@@ -9,7 +9,7 @@ const test = spec.world(gatewayUsagePolicy, {
   needs: { commands: ["pnpm", "bun"], optIn: ["OPENWORK_EVAL_E2E_TESTS"] },
 });
 
-const policyName = "Journey monthly allowance";
+const policyName = "Usage Member";
 const reason = "Finish the synthetic integration review";
 const ownPath = "/v1/gateway/usage-limits/me";
 const requestsPath = "/v1/gateway/usage-limit-reset-requests";
@@ -103,52 +103,37 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
   expect(await own()).toMatchObject({ organizationId: world.orgId, memberId: world.memberId, state: "unlimited", buckets: [], coverage: untrackedCoverage });
   expect(await own(world.control)).toMatchObject({ memberId: world.controlId, state: "unlimited", buckets: [], coverage: untrackedCoverage });
 
-  const policy = await step("admin creates and assigns the monthly hard policy in rendered Den", async () => {
+  const policy = await step("admin sets Usage Member's monthly hard limit on the New limit page", async () => {
     await admin.navigate(new URL("/dashboard/ai-gateway?tab=limits", world.den.ref.webUrl).toString());
-    await admin.see({ role: "button", label: "Create policy" }, { timeoutMs: 90_000 });
+    await admin.see({ testId: "gateway-limits-empty" }, { timeoutMs: 90_000 });
     await expectAdminRoute("/dashboard/ai-gateway?tab=limits", "Limits");
     await admin.notSee({ testId: "gateway-users-teams" });
-    await admin.click({ role: "button", label: "Create policy" });
-    await admin.see({ role: "combobox", label: "Timeframe 1" }, { value: "1 month" });
-    await admin.type({ role: "textbox", label: "Policy name" }, policyName);
-    await admin.type({ role: "textbox", label: "USD Amount 1" }, "1.000000");
-    await capture("Den policy editor", admin, probe.on(world.admin), '[role="dialog"]');
-    await admin.click({ role: "button", label: "Save policy" });
-    await admin.see({ role: "button", label: `Edit ${policyName}` });
-    await admin.notSee({ role: "button", label: `Assignments for ${policyName}` });
-    await adminProbe.eventually(() => adminProbe.dom('[role="dialog"]'), {
-      within: 15_000, label: "Den editor closes after save", until: (value) => value.elements.length === 0,
-    });
+    await admin.click({ testId: "gateway-limit-new" });
+    await admin.see({ testId: "gateway-limit-editor" }, { timeoutMs: 30_000 });
+    await expectAdminRoute("/dashboard/ai-gateway/limits/new", "Limits");
+    await admin.click({ role: "switch", label: "Everyone in the organization" });
+    await admin.click({ testId: "gateway-limit-add-person" });
+    await admin.click({ role: "combobox", label: "Person" });
+    await admin.click({ role: "option", label: /Usage Member/ });
+    await admin.see({ testId: "gateway-limit-who-row" }, { text: /Usage Member/ });
+    await admin.type({ testId: "gateway-limit-amount-month" }, "1.000000");
+    await capture("Den New spend limit amounts", admin, adminProbe, '[data-testid="gateway-limit-period-month"]');
+    await admin.click({ testId: "gateway-limit-save" });
+    await admin.see({ testId: "gateway-limit-row" }, { text: /\$1\.00 a month each/, timeoutMs: 30_000 });
+    await expectAdminRoute("/dashboard/ai-gateway?tab=limits", "Limits");
     const saved = (await policies()).find((entry) => entry.name === policyName);
-    expect(saved).toMatchObject({ hardLimit: true, allowRequestReset: true, limits: [{ timeframe: "month", costLimitMicroUsd: 1_000_000 }], assignments: [] });
-    if (!saved) throw new Error("Policy not persisted by the editor");
-    expect((await adminProbe.dom('[aria-labelledby="gateway-usage-limits-heading"] tbody tr')).elements).toHaveLength(1);
-    await capture("Den Limits policy rows", admin, adminProbe, '[aria-labelledby="gateway-usage-limits-heading"] tbody tr');
+    expect(saved).toMatchObject({ hardLimit: true, allowRequestReset: true, limits: [{ timeframe: "month", costLimitMicroUsd: 1_000_000 }] });
+    if (!saved) throw new Error("Policy not persisted by the New limit page");
+    expect(saved.assignments).toEqual([{ id: expect.any(String), memberId: world.memberId, teamId: null, organization: false }]);
+    expect((await adminProbe.dom('[data-testid="gateway-limit-row"]')).elements).toHaveLength(1);
+    await capture("Den Limits row", admin, adminProbe, '[data-testid="gateway-limit-row"]');
     await admin.click({ role: "tab", label: "Users & Teams" });
     await admin.see({ testId: "gateway-users-teams" });
     await expectAdminRoute("/dashboard/ai-gateway?tab=users-and-teams", "Users & Teams");
-    await admin.notSee({ role: "button", label: "Create policy" });
-    await admin.notSee({ role: "combobox", label: "Find person to inspect" });
+    await admin.notSee({ testId: "gateway-limit-new" });
+    await admin.notSee({ role: "combobox", label: "Find a person" });
     await admin.notSee({ role: "button", label: "Refresh requests" });
-    await admin.click({ role: "button", label: "Apply new usage limit" });
-    expect((await adminProbe.dom('[role="dialog"] button:disabled')).elements.map((element) => element.text)).toContain("Continue");
-    await admin.click({ role: "button", label: "People (0)" });
-    await admin.type({ placeholder: "Search people..." }, world.member.email);
-    await admin.click({ role: "button", label: /Usage Member[\s\S]*usage-member@example\.test/ });
-    await admin.click({ role: "button", label: "Continue" });
-    await admin.click({ role: "combobox", label: "Usage limit policy" });
-    await admin.click({ role: "option", label: new RegExp(policyName) });
-    await capture("Den central usage assignment form", admin, adminProbe, '[role="dialog"]');
-    await admin.click({ role: "button", label: "Apply usage limit" });
-    await adminProbe.eventually(() => adminProbe.dom('[role="dialog"]'), {
-      within: 15_000, label: "Den editor closes after save", until: (value) => value.elements.length === 0,
-    });
     await admin.see({ role: "button", label: `Unassign ${policyName} from Usage Member` });
-    await probe.eventually(async () => (await policies()).find((entry) => entry.id === saved.id)?.assignments, {
-      within: 15_000, intervalMs: 200, label: "Den assignment persisted",
-      until: (assignments) => assignments?.length === 1 && assignments[0]?.memberId === world.memberId,
-    });
-    expect((await policies()).find((entry) => entry.id === saved.id)?.assignments).toEqual([{ id: expect.any(String), memberId: world.memberId, teamId: null, organization: false }]);
     expect((await adminProbe.dom('[data-testid="gateway-subject-card"]')).elements).toHaveLength(2);
     expect((await adminProbe.dom(`[data-subject="member:${world.memberId}"]`)).elements[0]?.text).toContain(policyName);
     expect((await adminProbe.dom(`[data-subject="member:${world.controlId}"]`)).elements).toHaveLength(0);
@@ -163,7 +148,7 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
   if (!initialBucket) throw new Error("Assigned bucket missing");
   expect(new Date(initialBucket.resetAt).getUTCHours()).toBe(5);
 
-  await step("nested provider forms retain AI Providers and Limits owns the member inspector", async () => {
+  await step("nested provider forms retain AI Providers and each person has a page with their limit", async () => {
     await admin.click({ role: "tab", label: "AI Providers" });
     await admin.see({ testId: "gateway-provider-create" });
     await expectAdminRoute("/dashboard/ai-gateway?tab=ai-providers", "AI Providers");
@@ -184,22 +169,18 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     await admin.see({ role: "button", label: "Save provider and models" });
     await admin.notSee({ role: "button", label: "Apply new usage limit" });
     await admin.click({ role: "tab", label: "Limits" });
-    await admin.see({ role: "combobox", label: "Find person to inspect" });
+    await admin.see({ role: "combobox", label: "Find a person" });
     await expectAdminRoute("/dashboard/ai-gateway?tab=limits", "Limits");
-    await admin.click({ role: "combobox", label: "Find person to inspect" });
-    await admin.type({ role: "combobox", label: "Find person to inspect" }, world.member.email);
+    await admin.click({ role: "combobox", label: "Find a person" });
+    await admin.type({ role: "combobox", label: "Find a person" }, world.member.email);
     await admin.click({ role: "option", label: /Usage Member[\s\S]*usage-member@example\.test/ });
-    await admin.see({ text: "Within allowance" });
-    expect((await adminProbe.dom('[aria-label="Usage for Usage Member"]')).elements[0]?.text).toContain("Within allowance");
-    await admin.see({ text: "$0.00 used" });
-    await admin.click({ role: "button", label: "Change person" });
-    await admin.click({ role: "combobox", label: "Find person to inspect" });
-    await admin.type({ role: "combobox", label: "Find person to inspect" }, world.control.email);
-    await admin.click({ role: "option", label: /Usage Control[\s\S]*usage-control@example\.test/ });
-    await admin.see({ text: "Unlimited" });
-    expect((await adminProbe.dom('[aria-label="Usage for Usage Control"]')).elements[0]?.text).toContain("Unlimited");
-    await admin.notSee({ text: "$0.00 used" });
-    await admin.click({ role: "button", label: "Change person" });
+    await expectAdminRoute(`/dashboard/ai-gateway/people/${world.memberId}`, "Users & Teams");
+    await admin.see({ testId: "gateway-person-limit" }, { text: /Within the limit/ });
+    await admin.see({ testId: "gateway-person-limit-row" }, { text: /\$0\.00 used/ });
+    await admin.see({ testId: "gateway-person-limit-row" }, { text: /\$1\.00 a month/ });
+    await admin.navigate(new URL(`/dashboard/ai-gateway/people/${world.controlId}`, world.den.ref.webUrl).toString());
+    await admin.see({ testId: "gateway-person-limit" }, { text: /No limit/, timeoutMs: 60_000 });
+    await admin.notSee({ testId: "gateway-person-limit-row" });
     await admin.notSee({ role: "link", label: "Old Gateway" });
     for (const oldPath of [
       "/dashboard/gateway-providers",
@@ -226,7 +207,7 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     await expectAdminRoute("/dashboard/ai-gateway?tab=limits", "Limits");
     expect(await policies()).toHaveLength(1);
     expect(world.upstreamCount()).toBe(0);
-    evidence.recordAssertionEvidence("AI Gateway tab and nested form ownership", "New/edit provider forms stay within AI Providers without saving changes. The old Gateway sidebar link is absent and its list/new/detail/edit URLs show 404 without redirecting. Central Users & Teams assigns only Usage Member; Limits inspector reports that member within allowance and the unassigned control unlimited. The legacy Models URL forwards to the OpenWork Models tab with repeated query values intact and no duplicate sidebar link or page heading. No upstream inference calls occurred.", true);
+    evidence.recordAssertionEvidence("AI Gateway tab and nested form ownership", "New/edit provider forms stay within AI Providers without saving changes. The old Gateway sidebar link is absent and its list/new/detail/edit URLs show 404 without redirecting. The New limit page assigns only Usage Member; Usage Member's page reports $0.00 used of $1.00 a month and the unassigned control's page shows No limit. The legacy Models URL forwards to the OpenWork Models tab with repeated query values intact and no duplicate sidebar link or page heading. No upstream inference calls occurred.", true);
   });
 
   const sessionId = await step("member selects the actual managed Gateway model in a real Desktop session", async () => {

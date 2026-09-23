@@ -130,7 +130,7 @@ function GatewayLimitForm({ orgId, orgSlug, policy, target, teams, members }: Ed
   };
 
   const memberOptions = members.filter((member) => !who.memberIds.includes(member.id)).map((member) => ({ value: member.id, label: member.user.name || member.user.email, description: member.user.email }));
-  const teamOptions = teams.filter((team) => !who.teamIds.includes(team.id)).map((team) => ({ value: team.id, label: team.name, description: `${team.memberIds.length} members` }));
+  const teamOptions = teams.filter((team) => !who.teamIds.includes(team.id)).map((team) => ({ value: team.id, label: team.name, description: `${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}` }));
 
   async function save() {
     setSubmitted(true);
@@ -197,7 +197,7 @@ function GatewayLimitForm({ orgId, orgSlug, policy, target, teams, members }: Ed
             <span className="block text-[13px] font-medium text-gray-900">Everyone in the organization</span>
             <span className="block text-[12px] text-gray-500">{who.organization ? "Each person gets these amounts, including people who join later." : "Only the people and teams you add below."}</span>
           </span>
-          <DenSwitch checked={who.organization} aria-label="Everyone in the organization" data-testid="gateway-limit-everyone"
+          <DenSwitch checked={who.organization} aria-label="Everyone in the organization" testId="gateway-limit-everyone"
             onChange={(checked) => setWho((current) => ({ ...current, organization: checked, ...(checked ? { teamIds: [], memberIds: [] } : {}) }))} />
         </div>
         {!who.organization && (who.teamIds.length > 0 || who.memberIds.length > 0) ? (
@@ -209,7 +209,7 @@ function GatewayLimitForm({ orgId, orgSlug, policy, target, teams, members }: Ed
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500"><Users className="h-4 w-4" aria-hidden="true" /></span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-[13px] font-medium text-gray-900">{team?.name ?? "Removed team"}</span>
-                    <span className="block text-[12px] text-gray-500">{team ? `${team.memberIds.length} members, future members included` : "No longer in the directory"}</span>
+                    <span className="block text-[12px] text-gray-500">{team ? `${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}, future members included` : "No longer in the directory"}</span>
                   </span>
                   <DenButton size="sm" variant="secondary" type="button" onClick={() => setWho((current) => ({ ...current, teamIds: current.teamIds.filter((entry) => entry !== teamId) }))}>Remove</DenButton>
                 </li>

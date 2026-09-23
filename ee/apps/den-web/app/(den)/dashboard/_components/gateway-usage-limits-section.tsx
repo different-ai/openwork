@@ -195,6 +195,13 @@ function policyWho(policy: GatewayUsageLimitPolicy, teams: DenOrgTeam[], members
   }, teams, members);
 }
 
+function targetKind(policy: GatewayUsageLimitPolicy): string {
+  if (policy.assignments.some((assignment) => assignment.organization)) return "Everyone in the organization";
+  const teams = policy.assignments.filter((assignment) => assignment.teamId).length;
+  const people = policy.assignments.filter((assignment) => assignment.memberId).length;
+  return [teams ? `${teams} ${teams === 1 ? "team" : "teams"}` : "", people ? `${people} ${people === 1 ? "person" : "people"}` : ""].filter(Boolean).join(", ");
+}
+
 function LimitIcon({ policy }: { policy: GatewayUsageLimitPolicy }) {
   const Icon = policy.assignments.some((assignment) => assignment.organization) ? Globe
     : policy.assignments.every((assignment) => assignment.memberId) && policy.assignments.length > 0 ? User : Users;
@@ -264,11 +271,11 @@ export function GatewayUsageLimitsSection({ orgId, orgSlug, teams, members }: { 
                   <LimitIcon policy={policy} />
                   <span className="flex min-w-0 flex-[1.2] flex-col">
                     <span className="truncate text-[13px] font-medium text-gray-900">{policy.name}</span>
-                    <span className="truncate text-[12px] text-gray-500">{who || "Not applied to anyone yet"}</span>
+                    <span className="truncate text-[12px] text-gray-500">{!who ? "Not applied to anyone yet" : who === policy.name ? targetKind(policy) : who}</span>
                   </span>
                   <span className="min-w-0 flex-1 text-[13px] tabular-nums text-gray-700">{describeLimitAmounts(policy)} each</span>
                   <span className="w-28 shrink-0 text-[12px] text-gray-600">{policy.hardLimit ? "Pauses them" : "Only warns"}</span>
-                  <Link href={getAiGatewayLimitRoute(orgSlug, policy.id)} aria-label={`Edit ${policy.name}`} className={buttonVariants({ variant: "secondary", size: "sm" })}>Edit</Link>
+                  <Link href={getAiGatewayLimitRoute(orgSlug, policy.id)} aria-label={`Edit ${policy.name}`} data-testid="gateway-limit-edit" className={buttonVariants({ variant: "secondary", size: "sm" })}>Edit</Link>
                 </li>
               );
             })}

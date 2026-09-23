@@ -17,8 +17,9 @@ const pushed: string[] = [];
 const replaced: string[] = [];
 let searchParams = new URLSearchParams();
 const router = { push: (href: string) => { pushed.push(href); }, replace: (href: string) => { replaced.push(href); }, back: () => {}, forward: () => {}, refresh: () => {}, prefetch: () => {} };
-spyOn(navigation, "useRouter").mockImplementation(() => router);
-spyOn(navigation, "useSearchParams").mockImplementation(() => new navigation.ReadonlyURLSearchParams(searchParams));
+const routerSpy = spyOn(navigation, "useRouter").mockImplementation(() => router);
+const searchSpy = spyOn(navigation, "useSearchParams").mockImplementation(() => new navigation.ReadonlyURLSearchParams(searchParams));
+afterAll(() => { routerSpy.mockRestore(); searchSpy.mockRestore(); });
 const { GatewayUsageLimitsSection, GatewayMemberUsageDetails } = await import("../app/(den)/dashboard/_components/gateway-usage-limits-section");
 const { GatewayLimitEditor } = await import("../app/(den)/dashboard/_components/gateway-limit-editor-screen");
 const { GatewayPerson } = await import("../app/(den)/dashboard/_components/gateway-person-screen");
@@ -532,7 +533,7 @@ test("a team target is named and turning off every period blocks save", async ()
   const view = await mount(editor({ target: { teamId: team.id } }));
   try {
     expect(view.container.textContent).toContain("Example Team");
-    expect(view.container.textContent).toContain("1 members, future members included");
+    expect(view.container.textContent).toContain("1 member, future members included");
     await click("Limit per month");
     expect(view.container.querySelector('[aria-label="Amount a month"]')).toBeNull();
     await click("Save limit");

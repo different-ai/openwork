@@ -170,6 +170,7 @@ test("root tabs navigate without losing query context and nested content keeps A
 test("Limits owns policies, inspection and reset review while Users & Teams owns assignments", async () => {
   const view = await mount(<AiGatewayScreen />, reply, "limits");
   try {
+    await tick();
     const panel = view.container.querySelector('[data-testid="ai-gateway-panel-limits"]');
     expect(panel?.querySelector('[aria-labelledby="gateway-usage-limits-heading"]')).not.toBeNull();
     expect(panel?.querySelector('[aria-label="Find a person"]')).not.toBeNull();
