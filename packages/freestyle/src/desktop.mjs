@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, closeSync, writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 
-// Controller-owned: a virtual display, a VNC server bound to loopback, and the
+// Controller-owned: a virtual XFCE desktop, a VNC server bound to loopback, and the
 // noVNC web client, all behind the preview gateway's own access check. The
 // OpenWork desktop app itself comes from the reviewed commit in /workspace.
 const DESKTOP_DISPLAY = ":99";
@@ -55,7 +55,7 @@ export async function startDesktop(stack, world) {
   mkdirSync("/tmp/.X11-unix", { recursive: true, mode: 0o1777 });
   service(stack, "Xvfb", [DESKTOP_DISPLAY, "-screen", "0", "1440x900x24", "-nolisten", "tcp"], "xvfb");
   await waitFor(() => existsSync(`/tmp/.X11-unix/X${DESKTOP_DISPLAY.slice(1)}`), "display");
-  service(stack, "fluxbox", [], "fluxbox");
+  service(stack, "startxfce4", [], "xfce");
   service(stack, "x11vnc", ["-display", DESKTOP_DISPLAY, "-localhost", "-rfbport", String(VNC_PORT), "-forever", "-shared", "-nopw", "-quiet"], "x11vnc");
   service(stack, "websockify", ["--web", "/usr/share/novnc", `127.0.0.1:${NOVNC_PORT}`, `127.0.0.1:${VNC_PORT}`], "novnc");
   await waitFor(async () => (await fetch(`http://127.0.0.1:${NOVNC_PORT}/vnc.html`, { signal: AbortSignal.timeout(2_000) })).ok, "viewer");
