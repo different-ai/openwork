@@ -1,104 +1,92 @@
 import { readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
-import { FreestyleApiError } from "freestyle";
-import { client, execChecked, findSnapshot, isMissing, snapshotSlug, type PreviewWorld } from "./index.ts";
+import type { Vm } from "freestyle";
+import { client, execChecked, findSnapshot, snapshotSlug, type PreviewWorld } from "./index.ts";
+import { compiledFingerprint, dependencyFingerprint, dependencyInput, digest, ensureLayer, sourceTree, type ObserveBuild } from "./cache.ts";
+import { checkoutRecipe, compiledRecipe, dependencyRecipe, toolsRecipe } from "./build-recipes.ts";
 
-/** Build once per exact source revision, then clone the running, verified world. */
-export async function ensureSnapshot(sha: string, api = client(), log: (message: string) => void = () => {}, world: PreviewWorld = "app-web") {
-  const slug = snapshotSlug(sha, world);
-  const deadline = Date.now() + 11 * 60_000;
-  // The provider's unique slug is the distributed lock: works across Vercel instances.
-  while (Date.now() < deadline) {
-    const existing = await findSnapshot(sha, api, world);
-    if (existing) return existing;
-    let created;
-    try {
-      created = await api.vms.create({
-        slug: `ow-build-${world}-v4-${sha}`, snapshotId: "freestyle/ubuntu",
-        displayName: `OpenWork snapshot ${sha.slice(0, 7)}`, ttlSeconds: 1800,
-        metadata: { kind: "openwork-snapshot-builder-v1", gitSha: sha },
-        firewall: { rules: [{ action: "allow", source: {}, destination: { public: true } }] },
-      });
-    } catch (error) {
-      if (!(error instanceof FreestyleApiError) || error.status !== 409) throw error;
-      // Capacity failures also use 409. Only wait when our builder actually exists.
-      const builder = await api.vms.get(`ow-build-${world}-v4-${sha}`).catch((cause: unknown) => {
-        if (isMissing(cause)) return null;
-        throw cause;
-      });
-      if (!builder) {
-        const completed = await findSnapshot(sha, api, world);
-        if (completed) return completed;
-        throw error;
-      }
-      if (builder.metadata.kind !== "openwork-snapshot-builder-v1" || builder.metadata.gitSha !== sha) throw error;
-      await delay(2_000);
-      continue;
-    }
-    const { vm } = created;
-    try {
-      log(`Building snapshot for ${sha} in ${vm.id}`);
-      await execChecked(vm, "mkdir -p /opt/openwork-preview");
-      await vm.fs.writeTextFile("/opt/openwork-preview/gateway.mjs", await readFile(new URL("./gateway.mjs", import.meta.url), "utf8"));
-      await vm.fs.writeTextFile("/opt/openwork-preview/runtime.mjs", await readFile(new URL(world === "acme-web" ? "./acme-runtime.mjs" : "./runtime.mjs", import.meta.url), "utf8"));
-      await vm.fs.writeTextFile("/opt/openwork-preview/health.mjs", await readFile(new URL("./health.mjs", import.meta.url), "utf8"));
-      for (const file of ["origins.mjs", "resume.mjs", "desktop.mjs"]) {
-        await vm.fs.writeTextFile(`/opt/openwork-preview/${file}`, await readFile(new URL(`./${file}`, import.meta.url), "utf8"));
-      }
-      // Only public repository bytes enter the VM. No host credentials or environment are forwarded.
-      const setup = `#!/bin/bash
+export interface BuildOptions {
+  observe?: ObserveBuild;
+  sourceFetch?: typeof fetch;
+  diagnostic?: (stage: string, log: string) => Promise<void>;
+}
+
+async function runScript(vm: Vm, stage: string, script: string, options: BuildOptions) {
+  const root = `/opt/openwork-preview/${stage}`;
+  await execChecked(vm, "mkdir -p /opt/openwork-preview");
+  await vm.fs.writeTextFile(`${root}.sh`, `#!/bin/bash
 set -euo pipefail
-exec > /opt/openwork-preview/build.log 2>&1
-trap 'tail -n 50 /workspace/tmp/worlds/runtime/freestyle-preview/web.log /workspace/tmp/worlds/runtime/freestyle-preview/server.log 2>/dev/null || true; touch /opt/openwork-preview/failed' ERR
-git init /workspace
-cd /workspace
-git remote add origin https://github.com/different-ai/openwork.git
-git fetch --depth=1 origin ${sha}
-git checkout --detach FETCH_HEAD
-test "$(git rev-parse HEAD)" = "${sha}"
-corepack enable
-corepack prepare pnpm@11.4.0 --activate
-${world === "acme-web" ? `apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server redis-server xvfb x11vnc novnc websockify fluxbox dbus-x11 xauth libgtk-3-0 libnss3 libasound2t64 libgbm1
-# Open the viewer connected and scaled to the reviewer's window.
-printf '<!doctype html><meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=1&amp;resize=scale&amp;reconnect=1&amp;reconnect_delay=2000"><title>OpenWork desktop</title>' > /usr/share/novnc/index.html
-systemctl enable --now mysql redis-server
-mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'password'; FLUSH PRIVILEGES;"
-pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world... --filter @openwork-ee/den-api... --filter @openwork-ee/den-web... --filter @openwork-ee/gateway... --filter @openwork/desktop...
-pnpm --dir evals install --frozen-lockfile --ignore-scripts
-pnpm --filter @openwork-ee/den-db build
-pnpm --filter @openwork/email build
-# Desktop build runs alongside the remaining builds; launches then skip it.
-(node apps/desktop/scripts/prepare-sidecar.mjs --force --outdir apps/desktop/resources/sidecars && node apps/desktop/scripts/prepare-computer-use-helper.mjs --force --outdir apps/desktop/resources/helpers) &
-DESKTOP_BUILD=$!` : "pnpm install --frozen-lockfile --filter @openwork/app... --filter openwork-server... --filter @openwork/world..."}
-pnpm --filter @openwork/types build
-pnpm --filter @openwork/sdk build
-pnpm --filter @openwork/enterprise-mcp-client build
-${world === "acme-web" ? "pnpm --filter @openwork-ee/den-api run build:workspace-dependencies" : ""}
-mkdir -p /opt/openwork-preview/tools
-printf 'allowBuilds:\n  opencode-ai: true\n' > /opt/openwork-preview/tools/pnpm-workspace.yaml
-pnpm --dir /opt/openwork-preview/tools add opencode-ai@1.18.15
-node /opt/openwork-preview/tools/node_modules/opencode-ai/postinstall.mjs
-export PATH="/opt/openwork-preview/tools/node_modules/.bin:$PATH"
-opencode --version
-systemctl daemon-reload
-${world === "app-web" ? "systemctl start openwork-preview-runtime\ncurl --retry 20 --retry-delay 2 --retry-all-errors -fsS http://127.0.0.1:5178/ >/dev/null\nnode /opt/openwork-preview/health.mjs" : `mysqladmin -uroot -ppassword ping
-redis-cli ping
-wait "$DESKTOP_BUILD"
-systemctl start openwork-preview-runtime
-for attempt in $(seq 1 240); do
-  test ! -f /opt/openwork-preview/failed-world
-  if test -f /opt/openwork-preview/ready-world; then break; fi
-  sleep 2
-done
-test -f /opt/openwork-preview/ready-world
-node /opt/openwork-preview/health.mjs`}
-systemctl enable --now openwork-preview-gateway
-touch /opt/openwork-preview/ready
-`;
-      await vm.fs.writeTextFile("/opt/openwork-preview/setup.sh", setup);
-      // Keep the app in its own service cgroup so completion of the builder
-      // cannot kill the processes captured by the running snapshot.
+exec > ${root}.log 2>&1
+trap 'touch ${root}.failed' ERR
+rm -f ${root}.ready ${root}.failed
+export pnpm_config_verify_deps_before_run=false
+${script}
+touch ${root}.ready
+`);
+  await execChecked(vm, `systemd-run --collect --unit=openwork-${stage} /bin/bash ${root}.sh`);
+  const deadline = Date.now() + 11 * 60_000;
+  while (Date.now() < deadline) {
+    const state = (await execChecked(vm, `if test -f ${root}.failed; then echo failed; elif test -f ${root}.ready; then echo ready; else echo building; fi`)).trim();
+    if (state === "ready") return;
+    if (state === "failed") {
+      if (options.diagnostic) await options.diagnostic(stage, await vm.fs.readTextFile(`${root}.log`));
+      throw new Error(`Snapshot ${stage} failed. Private builder log: ${root}.log`);
+    }
+    await delay(1_000);
+  }
+  if (options.diagnostic) await options.diagnostic(stage, await vm.fs.readTextFile(`${root}.log`));
+  throw new Error(`Snapshot ${stage} exceeded 11 minutes`);
+}
+
+/** Immutable tools/dependencies are shared; the running world always belongs to one exact commit. */
+export async function ensureSnapshot(sha: string, api = client(), log: (message: string) => void = () => {}, world: PreviewWorld = "app-web", options: BuildOptions = {}) {
+  const slug = snapshotSlug(sha, world);
+  const observe: ObserveBuild = (event) => { log(JSON.stringify(event)); options.observe?.(event); };
+  const existing = await findSnapshot(sha, api, world);
+  if (existing) { observe({ stage: "world", durationMs: 0, cacheHit: true }); return existing; }
+  const entries = await sourceTree(sha, options.sourceFetch);
+  const tools = toolsRecipe(world);
+  const dependencies = dependencyRecipe(world);
+  const toolsSlug = `ow-tools-v1-${world}-${digest(tools)}`;
+  const depsSlug = `ow-deps-v1-${world}-${digest(toolsSlug + dependencies + dependencyFingerprint(entries))}`;
+  const deps = await ensureLayer({ slug: depsSlug, stage: "dependencies", observe,
+    parent: async () => (await ensureLayer({ slug: toolsSlug, stage: "tools", observe,
+      parent: async () => "freestyle/ubuntu",
+      prepare: async (vm) => runScript(vm, "tools", tools, options),
+    }, api)).id,
+    prepare: async (vm) => {
+      // Remove application source before installing the shared layer. Only
+      // fingerprinted inputs and immutable registry dependencies may affect it.
+      const inputs = entries.filter((entry) => entry.type === "blob" && dependencyInput(entry.path)).map((entry) => entry.path);
+      await vm.fs.writeTextFile("/opt/openwork-preview/dependency-inputs.json", JSON.stringify(inputs));
+      await runScript(vm, "dependencies", `${checkoutRecipe(sha)}
+node --input-type=module - <<'NODE'
+import { readFile, rm } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+const keep = new Set(JSON.parse(await readFile('/opt/openwork-preview/dependency-inputs.json', 'utf8')));
+for (const path of execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\\0').filter(Boolean)) {
+  if (!keep.has(path)) await rm(path, { force: true });
+}
+NODE
+${dependencies}`, options);
+    },
+  }, api);
+  const compile = compiledRecipe(world);
+  const compiledSlug = `ow-compiled-v1-${world}-${digest(depsSlug + compile + compiledFingerprint(entries))}`;
+  const compiled = await ensureLayer({ slug: compiledSlug, stage: "compiled", observe,
+    parent: async () => deps.id,
+    prepare: async (vm) => runScript(vm, "compiled", `${checkoutRecipe(sha)}\n${compile}`, options),
+  }, api);
+  return ensureLayer({ slug, stage: "world", observe, ttlSeconds: 7 * 86400,
+    parent: async () => compiled.id,
+    prepare: async (vm) => {
+      log(`Preparing ${world} at ${sha} from cached dependencies`);
+      for (const [target, source] of [
+        ["gateway.mjs", "gateway.mjs"], ["runtime.mjs", world === "acme-web" ? "acme-runtime.mjs" : "runtime.mjs"],
+        ["health.mjs", "health.mjs"], ["origins.mjs", "origins.mjs"], ["resume.mjs", "resume.mjs"], ["desktop.mjs", "desktop.mjs"],
+      ]) {
+        await vm.fs.writeTextFile(`/opt/openwork-preview/${target}`, await readFile(new URL(`./${source}`, import.meta.url), "utf8"));
+      }
       await vm.fs.writeTextFile("/etc/systemd/system/openwork-preview-runtime.service", `[Unit]
 Description=OpenWork isolated preview runtime
 [Service]
@@ -116,25 +104,35 @@ Restart=on-failure
 [Install]
 WantedBy=multi-user.target
 `);
-      await execChecked(vm, "systemd-run --unit=openwork-preview-build /bin/bash /opt/openwork-preview/setup.sh");
-      while (Date.now() < deadline) {
-        const status = await execChecked(vm, "if test -f /opt/openwork-preview/failed; then echo failed; elif test -f /opt/openwork-preview/ready; then echo ready; else echo building; fi");
-        if (status.trim() === "failed") throw new Error(`Snapshot build failed in ${vm.id}; inspect /opt/openwork-preview/build.log.`);
-        if (status.trim() === "ready") {
-          log("App is ready; saving its running snapshot.");
-          const result = await vm.snapshot({ slug, displayName: `OpenWork ${sha.slice(0, 7)}`, autoDeleteSeconds: 7 * 86400 });
-          return result.snapshot;
-        }
-        await delay(3_000);
+      await runScript(vm, "world", `
+stage_start=$(date +%s%3N)
+mark() { now=$(date +%s%3N); printf '{"stage":"%s","durationMs":%s}\\n' "$1" "$((now-stage_start))" >> /opt/openwork-preview/build-stages.jsonl; stage_start=$now; }
+${checkoutRecipe(sha)}
+mark checkout
+tar -xf /opt/openwork-preview/compiled.tar -C /workspace
+mark compile
+export PATH="/opt/openwork-preview/tools/node_modules/.bin:$PATH"
+systemctl daemon-reload
+systemctl start openwork-preview-runtime
+${world === "app-web" ? "curl --retry 20 --retry-delay 1 --retry-all-errors -fsS http://127.0.0.1:5178/ >/dev/null" : `for attempt in $(seq 1 480); do
+  test ! -f /opt/openwork-preview/failed-world
+  if test -f /opt/openwork-preview/ready-world; then break; fi
+  sleep 1
+done
+test -f /opt/openwork-preview/ready-world`}
+node /opt/openwork-preview/health.mjs
+systemctl enable --now openwork-preview-gateway
+mark boot-and-verify
+`, options);
+      const timings = await vm.fs.readTextFile("/opt/openwork-preview/build-stages.jsonl")
+        + (world === "acme-web" ? await vm.fs.readTextFile("/opt/openwork-preview/runtime-stages.jsonl") : "");
+      for (const line of timings.trim().split("\n")) {
+        const value: unknown = JSON.parse(line);
+        if (!value || typeof value !== "object" || !("stage" in value) || typeof value.stage !== "string"
+          || !["checkout", "compile", "boot-and-verify", "world-services", "gateway-probe", "den-pages", "app-modules", "desktop"].includes(value.stage) || !("durationMs" in value)
+          || typeof value.durationMs !== "number" || !Number.isFinite(value.durationMs) || value.durationMs < 0) throw new Error("Invalid build timing");
+        observe({ stage: value.stage, durationMs: value.durationMs });
       }
-      throw new Error("Snapshot build exceeded 11 minutes. Try again after checking the builder logs.");
-    } catch (error) {
-      log(await vm.fs.readTextFile("/opt/openwork-preview/build.log").then((value) => value.slice(-6000), () => "Builder log unavailable."));
-      throw error;
-    } finally {
-      // Snapshot survives deletion; no paid builder stays behind.
-      await vm.delete().catch(() => log("Builder cleanup will be completed by its provider TTL."));
-    }
-  }
-  throw new Error("Another snapshot build is still running. Try launching again shortly.");
+    },
+  }, api);
 }

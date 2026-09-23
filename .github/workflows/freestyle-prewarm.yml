@@ -43,6 +43,9 @@ jobs:
       - name: Prepare reusable snapshot
         env:
           FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          # Only the pinned host controller reads public Git tree metadata.
+          # Neither this token nor the Freestyle key enters any guest VM.
+          OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
           PREVIEW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           PREVIEW_WORLD: ${{ matrix.world }}
         run: |
@@ -54,6 +57,13 @@ jobs:
           FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
           PREVIEW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node scripts/verify-freestyle-preview.ts "$PREVIEW_SHA"
+      - name: Save sanitized snapshot preparation timings
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: freestyle-build-proof-${{ matrix.world }}
+          path: freestyle-build-proof-${{ matrix.world }}.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Measure and verify a restored OpenWork web clone
         if: matrix.world == 'app-web'
         env:

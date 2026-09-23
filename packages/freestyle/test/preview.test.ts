@@ -138,7 +138,9 @@ test("provider capacity conflicts do not masquerade as an in-progress snapshot",
     if (init?.method === "POST") return Response.json({ code: "CONFLICT", message: "No capacity" }, { status: 409 });
     return Response.json({ code: "NOT_FOUND", message: "Missing" }, { status: 404 });
   } });
-  await assert.rejects(ensureSnapshot(sha, api), /No capacity/);
+  await assert.rejects(ensureSnapshot(sha, api, undefined, "app-web", {
+    sourceFetch: async () => Response.json({ truncated: false, tree: [{ path: "pnpm-lock.yaml", sha, type: "blob" }] }),
+  }), /No capacity/);
 });
 
 test("an existing immutable snapshot is reused without creating a builder", async () => {
