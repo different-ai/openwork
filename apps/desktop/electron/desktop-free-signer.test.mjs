@@ -10,6 +10,9 @@ import {
   MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH,
 } from "@openwork/types/desktop-free-access";
 import { createDesktopFreeSigner, desktopFreeBootstrapEligible } from "./desktop-free-signer.mjs";
+import { readDesktopMachineId } from "./desktop-machine-id.mjs";
+
+const machineId = "c".repeat(64);
 
 function storage() {
   return {
@@ -25,7 +28,7 @@ function storage() {
 
 async function fixture(run) {
   const root = await mkdtemp(path.join(tmpdir(), "openwork-free-signer-"));
-  const options = { filePath: path.join(root, "identity.bin"), appVersion: "0.20.0", platform: process.platform, arch: "arm64", isEligible: () => true, loadSafeStorage: storage };
+  const options = { filePath: path.join(root, "identity.bin"), appVersion: "0.20.0", platform: process.platform, arch: "arm64", isEligible: () => true, loadSafeStorage: storage, readMachineId: async () => machineId };
   try { await run(options, root); }
   finally { await rm(root, { recursive: true, force: true }); }
 }
@@ -47,12 +50,14 @@ test("one protected installation signs the actual guest and member route, raw bo
       const authorization = requestPath === DESKTOP_FREE_SESSION_PATH ? "" : "Bearer member-or-guest-fixture";
       const proof = JSON.parse(Buffer.from(await restarted.sign({ method, path: requestPath, body, authorization }), "base64url").toString());
       assert.equal(proof.appVersion, "0.20.0");
+      assert.equal(proof.version, 2);
+      assert.equal(proof.machineId, machineId);
       assert.equal(nonces.has(proof.nonce), false);
       nonces.add(proof.nonce);
       const fields = { ...proof, method, path: requestPath, bodyHash: createHash("sha256").update(body).digest("hex"), authorizationHash: createHash("sha256").update(authorization).digest("hex") };
       const signature = Buffer.from(proof.signature, "base64url");
       assert.equal(verify(null, Buffer.from(desktopFreeProofMessage(fields)), key, signature), true);
-      for (const changed of [{ path: "/other" }, { authorizationHash: createHash("sha256").update("Bearer other").digest("hex") }, { bodyHash: createHash("sha256").update("{}").digest("hex") }, { appVersion: "99.0.0" }]) {
+      for (const changed of [{ path: "/other" }, { authorizationHash: createHash("sha256").update("Bearer other").digest("hex") }, { bodyHash: createHash("sha256").update("{}").digest("hex") }, { appVersion: "99.0.0" }, { machineId: "d".repeat(64) }]) {
         assert.equal(verify(null, Buffer.from(desktopFreeProofMessage({ ...fields, ...changed })), key, signature), false);
       }
     }
@@ -87,4 +92,55 @@ test("public hosted eligibility respects explicit enterprise policies and no his
     assert.equal(desktopFreeBootstrapEligible(distribution, denied), false);
   }
   assert.equal(desktopFreeBootstrapEligible({ flavor: "enterprise" }, bootstrap), false);
+});
+
+test("the machine id outlives the signing key: a reinstall signs as the same machine", async () => {
+  await fixture(async (options) => {
+    const before = await createDesktopFreeSigner(options).identity();
+    assert.equal(before.machineId, machineId);
+    assert.equal("installationId" in before, false);
+    await rm(options.filePath);
+    const after = await createDesktopFreeSigner(options).identity();
+    assert.notEqual(after.publicKey, before.publicKey);
+    assert.equal(after.machineId, before.machineId);
+  });
+});
+
+test("an unreadable or malformed machine id blocks signing and is retried rather than cached", async () => {
+  await fixture(async (options) => {
+    let reads = 0;
+    const signer = createDesktopFreeSigner({ ...options, readMachineId: async () => { reads++; if (reads === 1) throw new Error("ioreg unavailable"); return machineId; } });
+    await assert.rejects(signer.sign({ method: "GET", path: DESKTOP_FREE_STATUS_PATH, body: new Uint8Array(), authorization: "" }), /ioreg unavailable/);
+    assert.equal((await signer.identity()).machineId, machineId);
+    assert.equal(reads, 2);
+    await assert.rejects(createDesktopFreeSigner({ ...options, readMachineId: async () => "raw-hardware-uuid" }).identity(), /Invalid desktop machine identifier/);
+  });
+});
+
+test("machine ids are salted hashes of the operating system identifier on every platform", async () => {
+  const uuid = "5E1F8C3A-1B2C-4D5E-8F90-A1B2C3D4E5F6";
+  const expected = createHash("sha256").update(`openwork-desktop-free-machine-v1:${uuid.toLowerCase()}`).digest("hex");
+  const darwin = await readDesktopMachineId("darwin", { exec: async (file, args) => {
+    assert.equal(file, "/usr/sbin/ioreg");
+    assert.deepEqual(args, ["-rd1", "-c", "IOPlatformExpertDevice"]);
+    return { stdout: `  "IOPlatformSerialNumber" = "SERIAL"\n  "IOPlatformUUID" = "${uuid}"\n` };
+  } });
+  assert.equal(darwin, expected);
+  assert.equal(darwin.includes(uuid.toLowerCase()), false);
+  const win32 = await readDesktopMachineId("win32", { environment: { SystemRoot: "C:\\Windows" }, exec: async (file, args) => {
+    assert.equal(file, "C:\\Windows\\System32\\reg.exe");
+    assert.deepEqual(args, ["query", "HKLM\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"]);
+    return { stdout: `\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography\r\n    MachineGuid    REG_SZ    ${uuid}\r\n` };
+  } });
+  assert.equal(win32, expected);
+  const linux = await readDesktopMachineId("linux", { read: async (file) => {
+    if (file === "/etc/machine-id") throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    assert.equal(file, "/var/lib/dbus/machine-id");
+    return `${uuid}\n`;
+  } });
+  assert.equal(linux, expected);
+  for (const value of ["", "00000000-0000-0000-0000-000000000000", "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF", "short"]) {
+    await assert.rejects(readDesktopMachineId("darwin", { exec: async () => ({ stdout: `"IOPlatformUUID" = "${value}"` }) }), /stable machine identifier/);
+  }
+  await assert.rejects(readDesktopMachineId("linux", { read: async () => "" }), /stable machine identifier/);
 });

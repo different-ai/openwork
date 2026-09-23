@@ -86,7 +86,7 @@ export type LocalManagedMcpVaultKeyProvider = () => Promise<Uint8Array>;
 
 export type DesktopFreeSigner = {
   currentVersion: string;
-  identity: () => Promise<Pick<DesktopFreeProofClaims, "publicKey" | "appVersion" | "platform" | "arch"> & { installationId: string }>;
+  identity: () => Promise<Pick<DesktopFreeProofClaims, "publicKey" | "machineId" | "appVersion" | "platform" | "arch">>;
   sign: (request: { method: string; path: string; body: Uint8Array; authorization: string }) => Promise<string>;
 };
 
