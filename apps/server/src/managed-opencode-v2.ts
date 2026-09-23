@@ -1,7 +1,7 @@
 import type { EnginePermissionRule } from "./managed-policy-rules.js";
 import { nativeModelVariants } from "@openwork/types/cloud-model-fast";
 import { gatewayBase } from "./gateway-quota.js";
-import { openworkGatewayQuotaV2PluginPath } from "./openwork-extensions-plugin-path.js";
+import { openworkGatewayQuotaV2PluginPath, openworkProviderFiltersV2PluginPath } from "./openwork-extensions-plugin-path.js";
 import { pathToFileURL } from "node:url";
 // Parallel v2 lane prototype: provider injection is a watched-config write. This module
 // deliberately has no reload/dispose call, unlike managed-opencode.ts and server.ts reloadOpencodeEngine.
@@ -30,6 +30,8 @@ export interface OpencodeV2ProviderSpec {
   headers?: Record<string, unknown>;
   apiKey: string;
   models: OpencodeV2ModelSpec[];
+  whitelist?: string[];
+  blacklist?: string[];
 }
 
 export interface ManagedOpencodeV2ServerOptions {
@@ -86,11 +88,13 @@ export function renderOpencodeV2Config(input: {
   permissions?: EnginePermissionRule[];
   skills: string[];
   gatewayQuotaPluginDirectory?: string;
+  providerFiltersPluginDirectory?: string;
 }): Record<string, unknown> {
   const providerConfig: Record<string, unknown> = {};
   for (const provider of input.providers) {
     const models: Record<string, unknown> = {};
     for (const model of provider.models) {
+      if ((provider.whitelist !== undefined && !provider.whitelist.includes(model.id)) || provider.blacklist?.includes(model.id)) continue;
       const config = model.config ?? {};
       const modalities = isRecord(config.modalities) ? config.modalities : {};
       models[model.id] = {
@@ -130,13 +134,22 @@ export function renderOpencodeV2Config(input: {
     const base = gatewayBase(provider.id, provider.baseUrl);
     return base ? [[provider.id, base.href]] : [];
   }));
+  const filters = Object.fromEntries(input.providers.filter(provider => provider.whitelist !== undefined || provider.blacklist !== undefined)
+    .map(provider => [provider.id, { whitelist: provider.whitelist, blacklist: provider.blacklist }]));
+  const plugins = [
+    ...(Object.keys(gatewayProviders).length && input.gatewayQuotaPluginDirectory ? [{
+      package: pathToFileURL(input.gatewayQuotaPluginDirectory).href,
+      options: { providers: gatewayProviders },
+    }] : []),
+    ...(Object.keys(filters).length && input.providerFiltersPluginDirectory ? [{
+      package: pathToFileURL(input.providerFiltersPluginDirectory).href,
+      options: { providers: filters },
+    }] : []),
+  ];
   return {
     $schema: "https://opencode.ai/config.json",
     providers: providerConfig,
-    ...(Object.keys(gatewayProviders).length && input.gatewayQuotaPluginDirectory ? { plugins: [{
-      package: pathToFileURL(input.gatewayQuotaPluginDirectory).href,
-      options: { providers: gatewayProviders },
-    }] } : {}),
+    ...(plugins.length ? { plugins } : {}),
     ...(input.permissions ? { permissions: input.permissions } : {}),
     ...(input.skills.length ? { skills: [...input.skills] } : {}),
   };
@@ -150,6 +163,7 @@ export async function createManagedOpencodeV2Server(
   const bootTimeoutMs = options.bootTimeoutMs ?? 60_000;
   const configDir = join(options.rootDir, "config");
   const gatewayQuotaPluginDirectory = join(options.rootDir, "gateway-quota-plugin");
+  const providerFiltersPluginDirectory = join(options.rootDir, "provider-filters-plugin");
   const password = randomBytes(24).toString("base64url");
   const username = "opencode";
   let url = "";
@@ -182,6 +196,10 @@ export async function createManagedOpencodeV2Server(
   await writeFile(join(gatewayQuotaPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
   await writeFile(join(gatewayQuotaPluginDirectory, "server.js"),
     `export { default } from ${JSON.stringify(pathToFileURL(openworkGatewayQuotaV2PluginPath()).href)};\n`, { mode: 0o600 });
+  await mkdir(providerFiltersPluginDirectory, { recursive: true, mode: 0o700 });
+  await writeFile(join(providerFiltersPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
+  await writeFile(join(providerFiltersPluginDirectory, "server.js"),
+    `export { default } from ${JSON.stringify(pathToFileURL(openworkProviderFiltersV2PluginPath()).href)};\n`, { mode: 0o600 });
   // Replace the generated config before boot, removing stale managed-policy
   // registrations while retaining independent engine permissions. Leave the
   // old entrypoint on disk: another configuration may still reference it.
@@ -282,6 +300,7 @@ export async function createManagedOpencodeV2Server(
     await writeFile(temporary, `${JSON.stringify(renderOpencodeV2Config({
       providers: [...providers.values()],
       gatewayQuotaPluginDirectory,
+      providerFiltersPluginDirectory,
       ...(options.permissions ? { permissions: await options.permissions() } : {}),
       skills,
     }), null, 2)}\n`, { mode: 0o600 });

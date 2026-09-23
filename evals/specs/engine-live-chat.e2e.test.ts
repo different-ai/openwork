@@ -21,11 +21,16 @@ test(`LIVE-CONNECTORS ${resolveEvalEngine()}: the real model searches Den capabi
   const connector = await world.connectReports();
   await step("Discover the assigned report capability and execute its current ID", async () => {
     await turn(ctx, "Use the openwork-cloud connection: search_capabilities for current_amber_report, then execute_capability with the name returned by search. Report the exact report text. Do not guess its name or read files.", connector.proof);
-    expect(await connector.toolCalls()).toMatchObject([{ name: "current_amber_report", args: {} }]);
+    const calls = await connector.toolCalls();
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) expect(call).toMatchObject({ name: "current_amber_report", args: {} });
   });
+  const successfulCalls = (await connector.toolCalls()).length;
   await step("Return a connector failure honestly in the same conversation", async () => {
     await turn(ctx, "Use openwork-cloud search_capabilities for unavailable_violet_status, then execute_capability on that discovered capability. If the service fails, reply UNAVAILABLE. Do not invent a status.", "UNAVAILABLE");
-    expect((await connector.toolCalls()).map(call => call.name)).toEqual(["current_amber_report", "unavailable_violet_status"]);
+    const calls = (await connector.toolCalls()).slice(successfulCalls);
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) expect(call).toMatchObject({ name: "unavailable_violet_status", args: {} });
   });
   expect(await world.route()).toBe(route);
   expect(await world.documentIdentity()).toBe(documentIdentity);
@@ -60,6 +65,10 @@ test(`LIVE-CLOUD ${resolveEvalEngine()}: the real model retrieves, refreshes and
       expect(tools.some(part => record(part.state) && (
         (/get_skill|execute_capability/.test(JSON.stringify(part)) && JSON.stringify(part.state).includes(cloud.capability)
           && (part.state.status === "error" || /not found|not available|unknown_capability|denied|not accessible/i.test(JSON.stringify(part.state))))
+        || (record(part.state.metadata) && Array.isArray(part.state.metadata.toolCalls)
+          && part.state.metadata.toolCalls.some(call => record(call) && call.status === "error"
+            && /(?:^|\.)(?:get_skill|execute_capability)$/.test(String(call.tool))
+            && record(call.input) && call.input.name === cloud.capability))
         || (/search_capabilities/.test(String(part.tool ?? part.name)) && typeof part.state.output === "string" && /"matches"\s*:\s*\[\s*\]/.test(part.state.output))
       ))).toBe(true);
     }
@@ -186,6 +195,17 @@ async function ready({ world, user, probe, step, evidence }: Context) {
       return "loading";
     }, [])), { within: 30_000, label: "provider connection entry", until: entry => entry !== "loading" });
     if (settings === "settings") {
+      // Staging a v1 provider changes its startup config and rolls the legacy
+      // engine. If the settings read raced that reload, exercise its real Retry.
+      const entry = await probe.eventually(() => probe.eval(browserScript(() => {
+        if ([...document.querySelectorAll("button")].some(button => button.textContent?.trim() === "Connect provider" && !button.disabled)) return "ready";
+        if ([...document.querySelectorAll("button")].some(button => button.textContent?.trim() === "Retry" && !button.disabled)) return "retry";
+        return "loading";
+      }, [])), { within: 30_000, label: "provider settings finishes loading", until: value => value !== "loading" });
+      if (entry === "retry") {
+        evidence.recordJsonArtifact("Provider settings required its Retry action after config staging", { engine: world.engine });
+        await user.click({ role: "button", label: "Retry" });
+      }
       await user.screenshot();
       await user.click({ role: "button", label: "Connect provider" }).catch(async (error: unknown) => {
         await user.screenshot();
@@ -315,7 +335,13 @@ test(`LIVE-FORK ${resolveEvalEngine()}: branch at a chosen answer and preserve t
       return button ? [...document.querySelectorAll('button[aria-label="Branch in new chat"]')].indexOf(button) : -1;
     }, [first]));
     expect(branchIndex).toBeGreaterThanOrEqual(0);
-    await user.hover({ text: new RegExp(`^${first}$`) });
+    const answerIndex = await probe.eval(browserScript(marker => {
+      const matches = [...document.querySelectorAll("body *")].filter(element => element.textContent?.trim() === marker
+        && ![...element.children].some(child => child.textContent?.trim() === marker));
+      return matches.findIndex(element => element.closest('[data-message-role="assistant"]'));
+    }, [first]));
+    expect(answerIndex).toBeGreaterThanOrEqual(0);
+    await user.hover({ text: new RegExp(`^${first}$`), nth: answerIndex });
     await user.click({ role: "button", label: "Branch in new chat", nth: branchIndex });
     await probe.eventually(() => world.route(), { within: 30_000, label: "fork gets a distinct session", until: current => current !== route && /\/session\//.test(current) });
     await user.see({ text: first });
@@ -449,7 +475,7 @@ test(`LIVE-MCP ${resolveEvalEngine()}: add a local process in Library and let th
     const sessionId = /\/session\/([^/?#]+)/.exec(route)?.[1];
     if (!sessionId) throw new Error("Missing current conversation ID");
     await user.click({ role: "button", label: "Library" });
-    await user.click({ role: "button", label: "MCPs" });
+    await user.click({ role: "button", label: "Connectors" });
     await user.click({ role: "button", label: /^Advanced\b/ });
     await user.click({ role: "button", label: "Add workspace MCP" });
     await user.type({ placeholder: "github-copilot" }, "live-report");

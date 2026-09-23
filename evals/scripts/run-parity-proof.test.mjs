@@ -34,3 +34,7 @@ test("the native v2 skill contract explicitly selects v2", () => {
   assert.equal(plan[0].engine, "v2");
   assert.deepEqual(plan[0].args.slice(-2), ["--engine", "v2"]);
 });
+
+test("the native model filter regression explicitly selects v2", () => {
+  assert.deepEqual(parityProofPlan("evals/specs/engine-provider-filters.e2e.test.ts").map(item => item.engine), ["v2"]);
+});
