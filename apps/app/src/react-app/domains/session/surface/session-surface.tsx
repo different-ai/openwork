@@ -1581,7 +1581,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
     scopeKey: gatewayUsage.scopeKey, sessionOwner, gatewaySelected: gatewayUsage.active, status: gatewayUsage.data,
     errorKey: error?.message ?? null, evidence: error?.presentation?.gatewayUsage ?? null, rateLimited: error?.presentation?.kind === "rate-limited",
   });
-  const visibleMessages = hideGatewayError ? renderedMessages.filter((message) => message !== latestUsageMessage) : renderedMessages;
+  const visibleMessages = useMemo(() => {
+    if (!hideGatewayError) return renderedMessages;
+    let lastUser = -1;
+    renderedMessages.forEach((message, index) => { if (message.role === "user") lastUser = index; });
+    // Engine retries leave one error per attempt; the confirmed block explains every one of them.
+    return renderedMessages.filter((message, index) => {
+      if (message === latestUsageMessage) return false;
+      if (index < lastUser) return true;
+      const presentation = sessionErrorPresentationFromUIMessage(message);
+      return !presentation || (presentation.kind !== "rate-limited" && !presentation.gatewayUsage);
+    });
+  }, [hideGatewayError, renderedMessages, latestUsageMessage]);
   const renderedMessagesRef = useRef(renderedMessages);
   useEffect(() => {
     renderedMessagesRef.current = renderedMessages;
