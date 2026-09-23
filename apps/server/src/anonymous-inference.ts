@@ -1,9 +1,6 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual, randomUUID } from "node:crypto";
 import {
-  DESKTOP_FREE_PROVIDER_ID, DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROOF_HEADER,
-  DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH,
-  MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH,
-  type DesktopFreeAccessStatus, type DesktopFreeSession,
+  DESKTOP_FREE_PROVIDER_ID, DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROOF_HEADER, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH, type DesktopFreeAccessStatus, type DesktopFreeSession, DESKTOP_FREE_SESSION_POW_BITS, DESKTOP_FREE_SESSION_POW_MAX_BITS, desktopFreeSessionPowMessage, leadingZeroBits,
 } from "@openwork/types/desktop-free-access";
 import type { ManagedModelRecommendation } from "@openwork/types/den/inference";
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
@@ -26,6 +23,13 @@ const ERROR_BODY_LIMIT = 64 * 1024;
 const SESSION_TIMEOUT_MS = 10_000;
 const REQUEST_LIFETIME_MS = 5 * 60_000;
 const MEMBER_CREDENTIAL_CACHE_MS = 5 * 60_000;
+/** Minting a guest session costs a proof of work bound to the request's nonce; ~20 bits is well under a second. */
+export function solveSessionPow(machineId: string, nonce: string, bits: number): string {
+  for (let counter = 0; ; counter++) {
+    const pow = counter.toString(36);
+    if (leadingZeroBits(createHash("sha256").update(desktopFreeSessionPowMessage({ machineId, nonce, pow })).digest()) >= bits) return pow;
+  }
+}
 // Engine calls are relayed only while a task the user started from the app is live.
 const ACTIVATION_IDLE_MS = 15 * 60_000;
 const ACTIVATION_MAX_MS = 2 * 60 * 60_000;
@@ -160,11 +164,14 @@ export class AnonymousInferenceService {
   private failures = new Map<string, { expiresAt: number; failure: RemoteFailure }>();
   private cachedStatus: { key: string; expiresAt: number; value: DesktopFreeAccessStatus } | null = null;
   private activation: { openedAt: number; lastActivityAt: number; sessions: Set<string> } | null = null;
+  private sessionPowBits: number;
 
   constructor(private readonly config: ServerConfig, private readonly logger: {
     log: (level: "info" | "warn" | "error", message: string, attributes?: Record<string, unknown>) => void;
   }, environment: NodeJS.ProcessEnv = process.env, private readonly now: () => number = Date.now) {
     this.origin = resolveAnonymousInferenceOrigin(environment);
+    const powBits = Number(environment.OPENWORK_FREE_SESSION_POW_BITS ?? DESKTOP_FREE_SESSION_POW_BITS);
+    this.sessionPowBits = Number.isSafeInteger(powBits) && powBits >= 0 && powBits <= DESKTOP_FREE_SESSION_POW_MAX_BITS ? powBits : DESKTOP_FREE_SESSION_POW_BITS;
     this.allowLocalDen = environment.OPENWORK_DEV_MODE === "1" || environment.NODE_ENV === "test";
     this.enabled = Boolean(config.anonymousInference?.desktop) && !config.readOnly
       && ![environment.OPENWORK_DISABLE_FREE_INFERENCE, environment.OPENWORK_DISABLE_HOSTED_MODELS, environment.VITE_DISABLE_OPENWORK_MODELS]
@@ -408,7 +415,7 @@ export class AnonymousInferenceService {
     this.activate(decodeURIComponent(task[1]));
   }
 
-  private async remote(path: string, method: string, body: Uint8Array<ArrayBuffer>, authenticated: boolean, requestSignal = AbortSignal.timeout(SESSION_TIMEOUT_MS), retry = true, relayToken?: string): Promise<Response> {
+  private async remote(path: string, method: string, body: Uint8Array<ArrayBuffer>, authenticated: boolean, requestSignal = AbortSignal.timeout(SESSION_TIMEOUT_MS), retry = true, relayToken?: string, nonce?: string): Promise<Response> {
     const signal = AbortSignal.any([requestSignal, this.identityController.signal]);
     await this.assertDispatchAllowed();
     signal.throwIfAborted();
@@ -421,7 +428,7 @@ export class AnonymousInferenceService {
     const authorization = member ?? (session ? `Bearer ${session.token}` : "");
     const actualPath = member ? path === DESKTOP_FREE_STATUS_PATH ? MEMBER_FREE_STATUS_PATH
       : path === DESKTOP_FREE_MODELS_PATH ? MEMBER_FREE_MODELS_PATH : path === DESKTOP_FREE_CHAT_PATH ? MEMBER_FREE_CHAT_PATH : path : path;
-    const proof = await this.config.anonymousInference!.desktop.sign({ method, path: actualPath, body, authorization });
+    const proof = await this.config.anonymousInference!.desktop.sign({ method, path: actualPath, body, authorization, ...(nonce ? { nonce } : {}) });
     signal.throwIfAborted();
     if (relayToken) this.assertRelayIdentity(relayToken);
     const response = await externalFetch(`${this.origin}${actualPath}`, {
@@ -439,7 +446,7 @@ export class AnonymousInferenceService {
     }
     if (authenticated && !member && retry && failure.status === 401 && failure.payload().code === "invalid_anonymous_token") {
       if (this.session?.token === session?.token) this.session = null;
-      return this.remote(path, method, body, authenticated, signal, false, relayToken);
+      return this.remote(path, method, body, authenticated, signal, false, relayToken, nonce);
     }
     throw failure;
   }
@@ -448,10 +455,24 @@ export class AnonymousInferenceService {
     if (this.session && this.session.expiresAt - 30_000 > Date.now()) return this.session;
     if (this.sessionPromise) return this.sessionPromise;
     const signal = this.identityController.signal;
-    const mint = async (): Promise<DesktopFreeSession> => {
-      // The signed proof carries the machine identity; the session body is empty.
-      const body = new TextEncoder().encode("{}");
-      const response = await this.remote(DESKTOP_FREE_SESSION_PATH, "POST", body, false, AbortSignal.any([signal, AbortSignal.timeout(SESSION_TIMEOUT_MS)]));
+    const mint = async (bits = this.sessionPowBits, retry = true): Promise<DesktopFreeSession> => {
+      // The signed proof carries the machine identity; the body carries the proof of work for the proof's own nonce.
+      const { machineId } = await this.config.anonymousInference!.desktop.identity();
+      const nonce = randomUUID();
+      const body = new TextEncoder().encode(JSON.stringify({ pow: solveSessionPow(machineId, nonce, bits) }));
+      let response: Response;
+      try {
+        response = await this.remote(DESKTOP_FREE_SESSION_PATH, "POST", body, false, AbortSignal.any([signal, AbortSignal.timeout(SESSION_TIMEOUT_MS)]), true, undefined, nonce);
+      } catch (error) {
+        // The gateway may ask for more work than this build assumed; do it once.
+        const asked = error instanceof RemoteFailure && error.status === 400 ? error.payload() : null;
+        const required = asked?.code === "session_pow_required" && typeof asked.bits === "number" ? asked.bits : null;
+        if (retry && required !== null && Number.isSafeInteger(required) && required > bits && required <= DESKTOP_FREE_SESSION_POW_MAX_BITS) {
+          this.sessionPowBits = required;
+          return mint(required, false);
+        }
+        throw error;
+      }
       const payload: unknown = JSON.parse(new TextDecoder().decode(await readBoundedBody(response.body, ERROR_BODY_LIMIT, AbortSignal.any([signal, AbortSignal.timeout(SESSION_TIMEOUT_MS)]))));
       if (!isRecord(payload) || typeof payload.token !== "string" || !payload.token.trim()
         || typeof payload.expiresAt !== "number" || !Number.isFinite(payload.expiresAt) || payload.expiresAt <= Date.now()

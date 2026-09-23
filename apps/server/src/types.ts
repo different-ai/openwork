@@ -87,7 +87,8 @@ export type LocalManagedMcpVaultKeyProvider = () => Promise<Uint8Array>;
 export type DesktopFreeSigner = {
   currentVersion: string;
   identity: () => Promise<Pick<DesktopFreeProofClaims, "publicKey" | "machineId" | "appVersion" | "platform" | "arch">>;
-  sign: (request: { method: string; path: string; body: Uint8Array; authorization: string }) => Promise<string>;
+  /** `nonce` lets the caller bind work (a session proof-of-work) to the proof before it is signed. */
+  sign: (request: { method: string; path: string; body: Uint8Array; authorization: string; nonce?: string }) => Promise<string>;
 };
 
 export interface ServerConfig {

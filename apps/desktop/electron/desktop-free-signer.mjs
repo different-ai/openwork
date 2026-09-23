@@ -90,13 +90,14 @@ export function createDesktopFreeSigner({ filePath, loadSafeStorage, appVersion,
       const { publicKey, machineId } = await identity();
       return { publicKey, machineId, appVersion, ...permitted() };
     },
-    async sign({ method, path: requestPath, body, authorization }) {
+    async sign({ method, path: requestPath, body, authorization, nonce = undefined }) {
       const allowed = method === "POST"
         ? [DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_CHAT_PATH]
         : method === "GET" ? [DESKTOP_FREE_STATUS_PATH, DESKTOP_FREE_MODELS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_STATUS_PATH] : [];
       if (!allowed.includes(requestPath)) throw new Error("Unsupported desktop free proof request.");
       const [{ privateKey, publicKey, machineId }, secret] = await Promise.all([identity(), releaseSecret()]);
-      const base = { publicKey, machineId, appVersion, ...permitted(), timestamp: Date.now(), nonce: randomUUID() };
+      if (nonce !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(nonce)) throw new Error("Invalid desktop free proof nonce.");
+      const base = { publicKey, machineId, appVersion, ...permitted(), timestamp: Date.now(), nonce: nonce ?? randomUUID() };
       const request = { method, path: requestPath, bodyHash: createHash("sha256").update(body).digest("hex"),
         authorizationHash: createHash("sha256").update(authorization).digest("hex") };
       const releaseTag = secret ? createHmac("sha256", secret).update(desktopFreeReleaseTagMessage({ ...base, ...request })).digest("hex") : null;

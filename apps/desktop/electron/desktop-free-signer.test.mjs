@@ -160,3 +160,13 @@ test("a build without a release secret keeps signing v2 proofs, and the secret n
     assert.equal(JSON.stringify(identity).includes(releaseSecret.toString("hex")), false);
   });
 });
+
+test("a caller-supplied nonce is signed as given, so work bound to it is bound to the proof; malformed nonces are refused", async () => {
+  await fixture(async (options) => {
+    const signer = createDesktopFreeSigner(options);
+    const nonce = "7b1f0c2e-5a6d-4b8c-9d0e-1f2a3b4c5d6e";
+    const proof = JSON.parse(Buffer.from(await signer.sign({ method: "POST", path: DESKTOP_FREE_SESSION_PATH, body: Buffer.from('{"pow":"x"}'), authorization: "", nonce }), "base64url").toString());
+    assert.equal(proof.nonce, nonce);
+    await assert.rejects(signer.sign({ method: "POST", path: DESKTOP_FREE_SESSION_PATH, body: Buffer.from("{}"), authorization: "", nonce: "not-a-uuid" }), /nonce/);
+  });
+});

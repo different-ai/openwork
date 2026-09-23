@@ -6,7 +6,7 @@ import { join } from "node:path";
 import {
   DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, DESKTOP_FREE_SESSION_PATH,
   DESKTOP_FREE_STATUS_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH,
-  MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH,
+  MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH, desktopFreeSessionPowMessage, leadingZeroBits,
   type DesktopFreeAccessStatus,
 } from "@openwork/types/desktop-free-access";
 import { AnonymousInferenceService, isOwnedProvider } from "./anonymous-inference.js";
@@ -39,6 +39,8 @@ async function fixture(run: (input: {
   environment: NodeJS.ProcessEnv; memberSession: CloudProviderDenSession; origin: string;
   requests: ObservedRequest[]; signed: Parameters<DesktopFreeSigner["sign"]>[0][];
   reject: (path: string, status: number, payload: unknown, headers?: HeadersInit) => void;
+  rejectOnce: (path: string, status: number, payload: unknown) => void;
+  sessionPowBits: (body: string, proof: Parameters<DesktopFreeSigner["sign"]>[0] | undefined) => number;
   localRequest: (endpoint?: string, body?: string, sessionID?: string) => Promise<Request>;
   connectMember: () => Promise<void>;
   /** What the app does when the user presses send with Auto selected. */
@@ -62,9 +64,19 @@ async function fixture(run: (input: {
     expect(request.headers.get("cookie")).toBe(null);
     return observation;
   };
+  const rejectedOnce = new Map<string, { status: number; payload: unknown }>();
   const rejection = (path: string) => {
+    const once = rejectedOnce.get(path);
+    if (once) { rejectedOnce.delete(path); return Response.json(once.payload, { status: once.status }); }
     const value = rejected.get(path);
     return value ? Response.json(value.payload, { status: value.status, headers: value.headers }) : null;
+  };
+  const machineId = "c".repeat(64);
+  // How much work the relay did for this mint: bits over the machine id and the nonce it asked the signer to use.
+  const sessionPowBits = (body: string, proof: Parameters<DesktopFreeSigner["sign"]>[0] | undefined) => {
+    const pow = (JSON.parse(body) as { pow?: unknown }).pow;
+    if (typeof pow !== "string" || typeof proof?.nonce !== "string") return -1;
+    return leadingZeroBits(createHash("sha256").update(desktopFreeSessionPowMessage({ machineId, nonce: proof.nonce, pow })).digest());
   };
   const gateway = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const { path, headers, method, body } = await observe(request);
@@ -79,7 +91,7 @@ async function fixture(run: (input: {
     if (failed) return failed;
     if (path === DESKTOP_FREE_SESSION_PATH) {
       expect(headers.has("authorization")).toBe(false);
-      expect(body).toBe("{}");
+      expect(sessionPowBits(body, proof)).toBeGreaterThanOrEqual(8);
       return Response.json({ token: "guest-fixture", expiresAt: Date.now() + 300_000, model: DESKTOP_FREE_MODEL_ID });
     }
     const member = [MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH].includes(path);
@@ -116,18 +128,20 @@ async function fixture(run: (input: {
     tokenSource: "generated", hostTokenSource: "generated", logFormat: "pretty", logRequests: false,
     ...(native ? { anonymousInference: { desktop: {
       currentVersion: "0.20.0",
-      identity: async () => ({ machineId: "c".repeat(64), publicKey: "fixture-public-key", appVersion: "0.20.0", platform: "darwin", arch: "arm64" }),
+      identity: async () => ({ machineId, publicKey: "fixture-public-key", appVersion: "0.20.0", platform: "darwin", arch: "arm64" }),
       sign: async (request) => { signed.push(request); return `proof-${signed.length}`; },
     } satisfies DesktopFreeSigner } } : {}),
   };
   const envPath = join(root, "env.json");
   const env = new EnvService({ path: envPath });
-  const environment = { NODE_ENV: "test", OPENWORK_FREE_INFERENCE_ORIGIN: origin };
+  const environment = { NODE_ENV: "test", OPENWORK_FREE_INFERENCE_ORIGIN: origin, OPENWORK_FREE_SESSION_POW_BITS: "8" };
   let clock = Date.now();
   const service = new AnonymousInferenceService(config, { log: () => {} }, environment, () => clock);
   try {
     await run({ service, config, env, envPath, environment, memberSession, origin, requests, signed,
       reject: (path, status, payload, headers) => { rejected.set(path, { status, payload, headers }); },
+      rejectOnce: (path, status, payload) => { rejectedOnce.set(path, { status, payload }); },
+      sessionPowBits,
       connectMember: () => service.setMemberSession(memberSession),
       activate: (sessionID = "test") => service.assertTaskAccess(new Request(`http://localhost/session/${sessionID}/prompt_async`, { method: "POST",
         body: JSON.stringify({ model: { providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID } }) }), `/session/${sessionID}/prompt_async`),
@@ -599,5 +613,25 @@ test("an engine call that names its session must name one the user started", asy
     expect(await foreign.json()).toMatchObject({ error: { code: "auto_not_activated" } });
     // An engine that sends no session header still works inside the window.
     expect((await service.handle(await localRequest(), "chat/completions")).status).toBe(200);
+  });
+});
+
+test("minting a guest session does the proof of work for its own nonce and redoes it once if the gateway wants more", async () => {
+  await fixture(async ({ service, requests, signed, rejectOnce, sessionPowBits, activate, localRequest }) => {
+    await service.initialize(9876);
+    rejectOnce(DESKTOP_FREE_SESSION_PATH, 400, { error: { code: "session_pow_required", bits: 10 } });
+    await activate();
+    expect(await (await service.handle(await localRequest(), "chat/completions")).text()).toContain("[DONE]");
+    const mints = requests.map((request, index) => ({ request, proof: signed[index] })).filter(({ request }) => request.path === DESKTOP_FREE_SESSION_PATH);
+    expect(mints).toHaveLength(2);
+    const [first, second] = mints.map(({ request, proof }) => sessionPowBits(request.body, proof));
+    expect(first).toBeGreaterThanOrEqual(8);
+    expect(second).toBeGreaterThanOrEqual(10);
+    expect(mints[0].proof?.nonce).not.toBe(mints[1].proof?.nonce);
+    // A demand beyond the supported maximum is not honoured.
+    rejectOnce(DESKTOP_FREE_SESSION_PATH, 400, { error: { code: "session_pow_required", bits: 40 } });
+    await service.setMemberSession({ baseUrl: "https://den.example.test", orgId: "o", token: "t" });
+    await service.setMemberSession(null);
+    expect((await service.status(true)).state).toBe("unavailable");
   });
 });
