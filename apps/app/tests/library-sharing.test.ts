@@ -77,7 +77,7 @@ describe("Den Library payloads", () => {
     });
     expect(grants.map((grant) => grant.id)).toEqual(["g1", "g3"]);
     expect(parseDenLibraryPluginFiles({ items: [{ configObjectId: "co-1", configObject: { objectType: "skill", title: "customer-briefing" } }] }))
-      .toEqual([{ configObjectId: "co-1", objectType: "skill", title: "customer-briefing", description: null }]);
+      .toEqual([{ configObjectId: "co-1", objectType: "skill", title: "customer-briefing", description: null, rawSourceText: null }]);
     expect(parseDenLibraryConfigObjectVersion({ item: { id: "v1", rawSourceText: "---" } })).toEqual({ id: "v1", rawSourceText: "---" });
     expect(directory.members.map((member) => member.name)).toEqual(["Sam K.", "Alex", "b@example.test"]);
   });
