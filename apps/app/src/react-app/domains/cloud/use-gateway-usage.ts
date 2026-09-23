@@ -27,10 +27,14 @@ export function useGatewayUsageErrorHandled(input: {
   errorKey: string | null;
   gatewaySelected: boolean;
   evidence: GatewayUsageErrorEvidence | null;
+  /** A generic 429 whose policy body and headers did not survive the engine. */
+  rateLimited?: boolean;
   status?: GatewayUsageStatus;
 }) {
-  const key = input.evidence ? JSON.stringify([input.scopeKey, input.sessionOwner, input.errorKey, input.evidence]) : null;
-  const corroborated = input.gatewaySelected && corroboratesGatewayUsageError(input.evidence, input.status);
+  const bare = !input.evidence && input.rateLimited === true;
+  const key = input.evidence || bare ? JSON.stringify([input.scopeKey, input.sessionOwner, input.errorKey, input.evidence ?? "rate-limited"]) : null;
+  // Without evidence only the member's own blocked status can explain the 429.
+  const corroborated = input.gatewaySelected && (bare ? input.status?.state === "blocked" : corroboratesGatewayUsageError(input.evidence, input.status));
   const [handledKey, setHandledKey] = useState<string | null>(null);
   useEffect(() => {
     if (corroborated && key) setHandledKey(key);

@@ -1562,7 +1562,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
   const gatewaySelected = isGatewayUsageModel(sessionModel.selectedModel.providerID, props.gatewayProviderIds);
   const latestUsageMessage = renderedMessages.at(-1);
-  const latestUsageEvidence = useMemo(() => latestUsageMessage ? sessionErrorPresentationFromUIMessage(latestUsageMessage)?.gatewayUsage ?? null : null, [latestUsageMessage]);
+  const latestUsagePresentation = useMemo(() => latestUsageMessage ? sessionErrorPresentationFromUIMessage(latestUsageMessage) : null, [latestUsageMessage]);
+  const latestUsageEvidence = latestUsagePresentation?.gatewayUsage ?? null;
   const gatewayUsage = useGatewayUsage(gatewaySelected, false, gatewayUsageRefreshKey({
     sessionOwner,
     providerId: sessionModel.selectedModel.providerID,
@@ -1574,11 +1575,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const gatewayNotice = gatewayUsageNoticeState({ gatewaySelected: gatewayUsage.active, status: gatewayUsage.data });
   const hideGatewayError = useGatewayUsageErrorHandled({
     scopeKey: gatewayUsage.scopeKey, sessionOwner, gatewaySelected: gatewayUsage.active, status: gatewayUsage.data,
-    errorKey: latestUsageMessage?.id ?? null, evidence: latestUsageEvidence,
+    errorKey: latestUsageMessage?.id ?? null, evidence: latestUsageEvidence, rateLimited: latestUsagePresentation?.kind === "rate-limited",
   });
   const hideDirectGatewayError = useGatewayUsageErrorHandled({
     scopeKey: gatewayUsage.scopeKey, sessionOwner, gatewaySelected: gatewayUsage.active, status: gatewayUsage.data,
-    errorKey: error?.message ?? null, evidence: error?.presentation?.gatewayUsage ?? null,
+    errorKey: error?.message ?? null, evidence: error?.presentation?.gatewayUsage ?? null, rateLimited: error?.presentation?.kind === "rate-limited",
   });
   const visibleMessages = hideGatewayError ? renderedMessages.filter((message) => message !== latestUsageMessage) : renderedMessages;
   const renderedMessagesRef = useRef(renderedMessages);

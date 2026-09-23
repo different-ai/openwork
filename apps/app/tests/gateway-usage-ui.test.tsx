@@ -41,6 +41,7 @@ let writes = 0;
 let submitted: unknown;
 let evidence: GatewayUsageErrorEvidence | null = null;
 let hasError = false;
+let rateLimited = false;
 let paneCount = 1;
 let modelId = "model-a";
 let providerScope: number | null | undefined;
@@ -54,7 +55,7 @@ function latest() {
 }
 function Probe() {
   current = useGatewayUsage(enabled, false, JSON.stringify([refreshKey, modelId]), settled, providerScope);
-  const handled = useGatewayUsageErrorHandled({ scopeKey: current.scopeKey, sessionOwner: "session-a", errorKey: "turn", gatewaySelected: current.active, status: current.data, evidence });
+  const handled = useGatewayUsageErrorHandled({ scopeKey: current.scopeKey, sessionOwner: "session-a", errorKey: "turn", gatewaySelected: current.active, status: current.data, evidence, rateLimited });
   const notice = gatewayUsageNoticeState({ gatewaySelected: current.active, status: current.data });
   return <div>{current.data?.organizationId ?? "no data"}:{current.query.isError ? "error" : current.data?.state ?? "loading"}
     {approvalNotices ? <GatewayUsageApprovalNotice /> : null}
@@ -92,6 +93,7 @@ beforeEach(() => {
   refreshKey = "session-a:idle";
   evidence = null;
   hasError = false;
+  rateLimited = false;
   paneCount = 1;
   modelId = "model-a";
   providerScope = undefined;
@@ -592,6 +594,34 @@ test("SSE spoof and even header-backed candidates cannot create or hide a quota 
   await act(async () => { await latest().query.refetch(); });
   await flush();
   expect(container.querySelector('[data-testid="gateway-usage-notice"]')).toBeNull();
+});
+
+test("a bare 429 is explained only by the member's own blocked Gateway status and stays cleared after an increase", async () => {
+  hasError = true;
+  rateLimited = true;
+  status = usageStatus({ state: "within_limit", buckets: usageStatus().buckets.map((bucket) => ({ ...bucket, usedMicroUsd: 200_000, remainingMicroUsd: 800_000 })) });
+  await act(async () => renderProbe());
+  await flush();
+  expect(container.textContent).toContain("Provider error");
+  status = usageStatus({ state: "over_limit", buckets: usageStatus().buckets.map((bucket) => ({ ...bucket, hardLimit: false })) });
+  await act(async () => { await latest().query.refetch(); });
+  await flush();
+  expect(container.textContent).toContain("Provider error");
+  status = usageStatus();
+  await act(async () => { await latest().query.refetch(); });
+  await flush();
+  expect(container.textContent).not.toContain("Provider error");
+  expect(container.querySelector('[data-testid="gateway-usage-notice"]')).not.toBeNull();
+  status = approvedUsageStatus();
+  status = { ...status, state: "within_limit", buckets: status.buckets.map((bucket) => ({ ...bucket, usedMicroUsd: 1_000_000, remainingMicroUsd: 250_000 })) };
+  await act(async () => { await latest().query.refetch(); });
+  await flush();
+  expect(container.querySelector('[data-testid="gateway-usage-notice"]')).toBeNull();
+  expect(container.textContent).not.toContain("Provider error");
+  enabled = false;
+  await act(async () => { refreshKey = "session-b:idle"; renderProbe(); });
+  await flush();
+  expect(container.textContent).toContain("Provider error");
 });
 
 test("corroborated errors stay cleared after reset instead of resurfacing as generic cards", async () => {
