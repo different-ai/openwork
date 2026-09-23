@@ -118,10 +118,14 @@ function ExtensionIcon(props: {
   );
 }
 
+/** Skills and plugins are simply there once added; only things that reach another service show a live dot. */
+function connectsToSomething(taxonomy: ExtensionTaxonomy) {
+  return taxonomy === "connection" || taxonomy === "mcp" || taxonomy === "app";
+}
+
 function ExtensionBadges(props: {
   readiness: ReadinessState;
   taxonomy: ExtensionTaxonomy;
-  connectedLabel: string;
   hidden: boolean;
   preview: boolean;
   beta: boolean;
@@ -129,19 +133,14 @@ function ExtensionBadges(props: {
 }) {
   return (
     <>
-      {props.readiness === "ready" ? (
-        <span data-library-ready className="shrink-0 rounded-md bg-green-3 px-1.5 py-0.5 text-[10px] font-medium text-green-11">
-          {props.connectedLabel}
-        </span>
-      ) : props.readiness === "partial" ? (
+      <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${taxonomyStyle[props.taxonomy]}`}>
+        {extensionTaxonomyLabel(props.taxonomy)}
+      </span>
+      {props.readiness === "partial" ? (
         <span className="shrink-0 rounded-md bg-amber-3 px-1.5 py-0.5 text-[10px] font-medium text-amber-11">
           Partially set up
         </span>
-      ) : (
-        <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${taxonomyStyle[props.taxonomy]}`}>
-          {extensionTaxonomyLabel(props.taxonomy)}
-        </span>
-      )}
+      ) : null}
       {props.hidden ? (
         <span className="shrink-0 rounded-md bg-gray-3 px-1.5 py-0.5 text-[10px] font-medium text-gray-11">
           Hidden
@@ -209,7 +208,6 @@ export function ExtensionCard(props: ExtensionCardProps) {
     <ExtensionBadges
       readiness={readiness}
       taxonomy={taxonomy}
-      connectedLabel={connectedLabel}
       hidden={hidden}
       preview={preview}
       beta={beta}
@@ -226,6 +224,11 @@ export function ExtensionCard(props: ExtensionCardProps) {
       compact={layout === "list"}
     />
   );
+  const readyDot = readiness === "ready" && connectsToSomething(taxonomy) ? (
+    <span data-library-ready role="img" aria-label={connectedLabel} className="size-1.5 shrink-0 rounded-full bg-green-9" />
+  ) : readiness === "partial" ? (
+    <span className="size-1.5 shrink-0 rounded-full bg-amber-9" />
+  ) : null;
   const nextAction = !disabledReason && !connecting && nextActionLabel ? (
     <div
       className="text-[11px] font-medium text-dls-text transition-colors group-hover:opacity-80"
@@ -258,11 +261,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
         {icon}
         <div className="flex w-44 shrink-0 items-center gap-1.5">
           <h4 className="min-w-0 truncate text-[13px] font-medium text-dls-text">{name}</h4>
-          {readiness === "ready" ? (
-            <span data-library-ready role="img" aria-label={connectedLabel} className="size-1.5 shrink-0 rounded-full bg-green-9" />
-          ) : readiness === "partial" ? (
-            <span className="size-1.5 shrink-0 rounded-full bg-amber-9" />
-          ) : null}
+          {readyDot}
         </div>
         <div className="flex w-36 shrink-0 items-center gap-1">
           <span className="whitespace-nowrap rounded-md bg-dls-hover px-1.5 py-0.5 text-[10px] font-medium tracking-[0.04em] text-dls-secondary uppercase">
@@ -313,40 +312,40 @@ export function ExtensionCard(props: ExtensionCardProps) {
     );
   }
 
+  const statusChip = props.statusChip ? (
+    <span
+      data-library-status={props.statusChip.label}
+      className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${props.statusChip.tone === "attention" ? "bg-amber-3 text-amber-11" : "bg-dls-hover text-dls-text"}`}
+    >
+      {props.statusChip.label}
+    </span>
+  ) : null;
+
+  // Every grid card is the same size: one line each for name, description, and footer.
   const card = (
     <button
       type="button"
       disabled={disabled || connecting}
       onClick={onClick}
       data-library-row={name}
-      className={`${shellClassName} rounded-xl p-4 ${props.trailing ? "pr-12" : ""}`}
+      title={description}
+      className={`${shellClassName} flex h-[104px] flex-col justify-between overflow-hidden rounded-xl p-3.5 ${props.trailing ? "pr-11" : ""}`}
     >
-      <div className="flex items-start gap-3">
+      <div className="flex min-w-0 items-center gap-3">
         {icon}
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <h4 className="min-w-0 break-words text-sm font-semibold text-dls-text">{name}</h4>
-            {badges}
-            {props.statusChip ? (
-              <span
-                data-library-status={props.statusChip.label}
-                className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${props.statusChip.tone === "attention" ? "bg-amber-3 text-amber-11" : "bg-dls-hover text-dls-text"}`}
-              >
-                {props.statusChip.label}
-              </span>
-            ) : null}
+          <div className="flex min-w-0 items-center gap-1.5">
+            <h4 className="min-w-0 truncate text-sm font-semibold text-dls-text">{name}</h4>
+            {readyDot}
           </div>
-          <p className="mt-0.5 line-clamp-2 text-xs text-dls-secondary">{description}</p>
-          {meta ? (
-            <div className="mt-1 text-[11px] text-dls-secondary">{meta}</div>
-          ) : null}
-          {disabledReason ? (
-            <div className="mt-2 text-[11px] font-medium text-amber-11">
-              {disabledReason}
-            </div>
-          ) : null}
-          {nextAction ? <div className="mt-2">{nextAction}</div> : null}
+          <p className="truncate text-xs text-dls-secondary">{disabledReason ?? description}</p>
         </div>
+      </div>
+      <div className="flex min-w-0 items-center gap-1.5">
+        {badges}
+        {statusChip}
+        {meta ? <span data-library-caption className="min-w-0 truncate text-[11px] text-dls-secondary">{meta}</span> : null}
+        {nextAction ? <div className="ml-auto shrink-0">{nextAction}</div> : null}
       </div>
     </button>
   );

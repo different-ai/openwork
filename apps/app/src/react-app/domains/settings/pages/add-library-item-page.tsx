@@ -5,6 +5,12 @@ import { Check, FileText, Loader2, Plus, Server, Terminal, Trash2 } from "lucide
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { DenExternalMcpPreset } from "../../../../app/lib/den";
+import {
+  mcpServerChecks,
+  mcpServerChecksPassed,
+  type DenMcpDiscovery,
+  type McpServerCheck,
+} from "../../../../app/lib/den-mcp-discovery";
 import { t } from "../../../../i18n";
 import { TextInput } from "../../../design-system/text-input";
 import { resolveExtensionIconUrl } from "../../../design-system/extension-icon-src";
@@ -21,6 +27,7 @@ import {
   type LibraryPluginComponentKind,
 } from "../library";
 import { LibraryPage } from "./library-page";
+import { McpServerCheckList } from "./mcp-server-check-list";
 
 /** Fill well only — no stacked border + inset ring (those look like a double edge in-app). */
 export const libraryFieldClass = [
@@ -38,6 +45,8 @@ export type AddLibraryItemPageProps = {
   canConfigureMcpConnections?: boolean;
   /** Connectors a plugin can include without typing an address. */
   connectorPresets?: DenExternalMcpPreset[];
+  /** Looks at an MCP server before it is added; the page shows each check and waits for Continue. */
+  checkMcpServer?: (url: string) => Promise<DenMcpDiscovery>;
   /** Steps between Library and this page, e.g. Add a connector. */
   crumbs?: Array<{ label: string; onClick?: () => void }>;
   onClose: () => void;
@@ -58,6 +67,30 @@ function titleForKind(kind: LibraryAuthorableKind) {
       return t("extensions.create_plugin_title");
   }
 }
+
+type McpCheckState =
+  | { status: "checking" }
+  | { status: "done"; checks: McpServerCheck[]; discovery: DenMcpDiscovery }
+  | { status: "unavailable" };
+
+const mcpCheckWords = () => ({
+  reachOk: t("extensions.mcp_check_reach_ok"),
+  reachFail: t("extensions.mcp_check_reach_fail"),
+  protocolOk: (version: string | undefined) => (version
+    ? t("extensions.mcp_check_protocol_ok_version", { version })
+    : t("extensions.mcp_check_protocol_ok")),
+  protocolFail: t("extensions.mcp_check_protocol_fail"),
+  signInOauth: t("extensions.mcp_check_sign_in_oauth"),
+  signInNone: t("extensions.mcp_check_sign_in_none"),
+  signInKey: t("extensions.mcp_check_sign_in_key"),
+  signInUnknown: t("extensions.mcp_check_sign_in_unknown"),
+  registrationDynamic: t("extensions.mcp_check_registration_dynamic"),
+  registrationMetadata: t("extensions.mcp_check_registration_metadata"),
+  registrationManual: t("extensions.mcp_check_registration_manual"),
+  toolsReady: (count: number) => t("extensions.mcp_check_tools_ready", { count: String(count) }),
+  toolsAfterSignIn: t("extensions.mcp_check_tools_after_sign_in"),
+  toolsNone: t("extensions.mcp_check_tools_none"),
+});
 
 function emptyComponent(kind: LibraryPluginComponentKind, withConnection: boolean): LibraryPluginComponentDraft {
   return {
@@ -256,6 +289,8 @@ export function AddLibraryItemPage(props: AddLibraryItemPageProps) {
   const [connection, setConnection] = useState<LibraryMcpConnectionForm>(emptyLibraryMcpConnectionForm);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [mcpCheck, setMcpCheck] = useState<McpCheckState | null>(null);
+  const [checksSettled, setChecksSettled] = useState(false);
   const configureConnections = props.cloud === true && props.canConfigureMcpConnections === true;
   const presets = props.connectorPresets ?? [];
 
@@ -267,6 +302,8 @@ export function AddLibraryItemPage(props: AddLibraryItemPageProps) {
     setConnection(emptyLibraryMcpConnectionForm());
     setError(null);
     setSubmitting(false);
+    setMcpCheck(null);
+    setChecksSettled(false);
   }, [kind]);
 
   const handleClose = () => {
@@ -319,19 +356,50 @@ export function AddLibraryItemPage(props: AddLibraryItemPageProps) {
       }
     }
     setError(null);
+    if (kind === "mcp" && props.checkMcpServer && !mcpCheck) {
+      void runMcpCheck(props.checkMcpServer, instructions.trim());
+      return;
+    }
+    await create(connection);
+  };
+
+  const runMcpCheck = async (check: (url: string) => Promise<DenMcpDiscovery>, url: string) => {
+    setChecksSettled(false);
+    setMcpCheck({ status: "checking" });
+    try {
+      const discovery = await check(url);
+      setMcpCheck({ status: "done", discovery, checks: mcpServerChecks(discovery, mcpCheckWords()) });
+    } catch {
+      setMcpCheck({ status: "unavailable" });
+      setChecksSettled(true);
+    }
+  };
+
+  const create = async (withConnection: LibraryMcpConnectionForm) => {
     setSubmitting(true);
     try {
       await props.onCreate({
-        name: trimmedName,
+        name: name.trim(),
         description: description.trim(),
         instructions: instructions.trim(),
         components: kind === "plugin" ? components : undefined,
-        connection: kind === "mcp" && configureConnections ? connection : undefined,
+        connection: kind === "mcp" && configureConnections ? withConnection : undefined,
       });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t("common.something_went_wrong"));
       setSubmitting(false);
     }
+  };
+
+  /** Den knows better than the form how the server signs in; a keyless server needs no sign-in step. */
+  const continueAfterCheck = () => {
+    if (mcpCheck?.status === "done" && mcpCheck.discovery.authentication.kind === "none" && connection.authType !== "none") {
+      const adjusted = withLibraryMcpAuthType(connection, "none");
+      setConnection(adjusted);
+      void create(adjusted);
+      return;
+    }
+    void create(connection);
   };
 
   const busy = submitting || props.busy === true;
@@ -344,6 +412,61 @@ export function AddLibraryItemPage(props: AddLibraryItemPageProps) {
           ? t("extensions.create_mcp_submit_sign_in")
           : t("extensions.create_mcp_submit")
         : t("extensions.add_create");
+
+  if (mcpCheck) {
+    const serverName = name.trim();
+    const checks = mcpCheck.status === "done" ? mcpCheck.checks : null;
+    const passed = checks ? mcpServerChecksPassed(checks) : mcpCheck.status === "unavailable";
+    const warned = checks?.some((check) => check.status === "warn") === true;
+    const heading = mcpCheck.status === "checking" || !checksSettled
+      ? t("extensions.mcp_check_title", { name: serverName })
+      : !passed
+        ? t("extensions.mcp_check_failed", { name: serverName })
+        : warned || mcpCheck.status === "unavailable"
+          ? t("extensions.mcp_check_done_warn", { name: serverName })
+          : t("extensions.mcp_check_done", { name: serverName });
+    return (
+      <LibraryPage
+        title={titleForKind(kind)}
+        crumbs={props.crumbs ?? [{ label: titleForKind(kind) }]}
+        testId="library-create-page"
+        backDisabled={busy}
+        onBack={handleClose}
+        footerNote={t("extensions.add_page_just_me_note")}
+        actions={(
+          <>
+            <Button variant="outline" disabled={busy} onClick={() => { setMcpCheck(null); setChecksSettled(false); }}>
+              {t("extensions.mcp_check_edit")}
+            </Button>
+            <Button
+              disabled={busy || !checksSettled}
+              variant={passed ? "default" : "outline"}
+              onClick={continueAfterCheck}
+            >
+              {busy ? <Loader2 size={14} className="animate-spin" /> : null}
+              {passed ? t("extensions.mcp_check_continue") : t("extensions.mcp_check_add_anyway")}
+            </Button>
+          </>
+        )}
+      >
+        <div className="flex flex-col gap-1" data-mcp-check-state={checksSettled ? (passed ? "passed" : "failed") : "checking"}>
+          <h2 className="text-[17px] font-semibold tracking-[-0.01em] text-dls-text">{heading}</h2>
+          <p className="text-[13px] text-dls-secondary">
+            {mcpCheck.status === "unavailable" ? t("extensions.mcp_check_unavailable") : t("extensions.mcp_check_hint")}
+          </p>
+          <p className="truncate font-mono text-xs text-dls-secondary">{instructions.trim()}</p>
+        </div>
+        {mcpCheck.status === "unavailable" ? null : (
+          <McpServerCheckList checks={checks} onSettled={() => setChecksSettled(true)} />
+        )}
+        {error ? (
+          <div role="alert" className="rounded-2xl border border-red-6 bg-red-2 px-4 py-3 text-sm text-red-11">
+            {error}
+          </div>
+        ) : null}
+      </LibraryPage>
+    );
+  }
 
   return (
     <LibraryPage

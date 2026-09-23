@@ -45,22 +45,26 @@ describe("Add to your Library picker", () => {
     expect(libraryAddKindsForFilter("plugin")).toEqual(["plugin"]);
   });
 
-  test.skipIf(dialogLayerInert)("lists those three choices without workspace MCP and one click dispatches the kind", async () => {
+  test.skipIf(dialogLayerInert)("lists Connector first with its logos, then Skill and Plugin; Continue dispatches the selected kind", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
     const onSelect = mock(() => {});
     const onClose = mock(() => {});
+    const cues = [{ id: "notion", name: "Notion", iconSlug: "notion" }, { id: "slack", name: "Slack", iconSlug: "slack" }];
     try {
-      await act(async () => root.render(<LibraryAddKindPicker open kinds={libraryAddKindsForFilter("all")} onClose={onClose} onSelect={onSelect} />));
-      expect(document.querySelector('[role="dialog"]')).not.toBeNull();
-      const choices = [...document.querySelectorAll<HTMLButtonElement>('[data-testid="library-add-choices"] button[data-kind]')];
-      expect(choices.map((choice) => choice.dataset.kind)).toEqual(["skill", "connection", "plugin"]);
+      await act(async () => root.render(<LibraryAddKindPicker open kinds={libraryAddKindsForFilter("all")} connectorCues={cues} onClose={onClose} onSelect={onSelect} />));
+      const choices = [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
+      expect(choices.map((choice) => choice.dataset.kind)).toEqual(["connection", "skill", "plugin"]);
+      expect(choices[0]?.getAttribute("aria-checked")).toBe("true");
+      expect([...choices[0]?.querySelectorAll("[data-connector-cue]") ?? []].map((cue) => cue.getAttribute("data-connector-cue"))).toEqual(["notion", "slack"]);
+      expect(choices[1]?.querySelector("[data-connector-cue]")).toBeNull();
       expect(document.body.textContent).not.toContain("workspace MCP");
-      const continueButton = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Continue");
-      expect(continueButton).toBeUndefined();
       await act(async () => choices[2]?.click());
-      expect(onSelect).toHaveBeenCalledTimes(1);
+      expect(choices[2]?.getAttribute("aria-checked")).toBe("true");
+      expect(onSelect).not.toHaveBeenCalled();
+      const continueButton = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Continue");
+      await act(async () => continueButton?.click());
       expect(onSelect).toHaveBeenCalledWith("plugin");
       expect(onClose).toHaveBeenCalledTimes(1);
     } finally {

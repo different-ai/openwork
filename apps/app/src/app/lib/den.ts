@@ -7,6 +7,7 @@ import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER,
 } from "@openwork/types/automations";
 import type { GatewayProviderSummary } from "@openwork/types/den/gateway";
+import { parseDenMcpDiscovery, type DenMcpDiscovery } from "./den-mcp-discovery";
 import type {
   AutomationDetail,
   AutomationDesktopRunnerPresence,
@@ -3557,6 +3558,19 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         { method: "GET", token, organizationId: orgId },
       );
       return getDenExternalMcpPresets(payload);
+    },
+
+    async discoverMcpConnectionRequirements(orgId: string, url: string): Promise<DenMcpDiscovery> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        "/v1/mcp-connections/discover",
+        { method: "POST", token, organizationId: orgId, body: { url } },
+      );
+      const discovery = parseDenMcpDiscovery(payload);
+      if (!discovery) {
+        throw new DenApiError(500, "invalid_mcp_discovery_payload", "MCP discovery response was invalid.");
+      }
+      return discovery;
     },
 
     async startMcpConnectionConnect(orgId: string, connectionId: string): Promise<DenMcpConnectionConnectStart> {

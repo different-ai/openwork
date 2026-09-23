@@ -1955,20 +1955,17 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Discover external MCP connection requirements",
-      description: "Admin-only, side-effect-free requirements discovery. It performs no client registration, credential write, or connection creation.",
+      description: "Side-effect-free requirements discovery for any organization member, through the same guarded fetch as connection setup. It performs no client registration, credential write, or connection creation.",
       responses: {
         200: jsonResponse("Requirements discovery result.", requirementsDiscoveryResponseSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can discover MCP requirements.", forbiddenSchema),
         502: jsonResponse("Requirements discovery failed.", requirementsDiscoveryFailedSchema),
       },
     }),
     orgMemberRoute(),
     jsonValidator(discoverConnectionBodySchema),
     async (c) => {
-      const admin = ensureOrganizationAdminRole(c, "Only workspace owners and admins can discover MCP requirements.")
-      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
       const { url } = c.req.valid("json")
       try {
         const result = await discoverConnectionRequirements({

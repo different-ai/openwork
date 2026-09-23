@@ -542,6 +542,17 @@ export async function libraryPaperFlow(seed: Seed) {
   for (const path of ["/api/den/v1/mcp-connections/presets", "/v1/mcp-connections/presets"]) {
     await proxy.faults.status(path, 200, { times: 1000, body: { presets } });
   }
+  // What Den reports for a server that signs in with an account and registers itself; no provider is contacted.
+  const discovery = {
+    status: "ready",
+    server: { url: slack.mcpUrl, protocolVersion: "2025-06-18", initialize: "authentication_required" },
+    authentication: { kind: "oauth", availableRegistrationMethods: ["dynamic", "client_metadata"], recommendedRegistrationMethod: "client_metadata" },
+    tools: { visibility: "requires_auth" },
+    manualRequirements: [],
+  };
+  for (const path of ["/api/den/v1/mcp-connections/discover", "/v1/mcp-connections/discover"]) {
+    await proxy.faults.status(path, 200, { times: 1000, body: discovery });
+  }
   const shapedDen = { ...den, ref: proxy.ref };
   const viewport = { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false };
 

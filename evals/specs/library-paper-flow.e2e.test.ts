@@ -35,6 +35,14 @@ test(title, async ({ evidence, world, user, probe, step }) => {
       await user.click({ role: "button", label: "Close" });
     }
   };
+  const pick = async (kind: "Connector" | "Skill" | "Plugin") => {
+    await user.click({ text: new RegExp(`^${kind}$`) });
+    await user.click({ role: "button", label: "Continue" });
+  };
+  const backToLibrary = async (name: string) => {
+    await user.click({ role: "button", label: "Library" });
+    await user.see({ role: "button", label: `More for ${name}` }, { timeoutMs: 60_000 });
+  };
   const rowNames = async (section: string) => (await probe.dom(`[data-library-section="${section}"] [data-library-row]`)).elements.map((element) => element.text);
 
   // Lane 1 · Browse
@@ -59,7 +67,7 @@ test(title, async ({ evidence, world, user, probe, step }) => {
       within: 60_000, label: "Linear's row arrives from the organization", until: (chip) => chip === "Sign in",
     });
     const filters = await texts('[aria-label="Library filters"] button[aria-pressed]:not([aria-label])');
-    expect(filters).toEqual(["All", "Skills", "Plugins"]);
+    expect(filters).toEqual(["All", "Connectors", "Skills", "Plugins"]);
     await user.notSee({ role: "tab", label: /Ready to use/ });
     const chip = async (name: string) => (await texts(`[data-library-row="${name}"] [data-library-status]`)).join("");
     const google = await chip("Google Workspace");
@@ -93,23 +101,29 @@ test(title, async ({ evidence, world, user, probe, step }) => {
   });
 
   // Lane 2 · Add
-  await step("Add to library asks what to add: a skill, a connector, or a plugin", async () => {
+  await step("Add to library asks what to add: a connector, a skill, or a plugin", async () => {
     await user.click({ role: "button", label: "Add to library" });
     await user.see({ testId: "library-add-choices" });
-    const kinds = await texts('[data-testid="library-add-choices"] [data-kind-title]');
     await user.see({ text: "New things start just for you. Share them whenever you like." });
+    await user.see({ role: "button", label: "Continue" });
+    const kinds = await texts('[data-testid="library-add-choices"] [data-kind-title]');
+    const selected = await texts('[data-testid="library-add-choices"] [role="radio"][aria-checked="true"] [data-kind-title]');
+    const logos = await probe.eventually(async () => (await probe.dom('[data-testid="connection-logo-cues"] [data-connector-cue]')).elements.length, {
+      within: 30_000, label: "the Connector choice shows the services it can reach", until: (count) => count > 0,
+    });
     expect((await probe.dom('[role="dialog"]')).elements).toHaveLength(1);
     await shot();
     evidence.recordAssertionEvidence(
-      "The picker stays a small dialog with three plain choices",
-      `choices=${kinds.join(" / ")}; footer "New things start just for you. Share them whenever you like."`,
-      kinds.join("|") === "Skill|Connector|Plugin",
+      "The picker stays a small dialog: Connector first with service logos, then Skill and Plugin, and Continue",
+      `choices=${kinds.join(" / ")}; selected=${selected.join("")}; connector logos=${logos}; footer "New things start just for you. Share them whenever you like."`,
+      kinds.join("|") === "Connector|Skill|Plugin" && selected.join("") === "Connector" && logos > 0,
     );
-    expect(kinds).toEqual(["Skill", "Connector", "Plugin"]);
+    expect(kinds).toEqual(["Connector", "Skill", "Plugin"]);
+    expect(selected).toEqual(["Connector"]);
   });
 
   await step("a skill is written in plain words on its own page and starts just for you", async () => {
-    await user.click({ text: /^Skill$/ });
+    await pick("Skill");
     await user.see({ testId: "library-create-page" });
     await user.see({ role: "heading", label: "Create a skill" });
     await user.type({ label: "Name" }, "Customer briefing");
@@ -120,20 +134,27 @@ test(title, async ({ evidence, world, user, probe, step }) => {
     await user.click({ role: "button", label: "Create skill" });
     await user.see({ text: "Added to your Library" }, { timeoutMs: 60_000 });
     await user.notSee({ testId: "library-create-page" });
-    await user.see({ role: "button", label: "More for Customer briefing" }, { timeoutMs: 60_000 });
+  });
+
+  await step("after: the new skill opens on its own page, and back in the Library it is just for you", async () => {
+    const detail = await probe.eventually(() => texts("h2"), {
+      within: 60_000, label: "the skill's own page", until: (headings) => headings.includes("Customer briefing"),
+    });
+    await shot();
+    await backToLibrary("Customer briefing");
+    await closeToasts();
     const captionText = await caption("Customer briefing");
     evidence.recordAssertionEvidence(
-      "Creating a skill adds it to Added by you, just for the creator",
-      `toast "Added to your Library · Only you can use it for now"; row caption "${captionText}"`,
-      captionText === "Cloud · You · Just me",
+      "Creating a skill lands on the skill, then lists it under Added by you, just for the creator",
+      `detail heading "${detail.find((value) => value === "Customer briefing") ?? ""}"; row caption "${captionText}"`,
+      captionText === "Just me",
     );
-    expect(captionText).toBe("Cloud · You · Just me");
-    await closeToasts();
+    expect(captionText).toBe("Just me");
   });
 
   await step("Connector opens a catalog of services, and Linear shows as already added", async () => {
     await user.click({ role: "button", label: "Add to library" });
-    await user.click({ text: /^Connector$/ });
+    await pick("Connector");
     await user.see({ role: "heading", label: "Add a connector" });
     const listed = (await probe.dom("[data-connector]")).elements.map((element) => element.text.split("\n")[0]?.trim() ?? "");
     const linear = await texts('[data-connector="Linear"]');
@@ -171,7 +192,17 @@ test(title, async ({ evidence, world, user, probe, step }) => {
     });
     const url = new URL(opened.at(-1) ?? "");
     await user.see({ text: "Added to your Library" });
-    await user.see({ role: "button", label: "More for Slack" }, { timeoutMs: 60_000 });
+    await user.see({ text: "Whose account does the AI use?" }, { timeoutMs: 60_000 });
+    await user.see({ text: "Your own. You sign in once." });
+    const heading = await texts("h2");
+    await shot();
+    evidence.recordAssertionEvidence(
+      "A new connector lands on its connection page, where sign-in lives",
+      `headings ${heading.join(" / ")}; "Whose account does the AI use?" → "Your own. You sign in once."`,
+      heading.some((value) => value.startsWith("Slack")),
+    );
+    await backToLibrary("Slack");
+    await closeToasts();
     const slackCaption = await caption("Slack");
     const slackChip = await probe.eventually(async () => (await texts('[data-library-row="Slack"] [data-library-status]')).join(""), {
       within: 30_000, label: "Slack's row asks the member to finish signing in",
@@ -185,14 +216,14 @@ test(title, async ({ evidence, world, user, probe, step }) => {
     );
     expect(url.origin).toBe(world.slackOrigin);
     expect(url.pathname).toMatch(/\/authorize$/);
-    expect(slackCaption).toBe("Cloud · You · Just me");
+    expect(slackCaption).toBe("Just me");
     expect(slackChip).toBe("Sign in");
     await closeToasts();
   });
 
   await step("Something else opens Add an MCP server with three ways to sign in", async () => {
     await user.click({ role: "button", label: "Add to library" });
-    await user.click({ text: /^Connector$/ });
+    await pick("Connector");
     await user.click({ role: "button", label: "Add an MCP" });
     await user.see({ role: "heading", label: "Add an MCP server" });
     const ways = await texts('[role="radiogroup"][aria-label="How does it sign in?"] [role="radio"] span > span:first-child');
@@ -204,13 +235,45 @@ test(title, async ({ evidence, world, user, probe, step }) => {
       ways.join("|") === "With my account|With a key|No sign-in",
     );
     expect(ways).toEqual(["With my account", "With a key", "No sign-in"]);
+  });
+
+  await step("before adding it, OpenWork checks the MCP server and ticks off each check", async () => {
+    await user.type({ label: "Name" }, "Team notes");
+    await user.type({ placeholder: "https://mcp.example.com/mcp" }, world.slackMcpUrl);
+    await user.click({ role: "button", label: "Add and sign in" });
+    await user.see({ testId: "mcp-server-checks" }, { timeoutMs: 30_000 });
+    const count = async (selector: string) => (await probe.dom(selector)).elements.length;
+    const state = await probe.eventually(async () => (await count('[data-mcp-check-state="passed"]')) > 0 ? "passed" : (await count('[data-mcp-check-state="failed"]')) > 0 ? "failed" : "", {
+      within: 30_000, label: "the checks settle", until: (value) => value !== "",
+    });
+    const ids = ["reach", "protocol", "sign-in", "registration", "tools"];
+    const rows = await probe.eventually(async () => {
+      const results: string[] = [];
+      for (const id of ids) {
+        for (const status of ["pass", "warn", "fail", "skip"]) {
+          if ((await count(`[data-mcp-check="${id}"][data-mcp-check-status="${status}"]`)) > 0) results.push(`${id}=${status}`);
+        }
+      }
+      return results;
+    }, { within: 10_000, label: "every check has a result", until: (value) => value.length === ids.length });
+    await user.see({ role: "button", label: "Continue" });
+    await shot();
+    evidence.recordAssertionEvidence(
+      "Adding an MCP shows each check (reachable, speaks MCP, sign-in, registration, tools) before Continue",
+      `state=${state}; checks ${rows.join(" / ")}`,
+      state === "passed" && rows.some((row) => row === "registration=pass"),
+    );
+    expect(state).toBe("passed");
+    expect(rows).toContain("registration=pass");
+    await user.click({ role: "button", label: "Change address" });
+    await user.see({ role: "heading", label: "Add an MCP server" });
     await user.click({ role: "button", label: "Cancel" });
     await user.notSee({ testId: "library-create-page" });
   });
 
   await step("a plugin bundles a skill and a command on one page", async () => {
     await user.click({ role: "button", label: "Add to library" });
-    await user.click({ text: /^Plugin$/ });
+    await pick("Plugin");
     await user.see({ role: "heading", label: "Create a plugin" });
     await user.type({ label: "Plugin name" }, "Sales call prep");
     await user.type({ label: "Description" }, "A skill and a command for sales calls");
@@ -225,8 +288,11 @@ test(title, async ({ evidence, world, user, probe, step }) => {
     const parts = await texts("[data-plugin-component]");
     await shot();
     await user.click({ role: "button", label: "Create plugin" });
-    await user.see({ role: "button", label: "More for Sales call prep" }, { timeoutMs: 60_000 });
+    await probe.eventually(() => texts("h2"), {
+      within: 60_000, label: "the plugin's own page", until: (headings) => headings.includes("Sales call prep"),
+    });
     await user.notSee({ testId: "library-create-page" });
+    await backToLibrary("Sales call prep");
     evidence.recordAssertionEvidence(
       "A plugin is made of the parts the member adds, on one page",
       `inside: ${parts.map((part) => part.split("\n")[0]).join(" / ")}; created "Sales call prep"`,
@@ -244,12 +310,30 @@ test(title, async ({ evidence, world, user, probe, step }) => {
     evidence.recordAssertionEvidence(
       "Everything new starts just for its creator",
       `Added by you "${meta}": ${["Customer briefing", "Slack", "Sales call prep"].map((name, index) => `${name} → ${captions[index]}`).join("; ")}`,
-      meta === "3 · only you so far" && captions.every((value) => value === "Cloud · You · Just me"),
+      meta === "3 · only you so far" && captions.every((value) => value === "Just me"),
     );
     expect(mine).toHaveLength(3);
     expect(meta).toBe("3 · only you so far");
-    expect(captions).toEqual(["Cloud · You · Just me", "Cloud · You · Just me", "Cloud · You · Just me"]);
+    expect(captions).toEqual(["Just me", "Just me", "Just me"]);
     await closeToasts();
+  });
+
+  await step("card view: every card is the same size, says what it is, and only asks for something when it needs you", async () => {
+    await user.click({ role: "button", label: "Card view" });
+    const cards = await probe.eventually(async () => (await probe.dom("button[data-library-row]")).elements, {
+      within: 10_000, label: "the Library shows cards", until: (elements) => elements.length >= 6 && elements.every((element) => element.rect.height > 80),
+    });
+    const heights = [...new Set(cards.map((card) => Math.round(card.rect.height)))];
+    const saysConnected = cards.filter((card) => card.text.includes("Connected")).length;
+    await shot();
+    evidence.recordAssertionEvidence(
+      "Cards share one height, name their kind, and carry no Connected chip",
+      `${cards.length} cards; heights ${heights.join(", ")}px; cards saying Connected: ${saysConnected}`,
+      heights.length === 1 && saysConnected === 0,
+    );
+    expect(heights).toHaveLength(1);
+    expect(saysConnected).toBe(0);
+    await user.click({ role: "button", label: "List view" });
   });
 
   // Lane 3 · Use
@@ -311,7 +395,7 @@ test(title, async ({ evidence, world, user, probe, step }) => {
     await user.notSee({ testId: "library-share-page" });
     await user.see({ text: `${world.supportSize} people have it in their Library now` });
     const captionText = await probe.eventually(() => caption("Customer briefing"), {
-      within: 30_000, label: "the shared row caption", until: (value) => value === "Cloud · You · Shared with Support",
+      within: 30_000, label: "the shared row caption", until: (value) => value === "Shared with Support",
     });
     const meta = await sectionMeta("mine");
     await shot();

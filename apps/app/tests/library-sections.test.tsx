@@ -193,7 +193,8 @@ describe("Library sections", () => {
   });
 
   test("legacy routes land on All, and the list is the initial layout", () => {
-    expect(filterForSection(undefined)).toBe("mcp");
+    expect(filterForSection(undefined)).toBe("all");
+    expect(filterForSection("mcps")).toBe("connection");
     expect(readExtensionLayout()).toBe("list");
     writeExtensionLayout("grid");
     expect(readExtensionLayout()).toBe("grid");
@@ -244,16 +245,18 @@ describe("Library sections", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  test.skipIf(dialogLayerInert)("labeled Library Add opens the picker: Skill, Connector, Plugin", async () => {
+  test.skipIf(dialogLayerInert)("labeled Library Add opens the picker: Connector, Skill, Plugin, then Continue", async () => {
     const select = mock(() => {});
     const host = await mount(<LibraryAddControl kinds={["skill", "connection", "plugin"]} label="Add to library" onSelect={select} />);
     const button = host.querySelector<HTMLButtonElement>('button[aria-label="Add to library"]');
     await act(async () => button?.click());
     const choices = [...document.querySelectorAll<HTMLButtonElement>('[data-testid="library-add-choices"] button[data-kind]')];
-    expect(choices.map((choice) => choice.dataset.kind)).toEqual(["skill", "connection", "plugin"]);
-    expect(choices.map((choice) => choice.querySelector("[data-kind-title]")?.textContent)).toEqual(["Skill", "Connector", "Plugin"]);
+    expect(choices.map((choice) => choice.dataset.kind)).toEqual(["connection", "skill", "plugin"]);
+    expect(choices.map((choice) => choice.querySelector("[data-kind-title]")?.textContent)).toEqual(["Connector", "Skill", "Plugin"]);
     await act(async () => choices[1]?.click());
-    expect(select).toHaveBeenCalledWith("connection");
+    const next = [...document.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.textContent === "Continue");
+    await act(async () => next?.click());
+    expect(select).toHaveBeenCalledWith("skill");
     expect(document.querySelector('[data-testid="library-add-choices"]')).toBeNull();
   });
 

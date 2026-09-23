@@ -19,6 +19,7 @@ export type ExtensionInventoryState = "all" | "needs_signin" | "needs_admin_setu
 
 export const extensionInventoryFilters: ExtensionInventoryFilter[] = [
   "all",
+  "connection",
   "skill",
   "plugin",
 ];
@@ -30,6 +31,7 @@ export const extensionInventoryFilters: ExtensionInventoryFilter[] = [
  */
 export function primaryLibraryFilter(filter?: ExtensionInventoryFilter): ExtensionInventoryFilter {
   if (filter === "skill" || filter === "command" || filter === "agent") return "skill";
+  if (filter === "connection" || filter === "mcp") return "connection";
   return filter === "plugin" ? "plugin" : "all";
 }
 
@@ -54,7 +56,9 @@ export function matchesExtensionFilter(
   taxonomy: ExtensionTaxonomy,
   transport: ExtensionTransport = null,
 ) {
-  return filter === "all" || filter === taxonomy || (filter === "mcp" && (taxonomy === "connection" || transport === "mcp"));
+  if (filter === "all" || filter === taxonomy) return true;
+  const connector = taxonomy === "connection" || taxonomy === "mcp" || transport === "mcp";
+  return (filter === "mcp" || filter === "connection") && connector;
 }
 
 export function extensionFilterLabel(filter: ExtensionInventoryFilter) {

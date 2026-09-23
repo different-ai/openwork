@@ -104,8 +104,8 @@ describe("Library sharing words", () => {
   test("row captions say who has it and whether it just changed", () => {
     const justMe = { orgWide: false, teams: [], people: [] };
     const support = { orgWide: false, teams: [{ id: "t", name: "Support", peopleCount: 5, grantId: "g" }], people: [] };
-    expect(libraryOwnedCaption(justMe, false)).toBe("Cloud · You · Just me");
-    expect(libraryOwnedCaption(support, false)).toBe("Cloud · You · Shared with Support");
+    expect(libraryOwnedCaption(justMe, false)).toBe("Just me");
+    expect(libraryOwnedCaption(support, false)).toBe("Shared with Support");
     expect(libraryOwnedCaption(support, true)).toBe("Changed just now · Support has it");
     expect(libraryAudienceName({ ...support, people: [{ id: "p", name: "Alex", grantId: null }] })).toBe("Support and Alex");
   });
@@ -119,7 +119,7 @@ describe("Library sharing words", () => {
 
   test("shared items name who shared them; connections name who else can use them", () => {
     expect(librarySharedByCaption({ edges: [{ kind: "person", sharedById: "m", sharedByName: "Alex", grantedAt: null }] }, "OpenWork")).toBe("Shared by Alex");
-    expect(librarySharedByCaption({ edges: [] }, "OpenWork")).toBe("Cloud · OpenWork");
+    expect(librarySharedByCaption({ edges: [] }, "OpenWork")).toBe("From OpenWork");
     expect(libraryConnectionAudience([{ kind: "org_wide" }], "OpenWork")).toBe("Everyone in OpenWork");
     expect(libraryConnectionAudience([{ kind: "team", teamId: "t", teamName: "Support" }], "OpenWork")).toBe("People in Support");
   });
