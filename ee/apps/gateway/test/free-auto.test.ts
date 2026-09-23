@@ -1,12 +1,12 @@
 import assert from "node:assert/strict"
-import { generateKeyPairSync, randomUUID, sign } from "node:crypto"
+import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto"
 import { test } from "node:test"
 import { Hono } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR, freeInferenceWindow, managedModelCatalog, readFreeInferenceConfig } from "@openwork/types/den/inference"
 import { DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH,
-  MEMBER_FREE_STATUS_PATH, desktopFreeProofMessage, desktopFreeReleaseTagMessage, type DesktopFreeProofClaims } from "@openwork/types/desktop-free-access"
-import { readAutoConfig, freeRequestReservation, freeUsageAmount, FREE_OPENAI_CHAT_URL } from "../src/free-config.js"
+  MEMBER_FREE_STATUS_PATH, desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeSessionPowMessage, leadingZeroBits, type DesktopFreeProofClaims } from "@openwork/types/desktop-free-access"
+import { readAutoConfig, freeRequestReservation, freeUsageAmount, rampedDeviceAmount, FREE_OPENAI_CHAT_URL } from "../src/free-config.js"
 import { desktopFreeHash, verifyDesktopFreeProof } from "../src/desktop-free-proof.js"
 import { createDesktopFreeReleaseSource, desktopFreeVersionError, supportedDesktopReleases, type DesktopRelease } from "../src/desktop-free-version.js"
 import { deriveReleaseSecret, releaseTag } from "../src/free-release.js"
@@ -29,7 +29,7 @@ const releaseKey = "test-only-release-master-key-2222222222222222222"
 const previousReleaseKey = "test-only-previous-master-key-33333333333333333"
 const config = readAutoConfig({ INFERENCE_FREE_ENABLED: "true", ANONYMOUS_INFERENCE_ENABLED: "true",
   INFERENCE_FREE_OPENAI_API_KEY: "sk-fixture-dedicated-free-key", ANONYMOUS_TOKEN_SECRET: "test-only-token-secret-00000000000000000000",
-  ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "test-only-accounting-key-1111111111111111111", DESKTOP_FREE_RELEASE_KEY: releaseKey })
+  ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "test-only-accounting-key-1111111111111111111", DESKTOP_FREE_RELEASE_KEY: releaseKey, ANONYMOUS_SESSION_POW_BITS: "8" })
 const day = 86400000
 const now = Date.parse("2026-09-23T12:00:00Z")
 /** Newest first: 1.2.3 (today), 1.2.2 (2 days), 1.2.1 (5 days), 1.2.0 (10 days, within 14-day floor), 1.1.9 (30 days, out). */
@@ -47,13 +47,26 @@ const memberKey = "ow_inf_fixture-member-key"
 const keyRow = { id: createDenTypeId("inferenceKey"), organization_id: createDenTypeId("organization"), org_membership_id: createDenTypeId("member") }
 const member: MemberPrincipal = { kind: "member", id: createDenTypeId("user"), inferenceKeyId: keyRow.id, memberId: keyRow.org_membership_id, organizationId: keyRow.organization_id }
 const prompt = JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, messages: [{ role: "user", content: "hello" }] })
-type SignedOptions = { version?: string; source?: typeof device; proofVersion?: 2 | 3; secret?: Uint8Array | null; tagVersion?: string }
+type SignedOptions = { version?: string; source?: typeof device; proofVersion?: 2 | 3; secret?: Uint8Array | null; tagVersion?: string; nonce?: string }
+function solvePow(machineId: string, nonce: string, bits: number) {
+  for (let counter = 0; ; counter++) {
+    const pow = counter.toString(36)
+    if (leadingZeroBits(Uint8Array.from(createHash("sha256").update(desktopFreeSessionPowMessage({ machineId, nonce, pow })).digest())) >= bits) return pow
+  }
+}
+/** A session mint request whose body carries the proof-of-work for its own nonce. */
+function session(options: SignedOptions & { bits?: number; pow?: string } = {}) {
+  const source = options.source ?? device
+  const nonce = options.nonce ?? randomUUID()
+  const pow = options.pow ?? solvePow(source.binding.machineId, nonce, options.bits ?? 8)
+  return signed(DESKTOP_FREE_SESSION_PATH, "", JSON.stringify({ pow }), { ...options, nonce })
+}
 function signed(path: string, authorization = "", body?: string, options: SignedOptions = {}) {
   const source = options.source ?? device
   const method = body === undefined ? "GET" : "POST"
   const appVersion = options.version ?? "1.2.3"
   const base = { publicKey: source.publicKey, machineId: source.binding.machineId, appVersion,
-    platform: "darwin" as const, arch: "arm64" as const, timestamp: now, nonce: randomUUID() }
+    platform: "darwin" as const, arch: "arm64" as const, timestamp: now, nonce: options.nonce ?? randomUUID() }
   const request = { method, path, bodyHash: desktopFreeHash(body ?? ""), authorizationHash: desktopFreeHash(authorization) }
   // Default: a v3 proof tagged by the secret the build of `appVersion` would carry.
   const secret = options.secret === undefined ? deriveReleaseSecret(releaseKey, options.tagVersion ?? appVersion) : options.secret
@@ -75,7 +88,7 @@ function fakeStore(principals: FreePrincipal[], receipts: Array<FreeUsageReceipt
   return {
     family: "anonymous",
     async consumeNonce(proof) { const key = `${proof.keyThumbprint}:${proof.nonce}`; if (nonces.has(key)) return "replay"; nonces.add(key); return "accepted" },
-    async consumeSession() { calls.session++; return true },
+    async consumeSession() { calls.session++; return "accepted" as const },
     async read(principal) { return { state: "ready", code: null, allowance: { limitUsd: principal.kind === "member" ? 5 : 1,
       usedUsd: 0, reservedUsd: 0, remainingUsd: principal.kind === "member" ? 5 : 1, resetsAt: freeInferenceWindow().end.toISOString() } } },
     async reserve(principal, _ip, requestId, deadlineAt) { principals.push(principal); return { ok: true, requestId, deadlineAt } },
@@ -139,7 +152,7 @@ test("disabled endpoints do not verify metadata, write accounting, or dispatch",
   const f = fixture({ config: off, releases: async () => { throw new Error("must not call") } })
   const handler = createFreeMemberHandler({ config: off, store: f.store, fetch: async () => { throw new Error("must not call") }, findMember: async () => member })
   const memberApp = new Hono().all("/api/v1/*", (c) => handler(c, { ...keyRow } as never))
-  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_SESSION_PATH, "", "{}"))).status, 503)
+  assert.equal((await f.app.fetch(session())).status, 503)
   assert.equal((await memberApp.fetch(new Request(`https://free.test${MEMBER_FREE_CHAT_PATH}`, { method: "POST", body: prompt, headers: { "content-type": "application/json" } }))).status, 403)
   assert.equal(f.requests.length, 0)
   assert.equal(f.calls.session, 0)
@@ -185,12 +198,52 @@ test("session rejects authenticated downgrade, extra body fields and replay", as
   const f = fixture()
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_SESSION_PATH, `Bearer ${memberKey}`, "{}"))).status, 401)
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_SESSION_PATH, "", JSON.stringify({ installationId: randomUUID() })))).status, 400)
-  const request = signed(DESKTOP_FREE_SESSION_PATH, "", "{}")
+  const request = session()
   const response = await f.app.fetch(request.clone())
   assert.equal(response.status, 200)
   assert.ok(verifyAnonymousToken((await response.json()).token, "127.0.0.1", config))
   assert.equal((await f.app.fetch(request)).status, 401)
   assert.equal(f.calls.session, 1)
+})
+
+test("minting a guest session costs a proof of work bound to the proof's own nonce", async () => {
+  const f = fixture()
+  const missing = await f.app.fetch(signed(DESKTOP_FREE_SESSION_PATH, "", "{}"))
+  assert.equal(missing.status, 400)
+  assert.deepEqual(await missing.json(), { error: { code: "session_pow_required", bits: 8, message: "A proof of work is required to start a guest session." } })
+  assert.equal((await f.app.fetch(session({ pow: "not-enough-zeros" }))).status, 400)
+  // Work done for one nonce does not pay for another.
+  const nonce = randomUUID()
+  const pow = solvePow(machineId, nonce, 8)
+  assert.equal((await f.app.fetch(session({ nonce: randomUUID(), pow }))).status, 400)
+  assert.equal((await f.app.fetch(session({ nonce, pow }))).status, 200)
+  assert.equal(f.calls.session, 1)
+  const free = fixture({ config: { ...config, sessionPowBits: 0 } })
+  assert.equal((await free.app.fetch(signed(DESKTOP_FREE_SESSION_PATH, "", "{}"))).status, 200)
+  const base = fixture()
+  const capped = fixture({ store: { ...base.store, consumeSession: async () => "new_identity_capped" as const } })
+  const response = await capped.app.fetch(session())
+  assert.equal(response.status, 429)
+  assert.equal((await response.json()).error.code, "anonymous_new_identity_capped")
+})
+
+test("the guest allowance ramps with the machine's age and never exceeds the device budget", () => {
+  const defaults = readAutoConfig({})
+  assert.deepEqual(defaults.installRamp, [{ days: 0, amount: 10000000 }, { days: 1, amount: 25000000 }, { days: 3, amount: 50000000 }, { days: 7, amount: 100000000 }])
+  assert.equal(defaults.ipNewIdentitiesPerDay, 5)
+  assert.equal(defaults.sessionPowBits, 20)
+  const day = 86400000
+  assert.equal(rampedDeviceAmount(defaults, 0) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.1)
+  assert.equal(rampedDeviceAmount(defaults, day - 1) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.1)
+  assert.equal(rampedDeviceAmount(defaults, day) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.25)
+  assert.equal(rampedDeviceAmount(defaults, 5 * day) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.5)
+  assert.equal(rampedDeviceAmount(defaults, 30 * day) / INFERENCE_USAGE_CONVERSION_FACTOR, 1)
+  const custom = readAutoConfig({ ANONYMOUS_INSTALL_RAMP: "0:50000,2:5000000", ANONYMOUS_INSTALL_WEEKLY_MICRO_USD: "2000000" })
+  assert.equal(rampedDeviceAmount(custom, 3 * day) / INFERENCE_USAGE_CONVERSION_FACTOR, 2, "a ramp step above the device budget is clamped to it")
+  for (const ramp of ["1:100000", "0:100000,0:200000", "0:200000,1:100000", "0:x", ""]) {
+    if (ramp === "") continue
+    assert.throws(() => readAutoConfig({ ANONYMOUS_INSTALL_RAMP: ramp }), ramp)
+  }
 })
 
 test("a guest token cannot be used with another machine's proof", async () => {

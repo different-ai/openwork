@@ -13,6 +13,22 @@ export const MEMBER_FREE_STATUS_PATH = "/api/v1/auto/status";
 export const MEMBER_FREE_MODELS_PATH = "/api/v1/models";
 export const MEMBER_FREE_CHAT_PATH = "/api/v1/chat/completions";
 export const DESKTOP_FREE_PROOF_MAX_BYTES = 2048;
+/** Minting a guest session costs a small proof-of-work bound to the request's single-use nonce. */
+export const DESKTOP_FREE_SESSION_POW_BITS = 20;
+export const DESKTOP_FREE_SESSION_POW_MAX_BITS = 24;
+export const DESKTOP_FREE_SESSION_POW_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+export function desktopFreeSessionPowMessage(input: { machineId: string; nonce: string; pow: string }): string {
+  return `${input.machineId}:${input.nonce.toLowerCase()}:${input.pow}`;
+}
+export function leadingZeroBits(digest: Uint8Array): number {
+  let bits = 0;
+  for (const byte of digest) {
+    if (byte === 0) { bits += 8; continue; }
+    bits += Math.clz32(byte) - 24;
+    break;
+  }
+  return bits;
+}
 export const DESKTOP_FREE_PROOF_CLOCK_SKEW_MS = 60_000;
 
 /** SHA-256 hex of the OS machine identifier, salted per product; stable across reinstalls. */
