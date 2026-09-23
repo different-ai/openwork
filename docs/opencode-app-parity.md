@@ -30,7 +30,7 @@ The signed-in first-send regression is covered by `LIVE-ORG`. Native v2 create a
 
 Cloud skills now follow the same v1 path on both engines: the shared Connect metadata catalog has a 30-second in-memory cache, and the model retrieves the selected skill's current instructions through Connect on demand. V2 no longer downloads every organization skill or writes their bodies into a native skill directory before sending a message. Existing generated Cloud copies are removed when the v2 runtime starts. No Den deployment is required. This preserves v1 discovery refresh timing; instant metadata updates are future work. `LIVE-CLOUD` uses real Den and real inference to check discovery, use, edited instructions, and removal in one conversation on both engines.
 
-The pinned v2 free starter service currently rejects real inference with HTTP 426, requesting OpenCode 1.18.0 or newer despite the native beta's `0.0.0-beta-19086` version. This remains a failing migration gate. Paid Gateway success must not hide that failure or be presented as complete first-boot parity.
+The earlier local v2 free-starter run received HTTP 426 despite the native beta pin. On PR commit `c170b0a58`, Linux CI subsequently passed actual free-starter inference on both engines, through both app-web and a fresh native desktop installation. The historical rejection remains recorded below; it is not the result of that CI run. Paid Gateway success is still separate evidence from first-boot parity.
 
 ## Local verification recorded on 2026-09-23
 
@@ -83,7 +83,7 @@ The changes preserve conversation continuity (DESIGN P11). Review the attached s
 These results are separate from the targeted parity command; none are silently treated as passing:
 
 - The earlier sessionless recovery check failed to restore the expected draft after recovery. First boot, first send and streaming in this parity suite are independently exercised.
-- The broader server proxy test found `HEAD /opencode cancellation after ownership metadata stays request-scoped` returning 500 instead of 499. Several combined Bun server runs also ended with SIGTRAP after printing their assertion results; those commands are not clean passes.
+- The server proxy cancellation failure (HEAD returning 500 instead of 499) is fixed: read cancellation now reaches ownership checks and null abort reasons are classified correctly. All 165 server core tests passed with CI's Bun 1.3.14, and the GitHub core check passed on `c170b0a58`. Earlier Bun 1.3.8 combined runs ended with SIGTRAP and are not counted as passes.
 - The evals typecheck reported 17 errors in existing analytics, sessionless-world and MCP sandbox files. Layer lint reported 61 existing violations; the new parity files introduced no reported violations. Existing channel/boundary ratchets also reported debt outside these journeys.
 - Rebuilding desktop resources failed because the local ComputerUse Swift build could not parse a property list. The later native live suite used existing prepared resources successfully. Both app-web and native development launch timings were measured; neither is a packaged cold-start benchmark.
 

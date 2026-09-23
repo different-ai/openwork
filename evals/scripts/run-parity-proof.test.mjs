@@ -27,3 +27,10 @@ test("either engine failing or skipping keeps proof red; both always run", async
     assert.equal(result, codes.every(code => code === 0) ? 0 : 1);
   }
 });
+
+test("the native v2 skill contract explicitly selects v2", () => {
+  const plan = parityProofPlan("evals/specs/opencode-v2-skill-jit.e2e.test.ts");
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0].engine, "v2");
+  assert.deepEqual(plan[0].args.slice(-2), ["--engine", "v2"]);
+});

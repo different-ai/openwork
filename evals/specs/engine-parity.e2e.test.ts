@@ -30,7 +30,18 @@ test(`PARITY-STREAM ${resolveEvalEngine()}: read the beginning of an answer befo
       await user.notSee({ text: chunks[1] });
       await user.screenshot();
       evidence.recordJsonArtifact("Visible streaming while upstream is paused", { engine: world.engine, userRenderedMs, firstTextMs, upstream });
-    } finally { await world.mock.releaseAgentReply(prompt); }
+    } catch (error) {
+      // A missing upstream stream must not let cleanup hide the original
+      // visible-answer failure (for example a provider admission error).
+      evidence.recordJsonArtifact("Streaming failure diagnostics", {
+        engine: world.engine, requests: await world.mock.agentRequests(),
+        serverErrors: await world.serverErrors(), screen: await probe.text(),
+      });
+      await user.screenshot();
+      await world.mock.releaseAgentReply(prompt).catch(() => undefined);
+      throw error;
+    }
+    await world.mock.releaseAgentReply(prompt);
   });
   await step("Releasing the remaining sentence completes the same answer once", async () => {
     await user.see({ text: chunks.join("") }, { timeoutMs: 30_000 });

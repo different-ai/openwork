@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { waitUntilInteractive } from "@openwork/behaviors";
-import { navigate } from "@openwork/cdp";
+import { addInitScript, evaluate, navigate } from "@openwork/cdp";
 import type { AttachedSurface } from "@openwork/cdp";
 import {
   chrome,
@@ -18,6 +18,10 @@ import { startLocalRuntime, startRemoteRuntime } from "./app-web-runtime.ts";
 import type { AppWebRuntime } from "./app-web-runtime.ts";
 import type { MockBoot, MockHandle } from "./mock.ts";
 import type { Place } from "./place.ts";
+
+declare global {
+  interface Window { __openworkEvalBootErrors?: string[] }
+}
 
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 const MOCK_SCRIPT_PATH = join(REPO_ROOT, "scripts", "mock-oauth-mcp-server.mjs");
@@ -240,7 +244,6 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
       };
       mocks = await bootRemoteMocks(sandbox, options.mocks ?? {});
       runtime = await startRemoteRuntime(sandbox, worldName, workspaceRoot, source, { syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin, env: options.env, emptyWorkspace: options.emptyWorkspace });
-      await navigate(browser.client, runtime.webUrl);
     } else {
       // Capture only the commit identity, before mocks or app processes launch.
       // Do not expose git stderr, checkout paths, or environment in evidence.
@@ -262,13 +265,39 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
       browser = await chrome({
         name: worldName,
         host: options.place.host(),
-        startUrl: runtime.webUrl,
+        startUrl: "about:blank",
         headless: options.headless ?? true,
       });
       if (browser.handle.kind !== "chrome") throw new Error("App-web requires a chrome handle.");
       browser.handle.meta = { ...browser.handle.meta, actualSourceSha: localSourceSha };
     }
-    await waitUntilInteractive(browser, { timeoutMs: 60_000 });
+    // Observe entry-bundle failures before navigation. The static startup page
+    // survives a broken module load, so a DOM timeout alone hides the cause.
+    await addInitScript(browser.client, () => {
+      window.__openworkEvalBootErrors = [];
+      window.addEventListener("error", event => {
+        const target = event.target;
+        const source = target instanceof HTMLScriptElement ? new URL(target.src).pathname : event.filename?.split("?")[0];
+        if ((window.__openworkEvalBootErrors?.length ?? 0) < 10) window.__openworkEvalBootErrors?.push(`${event.message || "Resource failed"} (${source || "unknown"})`.slice(0, 1000));
+      }, true);
+      window.addEventListener("unhandledrejection", event => {
+        const reason = event.reason;
+        if ((window.__openworkEvalBootErrors?.length ?? 0) < 10) window.__openworkEvalBootErrors?.push(String(reason instanceof Error ? reason.message : reason).slice(0, 1000));
+      });
+    });
+    await navigate(browser.client, runtime.webUrl);
+    try {
+      await waitUntilInteractive(browser, { timeoutMs: 60_000 });
+    } catch (error) {
+      const boot = await evaluate(browser.client, () => ({
+        errors: (window.__openworkEvalBootErrors ?? []).slice(0, 10),
+        failedResources: performance.getEntriesByType("resource")
+          .filter(entry => entry instanceof PerformanceResourceTiming && entry.responseStatus >= 400)
+          .map(entry => ({ path: new URL(entry.name).pathname,
+            status: entry instanceof PerformanceResourceTiming ? entry.responseStatus : 0 })).slice(0, 20),
+      })).catch(() => null);
+      throw new Error(`${error instanceof Error ? error.message : String(error)} Startup diagnostics: ${JSON.stringify(boot)}`, { cause: error });
+    }
 
     const originalBrowserStop = browser.stop.bind(browser);
     let stopped = false;

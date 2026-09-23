@@ -66,8 +66,17 @@ export async function engineGatewayParity(seed: Seed, context: { place: Place })
   const orgId = string(parityRecord(parityRecord(org.body).organization).id);
   const installed = await base.hostRequest("/den-session", "PUT", { baseUrl: den.ref.apiUrl, token: member.token, orgId });
   if (installed.status !== 204) throw new Error(`Could not deliver member identity: ${installed.status}`);
-  const workspaceId = /\/workspace\/([^/]+)/.exec(await base.route())?.[1];
-  if (!workspaceId) throw new Error("Missing Gateway workspace");
+  // Sign-in resolves before the renderer finishes restoring the workspace.
+  // Wait for that visible navigation instead of reading its transient root URL.
+  const workspaceDeadline = Date.now() + 30_000;
+  let workspaceId: string | undefined;
+  while (!workspaceId) {
+    const route = await base.route();
+    workspaceId = /\/workspace\/([^/]+)/.exec(route)?.[1];
+    if (workspaceId) break;
+    if (Date.now() >= workspaceDeadline) throw new Error(`Gateway workspace did not restore after sign-in: ${route}`);
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
   const observer = base.engine === "v2" ? await base.observeNativeCatalog(workspaceId) : null;
   if (observer) setup.defer(() => observer.stop());
   let providerId = "";
