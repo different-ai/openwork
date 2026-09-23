@@ -1,5 +1,5 @@
 import { INFERENCE_USAGE_CONVERSION_FACTOR, readFreeInferenceConfig } from "@openwork/types/den/inference"
-import { DESKTOP_FREE_SESSION_POW_BITS, DESKTOP_FREE_SESSION_POW_MAX_BITS } from "@openwork/types/desktop-free-access"
+import { DESKTOP_FREE_SESSION_POW_BITS, DESKTOP_FREE_SESSION_POW_MAX_BITS, DESKTOP_FREE_SESSION_POW_MAX_ROUNDS, DESKTOP_FREE_SESSION_POW_ROUNDS } from "@openwork/types/desktop-free-access"
 import { DESKTOP_FREE_RELEASES_URL } from "./desktop-free-version.js"
 
 export const FREE_OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
@@ -20,8 +20,9 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
   }
   const deviceWeeklyAmount = integer("ANONYMOUS_INSTALL_WEEKLY_MICRO_USD", 1000000, 1, 100000000) * 100
   if (member.enabled && member.weeklyLimitAmount <= deviceWeeklyAmount) throw new Error("Member free budget must exceed the device budget")
-  // A machine seen minutes ago is worth little; the full device allowance arrives with age. "minutes:microUsd,…" ascending.
-  const rampSource = environment.ANONYMOUS_INSTALL_RAMP?.trim() || "0:100000,30:1000000"
+  // A machine is worth little until the app has been open for a while: tiers unlock by active minutes,
+  // credited from heartbeats no further apart than the activity gap. "activeMinutes:microUsd,…" ascending.
+  const rampSource = environment.ANONYMOUS_INSTALL_RAMP?.trim() || "0:100000,10:200000,20:500000,30:1000000"
   const installRamp = rampSource.split(",").map((entry) => {
     const [minutes, micro] = entry.split(":").map((value) => Number(value.trim()))
     if (!Number.isSafeInteger(minutes) || minutes < 0 || minutes > 525600 || !Number.isSafeInteger(micro) || micro < 1) throw new Error("Invalid ANONYMOUS_INSTALL_RAMP")
@@ -62,8 +63,10 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
     supportedReleaseMinDays: integer("DESKTOP_FREE_SUPPORTED_RELEASE_MIN_DAYS", 14, 0, 365),
     blockedReleases: (environment.DESKTOP_FREE_BLOCKED_RELEASES ?? "").split(",").map((value) => value.trim().replace(/^v/, "")).filter(Boolean),
     deviceWeeklyAmount, installRamp,
+    activityMaxGapMs: integer("ANONYMOUS_ACTIVITY_MAX_GAP_MS", 180000, 1000, 3600000),
     ipNewIdentitiesPerDay: integer("ANONYMOUS_IP_NEW_IDENTITIES_PER_DAY", 5, 1, 1000),
     sessionPowBits: integer("ANONYMOUS_SESSION_POW_BITS", DESKTOP_FREE_SESSION_POW_BITS, 0, DESKTOP_FREE_SESSION_POW_MAX_BITS),
+    sessionPowRounds: integer("ANONYMOUS_SESSION_POW_ROUNDS", DESKTOP_FREE_SESSION_POW_ROUNDS, 1, DESKTOP_FREE_SESSION_POW_MAX_ROUNDS),
     ipDailyAmount: integer("ANONYMOUS_IP_DAILY_MICRO_USD", 5000000, 1, 100000000) * 100,
     globalDailyAmount: integer("ANONYMOUS_GLOBAL_DAILY_MICRO_USD", 100000000, 1, 1000000000) * 100,
     globalMonthlyAmount: integer("ANONYMOUS_GLOBAL_MONTHLY_MICRO_USD", 3000000000, 1, 10000000000) * 100,
@@ -84,9 +87,9 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
   }
 }
 export type AutoConfig = ReturnType<typeof readAutoConfig>
-/** The device allowance for a guest identity of the given age. */
-export function rampedDeviceAmount(config: Pick<AutoConfig, "installRamp" | "deviceWeeklyAmount">, ageMs: number) {
-  const minutes = Math.max(0, ageMs) / 60000
+/** The device allowance for a guest machine that has had the app open for `activeMs`. */
+export function rampedDeviceAmount(config: Pick<AutoConfig, "installRamp" | "deviceWeeklyAmount">, activeMs: number) {
+  const minutes = Math.max(0, activeMs) / 60000
   let amount = config.installRamp[0].amount
   for (const step of config.installRamp) if (minutes >= step.minutes) amount = step.amount
   return Math.min(amount, config.deviceWeeklyAmount)

@@ -29,7 +29,7 @@ const releaseKey = "test-only-release-master-key-2222222222222222222"
 const previousReleaseKey = "test-only-previous-master-key-33333333333333333"
 const config = readAutoConfig({ INFERENCE_FREE_ENABLED: "true", ANONYMOUS_INFERENCE_ENABLED: "true",
   INFERENCE_FREE_OPENAI_API_KEY: "sk-fixture-dedicated-free-key", ANONYMOUS_TOKEN_SECRET: "test-only-token-secret-00000000000000000000",
-  ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "test-only-accounting-key-1111111111111111111", DESKTOP_FREE_RELEASE_KEY: releaseKey, ANONYMOUS_SESSION_POW_BITS: "8" })
+  ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "test-only-accounting-key-1111111111111111111", DESKTOP_FREE_RELEASE_KEY: releaseKey, ANONYMOUS_SESSION_POW_BITS: "8", ANONYMOUS_SESSION_POW_ROUNDS: "2" })
 const day = 86400000
 const now = Date.parse("2026-09-23T12:00:00Z")
 /** Newest first: 1.2.3 (today), 1.2.2 (2 days), 1.2.1 (5 days), 1.2.0 (10 days, within 14-day floor), 1.1.9 (30 days, out). */
@@ -48,11 +48,13 @@ const keyRow = { id: createDenTypeId("inferenceKey"), organization_id: createDen
 const member: MemberPrincipal = { kind: "member", id: createDenTypeId("user"), inferenceKeyId: keyRow.id, memberId: keyRow.org_membership_id, organizationId: keyRow.organization_id }
 const prompt = JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, messages: [{ role: "user", content: "hello" }] })
 type SignedOptions = { version?: string; source?: typeof device; proofVersion?: 2 | 3; secret?: Uint8Array | null; tagVersion?: string; nonce?: string }
-function solvePow(machineId: string, nonce: string, bits: number) {
-  for (let counter = 0; ; counter++) {
-    const pow = counter.toString(36)
-    if (leadingZeroBits(Uint8Array.from(createHash("sha256").update(desktopFreeSessionPowMessage({ machineId, nonce, pow })).digest())) >= bits) return pow
-  }
+function solvePow(machineId: string, nonce: string, bits: number, rounds = 2) {
+  return Array.from({ length: rounds }, (_, round) => {
+    for (let counter = 0; ; counter++) {
+      const pow = counter.toString(36)
+      if (leadingZeroBits(Uint8Array.from(createHash("sha256").update(desktopFreeSessionPowMessage({ machineId, nonce, round, pow })).digest())) >= bits) return pow
+    }
+  }).join(".")
 }
 /** A session mint request whose body carries the proof-of-work for its own nonce. */
 function session(options: SignedOptions & { bits?: number; pow?: string } = {}) {
@@ -210,8 +212,14 @@ test("minting a guest session costs a proof of work bound to the proof's own non
   const f = fixture()
   const missing = await f.app.fetch(signed(DESKTOP_FREE_SESSION_PATH, "", "{}"))
   assert.equal(missing.status, 400)
-  assert.deepEqual(await missing.json(), { error: { code: "session_pow_required", bits: 8, message: "A proof of work is required to start a guest session." } })
+  assert.deepEqual(await missing.json(), { error: { code: "session_pow_required", bits: 8, rounds: 2, message: "A proof of work is required to start a guest session." } })
   assert.equal((await f.app.fetch(session({ pow: "not-enough-zeros" }))).status, 400)
+  // Every round must be solved, and a round's solution only counts for its own round.
+  const halfNonce = randomUUID(), swappedNonce = randomUUID()
+  const [one] = solvePow(machineId, halfNonce, 8).split(".")
+  assert.equal((await f.app.fetch(session({ nonce: halfNonce, pow: one }))).status, 400)
+  const [first, second] = solvePow(machineId, swappedNonce, 8).split(".")
+  assert.equal((await f.app.fetch(session({ nonce: swappedNonce, pow: `${second}.${first}` }))).status, 400)
   // Work done for one nonce does not pay for another.
   const nonce = randomUUID()
   const pow = solvePow(machineId, nonce, 8)
@@ -227,14 +235,16 @@ test("minting a guest session costs a proof of work bound to the proof's own non
   assert.equal((await response.json()).error.code, "anonymous_new_identity_capped")
 })
 
-test("the guest allowance is small for a machine's first 30 minutes and never exceeds the device budget", () => {
+test("the guest allowance unlocks over the machine's first 30 active minutes and never exceeds the device budget", () => {
   const defaults = readAutoConfig({})
-  assert.deepEqual(defaults.installRamp, [{ minutes: 0, amount: 10000000 }, { minutes: 30, amount: 100000000 }])
+  assert.deepEqual(defaults.installRamp, [{ minutes: 0, amount: 10000000 }, { minutes: 10, amount: 20000000 }, { minutes: 20, amount: 50000000 }, { minutes: 30, amount: 100000000 }])
   assert.equal(defaults.ipNewIdentitiesPerDay, 5)
-  assert.equal(defaults.sessionPowBits, 23)
+  assert.deepEqual([defaults.sessionPowBits, defaults.sessionPowRounds, defaults.activityMaxGapMs], [20, 8, 180000])
   const minute = 60000
   assert.equal(rampedDeviceAmount(defaults, 0) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.1)
-  assert.equal(rampedDeviceAmount(defaults, 30 * minute - 1) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.1)
+  assert.equal(rampedDeviceAmount(defaults, 10 * minute - 1) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.1)
+  assert.equal(rampedDeviceAmount(defaults, 10 * minute) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.2)
+  assert.equal(rampedDeviceAmount(defaults, 25 * minute) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.5)
   assert.equal(rampedDeviceAmount(defaults, 30 * minute) / INFERENCE_USAGE_CONVERSION_FACTOR, 1)
   assert.equal(rampedDeviceAmount(defaults, 7 * 24 * 60 * minute) / INFERENCE_USAGE_CONVERSION_FACTOR, 1)
   const custom = readAutoConfig({ ANONYMOUS_INSTALL_RAMP: "0:50000,10:250000,120:5000000", ANONYMOUS_INSTALL_WEEKLY_MICRO_USD: "2000000" })
