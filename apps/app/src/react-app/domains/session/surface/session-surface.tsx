@@ -1562,8 +1562,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
   const gatewaySelected = isGatewayUsageModel(sessionModel.selectedModel.providerID, props.gatewayProviderIds);
   const latestUsageMessage = renderedMessages.at(-1);
-  const latestUsagePresentation = useMemo(() => latestUsageMessage ? sessionErrorPresentationFromUIMessage(latestUsageMessage) : null, [latestUsageMessage]);
-  const latestUsageEvidence = latestUsagePresentation?.gatewayUsage ?? null;
+  // The turn's error, not whatever renders last: a trailing empty or retry message must not hide it.
+  const usageError = useMemo(() => {
+    for (let index = renderedMessages.length - 1; index >= 0; index--) {
+      const message = renderedMessages[index];
+      if (message.role === "user") return null;
+      const presentation = sessionErrorPresentationFromUIMessage(message);
+      if (presentation) return { message, presentation };
+    }
+    return null;
+  }, [renderedMessages]);
+  const latestUsageEvidence = usageError?.presentation.gatewayUsage ?? null;
   const gatewayUsage = useGatewayUsage(gatewaySelected, false, gatewayUsageRefreshKey({
     sessionOwner,
     providerId: sessionModel.selectedModel.providerID,
@@ -1575,7 +1584,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const gatewayNotice = gatewayUsageNoticeState({ gatewaySelected: gatewayUsage.active, status: gatewayUsage.data });
   const hideGatewayError = useGatewayUsageErrorHandled({
     scopeKey: gatewayUsage.scopeKey, sessionOwner, gatewaySelected: gatewayUsage.active, status: gatewayUsage.data,
-    errorKey: latestUsageMessage?.id ?? null, evidence: latestUsageEvidence, rateLimited: latestUsagePresentation?.kind === "rate-limited",
+    errorKey: usageError?.message.id ?? null, evidence: latestUsageEvidence, rateLimited: usageError?.presentation.kind === "rate-limited",
   });
   const hideDirectGatewayError = useGatewayUsageErrorHandled({
     scopeKey: gatewayUsage.scopeKey, sessionOwner, gatewaySelected: gatewayUsage.active, status: gatewayUsage.data,
@@ -1587,12 +1596,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
     renderedMessages.forEach((message, index) => { if (message.role === "user") lastUser = index; });
     // Engine retries leave one error per attempt; the confirmed block explains every one of them.
     return renderedMessages.filter((message, index) => {
-      if (message === latestUsageMessage) return false;
+      if (message === usageError?.message) return false;
       if (index < lastUser) return true;
       const presentation = sessionErrorPresentationFromUIMessage(message);
       return !presentation || (presentation.kind !== "rate-limited" && !presentation.gatewayUsage);
     });
-  }, [hideGatewayError, renderedMessages, latestUsageMessage]);
+  }, [hideGatewayError, renderedMessages, usageError]);
   const renderedMessagesRef = useRef(renderedMessages);
   useEffect(() => {
     renderedMessagesRef.current = renderedMessages;

@@ -314,6 +314,9 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
       },
     });
     expect(native.ok).toBe(true);
+    const nativeErrors = usageRecords(Array.isArray(native.body) ? native.body : usageRecord(native.body).data)
+      .map((entry) => usageRecord(entry.info ?? entry)).filter((info) => Boolean(info.error)).map((info) => info.error);
+    evidence.recordAssertionEvidence("Native engine reports the Gateway rejection", JSON.stringify(nativeErrors).slice(0, 2000), nativeErrors.length > 0);
     expect(world.upstreamCount()).toBe(1);
     expect((await own()).buckets).toEqual(exhausted.buckets);
     await member.see({ testId: "gateway-usage-notice" }, { text: /used this month’s \$1\.00/ });
