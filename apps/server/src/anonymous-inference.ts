@@ -1,7 +1,7 @@
 import { Worker } from "node:worker_threads";
 import { createHash, randomBytes, timingSafeEqual, randomUUID } from "node:crypto";
 import {
-  DESKTOP_FREE_PROVIDER_ID, DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROOF_HEADER, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH, type DesktopFreeAccessStatus, type DesktopFreeSession, DESKTOP_FREE_SESSION_POW_BITS, DESKTOP_FREE_SESSION_POW_MAX_BITS, desktopFreeSessionPowMessage, leadingZeroBits,
+  DESKTOP_FREE_PROVIDER_ID, DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROOF_HEADER, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH, type DesktopFreeAccessStatus, type DesktopFreeSession, DESKTOP_FREE_SESSION_POW_BITS, DESKTOP_FREE_SESSION_POW_MAX_BITS, desktopFreeSessionPowMessage, leadingZeroBits, DESKTOP_FREE_SESSION_POW_ROUNDS, DESKTOP_FREE_SESSION_POW_MAX_ROUNDS,
 } from "@openwork/types/desktop-free-access";
 import type { ManagedModelRecommendation } from "@openwork/types/den/inference";
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
@@ -24,45 +24,51 @@ const ERROR_BODY_LIMIT = 64 * 1024;
 const SESSION_TIMEOUT_MS = 10_000;
 const REQUEST_LIFETIME_MS = 5 * 60_000;
 const MEMBER_CREDENTIAL_CACHE_MS = 5 * 60_000;
-/** Minting a guest session costs a proof of work bound to the request's nonce; 23 bits is a few seconds. */
-export function solveSessionPow(machineId: string, nonce: string, bits: number): string {
-  for (let counter = 0; ; counter++) {
-    const pow = counter.toString(36);
-    if (leadingZeroBits(createHash("sha256").update(desktopFreeSessionPowMessage({ machineId, nonce, pow })).digest()) >= bits) return pow;
-  }
+/** Minting a guest session costs a proof of work bound to the request's nonce: `rounds` small puzzles, joined by ".". */
+export function solveSessionPow(machineId: string, nonce: string, bits: number, rounds: number): string {
+  return Array.from({ length: rounds }, (_, round) => {
+    for (let counter = 0; ; counter++) {
+      const pow = counter.toString(36);
+      if (leadingZeroBits(createHash("sha256").update(desktopFreeSessionPowMessage({ machineId, nonce, round, pow })).digest()) >= bits) return pow;
+    }
+  }).join(".");
 }
 // The same search on a worker thread, so the app stays responsive while it runs at startup.
 const POW_WORKER_SOURCE = `
 import { parentPort, workerData } from "node:worker_threads";
 import { createHash } from "node:crypto";
-const { message, bits } = workerData;
-for (let counter = 0; ; counter++) {
-  const pow = counter.toString(36);
-  const digest = createHash("sha256").update(message + pow).digest();
-  let zeros = 0;
-  for (const byte of digest) { if (byte === 0) { zeros += 8; continue; } zeros += Math.clz32(byte) - 24; break; }
-  if (zeros >= bits) { parentPort.postMessage(pow); break; }
-}`;
-export type PowJob = { nonce: string; bits: number; promise: Promise<string>; cancel: () => void };
+const { prefix, bits, rounds } = workerData;
+const solutions = [];
+for (let round = 0; round < rounds; round++) {
+  for (let counter = 0; ; counter++) {
+    const pow = counter.toString(36);
+    const digest = createHash("sha256").update(prefix + round + ":" + pow).digest();
+    let zeros = 0;
+    for (const byte of digest) { if (byte === 0) { zeros += 8; continue; } zeros += Math.clz32(byte) - 24; break; }
+    if (zeros >= bits) { solutions.push(pow); break; }
+  }
+}
+parentPort.postMessage(solutions.join("."));`;
+export type PowJob = { nonce: string; bits: number; rounds: number; promise: Promise<string>; cancel: () => void };
 // Bun (the test runner) cannot terminate inline workers reliably; the app itself runs on Node inside Electron.
 const POW_IN_WORKER = typeof process.versions.bun !== "string";
-export function startSessionPow(machineId: string, nonce: string, bits: number, inWorker = POW_IN_WORKER): PowJob {
-  const message = desktopFreeSessionPowMessage({ machineId, nonce, pow: "" });
+export function startSessionPow(machineId: string, nonce: string, bits: number, rounds: number, inWorker = POW_IN_WORKER): PowJob {
+  const prefix = `${machineId}:${nonce.toLowerCase()}:`;
   let worker: Worker | null = null;
   let cancelled = false;
   const solved = new Promise<string>((resolve, reject) => {
-    if (!inWorker) { setImmediate(() => { try { resolve(solveSessionPow(machineId, nonce, bits)); } catch (error) { reject(error); } }); return; }
+    if (!inWorker) { setImmediate(() => { try { resolve(solveSessionPow(machineId, nonce, bits, rounds)); } catch (error) { reject(error); } }); return; }
     try {
-      worker = new Worker(POW_WORKER_SOURCE, { eval: true, workerData: { message, bits } });
+      worker = new Worker(POW_WORKER_SOURCE, { eval: true, workerData: { prefix, bits, rounds } });
       worker.once("message", (pow: unknown) => { if (typeof pow === "string") resolve(pow); else reject(new Error("Invalid proof of work.")); });
       worker.once("error", reject);
       worker.once("exit", (code: number) => { if (code !== 0) reject(new Error("Proof of work worker exited.")); });
     } catch (error) { reject(error); }
   });
   // A worker failure falls back to solving in process, unless the job was cancelled: then nobody is waiting.
-  const promise = solved.catch((error: unknown) => { if (cancelled) throw error; return solveSessionPow(machineId, nonce, bits); });
+  const promise = solved.catch((error: unknown) => { if (cancelled) throw error; return solveSessionPow(machineId, nonce, bits, rounds); });
   const cancel = () => { cancelled = true; promise.catch(() => undefined); void worker?.terminate(); };
-  return { nonce, bits, promise, cancel };
+  return { nonce, bits, rounds, promise, cancel };
 }
 // Engine calls are relayed only while a task the user started from the app is live.
 const ACTIVATION_IDLE_MS = 15 * 60_000;
@@ -200,7 +206,10 @@ export class AnonymousInferenceService {
   private preferenceQueue: Promise<void> = Promise.resolve();
   private activation: { openedAt: number; lastActivityAt: number; sessions: Set<string> } | null = null;
   private sessionPowBits: number;
+  private sessionPowRounds: number;
   private powJob: PowJob | null = null;
+  private readonly heartbeatMs: number;
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly config: ServerConfig, private readonly logger: {
     log: (level: "info" | "warn" | "error", message: string, attributes?: Record<string, unknown>) => void;
@@ -208,6 +217,11 @@ export class AnonymousInferenceService {
     this.origin = resolveAnonymousInferenceOrigin(environment);
     const powBits = Number(environment.OPENWORK_FREE_SESSION_POW_BITS ?? DESKTOP_FREE_SESSION_POW_BITS);
     this.sessionPowBits = Number.isSafeInteger(powBits) && powBits >= 0 && powBits <= DESKTOP_FREE_SESSION_POW_MAX_BITS ? powBits : DESKTOP_FREE_SESSION_POW_BITS;
+    const powRounds = Number(environment.OPENWORK_FREE_SESSION_POW_ROUNDS ?? DESKTOP_FREE_SESSION_POW_ROUNDS);
+    this.sessionPowRounds = Number.isSafeInteger(powRounds) && powRounds >= 1 && powRounds <= DESKTOP_FREE_SESSION_POW_MAX_ROUNDS ? powRounds : DESKTOP_FREE_SESSION_POW_ROUNDS;
+    // While the app is open and signed out, a signed status check every minute tells the gateway the app is in use.
+    const heartbeatMs = Number(environment.OPENWORK_FREE_HEARTBEAT_MS ?? 60_000);
+    this.heartbeatMs = Number.isSafeInteger(heartbeatMs) && heartbeatMs >= 0 ? heartbeatMs : 60_000;
     this.allowLocalDen = environment.OPENWORK_DEV_MODE === "1" || environment.NODE_ENV === "test";
     this.enabled = Boolean(config.anonymousInference?.desktop) && !config.readOnly
       && ![environment.OPENWORK_DISABLE_FREE_INFERENCE, environment.OPENWORK_DISABLE_HOSTED_MODELS, environment.VITE_DISABLE_OPENWORK_MODELS]
@@ -342,6 +356,7 @@ export class AnonymousInferenceService {
         return { ...snapshot, provider: mergeRuntimeProviderUpdate(snapshot.provider, { [ANONYMOUS_INFERENCE_PROVIDER_ID]: null }) };
       }
       this.available = true;
+      this.startHeartbeat();
       const provider = {
         name: ANONYMOUS_INFERENCE_PROVIDER_NAME, npm: "@ai-sdk/openai-compatible",
         options: { apiKey: this.localAccessToken, baseURL: `http://127.0.0.1:${boundPort}${LOCAL_ROUTE_PREFIX}` },
@@ -527,32 +542,44 @@ export class AnonymousInferenceService {
   }
 
   /** Has (or starts) a solved proof of work ready for the next guest session; returns the nonce it is bound to. */
-  warmSessionPow(machineId: string, bits = this.sessionPowBits): { nonce: string; ready: Promise<void> } {
-    if (!this.powJob || this.powJob.bits < bits) {
+  warmSessionPow(machineId: string, bits = this.sessionPowBits, rounds = this.sessionPowRounds): { nonce: string; ready: Promise<void> } {
+    if (!this.powJob || this.powJob.bits < bits || this.powJob.rounds !== rounds) {
       this.powJob?.cancel();
-      this.powJob = startSessionPow(machineId, randomUUID(), bits);
+      this.powJob = startSessionPow(machineId, randomUUID(), bits, rounds);
     }
     const job = this.powJob;
     return { nonce: job.nonce, ready: job.promise.then(() => undefined) };
   }
-  private takeSessionPow(machineId: string, bits: number): PowJob {
-    const job = this.powJob && this.powJob.bits >= bits ? this.powJob : startSessionPow(machineId, randomUUID(), bits);
+  private takeSessionPow(machineId: string, bits: number, rounds: number): PowJob {
+    const job = this.powJob && this.powJob.bits >= bits && this.powJob.rounds === rounds ? this.powJob : startSessionPow(machineId, randomUUID(), bits, rounds);
     if (this.powJob === job) this.powJob = null;
     return job;
+  }
+  private startHeartbeat(): void {
+    if (this.heartbeat || this.heartbeatMs === 0) return;
+    this.heartbeat = setInterval(() => {
+      if (this.stopped || !this.available || this.memberSession) return;
+      void this.status(true).catch(() => undefined);
+    }, this.heartbeatMs);
+    this.heartbeat.unref?.();
+  }
+  private stopHeartbeat(): void {
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = null;
   }
 
   private async guestSession(): Promise<DesktopFreeSession> {
     if (this.session && this.session.expiresAt - 30_000 > Date.now()) return this.session;
     if (this.sessionPromise) return this.sessionPromise;
     const signal = this.identityController.signal;
-    const mint = async (bits = this.sessionPowBits, retry = true): Promise<DesktopFreeSession> => {
+    const mint = async (bits = this.sessionPowBits, rounds = this.sessionPowRounds, retry = true): Promise<DesktopFreeSession> => {
       // The signed proof carries the machine identity; the body carries the proof of work for the proof's own nonce.
       const { machineId } = await this.config.anonymousInference!.desktop.identity();
-      const job = this.takeSessionPow(machineId, bits);
+      const job = this.takeSessionPow(machineId, bits, rounds);
       const nonce = job.nonce;
       const pow = await job.promise;
       // The next session's work starts now, so it is ready long before this session expires.
-      this.warmSessionPow(machineId, bits);
+      this.warmSessionPow(machineId, bits, rounds);
       const body = new TextEncoder().encode(JSON.stringify({ pow }));
       let response: Response;
       try {
@@ -560,10 +587,14 @@ export class AnonymousInferenceService {
       } catch (error) {
         // The gateway may ask for more work than this build assumed; do it once.
         const asked = error instanceof RemoteFailure && error.status === 400 ? error.payload() : null;
-        const required = asked?.code === "session_pow_required" && typeof asked.bits === "number" ? asked.bits : null;
-        if (retry && required !== null && Number.isSafeInteger(required) && required > bits && required <= DESKTOP_FREE_SESSION_POW_MAX_BITS) {
-          this.sessionPowBits = required;
-          return mint(required, false);
+        const requiredBits = asked?.code === "session_pow_required" && typeof asked.bits === "number" ? asked.bits : null;
+        const requiredRounds = asked?.code === "session_pow_required" && typeof asked.rounds === "number" ? asked.rounds : rounds;
+        if (retry && requiredBits !== null && Number.isSafeInteger(requiredBits) && Number.isSafeInteger(requiredRounds)
+          && requiredBits <= DESKTOP_FREE_SESSION_POW_MAX_BITS && requiredRounds >= 1 && requiredRounds <= DESKTOP_FREE_SESSION_POW_MAX_ROUNDS
+          && (requiredBits > bits || requiredRounds !== rounds)) {
+          this.sessionPowBits = requiredBits;
+          this.sessionPowRounds = requiredRounds;
+          return mint(requiredBits, requiredRounds, false);
         }
         throw error;
       }
@@ -692,6 +723,7 @@ export class AnonymousInferenceService {
   private disable(): void {
     this.available = false;
     this.activation = null;
+    this.stopHeartbeat();
     this.memberCredential = null;
     this.memberCredentialPromise = null;
     this.sessionPromise = null;

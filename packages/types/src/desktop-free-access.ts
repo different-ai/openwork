@@ -14,12 +14,19 @@ export const MEMBER_FREE_MODELS_PATH = "/api/v1/models";
 export const MEMBER_FREE_CHAT_PATH = "/api/v1/chat/completions";
 export const DESKTOP_FREE_PROOF_MAX_BYTES = 2048;
 /** Minting a guest session costs a small proof-of-work bound to the request's single-use nonce. */
-/** ~3 s of hashing on a laptop; the desktop solves it in the background while the app loads. */
-export const DESKTOP_FREE_SESSION_POW_BITS = 23;
-export const DESKTOP_FREE_SESSION_POW_MAX_BITS = 26;
-export const DESKTOP_FREE_SESSION_POW_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-export function desktopFreeSessionPowMessage(input: { machineId: string; nonce: string; pow: string }): string {
-  return `${input.machineId}:${input.nonce.toLowerCase()}:${input.pow}`;
+/**
+ * Several small puzzles rather than one large one: the total time clusters
+ * around 1–3 s on a laptop instead of occasionally taking many times longer.
+ * The desktop solves it in the background while the app loads.
+ */
+export const DESKTOP_FREE_SESSION_POW_BITS = 19;
+export const DESKTOP_FREE_SESSION_POW_MAX_BITS = 24;
+export const DESKTOP_FREE_SESSION_POW_ROUNDS = 8;
+export const DESKTOP_FREE_SESSION_POW_MAX_ROUNDS = 16;
+/** Round solutions joined by "."; each solution is short base36. */
+export const DESKTOP_FREE_SESSION_POW_PATTERN = /^[A-Za-z0-9_-]{1,32}(?:\.[A-Za-z0-9_-]{1,32}){0,15}$/;
+export function desktopFreeSessionPowMessage(input: { machineId: string; nonce: string; round: number; pow: string }): string {
+  return `${input.machineId}:${input.nonce.toLowerCase()}:${input.round}:${input.pow}`;
 }
 export function leadingZeroBits(digest: Uint8Array): number {
   let bits = 0;

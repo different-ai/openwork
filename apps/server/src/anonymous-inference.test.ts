@@ -41,7 +41,7 @@ async function fixture(run: (input: {
   requests: ObservedRequest[]; signed: Parameters<DesktopFreeSigner["sign"]>[0][];
   reject: (path: string, status: number, payload: unknown, headers?: HeadersInit) => void;
   rejectOnce: (path: string, status: number, payload: unknown) => void;
-  sessionPowBits: (body: string, proof: Parameters<DesktopFreeSigner["sign"]>[0] | undefined) => number;
+  sessionPowBits: (body: string, proof: Parameters<DesktopFreeSigner["sign"]>[0] | undefined, rounds?: number) => number;
   localRequest: (endpoint?: string, body?: string, sessionID?: string) => Promise<Request>;
   connectMember: () => Promise<void>;
   /** What the app does when the user presses send with Auto selected. */
@@ -49,7 +49,7 @@ async function fixture(run: (input: {
   endSession: (sessionID?: string, how?: "abort" | "delete") => Promise<void>;
   advance: (ms: number) => void;
   pauseCredential: () => { started: Promise<void>; release: () => void };
-}) => Promise<void>, native = true) {
+}) => Promise<void>, native = true, environmentOverrides: Record<string, string> = {}) {
   const root = await mkdtemp(join(tmpdir(), "openwork-free-inference-"));
   const previousDb = process.env.OPENWORK_RUNTIME_DB;
   process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
@@ -74,10 +74,13 @@ async function fixture(run: (input: {
   };
   const machineId = "c".repeat(64);
   // How much work the relay did for this mint: bits over the machine id and the nonce it asked the signer to use.
-  const sessionPowBits = (body: string, proof: Parameters<DesktopFreeSigner["sign"]>[0] | undefined) => {
+  const sessionPowBits = (body: string, proof: Parameters<DesktopFreeSigner["sign"]>[0] | undefined, rounds?: number) => {
     const pow = (JSON.parse(body) as { pow?: unknown }).pow;
     if (typeof pow !== "string" || typeof proof?.nonce !== "string") return -1;
-    return leadingZeroBits(createHash("sha256").update(desktopFreeSessionPowMessage({ machineId, nonce: proof.nonce, pow })).digest());
+    const solutions = pow.split(".");
+    if (solutions.length !== (rounds ?? solutions.length)) return -1;
+    const nonce = proof.nonce;
+    return Math.min(...solutions.map((solution, round) => leadingZeroBits(createHash("sha256").update(desktopFreeSessionPowMessage({ machineId, nonce, round, pow: solution })).digest())));
   };
   const gateway = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const { path, headers, method, body } = await observe(request);
@@ -135,7 +138,7 @@ async function fixture(run: (input: {
   };
   const envPath = join(root, "env.json");
   const env = new EnvService({ path: envPath });
-  const environment = { NODE_ENV: "test", OPENWORK_FREE_INFERENCE_ORIGIN: origin, OPENWORK_FREE_SESSION_POW_BITS: "8" };
+  const environment = { NODE_ENV: "test", OPENWORK_FREE_INFERENCE_ORIGIN: origin, OPENWORK_FREE_SESSION_POW_BITS: "8", OPENWORK_FREE_SESSION_POW_ROUNDS: "2", OPENWORK_FREE_HEARTBEAT_MS: "0", ...environmentOverrides };
   let clock = Date.now();
   const service = new AnonymousInferenceService(config, { log: () => {} }, environment, () => clock);
   try {
@@ -671,14 +674,13 @@ test("the first guest session uses work started while the app loaded, and the ne
 test("minting a guest session does the proof of work for its own nonce and redoes it once if the gateway wants more", async () => {
   await fixture(async ({ service, requests, signed, rejectOnce, sessionPowBits, activate, localRequest }) => {
     await service.initialize(9876);
-    rejectOnce(DESKTOP_FREE_SESSION_PATH, 400, { error: { code: "session_pow_required", bits: 10 } });
+    rejectOnce(DESKTOP_FREE_SESSION_PATH, 400, { error: { code: "session_pow_required", bits: 10, rounds: 3 } });
     await activate();
     expect(await (await service.handle(await localRequest(), "chat/completions")).text()).toContain("[DONE]");
     const mints = requests.map((request, index) => ({ request, proof: signed[index] })).filter(({ request }) => request.path === DESKTOP_FREE_SESSION_PATH);
     expect(mints).toHaveLength(2);
-    const [first, second] = mints.map(({ request, proof }) => sessionPowBits(request.body, proof));
-    expect(first).toBeGreaterThanOrEqual(8);
-    expect(second).toBeGreaterThanOrEqual(10);
+    expect(sessionPowBits(mints[0].request.body, mints[0].proof, 2)).toBeGreaterThanOrEqual(8);
+    expect(sessionPowBits(mints[1].request.body, mints[1].proof, 3)).toBeGreaterThanOrEqual(10);
     expect(mints[0].proof?.nonce).not.toBe(mints[1].proof?.nonce);
     // A demand beyond the supported maximum is not honoured.
     rejectOnce(DESKTOP_FREE_SESSION_PATH, 400, { error: { code: "session_pow_required", bits: 40 } });
@@ -686,4 +688,18 @@ test("minting a guest session does the proof of work for its own nonce and redoe
     await service.setMemberSession(null);
     expect((await service.status(true)).state).toBe("unavailable");
   });
+});
+
+test("while the app is open and signed out, the relay sends a signed status heartbeat so active time accrues", async () => {
+  await fixture(async ({ service, requests, connectMember }) => {
+    await service.initialize(9876);
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    const beats = requests.filter((request) => request.path === DESKTOP_FREE_STATUS_PATH).length;
+    expect(beats).toBeGreaterThanOrEqual(2);
+    await connectMember();
+    const afterSignIn = requests.filter((request) => request.path === DESKTOP_FREE_STATUS_PATH).length;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(requests.filter((request) => request.path === DESKTOP_FREE_STATUS_PATH).length).toBe(afterSignIn);
+    service.stop();
+  }, true, { OPENWORK_FREE_HEARTBEAT_MS: "60" });
 });
