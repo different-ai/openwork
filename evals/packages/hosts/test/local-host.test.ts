@@ -198,6 +198,73 @@ test("freePort kills a real child listener and releases its port", {
   }
 });
 
+test("surface cleanup leaves a listener from another process group alone", {
+  skip: process.platform !== "darwin" && process.platform !== "linux",
+}, async () => {
+  // A packaged surface allocates a Vite port it never binds; a concurrently
+  // booting app can take that port. Disposing the first surface must not kill it.
+  const port = await allocateFreePort();
+  const bystander = spawn(process.execPath, [
+    "-e",
+    "require('node:net').createServer().listen(Number(process.argv[1]), '127.0.0.1', () => process.stdout.write('ready\\n'))",
+    String(port),
+  ], { detached: true, stdio: ["ignore", "pipe", "inherit"] });
+  const logs: string[] = [];
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Listener child did not bind port ${port}.`)), 5_000);
+      bystander.once("error", reject);
+      bystander.stdout?.once("data", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    assert(bystander.pid);
+    const unrelatedGroup = bystander.pid + 1_000_000;
+
+    await freePort(port, { log: (message) => logs.push(message), ownerProcessGroup: unrelatedGroup });
+
+    assert.equal(bystander.exitCode, null);
+    assert.equal(bystander.signalCode, null);
+    process.kill(bystander.pid, 0);
+    assert(logs.some((message) => message.includes("leaving it alone")));
+  } finally {
+    if (bystander.exitCode === null && bystander.signalCode === null) bystander.kill("SIGKILL");
+  }
+});
+
+test("surface cleanup still stops a listener in the surface's own process group", {
+  skip: process.platform !== "darwin" && process.platform !== "linux",
+}, async () => {
+  const port = await allocateFreePort();
+  const owned = spawn(process.execPath, [
+    "-e",
+    "require('node:net').createServer().listen(Number(process.argv[1]), '127.0.0.1', () => process.stdout.write('ready\\n'))",
+    String(port),
+  ], { detached: true, stdio: ["ignore", "pipe", "inherit"] });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Listener child did not bind port ${port}.`)), 5_000);
+      owned.once("error", reject);
+      owned.stdout?.once("data", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    assert(owned.pid);
+
+    await freePort(port, { ownerProcessGroup: owned.pid });
+
+    await new Promise<void>((resolve, reject) => {
+      const probe = createServer();
+      probe.once("error", reject);
+      probe.listen(port, "127.0.0.1", () => probe.close((error) => error ? reject(error) : resolve()));
+    });
+  } finally {
+    if (owned.exitCode === null && owned.signalCode === null) owned.kill("SIGKILL");
+  }
+});
+
 test("pruneStaleSurfaceProfiles removes untracked profiles and never touches live ones", async () => {
   const rootDir = await mkdtemp(join(tmpdir(), "openwork-surface-prune-"));
   const livePath = resolve(rootDir, "live-a");
