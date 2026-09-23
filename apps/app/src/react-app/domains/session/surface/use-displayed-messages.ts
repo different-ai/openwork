@@ -1,13 +1,43 @@
 import { useMemo } from "react";
 import type { UIMessage } from "ai";
-import type { ComposerAttachment } from "../../../../app/types";
+import type { ComposerAttachment, ComposerPart } from "../../../../app/types";
 import { resolveAttachmentFileMetadata } from "../sync/attachment-file-part";
 import type { ComposerSessionState } from "./composer-state-store";
 import { resolvePastedTextPlaceholders } from "./composer/pasted-text";
+import { composerPillFromPart, composerPillText } from "./composer/composer-pills";
 
-export function pendingMessageParts(text: string, attachments: ComposerAttachment[], serverParts: UIMessage["parts"] = []) {
+/**
+ * Text parts for a pending user turn, built from the draft's parts so composer
+ * pills render as pills before the server echoes the message. Returns
+ * undefined when the draft has no pills and plain text is enough.
+ */
+export function pendingDraftTextParts(parts: readonly ComposerPart[]): UIMessage["parts"] | undefined {
+  const hasPill = parts.some((part) => part.type === "skill" || part.type === "connect-skill" || part.type === "connector" || part.type === "app" || part.type === "computer");
+  if (!hasPill) return undefined;
+  return parts.flatMap<UIMessage["parts"][number]>((part) => {
+    switch (part.type) {
+      case "skill":
+      case "connect-skill":
+      case "connector":
+      case "app":
+      case "computer": {
+        const pill = composerPillFromPart(part);
+        return [{ type: "text", text: composerPillText(pill), state: "done", providerMetadata: { opencode: { composerPill: pill } } }];
+      }
+      case "text":
+      case "paste":
+        return part.text ? [{ type: "text", text: part.text, state: "done" }] : [];
+      case "agent":
+        return [{ type: "text", text: `@${part.name}`, state: "done" }];
+      case "file":
+        return [{ type: "text", text: `@${part.path}`, state: "done" }];
+    }
+  });
+}
+
+export function pendingMessageParts(text: string, attachments: ComposerAttachment[], serverParts: UIMessage["parts"] = [], textParts?: UIMessage["parts"]) {
   const parts = [...serverParts];
-  if (text && !parts.some((part) => part.type === "text" && part.text)) parts.unshift({ type: "text", text });
+  if (text && !parts.some((part) => part.type === "text" && part.text)) parts.unshift(...(textParts ?? [{ type: "text", text }]));
   const matched = new Set<number>();
   let attachmentsReady = true;
   for (const attachment of attachments) {

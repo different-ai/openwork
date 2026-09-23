@@ -248,9 +248,10 @@ describe("computer task mentions", () => {
 describe("generated mention instructions", () => {
   const connected = { type: "connect-skill", slug: "summarize", name: "Summarize", marketplace: "Team tools", capability: "skill:summarize" } satisfies ComposerPart;
   const cases: { part: ComposerPart; token: string; label: string; instruction: string }[] = [
-    { part: { type: "app", name: "Notes" }, token: "@Notes", label: "@Notes", instruction: "computer-use tools" },
+    { part: { type: "app", name: "Notes" }, token: "@Notes", label: "@Notes", instruction: "computer_discover" },
     { part: { type: "skill", name: "summarize" }, token: "[skill summarize]", label: "[skill summarize]", instruction: "follow its instructions" },
     { part: connected, token: encodeConnectSkillToken(connected), label: "/summarize", instruction: "skill:summarize" },
+    { part: { type: "connector", name: "GitHub" }, token: "[connector GitHub]", label: "[connector GitHub]", instruction: "\"GitHub\" connector" },
   ];
   for (const { part, token, label, instruction } of cases) {
     test(`${part.type} preserves its label and hides instructions in both send branches`, async () => {
@@ -263,7 +264,7 @@ describe("generated mention instructions", () => {
           .map((part) => part.type === "text" ? part.text : "").join(""))
           .toBe(`${label} Please summarize. `);
         expect(parts.filter((part) => part.type === "text" && part.synthetic)).toEqual([
-          { type: "text", synthetic: true, text: expect.stringContaining(instruction) },
+          expect.objectContaining({ type: "text", synthetic: true, text: expect.stringContaining(instruction) }),
         ]);
       }
     });

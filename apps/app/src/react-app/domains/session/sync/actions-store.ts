@@ -34,7 +34,7 @@ import { addOpencodeCacheHint, safeStringify } from "../../../../app/utils";
 import { clearSessionDraft, LOCAL_SESSION_DRAFT_SCOPE, saveSessionDraft } from "./draft-store";
 import { firstLineLocalFileParts, isReadInlineablePath } from "./prompt-file-parts";
 import { composerAttachmentToFilePart } from "./attachment-file-part";
-import { mentionPromptParts } from "./mention-parts";
+import { composerPillFromPart, composerPillPromptParts } from "../surface/composer/composer-pills";
 
 type SessionModelConfig = {
   applyPendingSessionChoice: (sessionId: string) => void;
@@ -163,9 +163,9 @@ export function createSessionActionsStore(options: {
         parts.push({ type: "agent", name: part.name } as AgentPartInput);
         continue;
       }
-      if (part.type === "computer" || part.type === "app" || part.type === "skill" || part.type === "connect-skill") {
-        // The resolved user text already contains the visible mention label.
-        const [, instruction] = mentionPromptParts(part);
+      if (part.type === "computer" || part.type === "app" || part.type === "skill" || part.type === "connect-skill" || part.type === "connector") {
+        // The resolved user text already contains the visible pill text.
+        const [, instruction] = composerPillPromptParts(composerPillFromPart(part));
         parts.push(instruction);
         continue;
       }

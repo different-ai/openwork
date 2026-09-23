@@ -9,6 +9,7 @@ import {
   parseStructuredOutputUIPart,
   STRUCTURED_OUTPUT_TOOL,
 } from "./parse-tool-parts";
+import { readComposerPill } from "../surface/composer/composer-pills";
 import {
   presentOpencodeSessionError,
   type OpencodeSessionErrorPresentation,
@@ -144,6 +145,7 @@ export function attachmentNoteToUIParts(part: TextPart): UIMessage["parts"] {
 export function textPartToUIPart(part: TextPart): UIMessage["parts"][number] | null {
   if (part.synthetic || part.ignored) return null;
   const composerToken = part.metadata?.openworkComposerToken;
+  const composerPill = readComposerPill(part.metadata?.openworkComposerPill);
   return {
     type: "text",
     text: part.text,
@@ -151,6 +153,7 @@ export function textPartToUIPart(part: TextPart): UIMessage["parts"][number] | n
     providerMetadata: { opencode: {
       partId: part.id,
       ...(typeof composerToken === "string" ? { composerToken } : {}),
+      ...(composerPill ? { composerPill } : {}),
     } },
   };
 }

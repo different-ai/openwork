@@ -12,7 +12,7 @@ import { parseDynamicToolUIPart } from "../src/react-app/domains/session/sync/pa
 import { codeModeToolCalls } from "../src/lib/code-mode-tools";
 import { getModelBehaviorControls, getModelBehaviorOptions } from "../src/app/lib/model-behavior";
 import { catalogFastVariants, fastVariantId, nativeModelVariants } from "@openwork/types/cloud-model-fast";
-import { mentionPromptParts } from "../src/react-app/domains/session/sync/mention-parts";
+import { composerPillPromptParts } from "../src/react-app/domains/session/surface/composer/composer-pills";
 
 describe("explicit native skill attachments", () => {
   test("preserves v1 instructions but attaches live native IDs on v2, deduplicated", async () => {
@@ -24,7 +24,7 @@ describe("explicit native skill attachments", () => {
       return jsonResponse({ data: request.url.endsWith("/skill") ? [{ id: "native-release", name: "release" }] : { effect: "allow" } });
     };
     try {
-      const selected = mentionPromptParts({ type: "skill", name: "release" });
+      const selected = composerPillPromptParts({ kind: "skill", name: "release" });
       expect(selected[1]).toMatchObject({ synthetic: true, text: "Load [skill release] and follow its instructions." });
       const parts = [{ type: "text", text: "Prepare a report " }, ...selected, selected[1]];
       expect(v2PromptText(parts)).toBe("Prepare a report [skill release]");
@@ -46,7 +46,7 @@ describe("explicit native skill attachments", () => {
     try {
       const result = await createClientV2("http://localhost:4096/opencode2", "/workspace", {}).session.promptAsync({
         sessionID: "ses_skills", model: { providerID: "witness", modelID: "model" },
-        parts: mentionPromptParts({ type: "skill", name: "release" }),
+        parts: composerPillPromptParts({ kind: "skill", name: "release" }),
       });
       expect(result.error).toMatchObject({ message: expect.stringContaining("Nothing was sent") });
       expect(methods).toEqual(["GET"]);
@@ -70,7 +70,7 @@ describe("explicit native skill attachments", () => {
     try {
       const result = await createClientV2("http://localhost:4096/opencode2", "/workspace", {}).session.promptAsync({
         sessionID: "ses_skills", model: { providerID: "witness", modelID: "model" },
-        parts: mentionPromptParts({ type: "skill", name: "release" }),
+        parts: composerPillPromptParts({ kind: "skill", name: "release" }),
       });
       expect(result.error).toMatchObject({ message: expect.stringContaining("Nothing was sent") });
       expect(paths).toEqual(["/opencode2/api/skill", "/opencode2/api/session/ses_skills/permission"]);

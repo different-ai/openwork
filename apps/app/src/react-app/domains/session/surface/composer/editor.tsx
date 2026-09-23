@@ -38,7 +38,7 @@ import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
 import { parseConnectSkillToken } from "./connect-skill-token";
 import { encodeConnectorToken, parseConnectorToken } from "./connector-token";
-import { humanizeCapabilityName } from "./composer-plus-menu-model";
+import { COMPOSER_DRAFT_TOKEN_RE, COMPOSER_MENTION_CLASS, COMPOSER_TOKEN_CLASS, composerPillLabel } from "./composer-pills";
 import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
 import { insertPastedText } from "./pasted-text-insertion";
 import { lineBoundaryMoveForKey } from "./line-boundary-keys";
@@ -108,14 +108,7 @@ type SerializedComposerSkillNode = Spread<
   SerializedTextNode
 >;
 
-const MENTION_PILL_CLASS: Record<ComposerMentionKind, string> = {
-  computer: "inline-flex items-center rounded-full border border-sky-6/35 bg-sky-3/20 px-2.5 py-1 text-xs font-medium text-sky-11",
-  file: "inline-flex items-center rounded-full border border-gray-6 bg-gray-3 px-2.5 py-1 text-xs font-medium text-gray-11",
-  agent: "inline-flex items-center rounded-full border border-sky-6/35 bg-sky-3/20 px-2.5 py-1 text-xs font-medium text-sky-11",
-  app: "inline-flex items-center rounded-full border border-cyan-6/35 bg-cyan-3/20 px-2.5 py-1 text-xs font-medium text-cyan-11",
-};
-
-const COMPOSER_TOKEN_CLASS = "inline-flex items-center rounded-md bg-gray-3 px-1.5 py-0.5 text-xs font-medium text-gray-12";
+const MENTION_PILL_CLASS: Record<ComposerMentionKind, string> = COMPOSER_MENTION_CLASS;
 
 function mentionPillText(value: string, kind: ComposerMentionKind) {
   return `@${kind === "file" ? value.split(/[\\/]/).pop() || value : value}`;
@@ -296,7 +289,7 @@ class ComposerSkillNode extends TextNode {
   override createDOM(_config: EditorConfig) {
     const dom = document.createElement("span");
     dom.className = COMPOSER_TOKEN_CLASS;
-    dom.textContent = humanizeCapabilityName(this.__skillName);
+    dom.textContent = composerPillLabel({ kind: "skill", name: this.__skillName });
     dom.contentEditable = "false";
     dom.setAttribute("spellcheck", "false");
     dom.title = `Skill: ${this.__skillName}`;
@@ -305,7 +298,7 @@ class ComposerSkillNode extends TextNode {
 
   override updateDOM(prevNode: ComposerSkillNode, dom: HTMLElement) {
     if (prevNode.__skillName !== this.__skillName) {
-      dom.textContent = humanizeCapabilityName(this.__skillName);
+      dom.textContent = composerPillLabel({ kind: "skill", name: this.__skillName });
       dom.title = `Skill: ${this.__skillName}`;
     }
     return false;
@@ -374,7 +367,7 @@ class ComposerConnectorNode extends TextNode {
   override createDOM(_config: EditorConfig) {
     const dom = document.createElement("span");
     dom.className = COMPOSER_TOKEN_CLASS;
-    dom.textContent = this.__connectorName;
+    dom.textContent = composerPillLabel({ kind: "connector", name: this.__connectorName });
     dom.contentEditable = "false";
     dom.setAttribute("spellcheck", "false");
     dom.dataset.composerConnector = this.__connectorName;
@@ -384,7 +377,7 @@ class ComposerConnectorNode extends TextNode {
 
   override updateDOM(prevNode: ComposerConnectorNode, dom: HTMLElement) {
     if (prevNode.__connectorName !== this.__connectorName) {
-      dom.textContent = this.__connectorName;
+      dom.textContent = composerPillLabel({ kind: "connector", name: this.__connectorName });
       dom.dataset.composerConnector = this.__connectorName;
       dom.title = `Connector: ${this.__connectorName}`;
     }
@@ -839,7 +832,7 @@ function setPrompt(
     value = slashMatch[2] ?? "";
   }
 
-  const segments = value.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|@[^\s@]+)/);
+  const segments = value.split(COMPOSER_DRAFT_TOKEN_RE);
   const pastedTextByLabel = new Map((pastedText ?? []).map((item) => [item.label, item]));
   const attachmentsById = new Map((attachments ?? []).map((item) => [item.id, item]));
   for (const segment of segments) {
