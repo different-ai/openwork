@@ -50,7 +50,6 @@ export type RemoteSkillDescriptor = {
   pluginName?: string
   capability: string
   location: string
-  revision?: string
 }
 
 export type AccessibleMarketplaceCapabilityReference = {
@@ -729,23 +728,12 @@ export async function listAccessibleMarketplaceSkillDescriptors(input: {
     rows: (await listActiveCapabilityRows(organizationId))
       .filter((row) => row.configObject.objectType === "skill"),
   })
-  // Fetch only immutable identities, not every historical skill body.
-  const configObjectIds = rows.map(row => row.configObject.id)
-  const versionRows = configObjectIds.length ? await db.select({
-    id: ConfigObjectVersionTable.id, configObjectId: ConfigObjectVersionTable.configObjectId,
-  }).from(ConfigObjectVersionTable).where(and(
-    eq(ConfigObjectVersionTable.organizationId, organizationId),
-    inArray(ConfigObjectVersionTable.configObjectId, configObjectIds),
-  )).orderBy(desc(ConfigObjectVersionTable.createdAt), desc(ConfigObjectVersionTable.id)) : []
-  const versions = new Map<string, string>()
-  for (const row of versionRows) if (!versions.has(row.configObjectId)) versions.set(row.configObjectId, row.id)
   const descriptors = new Map<string, RemoteSkillDescriptor>()
   for (const row of rows) {
     const capability = buildMarketplaceCapabilityName(row.plugin.id, row.configObject.id)
     if (descriptors.has(capability)) continue
     const uniqueSuffix = `${row.plugin.id.slice(-4)}${row.configObject.id.slice(-4)}`
     const name = standardSkillName(row.configObject.title, uniqueSuffix)
-    const version = versions.get(row.configObject.id)
     descriptors.set(capability, {
       name,
       title: row.configObject.title,
@@ -758,7 +746,6 @@ export async function listAccessibleMarketplaceSkillDescriptors(input: {
       pluginName: row.plugin.name,
       capability,
       location: `skill://${name}/SKILL.md`,
-      ...(version ? { revision: version } : {}),
     })
   }
 

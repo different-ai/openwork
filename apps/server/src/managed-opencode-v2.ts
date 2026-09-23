@@ -185,8 +185,8 @@ export async function createManagedOpencodeV2Server(
   // Replace the generated config before boot, removing stale managed-policy
   // registrations while retaining independent engine permissions. Leave the
   // old entrypoint on disk: another configuration may still reference it.
-  // Boot registers no skill directories: a stale materialized root is never
-  // visible until a fresh cloud skill sync succeeds.
+  // Cloud skills use Connect on demand, just like v1. No generated Cloud
+  // skill directory is registered with the native engine.
   await writeConfig();
   const child = spawn(options.bin, ["serve", "--hostname", hostname, "--port", String(port)], {
     env: {

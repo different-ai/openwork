@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto"
 import {
   McpServer,
   ProtocolError,
@@ -217,23 +216,16 @@ export const AGENT_SKILL_INDEX_SCHEMA = "https://schemas.agentskills.io/discover
 export function buildAgentSkillIndex(skills: RemoteSkillDescriptor[]) {
   return {
     $schema: AGENT_SKILL_INDEX_SCHEMA,
-    skills: skills.map((skill) => {
-      const builtin = executeBuiltinSkillCapability(skill.capability)
-      // Include rendered metadata as well as the immutable version identity:
-      // a description-only edit also changes the native SKILL.md frontmatter.
-      const revision = builtin?.content ?? skill.revision
-      return {
-        name: skill.name,
-        type: "skill-md" as const,
-        title: skill.title,
-        description: skill.description,
-        url: skill.location,
-        capability: skill.capability,
-        ...(revision ? { revision: createHash("sha256").update(JSON.stringify([skill.name, skill.description, revision])).digest("hex") } : {}),
-        ...(skill.marketplaceName ? { marketplaceName: skill.marketplaceName } : {}),
-        ...(skill.pluginName ? { pluginName: skill.pluginName } : {}),
-      }
-    }),
+    skills: skills.map((skill) => ({
+      name: skill.name,
+      type: "skill-md" as const,
+      title: skill.title,
+      description: skill.description,
+      url: skill.location,
+      capability: skill.capability,
+      ...(skill.marketplaceName ? { marketplaceName: skill.marketplaceName } : {}),
+      ...(skill.pluginName ? { pluginName: skill.pluginName } : {}),
+    })),
   }
 }
 

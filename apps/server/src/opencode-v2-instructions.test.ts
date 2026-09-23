@@ -65,53 +65,11 @@ test("skipped native files (malformed frontmatter) are neither expected nor trea
   });
 });
 
-test("materialized cloud skills must be present with their bodies and stale cloud entries gone", async () => {
-  await withWorkspace(async (root) => {
-    const cloudRoot = join(root, "state", "cloud-skills");
-    const scope = join(cloudRoot, "0123456789abcdef");
-    const location = join(scope, "openwork-cloud-aaaaaaaaaaaaaaaa", "SKILL.md");
-    const content = "---\nname: customer-briefing\ndescription: Brief\n---\n\nDo the briefing.\n";
-    const stale = join(cloudRoot, "fedcba9876543210", "openwork-cloud-bbbbbbbbbbbbbbbb", "SKILL.md");
-    let reads = 0;
-    await waitForOpenWorkV2Skills(root, async () => {
-      reads++;
-      if (reads === 1) return { data: [{ id: "openwork-cloud-bbbbbbbbbbbbbbbb", name: "old", location: stale, content: "old" }] };
-      if (reads === 2) return { data: [{ id: "openwork-cloud-aaaaaaaaaaaaaaaa", name: "customer-briefing", location, content: "Previous body" }] };
-      return { data: [{ id: "openwork-cloud-aaaaaaaaaaaaaaaa", name: "customer-briefing", location, content: "\nDo the briefing.\n" }] };
-    }, { root: cloudRoot, state: { root: scope, skills: [{ id: "openwork-cloud-aaaaaaaaaaaaaaaa", uri: "skill://customer-briefing/SKILL.md", location, content }] } });
-    expect(reads).toBe(3);
-  });
-});
-
-test("v2 guidance routes organization skills through the native catalog, not Connect", () => {
-  for (const connected of [true, false]) {
-    const value = buildOpenWorkV2Instructions(connected);
-    expect(value.operatingInstructions).not.toContain("remote skills");
-    expect(value.operatingInstructions).not.toContain("remote skill catalog");
-    expect(value.operatingInstructions).toContain("Authorized organization skills are in the native skill catalog");
-    expect(value.skillInstructions).not.toContain("provided by OpenWork Connect");
-    expect(value.skillInstructions).toContain("openwork-cloud-");
-    expect(Buffer.byteLength(JSON.stringify(value), "utf8")).toBeLessThanOrEqual(7 * 1024);
-  }
-});
-
-test("native admission abandons a revoked cloud snapshot and waits for the replacement", async () => {
-  await withWorkspace(async (root) => {
-    const cloudRoot = join(root, "cloud");
-    const location = join(cloudRoot, "new", "SKILL.md");
-    const snapshot = { root: cloudRoot, state: { root: cloudRoot, skills: [{ id: "new", uri: "skill://parity/SKILL.md", location, content: "Current body" }] } };
-    let current = true;
-    const revoked = await waitForOpenWorkV2Skills(root, async () => {
-      current = false;
-      return { data: [] };
-    }, snapshot, () => current);
-    expect(revoked).toBe(false);
-    let reads = 0;
-    const replacement = await waitForOpenWorkV2Skills(root, async () => {
-      reads++;
-      return { data: reads === 1 ? [] : [{ location, content: "Current body" }] };
-    }, snapshot);
-    expect(replacement).toBe(true);
-    expect(reads).toBe(2);
-  });
+test("v2 uses the v1 remote skill guidance and keeps local skills native", () => {
+  const catalog = "<available_remote_skills>metadata</available_remote_skills>";
+  const connected = buildOpenWorkV2Instructions(true, catalog);
+  expect(connected.operatingInstructions).toContain("remote skills");
+  expect(connected.skillInstructions).toContain("OpenWork Connect");
+  expect(connected.remoteSkills).toBe(catalog);
+  expect(buildOpenWorkV2Instructions(false, catalog).remoteSkills).toBe("");
 });

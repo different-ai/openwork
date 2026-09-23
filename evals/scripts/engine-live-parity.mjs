@@ -6,7 +6,7 @@ import { prepareParityBinaries } from "./engine-parity-binaries.mjs";
 import { median, verifyRun } from "./engine-parity.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const cases = ["LIVE-DESKTOP", "LIVE-ORG", "LIVE-CHAT", "LIVE-FORK", "LIVE-SIDE", "LIVE-SKILLS", "LIVE-MODELS", "LIVE-MCP", "LIVE-CONNECTORS", "LIVE-LAUNCH"];
+const cases = ["LIVE-DESKTOP", "LIVE-ORG", "LIVE-CLOUD", "LIVE-CHAT", "LIVE-FORK", "LIVE-SIDE", "LIVE-SKILLS", "LIVE-MODELS", "LIVE-MCP", "LIVE-CONNECTORS", "LIVE-LAUNCH"];
 const args = process.argv.slice(2);
 if (args.some(arg => !/^--iterations=\d+$/.test(arg))) throw new Error("Usage: pnpm evals:parity:live [--iterations=3]");
 const iterations = Number(args[0]?.split("=")[1] ?? 3);
@@ -69,7 +69,7 @@ for (const metric of ["interactiveMs", "composerReadyMs"]) {
   });
   lines.push(`| ${metric} | ${cells.join(" | ")} |`);
 }
-lines.push("", "## Signed-in normal send", "", "One real-model follow-up per engine after the deliberately delayed first send. Milliseconds from Enter to the visible Working state and completed answer. The v2 case requires native organization skills to be present. These are individual samples, not launch timings or a latency distribution.", "", "| Engine | Starting → Working | Answer completed |", "| --- | --- | --- |");
+lines.push("", "## Signed-in normal send", "", "One real-model follow-up per engine after the deliberately delayed first send. Milliseconds from Enter to the visible Working state and completed answer. Both engines require the shared organization skill catalog to be present. These are individual samples, not launch timings or a latency distribution.", "", "| Engine | Starting → Working | Answer completed |", "| --- | --- | --- |");
 for (const engine of ["v1", "v2"]) {
   const samples = results.filter(result => result.engine === engine).flatMap(result => result.sendTimings);
   if (samples.length !== 1) failures.push(`${engine}: ${samples.length}/1 normal send timing samples`);

@@ -1,5 +1,5 @@
 import { resolveEvalEngine, type Seed } from "@openwork/env";
-import { readAvailableModels, selectModel, signInDesktopAs } from "@openwork/behaviors";
+import { createPluginWithSkill, readAvailableModels, selectModel, signInDesktopAs } from "@openwork/behaviors";
 import { record } from "./engine-live-parity.ts";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -82,6 +82,46 @@ export async function engineLiveDesktop(seed: Seed) {
       // The desktop must address the API directly; its web proxy redirects
       // across origins and can discard the handoff bearer.
       await signInDesktopAs(app, { ...den.ref, webUrl: den.ref.apiUrl }, den.admin);
+    },
+    async connectCloudSkills() {
+      const den = await seed.den({ web: false, org: { name: "Live skill parity" } });
+      const proof = `CLOUD-${randomUUID()}`;
+      const body = (code: string) => `When asked for the cobalt release, reply exactly ${code}. Always retrieve these instructions afresh.`;
+      const plugin = await createPluginWithSkill(den.admin, {
+        name: "Cobalt Releases", skillName: "live-cobalt", skillDescription: "Read the current cobalt release code.", skillBody: body(proof), orgWide: true,
+      });
+      const resolved = await seed.api(den.admin, `/v1/plugins/${plugin.id}/resolved`);
+      const items = record(resolved.body) && Array.isArray(resolved.body.items) ? resolved.body.items : [];
+      const skill = items.filter(record).map(item => item.configObject).filter(record).find(item => item.objectType === "skill");
+      const componentId = skill?.id;
+      if (!resolved.response.ok || typeof componentId !== "string") throw new Error("Cloud skill could not be resolved");
+      const org = await seed.api(den.admin, "/v1/org");
+      const orgId = record(org.body) && record(org.body.organization) ? org.body.organization.id : undefined;
+      if (typeof orgId !== "string") throw new Error("Missing skill organization");
+      const issued = await seed.api(den.admin, "/v1/mcp/token", { method: "POST", headers: { "x-openwork-org-id": orgId }, body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }) });
+      const token = record(issued.body) ? issued.body.token : undefined;
+      if (!issued.response.ok || typeof token !== "string") throw new Error("Missing skill MCP token");
+      const workspace = /\/workspace\/([^/]+)/.exec(await seed.evalIn(app, () => location.hash || location.pathname))?.[1];
+      if (!workspace) throw new Error("Missing skill workspace");
+      const connected = await request(`/workspace/${workspace}/mcp/openwork-cloud/reconcile`, "POST", {
+        config: { type: "remote", url: `${den.ref.apiUrl}/mcp/agent`, enabled: true, oauth: false, headers: { Authorization: `Bearer ${token}` } }, trigger: "live-parity-fixture",
+      });
+      if (connected.status !== 200) throw new Error(`Skill reconciliation failed: ${connected.status}`);
+      return {
+        proof, capability: `plugin:${plugin.id}:${componentId}`, workspace,
+        async update() {
+          const proof = `CLOUD-${randomUUID()}`;
+          const result = await seed.api(den.admin, `/v1/config-objects/${componentId}/versions`, { method: "POST", body: JSON.stringify({ input: {
+            rawSourceText: `---\nname: live-cobalt\ndescription: Read the current cobalt release code.\n---\n\n${body(proof)}\n`,
+          }, reason: "Live parity skill update" }) });
+          if (!result.response.ok) throw new Error(`Skill update failed: ${result.response.status}`);
+          return proof;
+        },
+        async remove() {
+          const result = await seed.api(den.admin, `/v1/plugins/${plugin.id}/config-objects/${componentId}`, { method: "DELETE" });
+          if (!result.response.ok) throw new Error(`Skill removal failed: ${result.response.status}`);
+        },
+      };
     },
     async connectReports() {
       const proof = `REPORT-${randomUUID()}`;

@@ -308,7 +308,7 @@ async function startV2Proxy(options?: MockReadOptions) {
     start() {}, status, setEnabled: async () => status(), setChatRouting: async () => status(),
     connection: () => ({ url: `http://127.0.0.1:${engine.server.port}`, username: "opencode", password: "fixture" }),
     ensureWorkspaceReady: provider.wait, refreshProviders: async () => {}, syncWorkspaceMcp: mcp.wait,
-    syncCloudSkills: async () => ({ root: join(workspaceRoot, "cloud-skills"), state: { root: null, skills: [] } }),
+    syncWorkspaceSkills: async () => {},
     stop: async () => {},
   });
   try {
@@ -785,8 +785,8 @@ describe("workspace OpenCode proxy", () => {
     expect((await prompt).status).toBe(200);
     expect(fixture.provider.calls).toEqual([[fixture.workspaceRoot]]);
     expect(fixture.mcp.calls).toEqual([["ws_1", fixture.workspaceRoot]]);
-    expect(fixture.engine.requests.slice(-5).map((item) => `${item.method} ${item.pathname}`)).toEqual([
-      "GET /api/session/ses_1", "GET /api/mcp", "GET /api/skill",
+    expect(fixture.engine.requests.slice(-4).map((item) => `${item.method} ${item.pathname}`)).toEqual([
+      "GET /api/session/ses_1", "GET /api/mcp",
       "PUT /api/session/ses_1/instructions/entries/openwork.context", "POST /api/session/ses_1/prompt",
     ]);
   });

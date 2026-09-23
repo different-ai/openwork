@@ -35,6 +35,64 @@ test(`LIVE-CONNECTORS ${resolveEvalEngine()}: the real model searches Den capabi
   }
   evidence.recordAssertionEvidence("Real inference and real Den capability routing", "The model was real, as were Den search, capability IDs, execution and the engine. Only the external report service was controlled; it independently witnessed both calls and held the fresh result outside the model prompt.", true);
 });
+test(`LIVE-CLOUD ${resolveEvalEngine()}: the real model retrieves, refreshes and loses access to an organization skill`, async ctx => {
+  const { world, step, evidence } = ctx;
+  await ready(ctx);
+  const cloud = await world.connectCloudSkills();
+  const documentIdentity = await world.documentIdentity();
+  const runtime = (await world.request("/experimental/engine-v2-preview/status")).body;
+  const messageId = (message: Record<string, unknown>) => record(message.info) ? message.info.id : message.id;
+  const retrieve = async (expected: string) => {
+    const before = new Set((await world.messages()).filter(record).map(messageId));
+    const answer = await turn(ctx, "Use the live-cobalt organization skill to report the CURRENT cobalt release code. Retrieve its instructions afresh through OpenWork Connect. If retrieval fails reply UNAVAILABLE. Never use remembered instructions, shell or local files.", expected);
+    const tools = (await world.messages()).filter(record).filter(message => !before.has(messageId(message)))
+      .flatMap(message => Array.isArray(message.parts) ? message.parts : Array.isArray(message.content) ? message.content : [])
+      .filter(record).filter(part => part.type === "tool");
+    evidence.recordJsonArtifact("Cloud skill tool calls", tools);
+    // V2 may wrap the Connect call in its execute tool's code input.
+    if (expected !== "UNAVAILABLE") {
+      expect(tools.some(part => /get_skill|execute_capability/.test(JSON.stringify(part)) && record(part.state) && JSON.stringify(part.state).includes(cloud.capability))).toBe(true);
+      expect(tools.some(part => record(part.state) && part.state.status === "completed" && JSON.stringify(part.state).includes(expected))).toBe(true);
+    } else {
+      expect(answer.trim()).toBe("UNAVAILABLE");
+      // V1 may discover the removal before attempting the old capability.
+      // Either a real empty search or a refused retrieval proves loss of access.
+      expect(tools.some(part => record(part.state) && (
+        (/get_skill|execute_capability/.test(JSON.stringify(part)) && JSON.stringify(part.state).includes(cloud.capability)
+          && (part.state.status === "error" || /not found|not available|unknown_capability|denied|not accessible/i.test(JSON.stringify(part.state))))
+        || (/search_capabilities/.test(String(part.tool ?? part.name)) && typeof part.state.output === "string" && /"matches"\s*:\s*\[\s*\]/.test(part.state.output))
+      ))).toBe(true);
+    }
+  };
+  await step("Discover metadata and retrieve only the selected skill through Connect", async () => {
+    const catalog = (await world.request("/experimental/connect/skills")).body;
+    expect(JSON.stringify(catalog)).toContain(cloud.capability);
+    expect(JSON.stringify(catalog)).not.toContain(cloud.proof);
+    await retrieve(cloud.proof);
+    if (world.engine === "v2") {
+      const native = (await world.request(`/workspace/${cloud.workspace}/opencode2/api/skill`)).body;
+      expect(JSON.stringify(native)).not.toContain("openwork-cloud-");
+      expect(JSON.stringify(native)).not.toContain(cloud.proof);
+    }
+  });
+  const route = await world.route();
+  await step("Edit the remote instructions and use the fresh code in the same task", async () => {
+    const proof = await cloud.update();
+    await retrieve(proof);
+  });
+  await step("Remove the plugin skill and report that its capability is unavailable", async () => {
+    await cloud.remove();
+    await retrieve("UNAVAILABLE");
+  });
+  expect(await world.route()).toBe(route);
+  expect(await world.documentIdentity()).toBe(documentIdentity);
+  if (world.engine === "v2") {
+    expect((await world.request("/experimental/engine-v2-preview/status")).body).toMatchObject({ pid: record(runtime) ? runtime.pid : undefined });
+    expect(await world.reloadRequests()).toEqual([]);
+  }
+  evidence.recordAssertionEvidence("Shared v1 Cloud skill behavior", "Real Den and real inference: the catalog exposes metadata only, Connect retrieves the current body on demand, an edit is used in the same task, and removal prevents retrieval. The v2 engine and app document stay running.", true);
+});
+
 test(`LIVE-ORG ${resolveEvalEngine()}: sign in and send the first real message while organization setup is slow`, async ctx => {
   const { world, user, probe, step, evidence } = ctx;
   const gateway = await ready(ctx);
@@ -77,15 +135,10 @@ test(`LIVE-ORG ${resolveEvalEngine()}: sign in and send the first real message w
     evidence.recordAssertionEvidence("Cold signed-in first send", "A fresh organization was signed in before the first task. On v2, the actual create and prompt HTTP requests were each held for 21 seconds without replacing their answers. One real user turn completed with no timeout error or restored duplicate draft.", true);
     await user.screenshot();
   });
-  await step("A normal second send reaches Working promptly with current organization skills", async () => {
-    if (world.engine === "v2") {
-      const workspace = /\/workspace\/([^/]+)/.exec(await world.route())?.[1];
-      const catalog = (await world.request(`/workspace/${workspace}/opencode2/api/skill`)).body;
-      const skills = record(catalog) && Array.isArray(catalog.data) ? catalog.data.filter(record) : [];
-      const cloudSkills = skills.filter(skill => typeof skill.id === "string" && skill.id.startsWith("openwork-cloud-"));
-      expect(cloudSkills.length).toBeGreaterThan(0);
-      evidence.recordJsonArtifact("Organization skills loaded natively", { count: cloudSkills.length });
-    }
+  await step("A normal second send reaches Working promptly with the shared organization skill catalog", async () => {
+    const catalog = (await world.request("/experimental/connect/skills")).body;
+    expect(record(catalog) && Array.isArray(catalog.skills) && catalog.skills.length > 0).toBe(true);
+    evidence.recordJsonArtifact("Shared organization skill catalog", { count: record(catalog) && Array.isArray(catalog.skills) ? catalog.skills.length : 0 });
     const marker = `WARM-${randomUUID().slice(0, 8)}`;
     await turn(ctx, `Reply exactly ${marker}. Do not use tools or change files.`, marker, "primary", 5_000);
   });

@@ -37,7 +37,7 @@ import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plu
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
 import { buildOpenWorkV2Instructions, OPENWORK_V2_INSTRUCTION_KEY } from "./opencode-v2-instructions.js";
-import { CLOUD_NATIVE_SKILL_ID_PREFIX, CloudNativeSkillSyncError } from "./cloud-native-skills.js";
+import { readOpenWorkConnectSkillCatalog, renderOpenWorkConnectSkillInstruction } from "./connect-skill-catalog.js";
 import {
   callMcpAppTool,
   listMcpAppCatalog,
@@ -968,7 +968,7 @@ export async function startServer(
             workspace,
             proxyPath: mount.restPath,
             connection,
-            syncCloudSkills: engineV2Preview.syncCloudSkills,
+            syncWorkspaceSkills: engineV2Preview.syncWorkspaceSkills,
             actor,
             recoverySignal: taskRecovery?.owns(request) ? request.signal : undefined,
           });
@@ -1236,7 +1236,7 @@ export async function proxyOpencodeV2Request(input: {
   workspace: WorkspaceInfo;
   proxyPath: string;
   connection: { url: string; username: string; password: string };
-  syncCloudSkills: EngineV2Preview["syncCloudSkills"];
+  syncWorkspaceSkills: EngineV2Preview["syncWorkspaceSkills"];
   recoverySignal?: AbortSignal;
 }): Promise<Response> {
   const method = input.request.method.toUpperCase();
@@ -1323,22 +1323,11 @@ export async function proxyOpencodeV2Request(input: {
     const mcpPayload: unknown = mcpResponse.ok ? await mcpResponse.json() : null;
     const connectReady = isRecord(mcpPayload) && Array.isArray(mcpPayload.data) && mcpPayload.data.some((entry) =>
       isRecord(entry) && entry.name === "openwork-cloud" && isRecord(entry.status) && entry.status.status === "connected");
-    // Authorized organization skills are materialized fresh as native skills
-    // on every admission. Skills fail closed, the conversation does not: any
-    // Cloud auth/transport failure has already cleared and unregistered the
-    // materialized root, so the prompt is admitted without Cloud skills and the
-    // native reconciliation confirms none remain in the registry.
-    let cloudSkills: Awaited<ReturnType<EngineV2Preview["syncCloudSkills"]>>;
-    try {
-      cloudSkills = await input.syncCloudSkills(input.workspace.path);
-    } catch (error) {
-      if (error instanceof CloudNativeSkillSyncError) throw new ApiError(502, error.code, error.message);
-      throw new ApiError(502, "cloud_skill_sync_failed", "OpenWork Cloud skills could not be synchronized");
-    }
-    if (cloudSkills.failure) {
-      console.warn(`[openwork-server] Cloud skills unavailable for this turn (${cloudSkills.failure}); admitting without Cloud skills`);
-    }
-    const value = buildOpenWorkV2Instructions(connectReady);
+    // Reuse v1's cached discovery metadata and fetch bodies through Connect
+    // only when a skill is used. Never download the Cloud library on send.
+    await input.syncWorkspaceSkills(input.workspace.path);
+    const remoteSkills = connectReady ? await readOpenWorkConnectSkillCatalog(input.config) : [];
+    const value = buildOpenWorkV2Instructions(connectReady, renderOpenWorkConnectSkillInstruction(remoteSkills));
     const instructionUrl = new URL(target);
     instructionUrl.pathname = `/api/session/${encodeURIComponent(sessionId)}/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`;
     const synced = await loopbackFetch(instructionUrl.toString(), {
@@ -1379,7 +1368,7 @@ export async function proxyOpencodeV2Request(input: {
       if (!isRecord(value) || typeof value.id !== "string") {
         throw new ApiError(502, "invalid_engine_response", "Invalid skill metadata");
       }
-      if (!value.id.startsWith(CLOUD_NATIVE_SKILL_ID_PREFIX)) return value;
+      if (!value.id.startsWith("openwork-cloud-")) return value;
       return Object.fromEntries(Object.entries(value).filter(([key]) => ["id", "name", "description", "slash"].includes(key)));
     };
     return jsonResponse({ data: Array.isArray(raw) ? raw.map(publicSkill) : publicSkill(raw) });

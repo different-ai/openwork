@@ -83,6 +83,27 @@ describe("native conversation mutations", () => {
 });
 
 describe("explicit native skill attachments", () => {
+  test.each([false, true])("keeps Cloud selections on the v1 Connect path (legacy metadata: %s)", async legacy => {
+    const originalFetch = globalThis.fetch;
+    const requests: { path: string; body: unknown }[] = [];
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      requests.push({ path: new URL(request.url).pathname, body: request.method === "POST" ? await request.json() : null });
+      return jsonResponse({ data: {} });
+    };
+    try {
+      const capability = "plugin:plg_cobalt:cob_release";
+      const parts = mentionPromptParts({ type: "connect-skill", slug: "cobalt", name: "Cobalt", marketplace: "Releases", capability })
+        .map(part => legacy && part.synthetic ? { ...part, metadata: { openworkSelectedSkill: { id: capability } } } : part);
+      const result = await createClientV2("http://localhost:4096/opencode2", "/workspace", {}).session.promptAsync({ sessionID: "ses_cloud", model: { providerID: "witness", modelID: "model" }, parts });
+      expect(result.error).toBeUndefined();
+      expect(requests.map(request => request.path)).toEqual(["/opencode2/api/session/ses_cloud/model", "/opencode2/api/session/ses_cloud/prompt"]);
+      expect(requests.at(-1)?.body).toEqual({ text: v2PromptText(parts) });
+      expect(v2PromptText(parts)).toContain(capability);
+      expect(v2PromptText(parts)).toContain("openwork-cloud_");
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
   test("preserves v1 instructions but attaches live native IDs on v2, deduplicated", async () => {
     const originalFetch = globalThis.fetch;
     const requests: { path: string; body: unknown }[] = [];

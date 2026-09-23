@@ -51,7 +51,11 @@ type PromptPart = {
 };
 
 function selectedSkill(part: PromptPart): Record<string, unknown> | null {
-  return part.type === "text" && part.synthetic === true ? readRecord(part.metadata, "openworkSelectedSkill") : null;
+  const selection = part.type === "text" && part.synthetic === true ? readRecord(part.metadata, "openworkSelectedSkill") : null;
+  // Older drafts marked remote capabilities as native attachments. Preserve
+  // their Connect instruction instead of resolving them in the local registry.
+  const id = readString(selection, "id");
+  return id && /^(?:skill|plugin):/.test(id) ? null : selection;
 }
 
 /** The exact native prompt body, also used to correlate text-only user acknowledgements. */
