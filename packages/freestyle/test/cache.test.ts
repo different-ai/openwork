@@ -42,6 +42,7 @@ function provider() {
       creates++;
       return Response.json(builder);
     }
+    if (path.endsWith("/exec-await")) return Response.json({ statusCode: 0, stdout: "" });
     if (path.endsWith("/snapshot") && init?.method === "POST") {
       exists = true;
       return Response.json({ snapshotId: "snapshot", snapshot: { id: "snapshot", createdAt: new Date().toISOString() } });

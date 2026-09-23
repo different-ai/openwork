@@ -37,7 +37,7 @@ async function signIn(world) {
     const { signInDesktopAs } = await import("/workspace/evals/packages/behaviors/src/index.ts");
     for (let attempt = 1; attempt <= 2; attempt++) {
       const surface = await attachSurface({ name: "preview-desktop", kind: "electron", hostKind: "local", cdpUrl: `http://127.0.0.1:${CDP_PORT}` }, { timeoutMs: 60_000 });
-      try { await signInDesktopAs(surface, { ...world.den.ref, webUrl: world.den.ref.apiUrl }, world.den.admin); return true; }
+      try { await signInDesktopAs(surface, world.den.ref, world.den.admin); return true; }
       catch (error) { console.error(`Desktop sign-in attempt ${attempt} failed:`, error); }
       finally { await surface.stop().catch(() => undefined); }
     }

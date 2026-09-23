@@ -44,7 +44,7 @@ export async function signInDesktopAs(app: Surface, den: DenRef, member: DenSess
   });
   const grant = await createDesktopHandoffGrant(member);
   try {
-    await control(app, "auth.exchange-grant", { grant, baseUrl: den.webUrl });
+    await control(app, "auth.exchange-grant", { grant, baseUrl: den.webUrl, apiBaseUrl: den.apiUrl });
   } catch (error) {
     if (!messageText(error).includes("Already acting: auth.exchange-grant")) throw error;
   }

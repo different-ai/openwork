@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { FreestyleApiError, type Freestyle, type Vm } from "freestyle";
-import { isMissing } from "./index.ts";
+import { execChecked, isMissing } from "./index.ts";
 
 export interface SourceEntry { path: string; sha: string; type: string }
 export interface BuildStage { stage: string; durationMs: number; cacheHit?: boolean }
@@ -66,7 +66,7 @@ export async function ensureLayer(input: {
       created = await api.vms.create({
         slug: builderSlug, snapshotId: parent, ttlSeconds: 1800,
         displayName: `OpenWork ${input.stage} builder`,
-        metadata: { kind: "openwork-cache-builder-v1", cacheKey: input.slug },
+        metadata: { kind: "openwork-cache-builder-v1", cacheKey: digest(input.slug) },
         firewall: { rules: [{ action: "allow", source: {}, destination: { public: true } }] },
       });
     } catch (error) {
@@ -84,7 +84,7 @@ export async function ensureLayer(input: {
         input.observe({ stage: input.stage, durationMs: Math.round(performance.now() - start), cacheHit: true });
         return completed;
       }
-      if (owner.metadata.kind !== "openwork-cache-builder-v1" || owner.metadata.cacheKey !== input.slug) throw error;
+      if (owner.metadata.kind !== "openwork-cache-builder-v1" || owner.metadata.cacheKey !== digest(input.slug)) throw error;
       await delay(2_000);
       continue;
     }
@@ -92,6 +92,9 @@ export async function ensureLayer(input: {
       const prepareStart = performance.now();
       await input.prepare(created.vm);
       input.observe({ stage: `${input.stage}-prepare`, durationMs: Math.round(performance.now() - prepareStart) });
+      // Keep running application memory, release filesystem cache left by builds.
+      // The provider otherwise materializes gigabytes of unused cached file pages.
+      await execChecked(created.vm, "sync && echo 3 > /proc/sys/vm/drop_caches");
       const snapshotStart = performance.now();
       const result = await created.vm.snapshot({ slug: input.slug, displayName: `OpenWork ${input.stage}`,
         autoDeleteSeconds: 7 * 86400, ttlSeconds: input.ttlSeconds ?? 30 * 86400 });

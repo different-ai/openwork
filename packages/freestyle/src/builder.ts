@@ -29,7 +29,10 @@ touch ${root}.ready
     const state = (await execChecked(vm, `if test -f ${root}.failed; then echo failed; elif test -f ${root}.ready; then echo ready; else echo building; fi`)).trim();
     if (state === "ready") return;
     if (state === "failed") {
-      if (options.diagnostic) await options.diagnostic(stage, await vm.fs.readTextFile(`${root}.log`));
+      if (options.diagnostic) {
+        const runtime = stage === "world" ? await execChecked(vm, "journalctl -u openwork-preview-runtime --no-pager -n 100") : "";
+        await options.diagnostic(stage, await vm.fs.readTextFile(`${root}.log`) + runtime);
+      }
       throw new Error(`Snapshot ${stage} failed. Private builder log: ${root}.log`);
     }
     await delay(1_000);
@@ -72,7 +75,7 @@ ${dependencies}`, options);
     },
   }, api);
   const compile = compiledRecipe(world);
-  const compiledSlug = `ow-compiled-v1-${world}-${digest(depsSlug + compile + compiledFingerprint(entries))}`;
+  const compiledSlug = `ow-build-v1-${world}-${digest(depsSlug + compile + compiledFingerprint(entries))}`;
   const compiled = await ensureLayer({ slug: compiledSlug, stage: "compiled", observe,
     parent: async () => deps.id,
     prepare: async (vm) => runScript(vm, "compiled", `${checkoutRecipe(sha)}\n${compile}`, options),
@@ -80,6 +83,9 @@ ${dependencies}`, options);
   return ensureLayer({ slug, stage: "world", observe, ttlSeconds: 7 * 86400,
     parent: async () => compiled.id,
     prepare: async (vm) => {
+      // ACME includes two development frontends and a real Electron window.
+      // The base VM's 8 GiB thrashes when their compilers run together.
+      if (world === "acme-web") await vm.resize({ cpu: 8, memory: 16384 });
       log(`Preparing ${world} at ${sha} from cached dependencies`);
       for (const [target, source] of [
         ["gateway.mjs", "gateway.mjs"], ["runtime.mjs", world === "acme-web" ? "acme-runtime.mjs" : "runtime.mjs"],
