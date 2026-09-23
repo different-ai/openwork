@@ -38,7 +38,7 @@ import { useMemberSignIn } from "./connector-setup";
 import { usePluginAccess } from "./plugin-access-data";
 import { useDenToast } from "./den-toast";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
-import { pluginQueryKeys } from "./plugin-data";
+import { pluginQueryKeys, usePluginSummaries } from "./plugin-data";
 
 function itemHref(orgSlug: string | null, item: LibraryItem): string {
   if (item.type === "connection") return getLibraryConnectorRoute(orgSlug, item.id);
@@ -59,7 +59,9 @@ function OwnedConnectionStatus({ connection }: { connection: ExternalMcpConnecti
 
 function OwnedPluginStatus({ pluginId }: { pluginId: string }) {
   const { orgContext } = useOrgDashboard();
-  const access = usePluginAccess(pluginId);
+  const summaries = usePluginSummaries();
+  const listed = summaries.data?.some((plugin) => plugin.id === pluginId && plugin.accessIncluded) ?? false;
+  const access = usePluginAccess(pluginId, { enabled: !summaries.isPending && !listed });
   if (!orgContext || !access.data) return null;
   return <>{ownedAccessStatus(draftFromPluginGrants(access.data), orgContext, orgContext.currentMember.id)}</>;
 }
@@ -159,6 +161,8 @@ function LibraryContent() {
   const searchParams = useSearchParams();
   const { orgSlug, orgContext } = useOrgDashboard();
   const library = useLibrary();
+  // Carries who can use each plugin the viewer manages, so rows need no request each.
+  usePluginSummaries();
   const usable = useMcpConnections("usable");
   const signIn = useMemberSignIn();
   const prefetchCatalog = usePrefetchConnectorCatalog();
