@@ -286,6 +286,7 @@ export function createCloudNativeSkillSync(options: {
     const state = await materializeCloudNativeSkills(options.root, scope, bodies);
     if (generation !== started) return "stale";
     await setRegistered(state.root);
+    if (generation !== started) return "stale";
     current = state;
     return state;
   }

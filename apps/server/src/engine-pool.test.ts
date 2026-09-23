@@ -11,6 +11,7 @@ import {
   enginePoolForConfig,
   isEngineConnectionFailure,
   setEnginePoolForConfig,
+  rolloverOutcomeApplied,
   type EnginePoolHooks,
   type EngineSpawnTemplate,
 } from "./engine-pool.js";
@@ -30,6 +31,12 @@ const ENV_NAMES = [
 ];
 
 const cleanups: Array<() => void | Promise<void>> = [];
+
+test("a completed native live update clears pending refreshes while deferred changes do not", () => {
+  expect(rolloverOutcomeApplied({ action: "updated_live" })).toBe(true);
+  expect(rolloverOutcomeApplied({ action: "coalesced" })).toBe(false);
+  expect(rolloverOutcomeApplied({ action: "skipped", reason: "unchanged" })).toBe(false);
+});
 const savedEnv = new Map<string, string | undefined>();
 
 afterEach(async () => {

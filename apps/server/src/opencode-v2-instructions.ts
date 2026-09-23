@@ -62,12 +62,14 @@ type Expected = { path: string; content: string };
  * skill with a directory/name mismatch or no description never blocks admission.
  * When `cloud` is supplied, the materialized organization skills must be
  * present with their exact bodies and no stale entry may remain under the root.
+ * Returns false if the caller invalidates the snapshot while waiting.
  */
 export async function waitForOpenWorkV2Skills(
   directory: string,
   readNative: () => Promise<unknown>,
   cloud?: { root: string; state: CloudNativeSkillState },
-): Promise<void> {
+  isCurrent: () => boolean = () => true,
+): Promise<boolean> {
   const canonicalPath = (path: string) => realpath(path).catch(() => path);
   const root = await canonicalPath(directory);
   const managedRoots = workspaceNativeSkillRoots(root);
@@ -88,8 +90,11 @@ export async function waitForOpenWorkV2Skills(
     expectedCloud.push({ path: await canonicalPath(skill.location), content: nativeSkillBody(skill.content) ?? skill.content.trim() });
   }
   const deadline = Date.now() + 5_000;
+  let diagnostic = "";
   do {
+    if (!isCurrent()) return false;
     const payload = await readNative();
+    if (!isCurrent()) return false;
     if (!record(payload) || !Array.isArray(payload.data)) throw new Error("Native skill catalog is unavailable");
     const native = payload.data.filter(record).filter((skill) => typeof skill.location === "string" && typeof skill.content === "string");
     const canonical = await Promise.all(native.map(async (skill) => ({
@@ -103,10 +108,16 @@ export async function waitForOpenWorkV2Skills(
       && !scanned.has(entry.path));
     const staleCloud = cloudRoot !== null && canonical.some((entry) => entry.path.startsWith(cloudRoot)
       && !expectedCloud.some((skill) => skill.path === entry.path));
-    if (matches && !removed && !staleCloud) return;
+    diagnostic = JSON.stringify({
+      missingWorkspace: expected.filter((skill) => !present(skill)).map((skill) => skill.path),
+      missingCloud: expectedCloud.filter((skill) => !present(skill)).map((skill) => skill.path),
+      removed, staleCloud,
+    });
+    if (!isCurrent()) return false;
+    if (matches && !removed && !staleCloud) return true;
     await new Promise((resolve) => setTimeout(resolve, 100));
   } while (Date.now() < deadline);
-  throw new Error("Native skills did not reach the current workspace contents");
+  throw new Error(`Native skills did not reach the current workspace contents: ${diagnostic}`);
 }
 
 /** OpenWork owns app guidance; OpenCode owns the live skill and MCP catalogs. */

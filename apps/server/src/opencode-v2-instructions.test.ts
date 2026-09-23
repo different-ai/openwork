@@ -94,3 +94,24 @@ test("v2 guidance routes organization skills through the native catalog, not Con
     expect(Buffer.byteLength(JSON.stringify(value), "utf8")).toBeLessThanOrEqual(7 * 1024);
   }
 });
+
+test("native admission abandons a revoked cloud snapshot and waits for the replacement", async () => {
+  await withWorkspace(async (root) => {
+    const cloudRoot = join(root, "cloud");
+    const location = join(cloudRoot, "new", "SKILL.md");
+    const snapshot = { root: cloudRoot, state: { root: cloudRoot, skills: [{ id: "new", uri: "skill://parity/SKILL.md", location, content: "Current body" }] } };
+    let current = true;
+    const revoked = await waitForOpenWorkV2Skills(root, async () => {
+      current = false;
+      return { data: [] };
+    }, snapshot, () => current);
+    expect(revoked).toBe(false);
+    let reads = 0;
+    const replacement = await waitForOpenWorkV2Skills(root, async () => {
+      reads++;
+      return { data: reads === 1 ? [] : [{ location, content: "Current body" }] };
+    }, snapshot);
+    expect(replacement).toBe(true);
+    expect(reads).toBe(2);
+  });
+});

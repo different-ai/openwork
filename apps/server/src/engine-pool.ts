@@ -89,21 +89,22 @@ export type EnginePoolHooks = {
 export type RolloverReason = string;
 
 /**
- * What a rollover request did. Only `reloaded_in_place` and `rolled_over`
+ * What a refresh request did. `updated_live`, `reloaded_in_place` and `rolled_over`
  * mean the engine now serves the requested config; `skipped` and `coalesced`
  * leave the caller's change owed, so a caller tracking a pending reload must
  * keep it pending until one of the applied outcomes arrives.
  */
 export type RolloverOutcome =
+  | { action: "updated_live" }
   | { action: "skipped"; reason: "unchanged" | "disposed" }
   | { action: "reloaded_in_place" }
   | { action: "coalesced" }
   | { action: "rolled_over"; generationId: string; drainingSessions: number };
 
-export type AppliedRolloverOutcome = Extract<RolloverOutcome, { action: "reloaded_in_place" | "rolled_over" }>;
+export type AppliedRolloverOutcome = Extract<RolloverOutcome, { action: "updated_live" | "reloaded_in_place" | "rolled_over" }>;
 
 export function rolloverOutcomeApplied(outcome: RolloverOutcome): outcome is AppliedRolloverOutcome {
-  return outcome.action === "reloaded_in_place" || outcome.action === "rolled_over";
+  return outcome.action === "updated_live" || outcome.action === "reloaded_in_place" || outcome.action === "rolled_over";
 }
 
 type RolloverRequest = {

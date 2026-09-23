@@ -1644,6 +1644,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   useEffect(() => {
     return reloadCoordinator.registerWorkspaceReloadControls({
+      workspaceId: selectedWorkspace?.id || selectedWorkspaceId || "",
+      applyLiveChanges: async () => {
+        if (selectedWorkspace?.workspaceType === "remote") return false;
+        const status = await openworkClient?.getEngineV2PreviewStatus();
+        if (!status?.enabled || !status.chatRouting) return false;
+        await refreshProviderListQueries(getReactQueryClient()).catch(() => undefined);
+        return true;
+      },
       canReloadWorkspaceEngine: () => Boolean(openworkClient && (selectedWorkspace?.id || selectedWorkspaceId)),
       reloadWorkspaceEngine: reloadWorkspaceEngineFromUi,
       activeSessions: () => activeReloadBlockingSessions,

@@ -13,6 +13,74 @@ import { codeModeToolCalls } from "../src/lib/code-mode-tools";
 import { getModelBehaviorControls, getModelBehaviorOptions } from "../src/app/lib/model-behavior";
 import { catalogFastVariants, fastVariantId, nativeModelVariants } from "@openwork/types/cloud-model-fast";
 import { mentionPromptParts } from "../src/react-app/domains/session/sync/mention-parts";
+import { subscribeProviderCatalogChanges } from "../src/app/lib/provider-events";
+
+describe("native conversation mutations", () => {
+  test("fork excludes the selected boundary and preserves a root conversation", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init); requests.push(request);
+      return jsonResponse({ data: { id: "ses_branch", fork: { sessionID: "ses_original" } } });
+    };
+    try {
+      const client = createClientV2("http://localhost/opencode2", "/workspace", {});
+      const result = await client.session.fork({ sessionID: "ses_original", messageID: "msg_next" });
+      expect(result.data).toMatchObject({ id: "ses_branch" });
+      expect(result.data?.parentID).toBeUndefined();
+      expect(new URL(requests[0]!.url).pathname).toBe("/opencode2/api/session/ses_original/fork");
+      expect(await requests[0]!.json()).toEqual({ boundary: { type: "before", messageID: "msg_next" } });
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("revert stages file changes, reads authoritative cursor, and restores it through clear", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: { path: string; body: unknown }[] = [];
+    let reverted = false;
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const path = new URL(request.url).pathname;
+      calls.push({ path, body: request.method === "POST" && path.endsWith("stage") ? await request.json() : null });
+      if (path.endsWith("stage")) { reverted = true; return jsonResponse({ data: { messageID: "msg_last" } }); }
+      if (path.endsWith("clear")) { reverted = false; return new Response(null, { status: 204 }); }
+      return jsonResponse({ data: { id: "ses_original", ...(reverted ? { revert: { messageID: "msg_last", snapshot: "snapshot" } } : {}) } });
+    };
+    try {
+      const client = createClientV2("http://localhost/opencode2", "/workspace", {});
+      expect((await client.session.revert({ sessionID: "ses_original", messageID: "msg_last" })).data?.revert).toEqual({ messageID: "msg_last" });
+      expect((await client.session.unrevert({ sessionID: "ses_original" })).data?.revert).toBeUndefined();
+      expect(calls.map(call => call.path)).toEqual(["/opencode2/api/session/ses_original/revert/stage", "/opencode2/api/session/ses_original", "/opencode2/api/session/ses_original/revert/clear", "/opencode2/api/session/ses_original"]);
+      expect(calls[0]?.body).toEqual({ messageID: "msg_last", files: true });
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("failed mutations remain failures and do not fetch a success-shaped session", async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => { calls++; return new Response(JSON.stringify({ message: "Session busy" }), { status: 409 }); };
+    try {
+      const client = createClientV2("http://localhost/opencode2", "/workspace", {});
+      for (const result of [await client.session.revert({ sessionID: "ses_busy", messageID: "msg_last" }), await client.session.unrevert({ sessionID: "ses_busy" }), await client.session.fork({ sessionID: "ses_busy" })]) {
+        expect(result.response.status).toBe(409); expect(result.data).toBeUndefined();
+      }
+      expect(calls).toBe(3);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("native staged, cleared and committed events keep the visible cursor synchronized", () => {
+    const state = createV2EventTranslationState();
+    expect(translateV2Event({ type: "session.revert.staged", data: { sessionID: "ses_one", revert: { messageID: "msg_last" } } }, state)).toEqual([
+      { type: "session.updated", properties: { info: { id: "ses_one", revert: { messageID: "msg_last" } } } },
+    ]);
+    expect(translateV2Event({ type: "session.revert.cleared", data: { sessionID: "ses_one" } }, state)).toEqual([
+      { type: "session.updated", properties: { info: { id: "ses_one", revert: undefined } } },
+    ]);
+    expect(translateV2Event({ type: "session.revert.committed", data: { sessionID: "ses_one", to: "msg_last" } }, state)).toEqual([
+      { type: "session.history.truncated", properties: { sessionID: "ses_one", messageID: "msg_last" } },
+      { type: "session.updated", properties: { info: { id: "ses_one", revert: undefined } } },
+    ]);
+  });
+});
 
 describe("explicit native skill attachments", () => {
   test("preserves v1 instructions but attaches live native IDs on v2, deduplicated", async () => {
@@ -1036,7 +1104,7 @@ describe("OpenCode v2 message pagination", () => {
         return jsonResponse({ data: [{ id: "msg_system", type: "system", text: "Internal context" }], cursor: { next: cursor } });
       }
       expect(url.searchParams.get("cursor")).toBe(cursor);
-      return jsonResponse({ data: [], cursor: {} });
+      return jsonResponse({ data: [], cursor: { previous: null, next: null } });
     };
     try {
       const client = createClientV2("https://worker.example/workspace/ws/opencode2", undefined, { token: "page-token" });
@@ -1812,6 +1880,30 @@ describe("OpenCode v2 client compatibility", () => {
     }
   });
 
+  test("native catalog updates notify only the matching workspace without inventing a reload event", async () => {
+    const originalFetch = globalThis.fetch;
+    const updates: Array<{ baseUrl: string; directory?: string }> = [];
+    const unsubscribe = subscribeProviderCatalogChanges((scope) => updates.push(scope));
+    globalThis.fetch = async () => new Response([
+      { type: "catalog.updated", data: {} },
+      { type: "catalog.updated", location: { directory: "/other" }, data: {} },
+      { type: "catalog.updated", location: { directory: "/workspace" }, data: {} },
+    ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""));
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const { stream } = await client.event.subscribe();
+      expect((await stream.next()).done).toBe(true);
+      expect(updates).toEqual([{ baseUrl: "http://opencode.test/opencode2", directory: "/workspace" }]);
+      updates.length = 0;
+      // The session sync client is scoped by its mounted URL, not a directory
+      // constructor argument. Preserve the native event's directory for it.
+      const mounted = createClientV2("http://opencode.test/opencode2", undefined, {});
+      const subscription = await mounted.event.subscribe();
+      expect((await subscription.stream.next()).done).toBe(true);
+      expect(updates.at(-1)).toEqual({ baseUrl: "http://opencode.test/opencode2", directory: "/workspace" });
+    } finally { unsubscribe(); globalThis.fetch = originalFetch; }
+  });
+
   test("a reconnected subscription rebuilds the same completed parts without retaining old payloads or tombstones", async () => {
     const originalFetch = globalThis.fetch;
     const identity = { sessionID: "s", assistantMessageID: "m", ordinal: 0 };
@@ -1885,8 +1977,9 @@ describe("OpenCode v2 client compatibility", () => {
         ["GET", "/workspace/owned/opencode2/api/event"], ["GET", "/workspace/owned/opencode2/api/session/ses_fork"],
       ]);
       expect(requests.every((request) => request.headers.get("Authorization") === "Bearer fixture-token")).toBe(true);
-      expect((await client.session.fork({ sessionID: "ses_source" })).response.status).toBe(501);
-      expect(requests).toHaveLength(2);
+      expect((await client.session.fork({ sessionID: "ses_source" })).data?.id).toBe("ses_fork");
+      expect(requests).toHaveLength(3);
+      expect(await requests[2]?.json()).toEqual({ boundary: { type: "through" } });
     } finally { globalThis.fetch = originalFetch; }
   });
 
@@ -2293,9 +2386,9 @@ test("v2 provider catalog retains display names and advertised effort without ex
     const models = result.data?.all[0]?.models;
     expect(models?.coding?.variants).toEqual({ low: { reasoningEffort: "low" }, high: { reasoningEffort: "high" }, CustomExact: { thinking: { budgetTokens: 4096 } } });
     if (!models?.coding || !models.standard || !models.builtin) throw new Error("Missing mapped models");
-    expect(getModelBehaviorOptions("lpr_fixture", models.coding).map((option) => option.value)).toEqual(["low", "high", "CustomExact"]);
-    expect(getModelBehaviorOptions("lpr_fixture", models.standard)).toEqual([]);
-    expect(getModelBehaviorOptions("lpr_fixture", models.builtin)).toEqual([]);
+    expect(getModelBehaviorOptions("lpr_fixture", models.coding).map((option) => option.value)).toEqual([null, "low", "high", "CustomExact"]);
+    expect(getModelBehaviorOptions("lpr_fixture", models.standard).map((option) => option.value)).toEqual([null]);
+    expect(getModelBehaviorOptions("lpr_fixture", models.builtin).map((option) => option.value)).toEqual([null]);
     expect(JSON.stringify(result.data)).not.toContain("fixture-private");
   } finally {
     globalThis.fetch = originalFetch;

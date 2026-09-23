@@ -39,6 +39,8 @@ export interface HeadlessWebLaunchOptions {
   name: string;
   state: HeadlessWebState;
   workspace?: string;
+  /** Start with no registered workspace; keep the supplied path authorized for onboarding. */
+  emptyWorkspace?: boolean;
   allowSharedState?: boolean;
   replace?: boolean;
   keepTokens?: boolean;
@@ -771,7 +773,7 @@ export async function launchHeadlessWeb(options: HeadlessWebLaunchOptions): Prom
     const existingConfig = await readFile(serverConfigPath, "utf8").catch(() => null);
     await writeFile(
       serverConfigPath,
-      `${JSON.stringify(mergeHeadlessServerConfig(existingConfig, workspace), null, 2)}\n`,
+      `${JSON.stringify(options.emptyWorkspace ? { authorizedRoots: [workspace], workspaces: [] } : mergeHeadlessServerConfig(existingConfig, workspace), null, 2)}\n`,
       "utf8",
     );
   }

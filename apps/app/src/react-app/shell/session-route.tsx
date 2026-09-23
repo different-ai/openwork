@@ -776,6 +776,7 @@ export function SessionRoute() {
 
   const { engineReloadVersion, routeEngineInfo, reloadWorkspaceEngineFromUi } = useEngineReload({
     client,
+    opencodeBaseUrl,
     workspaceId: selectedWorkspaceId,
     workspace: selectedWorkspace,
     endpointForWorkspace,

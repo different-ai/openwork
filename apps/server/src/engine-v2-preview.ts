@@ -1,3 +1,4 @@
+import { waitForOpenWorkV2Skills } from "./opencode-v2-instructions.js";
 import { executionRules } from "./managed-policy-rules.js";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -32,6 +33,7 @@ import {
 import type { EnvService } from "./env-file.js";
 import { selectPrimaryCredentialEnvName } from "./managed-provider-auth.js";
 import type { ServerConfig } from "./types.js";
+import { localProviderDefinitions, readLocalProviderApiKeys } from "./opencode-v2-local-auth.js";
 
 const OPENCODE_V2_VERSION = constants.opencodeV2Version;
 const PREVIEW_STATE_FILE = "engine-v2-preview.json";
@@ -72,9 +74,10 @@ export interface EngineV2Preview {
   setChatRouting(chatRouting: boolean): Promise<EngineV2PreviewStatus>;
   connection(): { url: string; username: string; password: string } | undefined;
   ensureWorkspaceReady(directory: string): Promise<void>;
+  refreshProviders(): Promise<void>;
   syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void>;
-  /** Fresh materialization of authorized Cloud skills as native skills. `failure` is set when they failed closed (cleared) for this admission. */
-  syncCloudSkills(): Promise<{ root: string; state: CloudNativeSkillState; failure?: CloudNativeSkillSyncCode }>;
+  /** Materialize authorized Cloud skills and join the native watcher for this workspace. `failure` means Cloud skills failed closed for this admission. */
+  syncCloudSkills(directory: string): Promise<{ root: string; state: CloudNativeSkillState; failure?: CloudNativeSkillSyncCode }>;
   stop(): Promise<void>;
 }
 
@@ -168,6 +171,7 @@ async function resolveBinary(config: ServerConfig): Promise<ResolvedBinary> {
 export function mapRuntimeProvidersToV2Specs(
   providerMap: Record<string, unknown>,
   storedCredentials: ReadonlyMap<string, string> = new Map(),
+  localApiKeys: ReadonlyMap<string, string> = new Map(),
 ): { specs: OpencodeV2ProviderSpec[]; skippedProviderIds: string[] } {
   const specs: OpencodeV2ProviderSpec[] = [];
   const skippedProviderIds: string[] = [];
@@ -220,7 +224,7 @@ export function mapRuntimeProvidersToV2Specs(
     // Resolve only this provider's declared credential, never inherit the
     // server environment or copy unrelated secrets into the sidecar.
     const explicitKey = typeof apiKey === "string" && apiKey.trim() !== "" && !apiKey.includes("{env:") ? apiKey : undefined;
-    const resolvedKey = explicitKey ?? storedKey;
+    const resolvedKey = explicitKey ?? storedKey ?? localApiKeys.get(id);
     if (envNames.length > 0 && !resolvedKey) {
       skippedProviderIds.push(id);
       continue;
@@ -345,16 +349,34 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     },
   });
 
-  async function syncCloudSkills(): Promise<{ root: string; state: CloudNativeSkillState; failure?: CloudNativeSkillSyncCode }> {
-    if (!sidecar) throw new CloudNativeSkillSyncError("cloud_skill_engine_unavailable", "OpenCode v2 is not running");
-    try {
-      return { root: cloudSkillsRoot, state: await cloudSkills.sync() };
-    } catch (error) {
-      if (!(error instanceof CloudNativeSkillSyncError)) throw error;
-      // Skills fail closed, the conversation does not: sync() already cleared
-      // and unregistered the root, so the caller admits without Cloud skills.
-      return { root: cloudSkillsRoot, state: EMPTY_CLOUD_NATIVE_SKILL_STATE, failure: error.code };
+  async function syncCloudSkills(directory: string): Promise<{ root: string; state: CloudNativeSkillState; failure?: CloudNativeSkillSyncCode }> {
+    const active = sidecar;
+    if (!active) throw new CloudNativeSkillSyncError("cloud_skill_engine_unavailable", "OpenCode v2 is not running");
+    // A connection refresh can invalidate a just-materialized root while the
+    // native watcher catches up. Join the current generation, never wait for
+    // a revoked snapshot that can no longer arrive in the native catalog.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const generation = cloudSkills.generation();
+      let state: CloudNativeSkillState;
+      let failure: CloudNativeSkillSyncCode | undefined;
+      try {
+        state = await cloudSkills.sync();
+      } catch (error) {
+        if (!(error instanceof CloudNativeSkillSyncError)) throw error;
+        state = EMPTY_CLOUD_NATIVE_SKILL_STATE;
+        failure = error.code;
+      }
+      const isCurrent = () => sidecar === active && cloudSkills.generation() === generation;
+      if (!isCurrent()) continue;
+      const snapshot = { root: cloudSkillsRoot, state, ...(failure ? { failure } : {}) };
+      const ready = await waitForOpenWorkV2Skills(directory, async () => {
+        const response = await active.fetchJson("/api/skill", { directory, timeoutMs: 5_000 });
+        if (response.status !== 200) throw new Error("Native skills are unavailable");
+        return response.json;
+      }, snapshot, isCurrent);
+      if (ready) return snapshot;
     }
+    throw new CloudNativeSkillSyncError("cloud_skill_sync_stale", "OpenWork Cloud configuration kept changing during skill synchronization");
   }
 
   async function syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void> {
@@ -450,9 +472,11 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   async function mirrorProviders(): Promise<void> {
     const active = sidecar;
     if (!active) return;
-    const providerMap = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
+    const configured = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
+    const localKeys = await readLocalProviderApiKeys();
+    const providerMap = { ...await localProviderDefinitions(config, localKeys, configured), ...configured };
     const credentials = new Map((await options.env?.list() ?? []).map((entry) => [entry.key, entry.value]));
-    const mapped = mapRuntimeProvidersToV2Specs(providerMap, credentials);
+    const mapped = mapRuntimeProvidersToV2Specs(providerMap, credentials, localKeys);
     const nextMirroredProviderIds = mapped.specs.map((spec) => spec.id);
     await active.setProviders(mapped.specs);
     mirroredSpecs = mapped.specs;
@@ -498,6 +522,13 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
       }
     })();
     void mirrorInFlight;
+  }
+
+  async function refreshProviders(): Promise<void> {
+    if (!running || !sidecar) throw new Error("OpenCode v2 is not running");
+    scheduleMirror();
+    await mirrorInFlight;
+    if (lastError) throw new Error(lastError);
   }
 
   async function closeSidecar(): Promise<void> {
@@ -670,5 +701,5 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     if (enabled) void start().catch(recordStartError);
   }
   if (!options.deferStart) startWhenReady();
-  return { start: startWhenReady, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, syncWorkspaceMcp, syncCloudSkills, stop };
+  return { start: startWhenReady, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, refreshProviders, syncWorkspaceMcp, syncCloudSkills, stop };
 }

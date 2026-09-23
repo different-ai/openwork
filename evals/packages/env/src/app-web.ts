@@ -24,6 +24,9 @@ const MOCK_SCRIPT_PATH = join(REPO_ROOT, "scripts", "mock-oauth-mcp-server.mjs")
 
 export interface SeedAppWebOptions {
   workspacePath: string;
+  emptyWorkspace?: boolean;
+  /** Explicit fixture runtime settings; the normal isolated environment is retained. */
+  env?: Record<string, string>;
   syntheticPreactivatedDenOrigin?: string;
   name?: string;
   mocks?: Record<string, MockBoot>;
@@ -236,7 +239,7 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
         sourcePreparedFingerprint: source.preparedFingerprint,
       };
       mocks = await bootRemoteMocks(sandbox, options.mocks ?? {});
-      runtime = await startRemoteRuntime(sandbox, worldName, workspaceRoot, source, { syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin });
+      runtime = await startRemoteRuntime(sandbox, worldName, workspaceRoot, source, { syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin, env: options.env, emptyWorkspace: options.emptyWorkspace });
       await navigate(browser.client, runtime.webUrl);
     } else {
       // Capture only the commit identity, before mocks or app processes launch.
@@ -255,7 +258,7 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
         throw new Error("Invalid local app-web source SHA receipt.");
       }
       mocks = await bootLocalMocks(options.place, options.mocks ?? {});
-      runtime = await startLocalRuntime(worldName, workspaceRoot, { syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin });
+      runtime = await startLocalRuntime(worldName, workspaceRoot, { syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin, env: options.env, emptyWorkspace: options.emptyWorkspace });
       browser = await chrome({
         name: worldName,
         host: options.place.host(),

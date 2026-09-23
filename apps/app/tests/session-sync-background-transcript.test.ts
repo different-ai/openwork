@@ -7,6 +7,7 @@ import {
   __createWorkspaceSessionSyncForTest,
   __setSessionSyncDeltaFlushSchedulerForTest,
   trackWorkspaceSessionSync,
+  snapshotKey,
   transcriptKey,
 } from "../src/react-app/domains/session/sync/session-sync";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
@@ -70,6 +71,26 @@ afterAll(() => {
 });
 
 describe("background session transcript", () => {
+  test("native revert commit removes the old suffix from visible and paged history before clearing the cursor", () => {
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, "session-a");
+    try {
+      const messages: UIMessage[] = [
+        { id: "first", role: "user", parts: [{ type: "text", text: "Keep this turn" }] },
+        { id: "edited", role: "user", parts: [{ type: "text", text: "Old request" }] },
+        { id: "answer", role: "assistant", parts: [{ type: "text", text: "Old answer" }] },
+      ];
+      const query = getReactQueryClient();
+      const pageKey = ["react-session-latest", ...snapshotKey("workspace-a", "session-a")];
+      query.setQueryData(key, messages);
+      query.setQueryData(pageKey, { messages, source: messages });
+      __applySessionSyncEventForTest(syncInput, { type: "session.history.truncated", properties: { sessionID: "session-a", messageID: "edited" } });
+      __applySessionSyncEventForTest(syncInput, { type: "session.updated", properties: { info: { id: "session-a", revert: undefined } } });
+      expect(transcript()).toEqual([messages[0]]);
+      expect(query.getQueryData(pageKey)).toEqual({ messages: [messages[0]], source: [messages[0]] });
+    } finally { release(); cleanup(); }
+  });
+
   test("deltas keep landing after the user has been away longer than any gc window", () => {
     const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
     const release = trackWorkspaceSessionSync(syncInput, "session-a");

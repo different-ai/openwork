@@ -129,6 +129,9 @@ function hasLiveSessionActivity(
 type ReloadSession = { id: string; title: string };
 
 export type WorkspaceReloadControls = {
+  workspaceId: string;
+  /** Return true when the selected engine observes these changes live. */
+  applyLiveChanges?: () => Promise<boolean>;
   canReloadWorkspaceEngine: () => boolean;
   reloadWorkspaceEngine: () => Promise<boolean>;
   activeSessions?: () => ReloadSession[];
@@ -215,6 +218,18 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   );
 
   const systemState = useSystemState(systemStateOptions);
+  const markReloadRequired = useCallback((reason: ReloadReason, trigger?: ReloadTrigger) => {
+    const controls = controlsRef.current;
+    if (controls?.applyLiveChanges && ["skills", "mcp", "config"].includes(reason)) {
+      void controls.applyLiveChanges().then(applied => {
+        if (!applied && controlsRef.current?.workspaceId === controls.workspaceId) systemState.markReloadRequired(reason, trigger);
+      }).catch(() => {
+        if (controlsRef.current?.workspaceId === controls.workspaceId) systemState.markReloadRequired(reason, trigger);
+      });
+      return;
+    }
+    systemState.markReloadRequired(reason, trigger);
+  }, [systemState.markReloadRequired]);
 
   useEffect(() => {
     const update = (event: Event) => {
@@ -231,13 +246,13 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ reason?: ReloadReason; trigger?: ReloadTrigger }>).detail;
-      systemState.markReloadRequired(detail?.reason ?? "config", detail?.trigger);
+      markReloadRequired(detail?.reason ?? "config", detail?.trigger);
     };
 
     window.addEventListener("openwork-reload-required", handler);
 
     return () => window.removeEventListener("openwork-reload-required", handler);
-  }, [systemState.markReloadRequired]);
+  }, [markReloadRequired]);
 
   // Track what is pending so the post-reload receipt can describe it.
   useEffect(() => {
@@ -346,7 +361,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
 
   const value = useMemo<ReloadCoordinatorContextValue>(
     () => ({
-      markReloadRequired: systemState.markReloadRequired,
+      markReloadRequired,
       clearReloadRequired: systemState.clearReloadRequired,
       reloadWorkspaceEngine: systemState.reloadWorkspaceEngine,
       canReloadWorkspaceEngine: systemState.canReloadWorkspaceEngine,
@@ -359,7 +374,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       registerWorkspaceReloadControls,
       systemState.canReloadWorkspaceEngine,
       systemState.clearReloadRequired,
-      systemState.markReloadRequired,
+      markReloadRequired,
       systemState.reload.reloadPending,
       systemState.reload.reloadBusy,
       systemState.reload.reloadError,

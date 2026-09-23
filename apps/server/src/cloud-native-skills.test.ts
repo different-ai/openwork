@@ -272,3 +272,28 @@ test("the generated engine config keeps skill directories across provider rewrit
   expect(Object.keys(second.providers ?? {})).toEqual(["p"]);
   expect(renderOpencodeV2Config({ providers: [], skills: [] })).not.toHaveProperty("skills");
 });
+
+test("a scope change during native registration cannot publish a stale skill snapshot", async () => {
+  await withRoot(async (root) => {
+    const cloud = fakeCloud({ index: indexFor([BRIEFING_URI]), bodies: { [BRIEFING_URI]: BRIEFING_BODY } });
+    let config: Record<string, unknown> | null = cloudConfig("registration-token");
+    let release: (() => void) | undefined;
+    const sync = createCloudNativeSkillSync({
+      root, fetcher: cloud.fetcher, readCloudConfig: async () => config,
+      register: async (directory) => {
+        if (directory) await new Promise<void>((resolve) => { release = resolve; });
+      },
+    });
+    const pending = sync.sync();
+    while (!release) await new Promise((resolve) => setTimeout(resolve, 5));
+    config = null;
+    const generation = sync.generation();
+    const reconcile = sync.reconcileScope();
+    while (sync.generation() === generation) await new Promise((resolve) => setTimeout(resolve, 5));
+    release();
+    const state = await pending;
+    await reconcile;
+    expect(state).toEqual({ root: null, skills: [] });
+    expect(await stat(root).then(() => true, () => false)).toBe(false);
+  });
+});
