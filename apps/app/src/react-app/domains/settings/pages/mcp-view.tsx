@@ -133,6 +133,8 @@ import {
   type LibraryAudience,
   type LibrarySection,
 } from "../library-sharing";
+import { seededConnectorDraft } from "../../session/surface/composer/connector-token";
+import { useStartSeededChat } from "../../../shell/use-start-seeded-chat";
 import { libraryConnectorCues } from "../library-connector-cues";
 import { useLibraryCloud, type LibraryEditableSkill, type LibraryShareTarget } from "../use-library-cloud";
 import { AddLibraryItemPage } from "./add-library-item-page";
@@ -586,6 +588,18 @@ export function McpView(props: McpViewProps) {
     enabled: libraryAddOptions.cloudSignedIn,
   });
   const libraryDirectory = libraryCloud.directory;
+  const startSeededChat = useStartSeededChat();
+  const chatWith = (chips: { skills?: string[]; connectors?: string[] }) => {
+    const draft = [
+      ...(chips.skills ?? []).map((name) => `[skill ${name}]`),
+      ...(chips.connectors ?? []).map((name) => seededConnectorDraft({ connector: name, prompt: "" }).trim()),
+    ].join(" ");
+    return draft ? () => startSeededChat(`${draft} `) : undefined;
+  };
+  const shareOwned = (pluginId: string | undefined) =>
+    pluginId && libraryCloud.ownedPluginIds.has(pluginId) && libraryCloud.pluginById.has(pluginId)
+      ? () => setScreen({ kind: "share", pluginId })
+      : undefined;
   const audienceNameOrNull = (audience: LibraryAudience) =>
     isLibraryAudienceShared(audience) ? libraryAudienceName(audience) : null;
   const markChanged = (pluginId: string, changed: boolean) => {
@@ -1232,6 +1246,7 @@ export function McpView(props: McpViewProps) {
               props.removeMcp(slug);
               closeDetail();
             } : undefined}
+            onChat={chatWith({ connectors: [detailEntry.name] })}
             onHide={() => setOpenWorkExtensionHidden(detailEntry, true)}
             onShow={() => setOpenWorkExtensionHidden(detailEntry, false)}
           />
@@ -1271,6 +1286,7 @@ export function McpView(props: McpViewProps) {
               props.uninstallSkill?.(detailSkill.name);
               closeDetail();
             } : undefined}
+            onChat={chatWith({ skills: [detailSkill.name] })}
             onHide={() => setOpenWorkExtensionHidden(getSkillHiddenId(detailSkill), true)}
             onShow={() => setOpenWorkExtensionHidden(getSkillHiddenId(detailSkill), false)}
           />
@@ -1297,6 +1313,7 @@ export function McpView(props: McpViewProps) {
             ...(detailCommand.agent ? [{ label: t("extensions.detail_fact_agent"), value: detailCommand.agent }] : []),
             ...(detailCommand.model ? [{ label: t("extensions.detail_fact_model"), value: detailCommand.model }] : []),
           ]}
+          onChat={() => startSeededChat(`/${detailCommand.name} `)}
         />
       ) : null}
 
@@ -1354,6 +1371,7 @@ export function McpView(props: McpViewProps) {
               : []),
           ]}
           showEnablementCard
+          onChat={chatWith({ connectors: [detailConnectMcp.name] })}
           configSlot={openInDenAction({ id: detailConnectMcp.id ?? detailConnectMcp.name })}
         />
       ) : null}
@@ -1379,6 +1397,7 @@ export function McpView(props: McpViewProps) {
             errorInfo={readMcpErrorInfo(props.mcpStatuses[detailServer.name])}
             oauth={supportsOauth(detailServer)}
             showEnablementCard={false}
+            onChat={chatWith({ connectors: [displayName(detailServer.name)] })}
             configSlot={(
               <McpConfiguredServerDetails
                 entry={detailServer}
@@ -1408,6 +1427,11 @@ export function McpView(props: McpViewProps) {
         const marketplaceName = detailPlugin.files.find((file) => file.marketplaceName)?.marketplaceName;
         const cloudItem = libraryCloud.pluginById.get(detailPlugin.pluginId);
         const pluginTaxonomy = cloudItem ? libraryCloudItemTaxonomy(cloudItem.componentKinds, cloudItem.componentCount) : "plugin";
+        const filesOfKind = (kind: string) => detailPlugin.files
+          .filter((file) => libraryPluginFileKind(file.objectType) === kind)
+          .map((file) => libraryPluginFileDisplayName(file));
+        const pluginSkills = filesOfKind("skill");
+        const pluginConnectors = filesOfKind("mcp");
         return (
           <ExtensionDetailModal
             open={!!detailPlugin}
@@ -1438,6 +1462,11 @@ export function McpView(props: McpViewProps) {
               };
             })}
             configSlot={openInDenAction({ id: `marketplace:installed:${detailPlugin.pluginId}`, pluginId: detailPlugin.pluginId })}
+            onChat={chatWith({
+              skills: pluginSkills.length === 0 && pluginTaxonomy === "skill" ? [detailPlugin.name] : pluginSkills,
+              connectors: pluginConnectors,
+            })}
+            onShare={shareOwned(detailPlugin.pluginId)}
             onUninstall={props.removeCloudPlugin ? () => {
               void props.removeCloudPlugin?.(detailPlugin.pluginId);
               closeDetail();
@@ -1473,6 +1502,11 @@ export function McpView(props: McpViewProps) {
                 : []),
             ]}
             configSlot={openInDenAction({ id: `marketplace:installed:${plugin.pluginId}`, pluginId: plugin.pluginId })}
+            onChat={kind === "skill"
+              ? chatWith({ skills: [libraryPluginFileDisplayName(file)] })
+              : kind === "mcp"
+                ? chatWith({ connectors: [libraryPluginFileDisplayName(file)] })
+                : undefined}
           />
         );
       })() : null}
@@ -1527,6 +1561,8 @@ export function McpView(props: McpViewProps) {
             onReconnect={ready && canAuthorize && props.reconnectOrgMcp ? () => props.reconnectOrgMcp?.(connection.id) : undefined}
             onUninstall={canDisconnect && props.disconnectOrgMcp ? () => props.disconnectOrgMcp?.(connection.id) : undefined}
             uninstallLabel={t("mcp.org_connection_disconnect_action")}
+            onChat={chatWith({ connectors: [displayName] })}
+            onShare={shareOwned(ownPlugin?.id)}
             closeOnUninstall={false}
             showEnablementCard={false}
             configSlot={(
@@ -1929,7 +1965,7 @@ export function McpView(props: McpViewProps) {
       return detailPanels;
     }
     return (
-      <div className="flex w-full max-w-3xl flex-col gap-6 animate-in fade-in duration-300">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 animate-in fade-in duration-300">
         <Button
           variant="ghost"
           size="sm"
