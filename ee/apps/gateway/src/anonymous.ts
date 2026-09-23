@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto"
 import type { Context, Hono } from "hono"
 import { z } from "zod"
 import {
   DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH,
-  DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, type DesktopFreeAccessStatus, type DesktopFreeVersionError,
+  DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_SESSION_POW_PATTERN, desktopFreeSessionPowMessage, leadingZeroBits,
+  type DesktopFreeAccessStatus, type DesktopFreeVersionError,
 } from "@openwork/types/desktop-free-access"
 import { managedModelCatalog } from "@openwork/types/den/inference"
 import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
@@ -17,8 +19,14 @@ import { dispatchFreeCompletion } from "./free-dispatch.js"
 import { prepareFreeRequest, readFreeRequest, FreeRequestError } from "./free-request.js"
 import { env } from "./env.js"
 
-// The signed proof carries the machine id; the session body has nothing else to say.
-const sessionSchema = z.strictObject({})
+// The signed proof carries the machine id; the body carries the proof-of-work for this proof's nonce.
+const sessionSchema = z.strictObject({ pow: z.string().regex(DESKTOP_FREE_SESSION_POW_PATTERN).optional() })
+function powSatisfied(proof: { machineId: string; nonce: string }, pow: string | undefined, bits: number) {
+  if (bits === 0) return true
+  if (!pow) return false
+  const digest = createHash("sha256").update(desktopFreeSessionPowMessage({ ...proof, pow })).digest()
+  return leadingZeroBits(Uint8Array.from(digest)) >= bits
+}
 export type FreeRouteDependencies = {
   config: AutoConfig;
   store: FreeAllowanceStore;
@@ -58,12 +66,18 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     const address = dependencies.clientAddress(c)
     if (!address) return desktopFreeGateError(503, "anonymous_unavailable")
     const parsed = await readFreeRequest(c.req.raw, 4096, AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(10000)]))
-    if (!sessionSchema.safeParse(parsed.value).success) return desktopFreeGateError(400, "invalid_request")
+    const session = sessionSchema.safeParse(parsed.value)
+    if (!session.success) return desktopFreeGateError(400, "invalid_request")
     const gate = await checkDesktopFreeRequest(c.req.raw, parsed.bodyHash, anonymousIpHash(address, config), gateDependencies)
     if (gate.error) return gate.error
     if (gate.versionError) return versionResponse(gate.versionError)
+    // Minting costs a little CPU, bound to this proof's single-use nonce so the work cannot be replayed.
+    if (!powSatisfied(gate.proof, session.data.pow, config.sessionPowBits)) {
+      return Response.json({ error: { code: "session_pow_required", bits: config.sessionPowBits, message: "A proof of work is required to start a guest session." } }, { status: 400, headers: { "cache-control": "no-store" } })
+    }
     const identities = createAnonymousIdentities(gate.proof, address, config)
-    if (!await store.consumeSession(identities.ipHash, identities.installationHash)) return desktopFreeGateError(429, "anonymous_capacity_exceeded")
+    const minted = await store.consumeSession(identities.ipHash, identities.installationHash)
+    if (minted !== "accepted") return desktopFreeGateError(429, minted === "new_identity_capped" ? "anonymous_new_identity_capped" : "anonymous_capacity_exceeded")
     return c.json({ ...issueAnonymousToken(identities, gate.proof, config), model: DESKTOP_FREE_MODEL_ID }, 200, { "cache-control": "no-store" })
   }))
 

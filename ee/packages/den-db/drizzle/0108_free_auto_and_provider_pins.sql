@@ -4,6 +4,12 @@ CREATE TABLE `anonymous_inference_control` (
 	CONSTRAINT `anonymous_inference_control_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
+CREATE TABLE `anonymous_inference_identities` (
+	`id` varchar(64) NOT NULL,
+	`first_seen_at` timestamp(3) NOT NULL,
+	CONSTRAINT `anonymous_inference_identities_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
 CREATE TABLE `anonymous_inference_rate_buckets` (
 	`id` varchar(64) NOT NULL,
 	`used_amount` int NOT NULL DEFAULT 0,

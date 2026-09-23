@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "64c10884-2df3-4cf5-8081-31edd75c4fb0",
+  "id": "e5a62b0a-7494-4d33-97cb-f2f7ae10e485",
   "prevId": "aa59af63-ceaa-49d2-aad7-90c5b6f61b55",
   "tables": {
     "account": {
@@ -2932,6 +2932,37 @@
       "compositePrimaryKeys": {
         "anonymous_inference_control_id": {
           "name": "anonymous_inference_control_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "anonymous_inference_identities": {
+      "name": "anonymous_inference_identities",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "first_seen_at": {
+          "name": "first_seen_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "anonymous_inference_identities_id": {
+          "name": "anonymous_inference_identities_id",
           "columns": [
             "id"
           ]

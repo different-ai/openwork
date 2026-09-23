@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises"
 import { test } from "node:test"
 import { z } from "zod"
 import {
-  createDenDb, AuthUserTable, OrganizationTable, MemberTable, InferenceKeyTable,
+  createDenDb, AuthUserTable, OrganizationTable, MemberTable, InferenceKeyTable, AnonymousInferenceIdentityTable,
   InferenceFreeUsageBucketTable as Bucket, InferenceFreeReservationTable as Reservation,
   InferenceFreeReservationChargeTable as Charge, InferenceFreeControlTable as Control,
   AnonymousInferenceUsageBucketTable as GuestBucket, AnonymousInferenceReservationChargeTable as GuestCharge,
@@ -13,7 +13,7 @@ import {
 import { and, eq, sql } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { freeInferenceWindow, INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
-import { readAutoConfig, freeRequestReservation } from "../src/free-config.js"
+import { readAutoConfig, freeRequestReservation, rampedDeviceAmount } from "../src/free-config.js"
 import type { FreePrincipal, GuestPrincipal } from "../src/free-principal.js"
 import type { FreeUsageReceipt } from "../src/free-allowance.js"
 
@@ -104,10 +104,10 @@ test("free Auto SQL and 0108 upgrade in an owned random database", { skip: !admi
   await t.test("0108 executes over 0107 table shapes and preserves old rows with empty default pins", async () => {
     const migration = await readFile(new URL("../../../packages/den-db/drizzle/0108_free_auto_and_provider_pins.sql", import.meta.url), "utf8")
     const statements = migration.split("--> statement-breakpoint").map((value) => value.trim()).filter(Boolean)
-    assert.equal(statements.length, 20)
+    assert.equal(statements.length, 21)
     for (const statement of statements) await connection.query(statement)
     const added = Object.keys(after.tables).filter((name) => !before.tables[name]).sort()
-    assert.deepEqual(added, ["anonymous_inference_control", "anonymous_inference_rate_buckets", "anonymous_inference_reservation_charges",
+    assert.deepEqual(added, ["anonymous_inference_control", "anonymous_inference_identities", "anonymous_inference_rate_buckets", "anonymous_inference_reservation_charges",
       "anonymous_inference_reservations", "anonymous_inference_usage_buckets", "desktop_free_proof_nonces", "inference_free_control",
       "inference_free_rate_buckets", "inference_free_reservation_charges", "inference_free_reservations", "inference_free_usage_buckets"])
     for (const name of added) {
@@ -128,7 +128,7 @@ test("free Auto SQL and 0108 upgrade in an owned random database", { skip: !admi
     await connection.query("INSERT INTO gateway_providers (id,organization_id,created_by_org_membership_id,provider_id,name,provider_config,settings) VALUES ('new-provider','org-fixture','member-fixture','fixture','New provider',JSON_OBJECT(),JSON_OBJECT())")
     assert.deepEqual(await rows("SELECT id, JSON_LENGTH(pinned_model_ids) AS pins FROM gateway_providers ORDER BY id"), [{ id: "new-provider", pins: 0 }, { id: "old-provider", pins: 0 }])
     assert.deepEqual(await rows("SELECT JSON_UNQUOTE(JSON_EXTRACT(model_ids,'$[0]')) AS model FROM gateway_providers WHERE id='old-provider'"), [{ model: "kept-model" }])
-    t.diagnostic(`Applied ${statements.length} generated 0108 statements; verified eleven new tables, every column/index, guest tables free of account references, and pin defaults`)
+    t.diagnostic(`Applied ${statements.length} generated 0108 statements; verified twelve new tables, every column/index, guest tables free of account references, and pin defaults`)
   })
   const { createFreeAllowanceStore } = await import("../src/free-allowance.js")
   const { findMemberFreePrincipal, freePrincipalHash, memberFreePrincipalAllowed } = await import("../src/free-principal.js")
@@ -195,7 +195,7 @@ test("free Auto SQL and 0108 upgrade in an owned random database", { skip: !admi
     org_membership_id: sentinelMember, external_job_id: "paid-sentinel", event_type: "openrouter_usage", cost_amount: 12345, occurred_at: new Date() })
   const paidBefore = { buckets: await rows("SELECT * FROM inference_org_usage_buckets"), ledger: await rows("SELECT * FROM inference_usage_ledger_entries") }
 
-  await t.test("members get one OpenWork Models key; member and guest allowances live in separate tables at $5/$1", async () => {
+  await t.test("members get one OpenWork Models key; member and guest allowances live in separate tables ($5, and $1 ramped for guests)", async () => {
     const member = await person()
     const credentials = await Promise.all(Array.from({ length: 6 }, () => ensureMemberFreeInferenceCredential(member.input)))
     assert.ok(credentials.every((value) => value?.apiKey === member.credential.apiKey))
@@ -206,12 +206,12 @@ test("free Auto SQL and 0108 upgrade in an owned random database", { skip: !admi
     const guest: GuestPrincipal = { kind: "installation", id: "a".repeat(64) }
     const [memberAdmission, guestAdmission] = await Promise.all([admit(member.principal), admit(guest)])
     assert.equal((await bucket(member.principal)).limit_amount, 5 * INFERENCE_USAGE_CONVERSION_FACTOR)
-    assert.equal((await bucket(guest)).limit_amount, INFERENCE_USAGE_CONVERSION_FACTOR)
+    assert.equal((await bucket(guest)).limit_amount, rampedDeviceAmount(config, 0), "a brand-new machine starts on the first ramp step")
     assert.equal((await rows("SELECT COUNT(*) AS amount FROM inference_free_reservations WHERE request_id=?", [guestAdmission.requestId]))[0].amount, 0)
     assert.equal((await rows("SELECT COUNT(*) AS amount FROM anonymous_inference_reservations WHERE request_id=?", [memberAdmission.requestId]))[0].amount, 0)
     assert.equal((await reservation(memberAdmission.requestId)).inference_key_id, member.key.id)
     assert.equal((await store.read(member.principal, null)).allowance?.limitUsd, 5)
-    assert.equal((await guests.read(guest, ip)).allowance?.limitUsd, 1)
+    assert.equal((await guests.read(guest, ip)).allowance?.limitUsd, 0.1)
     assert.equal((await guests.reserve(member.principal, ip, id(), Date.now() + 60000)).ok, false)
     assert.equal((await store.reserve(guest, null, id(), Date.now() + 60000)).ok, false)
     await store.cancelUndispatched(memberAdmission.requestId)
@@ -262,6 +262,35 @@ test("free Auto SQL and 0108 upgrade in an owned random database", { skip: !admi
     const next = await admit(member.principal)
     await store.cancelUndispatched(next.requestId)
     assert.equal((await bucket(member.principal)).used_amount, hold)
+  })
+
+  await t.test("a guest's allowance starts small and grows with the machine's age; each IP may introduce only a few new machines a day", async () => {
+    const day = 86400000
+    const newIp = "9".repeat(64)
+    // Five fresh machines fit under the daily cap; the sixth does not, but a known machine still may.
+    const machines = Array.from({ length: 6 }, (_, index) => `e${index}`.padEnd(64, "e"))
+    for (const machine of machines.slice(0, 5)) assert.equal(await guests.consumeSession(newIp, machine), "accepted")
+    assert.equal(await otherGuests.consumeSession(newIp, machines[5]), "new_identity_capped")
+    assert.equal(await guests.consumeSession(newIp, machines[0]), "accepted")
+    assert.equal(await guests.consumeSession("8".repeat(64), machines[5]), "accepted", "another IP may introduce it")
+    const guest: GuestPrincipal = { kind: "installation", id: machines[0] }
+    const fresh = await admit(guest)
+    assert.equal((await bucket(guest)).limit_amount, rampedDeviceAmount(config, 0))
+    assert.equal((await guests.read(guest, ip)).allowance?.limitUsd, 0.1)
+    await guests.cancelUndispatched(fresh.requestId)
+    // Three days later the same weekly bucket allows more; the stored limit only ever rises.
+    await db.update(AnonymousInferenceIdentityTable).set({ first_seen_at: new Date(Date.now() - 3 * day) }).where(eq(AnonymousInferenceIdentityTable.id, machines[0]))
+    assert.equal((await otherGuests.read(guest, ip)).allowance?.limitUsd, 0.5)
+    const aged = await admit(guest)
+    assert.equal((await bucket(guest)).limit_amount, rampedDeviceAmount(config, 3 * day))
+    await guests.cancelUndispatched(aged.requestId)
+    await db.update(AnonymousInferenceIdentityTable).set({ first_seen_at: new Date() }).where(eq(AnonymousInferenceIdentityTable.id, machines[0]))
+    assert.equal((await guests.read(guest, ip)).allowance?.limitUsd, 0.5, "a bucket never shrinks within its week")
+    // A machine first met through a reservation (not a mint) is recorded too.
+    const direct: GuestPrincipal = { kind: "installation", id: "f".repeat(64) }
+    const admitted = await admit(direct)
+    assert.equal((await db.select().from(AnonymousInferenceIdentityTable).where(eq(AnonymousInferenceIdentityTable.id, direct.id))).length, 1)
+    await guests.cancelUndispatched(admitted.requestId)
   })
 
   await t.test("a request OpenAI refused (revoked key, rate limit) is released without charge", async () => {
