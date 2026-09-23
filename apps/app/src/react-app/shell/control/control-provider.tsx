@@ -806,7 +806,7 @@ export function OpenworkRouteControlActions() {
           type: "string",
           required: true,
           description:
-            "Settings tab: general | ai | ollama | preferences | permissions | shell | environment | advanced | appearance | updates | recovery | debug | cloud-account | cloud-providers",
+            "Settings tab: general | ai | ollama | preferences | permissions | shell | environment | advanced | appearance | updates | recovery | debug | cloud-account | usage | cloud-providers",
         },
       ],
       previewArgs: { panel: "ai" },

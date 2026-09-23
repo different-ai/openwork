@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { GATEWAY_USAGE_LIMIT_ERROR_CODE, hasGatewayUsageLimitHttpMarker, gatewayUsageTimeframeSchema, type GatewayUsageStatus } from "@openwork/types/den/gateway-usage-limits";
+import { GATEWAY_USAGE_LIMIT_ERROR_CODE, hasGatewayUsageLimitHttpMarker, gatewayUsageTimeframeSchema, type GatewayUsageBucket, type GatewayUsageStatus } from "@openwork/types/den/gateway-usage-limits";
 
 export const gatewayUsageQueryPrefix = ["gateway-own-usage"];
 
@@ -102,3 +102,30 @@ export function formatGatewayMoney(microUsd: number): string {
 }
 
 export const gatewayTimeframeLabels = { day: "Daily", week: "Weekly", month: "Monthly" };
+
+export const gatewayPeriodLabels: Record<GatewayUsageBucket["timeframe"], string> = { day: "Today", week: "This week", month: "This month" };
+export const gatewayPeriodPossessives: Record<GatewayUsageBucket["timeframe"], string> = { day: "today’s", week: "this week’s", month: "this month’s" };
+
+/** What an approved increase adds; mirrors the Den approval (a quarter of the base, rounded up). */
+export function gatewayIncreaseMicroUsd(bucket: Pick<GatewayUsageBucket, "baseAllowanceMicroUsd">): number {
+  return Math.ceil(bucket.baseAllowanceMicroUsd / 4);
+}
+
+export function gatewayPercentLeft(bucket: Pick<GatewayUsageBucket, "allowanceMicroUsd" | "usedMicroUsd">): number {
+  if (bucket.allowanceMicroUsd <= 0) return 0;
+  const left = Math.max(0, bucket.allowanceMicroUsd - bucket.usedMicroUsd);
+  return Math.min(100, Math.floor((left * 100) / bucket.allowanceMicroUsd));
+}
+
+export function formatGatewayReset(resetAt: string, now: number): string {
+  const ms = Date.parse(resetAt) - now;
+  if (ms < 60 * 60_000) {
+    const minutes = Math.max(1, Math.round(ms / 60_000));
+    return `Resets in ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+  }
+  if (ms < 24 * 60 * 60_000) {
+    const hours = Math.round(ms / (60 * 60_000));
+    return `Resets in ${hours} ${hours === 1 ? "hour" : "hours"}`;
+  }
+  return `Resets ${new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(resetAt))}`;
+}
