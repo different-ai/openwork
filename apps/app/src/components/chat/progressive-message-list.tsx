@@ -36,7 +36,8 @@ const MAX_CACHED_GROUPS = 2048
 // Each commit may restore the reading anchor, which moves scrollTop, which
 // re-renders a new range that is measured and restored again. Long histories
 // with poor estimates can chain past React's nested-update limit, so later
-// syncs in one chain wait for the next frame instead.
+// syncs in one chain wait for the next task instead. Not a frame: hidden or
+// occluded windows may never paint one, which would stall syncing for good.
 const MAX_NESTED_OFFSET_SYNCS = 8
 const heightCache = new Map<string, Map<string, number>>()
 // Existing reading-anchor and session controllers own scroll writes. TanStack
@@ -205,18 +206,18 @@ function VirtualGroups<T>(props: ProgressiveMessageListProps<T>) {
     virtualizer.measure()
     bridge.current?.measureMounted()
   }, [virtualizer, estimates])
-  const nestedSyncs = React.useRef<{ count: number; frame: number | null }>({ count: 0, frame: null })
+  const nestedSyncs = React.useRef<{ count: number; timer: ReturnType<typeof setTimeout> | null }>({ count: 0, timer: null })
   React.useLayoutEffect(() => {
     const chain = nestedSyncs.current
-    chain.frame ??= window.requestAnimationFrame(() => {
-      chain.frame = null
+    chain.timer ??= setTimeout(() => {
+      chain.timer = null
       chain.count = 0
       syncOffset.current?.()
-    })
+    }, 0)
     if (chain.count++ < MAX_NESTED_OFFSET_SYNCS) syncOffset.current?.()
   })
   React.useEffect(() => () => {
-    if (nestedSyncs.current.frame !== null) window.cancelAnimationFrame(nestedSyncs.current.frame)
+    if (nestedSyncs.current.timer !== null) clearTimeout(nestedSyncs.current.timer)
   }, [])
   const items = virtualizer.getVirtualItems()
   const segments: Segment[] = []

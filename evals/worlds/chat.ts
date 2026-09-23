@@ -1021,7 +1021,12 @@ export async function streamedToolHistory(seed: Seed) {
       // entries that will no longer fit in a later bounded snapshot.
       const visibleDeadline = Math.min(deadline, Date.now() + 10000);
       while (![...document.querySelectorAll<HTMLElement>('[data-message-role="user"]')].some(node => node.innerText.includes(text))) {
-        if (Date.now() >= visibleDeadline) throw new Error("Native history event did not render: " + text);
+        if (Date.now() >= visibleDeadline) {
+          const rows = [...document.querySelectorAll<HTMLElement>('[data-message-role="user"]')]
+            .map(node => JSON.stringify((node.textContent ?? "").trim().slice(0, 40)) + (node.innerText.trim() ? "" : " (hidden)"));
+          throw new Error("Native history event did not render: " + text + " Route " + location.hash
+            + "; mounted user rows (" + rows.length + "): " + rows.slice(-6).join(", "));
+        }
         await new Promise(resolve => setTimeout(resolve, 25));
       }
     }
