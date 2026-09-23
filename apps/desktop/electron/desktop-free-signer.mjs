@@ -114,7 +114,7 @@ export function createDesktopFreeSigner({ filePath, loadSafeStorage, appVersion,
       const { privateKey, publicKey, machineId } = await identity();
       const claims = { version: 2, publicKey, machineId, appVersion, ...permitted(), timestamp: Date.now(), nonce: randomUUID() };
       const message = desktopFreeProofMessage({
-        ...claims, method, path: requestPath,
+        ...claims, version: 2, method, path: requestPath,
         bodyHash: createHash("sha256").update(body).digest("hex"),
         authorizationHash: createHash("sha256").update(authorization).digest("hex"),
       });
