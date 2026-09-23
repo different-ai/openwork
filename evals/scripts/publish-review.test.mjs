@@ -120,6 +120,18 @@ test("never substitutes smoke, unrelated records, or missing proof artifacts", a
   }
 });
 
+test("a PR changing only specs the proof lane cannot run is a no-evidence skip, not a missing artifact", async () => {
+  const fixture = harness({
+    files: [{ filename: "evals/specs/packaged-activated-launch.e2e.test.ts", status: "modified" }],
+    artifacts: { total_count: 0, artifacts: [] },
+  });
+  const result = await publishCompletedEvidence({ repo, runId: 30 }, fixture.dependencies);
+  assert.equal(result.noEvidence, true);
+  assert.match(result.skipped, /cannot run.*needs: set OPENWORK_EVAL_ELECTRON_BINARY/);
+  assert.equal(fixture.downloads.length, 0);
+  assert.equal(fixture.publications.length, 0);
+});
+
 test("stale heads and run attempts do not publish", async () => {
   const staleAttempt = harness();
   await publishCompletedEvidence({ repo, runId: 30, runAttempt: "2" }, staleAttempt.dependencies);
@@ -133,7 +145,7 @@ const jobEnv = { GITHUB_REPOSITORY: repo, REVIEW_RUN_ID: "30", OPENWORK_REVIEW_U
 test("publication job distinguishes published, skipped, unavailable and failed without leaking errors", async () => {
   for (const [value, state, code] of [
     [{ posted: true, urls: { report: `https://review.example.test/r/${"a".repeat(32)}` } }, "published", 0],
-    [{ skipped: "PR adds or changes no E2E spec; no proof evidence to publish" }, "skipped", 0],
+    [{ skipped: "PR adds or changes no E2E spec; no proof evidence to publish", noEvidence: true }, "skipped", 0],
   ]) {
     const summaries = [];
     const result = await publicationJob(jobEnv, { publish: async () => value, summary: async text => summaries.push(text) });

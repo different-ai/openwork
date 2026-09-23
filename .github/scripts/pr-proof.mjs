@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
+import { unmetSpecNeeds } from "../../evals/scripts/journey-catalog.mjs";
 
 const SPEC = /^evals\/specs\/.+\.e2e\.test\.ts$/;
+const LIVE_SPEC = "evals/specs/live-stream-continuity.e2e.test.ts";
+// What each pr-proof.yml job provides; keep in step with its env.
+const proofLane = Object.freeze({ platform: "linux", env: Object.freeze([]) });
+const liveProofLane = Object.freeze({ platform: "linux", env: Object.freeze(["OPENAI_API_KEY"]), optIns: Object.freeze(["OPENWORK_EVAL_LIVE_OPENAI"]) });
 
 export function safePath(path) {
   return typeof path === "string" && path.length > 0 && path.length <= 240
@@ -10,18 +15,28 @@ export function safePath(path) {
 
 // Every E2E spec the PR added or changed is a proof of its work. Nothing is
 // required; a PR that touches no spec simply produces no proof evidence.
+// A spec whose registered journey needs something its proof job never provides
+// (a packaged binary, another platform) would only fail or skip there, so it is
+// excluded with that reason instead of scheduled.
 export function selectProof(files) {
   if (!Array.isArray(files) || files.some(file => !safePath(file.filename) || (file.previous_filename !== undefined && !safePath(file.previous_filename))))
     throw new Error("Missing or unsafe changed-file listing; proof selection is unavailable.");
   if (new Set(files.map(file => file.filename)).size !== files.length) throw new Error("Duplicate changed files; proof selection is unavailable.");
-  const specs = files
+  const changed = files
     .filter(file => ["added", "modified", "renamed", "changed", "copied"].includes(file.status) && SPEC.test(file.filename))
     .map(file => file.filename).sort();
-  return { specs };
+  const specs = [];
+  const excluded = [];
+  for (const spec of changed) {
+    const missing = unmetSpecNeeds(spec.slice("evals/specs/".length), spec === LIVE_SPEC ? liveProofLane : proofLane);
+    if (missing.length) excluded.push({ spec, reason: missing.join(", ") });
+    else specs.push(spec);
+  }
+  return { specs, excluded };
 }
 
 export function proofLanes(specs, { event, current, repo, actor, triggeringActor }) {
-  const liveSpecs = specs.filter(spec => spec === "evals/specs/live-stream-continuity.e2e.test.ts");
+  const liveSpecs = specs.filter(spec => spec === LIVE_SPEC);
   const normalSpecs = specs.filter(spec => !liveSpecs.includes(spec));
   if (liveSpecs.length) {
     const repository = event?.repository;

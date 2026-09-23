@@ -82,7 +82,7 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
     } else if (receipt?.state === "skipped" && receipt.noEvidence === true && source.conclusion === "success") {
       conclusion = "neutral";
       title = "No change-specific evidence selected";
-      summary = `Commit \`${sha}\` has no added or changed E2E specs. No report was published and no test pass is inferred. [Source run](${logUrl})`;
+      summary = `Commit \`${sha}\` has no added or changed E2E spec the PR proof lane can run. No report was published and no test pass is inferred. [Source run](${logUrl})`;
     } else if (["cancelled", "timed_out"].includes(source.conclusion)) {
       conclusion = source.conclusion;
       title = "Evidence run interrupted";
