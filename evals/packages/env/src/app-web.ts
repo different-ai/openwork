@@ -298,7 +298,10 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
           .map(entry => ({ path: new URL(entry.name).pathname,
             status: entry instanceof PerformanceResourceTiming ? entry.responseStatus : 0 })).slice(0, 20),
       })).catch(() => null);
-      throw new Error(`${error instanceof Error ? error.message : String(error)} Startup diagnostics: ${JSON.stringify(boot)} Network failures: ${JSON.stringify(network.failures)} Browser errors: ${JSON.stringify(network.browserErrors)}`, { cause: error });
+      const viteEvents = remote ? [] : (await readFile(join(runtime.runtimeDirectory, "web.log"), "utf8").catch(() => ""))
+        .split("\n").filter(line => /Re-optimizing dependencies|new dependencies optimized|optimized dependencies changed|Pre-transform error|Internal server error|Outdated Optimize Dep/.test(line))
+        .slice(-20).map(line => line.replace(/https?:\/\/\S+/g, "[url]").slice(0, 500));
+      throw new Error(`${error instanceof Error ? error.message : String(error)} Startup diagnostics: ${JSON.stringify(boot)} Network failures: ${JSON.stringify(network.failures)} Browser errors: ${JSON.stringify(network.browserErrors)} Vite events: ${JSON.stringify(viteEvents)}`, { cause: error });
     } finally {
       network.close();
     }

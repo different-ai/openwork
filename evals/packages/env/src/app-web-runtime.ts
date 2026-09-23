@@ -44,6 +44,9 @@ export function isolatedRuntimeEnvironment(root: string): NodeJS.ProcessEnv {
     HOME: home,
     USERPROFILE: home,
     XDG_CACHE_HOME: join(root, "cache"),
+    // Fresh app instances must not rewrite another Vite server's dependency
+    // cache while its browser is importing modules.
+    OPENWORK_VITE_CACHE_DIR: join(root, "cache", "vite"),
     XDG_CONFIG_HOME: config,
     XDG_DATA_HOME: data,
     XDG_STATE_HOME: join(root, "state"),
