@@ -59,12 +59,13 @@ test('changed additional journey joins critical selection; manual filters work f
   assert.equal(selectJourneys(entries, { only: '  ' }).length, entries.length);
 });
 
-test('journeys needing a packaged binary or macOS are skipped in the CI lane (prerequisites unmet); everything else runs', async () => {
+test('journeys needing a packaged binary, macOS, or paid live consent are skipped in the CI lane', async () => {
   const entries = await catalog();
   const excluded = entries.filter(entry => entry.placement !== 'manual' && unmetLaneNeeds(entry).length > 0);
   assert.deepEqual(excluded.map(entry => [entry.spec, unmetLaneNeeds(entry).join(', ')]), [
     ['computer-use-window-scope.e2e.test.ts', 'run on darwin'],
     ['desktop-quit-path.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
+    ['live-stream-continuity.e2e.test.ts', 'set OPENAI_API_KEY, set OPENWORK_EVAL_LIVE_OPENAI=1'],
     ['packaged-activated-launch.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
     ['packaged-first-launch.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
     ['packaged-preactivation-egress.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
@@ -76,7 +77,9 @@ test('journeys needing a packaged binary or macOS are skipped in the CI lane (pr
   // A lane that packages the enterprise desktop would schedule the packaged journeys again; released-enterprise-activated's
   // update case still skips itself there without OPENWORK_EVAL_RELEASED_BASELINE_BINARY, which the verdict counts as not tested.
   const packagedLane = { ...ciLane, env: ['OPENWORK_EVAL_ELECTRON_BINARY'] };
-  assert.deepEqual(excluded.filter(entry => unmetLaneNeeds(entry, packagedLane).length > 0).map(entry => entry.spec), ['computer-use-window-scope.e2e.test.ts']);
+  assert.deepEqual(excluded.filter(entry => unmetLaneNeeds(entry, packagedLane).length > 0).map(entry => entry.spec), [
+    'computer-use-window-scope.e2e.test.ts', 'live-stream-continuity.e2e.test.ts',
+  ]);
   assert.deepEqual(unmetLaneNeeds(entry), []);
 });
 
@@ -89,7 +92,7 @@ test('journeys needing a packaged binary or macOS are skipped in the CI lane (pr
 // plans are #4771's job — this guard only keeps declared needs from drifting either way.
 function wholeFileBlockers(specSource, worldSources) {
   const declarations = [...specSource.matchAll(/needs:\s*\{([^}]*)\}/g)].map(match => match[1]);
-  const envSets = declarations.map(body => new Set([...(body.match(/\benv:\s*\[([^\]]*)\]/)?.[1] ?? '').matchAll(/"(OPENWORK_EVAL_\w+)"/g)].map(name => name[1])));
+  const envSets = declarations.map(body => new Set([...(body.match(/\benv:\s*\[([^\]]*)\]/)?.[1] ?? '').matchAll(/"([A-Z][A-Z0-9_]+)"/g)].map(name => name[1])));
   const env = new Set(envSets.length ? [...envSets[0]].filter(name => envSets.every(set => set.has(name))) : []);
   const platforms = declarations.map(body => body.match(/\bplatform:\s*"(\w+)"/)?.[1]);
   let platform = platforms.length && platforms.every(value => value && value === platforms[0]) ? platforms[0] : undefined;
@@ -98,7 +101,7 @@ function wholeFileBlockers(specSource, worldSources) {
     lines.forEach((line, index) => {
       if (!/throw new (?:SkipError|Error)\(/.test(line)) return;
       const window = lines.slice(Math.max(0, index - 2), index + 1).join('\n');
-      for (const match of window.matchAll(/process\.env\.(OPENWORK_EVAL_\w+)/g)) env.add(match[1]);
+      for (const match of window.matchAll(/process\.env\.([A-Z][A-Z0-9_]+)/g)) env.add(match[1]);
       platform = window.match(/process\.platform\s*!==\s*"(\w+)"/)?.[1] ?? platform;
     });
   }
@@ -114,7 +117,7 @@ async function guardedPrerequisites(spec, root = new URL('../specs/', import.met
 test('catalog needs match the whole-file prerequisites each spec and its worlds guard, in both directions', async () => {
   const entries = await catalog();
   const declared = entries.filter(entry => entry.needs);
-  assert.equal(declared.length, 7);
+  assert.equal(declared.length, 8);
   for (const entry of declared) {
     assert.deepEqual({ env: [...(entry.needs.env ?? [])].sort(), platform: entry.needs.platform }, await guardedPrerequisites(entry.spec), `${entry.spec}: catalog needs drifted from the spec/world guards`);
   }
@@ -171,6 +174,16 @@ test('registered case metadata names exact files, supported execution axes, and 
       engines: ['v1', 'v2'],
     },
     {
+      spec: 'live-stream-continuity.e2e.test.ts',
+      id: 'CONT-01-live',
+      engines: ['v1'],
+    },
+    {
+      spec: 'live-stream-continuity.e2e.test.ts',
+      id: 'CONT-01-live-history',
+      engines: ['v1'],
+    },
+    {
       spec: 'live-tool-visible-after-session-switch.e2e.test.ts',
       id: 'SWITCH-10',
       engines: ['v1', 'v2'],
@@ -212,6 +225,28 @@ test('registered case metadata names exact files, supported execution axes, and 
     assert(entries.some(entry => entry.spec === registered.spec));
     assert.equal('surfaces' in registered, false);
   }
+});
+
+test('live continuity is isolated, local, v1-only and never scheduled from a provider key alone', async () => {
+  const entries = await catalog();
+  const live = entries.find(entry => entry.spec === 'live-stream-continuity.e2e.test.ts');
+  assert.equal(live.placement, 'local');
+  assert.equal(live.model, 'live');
+  assert.equal(live.critical, false);
+  assert.deepEqual(unmetLaneNeeds(live, { ...ciLane, env: ['OPENAI_API_KEY'] }), ['set OPENWORK_EVAL_LIVE_OPENAI=1']);
+  assert.deepEqual(unmetLaneNeeds(live, { ...ciLane, optIns: ['OPENWORK_EVAL_LIVE_OPENAI'] }), ['set OPENAI_API_KEY']);
+  assert.deepEqual(unmetLaneNeeds(live, { ...ciLane, env: ['OPENAI_API_KEY'], optIns: ['OPENWORK_EVAL_LIVE_OPENAI'] }), []);
+  for (const registered of live.cases) {
+    assert.deepEqual(registered.engines, ['v1']);
+    assert.deepEqual(registered.optIns, ['OPENWORK_EVAL_E2E_TESTS', 'OPENWORK_EVAL_LIVE_OPENAI']);
+    assert.equal(registered.example.placement, '--local');
+  }
+  const mock = entries.find(entry => entry.spec === 'streamed-markdown-answer.e2e.test.ts');
+  assert.equal(mock.model, 'mock');
+  assert.equal(mock.needs, undefined);
+  assert.deepEqual(mock.cases.map(entry => entry.id), ['CONT-01']);
+  const source = await readFile(new URL('../specs/live-stream-continuity.e2e.test.ts', import.meta.url), 'utf8');
+  assert.match(source, /needs:\s*\{\s*placement:\s*"local",\s*optIn:\s*\["OPENWORK_EVAL_LIVE_OPENAI"\]/);
 });
 
 test('skips, no tests, missing summaries, setup and judging failures never pass', () => {

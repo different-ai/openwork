@@ -17,11 +17,11 @@ mock.module("../src/db.js", () => ({ db: { select: () => rows } }))
 mock.module("../src/auth.js", () => ({ auth: { api: {} } }))
 
 let authenticated = true
-let dashboard = false
+let metadata: unknown = {}
 const memberRoute: MiddlewareHandler = async (c, next) => {
   if (!authenticated) return c.json({ error: "unauthorized" }, 401)
   c.set("organizationContext", {
-    organization: { id: createDenTypeId("organization"), metadata: { capabilities: { gatewayDashboard: dashboard } } },
+    organization: { id: createDenTypeId("organization"), metadata },
     currentMember: { id: createDenTypeId("member"), role: "owner", isOwner: true },
     members: [], teams: [], roles: [],
   })
@@ -43,16 +43,24 @@ const app = new Hono()
 registerOrgCoreRoutes(app)
 afterAll(() => mock.restore())
 
-test("authenticated GET /v1/org returns the versioned deployment capability independently of org dashboard flag", async () => {
-  for (const enabled of [false, true]) for (const exposed of [false, true]) {
+test("authenticated GET /v1/org always exposes gateway compatibility independently of deployment and retired metadata", async () => {
+  const legacyMetadata = [
+    // Retired flag values cannot gate access; the metadata document itself must remain valid.
+    undefined, null, {}, { capabilities: null }, { capabilities: "false" }, { capabilities: [] },
+    ...[undefined, null, false, true, "false", "true", 1, {}, []].flatMap((gatewayDashboard) => {
+      const value = { capabilities: { gatewayDashboard } }
+      return [value, JSON.stringify(value)]
+    }),
+  ]
+  for (const enabled of [false, true]) for (const stored of legacyMetadata) {
     env.gatewayEnabled = enabled
-    dashboard = exposed
+    metadata = stored
     const response = await app.request("/v1/org")
     expect(response.status).toBe(200)
     const payload = await response.json()
     expect(payload.deploymentCapabilities).toEqual({ version: 1, aiGateway: enabled })
     expect(parseDeploymentCapabilities(payload.deploymentCapabilities).aiGateway).toBe(enabled)
-    expect(payload.capabilities.gatewayDashboard).toBe(exposed)
+    expect(payload.capabilities.gatewayDashboard).toBe(true)
     expect(payload.organization.deploymentCapabilities).toBeUndefined()
   }
 })

@@ -1,4 +1,5 @@
 import type { McpStatusMap } from "../types";
+import type { ConnectionActionIntent } from "@openwork/types/connection-action-app";
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
 import type { GatewayDesktopOauthStartRequest, GatewayDesktopOauthStartResponse } from "@openwork/types/den/gateway";
 import {
@@ -471,6 +472,7 @@ export type OpenworkMcpItem = {
 };
 
 export type OpenworkMcpAppResource = {
+  hostConnectionActions?: true;
   /** Opaque, short-lived host context. Absent on generated previews and older servers. */
   launchId?: string;
   refresh?: { resourceDigest: string; expiresAt: number };
@@ -520,6 +522,7 @@ export type OpenworkMcpAppCatalogServer = {
 };
 
 export type OpenworkMcpAppToolResult = {
+  hostAction?: ConnectionActionIntent;
   content: Array<Record<string, unknown>>;
   structuredContent?: Record<string, unknown>;
   isError?: boolean;

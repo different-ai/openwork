@@ -3,17 +3,20 @@ import { getGithubData } from "../lib/github";
 import { headers } from "next/headers";
 import { StructuredData } from "../components/structured-data";
 import { homeFaq } from "../lib/faq";
-import { baseOpenGraph } from "../lib/seo";
+import { baseOpenGraph, withSocialMetadata } from "../lib/seo";
 
-export const metadata = {
+export const metadata = withSocialMetadata({
   alternates: {
     canonical: "/"
   },
   openGraph: {
     ...baseOpenGraph,
+    title: "OpenWork — Open source Claude Cowork alternative for teams",
+    description:
+      "Bring your own model and provider, wire in your tools and context, and ship reusable agent setups across your org — with guardrails built in.",
     url: "https://openworklabs.com"
   }
-};
+});
 
 const softwareApplicationSchema = {
   "@context": "https://schema.org",

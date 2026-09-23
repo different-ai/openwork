@@ -1,81 +1,81 @@
 import { beforeEach, describe, expect, test } from "bun:test"
-
 import {
   chatMcpReconnectKey,
   chatMcpReconnectPresentation,
   chatMcpReconnectRecord,
+  respondChatConnectionDecision,
   useChatMcpReconnectStore,
 } from "../src/components/tools/mcp-reconnect-state"
+import type { ChatConnectionDecisionBinding, ChatConnectionDecisionResponse } from "../src/react-app/domains/session/surface/mcp-chat-reconnect"
 
-const action = {
-  connectionId: "emc_research",
-  connectionName: "Research Vault",
-  label: "Reconnect",
-}
+const action = { connectionId: "connection-1", connectionName: "Research Vault", label: "Reconnect" }
+const request = { requestId: "request-1", owner: "account/session", sessionId: "session", turnId: "turn-1", toolCallId: "call-1", connectionId: action.connectionId }
+const skipped: ChatConnectionDecisionResponse = { outcome: "skipped", continuation: "without_connection", alternativeAuthorization: false }
+const connected: ChatConnectionDecisionResponse = { outcome: "connected", continuation: "review_remaining_work", repeatCompletedWrites: false }
+const key = chatMcpReconnectKey(request.toolCallId, request.connectionId, request.owner)
 
 beforeEach(() => useChatMcpReconnectStore.getState().reset())
 
-describe("chat MCP reconnect state", () => {
-  test("keeps completion by tool call and connection across component remounts", () => {
-    const key = chatMcpReconnectKey("call-1", action.connectionId)
-    useChatMcpReconnectStore.getState().setRecord(key, { phase: "connected", error: null, authorizeUrl: null })
-
-    expect(chatMcpReconnectRecord(key)).toEqual({ phase: "connected", error: null, authorizeUrl: null })
-    expect(chatMcpReconnectRecord(chatMcpReconnectKey("call-2", action.connectionId))).toEqual({
-      phase: "ready",
-      error: null,
-      authorizeUrl: null,
-    })
+describe("connection decisions", () => {
+  test("state labels offer authentication without draft retry or paused claims", () => {
+    expect(chatMcpReconnectPresentation(action, "ready")).toEqual({ badgeLabel: "Authenticate Research Vault to continue", buttonLabel: "Authenticate", disabled: false })
+    expect(chatMcpReconnectPresentation(action, "opening").disabled).toBe(true)
+    expect(chatMcpReconnectPresentation(action, "authorization_opened")).toEqual({ badgeLabel: "Finish sign-in in your browser", buttonLabel: "Open sign-in again", disabled: false })
+    expect(chatMcpReconnectPresentation(action, "connected")).toEqual({ badgeLabel: "Research Vault connected", buttonLabel: "Connected", disabled: true })
+    expect(chatMcpReconnectPresentation(action, "skipped")).toEqual({ badgeLabel: "Skipped Research Vault", buttonLabel: "Skipped", disabled: true })
+    expect(chatMcpReconnectPresentation(action, "failed").buttonLabel).toBe("Authenticate")
   })
 
-  test("keeps the pending browser continuation across chat row remounts", () => {
-    const key = chatMcpReconnectKey("call-1", action.connectionId)
-    const authorizeUrl = "https://provider.example/authorize?state=pending"
-    useChatMcpReconnectStore.getState().setRecord(key, {
-      phase: "authorization_opened",
-      error: null,
-      authorizeUrl,
-    })
+  test("skipped decision survives row remount reads but never crosses owner or call scope", () => {
+    useChatMcpReconnectStore.getState().setRecord(key, { phase: "skipped", error: null, authorizeUrl: null })
+    expect(chatMcpReconnectRecord(key).phase).toBe("skipped")
+    expect(chatMcpReconnectRecord(chatMcpReconnectKey("call-2", request.connectionId, request.owner)).phase).toBe("ready")
+    expect(chatMcpReconnectRecord(chatMcpReconnectKey(request.toolCallId, request.connectionId, "other-account/session")).phase).toBe("ready")
+  })
 
-    expect(chatMcpReconnectRecord(key)).toEqual({
-      phase: "authorization_opened",
-      error: null,
-      authorizeUrl,
-    })
-
+  test("preserves the browser URL for explicit reopen only", () => {
+    const authorizeUrl = "https://provider.example/authorize"
+    useChatMcpReconnectStore.getState().setRecord(key, { phase: "authorization_opened", error: null, authorizeUrl })
+    expect(chatMcpReconnectRecord(key).authorizeUrl).toBe(authorizeUrl)
     useChatMcpReconnectStore.getState().reset()
-    expect(chatMcpReconnectRecord(key)).toEqual({ phase: "ready", error: null, authorizeUrl: null })
+    expect(chatMcpReconnectRecord(key).authorizeUrl).toBeNull()
   })
 
-  test("presents a safe retry only after reconnection completes", () => {
-    expect(chatMcpReconnectPresentation(action, "ready")).toEqual({
-      badgeLabel: "Reconnect required",
-      buttonLabel: "Reconnect",
-      disabled: false,
-    })
-    expect(chatMcpReconnectPresentation(action, "authorization_opened")).toEqual({
-      badgeLabel: "Reconnect required",
-      buttonLabel: "Open sign-in again",
-      disabled: false,
-    })
-    expect(chatMcpReconnectPresentation(action, "connected")).toEqual({
-      badgeLabel: "Reconnected",
-      buttonLabel: "Try again",
-      disabled: false,
-    })
-    expect(chatMcpReconnectPresentation(action, "failed")).toEqual({
-      badgeLabel: "Reconnect failed",
-      buttonLabel: "Try reconnecting",
-      disabled: false,
-    })
+  test("duplicate decisions cannot deliver two continuations", async () => {
+    const responses: ChatConnectionDecisionResponse[] = []
+    let finish = () => {}
+    const pending = new Promise<void>(resolve => { finish = resolve })
+    const binding: ChatConnectionDecisionBinding = { request, isPending: () => true, respond: async response => { responses.push(response); await pending } }
+    const first = respondChatConnectionDecision(key, binding, connected)
+    expect(await respondChatConnectionDecision(key, binding, skipped)).toBe(false)
+    finish()
+    expect(await first).toBe(true)
+    expect(responses).toEqual([connected])
+    expect(await respondChatConnectionDecision(key, binding, connected)).toBe(false)
+  })
+
+  test("skip explicitly declines the dependency and alternative authorization", async () => {
+    const responses: ChatConnectionDecisionResponse[] = []
+    const binding: ChatConnectionDecisionBinding = { request, isPending: () => true, respond: async response => { responses.push(response) } }
+    expect(await respondChatConnectionDecision(key, binding, skipped)).toBe(true)
+    expect(responses).toEqual([skipped])
+  })
+
+  test("stale or unrelated running work cannot receive a decision", async () => {
+    let delivered = false
+    const binding: ChatConnectionDecisionBinding = { request, isPending: () => false, respond: async () => { delivered = true } }
+    expect(await respondChatConnectionDecision(key, binding, connected)).toBe(false)
+    expect(delivered).toBe(false)
+    expect(chatMcpReconnectRecord(key).responseSubmitted).toBeUndefined()
+  })
+
+  test("a rejected native reply releases the latch without automatically retrying", async () => {
+    let calls = 0
+    const binding: ChatConnectionDecisionBinding = { request, isPending: () => true, respond: async () => { calls += 1; if (calls === 1) throw new Error("Reply rejected") } }
+    await expect(respondChatConnectionDecision(key, binding, skipped)).rejects.toThrow("Reply rejected")
+    expect(chatMcpReconnectRecord(key).responseSubmitted).toBe(false)
+    expect(calls).toBe(1)
+    expect(await respondChatConnectionDecision(key, binding, skipped)).toBe(true)
+    expect(calls).toBe(2)
   })
 })
-
-
-test("authorization state does not leak across tasks with reused tool-call IDs", () => {
-  const first = chatMcpReconnectKey("call-1", "connection-1", "workspace/task-one");
-  const second = chatMcpReconnectKey("call-1", "connection-1", "workspace/task-two");
-  useChatMcpReconnectStore.getState().setRecord(first, { phase: "authorization_opened", authorizeUrl: "https://example.com/oauth", error: null });
-  expect(chatMcpReconnectRecord(second).phase).toBe("ready");
-  expect(chatMcpReconnectRecord(second).authorizeUrl).toBeNull();
-});

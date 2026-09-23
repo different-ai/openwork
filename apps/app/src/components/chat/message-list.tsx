@@ -1,6 +1,5 @@
 "use memo";
 
-import { VisualizationTool } from "@/components/tools/visualization-tool"
 import * as React from "react"
 import {
   AlertTriangle,
@@ -38,7 +37,6 @@ import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
 import { EditTool } from "@/components/tools/edit"
-import { EnvVarRequestTool } from "@/components/tools/env-var-request"
 import { ReadFileTool, WriteFileTool } from "@/components/tools/file"
 import { GlobTool } from "@/components/tools/glob"
 import { GrepTool } from "@/components/tools/grep"
@@ -47,7 +45,6 @@ import {
   isAutomationProposalToolPart,
   OpenWorkAutomationProposalTool,
 } from "@/components/tools/openwork-automation-proposal"
-import { OpenWorkSessionCreateTool } from "@/components/tools/openwork-session-create"
 import { QuestionTool } from "@/components/tools/question"
 import { SkillTool } from "@/components/tools/skill"
 import { TodoWriteTool } from "@/components/tools/todowrite"
@@ -89,8 +86,11 @@ import {
 import { Tool } from "@/components/ui/tool"
 import { CapabilityCallLine } from "@/components/chat/capability-call-line"
 import { CodeModeTool } from "@/components/chat/code-mode-tool"
+import { ConnectionCard } from "@/components/chat/connection-card"
+import { connectionFromChatToolPart } from "@/components/tools/error-attribution"
+import { isReservedConnectionQuestion, type ChatConnectionDecisionBinding } from "@/react-app/domains/session/surface/mcp-chat-reconnect"
 import { codeModeToolCalls } from "@/lib/code-mode-tools"
-import { hasPreservedMcpAppResult, McpAppFrame } from "@/components/chat/mcp-app-frame"
+import { hasPreservedMcpAppResult, isNativeConnectionAppLaunch, McpAppFrame } from "@/components/chat/mcp-app-frame"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
 import { SubagentRunLine } from "@/components/chat/subagent-run-line"
 import { ToolAggregateGroup } from "@/components/chat/tool-aggregate-group"
@@ -102,7 +102,6 @@ import {
   isApplyPatchToolPart,
   isBashToolPart,
   isEditToolPart,
-  isEnvVarRequestToolPart,
   isGlobToolPart,
   isGrepToolPart,
   isLspToolPart,
@@ -188,11 +187,46 @@ class ToolMessage extends React.Component<ToolMessageProps, { failed: boolean }>
   }
 }
 
+/**
+ * Tool calls in the current assistant turn that present as the native
+ * connection card. One card per connection: the latest report wins, and a
+ * pending native question pins the card to the call it is bound to. Earlier
+ * reports for the same connection stay quiet sentence lines.
+ */
+const ConnectionCardPartsContext = React.createContext<ReadonlySet<string>>(new Set())
+
+function connectionCardPartIds(
+  items: readonly UIMessageWithIndex[],
+  getConnectionDecision: ((toolCallId: string) => ChatConnectionDecisionBinding | null) | undefined,
+): Set<string> {
+  const latest = new Map<string, string>()
+  const bound = new Map<string, string>()
+  for (const item of items) {
+    if (item.message.role !== "assistant" || isSessionErrorMessage(item.message)) continue
+    for (const part of item.message.parts) {
+      if (part.type !== "dynamic-tool" || (part.state !== "output-available" && part.state !== "output-error")) continue
+      const decision = getConnectionDecision?.(part.toolCallId) ?? null
+      const found = connectionFromChatToolPart(part, { allowDiscovery: decision !== null })
+      if (!found) continue
+      if (decision) bound.set(found.connection.connectionId, part.toolCallId)
+      else latest.set(found.connection.connectionId, part.toolCallId)
+    }
+  }
+  return new Set([...latest.entries()].map(([connectionId, toolCallId]) => bound.get(connectionId) ?? toolCallId).concat([...bound.values()]))
+}
+
+/** The reserved native connection question is answered through the card, never as a tool row. */
+function isReservedConnectionQuestionPart(part: ToolUIPart | DynamicToolUIPart): boolean {
+  return part.type === "dynamic-tool" && /(?:^|_)question$/.test(part.toolName) && isReservedConnectionQuestion(part.input)
+}
+
 const ToolMessageInner = ({ part }: ToolMessageProps) => {
-  const { connectorIdentities, onMcpReconnect, onMcpReopenAuthorization, onMcpRetry } = useMessageList()
+  const { connectorIdentities, onMcpReconnect, onMcpReopenAuthorization, connectionQuestionToolCallId, getConnectionDecision } = useMessageList()
   const parentActive = React.useContext(ParentRunActiveContext)
   const resolveLifecycle = useCurrentToolLifecycleResolver()
   const lifecycle = resolveLifecycle(part.toolCallId, isToolPartInFlight(part))
+  const connectionCardParts = React.useContext(ConnectionCardPartsContext)
+  if (part.toolCallId === connectionQuestionToolCallId || isReservedConnectionQuestionPart(part)) return null
 
   // Delegated work has its own lifecycle, even after a parent follow-up/error.
   if (isTaskToolPart(part)) return <SubagentRunLine part={part} parentActive={parentActive} />
@@ -218,24 +252,15 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     )
   }
 
-  if (lifecycle === "interrupted") {
+  const statusUnknown = isToolPartInFlight(part) && (lifecycle === "interrupted" || (!lifecycle && !parentActive))
+  if (statusUnknown) {
     return (
-      <div
-        className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-        data-tool-lifecycle="interrupted"
-        role="alert"
-      >
-        <AlertTriangle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-        <div>
-          <div className="font-medium">Task interrupted</div>
-          <div className="text-xs text-destructive/80">This step stopped before it finished. Retry to continue.</div>
-        </div>
+      <div className="text-sm text-muted-foreground" data-tool-lifecycle="unknown">
+        {part.type === "dynamic-tool" ? (
+          <CapabilityCallLine part={part} connector={resolveConnectorToolIdentity(part, connectorIdentities)} statusUnknown />
+        ) : "Tool activity — status unavailable"}
       </div>
     )
-  }
-
-  if (part.type === "dynamic-tool" && part.toolName === "openwork_visualization") {
-    return <VisualizationTool part={part} />
   }
 
   if (isBashToolPart(part)) {
@@ -290,16 +315,14 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     return <QuestionTool part={part} />
   }
 
-  if (isEnvVarRequestToolPart(part)) {
-    return <EnvVarRequestTool part={part} />
-  }
-
-  if (part.type === "dynamic-tool" && part.toolName === "openwork_session_create") {
-    return <OpenWorkSessionCreateTool part={part} />
-  }
-
   if (part.type === "dynamic-tool" && isAutomationProposalToolPart(part)) {
     return <OpenWorkAutomationProposalTool part={part} />
+  }
+
+  // OpenWork's own connection reports render as the native card: the host is
+  // the presentation; the Den App remains for external hosts.
+  if (part.type === "dynamic-tool" && connectionCardParts.has(part.toolCallId)) {
+    return <ConnectionCard part={part} allowDiscovery={Boolean(getConnectionDecision?.(part.toolCallId))} />
   }
 
   // Failed calls use the same sentence line with the "failures are
@@ -311,7 +334,6 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
         connector={resolveConnectorToolIdentity(part, connectorIdentities)}
         onReconnect={hasPreservedMcpAppResult(part) ? undefined : onMcpReconnect}
         onReopenAuthorization={onMcpReopenAuthorization}
-        onRetry={onMcpRetry}
       />
     )
   }
@@ -321,7 +343,6 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
       toolPart={part}
       onReconnect={onMcpReconnect}
       onReopenAuthorization={onMcpReopenAuthorization}
-      onRetry={onMcpRetry}
     />
   )
 }
@@ -1186,6 +1207,7 @@ function collectMcpAppParts(items: UIMessageWithIndex[]): DynamicToolUIPart[] {
         part.type === "dynamic-tool"
         && (part.state === "output-available" || part.state === "output-error")
         && hasPreservedMcpAppResult(part)
+        && !isNativeConnectionAppLaunch(part)
       ) {
         parts.set(part.toolCallId, part)
       }
@@ -1199,7 +1221,8 @@ function MessageGroup({
   isLastGroup,
   isStreaming,
 }: AssistantMessageGroupProps) {
-  const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, showThinking, readOnly } = useMessageList()
+  const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, showThinking, readOnly, getConnectionDecision } = useMessageList()
+  const connectionCardParts = React.useMemo(() => connectionCardPartIds(items, getConnectionDecision), [items, getConnectionDecision])
   const lastItem = items[items.length - 1]
   // Branch/revert must target a real server-side message id. Synthetic
   // client-side messages (e.g. session errors) don't exist on the server and
@@ -1338,6 +1361,7 @@ function MessageGroup({
 
   return (
     <DevProfiler id={`MessageGroup:${lastItem.message.id}`}>
+      <ConnectionCardPartsContext.Provider value={connectionCardParts}>
       <div className="flex flex-col gap-2 group/message-group">
       {/* The scroll area keeps the same 8px rhythm the parts inside a single
           message use, so a step row is spaced identically whether or not a
@@ -1403,6 +1427,7 @@ function MessageGroup({
         </div>
       )}
       </div>
+      </ConnectionCardPartsContext.Provider>
     </DevProfiler>
   )
 }

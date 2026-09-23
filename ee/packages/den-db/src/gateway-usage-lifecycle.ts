@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm"
 import { gatewaySafeMoney } from "@openwork/types/den/gateway-usage-limits"
 import { MemberTable } from "./schema/org"
+import { lockUsageOrganization } from "./gateway-usage-entitlements"
 import { GatewayRequestLogTable as Log } from "./schema/inference"
 import {
   GatewayUsageTrackingTable as T,
@@ -36,6 +37,7 @@ export async function fenceUsageOrganizationDeletion(
   tx: UsageTx,
   organizationId: GatewayUsageScope["organizationId"],
 ) {
+  await lockUsageOrganization(tx, organizationId)
   return tx
     .select({ id: MemberTable.id, userId: MemberTable.userId })
     .from(MemberTable)

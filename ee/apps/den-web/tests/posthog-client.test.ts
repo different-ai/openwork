@@ -61,7 +61,7 @@ function instrumentation(options: {
   });
   const sdk = Object.freeze({ init, capture: mock(), identify: mock(), reset: mock() });
   const sentry = { init: mock((_config: Record<string, unknown>) => {}), captureRouterTransitionStart: mock() };
-  const env = { NODE_ENV: "production", NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token, ...options.env };
+  const env = { NODE_ENV: "production", NEXT_PUBLIC_POSTHOG_KEY: token, ...options.env };
   const run = () => evaluate<{ onRouterTransitionStart: (...args: unknown[]) => void }>(
     "instrumentation-client.ts",
     {
@@ -77,7 +77,7 @@ function instrumentation(options: {
 }
 
 describe("official PostHog instrumentation", () => {
-  test("immediately exposes the imported singleton without a loaded callback or method wrappers", () => {
+  test("KEY-only initialization immediately exposes the imported singleton without callbacks or wrappers", () => {
     const result = instrumentation();
     expect(result.sdk.init).toHaveBeenCalledTimes(1);
     expect(result.window.posthog).toBe(result.sdk);
@@ -103,8 +103,11 @@ describe("official PostHog instrumentation", () => {
     ["development", { env: { NODE_ENV: "development" } }],
     ["test environment", { env: { NODE_ENV: "test" } }],
     ["unset NODE_ENV", { env: { NODE_ENV: undefined } }],
-    ["missing public token", { env: { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: undefined } }],
-    ["blank public token", { env: { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: "" } }],
+    ["missing public key", { env: { NEXT_PUBLIC_POSTHOG_KEY: undefined } }],
+    ["blank public key", { env: { NEXT_PUBLIC_POSTHOG_KEY: "" } }],
+    ["project alias without an emitted KEY", { env: { NEXT_PUBLIC_POSTHOG_KEY: undefined, NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token } }],
+    ["legacy alias without an emitted KEY", { env: { NEXT_PUBLIC_POSTHOG_KEY: undefined, DEN_WEB_POSTHOG_KEY: token } }],
+    ["blank emitted KEY with aliases present", { env: { NEXT_PUBLIC_POSTHOG_KEY: "", NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token, DEN_WEB_POSTHOG_KEY: token } }],
     ["localhost", { origin: "http://localhost:3005" }],
     ["preview origin", { origin: "https://eng108-preview.example.test" }],
     ["self-hosted origin", { origin: "https://selfhost.example.test" }],
@@ -124,35 +127,41 @@ describe("official PostHog instrumentation", () => {
     expect(result.window.posthog).toBe(existing);
   });
 
-  test("an init exception does not alter Sentry initialization or its router hook", () => {
+  const sentryCases: [string, NonNullable<Parameters<typeof instrumentation>[0]>, number][] = [
+    ["init exception", { throws: true }, 1],
+    ["blank KEY", { env: { NEXT_PUBLIC_POSTHOG_KEY: "" } }, 0],
+    ["missing KEY", { env: { NEXT_PUBLIC_POSTHOG_KEY: undefined } }, 0],
+    ["EU host", { env: { NEXT_PUBLIC_POSTHOG_HOST: "https://eu.i.posthog.com" } }, 1],
+  ];
+  test.each(sentryCases)("PostHog %s does not alter Sentry initialization or its router hook", (_name, options, calls) => {
     const env = {
       NEXT_PUBLIC_DEN_OBSERVABILITY_BACKEND: "sentry",
       NEXT_PUBLIC_SENTRY_DSN: "https://public@sentry.example.test/123",
       NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE: "0.25",
     };
     const baseline = instrumentation({ env });
-    const failed = instrumentation({ env, throws: true });
-    expect(failed.sdk.init).toHaveBeenCalledTimes(1);
-    expect(failed.window.posthog).toBeUndefined();
-    expect(failed.sentry.init).toHaveBeenCalledTimes(1);
+    const result = instrumentation({ ...options, env: { ...env, ...options.env } });
+    expect(result.sdk.init).toHaveBeenCalledTimes(calls);
+    expect(result.window.posthog).toBe(options.throws || calls === 0 ? undefined : result.sdk);
+    expect(result.sentry.init).toHaveBeenCalledTimes(1);
     const normalConfig = baseline.sentry.init.mock.calls[0]?.[0];
-    const failedConfig = failed.sentry.init.mock.calls[0]?.[0];
-    if (!normalConfig || !failedConfig) throw new Error("Expected both Sentry initializations");
+    const resultConfig = result.sentry.init.mock.calls[0]?.[0];
+    if (!normalConfig || !resultConfig) throw new Error("Expected both Sentry initializations");
     const { beforeSendLog: normalLog, ...normalOptions } = normalConfig;
-    const { beforeSendLog: failedLog, ...failedOptions } = failedConfig;
-    expect(failedOptions).toEqual(normalOptions);
-    if (typeof normalLog !== "function" || typeof failedLog !== "function") {
+    const { beforeSendLog: resultLog, ...resultOptions } = resultConfig;
+    expect(resultOptions).toEqual(normalOptions);
+    if (typeof normalLog !== "function" || typeof resultLog !== "function") {
       throw new Error("Expected Sentry log scrubbers");
     }
     const log = { message: "GET /dashboard?token=private", attributes: { token: "private" } };
-    expect(failedLog(log)).toEqual(normalLog(log));
-    expect(failed.sentry.init).toHaveBeenCalledWith(expect.objectContaining({
+    expect(resultLog(log)).toEqual(normalLog(log));
+    expect(result.sentry.init).toHaveBeenCalledWith(expect.objectContaining({
       dsn: env.NEXT_PUBLIC_SENTRY_DSN, tracesSampleRate: 0.25,
       sendDefaultPii: false, beforeSend: scrub.scrubSentryEvent,
     }));
-    expect(failed.onRouterTransitionStart).toBe(failed.sentry.captureRouterTransitionStart);
-    failed.onRouterTransitionStart("/dashboard", "push", "pushState");
-    expect(failed.sentry.captureRouterTransitionStart).toHaveBeenCalledTimes(1);
+    expect(result.onRouterTransitionStart).toBe(result.sentry.captureRouterTransitionStart);
+    result.onRouterTransitionStart("/dashboard", "push", "pushState");
+    expect(result.sentry.captureRouterTransitionStart).toHaveBeenCalledTimes(1);
   });
 
   test("keeps raw bootstraps, custom queues and SDK method replacements out of client source", () => {
@@ -176,42 +185,77 @@ function nextConfig(env: Env) {
   }, { process: { env } });
 }
 
-describe("PostHog public build-time token", () => {
+describe("PostHog existing public build-time key", () => {
+  const aliases = { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: "phc_project_alias", DEN_WEB_POSTHOG_KEY: "phc_legacy_alias" };
   const cases: [string, Env, string][] = [
     ["unset", {}, ""],
-    ["blank", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: "" }, ""],
-    ["whitespace", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: " \t " }, ""],
-    ["primary", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token }, token],
-    ["trimmed primary", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ` ${token} ` }, token],
-    ["legacy fallback only when unset", { DEN_WEB_POSTHOG_KEY: token }, token],
-    ["trimmed fallback", { DEN_WEB_POSTHOG_KEY: ` ${token} ` }, token],
-    ["primary wins", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token, DEN_WEB_POSTHOG_KEY: "phc_other" }, token],
-    ["explicit blank blocks fallback", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: "", DEN_WEB_POSTHOG_KEY: token }, ""],
-    ["whitespace blocks fallback", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: " \t ", DEN_WEB_POSTHOG_KEY: token }, ""],
-    ["invalid primary blocks fallback", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: "invalid", DEN_WEB_POSTHOG_KEY: token }, ""],
-    ["invalid fallback", { DEN_WEB_POSTHOG_KEY: "invalid" }, ""],
-    ["missing token suffix", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: "phc_" }, ""],
-    ["invalid token characters", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: "phc_bad token" }, ""],
-    ["oversized token", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: `phc_${"a".repeat(201)}` }, ""],
-    ["preview", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token, VERCEL_ENV: "preview" }, ""],
-    ["Vercel development", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token, VERCEL_ENV: "development" }, ""],
-    ["self-hosted", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token, VERCEL_ENV: undefined }, ""],
-    ["development build", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token, NODE_ENV: "development" }, ""],
-    ["test build", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token, NODE_ENV: "test" }, ""],
-    ["unset NODE_ENV", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token, NODE_ENV: undefined }, ""],
-    ["explicit dev mode", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token, OPENWORK_DEV_MODE: "1" }, ""],
-    ["other nonzero dev mode", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token, OPENWORK_DEV_MODE: "true" }, ""],
-    ["zero dev mode", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token, OPENWORK_DEV_MODE: "0" }, token],
-    ["blank dev mode", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token, OPENWORK_DEV_MODE: "" }, token],
+    ["blank", { NEXT_PUBLIC_POSTHOG_KEY: "" }, ""],
+    ["whitespace", { NEXT_PUBLIC_POSTHOG_KEY: " \t " }, ""],
+    ["existingKeyProduction without aliases or new token names", { NEXT_PUBLIC_POSTHOG_KEY: token }, token],
+    ["trimmed primary", { NEXT_PUBLIC_POSTHOG_KEY: ` ${token} ` }, token],
+    ["project alias when KEY is unset", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token }, token],
+    ["trimmed project alias", { NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ` ${token} ` }, token],
+    ["legacy alias when KEY and project alias are unset", { DEN_WEB_POSTHOG_KEY: token }, token],
+    ["trimmed legacy alias", { DEN_WEB_POSTHOG_KEY: ` ${token} ` }, token],
+    ["primary wins over both aliases", { ...aliases, NEXT_PUBLIC_POSTHOG_KEY: token }, token],
+    ["primary works with blank aliases", { NEXT_PUBLIC_POSTHOG_KEY: token, NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: "", DEN_WEB_POSTHOG_KEY: "" }, token],
+    ["primary works with invalid aliases", { NEXT_PUBLIC_POSTHOG_KEY: token, NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: "invalid", DEN_WEB_POSTHOG_KEY: "invalid" }, token],
+    ["project alias precedes legacy alias", aliases, aliases.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN],
+    ["explicit blank KEY blocks both aliases", { ...aliases, NEXT_PUBLIC_POSTHOG_KEY: "" }, ""],
+    ["whitespace KEY blocks both aliases", { ...aliases, NEXT_PUBLIC_POSTHOG_KEY: " \t " }, ""],
+    ["invalid KEY blocks both aliases", { ...aliases, NEXT_PUBLIC_POSTHOG_KEY: "invalid" }, ""],
+    ["blank project alias blocks legacy alias", { ...aliases, NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: "" }, ""],
+    ["whitespace project alias blocks legacy alias", { ...aliases, NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: " \t " }, ""],
+    ["invalid project alias blocks legacy alias", { ...aliases, NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: "invalid" }, ""],
+    ["invalid legacy alias", { DEN_WEB_POSTHOG_KEY: "invalid" }, ""],
+    ["missing key suffix", { ...aliases, NEXT_PUBLIC_POSTHOG_KEY: "phc_" }, ""],
+    ["invalid key characters", { ...aliases, NEXT_PUBLIC_POSTHOG_KEY: "phc_bad token" }, ""],
+    ["oversized key", { ...aliases, NEXT_PUBLIC_POSTHOG_KEY: `phc_${"a".repeat(201)}` }, ""],
+    ["maximum key length", { NEXT_PUBLIC_POSTHOG_KEY: `phc_${"a".repeat(200)}` }, `phc_${"a".repeat(200)}`],
+    ["allowed key characters", { NEXT_PUBLIC_POSTHOG_KEY: "phc_A0-z_9" }, "phc_A0-z_9"],
+    ["zero dev mode", { NEXT_PUBLIC_POSTHOG_KEY: token, OPENWORK_DEV_MODE: "0" }, token],
+    ["blank dev mode", { NEXT_PUBLIC_POSTHOG_KEY: token, OPENWORK_DEV_MODE: "" }, token],
   ];
-  test.each(cases)("%s exposes only the eligible public token", (_name: string, overrides: Env, expected: string) => {
+  test.each(cases)("%s emits KEY and initializes only when eligible", (_name, overrides, expected) => {
     const env = {
       NODE_ENV: "production", VERCEL_ENV: "production",
       PRIVATE_TEST_VALUE: "must-stay-server-side", ...overrides,
     };
     const before = { ...env };
-    expect(nextConfig(env).env).toEqual({ NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: expected });
+    const config = nextConfig(env);
+    expect(config.env).toEqual({ NEXT_PUBLIC_POSTHOG_KEY: expected, NEXT_PUBLIC_POSTHOG_HOST: "https://us.i.posthog.com" });
     expect(env).toEqual(before);
+    const result = instrumentation({ env: config.env });
+    expect(result.sdk.init).toHaveBeenCalledTimes(expected ? 1 : 0);
+    expect(result.window.posthog).toBe(expected ? result.sdk : undefined);
+    if (expected) {
+      expect(result.sdk.init).toHaveBeenCalledWith(expected, expect.objectContaining({ api_host: "/ow", ui_host: "https://us.posthog.com" }));
+    }
+  });
+
+  const disabled: [string, Env][] = [
+    ["preview", { VERCEL_ENV: "preview" }],
+    ["Vercel development", { VERCEL_ENV: "development" }],
+    ["self-hosted", { VERCEL_ENV: undefined }],
+    ["development build", { NODE_ENV: "development" }],
+    ["test build", { NODE_ENV: "test" }],
+    ["unset NODE_ENV", { NODE_ENV: undefined }],
+    ["explicit dev mode", { OPENWORK_DEV_MODE: "1" }],
+    ["other nonzero dev mode", { OPENWORK_DEV_MODE: "true" }],
+  ];
+  test.each(disabled)("%s disables KEY and both alias fallbacks even at the canonical origin", (_name, overrides) => {
+    for (const credentials of [{ NEXT_PUBLIC_POSTHOG_KEY: token }, aliases, { DEN_WEB_POSTHOG_KEY: token }]) {
+      for (const host of ["https://us.i.posthog.com", "https://eu.i.posthog.com"]) {
+        const config = nextConfig({
+          NODE_ENV: "production", VERCEL_ENV: "production", NEXT_PUBLIC_POSTHOG_HOST: host,
+          ...credentials, ...overrides,
+        });
+        expect(config.env).toEqual({ NEXT_PUBLIC_POSTHOG_KEY: "", NEXT_PUBLIC_POSTHOG_HOST: host });
+        const result = instrumentation({ env: config.env });
+        expect(result.sdk.init).not.toHaveBeenCalled();
+        expect(result.window.posthog).toBeUndefined();
+      }
+    }
   });
 
   test("preserves ordered PostHog rewrites, trailing slash policy, and Den redirects", async () => {
@@ -226,6 +270,135 @@ describe("PostHog public build-time token", () => {
       { source: "/api/den/:path*", destination: "https://api.example.test/:path*", permanent: false },
     ]);
     expect(await nextConfig({}).redirects?.()).toEqual([]);
+  });
+});
+
+describe("PostHog existing public host selects only the upstream region", () => {
+  const cases: [string, string | undefined, "us" | "eu"][] = [
+    ["default US", undefined, "us"],
+    ["empty host defaults to US", "", "us"],
+    ["whitespace host defaults to US", " \t ", "us"],
+    ["US API", "https://us.i.posthog.com", "us"],
+    ["EU API", "https://eu.i.posthog.com", "eu"],
+    ["legacy US UI", "https://app.posthog.com", "us"],
+    ["US UI", "https://us.posthog.com", "us"],
+    ["EU UI", "https://eu.posthog.com", "eu"],
+    ["existing proxy path", "/ow", "us"],
+    ["US API trailing slash", "https://us.i.posthog.com/", "us"],
+    ["EU API trailing slash", "https://eu.i.posthog.com/", "eu"],
+    ["legacy US UI trailing slash", "https://app.posthog.com/", "us"],
+    ["US UI trailing slash", "https://us.posthog.com/", "us"],
+    ["EU UI trailing slash", "https://eu.posthog.com/", "eu"],
+    ["proxy trailing slash", "/ow/", "us"],
+    ["trimmed US host with trailing slashes", " https://us.i.posthog.com/// \t", "us"],
+    ["trimmed EU host with trailing slashes", " https://eu.posthog.com/// \t", "eu"],
+  ];
+  test.each(cases)("%s keeps ordered runtime rewrites and the browser API on /ow", async (_name, host, region) => {
+    const env = {
+      NODE_ENV: "production", VERCEL_ENV: "production",
+      NEXT_PUBLIC_POSTHOG_KEY: token, NEXT_PUBLIC_POSTHOG_HOST: host,
+    };
+    const before = { ...env };
+    const config = nextConfig(env);
+    expect(env).toEqual(before);
+    expect(config.env).toEqual({ NEXT_PUBLIC_POSTHOG_KEY: token, NEXT_PUBLIC_POSTHOG_HOST: `https://${region}.i.posthog.com` });
+    expect(config.skipTrailingSlashRedirect).toBe(true);
+    expect(await config.rewrites?.()).toEqual([
+      { source: "/ow/static/:path*", destination: `https://${region}-assets.i.posthog.com/static/:path*` },
+      { source: "/ow/array/:path*", destination: `https://${region}-assets.i.posthog.com/array/:path*` },
+      { source: "/ow/:path*", destination: `https://${region}.i.posthog.com/:path*` },
+    ]);
+    const result = instrumentation({ env: config.env });
+    expect(result.sdk.init).toHaveBeenCalledTimes(1);
+    expect(result.sdk.init).toHaveBeenCalledWith(token, expect.objectContaining({ api_host: "/ow", ui_host: `https://${region}.posthog.com` }));
+    expect(result.window.posthog).toBe(result.sdk);
+  });
+
+  const rejected: [string, string][] = [
+    ["unsupported origin", "https://unsupported.example.test"],
+    ["lookalike origin", "https://us.i.posthog.com.example.test"],
+    ["non-HTTPS origin", "http://us.i.posthog.com"],
+    ["protocol-relative origin", "//eu.i.posthog.com"],
+    ["credentialed US origin", "https://fixture:host-secret@us.i.posthog.com"],
+    ["credentialed EU origin", "https://fixture:host-secret@eu.i.posthog.com"],
+    ["credentialed UI origin", "https://fixture:host-secret@app.posthog.com"],
+    ["username-only origin", "https://fixture@eu.posthog.com"],
+    ["US path", "https://us.i.posthog.com/e/"],
+    ["EU path", "https://eu.i.posthog.com/static/"],
+    ["UI path", "https://eu.posthog.com/project/fixture"],
+    ["US query", "https://us.i.posthog.com?token=host-secret"],
+    ["EU query", "https://eu.i.posthog.com/?token=host-secret"],
+    ["UI query", "https://app.posthog.com?token=host-secret"],
+    ["fragment", "https://eu.posthog.com#host-secret"],
+    ["proxy child path", "/ow/e/"],
+    ["proxy query", "/ow?token=host-secret"],
+    ["explicit port", "https://us.i.posthog.com:443"],
+    ["malformed origin", "https://[invalid"],
+  ];
+  test.each(rejected)("active production with a valid KEY rejects %s without leaking the value", (_name, host) => {
+    const env = {
+      NODE_ENV: "production", VERCEL_ENV: "production",
+      NEXT_PUBLIC_POSTHOG_KEY: token, NEXT_PUBLIC_POSTHOG_HOST: host,
+    };
+    const before = { ...env };
+    let error: unknown;
+    try {
+      nextConfig(env);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({
+      name: "Error",
+      message: "NEXT_PUBLIC_POSTHOG_HOST must be a US/EU PostHog Cloud HTTPS origin or /ow.",
+    });
+    expect(String(error)).not.toContain(host);
+    expect(String(error)).not.toContain("host-secret");
+    expect(env).toEqual(before);
+  });
+
+  const disabled: [string, Env][] = [
+    ["preview", { VERCEL_ENV: "preview" }],
+    ["Vercel development", { VERCEL_ENV: "development" }],
+    ["self-hosted", { VERCEL_ENV: undefined }],
+    ["development build", { NODE_ENV: "development" }],
+    ["test build", { NODE_ENV: "test" }],
+    ["unset NODE_ENV", { NODE_ENV: undefined }],
+    ["explicit dev mode", { OPENWORK_DEV_MODE: "1" }],
+    ["other nonzero dev mode", { OPENWORK_DEV_MODE: "true" }],
+    ["missing KEY and aliases", { NEXT_PUBLIC_POSTHOG_KEY: undefined }],
+    ["blank KEY", { NEXT_PUBLIC_POSTHOG_KEY: "" }],
+    ["whitespace KEY", { NEXT_PUBLIC_POSTHOG_KEY: " \t " }],
+    ["invalid KEY", { NEXT_PUBLIC_POSTHOG_KEY: "invalid" }],
+    ["missing key suffix", { NEXT_PUBLIC_POSTHOG_KEY: "phc_" }],
+    ["invalid key characters", { NEXT_PUBLIC_POSTHOG_KEY: "phc_bad token" }],
+    ["oversized key", { NEXT_PUBLIC_POSTHOG_KEY: `phc_${"a".repeat(201)}` }],
+    ["blank KEY overriding valid aliases", { NEXT_PUBLIC_POSTHOG_KEY: "", NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token, DEN_WEB_POSTHOG_KEY: token }],
+    ["invalid KEY overriding valid aliases", { NEXT_PUBLIC_POSTHOG_KEY: "invalid", NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: token, DEN_WEB_POSTHOG_KEY: token }],
+  ];
+  const disabledHosts = [
+    ...rejected.map(([, host]) => ({ host, region: "us" })),
+    { host: "https://eu.i.posthog.com", region: "eu" },
+    { host: "https://eu.posthog.com/", region: "eu" },
+  ];
+  test.each(disabled)("%s tolerates unsupported HOST with US defaults and retains valid EU hosts without SDK initialization", async (_name, overrides) => {
+    for (const { host, region } of disabledHosts) {
+      const env = {
+        NODE_ENV: "production", VERCEL_ENV: "production",
+        NEXT_PUBLIC_POSTHOG_KEY: token, NEXT_PUBLIC_POSTHOG_HOST: host, ...overrides,
+      };
+      const before = { ...env };
+      const config = nextConfig(env);
+      expect(env).toEqual(before);
+      expect(config.env).toEqual({ NEXT_PUBLIC_POSTHOG_KEY: "", NEXT_PUBLIC_POSTHOG_HOST: `https://${region}.i.posthog.com` });
+      expect(await config.rewrites?.()).toEqual([
+        { source: "/ow/static/:path*", destination: `https://${region}-assets.i.posthog.com/static/:path*` },
+        { source: "/ow/array/:path*", destination: `https://${region}-assets.i.posthog.com/array/:path*` },
+        { source: "/ow/:path*", destination: `https://${region}.i.posthog.com/:path*` },
+      ]);
+      const result = instrumentation({ env: config.env });
+      expect(result.sdk.init).not.toHaveBeenCalled();
+      expect(result.window.posthog).toBeUndefined();
+    }
   });
 });
 

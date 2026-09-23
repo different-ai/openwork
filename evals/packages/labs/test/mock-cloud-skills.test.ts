@@ -144,13 +144,23 @@ test("advertises the Connect routing tools and records every tools/call by name"
   const token = mock.credential("account-a");
   const listed = await rpc(mock.agentUrl, token, { id: 1, jsonrpc: "2.0", method: "tools/list", params: {} });
   const tools = isRecord(listed.payload) && isRecord(listed.payload.result) && Array.isArray(listed.payload.result.tools) ? listed.payload.result.tools : [];
-  assert.deepEqual(tools.map((tool) => isRecord(tool) ? tool.name : null), ["search_capabilities", "execute_capability"]);
+  assert.deepEqual(tools.map((tool) => isRecord(tool) ? tool.name : null), ["search_capabilities", "execute_capability", "list_skills", "get_skill"]);
   const called = await rpc(mock.agentUrl, token, { id: 2, jsonrpc: "2.0", method: "tools/call", params: { name: "search_capabilities", arguments: { query: "amber" } } });
   assert.equal(called.response.status, 200);
   assert.ok(isRecord(called.payload) && isRecord(called.payload.result));
   const unknown = await rpc(mock.agentUrl, token, { id: 3, jsonrpc: "2.0", method: "tools/call", params: { name: "not_a_tool" } });
   assert.ok(isRecord(unknown.payload) && isRecord(unknown.payload.error));
-  assert.deepEqual(mock.toolCallNames(), ["search_capabilities", "not_a_tool"]);
+  mock.publishSkill("account-a", { name: "amber-report", description: "Amber release report code.", body: "Reply with AMBER-1." });
+  const listed2 = await rpc(mock.agentUrl, token, { id: 4, jsonrpc: "2.0", method: "tools/call", params: { name: "list_skills", arguments: {} } });
+  const listedSkills = isRecord(listed2.payload) && isRecord(listed2.payload.result) && isRecord(listed2.payload.result.structuredContent)
+    && Array.isArray(listed2.payload.result.structuredContent.skills) ? listed2.payload.result.structuredContent.skills : [];
+  assert.deepEqual(listedSkills.map((skill) => isRecord(skill) ? [skill.name, skill.location] : null), [["amber-report", "skill://amber-report/SKILL.md"]]);
+  const got = await rpc(mock.agentUrl, token, { id: 5, jsonrpc: "2.0", method: "tools/call", params: { name: "get_skill", arguments: { name: "amber-report" } } });
+  const gotResult = isRecord(got.payload) && isRecord(got.payload.result) ? got.payload.result : {};
+  assert.equal(Array.isArray(gotResult.content) && isRecord(gotResult.content[0]) ? gotResult.content[0].text : null, mock.skillMarkdown("account-a", "amber-report"));
+  const missing = await rpc(mock.agentUrl, token, { id: 6, jsonrpc: "2.0", method: "tools/call", params: { name: "get_skill", arguments: { name: "nope" } } });
+  assert.equal(isRecord(missing.payload) && isRecord(missing.payload.result) ? missing.payload.result.isError : null, true);
+  assert.deepEqual(mock.toolCallNames(), ["search_capabilities", "not_a_tool", "list_skills", "get_skill", "get_skill"]);
   assert.deepEqual((await mock.toolCalls({ name: "search_capabilities" })).map((call) => [call.name, call.tokenId]), [["search_capabilities", "account-a"]]);
   const since = new Date(Date.now() + 60_000).toISOString();
   assert.deepEqual(mock.toolCallNames({ sinceIso: since }), []);

@@ -1,14 +1,14 @@
-import { browserScript } from "@openwork/cdp";
+import { browserScript, locate } from "@openwork/cdp";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { app as startApp, faultProxy as startFaultProxy, resolveEvalEngine, SkipError } from "@openwork/env";
+import { app as startApp, faultProxy as startFaultProxy, resolveEvalEngine } from "@openwork/env";
 import type { Den, MockHandle, Seed } from "@openwork/env";
 import { denFetch, evalIn as rawEvalIn } from "@openwork/behaviors";
 import type { DenFetchResult, DenSession } from "@openwork/behaviors";
 import { allocateFreePort } from "@openwork/cdp";
-import { startMockMcp } from "@openwork/labs";
-import { captureExternalBrowserUrls, electronProfilePaths } from "@openwork/hosts";
+import { startMockMcp, type MockAgentWorkload } from "@openwork/labs";
+import { electronProfilePaths } from "@openwork/hosts";
 import { configureProvider } from "./chat.ts";
 import { browserScriptValue, runBrowserHost } from "../packages/env/src/browser-task.ts";
 
@@ -253,9 +253,11 @@ export async function preseededConnect(seed: Seed) {
       promptMarker: prompt,
       finalReply: "The skill was read.",
       finalReplyFrom: "last-tool-text",
+      // The direct skill path the desktop prompt now recommends: list the
+      // catalog without keyword search, then read the one skill by capability.
       steps: [
-        { tool: "search_capabilities", arguments: { query: skillName, limit: 1, type: "skills" } },
-        { tool: "execute_capability", arguments: {}, argumentsFrom: "capability-search" },
+        { tool: "list_skills", arguments: { query: skillName, limit: 1 } },
+        { tool: "get_skill", arguments: {}, argumentsFrom: "skill-list" },
       ],
     }] }) },
   });
@@ -962,13 +964,31 @@ async function configureWorkspaceModel(seed: Seed, input: {
     });
     if (patched !== "ok") return patched;
     const reloaded = await request("/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST" });
-    if (reloaded !== "ok" && !reloaded.includes("opencode_reload_timeout")) return reloaded;
+    if (reloaded !== "ok" && !reloaded.includes("opencode_reload_timeout") && !reloaded.includes("opencode_engine_unreachable")) return reloaded;
     if (inputValue2) {
       const reconcile = await request("/workspace/" + encodeURIComponent(workspaceId) + "/mcp/openwork-cloud/reconcile", {
         method: "POST", body: JSON.stringify(inputValue2),
       });
       if (reconcile !== "ok") return reconcile;
     }
+    const deadline = Date.now() + 90_000;
+    let healthy = false;
+    while (Date.now() < deadline) {
+      try {
+        const health = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/global/health", {
+          headers: { Authorization: "Bearer " + token }, signal: AbortSignal.timeout(5_000),
+        });
+        if (health.ok) {
+          const readiness: unknown = await health.json();
+          if (readiness && typeof readiness === "object" && "healthy" in readiness && readiness.healthy === true) {
+            healthy = true;
+            break;
+          }
+        }
+      } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (!healthy) return "Engine did not report healthy";
     const raw = localStorage.getItem("openwork.preferences");
     let preferences: Record<string, unknown> = {};
     try { preferences = raw ? JSON.parse(raw) : {}; } catch {}
@@ -1006,7 +1026,18 @@ async function reloadConfiguredApp(app: import("@openwork/cdp").Surface): Promis
   throw new Error("The configured desktop control did not return after reload.");
 }
 
-export const connectionActionReply = "Connect your Notion account to continue.";
+export const connectionActionQuestion = {
+  header: "Connection",
+  question: "Connect Notion to continue?",
+  options: [
+    { label: "Authenticate", description: "Connect this account to continue." },
+    { label: "Skip", description: "Continue without this connection." },
+  ],
+  multiple: false,
+  custom: false,
+};
+export const connectionActionSkipPrompt = "Skip Notion setup if I choose.";
+export const connectionStatusSkipPrompt = "Recheck Notion sign-in and skip if I choose.";
 export const ordinaryDiscoveryPrompt = "Create a dashboard using my notes.";
 export const ordinaryDiscoveryReply = "I found the available capabilities for the dashboard.";
 export const connectionActionPrompt = "I want to connect Notion.";
@@ -1015,7 +1046,7 @@ export const connectionStatusPrompt = "Check my Notion connection so I can sign 
 export const allConnectorsPrompt = "Show me all the quick-add connectors.";
 export const allConnectorsReply = "Here are all the connectors available to add.";
 export const connectorCatalogPrompt = "I want to set up Slack.";
-export const connectorCatalogReply = "Choose Slack to set it up, or browse the available connectors.";
+export const connectorCatalogReply = "Slack setup options are available in your organization Connections dashboard.";
 
 export async function connectionActionMcpApp(seed: Seed) {
   const providerId = "connection-action-mcp-app-provider";
@@ -1028,25 +1059,33 @@ export async function connectionActionMcpApp(seed: Seed) {
         latestUserTurn: true,
         finalReply: ordinaryDiscoveryReply,
         steps: [{ tool: "search_capabilities", arguments: { query: "Notion", type: "mcp" } }],
-      }, {
-        promptMarker: connectionActionPrompt,
+      }, ...[connectionActionPrompt, connectionActionSkipPrompt].map((promptMarker): MockAgentWorkload => ({
+        promptMarker,
         latestUserTurn: true,
-        finalReply: connectionActionReply,
-        steps: [{ tool: "search_capabilities", arguments: { query: "Notion", type: "mcp", intent: "connect" } }],
-      }, {
-        promptMarker: connectionStatusPrompt,
+        finalReply: "No connection outcome was observed.",
+        finalReplyFrom: "last-tool-text",
+        steps: [
+          { tool: "search_capabilities", arguments: { query: "Notion", type: "mcp", intent: "connect" } },
+          { tool: "question", arguments: { questions: [connectionActionQuestion] } },
+        ],
+      })), ...[connectionStatusPrompt, connectionStatusSkipPrompt].map((promptMarker): MockAgentWorkload => ({
+        promptMarker,
         latestUserTurn: true,
-        finalReply: connectionActionReply,
+        finalReply: "No connection outcome was observed.",
+        finalReplyFrom: "last-tool-text",
         steps: [
           { tool: "search_capabilities", arguments: { query: "Notion", type: "mcp", limit: 1 } },
           { tool: "execute_capability", arguments: {}, argumentsFrom: "capability-search" },
+          { tool: "question", arguments: { questions: [connectionActionQuestion] } },
         ],
-      }, {
+      })), {
         promptMarker: connectorCatalogPrompt,
+        latestUserTurn: true,
         finalReply: connectorCatalogReply,
         steps: [{ tool: "search_capabilities", arguments: { query: "Slack", type: "mcp", intent: "connect" } }],
       }, {
         promptMarker: allConnectorsPrompt,
+        latestUserTurn: true,
         finalReply: allConnectorsReply,
         steps: [{ tool: "search_capabilities", arguments: { query: "quick add connectors", type: "connectors" } }],
       }] }),
@@ -1070,92 +1109,39 @@ export async function connectionActionMcpApp(seed: Seed) {
   if (!mcpToken || !appHostToken || mcpToken === appHostToken) throw new Error("Distinct model and app-host tokens were not minted.");
   const app = await seed.desktop({ den, as: "admin", name: "connection-action-mcp-app" });
   const workspace = await seed.workspace(app, seed.tmpPath("connection-action-mcp-app"));
+  const questionPolicyWritten = await seed.evalIn(app, browserScript(async (workspaceId) => {
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/files/content", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "opencode.json", content: JSON.stringify({ permission: { question: "allow" } }) }),
+    });
+    return response.ok;
+  }, [workspace.workspaceId]), { awaitPromise: true });
+  if (questionPolicyWritten !== true) throw new Error("Could not arrange the connection question-tool policy.");
   await configureWorkspaceModel(seed, {
     app, workspaceId: workspace.workspaceId, providerId, modelId,
     fixtureUrl: den.mocks.connector.url, denApiUrl: den.ref.apiUrl, mcpToken, appHostToken,
   });
   await reloadConfiguredApp(app);
-  await seed.session(app);
-  return { app, den, connection, organizationId, mcpSession: { ...den.admin, token: mcpToken }, appHostSession: { ...den.admin, token: appHostToken } };
-}
-
-export const skillCreatedResourceUri = "ui://openwork/skill-created/v1/view.html";
-export const skillCreatedReply = "The beautiful tomatoes skill is ready to use.";
-
-export async function skillCreatedMcpApp(seed: Seed) {
-  const providerId = "skill-created-mcp-app-provider";
-  const modelId = "skill-created-mcp-app-model";
-  const counters = { createCalls: 0 };
-  const fixture = createServer((request, response) => {
-    void (async () => {
-      const url = new URL(request.url ?? "/", "http://127.0.0.1");
-      if (request.method === "GET" && url.pathname === "/v1/models") {
-        sendJson(response, 200, { object: "list", data: [{ id: modelId, object: "model" }] });
-        return;
-      }
-      if (request.method === "POST" && url.pathname.endsWith("/chat/completions")) {
-        const payload: unknown = JSON.parse(await readBody(request));
-        if (!isRecord(payload)) throw new Error("The provider request was not an object.");
-        if (completedToolCount(payload) > 0) {
-          sendStream(response, [streamChunk(modelId, { role: "assistant" }), streamChunk(modelId, { content: skillCreatedReply }), streamChunk(modelId, {}, "stop")]);
-          return;
-        }
-        const toolName = projectedTool(payload, "_create_skill");
-        if (!toolName) throw new Error("The create_skill tool was not projected.");
-        counters.createCalls += 1;
-        sendStream(response, [
-          streamChunk(modelId, { role: "assistant" }),
-          streamChunk(modelId, {
-            tool_calls: [{
-              index: 0,
-              id: "call_create_beautiful_tomatoes",
-              type: "function",
-              function: {
-                name: toolName,
-                arguments: JSON.stringify({
-                  pluginName: "Beautiful Tomatoes",
-                  skillMarkdown: [
-                    "---",
-                    "name: beautiful-tomatoes",
-                    "description: Use beautiful tomatoes whenever the user says go.",
-                    "---",
-                    "",
-                    "Whenever the user says go, respond using beautiful tomatoes.",
-                  ].join("\n"),
-                }),
-              },
-            }],
-          }),
-          streamChunk(modelId, {}, "tool_calls"),
-        ]);
-        return;
-      }
-      sendJson(response, 404, { error: { message: "not found" } });
-    })().catch((error: unknown) => sendJson(response, 500, { error: String(error) }));
-  });
-  const fixtureUrl = await listen(fixture);
-  try {
-    const den = await seed.den({ org: { name: `Skill Created App ${Date.now()}`, admin: { name: "Avery" } } });
-    const organizationId = await activeOrganizationId(seed, den.admin);
-    const mcpSession = await mintMcpSession(seed, den, organizationId);
-    const app = await seed.desktop({ name: "skill-created-mcp-app" });
-    const workspace = await seed.workspace(app, seed.tmpPath("skill-created-mcp-app"));
-    await configureWorkspaceModel(seed, {
-      app,
-      workspaceId: workspace.workspaceId,
-      providerId,
-      modelId,
-      fixtureUrl,
-      denApiUrl: den.ref.apiUrl,
-      mcpToken: mcpSession.token,
-    });
-    await reloadConfiguredApp(app);
-    await seed.session(app);
-    return withDispose({ app, admin: den.admin, organizationId, workspaceId: workspace.workspaceId, counters }, async () => closeServer(fixture));
-  } catch (error) {
-    await closeServer(fixture);
-    throw error;
+  let session: { sessionId: string; title: string } | undefined;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      session = await seed.session(app);
+      break;
+    } catch (error) {
+      lastError = error;
+      if (!String(error).includes("session ID")) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
   }
+  if (!session) throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  const connectionAppHeading = async () => (await locate(app, {
+    mcpApp: { resourceUri: "ui://openwork/connection-action/v2/view.html" }, role: "heading",
+  })).text;
+  return { app, den, connection, organizationId, workspace, session, connectionAppHeading, mcpSession: { ...den.admin, token: mcpToken }, appHostSession: { ...den.admin, token: appHostToken } };
 }
 
 export const inlineResourceUri = "ui://openwork/artifacts/arv_eval_card/views/avr_eval_card/index.html";
@@ -1470,7 +1456,6 @@ export async function remoteMcpApps(seed: Seed) {
 
 export async function connectorCatalogDiscovery(seed: Seed) {
   const world = await connectionActionMcpApp(seed);
-  if (world.app.handle.hostKind !== "daytona") throw new SkipError("connector setup OS handoff witness requires Daytona Linux");
   const response = await seed.api(world.den.admin, "/v1/mcp-connections/presets");
   if (!isRecord(response.body) || !Array.isArray(response.body.presets)) throw new Error("Den did not return its connector presets.");
   const presetIds = response.body.presets.map((preset: unknown) => {
@@ -1478,6 +1463,5 @@ export async function connectorCatalogDiscovery(seed: Seed) {
     return preset.presetId;
   });
   const web = await seed.web({ den: world.den, signedInAs: world.den.admin, startPath: "/dashboard/mcp-connections", headless: true });
-  const browserUrls = await captureExternalBrowserUrls(world.app.handle);
-  return withDispose({ ...world, web, browserUrls, expectedIds: ["google-workspace", "microsoft-365", ...presetIds] }, async () => { await browserUrls[Symbol.asyncDispose](); });
+  return { ...world, web, expectedIds: ["google-workspace", "microsoft-365", ...presetIds] };
 }

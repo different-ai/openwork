@@ -18,6 +18,32 @@ import type { DenRef, DenSession } from "@openwork/behaviors";
 import type { MockMcpHandle } from "@openwork/labs";
 import { BufferedEvidenceSink, SeedChannel, SpecRuntime, copyWorldResources, registerWorldDisposable } from "../src/spec/runtime.ts";
 
+test("active step captions follow nesting and clear after success or failure", async () => {
+  await using stack = new AsyncDisposableStack();
+  const runtime = new SpecRuntime(resolvePlace({}), stack, new BufferedEvidenceSink());
+  runtime.stage = "body";
+  assert.equal(runtime.currentStepName(), undefined);
+  await runtime.step("parent", async () => {
+    assert.equal(runtime.currentStepName(), "parent");
+    await runtime.step("child", () => {
+      assert.equal(runtime.currentStepName(), "child");
+    });
+    assert.equal(runtime.currentStepName(), "parent");
+  });
+  assert.equal(runtime.currentStepName(), undefined);
+  await assert.rejects(runtime.step("failing parent", async () => {
+    try {
+      await runtime.step("failing child", () => {
+        assert.equal(runtime.currentStepName(), "failing child");
+        throw new Error("expected step failure");
+      });
+    } finally {
+      assert.equal(runtime.currentStepName(), "failing parent");
+    }
+  }), /expected step failure/);
+  assert.equal(runtime.currentStepName(), undefined);
+});
+
 test("world resource validation rejects malformed and conflicting contracts", () => {
   for (const value of [null, [], {}, { surfaces: [], services: ["unknown"] },
     { surfaces: ["unknown"], services: [] }, { surfaces: ["appWeb", "appWeb"], services: [] },

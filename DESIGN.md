@@ -2,8 +2,9 @@
 
 How OpenWork UI is designed. Agents read this before building or reviewing any
 user-facing surface (`apps/app`, `apps/desktop`, `ee/apps/den-web`, MCP Apps,
-generated artifact views). Warden's `design-spec-review` skill checks PRs
-against the numbered rules below and *warns* — it never blocks.
+generated artifact views). The optional `.warden/skills/design-spec-review` skill
+can review the numbered rules below locally. Automated Warden reviews focus on
+security and confidentiality.
 
 ## Who we design for
 

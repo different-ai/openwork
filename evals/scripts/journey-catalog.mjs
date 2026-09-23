@@ -62,6 +62,14 @@ const definitions = {
   'streamed-markdown-answer.e2e.test.ts': {
     cases: [{ id: 'CONT-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
   },
+  'live-stream-continuity.e2e.test.ts': {
+    name: 'Keep a real OpenAI answer streaming across conversation switches', placement: 'local', model: 'live',
+    needs: { env: ['OPENAI_API_KEY'], optIn: ['OPENWORK_EVAL_LIVE_OPENAI'] },
+    cases: [
+      { id: 'CONT-01-live', engines: ['v1'], optIns: ['OPENWORK_EVAL_E2E_TESTS', 'OPENWORK_EVAL_LIVE_OPENAI'], example: { placement: '--local', engine: 'v1' } },
+      { id: 'CONT-01-live-history', engines: ['v1'], optIns: ['OPENWORK_EVAL_E2E_TESTS', 'OPENWORK_EVAL_LIVE_OPENAI'], example: { placement: '--local', engine: 'v1' } },
+    ],
+  },
   'live-tool-visible-after-session-switch.e2e.test.ts': {
     cases: [{ id: 'SWITCH-10', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--daytona', engine: 'v1' } }],
   },
@@ -126,6 +134,7 @@ export const ciLane = Object.freeze({ platform: 'linux', env: Object.freeze([]) 
 // Needs the lane cannot meet, phrased as the action that would meet them; empty when the journey is applicable.
 export function unmetLaneNeeds(entry, lane = ciLane) {
   const missing = (entry.needs?.env ?? []).filter(name => !lane.env.includes(name)).map(name => `set ${name}`);
+  missing.push(...(entry.needs?.optIn ?? []).filter(name => !lane.optIns?.includes(name)).map(name => `set ${name}=1`));
   if (entry.needs?.platform && entry.needs.platform !== lane.platform) missing.push(`run on ${entry.needs.platform}`);
   return missing;
 }

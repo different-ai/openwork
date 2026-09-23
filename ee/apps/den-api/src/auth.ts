@@ -1177,7 +1177,9 @@ export const auth = betterAuth({
           }
           const capabilities = metadata.capabilities;
           if (capabilities && typeof capabilities === "object" && "gatewayDashboard" in capabilities) {
-            throw new APIError("FORBIDDEN", { message: "capabilities.gatewayDashboard is reserved for internal platform administration." });
+            const retainedCapabilities = { ...capabilities };
+            delete retainedCapabilities.gatewayDashboard;
+            return { data: { metadata: { ...metadata, capabilities: retainedCapabilities } } };
           }
         },
         beforeUpdateOrganization: async ({ organization }) => {

@@ -11,7 +11,7 @@ Use the skills in this order:
 1. `write-a-spec`
 2. `run-tests`
 3. `diagnose-a-red-run` when the run fails
-4. `publish-evidence` for the existing ambient test evidence
+4. `open-a-pr`; CI runs the changed specs on the PR head and publishes the evidence
 
 Demo-driven features start from a world script plus a spec in `evals/specs`.
 
@@ -54,7 +54,6 @@ Skills own mechanics; this README owns the map and vocabulary.
 | Author a spec | `write-a-spec` | Add executable coverage under `evals/specs`. |
 | Run tests | `run-tests` | Run a selected spec; the CLI chooses and reports placement. |
 | Failing or red run | `diagnose-a-red-run` | Classify a failure before changing code. |
-| Publish evidence or declare a PR verdict | `publish-evidence` | Judge and publish an existing ambient evidence run. |
 | Missing secret or environment variable | `get-env-var` | Load a required team secret into the shell. |
 | Drive local Electron via CDP | `browser-automation` | Explore or debug the local desktop surface. |
 | Daytona setup or sandbox debugging | `daytona` | Repair the CLI, snapshots, sandboxes, or secrets volume. |
@@ -497,16 +496,11 @@ A failed assertion is `Failed`; missing requirements, tooling failure, or
 missing test evidence is `Incomplete` or a named skip. A green suite containing
 skips is not proof.
 
-Publish an already completed test run with the `publish-evidence` skill:
-
-```bash
-pnpm evals:e2e --publish --pr <number> [--test-run <path|directory-id|latest|name>]
-```
-
-`evals:e2e --publish` judges and publishes test evidence without rerunning tests.
-Its optional `--test-run` argument selects an existing test run by path,
-directory ID, record name, or `latest` at publish time. Custom screenshots and
-recordings are supplementary and never determine the pass/fail verdict.
+CI publishes. `PR change proof` runs every changed spec on the PR head and
+`evidence-review` posts one sticky comment linking the report; nobody runs the
+publisher by hand. `evals:e2e --publish` remains for that trusted CI path
+only. Custom screenshots and recordings are supplementary and never determine
+the pass/fail verdict.
 
 ## Standalone isolated Den
 

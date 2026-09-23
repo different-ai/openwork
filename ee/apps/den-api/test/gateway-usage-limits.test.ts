@@ -99,7 +99,7 @@ const policySchema = z.object({
   revision: z.number(),
   limits: z.array(z.object({ timeframe: z.string(), costLimitMicroUsd: z.number() })),
   assignments: z.array(
-    z.object({ id: z.string(), memberId: z.string().nullable(), teamId: z.string().nullable() }),
+    z.object({ id: z.string(), memberId: z.string().nullable(), teamId: z.string().nullable(), organization: z.boolean() }),
   ),
 })
 const usageSchema = z.object({
@@ -273,6 +273,42 @@ test("HTTP contracts, roles, cross-org lookup, reset ownership and approved exte
   actor = member
   role = "member"
   expect(usageSchema.parse(await (await request("usage-limits/me")).json()).state).toBe("unlimited")
+})
+
+test("organization assignment is strict, admin-only, idempotent and includes future members", async () => {
+  const owner = await seed("owner")
+  const member = await seed("member", owner.organizationId)
+  const foreign = await seed("owner")
+  actor = owner
+  role = "owner"
+  const policy = policySchema.parse(await (await request("usage-limit-policies", "POST", input)).json())
+  const path = `usage-limit-policies/${policy.id}/assignments`
+  for (const target of [
+    {},
+    { organization: false },
+    { organization: "true" },
+    { organization: true, memberId: member.memberId },
+    { organization: true, teamId: createDenTypeId("team") },
+    { organization: true, organizationId: foreign.organizationId },
+  ]) expect((await request(path, "POST", target)).status).toBe(400)
+  actor = member
+  role = "member"
+  expect((await request(path, "POST", { organization: true })).status).toBe(403)
+  actor = foreign
+  role = "owner"
+  expect((await request(path, "POST", { organization: true })).status).toBe(404)
+  actor = owner
+  const assigned = await request(path, "POST", { organization: true })
+  expect(assigned.status).toBe(200)
+  const assignments = policySchema.parse(await assigned.json()).assignments
+  expect(assignments).toEqual([{ id: expect.any(String), organization: true, memberId: null, teamId: null }])
+  expect(policySchema.parse(await (await request(path, "POST", { organization: true })).json()).assignments).toEqual(assignments)
+  expect(await (await request(path)).json()).toEqual({ assignments })
+  const future = await seed("member", owner.organizationId)
+  actor = future
+  role = "member"
+  expect(usageSchema.parse(await (await request("usage-limits/me")).json()).buckets[0]?.allowanceMicroUsd).toBe(5)
+  expect((await service.getStatus(foreign)).state).toBe("unlimited")
 })
 
 test("OpenAPI exposes the wire contract and explicit authentication", async () => {

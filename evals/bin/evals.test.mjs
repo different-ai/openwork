@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -23,6 +23,7 @@ import {
   worldSnapshotsSince,
 } from "./evals.mjs";
 import { discoverWorlds, selectWorlds, planWorlds } from "../scripts/world-plan.ts";
+import { unmetNeeds } from "../packages/env/src/needs.ts";
 
 const webSource = `import { spec } from "@openwork/testkit";
 const test = spec.world(arrange, { resources: { surfaces: ["appWeb"], services: ["mock"] } });
@@ -245,6 +246,64 @@ test("registered cases validate file and effective engine/surface before placeme
   );
 });
 
+test("explicit live cases consent to paid OpenAI, validate v1/web and keep local placement", async () => {
+  const file = new URL("../specs/live-stream-continuity.e2e.test.ts", import.meta.url).pathname;
+  const source = await readFile(file, "utf8");
+  for (const id of ["CONT-01-live", "CONT-01-live-history"]) {
+    const options = parseArgs(["live-stream-continuity", "--local", "--engine", "v1", "--surface", "web", "--case", id]);
+    const env = { OPENAI_API_KEY: "fixture-not-a-provider-key", OPENWORK_WORLD_PLACE: "daytona", OPENWORK_EVAL_DAYTONA: "1" };
+    const child = buildChildEnvironment(options, [file], [source], env, () => { throw new Error("local must not probe Daytona"); });
+    assert.equal(child.placement, "local");
+    assert.equal(child.engine, "v1");
+    assert.equal(child.surface, "web");
+    assert.equal(child.env.OPENWORK_EVAL_LIVE_OPENAI, "1");
+    assert.equal(env.OPENWORK_EVAL_LIVE_OPENAI, undefined);
+    assert.deepEqual(child.plan.surfaces, ["appWeb"]);
+    assert.deepEqual(child.plan.services, []);
+    const requirements = { placement: "local", optIn: ["OPENWORK_EVAL_LIVE_OPENAI"], env: ["OPENAI_API_KEY"] };
+    assert.deepEqual(unmetNeeds(requirements, child.env), []);
+    const missingKey = buildChildEnvironment(options, [file], [source], {}, () => false);
+    assert.equal(missingKey.env.OPENAI_API_KEY, undefined);
+    assert.deepEqual(unmetNeeds(requirements, missingKey.env), ["set OPENAI_API_KEY"]);
+    const disabled = buildChildEnvironment(options, [file], [source], { ...env, OPENWORK_EVAL_LIVE_OPENAI: "0" }, () => false);
+    assert.deepEqual(unmetNeeds(requirements, disabled.env), ["set OPENWORK_EVAL_LIVE_OPENAI=1"]);
+    assert.throws(() => resolveExecutionSelection(
+      parseArgs(["live-stream-continuity", "--engine", "v2", "--case", id]), [file], {}, [source],
+    ), /does not support engine v2/);
+    assert.throws(() => resolveExecutionSelection(
+      parseArgs(["live-stream-continuity", "--surface", "electron", "--case", id]), [file], {}, [source],
+    ), /conflicts with declared world surfaces/);
+    assert.throws(() => resolveExecutionSelection(
+      parseArgs(["streamed-markdown-answer", "--case", id]), ["/repo/streamed-markdown-answer.e2e.test.ts"], {}, [webSource],
+    ), /belongs to live-stream-continuity/);
+  }
+});
+
+test("whole-file and multi-file selection never infer paid consent from source or a CI provider key", async () => {
+  const live = new URL("../specs/live-stream-continuity.e2e.test.ts", import.meta.url).pathname;
+  const mock = new URL("../specs/streamed-markdown-answer.e2e.test.ts", import.meta.url).pathname;
+  const [liveSource, mockSource] = await Promise.all([readFile(live, "utf8"), readFile(mock, "utf8")]);
+  assert.doesNotMatch(mockSource, /OPENWORK_EVAL_LIVE_OPENAI|CONT-01-live/);
+  for (const engine of ["v1", "v2"]) {
+    for (const files of [[live], [mock], [mock, live]]) {
+      const sources = files.map(file => file === live ? liveSource : mockSource);
+      const child = buildChildEnvironment(parseArgs(["live-stream-continuity", "--engine", engine]), files, sources,
+        { OPENAI_API_KEY: "fixture-not-a-provider-key" }, () => true);
+      assert.equal(child.engine, engine);
+      assert.equal(child.placement, "daytona");
+      assert.equal(child.env.OPENWORK_EVAL_LIVE_OPENAI, undefined);
+      assert(!child.consented.includes("OPENWORK_EVAL_LIVE_OPENAI"));
+      assert.deepEqual(unmetNeeds({ placement: "local", optIn: ["OPENWORK_EVAL_LIVE_OPENAI"], env: ["OPENAI_API_KEY"] }, child.env), [
+        "set OPENWORK_EVAL_LIVE_OPENAI=1", "use local placement without OPENWORK_EVAL_DEN_API_URL",
+      ]);
+    }
+  }
+  const explicit = buildChildEnvironment(parseArgs(["live-stream-continuity", "--local", "--engine", "v1"]), [live], [liveSource], {
+    OPENAI_API_KEY: "fixture-not-a-provider-key", OPENWORK_EVAL_LIVE_OPENAI: "1",
+  }, () => false);
+  assert.deepEqual(unmetNeeds({ placement: "local", optIn: ["OPENWORK_EVAL_LIVE_OPENAI"], env: ["OPENAI_API_KEY"] }, explicit.env), []);
+});
+
 test("registered cases derive fixed web from source regardless of inherited surface", () => {
   const markdown = "/repo/streamed-markdown-answer.e2e.test.ts";
   const switched = "/repo/live-tool-visible-after-session-switch.e2e.test.ts";
@@ -325,6 +384,8 @@ test("--list prints exact registered cases and commands without selecting placem
   assert.match(result.stdout, /engines: v1, v2/);
   assert.match(result.stdout, /resources=unknown; legacy; lazy provision only/);
   assert.match(result.stdout, /pnpm evals:e2e streamed-markdown-answer --local --engine v2 --case CONT-01/);
+  assert.match(result.stdout, /pnpm evals:e2e live-stream-continuity --local --engine v1 --case CONT-01-live/);
+  assert.match(result.stdout, /pnpm evals:e2e live-stream-continuity --local --engine v1 --case CONT-01-live-history/);
   assert.match(result.stdout, /pnpm evals:e2e live-tool-visible-after-session-switch --daytona --engine v1 --case SWITCH-10/);
   assert.doesNotMatch(result.stdout, /--surface/);
   assert.doesNotMatch(result.stderr, /placement:/);

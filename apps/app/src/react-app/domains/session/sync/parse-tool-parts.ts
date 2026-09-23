@@ -76,6 +76,7 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
     ? part.state.time.start
     : null;
   const openwork = {
+    ...(part.id !== part.callID ? { sourcePartId: part.id } : {}),
     ...(mcpResult ? { mcpResult } : {}),
     ...(childSessionId ? { childSessionId } : {}),
     ...(toolStartedAt === null ? {} : { toolStartedAt }),

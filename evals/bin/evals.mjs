@@ -50,7 +50,8 @@ Other:
 
 Publish mode cannot be combined with test names, run-selection flags, --with-llm-vision,
 --daytona, --local, or --den. Named tests auto-consent to opt-in flags declared in their source;
-value-bearing environment variables are never auto-set.
+value-bearing environment variables are never auto-set. Paid OPENWORK_EVAL_LIVE_OPENAI
+requires an explicit environment opt-in or a registered --case declaring that opt-in.
 
 Registered case examples:
 ${caseExamples}
@@ -413,7 +414,8 @@ export function buildChildEnvironment(options, resolved, sources, env = process.
   const placement = resolveRunEnvironment(options, selection.env, probe);
   const childEnv = { ...placement.env };
   const consented = new Set(["OPENWORK_EVAL_E2E_TESTS"]);
-  const requested = selection.optIns ?? sources.flatMap(consentVarsFromSource);
+  const requested = selection.optIns ?? sources.flatMap(consentVarsFromSource)
+    .filter(variable => variable !== "OPENWORK_EVAL_LIVE_OPENAI");
   for (const variable of requested) {
     if (TRANSPORT_SELECTOR_ENV.has(variable) || Object.hasOwn(env, variable)) continue;
     childEnv[variable] = "1";

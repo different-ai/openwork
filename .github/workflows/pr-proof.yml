@@ -19,6 +19,8 @@ jobs:
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
       selected: ${{ steps.select.outputs.selected }}
+      liveMatrix: ${{ steps.select.outputs.liveMatrix }}
+      liveSelected: ${{ steps.select.outputs.liveSelected }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -49,11 +51,12 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup-tests
-      - name: Prepare a virtual display, local Den dependencies and the review app
+      - uses: ./.github/actions/setup-browser
+        with:
+          oauth-handoff: "true"
+      - name: Build local Den dependencies and the review app
+        shell: bash
         run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y xvfb x11-utils libgtk-3-0 libnss3 libasound2t64 libgbm1
           pnpm --filter @openwork/types build
           pnpm --filter @openwork-ee/den-db build
           pnpm --filter @openwork/email build
@@ -71,6 +74,66 @@ jobs:
           set -euo pipefail
           test "$(id -u)" -ne 0
           xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local
+      - name: Save selected native testkit and Vitest records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr-proof-${{ github.run_attempt }}-${{ matrix.key }}
+          path: |
+            evals/results/test-runs/
+            evals/results/.testkit/cli-run-*.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+
+  live-proof:
+    needs: select
+    if: >-
+      needs.select.outputs.liveSelected == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.event.pull_request.head.repo.id == github.event.repository.id &&
+      github.event.pull_request.base.repo.id == github.event.repository.id &&
+      github.event.pull_request.head.repo.fork == false &&
+      github.event.pull_request.base.repo.fork == false &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      github.actor != 'dependabot[bot]' &&
+      github.triggering_actor != 'dependabot[bot]'
+    environment: pr-slow-specs
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.select.outputs.liveMatrix) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-tests
+      - uses: ./.github/actions/setup-browser
+      - name: Build local appWeb dependencies without live credentials
+        run: pnpm --filter @openwork/types build
+      - name: Run the whole selected live spec on local v1 appWeb
+        timeout-minutes: 20
+        env:
+          PROOF_SPEC: ${{ matrix.spec }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENWORK_EVAL_LIVE_OPENAI: "1"
+          OPENWORK_EVAL_OPENAI_MODEL: gpt-5.4
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          if [ "$PROOF_SPEC" != 'evals/specs/live-stream-continuity.e2e.test.ts' ]; then
+            printf '%s\n' '::error::Unsupported live proof selection. Add an explicit reviewed live-spec policy before running another file.' >&2
+            exit 1
+          fi
+          if [[ -z "${OPENAI_API_KEY//[[:space:]]/}" ]]; then
+            printf '%s\n' '::error::OPENAI_API_KEY is required for selected live proof. Configure repository/environment access and approve pr-slow-specs; this proof cannot be skipped.' >&2
+            exit 1
+          fi
+          xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --engine v1 --surface web
       - name: Save selected native testkit and Vitest records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

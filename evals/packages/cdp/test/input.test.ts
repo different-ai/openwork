@@ -174,6 +174,64 @@ test("the browser-side miss report lists every rendered element of the requested
   );
 });
 
+test("role targets locate labelled progress bars such as usage meters", async () => {
+  class Element {
+    tagName: string;
+    attributes: Record<string, string>;
+    innerText = "";
+    textContent = "";
+    parentElement: Element | null = null;
+    children: Element[] = [];
+    labels = [];
+    constructor(tagName: string, attributes: Record<string, string>) {
+      this.tagName = tagName.toUpperCase();
+      this.attributes = attributes;
+    }
+    getAttribute(name: string) { return this.attributes[name] ?? null; }
+    hasAttribute(name: string) { return name in this.attributes; }
+    closest() { return null; }
+    contains(other: Element) { return other === this; }
+    matches() { return false; }
+    scrollIntoView() {}
+    getBoundingClientRect() { return { left: 100, top: 200, width: 300, height: 6, x: 100, y: 200 }; }
+  }
+  class HTMLElement extends Element { isContentEditable = false; }
+  class HTMLInputElement extends HTMLElement {}
+  class HTMLTextAreaElement extends HTMLElement {}
+  class HTMLSelectElement extends HTMLElement {}
+  class HTMLButtonElement extends HTMLElement {}
+  const meters = ["5 hour", "Weekly", "Monthly"].map((window) => new HTMLElement("div", { role: "progressbar", "aria-label": `${window} usage limit remaining` }));
+  const document = {
+    // Mirror the browser: an element is only a candidate when the selector names its role.
+    querySelectorAll(selector: string) { return selector.includes('[role="progressbar"]') ? meters : []; },
+    querySelector() { return null; },
+    getElementById() { return null; },
+    elementFromPoint() { return meters[0]; },
+  };
+  const surface = surfaceReturning(null);
+  surface.client.send = async (method, params) => {
+    if (method === "Runtime.evaluate") return { result: { objectId: "global" } };
+    assert.equal(method, "Runtime.callFunctionOn");
+    assert.ok(params && typeof params.functionDeclaration === "string" && Array.isArray(params.arguments));
+    const [argument] = params.arguments;
+    assert.ok(argument && typeof argument === "object" && "value" in argument && typeof argument.value === "string");
+    const value = runInNewContext(`(${params.functionDeclaration})(${JSON.stringify(argument.value)})`, {
+      document,
+      location: { hash: "", pathname: "/dashboard/ai-gateway" },
+      innerWidth: 1440,
+      innerHeight: 1100,
+      getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }),
+      Element, HTMLElement, HTMLInputElement, HTMLTextAreaElement, HTMLSelectElement, HTMLButtonElement,
+      JSON, String, Number, Boolean, Array, Object, RegExp,
+    });
+    return { result: { value } };
+  };
+  const located = await locate(surface, { role: "progressbar", label: "5 hour usage limit remaining" });
+  assert.equal(located.name, "5 hour usage limit remaining");
+  assert.equal(located.visible, true);
+  assert.equal(located.hitTestOk, true);
+});
+
 test("key dispatch leaves native codes to Chrome and retains explicit editing commands", async () => {
   const surface = surfaceReturning(null);
   const events: unknown[] = [];
@@ -352,4 +410,112 @@ test("clickTarget fails with both rects when the target moves out of reach befor
   const disabledLate = surfaceLocating([enabledButton, enabledButton, { ...enabledButton, disabled: "disabled" }]);
   await assert.rejects(clickTarget(disabledLate.surface, "Run task"), DisabledTargetError);
   assert.deepEqual(disabledLate.mouse, []);
+});
+
+function appFrameSurface(options: { disabled?: boolean; covered?: boolean; missingDocument?: boolean; resourceUri?: string } = {}) {
+  const mouse: Record<string, unknown>[] = [];
+  const button = { nodeId: 7, backendNodeId: 70, nodeName: "BUTTON", attributes: options.disabled ? ["disabled", ""] : [],
+    children: [{ nodeId: 8, backendNodeId: 80, nodeName: "#text", nodeValue: "Authenticate" }] };
+  const heading = { nodeId: 9, backendNodeId: 90, nodeName: "H1", children: [{ nodeId: 10, backendNodeId: 100, nodeName: "#text", nodeValue: "Notion connected" }] };
+  const surface = surfaceReturning(null);
+  surface.client.send = async (method, params = {}) => {
+    if (method === "DOM.enable" || method === "CSS.enable" || method === "DOM.scrollIntoViewIfNeeded") return {};
+    if (method === "DOM.getDocument") return { root: { nodeId: 1, backendNodeId: 10, nodeName: "#document", children: [
+      { ...button, nodeId: 11, backendNodeId: 110 },
+      { nodeId: 2, backendNodeId: 20, nodeName: "DIV", attributes: ["data-mcp-app-resource", options.resourceUri ?? "ui://connection"], children: [
+        { nodeId: 3, backendNodeId: 30, nodeName: "IFRAME", contentDocument: options.missingDocument ? undefined : {
+          nodeId: 4, backendNodeId: 40, nodeName: "#document", children: [
+            { nodeId: 5, backendNodeId: 50, nodeName: "IFRAME", contentDocument: { nodeId: 6, backendNodeId: 60, nodeName: "#document", children: [button, heading] } },
+          ],
+        } },
+      ] },
+    ] } };
+    if (method === "DOM.getBoxModel") { assert.ok(params.nodeId === 7 || params.nodeId === 9); return { model: { content: [100, 200, 200, 200, 200, 240, 100, 240] } }; }
+    if (method === "DOM.getNodeForLocation") return { backendNodeId: options.covered ? 110 : 70 };
+    if (method === "CSS.getComputedStyleForNode") return { computedStyle: [{ name: "visibility", value: "visible" }] };
+    if (method === "Input.dispatchMouseEvent") { mouse.push(params); return {}; }
+    throw new Error(`Unexpected CDP method ${method}`);
+  };
+  return { surface, mouse };
+}
+
+const appAuthenticate = { mcpApp: { resourceUri: "ui://connection" }, role: "button", label: "Authenticate" } satisfies Exclude<import("../src/input.ts").Target, string>;
+
+test("MCP App targets resolve nested frame DOM, not a same-named host button", async () => {
+  const { surface, mouse } = appFrameSurface();
+  const found = await clickTarget(surface, appAuthenticate, { timeoutMs: 1_000 });
+  assert.equal(found.name, "Authenticate");
+  assert.deepEqual(mouse.map(event => [event.type, event.x, event.y]), [
+    ["mouseMoved", 150, 220], ["mousePressed", 150, 220], ["mouseReleased", 150, 220],
+  ]);
+});
+
+test("MCP App targets retain disabled and hit-test guards", async () => {
+  const disabled = appFrameSurface({ disabled: true });
+  await assert.rejects(clickTarget(disabled.surface, appAuthenticate, { timeoutMs: 1_000 }), DisabledTargetError);
+  assert.deepEqual(disabled.mouse, []);
+  const covered = appFrameSurface({ covered: true });
+  await assert.rejects(clickTarget(covered.surface, appAuthenticate, { timeoutMs: 150 }), /hitTestOk=false/);
+  assert.deepEqual(covered.mouse, []);
+});
+
+test("unreadable frame documents cannot establish absence or fall back to the host control", async () => {
+  const missing = appFrameSurface({ missingDocument: true });
+  await assert.rejects(assertAbsent(missing.surface, appAuthenticate, 100), /frame documents unavailable/);
+  assert.deepEqual(missing.mouse, []);
+  const other = appFrameSurface({ resourceUri: "ui://another-app" });
+  await assert.rejects(locate(other.surface, appAuthenticate), TargetNotFoundError);
+  assert.deepEqual(other.mouse, []);
+  await assert.rejects(assertAbsent(surfaceReturning(null), appAuthenticate, 100), /Unexpected CDP method/);
+});
+
+test("trusted input reaches an isolated MCP App iframe in Chrome", { skip: process.env.OPENWORK_CDP_FRAME_CHROME ? false : "needs: OPENWORK_CDP_FRAME_CHROME", timeout: 30_000 }, async () => {
+  const { createServer } = await import("node:http");
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { spawn } = await import("node:child_process");
+  const { attachSurface } = await import("../src/surface.ts");
+  await using cleanup = new AsyncDisposableStack();
+  const profile = await mkdtemp(join(tmpdir(), "openwork-frame-input-"));
+  cleanup.defer(() => rm(profile, { recursive: true, force: true }));
+  let port = 0;
+  let trusted = 0;
+  const server = createServer((request, response) => {
+    response.setHeader("Content-Type", "text/html");
+    if (request.url === "/decision") { trusted += 1; response.end("ok"); return; }
+    if (request.url === "/frame") {
+      const html = `<h1>Connect Notion</h1><button onclick="if(event.isTrusted){document.querySelector('h1').textContent='Notion connected';fetch('http://127.0.0.1:${port}/decision',{mode:'no-cors'});this.remove()}">Authenticate</button>`;
+      response.end(`<iframe sandbox="allow-scripts" style="width:500px;height:200px" srcdoc="${html.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}"></iframe>`);
+    } else response.end(`<button>Authenticate</button><div data-mcp-app-resource="ui://connection" style="padding:80px"><iframe sandbox="allow-scripts allow-same-origin" style="width:600px;height:300px" src="http://127.0.0.1:${port}/frame"></iframe></div>`);
+  });
+  await new Promise<void>(resolve => server.listen(0, "::", resolve));
+  cleanup.defer(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Fixture port unavailable");
+  port = address.port;
+  const browser = spawn(process.env.OPENWORK_CDP_FRAME_CHROME ?? "", ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", `http://localhost:${port}`], { stdio: ["ignore", "ignore", "pipe"] });
+  cleanup.defer(async () => {
+    if (browser.exitCode !== null || browser.signalCode !== null) return;
+    const exited = new Promise<void>(resolve => browser.once("exit", () => resolve()));
+    browser.kill();
+    await exited;
+  });
+  const cdpUrl = await new Promise<string>((resolve, reject) => {
+    let output = "";
+    const timer = setTimeout(() => reject(new Error("Chrome did not expose CDP")), 10_000);
+    browser.once("error", error => { clearTimeout(timer); reject(error); });
+    browser.stderr.on("data", data => {
+      output += String(data);
+      const match = output.match(/DevTools listening on ws:\/\/([^/]+)/);
+      if (match) { clearTimeout(timer); resolve(`http://${match[1]}`); }
+    });
+  });
+  const surface = await attachSurface({ name: "isolated-frame-input", kind: "chrome", hostKind: "local", cdpUrl });
+  cleanup.use(surface);
+  await clickTarget(surface, appAuthenticate, { timeoutMs: 10_000 });
+  const outcome = await waitForLocated(surface, { mcpApp: { resourceUri: "ui://connection" }, role: "heading", text: "Notion connected" }, { timeoutMs: 10_000 });
+  assert.equal(outcome.visible, true);
+  assert.equal(trusted, 1);
+  await assertAbsent(surface, appAuthenticate, 100);
 });

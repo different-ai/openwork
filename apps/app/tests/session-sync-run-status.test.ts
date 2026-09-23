@@ -971,10 +971,12 @@ describe("active session status reconciliation", () => {
     jest.advanceTimersByTime(250);
     await flushMicrotasks();
 
-    for (const key of [statusKey, permissionKey, questionKey, todoKey]) {
+    // The transcript is GC-exempt like the other live caches (it must survive
+    // while a background run streams), so release owns its removal too.
+    expect(transcript).toBeDefined();
+    for (const key of [transcriptKey, statusKey, permissionKey, questionKey, todoKey]) {
       expect(queryClient.getQueryData(key(workspaceId, sessionId))).toBeUndefined();
     }
-    expect(queryClient.getQueryData(transcriptKey(workspaceId, sessionId))).toBe(transcript);
     expect(queryClient.getQueryData([...questionKey(workspaceId, sessionId), "settled"])).toEqual(["answered"]);
     expect(queryClient.getQueryData(statusKey(workspaceId, "background-live"))).toEqual({ type: "busy" });
   });

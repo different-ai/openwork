@@ -24,6 +24,7 @@ export interface CdpClient {
 
 export interface CdpSendOptions {
   timeoutMs?: number;
+  sessionId?: string;
 }
 
 export interface CdpConnectOptions {
@@ -211,7 +212,7 @@ export function connect(
           closeSocket();
         },
         close: closeSocket,
-        send(method: string, params: Record<string, unknown> = {}, { timeoutMs = sendTimeoutMs }: CdpSendOptions = {}) {
+        send(method: string, params: Record<string, unknown> = {}, { timeoutMs = sendTimeoutMs, sessionId }: CdpSendOptions = {}) {
           if (closed || socket.readyState !== WebSocket.OPEN) {
             return Promise.reject(new Error("CDP socket is not open."));
           }
@@ -231,7 +232,7 @@ export function connect(
             }, timeoutMs);
             pending.set(id, { resolve: innerResolve, reject: innerReject, timer });
             try {
-              socket.send(JSON.stringify({ id, method, params }));
+              socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
             } catch (error) {
               pending.delete(id);
               if (timer) clearTimeout(timer);

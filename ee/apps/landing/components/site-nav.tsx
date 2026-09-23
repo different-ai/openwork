@@ -112,7 +112,7 @@ export function SiteNav(props: Props) {
             <DownloadLink
               className="lp-pill-primary lp-pill-sm !hidden lg:!inline-flex"
             >
-              Download
+              Download OpenWork
             </DownloadLink>
             <button
               type="button"

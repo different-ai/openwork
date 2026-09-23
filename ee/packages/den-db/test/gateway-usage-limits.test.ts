@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import {
   gatewayUsagePeriod, gatewayUsdToMicroUsd, gatewayUsagePolicyWriteSchema, gatewayWinningPolicies, gatewayUsageLimitResponse,
-  gatewaySafeMoney, type GatewayUsageLimitPolicy, type GatewayUsageStatus,
+  gatewaySafeMoney, gatewayUsageLimitPolicySchema, gatewayUsageProvenanceSchema, type GatewayUsageLimitPolicy, type GatewayUsageStatus,
 } from "@openwork/types/den/gateway-usage-limits"
 
 const policy = (id: string, amount: number, hardLimit = true, allowRequestReset = true): GatewayUsageLimitPolicy => ({ id, name: id, hardLimit, allowRequestReset, revision: 1, limits: [{ timeframe: "month", costLimitMicroUsd: amount }], assignments: [] })
@@ -17,6 +17,20 @@ test("policy schema defaults flags and rejects duplicate or absent limits", () =
   assert.equal(value.hardLimit, true)
   assert.equal(value.allowRequestReset, true)
   for (const limits of [[], [...value.limits, ...value.limits]]) assert.equal(gatewayUsagePolicyWriteSchema.safeParse({ ...value, limits }).success, false)
+})
+test("assignment reads default older targets to false and validate organization provenance", () => {
+  const parsed = gatewayUsageLimitPolicySchema.parse({
+    ...policy("policy", 100),
+    assignments: [
+      { id: "direct", memberId: "member", teamId: null },
+      { id: "everyone", memberId: null, teamId: null, organization: true },
+    ],
+  })
+  assert.equal(parsed.assignments[0]?.organization, false)
+  assert.equal(parsed.assignments[1]?.organization, true)
+  const source = { kind: "organization", assignmentId: "everyone", memberId: null, teamId: null }
+  assert.deepEqual(gatewayUsageProvenanceSchema.parse(source), source)
+  assert.equal(gatewayUsageProvenanceSchema.safeParse({ ...source, memberId: "member" }).success, false)
 })
 test("05UTC boundaries cover leap day, Monday, month, year and DST", () => {
   for (const [timeframe, instant, start, end] of [

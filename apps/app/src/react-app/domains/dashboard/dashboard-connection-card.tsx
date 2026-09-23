@@ -1,17 +1,13 @@
 import { ConnectionCard } from "@/components/chat/connection-card";
-import type { ConnectionActionPayload } from "@openwork/types/connection-action-app";
-import type { ChatToolReconnectAction } from "@/components/tools/error-attribution";
 import type { ChatToolReconnectCallbacks } from "@/components/tools/use-chat-tool-reconnect";
 import { createDenClient, readDenSettings } from "@/app/lib/den";
 import { openDesktopUrl } from "@/app/lib/desktop";
 import { isChatMcpReconnectScopeCurrent, waitForFreshMcpAuthorization } from "../session/surface/mcp-chat-reconnect";
 
-export function DashboardConnectionCard({ toolName, toolCallId, output, connection, action, onConnected }: {
+export function DashboardConnectionCard({ toolName, toolCallId, output, onConnected }: {
   toolName: string;
   toolCallId: string;
   output: unknown;
-  connection: ConnectionActionPayload;
-  action: ChatToolReconnectAction | null;
   onConnected: () => void;
 }) {
   const callbacks: ChatToolReconnectCallbacks = {
@@ -53,5 +49,5 @@ export function DashboardConnectionCard({ toolName, toolCallId, output, connecti
     onReopenAuthorization: async (_target, url) => { await openDesktopUrl(url); },
   };
   return <ConnectionCard part={{ type: "dynamic-tool", toolName, toolCallId, state: "output-available", input: {}, output }}
-    connection={connection} action={action} callbacks={callbacks} />;
+    callbacks={callbacks} />;
 }

@@ -95,7 +95,7 @@ import {
 } from "./workspace-export-safety.js";
 import { serve, type ServeResult } from "./serve-node.js";
 import { serveStaticUi } from "./static-ui.js";
-import { externalFetch, loopbackFetch } from "./server-fetch.js";
+import { externalFetch, loopbackFetch, transferResponseBody } from "./server-fetch.js";
 import { registerCoreRoutes } from "./routes/core.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
@@ -153,7 +153,7 @@ import {
   writeOpenworkWorkspaceConfig,
 } from "./openwork-workspace-config-store.js";
 import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
-import { findManagedEngineWorkspace } from "./workspaces.js";
+import { findManagedEngineWorkspace, managedEngineRootWorkspace } from "./workspaces.js";
 import { startThreadApprovalReplayer, type ThreadApprovalReplayer } from "./thread-approvals.js";
 import { CloudProviderSync, parseCloudProviderDenSession } from "./cloud-provider-sync.js";
 import { createEngineV2Preview, type EngineV2Preview } from "./engine-v2-preview.js";
@@ -303,10 +303,12 @@ function parseRuntimeProviderPatchPayload(body: Record<string, unknown>): Record
 
 function resolveEngineRuntimeWorkspace(config: ServerConfig): WorkspaceInfo {
   const workspace = findManagedEngineWorkspace(config.workspaces) ?? config.workspaces[0];
-  if (!workspace) {
-    throw new ApiError(400, "workspace_missing", "At least one workspace is required for engine runtime config");
-  }
-  return workspace;
+  if (workspace) return workspace;
+  // A managed engine runs before the first workspace exists. Engine-wide
+  // maintenance (provider credentials, reloads) targets its root directory.
+  const pool = enginePoolForConfig(config);
+  if (pool) return managedEngineRootWorkspace(pool.cwd());
+  throw new ApiError(400, "workspace_missing", "At least one workspace is required for engine runtime config");
 }
 
 function redactBearerTokens(value: string): string {
@@ -812,9 +814,10 @@ export async function startServer(
     logger: toManagedProviderAuthLogger(logger),
   });
   managedDesktopPolicy(config).onChange = () => {
-    // Sign-in can precede the first workspace. Its future engine reads the
-    // persisted policy at startup; there is no running workspace to reload.
-    if (config.workspaces.length > 0) cloudProviderSync.markReloadPending();
+    // Sign-in can precede the first workspace. A managed engine is already
+    // running then and must pick up the policy; an attached server with no
+    // workspace has no engine to reload.
+    if (config.workspaces.length > 0 || enginePoolForConfig(config)) cloudProviderSync.markReloadPending();
   };
   const engineV2Preview = createEngineV2Preview({ config, env, deferStart: true });
   const routes = createRoutes(
@@ -856,6 +859,10 @@ export async function startServer(
         if (typeof path === "string") errorPath = path;
         const cause = apiError.details.cause;
         if (typeof cause === "string") errorCause = cause;
+      };
+
+      const recordUnhandledErrorCause = (error: unknown) => {
+        errorCause = error instanceof Error ? error.message : String(error);
       };
 
       const finalize = (response: Response) => {
@@ -908,6 +915,7 @@ export async function startServer(
         } catch (error) {
           const requestCanceled = isExpectedRequestCancellation(error, request.signal);
           if (!(error instanceof ApiError) && !requestCanceled) {
+            recordUnhandledErrorCause(error);
             captureServerException(error, { method: request.method, route: "/workspace/:id/opencode/*", requestSignal: request.signal });
           }
           const apiError = error instanceof ApiError
@@ -959,6 +967,7 @@ export async function startServer(
         } catch (error) {
           const requestCanceled = isExpectedRequestCancellation(error, request.signal);
           if (!(error instanceof ApiError) && !requestCanceled) {
+            recordUnhandledErrorCause(error);
             captureServerException(error, { method: request.method, route: "/workspace/:id/opencode2/*", requestSignal: request.signal });
           }
           const apiError = error instanceof ApiError
@@ -1028,6 +1037,7 @@ export async function startServer(
         } catch (error) {
           const requestCanceled = isExpectedRequestCancellation(error, request.signal);
           if (!(error instanceof ApiError) && !requestCanceled) {
+            recordUnhandledErrorCause(error);
             captureServerException(error, { method: request.method, route: "/opencode/*", requestSignal: request.signal });
           }
           const apiError = error instanceof ApiError
@@ -2073,7 +2083,7 @@ function sanitizeProxyResponse(response: Response): Response {
   headers.delete("content-encoding");
   headers.delete("transfer-encoding");
   headers.delete("content-length");
-  return new Response(response.body, {
+  return new Response(transferResponseBody(response), {
     status: response.status,
     statusText: response.statusText,
     headers,
@@ -2108,7 +2118,11 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   const exposed = headers.get("Access-Control-Expose-Headers");
   headers.set("Access-Control-Expose-Headers", [exposed, "X-Next-Cursor", "Link"].filter(Boolean).join(", "));
   headers.set("Vary", "Origin");
-  return new Response(response.body, { status: response.status, headers });
+  return new Response(transferResponseBody(response), {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 async function requireClient(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
@@ -3694,6 +3708,7 @@ function createRoutes(
               launch: {
                 toolName: typeof launch.toolName === "string" ? launch.toolName : "",
                 resourceUri: typeof launch.resourceUri === "string" ? launch.resourceUri : "",
+                arguments: isRecord(launch.arguments) ? launch.arguments : undefined,
               },
             })
         : await resolveMcpAppResource({

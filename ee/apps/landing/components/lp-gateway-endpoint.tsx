@@ -83,7 +83,7 @@ export function LpGatewayEndpoint({ url }: Props) {
           <span className="mono text-[11px] tracking-[0.1em] text-white/50">
             GATEWAY ENDPOINT
           </span>
-          <span className="mono hidden text-[11px] tracking-[0.06em] text-white/40 sm:inline">
+          <span className="mono hidden text-[11px] tracking-[0.06em] text-white/60 sm:inline">
             MCP · Streamable HTTP
           </span>
         </div>
@@ -98,7 +98,7 @@ export function LpGatewayEndpoint({ url }: Props) {
               void copy();
             }}
             aria-label={`Copy ${url}`}
-            className="inline-flex h-10 min-w-[104px] shrink-0 items-center justify-center gap-2 rounded-full bg-white px-4 text-[13px] font-medium text-[var(--lp-ink)] transition-opacity hover:opacity-90 active:scale-[0.97]"
+            className="inline-flex h-10 min-w-[104px] shrink-0 items-center justify-center gap-2 rounded-full bg-white px-4 text-[13px] font-medium text-[var(--lp-ink)] transition-opacity hover:opacity-90 focus-visible:outline-white active:scale-[0.97]"
           >
             {copied ? (
               <>

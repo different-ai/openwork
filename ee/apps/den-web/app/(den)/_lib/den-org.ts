@@ -250,8 +250,6 @@ export type DenOrgEntitlements = {
 
 /** Server-advertised and per-org capabilities; optional fields default to off. */
 export type DenOrgCapabilities = {
-  /** Platform-admin opt-in for the Gateway dashboard only; never a runtime inference gate. */
-  gatewayDashboard: boolean;
   orgManagedDashboards: boolean;
   installLinks: boolean;
   mcpConnections: boolean;
@@ -569,7 +567,7 @@ export function getCustomLlmProvidersRoute(orgSlug?: string | null): string {
 }
 
 export function getInferenceRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/inference`;
+  return `${getAiGatewayRoute(orgSlug)}?tab=openwork-models`;
 }
 
 export function getWebRoute(orgSlug?: string | null): string {
@@ -612,20 +610,25 @@ export function getNewLlmProviderRoute(orgSlug?: string | null): string {
   return `${getLlmProvidersRoute(orgSlug)}/new`;
 }
 
-export function getGatewayProvidersRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/gateway-providers`;
+export function getAiGatewayRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/ai-gateway`;
 }
 
-export function getGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
-  return `${getGatewayProvidersRoute(orgSlug)}/${encodeURIComponent(inferenceProviderId)}`;
+export function getAiGatewayProvidersRoute(orgSlug?: string | null): string {
+  return `${getAiGatewayRoute(orgSlug)}?tab=ai-providers`;
 }
 
-export function getEditGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
-  return `${getGatewayProviderRoute(orgSlug, inferenceProviderId)}/edit`;
+export function getNewAiGatewayProviderRoute(orgSlug?: string | null, providerId?: string): string {
+  const base = `${getAiGatewayRoute(orgSlug)}/providers/new`;
+  return providerId ? `${base}?provider=${encodeURIComponent(providerId)}` : base;
 }
 
-export function getNewGatewayProviderRoute(orgSlug?: string | null): string {
-  return `${getGatewayProvidersRoute(orgSlug)}/new`;
+export function getAiGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
+  return `${getAiGatewayRoute(orgSlug)}/providers/${encodeURIComponent(inferenceProviderId)}`;
+}
+
+export function getEditAiGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
+  return `${getAiGatewayProviderRoute(orgSlug, inferenceProviderId)}/edit`;
 }
 
 export function getBillingRoute(orgSlug?: string | null): string {
@@ -1012,12 +1015,11 @@ function parseOrgAuthMethods(value: unknown): DenOrgAuthMethods {
 
 function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
   if (!isRecord(value)) {
-    return { gatewayDashboard: false, orgManagedDashboards: false, installLinks: false, mcpConnections: false, workflows: true, openworkWeb: false, cloud: false };
+    return { orgManagedDashboards: false, installLinks: false, mcpConnections: false, workflows: true, openworkWeb: false, cloud: false };
   }
 
   return {
     orgManagedDashboards: value.orgManagedDashboards === true,
-    gatewayDashboard: value.gatewayDashboard === true,
     installLinks: value.installLinks === true,
     mcpConnections: value.mcpConnections === true,
     // Workflows are enabled everywhere on current servers; only an explicit

@@ -192,6 +192,8 @@ export interface DenSandbox {
   sandbox: string;
   apiUrl: string;
   webUrl: string;
+  /** Desktop-reachable AI Gateway origin; present only when Den env set GATEWAY_ENABLED=true. */
+  gatewayUrl?: string;
   created: boolean;
 }
 
@@ -212,6 +214,28 @@ export interface MockOnSandbox {
   url: string;
   loopbackUrl: string;
   sourceFingerprint: string;
+  stop(): Promise<void>;
+}
+
+export interface ScriptOnSandboxOptions {
+  sandbox: string;
+  /** Short lowercase label for log files and process cleanup, e.g. "acme-upstream". */
+  label: string;
+  port: number;
+  /** Exact trusted runner-side script source to execute inside the sandbox. */
+  scriptSource: string;
+  /** Environment for the script; HOST and PORT are always set by the runner. */
+  env?: Record<string, string>;
+  /** Loopback path that must answer 200 before the script counts as ready. */
+  healthPath?: string;
+  log?: (line: string) => void;
+}
+
+export interface ScriptOnSandbox {
+  loopbackUrl: string;
+  sourceFingerprint: string;
+  /** Tail of the script's log inside the sandbox. */
+  logTail(): Promise<string>;
   stop(): Promise<void>;
 }
 
@@ -1032,7 +1056,7 @@ function parsedPublicUrl(value: string | undefined): string | null {
   }
 }
 
-function parseDenUrlsFile(content: string): { webUrl: string; apiUrl: string } | null {
+export function parseDenUrlsFile(content: string): { webUrl: string; apiUrl: string; gatewayUrl?: string } | null {
   const entries = new Map<string, string>();
   for (const line of content.split(/\r?\n/)) {
     const separator = line.indexOf("=");
@@ -1041,7 +1065,8 @@ function parseDenUrlsFile(content: string): { webUrl: string; apiUrl: string } |
   }
   const webUrl = parsedPublicUrl(entries.get("DEN_WEB_URL"));
   const apiUrl = parsedPublicUrl(entries.get("DEN_API_URL"));
-  return webUrl && apiUrl ? { webUrl, apiUrl } : null;
+  const gatewayUrl = parsedPublicUrl(entries.get("GATEWAY_URL"));
+  return webUrl && apiUrl ? { webUrl, apiUrl, ...(gatewayUrl ? { gatewayUrl } : {}) } : null;
 }
 
 
@@ -1107,6 +1132,7 @@ export async function provisionDenSandbox(options: DenSandboxOptions & Provision
   let sandbox: string;
   let webUrl: string;
   let apiUrl: string;
+  let gatewayUrl: string | undefined;
 
   if (reused && options.reuseUrls) {
     // The runner that provisioned this sandbox kept its baked DEN_*_PUBLIC_URL
@@ -1162,13 +1188,14 @@ export async function provisionDenSandbox(options: DenSandboxOptions & Provision
       }
       webUrl = urls.webUrl;
       apiUrl = urls.apiUrl;
+      gatewayUrl = urls.gatewayUrl;
     } finally {
       await rm(urlsDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 
   await timedStep(log, "Den seeded-org proof", () => proveDenSeed(apiUrl, webUrl, sandbox, Boolean(reused)));
-  return { sandbox, apiUrl, webUrl, created: !reused };
+  return { sandbox, apiUrl, webUrl, ...(gatewayUrl ? { gatewayUrl } : {}), created: !reused };
 }
 
 export async function startMockOnSandbox(options: MockOnSandboxOptions & ProvisionExecOptions): Promise<MockOnSandbox> {
@@ -1284,6 +1311,95 @@ echo detached`;
     }
   };
   return { url, loopbackUrl, sourceFingerprint, stop };
+}
+
+/**
+ * Runs a trusted runner-side Node script inside an existing sandbox, detached,
+ * and waits for its loopback health endpoint. This is how a world places a
+ * witness (fake upstream, fixture server) next to a Daytona Den so services in
+ * that sandbox can reach it on 127.0.0.1. The script is uploaded verbatim; the
+ * checkout's copy is never trusted because the provisioned ref controls it.
+ */
+export async function startScriptOnSandbox(options: ScriptOnSandboxOptions & ProvisionExecOptions): Promise<ScriptOnSandbox> {
+  const exec = options.exec ?? defaultDaytonaExec;
+  const log = options.log ?? console.error;
+  if (!/^[a-z][a-z0-9-]{1,40}$/.test(options.label)) throw new Error(`Unsafe sandbox script label ${JSON.stringify(options.label)}.`);
+  if (!Number.isInteger(options.port) || options.port < 1024 || options.port > 65535) throw new Error("Sandbox script port must be an integer between 1024 and 65535.");
+  if (options.healthPath !== undefined && !/^\/[A-Za-z0-9._~\/-]*$/.test(options.healthPath)) throw new Error("Sandbox script healthPath must be a plain absolute path.");
+  const sourceFingerprint = createHash("sha256").update(options.scriptSource).digest("hex");
+  const scriptPath = `/tmp/openwork-${options.label}-${sourceFingerprint.slice(0, 16)}.mjs`;
+  const logPath = `/tmp/openwork-${options.label}.log`;
+  const loopbackUrl = `http://127.0.0.1:${options.port}`;
+  const context = (step: string) => `${options.label} ${step} for ${options.sandbox}`;
+  // Values reach the detached process through Python, base64 encoded, so the
+  // remote command line never carries quotes or secrets in clear text.
+  const scriptEnv = Object.fromEntries(Object.entries({ ...(options.env ?? {}), HOST: "0.0.0.0", PORT: String(options.port) }).map(([key, value]) => {
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) throw new Error(`Unsafe sandbox script environment name ${JSON.stringify(key)}.`);
+    return [key, Buffer.from(value, "utf8").toString("base64")];
+  }));
+
+  await timedStep(log, `${options.label} process cleanup`, () => execInSandbox(
+    exec, options.sandbox, `pkill -f [o]penwork-${options.label}- || true`,
+    { timeoutMs: 30_000, context: context("process cleanup") },
+  ).catch(() => undefined));
+
+  await timedStep(log, `${options.label} source upload`, async () => {
+    const encoded = Buffer.from(options.scriptSource, "utf8").toString("base64");
+    const encodedPath = `${scriptPath}.b64`;
+    await execInSandbox(exec, options.sandbox, `rm -f ${scriptPath} ${encodedPath}`, { timeoutMs: 30_000, context: context("source reset") });
+    for (let offset = 0; offset < encoded.length; offset += 8 * 1024) {
+      await execInSandbox(exec, options.sandbox, `printf %s ${encoded.slice(offset, offset + 8 * 1024)} >> ${encodedPath}`, {
+        timeoutMs: 30_000, context: context("source chunk upload"),
+      });
+    }
+    await execInSandbox(exec, options.sandbox, `base64 -d ${encodedPath} > ${scriptPath}; rm -f ${encodedPath}`, {
+      timeoutMs: 30_000, context: context("source finalize"),
+    });
+  });
+
+  await timedStep(log, `${options.label} process detach`, async () => {
+    const detachScript = `cd /workspace; python3 - <<PYEOF
+import base64, os, subprocess
+encoded = ${JSON.stringify(scriptEnv)}
+env = dict(os.environ)
+env.update({key: base64.b64decode(value).decode("utf-8") for key, value in encoded.items()})
+log = open(${JSON.stringify(logPath)}, "ab", buffering=0)
+subprocess.Popen(["node", ${JSON.stringify(scriptPath)}], cwd="/workspace", env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+PYEOF
+echo detached`;
+    await execInSandbox(exec, options.sandbox, detachScript, { timeoutMs: 30_000, context: context("process detach") });
+  });
+
+  const logTail = async () => outputTail(await execInSandbox(exec, options.sandbox, `tail -80 ${logPath} 2>&1 || true`, {
+    timeoutMs: 30_000, context: context("log tail"),
+  }));
+
+  await timedStep(log, `${options.label} health gate`, async () => {
+    const healthUrl = `${loopbackUrl}${options.healthPath ?? "/health"}`;
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      const probe = await execInSandbox(exec, options.sandbox, `curl -s -o /dev/null -w %{http_code} ${healthUrl} || true`, {
+        timeoutMs: 30_000, context: context("health probe"),
+      });
+      if (lastNonemptyLine(probe.stdout) === "200") return;
+      await delay(2_000);
+    }
+    throw new Error(`${options.label} health gate failed at ${healthUrl}. Log tail:\n${await logTail()}`);
+  });
+
+  let stopped = false;
+  return {
+    loopbackUrl,
+    sourceFingerprint,
+    logTail,
+    async stop() {
+      if (stopped) return;
+      stopped = true;
+      await execInSandbox(exec, options.sandbox, `pkill -f ${scriptPath.replace("/", "[/]")} || true; rm -f ${scriptPath}`, {
+        timeoutMs: 30_000, context: context("process stop"),
+      });
+    },
+  };
 }
 
 export async function startFaultProxyOnSandbox(options: FaultProxyOnSandboxOptions & ProvisionExecOptions): Promise<FaultProxyOnSandbox> {

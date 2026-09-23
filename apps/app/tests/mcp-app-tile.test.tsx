@@ -719,8 +719,12 @@ test.each(["result", "transport", "metadata", "text"])("live setup failures rend
     await refreshCompactTile(container);
     expect(calls).toBe(2);
     expect(container.querySelector("[data-sandbox-view]")).toBeNull();
-    expect(container.querySelector('[data-testid="desktop-connection-card"]')?.textContent).toContain("Calendar");
-    expect(container.querySelector('button[aria-label="Connect Calendar"]')).not.toBeNull();
+    const connectionCard = container.querySelector('[data-testid="desktop-connection-card"]');
+    expect(connectionCard?.getAttribute("aria-label")).toBe("Calendar connection");
+    expect(connectionCard?.querySelector('[role="status"]')?.textContent).toBe("Connect Calendar");
+    const connectButton = connectionCard?.querySelector<HTMLButtonElement>("button");
+    expect(connectButton?.textContent).toBe("Connect");
+    expect(connectButton?.disabled).toBe(false);
     expect(readDashboardTileCache("live-setup-scope", entry.id)).toBeNull();
   } finally {
     await act(async () => root.unmount());

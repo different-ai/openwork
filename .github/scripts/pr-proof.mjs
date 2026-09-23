@@ -20,6 +20,23 @@ export function selectProof(files) {
   return { specs };
 }
 
+export function proofLanes(specs, { event, current, repo, actor, triggeringActor }) {
+  const liveSpecs = specs.filter(spec => spec === "evals/specs/live-stream-continuity.e2e.test.ts");
+  const normalSpecs = specs.filter(spec => !liveSpecs.includes(spec));
+  if (liveSpecs.length) {
+    const repository = event?.repository;
+    const sameRepo = candidate => Number.isSafeInteger(repository?.id) && repository.id > 0
+      && repository.full_name === repo && candidate?.id === repository.id
+      && candidate.full_name === repo && candidate.fork === false;
+    const identities = [actor, triggeringActor, event?.pull_request?.user?.login, current?.user?.login];
+    if (![event?.pull_request, current].every(pr => sameRepo(pr?.head?.repo) && sameRepo(pr?.base?.repo))
+      || identities.some(login => typeof login !== "string" || !login || login.toLowerCase() === "dependabot[bot]")) {
+      throw new Error("Live PR proof is unsupported for forks, untrusted repository metadata, or Dependabot. A maintainer must move the reviewed change to a same-repository PR and approve the pr-slow-specs environment; do not bypass or skip the selected live spec.");
+    }
+  }
+  return { normalSpecs, liveSpecs };
+}
+
 export async function changedFiles(api, repo, pr, expectedCount) {
   if (!Number.isSafeInteger(expectedCount) || expectedCount < 0 || expectedCount > 3000) throw new Error("Changed-file count is unavailable or exceeds GitHub's 3000-file limit.");
   const files = [];

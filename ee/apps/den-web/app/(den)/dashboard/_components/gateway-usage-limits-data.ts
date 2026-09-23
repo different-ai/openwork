@@ -20,7 +20,7 @@ const membersPath = "/v1/gateway/usage-limits/members";
 const resetsPath = "/v1/gateway/usage-limit-reset-requests";
 const policiesSchema = z.object({ policies: z.array(gatewayUsageLimitPolicySchema) });
 const assignmentsSchema: z.ZodType<Pick<GatewayUsageLimitPolicy, "assignments">> = z.object({
-  assignments: z.array(z.object({ id: z.string(), memberId: z.string().nullable(), teamId: z.string().nullable() })),
+  assignments: z.array(z.object({ id: z.string(), memberId: z.string().nullable(), teamId: z.string().nullable(), organization: z.boolean().default(false) })),
 });
 const membersSchema = z.object({ members: z.array(z.object({ id: z.string(), name: z.string(), email: z.string() })) });
 export type GatewayUsageMember = z.infer<typeof membersSchema>["members"][number];
@@ -137,7 +137,7 @@ export function useGatewayResetRequests(orgId: string, view: GatewayUsageResetPa
 export type GatewayLimitsAction =
   | { type: "save"; policy?: Pick<GatewayUsageLimitPolicy, "id" | "revision">; body: GatewayUsagePolicyWrite }
   | { type: "archive"; policy: Pick<GatewayUsageLimitPolicy, "id" | "revision"> }
-  | { type: "assign"; policyId: string; target: { memberId: string } | { teamId: string } }
+  | { type: "assign"; policyId: string; target: { memberId: string } | { teamId: string } | { organization: true } }
   | { type: "unassign"; policyId: string; assignmentId: string }
   | { type: "approve" | "deny"; requestId: string };
 

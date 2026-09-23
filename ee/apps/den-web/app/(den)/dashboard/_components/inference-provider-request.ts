@@ -306,6 +306,42 @@ export function getProviderStatusLabel(status: InferenceProviderStatus) {
   return status === "active" ? "Active" : "Disabled";
 }
 
+export const GATEWAY_PAGE_DESCRIPTION =
+  "Your organization's provider keys stay on the server. People pick models in the app; you decide who can use which ones.";
+
+export type GatewayAudienceNames = {
+  organization: string | null;
+  teamName: (teamId: string) => string | undefined;
+  memberName: (memberId: string) => string | undefined;
+};
+
+/** One line for a list row: who this provider is shared with. */
+export function describeGatewayAccess(
+  provider: Pick<DenInferenceProvider, "accessGrants">,
+  names: GatewayAudienceNames,
+): string {
+  const { allMembers, teamIds, memberIds } = accessFromGrants(provider.accessGrants);
+  if (allMembers) return names.organization ? `Everyone in ${names.organization}` : "Everyone";
+  const labels = [
+    ...teamIds.map((id) => names.teamName(id) ?? "A team"),
+    ...memberIds.map((id) => names.memberName(id) ?? "A person"),
+  ];
+  return labels.length ? labels.join(", ") : "No one has access yet";
+}
+
+export function accessFromGrants(grants: GatewayAccessGrant[] | null | undefined): {
+  allMembers: boolean;
+  memberIds: string[];
+  teamIds: string[];
+} {
+  const list = grants ?? [];
+  return {
+    allMembers: list.some((grant) => grant.audience.type === "organization"),
+    teamIds: list.flatMap((grant) => (grant.audience.type === "team" ? [grant.audience.teamId] : [])),
+    memberIds: list.flatMap((grant) => (grant.audience.type === "member" ? [grant.audience.memberId] : [])),
+  };
+}
+
 // --- Request bodies ---
 
 export type InferenceProviderFormInput = {

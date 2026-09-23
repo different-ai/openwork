@@ -1,41 +1,23 @@
-## Summary
--
+<!-- Keep the whole body under ~200 words. Plain language, no jargon.
+     Details belong in commit messages and the evidence report, not here.
+     See .opencode/skills/open-a-pr/SKILL.md -->
 
-## Why
--
+## What is this about?
 
-## Issue
-- Closes #
 
-## Scope
--
+## What problem does it solve?
 
-## Out of scope
--
 
-## Testing
-### Ran
-- `...`
+## What was the situation before?
 
-### Result
-- pass/fail:
-- if fail, exact files/errors:
 
-## CI status
-- pass:
-- code-related failures:
-- external/env/auth blockers:
+## Release note
 
-## Manual verification
-1.
-2.
-3.
+<!-- One sentence for people who use OpenWork, e.g. "You can now run OpenWork on your own server with `openwork-server web`."
+     Write "none" if users will not notice (CI, tests, review tooling). -->
+
 
 ## Evidence
-- video/screenshot link, or `N/A (docs-only)`
 
-## Risk
--
-
-## Rollback
+<!-- One line per proof, phrased before → after. Link the report. Say plainly if it is red. -->
 -

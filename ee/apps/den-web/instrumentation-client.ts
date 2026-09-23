@@ -13,13 +13,14 @@ import {
 
 // Official Next.js integration: initialize the bundled SDK before hydration.
 // next.config.js exposes a token only for eligible hosted production builds.
-const posthogToken = process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN;
+const posthogToken = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 if (process.env.NODE_ENV === "production" && posthogToken && typeof window !== "undefined"
   && window.location.origin === "https://app.openworklabs.com" && !window.posthog) {
   try {
     posthog.init(posthogToken, {
       api_host: "/ow",
-      ui_host: "https://us.posthog.com",
+      ui_host: process.env.NEXT_PUBLIC_POSTHOG_HOST === "https://eu.i.posthog.com"
+        ? "https://eu.posthog.com" : "https://us.posthog.com",
       defaults: "2026-05-30",
       persistence: "localStorage",
       cross_subdomain_cookie: false,

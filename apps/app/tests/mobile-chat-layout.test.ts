@@ -74,3 +74,13 @@ test("mobile hero docks the shared composer and desktop retains editor dimension
   expect(editor).toContain("lg:min-h-[60px] lg:max-h-[280px]");
   expect(editor).toContain("text-base");
 });
+
+test("empty prompt suggestions keep a visible responsive affordance", () => {
+  const hero = source("react-app/domains/session/chat/session-empty-hero.tsx");
+  expect(hero).toContain('className={hideIntroduction ? "hidden" : "grid gap-2 sm:grid-cols-2"}');
+  expect(hero).toContain("<DescriptiveButton");
+  expect(hero).toContain("min-h-10 items-center rounded-xl bg-background");
+  expect(hero).toContain("hover:border-foreground/20 hover:bg-muted/60");
+  expect(hero).toContain("max-lg:min-h-11");
+  expect(hero).not.toContain('variant="ghost"');
+});

@@ -32,7 +32,7 @@ export interface MockAgentToolStep {
   /** Emit an unadvertised tool call to exercise the engine's rejection boundary. */
   allowUnadvertisedTool?: boolean;
   /** Derive the handoff from the actual model input instead of fixture arguments. */
-  argumentsFrom?: "computer-mention" | "skill-catalog" | "capability-search";
+  argumentsFrom?: "computer-mention" | "skill-catalog" | "capability-search" | "skill-list";
   tool: string;
   arguments: Record<string, unknown>;
 }
@@ -54,7 +54,7 @@ export interface MockAgentWorkload {
   finalReplyChunkSize?: number;
   /** Exact content-delta boundaries. Their concatenation must equal finalReply. */
   finalReplyChunks?: string[];
-  /** Initially release this many exact chunks, then wait for releaseAgentReply(). */
+  /** Initially release this many exact chunks, then wait for releaseAgentReply(). 0 holds the whole reply. */
   finalReplyInitiallyReleasedChunks?: number;
   /** Hold the final response before sending headers, to exercise loading transitions. */
   finalReplyDelayMs?: number;

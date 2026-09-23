@@ -69,6 +69,17 @@ export type AdminUsersPageResponse = {
 
 export type AdminOrganizationsPageResponse = {
   organizations: Array<{
+    capabilities: {
+      installLinks: boolean;
+      mcpConnections: boolean;
+      modelsAnalytics: boolean;
+      /**
+       * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+       *
+       * @deprecated
+       */
+      gatewayDashboard: true;
+    };
     [key: string]: unknown;
   }>;
   page: AdminPageInfo;
@@ -130,6 +141,17 @@ export type AdminOverviewResponse = {
     [key: string]: unknown;
   }>;
   organizations: Array<{
+    capabilities: {
+      installLinks: boolean;
+      mcpConnections: boolean;
+      modelsAnalytics: boolean;
+      /**
+       * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+       *
+       * @deprecated
+       */
+      gatewayDashboard: true;
+    };
     [key: string]: unknown;
   }>;
   userPage: AdminPageInfo;
@@ -662,7 +684,12 @@ export type OrganizationContextResponse = {
     [key: string]: unknown;
   }>;
   capabilities: {
-    gatewayDashboard: boolean;
+    /**
+     * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+     *
+     * @deprecated
+     */
+    gatewayDashboard: true;
     [key: string]: unknown;
   };
   deploymentCapabilities: {
@@ -1211,7 +1238,7 @@ export type CreateInstallLinkResponse = {
 
 export type CapabilityDisabledError = {
   error: "capability_disabled";
-  capability: "installLinks" | "mcpConnections" | "modelsAnalytics" | "gatewayDashboard";
+  capability: "installLinks" | "mcpConnections" | "modelsAnalytics";
 };
 
 export type CreateInstallLinkRequest = {
@@ -4131,6 +4158,52 @@ export type TeamResponse = {
   };
 };
 
+export type OrganizationWebOrigin = {
+  id: string;
+  origin: string;
+  createdAt: string;
+  createdByName: string | null;
+};
+
+export type OrganizationWebOriginList = {
+  origins: Array<OrganizationWebOrigin>;
+  limit: number;
+};
+
+export type WebOriginOrganizationNotFoundError = {
+  error: "organization_not_found";
+};
+
+export type InvalidWebOriginError = {
+  error: "invalid_web_origin";
+  message: string;
+};
+
+export type ApproveWebOriginBadRequest = InvalidRequestError | InvalidWebOriginError;
+
+export type WebOriginAlreadyApprovedError = {
+  error: "web_origin_already_approved";
+  message: string;
+};
+
+export type WebOriginLimitReachedError = {
+  error: "web_origin_limit_reached";
+  message: string;
+};
+
+export type ApproveWebOriginConflict = WebOriginAlreadyApprovedError | WebOriginLimitReachedError;
+
+export type OrganizationWebOriginApproveBody = {
+  origin: string;
+};
+
+export type WebOriginNotFoundError = {
+  error: "web_origin_not_found";
+  message: string;
+};
+
+export type RemoveWebOriginNotFound = WebOriginNotFoundError | WebOriginOrganizationNotFoundError;
+
 export type DenAppVersionResponse = {
   minAppVersion: string;
   latestAppVersion: string;
@@ -4944,7 +5017,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
    */
   200: {
     capabilities: {
-      [key: string]: unknown;
+      installLinks: boolean;
+      mcpConnections: boolean;
+      modelsAnalytics: boolean;
+      /**
+       * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+       *
+       * @deprecated
+       */
+      gatewayDashboard: true;
     };
   };
 };
@@ -4996,7 +5077,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       id: string;
     };
     capabilities: {
-      [key: string]: unknown;
+      installLinks: boolean;
+      mcpConnections: boolean;
+      modelsAnalytics: boolean;
+      /**
+       * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+       *
+       * @deprecated
+       */
+      gatewayDashboard: true;
     };
   };
 };
@@ -12378,6 +12467,7 @@ export type GetV1GatewayUsageLimitPoliciesResponses = {
         id: string;
         memberId: string | null;
         teamId: string | null;
+        organization?: boolean;
       }>;
       archivedAt?: string | null;
     }>;
@@ -12468,6 +12558,7 @@ export type PostV1GatewayUsageLimitPoliciesResponses = {
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization?: boolean;
     }>;
     archivedAt?: string | null;
   };
@@ -12560,6 +12651,7 @@ export type PatchV1GatewayUsageLimitPoliciesByPolicyIdResponses = {
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization?: boolean;
     }>;
     archivedAt?: string | null;
   };
@@ -12645,6 +12737,7 @@ export type PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponses = {
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization?: boolean;
     }>;
     archivedAt?: string | null;
   };
@@ -12719,6 +12812,7 @@ export type GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses = {
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization: boolean;
     }>;
   };
 };
@@ -12728,6 +12822,9 @@ export type GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponse =
 
 export type PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsData = {
   body:
+    | {
+        organization: true;
+      }
     | {
         memberId: string;
       }
@@ -12807,6 +12904,7 @@ export type PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses = {
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization?: boolean;
     }>;
     archivedAt?: string | null;
   };
@@ -12891,6 +12989,7 @@ export type DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentId
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization?: boolean;
     }>;
     archivedAt?: string | null;
   };
@@ -13058,6 +13157,12 @@ export type GetV1GatewayUsageLimitsMeResponses = {
       policyRevision?: number;
       provenance?: Array<
         | {
+            kind: "organization";
+            assignmentId: string;
+            memberId: null;
+            teamId: null;
+          }
+        | {
             kind: "direct";
             assignmentId: string;
             memberId: string;
@@ -13176,6 +13281,12 @@ export type GetV1GatewayUsageLimitsMembersByMemberIdResponses = {
       policyName: string;
       policyRevision?: number;
       provenance?: Array<
+        | {
+            kind: "organization";
+            assignmentId: string;
+            memberId: null;
+            teamId: null;
+          }
         | {
             kind: "direct";
             assignmentId: string;
@@ -13649,6 +13760,227 @@ export type PostV1GatewayUsageLimitResetRequestsByIdDenyResponses = {
 
 export type PostV1GatewayUsageLimitResetRequestsByIdDenyResponse =
   PostV1GatewayUsageLimitResetRequestsByIdDenyResponses[keyof PostV1GatewayUsageLimitResetRequestsByIdDenyResponses];
+
+export type GetV1InferenceProvidersModelManagementData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers/model-management";
+};
+
+export type GetV1InferenceProvidersModelManagementErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersModelManagementError =
+  GetV1InferenceProvidersModelManagementErrors[keyof GetV1InferenceProvidersModelManagementErrors];
+
+export type GetV1InferenceProvidersModelManagementResponses = {
+  /**
+   * List inference gateway providers and model groups for model enablement
+   */
+  200: {
+    inferenceProviders: Array<{
+      /**
+       * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      name: string;
+      providerId: string;
+      status: "active" | "disabled";
+      modelIds: Array<string>;
+      modelGroups: Array<{
+        /**
+         * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+         */
+        id: string;
+        name: string;
+        status: "active" | "disabled";
+        modelIds: Array<string>;
+      }>;
+    }>;
+  };
+};
+
+export type GetV1InferenceProvidersModelManagementResponse =
+  GetV1InferenceProvidersModelManagementResponses[keyof GetV1InferenceProvidersModelManagementResponses];
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/available-models";
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsError =
+  GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors[keyof GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors];
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponses = {
+  /**
+   * List available upstream models for inference gateway provider
+   */
+  200: {
+    models: Array<{
+      id: string;
+      name: string;
+    }>;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponse =
+  GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponses[keyof GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponses];
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsData = {
+  body: {
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    modelGroupId: string;
+    modelIds: Array<string>;
+  };
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/enable-models";
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsError =
+  PostV1InferenceProvidersByInferenceProviderIdEnableModelsErrors[keyof PostV1InferenceProvidersByInferenceProviderIdEnableModelsErrors];
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses = {
+  /**
+   * Add models to inference gateway provider group
+   */
+  200: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    modelGroupId: string;
+    modelIds: Array<string>;
+    groupModelIds: Array<string>;
+    addedModelIds: Array<string>;
+  };
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponse =
+  PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses[keyof PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses];
 
 export type GetV1InferenceProvidersData = {
   body?: never;
@@ -24525,6 +24857,124 @@ export type PostV1TeamsResponses = {
 };
 
 export type PostV1TeamsResponse = PostV1TeamsResponses[keyof PostV1TeamsResponses];
+
+export type GetV1OrgWebOriginsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/org/web-origins";
+};
+
+export type GetV1OrgWebOriginsErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and admins can view approved web origins.
+   */
+  403: ForbiddenError;
+  /**
+   * The organization was not found.
+   */
+  404: WebOriginOrganizationNotFoundError;
+};
+
+export type GetV1OrgWebOriginsError = GetV1OrgWebOriginsErrors[keyof GetV1OrgWebOriginsErrors];
+
+export type GetV1OrgWebOriginsResponses = {
+  /**
+   * Approved web origins returned successfully.
+   */
+  200: OrganizationWebOriginList;
+};
+
+export type GetV1OrgWebOriginsResponse = GetV1OrgWebOriginsResponses[keyof GetV1OrgWebOriginsResponses];
+
+export type PostV1OrgWebOriginsData = {
+  body: OrganizationWebOriginApproveBody;
+  path?: never;
+  query?: never;
+  url: "/v1/org/web-origins";
+};
+
+export type PostV1OrgWebOriginsErrors = {
+  /**
+   * The origin was not an exact HTTPS origin.
+   */
+  400: ApproveWebOriginBadRequest;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and super-admins with a recent sign-in can approve web origins.
+   */
+  403: ForbiddenError;
+  /**
+   * The organization was not found.
+   */
+  404: WebOriginOrganizationNotFoundError;
+  /**
+   * The origin is already approved or the organization reached its approved origin limit.
+   */
+  409: ApproveWebOriginConflict;
+};
+
+export type PostV1OrgWebOriginsError = PostV1OrgWebOriginsErrors[keyof PostV1OrgWebOriginsErrors];
+
+export type PostV1OrgWebOriginsResponses = {
+  /**
+   * The web origin was approved.
+   */
+  201: OrganizationWebOrigin;
+};
+
+export type PostV1OrgWebOriginsResponse = PostV1OrgWebOriginsResponses[keyof PostV1OrgWebOriginsResponses];
+
+export type DeleteV1OrgWebOriginsByWebOriginIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'owo_' prefix and a 26-character base32 suffix.
+     */
+    webOriginId: string;
+  };
+  query?: never;
+  url: "/v1/org/web-origins/{webOriginId}";
+};
+
+export type DeleteV1OrgWebOriginsByWebOriginIdErrors = {
+  /**
+   * The web origin id was invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and super-admins with a recent sign-in can remove approved web origins.
+   */
+  403: ForbiddenError;
+  /**
+   * The approved web origin or organization was not found.
+   */
+  404: RemoveWebOriginNotFound;
+};
+
+export type DeleteV1OrgWebOriginsByWebOriginIdError =
+  DeleteV1OrgWebOriginsByWebOriginIdErrors[keyof DeleteV1OrgWebOriginsByWebOriginIdErrors];
+
+export type DeleteV1OrgWebOriginsByWebOriginIdResponses = {
+  /**
+   * The approved web origin was removed.
+   */
+  204: void;
+};
+
+export type DeleteV1OrgWebOriginsByWebOriginIdResponse =
+  DeleteV1OrgWebOriginsByWebOriginIdResponses[keyof DeleteV1OrgWebOriginsByWebOriginIdResponses];
 
 export type GetV1AppVersionData = {
   body?: never;

@@ -334,6 +334,9 @@ class DaytonaPlace implements Place {
 
 /** Resolve placement once; resources never inspect placement environment again. */
 export function resolvePlace(env: NodeJS.ProcessEnv = process.env): Place {
+  if (env.OPENWORK_WORLD_PLACE === "freestyle") {
+    throw new Error("Freestyle placement supports app-web. This recipe does not yet support Freestyle.");
+  }
   if (daytonaPlacement(env)) {
     return new DaytonaPlace(
       resolveEvalRef(env),

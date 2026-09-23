@@ -11,6 +11,8 @@
     "dev:web": "OPENWORK_DEV_MODE=1 vite",
     "prebuild:web": "pnpm --filter @openwork/types build",
     "build:web": "VITE_OPENWORK_DEPLOYMENT=web VITE_DEN_REQUIRE_SIGNIN=1 vite build",
+    "prebuild:selfhost": "pnpm --filter @openwork/types build",
+    "build:selfhost": "VITE_OPENWORK_DEPLOYMENT=web vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:health": "node scripts/health.mjs",

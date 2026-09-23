@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { managedPolicyPluginPath } from "./managed-policy-plugin.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
+import { OPENWORK_AGENT_PROMPT } from "./openwork-agent-prompt.js";
 import { catalogFastVariants, fastVariantId } from "@openwork/types/cloud-model-fast";
 
 import {
@@ -60,6 +61,13 @@ async function readConfigFile(config: ServerConfig): Promise<Record<string, unkn
 }
 
 describe("openwork runtime config file", () => {
+  test("v1 receives the shared host-gated native connection question prompt", () => {
+    expect(buildOpenworkRuntimeConfigObjectFromSnapshot({})).toMatchObject({
+      agent: { openwork: { prompt: OPENWORK_AGENT_PROMPT } },
+    });
+    expect(OPENWORK_AGENT_PROMPT).toContain("context.features.connectionQuestions === true");
+  });
+
   test("signed-in and signed-out runtime ignores cached org restrictions and preserves local models", async () => {
     const { config } = await setup();
     const provider = { ollama: { models: { "local-model": { name: "Local model" } } } };

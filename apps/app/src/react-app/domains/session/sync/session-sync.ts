@@ -536,14 +536,22 @@ function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: st
     entry.deltaFlushLane = null;
     entry.cancelDeltaFlush = null;
   }
-  // Keep sequence and settlement watermarks: delayed events/reads must not
-  // resurrect a terminal run or a replied interaction after cache release.
-  queryClient.removeQueries({ queryKey: permissionKey(input.workspaceId, sessionId), exact: true });
-  queryClient.removeQueries({ queryKey: questionKey(input.workspaceId, sessionId), exact: true });
-  // Status entries are exempt from TanStack GC (see query-client.ts), so the
-  // tracked-session lifecycle owns their cleanup.
-  queryClient.removeQueries({ queryKey: statusKey(input.workspaceId, sessionId), exact: true });
-  queryClient.removeQueries({ queryKey: todoKey(input.workspaceId, sessionId), exact: true });
+  // A runtime restart can replace the endpoint while retaining the same
+  // workspace/session cache keys. Releasing the old sync must not erase the
+  // replacement sync's mounted or retained conversation.
+  const hasOtherOwner = [...syncs.values()].some((other) =>
+    other !== entry && other.input.workspaceId === input.workspaceId && isTrackedSession(other, sessionId));
+  if (!hasOtherOwner) {
+    // Keep sequence and settlement watermarks: delayed events/reads must not
+    // resurrect a terminal run or a replied interaction after cache release.
+    queryClient.removeQueries({ queryKey: permissionKey(input.workspaceId, sessionId), exact: true });
+    queryClient.removeQueries({ queryKey: questionKey(input.workspaceId, sessionId), exact: true });
+    // These caches are GC-exempt (see query-client.ts). In particular, live
+    // transcripts must retain their part declarations so deltas can land.
+    queryClient.removeQueries({ queryKey: transcriptKey(input.workspaceId, sessionId), exact: true });
+    queryClient.removeQueries({ queryKey: statusKey(input.workspaceId, sessionId), exact: true });
+    queryClient.removeQueries({ queryKey: todoKey(input.workspaceId, sessionId), exact: true });
+  }
   if (entry.refs <= 0 && entry.retainedSessionTimers.size === 0) {
     disposeWorkspaceSync(syncKey(input), entry);
   }

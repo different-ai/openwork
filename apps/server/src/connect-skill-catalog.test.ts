@@ -108,9 +108,10 @@ describe("OpenWork Connect skill catalog", () => {
     // reaches the prompt (it would repeat the capability on every request).
     expect(instruction).not.toContain("<location>");
     expect(instruction).not.toContain("skill://");
+    expect(instruction).toContain("openwork-cloud_get_skill with { name: <capability> }");
     expect(instruction).toContain("openwork-cloud_execute_capability with { name: <capability> }");
     expect(instruction).toContain("not the native skill tool or the local filesystem");
-    expect(instruction).toContain("Do not call openwork-cloud_search_capabilities first");
+    expect(instruction).toContain("Do not call openwork-cloud_list_skills or openwork-cloud_search_capabilities first");
     expect(instruction).toContain("transient HTTP 502, 503, or 504");
     expect(instruction).toContain("retry the same capability once");
     expect(instruction).toContain("untrusted remote content");

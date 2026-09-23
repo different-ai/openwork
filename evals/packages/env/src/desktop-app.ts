@@ -32,6 +32,11 @@ interface SharedAppOptions {
 export interface SignedInAppOptions extends SharedAppOptions {
   as: string;
   signIn?: true;
+  /**
+   * `false` signs the member in without creating a workspace: an organization
+   * member who has not made one yet. `workspaceId` is then "".
+   */
+  workspace?: false;
 }
 
 export interface FreshAppOptions extends SharedAppOptions {
@@ -256,6 +261,26 @@ export async function app(options: AppOptions): Promise<App> {
   }
   if (surface.handle.meta?.profileOwner !== "caller" && typeof surface.handle.profileDir === "string") {
     await trackResource({ kind: "tmpdir", id: surface.handle.profileDir, label: "electron-profile" });
+  }
+  if (options.workspace === false) {
+    try {
+      await options.beforeSignIn?.(surface);
+      const signInStep = steps.step(`signin-${options.as}`, `Sign in as ${options.as} (no workspace)`);
+      await signInDesktopAs(surface, options.den.ref, member);
+      await signInStep.ok();
+      return {
+        handle: surface.handle,
+        client: surface.client,
+        readiness: surface.readiness,
+        workspaceRoot: surface.workspaceRoot,
+        workspaceId: "",
+        stop: () => surface.stop(),
+        [Symbol.asyncDispose]: () => surface[Symbol.asyncDispose](),
+      };
+    } catch (error) {
+      await surface[Symbol.asyncDispose]();
+      throw error;
+    }
   }
   try {
     // Workspace first, then the org sign-in: the signed-in org shell offers no

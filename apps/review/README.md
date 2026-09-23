@@ -130,7 +130,78 @@ links to the private report; no raw trace or public screenshots are used as a
 fallback. Signed-in project members should verify the report commit and sources.
 Anonymous report, JSON, and image requests must redirect to Vercel Authentication.
 
-## Contract
+## Interactive Freestyle previews
+
+The **Freestyle preview prewarm** workflow prepares both `app-web` and `acme-web`
+snapshots for each same-repository PR head targeting `dev`. Configure the repository
+secret `FREESTYLE_API_KEY` as well as the Vercel secret below. Fork and Dependabot
+PRs do not receive this credential. A manual workflow run prepares its selected ref.
+The CI runner checks out the reviewed controller pinned to an immutable commit, never
+the PR source. Only the guest VM fetches and executes PR code, without the provider
+credential. Update the controller pin after reviewing its code and dependencies.
+Each world/commit is serialized in CI; the provider snapshot cache and builder lock
+also deduplicate reruns and concurrent reviewer launches. Existing snapshots are
+reused until their seven-day expiry. Prewarming does not create a shared reviewer VM:
+each click still clones separately. ACME is fully seeded, its service chain verified, and browser entry points compiled
+before its memory snapshot is captured. Clones resume those processes; launch only
+assigns public access, renews expired demo sessions if needed, and checks readiness.
+
+After prewarming, CI measures two real ACME launches and verifies restored processes,
+independent databases/access, sign-in, and a fresh AI Gateway reply. The prewarm job
+summary and `freestyle-launch-proof` artifact contain sanitized measurements. These
+measure controller launch through first app HTML readiness, **not** reviewer HTTP overhead
+or browser rendering. The ACME selected-proof report verifies the world recipe;
+it does not benchmark Freestyle. Do not quote a direct launch timing as click-to-usable.
+The OpenWork web prewarm job also verifies a fresh clone's app HTML and engine,
+with separate ready-link and repeat-page timings in `freestyle-app-launch-proof`.
+Fresh clones write their private access file and wait for the first authorized
+app HTML response before returning a link, so an early gateway response cannot
+hide a still-starting app. ACME snapshots older than five days renew their demo session
+before use so a new sandbox does not outlive the session it inherited.
+
+Set `FREESTYLE_API_KEY` in the protected Vercel Preview environment. Every report
+offers **Launch in Freestyle**. The server reads the commit from the stored report;
+the browser cannot select another revision. On the first launch it checks out that
+exact public commit in an isolated builder, installs OpenWork, starts the web app
+and local engine, and saves a private running snapshot. Later launches clone it.
+Each click gets a new VM, a new hostname, and a new access token, including repeat
+clicks from the same reviewer. **Open sandbox** opens the resulting app.
+
+The snapshot contains an empty local workspace and no API keys, production login,
+or connected accounts. Models can be connected inside each disposable sandbox.
+The first build may take several minutes. Failed builds and launches clean up
+their VMs; provider-enforced TTLs also bound interrupted operations. Preview VMs
+expire after two hours, and unused snapshots expire after seven days. Snapshot
+slugs and VM metadata are durable state in Freestyle, shared across app instances;
+a unique builder slug coordinates concurrent first launches. Public routes only
+expose the access-controlled gateway; the app and engine listen on loopback.
+
+Prewarm a commit before reviewers arrive:
+
+```sh
+node --env-file=.env.freestyle.local scripts/prepare-freestyle-preview.ts <full-pushed-sha>
+```
+
+The same provider is available in the world CLI (export `FREESTYLE_API_KEY` in
+the invoking shell, or use Node's `--env-file` option):
+
+```sh
+pnpm world up app-web --place freestyle --detach --timeout 800000 -- --ref <full-pushed-sha>
+pnpm world outputs app-web --reveal
+pnpm world down app-web
+```
+
+World teardown deletes its owned VM, with a resource ledger for interrupted
+teardown. The access URL is a secret world output. Freestyle placement currently
+supports `app-web` and the co-located `acme-web` demo. ACME also starts the real desktop app, signed in as the demo owner when available, behind the same private access; **Open Desktop app** streams it through noVNC. If the display cannot start, the rest of the world still launches without that link. The reviewer offers a world selector and a visible personal sandbox panel with service URLs and sign-in details. Developer credentials expand below; copying always returns usable values. Desktop recipes retain their existing placements.
+
+Validate with `pnpm --filter @openwork/freestyle test`, the world package tests,
+and the reviewer production build. UI follows DESIGN.md P3, P4, P10, P11, S1,
+C1, C2, and C6: the launch stays in place, failures are actionable, and snapshot
+details are collapsed. Review has no shared button component, so it uses a native
+keyboard-accessible button (P5).
+
+## Report data contract
 
 `packages/review/src/schema.ts` is the runtime schema and TypeScript source of
 truth. Sections refer to evidence by stable IDs, allowing the same evidence to
@@ -143,3 +214,5 @@ Status describes selected evidence: a failed assertion or visual judgment is
 Failed; skipped/unknown tests, missing assertion evidence, pending judgments,
 and declared gaps are Incomplete. An image-only document is Reference. Human
 approval and discussion stay in GitHub.
+
+Freestyle previews use the verified `preview.openwork.software` wildcard: `*.preview` CNAME to `beta-web.freestyle.sh`, `_acme-challenge.preview` NS to `beta-dns.freestyle.sh`, and Freestyle ownership verification. Keep its wildcard certificate active. This avoids the permanent free `style.dev` hostname claim limit; TLS routes still expire with each VM.

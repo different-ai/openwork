@@ -115,7 +115,12 @@ interface StoredJsonArtifact extends JsonArtifact {
 
 export interface TestEvidenceRecorder {
   readonly dir: string;
-  recordScreenshot(screenshotArtifact: ScreenshotArtifact): string;
+  /**
+   * Record a screenshot. `caption` is what a reviewer reads under the image in
+   * the review app; the spec runtime passes the active `step()` name. Without
+   * it the caption falls back to "<test name> artifact N".
+   */
+  recordScreenshot(screenshotArtifact: ScreenshotArtifact, options?: { caption?: string }): string;
   recordVisualValidation(screenshotHash: string, visualEvidence: VisualEvidenceResult): string;
   recordAssertionEvidence(assertion: string, evidence: string, passed: boolean): void;
   recordJsonArtifact(label: string, value: unknown): void;
@@ -640,11 +645,11 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
 
   return {
     dir,
-    recordScreenshot(screenshotArtifact) {
+    recordScreenshot(screenshotArtifact, options) {
       assertOpen();
       const sequence = nextSequence;
       nextSequence += 1;
-      const caption = artifactCaption(name, sequence);
+      const caption = options?.caption?.trim() || artifactCaption(name, sequence);
       const screenshotFileName = fileName(sequence, caption);
       artifacts.push({
         caption,
