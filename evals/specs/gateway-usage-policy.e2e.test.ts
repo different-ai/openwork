@@ -464,13 +464,14 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
   await step("member requests another increase after exhaustion and Den adds to the existing extension", async () => {
     const previousHistory = await requests(world.member, "/me?view=history");
     const repeatReason = "Finish the remaining synthetic review after using the first increase";
-    await member.see({ testId: "gateway-usage-notice" }, { text: /Out of usage/ });
-    await member.click({ role: "button", label: /^Request Increase$/ });
-    await member.see({ role: "textbox", label: "Reason (required)" });
-    expect((await memberProbe.dom('[role="dialog"] button[type="submit"]:disabled')).elements).toHaveLength(1);
-    await member.type({ role: "textbox", label: "Reason (required)" }, repeatReason);
-    await capture("Desktop repeat increase form", member, memberProbe, '[role="dialog"]');
-    await member.click({ role: "button", label: /^Request Increase$/, nth: 1 });
+    await member.see({ testId: "gateway-usage-notice" }, { text: /used this month’s \$1\.25/, timeoutMs: 60_000 });
+    await member.click({ role: "button", label: "Ask for $0.25 more" });
+    await member.see({ role: "textbox", label: "What do you need it for?" });
+    expect((await memberProbe.dom('[role="dialog"]')).elements).toHaveLength(0);
+    expect((await memberProbe.dom('[data-testid="gateway-usage-notice"] button[type="submit"]:disabled')).elements).toHaveLength(1);
+    await member.type({ role: "textbox", label: "What do you need it for?" }, repeatReason);
+    await capture("Desktop repeat increase form", member, memberProbe, '[data-testid="gateway-usage-notice"]');
+    await member.click({ role: "button", label: "Send request" });
     const rows = await probe.eventually(() => requests(world.member, "/me"), {
       within: 15_000, intervalMs: 200, label: "second distinct Desktop increase request persisted",
       until: (value) => value.length === 1 && value[0]?.reason === repeatReason && value[0]?.status === "pending",
@@ -480,8 +481,9 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     expect(request.id).not.toBe(pending.id);
     expect(request).toMatchObject({ bucketId: initialBucket.id, allowanceMicroUsd: 1_250_000, usedMicroUsd: 2_000_000 });
     expect(await requests()).toEqual(rows);
-    await member.notSee({ role: "textbox", label: "Reason (required)" });
-    await member.notSee({ role: "button", label: /^Request Increase$/ });
+    await member.see({ testId: "gateway-usage-notice" }, { text: /Asked for \$0\.25 more this month[\s\S]*Waiting for an admin/, timeoutMs: 15_000 });
+    await member.notSee({ role: "textbox", label: "What do you need it for?" });
+    await member.notSee({ role: "button", label: "Ask for $0.25 more" });
     expect((await own()).buckets[0]).toMatchObject({ canRequestReset: false, resetRequestStatus: "pending" });
     const duplicate = await seed.api(world.member, requestsPath, { method: "POST", body: JSON.stringify({ bucketId: initialBucket.id, reason: repeatReason }) });
     expect(duplicate.response.status).toBe(200);
@@ -507,11 +509,10 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     expect(history.find((entry) => entry.id === request.id)).toMatchObject({ status: "approved", reviewedBy: world.adminId, allowanceMicroUsd: 1_500_000, usedMicroUsd: 2_000_000, resetAt: initialBucket.resetAt });
     expect(await requests(world.member, "/me?view=history")).toEqual(history);
     expect(await requests(world.control, "/me?view=history")).toEqual([]);
-    await member.click({ role: "button", label: "Usage limits", nth: 0 });
-    await member.click({ role: "button", label: "Refresh usage" });
-    await member.see({ text: "$2.00 used / $1.50 total" });
-    await member.see({ role: "button", label: "Request Increase — Monthly" });
-    await capture("Desktop repeat approval still exhausted", member, memberProbe, '[aria-label="Monthly usage"]');
+    await openUsageFromAccountMenu(/This month\s*0% left/);
+    await member.see({ text: /\$0\.00 of \$1\.50 left/ });
+    await member.see({ role: "button", label: "Ask for $0.25 more" });
+    await capture("Desktop repeat approval still exhausted", member, memberProbe, '[aria-label="This month usage"]');
     expect((await world.generate()).status).toBe(429);
     expect(world.upstreamCount()).toBe(2);
     expect((await own()).buckets).toEqual(approved.buckets);
