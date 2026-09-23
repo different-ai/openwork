@@ -10,6 +10,7 @@ const AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT = "openwork:automation-runner:
 const BROWSER_BOUNDS_INVALIDATED_EVENT = "openwork:browser:bounds-invalidated";
 
 let lastBrowserGeometry = null;
+let windowFullscreen = ipcRenderer.sendSync("openwork:window-fullscreen-sync") === true;
 
 async function sendBrowserGeometry(channel, bounds, ...args) {
   // Capture zoom in the same renderer turn as the CSS measurement, not after IPC.
@@ -41,6 +42,7 @@ function applyShellDocumentMarkers() {
     if (!root) return false;
 
     root.dataset.openworkShell = "electron";
+    root.dataset.windowFullscreen = String(windowFullscreen);
     root.classList.add("openwork-electron");
     if (process.platform === "darwin") {
       root.classList.add("openwork-platform-mac");
@@ -402,6 +404,11 @@ ipcRenderer.on(NATIVE_MENU_ZOOM_EVENT, (_event, action) => {
 ipcRenderer.on(BROWSER_BOUNDS_INVALIDATED_EVENT, () => {
   lastBrowserGeometry = null;
   window.dispatchEvent(new Event(BROWSER_BOUNDS_INVALIDATED_EVENT));
+});
+
+ipcRenderer.on("openwork:window-fullscreen", (_event, fullscreen) => {
+  windowFullscreen = fullscreen === true;
+  applyShellDocumentMarkers();
 });
 
 if (!applyShellDocumentMarkers() && typeof document !== "undefined") {
