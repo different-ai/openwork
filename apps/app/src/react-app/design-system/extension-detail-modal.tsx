@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, Loader2 } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, Loader2, MessageCircle, Share2 } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -97,7 +97,11 @@ export type ExtensionDetailModalProps = {
   onReconnect?: () => void;
   reconnectLabel?: string;
   connectingLabel?: string;
-  /** Uninstall/disconnect handler. Shown when connected. */
+  /** Start a new chat with this item already in the composer. */
+  onChat?: () => void;
+  /** Open the share page. Only for things the member owns. */
+  onShare?: () => void;
+  /** Remove/disconnect handler. Shown when connected. */
   onUninstall?: () => void;
   uninstallLabel?: string;
   closeOnUninstall?: boolean;
@@ -241,6 +245,8 @@ export function ExtensionDetailModal({
   onReconnect,
   reconnectLabel = "Reconnect",
   connectingLabel = "Connecting...",
+  onChat,
+  onShare,
   onUninstall,
   uninstallLabel,
   closeOnUninstall = true,
@@ -338,6 +344,22 @@ export function ExtensionDetailModal({
           </>
         )}
       </div>
+      {onShare || onChat ? (
+        <div className="flex shrink-0 items-center gap-2">
+          {onShare ? (
+            <Button variant="outline" size="sm" onClick={onShare}>
+              <Share2 data-icon="inline-start" />
+              {t("extensions.detail_share")}
+            </Button>
+          ) : null}
+          {onChat ? (
+            <Button size="sm" onClick={onChat}>
+              <MessageCircle data-icon="inline-start" />
+              {t("extensions.detail_chat")}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 
@@ -683,7 +705,7 @@ export function ExtensionDetailModal({
               if (closeOnUninstall) onClose();
             }}
           >
-            {uninstallLabel ?? (taxonomy === "skill" ? "Uninstall" : "Disconnect")}
+            {uninstallLabel ?? (taxonomy === "connection" || taxonomy === "mcp" ? t("extensions.detail_disconnect") : t("extensions.detail_remove"))}
           </Button>
         ) : null}
         {!connected && onConnect ? (
@@ -707,7 +729,7 @@ export function ExtensionDetailModal({
 
   if (presentation === "page") {
     return (
-      <div className="flex w-full max-w-3xl flex-col gap-6 animate-in fade-in duration-300">
+      <div data-extension-detail-page className="mx-auto flex w-full max-w-3xl flex-col gap-6 animate-in fade-in duration-300">
         <Button
           variant="ghost"
           size="sm"

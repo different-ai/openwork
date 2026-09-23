@@ -136,19 +136,25 @@ test(title, async ({ evidence, world, user, probe, step }) => {
     await user.notSee({ testId: "library-create-page" });
   });
 
-  await step("after: the new skill opens on its own page, and back in the Library it is just for you", async () => {
+  await step("after: the new skill opens on its own centered page with Share and Chat, and back in the Library it is just for you", async () => {
     const detail = await probe.eventually(() => texts("h2"), {
       within: 60_000, label: "the skill's own page", until: (headings) => headings.includes("Customer briefing"),
     });
+    await user.see({ role: "button", label: "Share" });
+    await user.see({ role: "button", label: "Chat" });
     await shot();
+    const page = (await probe.dom("[data-extension-detail-page]")).elements[0]?.rect;
     await backToLibrary("Customer briefing");
     await closeToasts();
+    const content = (await probe.dom('[aria-label="Library filters"]')).elements[0]?.rect;
+    const offset = page && content ? Math.abs((page.left + page.right) / 2 - (content.left + content.right) / 2) : Number.POSITIVE_INFINITY;
     const captionText = await caption("Customer briefing");
     evidence.recordAssertionEvidence(
-      "Creating a skill lands on the skill, then lists it under Added by you, just for the creator",
-      `detail heading "${detail.find((value) => value === "Customer briefing") ?? ""}"; row caption "${captionText}"`,
-      captionText === "Just me",
+      "Creating a skill lands on the skill's page, centered in the Library with Share and Chat, then lists it under Added by you, just for the creator",
+      `detail heading "${detail.find((value) => value === "Customer briefing") ?? ""}"; Share and Chat buttons shown; page center is ${offset.toFixed(0)}px off the Library's center; row caption "${captionText}"`,
+      captionText === "Just me" && offset <= 8,
     );
+    expect(offset).toBeLessThanOrEqual(8);
     expect(captionText).toBe("Just me");
   });
 
@@ -353,6 +359,33 @@ test(title, async ({ evidence, world, user, probe, step }) => {
       line.length > 0,
     );
     expect(line).not.toBe("");
+    await user.click({ role: "button", label: "Library" });
+    await user.see({ role: "button", label: "More for Customer briefing" }, { timeoutMs: 60_000 });
+  });
+
+  await step("from its page, Share opens who can use it, and Chat starts a new task with the skill attached", async () => {
+    await user.click({ text: "Customer briefing" });
+    await probe.eventually(() => texts("h2"), {
+      within: 30_000, label: "the skill's own page", until: (headings) => headings.includes("Customer briefing"),
+    });
+    await user.click({ role: "button", label: "Share" });
+    await user.see({ testId: "library-share-page" });
+    await user.see({ text: "Who can use it" });
+    await user.click({ role: "button", label: "Cancel" });
+    const backOnPage = await probe.eventually(() => texts("h2"), {
+      within: 30_000, label: "Cancel returns to the skill's page", until: (headings) => headings.includes("Customer briefing"),
+    });
+    await user.click({ role: "button", label: "Chat" });
+    const chips = await probe.eventually(async () => texts('[title^="Skill: "]'), {
+      within: 30_000, label: "the new task's composer carries the skill", until: (found) => found.length > 0,
+    });
+    await shot();
+    evidence.recordAssertionEvidence(
+      "The skill's page shares and chats in one click; Chat puts the skill in a new task's composer without sending anything",
+      `Share → share page, Cancel → back on "${backOnPage.find((value) => value === "Customer briefing") ?? ""}"; Chat → composer chip "${chips[0] ?? ""}"`,
+      chips.length > 0,
+    );
+    expect(chips.length).toBeGreaterThan(0);
     await user.click({ role: "button", label: "Library" });
     await user.see({ role: "button", label: "More for Customer briefing" }, { timeoutMs: 60_000 });
   });
