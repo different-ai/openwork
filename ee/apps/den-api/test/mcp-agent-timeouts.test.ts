@@ -637,3 +637,14 @@ test.each([false, true])("empty capability search without setup suggestions stay
   expect(result.structuredContent).toEqual({ matches: [], hint: "No matches. Try broader or different keywords." })
   expect(result).not.toHaveProperty("_meta")
 })
+
+test("skill index revisions change for new versions and rendered metadata, and builtins are versioned", () => {
+  const skill = { name: "example", title: "Example", description: "Initial instructions", capability: "plugin:example:example", location: "skill://example/SKILL.md", revision: "version-one" }
+  const revision = (value: typeof skill) => agentModule.buildAgentSkillIndex([value]).skills[0]?.revision
+  expect(revision(skill)).toMatch(/^[a-f0-9]{64}$/)
+  expect(revision({ ...skill })).toBe(revision(skill))
+  expect(revision({ ...skill, revision: "version-two" })).not.toBe(revision(skill))
+  expect(revision({ ...skill, description: "Updated instructions" })).not.toBe(revision(skill))
+  expect(revision({ ...skill, name: "renamed" })).not.toBe(revision(skill))
+  expect(agentModule.buildAgentSkillIndex([{ ...skill, capability: BUILTIN_CREATE_SKILL_CAPABILITY, revision: undefined }]).skills[0]?.revision).toMatch(/^[a-f0-9]{64}$/)
+})

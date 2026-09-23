@@ -1,5 +1,5 @@
 import { resolveEvalEngine, type Seed } from "@openwork/env";
-import { readAvailableModels, selectModel } from "@openwork/behaviors";
+import { readAvailableModels, selectModel, signInDesktopAs } from "@openwork/behaviors";
 import { record } from "./engine-live-parity.ts";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -73,6 +73,15 @@ export async function engineLiveDesktop(seed: Seed) {
       }
       const log = info.logFilePath ? await readFile(info.logFilePath, "utf8") : "";
       return { session, pages, mutations: log.split("\n").filter(line => /revert|interrupt|fork/.test(line)).slice(-15) };
+    },
+    async openProviderSettings() {
+      await seed.evalIn(app, () => window.__openworkControl.execute("route.settings.providers"), { awaitPromise: true });
+    },
+    async signInOrganization() {
+      const den = await seed.den({ web: true, org: { name: "Cold send parity" } });
+      // The desktop must address the API directly; its web proxy redirects
+      // across origins and can discard the handoff bearer.
+      await signInDesktopAs(app, { ...den.ref, webUrl: den.ref.apiUrl }, den.admin);
     },
     async connectReports() {
       const proof = `REPORT-${randomUUID()}`;

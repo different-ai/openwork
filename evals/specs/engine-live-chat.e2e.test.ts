@@ -3,6 +3,7 @@ import { expect } from "vitest";
 import { browserScript, spec, resolveEvalEngine, type SpecBodyContext } from "@openwork/testkit";
 import { engineLiveDesktop } from "../worlds/engine-live-desktop.ts";
 import { record } from "../worlds/engine-live-parity.ts";
+import { delayNativeSessionWrites } from "../worlds/engine-write-delay.ts";
 
 const test = spec.world(engineLiveDesktop, { timeout: 900_000,
   resources: { surfaces: ["desktop"], services: ["den", "mock"], nativeReason: "Use real inference with native local providers, local processes and conversation controls. Only the external connector is a controlled witness." },
@@ -34,6 +35,62 @@ test(`LIVE-CONNECTORS ${resolveEvalEngine()}: the real model searches Den capabi
   }
   evidence.recordAssertionEvidence("Real inference and real Den capability routing", "The model was real, as were Den search, capability IDs, execution and the engine. Only the external report service was controlled; it independently witnessed both calls and held the fresh result outside the model prompt.", true);
 });
+test(`LIVE-ORG ${resolveEvalEngine()}: sign in and send the first real message while organization setup is slow`, async ctx => {
+  const { world, user, probe, step, evidence } = ctx;
+  const gateway = await ready(ctx);
+  const modelId = gateway?.modelId ?? process.env.OPENWORK_LIVE_MODEL;
+  if (!modelId) throw new Error("The signed-in cold-send check requires an explicitly connected real model");
+  await step("Sign into a fresh organization before the first task", async () => {
+    await world.signInOrganization();
+    const deadline = Date.now() + 90_000;
+    while ((await world.route()).includes("/onboarding")) {
+      if (Date.now() > deadline) throw new Error("Organization onboarding did not finish");
+      const label = await probe.eval(browserScript(() => {
+        const labels = [...document.querySelectorAll("button")].filter(button => !button.disabled).map(button => button.textContent?.trim());
+        return ["Continue with organization", "Continue to workspace", "Continue without OpenWork Models", "Continue"].find(label => labels.includes(label));
+      }, []));
+      if (label) await user.click({ role: "button", label });
+      else await new Promise(resolve => setTimeout(resolve, 200));
+    }
+    await user.see("composer", { editable: true, timeoutMs: 90_000 });
+    await world.selectModel(modelId);
+    await user.screenshot();
+  });
+  const endpoint = world.app.client.webSocketDebuggerUrl;
+  if (!endpoint) throw new Error("Native desktop debugger endpoint missing");
+  await using delayed = await delayNativeSessionWrites(endpoint);
+  const marker = `COLD-${randomUUID().slice(0, 8)}`;
+  await step("Keep the first message visible through delayed setup, then receive one real answer", async () => {
+    await turn(ctx, `Reply exactly ${marker}. Do not use tools or change files.`, marker);
+    await user.notSee({ text: "Couldn’t send your message" });
+    await user.notSee({ text: "Request timed out." });
+    expect((await probe.composer()).draftText).toBe("");
+    const messages = (await world.messages()).filter(record);
+    const userMessages = messages.filter(message => message.type === "user" || (record(message.info) && message.info.role === "user"));
+    expect(userMessages).toHaveLength(1);
+    const samples = delayed.samples();
+    if (world.engine === "v2") {
+      expect(samples.map(sample => sample.kind)).toEqual(["create", "prompt"]);
+      expect(samples.every(sample => sample.heldMs >= 20_000)).toBe(true);
+    }
+    evidence.recordJsonArtifact("Actual native write delays", { engine: world.engine, samples });
+    evidence.recordAssertionEvidence("Cold signed-in first send", "A fresh organization was signed in before the first task. On v2, the actual create and prompt HTTP requests were each held for 21 seconds without replacing their answers. One real user turn completed with no timeout error or restored duplicate draft.", true);
+    await user.screenshot();
+  });
+  await step("A normal second send reaches Working promptly with current organization skills", async () => {
+    if (world.engine === "v2") {
+      const workspace = /\/workspace\/([^/]+)/.exec(await world.route())?.[1];
+      const catalog = (await world.request(`/workspace/${workspace}/opencode2/api/skill`)).body;
+      const skills = record(catalog) && Array.isArray(catalog.data) ? catalog.data.filter(record) : [];
+      const cloudSkills = skills.filter(skill => typeof skill.id === "string" && skill.id.startsWith("openwork-cloud-"));
+      expect(cloudSkills.length).toBeGreaterThan(0);
+      evidence.recordJsonArtifact("Organization skills loaded natively", { count: cloudSkills.length });
+    }
+    const marker = `WARM-${randomUUID().slice(0, 8)}`;
+    await turn(ctx, `Reply exactly ${marker}. Do not use tools or change files.`, marker, "primary", 5_000);
+  });
+});
+
 type Context = SpecBodyContext<Awaited<ReturnType<typeof engineLiveDesktop>>>;
 
 async function openSavedConversation(ctx: Context, sessionId: string) {
@@ -60,7 +117,7 @@ async function chooseNativeMenu(ctx: Context, label: string) {
   expect(await ctx.probe.eval(browserScript(id => window.__OPENWORK_ELECTRON__.contextMenu.choose(id), [item.id]), { awaitPromise: true })).toBe(true);
 }
 
-async function ready({ world, user, probe, step }: Context) {
+async function ready({ world, user, probe, step, evidence }: Context) {
   await user.see("composer", { editable: true, timeoutMs: 90_000 });
   await probe.eventually(() => probe.composer(), { within: 90_000, label: "initial boot settled with a model", until: state => !state.modelUnavailable });
   const gateway = await world.stageGateway();
@@ -69,15 +126,26 @@ async function ready({ world, user, probe, step }: Context) {
     const keyName = process.env.OPENWORK_LIVE_KEY_ENV;
     const key = gateway?.key ?? (keyName ? process.env[keyName]?.trim() : undefined);
     if (!key) throw new Error("Live provider requested without a credential; no mock fallback is allowed");
-    await user.click({ role: "button", label: "Change model" });
-    await user.click({ role: "button", label: /^Model\s/ });
-    await user.click({ role: "button", label: "Connect more providers" });
+    await world.openProviderSettings();
     const settings = await probe.eventually(() => probe.eval(browserScript(() => {
       if (document.querySelector('input[placeholder="Filter providers by name or ID"]')) return "modal";
       if ([...document.querySelectorAll("button")].some(button => button.textContent?.trim() === "Connect provider")) return "settings";
       return "loading";
     }, [])), { within: 30_000, label: "provider connection entry", until: entry => entry !== "loading" });
-    if (settings === "settings") await user.click({ role: "button", label: "Connect provider" });
+    if (settings === "settings") {
+      await user.screenshot();
+      await user.click({ role: "button", label: "Connect provider" }).catch(async (error: unknown) => {
+        await user.screenshot();
+        const workspace = /\/workspace\/([^/]+)/.exec(await world.route())?.[1];
+        const diagnostics = [];
+        for (const path of ["opencode2/api/model", "opencode2/api/provider", "opencode/config", "opencode/provider"]) {
+          const result = await world.request(`/workspace/${workspace}/${path}`);
+          diagnostics.push({ path, status: result.status, keys: record(result.body) ? Object.keys(result.body) : [] });
+        }
+        evidence.recordJsonArtifact("Provider load diagnostics", diagnostics);
+        throw error;
+      });
+    }
     await user.type({ placeholder: "Filter providers by name or ID" }, provider);
     await user.click({ role: "button", label: new RegExp(`^${provider}`) });
     if (provider === "OpenAI") await user.click({ role: "button", label: /^Manually enter API Key/ });
@@ -93,7 +161,7 @@ async function ready({ world, user, probe, step }: Context) {
   return gateway ? { modelId: gateway.modelId, secondModelId: gateway.secondModelId } : null;
 }
 
-async function turn(ctx: Context, prompt: string, expected: string, pane: "primary" | "secondary" = "primary") {
+async function turn(ctx: Context, prompt: string, expected: string, pane: "primary" | "secondary" = "primary", startingBudgetMs?: number) {
   const { world, user, probe, evidence } = ctx;
   const sessionId = await probe.eval(browserScript((pane) => document.querySelector(`[data-workbench-pane="${pane}"] [data-session-surface-id]`)?.getAttribute("data-session-surface-id") ?? undefined, [pane]));
   const before = new Set((sessionId ? await world.messages(sessionId) : []).filter(record).map(message => record(message.info) ? message.info.id : message.id));
@@ -101,9 +169,14 @@ async function turn(ctx: Context, prompt: string, expected: string, pane: "prima
   await user.press("Enter");
   const started = Date.now();
   let answer = "";
+  let startingMs: number | undefined;
   while (Date.now() - started < 120_000) {
     const currentSessionId = sessionId ?? await probe.eval(browserScript((pane) => document.querySelector(`[data-workbench-pane="${pane}"] [data-session-surface-id]`)?.getAttribute("data-session-surface-id") ?? undefined, [pane]));
     if (!currentSessionId) { await new Promise(resolve => setTimeout(resolve, 100)); continue; }
+    if (startingMs === undefined && await probe.eval(browserScript((pane) => {
+      const root = document.querySelector(`[data-workbench-pane="${pane}"]`) ?? document;
+      return Boolean(root.querySelector('[data-loading-message="working"]'));
+    }, [pane]))) startingMs = Date.now() - started;
     const messages = (await world.messages(currentSessionId)).filter(record).filter(message => !before.has(record(message.info) ? message.info.id : message.id));
     for (const message of messages) {
       const info = record(message.info) ? message.info : message;
@@ -118,9 +191,15 @@ async function turn(ctx: Context, prompt: string, expected: string, pane: "prima
       return (info.role === "assistant" || info.type === "assistant") && record(info.time) && typeof info.time.completed === "number" && info.finish === "stop";
     });
     if (complete && answer.includes(expected)) {
-      evidence.recordJsonArtifact("Completed real model turn", { engine: world.engine, pane, elapsedMs: Date.now() - started,
+      const completedMs = Date.now() - started;
+      startingMs ??= completedMs;
+      evidence.recordJsonArtifact("Completed real model turn", { engine: world.engine, pane, startingMs, elapsedMs: completedMs,
         answer, generated: messages.map(message => { const info = record(message.info) ? message.info : message; return { role: info.role ?? info.type, model: info.model ?? info.modelID, tokens: info.tokens, finish: info.finish }; }) });
       await user.screenshot();
+      if (startingBudgetMs !== undefined) {
+        evidence.recordJsonArtifact("Native normal send timings", { engine: world.engine, startingMs, completedMs });
+        expect(startingMs).toBeLessThan(startingBudgetMs);
+      }
       return answer;
     }
     await new Promise(resolve => setTimeout(resolve, 500));

@@ -11,6 +11,7 @@ Native live profiles and default workspaces are created in the operating system'
 | Real-model journey | Required outcome |
 | --- | --- |
 | Blank native installation | Production startup creates the default workspace, stays signed out, and sends the first message to its real default model. |
+| Organization first send | Sign into a fresh organization, then send once; v2 create and prompt requests each survive an independently imposed 21-second delay without a false error or duplicated draft. |
 | Conversation controls | Revert and restore history, edit/resend, fork at a boundary, and open an independent side chat. |
 | Skills | Consume installed instructions through a witnessed native skill-tool call; v2 edits, removes and reinstalls them in the same conversation without engine reloads. |
 | Models | Enter a real key in the app, browse assigned Gateway aliases, remove/add a model, select it, and obtain real answers from both. |
@@ -21,6 +22,10 @@ Native live profiles and default workspaces are created in the operating system'
 Native context menus are real OS popups without DOM targets. Those choices use the existing development bridge after opening and inspecting the actual enabled popup; they do not call conversation APIs directly. No-reload checks require logs that actually observed inference, as well as an unchanged renderer document and engine PID. Native launch measurements include development build/harness overhead and are not packaged cold-start figures. Existing prepared Electron resources may be reused with `OPENWORK_EVAL_ELECTRON_RESOURCES_PREPARED=1`; this was needed on the current Mac because rebuilding the ComputerUse helper failed.
 
 The empty browser-host test, `engine-live-parity.e2e.test.ts`, separately verifies a server starting with zero workspaces. Because the browser has no native folder chooser, it creates the first workspace through the real host API and then sends through the visible composer. The native blank-installation test covers the desktop's actual automatic workspace creation.
+
+The signed-in first-send regression is covered by `LIVE-ORG`. Native v2 create and prompt writes receive a bounded 60-second startup budget because organization connection and skill reconciliation can exceed the ordinary 10-second read budget. The test delays the real HTTP requests on the wire; it does not substitute engine or model responses. Ordinary reads retain their original timeout, and the transport never automatically resends a write.
+
+Slow “Starting” diagnosis: a read-only measurement against an existing 95-skill organization took 14.3s to download all skill bodies with four concurrent requests; bounded 32-way reads took 5.9s (one sample each, not end-to-end app timing). Den now publishes an opaque revision derived from the immutable skill version and rendered metadata. Each admission still initializes an authenticated MCP session and reads the current authorized index; only unchanged versioned bodies are reused. Updates, additions, removals, credential changes, and failed authorization invalidate the relevant cache. Older Den servers omit revisions and retain full fresh body reads. The warm-send improvement requires deploying the Den API changes as well as restarting the updated local server; it is not delivered by toggling OC2 alone.
 
 The pinned v2 free starter service currently rejects real inference with HTTP 426, requesting OpenCode 1.18.0 or newer despite the native beta's `0.0.0-beta-19086` version. This remains a failing migration gate. Paid Gateway success must not hide that failure or be presented as complete first-boot parity.
 

@@ -1,5 +1,5 @@
 // OpenWork Cloud skills as native OpenCode v2 skills. The host reads the
-// authorized skill index and every SKILL.md body fresh from the openwork-cloud
+// authorized skill index fresh and new or revised SKILL.md bodies from the openwork-cloud
 // MCP connection, materializes them into an engine-private directory, and
 // registers only that directory through the generated config `skills` list.
 // The agent never sees a Connect hop for skills: the native skill tool loads
@@ -17,7 +17,10 @@ const SKILL_INDEX_URI = "skill://index.json";
 const MAX_INDEX_BYTES = 1024 * 1024;
 const MAX_SKILLS = 200;
 const MAX_BODY_BYTES = 256 * 1024;
-const BODY_CONCURRENCY = 4;
+// Each body is an independent authorized read. Four lanes made a typical
+// organization with ~100 skills add dozens of WAN round trips to every send.
+// Keep concurrency bounded, while joining all reads before native admission.
+const BODY_CONCURRENCY = 32;
 const MAX_STALE_RETRIES = 3;
 
 export type CloudNativeSkillSyncCode =
@@ -84,17 +87,20 @@ const skillIndexSchema = z.object({
     name: z.string().min(1).max(64),
     type: z.string().max(64),
     url: z.string().startsWith("skill://").max(1024),
+    revision: z.string().min(1).max(256).optional(),
   }).passthrough()),
 }).passthrough();
 
 /**
- * Fresh read of the skill index and every listed SKILL.md body through one
- * initialized MCP session. No cache: any transport, auth, size, or shape
- * problem throws so the caller can fail closed.
+ * Fresh read of the skill index and changed SKILL.md bodies through one
+ * initialized MCP session. Only bodies with an unchanged server revision may
+ * be reused after that fresh authorization check. Older servers have no
+ * revisions and still read every body. Any failure clears the caller cache.
  */
 export async function fetchCloudNativeSkills(
   config: Record<string, unknown>,
   fetcher: McpFetch = externalFetch,
+  cache = new Map<string, { revision: string; content: string }>(),
 ): Promise<CloudNativeSkillBody[]> {
   const reader = await openMcpResourceReader({ config, fetcher, clientName: "openwork-server-cloud-skills" });
   if (!reader) {
@@ -126,22 +132,29 @@ export async function fetchCloudNativeSkills(
     throw new CloudNativeSkillSyncError("cloud_skill_index_too_large", `OpenWork Cloud skill index lists more than ${MAX_SKILLS} skills`);
   }
   const bodies: CloudNativeSkillBody[] = [];
+  const revisions = new Map(parsed.data.skills.map(skill => [skill.url, skill.revision]));
+  const fresh = new Map<string, { revision: string; content: string }>();
   let next = 0;
   const worker = async () => {
     while (next < uris.length) {
       const uri = uris[next++];
       if (uri === undefined) return;
-      const content = await reader.read(uri);
+      const revision = revisions.get(uri);
+      const cached = revision ? cache.get(uri) : undefined;
+      const content = cached && cached.revision === revision ? cached.content : await reader.read(uri);
       if (content === null) {
         throw new CloudNativeSkillSyncError("cloud_skill_body_unavailable", `OpenWork Cloud skill body could not be read: ${uri}`);
       }
       if (Buffer.byteLength(content, "utf8") > MAX_BODY_BYTES) {
         throw new CloudNativeSkillSyncError("cloud_skill_body_too_large", `OpenWork Cloud skill body exceeds the size limit: ${uri}`);
       }
+      if (revision) fresh.set(uri, { revision, content });
       bodies.push({ uri, content });
     }
   };
   await Promise.all(Array.from({ length: Math.min(BODY_CONCURRENCY, uris.length) }, worker));
+  cache.clear();
+  for (const [uri, entry] of fresh) cache.set(uri, entry);
   return bodies.sort((left, right) => left.uri.localeCompare(right.uri));
 }
 
@@ -236,6 +249,7 @@ export function createCloudNativeSkillSync(options: {
   let generation = 0;
   let registered: string | null = null;
   let activeScope: string | null = null;
+  const bodyCache = new Map<string, { revision: string; content: string }>();
   let current: CloudNativeSkillState = EMPTY_CLOUD_NATIVE_SKILL_STATE;
   let queue: Promise<unknown> = Promise.resolve();
 
@@ -252,6 +266,7 @@ export function createCloudNativeSkillSync(options: {
   }
 
   async function clearAll(): Promise<void> {
+    bodyCache.clear();
     current = EMPTY_CLOUD_NATIVE_SKILL_STATE;
     activeScope = null;
     try {
@@ -266,6 +281,7 @@ export function createCloudNativeSkillSync(options: {
     const cloud = await options.readCloudConfig();
     const scope = cloudNativeSkillScopeKey(cloud);
     if (generation !== started) return "stale";
+    if (activeScope !== scope) bodyCache.clear();
     activeScope = scope;
     if (!cloud || !scope) {
       await clearAll();
@@ -273,7 +289,7 @@ export function createCloudNativeSkillSync(options: {
     }
     let bodies: CloudNativeSkillBody[];
     try {
-      bodies = await fetchCloudNativeSkills(cloud, options.fetcher);
+      bodies = await fetchCloudNativeSkills(cloud, options.fetcher, bodyCache);
     } catch (error) {
       if (generation !== started) return "stale";
       // Only a successfully cleared registry may admit a turn without Cloud
@@ -315,6 +331,7 @@ export function createCloudNativeSkillSync(options: {
         current = EMPTY_CLOUD_NATIVE_SKILL_STATE;
         activeScope = null;
         registered = null;
+        bodyCache.clear();
         await rm(options.root, { recursive: true, force: true });
       });
     },

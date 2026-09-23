@@ -1400,3 +1400,22 @@ describe("marketplace capabilities source", () => {
     expectYourConnectionsUrl(executeResult.connectionStatus?.action.url, connectionId)
   })
 })
+
+test("version-aware skill descriptors publish the latest immutable body revision", async () => {
+  const owner = await seedMember()
+  const skill = await seedCapability({ owner, objectType: "skill", title: "Revision example", rawSourceText: "Initial instructions" })
+  const read = () => marketplaceCapabilities.listAccessibleMarketplaceSkillDescriptors({ organizationId: owner.organizationId, member: owner.member, enabled: true })
+  const first = (await read()).find(value => value.capability === skill.name)
+  expect(first?.revision).toBeDefined()
+  const nextRevision = createDenTypeId("configObjectVersion")
+  await db.insert(ConfigObjectVersionTable).values({
+    id: nextRevision, organizationId: owner.organizationId, configObjectId: skill.configObjectId,
+    normalizedPayloadJson: null, rawSourceText: "Updated instructions", schemaVersion: null,
+    createdVia: "cloud", createdByOrgMembershipId: owner.memberId, connectorSyncEventId: null,
+    sourceRevisionRef: null, isDeletedVersion: false, createdAt: new Date(Date.now() + 1000),
+  })
+  const updated = (await read()).find(value => value.capability === skill.name)
+  expect(updated?.revision).toBe(nextRevision)
+  expect(updated?.revision).not.toBe(first?.revision)
+  expect(updated?.location).toBe(first?.location)
+})

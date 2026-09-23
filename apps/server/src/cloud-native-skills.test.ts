@@ -297,3 +297,78 @@ test("a scope change during native registration cannot publish a stale skill sna
     expect(await stat(root).then(() => true, () => false)).toBe(false);
   });
 });
+
+test("fresh authorized revisions reuse unchanged bodies, fetch edits and additions, and remove revoked skills", async () => {
+  await withRoot(async root => {
+    const versioned = (revision: string, extra = false) => ({ skills: [
+      { name: "briefing", type: "skill-md", url: BRIEFING_URI, revision },
+      ...(extra ? [{ name: "triage", type: "skill-md", url: TRIAGE_URI, revision: "one" }] : []),
+    ] });
+    const catalog = { index: versioned("one"), bodies: { [BRIEFING_URI]: BRIEFING_BODY, [TRIAGE_URI]: TRIAGE_BODY } };
+    const cloud = fakeCloud(catalog);
+    let token = "one";
+    const sync = createCloudNativeSkillSync({ root, fetcher: cloud.fetcher,
+      readCloudConfig: async () => cloudConfig(token), register: async () => {} });
+    await sync.sync();
+    await sync.sync();
+    expect(cloud.reads).toEqual([INDEX_URI, BRIEFING_URI, INDEX_URI]);
+    catalog.index = versioned("two", true);
+    catalog.bodies[BRIEFING_URI] += "\nEdited body.\n";
+    const updated = await sync.sync();
+    expect(updated.skills.find(skill => skill.uri === BRIEFING_URI)?.content).toContain("Edited body.");
+    expect(cloud.reads.slice(-3)).toEqual([INDEX_URI, BRIEFING_URI, TRIAGE_URI]);
+    catalog.index = versioned("two");
+    const removed = await sync.sync();
+    expect(removed.skills).toHaveLength(1);
+    expect(await readdir(String(removed.root))).toEqual([cloudNativeSkillId(BRIEFING_URI)]);
+    expect(cloud.reads.at(-1)).toBe(INDEX_URI);
+    // The same URI and revision under a new credential must be fetched again.
+    token = "two";
+    await sync.sync();
+    expect(cloud.reads.slice(-2)).toEqual([INDEX_URI, BRIEFING_URI]);
+    catalog.index = { skills: [] };
+    const revoked = await sync.sync();
+    expect(revoked.skills).toEqual([]);
+    expect(await readdir(String(revoked.root))).toEqual([]);
+  });
+});
+
+test("an authorization failure clears versioned bodies before any later admission", async () => {
+  await withRoot(async root => {
+    const cloud = fakeCloud({ index: { skills: [{ name: "briefing", type: "skill-md", url: BRIEFING_URI, revision: "one" }] }, bodies: { [BRIEFING_URI]: BRIEFING_BODY } });
+    let rejected = false;
+    const sync = createCloudNativeSkillSync({ root,
+      fetcher: (url, init) => rejected ? Promise.resolve(new Response(null, { status: 401 })) : cloud.fetcher(url, init),
+      readCloudConfig: async () => cloudConfig("one"), register: async () => {} });
+    await sync.sync();
+    rejected = true;
+    await expect(sync.sync()).rejects.toBeInstanceOf(CloudNativeSkillSyncError);
+    expect(sync.current().skills).toEqual([]);
+    expect(await stat(root).then(() => true, () => false)).toBe(false);
+    rejected = false;
+    await sync.sync();
+    expect(cloud.reads.filter(uri => uri === BRIEFING_URI)).toHaveLength(2);
+  });
+});
+
+test("a 95-skill organization checks authorization each turn without 95 repeated body downloads", async () => {
+  await withRoot(async root => {
+    const skills = Array.from({ length: 95 }, (_, index) => ({
+      name: `example-${index}`, type: "skill-md", url: `skill://example-${index}/SKILL.md`, revision: "one",
+    }));
+    let active = 0;
+    let peak = 0;
+    const cloud = fakeCloud({ index: { skills },
+      bodies: Object.fromEntries(skills.map(skill => [skill.url, `---\nname: ${skill.name}\ndescription: Example\n---\nFresh instructions.\n`])),
+      gate: async () => { active++; peak = Math.max(peak, active); await new Promise(resolve => setTimeout(resolve, 5)); active--; },
+    });
+    const sync = createCloudNativeSkillSync({ root, fetcher: cloud.fetcher, readCloudConfig: async () => cloudConfig("one"), register: async () => {} });
+    expect((await sync.sync()).skills).toHaveLength(95);
+    expect(peak).toBeGreaterThan(4);
+    expect(peak).toBeLessThanOrEqual(32);
+    expect(cloud.reads).toHaveLength(96);
+    expect((await sync.sync()).skills).toHaveLength(95);
+    expect(cloud.reads).toHaveLength(97);
+    expect(cloud.reads.at(-1)).toBe(INDEX_URI);
+  });
+});

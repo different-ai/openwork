@@ -6,7 +6,7 @@ import { prepareParityBinaries } from "./engine-parity-binaries.mjs";
 import { median, verifyRun } from "./engine-parity.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const cases = ["LIVE-DESKTOP", "LIVE-CHAT", "LIVE-FORK", "LIVE-SIDE", "LIVE-SKILLS", "LIVE-MODELS", "LIVE-MCP", "LIVE-CONNECTORS", "LIVE-LAUNCH"];
+const cases = ["LIVE-DESKTOP", "LIVE-ORG", "LIVE-CHAT", "LIVE-FORK", "LIVE-SIDE", "LIVE-SKILLS", "LIVE-MODELS", "LIVE-MCP", "LIVE-CONNECTORS", "LIVE-LAUNCH"];
 const args = process.argv.slice(2);
 if (args.some(arg => !/^--iterations=\d+$/.test(arg))) throw new Error("Usage: pnpm evals:parity:live [--iterations=3]");
 const iterations = Number(args[0]?.split("=")[1] ?? 3);
@@ -40,6 +40,7 @@ for (let iteration = 0; iteration < iterations; iteration++) {
     if (code !== 0) runFailures.push(`${label}: command exited ${code}`);
     const evidence = [];
     const timings = [];
+    const sendTimings = [];
     for (const directory of (await readdir(evidenceRoot)).filter(name => !before.has(name))) {
       const path = join(evidenceRoot, directory);
       const record = await readFile(join(path, "test-run.json"), "utf8").then(JSON.parse).catch(() => null);
@@ -47,10 +48,11 @@ for (let iteration = 0; iteration < iterations; iteration++) {
       evidence.push({ name: record.name, outcome: record.outcome, path: relative(out, join(path, "index.html")), failure: record.failure });
       if (record.outcome === "passed") for (const artifact of record.artifacts ?? []) {
         if (artifact.kind === "json" && artifact.label === "Native launch timings") timings.push(JSON.parse(await readFile(join(path, artifact.fileName), "utf8")));
+        if (artifact.kind === "json" && artifact.label === "Native normal send timings") sendTimings.push(JSON.parse(await readFile(join(path, artifact.fileName), "utf8")));
       }
     }
     failures.push(...runFailures);
-    results.push({ engine, iteration: iteration + 1, code, failures: runFailures, evidence, timings });
+    results.push({ engine, iteration: iteration + 1, code, failures: runFailures, evidence, timings, sendTimings });
     await writeFile(join(out, "results.json"), JSON.stringify({ status: "RUNNING", results, failures }, null, 2));
   }
 }
@@ -66,6 +68,12 @@ for (const metric of ["interactiveMs", "composerReadyMs"]) {
     return values.length ? `${Math.round(median(values))} (${Math.round(Math.min(...values))}–${Math.round(Math.max(...values))}), n=${values.length}` : "not measured";
   });
   lines.push(`| ${metric} | ${cells.join(" | ")} |`);
+}
+lines.push("", "## Signed-in normal send", "", "One real-model follow-up per engine after the deliberately delayed first send. Milliseconds from Enter to the visible Working state and completed answer. The v2 case requires native organization skills to be present. These are individual samples, not launch timings or a latency distribution.", "", "| Engine | Starting → Working | Answer completed |", "| --- | --- | --- |");
+for (const engine of ["v1", "v2"]) {
+  const samples = results.filter(result => result.engine === engine).flatMap(result => result.sendTimings);
+  if (samples.length !== 1) failures.push(`${engine}: ${samples.length}/1 normal send timing samples`);
+  for (const sample of samples) lines.push(`| ${engine} | ${sample.startingMs} ms | ${sample.completedMs} ms |`);
 }
 lines[2] = failures.length ? "**NOT READY — required flows failed or did not run.**" : "**PASS — all required native journeys passed on both engines.**";
 if (failures.length) lines.push("", "## Failures", "", ...failures.map(failure => `- ${failure}`));
