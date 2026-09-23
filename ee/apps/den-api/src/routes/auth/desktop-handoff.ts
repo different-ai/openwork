@@ -9,8 +9,8 @@ import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/exte
 import { jsonValidator, publicRoute, userSessionRoute } from "../../middleware/index.js"
 import { db } from "../../db.js"
 import { env, type DenOrgMode } from "../../env.js"
-import { ensurePersonalOrganizationForUser, resolveUserOrganizations } from "../../orgs.js"
-import { isWebOriginApprovedForOrganization } from "../../organization-web-origins.js"
+import { ensurePersonalOrganizationForUser, resolveUserOrganizations, setSessionActiveOrganization } from "../../orgs.js"
+import { findMemberOrganizationsApprovingWebOrigin, isWebOriginApprovedForOrganization } from "../../organization-web-origins.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import { enforceRateLimit } from "../../utils/rate-limit.js"
@@ -357,11 +357,36 @@ async function getCloudSignedPreviewUrls(organizationId: WorkerOrgId) {
   return rows.map((row) => row.signedPreviewUrl)
 }
 
-export async function resolveApprovedWebHandoffReturnUrl(input: {
+type WebHandoffApproval = {
+  returnUrl: string
+  /** The organization whose approval matched, when the session should become active in it. */
+  organizationId: WorkerOrgId | null
+}
+
+function normalizeOptionalOrganizationId(value: string | null | undefined): WorkerOrgId | null {
+  if (!value) return null
+  try {
+    return normalizeDenTypeId("organization", value)
+  } catch {
+    return null
+  }
+}
+
+function normalizeOptionalUserId(value: string | null | undefined) {
+  if (!value) return null
+  try {
+    return normalizeDenTypeId("user", value)
+  } catch {
+    return null
+  }
+}
+
+export async function resolveWebHandoffApproval(input: {
   returnUrl: string
   activeOrganizationId?: string | null
+  userId?: string | null
   loadSignedPreviewUrls?: (organizationId: WorkerOrgId) => Promise<string[]>
-}) {
+}): Promise<WebHandoffApproval | null> {
   const gatewayReturnUrl = approveWebHandoffReturnUrlForSignedPreviews({
     returnUrl: input.returnUrl,
     signedPreviewUrls: [],
@@ -369,17 +394,10 @@ export async function resolveApprovedWebHandoffReturnUrl(input: {
     gatewayOrigin: env.gatewayOrigin,
   })
   if (gatewayReturnUrl) {
-    return gatewayReturnUrl
+    return { returnUrl: gatewayReturnUrl, organizationId: null }
   }
 
-  if (env.orgMode !== "multi_org" || !input.activeOrganizationId) {
-    return null
-  }
-
-  let organizationId: WorkerOrgId
-  try {
-    organizationId = normalizeDenTypeId("organization", input.activeOrganizationId)
-  } catch {
+  if (env.orgMode !== "multi_org") {
     return null
   }
 
@@ -389,17 +407,39 @@ export async function resolveApprovedWebHandoffReturnUrl(input: {
   }
 
   // Exact origins the active organization's owners approved in Org settings.
-  if (await isWebOriginApprovedForOrganization(organizationId, candidate.origin)) {
-    return candidate.returnUrl
+  const activeOrganizationId = normalizeOptionalOrganizationId(input.activeOrganizationId)
+  if (activeOrganizationId && await isWebOriginApprovedForOrganization(activeOrganizationId, candidate.origin)) {
+    return { returnUrl: candidate.returnUrl, organizationId: activeOrganizationId }
   }
 
-  const signedPreviewUrls = await (input.loadSignedPreviewUrls ?? getCloudSignedPreviewUrls)(organizationId)
-  return approveWebHandoffReturnUrlForSignedPreviews({
+  // A fresh sign-in by someone in several organizations has no active
+  // organization yet, and a member may be active in another one. Approval by
+  // any organization the user currently belongs to is enough; the handoff then
+  // lands them in that organization.
+  const userId = normalizeOptionalUserId(input.userId)
+  if (userId) {
+    const [approvingOrganizationId] = await findMemberOrganizationsApprovingWebOrigin(userId, candidate.origin)
+    if (approvingOrganizationId) {
+      return { returnUrl: candidate.returnUrl, organizationId: approvingOrganizationId }
+    }
+  }
+
+  if (!activeOrganizationId) {
+    return null
+  }
+
+  const signedPreviewUrls = await (input.loadSignedPreviewUrls ?? getCloudSignedPreviewUrls)(activeOrganizationId)
+  const previewReturnUrl = approveWebHandoffReturnUrlForSignedPreviews({
     returnUrl: input.returnUrl,
     signedPreviewUrls,
     orgMode: env.orgMode,
     gatewayOrigin: env.gatewayOrigin,
   })
+  return previewReturnUrl ? { returnUrl: previewReturnUrl, organizationId: null } : null
+}
+
+export async function resolveApprovedWebHandoffReturnUrl(input: Parameters<typeof resolveWebHandoffApproval>[0]) {
+  return (await resolveWebHandoffApproval(input))?.returnUrl ?? null
 }
 
 export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
@@ -429,15 +469,22 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
     const input = c.req.valid("json")
     let approvedReturnUrl: string | null = null
     if (input.returnUrl !== undefined) {
-      approvedReturnUrl = await resolveApprovedWebHandoffReturnUrl({
+      const approval = await resolveWebHandoffApproval({
         returnUrl: input.returnUrl,
         activeOrganizationId: session.activeOrganizationId,
+        userId: user.id,
       })
-      if (!approvedReturnUrl) {
+      if (!approval) {
         return c.json({
           error: "invalid_return_url",
           message: "The Cloud web handoff return URL is not approved for this organization.",
         }, 400)
+      }
+      approvedReturnUrl = approval.returnUrl
+      // The grant hands over this session, so make it active in the approving
+      // organization before the web instance exchanges it.
+      if (approval.organizationId && approval.organizationId !== session.activeOrganizationId) {
+        await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), approval.organizationId)
       }
     }
 

@@ -313,4 +313,78 @@ describe("desktop handoff public URL", () => {
     }
     expect(approvalLookups).toEqual([])
   })
+
+  describe("member organizations", () => {
+    const userId = typeId.generator("user")
+    const outsiderId = typeId.generator("user")
+    const memberLookups: Array<{ userId: string; origin: string }> = []
+
+    async function membersApprove(memberships: Record<string, string[]>) {
+      const { setMemberWebOriginLookupForTest } = await import("../src/organization-web-origins.js")
+      memberLookups.length = 0
+      setMemberWebOriginLookupForTest(async (input) => {
+        memberLookups.push(input)
+        return input.origin === webOrigin ? (memberships[input.userId] ?? []).map((id) => typeId.schema("organization").parse(id)) : []
+      })
+    }
+
+    afterEach(async () => {
+      const { setMemberWebOriginLookupForTest } = await import("../src/organization-web-origins.js")
+      setMemberWebOriginLookupForTest(null)
+    })
+
+    test("a fresh multi-organization session with no active organization is approved and lands in the approving organization", async () => {
+      const { resolveWebHandoffApproval } = await loadDesktopHandoffRoutes()
+      await configureDesktopHandoffEnv({})
+      await approveWebOriginForOrganization(organizationId, webOrigin)
+      await membersApprove({ [userId]: [organizationId] })
+
+      expect(await resolveWebHandoffApproval({ activeOrganizationId: null, userId, returnUrl: `${webOrigin}/` }))
+        .toEqual({ returnUrl: `${webOrigin}/signin`, organizationId })
+      expect(approvalLookups).toEqual([])
+      expect(memberLookups).toEqual([{ userId, origin: webOrigin }])
+    })
+
+    test("a member active in another organization is approved by an organization they belong to", async () => {
+      const { resolveWebHandoffApproval } = await loadDesktopHandoffRoutes()
+      await configureDesktopHandoffEnv({})
+      await approveWebOriginForOrganization(organizationId, webOrigin)
+      await membersApprove({ [userId]: [organizationId] })
+
+      expect(await resolveWebHandoffApproval({ activeOrganizationId: otherOrganizationId, userId, returnUrl: webOrigin, loadSignedPreviewUrls: noSignedPreviews }))
+        .toEqual({ returnUrl: `${webOrigin}/signin`, organizationId })
+      expect(approvalLookups).toEqual([{ origin: webOrigin, organizationId: otherOrganizationId }])
+    })
+
+    test("the active organization's own approval keeps the session where it is", async () => {
+      const { resolveWebHandoffApproval } = await loadDesktopHandoffRoutes()
+      await configureDesktopHandoffEnv({})
+      await approveWebOriginForOrganization(organizationId, webOrigin)
+      await membersApprove({ [userId]: [otherOrganizationId, organizationId] })
+
+      expect(await resolveWebHandoffApproval({ activeOrganizationId: organizationId, userId, returnUrl: webOrigin }))
+        .toEqual({ returnUrl: `${webOrigin}/signin`, organizationId })
+      expect(memberLookups).toEqual([])
+    })
+
+    test("people outside every approving organization, unsafe URLs, and single-org mode stay refused", async () => {
+      const { resolveWebHandoffApproval } = await loadDesktopHandoffRoutes()
+      await configureDesktopHandoffEnv({})
+      await approveWebOriginForOrganization(organizationId, webOrigin)
+      await membersApprove({ [userId]: [organizationId] })
+
+      expect(await resolveWebHandoffApproval({ activeOrganizationId: null, userId: outsiderId, returnUrl: webOrigin })).toBeNull()
+      expect(await resolveWebHandoffApproval({ activeOrganizationId: null, userId: "not-a-user-id", returnUrl: webOrigin })).toBeNull()
+      for (const returnUrl of ["https://web.selfhost.example.test.evil.test/", `${webOrigin}:444/`, `${webOrigin}/other`, `http://web.selfhost.example.test/`]) {
+        expect(await resolveWebHandoffApproval({ activeOrganizationId: null, userId, returnUrl })).toBeNull()
+      }
+      expect(memberLookups).toEqual([{ userId: outsiderId, origin: webOrigin }, ...["https://web.selfhost.example.test.evil.test", `${webOrigin}:444`].map((origin) => ({ userId, origin }))])
+
+      memberLookups.length = 0
+      await configureDesktopHandoffEnv({ orgMode: "single_org" })
+      expect(await resolveWebHandoffApproval({ activeOrganizationId: null, userId, returnUrl: webOrigin })).toBeNull()
+      expect(memberLookups).toEqual([])
+      await configureDesktopHandoffEnv({})
+    })
+  })
 })
