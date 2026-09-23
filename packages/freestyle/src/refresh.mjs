@@ -43,7 +43,8 @@ if (services.den) {
       }
       if (!loaded) throw new Error("Desktop did not load the updated frontend");
       const outputs = JSON.parse(await readFile(`${root}/outputs.json`, "utf8"));
-      const den = { webUrl: services.den, apiUrl: services.api };
+      // The desktop signs in through its loopback Den front (see desktop.mjs).
+      const den = { webUrl: services.desktopDen ?? services.den, apiUrl: services.api };
       try {
         await signInDesktopAs(surface, den, { ...den, token: outputs.denToken.value, email: outputs.alexEmail.value, password: outputs.alexPassword.value });
         await writeFile(`${root}/desktop/status`, "ready", { mode: 0o600 });

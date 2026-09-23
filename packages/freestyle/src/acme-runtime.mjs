@@ -77,7 +77,7 @@ try {
   ]);
   outputs.orgId = { value: world.model.orgId, group: "Org" };
   outputs.verifiedReply = { value: proof.reply, group: "Verification" };
-  const services = { app: web.manifest.webUrl, den: den.ref.webUrl, api: den.ref.apiUrl, engine: web.manifest.openworkUrl, gateway: gatewayUrl, ...(desktop ? { desktop: desktop.url } : {}) };
+  const services = { app: web.manifest.webUrl, den: den.ref.webUrl, api: den.ref.apiUrl, engine: web.manifest.openworkUrl, gateway: gatewayUrl, ...(desktop ? { desktop: desktop.url, desktopDen: desktop.denUrl } : {}) };
   await writeFile("/opt/openwork-preview/services.json", JSON.stringify(services), { mode: 0o600 });
   await writeFile("/opt/openwork-preview/outputs.json", JSON.stringify(outputs), { mode: 0o600 });
   await writeFile("/opt/openwork-preview/ready-world", JSON.stringify({ warmedAt: new Date().toISOString(), pid: process.pid, modules }));

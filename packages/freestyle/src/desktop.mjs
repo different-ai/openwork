@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, closeSync, writeFileSync } from "node:fs";
+import { createServer, request } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 
 // Controller-owned: a virtual display, a VNC server bound to loopback, and the
@@ -9,7 +10,10 @@ const DESKTOP_DISPLAY = ":99";
 const NOVNC_PORT = 6080;
 const VNC_PORT = 5900;
 const CDP_PORT = 9825;
+const DEN_FRONT_PORT = 5190;
 const LOGS = "/opt/openwork-preview/desktop";
+const DEN_PROXY_PREFIX = "/api/den";
+const DESKTOP_WORKSPACE = "/root/Acme";
 
 function service(stack, command, args, name) {
   const log = openSync(`${LOGS}/${name}.log`, "a", 0o600);
@@ -29,15 +33,71 @@ async function waitFor(check, label, timeoutMs = 60_000) {
   throw new Error(`Desktop ${label} did not become ready`);
 }
 
+function forward(req, res, target, path) {
+  const upstream = request({ hostname: target.hostname, port: target.port, method: req.method, path,
+    headers: { ...req.headers, host: target.host } }, (response) => {
+    res.writeHead(response.statusCode ?? 502, response.headers);
+    response.pipe(res);
+  });
+  upstream.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+  req.pipe(upstream);
+}
+
+/**
+ * Den advertises the snapshot's template origins (runtime-config `denApiUrl`
+ * and `/api/den` redirects). Only the edge translates them, and only for
+ * browsers; inside the VM they never answer, so the desktop's Den calls time
+ * out. The desktop instead uses this loopback Den web origin, which keeps
+ * every advertised Den address inside the VM. Browsers are unaffected.
+ */
+async function startDesktopDenFront(stack, den) {
+  const web = new URL(den.webUrl);
+  const api = new URL(den.apiUrl);
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", "http://desktop-den.invalid");
+    if (req.method === "GET" && url.pathname === "/api/runtime-config") {
+      try {
+        const upstream = await fetch(new URL(`${url.pathname}${url.search}`, web), { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
+        const config = await upstream.json();
+        res.writeHead(upstream.status, { "content-type": "application/json", "cache-control": "no-store" });
+        res.end(JSON.stringify({ ...config, denApiUrl: den.apiUrl }));
+      } catch {
+        if (!res.headersSent) res.writeHead(502);
+        res.end();
+      }
+      return;
+    }
+    if (url.pathname === DEN_PROXY_PREFIX || url.pathname.startsWith(`${DEN_PROXY_PREFIX}/`)) {
+      forward(req, res, api, `${url.pathname.slice(DEN_PROXY_PREFIX.length) || "/"}${url.search}`);
+      return;
+    }
+    forward(req, res, web, `${url.pathname}${url.search}`);
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(DEN_FRONT_PORT, "127.0.0.1", resolve);
+  });
+  stack.defer(() => new Promise((resolve) => server.close(() => resolve(undefined))));
+  return `http://127.0.0.1:${DEN_FRONT_PORT}`;
+}
+
 // Signs the running window in as the demo owner with the harness's own handoff,
-// over the launcher's debug port. Any failure leaves the real app signed out.
-async function signIn(world) {
+// over the launcher's debug port, then opens a workspace so the app is ready to
+// chat. Any sign-in failure leaves the real app signed out.
+async function signIn(world, den) {
   try {
     const { attachSurface } = await import("/workspace/evals/packages/cdp/src/index.ts");
-    const { signInDesktopAs } = await import("/workspace/evals/packages/behaviors/src/index.ts");
+    const { signInDesktopAs, createAndSelectWorkspace } = await import("/workspace/evals/packages/behaviors/src/index.ts");
     for (let attempt = 1; attempt <= 2; attempt++) {
       const surface = await attachSurface({ name: "preview-desktop", kind: "electron", hostKind: "local", cdpUrl: `http://127.0.0.1:${CDP_PORT}` }, { timeoutMs: 60_000 });
-      try { await signInDesktopAs(surface, world.den.ref, world.den.admin); return true; }
+      try {
+        await signInDesktopAs(surface, den, world.den.admin);
+        try {
+          mkdirSync(DESKTOP_WORKSPACE, { recursive: true });
+          await createAndSelectWorkspace(surface, { path: DESKTOP_WORKSPACE });
+        } catch (error) { console.error("Desktop workspace setup failed:", error); }
+        return true;
+      }
       catch (error) { console.error(`Desktop sign-in attempt ${attempt} failed:`, error); }
       finally { await surface.stop().catch(() => undefined); }
     }
@@ -64,9 +124,8 @@ export async function startDesktop(stack, world) {
   // Upstream's Linux desktop launcher (used by Daytona previews) runs the real
   // app from the reviewed commit. A relaunch loop and a deadline-free readiness
   // poll keep it working across the snapshot's pause and resume.
-  // Den web's /api/den proxy redirects to the snapshot's template origin, which
-  // does not resolve in the VM; point the app straight at the local Den API.
-  writeFileSync(`${LOGS}/bootstrap.json`, JSON.stringify({ baseUrl: world.den.ref.webUrl, apiBaseUrl: world.den.ref.apiUrl, requireSignin: false }), { mode: 0o600 });
+  const den = { ...world.den.ref, webUrl: await startDesktopDenFront(stack, world.den.ref) };
+  writeFileSync(`${LOGS}/bootstrap.json`, JSON.stringify({ baseUrl: den.webUrl, apiBaseUrl: den.apiUrl, requireSignin: false }), { mode: 0o600 });
   const env = {
     ...process.env, DISPLAY: DESKTOP_DISPLAY, OPENWORK_WORKSPACE_DIR: "/workspace", PORT: "5186",
     OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: String(CDP_PORT), OPENWORK_DESKTOP_BOOTSTRAP_PATH: `${LOGS}/bootstrap.json`,
@@ -91,8 +150,8 @@ export async function startDesktop(stack, world) {
       } catch { /* still booting */ }
       await delay(3_000);
     }
-    status(await signIn(world) ? "ready" : "ready-signed-out");
+    status(await signIn(world, den) ? "ready" : "ready-signed-out");
     return true;
   })();
-  return { url: `http://127.0.0.1:${NOVNC_PORT}`, ready };
+  return { url: `http://127.0.0.1:${NOVNC_PORT}`, denUrl: den.webUrl, ready };
 }
