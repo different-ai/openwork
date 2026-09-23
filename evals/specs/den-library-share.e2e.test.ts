@@ -44,7 +44,16 @@ test("a member: I want Maya and the Support team to use Slack so they can search
   await step("4. I find Slack in the list and add it", async () => {
     await user.click({ role: "button", label: "Continue" });
     await user.see({ role: "heading", label: "Add a connector" }, { timeoutMs: 60_000 });
-    await user.see({ testId: "connector-picker-custom" }, { text: /Something else/ });
+    await user.see({ role: "button", label: "Add another MCP" });
+    await user.type({ label: "Filter by name" }, "acme", { replace: true });
+    await user.see({ testId: "connector-picker-no-match" }, { text: /No app called “acme”/ });
+    await user.screenshot();
+    await user.click({ testId: "connector-picker-no-match-add" });
+    await user.see({ testId: "connector-picker-custom" }, { text: /Paste the address your vendor or IT team gave you/ });
+    await user.notSee({ testId: "connector-picker-no-match" });
+    await user.screenshot();
+    await user.click({ role: "button", label: "Cancel" });
+    await user.type({ label: "Filter by name" }, "", { replace: true });
     await user.click({ role: "link", label: "Add Slack" });
     await user.see({ role: "heading", label: "Connect Slack" }, { timeoutMs: 60_000 });
     await user.see({ role: "button", label: "Sign in with Slack" }, { timeoutMs: 60_000 });

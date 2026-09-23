@@ -1,6 +1,6 @@
 "use client";
 
-import { Server } from "lucide-react";
+import { Plus, Server } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
@@ -33,9 +33,20 @@ export function catalogEntriesFromPresets(presets: readonly ExternalMcpPreset[])
   }));
 }
 
-function SomethingElse({ onContinue }: { onContinue: (input: { name: string; url: string }) => void }) {
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
+function ServerTile() {
+  return (
+    <span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[7px] border border-gray-200 bg-white text-gray-500">
+      <Server className="h-4 w-4" strokeWidth={1.8} />
+    </span>
+  );
+}
+
+function AddMcpForm({ initialName, onCancel, onContinue }: {
+  initialName: string;
+  onCancel: () => void;
+  onContinue: (input: { name: string; url: string }) => void;
+}) {
+  const [name, setName] = useState(initialName);
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -60,36 +71,29 @@ function SomethingElse({ onContinue }: { onContinue: (input: { name: string; url
   }
 
   return (
-    <div className="mx-2 my-1 rounded-xl border border-dashed border-gray-200 px-3 py-3" data-testid="connector-picker-custom">
+    <div className="rounded-2xl border border-gray-100 bg-white px-5 py-4" data-testid="connector-picker-custom">
       <div className="flex items-center gap-3.5">
-        <span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[7px] border border-gray-200 bg-white text-gray-500">
-          <Server className="h-4 w-4" strokeWidth={1.8} />
-        </span>
+        <ServerTile />
         <div className="min-w-0 flex-1">
-          <p className="text-[14px] font-medium leading-5 text-gray-900">Something else</p>
-          <p className="text-[13px] leading-[18px] text-gray-500">Add an MCP server with the address your vendor or IT team gave you.</p>
+          <p className="text-[14px] font-medium leading-5 text-gray-900">Add another MCP</p>
+          <p className="text-[13px] leading-[18px] text-gray-500">Paste the address your vendor or IT team gave you.</p>
         </div>
-        {open ? null : (
-          <DenButton variant="secondary" size="xs" onClick={() => setOpen(true)}>Add an MCP</DenButton>
-        )}
       </div>
-      {open ? (
-        <form
-          className="mt-3 flex flex-col gap-2 pl-[46px]"
-          onSubmit={(event) => {
-            event.preventDefault();
-            submit();
-          }}
-        >
-          <DenInput value={url} onChange={(event) => { setUrl(event.target.value); setError(null); }} placeholder="https://mcp.example.com/mcp" aria-label="Address" autoFocus />
-          <DenInput value={name} onChange={(event) => setName(event.target.value)} placeholder="Name (optional)" aria-label="Name" />
-          {error ? <p className="text-[12px] text-red-600">{error}</p> : null}
-          <div className="flex justify-end gap-2">
-            <DenButton type="button" variant="secondary" size="sm" onClick={() => { setOpen(false); setError(null); }}>Cancel</DenButton>
-            <DenButton type="submit" size="sm">Continue</DenButton>
-          </div>
-        </form>
-      ) : null}
+      <form
+        className="mt-3 flex flex-col gap-2 pl-[46px]"
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit();
+        }}
+      >
+        <DenInput value={url} onChange={(event) => { setUrl(event.target.value); setError(null); }} placeholder="https://mcp.example.com/mcp" aria-label="Address" autoFocus />
+        <DenInput value={name} onChange={(event) => setName(event.target.value)} placeholder="Name (optional)" aria-label="Name" />
+        {error ? <p className="text-[12px] text-red-600">{error}</p> : null}
+        <div className="flex justify-end gap-2">
+          <DenButton type="button" variant="secondary" size="sm" onClick={onCancel}>Cancel</DenButton>
+          <DenButton type="submit" size="sm">Continue</DenButton>
+        </div>
+      </form>
     </div>
   );
 }
@@ -103,13 +107,28 @@ export function ConnectorPicker({ entries, loading, addHref, customHref }: {
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
+  const [customName, setCustomName] = useState<string | null>(null);
   const needle = query.trim().toLowerCase();
   const visible = entries.filter((entry) => !needle || `${entry.name} ${entry.description}`.toLowerCase().includes(needle));
+  const noMatch = !loading && visible.length === 0 && needle.length > 0;
 
   return (
     <div className="flex flex-col gap-3">
-      <FilterInput value={query} onChange={setQuery} size="md" />
-      <ItemPanel>
+      <div className="flex items-center gap-2">
+        <FilterInput value={query} onChange={setQuery} size="md" className="flex-1" />
+        <DenButton variant="secondary" size="sm" icon={Plus} className="h-9" onClick={() => setCustomName("")}>
+          Add another MCP
+        </DenButton>
+      </div>
+      {customName !== null ? (
+        <AddMcpForm
+          key={customName}
+          initialName={customName}
+          onCancel={() => setCustomName(null)}
+          onContinue={(input) => router.push(customHref(input))}
+        />
+      ) : null}
+      {noMatch && customName !== null ? null : <ItemPanel>
         {loading ? <p className="px-5 py-6 text-[13px] text-gray-500">Loading...</p> : null}
         {visible.map((entry) => (
           <ItemRow
@@ -125,11 +144,17 @@ export function ConnectorPicker({ entries, loading, addHref, customHref }: {
             )}
           />
         ))}
-        {!loading && visible.length === 0 && needle ? (
-          <p className="px-5 py-4 text-[13px] text-gray-500">Nothing matches &quot;{query.trim()}&quot;.</p>
+        {noMatch ? (
+          <div className="flex flex-col items-center gap-1.5 px-6 pb-8 pt-10 text-center" data-testid="connector-picker-no-match">
+            <ServerTile />
+            <p className="mt-2.5 text-[15px] font-semibold leading-[22px] text-gray-900">No app called &ldquo;{query.trim()}&rdquo;</p>
+            <p className="text-[13px] leading-5 text-gray-500">Add it with the address your vendor or IT team gave you.</p>
+            <DenButton size="md" icon={Plus} className="mt-3.5" data-testid="connector-picker-no-match-add" onClick={() => setCustomName(query.trim())}>
+              Add another MCP
+            </DenButton>
+          </div>
         ) : null}
-        <SomethingElse onContinue={(input) => router.push(customHref(input))} />
-      </ItemPanel>
+      </ItemPanel>}
     </div>
   );
 }
