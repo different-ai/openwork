@@ -18,8 +18,7 @@ export const DESKTOP_FREE_PROOF_CLOCK_SKEW_MS = 60_000;
 /** SHA-256 hex of the OS machine identifier, salted per product; stable across reinstalls. */
 export const DESKTOP_FREE_MACHINE_ID_PATTERN = /^[a-f0-9]{64}$/;
 
-export type DesktopFreeProofClaims = {
-  version: 2;
+type DesktopFreeProofBase = {
   publicKey: string;
   machineId: string;
   appVersion: string;
@@ -28,16 +27,32 @@ export type DesktopFreeProofClaims = {
   timestamp: number;
   nonce: string;
 };
+/**
+ * v3 adds `releaseTag`: an HMAC over the request by a secret that each stable
+ * desktop release derives at build time, so the gateway can tell which
+ * release signed the request and refuse releases outside its support window.
+ */
+export type DesktopFreeProofClaims = (DesktopFreeProofBase & { version: 2 }) | (DesktopFreeProofBase & { version: 3; releaseTag: string });
 export type DesktopFreeProof = DesktopFreeProofClaims & { signature: string };
+export const DESKTOP_FREE_RELEASE_TAG_PATTERN = /^[a-f0-9]{64}$/;
 
-export function desktopFreeProofMessage(input: DesktopFreeProofClaims & {
-  method: string; path: string; bodyHash: string; authorizationHash: string;
-}): string {
-  return JSON.stringify([
-    2, input.method.toUpperCase(), input.path, input.bodyHash,
+type DesktopFreeProofRequest = { method: string; path: string; bodyHash: string; authorizationHash: string };
+function desktopFreeProofFields(input: DesktopFreeProofBase & DesktopFreeProofRequest): unknown[] {
+  return [
+    input.method.toUpperCase(), input.path, input.bodyHash,
     input.authorizationHash, input.publicKey, input.machineId, input.appVersion, input.platform,
     input.arch, input.timestamp, input.nonce,
-  ]);
+  ];
+}
+/** What the release secret tags: the same request fields, without the tag itself. */
+export function desktopFreeReleaseTagMessage(input: DesktopFreeProofBase & DesktopFreeProofRequest): string {
+  return JSON.stringify([3, ...desktopFreeProofFields(input)]);
+}
+/** What the device key signs. A v3 signature also covers the release tag. */
+export function desktopFreeProofMessage(input: DesktopFreeProofClaims & DesktopFreeProofRequest): string {
+  return input.version === 3
+    ? JSON.stringify([3, ...desktopFreeProofFields(input), input.releaseTag])
+    : JSON.stringify([2, ...desktopFreeProofFields(input)]);
 }
 
 export type DesktopFreeAccessStatus = {

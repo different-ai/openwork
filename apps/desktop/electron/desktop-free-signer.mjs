@@ -1,10 +1,11 @@
-import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomUUID, sign } from "node:crypto";
+import { createHash, createHmac, createPrivateKey, createPublicKey, generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { chmod, link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { readDesktopMachineId } from "./desktop-machine-id.mjs";
 import {
   DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, DESKTOP_FREE_MODELS_PATH,
-  DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH, DESKTOP_FREE_MACHINE_ID_PATTERN, desktopFreeProofMessage,
+  DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH, DESKTOP_FREE_MACHINE_ID_PATTERN,
+  desktopFreeProofMessage, desktopFreeReleaseTagMessage,
 } from "@openwork/types/desktop-free-access";
 
 /**
@@ -41,7 +42,12 @@ export function desktopFreeBootstrapEligible(distribution, bootstrap, environmen
   } catch { return false; }
 }
 
-export function createDesktopFreeSigner({ filePath, loadSafeStorage, appVersion, platform, arch, isEligible, readMachineId = () => readDesktopMachineId(platform) }) {
+/**
+ * `releaseSecret` returns this build's free Auto release secret, or null for a
+ * build without one (developer or untagged). With a secret, proofs are v3 and
+ * carry a release tag the gateway checks against the claimed version.
+ */
+export function createDesktopFreeSigner({ filePath, loadSafeStorage, appVersion, platform, arch, isEligible, readMachineId = () => readDesktopMachineId(platform), releaseSecret = async () => null }) {
   let pending = null;
   let machine = null;
   const permitted = () => {
@@ -111,13 +117,16 @@ export function createDesktopFreeSigner({ filePath, loadSafeStorage, appVersion,
         ? [DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_CHAT_PATH]
         : method === "GET" ? [DESKTOP_FREE_STATUS_PATH, DESKTOP_FREE_MODELS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_STATUS_PATH] : [];
       if (!allowed.includes(requestPath)) throw new Error("Unsupported desktop free proof request.");
-      const { privateKey, publicKey, machineId } = await identity();
-      const claims = { version: 2, publicKey, machineId, appVersion, ...permitted(), timestamp: Date.now(), nonce: randomUUID() };
-      const message = desktopFreeProofMessage({
-        ...claims, version: 2, method, path: requestPath,
-        bodyHash: createHash("sha256").update(body).digest("hex"),
-        authorizationHash: createHash("sha256").update(authorization).digest("hex"),
-      });
+      const [{ privateKey, publicKey, machineId }, secret] = await Promise.all([identity(), releaseSecret()]);
+      const base = { publicKey, machineId, appVersion, ...permitted(), timestamp: Date.now(), nonce: randomUUID() };
+      const request = { method, path: requestPath, bodyHash: createHash("sha256").update(body).digest("hex"),
+        authorizationHash: createHash("sha256").update(authorization).digest("hex") };
+      const releaseTag = secret ? createHmac("sha256", secret).update(desktopFreeReleaseTagMessage({ ...base, ...request })).digest("hex") : null;
+      // Literal objects keep `version` narrow for the message helper's discriminated claims type.
+      const message = releaseTag !== null
+        ? desktopFreeProofMessage({ version: 3, ...base, releaseTag, ...request })
+        : desktopFreeProofMessage({ version: 2, ...base, ...request });
+      const claims = releaseTag !== null ? { version: 3, ...base, releaseTag } : { version: 2, ...base };
       return Buffer.from(JSON.stringify({ ...claims, signature: sign(null, Buffer.from(message), privateKey).toString("base64url") })).toString("base64url");
     },
   });

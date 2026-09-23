@@ -2,7 +2,7 @@ import type { Context, Hono } from "hono"
 import { z } from "zod"
 import {
   DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH,
-  DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, type DesktopFreeAccessStatus,
+  DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, type DesktopFreeAccessStatus, type DesktopFreeVersionError,
 } from "@openwork/types/desktop-free-access"
 import { managedModelCatalog } from "@openwork/types/den/inference"
 import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
@@ -12,7 +12,7 @@ import { type AutoConfig } from "./free-config.js"
 import type { GuestPrincipal } from "./free-principal.js"
 import { checkDesktopFreeRequest, desktopFreeGateError, type DesktopFreeGateDependencies } from "./desktop-free-access.js"
 import { desktopFreeHash } from "./desktop-free-proof.js"
-import { createDesktopFreeVersionSource } from "./desktop-free-version.js"
+import { createDesktopFreeReleaseSource, type DesktopRelease } from "./desktop-free-version.js"
 import { dispatchFreeCompletion } from "./free-dispatch.js"
 import { prepareFreeRequest, readFreeRequest, FreeRequestError } from "./free-request.js"
 import { env } from "./env.js"
@@ -23,13 +23,14 @@ export type FreeRouteDependencies = {
   config: AutoConfig;
   store: FreeAllowanceStore;
   fetch: typeof fetch;
-  latestVersion: DesktopFreeGateDependencies["latestVersion"];
+  releases: () => Promise<DesktopRelease[] | null>;
+  now?: () => number;
   clientAddress: (c: Context) => string | null;
 }
 function defaults(): FreeRouteDependencies {
   const config = env.freeAuto
   return { config, store: createFreeAllowanceStore(config, "anonymous"), fetch: createInferenceEgressFetch(),
-    latestVersion: createDesktopFreeVersionSource({ url: config.versionUrl }),
+    releases: createDesktopFreeReleaseSource({ url: config.releasesUrl, token: process.env.GITHUB_TOKEN?.trim() || undefined }),
     clientAddress: (c) => resolveAnonymousClientAddress(c, config) }
 }
 function bearer(request: Request) {
@@ -40,14 +41,14 @@ function errorResponse(error: unknown) {
   if (error instanceof FreeRequestError) return desktopFreeGateError(error.status, error.code, error.message)
   return desktopFreeGateError(503, "anonymous_unavailable")
 }
-function versionResponse(error: NonNullable<Awaited<ReturnType<typeof checkDesktopFreeRequest>>["versionError"]>) {
+function versionResponse(error: DesktopFreeVersionError) {
   return Response.json({ error }, { status: error.code === "desktop_update_required" ? 426 : 503, headers: { "cache-control": "no-store" } })
 }
 
 /** Signed-out desktop Auto. Signed-in members use their OpenWork Models key on /api/v1 instead. */
 export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defaults()) {
   const { config, store } = dependencies
-  const gateDependencies = { latestVersion: dependencies.latestVersion, consumeNonce: store.consumeNonce }
+  const gateDependencies: DesktopFreeGateDependencies = { releases: dependencies.releases, consumeNonce: store.consumeNonce, config, now: dependencies.now }
   const route = (handler: (c: Context) => Promise<Response>) => async (c: Context) => {
     try { return await handler(c) } catch (error) { return errorResponse(error) }
   }

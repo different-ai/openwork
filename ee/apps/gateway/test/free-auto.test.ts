@@ -5,10 +5,12 @@ import { Hono } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR, freeInferenceWindow, managedModelCatalog, readFreeInferenceConfig } from "@openwork/types/den/inference"
 import { DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH,
-  MEMBER_FREE_STATUS_PATH, desktopFreeProofMessage, type DesktopFreeProofClaims } from "@openwork/types/desktop-free-access"
+  MEMBER_FREE_STATUS_PATH, desktopFreeProofMessage, desktopFreeReleaseTagMessage, type DesktopFreeProofClaims } from "@openwork/types/desktop-free-access"
 import { readAutoConfig, freeRequestReservation, freeUsageAmount, FREE_OPENAI_CHAT_URL } from "../src/free-config.js"
 import { desktopFreeHash, verifyDesktopFreeProof } from "../src/desktop-free-proof.js"
-import { createDesktopFreeVersionSource, desktopFreeVersionError } from "../src/desktop-free-version.js"
+import { createDesktopFreeReleaseSource, desktopFreeVersionError, supportedDesktopReleases, type DesktopRelease } from "../src/desktop-free-version.js"
+import { deriveReleaseSecret, releaseTag } from "../src/free-release.js"
+import { releaseTagRequired } from "../src/desktop-free-access.js"
 import { createAnonymousIdentities, issueAnonymousToken, verifyAnonymousToken, canonicalizeAnonymousAddress } from "../src/anonymous-identity.js"
 import { prepareFreeRequest, readFreeRequest } from "../src/free-request.js"
 import { FreeResponseReceipt, meterFreeResponse } from "../src/free-response.js"
@@ -23,9 +25,15 @@ const { createFreeMemberHandler } = await import("../src/free-member.js")
 const { registerProxyRoutes } = await import("../src/proxy.js")
 const { freeSettlementDecision } = await import("../src/free-allowance.js")
 
+const releaseKey = "test-only-release-master-key-2222222222222222222"
+const previousReleaseKey = "test-only-previous-master-key-33333333333333333"
 const config = readAutoConfig({ INFERENCE_FREE_ENABLED: "true", ANONYMOUS_INFERENCE_ENABLED: "true",
   INFERENCE_FREE_OPENAI_API_KEY: "sk-fixture-dedicated-free-key", ANONYMOUS_TOKEN_SECRET: "test-only-token-secret-00000000000000000000",
-  ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "test-only-accounting-key-1111111111111111111" })
+  ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "test-only-accounting-key-1111111111111111111", DESKTOP_FREE_RELEASE_KEY: releaseKey })
+const day = 86400000
+const now = Date.parse("2026-09-23T12:00:00Z")
+/** Newest first: 1.2.3 (today), 1.2.2 (2 days), 1.2.1 (5 days), 1.2.0 (10 days, within 14-day floor), 1.1.9 (30 days, out). */
+const releases: DesktopRelease[] = [["1.2.3", 0], ["1.2.2", 2], ["1.2.1", 5], ["1.2.0", 10], ["1.1.9", 30]].map(([version, age]) => ({ version: String(version), publishedAt: now - Number(age) * day }))
 const machineId = "c".repeat(64)
 function signer(machine = machineId) {
   const keys = generateKeyPairSync("ed25519")
@@ -39,12 +47,19 @@ const memberKey = "ow_inf_fixture-member-key"
 const keyRow = { id: createDenTypeId("inferenceKey"), organization_id: createDenTypeId("organization"), org_membership_id: createDenTypeId("member") }
 const member: MemberPrincipal = { kind: "member", id: createDenTypeId("user"), inferenceKeyId: keyRow.id, memberId: keyRow.org_membership_id, organizationId: keyRow.organization_id }
 const prompt = JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, messages: [{ role: "user", content: "hello" }] })
-function signed(path: string, authorization = "", body?: string, options: { version?: string; source?: typeof device } = {}) {
+type SignedOptions = { version?: string; source?: typeof device; proofVersion?: 2 | 3; secret?: Uint8Array | null; tagVersion?: string }
+function signed(path: string, authorization = "", body?: string, options: SignedOptions = {}) {
   const source = options.source ?? device
   const method = body === undefined ? "GET" : "POST"
-  const claims: DesktopFreeProofClaims = { version: 2, publicKey: source.publicKey, machineId: source.binding.machineId, appVersion: options.version ?? "1.2.3",
-    platform: "darwin", arch: "arm64", timestamp: Date.now(), nonce: randomUUID() }
-  const message = desktopFreeProofMessage({ ...claims, method, path, bodyHash: desktopFreeHash(body ?? ""), authorizationHash: desktopFreeHash(authorization) })
+  const appVersion = options.version ?? "1.2.3"
+  const base = { publicKey: source.publicKey, machineId: source.binding.machineId, appVersion,
+    platform: "darwin" as const, arch: "arm64" as const, timestamp: now, nonce: randomUUID() }
+  const request = { method, path, bodyHash: desktopFreeHash(body ?? ""), authorizationHash: desktopFreeHash(authorization) }
+  // Default: a v3 proof tagged by the secret the build of `appVersion` would carry.
+  const secret = options.secret === undefined ? deriveReleaseSecret(releaseKey, options.tagVersion ?? appVersion) : options.secret
+  const claims: DesktopFreeProofClaims = options.proofVersion === 2 || secret === null ? { version: 2, ...base }
+    : { version: 3, ...base, releaseTag: releaseTag(secret, { ...base, ...request }) }
+  const message = desktopFreeProofMessage({ ...claims, ...request })
   const proof = Buffer.from(JSON.stringify({ ...claims, signature: sign(null, Uint8Array.from(Buffer.from(message)), source.keys.privateKey).toString("base64url") })).toString("base64url")
   return new Request(`https://free.test${path}`, { method, body, headers: { "x-openwork-desktop-proof": proof,
     ...(authorization ? { authorization } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) } })
@@ -84,7 +99,7 @@ function fixture(overrides: Partial<import("../src/anonymous.js").FreeRouteDepen
     return upstream(request)
   }
   const app = new Hono()
-  registerAnonymousInferenceRoutes(app, { config, store, latestVersion: async () => "1.2.3", clientAddress: () => "127.0.0.1", fetch, ...overrides })
+  registerAnonymousInferenceRoutes(app, { config, store, releases: async () => releases, now: () => now, clientAddress: () => "127.0.0.1", fetch, ...overrides })
   const memberApp = new Hono()
   const handler = createFreeMemberHandler({ config, store: { ...store, family: "member" }, fetch, findMember: async (key) => key.id === keyRow.id ? member : null,
     defaultPinned: async () => true, ...memberOverrides })
@@ -92,18 +107,29 @@ function fixture(overrides: Partial<import("../src/anonymous.js").FreeRouteDepen
   return { app, memberApp, principals, receipts, requests, calls, store }
 }
 
-test("free Auto stays off without the dedicated OpenAI key and never reads OpenRouter settings", () => {
+test("free Auto stays off without the dedicated OpenAI key or release key and never reads OpenRouter settings", () => {
   const defaults = readAutoConfig({})
   assert.equal(defaults.memberEnabled, false)
   assert.equal(defaults.anonymousEnabled, false)
   assert.equal(defaults.member.weeklyBudgetUsd, 5)
   assert.equal(defaults.deviceWeeklyAmount / INFERENCE_USAGE_CONVERSION_FACTOR, 1)
+  assert.deepEqual([defaults.supportedReleaseCount, defaults.supportedReleaseMinDays, defaults.blockedReleases, defaults.firstReleaseTagVersion], [3, 14, [], null])
   const withoutKey = readAutoConfig({ INFERENCE_FREE_ENABLED: "true", ANONYMOUS_INFERENCE_ENABLED: "true", ANONYMOUS_TOKEN_SECRET: "t".repeat(40),
     ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "a".repeat(40), ANONYMOUS_OPENROUTER_API_KEY: "legacy", INFERENCE_FREE_UPSTREAM_API_KEY: "legacy" })
   assert.equal(withoutKey.memberEnabled, false)
   assert.equal(withoutKey.anonymousEnabled, false)
+  const withoutReleaseKey = readAutoConfig({ INFERENCE_FREE_ENABLED: "true", ANONYMOUS_INFERENCE_ENABLED: "true", INFERENCE_FREE_OPENAI_API_KEY: "sk-x",
+    ANONYMOUS_TOKEN_SECRET: "t".repeat(40), ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "a".repeat(40) })
+  assert.equal(withoutReleaseKey.memberEnabled, true, "members do not depend on the desktop release key")
+  assert.equal(withoutReleaseKey.anonymousEnabled, false, "guests do")
   assert.equal(config.memberEnabled, true)
   assert.equal(config.anonymousEnabled, true)
+  // The dev secret is only read in developer mode, and every secret must differ.
+  assert.equal(readAutoConfig({ DESKTOP_FREE_DEV_RELEASE_SECRET: "d".repeat(40) }).devReleaseSecret, "")
+  assert.equal(readAutoConfig({ OPENWORK_DEV_MODE: "1", DESKTOP_FREE_DEV_RELEASE_SECRET: "d".repeat(40) }).devReleaseSecret, "d".repeat(40))
+  assert.throws(() => readAutoConfig({ DESKTOP_FREE_RELEASE_KEY: "s".repeat(40), ANONYMOUS_TOKEN_SECRET: "s".repeat(40) }))
+  assert.throws(() => readAutoConfig({ DESKTOP_FREE_FIRST_RELEASE_TAG_VERSION: "v1.2.3" }))
+  assert.deepEqual(readAutoConfig({ DESKTOP_FREE_BLOCKED_RELEASES: " v1.2.2, 1.2.1 ,, " }).blockedReleases, ["1.2.2", "1.2.1"])
   assert.throws(() => readAutoConfig({ INFERENCE_FREE_ENABLED: "true", INFERENCE_FREE_WEEKLY_BUDGET_USD: "1" }))
   assert.throws(() => readAutoConfig({ INFERENCE_FREE_OPENAI_MODEL: "openai/gpt-5.6-luna" }))
   assert.throws(() => readFreeInferenceConfig({ INFERENCE_FREE_MODEL_ID: "paid-model" }))
@@ -112,7 +138,7 @@ test("free Auto stays off without the dedicated OpenAI key and never reads OpenR
 
 test("disabled endpoints do not verify metadata, write accounting, or dispatch", async () => {
   const off = readAutoConfig({})
-  const f = fixture({ config: off, latestVersion: async () => { throw new Error("must not call") } })
+  const f = fixture({ config: off, releases: async () => { throw new Error("must not call") } })
   const handler = createFreeMemberHandler({ config: off, store: f.store, fetch: async () => { throw new Error("must not call") }, findMember: async () => member, defaultPinned: async () => true })
   const memberApp = new Hono().all("/api/v1/*", (c) => handler(c, { ...keyRow } as never))
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_SESSION_PATH, "", "{}"))).status, 503)
@@ -126,7 +152,7 @@ test("proof binds raw body, actual bearer, route, key and machine", () => {
   const token = `Bearer ${guest()}`
   const request = signed(DESKTOP_FREE_CHAT_PATH, token, prompt)
   const input = { header: request.headers.get("x-openwork-desktop-proof"), method: "POST", path: DESKTOP_FREE_CHAT_PATH,
-    bodyHash: desktopFreeHash(prompt), authorization: token }
+    bodyHash: desktopFreeHash(prompt), authorization: token, now }
   assert.equal(verifyDesktopFreeProof(input)?.machineId, machineId)
   assert.equal(verifyDesktopFreeProof({ ...input, bodyHash: desktopFreeHash(prompt + " ") }), null)
   assert.equal(verifyDesktopFreeProof({ ...input, authorization: "Bearer another" }), null)
@@ -249,17 +275,60 @@ test("a member key never reaches the guest routes and a guest token never reache
   assert.equal(f.principals.length, 0)
 })
 
-test("version failure and unsupported model deny before reservation", async () => {
+function guestFor(version: string) {
+  const source = signer()
+  const binding = { ...source.binding, appVersion: version }
+  return { source, token: issueAnonymousToken(createAnonymousIdentities(binding, "127.0.0.1", config), binding, config).token }
+}
+
+test("only supported releases pass: version outside the window, unsupported model and unknown list deny before reservation", async () => {
   const f = fixture()
+  // A token issued to one build cannot be used with another build's proof.
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { version: "1.2.2" }))).status, 401)
-  const old = signer()
-  const oldToken = issueAnonymousToken(createAnonymousIdentities(old.binding, "127.0.0.1", config), { ...old.binding, appVersion: "1.2.2" }, config).token
-  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${oldToken}`, prompt, { version: "1.2.2", source: old }))).status, 426)
+  const old = guestFor("1.1.9")
+  const response = await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${old.token}`, prompt, { version: "1.1.9", source: old.source }))
+  assert.equal(response.status, 426)
+  assert.deepEqual(await response.json(), { error: { code: "desktop_update_required", currentVersion: "1.1.9", minimumVersion: "1.2.0", message: "Update OpenWork Desktop to 1.2.0 or newer to use Auto." } })
+  const floored = guestFor("1.2.0")
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${floored.token}`, undefined, { version: "1.2.0", source: floored.source }))).status, 200, "10 days old is inside the 14-day floor")
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt.replace(INFERENCE_FREE_MODEL_ID, "paid-model")))).status, 400)
   assert.equal(f.principals.length, 0)
   assert.equal(f.requests.length, 0)
-  const unavailable = fixture({ latestVersion: async () => null })
+  const unavailable = fixture({ releases: async () => null })
   assert.equal((await unavailable.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 503)
+  const blocked = fixture({ config: { ...config, blockedReleases: ["1.2.3"] } })
+  assert.equal((await blocked.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 426, "a yanked release is refused at once")
+})
+
+test("the release tag must come from the secret of the claimed version, the previous master key overlaps, dev secrets only count in dev mode", async () => {
+  const f = fixture()
+  const ok = await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`))
+  assert.equal(ok.status, 200)
+  // A secret lifted from the 1.2.2 build presented as the 1.2.3 build.
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`, undefined, { tagVersion: "1.2.2" }))).status, 401)
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`, undefined, { secret: new TextEncoder().encode("not-our-key-at-all-0000000000000000") }))).status, 401)
+  const rotated = fixture({ config: { ...config, releaseKey: "test-only-rotated-master-key-444444444444444444", releaseKeyPrevious: releaseKey } })
+  assert.equal((await rotated.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`))).status, 200, "builds from the previous key keep working during the overlap")
+  const retired = fixture({ config: { ...config, releaseKey: "test-only-rotated-master-key-444444444444444444" } })
+  assert.equal((await retired.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`))).status, 401, "after the overlap they do not")
+  const devSecret = new TextEncoder().encode("test-only-dev-release-secret-5555555555555555")
+  const dev = fixture({ config: { ...config, devReleaseSecret: "test-only-dev-release-secret-5555555555555555" } })
+  const devGuest = guestFor("0.0.0-dev")
+  assert.equal((await dev.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${devGuest.token}`, undefined, { version: "0.0.0-dev", source: devGuest.source, secret: devSecret }))).status, 200, "a dev build skips the window")
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${devGuest.token}`, undefined, { version: "0.0.0-dev", source: devGuest.source, secret: devSecret }))).status, 401, "but only when the gateway is in dev mode")
+})
+
+test("v2 proofs are accepted until every supported release carries a tag, then refused with the update wall", async () => {
+  const before = fixture()
+  assert.equal((await before.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`, undefined, { proofVersion: 2 }))).status, 200)
+  const cutover = fixture({ config: { ...config, firstReleaseTagVersion: "1.2.0" } })
+  const response = await cutover.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { proofVersion: 2 }))
+  assert.equal(response.status, 426)
+  assert.equal((await response.json()).error.code, "desktop_update_required")
+  assert.equal((await cutover.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`))).status, 200)
+  assert.equal(releaseTagRequired(["1.2.3", "1.2.0"], "1.2.1"), false)
+  assert.equal(releaseTagRequired(["1.2.3", "1.2.1"], "1.2.1"), true)
+  assert.equal(releaseTagRequired(["1.2.3"], null), false)
 })
 
 test("policy flip before dispatch cancels admission without an upstream call", async () => {
@@ -356,18 +425,40 @@ test("unknown settlement retains conservative charge; actual overrun triggers sa
   assert.equal(freeSettlementDecision(held, { eventId: "event", model: "wrong", amount: 1, inputTokens: 1, outputTokens: 1 }), null)
 })
 
-test("latest stable floor is cached, malformed sources fail closed", async () => {
-  let now = 0, calls = 0
-  const source = createDesktopFreeVersionSource({ url: "https://metadata.test/v1/app-version", now: () => now,
-    fetch: async () => { calls++; return Response.json({ latestAppVersion: "1.2.3" }) } })
-  assert.equal(await source(), "1.2.3")
-  assert.equal(await source(), "1.2.3")
-  assert.equal(calls, 1)
-  now = 300001
-  assert.equal(await source(), "1.2.3")
-  assert.equal(calls, 2)
-  assert.equal(desktopFreeVersionError("1.2.3-alpha", "1.2.3")?.code, "desktop_update_required")
+test("the support window is the newest releases plus the 14-day floor, minus blocked, never prereleases", () => {
+  const window = { count: 3, minDays: 14, blocked: [] as string[] }
+  assert.deepEqual(supportedDesktopReleases(releases, window, now), ["1.2.3", "1.2.2", "1.2.1", "1.2.0"])
+  assert.deepEqual(supportedDesktopReleases(releases, { ...window, minDays: 0 }, now), ["1.2.3", "1.2.2", "1.2.1"])
+  assert.deepEqual(supportedDesktopReleases(releases, { ...window, count: 1, minDays: 3 }, now), ["1.2.3", "1.2.2"])
+  assert.deepEqual(supportedDesktopReleases(releases, { ...window, blocked: ["1.2.3"] }, now), ["1.2.2", "1.2.1", "1.2.0"])
+  assert.deepEqual(supportedDesktopReleases([...releases, { version: "1.3.0-alpha.1", publishedAt: now }], window, now), ["1.2.3", "1.2.2", "1.2.1", "1.2.0"])
+  assert.equal(desktopFreeVersionError("1.2.3-alpha", ["1.2.3"])?.code, "desktop_update_required")
+  assert.equal(desktopFreeVersionError("1.2.3", ["1.2.3", "1.2.2"]), null)
+  assert.deepEqual(desktopFreeVersionError("1.2.1", ["1.2.3", "1.2.2"]), { code: "desktop_update_required", currentVersion: "1.2.1", minimumVersion: "1.2.2", message: "Update OpenWork Desktop to 1.2.2 or newer to use Auto." })
   assert.equal(desktopFreeVersionError("1.2.3", null)?.code, "desktop_version_unavailable")
+  assert.equal(desktopFreeVersionError("1.2.3", [])?.code, "desktop_version_unavailable")
+})
+
+test("the release list is cached, served stale through source failures, and malformed sources fail closed", async () => {
+  let clock = 0, calls = 0, fail = false
+  const github = releases.map((release) => ({ tag_name: `v${release.version}`, draft: false, prerelease: false, published_at: new Date(release.publishedAt).toISOString() }))
+  const source = createDesktopFreeReleaseSource({ url: "https://api.github.test/releases", now: () => clock,
+    fetch: async () => { calls++; return fail ? new Response("nope", { status: 500 }) : Response.json([...github, { tag_name: "v1.3.0-alpha.1", draft: false, prerelease: true, published_at: "2026-09-23T00:00:00Z" }, { tag_name: "v9.9.9", draft: true, prerelease: false, published_at: "2026-09-23T00:00:00Z" }]) } })
+  assert.deepEqual((await source())?.map((release) => release.version), ["1.2.3", "1.2.2", "1.2.1", "1.2.0", "1.1.9"])
+  await source()
+  assert.equal(calls, 1)
+  clock = 300001
+  fail = true
+  assert.deepEqual((await source())?.map((release) => release.version), ["1.2.3", "1.2.2", "1.2.1", "1.2.0", "1.1.9"], "a failed refresh serves the last good list")
+  assert.equal(calls, 2)
+  clock = 86400001
+  assert.equal(await source(), null, "stale lists expire after a day")
+  const custom = createDesktopFreeReleaseSource({ url: "https://metadata.test/releases", fetch: async () => Response.json({ releases: [{ version: "v1.2.3", publishedAt: "2026-09-23T00:00:00Z" }] }) })
+  assert.deepEqual(await custom(), [{ version: "1.2.3", publishedAt: Date.parse("2026-09-23T00:00:00Z") }])
+  for (const body of [{ latestAppVersion: "1.2.3" }, [{ tag_name: 1 }], "1.2.3", []]) {
+    const malformed = createDesktopFreeReleaseSource({ url: "https://metadata.test/releases", fetch: async () => Response.json(body) })
+    assert.equal(await malformed(), null, JSON.stringify(body))
+  }
 })
 
 function memberCall(app: Hono, path: string, init: RequestInit = {}) {

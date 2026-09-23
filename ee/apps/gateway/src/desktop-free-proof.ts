@@ -1,22 +1,34 @@
 import { createHash, createPublicKey, verify } from "node:crypto"
 import { z } from "zod"
-import { DESKTOP_FREE_MACHINE_ID_PATTERN, DESKTOP_FREE_PROOF_CLOCK_SKEW_MS, DESKTOP_FREE_PROOF_MAX_BYTES, desktopFreeProofMessage, type DesktopFreeProofClaims } from "@openwork/types/desktop-free-access"
+import { DESKTOP_FREE_MACHINE_ID_PATTERN, DESKTOP_FREE_PROOF_CLOCK_SKEW_MS, DESKTOP_FREE_PROOF_MAX_BYTES, DESKTOP_FREE_RELEASE_TAG_PATTERN,
+  desktopFreeProofMessage, type DesktopFreeProofClaims } from "@openwork/types/desktop-free-access"
+import { matchReleaseTag, type ReleaseSecretCandidate } from "./free-release.js"
 
-const proofSchema = z.strictObject({
-  version: z.literal(2), publicKey: z.string().length(60).regex(/^[A-Za-z0-9+/]+=$/),
+const claims = {
+  publicKey: z.string().length(60).regex(/^[A-Za-z0-9+/]+=$/),
   machineId: z.string().regex(DESKTOP_FREE_MACHINE_ID_PATTERN),
   appVersion: z.string().min(1).max(128), platform: z.enum(["darwin", "win32", "linux"]), arch: z.enum(["arm64", "x64"]),
   timestamp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), nonce: z.string().uuid(),
   signature: z.string().length(86).regex(/^[A-Za-z0-9_-]+$/),
-})
+}
+const proofSchema = z.discriminatedUnion("version", [
+  z.strictObject({ version: z.literal(2), ...claims }),
+  z.strictObject({ version: z.literal(3), releaseTag: z.string().regex(DESKTOP_FREE_RELEASE_TAG_PATTERN), ...claims }),
+])
 /** What a guest token is bound to: the signing key, the machine and the app build. */
 export type DesktopFreeBinding = Pick<DesktopFreeProofClaims, "machineId" | "appVersion" | "platform" | "arch"> & { keyThumbprint: string }
+export type VerifiedDesktopFreeProof = DesktopFreeProofClaims & DesktopFreeBinding & {
+  /** Which secret tagged a v3 proof; null for a v2 proof from a release that predates release tags. */
+  releaseSource: ReleaseSecretCandidate["source"] | null
+}
 export function desktopFreeHash(value: string | Uint8Array) { return createHash("sha256").update(value).digest("hex") }
 
 export function verifyDesktopFreeProof(input: {
   header: string | null; method: string; path: string; bodyHash: string; authorization: string;
+  /** Secrets the gateway accepts for the claimed app version. Absent means release tags are not checked (tests). */
+  releaseSecrets?: (appVersion: string) => ReleaseSecretCandidate[];
   binding?: DesktopFreeBinding; now?: number;
-}): (DesktopFreeProofClaims & DesktopFreeBinding) | null {
+}): VerifiedDesktopFreeProof | null {
   try {
     if (!input.header || input.header.length > DESKTOP_FREE_PROOF_MAX_BYTES || !/^[A-Za-z0-9_-]+$/.test(input.header)) return null
     const encoded = Buffer.from(input.header, "base64url")
@@ -34,9 +46,16 @@ export function verifyDesktopFreeProof(input: {
       || input.binding.platform !== proof.platform || input.binding.arch !== proof.arch)) return null
     const signatureBytes = Buffer.from(signature, "base64url")
     if (signatureBytes.toString("base64url") !== signature) return null
-    const message = desktopFreeProofMessage({ ...proof, method: input.method, path: input.path, bodyHash: input.bodyHash,
-      authorizationHash: desktopFreeHash(input.authorization) })
+    const request = { method: input.method, path: input.path, bodyHash: input.bodyHash, authorizationHash: desktopFreeHash(input.authorization) }
+    let releaseSource: VerifiedDesktopFreeProof["releaseSource"] = null
+    if (proof.version === 3 && input.releaseSecrets) {
+      // The tag is checked before the signature so a wrong-release secret is never mistaken for a bad signature.
+      const matched = matchReleaseTag(proof.releaseTag, input.releaseSecrets(proof.appVersion), { ...proof, ...request })
+      if (!matched) return null
+      releaseSource = matched.source
+    }
+    const message = desktopFreeProofMessage({ ...proof, ...request })
     if (!verify(null, new TextEncoder().encode(message), key, Uint8Array.from(signatureBytes))) return null
-    return { ...proof, keyThumbprint }
+    return { ...proof, keyThumbprint, releaseSource }
   } catch { return null }
 }

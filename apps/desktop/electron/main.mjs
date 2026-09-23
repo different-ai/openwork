@@ -23,7 +23,7 @@ import { globalOpencodeConfigDir, workspaceOpencodeConfigCandidates } from "@ope
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./runtime.mjs";
-import { registerUpdaterIpc } from "./updater.mjs";
+import { registerUpdaterIpc, resolveAppVersion } from "./updater.mjs";
 import {
   checkComputerUsePermissions,
   getComputerUseMcpCommand,
@@ -83,6 +83,7 @@ import {
 import { resetMacDockIcon } from "./brand-icon-darwin.mjs";
 import { createDesktopVaultKeyProvider } from "./secure-vault-key.mjs";
 import { createDesktopFreeSigner, desktopFreeBootstrapEligible } from "./desktop-free-signer.mjs";
+import { loadDesktopFreeReleaseSecret } from "./desktop-free-release.mjs";
 import {
   clearOpenworkSentrySession,
   initOpenworkSentry,
@@ -1332,6 +1333,7 @@ function validateSkillName(raw) {
   return trimmed;
 }
 
+let desktopFreeReleaseSecret = null;
 const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
@@ -1340,10 +1342,12 @@ const runtimeManager = createRuntimeManager({
     desktop: createDesktopFreeSigner({
       filePath: path.join(app.getPath("userData"), "desktop-free-identity.bin"),
       loadSafeStorage: () => require("electron").safeStorage,
-      appVersion: app.getVersion(),
+      // app.getVersion() is Electron's own version in development builds.
+      appVersion: resolveAppVersion(app),
       platform: process.platform,
       arch: process.arch,
       isEligible: () => desktopFreeBootstrapEligible(DESKTOP_DISTRIBUTION, workspaceStore.readDesktopBootstrapConfigSync()),
+      releaseSecret: () => (desktopFreeReleaseSecret ??= loadDesktopFreeReleaseSecret({ appVersion: resolveAppVersion(app) })).then((value) => value.secret),
     }),
   },
   // When OPENWORK_ENCRYPTION_KEY is set, skip the safeStorage provider so it does not shadow the documented env override used by CI/headless/enterprise.

@@ -12,6 +12,7 @@ import { readDenSettings } from "@/app/lib/den";
 import { toast } from "@/components/ui/sonner";
 import { beginRejectedTurnRecovery, claimRejectedTurnRecovery, type RejectedTurnOwner } from "../session/sync/draft-store";
 import { suspendRejectedQueueForSignIn } from "../session/sync/rejected-turn";
+import { useUpdateCheckRequestStore } from "../settings/state/update-check-request";
 
 export function AutoRejectedTurnRecoveryBridge() {
   const auth = useDenAuth();
@@ -24,8 +25,11 @@ export function AutoRejectedTurnRecoveryBridge() {
   return null;
 }
 
+/** Same as the native "Check for Updates…" menu: start the check, then show the Updates tab in this workspace. */
 export function openAutoUpdate() {
-  window.location.hash = "/settings/updates";
+  useUpdateCheckRequestStore.getState().requestUpdateCheck();
+  const workspace = window.location.hash.match(/^#(\/workspace\/[^/]+)/)?.[1] ?? "";
+  window.location.hash = `${workspace}/settings/updates`;
 }
 
 export function openAutoSignIn(recovery?: { owner: RejectedTurnOwner; id: string }) {
@@ -69,7 +73,8 @@ export function AutoPickerRecovery({ state, onRetry, onReload, hasAlternatives =
   const [failed, setFailed] = useState(false);
   const checkRestriction = useCheckDesktopRestriction();
   const activeWork = useSessionActivityStore((store) => Object.values(store.statusesByWorkspaceId[workspace?.workspaceId ?? ""] ?? {}).some((status) => ["thinking", "responding", "compacting", "waiting"].includes(status)));
-  const copy = autoPickerCopy(state, auth.isSignedIn);
+  const observed = useObservedAutoAccessStatus();
+  const copy = autoPickerCopy(state, auth.isSignedIn, observed?.minimumVersion);
   const run = async (action: () => void | Promise<unknown>) => {
     if (busy) return;
     setBusy(true); setFailed(false);
