@@ -316,7 +316,10 @@ export function commandMatchesPackagedSidecar(command, sidecarDirs = []) {
  * of the same bundle (a second profile, or concurrent packaged smoke checks)
  * spawns its engine as a direct child of its own main process; killing that
  * engine fails its startup with "OpenWork server did not finish starting".
- * `ps` rows are `{ pid, ppid, command }`.
+ *
+ * @param {{ pid: number, ppid: number, command: string }[]} rows `ps` rows
+ * @param {{ sidecarDirs?: string[], appExecutables?: (string | undefined)[], selfPid?: number }} [options]
+ * @returns {number[]}
  */
 export function orphanedPackagedSidecarPids(rows, { sidecarDirs = [], appExecutables = [], selfPid } = {}) {
   const executables = appExecutables.map((value) => String(value ?? "").trim()).filter(Boolean);
