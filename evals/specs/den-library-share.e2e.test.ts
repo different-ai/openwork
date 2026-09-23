@@ -9,7 +9,7 @@ const withSlack = spec.world(denLibraryWithSamsSlack, { timeout: 600_000 });
 
 const names = (items: { name: string }[]) => items.map((item) => item.name);
 
-test("a member: I want Maya and the Support team to use Slack so they can search messages without asking me", async ({ world, user, probe, step }) => {
+test("a member: I want Maya and the Support team to use Slack so they can search messages without asking me", async ({ world, user, probe, step, evidence }) => {
   const library = `${world.den.ref.webUrl}/dashboard/library`;
 
   await step("1. I open My Library: it keeps its shape while it loads, then it is empty and the sidebar only shows my own work", async () => {
@@ -17,6 +17,11 @@ test("a member: I want Maya and the Support team to use Slack so they can search
     await world.proxy.faults.latency("/v1/me/library", 5_000);
     await user.reload();
     await user.see({ testId: "item-rows-skeleton", label: "Loading your Library" }, { timeoutMs: 60_000 });
+    evidence.recordAssertionEvidence(
+      "My Library shows placeholder rows while it loads",
+      "With Den holding the Library for 5s, rows labelled \"Loading your Library\" sit where the list goes",
+      true,
+    );
     await user.screenshot();
     await user.see({ testId: "library-empty" }, { timeoutMs: 60_000 });
     await user.see({ text: "Nothing in your Library yet" });
@@ -109,7 +114,7 @@ test("a member: I want Maya and the Support team to use Slack so they can search
   });
 });
 
-withSlack("a member: I want Sales to use my plugin so every sales call starts with the same prep", async ({ world, user, probe, step }) => {
+withSlack("a member: I want Sales to use my plugin so every sales call starts with the same prep", async ({ world, user, probe, step, evidence }) => {
   await step("1. I choose Add to your Library and pick Plugin", async () => {
     await user.navigate(`${world.den.ref.webUrl}/dashboard/library`);
     await user.see({ testId: "library-section-mine" }, { timeoutMs: 60_000 });
@@ -171,6 +176,11 @@ withSlack("a member: I want Sales to use my plugin so every sales call starts wi
       expect(usable.text, `${person} can sign in to the Slack inside it`).toContain('"name":"Slack"');
     }
     expect(names(await world.library(world.den.members.kai)), "Kai is outside Sales").not.toContain("Sales call prep");
+    evidence.recordAssertionEvidence(
+      "Everyone in Sales gets the plugin, and nobody outside Sales does",
+      "Den's Library for Omar and Tess lists Sales call prep, and Kai's does not",
+      true,
+    );
     await user.screenshot();
   });
 });
