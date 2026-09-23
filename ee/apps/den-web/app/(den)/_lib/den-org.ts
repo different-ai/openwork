@@ -742,6 +742,15 @@ export function getMcpConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/mcp-connections`;
 }
 
+/** The full connector editor: API keys, OAuth apps, Google Workspace and Microsoft 365. */
+export function getAllMcpConnectionsRoute(orgSlug?: string | null): string {
+  return `${getMcpConnectionsRoute(orgSlug)}/all`;
+}
+
+export function getAllMcpConnectionRoute(orgSlug: string | null | undefined, connectorId: string): string {
+  return `${getAllMcpConnectionsRoute(orgSlug)}/${encodeURIComponent(connectorId)}`;
+}
+
 export function getConfiguredMcpConnectionsRoute(orgSlug?: string | null, connectionId?: string | null): string {
   const base = `${getMcpConnectionsRoute(orgSlug)}/configured`;
   return connectionId ? `${base}?connectionId=${encodeURIComponent(connectionId)}` : base;

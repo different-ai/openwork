@@ -111,3 +111,20 @@ export function pluginShareSubtitle(plugin: Pick<DenPlugin, "skills" | "commands
   const accounts = connectors.length > 0 ? ` Each person uses their own ${joinNames(connectors)} account.` : "";
   return `They get ${joinNames(parts, parts.length)}.${accounts}`;
 }
+
+/** "Sales can use it now / 8 people will find it in My Library.", or null when nobody was added. */
+export function accessAddedToast(previous: AccessDraft, next: AccessDraft, org: Directory, ownerId: string | null): { title: string; description: string } | null {
+  const added: AccessDraft = {
+    orgWide: next.orgWide && !previous.orgWide,
+    memberIds: next.memberIds.filter((id) => !previous.memberIds.includes(id)),
+    teamIds: next.teamIds.filter((id) => !previous.teamIds.includes(id)),
+  };
+  if (added.orgWide) return { title: "Everyone can use it now", description: "They will find it in My Library." };
+  if (added.memberIds.length === 0 && added.teamIds.length === 0) return null;
+  const names = accessNames(added, org, null);
+  const reached = accessPeopleIds(added, org, ownerId).length;
+  return {
+    title: `${joinNames(names) || "They"} can use it now`,
+    description: `${peopleLabel(reached)} will find it in My Library.`,
+  };
+}

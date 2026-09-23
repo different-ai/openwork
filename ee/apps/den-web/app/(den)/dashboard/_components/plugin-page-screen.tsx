@@ -13,14 +13,7 @@ import {
   getPluginsRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import {
-  type AccessDraft,
-  accessNames,
-  accessPeopleIds,
-  joinNames,
-  ownedAccessStatus,
-  peopleLabel,
-} from "./access-summary";
+import { type AccessDraft, accessAddedToast, ownedAccessStatus } from "./access-summary";
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
 import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
@@ -98,17 +91,6 @@ function useArchivePlugin() {
   };
 }
 
-/** "Sales can use it now" and who it reaches, after an admin adds a team or person. */
-function accessToast(added: AccessDraft, next: AccessDraft, org: Parameters<typeof accessPeopleIds>[1], ownerId: string | null) {
-  const names = accessNames(added, org, null);
-  const reached = accessPeopleIds(added, org, ownerId).length;
-  if (added.orgWide || next.orgWide) return { title: "Everyone can use it now", description: "They will find it in My Library." };
-  return {
-    title: `${joinNames(names) || "They"} can use it now`,
-    description: `${peopleLabel(reached)} will find it in My Library.`,
-  };
-}
-
 /** B2 (a member's plugin) and D3 (Manage, with Who can use it inline). */
 export function PluginPageScreen({ pluginId, mode }: { pluginId: string; mode: "member" | "admin" }) {
   const router = useRouter();
@@ -153,13 +135,8 @@ export function PluginPageScreen({ pluginId, mode }: { pluginId: string; mode: "
     setAccessError(null);
     try {
       await saveAccess({ pluginId, grants: access.data, next, ownerId: data.createdByOrgMembershipId });
-      const added: AccessDraft = {
-        orgWide: next.orgWide && !previous.orgWide,
-        memberIds: next.memberIds.filter((id) => !previous.memberIds.includes(id)),
-        teamIds: next.teamIds.filter((id) => !previous.teamIds.includes(id)),
-      };
-      if (added.orgWide || added.memberIds.length > 0 || added.teamIds.length > 0) {
-        const message = accessToast(added, next, orgContext, data.createdByOrgMembershipId);
+      const message = accessAddedToast(previous, next, orgContext, data.createdByOrgMembershipId);
+      if (message) {
         toast({
           ...message,
           action: {

@@ -2,6 +2,7 @@
 
 import {
   getAddConnectorRoute,
+  getAllMcpConnectionsRoute,
   getLibraryAddConnectorRoute,
   getLibraryConnectorRoute,
   getLibraryRoute,
@@ -26,6 +27,12 @@ export function ConnectorCatalogScreen({ mode }: { mode: ConnectorFlowMode }) {
   const presets = useMcpConnectionPresets();
   const connections = useMcpConnections(mode === "admin" ? "manageable" : "usable");
   const setupRoute = (catalogId?: string) => mode === "admin" ? getAddConnectorRoute(orgSlug, catalogId) : getLibraryAddConnectorRoute(orgSlug, catalogId);
+  const needsAdminSetup = new Set((presets.data ?? [])
+    .filter((preset) => preset.requiresOAuthClient === true || preset.authType === "apikey")
+    .map((preset) => preset.presetId));
+  const addHref = (catalogId: string) => mode === "admin" && needsAdminSetup.has(catalogId)
+    ? `${getMcpConnectionsRoute(orgSlug)}?${new URLSearchParams({ quickAdd: catalogId }).toString()}`
+    : setupRoute(catalogId);
 
   const entries = catalogEntriesFromPresets(presets.data ?? []).map((entry) => {
     const existing = connectionForPresetUrl(connections.data ?? [], entry.url);
@@ -48,9 +55,15 @@ export function ConnectorCatalogScreen({ mode }: { mode: ConnectorFlowMode }) {
       <ConnectorPicker
         entries={entries}
         loading={presets.isLoading}
-        addHref={(entry) => setupRoute(entry.id)}
+        addHref={(entry) => addHref(entry.id)}
         customHref={(input) => `${setupRoute("custom")}${customConnectorQuery(input)}`}
       />
+      {mode === "admin" ? (
+        <p className="text-center text-[12px] leading-4 text-gray-400">
+          Need an API key, your own OAuth app, Google Workspace or Microsoft 365?{" "}
+          <a href={getAllMcpConnectionsRoute(orgSlug)} className="font-medium text-gray-600 underline-offset-2 hover:text-gray-900 hover:underline">Advanced setup</a>
+        </p>
+      ) : null}
     </ItemPage>
   );
 }
