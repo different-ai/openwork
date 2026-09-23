@@ -35,6 +35,9 @@ import {
 import { type ExternalMcpConnection, useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
 import { usePrefetchConnectorCatalog } from "./connector-catalog-screen";
 import { useMemberSignIn } from "./connector-setup";
+import { matchesModelQuery } from "./library-models";
+import { useLibraryModels, useModelSignIn } from "./library-models-data";
+import { LibraryModelRow } from "./library-models-ui";
 import { usePluginAccess } from "./plugin-access-data";
 import { useDenToast } from "./den-toast";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
@@ -162,6 +165,8 @@ function LibraryContent() {
   const usable = useMcpConnections("usable");
   const signIn = useMemberSignIn();
   const prefetchCatalog = usePrefetchConnectorCatalog();
+  const models = useLibraryModels();
+  const modelSignIn = useModelSignIn();
   const [addOpen, setAddOpen] = useState(searchParams.get("add") === "1");
   const [query, setQuery] = useState("");
   const filter = parseLibraryFilter(searchParams.get("show"));
@@ -194,13 +199,15 @@ function LibraryContent() {
     return getLibraryNewPluginRoute(orgSlug, choice === "skill" ? "skill" : undefined);
   }
 
-  const empty = !library.isLoading && !library.error && items.length === 0;
+  const showModels = filter === "all" || filter === "models";
+  const modelRows = showModels ? (models.data ?? []).filter((provider) => matchesModelQuery(provider, query)) : [];
+  const hasModels = (models.data ?? []).length > 0;
+  const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels;
 
   return (
     <ItemPage testId="library-screen">
       <DenPageHeader
         title="My Library"
-        description="Connectors, skills and plugins you can use in chat."
         action={empty ? undefined : <DenButton icon={Plus} onClick={openAdd}>Add to your Library</DenButton>}
       />
 
@@ -247,17 +254,32 @@ function LibraryContent() {
             </ItemSection>
           ) : null}
 
-          {groups.received.length > 0 ? (
+          {groups.received.length > 0 || modelRows.length > 0 ? (
             <ItemSection title="From OpenWork" testId="library-section-received">
               <ItemPanel>
                 {groups.received.map((item) => (
                   <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine={false} ownedConnection={undefined} signIn={signIn} />
                 ))}
+                {modelRows.map((provider) => (
+                  <LibraryModelRow key={`model:${provider.id}`} provider={provider} signIn={modelSignIn} />
+                ))}
               </ItemPanel>
             </ItemSection>
           ) : null}
 
-          {!library.isLoading && groups.mine.length === 0 && groups.received.length === 0 ? (
+          {filter === "models" && models.error ? (
+            <p className="rounded-2xl border border-gray-100 bg-white px-5 py-4 text-[13px] text-gray-600">
+              {models.error instanceof Error ? models.error.message : "Your models did not load."}
+            </p>
+          ) : null}
+
+          {filter === "models" && !models.isLoading && !models.error && !hasModels ? (
+            <p className="rounded-2xl border border-gray-100 bg-white px-5 py-6 text-center text-[13px] text-gray-500" data-testid="library-models-empty">
+              Your organization hasn't given you any models yet.
+            </p>
+          ) : null}
+
+          {!library.isLoading && !models.isLoading && groups.mine.length === 0 && groups.received.length === 0 && modelRows.length === 0 && !(filter === "models" && (models.error || !hasModels)) ? (
             <p className="rounded-2xl border border-gray-100 bg-white px-5 py-6 text-center text-[13px] text-gray-500">Nothing matches.</p>
           ) : null}
         </>

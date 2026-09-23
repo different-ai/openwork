@@ -610,10 +610,6 @@ export function getNewLlmProviderRoute(orgSlug?: string | null): string {
   return `${getLlmProvidersRoute(orgSlug)}/new`;
 }
 
-export function getModelConnectionsRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/model-connections`;
-}
-
 export function getAiGatewayRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/ai-gateway`;
 }
@@ -792,6 +788,14 @@ export function getLibraryPluginShareRoute(orgSlug: string | null | undefined, p
 
 export function getLibraryNewPluginRoute(orgSlug?: string | null, start?: "skill"): string {
   return `${getLibraryRoute(orgSlug)}/plugins/new${start ? `?start=${start}` : ""}`;
+}
+
+export function getLibraryModelsRoute(orgSlug?: string | null): string {
+  return `${getLibraryRoute(orgSlug)}?show=models`;
+}
+
+export function getLibraryModelRoute(orgSlug: string | null | undefined, providerId: string): string {
+  return `${getLibraryRoute(orgSlug)}/models/${encodeURIComponent(providerId)}`;
 }
 
 export function getLibraryConnectorRoute(orgSlug: string | null | undefined, connectionId: string): string {

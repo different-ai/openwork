@@ -211,7 +211,7 @@ test("wrong-account recovery signs out then rechecks, without exposing the initi
   let signedOut = false;
   await fixture(async ({ container, button, requests }) => {
     expect(container.querySelector("h1")?.textContent).toBe("Switch OpenWork account");
-    expect(container.querySelector('[data-notice-tone="neutral"]')?.textContent).toContain("Use the OpenWork account that started Connect.");
+    expect(container.querySelector('[data-notice-tone="neutral"]')?.textContent).toContain("Use the OpenWork account that started signing in.");
     expect(container.textContent).not.toContain("initiator@example.test");
     expect(container.textContent).not.toContain("Continue to Google");
     expect(container.querySelector("a")).toBeNull();
@@ -253,9 +253,9 @@ test("uncertain sign-out requires a safe recheck instead of assuming the browser
 });
 
 for (const entry of [
-  { status: 400, error: "oauth_entry_expired", message: "This connection attempt expired. Start Connect again.", title: "Start Connect again" },
-  { status: 403, error: "forbidden", message: "Your administrator must grant connection access.", title: "Connection unavailable" },
-  { status: 403, error: "oauth_configuration_changed", message: "Provider configuration changed. Start Connect again.", title: "Connection unavailable" },
+  { status: 400, error: "oauth_entry_expired", message: "This connection attempt expired. Start Connect again.", title: "Start signing in again" },
+  { status: 403, error: "forbidden", message: "Your administrator must grant connection access.", title: "Sign-in unavailable" },
+  { status: 403, error: "oauth_configuration_changed", message: "Provider configuration changed. Start Connect again.", title: "Sign-in unavailable" },
 ]) {
   test(`status ${entry.error} blocks Google with actionable inline recovery`, async () => {
     await fixture(async ({ container, requests }) => {
@@ -272,7 +272,7 @@ for (const entry of [
 
 test("invalid browser attempts never reach either endpoint", async () => {
   await fixture(async ({ container, requests, focus }) => {
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("This connection link is invalid. Start Connect again in OpenWork.");
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("This sign-in link is invalid. Start signing in again in OpenWork.");
     expect(container.textContent).not.toContain("Continue to Google");
     await focus();
     expect(requests).toHaveLength(0);
@@ -372,7 +372,7 @@ test("only an explicit Continue click consumes the attempt and rapid double clic
 test("uncertain consuming result never automatically retries or becomes ready on focus", async () => {
   await fixture(async ({ container, button, requests, focus, visibility, poll }) => {
     await act(async () => button("Continue to Google").click());
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Could not confirm whether Google sign-in started. Start Connect again");
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Could not confirm whether Google sign-in started. Start signing in again");
     await focus();
     await visibility("visible");
     await poll();
@@ -404,7 +404,7 @@ test("an invalid Google authorization URL cannot navigate or retry the consuming
       await focus();
       expect(navigate).not.toHaveBeenCalled();
       expect(requests).toHaveLength(2);
-      expect(container.querySelector("h1")?.textContent).toBe("Start Connect again");
+      expect(container.querySelector("h1")?.textContent).toBe("Start signing in again");
     } finally { navigate.mockRestore(); }
   }, { respond: ({ url }) => url.includes("/browser-start?")
     ? Response.json({ authUrl: "https://other.example.test/authorize" })

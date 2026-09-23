@@ -81,7 +81,7 @@ describe("dashboard navigation index", () => {
 
   test("keeps members in Work while admins receive Manage, Observability and Team", () => {
     expect(buildFor("member").map((section) => section.label)).toEqual(["Work"]);
-    expect(buildFor("member")[0]?.items.map((item) => item.label)).toEqual(["My Library", "My Model Connections", "OpenWork Web"]);
+    expect(buildFor("member")[0]?.items.map((item) => item.label)).toEqual(["My Library", "OpenWork Web"]);
     expect(buildFor("admin").map((section) => section.label)).toEqual(["Work", "Manage", "Observability", "Team"]);
     expect(buildFor("admin").find((section) => section.label === "Manage")?.items.map((item) => item.label)).toEqual([
       "Plugins",
