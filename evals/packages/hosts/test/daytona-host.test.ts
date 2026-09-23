@@ -99,10 +99,14 @@ function successfulPolls(seen: string[] = []): (url: string) => Promise<void> {
   };
 }
 
-function base64AfterEcho(call: ExecCall): string {
-  const echoIndex = call.args.indexOf("echo");
-  assert(echoIndex >= 0, "Expected echo in base64 write call.");
-  return call.args[echoIndex + 1] ?? "";
+/** `daytona exec` runs no shell of its own, so the pipe must live inside one bash -lc argument. */
+function base64FromShellWrite(call: ExecCall): string {
+  const command = call.args.at(-1) ?? "";
+  assert(command.startsWith("bash -lc "), "Expected the base64 write to run inside bash -lc.");
+  assert(!call.args.includes("|") && !call.args.includes(">"), "Shell operators must not be passed as literal arguments.");
+  const match = /printf %s '"'"'([A-Za-z0-9+/=]+)'"'"' \| base64 -d > /.exec(command);
+  assert(match?.[1], "Expected printf of the encoded bootstrap piped to base64 -d.");
+  return match[1];
 }
 
 test("checkedExec retries when the Daytona CLI fails at the transport layer", async () => {
@@ -203,7 +207,7 @@ test("spawnElectron starts isolated Daytona Electron profiles and writes bootstr
   assert(firstMkdirIndex >= 0);
 
   const bootstrapCall = findCall(calls, "base64 -d");
-  assert.equal(Buffer.from(base64AfterEcho(bootstrapCall), "base64").toString("utf8"), `${JSON.stringify(bootstrap, null, 2)}\n`);
+  assert.equal(Buffer.from(base64FromShellWrite(bootstrapCall), "base64").toString("utf8"), `${JSON.stringify(bootstrap, null, 2)}\n`);
   assert(argsText(bootstrapCall).includes("/workspace/.openwork-daytona/profiles/owner-"));
   assert(argsText(bootstrapCall).includes("/bootstrap.json"));
 

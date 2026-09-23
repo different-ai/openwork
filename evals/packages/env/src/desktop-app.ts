@@ -42,6 +42,12 @@ export interface SignedInAppOptions extends SharedAppOptions {
 export interface FreshAppOptions extends SharedAppOptions {
   as?: never;
   signIn: false;
+  /**
+   * `false` leaves the first launch exactly as a person sees it: no harness
+   * workspace is added next to whatever the app arranges itself, and
+   * `workspacePath` is ignored. `workspaceId` is then "".
+   */
+  workspace?: false;
 }
 
 export type AppOptions = SignedInAppOptions | FreshAppOptions;
@@ -203,6 +209,23 @@ export async function app(options: AppOptions): Promise<App> {
     }
     if (surface.handle.meta?.profileOwner !== "caller" && typeof surface.handle.profileDir === "string") {
       await trackResource({ kind: "tmpdir", id: surface.handle.profileDir, label: "electron-profile" });
+    }
+    if (options.workspace === false) {
+      try {
+        await options.beforeSignIn?.(surface);
+        return {
+          handle: surface.handle,
+          client: surface.client,
+          readiness: surface.readiness,
+          workspaceRoot: surface.workspaceRoot,
+          workspaceId: "",
+          stop: () => surface.stop(),
+          [Symbol.asyncDispose]: () => surface[Symbol.asyncDispose](),
+        };
+      } catch (error) {
+        await surface[Symbol.asyncDispose]();
+        throw error;
+      }
     }
     try {
       const path = options.workspacePath ?? `/tmp/openwork-fresh-${Date.now()}`;
