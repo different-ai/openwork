@@ -1,5 +1,6 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import {
   getAddConnectorRoute,
   getAllMcpConnectionsRoute,
@@ -13,12 +14,24 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { connectionForPresetUrl } from "./connector-catalog";
 import { catalogEntriesFromPresets, ConnectorPicker } from "./connector-picker";
 import { ItemHeader, ItemPage } from "./item-header";
-import { useMcpConnectionPresets, useMcpConnections } from "./mcp-connections-data";
+import { preloadConnectorLogo } from "./item-logo";
+import { mcpConnectionPresetsQueryOptions, useMcpConnectionPresets, useMcpConnections } from "./mcp-connections-data";
 
 export type ConnectorFlowMode = "member" | "admin";
 
 export function customConnectorQuery(input: { name: string; url: string }): string {
   return `?${new URLSearchParams({ name: input.name, url: input.url }).toString()}`;
+}
+
+/** Loads the catalog and its logos ahead of "Add a connector", so it opens filled in. */
+export function usePrefetchConnectorCatalog(): () => void {
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.fetchQuery(mcpConnectionPresetsQueryOptions()).then(
+      (presets) => { for (const preset of presets) preloadConnectorLogo(preset.displayName, preset.url); },
+      () => undefined,
+    );
+  };
 }
 
 /** A1 to A3 and C1 to C2: pick what to connect. */

@@ -1,8 +1,9 @@
 "use client";
 
 import { FileText, Plug, SquareTerminal } from "lucide-react";
+import { preload } from "react-dom";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
-import { apexDomain } from "../../_lib/brand-icon";
+import { apexDomain, brandIconCandidates } from "../../_lib/brand-icon";
 
 type BrandHint = { simpleIconSlug?: string; serviceUrl?: string };
 
@@ -39,6 +40,12 @@ export function brandHintFor(name: string, url?: string | null): BrandHint {
   const known = BRAND_BY_NAME[name.trim().toLowerCase()];
   if (known) return known;
   return isPublicServiceUrl(url) && url ? { serviceUrl: url } : {};
+}
+
+/** Starts downloading the logo a ConnectorLogo would show, before its row renders. */
+export function preloadConnectorLogo(name: string, url?: string | null) {
+  const [src] = brandIconCandidates(brandHintFor(name, url));
+  if (src) preload(src, { as: "image" });
 }
 
 const SIZE = {

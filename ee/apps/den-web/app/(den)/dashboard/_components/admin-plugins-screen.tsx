@@ -7,12 +7,12 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { managedAccessStatus } from "./access-summary";
 import { useDenToast } from "./den-toast";
 import { ItemPage } from "./item-header";
-import { ItemMenu, removeEntry, ItemPanel, ItemRow, LinkButton } from "./item-list";
+import { ItemMenu, removeEntry, ItemPanel, ItemRow, ItemRowsSkeleton, LinkButton } from "./item-list";
 import { LetterTile } from "./item-logo";
 import { draftFromPluginGrants } from "./item-sharing";
 import { ConnectorLogoStrip } from "./library-add-dialog";
 import { usePluginAccess } from "./plugin-access-data";
-import { type DenPlugin, useArchivePlugin, usePlugins } from "./plugin-data";
+import { type DenPluginSummary, useArchivePlugin, usePluginSummaries } from "./plugin-data";
 
 function PluginsEmpty({ orgSlug }: { orgSlug: string | null }) {
   return (
@@ -33,7 +33,7 @@ function PluginsEmpty({ orgSlug }: { orgSlug: string | null }) {
   );
 }
 
-function PluginRow({ plugin }: { plugin: DenPlugin }) {
+function PluginRow({ plugin }: { plugin: DenPluginSummary }) {
   const toast = useDenToast();
   const { orgSlug, orgContext } = useOrgDashboard();
   const access = usePluginAccess(plugin.id);
@@ -78,7 +78,7 @@ function PluginRow({ plugin }: { plugin: DenPlugin }) {
 /** D1 and D6: every plugin the organization manages, and who has each one. */
 export function AdminPluginsScreen() {
   const { orgSlug } = useOrgDashboard();
-  const plugins = usePlugins();
+  const plugins = usePluginSummaries();
   const visible = (plugins.data ?? []).filter((plugin) => plugin.status !== "archived");
   const empty = !plugins.isLoading && !plugins.error && visible.length === 0;
 
@@ -105,7 +105,7 @@ export function AdminPluginsScreen() {
 
       {!empty && !plugins.error ? (
         <>
-          {plugins.isLoading ? <p className="text-[13px] text-gray-500">Loading plugins...</p> : null}
+          {plugins.isLoading ? <ItemPanel><ItemRowsSkeleton label="Loading plugins" /></ItemPanel> : null}
           {visible.length > 0 ? (
             <ItemPanel>
               {visible.map((plugin) => <PluginRow key={plugin.id} plugin={plugin} />)}
