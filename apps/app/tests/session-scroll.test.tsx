@@ -673,6 +673,18 @@ describe("session reading position", () => {
     expect(view.container.scrollTop).toBe(405);
   });
 
+  test("a layout scroll onto unmounted rows keeps the saved reading anchor", async () => {
+    useSessionScrollStore.getState().setManualScroll("a", 325, null, { messageId: "reading", offset: -25 });
+    const saved = state();
+    const view = fixture();
+    await view.render();
+    expect(view.container.scrollTop).toBe(325);
+    view.layout.messages.shift();
+    view.layout.placeholders = [{ id: "placeholder:first", before: "reading", top: 0, height: 300 }];
+    view.scroll(0);
+    expect(state()).toEqual(saved);
+  });
+
   test("waits for authoritative history, ignores empty/live-tail clamping, and restores message-relative position on return", async () => {
     useSessionScrollStore.getState().setManualScroll("a", 900, "latest", { messageId: "reading", offset: -25 });
     const saved = state();
