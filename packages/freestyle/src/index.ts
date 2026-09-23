@@ -106,6 +106,7 @@ export async function launchPreview(
   const origins = world === "acme-web" ? {
     app: `https://${domain}`, den: `https://den-${launchId}.preview.openwork.software`, api: `https://api-${launchId}.preview.openwork.software`,
     engine: `https://engine-${launchId}.preview.openwork.software`, gateway: `https://gateway-${launchId}.preview.openwork.software`,
+    desktop: `https://desktop-${launchId}.preview.openwork.software`,
   } : undefined;
   const domains = origins ? Object.values(origins).map((value) => new URL(value).hostname) : [domain];
   const token = randomBytes(32).toString("base64url");
@@ -138,7 +139,9 @@ export async function launchPreview(
       }
       stage = "read-outputs";
       outputs = parsePreviewOutputs(JSON.parse(await vm.fs.readTextFile("/opt/openwork-preview/outputs.json")));
-      const serviceKeys = { app: "webUrl", den: "denWeb", api: "denApi", engine: "openworkUrl", gateway: "gatewayUrl" };
+      const serviceKeys: Record<string, string> = { app: "webUrl", den: "denWeb", api: "denApi", engine: "openworkUrl", gateway: "gatewayUrl" };
+      // Link the noVNC viewer only when this snapshot started the desktop display.
+      if (outputs.desktopStatus && outputs.desktopStatus.value !== "unavailable") serviceKeys.desktop = "desktopUrl";
       for (const [name, key] of Object.entries(serviceKeys)) {
         const origin = Object.entries(origins ?? {}).find(([service]) => service === name)?.[1];
         if (!origin) throw new Error("Missing private service origin");

@@ -4,12 +4,15 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
+import { serverBinaryName } from "./platform.mjs";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const args = process.argv.slice(2);
 
-const binaryName = process.platform === "win32" ? "openwork-server.exe" : "openwork-server";
-const compiledBinary = fileURLToPath(new URL(`./dist/bin/${binaryName}`, `${new URL("../", import.meta.url)}`));
+const binaryName = serverBinaryName(process.platform, process.arch);
+const compiledBinary = binaryName
+  ? fileURLToPath(new URL(`./dist/bin/${binaryName}`, `${new URL("../", import.meta.url)}`))
+  : null;
 const builtCli = fileURLToPath(new URL("./dist/cli.js", `${new URL("../", import.meta.url)}`));
 const sourceCli = fileURLToPath(new URL("./src/cli.ts", `${new URL("../", import.meta.url)}`));
 
@@ -27,7 +30,7 @@ function run(command, commandArgs) {
   process.exit(result.status ?? 1);
 }
 
-if (existsSync(compiledBinary)) {
+if (compiledBinary && existsSync(compiledBinary)) {
   run(compiledBinary, args);
 }
 
@@ -40,6 +43,8 @@ if (existsSync(sourceCli)) {
 }
 
 console.error(
-  `Unable to find an OpenWork server entrypoint in ${basename(packageRoot)}. Build the package or run it from a source checkout with Bun available.`,
+  binaryName
+    ? `Missing OpenWork server binary for ${process.platform}/${process.arch} in ${basename(packageRoot)}. Reinstall the package or run it from a source checkout with Bun available.`
+    : `OpenWork server does not support ${process.platform}/${process.arch}. Supported platforms: macOS, Linux, and Windows on arm64 or x64.`,
 );
 process.exit(1);
