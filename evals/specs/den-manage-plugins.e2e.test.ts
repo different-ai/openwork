@@ -58,6 +58,7 @@ test("an admin: I want to give the Sales team a plugin so they all get the same 
   });
 
   await step("6. I go back to Plugins and see who has it", async () => {
+    const logStart = (await world.proxy.requestLog()).length;
     await user.click({ role: "link", label: "Plugins" });
     await user.see({ testId: "admin-plugins" }, { timeoutMs: 60_000 });
     await user.see({ testId: "admin-plugins" }, { text: /Sales call prep/ });
@@ -65,6 +66,9 @@ test("an admin: I want to give the Sales team a plugin so they all get the same 
       within: 30_000, label: "who has the plugin", until: (text) => text === "Sales",
     });
     expect(status).toBe("Sales");
+    const listCalls = (await world.proxy.requestLog()).slice(logStart).map((entry) => entry.path)
+      .filter((path) => path.startsWith("/v1/plugins?") || /^\/v1\/plugins\/[^/?]+\/access/.test(path));
+    expect(listCalls, "the list and who has each plugin arrive in one request").toEqual(["/v1/plugins?status=active&limit=100&includeAccess=true"]);
     await user.screenshot();
   });
 

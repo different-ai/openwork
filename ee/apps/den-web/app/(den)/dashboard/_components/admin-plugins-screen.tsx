@@ -1,5 +1,6 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { Plus, UserPlus } from "lucide-react";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { getNewPluginRoute, getPluginRoute } from "../../_lib/den-org";
@@ -12,7 +13,7 @@ import { LetterTile } from "./item-logo";
 import { draftFromPluginGrants } from "./item-sharing";
 import { ConnectorLogoStrip } from "./library-add-dialog";
 import { usePluginAccess } from "./plugin-access-data";
-import { type DenPluginSummary, useArchivePlugin, usePluginSummaries } from "./plugin-data";
+import { type DenPluginSummary, pluginDetailQueryOptions, useArchivePlugin, usePluginSummaries } from "./plugin-data";
 
 function PluginsEmpty({ orgSlug }: { orgSlug: string | null }) {
   return (
@@ -35,8 +36,9 @@ function PluginsEmpty({ orgSlug }: { orgSlug: string | null }) {
 
 function PluginRow({ plugin }: { plugin: DenPluginSummary }) {
   const toast = useDenToast();
+  const queryClient = useQueryClient();
   const { orgSlug, orgContext } = useOrgDashboard();
-  const access = usePluginAccess(plugin.id);
+  const access = usePluginAccess(plugin.id, { enabled: !plugin.accessIncluded });
   const archive = useArchivePlugin();
   const href = getPluginRoute(orgSlug, plugin.id);
   const status = orgContext && access.data
@@ -48,8 +50,12 @@ function PluginRow({ plugin }: { plugin: DenPluginSummary }) {
     toast({ title: `${plugin.name} is removed`, description: "Nobody can use it anymore." });
   }
 
+  function prefetch() {
+    void queryClient.prefetchQuery(pluginDetailQueryOptions(plugin.id));
+  }
+
   return (
-    <div data-plugin-row={plugin.name}>
+    <div data-plugin-row={plugin.name} onPointerEnter={prefetch} onFocus={prefetch}>
       <ItemRow
         href={href}
         logo={<LetterTile name={plugin.name} />}
