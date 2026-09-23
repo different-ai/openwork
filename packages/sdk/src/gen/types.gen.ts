@@ -20699,6 +20699,46 @@ export type PostV1ConfigObjectsByConfigObjectIdVersionsResponses = {
 export type PostV1ConfigObjectsByConfigObjectIdVersionsResponse =
   PostV1ConfigObjectsByConfigObjectIdVersionsResponses[keyof PostV1ConfigObjectsByConfigObjectIdVersionsResponses];
 
+export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'cob_' prefix and a 26-character base32 suffix.
+     */
+    configObjectId: string;
+  };
+  query?: never;
+  url: "/v1/config-objects/{configObjectId}/versions/latest";
+};
+
+export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors = {
+  /**
+   * The latest-version path parameters were invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in to view config object versions.
+   */
+  401: UnauthorizedError;
+  /**
+   * The config object version could not be found.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestError =
+  GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors[keyof GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors];
+
+export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses = {
+  /**
+   * Latest config object version returned successfully.
+   */
+  200: PluginArchConfigObjectVersionDetailResponse;
+};
+
+export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponse =
+  GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses[keyof GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses];
+
 export type GetV1ConfigObjectsByConfigObjectIdVersionsByVersionIdData = {
   body?: never;
   path: {
@@ -20742,46 +20782,6 @@ export type GetV1ConfigObjectsByConfigObjectIdVersionsByVersionIdResponses = {
 
 export type GetV1ConfigObjectsByConfigObjectIdVersionsByVersionIdResponse =
   GetV1ConfigObjectsByConfigObjectIdVersionsByVersionIdResponses[keyof GetV1ConfigObjectsByConfigObjectIdVersionsByVersionIdResponses];
-
-export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestData = {
-  body?: never;
-  path: {
-    /**
-     * Den TypeID with 'cob_' prefix and a 26-character base32 suffix.
-     */
-    configObjectId: string;
-  };
-  query?: never;
-  url: "/v1/config-objects/{configObjectId}/versions/latest";
-};
-
-export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors = {
-  /**
-   * The latest-version path parameters were invalid.
-   */
-  400: InvalidRequestError;
-  /**
-   * The caller must be signed in to view config object versions.
-   */
-  401: UnauthorizedError;
-  /**
-   * The config object version could not be found.
-   */
-  404: NotFoundError;
-};
-
-export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestError =
-  GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors[keyof GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors];
-
-export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses = {
-  /**
-   * Latest config object version returned successfully.
-   */
-  200: PluginArchConfigObjectVersionDetailResponse;
-};
-
-export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponse =
-  GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses[keyof GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses];
 
 export type PostV1ConfigObjectsByConfigObjectIdArchiveData = {
   body?: never;

@@ -10265,6 +10265,29 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * Get latest config object version
+   *
+   * Returns the latest config object version by created_at and id ordering.
+   */
+  public getV1ConfigObjectsByConfigObjectIdVersionsLatest<ThrowOnError extends boolean = false>(
+    parameters: {
+      configObjectId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "configObjectId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses,
+      GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors,
+      ThrowOnError
+    >({
+      url: "/v1/config-objects/{configObjectId}/versions/latest",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
    * Get config object version
    *
    * Returns one immutable config object version.
@@ -10293,29 +10316,6 @@ export class DenClient extends HeyApiClient {
       ThrowOnError
     >({
       url: "/v1/config-objects/{configObjectId}/versions/{versionId}",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * Get latest config object version
-   *
-   * Returns the latest config object version by created_at and id ordering.
-   */
-  public getV1ConfigObjectsByConfigObjectIdVersionsLatest<ThrowOnError extends boolean = false>(
-    parameters: {
-      configObjectId: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "configObjectId" }] }]);
-    return (options?.client ?? this.client).get<
-      GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses,
-      GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors,
-      ThrowOnError
-    >({
-      url: "/v1/config-objects/{configObjectId}/versions/latest",
       ...options,
       ...params,
     });
