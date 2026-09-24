@@ -516,11 +516,17 @@ function normalizeV2Permission(value: NativeV2Permission): PendingPermission {
   };
 }
 
-function normalizeQuestion(value: NativeV2Form): PendingQuestion {
-  if (value.metadata?.kind !== "question" || value.fields.some((field) => !["string", "multiselect"].includes(field.type) || field.when?.length)) {
+/**
+ * Native forms the question card can show and answer. Web search asks once which
+ * provider it may use; unanswered, the search is cancelled after a minute.
+ */
+const QUESTION_FORM_KINDS = new Set(["question", "websearch.provider"]);
+
+export function normalizeQuestion(value: NativeV2Form): PendingQuestion {
+  if (!QUESTION_FORM_KINDS.has(String(value.metadata?.kind)) || value.fields.some((field) => !["string", "multiselect"].includes(field.type) || field.when?.length)) {
     throw new Error("This native form cannot be represented by the question controls. It has not been answered or dismissed.");
   }
-  const tool = z.object({ messageID: z.string(), id: z.string() }).safeParse(value.metadata.tool);
+  const tool = z.object({ messageID: z.string(), id: z.string() }).safeParse(value.metadata?.tool);
   return {
     id: value.id,
     sessionID: value.sessionID,

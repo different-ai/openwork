@@ -19,6 +19,7 @@ import {
   prepareCurrentWorkspace,
   WORKSPACE_STARTUP_TIMEOUT_MS,
   hasPendingInteractions,
+  normalizeQuestion,
   type CoworkerActivity,
   parseModelPreference,
   recommendModel,
@@ -527,4 +528,19 @@ test("coalesceCalls runs the first call at once and folds a burst into one trail
   coalesced.cancel();
   await new Promise((resolve) => setTimeout(resolve, 260));
   assert.equal(runs, 3, "cancel drops a pending trailing call");
+});
+
+test("web search's provider consent is shown as a question instead of failing every interaction read", () => {
+  // The native websearch tool asks once which provider it may use and cancels the
+  // search after a minute unanswered. Rejecting the form hid it and failed the read.
+  const consent = {
+    id: "frm_websearch", sessionID: "ses_web", title: "Web Search", metadata: { kind: "websearch.provider" },
+    fields: [{ key: "choice", type: "string", description: "Allow OpenCode to search the web for up-to-date information?", required: true, custom: false,
+      options: [{ value: "allow", label: "Allow search via Exa" }, { value: "choose", label: "Choose another provider" }, { value: "disable", label: "Disable web search" }] }],
+  } as unknown as Parameters<typeof normalizeQuestion>[0];
+  const question = normalizeQuestion(consent);
+  assert.equal(question.questions[0]?.question, "Allow OpenCode to search the web for up-to-date information?");
+  assert.deepEqual(question.questions[0]?.options.map((option) => option.label), ["Allow search via Exa", "Choose another provider", "Disable web search"]);
+  assert.equal(question.questions[0]?.custom, false);
+  assert.throws(() => normalizeQuestion({ ...consent, metadata: { kind: "unknown.form" } }), /cannot be represented/);
 });
