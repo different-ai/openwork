@@ -516,6 +516,11 @@ test("the release list is cached, served stale through source failures, and malf
   assert.equal(calls, 2)
   clock = 86400001
   assert.equal(await source(), null, "stale lists expire after a day")
+  // GitHub's real list carries release notes and assets and is well over 1 MB.
+  const notes = "x".repeat(100_000)
+  const large = createDesktopFreeReleaseSource({ url: "https://api.github.test/releases",
+    fetch: async () => Response.json(github.map((release) => ({ ...release, body: notes, assets: Array.from({ length: 4 }, () => ({ name: notes })) }))) })
+  assert.deepEqual((await large())?.map((release) => release.version), ["1.2.3", "1.2.2", "1.2.1", "1.2.0", "1.1.9"], "a realistic-size GitHub list is accepted")
   const custom = createDesktopFreeReleaseSource({ url: "https://metadata.test/releases", fetch: async () => Response.json({ releases: [{ version: "v1.2.3", publishedAt: "2026-09-23T00:00:00Z" }] }) })
   assert.deepEqual(await custom(), [{ version: "1.2.3", publishedAt: Date.parse("2026-09-23T00:00:00Z") }])
   for (const body of [{ latestAppVersion: "1.2.3" }, [{ tag_name: 1 }], "1.2.3", []]) {

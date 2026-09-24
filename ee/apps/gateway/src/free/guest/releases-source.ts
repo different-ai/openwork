@@ -1,5 +1,8 @@
 import { parseDesktopReleases, type DesktopRelease } from "@openwork/free-auto"
 
+// GitHub's release list carries full notes and assets: 20 OpenWork releases were about 1.7 MB on 2026-09-24.
+const MAX_RELEASE_LIST_BYTES = 8 * 1024 * 1024
+
 /** Reads the published stable releases; caches 5 minutes and serves a stale list for up to a day if the source fails. */
 export function createDesktopFreeReleaseSource(options: { url: string; fetch?: typeof fetch; now?: () => number; token?: string }) {
   const now = options.now ?? Date.now
@@ -26,7 +29,7 @@ export function createDesktopFreeReleaseSource(options: { url: string; fetch?: t
         const chunk = await reader.read()
         if (chunk.done) break
         size += chunk.value.byteLength
-        if (size > 1048576) { void reader.cancel().catch(() => undefined); return null }
+        if (size > MAX_RELEASE_LIST_BYTES) { void reader.cancel().catch(() => undefined); return null }
         chunks.push(chunk.value)
       }
       const releases = parseDesktopReleases(JSON.parse(Buffer.concat(chunks).toString("utf8")))
