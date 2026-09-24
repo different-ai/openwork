@@ -1,3 +1,7 @@
+import { checkpointSchema } from "@openwork/review";
+import type { ReviewEvidence } from "@openwork/review";
+type ImageEvidence = Extract<ReviewEvidence, { kind: "image" }>;
+
 export interface ArtifactExpectationResult {
   expectation: string;
   passed: boolean;
@@ -23,6 +27,8 @@ export interface TestArtifact {
   ok: boolean | null;
   results: ArtifactExpectationResult[];
   judgments: ArtifactJudgment[];
+  checkpoint?: ImageEvidence["checkpoint"];
+  checkpointError?: string;
 }
 
 export interface TestRunSummary {
@@ -159,7 +165,12 @@ function parseArtifact(value: unknown): TestArtifact | null {
       judgments.push(parsed);
     }
   }
+  const checkpoint = value.checkpoint === undefined ? undefined : checkpointSchema.safeParse(value.checkpoint);
+  if (checkpoint && (!checkpoint.success || checkpoint.data.imageHash !== value.hash)) return null;
+  if (value.checkpointError !== undefined && typeof value.checkpointError !== "string") return null;
   return {
+    ...(checkpoint?.success ? { checkpoint: checkpoint.data } : {}),
+    ...(typeof value.checkpointError === "string" ? { checkpointError: value.checkpointError } : {}),
     caption: value.caption,
     fileName: value.fileName,
     hash: value.hash,

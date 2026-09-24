@@ -14,6 +14,7 @@ import type { Den } from "../evals/packages/env/src/den.ts";
 import { resolvePlace } from "../evals/packages/env/src/place.ts";
 import { receiptName, resolveStage } from "../packages/world/src/stage.ts";
 import { ACME_REPLY, gatewayEnvironment, seedAcmeGateway, startAcmeGateway, startAcmeUpstream } from "./lib/acme-gateway.ts";
+import type { AcmeStreamCheckpoint } from "./lib/acme-gateway.ts";
 import { probeAcmeGateway } from "./lib/acme-gateway-probe.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -28,12 +29,12 @@ export interface AcmeWebWorld {
 }
 
 /** Seeded Acme Den + real AI Gateway + isolated web runtime; only the upstream model is fake. */
-export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: string; den: string; api: string }): Promise<AcmeWebWorld> {
+export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: string; den: string; api: string }, checkpoint?: AcmeStreamCheckpoint): Promise<AcmeWebWorld> {
   const place = resolvePlace();
   if (place.kind !== "local") {
     throw new Error("Run acme-web co-located with MySQL (--place local), including inside a prepared Daytona sandbox.");
   }
-  const upstream = await startAcmeUpstream(stack);
+  const upstream = await startAcmeUpstream(stack, checkpoint);
   const gateway = await gatewayEnvironment(upstream.baseUrl);
   const webPort = await allocateFreePort();
   const den = stack.use(await server({
