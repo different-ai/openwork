@@ -86,11 +86,17 @@ export type RefResolver = (ref: string) => Promise<string>;
 /** Resolve a branch or tag on origin to its current commit SHA. */
 export function gitRefResolver(cwd: string): RefResolver {
   return async (ref) => {
-    const { stdout } = await promisify(execFile)("git", ["ls-remote", "--exit-code", "origin", `refs/heads/${ref}`], {
-      cwd,
-      timeout: 30_000,
+    // Never put the requested ref in git argv. Git accepts command overrides
+    // such as --upload-pack; selecting an exact ref from its output keeps the
+    // only variable input out of the command line altogether.
+    const requested = parseSourceSpec(`ref:${ref}`);
+    if (requested.kind !== "ref") throw new Error("A branch ref is required.");
+    const { stdout } = await promisify(execFile)("git", ["ls-remote", "--heads", "origin"], {
+      cwd, timeout: 30_000, maxBuffer: 8 * 1024 * 1024,
     });
-    const sha = stdout.trim().split(/\s+/)[0];
+    const matches = stdout.split(/\r?\n/).map((line) => line.trim().split(/\s+/))
+      .filter((parts) => parts.length === 2 && parts[1] === `refs/heads/${requested.ref}`);
+    const sha = matches.length === 1 ? matches[0]?.[0] : undefined;
     if (!sha || !SHA.test(sha)) throw new Error(`origin did not return a commit SHA for ${JSON.stringify(ref)}.`);
     return sha;
   };
