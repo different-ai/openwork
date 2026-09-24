@@ -3,6 +3,9 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 type ReadingPosition = { top: number; pinned: boolean; anchor: string | null; offset: number };
 const positions = new Map<string, ReadingPosition>();
 const SLACK_PX = 48;
+/** New content glides into view instead of jumping; the first restore of a view stays instant. */
+const GLIDE_MS = 220;
+const reducedMotion = () => typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
 /** Reading belongs to the conversation, not its mount. Only a gesture repins it. */
 export function useConversationScroll(scope: string, active: boolean, ready: boolean) {
@@ -32,6 +35,9 @@ export function useConversationScroll(scope: string, active: boolean, ready: boo
     if (!box || !content || !active || !ready) return;
     position.current = positions.get(scope) ?? { top: 0, pinned: true, anchor: null, offset: 0 };
     let frame = 0;
+    let glide = 0;
+    let glidingUntil = 0;
+    let restored = false;
     let writtenTop: number | null = null;
     let height = box.scrollHeight;
     let viewport = box.clientHeight;
@@ -47,13 +53,31 @@ export function useConversationScroll(scope: string, active: boolean, ready: boo
       const saved = position.current;
       const anchor = saved.anchor ? anchors().find((node) => node.dataset.scrollAnchor === saved.anchor) : null;
       const virtualIndex = saved.anchor && !anchor ? virtualAnchors.current?.indexFor(saved.anchor) ?? -1 : -1;
-      if (saved.pinned) box.scrollTop = box.scrollHeight;
+      if (saved.pinned) {
+        const target = box.scrollHeight - box.clientHeight;
+        const from = box.scrollTop;
+        const distance = target - from;
+        cancelAnimationFrame(glide);
+        // Following the latest: grow smoothly into new content once the view has settled.
+        if (restored && distance > 1 && distance < box.clientHeight * 1.5 && !reducedMotion()) {
+          const start = performance.now();
+          glidingUntil = start + GLIDE_MS + 50;
+          const step = (now: number) => {
+            const t = Math.min(1, (now - start) / GLIDE_MS);
+            box.scrollTop = from + distance * (1 - (1 - t) ** 3);
+            writtenTop = box.scrollTop;
+            if (t < 1 && position.current.pinned) glide = requestAnimationFrame(step);
+          };
+          glide = requestAnimationFrame(step);
+        } else box.scrollTop = box.scrollHeight;
+      }
       else if (anchor) box.scrollTop += anchor.getBoundingClientRect().top - box.getBoundingClientRect().top - saved.offset;
       else if (virtualIndex >= 0) virtualAnchors.current?.scrollToIndex(virtualIndex);
       else box.scrollTop = saved.top;
       writtenTop = box.scrollTop;
       height = box.scrollHeight;
       viewport = box.clientHeight;
+      restored = true;
       setAway(!saved.pinned);
     };
     const schedule = () => {
@@ -62,6 +86,8 @@ export function useConversationScroll(scope: string, active: boolean, ready: boo
     };
     const scrolled = () => {
       if (writtenTop === box.scrollTop) return;
+      // Our own glide is not a reading gesture.
+      if (performance.now() < glidingUntil && performance.now() > gestureUntil) return;
       // Layout can clamp scrollTop without a reading gesture. It cannot repin us.
       if (performance.now() > gestureUntil && (height !== box.scrollHeight || viewport !== box.clientHeight)) { schedule(); return; }
       writtenTop = null;
@@ -70,7 +96,7 @@ export function useConversationScroll(scope: string, active: boolean, ready: boo
       remember();
       setAway(!position.current.pinned);
     };
-    const reading = () => { gestureUntil = performance.now() + 200; cancelAnimationFrame(frame); };
+    const reading = () => { gestureUntil = performance.now() + 200; glidingUntil = 0; cancelAnimationFrame(frame); cancelAnimationFrame(glide); };
     const pointer = (event: PointerEvent) => { if (event.target === box) reading(); };
     const wheel = (event: WheelEvent) => {
       reading();
@@ -115,6 +141,7 @@ export function useConversationScroll(scope: string, active: boolean, ready: boo
       // Hidden views may already measure zero here; keep the last visible anchor.
       if (box.clientHeight > 0) remember();
       cancelAnimationFrame(frame);
+      cancelAnimationFrame(glide);
       observer.disconnect();
       box.removeEventListener("scroll", scrolled);
       box.removeEventListener("wheel", wheel);
@@ -129,8 +156,8 @@ export function useConversationScroll(scope: string, active: boolean, ready: boo
   return { scrollRef, contentRef, away, jumpToLatest, reveal, registerVirtualAnchors };
 }
 
-export function JumpToLatest({ onClick }: { onClick: () => void }) {
-  return <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
+export function JumpToLatest({ onClick, bottom = 12 }: { onClick: () => void; bottom?: number }) {
+  return <div className="pointer-events-none absolute inset-x-0 z-30 flex justify-center" style={{ bottom }}>
     <button type="button" className="pointer-events-auto rounded-full border border-line bg-ink/95 px-3 py-1.5 text-[11px] text-mist shadow-sm hover:text-snow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50" data-testid="conversation-jump-latest" onClick={onClick}>Jump to latest</button>
   </div>;
 }

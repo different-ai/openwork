@@ -288,6 +288,21 @@ function GroupChatView({
   const eventsRef = useRef(events);
   eventsRef.current = events;
   const { scrollRef, contentRef, away, jumpToLatest, reveal, registerVirtualAnchors } = useConversationScroll(`group:${group.id}`, active && !pendingAssignment, observed.groupId === group.id);
+  // The floating composer's height, so the conversation always ends just above it.
+  const [dock, setDock] = useState<HTMLDivElement | null>(null);
+  const [dockHeight, setDockHeight] = useState(0);
+  useEffect(() => {
+    if (!dock) return;
+    const observer = new ResizeObserver(() => setDockHeight(Math.ceil(dock.getBoundingClientRect().height)));
+    observer.observe(dock);
+    return () => observer.disconnect();
+  }, [dock]);
+  const readingLatest = useRef(!away);
+  readingLatest.current = !away;
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current;
+    if (scroller && readingLatest.current) scroller.scrollTop = scroller.scrollHeight;
+  }, [dockHeight, scrollRef]);
   const revealedActivity = useRef(0);
   const preparedActivity = useRef(0);
   const [activityNotice, setActivityNotice] = useState("");
@@ -857,7 +872,7 @@ function GroupChatView({
       {documentNotice ? <p role="alert" className="border-b border-line px-5 py-2 text-xs text-mist">{documentNotice}<button type="button" className="ml-2 underline" onClick={() => setDocumentNotice("")}>Dismiss</button></p> : null}
       {activityNotice ? <p role="status" className="border-b border-line px-5 py-2 text-xs text-mist">{activityNotice}<button type="button" className="ml-2 underline" onClick={() => setActivityNotice("")}>Dismiss</button></p> : null}
       <div className="relative flex min-h-0 flex-1 flex-col">
-      <div ref={scrollRef} style={{ overflowAnchor: "none" }} className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-[calc(var(--conversation-top,0px)+1.25rem)]">
+      <div ref={scrollRef} style={{ overflowAnchor: "none", paddingBottom: dockHeight + 20 }} className="min-h-0 flex-1 overflow-y-auto px-5 pt-[calc(var(--conversation-top,0px)+1.25rem)]">
         <div ref={contentRef} className="mx-auto max-w-3xl space-y-3">
           {introduction}
           {observed.groupId !== group.id && !activityError ? <p role="status" className="text-xs text-mist">Loading conversation…</p> : null}
@@ -920,14 +935,15 @@ function GroupChatView({
           {activityError ? <ErrorNote>{activityError}</ErrorNote> : null}
         </div>
       </div>
-      {active && away && !pendingAssignment ? <JumpToLatest onClick={jumpToLatest} /> : null}
+      {active && away && !pendingAssignment ? <JumpToLatest onClick={jumpToLatest} bottom={dockHeight + 12} /> : null}
       </div>
-      <div className="px-5 pb-4 pt-2" data-testid="coworker-composer">
+      {/* The composer floats over the conversation, which scrolls to the window's bottom beneath it. */}
+      <div ref={setDock} className="absolute inset-x-0 bottom-0 z-20 bg-[linear-gradient(to_top,var(--color-ink)_20%,transparent)] px-5 pb-4 pt-4" data-testid="coworker-composer">
         <div className="mx-auto max-w-3xl">
           {assignmentMode ? (
             <p className="mb-2 px-2 text-[11px] text-mist" data-testid="group-assignment-mode">Something one of them should own, separate from this chat</p>
           ) : null}
-          <div className={`relative rounded-[24px] border bg-panel/60 p-3 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`} data-testid="coworker-input-surface">
+          <div className={`relative rounded-[24px] border bg-panel/55 p-3 shadow-[0_8px_32px_rgb(0_0_0/0.35)] backdrop-blur-xl backdrop-saturate-150 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`} data-testid="coworker-input-surface">
             {!assignmentMode ? <VoicePanel voice={voice} /> : null}
             {mention && mentionOptions.length > 0 && !assignmentMode ? (
               <ul

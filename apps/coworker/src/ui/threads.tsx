@@ -1263,6 +1263,22 @@ function ThreadView({
   const observedTurnAt = useRef(0);
   const streamTurn = useRef("");
   const { scrollRef, contentRef, away, jumpToLatest } = useConversationScroll(`${coworker.slug}:${coworker.createdAt}:${threadId}`, active, transcriptLoaded);
+  // The floating composer's height, so the conversation always ends just above it.
+  const [dock, setDock] = useState<HTMLDivElement | null>(null);
+  const [dockHeight, setDockHeight] = useState(0);
+  useEffect(() => {
+    if (!dock) return;
+    const observer = new ResizeObserver(() => setDockHeight(Math.ceil(dock.getBoundingClientRect().height)));
+    observer.observe(dock);
+    return () => observer.disconnect();
+  }, [dock]);
+  const readingLatest = useRef(!away);
+  readingLatest.current = !away;
+  useLayoutEffect(() => {
+    // A taller composer (a longer draft, a queued message) must not cover the latest reply.
+    const scroller = scrollRef.current;
+    if (scroller && readingLatest.current) scroller.scrollTop = scroller.scrollHeight;
+  }, [dockHeight, scrollRef]);
   /** Long replies already reported this mount; the store also refuses a repeat by message id. */
   const longRepliesRecorded = useRef(new Set<string>());
   const recordLongReply = useCallback((messageId: string, chars: number) => {
@@ -2526,15 +2542,15 @@ function ThreadView({
       {/* Progress and problems show inline in the conversation; this keeps the turn state readable to assistive tech and tests. */}
       <div className="@container/discussion min-h-0 min-w-0 flex-1">
       <div className="flex h-full min-h-0 min-w-0 flex-col @min-[760px]/discussion:flex-row">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="coworker-conversation-column">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-testid="coworker-conversation-column">
       <p data-testid="coworker-thread-status" className="sr-only" aria-live="polite" data-state={statusState} data-outcome={outcome?.kind ?? ""}>
         {!stopAttempt && !working && !needsYou && !unconfirmedAdmission && !refusedAdmission && !acceptedObservationUnavailable && !failed && !settledWord && workspacePreparation.state !== "ready" ? workspacePreparation.state === "starting" ? "Starting AI" : "AI unavailable" : transcriptLoaded && kind === "discussion" && !stopAttempt && !working && !needsYou && !unconfirmedAdmission && !acceptedObservationUnavailable && !failed && !settledWord ? "Ready" : readableStatus}
       </p>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-[calc(var(--conversation-top,0px)+1.25rem)]"
-        style={{ overflowAnchor: "none" }}
+        className="min-h-0 flex-1 overflow-y-auto px-5 pt-[calc(var(--conversation-top,0px)+1.25rem)]"
+        style={{ overflowAnchor: "none", paddingBottom: dockHeight + 20 }}
       >
         <div ref={contentRef} className="mx-auto max-w-3xl space-y-3">
           {activityOpenError ? <p role="alert" className="text-xs text-amber">{activityOpenError}</p> : null}
@@ -2661,8 +2677,10 @@ function ThreadView({
       {kind === "discussion" ? (
         <div ref={setFloatingSlot} className="pointer-events-none absolute inset-0 overflow-hidden" data-testid="coworker-browser-float-slot" />
       ) : null}
-      {active && transcriptLoaded && away ? <JumpToLatest onClick={jumpToLatest} /> : null}
+      {active && transcriptLoaded && away ? <JumpToLatest onClick={jumpToLatest} bottom={dockHeight + 12} /> : null}
       </div>
+      {/* The composer and what sits with it float over the conversation, which scrolls to the window's bottom beneath them. */}
+      <div ref={setDock} className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-[linear-gradient(to_top,var(--color-ink)_20%,transparent)] [&>*]:pointer-events-auto" data-testid="coworker-composer-dock">
       {kind !== "worker" && turnState.next.length > 0 ? (
         <NextRows items={turnState.next} onEdit={editQueued} onRemove={(id) => commitTurnState((state) => removeQueued(state, id))} onSendNow={(id) => void sendQueuedNow(id)} />
       ) : null}
@@ -2715,6 +2733,7 @@ function ThreadView({
           onOpenSummary={onOpenSummary}
         />
       )}
+      </div>
       </div>
       {kind === "discussion" && browserEligible ? <Suspense fallback={null}><DiscussionBrowser key={`${coworker.slug}:${threadId}`} active={active} slug={coworker.slug} threadId={threadId} actionsSlot={headerSlots.tools} statusSlot={controlStatusSlot} floatingSlot={floatingSlot} openRequest={browserOpenRequest} /></Suspense> : null}
       </div>
@@ -3004,7 +3023,7 @@ const MessageBubble = memo(function MessageBubble({
       );
     }
     return (
-      <article className={`flex flex-col items-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-message-id={message.id} data-continued={continued ? "true" : "false"}>
+      <article className={`flex flex-col items-end ${continued ? "-mt-1.5" : ""} ${message.createdAt && Date.now() - message.createdAt < 4_000 ? "message-enter" : ""}`} data-message-role="user" data-message-id={message.id} data-continued={continued ? "true" : "false"}>
         <div className={`relative max-w-[min(72%,30rem)] ${reactions?.length ? "mt-5" : ""}`}>
           <div className={`bubble bubble-user whitespace-pre-wrap ${tail ? "bubble-tail-right" : ""}`} title={message.createdAt ? new Date(message.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : undefined}>
             {message.text || "…"}
@@ -3539,7 +3558,7 @@ function DiscussionComposer({
   const stopping = working && !assignmentMode && !value.trim() && Boolean(onStop);
   const submitLabel = busy ? "Working…" : assignmentMode ? "Create assignment" : working ? "Next" : "Send";
   return (
-    <div className="shrink-0 bg-ink px-5 pb-2 pt-2" data-testid="coworker-composer" data-working={working ? "true" : "false"}>
+    <div className="shrink-0 px-5 pb-2 pt-2" data-testid="coworker-composer" data-working={working ? "true" : "false"}>
       <div className="mx-auto max-w-3xl">
         {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
         {assignmentMode ? (
@@ -3547,7 +3566,7 @@ function DiscussionComposer({
             Something {coworkerName} should own, separate from this chat
           </p>
         ) : null}
-        <div className={`rounded-[24px] border bg-panel/60 p-3 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`} data-testid="coworker-input-surface">
+        <div className={`rounded-[24px] border bg-panel/55 p-3 shadow-[0_8px_32px_rgb(0_0_0/0.35)] backdrop-blur-xl backdrop-saturate-150 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`} data-testid="coworker-input-surface">
           {!assignmentMode ? <VoicePanel voice={voice} /> : null}
           {!assignmentMode && skills.length ? <div className="flex flex-wrap gap-2 px-1 pb-2" aria-label="Selected skills">
             {skills.map((skill, index) => <span key={`${skill.id}:${index}`} className="inline-flex max-w-full items-center gap-2 rounded-full border border-line px-2 py-1 text-xs text-snow" data-testid="coworker-selected-skill">
@@ -3714,9 +3733,9 @@ function MessageComposer({
   const fieldRef = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(fieldRef, value);
   return (
-    <div className="bg-ink px-5 pb-2 pt-2" data-testid="coworker-composer" data-working={working ? "true" : "false"}>
+    <div className="px-5 pb-2 pt-2" data-testid="coworker-composer" data-working={working ? "true" : "false"}>
       <div className="mx-auto max-w-3xl">
-        <div className="rounded-[24px] border border-line bg-panel/60 p-3 transition-colors focus-within:border-spark/50">
+        <div className="rounded-[24px] border border-line bg-panel/55 p-3 shadow-[0_8px_32px_rgb(0_0_0/0.35)] backdrop-blur-xl backdrop-saturate-150 transition-colors focus-within:border-spark/50">
           <textarea
             ref={fieldRef}
             aria-label={placeholder.replace("…", "")}

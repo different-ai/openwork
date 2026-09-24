@@ -75,7 +75,7 @@ export function LiveRow({ coworker, phase = "thinking", step = null, stepCall = 
   // The thinking bubble has the reply bubble's place, shape and one-line height,
   // so the first words fill it instead of replacing a different layout.
   if (typing) return (
-    <div className="relative flex min-w-0 flex-col items-start" data-testid="coworker-working" data-phase={status} data-outcome={long ? "slow" : "working"} data-popover={open ? "open" : "closed"}>
+    <div className="message-enter relative flex min-w-0 flex-col items-start" data-testid="coworker-working" data-phase={status} data-outcome={long ? "slow" : "working"} data-popover={open ? "open" : "closed"}>
       <button
         ref={anchorRef}
         type="button"
