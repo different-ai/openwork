@@ -149,14 +149,21 @@ test("desktop refresh reloads only the exact checkout and writes source-sha afte
   assert.deepEqual(events, []);
 });
 
+const pristineObserved = Object.fromEntries([
+  "reloaded", "rendererRead", "productContractRead", "firstRun", "noAppCloudIdentity", "signInOffered", "ordinaryDefaultModel",
+  "routeReady", "routeWorkspaceValid", "noRouteConversations", "nativeRead", "nativeLocalOnly", "nativeWorkspaceMatches",
+  "noNativeCloudSession", "noProvisionedModel", "noCloudConfiguration", "noNativeConversations",
+].map((key) => [key, true]));
+const pristineProfile = async () => ({ expectedWorkspacePath: "/isolated/OpenWork Chat", isolatedProfile: true, noBootstrap: true, noNativeProviderCredentials: true, nativeWorkspaceValid: true });
+
 test("desktop reload proves a new document, never signs in, and releases CDP initialization", async () => {
   const events = [];
-  const result = await inspectDesktop({ reload: true, loadCdp: async () => ({
+  const result = await inspectDesktop({ reload: true, readProfile: pristineProfile, loadCdp: async () => ({
     attachSurface: async () => ({ client: { send: async (method) => { events.push(method); } }, stop: async () => { events.push("stop"); } }),
-    browserScript: (_fn, args) => { assert.equal(typeof args[0], "string"); return "synthetic"; },
+    browserScript: (_fn, args) => { assert.equal(typeof (typeof args[0] === "object" ? args[0].nonce : args[0]), "string"); return "synthetic"; },
     addInitScript: async () => ({ dispose: async () => { events.push("dispose"); } }),
-    evaluate: async () => ({ reloaded: true, signedOut: true, firstRun: true, noDefaultModel: true }),
-    probeAppState: async () => ({ surface: "welcome", workspaceId: null }),
+    evaluate: async () => pristineObserved,
+    probeAppState: async () => ({ surface: "workspace", workspaceId: "ws_initial" }),
     isInteractive: () => true,
   }) });
   assert.equal(result.firstRun, true);
@@ -164,27 +171,41 @@ test("desktop reload proves a new document, never signs in, and releases CDP ini
 });
 
 for (const scenario of [
-  { name: "welcome", state: { surface: "welcome" }, expected: true },
-  { name: "fresh desktop task UI", state: { surface: "no-workspace" }, expected: true },
-  { name: "loading task UI", state: { surface: "no-workspace", transitional: "Preparing workspace" }, expected: false },
+  { name: "stock automatic workspace", expected: true },
+  { name: "unbootstrapped welcome", state: { surface: "welcome", workspaceId: null }, expected: false },
+  { name: "loading task UI", state: { transitional: "Preparing workspace" }, expected: false },
   { name: "missing control", state: { controlReady: false }, expected: false },
-  { name: "selected workspace", state: { workspaceId: "synthetic" }, expected: false },
-  { name: "signed-in state", empty: { signedOut: false }, expected: false },
-  { name: "default model", empty: { noDefaultModel: false }, expected: false },
+  { name: "demo workspace", empty: { routeWorkspaceValid: false }, expected: false },
+  { name: "signed-in state", empty: { noAppCloudIdentity: false }, expected: false },
+  { name: "gateway model", empty: { ordinaryDefaultModel: false }, expected: false },
+  { name: "native cloud token", empty: { noNativeCloudSession: false }, expected: false },
+  { name: "native conversations", empty: { noNativeConversations: false }, expected: false },
   { name: "completed onboarding", empty: { firstRun: false }, expected: false },
   { name: "stale reload", empty: { reloaded: false }, expected: false },
 ]) {
   test(`desktop readiness checks ${scenario.name} and closes CDP`, async () => {
     let stopped = false;
-    const task = inspectDesktop({ timeoutMs: 10, loadCdp: async () => ({
+    let reported;
+    const task = inspectDesktop({ timeoutMs: 10, readProfile: pristineProfile, report: (flags) => { reported = flags; }, loadCdp: async () => ({
       attachSurface: async () => ({ client: {}, stop: async () => { stopped = true; } }),
       browserScript: () => "synthetic",
-      evaluate: async () => ({ reloaded: true, signedOut: true, firstRun: true, noDefaultModel: true, ...scenario.empty }),
-      probeAppState: async () => ({ surface: "no-workspace", workspaceId: null, controlReady: true, transitional: null, ...scenario.state }),
+      evaluate: async () => ({ ...pristineObserved, ...scenario.empty }),
+      probeAppState: async () => ({ surface: "workspace", workspaceId: "ws_initial", controlReady: true, transitional: null, ...scenario.state }),
       isInteractive,
     }) });
-    if (scenario.expected) assert.deepEqual(await task, { ready: true, signedOut: true, firstRun: true, noWorkspace: true, noDefaultModel: true });
-    else await assert.rejects(task, /fresh signed-out onboarding/);
+    if (scenario.expected) {
+      const proof = await task;
+      assert.equal(proof.emptyLocalWorkspace, true);
+      assert.equal(proof.ordinaryDefaultModel, true);
+      assert.equal(proof.noProvisionedModel, true);
+      assert.equal(proof.noWorkspace, undefined);
+      assert.equal(proof.noDefaultModel, undefined);
+      assert.equal(reported, undefined);
+    } else {
+      await assert.rejects(task, /pristine signed-out state/);
+      assert.ok(Object.values(reported).every((value) => typeof value === "boolean"));
+      assert.ok(Object.values(reported).some((value) => value === false));
+    }
     assert.equal(stopped, true);
   });
 }

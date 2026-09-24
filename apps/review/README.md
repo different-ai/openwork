@@ -199,8 +199,9 @@ existing placements.
 In the review page, **Desktop only (signed out)** selects the distinct `desktop`
 Freestyle snapshot: Electron, its local engine and internal renderer, XFCE, and
 noVNC. It starts on a fresh profile without Den, MySQL, Redis, AI Gateway, demo
-accounts, a selected workspace/model, or a separate web preview. Only the private
-desktop viewer is published; no demo sign-in details are returned. Its dedicated
+accounts, or a separate web preview. OpenWork's normal empty local workspace and
+free starter model are retained, with no conversations or provisioned providers.
+Only the private desktop viewer is published; no demo sign-in details are returned. Its dedicated
 CI job verifies two signed-out clones, viewer access and cross-clone isolation,
 then deletes the test clones (`freestyle-desktop-launch-proof`).
 
