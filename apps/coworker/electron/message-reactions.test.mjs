@@ -7,7 +7,7 @@ import test from "node:test";
 import { createCoworker, getCoworker, restoreCoworker, retireCoworker, updateCoworker, withCoworkerRecordWrite } from "./coworkers.mjs";
 import { appendGroupEvent, archiveGroup, createGroup, getGroup, updateGroup } from "./groups.mjs";
 import { createMessageReactions, normalizeReactionEmoji } from "./message-reactions.mjs";
-import { assertReactionToolContext, createMessageReactionRuntime, hasCompletedReaction, REACTION_TOOL } from "./message-reactions-context.mjs";
+import { assertReactionToolContext, createMessageReactionRuntime, hasCompletedReaction, reactionOpportunity, REACTION_TOOL } from "./message-reactions-context.mjs";
 import { assertTeamConsultToolContext } from "./collaboration.mjs";
 import { NATIVE_TURN_ROLES } from "./native-turns.mjs";
 import { projectNativeV2History } from "@openwork/headless-threads/v2";
@@ -23,6 +23,15 @@ const command = (scope, actor, operationId, emoji = "👀", messageId = "message
 const storePath = (directory, scope) => scope.kind === "private"
   ? path.join(directory, scope.slug, `.message-reactions-${hash(scope.threadId)}.json`)
   : path.join(directory, ".groups", scope.groupId, ".message-reactions.json");
+
+test("reaction opportunities stay near one third and follow personality", () => {
+  const samples = Array.from({ length: 2000 }, (_, index) => `coworker:turn-${index}`);
+  const count = (personality) => samples.filter((seed) => reactionOpportunity(personality, seed)).length;
+  assert.ok(count("neutral") > 500 && count("neutral") < 700);
+  assert.ok(count("playful") > count("neutral"));
+  assert.ok(count("neutral") > count("dry"));
+  assert.equal(reactionOpportunity("neutral", samples[0]), reactionOpportunity("neutral", samples[0]), "retries keep the same opportunity");
+});
 
 async function fixture(t) {
   const home = await mkdtemp(path.join(tmpdir(), "coworker-reactions-"));
@@ -239,12 +248,16 @@ test("native reaction runtime freezes visible targets and revalidates at the ren
       return { entry, signal: nativeController.signal, assertActive };
     },
   };
-  const runtime = createMessageReactionRuntime({ directory, collaboration,
+  const runtime = createMessageReactionRuntime({ directory, collaboration, reactionAllowed: () => true,
     coworkerFor: (slug) => getCoworker(directory, slug),
     assertPrivate: async (slug, threadId) => {
       if (slug !== alpha.slug || threadId !== privateEntry.owner.threadId) throw new Error("Not this saved private discussion.");
       return getCoworker(directory, slug);
     },
+  });
+  const quietRuntime = createMessageReactionRuntime({ directory, collaboration, reactionAllowed: () => false,
+    coworkerFor: (slug) => getCoworker(directory, slug),
+    assertPrivate: async () => alpha,
   });
   let sequence = 0;
   const invoke = (args, { before = async () => {}, signal } = {}) => {
@@ -261,11 +274,13 @@ test("native reaction runtime freezes visible targets and revalidates at the ren
     current.entry.reactionTargets = { messageIds: prepared.messageIds, defaultMessageId: prepared.defaultMessageId };
     return prepared;
   };
+  assert.equal(await quietRuntime.prepare(current.entry, current.snapshot), null, "most turns do not offer a new reaction");
   const privateTargets = await prepare();
   assert.deepEqual(privateTargets.messageIds, [privateEntry.messageId]);
   assert.equal(privateTargets.defaultMessageId, privateEntry.messageId);
   const privateResult = (await invoke({ emoji: "👀", messageId: undefined })).structured.reaction;
   assert.equal(privateResult.messageId, privateEntry.messageId);
+  assert.ok(await quietRuntime.prepare(current.entry, current.snapshot), "an existing reaction can still be updated or removed");
   assert.equal(privateResult.actor.createdAt, alpha.createdAt);
   assert.equal(typeof privateResult.actor.createdAt, "string");
   current.snapshot.messages[0].parts[0].synthetic = true;

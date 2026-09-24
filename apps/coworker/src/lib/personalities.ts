@@ -1,10 +1,10 @@
 /**
  * Coworker personalities: a voice for the working state.
  *
- * A personality changes only what the interface says while a coworker is
- * busy — the small line under the thread, the rail label, the Now card. It
- * never changes how the coworker works or writes, and it never replaces a
- * truthful status: "Needs you", "Retrying", "Failed" always win. Sayings are
+ * A personality changes the interface's working sayings and the frequency and
+ * tone of optional message reactions. It never changes the coworker's actual
+ * task behavior or replaces a truthful status: "Needs you", "Retrying", and
+ * "Failed" always win. Sayings are
  * pre-written, work-oriented, and rotate deterministically so every surface
  * that shows the same coworker agrees on the same phrase at the same moment.
  */
