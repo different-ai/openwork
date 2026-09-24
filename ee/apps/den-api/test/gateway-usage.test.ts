@@ -137,19 +137,3 @@ test("raw missing-usage categories include only their own outcome and exclude re
     }
   } finally { sqlite.close(); }
 });
-
-test("OpenWork Models usage reports as its own family with Auto labelled and offered as a filter", async () => {
-  const hex = (value: string) => Buffer.from(value).toString("hex").toUpperCase()
-  const auto = `model:${hex("openwork")}:${hex("openai/gpt-5.6-luna")}`
-  replies = [
-    [["series", auto, JSON.stringify([bucket("4", "2", "0")]), null], ["option", "openwork", null, null]],
-    [],
-    [],
-  ]
-  const { usage } = await readGatewayUsage(org, { groupBy: "model", days: 31, filterIds: [] }, now)
-  expect(usage.series).toEqual([{ id: auto, label: "Auto" }])
-  expect(usage.filterOptions).toContainEqual({ id: "openwork", label: "OpenWork Models" })
-  // Every route feeds the read: the organization's providers, paid OpenWork Models and members' free Auto.
-  expect(queries[0]).toContain("`route` in (")
-  expect(queries[0]).toContain("`route` in ('openwork_openrouter', 'openwork_free') then")
-})

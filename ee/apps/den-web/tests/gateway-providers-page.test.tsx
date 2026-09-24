@@ -1,12 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { act, createElement, useState } from "react";
-import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { createRoot } from "react-dom/client";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { InferenceCredentialStatusBadge } from "../app/(den)/dashboard/_components/inference-providers-screen";
-import { GATEWAY_EXPLAINER, GatewayPinnedModelsTable } from "../app/(den)/dashboard/_components/inference-provider-detail-screen";
+import { GATEWAY_EXPLAINER } from "../app/(den)/dashboard/_components/inference-provider-detail-screen";
 import { GatewayModelUniverse } from "../app/(den)/dashboard/_components/inference-provider-model-universe";
 import {
   getCustomLlmProvidersRoute,
@@ -147,73 +145,6 @@ describe("Gateway provider editor", () => {
 });
 
 describe("Gateway provider detail", () => {
-  test("places organization pins above groups and saves only ordered pins", () => {
-    expect(detail.indexOf("<ProviderPinnedModelsEditor")).toBeLessThan(detail.indexOf("<GatewayAccessMatrix"));
-    expect(detail).toContain("Pinned for members");
-    expect(detail).toContain("Organization pins");
-    expect(detail).toContain("body: { pinnedModelIds: value }");
-    expect(matrix).toContain("provider.pinnedModelIds.includes(id)");
-  });
-
-  test("pin table shows model IDs, groups and only server-derived audiences", () => {
-    const base = { models: [{ id: "catalog-model", name: "Model", config: {} }], pinnedModelIds: ["catalog-model"], onChange: () => {} };
-    const missing = renderToStaticMarkup(createElement(GatewayPinnedModelsTable, base));
-    expect(missing).toContain("Audience not reported");
-    expect(missing).not.toContain("Everyone");
-    const html = renderToStaticMarkup(createElement(GatewayPinnedModelsTable, { ...base,
-      modelGroups: [{ id: "group", name: "Research", description: null, status: "active", modelIds: ["catalog-model"] }],
-      modelScopes: [{ modelId: "catalog-model", modelGroupId: "group", modelGroupName: "Research", credentialSetId: "set", credentialSetName: "Member key", audience: { type: "team", teamId: "team" }, audienceName: "Engineering", requiresMemberSignIn: true }],
-    }));
-    for (const value of ["catalog-model", "Research", "Engineering (sign-in required)", "Who sees it", "disabled"]) expect(html).toContain(value);
-    expect(html).not.toContain("Everyone");
-    expect(matrix).toContain('<details key={group.id}');
-  });
-
-  test("pins can be added, moved and removed with accessible controls in draft order", async () => {
-    GlobalRegistrator.register();
-    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    let current: string[] = [];
-    function Harness() {
-      const [ids, setIds] = useState(["beta", "alpha"]);
-      current = ids;
-      return <GatewayPinnedModelsTable models={[
-        { id: "alpha", name: "Alpha", config: {} }, { id: "beta", name: "Beta", config: {} }, { id: "gamma", name: "Gamma", config: {} },
-      ]} pinnedModelIds={ids} canManage modelGroups={[]} modelScopes={[]} onChange={setIds} />;
-    }
-    const button = (label: string) => container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
-    try {
-      await act(async () => root.render(<Harness />));
-      expect(button("Move Beta up")?.disabled).toBe(true);
-      expect(button("Move Alpha down")?.disabled).toBe(true);
-      expect(container.textContent).toContain("No active audience");
-      expect(container.textContent).toContain("Model group");
-      expect(container.textContent).toContain("Who sees it");
-      await act(async () => button("Move Alpha up")?.click());
-      expect(current).toEqual(["alpha", "beta"]);
-      expect(container.querySelector('[role="status"]')?.textContent).toBe("Alpha moved to position 1 in the draft.");
-      await act(async () => button("Move Alpha down")?.click());
-      expect(current).toEqual(["beta", "alpha"]);
-      await act(async () => button("Unpin Beta")?.click());
-      expect(current).toEqual(["alpha"]);
-      const picker = container.querySelector<HTMLInputElement>('[aria-label="Model to pin"]');
-      await act(async () => picker?.click());
-      const option = [...container.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((element) => element.textContent?.includes("Gamma"));
-      expect(option).toBeDefined();
-      await act(async () => option?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })));
-      const add = [...container.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent === "Pin model");
-      await act(async () => add?.click());
-      expect(current).toEqual(["alpha", "gamma"]);
-      expect(add?.disabled).toBe(true);
-    } finally {
-      await act(async () => root.unmount());
-      container.remove();
-      await GlobalRegistrator.unregister();
-    }
-  });
-
   test("shows the matrix explainer and write-only upstream keys", () => {
     expect(GATEWAY_EXPLAINER).toBe(
       "Members call this provider with their own AI Gateway key. Access rules select a model group and credential set; upstream credentials never reach their devices.",
@@ -280,7 +211,7 @@ describe("Gateway usage", () => {
     expect(usage).toContain("https://openworklabs.com/docs/ai-gateway/token-costs");
     expect(usage).toContain('unknownCost ? "Unknown" : formatUsageCost(usage.totalCostMicroUsd)');
     expect(usage).toContain('valueFormat={isCost ? "usd" : "tokens"}');
-    expect(usage).toContain("All Gateway providers, including OpenWork Models.");
+    expect(usage).toContain("Gateway providers only. OpenWork Models not included.");
     expect(usage).toContain("query.isPending || query.isFetching || query.isPlaceholderData");
     expect(usage).toContain('"Usage unavailable"');
   });

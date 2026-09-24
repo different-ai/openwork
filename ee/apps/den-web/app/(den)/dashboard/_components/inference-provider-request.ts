@@ -9,62 +9,9 @@ import type {
   InferenceProviderCredentialKind,
   InferenceProviderCredentialMode,
   InferenceProviderStatus,
-  InferenceAccess,
-  FreeInferenceProviderSummary,
 } from "@openwork/types/den/inference";
-import { INFERENCE_ACCESS_REASONS, freeInferenceProviderSummarySchema } from "@openwork/types/den/inference";
-import type { GatewayAccessGrant, GatewayCredentialSet, GatewayModelGroup, GatewayAuthorizationRequest, GatewayUsableModel, GatewayModelScope } from "@openwork/types/den/gateway";
+import type { GatewayAccessGrant, GatewayCredentialSet, GatewayModelGroup, GatewayAuthorizationRequest, GatewayUsableModel } from "@openwork/types/den/gateway";
 import { z } from "zod";
-
-const inferenceAccessSchema: z.ZodType<InferenceAccess> = z.object({
-  kind: z.enum(["paid", "free", "exhausted", "unavailable"]),
-  modelID: z.string().nullable(),
-  weeklyLimitUsd: z.number().finite().nonnegative().nullable(),
-  usedUsd: z.number().finite().nonnegative().nullable(),
-  reservedUsd: z.number().finite().nonnegative().nullable(),
-  remainingUsd: z.number().finite().nonnegative().nullable(),
-  resetsAt: z.string().nullable(),
-  reason: z.enum(INFERENCE_ACCESS_REASONS).nullable(),
-  canUpgrade: z.boolean().optional(),
-  defaultPinned: z.boolean().optional(),
-  catalog: z.array(z.object({
-    modelID: z.string(), displayName: z.string(), providerName: z.string(), summary: z.string(),
-    recommended: z.boolean(), rank: z.number(), capabilities: z.array(z.string()),
-  })).optional(),
-});
-
-export function readOpenWorkModelAccess(payload: unknown): InferenceAccess | null {
-  const result = z.object({ access: inferenceAccessSchema }).safeParse(payload);
-  return result.success ? result.data.access : null;
-}
-
-export function readFreeInferenceProvider(payload: unknown): FreeInferenceProviderSummary | null {
-  const result = z.object({ provider: freeInferenceProviderSummarySchema }).safeParse(payload);
-  return result.success ? result.data.provider : null;
-}
-
-export function getFreeInferenceProviderLabel(provider: FreeInferenceProviderSummary | null) {
-  if (!provider) return "Could not verify";
-  if (provider.state === "available") return "Included";
-  if (provider.state === "unavailable") return "Allowance unavailable";
-  return provider.reason === "admin_disabled" ? "Disabled by organization" : "Free offer disabled";
-}
-
-export function gatewayModelScopeLabels(scopes: GatewayModelScope[] | null | undefined, modelId?: string) {
-  if (!scopes) return ["Audience not reported"];
-  const labels = [...new Set(scopes.filter((scope) => !modelId || scope.modelId === modelId)
-    .map((scope) => `${scope.audienceName}${scope.requiresMemberSignIn ? " (sign-in required)" : ""}`))];
-  return labels.length ? labels : ["No active audience"];
-}
-
-export function getOpenWorkModelAccessLabel(access: InferenceAccess | null) {
-  if (!access) return "Could not verify";
-  if (access.kind === "free") return "Included";
-  if (access.kind === "paid") return "Available";
-  if (access.kind === "exhausted") return "Allowance exhausted";
-  if (access.reason === "admin_disabled") return "Disabled by organization";
-  return "Unavailable";
-}
 
 export type InferenceCredentialStatus = "ready" | "member_auth_required" | "org_credential_missing";
 
@@ -89,7 +36,6 @@ export type DenInferenceProvider = {
   providerConfig: Record<string, unknown>;
   /** Empty follows the catalog; null means an older response omitted the policy. */
   modelIds: string[] | null;
-  pinnedModelIds: string[];
   catalogWarning: string | null;
   settings: Record<string, string>;
   models: Array<{ id: string; name: string; config: Record<string, unknown> } & Partial<Pick<GatewayUsableModel, "upstreamModelId" | "modelGroupId" | "modelGroupName" | "credentialSetId" | "credentialSetName">>>;
@@ -101,7 +47,6 @@ export type DenInferenceProvider = {
   hasOauthClientSecret: boolean;
   oauthCallbackUrl: string | null;
   modelGroups: GatewayModelGroup[] | null;
-  modelScopes?: GatewayModelScope[];
   credentialSets: GatewayCredentialSet[] | null;
   accessGrants: GatewayAccessGrant[] | null;
   authorizationRequests: GatewayAuthorizationRequest[];
@@ -134,11 +79,6 @@ const accessGrantSchema: z.ZodType<GatewayAccessGrant> = z.object({
     z.object({ type: z.literal("team"), teamId: z.string() }),
     z.object({ type: z.literal("member"), memberId: z.string() }),
   ]),
-});
-const modelScopeSchema: z.ZodType<GatewayModelScope> = z.object({
-  modelId: z.string(), modelGroupId: z.string(), modelGroupName: z.string(), credentialSetId: z.string(), credentialSetName: z.string(),
-  audience: z.discriminatedUnion("type", [z.object({ type: z.literal("organization") }), z.object({ type: z.literal("team"), teamId: z.string() }), z.object({ type: z.literal("member"), memberId: z.string() })]),
-  audienceName: z.string(), requiresMemberSignIn: z.boolean(),
 });
 const authorizationRequestSchema: z.ZodType<GatewayAuthorizationRequest> = z.object({
   credentialSetId: z.string(), name: z.string(), authUrl: z.string(),
@@ -272,7 +212,6 @@ export function asInferenceProvider(value: unknown): DenInferenceProvider | null
     updatedAt: asString(value.updatedAt),
     providerConfig: asJsonRecord(value.providerConfig),
     modelIds: value.modelIds === undefined ? null : z.array(z.string()).parse(value.modelIds),
-    pinnedModelIds: value.pinnedModelIds === undefined ? [] : z.array(z.string()).parse(value.pinnedModelIds),
     catalogWarning: asString(value.catalogWarning),
     settings,
     models: Array.isArray(value.models)
@@ -305,7 +244,6 @@ export function asInferenceProvider(value: unknown): DenInferenceProvider | null
     hasOauthClientSecret: value.hasOauthClientSecret === true,
     oauthCallbackUrl: asString(value.oauthCallbackUrl),
     modelGroups: value.modelGroups === undefined ? null : z.array(modelGroupSchema).parse(value.modelGroups),
-    modelScopes: value.modelScopes === undefined ? undefined : z.array(modelScopeSchema).parse(value.modelScopes),
     credentialSets: value.credentialSets === undefined ? null : z.array(credentialSetSchema).parse(value.credentialSets),
     accessGrants: value.accessGrants === undefined ? null : z.array(accessGrantSchema).parse(value.accessGrants),
     authorizationRequests: value.authorizationRequests === undefined ? [] : z.array(authorizationRequestSchema).parse(value.authorizationRequests),
@@ -397,7 +335,6 @@ export type InferenceProviderRequestBody = {
   name: string;
   providerId: string;
   modelIds: string[];
-  pinnedModelIds?: string[];
   credentialMode: InferenceProviderCredentialMode;
   status: InferenceProviderStatus;
   settings?: Record<string, string>;

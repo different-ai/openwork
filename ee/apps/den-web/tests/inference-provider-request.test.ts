@@ -232,15 +232,6 @@ describe("credential status labels", () => {
 });
 
 describe("response parsing", () => {
-  test("keeps ordered pins separate from model order and defaults older responses to no pins", () => {
-    const provider = { id: "ipr_fixture", providerId: "anthropic", name: "Team models", credentialMode: "org", status: "active", models: [{ id: "alpha", name: "Alpha", config: {} }, { id: "beta", name: "Beta", config: {} }] };
-    expect(asInferenceProvider(provider)?.pinnedModelIds).toEqual([]);
-    const parsed = asInferenceProvider({ ...provider, pinnedModelIds: ["beta", "alpha"] });
-    expect(parsed?.pinnedModelIds).toEqual(["beta", "alpha"]);
-    expect(parsed?.models.map((model) => model.id)).toEqual(["alpha", "beta"]);
-    expect(() => asInferenceProvider({ ...provider, pinnedModelIds: [42] })).toThrow();
-  });
-
   test("parses the manageable list shape including access and credentials", () => {
     const providers = readInferenceProvidersFromPayload({
       inferenceProviders: [

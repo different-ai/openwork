@@ -1244,8 +1244,6 @@ test("ordered pins preserve the matrix and expose only caller-usable aliases", a
   expect(saved.pinnedModelIds).toEqual(configuredPins)
   for (const field of ["name", "modelIds", "modelGroups", "credentialSets", "accessGrants", "settings"]) expect(saved[field]).toEqual(created[field])
   expect(saved.models).toEqual([])
-  expect(readRows(saved, "modelScopes")).toHaveLength(2)
-  expect(firstRow(saved, "modelScopes")).toMatchObject({ modelGroupId: groupId, audience: { type: "member", memberId }, audienceName: "Gateway Member", requiresMemberSignIn: false })
   expect((await request(ownerCookie, `${base}/connect`)).status).toBe(403)
 
   const connected = readProvider(await (await request(memberCookie, `${base}/connect`)).json())
@@ -1256,11 +1254,9 @@ test("ordered pins preserve the matrix and expose only caller-usable aliases", a
     return readString(model, "id")
   })
   expect(connected.pinnedModelIds).toEqual(expectedPins)
-  expect(connected.modelScopes).toBeUndefined()
   expect(usableModels.map((model) => model.name)).toEqual(["Claude Haiku 4", "Claude Sonnet 4"])
   const listed = readProviderList(await (await request(memberCookie, "/v1/inference-providers")).json()).find((provider) => provider.id === id)
   expect(listed?.pinnedModelIds).toEqual(expectedPins)
-  expect(listed?.modelScopes).toBeUndefined()
   for (const body of [
     { pinnedModelIds: ["claude-sonnet-4", "claude-sonnet-4"] },
     { pinnedModelIds: [], modelIds: [] },

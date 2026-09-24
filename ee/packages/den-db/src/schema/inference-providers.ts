@@ -59,24 +59,6 @@ export const GatewayProviderTable = mysqlTable(
   ],
 )
 
-export const GatewayLocalKeyShareTable = mysqlTable(
-  "gateway_local_key_shares",
-  {
-    id: varchar("id", { length: 36 }).notNull().primaryKey(),
-    organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
-    org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
-    request_id: varchar("request_id", { length: 36 }).notNull(),
-    request_hash: varchar("request_hash", { length: 64 }).notNull(),
-    provider_id: varchar("provider_id", { length: 255 }).notNull(),
-    gateway_provider_id: denTypeIdColumn("inferenceProvider", "gateway_provider_id").notNull(),
-    created_at: timestamps.created_at,
-  },
-  (table) => [
-    uniqueIndex("gateway_local_key_share_request").on(table.organization_id, table.org_membership_id, table.request_id),
-    index("gateway_local_key_share_provider").on(table.gateway_provider_id),
-  ],
-)
-
 export const GatewayProviderModelTable = mysqlTable(
   "gateway_provider_models",
   {
@@ -396,7 +378,6 @@ export const gatewayCredentialSetRelations = relations(GatewayCredentialSetTable
   oauthStates: many(GatewayProviderOauthStateTable),
 }))
 
-export const gatewayLocalKeyShare = GatewayLocalKeyShareTable
 export const gatewayProvider = GatewayProviderTable
 export const gatewayProviderModel = GatewayProviderModelTable
 export const gatewayKey = GatewayKeyTable

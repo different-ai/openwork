@@ -51,7 +51,7 @@ describe("dashboard navigation index", () => {
     expect(models?.children?.some((child) => child.label === "Gateway")).toBe(gatewayDashboard);
     const search = flattenNavigationForSearch(sections);
     expect(search.some((entry) => entry.href === "/dashboard/gateway-providers")).toBe(gatewayDashboard);
-    expect(search.some((entry) => entry.label === "Models › Usage & billing")).toBe(true);
+    expect(search.some((entry) => entry.label === "Models › OpenWork Models")).toBe(true);
     expect(search.some((entry) => entry.label === "Models › Bring Your Own Keys (Legacy)")).toBe(true);
     expect(flattenNavigationForSearch(buildFor("member", { ...baseCapabilities, gatewayDashboard }))
       .some((entry) => entry.href === "/dashboard/gateway-providers")).toBe(false);
@@ -67,7 +67,7 @@ describe("dashboard navigation index", () => {
     const models = sections.flatMap((section) => section.items).find((item) => item.label === "Models");
     expect(models?.href).toBe(gatewayAccess === "checking" ? "/dashboard/custom-llm-providers" : "/dashboard/inference");
     expect(models?.children?.some((child) => child.label === "Gateway")).toBe(gatewayAccess === "enabled" || gatewayAccess === "unavailable");
-    expect(models?.children?.some((child) => child.label === "Usage & billing")).toBe(gatewayAccess !== "checking");
+    expect(models?.children?.some((child) => child.label === "OpenWork Models")).toBe(gatewayAccess !== "checking");
   });
 
   test("hosted admins see both Models and Gateway in the sidebar and command palette", () => {
@@ -75,12 +75,12 @@ describe("dashboard navigation index", () => {
     const models = sections.flatMap((section) => section.items).find((item) => item.label === "Models");
     expect(models?.children).toEqual([
       { href: "/dashboard/gateway-providers", label: "Gateway", badge: "New" },
-      { href: "/dashboard/inference", label: "Usage & billing" },
+      { href: "/dashboard/inference", label: "OpenWork Models" },
       { href: "/dashboard/custom-llm-providers", label: "Bring Your Own Keys (Legacy)" },
     ]);
     const search = flattenNavigationForSearch(sections);
     expect(search.find((entry) => entry.label === "Models › Gateway")?.href).toBe("/dashboard/gateway-providers");
-    expect(search.find((entry) => entry.label === "Models › Usage & billing")?.href).toBe("/dashboard/inference");
+    expect(search.find((entry) => entry.label === "Models › OpenWork Models")?.href).toBe("/dashboard/inference");
   });
 
   test.each([false, true])("Models stays hidden for self-hosted or unresolved runtime config with Gateway %s", (gatewayDashboard) => {
@@ -92,7 +92,7 @@ describe("dashboard navigation index", () => {
     ]) {
       const models = sections.flatMap((section) => section.items).find((item) => item.label === "Models");
       expect(models?.href).toBe("/dashboard/custom-llm-providers");
-      expect(models?.children?.some((child) => child.label === "Usage & billing")).toBe(false);
+      expect(models?.children?.some((child) => child.label === "OpenWork Models")).toBe(false);
       expect(flattenNavigationForSearch(sections).some((entry) => entry.href === "/dashboard/inference")).toBe(false);
     }
   });

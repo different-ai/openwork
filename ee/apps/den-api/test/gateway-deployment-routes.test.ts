@@ -50,7 +50,7 @@ const { env } = await import("../src/env.js")
 const { buildOpenWorkProviderConfig, readInferenceMetadata } = await import("../src/inference.js")
 const { deploymentCapabilities } = await import("../src/gateway-deployment.js")
 const { registerOrgInferenceProviderRoutes } = await import("../src/routes/org/inference-providers.js")
-const { publicGatewayPinnedModelIds, gatewayModelScopes } = await import("../src/llm/gateway-matrix.js")
+const { publicGatewayPinnedModelIds } = await import("../src/llm/gateway-matrix.js")
 const app = new Hono()
 app.onError((error, c) => {
   if (error.message === "fixture_storage_reached") return c.json({ error: error.message }, 503)
@@ -119,23 +119,6 @@ test("enabled management retains admin checks and privileged-session checks", as
     expect(await response.json()).toMatchObject({ error: "reauth" })
     expect(storageCalls).toBe(0)
   }
-})
-
-test("model audiences derive only from active grants, configured sets and scoped member/team labels", () => {
-  const input: Parameters<typeof gatewayModelScopes>[0] = {
-    active: true, groups: [{ id: "group", name: "Default", description: null, status: "active", modelIds: ["alpha"] }],
-    sets: [{ id: "set", name: "Team key", credentialMode: "org", status: "active", configured: true, credentialStatus: "ready" }],
-    grants: [{ id: "grant", modelGroupId: "group", credentialSetId: "set", audience: { type: "team", teamId: "team" } }],
-    members: [], teams: [{ id: "team", name: "Engineering" }],
-  }
-  expect(gatewayModelScopes(input)).toMatchObject([{ modelId: "alpha", modelGroupName: "Default", audienceName: "Engineering", requiresMemberSignIn: false }])
-  expect(gatewayModelScopes({ ...input, teams: [] })).toEqual([])
-  expect(gatewayModelScopes({ ...input, grants: [] })).toEqual([])
-  expect(gatewayModelScopes({ ...input, active: false })).toEqual([])
-  expect(gatewayModelScopes({ ...input, groups: input.groups.map((group) => ({ ...group, status: "disabled" })) })).toEqual([])
-  expect(gatewayModelScopes({ ...input, sets: input.sets.map((set) => ({ ...set, credentialStatus: "org_credential_missing" })) })).toEqual([])
-  expect(gatewayModelScopes({ ...input, sets: input.sets.map((set) => ({ ...set, credentialMode: "member", credentialStatus: "member_auth_required" })) })).toMatchObject([{ requiresMemberSignIn: true }])
-  expect(gatewayModelScopes({ ...input, grants: [{ ...input.grants[0], audience: { type: "organization" } }] })).toMatchObject([{ audienceName: "Everyone" }])
 })
 
 test("public pin projection preserves configured order, expands usable aliases and drops revoked access", () => {

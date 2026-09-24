@@ -83,7 +83,6 @@ export type CloudProvidersViewProps = {
   connectingGatewayProviderId?: string | null;
   onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
   onOpenDen?: () => void;
-  recentShares?: Array<{ inferenceProviderId: string; name: string; sharedAt: number }>;
 };
 
 export function CloudProvidersView({
@@ -103,7 +102,6 @@ export function CloudProvidersView({
   connectingGatewayProviderId,
   onConnectGatewayProvider,
   onOpenDen,
-  recentShares = [],
 }: CloudProvidersViewProps) {
   const { activeOrganization, isSignedIn } = useCloudSession();
   const [busy, setBusy] = React.useState(false);
@@ -167,21 +165,11 @@ export function CloudProvidersView({
       detail: provider.source === "openwork_gateway" ? "OpenWork Gateway · Organization credential" : "Managed in Den",
     }));
     const combined = [...liveRows, ...importedRows];
-    for (const share of recentShares) {
-      const row = combined.find((item) => item.cloudProviderId === share.inferenceProviderId);
-      const detail = `Shared by you ${new Date(share.sharedAt).toLocaleString()} · Managed in Den`;
-      if (row) row.detail = detail;
-      else {
-        const verifiedAfterShare = serverSync?.lastVerifiedAt !== undefined && serverSync.lastVerifiedAt !== null && new Date(serverSync.lastVerifiedAt).getTime() >= share.sharedAt;
-        combined.push({ key: `share:${share.inferenceProviderId}`, cloudProviderId: share.inferenceProviderId, provider: null, imported: null, name: share.name, detail: `${detail} · ${verifiedAfterShare ? "Not included in your current access" : "Checking your access"}`, status: verifiedAfterShare ? "unavailable" : "syncing" });
-      }
-    }
     return combined.filter((row) => !gatewayConnectProviders.some((provider) => provider.cloudProviderId === row.cloudProviderId)).map<CloudProviderRow>((row) => serverSync?.lastRun?.status === "failed" ? { ...row, status: "unavailable", detail: "Could not verify with Den. Sync again to check access." } : row);
   }, [
     checkDesktopAppRestriction,
     cloudOrgProviders,
     gatewayConnectProviders,
-    recentShares,
     importedCloudProviders,
     importsUnavailable,
     lastSyncError,

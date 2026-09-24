@@ -4,7 +4,7 @@ import { AuthUserTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, 
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { createGatewayModelAlias, gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
 import { inferenceCredentialEnvNames, isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
-import { parseGatewayProviderSecret, type GatewayAccessGrant, type GatewayAccessGrantWrite, type GatewayCredentialSet, type GatewayCredentialSetPatch, type GatewayModelGroup, type GatewayModelGroupPatch, type GatewayProviderDetails, type GatewayProviderSummary, type GatewayUsableModel, type GatewayModelScope } from "@openwork/types/den/gateway"
+import { parseGatewayProviderSecret, type GatewayAccessGrant, type GatewayAccessGrantWrite, type GatewayCredentialSet, type GatewayCredentialSetPatch, type GatewayModelGroup, type GatewayModelGroupPatch, type GatewayProviderDetails, type GatewayProviderSummary, type GatewayUsableModel } from "@openwork/types/den/gateway"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { buildGatewayModelConfig, buildGatewayProviderConfig, buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "./inference-provider-config.js"
@@ -242,34 +242,6 @@ export function gatewayGrantSummary(row: typeof GatewayProviderAccessTable.$infe
     audience: row.org_membership_id ? { type: "member", memberId: row.org_membership_id } : row.team_id ? { type: "team", teamId: row.team_id } : { type: "organization" } }
 }
 
-export function gatewayModelScopes(input: {
-  active: boolean;
-  groups: GatewayModelGroup[];
-  sets: GatewayCredentialSet[];
-  grants: GatewayAccessGrant[];
-  members: Array<{ id: string; name: string }>;
-  teams: Array<{ id: string; name: string }>;
-}): GatewayModelScope[] {
-  if (!input.active) return []
-  const scopes: GatewayModelScope[] = []
-  for (const grant of input.grants) {
-    const group = input.groups.find((entry) => entry.id === grant.modelGroupId && entry.status === "active")
-    const set = input.sets.find((entry) => entry.id === grant.credentialSetId && entry.status === "active" && entry.configured
-      && (entry.credentialMode === "member" || entry.credentialStatus === "ready"))
-    if (!group || !set) continue
-    const audience = grant.audience
-    const audienceName = audience.type === "organization" ? "Everyone"
-      : audience.type === "team" ? input.teams.find((team) => team.id === audience.teamId)?.name
-      : input.members.find((member) => member.id === audience.memberId)?.name
-    if (!audienceName) continue
-    for (const modelId of group.modelIds) scopes.push({
-      modelId, modelGroupId: group.id, modelGroupName: group.name, credentialSetId: set.id, credentialSetName: set.name,
-      audience, audienceName, requiresMemberSignIn: set.credentialMode === "member",
-    })
-  }
-  return scopes
-}
-
 export function publicGatewayPinnedModelIds(pinnedModelIds: readonly string[], usableModels: readonly Pick<GatewayUsableModel, "id" | "upstreamModelId">[]) {
   return [...new Set(pinnedModelIds.flatMap((id) => usableModels.filter((model) => model.upstreamModelId === id).map((model) => model.id)))]
 }
@@ -354,18 +326,6 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
   if (!manage) return summary
   const modelGroups: GatewayModelGroup[] = groups.map((group) => ({ id: group.id, name: group.name, description: group.description, status: group.status,
     modelIds: models.filter((model) => links.some((link) => link.model_group_id === group.id && link.gateway_provider_model_id === model.id)).map((model) => model.model_id) }))
-  const memberIds = access.flatMap((grant) => grant.org_membership_id ? [grant.org_membership_id] : [])
-  const teamIds = access.flatMap((grant) => grant.team_id ? [grant.team_id] : [])
-  const [audienceMembers, audienceTeams] = await Promise.all([
-    memberIds.length ? db.select({ id: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email }).from(MemberTable)
-      .innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
-      .where(and(eq(MemberTable.organizationId, provider.organization_id), inArray(MemberTable.id, memberIds), isNull(MemberTable.removedAt))) : [],
-    teamIds.length ? db.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable)
-      .where(and(eq(TeamTable.organizationId, provider.organization_id), inArray(TeamTable.id, teamIds))) : [],
-  ])
-  const accessGrants = access.map(gatewayGrantSummary)
-  const modelScopes = gatewayModelScopes({ active: provider.status === "active", groups: modelGroups, sets: setSummaries, grants: accessGrants,
-    members: audienceMembers.map((member) => ({ id: member.id, name: member.name || member.email || "Member" })), teams: audienceTeams })
-  return { ...summary, settings: publicProviderSettings(provider.settings), modelGroups, modelScopes, credentialSets: setSummaries, accessGrants, oauthCallbackUrl: `${baseUrl}/v1/inference-providers/oauth/callback`,
+  return { ...summary, settings: publicProviderSettings(provider.settings), modelGroups, credentialSets: setSummaries, accessGrants: access.map(gatewayGrantSummary), oauthCallbackUrl: `${baseUrl}/v1/inference-providers/oauth/callback`,
     credentials: credentials.map(({ credential, memberName, memberEmail }) => ({ id: credential.id, credentialSetId: credential.credential_set_id, subject: credential.subject, orgMembershipId: credential.org_membership_id, memberName, memberEmail, kind: credential.kind, status: credential.status, expiresAt: credential.expires_at?.toISOString() ?? null })) }
 }

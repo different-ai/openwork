@@ -1,8 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { InferenceAccess, FreeInferenceProviderSummary } from "@openwork/types/den/inference";
-import { z } from "zod";
 import type { GatewayAccessGrantWrite, GatewayCredentialSetWrite, GatewayModelGroupWrite } from "@openwork/types/den/gateway";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
@@ -11,85 +9,10 @@ import {
   readInferenceProviderFromPayload,
   readInferenceProvidersFromPayload,
   readInferenceProviderDetails,
-  readOpenWorkModelAccess,
-  readFreeInferenceProvider,
   type DenInferenceProviderDetails,
   type DenInferenceProvider,
   type InferenceProviderRequestBody,
 } from "./inference-provider-request";
-
-export function useOpenWorkFreeProvider(orgId: string | null) {
-  const generation = useRef(0);
-  const [state, setState] = useState<{ orgId: string; provider: FreeInferenceProviderSummary } | null>(null);
-  const [busy, setBusy] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const reload = useCallback(async () => {
-    const request = ++generation.current;
-    setError(null);
-    if (!orgId) { setState(null); setBusy(false); return; }
-    setBusy(true);
-    try {
-      const { response, payload } = await requestJson("/v1/inference/free/provider", { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId } }, 15000);
-      if (request !== generation.current) return;
-      if (!response.ok) {
-        if ([401, 403, 404].includes(response.status)) setState(null);
-        throw getRequestError(payload, response, "Could not refresh organization allowance. Try again.");
-      }
-      const provider = readFreeInferenceProvider(payload);
-      if (!provider) throw new Error("The server did not return a complete organization allowance summary.");
-      setState({ orgId, provider });
-    } catch (cause) {
-      if (request === generation.current) setError(cause instanceof Error ? cause.message : "Could not refresh organization allowance.");
-    } finally {
-      if (request === generation.current) setBusy(false);
-    }
-  }, [orgId]);
-  useEffect(() => { void reload(); return () => { generation.current += 1; }; }, [reload]);
-  const updatePin = useCallback((defaultPinned: boolean) => {
-    setState((current) => current?.orgId === orgId ? { ...current, provider: { ...current.provider, defaultPinned } } : current);
-  }, [orgId]);
-  return { provider: state?.orgId === orgId ? state.provider : null, busy, error, reload, updatePin };
-}
-
-export async function saveOpenWorkAutoPin(orgId: string, defaultPinned: boolean) {
-  const { response, payload } = await requestJson("/v1/inference/free/pins", {
-    method: "PATCH", headers: { [ORG_SCOPE_HEADER]: orgId }, body: JSON.stringify({ defaultPinned }),
-  }, 15000);
-  if (!response.ok) throw getRequestError(payload, response, "Could not save the organization Auto pin.");
-  const saved = z.object({ defaultPinned: z.boolean() }).safeParse(payload);
-  if (!saved.success) throw new Error("The server did not confirm the Auto pin. Refresh before trying again.");
-  return saved.data.defaultPinned;
-}
-
-export function useOpenWorkModelAccess(orgId: string | null) {
-  const generation = useRef(0);
-  const [state, setState] = useState<{ orgId: string; access: InferenceAccess } | null>(null);
-  const [busy, setBusy] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const reload = useCallback(async () => {
-    const request = ++generation.current;
-    setError(null);
-    if (!orgId) { setState(null); setBusy(false); return; }
-    setBusy(true);
-    try {
-      const { response, payload } = await requestJson("/v1/inference/access", { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId } }, 15000);
-      if (request !== generation.current) return;
-      if (!response.ok) throw new Error("Could not verify OpenWork Models. Refresh to try again.");
-      const access = readOpenWorkModelAccess(payload);
-      if (!access) throw new Error("OpenWork model access is unavailable from this server. Refresh after the server is updated.");
-      setState({ orgId, access });
-    } catch (cause) {
-      if (request === generation.current) setError(cause instanceof Error ? cause.message : "Could not verify OpenWork Models.");
-    } finally {
-      if (request === generation.current) setBusy(false);
-    }
-  }, [orgId]);
-  useEffect(() => {
-    void reload();
-    return () => { generation.current += 1; };
-  }, [reload]);
-  return { access: state?.orgId === orgId ? state.access : null, busy, error, reload };
-}
 
 export function useOrgInferenceProviders(orgId: string | null) {
   const generation = useRef(0);
@@ -134,8 +57,6 @@ export function useOrgInferenceProviders(orgId: string | null) {
 export function useInferenceProvider(orgId: string | null, inferenceProviderId: string | null) {
   const generation = useRef(0);
   const [provider, setProvider] = useState<DenInferenceProviderDetails | null>(null);
-  const [loadedScope, setLoadedScope] = useState<string | null>(null);
-  const scope = orgId && inferenceProviderId ? `${orgId}:${inferenceProviderId}` : null;
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -156,23 +77,19 @@ export function useInferenceProvider(orgId: string | null, inferenceProviderId: 
       );
       if (request !== generation.current) return;
       if (!response.ok) {
-        if ([401, 403, 404].includes(response.status)) setProvider(null);
         throw new Error(getErrorMessage(payload, `Failed to load the provider (${response.status}).`));
       }
       const catalog = await requestJson(`/v1/inference-providers/${encodeURIComponent(inferenceProviderId)}/models`, { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId } }, 15000);
       if (request !== generation.current) return;
-      if (!catalog.response.ok) {
-        if ([401, 403, 404].includes(catalog.response.status)) setProvider(null);
-        throw new Error(getErrorMessage(catalog.payload, "Could not load configured catalog models."));
-      }
+      if (!catalog.response.ok) throw new Error(getErrorMessage(catalog.payload, "Could not load configured catalog models."));
       const next = readInferenceProviderDetails(payload, catalog.payload);
       if (!next) {
         throw new Error("The server did not return valid model groups, credential sets and access rules. Matrix editing is unavailable until the API is updated.");
       }
       setProvider(next);
-      setLoadedScope(`${orgId}:${inferenceProviderId}`);
     } catch (loadError) {
       if (request !== generation.current) return;
+      setProvider(null);
       setError(loadError instanceof Error ? loadError.message : "Failed to load the provider.");
     } finally {
       if (request === generation.current) setBusy(false);
@@ -184,7 +101,7 @@ export function useInferenceProvider(orgId: string | null, inferenceProviderId: 
     return () => { generation.current += 1; };
   }, [load]);
 
-  return { provider: loadedScope === scope ? provider : null, busy, error, reload: load };
+  return { provider, busy, error, reload: load };
 }
 
 export async function saveInferenceProvider(input: {

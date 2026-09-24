@@ -64,7 +64,7 @@ export function GatewayUsageSection({ orgId }: { orgId: string }) {
             <p className="text-xs text-gray-500">{valueLabel}</p>
             {usage ? <p className="mt-1 break-words text-3xl font-semibold tracking-tight text-gray-950 tabular-nums">{noTeams ? "—" : isCost ? (unknownCost ? "Unknown" : formatUsageCost(usage.totalCostMicroUsd)) : usage.totalTokens.toLocaleString()}</p>
               : <p role="status" className="mt-2 text-sm text-gray-500">{loading ? "Loading usage..." : "Usage unavailable"}</p>}
-            <p className="mt-2 text-xs text-gray-500">All Gateway providers, including OpenWork Models.</p>
+            <p className="mt-2 text-xs text-gray-500">Gateway providers only. OpenWork Models not included.</p>
           </div>
           <div className="flex flex-wrap items-end gap-3">
             <div className="grid gap-1.5">

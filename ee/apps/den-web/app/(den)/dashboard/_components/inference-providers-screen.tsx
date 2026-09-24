@@ -2,8 +2,6 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import type { FreeInferenceProviderSummary } from "@openwork/types/den/inference";
-import { useDenFlow } from "../../_providers/den-flow-provider";
 import { ChevronRight, KeyRound, Layers3, Plus, Search, Shield } from "lucide-react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenBadge } from "../../_components/ui/badge";
@@ -14,7 +12,7 @@ import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { getGatewayProviderRoute, getNewGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { useOpenWorkFreeProvider, useOrgInferenceProviders } from "./inference-provider-data";
+import { useOrgInferenceProviders } from "./inference-provider-data";
 import { GatewayUsageSection } from "./gateway-usage-section";
 import { GatewayUsageLimitsSection } from "./gateway-usage-limits-section";
 import { GatewayUsageResetRequests } from "./gateway-usage-reset-requests";
@@ -23,7 +21,6 @@ import {
   getCredentialStatusLabel,
   getCredentialStatusTone,
   getProviderStatusLabel,
-  getFreeInferenceProviderLabel,
   type DenInferenceProvider,
 } from "./inference-provider-request";
 import { formatProviderTimestamp, getProviderDocUrl, getProviderIconSlug } from "./llm-provider-data";
@@ -90,33 +87,11 @@ function GatewayProviderCard({ provider, orgSlug }: { provider: DenInferenceProv
   );
 }
 
-export function OpenWorkModelsProviderCard({ orgSlug, provider, busy, error }: { orgSlug: string | null; provider: FreeInferenceProviderSummary | null; busy: boolean; error: string | null }) {
-  const allowance = provider?.allowance;
-  return <Link href={getGatewayProviderRoute(orgSlug, "openwork")} aria-label="Open OpenWork Models" data-testid="openwork-provider-card" className="group block min-w-0 rounded-[30px] focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2">
-    <DenCard className="flex h-full min-w-0 flex-col gap-5 transition-colors group-hover:border-gray-300 group-hover:bg-gray-50">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3"><DenBrandMark name="OpenWork" simpleIconSlug="openwork" /><div><h2 className="text-base font-semibold">OpenWork Models</h2><p className="mt-1 text-xs text-gray-500">openwork</p></div></div>
-        <DenBadge tone="neutral">{busy && !provider ? "Checking access" : getFreeInferenceProviderLabel(error ? null : provider)}</DenBadge>
-      </div>
-      {provider ? <>
-        <div className="flex flex-wrap gap-2"><DenBadge>Free plan</DenBadge><DenBadge>1 model group</DenBadge><DenBadge>{provider.defaultPinned ? "Auto pinned" : "Auto not pinned"}</DenBadge></div>
-        <dl className="grid grid-cols-2 gap-4 text-sm"><div><dt className="text-gray-500">Members at limit</dt><dd>{allowance?.exhaustedMembers == null ? "Not reported" : `${allowance.exhaustedMembers} of ${allowance.eligibleMembers}`}</dd></div><div><dt className="text-gray-500">Recorded free usage</dt><dd>{allowance?.usedUsd == null ? "Not reported" : `$${allowance.usedUsd.toFixed(2)}`}</dd></div></dl>
-      </> : <p className="text-sm text-gray-500">Organization provider details not reported</p>}
-      {error ? <p className="text-sm text-gray-500">Could not refresh these details. Open to retry.</p> : null}
-      <div className="mt-auto flex items-center justify-between gap-3 border-t border-gray-100 pt-4 text-xs text-gray-500"><span>Managed by OpenWork</span><ChevronRight className="size-4" strokeWidth={1.5} aria-hidden="true" /></div>
-    </DenCard>
-  </Link>;
-}
-
 export function InferenceProvidersScreen() {
   const { orgId, orgSlug, orgContext } = useOrgDashboard();
-  const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const access = getOrgAccessFlags(orgContext?.currentMember.role ?? "member", orgContext?.currentMember.isOwner ?? false, orgContext?.roles);
-  const showOpenWorkModels = runtimeConfigLoaded && runtimeConfig.orgMode === "multi_org" && access.isAdmin;
-  const openWork = useOpenWorkFreeProvider(showOpenWorkModels ? orgId : null);
   const { inferenceProviders, busy, error } = useOrgInferenceProviders(orgId);
   const [query, setQuery] = useState("");
-  const showOpenWorkCard = showOpenWorkModels && ["OpenWork Models", ...(openWork.provider?.catalog.map((model) => model.displayName) ?? [])].some((name) => name.toLowerCase().includes(query.trim().toLowerCase()));
 
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -169,7 +144,7 @@ export function InferenceProvidersScreen() {
           </div>
         ) : (
           <section aria-label="Configured providers">
-            {filtered.length === 0 && !showOpenWorkCard ? (
+            {filtered.length === 0 ? (
               <DenCard className="px-6 py-12 text-center">
                 <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900">
                   {inferenceProviders.length === 0 ? "No gateway providers yet." : "No providers match that search."}
@@ -181,8 +156,7 @@ export function InferenceProvidersScreen() {
                 </p>
               </DenCard>
             ) : (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                {showOpenWorkCard ? <OpenWorkModelsProviderCard orgSlug={orgSlug} {...openWork} /> : null}
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                 {filtered.map((provider) => <GatewayProviderCard key={provider.id} provider={provider} orgSlug={orgSlug} />)}
               </div>
             )}

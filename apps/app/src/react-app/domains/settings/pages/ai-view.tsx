@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
-import { Lock, MoreHorizontal } from "lucide-react";
+import { Lock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { DesktopFreePreferences } from "@/app/lib/openwork-server";
 import { t } from "@/i18n";
 import { gatewayConnectCopy, gatewayConnectProviderKey, type GatewayConnectProvider, isCloudManagedProviderKey, OPENWORK_GATEWAY_BADGE_LABEL } from "../../connections/provider-auth/cloud-provider-config";
@@ -16,7 +15,6 @@ export type ConnectedProvider = {
   id: string;
   name: string;
   source?: "env" | "api" | "config" | "custom";
-  savedAt?: number;
 };
 
 export type AiSettingsViewProps = {
@@ -50,7 +48,6 @@ export type AiSettingsViewProps = {
   autoBusy?: boolean;
   autoError?: string | null;
   onSetAutoEnabled?: (enabled: boolean) => void | Promise<void>;
-  onShareProvider?: (provider: ConnectedProvider) => void;
   organizationProviderIds?: ReadonlySet<string>;
   onOpenDen?: () => void;
 };
@@ -98,9 +95,8 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           {props.onSetAutoEnabled ? <Button variant="ghost" disabled={props.autoBusy || (autoOff && !props.autoPreferences?.canEnable)} onClick={() => void props.onSetAutoEnabled?.(autoOff)}>{autoOff ? "Turn on" : "Turn off"}</Button> : null}
         </div> : null}
         {local.map((provider) => <div key={provider.id} className="flex min-h-12 items-center justify-between gap-3 px-4 py-3" data-provider-scope="device">
-          <div className="flex min-w-0 items-center gap-3"><ProviderIcon providerId={provider.id} size={20} /><div className="min-w-0"><div className="text-sm font-medium">{provider.name}</div><div className="text-xs text-muted-foreground">{provider.savedAt !== undefined ? `Saved on this device ${new Date(provider.savedAt).toLocaleString()}` : provider.source === "api" ? "API key on this device" : provider.source === "env" ? "Environment credential" : "Configured on this device"}{props.organizationProviderIds?.has(provider.id) ? ` · Also available from ${props.organizationName || "your organization"}` : ""}</div></div></div>
+          <div className="flex min-w-0 items-center gap-3"><ProviderIcon providerId={provider.id} size={20} /><div className="min-w-0"><div className="text-sm font-medium">{provider.name}</div><div className="text-xs text-muted-foreground">{provider.source === "api" ? "API key on this device" : provider.source === "env" ? "Environment credential" : "Configured on this device"}{props.organizationProviderIds?.has(provider.id) ? ` · Also available from ${props.organizationName || "your organization"}` : ""}</div></div></div>
           <div className="flex shrink-0 items-center gap-1"><Button variant="ghost" disabled={props.busy || props.providerAuthBusy || !ready || !props.canDisconnectProvider(provider) || props.disconnectingProviderId !== null} onClick={() => void props.onDisconnectProvider(provider.id)}>{props.disconnectingProviderId === provider.id ? t("settings.disconnecting") : props.canDisconnectProvider(provider) ? t("settings.disconnect") : t("settings.managed_by_env")}</Button>
-            {props.onShareProvider ? <DropdownMenu><DropdownMenuTrigger render={<Button size="icon" variant="ghost" aria-label={`${provider.name} actions`} />}><MoreHorizontal className="size-4" /></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem disabled={props.busy || !ready} onClick={() => props.onShareProvider?.(provider)}>Share with organization</DropdownMenuItem></DropdownMenuContent></DropdownMenu> : null}
           </div>
         </div>)}
       </div>

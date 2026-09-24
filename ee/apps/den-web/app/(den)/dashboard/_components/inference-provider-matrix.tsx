@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
-import { ChevronRight } from "lucide-react";
 import type { GatewayAccessGrant, GatewayAudience, GatewayCredentialSet, GatewayCredentialSetWrite, GatewayModelGroup } from "@openwork/types/den/gateway";
 import { DenBadge } from "../../_components/ui/badge";
 import { DenButton } from "../../_components/ui/button";
@@ -15,7 +14,7 @@ import { DenTextarea } from "../../_components/ui/textarea";
 import { DenTable, type DenTableColumn } from "../../_components/ui/table";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteGatewayResource, saveGatewayResource } from "./inference-provider-data";
-import { gatewayModelScopeLabels, isGoogleVertexNpm, supportsMemberCredentialMode, type DenInferenceProviderDetails } from "./inference-provider-request";
+import { isGoogleVertexNpm, supportsMemberCredentialMode, type DenInferenceProviderDetails } from "./inference-provider-request";
 import { formatProviderTimestamp, getProviderEnvNames, getProviderNpmPackage, requestLlmProviderCatalogDetail, type DenModelsDevProviderDetail } from "./llm-provider-data";
 import { ProviderAccessPicker, ProviderModelPicker, type ProviderAccessValue } from "./llm-provider-pickers";
 
@@ -261,26 +260,16 @@ export function GatewayAccessMatrix({ provider, reload }: { provider: DenInferen
     {error && editor?.resource !== "credential-sets" ? <DenNotice className="mb-6" tone="error" message={error} /> : null}
     <section className={SECTION_CLASS}>
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">Model groups</h2><DenButton disabled={busy} onClick={() => editGroup()}>Add model group</DenButton></div>
-      {!provider.modelGroups.length ? <p className="mt-4">No groups yet.</p> : <div className="mt-4 divide-y divide-gray-200 border-y border-gray-200">{provider.modelGroups.map((group) => {
-        const scopes = provider.modelScopes?.filter((scope) => scope.modelGroupId === group.id);
-        return <details key={group.id} className="group">
-          <summary className="flex cursor-pointer list-none items-center gap-4 py-3">
-            <div className="min-w-0 flex-1"><h3 className="break-words text-sm font-medium">{modelGroupName(group.name)}</h3><p className="mt-1 text-xs text-gray-500">{group.modelIds.length} models · {group.modelIds.filter((id) => provider.pinnedModelIds.includes(id)).length} pinned</p></div>
-            <span className="w-40 text-sm">{gatewayModelScopeLabels(scopes).join(", ")}</span>
-            <DenBadge tone="neutral">{group.status}</DenBadge><ChevronRight className="size-4 shrink-0 transition-transform group-open:rotate-90" strokeWidth={1.5} aria-hidden="true" />
-          </summary>
-          <div className="grid gap-4 border-t border-gray-100 py-4">
-            {group.description ? <p className="text-sm text-gray-500">{group.description}</p> : null}
-            <DenTable headerTone="plain" rows={group.modelIds.map((id) => ({ id, name: provider.catalogModels.find((model) => model.id === id)?.name ?? id }))} getRowKey={(model) => model.id}
-              columns={[
-                { key: "model", header: "Model", render: (model) => model.name },
-                { key: "id", header: "Model ID", render: (model) => <span className="break-all font-mono text-xs">{model.id}</span> },
-                { key: "audience", header: "Who sees it", render: (model) => gatewayModelScopeLabels(scopes, model.id).join(", ") },
-              ]} emptyLabel="No models in this group. It does not grant access to any models." />
-            <div className="flex gap-2"><DenButton disabled={busy} variant="secondary" aria-label={`Edit model group ${modelGroupName(group.name)}`} onClick={() => editGroup(group)}>Edit</DenButton><DenButton disabled={busy} variant="destructive" aria-label={`Delete model group ${modelGroupName(group.name)}`} onClick={() => setDeleting({ resource: "model-groups", id: group.id, name: modelGroupName(group.name) })}>Delete</DenButton></div>
-          </div>
-        </details>;
-      })}</div>}
+      <p className="my-4 text-gray-500">Create reusable sets of models, then assign them to teams or people with an upstream key.</p>
+      {!provider.modelGroups.length ? <p>No groups yet.</p> : <div className="grid gap-4 md:grid-cols-2">{provider.modelGroups.map((group) => <div key={group.id} className="flex min-w-0 flex-col gap-4 rounded-2xl border border-gray-200 bg-white p-5">
+        <div className="flex flex-wrap items-start justify-between gap-2"><h3 className="min-w-0 break-words font-semibold">{modelGroupName(group.name)}</h3><DenBadge tone={group.status === "active" ? "success" : "neutral"}>{group.status}</DenBadge></div>
+        {group.description ? <p className="break-words text-sm text-gray-500">{group.description}</p> : null}
+        {group.modelIds.length ? <ul className="flex flex-wrap gap-2">
+          {group.modelIds.slice(0, 7).map((id) => <li key={id} className="min-w-0 max-w-full"><DenBadge className="max-w-full whitespace-normal break-all">{provider.catalogModels.find((model) => model.id === id)?.name ?? id}</DenBadge></li>)}
+          {group.modelIds.length > 7 ? <li><DenBadge>+{group.modelIds.length - 7} more</DenBadge></li> : null}
+        </ul> : <p className="text-sm text-gray-500">No models in this group. It does not grant access to any models.</p>}
+        <div className="mt-auto flex gap-2"><DenButton disabled={busy} variant="secondary" aria-label={`Edit model group ${modelGroupName(group.name)}`} onClick={() => editGroup(group)}>Edit</DenButton><DenButton disabled={busy} variant="destructive" aria-label={`Delete model group ${modelGroupName(group.name)}`} onClick={() => setDeleting({ resource: "model-groups", id: group.id, name: modelGroupName(group.name) })}>Delete</DenButton></div>
+      </div>)}</div>}
       {renderEditor("model-groups")}
       {renderDeletion("model-groups")}
     </section>
