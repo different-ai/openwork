@@ -242,7 +242,8 @@ export const INFERENCE_PROVIDER_CREDENTIAL_STATUSES = [
 export type InferenceProviderCredentialStatus =
   (typeof INFERENCE_PROVIDER_CREDENTIAL_STATUSES)[number];
 
-export const INFERENCE_REQUEST_ROUTES = ["openwork_openrouter", "org_provider"] as const;
+// openwork_free: signed-in members' free Auto, served from the dedicated OpenAI key.
+export const INFERENCE_REQUEST_ROUTES = ["openwork_openrouter", "org_provider", "openwork_free"] as const;
 export type InferenceRequestRoute = (typeof INFERENCE_REQUEST_ROUTES)[number];
 
 export const INFERENCE_REQUEST_PROTOCOLS = [

@@ -101,7 +101,8 @@ function fakeStore(principals: FreePrincipal[], receipts: Array<FreeUsageReceipt
     async settle(_id, receipt) { receipts.push(receipt); return true },
   }
 }
-function fixture(overrides: Partial<import("../src/free/guest/routes.js").FreeRouteDependencies> = {}, upstream: (request: Upstream) => Response = () => Response.json(openAiResponse())) {
+function fixture(overrides: Partial<import("../src/free/guest/routes.js").FreeRouteDependencies> = {}, upstream: (request: Upstream) => Response = () => Response.json(openAiResponse()),
+  memberOverrides: Partial<import("../src/free/member/handler.js").FreeMemberDependencies> = {}) {
   const principals: FreePrincipal[] = []
   const receipts: Array<FreeUsageReceipt | null> = []
   const requests: Upstream[] = []
@@ -116,7 +117,7 @@ function fixture(overrides: Partial<import("../src/free/guest/routes.js").FreeRo
   const app = new Hono()
   registerAnonymousInferenceRoutes(app, { config, store, releases: async () => releases, now: () => now, clientAddress: () => "127.0.0.1", fetch, ...overrides })
   const memberApp = new Hono()
-  const handler = createFreeMemberHandler({ config, store: { ...store, family: "member" }, fetch, findMember: async (key) => key.id === keyRow.id ? member : null })
+  const handler = createFreeMemberHandler({ config, store: { ...store, family: "member" }, fetch, findMember: async (key) => key.id === keyRow.id ? member : null, ...memberOverrides })
   memberApp.all("/api/v1/*", (c) => handler(c, { ...keyRow, key_hash: "", key_prefix: null, name: null, encrypted_key: null, status: "active", revoked_at: null, created_at: new Date(), updated_at: new Date() }))
   return { app, memberApp, principals, receipts, requests, calls, store }
 }
@@ -521,4 +522,49 @@ test("the release list is cached, served stale through source failures, and malf
     const malformed = createDesktopFreeReleaseSource({ url: "https://metadata.test/releases", fetch: async () => Response.json(body) })
     assert.equal(await malformed(), null, JSON.stringify(body))
   }
+})
+
+function memberCall(app: Hono, path: string, init: RequestInit = {}) {
+  return app.fetch(new Request(`https://free.test${path}`, init))
+}
+const memberChat = { method: "POST", body: prompt, headers: { "content-type": "application/json" } }
+
+test("member Auto requests join the organization's usage as OpenWork Models, logged against the member's key; guests are never logged", async () => {
+  const rows: Array<Record<string, unknown>> = []
+  const usageLog = { insert: async (row: Record<string, unknown>) => { rows.push({ ...row }) }, update: async (row: Record<string, unknown>) => { rows.push({ ...row }); return true } }
+  const f = fixture({}, undefined, { usageLog: usageLog as never })
+  const memberResponse = await memberCall(f.memberApp, MEMBER_FREE_CHAT_PATH, memberChat)
+  assert.equal(memberResponse.status, 200)
+  await memberResponse.json()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(rows.length, 2, "one pending insert and one settled update")
+  const [pending, settled] = rows
+  assert.equal(pending.route, "openwork_free")
+  assert.equal(pending.upstream_provider_id, "openai")
+  assert.equal(pending.upstream_host, "api.openai.com")
+  assert.equal(pending.organization_id, member.organizationId)
+  assert.equal(pending.org_membership_id, member.memberId)
+  assert.equal(pending.inference_key_id, keyRow.id)
+  assert.equal(pending.gateway_provider_id, null)
+  assert.equal(pending.upstream_model, INFERENCE_FREE_MODEL_ID)
+  assert.equal(settled.outcome, "ok")
+  assert.equal(settled.input_tokens, openAiResponse().usage.prompt_tokens)
+  assert.equal(settled.output_tokens, openAiResponse().usage.completion_tokens)
+  assert.ok(typeof settled.cost_micro_usd === "number" && settled.cost_micro_usd > 0)
+  assert.equal(settled.upstream_request_id, "chatcmpl-1", "OpenAI's completion id is the durable usage identity")
+  const guestResponse = await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))
+  assert.equal(guestResponse.status, 200)
+  await guestResponse.json()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(rows.length, 2, "guest requests are never attributed to an organization")
+})
+
+test("member Auto fails closed when the Gateway request log cannot be written, without consuming allowance", async () => {
+  const f = fixture({}, undefined, { usageLog: { insert: async () => { throw new Error("accounting offline") } } })
+  const response = await memberCall(f.memberApp, MEMBER_FREE_CHAT_PATH, memberChat)
+  assert.equal(response.status, 503)
+  assert.equal((await response.json()).error.code, "request_log_unavailable")
+  assert.equal(f.requests.length, 0, "nothing was sent upstream")
+  assert.equal(f.calls.cancelled, 1, "the undispatched reservation was released")
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 200, "guests do not depend on organization accounting")
 })

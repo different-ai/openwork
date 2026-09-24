@@ -1,16 +1,18 @@
 import type { Context } from "hono"
 import { DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_STATUS_PATH,
   type DesktopFreeAccessStatus } from "@openwork/free-auto"
-import { managedModelCatalog } from "@openwork/types/den/inference"
+import { INFERENCE_FREE_MODEL_ID, managedModelCatalog } from "@openwork/types/den/inference"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
 import { createFreeAllowanceStore, type FreeAllowanceStore } from "../shared/allowance.js"
-import type { AutoConfig } from "../shared/config.js"
+import { FREE_OPENAI_CHAT_URL, type AutoConfig } from "../shared/config.js"
 import { dispatchFreeCompletion } from "../shared/dispatch.js"
 import { freeError, FreeRequestError } from "../shared/errors.js"
 import { findMemberFreePrincipal } from "../shared/principal.js"
 import { prepareFreeRequest, readFreeRequest } from "../shared/request.js"
 import type { InferenceKeyRow } from "../../middleware/inference-auth.js"
+import { safeInferenceReporter, sentryInferenceReporter, type InferenceReporter } from "../../inference-reporting.js"
+import { createRequestLogRecorder, insertRequestLogIntoDb, updateRequestLogInDb, type InsertRequestLog, type UpdateRequestLog } from "../../request-log.js"
 import { env } from "../../env.js"
 
 export type FreeMemberDependencies = {
@@ -18,10 +20,12 @@ export type FreeMemberDependencies = {
   store: FreeAllowanceStore;
   fetch: typeof fetch;
   findMember: typeof findMemberFreePrincipal;
+  usageLog?: { insert: InsertRequestLog; update?: UpdateRequestLog; reporter?: InferenceReporter };
 }
 function defaults(): FreeMemberDependencies {
   const config = env.freeAuto
-  return { config, store: createFreeAllowanceStore(config, "member"), fetch: createInferenceEgressFetch(), findMember: findMemberFreePrincipal }
+  return { config, store: createFreeAllowanceStore(config, "member"), fetch: createInferenceEgressFetch(), findMember: findMemberFreePrincipal,
+    usageLog: { insert: insertRequestLogIntoDb, update: updateRequestLogInDb } }
 }
 function disabled() {
   return Response.json({ error: { message: "OpenWork Models are not enabled for this organization.", type: "invalid_request_error", code: "inference_disabled" } },
@@ -56,7 +60,18 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
       const signal = AbortSignal.any([controller.signal, c.req.raw.signal, AbortSignal.timeout(config.requestTimeoutMs)])
       const parsed = await readFreeRequest(c.req.raw, config.maxBodyBytes, signal)
       const prepared = prepareFreeRequest(parsed.value, config)
-      return dispatchFreeCompletion({ config, store, fetch: dependencies.fetch, principal, ipHash: null, prepared, signal, controller, deadlineAt })
+      const usageLog = dependencies.usageLog
+      const upstream = new URL(FREE_OPENAI_CHAT_URL)
+      return dispatchFreeCompletion({ config, store, fetch: dependencies.fetch, principal, ipHash: null, prepared, signal, controller, deadlineAt,
+        startUsageLog: usageLog ? (requestId, stream) => {
+          const recorder = createRequestLogRecorder({ insertRequestLog: usageLog.insert, updateRequestLog: usageLog.update,
+            reporter: safeInferenceReporter(usageLog.reporter ?? sentryInferenceReporter) })
+          recorder.start({ identity: { kind: "models", organizationId: key.organization_id, orgMembershipId: key.org_membership_id, inferenceKeyId: key.id },
+            openworkRequestId: requestId, route: "openwork_free", protocol: "openai_chat", upstreamProviderId: "openai",
+            upstreamHost: upstream.hostname, upstreamPath: upstream.pathname, method: "POST",
+            requestedModel: INFERENCE_FREE_MODEL_ID, upstreamModel: INFERENCE_FREE_MODEL_ID, stream, signal })
+          return recorder
+        } : undefined })
     } catch (error) {
       if (error instanceof FreeRequestError || error instanceof ManagedModelsPolicyError) return freeError(error.status, error.code, error.message)
       return freeError(503, "free_member_unavailable")
