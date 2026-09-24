@@ -1,7 +1,15 @@
 import { z } from "zod";
-import { readOrganizationMetadata } from "./managed-models-policy.js";
 
 export const INFERENCE_USAGE_CONVERSION_FACTOR = 100_000_000;
+
+// Den's web app loads this module from source, where a runtime relative import cannot resolve, so it keeps
+// its own copy of managed-models-policy's metadata reader instead of importing it.
+function readOrganizationMetadata(input: unknown): Record<string, unknown> {
+  if (input === null || input === undefined) return {};
+  const value: unknown = typeof input === "string" ? JSON.parse(input) : input;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Organization metadata must be a JSON object.");
+  return Object.fromEntries(Object.entries(value));
+}
 
 export const INFERENCE_WINDOW_TYPES = [
   "five_hour",
