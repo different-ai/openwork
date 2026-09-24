@@ -479,8 +479,6 @@ function workingMemoryTemplate(name, firstNote = "") {
   const now = String(firstNote ?? "").replace(/\s+/g, " ").trim().slice(0, 400);
   return `# Working memory — ${name}
 
-Curated active memory. I edit this continuously; my human can too.
-
 ## Now
 
 - ${now || "Nothing yet. I was just created."}

@@ -2,15 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { coworkerBridge, type AutomaticMemory, type CoworkerMemoryFile, type CoworkerSummary, type LongTermMemory, type MemoryChange } from "@/lib/bridge";
 import { relativeTime } from "@/lib/activity-summary";
 import { describeMemoryChange } from "@/lib/memory-changes";
-import { Button, Empty, ErrorNote, inputClass } from "@/ui/kit";
+import { Button, Empty, ErrorNote, IconButton, inputClass } from "@/ui/kit";
 import { Markdown } from "@/ui/markdown";
 
-type MemoryTab = "soul" | "working" | "long-term";
+type MemoryTab = "soul" | "working" | "long-term" | "automatic";
 type EditorMode = "view" | "edit";
 
 const FIXED_TABS: { id: MemoryTab; fileId: string; label: string }[] = [
   { id: "soul", fileId: "soul", label: "Soul" },
-  { id: "working", fileId: "working", label: "Working memory" },
+  { id: "working", fileId: "working", label: "Working" },
 ];
 
 /**
@@ -83,12 +83,8 @@ export function MemoryPanel({ coworker }: { coworker: CoworkerSummary }) {
 
   return (
     <div className="space-y-3" data-testid="memory-panel">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs leading-relaxed text-mist">Human-readable context that {coworker.name} can maintain.</p>
-        <Button variant="ghost" className="shrink-0 px-2 text-xs" onClick={() => void refresh()}>Refresh</Button>
-      </div>
-      {error ? <ErrorNote>{error}</ErrorNote> : null}
-      <nav className="flex gap-1 overflow-x-auto pb-1" aria-label="Memory">
+      <div className="flex items-center gap-1">
+      <nav className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto" aria-label="Memory">
         {FIXED_TABS.map((entry) => (
           <TabButton key={entry.id} active={tab === entry.id} testId={`memory-tab-${entry.id}`} onClick={() => openTab(entry.id)}>
             {entry.label}
@@ -102,17 +98,21 @@ export function MemoryPanel({ coworker }: { coworker: CoworkerSummary }) {
             </span>
           ) : null}
         </TabButton>
+        <TabButton active={tab === "automatic"} testId="memory-tab-automatic" onClick={() => openTab("automatic")}>Automatic</TabButton>
       </nav>
-      {tab !== "long-term" ? (
+      <IconButton label="Refresh memory" tooltipSide="bottom" onClick={() => void refresh()}><RefreshIcon /></IconButton>
+      </div>
+      {error ? <ErrorNote>{error}</ErrorNote> : null}
+      {tab === "automatic" ? (
+        <AutomaticMemoryPanel key={coworker.slug} coworker={coworker} />
+      ) : tab !== "long-term" ? (
         <FixedFileTab slug={coworker.slug} revision={revision} file={files.find((file) => file.id === FIXED_TABS.find((entry) => entry.id === tab)?.fileId) ?? null} />
       ) : indexOpen && indexFile ? (
         <div className="space-y-3" data-testid="memory-index-editor">
           <BackLink onClick={() => setIndexOpen(false)}>All memories</BackLink>
           <div>
             <h3 className="text-sm font-semibold text-snow">Index file</h3>
-            <p className="mt-0.5 text-xs leading-relaxed text-mist">
-              The map {coworker.name} loads every turn: one line per memory. Edit it only to fix a line the list above did not understand.
-            </p>
+            <p className="mt-0.5 text-xs text-mist">One line per memory, read every turn.</p>
           </div>
           <FileEditor key={indexFile.path} slug={coworker.slug} path={indexFile.path} label="Memory index" defaultMode="edit" onSaved={() => void refresh()} />
         </div>
@@ -142,8 +142,7 @@ export function MemoryPanel({ coworker }: { coworker: CoworkerSummary }) {
           onError={setError}
         />
       )}
-      <RecentChanges coworker={coworker} changes={changes} onUndo={(change) => void undo(change)} />
-      <AutomaticMemoryPanel key={coworker.slug} coworker={coworker} />
+      {tab !== "automatic" ? <RecentChanges changes={changes} onUndo={(change) => void undo(change)} /> : null}
     </div>
   );
 }
@@ -170,17 +169,14 @@ function AutomaticMemoryPanel({ coworker }: { coworker: CoworkerSummary }) {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [coworker.slug]);
   const group = groups.find((item) => item.id === groupId);
-  return <section className="space-y-3 rounded-xl border border-line bg-panel/30 p-3" data-testid="automatic-memory-panel">
-    <div>
-      <h3 className="text-sm font-semibold text-snow">Automatic conversation memory</h3>
-      <p className="mt-1 text-xs leading-relaxed text-mist">Bounded excerpts and AI summaries from successful replies, separate from the editable memory above. Summaries are attributed context, not verified facts.</p>
-    </div>
-    <label className="block space-y-1 text-xs text-mist">
-      <span>Memory scope</span>
-      <select aria-label="Automatic memory scope" className={inputClass} value={groupId} onChange={(event) => setGroupId(event.target.value)}>
+  return <section className="space-y-3" data-testid="automatic-memory-panel">
+    <p className="text-xs text-mist">Kept from past replies. Summaries are context, not verified facts.</p>
+    <label className="flex items-center gap-2 text-xs text-mist">
+      <span className="shrink-0">Scope</span>
+      <select aria-label="Automatic memory scope" className={`${inputClass} py-1.5`} value={groupId} onChange={(event) => setGroupId(event.target.value)}>
         <option value="">Private discussions</option>
         {groupId && !group ? <option value={groupId} disabled>Selected group unavailable</option> : null}
-        {groups.map((item) => <option key={item.id} value={item.id}>{item.name} (shared group memory)</option>)}
+        {groups.map((item) => <option key={item.id} value={item.id}>{item.name} (shared)</option>)}
       </select>
     </label>
     {error ? <ErrorNote>Memory groups could not be read: {error}</ErrorNote> : null}
@@ -235,13 +231,12 @@ function AutomaticMemoryScope({ coworker, groupId, label }: { coworker: Coworker
   }
   const speakerLabel = (speaker: string) => speaker === "user" ? "You" : speaker === coworker.slug ? coworker.name : speaker;
   return <div className="space-y-3" data-testid="automatic-memory-scope">
-    <p className="text-xs leading-relaxed text-mist">{groupId ? `Shared group memory for ${label}. Clearing it affects every coworker in this group.` : `Private discussions with ${coworker.name} only. Group memory is not included in this scope.`}</p>
-    <div className="flex flex-wrap gap-2">
-      <Button variant="ghost" className="px-2 text-xs" disabled={busy} onClick={() => setRevision((value) => value + 1)}>Refresh automatic memory</Button>
+    <div className="flex flex-wrap items-center gap-1">
+      <IconButton label="Refresh automatic memory" tooltipSide="bottom" disabled={busy} onClick={() => setRevision((value) => value + 1)}><RefreshIcon /></IconButton>
       {!confirming ? <Button variant="ghost" className="px-2 text-xs text-rose hover:text-rose" disabled={busy || memory === undefined} onClick={() => { setConfirming(true); setCleared(false); }}>Clear selected scope...</Button> : null}
     </div>
     {confirming ? <div className="space-y-2 border-y border-rose/25 py-3" data-testid="automatic-memory-clear-confirm">
-      <p className="text-xs leading-relaxed text-rose">Clear {groupId ? `shared group memory for ${label}` : `private discussion memory for ${coworker.name}`}? This removes only this scope's automatic excerpts and summaries. Manual memory, other scopes and conversation history stay unchanged. This cannot be undone; future successful replies may create new memory while automatic memory is on.</p>
+      <p className="text-xs leading-relaxed text-rose">{groupId ? "Every coworker in this group loses it. " : ""}Clear {groupId ? `shared group memory for ${label}` : `private discussion memory for ${coworker.name}`}? This removes only this scope's automatic excerpts and summaries. Manual memory, other scopes and conversation history stay unchanged. This cannot be undone; future successful replies may create new memory while automatic memory is on.</p>
       <div className="flex gap-2">
         <Button variant="ghost" className="flex-1 text-xs" disabled={busy} onClick={() => setConfirming(false)}>Keep memory</Button>
         <Button variant="danger" className="flex-1 text-xs" disabled={busy || !armed} onClick={() => void clear()}>{busy ? "Clearing..." : "Confirm clear"}</Button>
@@ -253,22 +248,22 @@ function AutomaticMemoryScope({ coworker, groupId, label }: { coworker: Coworker
     {memory === undefined ? <p className="text-xs text-mist">{readError ? "Automatic memory is unavailable." : "Reading automatic memory..."}</p> : memory === null ? <p className="text-xs text-mist" data-testid="automatic-memory-disabled">Automatic memory is disabled or unavailable for this scope. Check Automatic conversation memory in General settings.</p> : <div className="max-h-80 space-y-4 overflow-y-auto overscroll-contain pr-1" role="region" aria-label="Automatic memory contents" tabIndex={0}>
       <div>
         <h4 className="text-xs font-semibold text-snow">Recent excerpts</h4>
-        {!memory.recent.length ? <p className="mt-1 text-xs text-mist">No recent excerpts yet.</p> : <ul className="divide-y divide-line" data-testid="automatic-memory-recent">
+        {!memory.recent.length ? <p className="mt-1 text-xs text-mist">None yet.</p> : <ul className="divide-y divide-line" data-testid="automatic-memory-recent">
           {memory.recent.map((entry) => <li key={entry.id} className="space-y-1 py-2">
-            <p className="break-words text-[11px] text-mist">{speakerLabel(entry.speaker)} · {new Date(entry.at).toLocaleString()} · Source: {entry.sourceId}</p>
+            <p className="text-[11px] text-mist" title={`${new Date(entry.at).toLocaleString()} · Source: ${entry.sourceId}`}>{speakerLabel(entry.speaker)} · {whenLabel(entry.at)}</p>
             <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-snow">{entry.text}</p>
           </li>)}
         </ul>}
       </div>
       {[{ key: "shortTerm", label: "Short-term summaries", entries: memory.shortTerm }, { key: "longTerm", label: "Long-term summaries", entries: memory.longTerm }].map((term) => <div key={term.key}>
         <h4 className="text-xs font-semibold text-snow">{term.label}</h4>
-        {!term.entries.length ? <p className="mt-1 text-xs text-mist">No summaries yet. Recent local recall does not need an eligible model.</p> : <ul className="divide-y divide-line" data-testid={`automatic-memory-${term.key}`}>
+        {!term.entries.length ? <p className="mt-1 text-xs text-mist">None yet.</p> : <ul className="divide-y divide-line" data-testid={`automatic-memory-${term.key}`}>
           {term.entries.map((entry) => <li key={entry.text} className="space-y-1 py-2">
             <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-snow">{entry.text}</p>
             <details className="text-[11px] leading-relaxed text-mist">
-              <summary className="cursor-pointer">Sources ({entry.sources.length}) · Updated {new Date(entry.updatedAt).toLocaleString()}</summary>
+              <summary className="cursor-pointer">Sources ({entry.sources.length}) · {whenLabel(entry.updatedAt)}</summary>
               {entry.sources.map((source) => <div key={`${source.id}:${source.evidence}`} className="mt-2 space-y-1 border-l border-line pl-2">
-                <p className="break-words">{speakerLabel(source.speaker)} · {new Date(source.at).toLocaleString()} · Source: {source.sourceId}</p>
+                <p title={`${new Date(source.at).toLocaleString()} · Source: ${source.sourceId}`}>{speakerLabel(source.speaker)} · {whenLabel(source.at)}</p>
                 <blockquote className="whitespace-pre-wrap break-words">{source.evidence}</blockquote>
               </div>)}
             </details>
@@ -284,18 +279,24 @@ function AutomaticMemoryScope({ coworker, groupId, label }: { coworker: Coworker
  * coworker's changes read as they did in the conversation; the person's edits
  * and undos are named too, so every line here can be trusted and reversed.
  */
-function RecentChanges({ coworker, changes, onUndo }: { coworker: CoworkerSummary; changes: MemoryChange[]; onUndo: (change: MemoryChange) => void }) {
+function RecentChanges({ changes, onUndo }: { changes: MemoryChange[]; onUndo: (change: MemoryChange) => void }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? changes : changes.slice(0, 3);
   return (
     <section className="border-t border-line pt-3" data-testid="memory-recent-changes">
       <div className="flex items-center justify-between gap-2 px-1">
         <h3 className="text-[11px] font-semibold text-mist">Recent changes</h3>
-        {changes.length > 0 ? <span className="text-[10px] text-mist">{changes.length}</span> : null}
+        {changes.length > 3 ? (
+          <button type="button" className="text-[11px] text-mist hover:text-snow" aria-expanded={all} onClick={() => setAll((value) => !value)}>
+            {all ? "Show fewer" : `Show all ${changes.length}`}
+          </button>
+        ) : null}
       </div>
       {changes.length === 0 ? (
-        <p className="mt-1.5 px-1 text-[11px] leading-relaxed text-mist">Nothing yet. What {coworker.name} remembers or changes about itself shows up here, and you can undo it.</p>
+        <p className="mt-1 px-1 text-[11px] text-mist">No changes yet.</p>
       ) : (
         <ul className="mt-1.5 divide-y divide-line/70" data-testid="memory-change-list">
-          {changes.map((change) => {
+          {shown.map((change) => {
             const label = describeMemoryChange(change, changes);
             const when = relativeTime(change.at);
             return (
@@ -345,6 +346,12 @@ function BackLink({ onClick, children }: { onClick: () => void; children: React.
       {children}
     </button>
   );
+}
+
+/** "just now", "5 min ago": the exact time stays in the hover title. */
+function whenLabel(at: number): string {
+  const ago = relativeTime(at);
+  return !ago ? new Date(at).toLocaleDateString() : ago === "now" ? "just now" : `${ago} ago`;
 }
 
 function describeUpdated(updatedAt: number): string {
@@ -398,10 +405,7 @@ function MemoryList({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-xs leading-relaxed text-mist">
-          Durable facts {coworker.name} promotes from working memory, one file each. Select one to read, edit, or forget it.
-        </p>
+      <div className="flex items-center justify-end gap-3">
         {!creating ? (
           <Button variant="ghost" className="shrink-0 px-2 text-xs" onClick={() => setCreating(true)}>New memory</Button>
         ) : null}
@@ -439,7 +443,7 @@ function MemoryList({
       {memories === null ? (
         <Empty>Reading memory…</Empty>
       ) : memories.length === 0 ? (
-        <Empty>No long-term memories yet. They appear here as {coworker.name} promotes durable facts from working memory.</Empty>
+        <Empty>No long-term memories yet.</Empty>
       ) : (
         <ul className="divide-y divide-line" data-testid="memory-list">
           {memories.map((memory) => (
@@ -467,12 +471,9 @@ function MemoryList({
         </ul>
       )}
       {onOpenIndex ? (
-        <p className="text-[10px] leading-relaxed text-mist">
-          This list is read from the index {coworker.name} keeps.{" "}
-          <button type="button" className="underline decoration-mist/50 underline-offset-2 hover:text-snow" onClick={onOpenIndex}>
-            Open the index file
-          </button>
-        </p>
+        <button type="button" className="text-[10px] text-mist underline decoration-mist/50 underline-offset-2 hover:text-snow" onClick={onOpenIndex}>
+          Open the index file
+        </button>
       ) : null}
     </div>
   );
@@ -679,7 +680,7 @@ function FileEditor({
       </div>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {content === null ? null : mode === "view" ? (
-        <div className="min-h-[12rem] border-t border-line px-1 pt-3" data-testid="memory-view">
+        <div className="memory-compact min-h-[12rem] px-1" data-testid="memory-view">
           {content.trim() ? <Markdown text={content} /> : <p className="text-sm text-mist">Nothing written yet.</p>}
         </div>
       ) : (
@@ -691,7 +692,7 @@ function FileEditor({
             spellCheck={false}
             onChange={(event) => setContent(event.target.value)}
           />
-          <p className="text-[10px] leading-relaxed text-mist">Live-following coworker edits. Your unsaved changes are never replaced.</p>
+          <p className="text-[10px] text-mist">Your unsaved changes are never replaced.</p>
         </>
       )}
     </div>
@@ -708,5 +709,15 @@ function ModeButton({ active, onClick, children }: { active: boolean; onClick: (
     >
       {children}
     </button>
+  );
+}
+
+/** Two arrows chasing each other: read again now. */
+function RefreshIcon() {
+  return (
+    <svg className="size-3.5" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M13 8a5 5 0 0 1-8.6 3.5M3 8a5 5 0 0 1 8.6-3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <path d="M11.8 2.2v2.6H9.2M4.2 13.8v-2.6h2.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }

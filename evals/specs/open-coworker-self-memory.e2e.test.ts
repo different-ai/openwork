@@ -437,7 +437,11 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     await fill(app, 'textarea[aria-label="Message Nova"]', prompt);
     await clickButton(app, "Send");
     await waitFor(app, browserScript((reply) => [...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(reply)), [reply]), { timeoutMs: 120_000, label: "no-tool reply" });
-    await waitFor(app, browserScript((prompt) => (document.querySelector('[data-testid="automatic-memory-recent"]')?.textContent ?? "").includes(prompt), [prompt]), { timeoutMs: 30_000, label: "successful exchange captured automatically" });
+    await waitFor(app, browserScript((prompt) => {
+      // Automatic memory has its own tab in the memory panel.
+      document.querySelector<HTMLElement>('[data-testid="memory-tab-automatic"]:not([aria-pressed="true"])')?.click();
+      return (document.querySelector('[data-testid="automatic-memory-recent"]')?.textContent ?? "").includes(prompt);
+    }, [prompt]), { timeoutMs: 30_000, label: "successful exchange captured automatically" });
     const userBubble = await evalIn(app, () => [...document.querySelectorAll('[data-message-role="user"]')].at(-1)?.textContent?.trim());
     expect(userBubble).toBe(prompt);
     expect(userBubble).not.toMatch(/Prior conversation memory|untrusted_attributed_conversation_memory|"memories"/);

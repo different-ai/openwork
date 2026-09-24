@@ -977,3 +977,31 @@ a {
     animation: none;
   }
 }
+
+/*
+ * Memory pages read like a tidy outline, not a document: the tab already names
+ * the page, so its own title is hidden; sections are small labels; lines sit close.
+ */
+.memory-compact .coworker-markdown > h1:first-child {
+  display: none;
+}
+.memory-compact .coworker-markdown h1,
+.memory-compact .coworker-markdown h2,
+.memory-compact .coworker-markdown h3 {
+  margin: 0.9rem 0 0.3rem;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-mist);
+}
+.memory-compact .coworker-markdown p,
+.memory-compact .coworker-markdown li {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.memory-compact .coworker-markdown p,
+.memory-compact .coworker-markdown ul,
+.memory-compact .coworker-markdown ol {
+  margin: 0.25rem 0;
+}
