@@ -26,7 +26,8 @@ world or an existing test sandbox. Run from the requested worktree.
   viewer, not a macOS/Windows parity check. `--place local` runs this checkout:
   Den on the local MySQL/Redis and the desktop as a native window on this
   machine (source previews only; `--release` requires Daytona). Freestyle
-  supports `app-web`/`acme-web`, not these presets.
+  supports `app-web`, `acme-web`, and `preview-desktop` for the signed-out
+  `fresh` desktop only (no Den); `preview-den` does not run on Freestyle.
 
 For the isolated `preview-den`/`preview-desktop` presets, choose `--scenario fresh`
 for signup/first use, `team` for an owner with Notion
@@ -170,8 +171,10 @@ Do not combine `--source desktop=...` with `-- --release`. `--source den=ref:dev
 resolves origin/dev to a full SHA before adoption; otherwise the CLI pins the
 remote dev SHA for Daytona previews. For Windows, add `--os windows` before
 `--`, or use the composable source/seed syntax above; only exact blank published
-Windows x64 releases are supported. Freestyle does not support Windows or these
-preview presets. Release sandboxes do not mount shared secrets and do not run a
+Windows x64 releases are supported. Freestyle does not support Windows. On
+Freestyle, `preview-desktop` supports only the signed-out `fresh` desktop from a
+pushed commit (`pnpm world up preview-desktop --place freestyle --source desktop=ref:dev`);
+it has no Den, so team/restricted/workspace/blank and `preview-den` are refused. Release sandboxes do not mount shared secrets and do not run a
 source checkout, `pnpm install`, Electron source launch, or Vite. Their viewer,
 startup observation, release digest, Den URLs and log/profile paths are outputs.
 Linux additionally reports relaunch/browser shortcuts and a protocol handler. A

@@ -597,6 +597,13 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Preview Den source must be a full reviewed, pushed commit SHA.");
         sources.den = { kind: "sha", sha };
       }
+      // A Freestyle snapshot is built from one pushed commit. Pin it before
+      // adoption, exactly as Daytona previews pin their Den source.
+      if (script.name === "preview-desktop" && place === "freestyle" && !sources.desktop && !sources["*"]) {
+        const sha = process.env.OPENWORK_EVAL_REF?.trim() || await resolveRef("dev");
+        if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Freestyle desktop source must be a full reviewed, pushed commit SHA.");
+        sources.desktop = { kind: "sha", sha };
+      }
       if (script.name === "acme-web" && place === "daytona") {
         if (command.args.length > 0) throw new Error("Daytona acme-web uses --source to select a ref; script arguments after -- are not supported.");
         const acmeSource = sources["*"] ?? sources.den;

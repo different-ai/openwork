@@ -259,8 +259,93 @@ export async function bootPreview(stack: AsyncDisposableStack, place: Place, sur
   return { den, desktop: releaseDesktop ?? desktop ?? windowsRelease, outputs };
 }
 
-export async function runPreview(surface: PreviewSurface, argv = process.argv.slice(2)): Promise<void> {
+/** Deps are injectable so the Freestyle contract is unit-testable without a VM. */
+export interface FreestyleDesktopDeps {
+  ensureSnapshot(sha: string): Promise<unknown>;
+  launch(sha: string, lifetimeMinutes: number): Promise<{ id: string; snapshotId: string; url: string; expiresAt: string; outputs: Record<string, { value: string }> }>;
+  remove(id: string): Promise<void>;
+  track(id: string): Promise<void>;
+}
+
+async function defaultFreestyleDeps(): Promise<FreestyleDesktopDeps> {
+  const { ensureSnapshot } = await import("../../packages/freestyle/src/builder.ts");
+  const { launchPreview, deletePreview } = await import("../../packages/freestyle/src/index.ts");
+  return {
+    ensureSnapshot: (sha) => ensureSnapshot(sha, undefined, (message) => console.error(message), "desktop"),
+    launch: (sha, lifetimeMinutes) => launchPreview({ gitSha: sha, lifetimeMinutes, world: "desktop" }),
+    remove: (id) => deletePreview(id),
+    track: (id) => trackResource({ kind: "freestyle-preview", id, match: id, label: "Freestyle signed-out desktop" }),
+  };
+}
+
+/**
+ * The Freestyle desktop snapshot is a signed-out first launch with no Den, so
+ * only `fresh` from a pushed commit maps onto it. Anything else is refused
+ * before a VM is created rather than quietly booting a different world.
+ */
+export function freestyleDesktopPlan(input: {
+  surface: PreviewSurface;
+  argv: readonly string[];
+  sources: ReturnType<typeof sourcesFromEnv>;
+  seeds: ReturnType<typeof seedsFromEnv>;
+}): { sha: string; lifetimeMinutes: number } {
+  if (input.surface !== "desktop") throw new Error("preview-den cannot run on Freestyle; use Daytona or local.");
+  const parsed = parsePreviewOptions(input.argv);
+  if (parsed.release) throw new Error("Freestyle desktop runs a pushed commit, not a published release; use --place daytona for releases.");
+  if (input.argv.includes("--scenario") && parsed.scenario !== "fresh") {
+    throw new Error("Freestyle desktop supports only the signed-out fresh scenario.");
+  }
+  if (input.seeds.length > 1 || input.seeds.some((seed) => seed.name !== "fresh" || seed.arg !== undefined)) {
+    throw new Error("Freestyle desktop supports only --seed fresh.");
+  }
+  const unknown = Object.keys(input.sources).filter((key) => key !== "*" && key !== "desktop");
+  if (unknown.length > 0) throw new Error(`Freestyle desktop has no ${unknown.join(", ")} component; it runs without a Den.`);
+  const source = sourceFor(input.sources, "desktop");
+  if (source?.kind !== "sha") throw new Error("Freestyle desktop needs --source desktop=sha:<full-pushed-sha> or ref:<branch>.");
+  if (!input.argv.includes("--lifetime")) return { sha: source.sha, lifetimeMinutes: 120 };
+  if (parsed.lifetimeMinutes < 10 || parsed.lifetimeMinutes > 1430) {
+    throw new Error("Freestyle desktop lifetime must be 10-1430 minutes; Freestyle VMs always have a provider TTL.");
+  }
+  return { sha: source.sha, lifetimeMinutes: parsed.lifetimeMinutes };
+}
+
+export async function bootFreestyleDesktop(
+  stack: AsyncDisposableStack,
+  plan: { sha: string; lifetimeMinutes: number },
+  deps: FreestyleDesktopDeps,
+): Promise<Record<string, WorldOutput>> {
+  await deps.ensureSnapshot(plan.sha);
+  const preview = await deps.launch(plan.sha, plan.lifetimeMinutes);
+  stack.defer(() => deps.remove(preview.id));
+  await deps.track(preview.id);
+  const status = preview.outputs.desktopStatus?.value;
+  if (status !== "ready-signed-out") throw new Error("Freestyle desktop did not report a signed-out ready state.");
+  return {
+    preview: secret(preview.url, { group: "Preview", note: "Private signed-out Linux desktop (noVNC); reveal only in your terminal" }),
+    desktopStatus: output(status, { group: "Desktop" }),
+    scenario: output("fresh", { group: "World" }),
+    ref: output(plan.sha, { group: "World", note: "Pushed commit baked into the Freestyle snapshot" }),
+    placement: output("freestyle", { group: "World" }),
+    freestyleVm: output(preview.id, { group: "World" }),
+    snapshotId: output(preview.snapshotId, { group: "World" }),
+    expires: output(preview.expiresAt, { group: "World", note: "Freestyle provider TTL; the VM is deleted even if this driver stops" }),
+  };
+}
+
+export async function runPreview(surface: PreviewSurface, argv = process.argv.slice(2), freestyleDeps?: FreestyleDesktopDeps): Promise<void> {
   const target = targetFromEnv();
+  if (target.provider === "freestyle") {
+    const plan = freestyleDesktopPlan({ surface, argv, sources: sourcesFromEnv(), seeds: seedsFromEnv() });
+    await using stack = new AsyncDisposableStack();
+    const outputs = await bootFreestyleDesktop(stack, plan, freestyleDeps ?? await defaultFreestyleDeps());
+    const timer = setTimeout(() => process.kill(process.pid, "SIGTERM"), plan.lifetimeMinutes * 60_000);
+    try {
+      await hold({ name: `preview-${surface}`, outputs });
+    } finally {
+      clearTimeout(timer);
+    }
+    return;
+  }
   if (target.os === "windows" && target.provider === "daytona" && surface === "desktop") process.env.OPENWORK_WORLD_PREVIEW_DAYTONA = "1";
   const sources = sourcesFromEnv();
   const parsed = parsePreviewOptions(argv, sourceFor(sources, "desktop")?.kind === "release");
