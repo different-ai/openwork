@@ -100,19 +100,19 @@ export async function readAvailableModels(app: Surface): Promise<ModelFacts[]> {
     });
     for (const header of headers) {
       const group = header.parentElement?.parentElement;
-      if (group && !group.querySelector<HTMLElement>("span.font-mono")) header.click();
+      if (group && !group.querySelector<HTMLElement>("[data-model-id]")) header.click();
     }
     return true;
   }, [MODEL_DIALOG]));
   await waitFor(app, browserScript((MODEL_DIALOG) => {
     const dialog = document.querySelector<HTMLElement>(MODEL_DIALOG);
-    return Boolean(dialog && (dialog.querySelector<HTMLElement>("span.font-mono") || dialog.innerText.includes("No models")));
+    return Boolean(dialog && (dialog.querySelector<HTMLElement>("[data-model-id]") || dialog.innerText.includes("No models")));
   }, [MODEL_DIALOG]), { timeoutMs: 30_000, label: "model rows or empty state" });
   const value = await evalIn(app, browserScript((MODEL_DIALOG) => {
     const dialog = document.querySelector<HTMLElement>(MODEL_DIALOG);
     if (!dialog) return [];
     return [...dialog.querySelectorAll("button")].flatMap((button) => {
-      const id = button.querySelector<HTMLElement>("span.font-mono")?.textContent?.trim();
+      const id = button.getAttribute("data-model-id")?.trim();
       if (!id) return [];
       const spans = [...button.querySelectorAll("span")];
       const name = spans.find((span) => !span.classList.contains("font-mono"))?.textContent?.trim() ?? id;
@@ -144,7 +144,7 @@ async function expandModelGroups(app: Surface): Promise<void> {
     });
     for (const header of headers) {
       const group = header.parentElement?.parentElement;
-      if (group && !group.querySelector<HTMLElement>("span.font-mono")) header.click();
+      if (group && !group.querySelector<HTMLElement>("[data-model-id]")) header.click();
     }
     return true;
   }, [MODEL_DIALOG]));
@@ -158,7 +158,7 @@ export async function selectModel(app: Surface, name: string, options?: { provid
     const dialog = document.querySelector<HTMLElement>(MODEL_DIALOG);
     const expectedProvider = value;
     return [...(dialog?.querySelectorAll("button") ?? [])].some((button) => {
-      const id = button.querySelector<HTMLElement>("span.font-mono")?.textContent?.trim() ?? "";
+      const id = button.getAttribute("data-model-id")?.trim() ?? "";
       if (!id || button.disabled) return false;
       let group = button.parentElement;
       while (group && !group.querySelector<HTMLElement>(':scope > div > button')) group = group.parentElement;
@@ -176,7 +176,7 @@ export async function selectModel(app: Surface, name: string, options?: { provid
     const dialog = document.querySelector<HTMLElement>(MODEL_DIALOG);
     const expectedProvider = value;
     const rows = [...(dialog?.querySelectorAll("button") ?? [])].flatMap((candidate) => {
-      const id = candidate.querySelector<HTMLElement>("span.font-mono")?.textContent?.trim() ?? "";
+      const id = candidate.getAttribute("data-model-id")?.trim() ?? "";
       if (!id || candidate.disabled) return [];
       let group = candidate.parentElement;
       while (group && !group.querySelector<HTMLElement>(':scope > div > button')) group = group.parentElement;
