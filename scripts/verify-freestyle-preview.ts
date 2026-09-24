@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { appendFile, writeFile } from "node:fs/promises";
-import { client, execChecked, launchPreview, type PreviewSession } from "../packages/freestyle/src/index.ts";
+import { appendFile, readFile, writeFile } from "node:fs/promises";
+import { client, execChecked, guestCommandOutcome, launchPreview, type PreviewSession } from "../packages/freestyle/src/index.ts";
+import { desktopChatResult, responseErrorCode } from "../packages/freestyle/src/verify-results.ts";
 
 // Run only from the reviewed, pinned controller after CI prewarming. Never emit
 // access URLs, credentials, or arbitrary guest output into public CI artifacts.
@@ -9,16 +10,20 @@ if (!sha) throw new Error("Usage: node scripts/verify-freestyle-preview.ts <full
 const api = client();
 const sessions: PreviewSession[] = [];
 const launches: { launchMs: number; repeatHtmlMs: number }[] = [];
-async function json(session: PreviewSession, service: string, path: string, init: RequestInit = {}): Promise<unknown> {
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+async function json(session: PreviewSession, service: string, label: string, path: string, init: RequestInit = {}): Promise<unknown> {
   const response = await fetch(new URL(path, session.outputs[service].value), {
     ...init, headers: { cookie: session.outputs.previewCookie.value, ...init.headers },
     signal: AbortSignal.timeout(30_000),
   });
-  assert.equal(response.status, 200, "Restored service request must succeed");
+  if (response.status !== 200) {
+    // Public log: the failing call and a validated error code, never the body.
+    const code = responseErrorCode(await response.json().catch(() => undefined));
+    assert.fail(`Restored ${service} ${label} returned HTTP ${response.status}${code ? ` ${code}` : ""}`);
+  }
   return response.json();
-}
-function record(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 try {
   for (let index = 0; index < 2; index++) {
@@ -51,25 +56,25 @@ try {
   await execChecked(firstVm, "mysql -uroot -ppassword -e 'CREATE DATABASE preview_isolation_probe'");
   assert.equal((await execChecked(secondVm, "mysql -uroot -ppassword -N -e \"SHOW DATABASES LIKE 'preview_isolation_probe'\"")).trim(), "");
   const outputs = first.outputs;
-  const capabilities = await json(first, "denApi", `/v1/admin/organizations/${outputs.orgId.value}/capabilities`, {
+  const capabilities = await json(first, "denApi", "org capabilities", `/v1/admin/organizations/${outputs.orgId.value}/capabilities`, {
     headers: { authorization: `Bearer ${outputs.denToken.value}` },
   });
   assert.ok(record(capabilities) && record(capabilities.capabilities) && capabilities.capabilities.gatewayDashboard === true);
-  await json(first, "denApi", "/api/auth/sign-in/email", {
+  await json(first, "denApi", "demo sign-in", "/api/auth/sign-in/email", {
     method: "POST", headers: { "content-type": "application/json", origin: new URL(outputs.denWeb.value).origin },
     body: JSON.stringify({ email: outputs.alexEmail.value, password: outputs.alexPassword.value }),
   });
   const headers = { authorization: `Bearer ${outputs.openworkToken.value}`, "content-type": "application/json" };
-  const workspaces = await json(first, "openworkUrl", "/workspaces", { headers });
+  const workspaces = await json(first, "openworkUrl", "workspace list", "/workspaces", { headers });
   assert.ok(record(workspaces) && Array.isArray(workspaces.items));
   const workspace = workspaces.items.find(record);
   assert.ok(workspace && typeof workspace.id === "string");
   const base = `/workspace/${encodeURIComponent(workspace.id)}/opencode`;
-  const conversation = await json(first, "openworkUrl", `${base}/session`, {
+  const conversation = await json(first, "openworkUrl", "new session", `${base}/session`, {
     method: "POST", headers, body: JSON.stringify({ title: "Resumed gateway verification" }),
   });
   assert.ok(record(conversation) && typeof conversation.id === "string");
-  const response = await json(first, "openworkUrl", `${base}/session/${conversation.id}/message`, {
+  const response = await json(first, "openworkUrl", "first gateway message", `${base}/session/${conversation.id}/message`, {
     method: "POST", headers,
     body: JSON.stringify({ model: { providerID: outputs.providerId.value, modelID: outputs.modelId.value }, parts: [{ type: "text", text: "Verify the restored gateway." }] }),
   });
@@ -96,29 +101,22 @@ try {
   await execChecked(firstVm, "pgrep -x xfwm4 >/dev/null && pgrep -x xfce4-panel >/dev/null");
   // Like the web preview: a new desktop conversation, with no model picked, chats
   // through the world's AI Gateway instead of timing out on a public default.
-  await firstVm.fs.writeTextFile("/tmp/verify-desktop-chat.mjs", `
-const { attachSurface } = await import("/workspace/evals/packages/cdp/src/index.ts");
-const { evalIn, readComposerState, sendComposerMessage, waitForAssistantReply } = await import("/workspace/evals/packages/behaviors/src/index.ts");
-const surface = await attachSurface({ name: "verify", kind: "electron", hostKind: "local", cdpUrl: "http://127.0.0.1:9825" }, { timeoutMs: 30000 });
-try {
-  await evalIn(surface, () => { location.hash = location.hash.replace(/\\?.*$/, ""); });
-  await new Promise((resolve) => setTimeout(resolve, 3000));
-  const model = (await readComposerState(surface)).selectedModelLabel;
-  await sendComposerMessage(surface, "Verify the desktop gateway.");
-  const reply = await waitForAssistantReply(surface, { timeoutMs: 90000 });
-  console.log(JSON.stringify({ model, reply: reply.text }));
-} finally { await surface.stop().catch(() => {}); }
-`);
+  await firstVm.fs.writeTextFile("/tmp/verify-desktop-chat.mjs", await readFile(new URL("../packages/freestyle/src/desktop-chat-check.mjs", import.meta.url), "utf8"));
   const chatStart = performance.now();
-  const chat: unknown = JSON.parse((await execChecked(firstVm, "cd /workspace && node /tmp/verify-desktop-chat.mjs", 180_000)).trim().split("\n").pop() ?? "{}");
-  assert.ok(record(chat) && chat.model === outputs.model.value, "A new desktop conversation defaults to the world's AI Gateway model");
-  assert.ok(record(chat) && typeof chat.reply === "string" && chat.reply.includes("Acme AI Gateway is working."), "The desktop gets a fresh AI Gateway reply");
+  // Longer than the check's own 240s deadline, so the check always reports first.
+  const chatRun = await firstVm.exec({ command: "cd /workspace && node /tmp/verify-desktop-chat.mjs", timeoutMs: 280_000, linuxUser: "root" });
+  const chat = desktopChatResult(chatRun.stdout);
+  assert.ok(chat, `Desktop chat check reported no result (${guestCommandOutcome(chatRun.statusCode, 280_000)})`);
+  assert.ok(chat.ok, `Desktop chat check failed at "${chat.step}"${chat.timedOut ? " after its 240s deadline" : ""}; ms since start: ${JSON.stringify(chat.timings)}`);
+  assert.equal(chat.model, outputs.model.value, "A new desktop conversation defaults to the world's AI Gateway model");
+  assert.ok(chat.reply?.includes("Acme AI Gateway is working."), "The desktop gets a fresh AI Gateway reply");
   const desktopChatMs = Math.round(performance.now() - chatStart);
   const proof = {
     gitSha: sha, world: "acme-web", measuredAt: new Date().toISOString(), launches,
     scope: "Controller launch includes first authorized app HTML readiness, followed by a repeat HTML fetch. Excludes reviewer HTTP overhead and browser rendering; not a click-to-usable benchmark.",
     restoredRunningProcess: true, independentDatabases: true, independentUrlsAndCredentials: true,
     demoSignIn: true, gatewayDashboardEnabled: true, freshGatewayReply: true, desktopViewer: true, desktopReadyMs, desktopSignedIn, desktopChatMs,
+    desktopChatStepMs: chat.timings,
   };
   await writeFile("freestyle-launch-proof.json", JSON.stringify(proof, null, 2));
   console.log(JSON.stringify(proof));

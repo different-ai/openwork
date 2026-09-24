@@ -38,6 +38,16 @@ and verify the running template first. Schema creation, demo data and AI Gateway
 verification run on every new template; CI verifies a fresh gateway reply from the
 final snapshot on every commit. Reviewer isolation is unchanged.
 
+Template origins are placeholders that only the authenticated edge rewrites for
+browsers. ACME VMs refuse them locally (`/etc/hosts` to loopback): Den still advertises
+them to in-VM clients, and the signed-in desktop's OpenWork Cloud MCP otherwise hung
+at the public edge on every sync, starving the VM until desktop setup reached the
+snapshot deadline. Cloud MCP is unavailable in previews either way.
+
+CI's desktop chat check runs inside the clone with its own 240-second deadline, always
+prints one result line (step names and timings only) and exits; the host waits longer,
+so a failure names its step instead of a killed command.
+
 Desktop startup overlaps gateway verification and browser warmup. Go compiler workers
 use an explicit memory limit to release unused build memory; unused Linux filesystem
 caches are released before saving each snapshot. Application memory remains running.

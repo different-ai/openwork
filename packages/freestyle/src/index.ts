@@ -35,9 +35,15 @@ export async function findSnapshot(sha: string, api = client(), world: PreviewWo
   catch (error) { if (isMissing(error)) return null; throw error; }
 }
 
+/** Freestyle reports a null status when it killed the command at `timeoutMs`; the guest may have finished its work. */
+export function guestCommandOutcome(statusCode: number | null | undefined, timeoutMs: number): string {
+  return typeof statusCode === "number" ? `exit ${statusCode}` : `killed at ${Math.round(timeoutMs / 1000)}s timeout`;
+}
+
 export async function execChecked(vm: Vm, command: string, timeoutMs = 120_000): Promise<string> {
   const result = await vm.exec({ command, timeoutMs, linuxUser: "root" });
-  if (result.statusCode !== 0) throw new Error(`Freestyle guest command failed (${result.statusCode}). Inspect the builder's private logs.`);
+  // Keep this prefix: the review app logs only messages that start with it.
+  if (result.statusCode !== 0) throw new Error(`Freestyle guest command failed (${guestCommandOutcome(result.statusCode, timeoutMs)}).`);
   return result.stdout ?? "";
 }
 
