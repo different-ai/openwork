@@ -14167,6 +14167,154 @@ export type PostV1GatewayUsageLimitResetRequestsByIdDenyResponses = {
 export type PostV1GatewayUsageLimitResetRequestsByIdDenyResponse =
   PostV1GatewayUsageLimitResetRequestsByIdDenyResponses[keyof PostV1GatewayUsageLimitResetRequestsByIdDenyResponses];
 
+export type GetV1InferenceProvidersShareLocalKeyEligibilityData = {
+  body?: never;
+  path?: never;
+  query: {
+    providerId: string;
+  };
+  url: "/v1/inference-providers/share-local-key/eligibility";
+};
+
+export type GetV1InferenceProvidersShareLocalKeyEligibilityErrors = {
+  /**
+   * Invalid sharing request.
+   */
+  400: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Sign in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Fresh session and current owner/admin membership required.
+   */
+  403: ForbiddenError;
+  /**
+   * Transfer conflicts with an earlier request or provider configuration.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Sharing unavailable or outcome unconfirmed.
+   */
+  503: {
+    error: string;
+    message: string;
+  };
+};
+
+export type GetV1InferenceProvidersShareLocalKeyEligibilityError =
+  GetV1InferenceProvidersShareLocalKeyEligibilityErrors[keyof GetV1InferenceProvidersShareLocalKeyEligibilityErrors];
+
+export type GetV1InferenceProvidersShareLocalKeyEligibilityResponses = {
+  /**
+   * Check device API-key sharing eligibility
+   */
+  200: {
+    /**
+     * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
+     */
+    organizationId: string;
+    /**
+     * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+     */
+    memberId: string;
+    organizationName: string;
+    teams: Array<{
+      /**
+       * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      name: string;
+    }>;
+    eligible: boolean;
+    reason: string | null;
+  };
+};
+
+export type GetV1InferenceProvidersShareLocalKeyEligibilityResponse =
+  GetV1InferenceProvidersShareLocalKeyEligibilityResponses[keyof GetV1InferenceProvidersShareLocalKeyEligibilityResponses];
+
+export type PostV1InferenceProvidersShareLocalKeyData = {
+  body: {
+    requestId: string;
+    providerId: string;
+    name: string;
+    credential: {
+      kind: "api_key";
+      secret: string;
+    };
+    allMembers: boolean;
+    teamIds: Array<string>;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers/share-local-key";
+};
+
+export type PostV1InferenceProvidersShareLocalKeyErrors = {
+  /**
+   * Invalid sharing request.
+   */
+  400: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Sign in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Fresh session and current owner/admin membership required.
+   */
+  403: ForbiddenError;
+  /**
+   * Transfer conflicts with an earlier request or provider configuration.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Sharing unavailable or outcome unconfirmed.
+   */
+  503: {
+    error: string;
+    message: string;
+  };
+};
+
+export type PostV1InferenceProvidersShareLocalKeyError =
+  PostV1InferenceProvidersShareLocalKeyErrors[keyof PostV1InferenceProvidersShareLocalKeyErrors];
+
+export type PostV1InferenceProvidersShareLocalKeyResponses = {
+  /**
+   * Share a device API key with an organization
+   */
+  200: {
+    share: {
+      requestId: string;
+      /**
+       * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
+       */
+      organizationId: string;
+      providerId: string;
+      /**
+       * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+       */
+      inferenceProviderId: string;
+    };
+  };
+};
+
+export type PostV1InferenceProvidersShareLocalKeyResponse =
+  PostV1InferenceProvidersShareLocalKeyResponses[keyof PostV1InferenceProvidersShareLocalKeyResponses];
+
 export type GetV1InferenceProvidersModelManagementData = {
   body?: never;
   path?: never;

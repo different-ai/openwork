@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { createClient } from "../src/app/lib/opencode";
+import { createOpenworkServerClient } from "../src/app/lib/openwork-server";
 import type { ProviderListItem, WorkspaceDisplay } from "../src/app/types";
 import { createProviderAuthStore } from "../src/react-app/domains/connections/provider-auth/store";
 
@@ -52,7 +53,7 @@ function installProviderAuthFetch() {
   });
 }
 
-function createTestStore(workerType: "local" | "remote") {
+function createTestStore(workerType: "local" | "remote", savedDeviceKey = false) {
   const providers: ProviderListItem[] = [
     {
       id: "openai",
@@ -84,7 +85,7 @@ function createTestStore(workerType: "local" | "remote") {
     openworkServer: {
       getSnapshot: () => ({
         openworkServerStatus: "disconnected",
-        openworkServerClient: null,
+        openworkServerClient: savedDeviceKey ? { ...createOpenworkServerClient({ baseUrl: "http://localhost:8787" }), localProviderKeyMetadata: async () => ({ providers: [{ providerId: "openai", name: "OpenAI", savedAt: 100 }] }) } : null,
         openworkServerCapabilities: null,
       }),
     },
@@ -102,6 +103,15 @@ afterEach(() => {
 });
 
 describe("OpenAI provider auth methods", () => {
+  test("sign-in cannot silently replace a saved device key that would be re-seeded", async () => {
+    installWindow({ origin: "http://localhost:3000", electronInfo: { baseUrl: "http://localhost:8787", ownerToken: "fixture-owner" } });
+    installProviderAuthFetch();
+    const store = createTestStore("local", true);
+    try {
+      await store.openProviderAuthModal();
+      await expect(store.startProviderAuth("openai", 0)).rejects.toThrow("Disconnect the saved device API key");
+    } finally { store.dispose(); }
+  });
   test("desktop local workers offer non-headless OAuth", async () => {
     installWindow({
       origin: "http://localhost:3000",

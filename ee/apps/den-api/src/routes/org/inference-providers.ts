@@ -19,6 +19,8 @@ import { gatewayConfigurationError, gatewayModelConfigurationError, isSupportedG
 import { buildGoogleAuthorizeUrl, exchangeGoogleAuthorizationCode, googleOAuthClientBinding, googleOAuthNonce, readGoogleOAuthAttempt, revokeGoogleToken, verifyGoogleIdentity } from "../../llm/inference-provider-google-oauth.js"
 import { effectiveGatewayGrants, lockMemberOAuthAuthorization, memberGatewayTeams, revokeGoogleCredentials } from "../../llm/inference-provider-lifecycle.js"
 import { isMigrationSourceLockConflict } from "../../llm/inference-provider-migration.js"
+import { createGatewayProvider, defaultMatrix } from "../../llm/gateway-provider-create.js"
+import { registerLocalKeyShareRoutes } from "./inference-provider-key-share.js"
 import { getModelsDevProvider } from "../../llm/models-dev.js"
 import { decodeProviderCredential, readProviderEnvNames, runtimeProviderEnvNames } from "../../llm/provider-credentials.js"
 import { jsonValidator, orgMemberRoute, paramValidator, publicRoute, queryValidator, userSessionRoute } from "../../middleware/index.js"
@@ -153,24 +155,7 @@ function affectedRows(result: unknown): number {
 async function touch(tx: GatewayTx, provider: GatewayProvider) {
   await tx.update(GatewayProviderTable).set({ updated_at: new Date() }).where(eq(GatewayProviderTable.id, provider.id))
 }
-async function defaultMatrix(tx: GatewayTx, provider: GatewayProvider, input: z.infer<typeof createSchema>, creatorId: GatewayMemberId) {
-  const audiences: GatewayAccessGrantWrite["audience"][] = [
-    ...(input.allMembers ? [{ type: "organization" as const }] : []),
-    ...[...new Set(input.memberIds ?? [])].map((memberId) => ({ type: "member" as const, memberId })),
-    ...[...new Set(input.teamIds ?? [])].map((teamId) => ({ type: "team" as const, teamId })),
-  ]
-  const hasCredentialInput = input.credential !== undefined || input.apiKeys !== undefined || input.credentialMode === "member" || input.oauthClientId !== undefined || input.oauthClientSecret !== undefined
-  if (!hasCredentialInput && audiences.length) throw new GatewayWriteError(400, "credential_required", "Configure credentials before granting initial provider access.")
-  const set = hasCredentialInput
-    ? await writeGatewaySet(tx, provider, { name: "Default credentials", credentialMode: input.credentialMode ?? "org", credential: input.credential, apiKeys: input.apiKeys, oauthClientId: input.oauthClientId, oauthClientSecret: input.oauthClientSecret }, { createdByOrgMembershipId: creatorId })
-    : null
-  const models = await tx.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
-  if (!models.length && audiences.length) throw new GatewayWriteError(400, "model_required", "No supported catalog models are available for the requested initial access grants.")
-  const groupId = await writeGatewayGroup(tx, provider, { name: "All Allowed Models", modelIds: models.map((model) => model.model_id) })
-  if (!set) return { groupId, setId: null }
-  for (const audience of audiences) await writeGatewayGrant(tx, provider, { modelGroupId: groupId, credentialSetId: set.id, audience })
-  return { groupId, setId: set.id }
-}
+
 async function selectOAuthSet(provider: GatewayProvider, memberId: GatewayMemberId, selected?: string): Promise<GatewaySet> {
   const sets = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))
   const groups = await db.select().from(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.gateway_provider_id, provider.id))
@@ -187,6 +172,7 @@ async function selectOAuthSet(provider: GatewayProvider, memberId: GatewayMember
 export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   registerOrgGatewayUsageRoutes(app)
   registerOrgGatewayUsageLimitRoutes(app)
+  registerLocalKeyShareRoutes(app)
   // Agent-facing management reads never refresh or change the catalog. The existing provider summaries do.
   app.get("/v1/inference-providers/model-management", route("List inference gateway providers and model groups for model enablement", "Read-only organization Gateway provider and group selection. Returns saved upstream model IDs, not picker aliases or credentials. An empty provider modelIds policy means all supported catalog models. Requires owner/admin and Gateway management.", z.object({ inferenceProviders: z.array(modelManagementProviderSchema) }), 200, false, { "x-mcp": true, "x-mcp-search-aliases": ["find OpenAI provider model groups", "manage provider models", "choose model group to add models"] }), orgMemberRoute(), managementRead, async (c) => {
     try {
@@ -302,14 +288,9 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const actor = c.get("organizationContext")
       const input = c.req.valid("json")
       const catalog = await gatewayCatalog(input.providerId, input.modelIds)
-      validateGatewaySettings(catalog.config, input.settings ?? {})
-      const now = new Date()
-      const provider: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: catalog.catalog.id, name: input.name, model_ids: [...new Set(input.modelIds)], pinned_model_ids: [], provider_config: catalog.config, settings: input.settings ?? {}, credential_mode: input.credentialMode ?? "org", oauth_client_id: null, oauth_client_secret: null, status: input.status ?? "active", created_at: now, updated_at: now }
-      await db.transaction(async (tx) => {
+      const provider = await db.transaction(async (tx) => {
         const member = await liveMember(tx, actor, true, true)
-        await tx.insert(GatewayProviderTable).values(provider)
-        await writeGatewayModels(tx, provider, catalog.models)
-        await defaultMatrix(tx, provider, input, member.id)
+        return createGatewayProvider(tx, actor.organization.id, member.id, input, catalog)
       })
       return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true) }, 201)
     } catch (error) { return respond(c, error) }

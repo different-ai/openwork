@@ -76,6 +76,8 @@ import { sanitizeCommandName, validateMcpName, validateUserMcpName } from "./val
 import { TokenService } from "./tokens.js";
 import { resetManagedProviderAuthCache, syncManagedProviderAuth } from "./managed-provider-auth.js";
 import { EnvService } from "./env-file.js";
+import { LocalProviderKeys } from "./local-provider-keys.js";
+import { ProviderKeyShareService } from "./provider-key-share.js";
 import {
   normalizeResourceSnapshot,
   readDesktopCloudSyncState,
@@ -2448,6 +2450,18 @@ function createRoutes(
   anonymousInference: AnonymousInferenceService,
 ): Route[] {
   const routes: Route[] = [];
+  const localProviderKeys = new LocalProviderKeys(config, env);
+  const providerKeyShare = new ProviderKeyShareService({
+    source: localProviderKeys,
+    allowLocalDen: process.env.OPENWORK_DEV_MODE === "1" || process.env.NODE_ENV === "test",
+    readJournal: async (key) => {
+      const value = await readOpenworkWorkspaceConfig(config, `__provider_key_share__:${key}`);
+      return Object.keys(value).length ? value : null;
+    },
+    writeJournal: async (key, value, isCurrent) => {
+      await writeOpenworkWorkspaceConfig(config, `__provider_key_share__:${key}`, () => { isCurrent(); return value; });
+    },
+  });
   addRoute(routes, "GET", "/anonymous-inference/status", "client", async () =>
     jsonResponse(await anonymousInference.status()));
   for (const action of ["preflight", "refresh"]) {
@@ -2489,6 +2503,62 @@ function createRoutes(
     response.headers.set("Cache-Control", "no-store");
     return response;
   };
+  const requireDeviceKeyRequest = (request: Request) => {
+    ensureWritable(config);
+    if (!config.anonymousInference?.desktop) throw new ApiError(403, "desktop_required", "Device key sharing requires the desktop host.");
+    const origin = request.headers.get("origin");
+    if (origin && origin !== new URL(request.url).origin && !config.corsOrigins.includes(origin)) throw new ApiError(403, "invalid_origin", "This origin cannot manage device keys.");
+    if (request.method !== "GET" && request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") throw new ApiError(415, "invalid_content_type", "A JSON request is required.");
+  };
+  addRoute(routes, "GET", "/local-provider-keys", "host-token", async (ctx) => {
+    requireDeviceKeyRequest(ctx.request);
+    return privateProviderResponse({ providers: await localProviderKeys.listMetadata() });
+  });
+  addRoute(routes, "PUT", "/local-provider-keys/:id", "host-token", async (ctx) => {
+    requireDeviceKeyRequest(ctx.request);
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.key !== "string" || !body.key.trim() || body.key.length > 65535 || Object.keys(body).some((key) => key !== "key")) throw new ApiError(400, "invalid_payload", "A provider key is required.");
+    await localProviderKeys.save(ctx.params.id, body.key.trim());
+    const result = await syncManagedProviderAuth({ config, env });
+    if (![...result.delivered, ...result.unchanged].includes(ctx.params.id)) throw new ApiError(503, "provider_reload_unverified", "The key is saved, but its engine connection could not be verified. Refresh providers.");
+    const refresh = await applyManagedProviderReload(resolveEngineRuntimeWorkspace(config));
+    return jsonResponse({ saved: true, refresh });
+  });
+  addRoute(routes, "DELETE", "/local-provider-keys/:id", "host-token", async (ctx) => {
+    requireDeviceKeyRequest(ctx.request);
+    let secret;
+    try { secret = await localProviderKeys.read(ctx.params.id); }
+    catch (error) { if (error instanceof ApiError && error.code === "local_key_unavailable") return jsonResponse({ removed: false }); throw error; }
+    const removed = await localProviderKeys.remove(ctx.params.id, secret, () => {});
+    const result = await syncManagedProviderAuth({ config, env, retiredProviderIds: [ctx.params.id] });
+    if (removed && !result.removed.includes(ctx.params.id)) throw new ApiError(503, "provider_removal_unverified", "The stored key was removed. Restart the engine to verify disconnection.");
+    await applyManagedProviderReload(resolveEngineRuntimeWorkspace(config));
+    return jsonResponse({ removed });
+  });
+  addRoute(routes, "GET", "/local-provider-keys/:id/share", "host-token", async (ctx) => {
+    requireDeviceKeyRequest(ctx.request);
+    const orgId = new URL(ctx.request.url).searchParams.get("organizationId");
+    if (!orgId) throw new ApiError(400, "invalid_payload", "The selected organization is required.");
+    return privateProviderResponse(await providerKeyShare.eligibility(ctx.params.id, orgId));
+  });
+  addRoute(routes, "POST", "/local-provider-keys/:id/share", "host-token", async (ctx) => {
+    requireDeviceKeyRequest(ctx.request);
+    const body = await readJsonBody(ctx.request);
+    if (body.providerId !== ctx.params.id) throw new ApiError(400, "invalid_payload", "Provider identity does not match.");
+    // Sharing is governed by the same desktop policy as saving the key: a provider an admin blocked here cannot be exported.
+    await managedDesktopPolicy(config).assert("model", { providerID: ctx.params.id });
+    const result = await providerKeyShare.share(body);
+    if (result.localRemoved) {
+      try {
+        const auth = await syncManagedProviderAuth({ config, env, retiredProviderIds: [ctx.params.id] });
+        const refresh = await applyManagedProviderReload(resolveEngineRuntimeWorkspace(config));
+        return jsonResponse({ ...result, localRemoved: auth.removed.includes(ctx.params.id) && refresh === "reloaded" });
+      } catch {
+        return jsonResponse({ ...result, localRemoved: false });
+      }
+    }
+    return jsonResponse(result);
+  });
   addRoute(routes, "GET", "/anonymous-inference/preferences", "host-token", async () =>
     privateProviderResponse(await anonymousInference.preferences()));
   addRoute(routes, "PUT", "/anonymous-inference/preferences", "host-token", async (ctx) => {
@@ -3131,6 +3201,7 @@ function createRoutes(
     const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
     if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
     anonymousInference.setMemberSession(session);
+    providerKeyShare.setSession(session);
     const suspended = cloudProviderSync.suspend();
     try {
       await managedDesktopPolicy(config).setSession(session);
@@ -3145,6 +3216,7 @@ function createRoutes(
     const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
     if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
     anonymousInference.setMemberSession(session);
+    providerKeyShare.setSession(session);
     await managedDesktopPolicy(config).setSession(session);
     await cloudProviderSync.setSession(session);
     return new Response(null, { status: 204 });
@@ -3153,6 +3225,7 @@ function createRoutes(
   addRoute(routes, "DELETE", "/den-session", "host-token", async () => {
     ensureWritable(config);
     anonymousInference.setMemberSession(null);
+    providerKeyShare.setSession(null);
     await managedDesktopPolicy(config).clearSession();
     await cloudProviderSync.clearSession();
     await anonymousInference.initialize(config.port);

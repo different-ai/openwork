@@ -321,6 +321,8 @@ import type {
   GetV1InferenceProvidersOauthCallbackErrors,
   GetV1InferenceProvidersOauthCallbackResponses,
   GetV1InferenceProvidersResponses,
+  GetV1InferenceProvidersShareLocalKeyEligibilityErrors,
+  GetV1InferenceProvidersShareLocalKeyEligibilityResponses,
   GetV1InferenceProvidersUsageErrors,
   GetV1InferenceProvidersUsageResponses,
   GetV1InferenceResponses,
@@ -700,6 +702,8 @@ import type {
   PostV1InferenceProvidersMigrateFromLlmProviderErrors,
   PostV1InferenceProvidersMigrateFromLlmProviderResponses,
   PostV1InferenceProvidersResponses,
+  PostV1InferenceProvidersShareLocalKeyErrors,
+  PostV1InferenceProvidersShareLocalKeyResponses,
   PostV1InstallConnectExchangeErrors,
   PostV1InstallConnectExchangeResponses,
   PostV1InstallConnectPreviewErrors,
@@ -6196,6 +6200,79 @@ export class DenClient extends HeyApiClient {
       ThrowOnError
     >({
       url: "/v1/gateway/usage-limit-reset-requests/{id}/deny",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Check device API-key sharing eligibility
+   *
+   * Secret-free preflight for a genuine current user session and joined organization membership. Fresh owners/admins receive eligible=true and organization-scoped teams. Other current members, stale sessions, unsupported providers or disabled Gateway management receive the same direct object with eligible=false, an explicit reason and no teams. API keys are not user sessions.
+   */
+  public getV1InferenceProvidersShareLocalKeyEligibility<ThrowOnError extends boolean = false>(
+    parameters: {
+      providerId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "providerId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1InferenceProvidersShareLocalKeyEligibilityResponses,
+      GetV1InferenceProvidersShareLocalKeyEligibilityErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/share-local-key/eligibility",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Share a device API key with an organization
+   *
+   * Requires a genuine fresh owner/admin user session; authorization, membership and team scope are re-read from storage. Stores the encrypted API key, provider, default model group, chosen grants and durable receipt in one transaction. Organization/member/requestId retries with matching contents return the same receipt; different contents return 409. Only trusted catalog metadata is read; no upstream credential probe or inference call is made. The receipt acknowledges the committed transfer, not ongoing provider availability.
+   */
+  public postV1InferenceProvidersShareLocalKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      requestId: string;
+      providerId: string;
+      name: string;
+      credential: {
+        kind: "api_key";
+        secret: string;
+      };
+      allMembers: boolean;
+      teamIds: Array<string>;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "requestId" },
+            { in: "body", key: "providerId" },
+            { in: "body", key: "name" },
+            { in: "body", key: "credential" },
+            { in: "body", key: "allMembers" },
+            { in: "body", key: "teamIds" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersShareLocalKeyResponses,
+      PostV1InferenceProvidersShareLocalKeyErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/share-local-key",
       ...options,
       ...params,
       headers: {
