@@ -1,5 +1,6 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
+import { isRecord, records } from "../worlds/library.ts";
 import { denManagePluginsAsAdmin } from "../worlds/den-library-manage.ts";
 
 // Admins build a plugin once in Manage and choose which teams get it.
@@ -69,7 +70,7 @@ test("an admin: I want to give the Sales team a plugin so they all get the same 
     expect(status).toBe("Sales");
     const listCalls = (await world.proxy.requestLog()).slice(logStart).map((entry) => entry.path)
       .filter((path) => path.startsWith("/v1/plugins?") || /^\/v1\/plugins\/[^/?]+\/access/.test(path));
-    expect(listCalls, "the directory fetches a bounded page with access").toContain("/v1/plugins?status=active&limit=50&includeAccess=true&includeTotal=true");
+    expect(listCalls, "the directory fetches a bounded page with access").toContain("/v1/plugins?status=active&limit=50&includeAccess=true&includeTotal=true&includeFacets=true");
     expect(listCalls.some((path) => /\/access/.test(path))).toBe(false);
     evidence.recordAssertionEvidence(
       "Plugins loads a bounded page with access",
@@ -82,7 +83,10 @@ test("an admin: I want to give the Sales team a plugin so they all get the same 
   await step("after: I find the plugin by name and by Sales access", async () => {
     await user.type({ placeholder: "Search plugins by name" }, "Sales call");
     await user.see({ testId: "admin-plugins" }, { text: /Sales call prep/ });
+    await user.see({ testId: "plugin-directory-columns" }, { text: /Name[\s\S]*Shared with[\s\S]*Owner[\s\S]*Updated/ });
     await user.click({ role: "button", label: "Team" });
+    await user.see({ text: "Plugins available to a team" });
+    await user.screenshot();
     await user.click({ role: "button", label: "Sales" });
     await user.see({ role: "button", label: /Team: Sales/ });
     await user.see({ text: "1 plugin" });
@@ -103,19 +107,31 @@ test("an admin: I want to give the Sales team a plugin so they all get the same 
     await user.screenshot();
   });
 
-  await step("after: Omar has access through Sales, while Kai does not", async () => {
-    await user.click({ role: "button", label: "User" });
-    await user.click({ role: "button", label: "Omar Diaz" });
-    await user.see({ testId: "admin-plugins" }, { text: /Sales call prep/ });
+  await step("Owner filters the creator, not a person who was given access", async () => {
+    expect(names(await world.library(world.den.members.omar))).toContain("Sales call prep");
+    await user.click({ role: "button", label: "Owner" });
+    await user.see({ text: "Plugins created by" });
     await user.screenshot();
-    await user.click({ role: "button", label: /User: Omar Diaz/ });
-    await user.click({ role: "button", label: "Kai Brooks" });
-    await user.see({ text: "No plugins match. Try another name or audience." });
+    await user.click({ role: "button", label: "Omar Diaz" });
+    await user.see({ text: "No plugins match. Try another name, team, or owner." });
+    await user.screenshot();
+    await user.click({ role: "button", label: /Owner: Omar Diaz/ });
+    await user.click({ role: "button", label: "Riley Admin" });
+    await user.see({ testId: "admin-plugins" }, { text: /Sales call prep/ });
+    await user.see({ testId: "plugin-directory-total" }, { text: "1" });
+    await user.reload();
+    await user.see({ role: "button", label: /Owner: Riley Admin/ });
+    await user.see({ role: "button", label: /Team: Sales/ });
+    const inventory = await probe.api(world.den.admin, `/v1/plugins?status=active&includeTotal=true&includeFacets=true&teamId=${world.teamIds.Sales}`);
+    if (!isRecord(inventory.body)) throw new Error("Plugin inventory is missing.");
+    expect(inventory.body.total).toBe(1);
+    expect(records(inventory.body.teamCounts).find((entry) => entry.id === world.teamIds.Sales)?.count).toBe(1);
+    expect(records(inventory.body.ownerCounts).find((entry) => entry.id === world.memberIds.omar)).toBeUndefined();
+    const matching = records(inventory.body.items)[0];
+    expect(records(inventory.body.ownerCounts)).toContainEqual({ id: matching?.createdByOrgMembershipId, count: 1 });
     const filteredPaths = (await world.proxy.requestLog()).map((entry) => entry.path).filter((path) => path.startsWith("/v1/plugins?"));
-    expect(filteredPaths.some((path) => path.includes(`teamId=${world.teamIds.Sales}`))).toBe(true);
-    expect(filteredPaths.some((path) => path.includes(`memberId=${world.memberIds.omar}`))).toBe(true);
-    expect(filteredPaths.some((path) => path.includes(`memberId=${world.memberIds.kai}`))).toBe(true);
-    evidence.recordAssertionEvidence("the audience filters reach Den", "Team and both member queries reached the plugin list; Kai has no matching plugin", true);
+    expect(filteredPaths.some((path) => path.includes(`ownerId=${world.memberIds.omar}`))).toBe(true);
+    evidence.recordAssertionEvidence("owner and team filters have distinct meanings", "Omar can use the Sales plugin but does not own it; selecting Omar as owner gives zero results. Selecting Riley and Sales gives one result after reload. Team and owner counts agree with persisted grants and creator.", true);
     await user.screenshot();
   });
 
