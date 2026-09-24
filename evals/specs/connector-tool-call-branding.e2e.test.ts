@@ -4,7 +4,7 @@ import { connectorBranding, isRecord } from "../worlds/library.ts";
 
 const test = spec.world(connectorBranding, { timeout: 420_000 });
 
-test("connector-backed tool calls show first-class branding and human-readable labels", async ({ world, user, probe, step }) => {
+test("connector-backed tool calls show first-class branding and human-readable labels", async ({ world, user, probe, step, evidence }) => {
   const sinceIso = new Date().toISOString();
   await user.type("composer", world.prompt);
   await user.click("Run task");
@@ -13,6 +13,7 @@ test("connector-backed tool calls show first-class branding and human-readable l
     await user.see({ text: /Searched your connections for.*Slack list_channels/ }, { timeoutMs: 60_000 });
     await user.see({ text: /^Listing channels$/ }, { timeoutMs: 30_000 });
     await user.notSee({ text: /openwork-cloud_execute_capability/ });
+    evidence.recordAssertionEvidence("connector action while running", "Listing channels is visible; raw tool names are absent", true);
     await user.screenshot();
   });
 
@@ -46,10 +47,12 @@ test("connector-backed tool calls show first-class branding and human-readable l
     await user.click({ role: "button", label: "Listed channels. Show technical details" });
     await user.see({ text: /"limit":\s*3/ });
     await user.click({ role: "button", label: "Listed channels. Hide technical details" });
+    evidence.recordAssertionEvidence("connector action after reload", "One branded Slack row; limit 3 is available under technical details", true);
   });
 
   await step("before: a note has not yet been created", async () => {
     await user.notSee({ text: world.mutationProof });
+    evidence.recordAssertionEvidence("note before creation", "The new note is not in the conversation", true);
     await user.screenshot();
   });
 
@@ -62,6 +65,7 @@ test("connector-backed tool calls show first-class branding and human-readable l
     } else {
       await user.see({ text: /Creating note/ }, { timeoutMs: 60_000 });
     }
+    evidence.recordAssertionEvidence("creation in progress", world.engine === "v2" ? "Creating a note in Slack, not Tool activity" : "Creating note is visible", true);
     await user.screenshot();
   });
 
@@ -78,6 +82,7 @@ test("connector-backed tool calls show first-class branding and human-readable l
     await user.screenshot();
     await user.reload();
     await user.see({ text: world.mutationProof }, { timeoutMs: 30_000 });
+    evidence.recordAssertionEvidence("created note after reload", `create_note received limit 3; ${world.mutationProof} remains visible`, true);
     await user.screenshot();
   });
 
@@ -96,6 +101,7 @@ test("connector-backed tool calls show first-class branding and human-readable l
     await user.notSee({ role: "button", label: /^Ran(?:\s|\.|[0-9]|$)/ });
     expect(await world.den.mocks.connector.toolCalls({ name: "read_history", sinceIso, atLeast: 1 }))
       .toMatchObject([{ name: "read_history", args: { limit: 3 } }]);
+    evidence.recordAssertionEvidence("history lookup failed without claiming success", "read_history received limit 3; the reply says the lookup failed", true);
     await user.screenshot();
     await user.reload();
     if (world.engine === "v2") {
