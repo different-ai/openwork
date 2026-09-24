@@ -143,7 +143,7 @@ async function answerGoogleSignIn(tab: { webSocketDebuggerUrl: string }, decisio
  * admin has not finished setting up. Den, den-web and the Gateway's OAuth
  * handlers are real; no request reaches Google or a model provider.
  */
-export async function denLibraryModels(seed: Seed, { place }: { place: Place }) {
+export async function denLibraryModels(seed: Seed, { place }: { place: Place }, options: { asAdmin?: boolean } = {}) {
   if (place.kind !== "local") throw new Error("This world preloads a Google stand-in into the Den child; run it on the local lane.");
   const google = await googleStandIn();
   const gatewayUrl = `http://127.0.0.1:${await allocateFreePort()}`;
@@ -203,19 +203,23 @@ export async function denLibraryModels(seed: Seed, { place }: { place: Place }) 
   await queryDenDatabase(databaseUrl, "UPDATE gateway_provider_credentials SET status = 'refresh_failed' WHERE gateway_provider_id = ?", [mistralId]);
 
   const viewport = { width: 1440, height: 900 };
-  const web = await seed.web({ den, signedInAs: sam, startPath: "/dashboard/library?show=models", headless: true, viewport });
+  const web = options.asAdmin
+    ? await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/ai-gateway?tab=ai-providers", headless: true, viewport })
+    : await seed.web({ den, signedInAs: sam, startPath: "/dashboard/library?show=models", headless: true, viewport });
   const webOrigin = new URL(den.ref.webUrl).origin;
   // Sam signed in to Den in this browser with his password, the way people
   // do, so the browser also holds his Den session cookie. OpenWork's sign-in
   // tab checks that cookie before it sends anyone to Google.
-  const signedIn = await seed.api(sam, "/api/auth/sign-in/email", { method: "POST", body: JSON.stringify({ email: sam.email, password: sam.password }) });
-  const sessionCookie = signedIn.response.headers.getSetCookie().find((value) => value.includes("session_token="))?.split(";")[0] ?? "";
-  const separator = sessionCookie.indexOf("=");
-  if (!signedIn.response.ok || separator < 1) throw new Error(`Could not sign Sam in with his password: HTTP ${signedIn.response.status}`);
-  const applied = record(await web.client.send("Network.setCookie", {
-    name: sessionCookie.slice(0, separator), value: sessionCookie.slice(separator + 1), url: den.ref.webUrl, path: "/", httpOnly: true,
-  }));
-  if (applied.success !== true) throw new Error("Could not give the browser Sam's Den session cookie.");
+  if (!options.asAdmin) {
+    const signedIn = await seed.api(sam, "/api/auth/sign-in/email", { method: "POST", body: JSON.stringify({ email: sam.email, password: sam.password }) });
+    const sessionCookie = signedIn.response.headers.getSetCookie().find((value) => value.includes("session_token="))?.split(";")[0] ?? "";
+    const separator = sessionCookie.indexOf("=");
+    if (!signedIn.response.ok || separator < 1) throw new Error(`Could not sign Sam in with his password: HTTP ${signedIn.response.status}`);
+    const applied = record(await web.client.send("Network.setCookie", {
+      name: sessionCookie.slice(0, separator), value: sessionCookie.slice(separator + 1), url: den.ref.webUrl, path: "/", httpOnly: true,
+    }));
+    if (applied.success !== true) throw new Error("Could not give the browser Sam's Den session cookie.");
+  }
 
   async function memberConnections(session: DenSession) {
     const result = await seed.api(session, "/v1/inference-providers/member-connections");
@@ -231,6 +235,11 @@ export async function denLibraryModels(seed: Seed, { place }: { place: Place }) 
     den, web, sam, maya, googleCloudId, googleAccount: GOOGLE_ACCOUNT, oauthClientId: OAUTH_CLIENT_ID,
     /** Google Cloud models Den will actually serve this person right now. */
     usableModelNames,
+    /** The organization's default for new chats, as Den resolves it for this person. */
+    async defaultModelFor(session: DenSession) {
+      const result = await seed.api(session, "/v1/org/default-model");
+      return record(result.body);
+    },
     /** This person's own Google sign-in for Google Cloud, straight from Den. */
     memberConnections,
     googleTokenExchanges: google.exchanges,
@@ -266,3 +275,6 @@ export async function denLibraryModels(seed: Seed, { place }: { place: Place }) 
     },
   });
 }
+
+/** The same organization, with the admin on Manage › AI Gateway › AI Providers. */
+export const denLibraryModelsAsAdmin = (seed: Seed, ctx: { place: Place }) => denLibraryModels(seed, ctx, { asAdmin: true });

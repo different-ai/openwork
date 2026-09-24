@@ -114,6 +114,11 @@
       "development": "./src/den/microsoft-365.ts",
       "default": "./src/den/microsoft-365.ts"
     },
+    "./den/default-model": {
+      "types": "./src/den/default-model.ts",
+      "development": "./src/den/default-model.ts",
+      "default": "./src/den/default-model.ts"
+    },
     "./den/organization-web-origins": {
       "types": "./src/den/organization-web-origins.ts",
       "development": "./src/den/organization-web-origins.ts",

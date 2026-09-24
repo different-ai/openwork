@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, LoaderCircle, LockKeyhole } from "lucide-react";
+import { ChevronRight, LoaderCircle } from "lucide-react";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton } from "../../_components/ui/button";
 import { getLibraryModelRoute, getLibraryRoute } from "../../_lib/den-org";
@@ -28,31 +28,28 @@ export function ProviderLogo({ provider, size = "sm" }: { provider: Pick<Library
   );
 }
 
-function WaitingOnAdmin() {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <LockKeyhole className="h-3.5 w-3.5" aria-hidden />
-      Waiting on your admin
-    </span>
-  );
-}
-
 /** One provider in My Library, with the one thing the person can do about it on the right. */
 export function LibraryModelRow({ provider, signIn }: { provider: LibraryModelProvider; signIn: ModelSignIn }) {
   const { orgSlug } = useOrgDashboard();
   const waiting = signIn.waitingFor === provider.id;
   const failure = signIn.failureFor(provider.id);
+  // Same words as the model picker: Ready, Sign in, Set up.
   const status = provider.state === "blocked"
-    ? <WaitingOnAdmin />
-    : waiting ? "Finish signing in in your browser"
-      : failure ?? modelCount(provider.models.length);
-  const action = provider.state === "blocked" ? null
-    : waiting ? <DenButton variant="ghost" size="xs" onClick={signIn.cancel}>Cancel</DenButton>
-      : provider.state === "needs_signin" ? (
+    ? "Set up"
+    : waiting ? (
+      <span className="inline-flex items-center gap-2">
+        Finish signing in in your browser
+        <DenButton variant="ghost" size="xs" onClick={signIn.cancel}>Cancel</DenButton>
+      </span>
+    ) : provider.state === "needs_signin" ? (
+      <span className="inline-flex items-center gap-2">
+        {failure ? <span>{failure}</span> : null}
         <DenButton variant="secondary" size="xs" onClick={() => void signIn.signIn(provider)}>
           {failure ? "Try again" : "Sign in"}
         </DenButton>
-      ) : <ChevronRight className="h-4 w-4 text-gray-400" aria-hidden />;
+      </span>
+    ) : "Ready";
+  const action = <ChevronRight className="h-4 w-4 text-gray-400" aria-hidden />;
   return (
     <div data-library-item={provider.name} data-library-kind="model" data-model-state={provider.state}>
       <ItemRow
@@ -61,14 +58,14 @@ export function LibraryModelRow({ provider, signIn }: { provider: LibraryModelPr
         title={provider.name}
         description={modelNamesSummary(provider.models)}
         status={status}
-        action={action ?? <span />}
+        action={action}
       />
     </div>
   );
 }
 
 function stateLine(provider: LibraryModelProvider, waiting: boolean): { text: string; dot: string } {
-  if (provider.state === "blocked") return { text: "Waiting on your admin to finish setting this up.", dot: "bg-gray-300" };
+  if (provider.state === "blocked") return { text: "Your admin needs to set this up.", dot: "bg-gray-300" };
   if (waiting) return { text: "Finish signing in in your browser.", dot: "bg-gray-300" };
   if (provider.account) return { text: `Signed in as ${provider.account}`, dot: "bg-emerald-600" };
   if (provider.memberSets.length > 0) return { text: `Not signed in. Uses your own ${signInBrand(provider)} account.`, dot: "bg-gray-300" };

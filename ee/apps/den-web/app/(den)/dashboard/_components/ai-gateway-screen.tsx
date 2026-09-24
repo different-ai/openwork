@@ -23,6 +23,7 @@ import { useOrgInferenceProviders } from "./inference-provider-data";
 import { GatewayProvidersSection } from "./inference-providers-screen";
 import { LegacyProvidersSection } from "./llm-providers-screen";
 import { InferenceScreen } from "./inference-screen";
+import { DefaultModelPanel } from "./default-model-panel";
 
 export type AiGatewayTab = "overview" | "ai-providers" | "limits" | "users-and-teams" | "openwork-models";
 
@@ -81,6 +82,17 @@ function AiGatewayOverview({ orgId }: { orgId: string }) {
   );
 }
 
+/** AI Providers: the default for new chats sits above the providers it picks from. */
+function AiProvidersTab({ orgId }: { orgId: string }) {
+  const { inferenceProviders } = useOrgInferenceProviders(orgId);
+  return (
+    <div className="flex flex-col gap-6">
+      {inferenceProviders.length > 0 ? <DefaultModelPanel orgId={orgId} providers={inferenceProviders} /> : null}
+      <GatewayProvidersSection />
+    </div>
+  );
+}
+
 const EMPTY_STATE_PROVIDERS = [
   { id: "openrouter", name: "OpenRouter" },
   { id: "anthropic", name: "Anthropic" },
@@ -130,7 +142,7 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
                 : access === "enabled" && orgId && orgContext ? (
                   <>
                     {tab === "overview" ? <AiGatewayOverview key={orgId} orgId={orgId} /> : null}
-                    {tab === "ai-providers" ? <GatewayProvidersSection key={orgId} /> : null}
+                    {tab === "ai-providers" ? <AiProvidersTab key={orgId} orgId={orgId} /> : null}
                     {tab === "users-and-teams" ? <GatewayUsersTeamsSection key={orgId} orgId={orgId} orgSlug={orgSlug} orgContext={orgContext} /> : null}
                     {tab === "limits" ? (
                       <>

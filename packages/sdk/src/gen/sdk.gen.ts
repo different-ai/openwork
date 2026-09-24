@@ -96,6 +96,8 @@ import type {
   DeleteV1MembersByMemberIdErrors,
   DeleteV1MembersByMemberIdResponses,
   DeleteV1MemoryByIdErrors,
+  DeleteV1OrgDefaultModelErrors,
+  DeleteV1OrgDefaultModelResponses,
   DeleteV1OrgErrors,
   DeleteV1OrgResponses,
   DeleteV1OrgWebOriginsByWebOriginIdErrors,
@@ -400,6 +402,8 @@ import type {
   GetV1OauthProvidersByProviderIdConnectStartResponses,
   GetV1OauthProvidersByProviderIdStatusErrors,
   GetV1OauthProvidersByProviderIdStatusResponses,
+  GetV1OrgDefaultModelErrors,
+  GetV1OrgDefaultModelResponses,
   GetV1OrgErrors,
   GetV1OrgResponses,
   GetV1OrgsInvitationsPreviewErrors,
@@ -495,6 +499,7 @@ import type {
   MintAutomationRunnerTokenResponses,
   MoveMicrosoft365MailMessageErrors,
   MoveMicrosoft365MailMessageResponses,
+  OrganizationDefaultModelInput,
   OrganizationWebOriginApproveBody,
   PatchApiAuthScimV2GroupsByGroupIdErrors,
   PatchApiAuthScimV2GroupsByGroupIdResponses,
@@ -848,6 +853,8 @@ import type {
   PutV1McpConnectionsByConnectionIdToolPolicyResponses,
   PutV1McpConnectionsByKeyByExternalKeyErrors,
   PutV1McpConnectionsByKeyByExternalKeyResponses,
+  PutV1OrgDefaultModelErrors,
+  PutV1OrgDefaultModelResponses,
   PutV1TeamsByKeyByExternalKeyErrors,
   PutV1TeamsByKeyByExternalKeyResponses,
   RunAutomationNowErrors,
@@ -13571,6 +13578,60 @@ export class DenClient extends HeyApiClient {
       url: "/v1/org/web-origins/{webOriginId}",
       ...options,
       ...params,
+    });
+  }
+
+  /**
+   * Clear the organization's default model
+   *
+   * Removes the default for new chats. People keep their own picks; everyone else starts on the free starter model if policy allows it. Requires owner or admin.
+   */
+  public deleteV1OrgDefaultModel<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).delete<
+      DeleteV1OrgDefaultModelResponses,
+      DeleteV1OrgDefaultModelErrors,
+      ThrowOnError
+    >({ url: "/v1/org/default-model", ...options });
+  }
+
+  /**
+   * Get the organization's default model for new chats
+   *
+   * Returns the model the organization's admins chose for new chats, and the same model resolved for the caller: the routed model id their access grants and whether it needs their own sign-in first. Any member can read it; defaultModel is null when the caller has no access to the chosen model or none is set.
+   */
+  public getV1OrgDefaultModel<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetV1OrgDefaultModelResponses,
+      GetV1OrgDefaultModelErrors,
+      ThrowOnError
+    >({ url: "/v1/org/default-model", ...options });
+  }
+
+  /**
+   * Choose the organization's default model for new chats
+   *
+   * Sets the model everyone starts on in a new chat. The model must be one of the catalog models of an AI Gateway provider in this organization. People can still pick another model. Requires owner or admin.
+   */
+  public putV1OrgDefaultModel<ThrowOnError extends boolean = false>(
+    parameters: {
+      organizationDefaultModelInput: OrganizationDefaultModelInput;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ key: "organizationDefaultModelInput", map: "body" }] }]);
+    return (options?.client ?? this.client).put<
+      PutV1OrgDefaultModelResponses,
+      PutV1OrgDefaultModelErrors,
+      ThrowOnError
+    >({
+      url: "/v1/org/default-model",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 

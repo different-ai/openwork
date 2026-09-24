@@ -1,18 +1,20 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { denLibraryModels } from "../worlds/den-library-models.ts";
+import { denLibraryModels, denLibraryModelsAsAdmin } from "../worlds/den-library-models.ts";
 
 // Models live in My Library, next to connectors, skills and plugins. A model
 // that needs the person's own sign-in gets a Sign in button right there; no
 // separate "My Model Connections" page, no dialog.
 const test = spec.world(denLibraryModels, { timeout: 900_000, resources: { surfaces: ["web"], services: ["den"] } });
+const adminTest = spec.world(denLibraryModelsAsAdmin, { timeout: 900_000, resources: { surfaces: ["web"], services: ["den"] } });
 
 test("a member: I want to use Gemini, so I sign in with my own Google account right from My Library", async ({ world, user, probe, step, evidence }) => {
   await step("before: My Library shows every model my company gives me, and which one needs my sign-in", async () => {
     await user.see({ role: "tab", label: "Models" }, { timeoutMs: 120_000 });
     await user.see({ text: "Google Cloud" }, { timeoutMs: 60_000 });
     await user.see({ text: "Anthropic" });
-    await user.see({ text: "Waiting on your admin" });
+    await user.see({ text: "Set up" });
+    await user.see({ text: "Ready" });
     await user.see({ role: "button", label: "Sign in" });
     const served = await world.usableModelNames(world.sam);
     evidence.recordAssertionEvidence("Den serves Sam no Google Cloud models yet", `usable Google Cloud models for Sam: ${served.length}`, served.length === 0);
@@ -130,6 +132,40 @@ test("a member: I want to use Gemini, so I sign in with my own Google account ri
     evidence.recordAssertionEvidence("signing out stops Den serving Sam those models and revokes the Google token", `usable models: ${served.length}; Google revocations: ${world.googleRevocations()}`, served.length === 0 && world.googleRevocations() >= 1);
     expect(served).toEqual([]);
     expect(world.googleRevocations()).toBeGreaterThanOrEqual(1);
+    await user.screenshot();
+  });
+});
+
+adminTest("an admin: I want everyone to start new chats on Gemini 2.5 Pro, without taking away their own pick", async ({ world, user, step, evidence }) => {
+  await step("before: AI Providers has Default for new chats, and nothing is chosen yet", async () => {
+    await user.see({ testId: "default-model-panel" }, { timeoutMs: 120_000 });
+    await user.see({ text: "Everyone starts here. People can still pick another model." });
+    await user.see({ role: "button", label: "Default for new chats" }, { text: /No default/ });
+    const before = await world.defaultModelFor(world.sam);
+    evidence.recordAssertionEvidence("Den has no default for Sam yet", JSON.stringify(before), before.configured === null && before.defaultModel === null);
+    expect(before.configured).toBeNull();
+    await user.screenshot();
+  });
+
+  await step("the admin picks Gemini 2.5 Pro", async () => {
+    await user.click({ role: "button", label: "Default for new chats" });
+    await user.click({ role: "option", label: /^Gemini 2\.5 Pro/ });
+    await user.see({ testId: "den-toast" }, { text: /New chats start on Gemini 2\.5 Pro/, timeoutMs: 30_000 });
+    await user.screenshot();
+  });
+
+  await step("after: Sam and Maya both start there, and Den says it needs each person's own Google sign-in", async () => {
+    await user.see({ role: "button", label: "Default for new chats" }, { text: /Gemini 2\.5 Pro/ });
+    const sam = await world.defaultModelFor(world.sam);
+    const maya = await world.defaultModelFor(world.maya);
+    const read = (value: Record<string, unknown>) => {
+      const model = value.defaultModel;
+      return typeof model === "object" && model !== null ? { name: Reflect.get(model, "name"), needsSignIn: Reflect.get(model, "needsSignIn") } : null;
+    };
+    evidence.recordAssertionEvidence("members get the admin's default, marked as needing their own sign-in", `Sam: ${JSON.stringify(read(sam))}; Maya: ${JSON.stringify(read(maya))}`,
+      read(sam)?.name === "Gemini 2.5 Pro" && read(sam)?.needsSignIn === true && read(maya)?.needsSignIn === true);
+    expect(read(sam)).toEqual({ name: "Gemini 2.5 Pro", needsSignIn: true });
+    expect(read(maya)).toEqual({ name: "Gemini 2.5 Pro", needsSignIn: true });
     await user.screenshot();
   });
 });

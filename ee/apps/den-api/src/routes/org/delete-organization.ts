@@ -57,6 +57,7 @@ import {
   OrganizationRoleTable,
   OrganizationTable,
   OrganizationWebOriginTable,
+  OrganizationDefaultModelTable,
   OrgSubscriptionTable,
   PluginAccessGrantTable,
   PluginConfigObjectTable,
@@ -529,6 +530,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
 
         await tx.delete(OrganizationDiagnosticCredentialTable).where(eq(OrganizationDiagnosticCredentialTable.organizationId, organizationId))
         await tx.delete(OrganizationWebOriginTable).where(eq(OrganizationWebOriginTable.organizationId, organizationId))
+        await tx.delete(OrganizationDefaultModelTable).where(eq(OrganizationDefaultModelTable.organizationId, organizationId))
 
         await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.organizationId, organizationId))
         await tx.delete(ConnectedAccountTable).where(eq(ConnectedAccountTable.organizationId, organizationId))

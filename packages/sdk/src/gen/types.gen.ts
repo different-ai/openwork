@@ -4282,6 +4282,30 @@ export type WebOriginNotFoundError = {
 
 export type RemoveWebOriginNotFound = WebOriginNotFoundError | WebOriginOrganizationNotFoundError;
 
+export type OrganizationDefaultModel = {
+  configured: {
+    providerId: string;
+    modelId: string;
+    name: string | null;
+  } | null;
+  defaultModel: {
+    providerId: string;
+    modelId: string;
+    name: string;
+    needsSignIn: boolean;
+  } | null;
+};
+
+export type DefaultModelError = {
+  error: "default_model_not_found";
+  message: string;
+};
+
+export type OrganizationDefaultModelInput = {
+  providerId: string;
+  modelId: string;
+};
+
 export type DenAppVersionResponse = {
   minAppVersion: string;
   latestAppVersion: string;
@@ -25369,6 +25393,101 @@ export type DeleteV1OrgWebOriginsByWebOriginIdResponses = {
 
 export type DeleteV1OrgWebOriginsByWebOriginIdResponse =
   DeleteV1OrgWebOriginsByWebOriginIdResponses[keyof DeleteV1OrgWebOriginsByWebOriginIdResponses];
+
+export type DeleteV1OrgDefaultModelData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/org/default-model";
+};
+
+export type DeleteV1OrgDefaultModelErrors = {
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only owners and admins can choose the default.
+   */
+  403: ForbiddenError;
+};
+
+export type DeleteV1OrgDefaultModelError = DeleteV1OrgDefaultModelErrors[keyof DeleteV1OrgDefaultModelErrors];
+
+export type DeleteV1OrgDefaultModelResponses = {
+  /**
+   * Cleared.
+   */
+  204: void;
+};
+
+export type DeleteV1OrgDefaultModelResponse = DeleteV1OrgDefaultModelResponses[keyof DeleteV1OrgDefaultModelResponses];
+
+export type GetV1OrgDefaultModelData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/org/default-model";
+};
+
+export type GetV1OrgDefaultModelErrors = {
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Not a member of this organization.
+   */
+  403: ForbiddenError;
+};
+
+export type GetV1OrgDefaultModelError = GetV1OrgDefaultModelErrors[keyof GetV1OrgDefaultModelErrors];
+
+export type GetV1OrgDefaultModelResponses = {
+  /**
+   * The organization's default model.
+   */
+  200: OrganizationDefaultModel;
+};
+
+export type GetV1OrgDefaultModelResponse = GetV1OrgDefaultModelResponses[keyof GetV1OrgDefaultModelResponses];
+
+export type PutV1OrgDefaultModelData = {
+  body: OrganizationDefaultModelInput;
+  path?: never;
+  query?: never;
+  url: "/v1/org/default-model";
+};
+
+export type PutV1OrgDefaultModelErrors = {
+  /**
+   * Invalid request.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only owners and admins can choose the default.
+   */
+  403: ForbiddenError;
+  /**
+   * The model isn't offered by a provider in this organization.
+   */
+  404: DefaultModelError;
+};
+
+export type PutV1OrgDefaultModelError = PutV1OrgDefaultModelErrors[keyof PutV1OrgDefaultModelErrors];
+
+export type PutV1OrgDefaultModelResponses = {
+  /**
+   * The saved default.
+   */
+  200: OrganizationDefaultModel;
+};
+
+export type PutV1OrgDefaultModelResponse = PutV1OrgDefaultModelResponses[keyof PutV1OrgDefaultModelResponses];
 
 export type GetV1AppVersionData = {
   body?: never;
