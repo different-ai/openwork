@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">OpenWork SOC 2 Type II</title>
+  <circle cx="64" cy="64" r="61" fill="white" stroke="#011627" stroke-width="1.5"/>
+  <circle cx="64" cy="64" r="56" fill="none" stroke="#011627" stroke-opacity=".3" stroke-width=".75"/>
+  <g fill="#011627" font-family="Arial, Helvetica, sans-serif" text-anchor="middle">
+    <text x="64" y="39" font-size="10" letter-spacing="1.1">OPENWORK</text>
+    <text x="63.5" y="69" font-size="29" font-weight="700" letter-spacing="-1">SOC 2</text>
+    <path d="M41 79h46" stroke="#011627" stroke-opacity=".3" stroke-width=".75"/>
+    <text x="65" y="97" font-size="14" font-weight="600" letter-spacing="1.6">TYPE II</text>
+  </g>
+</svg>
