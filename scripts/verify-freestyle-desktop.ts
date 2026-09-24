@@ -36,7 +36,7 @@ await verifyBrowserHandoff({ env: desktopProfileEnvironment(profile) });
 const { attachSurface, evaluate, browserScript } = await import("/workspace/evals/packages/cdp/src/index.ts");
 const surface = await attachSurface({ name: "browser-handoff", kind: "electron", hostKind: "local", cdpUrl: "http://127.0.0.1:9825" });
 try {
-  await verifyBrowserHandoff({ launcher: "Electron shell.openExternal", openUrl: (url) => evaluate(surface, browserScript((href) => window.__OPENWORK_ELECTRON__.shell.openExternal(href), [url])) });
+  await verifyBrowserHandoff({ launcher: "Electron shell.openExternal", openUrl: (url) => evaluate(surface.client, browserScript((href) => window.__OPENWORK_ELECTRON__.shell.openExternal(href), [url])) });
 } finally { await surface.stop(); }
 console.log(JSON.stringify({ ...state, desktopOnlyServices: true, browserHandoff: true, electronBrowserHandoff: true, xfce: true }));
 `;
