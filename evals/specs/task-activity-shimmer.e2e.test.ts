@@ -73,6 +73,9 @@ test("ACT-01 delegated-task activity stays with its original message after a fol
       titleStyle: { color: style.color, backgroundImage: style.backgroundImage, animationName: style.animationName },
       mutedColors: [getComputedStyle(suffix).color, getComputedStyle(status).color],
       reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+      // The hover foreground is served under `@media (hover: hover)`; a
+      // touch-only or headless pointer keeps the running treatment instead.
+      hoverCapable: matchMedia("(hover: hover)").matches,
     };
   });
   await user.hover("composer");
@@ -121,10 +124,11 @@ test("ACT-01 delegated-task activity stays with its original message after a fol
   const hovered = await probe.eventually(readActivity, {
     within: 5_000, intervalMs: 50, label: "hovered task title uses solid foreground",
     until: (value) => value.hovered && value.colorSettled
-      && value.titleStyle.backgroundImage === "none" && value.titleStyle.animationName === "none"
-      && value.titleStyle.color === value.buttonColor,
+      && (!value.hoverCapable || (value.titleStyle.backgroundImage === "none" && value.titleStyle.animationName === "none"
+        && value.titleStyle.color === value.buttonColor)),
   });
-  expect(hovered.titleStyle.color).not.toBe(rendered.buttonColor);
+  if (hovered.hoverCapable) expect(hovered.titleStyle.color).not.toBe(rendered.buttonColor);
+  else expect(hovered.titleStyle).toEqual(rendered.titleStyle);
   expect(hovered.mutedColors).toEqual(rendered.mutedColors);
   expect(hovered.text).toMatch(/Working/);
 
@@ -139,7 +143,9 @@ test("ACT-01 delegated-task activity stays with its original message after a fol
   expect(restored.mutedColors).toEqual(rendered.mutedColors);
   evidence.recordJsonArtifact("Delegated task hover", { rendered, hovered, restored });
   evidence.recordAssertionEvidence("Running task titles use the normal hover foreground",
-    "Hover replaces the title shimmer with solid inherited text; pointer leave restores its running treatment without recoloring the agent label or status.", true);
+    hovered.hoverCapable
+      ? "Hover replaces the title shimmer with solid inherited text; pointer leave restores its running treatment without recoloring the agent label or status."
+      : "This browser reports no hover-capable pointer, so the running treatment stays in place under the pointer and the agent label and status keep their colors.", true);
   await user.click({ role: "button", label: /Build isolated Azure repro/ });
   await user.see({ text: /ACTIVITY_CHILD_HOLD/ });
   await user.see({ text: /Working/ });
