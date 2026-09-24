@@ -98,6 +98,20 @@ test("public hosted eligibility respects explicit enterprise policies and no his
   assert.equal(desktopFreeBootstrapEligible({ flavor: "enterprise" }, bootstrap), false);
 });
 
+test("a loopback control plane is eligible only when developer mode names it explicitly", () => {
+  const distribution = { flavor: "public" };
+  const local = { baseUrl: "http://localhost:3005", requireSignin: false, requireActivation: false };
+  assert.equal(desktopFreeBootstrapEligible(distribution, local, {}), false);
+  assert.equal(desktopFreeBootstrapEligible(distribution, local, { OPENWORK_DEV_FREE_CONTROL_PLANE: "http://localhost:3005" }), false);
+  assert.equal(desktopFreeBootstrapEligible(distribution, local, { OPENWORK_DEV_MODE: "1" }), false);
+  assert.equal(desktopFreeBootstrapEligible(distribution, local, { OPENWORK_DEV_MODE: "1", OPENWORK_DEV_FREE_CONTROL_PLANE: "http://localhost:3005" }), true);
+  assert.equal(desktopFreeBootstrapEligible(distribution, { ...local, baseUrl: "http://localhost:3015" }, { OPENWORK_DEV_MODE: "1", OPENWORK_DEV_FREE_CONTROL_PLANE: "http://localhost:3005" }), false);
+  assert.equal(desktopFreeBootstrapEligible(distribution, { ...local, baseUrl: "http://den.example.test" }, { OPENWORK_DEV_MODE: "1", OPENWORK_DEV_FREE_CONTROL_PLANE: "http://den.example.test" }), false);
+  assert.equal(desktopFreeBootstrapEligible({ flavor: "enterprise" }, local, { OPENWORK_DEV_MODE: "1", OPENWORK_DEV_FREE_CONTROL_PLANE: "http://localhost:3005" }), false);
+  assert.equal(desktopFreeBootstrapEligible(distribution, { ...local, apiBaseUrl: "http://localhost:8788" }, { OPENWORK_DEV_MODE: "1", OPENWORK_DEV_FREE_CONTROL_PLANE: "http://localhost:3005" }), true);
+  assert.equal(desktopFreeBootstrapEligible(distribution, { ...local, apiBaseUrl: "https://api.example.test" }, { OPENWORK_DEV_MODE: "1", OPENWORK_DEV_FREE_CONTROL_PLANE: "http://localhost:3005" }), false);
+});
+
 test("the machine id outlives the signing key: a reinstall signs as the same machine", async () => {
   await fixture(async (options) => {
     const before = await createDesktopFreeSigner(options).identity();
