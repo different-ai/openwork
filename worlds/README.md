@@ -15,7 +15,10 @@ pnpm world down preview-desktop --stage example
 ```
 
 `--place` selects who runs it (`local`, `daytona`, or `freestyle`); `--os`
-selects the guest OS. Local uses this computer's OS, Freestyle offers Linux,
+selects the guest OS. `preview-desktop --place freestyle` runs the signed-out
+`fresh` Linux desktop snapshot from a pushed commit (`--source desktop=ref:dev`
+by default); other scenarios, releases and Den sources are refused before a VM
+is created. Local uses this computer's OS, Freestyle offers Linux,
 and Daytona offers Linux or Windows. Daytona Windows supports only
 `preview-desktop` with `--source desktop=release:<x.y.z>/<distribution>
 --seed blank`; source builds and Den-only Windows previews fail before

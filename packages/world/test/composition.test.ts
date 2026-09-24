@@ -46,9 +46,11 @@ test("seeds have a bounded, round-trippable syntax", () => {
 test("world support is read without importing the script and rejects unsupported targets", async () => {
   const preview = fileURLToPath(new URL("../../../worlds/preview-desktop.ts", import.meta.url));
   const support = await readWorldSupport(preview);
-  assert.deepEqual(support, ["local/host", "daytona/linux", "daytona/windows"]);
+  assert.deepEqual(support, ["local/host", "daytona/linux", "daytona/windows", "freestyle/linux"]);
   assert.doesNotThrow(() => assertWorldSupport("preview-desktop", support, { provider: "daytona", os: "linux" }));
-  assert.throws(() => assertWorldSupport("preview-desktop", support, { provider: "freestyle", os: "linux" }), /cannot run on freestyle\/linux/);
+  assert.doesNotThrow(() => assertWorldSupport("preview-desktop", support, { provider: "freestyle", os: "linux" }));
+  const den = await readWorldSupport(fileURLToPath(new URL("../../../worlds/preview-den.ts", import.meta.url)));
+  assert.throws(() => assertWorldSupport("preview-den", den, { provider: "freestyle", os: "linux" }), /cannot run on freestyle\/linux/);
   assert.throws(() => assertWorldSupport("custom", undefined, { provider: "freestyle", os: "linux" }), /no supportedTargets declaration/);
 });
 
