@@ -53,6 +53,7 @@ pnpm --filter @openwork/sdk build
 systemctl daemon-reload
 systemctl start openwork-evidence
 for attempt in $(seq 1 480); do
+  if systemctl is-failed --quiet openwork-evidence; then exit 1; fi
   test ! -f /opt/openwork-preview/failed-world
   if test -f /opt/openwork-preview/evidence-ready; then break; fi
   sleep 1

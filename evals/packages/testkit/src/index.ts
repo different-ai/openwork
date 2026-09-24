@@ -1,7 +1,7 @@
 export { browserScript } from "@openwork/cdp";
 export { attachSurface, evaluateOnSurface } from "@openwork/cdp";
 export { denFetch, signIn as signInDen } from "@openwork/behaviors";
-export { screenshot } from "@openwork/test-evidence";
+export { screenshot, registerScreenshotCheckpoint } from "@openwork/test-evidence";
 export type { BrowserEvaluation, BrowserScript } from "@openwork/cdp";
 export { control, createDesktopHandoffGrant, evalIn, quitDesktop, signInDesktopAs } from "@openwork/behaviors";
 export { requestDenLoopback } from "@openwork/labs";

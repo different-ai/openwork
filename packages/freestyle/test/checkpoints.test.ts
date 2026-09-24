@@ -10,8 +10,9 @@ function checkpoint() {
   return parseEvidenceCheckpoint({ version: 1, provider: "freestyle", id: `ow-evidence-v1-${"b".repeat(32)}`, sourceSha, imageHash: "c".repeat(64),
     capturedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600_000).toISOString() });
 }
-function provider(manifest = checkpoint()) {
+function provider(manifest = checkpoint(), uniqueSlots = false) {
   const creates: Record<string, unknown>[] = [];
+  const slots = new Map<string, string>();
   const removed: string[] = [];
   const files = new Map<string, string>();
   const api = new Freestyle({ apiKey: "synthetic", fetch: async (input, init) => {
@@ -21,11 +22,14 @@ function provider(manifest = checkpoint()) {
     if (path === "/v5/vms" && init?.method === "POST") {
       const body: unknown = JSON.parse(String(init.body));
       assert.ok(typeof body === "object" && body !== null);
+      if (uniqueSlots && "slug" in body && typeof body.slug === "string" && slots.has(body.slug)) return Response.json({ message: "Slug conflict" }, { status: 409 });
+      if ("slug" in body && typeof body.slug === "string") slots.set(body.slug, `vm-${creates.length + 1}`);
       creates.push(Object.fromEntries(Object.entries(body)));
       return Response.json({ id: `vm-${creates.length}`, createdAt: new Date().toISOString() });
     }
     if (init?.method === "DELETE") { removed.push(path); return new Response(null, { status: 204 }); }
-    const vmId = path.split("/")[3];
+    const requested = path.split("/")[3];
+    const vmId = slots.get(requested) ?? requested;
     if (path.includes("/fs/")) {
       const guestPath = url.searchParams.get("path") ?? "";
       const key = `${vmId}:${guestPath}`;
@@ -79,6 +83,17 @@ test("fork validates its captured screenshot manifest and leaves the source unto
   const wrong = { ...value, imageHash: "e".repeat(64) };
   await assert.rejects(forkEvidenceCheckpoint(wrong, "d".repeat(32), randomUUID(), mock.api, reachable), /screenshot/);
   assert.deepEqual(mock.removed, ["/v5/vms/vm-2"]);
+});
+
+test("a retried request reuses its fork and unique provider slots cap concurrent copies", async () => {
+  const value = checkpoint(); const mock = provider(value, true); const requestId = randomUUID();
+  const first = await forkEvidenceCheckpoint(value, "d".repeat(32), requestId, mock.api, reachable);
+  const again = await forkEvidenceCheckpoint(value, "d".repeat(32), requestId, mock.api, reachable);
+  assert.equal(again.id, first.id); assert.equal(again.url, first.url); assert.equal(mock.creates.length, 1);
+  await forkEvidenceCheckpoint(value, "d".repeat(32), randomUUID(), mock.api, reachable);
+  await forkEvidenceCheckpoint(value, "d".repeat(32), randomUUID(), mock.api, reachable);
+  await assert.rejects(forkEvidenceCheckpoint(value, "d".repeat(32), randomUUID(), mock.api, reachable), /Three forks/);
+  assert.equal(mock.creates.length, 3);
 });
 
 test("failed public readiness deletes the allocated VM and unrelated VMs cannot be deleted", async () => {
