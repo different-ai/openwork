@@ -38,7 +38,7 @@ export function resolveConnectRowGroup(
   role: ConnectOrgRole,
   componentCounts: Record<string, number> = {},
 ): ConnectRowGroup {
-  if (!readiness) return pluginHasInstructionalComponents(componentCounts) ? "ready" : "excluded";
+  if (!readiness) return pluginHasInstructionalComponents(componentCounts) || componentCounts.app > 0 ? "ready" : "excluded";
   switch (readiness.state) {
     case "ready":
       return "ready";
@@ -61,6 +61,8 @@ export function resolveConnectionRowGroup(connection: Pick<DenExternalMcpConnect
 
 function componentTypeLabel(type: string, count: number) {
   switch (type) {
+    case "app":
+      return t("connect.row_component_app", { count });
     case "agent":
       return t("connect.row_component_agent", { count });
     case "command":

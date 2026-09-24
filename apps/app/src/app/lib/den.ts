@@ -7,6 +7,7 @@ import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER,
 } from "@openwork/types/automations";
 import type { GatewayProviderSummary } from "@openwork/types/den/gateway";
+import { mcpAppProjectionSchema } from "@openwork/types/mcp-app";
 import { parseDenMcpDiscovery, type DenMcpDiscovery } from "./den-mcp-discovery";
 import type {
   AutomationDetail,
@@ -2302,7 +2303,7 @@ function parseApiKeysRecord(value: unknown): Record<string, string> | null {
 function parsePluginConfigObjectType(value: unknown): DenPluginConfigObjectType | null {
   if (value === "script") return "workflow";
   return value === "skill" || value === "agent" || value === "command" || value === "tool" ||
-    value === "mcp" || value === "hook" || value === "context" || value === "custom" || value === "workflow"
+    value === "mcp" || value === "hook" || value === "context" || value === "custom" || value === "workflow" || value === "app"
     ? value
     : null;
 }
@@ -2322,6 +2323,12 @@ function parsePluginConfigObject(value: unknown): DenPluginConfigObject | null {
   if (!isRecord(value) || typeof value.id !== "string" || typeof value.title !== "string") return null;
   const objectType = parsePluginConfigObjectType(value.objectType);
   if (!objectType) return null;
+  const latestVersion = parsePluginConfigObjectVersion(value.latestVersion);
+  if (objectType === "app" && latestVersion) {
+    const app = mcpAppProjectionSchema.strip().safeParse(latestVersion.normalizedPayloadJson);
+    latestVersion.rawSourceText = null;
+    latestVersion.normalizedPayloadJson = app.success ? app.data : null;
+  }
   return {
     id: value.id,
     objectType,
@@ -2332,7 +2339,7 @@ function parsePluginConfigObject(value: unknown): DenPluginConfigObject | null {
     currentRelativePath: typeof value.currentRelativePath === "string" ? value.currentRelativePath : null,
     status: typeof value.status === "string" ? value.status : "active",
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
-    latestVersion: parsePluginConfigObjectVersion(value.latestVersion),
+    latestVersion,
   };
 }
 

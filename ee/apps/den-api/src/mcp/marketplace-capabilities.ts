@@ -12,6 +12,7 @@ import {
   PluginTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { isAuthoredMcpAppVersion, mcpAppToolName } from "@openwork/types/mcp-app"
 import {
   listExternalMcpConnections,
   listUsableExternalMcpConnections,
@@ -1599,6 +1600,17 @@ export async function executeMarketplaceCapability(input: {
         ...basePayload(row),
         status: "content_not_synced",
         hint: contentNotSyncedHint(row),
+      },
+    }
+  }
+
+  if (isAuthoredMcpAppVersion(version)) {
+    return {
+      ok: true,
+      result: {
+        ...basePayload(row),
+        status: "unsupported",
+        hint: `Call the direct MCP tool ${mcpAppToolName(row.configObject.id)} to open this App with its fixed standard resource binding. Generic execution and Code Mode do not open Apps or return their source. Editors can use read_app to edit it. No App was opened.`,
       },
     }
   }

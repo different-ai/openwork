@@ -78,10 +78,37 @@ Untagged operations are excluded by default. Today these are OAuth/MCP discovery
 
 They are required for OAuth/MCP setup, but should not appear as callable MCP tools.
 
-### Live generated apps
+### Authored Apps
+
+New generation uses `create_app`, not a Workflow-first sequence. Supply complete
+React/CSS source and a text fallback; `read_app` and `update_app` edit the same
+App using optimistic revision IDs. Creation is private unless an authorized
+existing Plugin is selected. Source reads require editor access. Plugin and
+Marketplace sharing do not share credentials.
+
+The component receives `{ app, input, result, hostContext }`, with React injected.
+Imports, fetch, host globals, and native forms are blocked. Use
+`app.callServerTool({ name, arguments })` for discovered ordinary tools with
+normal host consent and MCP scopes. There is no per-App grant or new read-only
+restriction. The standard bridge uses `autoResize: true`;
+`app.sendSizeChanged({ height })` is a request the host may clamp.
+
+Authored App search results name exact direct `open_app_cob_*` tools. Each tool
+binds a fixed revision URI and returns `{ app, input }` without running data tools.
+Generic execution only instructs the caller to use the direct tool; it never
+returns authoring source/HTML or claims to render. Exact resource reads recheck
+access on every request. See the existing cloud-mcp.mdx guide for the full API.
+
+### Legacy live generated apps
+
+`save_artifact_view` only edits existing views. Missing `artifactViewId` returns
+`deprecated_creation`; use `create_app`. Existing resources, render tools, edits,
+and Workflow bindings remain unchanged. Retirement requires a compatible client
+release, verified compatibility, and an explicit migration decision; no automatic
+migration or data deletion is implied.
 
 GeneratedArtifactView.dataMode is optional on the wire. An absent value means
-legacy snapshot; new save_artifact_view calls persist live by default.
+legacy snapshot.
 The mode is immutable for a view. Migration 0101_artifact_view_data_mode
 preserves existing rows as snapshots.
 

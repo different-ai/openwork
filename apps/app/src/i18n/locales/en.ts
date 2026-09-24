@@ -375,6 +375,8 @@ export default {
   "connect.row_chip_ready": "Ready",
   "connect.row_component_agent_one": "agent",
   "connect.row_component_agent_other": "agents",
+  "connect.row_component_app_one": "App",
+  "connect.row_component_app_other": "Apps",
   "connect.row_component_command_one": "command",
   "connect.row_component_command_other": "commands",
   "connect.row_component_context_one": "context",

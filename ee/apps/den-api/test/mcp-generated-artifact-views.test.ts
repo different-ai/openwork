@@ -238,7 +238,7 @@ test("returns actionable tool errors for missing schemas and failed builds", asy
   await withClient(async (client) => {
     const missingSchema = await client.callTool({
       name: "save_artifact_view",
-      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
     })
     expect(missingSchema.isError).toBe(true)
     expect(JSON.stringify(missingSchema.content)).toContain("artifact_view_output_schema_required")
@@ -257,7 +257,7 @@ test("returns actionable tool errors for missing schemas and failed builds", asy
   await withClient(async (client) => {
     const failed = await client.callTool({
       name: "save_artifact_view",
-      arguments: { configObjectId, title: view.title, reactSource: "export default function View( {" },
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View( {" },
     })
     expect(failed.isError).toBe(true)
     expect(JSON.stringify(failed.content)).toContain("artifact_view_build_failed")
@@ -274,7 +274,7 @@ test.each(draftDataModes)("%s draft metadata preserves compatible desktop previe
   await withClient(async (client) => {
     const saved = await client.callTool({
       name: "save_artifact_view",
-      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
     })
     expect(saved.isError).not.toBe(true)
     const text = JSON.stringify(saved.content)
@@ -309,13 +309,13 @@ test.each(draftDataModes)("%s draft metadata preserves compatible desktop previe
   })
 })
 
-test.each(draftDataModes)("%s new drafts preserve explicit preview metadata without activation", async (dataMode) => {
+test.each(draftDataModes)("%s edits of existing drafts preserve explicit preview metadata without activation", async (dataMode) => {
   let loads = 0
   const draftView = { ...view, dataMode, activeRevisionId: null }
   await withClient(async (client) => {
     const saved = await client.callTool({
       name: "save_artifact_view",
-      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
     })
     expect(saved.isError, JSON.stringify(saved.content)).not.toBe(true)
     expect(saved.structuredContent).toEqual({ view: draftView })
@@ -362,7 +362,7 @@ test.each([null, activeRevisionId])("live preview recovery preserves the draft w
     client.setNotificationHandler("notifications/tools/list_changed", () => { changed += 1 })
     const failed = await client.callTool({
       name: "save_artifact_view",
-      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
     })
     expect(failed.isError).toBe(true)
     expect(failed._meta?.["openwork/appDraft"]).toBeUndefined()
@@ -427,7 +427,7 @@ test.each(draftDataModes.filter((mode) => mode !== "live"))("%s preview failure 
   await withClient(async (client) => {
     const failed = await client.callTool({
       name: "save_artifact_view",
-      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
     })
     expect(failed.isError).toBe(true)
     const content = failed.content?.[0]
@@ -525,7 +525,7 @@ test.each([undefined, { state: "needs_connection", message: "Connect your accoun
       const result = await client.callTool({
         name,
         arguments: name === "save_artifact_view"
-          ? { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" } : {},
+          ? { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" } : {},
       })
       expect(result.isError).toBe(true)
       expect(result._meta?.["openwork/mcpApp"]).toBeUndefined()
@@ -535,6 +535,26 @@ test.each([undefined, { state: "needs_connection", message: "Connect your accoun
     views: [{ ...view, dataMode: "live" }],
     save: async () => ({ ...view, dataMode: "live" }),
     loadData: async () => ({ ok: false, error: "capability_unavailable", message: "Data unavailable", connectionCard }),
+  })
+})
+
+test("new legacy creation is blocked before saving or loading data", async () => {
+  let saves = 0
+  let loads = 0
+  await withClient(async (client) => {
+    const result = await client.callTool({
+      name: "save_artifact_view",
+      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+    })
+    expect(result.isError).toBe(true)
+    expect(JSON.stringify(result.content)).toContain("deprecated_creation")
+    expect(JSON.stringify(result.content)).toContain("create_app")
+    expect(result._meta).toBeUndefined()
+    expect(saves).toBe(0)
+    expect(loads).toBe(0)
+  }, {
+    save: async () => { saves += 1; return view },
+    loadData: async () => { loads += 1; return { ok: true, payload, markdown: "# Snapshot" } },
   })
 })
 

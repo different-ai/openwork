@@ -9,8 +9,10 @@
     body { margin: 0; padding: 24px; }
     header { display: flex; align-items: center; gap: 16px; padding-bottom: 16px; }
     h1 { font-size: 18px; font-weight: 600; }
-    select, button { font: inherit; padding: 8px 12px; }
-    iframe { display: block; width: 100%; height: 640px; border: 0; }
+    select, button, textarea { font: inherit; padding: 8px 12px; }
+    .input { display: flex; align-items: center; gap: 16px; }
+    textarea { width: 420px; height: 42px; resize: none; }
+    iframe { display: block; width: 100%; height: 160px; border: 0; }
     [role="alert"] { color: #8e1f1f; }
   </style>
 </head>
@@ -22,7 +24,9 @@
     <button id="open" disabled>Open app</button>
     <span id="status" role="status">Connecting</span>
   </header>
+  <div class="input"><label for="arguments">Launch arguments</label><textarea id="arguments">{}</textarea></div>
   <p id="error" role="alert" hidden></p>
+  <p id="bounds">Frame bounds 160–720 px</p>
   <div id="view"></div>
   <script type="module" src="/host.js"></script>
 </body>

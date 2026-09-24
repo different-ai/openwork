@@ -1461,16 +1461,20 @@ export function McpView(props: McpViewProps) {
                 key: file.configObjectId,
                 kindLabel: kind ? extensionTaxonomyLabel(kind) : file.objectType,
                 name: libraryPluginFileDisplayName(file),
-                onOpen: () => openPluginFile(detailPlugin, file),
+                onOpen: kind === "app" && detailPlugin.importedAt === null
+                  ? () => startSeededChat(`Use the ${file.title} app from ${detailPlugin.name}. `)
+                  : () => openPluginFile(detailPlugin, file),
               };
             })}
             configSlot={openInDenAction({ id: `marketplace:installed:${detailPlugin.pluginId}`, pluginId: detailPlugin.pluginId })}
-            onChat={chatWith({
-              skills: pluginSkills.length === 0 && pluginTaxonomy === "skill" ? [detailPlugin.name] : pluginSkills,
-              connectors: pluginConnectors,
-            })}
+            onChat={detailPlugin.importedAt === null && detailPlugin.files.some((file) => file.objectType === "app")
+              ? () => startSeededChat(`Use ${detailPlugin.name} to help me with this: `)
+              : chatWith({
+                skills: pluginSkills.length === 0 && pluginTaxonomy === "skill" ? [detailPlugin.name] : pluginSkills,
+                connectors: pluginConnectors,
+              })}
             onShare={shareOwned(detailPlugin.pluginId)}
-            onUninstall={props.removeCloudPlugin ? () => {
+            onUninstall={props.removeCloudPlugin && detailPlugin.importedAt !== null ? () => {
               void props.removeCloudPlugin?.(detailPlugin.pluginId);
               closeDetail();
             } : undefined}
@@ -1483,6 +1487,7 @@ export function McpView(props: McpViewProps) {
       {detailPluginFile ? (() => {
         const { plugin, file } = detailPluginFile;
         const kind = libraryPluginFileKind(file.objectType);
+        const authoredApp = kind === "app" && plugin.importedAt === null;
         const taxonomy = kind === "skill" || kind === "command" || kind === "agent" || kind === "mcp" || kind === "app"
           ? kind
           : "plugin";
@@ -1498,6 +1503,7 @@ export function McpView(props: McpViewProps) {
               : `From ${plugin.name}.`}
             taxonomy={taxonomy}
             connected={true}
+            showEnablementCard={!authoredApp}
             facts={[
               { label: t("extensions.detail_fact_plugin"), value: plugin.name },
               ...(file.marketplaceName
@@ -1509,7 +1515,9 @@ export function McpView(props: McpViewProps) {
               ? chatWith({ skills: [libraryPluginFileDisplayName(file)] })
               : kind === "mcp"
                 ? chatWith({ connectors: [libraryPluginFileDisplayName(file)] })
-                : undefined}
+                : authoredApp
+                  ? () => startSeededChat(`Use the ${file.title} app from ${plugin.name}. `)
+                  : undefined}
           />
         );
       })() : null}

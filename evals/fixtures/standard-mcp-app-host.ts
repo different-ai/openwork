@@ -15,8 +15,10 @@ const open = document.querySelector("button");
 const status = document.getElementById("status");
 const error = document.getElementById("error");
 const view = document.getElementById("view");
-if (!picker || !open || !status || !error || !view) throw new Error("Reference host controls missing");
-const controls = { picker, open, status, error, view };
+const argumentsInput = document.querySelector("textarea");
+const bounds = document.getElementById("bounds");
+if (!picker || !open || !status || !error || !view || !argumentsInput || !bounds) throw new Error("Reference host controls missing");
+const controls = { picker, open, status, error, view, argumentsInput, bounds };
 let requestId = 0;
 let bridge: AppBridge | undefined;
 
@@ -46,23 +48,25 @@ async function discover() {
     if (!ui || typeof ui !== "object" || !("resourceUri" in ui) || typeof ui.resourceUri !== "string") return [];
     return [{ tool, uri: ui.resourceUri }];
   });
-  for (const { tool } of apps) {
+  const requested = new URL(location.href).searchParams.get("tool");
+  const selectable = requested ? apps.filter(({ tool }) => tool.name === requested) : apps;
+  for (const { tool } of selectable) {
     const option = document.createElement("option");
     option.value = tool.name;
     option.textContent = tool.title ?? tool.name;
     controls.picker.append(option);
   }
-  const requested = new URL(location.href).searchParams.get("tool");
-  if (requested && apps.some(({ tool }) => tool.name === requested)) controls.picker.value = requested;
-  controls.open.disabled = apps.length === 0;
-  controls.status.textContent = "Ready";
+  controls.open.disabled = selectable.length === 0;
+  controls.status.textContent = selectable.length ? "Ready" : "App unavailable";
   controls.open.addEventListener("click", () => {
     void (async () => {
       controls.open.disabled = true;
       const selected = apps.find(({ tool }) => tool.name === controls.picker.value);
       if (!selected) throw new Error("Choose an advertised app");
       await bridge?.close();
-      const result = CallToolResultSchema.parse(await rpc("tools/call", { name: selected.tool.name, arguments: {} }));
+      const args = record(JSON.parse(controls.argumentsInput.value));
+      const result = CallToolResultSchema.parse(await rpc("tools/call", { name: selected.tool.name, arguments: args }));
+      if (result.isError) throw new Error("The app is unavailable to this member");
       const resource = ReadResourceResultSchema.parse(await rpc("resources/read", { uri: selected.uri }));
       const content = resource.contents.find(item => item.uri === selected.uri && item.mimeType === "text/html;profile=mcp-app");
       if (!content || !("text" in content) || typeof content.text !== "string") throw new Error("The advertised app resource has no HTML");
@@ -74,15 +78,26 @@ async function discover() {
       frame.setAttribute("sandbox", "allow-scripts");
       controls.view.replaceChildren(frame);
       if (!frame.contentWindow) throw new Error("App window missing");
-      const connected = new AppBridge(null, { name: "Reference host", version: "1.0.0" }, { serverTools: {} }, {
+      const connected = new AppBridge(null, { name: "Reference host", version: "1.0.0" }, location.pathname === "/blocked/" ? {} : { serverTools: {} }, {
         hostContext: { theme: "light", displayMode: "inline", availableDisplayModes: ["inline"], platform: "web" },
       });
       bridge = connected;
       connected.oncalltool = async params => CallToolResultSchema.parse(await rpc("tools/call", params));
       connected.onerror = fail;
+      const sizes: Array<{ height: number; applied: number; keys: string[] }> = [];
+      controls.view.dataset.sizeEvents = "[]";
+      connected.addEventListener("sizechange", (params) => {
+        const { height } = params;
+        if (typeof height !== "number" || !Number.isFinite(height) || height < 0) return;
+        const applied = Math.max(160, Math.min(720, Math.ceil(height)));
+        sizes.push({ height, applied, keys: Object.keys(params).sort() });
+        frame.style.height = `${applied}px`;
+        controls.view.dataset.sizeEvents = JSON.stringify(sizes);
+        controls.bounds.textContent = `Requested ${Math.ceil(height)} px; frame ${applied} px; bounds 160–720 px`;
+      });
       connected.oninitialized = () => {
         void (async () => {
-          await connected.sendToolInput({ arguments: {} });
+          await connected.sendToolInput({ arguments: args });
           await connected.sendToolResult(result);
           controls.status.textContent = "App connected";
           controls.open.disabled = false;

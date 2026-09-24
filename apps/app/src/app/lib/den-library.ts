@@ -217,7 +217,7 @@ export function parseDenLibraryPluginFiles(payload: unknown): DenLibraryPluginFi
       objectType: readString(configObject?.objectType) ?? "",
       title: readString(configObject?.title) ?? "",
       description: readString(configObject?.description),
-      rawSourceText: readString(latestVersion?.rawSourceText),
+      rawSourceText: configObject?.objectType === "app" ? null : readString(latestVersion?.rawSourceText),
     }];
   });
 }
