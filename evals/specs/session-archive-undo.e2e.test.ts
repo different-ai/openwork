@@ -9,7 +9,7 @@ const archivedToast: Target = { text: "Session archived" };
 const undoButton: Target = { role: "button", label: "Undo" };
 const viewButton: Target = { role: "button", label: "View" };
 
-test("session archive is honest about availability and can be undone when supported", async ({ world, user, agent, probe, step }) => {
+test("session archive is honest about availability and can be undone when supported", async ({ world, user, agent, probe, step, evidence }) => {
   const candidateId = world.candidate.sessionId;
   const neighborId = world.neighbor.sessionId;
   const candidateRow = { testId: `sidebar-session-${candidateId}` };
@@ -85,6 +85,11 @@ test("session archive is honest about availability and can be undone when suppor
       await user.notSee(undoButton);
       await user.notSee({ text: "This session is still working" });
       expect(await world.mutationRequests()).toEqual([]);
+      evidence.recordAssertionEvidence(
+        "V2 hides unsupported archive controls and refuses archive mutations",
+        "The session row has no archive button, the native menu has Pin but no Archive action, archive and restore commands are disabled, and both sessions remain active without mutation requests or success toasts.",
+        true,
+      );
     });
     return;
   }
@@ -211,5 +216,10 @@ test("session archive is honest about availability and can be undone when suppor
     await user.notSee("composer");
     expect(await agent.actions()).toEqual(expect.arrayContaining([expect.objectContaining({ id: "composer.send", disabled: true })]));
     await user.screenshot();
+    evidence.recordAssertionEvidence(
+      "V1 archive, Undo, and View preserve the target session",
+      "Archiving moves only the selected session. Undo restores it for named, long, and blank titles. View opens the archived session read-only with Restore available and sending disabled; the neighboring session remains active.",
+      true,
+    );
   });
 });
