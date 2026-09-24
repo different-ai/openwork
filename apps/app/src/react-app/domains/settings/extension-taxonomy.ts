@@ -18,7 +18,8 @@ export type ExtensionTransport = "mcp" | "native" | null;
 export type ExtensionInventoryState = "all" | "needs_signin" | "needs_admin_setup" | "ready" | "available" | "disabled";
 
 export const extensionInventoryFilters: ExtensionInventoryFilter[] = [
-  "mcp",
+  "all",
+  "connection",
   "skill",
   "plugin",
 ];
@@ -30,7 +31,8 @@ export const extensionInventoryFilters: ExtensionInventoryFilter[] = [
  */
 export function primaryLibraryFilter(filter?: ExtensionInventoryFilter): ExtensionInventoryFilter {
   if (filter === "skill" || filter === "command" || filter === "agent") return "skill";
-  return filter === "plugin" ? "plugin" : "mcp";
+  if (filter === "connection" || filter === "mcp") return "connection";
+  return filter === "plugin" ? "plugin" : "all";
 }
 
 /** Built-ins ship with OpenWork and run here, so they are apps. Accounts arrive as org connections. */
@@ -54,7 +56,9 @@ export function matchesExtensionFilter(
   taxonomy: ExtensionTaxonomy,
   transport: ExtensionTransport = null,
 ) {
-  return filter === "all" || filter === taxonomy || (filter === "mcp" && (taxonomy === "connection" || transport === "mcp"));
+  if (filter === "all" || filter === taxonomy) return true;
+  const connector = taxonomy === "connection" || taxonomy === "mcp" || transport === "mcp";
+  return (filter === "mcp" || filter === "connection") && connector;
 }
 
 export function extensionFilterLabel(filter: ExtensionInventoryFilter) {

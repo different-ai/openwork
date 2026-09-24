@@ -67,6 +67,8 @@ async function createModelsWorld(seed: Seed, analyticsUpgrade: boolean, usageSet
     ...(usageSettlement ? { MODELS_USAGE_FIXTURE: "1", INFERENCE_WEBHOOK_SECRET: "paid-usage-fixture-secret" } : {}),
     MODELS_DPA_ORG_ID: orgId,
     OPENROUTER_UPSTREAM_URL: `http://127.0.0.1:${witnessPort}`,
+    // The Gateway egress guard refuses loopback upstreams unless the operator allows the origin.
+    GATEWAY_EGRESS_ALLOWED_ORIGINS: `http://127.0.0.1:${witnessPort}`,
   };
   async function remoteExec(script: string, context: string) {
     if (!remote) throw new Error("Missing isolated server sandbox");
@@ -182,7 +184,7 @@ async function createModelsWorld(seed: Seed, analyticsUpgrade: boolean, usageSet
 
 export async function modelsAnalyticsWorld(seed: Seed) {
   const world = await createModelsWorld(seed, true);
-  const web = await seed.web({ den: world.den, signedInAs: world.den.admin, startPath: "/dashboard/inference", headless: true, viewport: { width: 1440, height: 1100 } });
+  const web = await seed.web({ den: world.den, signedInAs: world.den.admin, startPath: "/dashboard/ai-gateway?tab=openwork-models", headless: true, viewport: { width: 1440, height: 1100 } });
   return { ...world, web,
     async holdActivityPage(beforeId: string) {
       await seed.evalIn(web, browserScript((beforeId) => {

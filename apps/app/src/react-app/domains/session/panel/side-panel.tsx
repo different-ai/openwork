@@ -217,12 +217,6 @@ function BrowserPanelContent({
     });
   }, [suspended, tab.id, reportFailure]);
 
-  const suspend = React.useCallback(() => {
-    void getElectronBrowser()?.suspendTab?.(tab.id).catch((error: unknown) => {
-      reportFailure("Could not pause this browser tab.", error);
-    });
-  }, [tab.id, reportFailure]);
-
   const handleUrlKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -395,15 +389,6 @@ function BrowserPanelContent({
                 <Globe />
               </InputGroupAddon>
             </InputGroup>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={suspend}
-              disabled={tab.status !== "ready" || tab.automationProtected}
-              title={tab.automationProtected ? "Protected until browser work is released" : "Suspend this tab to free memory"}
-            >
-              Suspend
-            </Button>
             {tab.siteToolCount > 0 ? (
               <Popover>
                 <PopoverTrigger

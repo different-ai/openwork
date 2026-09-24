@@ -26,7 +26,7 @@ export interface AcmeWebWorld {
 }
 
 /** Seeded Acme Den + real AI Gateway + isolated web runtime; only the upstream model is fake. */
-export async function bootAcmeWeb(stack: AsyncDisposableStack): Promise<AcmeWebWorld> {
+export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: string; den: string; api: string }): Promise<AcmeWebWorld> {
   const place = resolvePlace();
   if (place.kind !== "local") {
     throw new Error("Run acme-web co-located with MySQL (--place local), including inside a prepared Daytona sandbox.");
@@ -36,9 +36,11 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack): Promise<AcmeWebW
   const webPort = await allocateFreePort();
   const den = stack.use(await server({
     place,
-    env: { ...gateway.env, DEN_DASHBOARDS_ENABLED: "true", RESEND_API_KEY: "", SMTP_HOST: "" },
+    env: { ...gateway.env, DEN_DASHBOARDS_ENABLED: "true", RESEND_API_KEY: "", SMTP_HOST: "",
+      ...(preview ? { DEN_WEB_ALLOWED_DEV_ORIGINS: new URL(preview.den).hostname } : {}) },
     seedProfile: "demo-org",
-    trustedOrigins: [`http://127.0.0.1:${webPort}`],
+    trustedOrigins: [`http://127.0.0.1:${webPort}`, ...(preview ? Object.values(preview) : [])],
+    publicOrigins: preview ? { web: preview.den, api: preview.den } : undefined,
     web: true,
   }));
   if (!den.database) throw new Error("Acme Gateway requires the world's isolated Den database.");
@@ -52,13 +54,14 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack): Promise<AcmeWebW
     name,
     workspace,
     state: "isolated",
+    browserHostSuffix: preview ? `.${new URL(preview.app).hostname.split(".").slice(1).join(".")}` : undefined,
     env: {
       ...process.env,
       OPENWORK_WEB_PORT: String(webPort),
       OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY: "1",
       OPENWORK_DEV_DEN_PROXY_TARGET: den.ref.webUrl,
-      VITE_DEN_BASE_URL: den.ref.webUrl,
-      VITE_DEN_API_BASE_URL: den.ref.apiUrl,
+      VITE_DEN_BASE_URL: preview?.den ?? den.ref.webUrl,
+      VITE_DEN_API_BASE_URL: preview ? "/api/den" : den.ref.apiUrl,
       VITE_DISABLE_OPENWORK_MODELS: "0",
     },
   });
@@ -72,14 +75,9 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack): Promise<AcmeWebW
   return { den, web, model, upstream, gatewayUrl: gateway.baseUrl };
 }
 
-export async function main(): Promise<void> {
-  await using stack = new AsyncDisposableStack();
-  const world = await bootAcmeWeb(stack);
+export function acmeWebOutputs(world: AcmeWebWorld) {
   const { den, web, model, gatewayUrl } = world;
-  await probeAcmeGateway(world);
-  await hold({
-    name: ACME_WEB_NAME,
-    outputs: {
+  return {
       webUrl: output(web.manifest.webUrl, { group: "URLs" }),
       openworkUrl: output(web.manifest.openworkUrl, { group: "URLs" }),
       denWeb: output(den.ref.webUrl, { group: "URLs" }),
@@ -91,9 +89,44 @@ export async function main(): Promise<void> {
       reply: output(ACME_REPLY, { group: "AI Gateway", note: "Deterministic upstream; no paid inference keys required" }),
       verified: output("OpenCode chat through AI Gateway", { group: "AI Gateway" }),
       alexEmail: output(den.admin.email, { group: "Accounts", note: "org owner (Acme)" }),
+      denToken: secret(den.admin.token, { group: "Accounts", note: "Disposable demo bearer token" }),
+      openworkToken: secret(web.manifest.token, { group: "OpenWork" }),
+      openworkHostToken: secret(web.manifest.hostToken, { group: "OpenWork" }),
+      databaseUrl: secret(den.database?.url ?? "", { group: "Infrastructure", note: "Inside this VM; MySQL is not exposed publicly" }),
+      redisUrl: output("redis://127.0.0.1:6379", { group: "Infrastructure", note: "Inside this VM" }),
+      upstreamKey: secret(world.upstream.key, { group: "AI Gateway", note: "Synthetic upstream; no paid credentials" }),
       alexPassword: secret(den.admin.password, { group: "Accounts" }),
       dashboards: output("enabled", { group: "Org", note: "DEN_DASHBOARDS_ENABLED=true" }),
-    },
+    };
+}
+
+export async function main(argv = process.argv.slice(2)): Promise<void> {
+  await using stack = new AsyncDisposableStack();
+  if (process.env.OPENWORK_WORLD_PLACE === "freestyle") {
+    const { parseAppWebOptions } = await import("./lib/app-web-options.ts");
+    const { ensureSnapshot } = await import("../packages/freestyle/src/builder.ts");
+    const { launchPreview, deletePreview } = await import("../packages/freestyle/src/index.ts");
+    const { trackResource } = await import("../packages/world/src/ledger.ts");
+    const options = parseAppWebOptions(argv, process.env);
+    if (!options.ref) throw new Error("ACME Freestyle requires --ref <full-pushed-sha>.");
+    await ensureSnapshot(options.ref, undefined, console.error, "acme-web");
+    const preview = await launchPreview({ gitSha: options.ref, lifetimeMinutes: options.lifetimeMinutes, world: "acme-web" });
+    stack.defer(() => deletePreview(preview.id));
+    await trackResource({ kind: "freestyle-preview", id: preview.id, match: preview.id, label: "acme-web" });
+    await hold({ name: ACME_WEB_NAME, outputs: { ...preview.outputs, webUrl: secret(preview.url), expires: preview.expiresAt, snapshotId: preview.snapshotId } });
+    return;
+  }
+  const place = resolvePlace();
+  if (place.kind === "daytona") {
+    const { bootAcmeWebOnDaytona } = await import("./lib/acme-web-daytona.ts");
+    await hold({ name: ACME_WEB_NAME, outputs: await bootAcmeWebOnDaytona(stack, place) });
+    return;
+  }
+  const world = await bootAcmeWeb(stack);
+  await probeAcmeGateway(world);
+  await hold({
+    name: ACME_WEB_NAME,
+    outputs: acmeWebOutputs(world),
   });
 }
 

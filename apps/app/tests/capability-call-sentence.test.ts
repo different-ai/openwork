@@ -11,10 +11,48 @@ function executeCapability(input: unknown): DynamicToolUIPart {
     state: "output-error",
     input,
     errorText: "boom",
-  } as DynamicToolUIPart;
+  };
 }
 
 describe("capability call sentences", () => {
+  test.each(["openwork_execute_capability", "openwork-cloud_execute_capability"])("names exact connection probes from %s", (toolName) => {
+    const part = { ...executeCapability({ name: "mcp:emc_probe:*", query: "ignored" }), toolName };
+    expect(getCapabilityCallSentence(part, { connectionName: "Notion" })).toEqual({
+      service: "Notion",
+      present: "Checking Notion connection…",
+      past: "Checked Notion connection",
+      failure: "Couldn't check Notion connection",
+    });
+    expect(getCapabilityCallSentence(part)).toEqual({
+      service: null,
+      present: "Checking connection…",
+      past: "Checked connection",
+      failure: "Couldn't check connection",
+    });
+  });
+
+  test("says which of your skills the answer is using", () => {
+    const byName: DynamicToolUIPart = {
+      type: "dynamic-tool", toolName: "openwork-cloud_get_skill", toolCallId: "call_skill",
+      state: "input-available", input: { name: "customer-briefing" },
+    };
+    expect(getCapabilityCallSentence(byName)).toMatchObject({ present: "Using your customer-briefing skill…", past: "Used your customer-briefing skill" });
+    const byCapability: DynamicToolUIPart = {
+      type: "dynamic-tool", toolName: "openwork-cloud_get_skill", toolCallId: "call_skill",
+      state: "output-available", input: { name: "plugin:plg_1:cob_1" }, output: { name: "customer-briefing", content: "" },
+    };
+    expect(getCapabilityCallSentence(byCapability).past).toBe("Used your customer-briefing skill");
+    const skillMarkdown = { ...byCapability, output: "---\nname: customer-briefing-f5yqprwv\ndescription: \"A one-page brief\"\n---\n\nFind the meeting." };
+    expect(getCapabilityCallSentence(skillMarkdown).past).toBe("Used your customer-briefing skill");
+    expect(getCapabilityCallSentence({ ...byName, toolName: "openwork-cloud_list_skills", input: {} }).past).toBe("Looked through your skills");
+  });
+
+  test("does not classify other tools or non-exact wildcard names as probes", () => {
+    for (const name of ["mcp:emc_probe:search", "mcp:emc_probe:*:extra", "mcp::*"]) {
+      expect(getCapabilityCallSentence(executeCapability({ name })).failure).toBeUndefined();
+    }
+    expect(getCapabilityCallSentence({ ...executeCapability({ name: "mcp:emc_probe:*" }), toolName: "third-party_execute_capability" }).failure).toBeUndefined();
+  });
   test("names an org MCP capability instead of falling back to 'a capability'", () => {
     const part = executeCapability({
       name: "mcp:emc_01kx2kfb42f6d94y1s1j992jhf:query_granola_meetings",

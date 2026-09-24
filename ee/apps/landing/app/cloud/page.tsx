@@ -8,15 +8,16 @@ import { LpAlphaBadge, LpArrowLink, LpSectionHeader, LpTonalCard } from "../../c
 import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
 import { getGithubData } from "../../lib/github";
+import { withSocialMetadata } from "../../lib/seo";
 
 const CLOUD_SIGNUP_URL = "https://app.openworklabs.com";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = withSocialMetadata({
   title: "OpenWork Cloud — the dashboard for your whole org",
   description:
     "OpenWork Cloud is where you run OpenWork as a team — provision model providers, deploy skills and MCP servers, manage members and policies. OpenWork Web and the Connect gateway are built in.",
   alternates: { canonical: "/cloud" }
-};
+});
 
 const dashboardFeatures = [
   {

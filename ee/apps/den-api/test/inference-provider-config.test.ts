@@ -127,6 +127,82 @@ test("buildGatewayProviderConfig swaps Vertex SDKs for their static-key equivale
   expect(vertexAnthropic.api).toBe("https://inference.example.test/api/v1/providers/ipr_01jvertexanthropic")
 })
 
+for (const fixture of [
+  { providerId: "google-vertex", sourceNpm: "@ai-sdk/google-vertex", clientNpm: "@ai-sdk/google", env: "GOOGLE_GENERATIVE_AI_API_KEY" },
+  { providerId: "google-vertex-anthropic", sourceNpm: "@ai-sdk/google-vertex/anthropic", clientNpm: "@ai-sdk/anthropic", env: "ANTHROPIC_API_KEY" },
+]) {
+  for (const override of ["none", "model", "provider", "both"]) {
+    test(`${fixture.providerId} maps ${override} SDK overrides without changing model routing or metadata`, () => {
+      const modelOverride = override === "model" || override === "both"
+      const providerOverride = override === "provider" || override === "both"
+      const storedProvider = {
+        id: fixture.providerId, npm: fixture.sourceNpm,
+        env: ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_VERTEX_PROJECT", "GOOGLE_VERTEX_LOCATION"],
+      }
+      const routing = { api: "https://catalog.example.test/v1", id: "catalog-route" }
+      const metadata = {
+        family: "fixture-family", tool_call: true, reasoning: true, attachment: true,
+        limit: { context: 128000, output: 8192 }, cost: { input: 1, output: 5 },
+        modalities: { input: ["text", "image"], output: ["text"] },
+        options: { temperature: 0.2 }, variants: { careful: { temperature: 0.1 } },
+      }
+      const sourceModel = {
+        id: "upstream-model", name: "Catalog name", ...metadata,
+        ...(modelOverride ? { npm: fixture.sourceNpm } : {}),
+        provider: { ...routing, ...(providerOverride ? { npm: fixture.sourceNpm } : {}) },
+        headers: { "anthropic-beta": "safe-beta" },
+      }
+      const original = structuredClone(sourceModel)
+      expect(gatewayModelConfigurationError(storedProvider, [sourceModel])).toBeNull()
+      const provider = buildGatewayProviderConfig({ id: "ipr_vertex", provider_config: storedProvider }, baseUrl)
+      const model = buildGatewayModelConfig({ id: "gwm_fixture", name: "Selected model", config: sourceModel })
+      expect(provider.npm).toBe(fixture.clientNpm)
+      expect(provider.env).toEqual([`IPR_VERTEX_${fixture.env}`])
+      expect(provider.options).toEqual({ baseURL: `${baseUrl}api/v1/providers/ipr_vertex` })
+      expect(model).toEqual({
+        id: "gwm_fixture", name: "Selected model", ...metadata,
+        ...(modelOverride ? { npm: fixture.clientNpm } : {}),
+        provider: { ...routing, ...(providerOverride ? { npm: fixture.clientNpm } : {}) },
+        headers: { "anthropic-beta": "safe-beta", "x-openwork-gateway-request-model": "gwm_fixture" },
+      })
+      expect(JSON.stringify(model)).not.toContain("@ai-sdk/google-vertex")
+      expect(sourceModel).toEqual(original)
+      expect(storedProvider.npm).toBe(fixture.sourceNpm)
+    })
+  }
+}
+
+test("gateway model SDK mapping preserves non-Vertex overrides and rejects mixed source SDKs", () => {
+  for (const npm of ["@ai-sdk/anthropic", "@ai-sdk/google", "@ai-sdk/openai-compatible"]) {
+    const sourceModel = { npm, provider: { npm, api: "https://catalog.example.test/v1" } }
+    expect(buildGatewayModelConfig({ id: "gwm_fixture", name: "Fixture", config: sourceModel })).toMatchObject(sourceModel)
+    expect(gatewayModelConfigurationError({ npm: "@ai-sdk/google-vertex" }, [sourceModel])).not.toBeNull()
+    expect(gatewayModelConfigurationError({ npm: "@ai-sdk/google-vertex/anthropic" }, [sourceModel])).not.toBeNull()
+  }
+  expect(gatewayModelConfigurationError({ npm: "@ai-sdk/google-vertex" }, [{ npm: "@ai-sdk/google-vertex/anthropic" }])).not.toBeNull()
+  expect(gatewayModelConfigurationError({ npm: "@ai-sdk/google-vertex/anthropic" }, [{ provider: { npm: "@ai-sdk/google-vertex" } }])).not.toBeNull()
+})
+
+test("Mistral without a catalog API URL keeps its native SDK and scoped gateway credential", () => {
+  const config = buildProviderConfigSnapshot({
+    id: "mistral", name: "Mistral", npm: "@ai-sdk/mistral", env: ["MISTRAL_API_KEY"],
+    api: null, doc: null, config: {}, models: [],
+  })
+  expect(config).not.toHaveProperty("api")
+  expect(gatewayConfigurationError(config, {})).toBeNull()
+  expect(buildGatewayProviderConfig({ id: "ipr_01jmistral", provider_config: config }, baseUrl)).toEqual({
+    id: "mistral", name: "Mistral", npm: "@ai-sdk/mistral", env: ["IPR_01JMISTRAL_MISTRAL_API_KEY"],
+    api: `${baseUrl}api/v1/providers/ipr_01jmistral`,
+    options: { baseURL: `${baseUrl}api/v1/providers/ipr_01jmistral` },
+  })
+  expect(pickInferenceApiKeyFromMap({ MISTRAL_API_KEY: "key" }, ["MISTRAL_API_KEY"])).toBe("key")
+  expect(gatewayModelConfigurationError(config, [{ id: "mistral-small-latest" }, { provider: { npm: "@ai-sdk/mistral" } }])).toBeNull()
+  for (const npm of ["@ai-sdk/openai", "@ai-sdk/openai-compatible", "@ai-sdk/cohere"]) {
+    expect(gatewayModelConfigurationError(config, [{ npm }])).not.toBeNull()
+    expect(gatewayModelConfigurationError(config, [{ provider: { npm } }])).not.toBeNull()
+  }
+})
+
 test("buildProviderConfigSnapshot keeps only the opencode block fields", () => {
   const snapshot = buildProviderConfigSnapshot({
     id: "openrouter",
@@ -152,6 +228,7 @@ test("isSupportedGatewayNpm accepts the proxied SDK families and rejects Bedrock
   for (const npm of [
     "@ai-sdk/anthropic",
     "@ai-sdk/openai",
+    "@ai-sdk/mistral",
     "@ai-sdk/azure",
     "@ai-sdk/openai-compatible",
     "@openrouter/ai-sdk-provider",
@@ -162,7 +239,7 @@ test("isSupportedGatewayNpm accepts the proxied SDK families and rejects Bedrock
     expect(isSupportedGatewayNpm(npm)).toBe(true)
   }
   expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock")).toBe(false)
-  expect(isSupportedGatewayNpm("@ai-sdk/mistral")).toBe(false)
+  expect(isSupportedGatewayNpm("@ai-sdk/cohere")).toBe(false)
   expect(isSupportedGatewayNpm(null)).toBe(false)
 })
 

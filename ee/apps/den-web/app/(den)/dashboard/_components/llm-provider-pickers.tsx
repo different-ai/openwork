@@ -164,6 +164,7 @@ export function ProviderAccessPicker({
     lockedMemberId,
     testIdPrefix,
     singleAudience = false,
+    everyoneDescription,
 }: {
     orgContext: DenOrgContext | null;
     value: ProviderAccessValue;
@@ -171,6 +172,7 @@ export function ProviderAccessPicker({
     lockedMemberId: string | null;
     testIdPrefix: string;
     singleAudience?: boolean;
+    everyoneDescription?: string;
 }) {
     const [accessTab, setAccessTab] = useState<"teams" | "people">("teams");
     const [accessQuery, setAccessQuery] = useState("");
@@ -216,7 +218,7 @@ export function ProviderAccessPicker({
                     icon={Users}
                     testId={`${testIdPrefix}-all-members`}
                     title={`Everyone in ${orgContext?.organization.name ?? "this organization"}`}
-                    description={`All ${orgContext?.members.length ?? 0} current members — and anyone who joins later — can use these models.`}
+                    description={everyoneDescription ?? `All ${orgContext?.members.length ?? 0} current members — and anyone who joins later — can use these models.`}
                     checked={allMembers}
                     onChange={(checked) => onChange({ ...value, ...(singleAudience ? { memberIds: [], teamIds: [] } : {}), allMembers: checked })}
                 />

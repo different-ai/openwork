@@ -51,7 +51,7 @@ export async function connectorQuickAddPresetAuth(seed: Seed) {
   }
   if (discoveredKind !== "oauth") throw new SkipError(`Den classified ${presetUrl} as ${discoveredKind}, not the conflicting oauth requirement this journey needs`);
 
-  const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/mcp-connections", headless: true, viewport: { width: 1440, height: 1400 } });
+  const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/mcp-connections/new", headless: true, viewport: { width: 1440, height: 1400 } });
   return {
     den,
     web,

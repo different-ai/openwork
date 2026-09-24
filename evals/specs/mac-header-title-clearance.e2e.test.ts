@@ -34,9 +34,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function titlebar(probe: Probe): Promise<TitlebarGeometry> {
   // TODO(primitive): probe.geometry should compare the session title with the painted titlebar toggle.
   const value = await probe.eval(() => {
-    const heading = document.querySelector('[data-session-pane] header h1');
-    const toggle = [...document.querySelectorAll('[data-slot="sidebar-trigger"]')]
-      .find((element) => element.getBoundingClientRect().width > 0);
+    const heading = document.querySelector('[data-session-header] h1');
+     const toggle = [...document.querySelectorAll('[data-slot="sidebar-trigger"]')]
+      .find((element) => !element.closest('[inert]') && element.getBoundingClientRect().width > 0);
     if (!(heading instanceof HTMLElement) || !(toggle instanceof HTMLElement)) return null;
     const inline = document.querySelector('[data-slot="sidebar"][data-state]');
     return {
@@ -142,4 +142,26 @@ test("the macOS session title stays clear of the titlebar controls in every side
   });
 
   await seed.evalIn(world.app, browserScript((classes: string) => { document.documentElement.className = classes; }, [platformClasses]));
+
+  if (platformClasses.includes("openwork-platform-mac")) {
+    await step("native macOS fullscreen removes traffic-light clearance and shortens the titlebar", async () => {
+      await world.clearViewport();
+      await world.fullscreen(true);
+      await probe.eventually(() => probe.dom('html[data-window-fullscreen="true"] [data-sidebar-titlebar]'), {
+        within: 10_000, label: "native fullscreen event reaches the titlebar", until: (value) => value.elements[0]?.rect.height === 40,
+      });
+      await user.see({ text: session.title });
+      expect((await probe.dom('[data-sidebar-titlebar] [data-sidebar-toggle]')).elements[0]?.rect.left).toBe(8);
+      await user.screenshot();
+    });
+    await step("leaving native fullscreen restores the traffic-light clearance", async () => {
+      await world.fullscreen(false);
+      await probe.eventually(() => probe.dom('html[data-window-fullscreen="false"] [data-sidebar-titlebar]'), {
+        within: 10_000, label: "windowed titlebar returns", until: (value) => value.elements[0]?.rect.height === 48,
+      });
+      await user.see({ text: session.title });
+      expect((await probe.dom('[data-sidebar-titlebar] [data-sidebar-toggle]')).elements[0]?.rect.left).toBe(88);
+      await user.screenshot();
+    });
+  }
 });

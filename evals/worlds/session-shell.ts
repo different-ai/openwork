@@ -2663,7 +2663,18 @@ export async function settingsRuntime(seed: Seed) {
 
 export async function macSidebar(seed: Seed) {
   const world = await oneWorkspace(seed, "mac-sidebar-toggle-clearance", ["Mac sidebar clearance"]);
-  return world;
+  return {
+    ...world,
+    clearViewport: () => world.app.client.send("Emulation.clearDeviceMetricsOverride"),
+    // TODO(primitive): user.setWindowFullscreen. Called immediately after trusted
+    // user input, a Chromium fullscreen request enters the real Electron window
+    // and exercises its native events, rather than changing CSS markers.
+    async fullscreen(enabled: boolean) {
+      await evaluate(world.app.client, enabled
+        ? () => document.documentElement.requestFullscreen()
+        : () => document.exitFullscreen());
+    },
+  };
 }
 
 export async function rendererCrash(seed: Seed) {

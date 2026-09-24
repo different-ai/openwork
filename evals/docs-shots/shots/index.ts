@@ -6,7 +6,6 @@ import {
   libraryAdvancedSettings,
   libraryCreateSkillModal,
   librarySkills,
-  skillCreatedCard,
 } from "./desktop.ts";
 import { openworkWebTab } from "./web-tab.ts";
 
@@ -16,7 +15,6 @@ export const shots: Shot[] = [
   libraryCreateSkillModal,
   libraryAdvancedSettings,
   libraryAddMcpModal,
-  skillCreatedCard,
   denPluginDetail,
   denSkillEditor,
   denOpenworkWeb,

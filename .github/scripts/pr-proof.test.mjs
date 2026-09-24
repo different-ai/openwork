@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { changedFiles, proofArtifact, proofLanes, selectProof } from "./pr-proof.mjs";
+import { changedFiles, packagedJourney, proofArtifact, proofLanes, selectProof } from "./pr-proof.mjs";
 
 const file = (filename, status = "modified", previous_filename) => ({ filename, status, ...(previous_filename ? { previous_filename } : {}) });
 
@@ -109,7 +109,7 @@ test("only the exact supported live file is routed; the entire changed selection
   assert.deepEqual(lanes.liveSpecs, [liveSpec]);
   assert.deepEqual(lanes.normalSpecs, specs.filter(spec => spec !== liveSpec));
   assert.deepEqual([...lanes.normalSpecs, ...lanes.liveSpecs].sort(), specs);
-  assert.deepEqual(proofLanes(selectProof([file(liveSpec, "removed")]).specs, {}), { normalSpecs: [], liveSpecs: [] });
+  assert.deepEqual(proofLanes(selectProof([file(liveSpec, "removed")]).specs, {}), { normalSpecs: [], liveSpecs: [], packagedSpecs: [] });
 });
 
 test("untrusted live selection fails closed with an actionable message, even on maintainer reruns", async t => {
@@ -117,7 +117,7 @@ test("untrusted live selection fails closed with an actionable message, even on 
     const trust = trustFixture();
     mutate(trust);
     assert.throws(() => proofLanes([normalSpec, liveSpec], trust), /unsupported.*maintainer.*same-repository PR.*approve the pr-slow-specs/);
-    assert.deepEqual(proofLanes([normalSpec], trust), { normalSpecs: [normalSpec], liveSpecs: [] });
+    assert.deepEqual(proofLanes([normalSpec], trust), { normalSpecs: [normalSpec], liveSpecs: [], packagedSpecs: [] });
   });
 });
 
@@ -223,6 +223,8 @@ test("workflow keeps ordinary proof unprotected and gates all live PR code befor
   assert.doesNotMatch(ordinary, /environment:|secrets\.|OPENAI_API_KEY|OPENWORK_EVAL_LIVE_OPENAI/);
   assert.match(ordinary, /if: needs.select.outputs.selected == 'true'/);
   assert.match(ordinary, /xvfb-run -a node evals\/bin\/evals.mjs "\$\{PROOF_SPEC#evals\/\}" --local\n/);
+  assert.match(ordinary, /run-parity-proof.mjs --supports "\$PROOF_SPEC"/);
+  assert.match(ordinary, /xvfb-run -a node evals\/scripts\/run-parity-proof.mjs "\$PROOF_SPEC"/);
   assert.match(ordinary, /liveMatrix: \$\{\{ steps.select.outputs.liveMatrix \}\}/);
   assert.match(ordinary, /liveSelected: \$\{\{ steps.select.outputs.liveSelected \}\}/);
   const gate = live.split("    steps:\n")[0];
@@ -248,32 +250,106 @@ test("workflow keeps ordinary proof unprotected and gates all live PR code befor
     assert.match(job, /include-hidden-files: true/);
     assert.match(job, /if-no-files-found: error/);
   }
-  const [preparation, executionAndUpload] = live.split("      - name: Run the whole selected live spec on local v1 appWeb\n");
+  const [preparation, executionAndUpload] = live.split("      - name: Run the whole selected live spec with real inference\n");
   const [execution, upload] = executionAndUpload.split("      - name: Save selected native testkit and Vitest records\n");
   assert.doesNotMatch(preparation + upload, /secrets\.|OPENAI_API_KEY|OPENWORK_EVAL_LIVE_OPENAI/);
   assert.match(execution, /OPENAI_API_KEY: \$\{\{ secrets.OPENAI_API_KEY \}\}/);
   assert.match(execution, /OPENWORK_EVAL_LIVE_OPENAI: "1"/);
   assert.match(execution, /OPENWORK_EVAL_OPENAI_MODEL: gpt-5\.4/);
-  assert.ok(execution.includes(`if [ "$PROOF_SPEC" != '${liveSpec}' ]; then`));
+  assert.ok(execution.includes(`if [ "$PROOF_SPEC" != '${liveSpec}' ] && [ "$PROOF_SPEC" != 'evals/specs/engine-live-chat.e2e.test.ts' ]; then`));
+  assert.match(execution, /OPENWORK_LIVE_PROVIDER=OpenAI OPENWORK_LIVE_KEY_ENV=OPENAI_API_KEY/);
+  assert.match(execution, /OPENWORK_LIVE_MODELS=gpt-5\.4,gpt-4\.1-mini/);
+  assert.match(execution, /xvfb-run -a node evals\/scripts\/run-parity-proof.mjs "\$PROOF_SPEC"/);
   assert.match(execution, /\$\{OPENAI_API_KEY\/\/\[\[:space:\]\]\/\}/);
   assert.match(execution, /this proof cannot be skipped/);
   assert.match(execution, /xvfb-run -a node evals\/bin\/evals.mjs "\$\{PROOF_SPEC#evals\/\}" --local --engine v1 --surface web\n/);
   assert.doesNotMatch(execution, /--testNamePattern|--grep|--test-name|pnpm .*build|pnpm .*install/);
-  assert.doesNotMatch(live, /--no-sandbox|OPENWORK_EVAL_CONTAINER_ELECTRON/);
+  assert.doesNotMatch(preparation + upload, /OPENWORK_EVAL_CONTAINER_ELECTRON/);
+  assert.match(execution, /OPENWORK_EVAL_CONTAINER_ELECTRON=1/);
 });
 
-test("live browser setup detects Chrome, installs via Google's signed apt repository if missing, and verifies it", async () => {
+test("both proof jobs share verified Chrome setup, with system OAuth handoff only for desktop proof", async () => {
   const workflow = await readFile(new URL("../workflows/pr-proof.yml", import.meta.url), "utf8");
-  const live = workflow.split("\n  live-proof:\n")[1];
-  assert.match(live, /apt-get install -y xvfb x11-utils libgtk-3-0 libnss3 libasound2t64 libgbm1/);
-  assert.equal(live.match(/command -v google-chrome \|\| command -v chromium \|\| command -v chromium-browser/g)?.length, 2);
-  assert.match(live, /if \[ -z "\$chrome" \]; then[\s\S]*https:\/\/dl\.google\.com\/linux\/linux_signing_key.pub/);
-  assert.match(live, /gpg --batch --yes --dearmor/);
-  assert.match(live, /signed-by=\/usr\/share\/keyrings\/openwork-google-chrome.gpg/);
-  assert.match(live, /https:\/\/dl\.google\.com\/linux\/chrome\/deb\//);
-  assert.match(live, /apt-get install -y google-chrome-stable/);
-  assert.match(live, /Repair the runner browser installation and rerun this job/);
-  assert.match(live, /"\$chrome" --version/);
-  assert.match(live, /CHROME_BIN=%s\\n' "\$chrome" >> "\$GITHUB_ENV"/);
-  assert.doesNotMatch(live, /curl[^\n]*\|[^\n]*(?:sh|bash)|trusted=yes|allow-unauthenticated/);
+  const [ordinary, live] = workflow.split("\n  live-proof:\n");
+  for (const job of [ordinary, live]) {
+    assert.match(job, /uses: \.\/\.github\/actions\/setup-tests\n      - uses: \.\/\.github\/actions\/setup-browser/);
+    assert.doesNotMatch(job, /apt-get|google-chrome|--input-type=module/);
+  }
+  assert.match(ordinary, /oauth-handoff: "true"/);
+  assert.match(live, /oauth-handoff: "true"/);
+  const action = await readFile(new URL("../actions/setup-browser/action.yml", import.meta.url), "utf8");
+  assert.match(action, /default: "false"/);
+  assert.match(action, /ACTION_PATH: \$\{\{ github.action_path \}\}/);
+  assert.match(action, /OAUTH_HANDOFF: \$\{\{ inputs.oauth-handoff \}\}/);
+  assert.match(action, /run: bash "\$ACTION_PATH\/setup.sh"/);
+  assert.match(action, /if: inputs.oauth-handoff == 'true'/);
+  assert.match(action, /run: xvfb-run -a node "\$ACTION_PATH\/probe-handoff.mjs"/);
+  const setup = await readFile(new URL("../actions/setup-browser/setup.sh", import.meta.url), "utf8");
+  assert.match(setup, /apt-get install -y xvfb x11-utils libgtk-3-0 libnss3 libasound2t64 libgbm1/);
+  assert.equal(setup.match(/command -v google-chrome \|\| command -v chromium \|\| command -v chromium-browser/g)?.length, 2);
+  assert.match(setup, /if \[ -z "\$chrome" \]; then[\s\S]*https:\/\/dl\.google\.com\/linux\/linux_signing_key.pub/);
+  assert.match(setup, /gpg --batch --yes --dearmor/);
+  assert.match(setup, /signed-by=\/usr\/share\/keyrings\/openwork-google-chrome.gpg/);
+  assert.match(setup, /https:\/\/dl\.google\.com\/linux\/chrome\/deb\//);
+  assert.match(setup, /apt-get install -y google-chrome-stable/);
+  assert.match(setup, /Repair the runner browser installation and rerun this job/);
+  assert.match(setup, /"\$chrome" --version/);
+  assert.match(setup, /CHROME_BIN=%s\\n' "\$chrome" >> "\$GITHUB_ENV"/);
+  assert.doesNotMatch(setup, /curl[^\n]*\|[^\n]*(?:sh|bash)|trusted=yes|allow-unauthenticated/);
+  const handoff = setup.split('if [ "$OAUTH_HANDOFF" = true ]; then')[1];
+  assert.ok(handoff);
+  assert.match(handoff, /sudo install -m 0755 "\$ACTION_PATH\/browser.sh" "\$browser"/);
+  assert.match(handoff, /\/usr\/share\/applications\/openwork-proof-browser.desktop/);
+  assert.match(handoff, /\/etc\/xdg\/mimeapps.list/);
+  for (const scheme of ["http", "https"]) assert.ok(handoff.includes(`x-scheme-handler/${scheme}=openwork-proof-browser.desktop`));
+  assert.match(handoff, /BROWSER=%s\\n' "\$browser" >> "\$GITHUB_ENV"/);
+  const browser = await readFile(new URL("../actions/setup-browser/browser.sh", import.meta.url), "utf8");
+  assert.match(browser, /exec "\$CHROME_BIN" --no-sandbox --disable-dev-shm-usage --no-first-run --no-default-browser-check/);
+  assert.ok(browser.includes('--user-data-dir="${OPENWORK_PROOF_BROWSER_PROFILE:-$RUNNER_TEMP/pr-proof-browser}" "$@"'));
+});
+
+const packagedSpec = "evals/specs/packaged-activated-launch.e2e.test.ts";
+
+test("packaged specs get their own lane named after their smoke journey", () => {
+  const lanes = proofLanes([normalSpec, packagedSpec, "evals/specs/nested/packaged-x.e2e.test.ts"], trustFixture());
+  assert.deepEqual(lanes.packagedSpecs, [packagedSpec]);
+  assert.deepEqual(lanes.normalSpecs, [normalSpec, "evals/specs/nested/packaged-x.e2e.test.ts"]);
+  assert.deepEqual(lanes.liveSpecs, []);
+  assert.equal(packagedJourney(packagedSpec), "packaged-activated-launch");
+  assert.throws(() => packagedJourney(normalSpec), /Invalid packaged proof spec/);
+});
+
+test("controller emits a packaged matrix with the journey and a publisher-compatible key", async () => {
+  const trust = trustFixture();
+  trust.current.changed_files = 2;
+  const result = await runController(trust, [file(normalSpec), file(packagedSpec)]);
+  assert.equal(result.status, 0, result.stderr);
+  const outputs = Object.fromEntries(result.output.trim().split("\n").map(line => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]));
+  assert.equal(outputs.packagedSelected, "true");
+  assert.deepEqual(JSON.parse(outputs.matrix).include.map(row => row.spec), [normalSpec]);
+  const [row] = JSON.parse(outputs.packagedMatrix).include;
+  assert.equal(row.spec, packagedSpec);
+  assert.equal(row.journey, "packaged-activated-launch");
+  assert.equal(`pr-proof-2-${row.key}`, proofArtifact(packagedSpec, 2));
+});
+
+test("workflow runs packaged proof through the packaged smoke runner without secrets", async () => {
+  const workflow = await readFile(new URL("../workflows/pr-proof.yml", import.meta.url), "utf8");
+  const packaged = workflow.split("\n  packaged-proof:\n")[1]?.split("\n  live-proof:\n")[0];
+  assert.ok(packaged);
+  assert.match(packaged, /if: needs.select.outputs.packagedSelected == 'true'/);
+  assert.match(packaged, /matrix: \$\{\{ fromJSON\(needs.select.outputs.packagedMatrix\) \}\}/);
+  assert.match(packaged, /node apps\/desktop\/scripts\/packaged-smoke.mjs --server-built --journey "\$PROOF_JOURNEY"/);
+  assert.match(packaged, /name: pr-proof-\$\{\{ github.run_attempt \}\}-\$\{\{ matrix.key \}\}/);
+  assert.match(packaged, /if-no-files-found: error/);
+  assert.doesNotMatch(packaged, /environment:|secrets\.|OPENAI_API_KEY/);
+});
+
+test("native real-model parity is protected and cannot leak into ordinary proof", () => {
+  const parity = "evals/specs/engine-live-chat.e2e.test.ts";
+  assert.deepEqual(proofLanes([normalSpec, parity], trustFixture()), { normalSpecs: [normalSpec], liveSpecs: [parity], packagedSpecs: [] });
+  for (const [, mutate] of untrusted) {
+    const trust = trustFixture(); mutate(trust);
+    assert.throws(() => proofLanes([parity], trust), /unsupported/);
+  }
 });

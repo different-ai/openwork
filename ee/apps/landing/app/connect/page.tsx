@@ -8,16 +8,17 @@ import { LpTerminalStory } from "../../components/lp-terminal-story";
 import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
 import { getGithubData } from "../../lib/github";
+import { withSocialMetadata } from "../../lib/seo";
 
 const CLOUD_SIGNUP_URL = "https://app.openworklabs.com";
 const GATEWAY_URL = "https://api.openworklabs.com/mcp/agent";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = withSocialMetadata({
   title: "OpenWork Connect — the MCP gateway for your team",
   description:
     "The MCP gateway for your whole org. Add a server or skill once — every teammate and agent gets it instantly, with auth, roles, and policies applied on the way through.",
   alternates: { canonical: "/connect" }
-};
+});
 
 const steps = [
   {

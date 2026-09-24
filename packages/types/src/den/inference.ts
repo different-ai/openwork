@@ -301,8 +301,31 @@ export const inferenceOauthTokenSecretSchema = z.object({
   accessToken: z.string().min(1),
   refreshToken: z.string().min(1).optional(),
   tokenType: z.string().min(1).optional(),
+  googleIdentity: z.object({
+    subject: z.string().min(1).max(255),
+    email: z.email(),
+    emailVerified: z.literal(true),
+    clientId: z.string().min(1),
+    authorizationRevision: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional(),
+  }).optional(),
 });
 export type InferenceOauthTokenSecret = z.infer<typeof inferenceOauthTokenSecretSchema>;
+
+export const gatewayMemberConnectionsResponseSchema = z.object({
+  connections: z.array(z.object({
+    providerId: z.string(),
+    credentialSetId: z.string(),
+    providerName: z.string(),
+    name: z.string(),
+    ready: z.boolean(),
+    hasAccess: z.boolean(),
+    hasCredential: z.boolean(),
+    configurationRequired: z.boolean().default(false),
+    authorizationRevision: z.string().nullable(),
+    accountEmail: z.string().nullable(),
+  })),
+});
+export type GatewayMemberConnectionsResponse = z.infer<typeof gatewayMemberConnectionsResponseSchema>;
 
 export type InferenceProviderSecret =
   | { kind: "api_key"; apiKey: string }

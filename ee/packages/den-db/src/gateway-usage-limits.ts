@@ -10,6 +10,8 @@ import {
 import {
   withGatewayUsageEntitlementMutation,
   usagePolicyMembers,
+  usageOrganizationMembers,
+  lockUsageOrganization,
   lockUsageMembers,
 } from "./gateway-usage-entitlements"
 import { isGatewayUsageDeadlock } from "./gateway-usage-errors"
@@ -228,23 +230,63 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         ),
       )
     },
+    restorePolicy(scope: GatewayUsageScope, id: string, revision: number) {
+      return transaction(async (tx, now) =>
+        withGatewayUsageEntitlementMutation(
+          tx,
+          scope.organizationId,
+          async () => {
+            await activeUsageMember(tx, scope, true, true)
+            const policy = await policyById(tx, scope, id)
+            if (policy.revision !== revision)
+              return fail(
+                "policy_revision_conflict",
+                409,
+                "Policy changed. Reload before restoring.",
+              )
+            if (policy.archivedAt) {
+              await tx
+                .update(P)
+                .set({ archivedAt: null, updatedAt: now, revision: revision + 1 })
+                .where(eq(P.id, id))
+              await audit(tx, scope, id, "policy_restored", { revision }, now)
+            }
+            return policyView(tx, scope, id)
+          },
+          await usagePolicyMembers(tx, scope.organizationId, id),
+          now,
+        ),
+      )
+    },
     assign(
       scope: GatewayUsageScope,
       policyId: string,
       target:
+        | { organization: true }
         | { memberId: GatewayUsageScope["memberId"] }
         | { teamId: typeof TeamTable.$inferSelect.id },
     ) {
       return transaction(async (tx, now) => {
+        await lockUsageOrganization(tx, scope.organizationId)
         const members =
-          "memberId" in target
-            ? [target.memberId]
-            : (
-                await tx
-                  .select({ id: TeamMemberTable.orgMembershipId })
-                  .from(TeamMemberTable)
-                  .where(eq(TeamMemberTable.teamId, target.teamId))
-              ).flatMap((row) => (row.id ? [row.id] : []))
+          "organization" in target
+            ? await usageOrganizationMembers(tx, scope.organizationId)
+            : "memberId" in target
+              ? [target.memberId]
+              : (
+                  await tx
+                    .select({ id: TeamMemberTable.orgMembershipId })
+                    .from(TeamMemberTable)
+                    .innerJoin(
+                      TeamTable,
+                      and(
+                        eq(TeamTable.id, TeamMemberTable.teamId),
+                        eq(TeamTable.organizationId, scope.organizationId),
+                      ),
+                    )
+                    .where(eq(TeamMemberTable.teamId, target.teamId))
+                    .for("share")
+                ).flatMap((row) => (row.id ? [row.id] : []))
         return withGatewayUsageEntitlementMutation(
           tx,
           scope.organizationId,
@@ -274,6 +316,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
                 organizationId: scope.organizationId,
                 memberId,
                 teamId,
+                organization: "organization" in target ? true : null,
                 createdAt: now,
               })
               .onDuplicateKeyUpdate({ set: { policyId } })

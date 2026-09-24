@@ -85,3 +85,45 @@ export function buildWorkspaceInfos(
 export function findManagedEngineWorkspace(workspaces: WorkspaceInfo[]): WorkspaceInfo | undefined {
   return workspaces.find((workspace) => workspace.workspaceType !== "remote" && workspace.path.trim() !== "");
 }
+
+/**
+ * Whether a server that manages its own engine should start it. A local
+ * workspace needs it, and so does a member with no workspace yet (providers
+ * must load right after sign-in). Remote-only setups run their engines
+ * elsewhere and need no local one.
+ */
+export function shouldStartManagedEngine(workspaces: WorkspaceInfo[]): boolean {
+  return workspaces.length === 0 || findManagedEngineWorkspace(workspaces) !== undefined;
+}
+
+/**
+ * Identity of the engine root the managed engine runs in when no workspace
+ * scopes a request. It is not a registered workspace: it only names the
+ * process cwd so engine-wide maintenance (reload, provider credentials) has a
+ * target before the first workspace exists, exactly like `cd ~ && opencode`.
+ */
+export const MANAGED_ENGINE_ROOT_WORKSPACE_ID = "ws_managed_engine_root";
+
+export function managedEngineRootWorkspace(cwd: string): WorkspaceInfo {
+  return {
+    id: MANAGED_ENGINE_ROOT_WORKSPACE_ID,
+    name: "OpenCode engine",
+    path: cwd,
+    preset: "starter",
+    workspaceType: "local",
+  };
+}
+
+/**
+ * Directory the managed engine starts in. A signed-in member may have no
+ * workspace yet; the engine still needs a cwd, so fall back to a scratch
+ * folder under runtime storage rather than refusing to start. The desktop
+ * passes its own scratch directory explicitly.
+ */
+export function resolveManagedEngineCwd(input: {
+  explicit?: string | null;
+  workspace?: WorkspaceInfo | null;
+  fallbackDir: string;
+}): string {
+  return input.explicit?.trim() || input.workspace?.path.trim() || input.fallbackDir;
+}

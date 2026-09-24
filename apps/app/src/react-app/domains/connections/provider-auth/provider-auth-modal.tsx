@@ -799,7 +799,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                                   </div>
                                 ) : (
                                   <div className="text-[12px] font-medium text-gray-9 group-hover:text-gray-12 transition-colors flex items-center gap-0.5 opacity-80 group-hover:opacity-100">
-                                    Connect
+                                    {entry.methods.some((method) => method.type === "oauth") ? "Login" : "Connect"}
                                     <ChevronRight size={14} className="opacity-0 -ml-2 group-hover:opacity-100 group-hover:ml-0 transition-all duration-200" />
                                   </div>
                                 )}

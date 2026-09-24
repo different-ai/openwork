@@ -9,8 +9,8 @@ export const OPENWORK_EXTENSION_STATE_CHANGED = "openwork:extension-state-change
 
 /** An absent or stale value uses cards; an explicit list choice is preserved. */
 export function readExtensionLayout(): ExtensionLayout {
-  if (typeof window === "undefined") return "grid";
-  return window.localStorage.getItem(EXTENSION_LAYOUT_KEY) === "list" ? "list" : "grid";
+  if (typeof window === "undefined") return "list";
+  return window.localStorage.getItem(EXTENSION_LAYOUT_KEY) === "grid" ? "grid" : "list";
 }
 
 export function writeExtensionLayout(layout: ExtensionLayout) {

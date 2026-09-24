@@ -9,7 +9,7 @@ const test = spec.world(gatewayUsagePolicy, {
   needs: { commands: ["pnpm", "bun"], optIn: ["OPENWORK_EVAL_E2E_TESTS"] },
 });
 
-const policyName = "Journey monthly allowance";
+const policyName = "Usage Member";
 const reason = "Finish the synthetic integration review";
 const ownPath = "/v1/gateway/usage-limits/me";
 const requestsPath = "/v1/gateway/usage-limit-reset-requests";
@@ -38,6 +38,14 @@ function expectSettledCoverage(status: GatewayUsageStatus) {
 
 test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed 25% extension", async ({ world, user, agent, probe, seed, step, evidence }) => {
   const admin = user.on(world.admin);
+  const adminProbe = probe.on(world.admin);
+  const expectAdminRoute = async (path: string, tab: string) => {
+    await adminProbe.eventually(() => adminProbe.eval(browserScript(() => `${location.pathname}${location.search}`, [])), {
+      within: 15_000, label: `Den route ${path}`, until: (value) => value === path,
+    });
+    expect((await adminProbe.dom('[role="tab"][aria-selected="true"]')).elements.map((element) => element.text)).toEqual([tab]);
+    expect((await adminProbe.dom(`[role="tabpanel"][aria-label="${tab}"]`)).elements).toHaveLength(1);
+  };
   const member = user.on(world.desktop);
   const memberAgent = agent.on(world.desktop);
   const memberProbe = probe.on(world.desktop);
@@ -95,28 +103,50 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
   expect(await own()).toMatchObject({ organizationId: world.orgId, memberId: world.memberId, state: "unlimited", buckets: [], coverage: untrackedCoverage });
   expect(await own(world.control)).toMatchObject({ memberId: world.controlId, state: "unlimited", buckets: [], coverage: untrackedCoverage });
 
-  const policy = await step("admin creates and assigns the monthly hard policy in rendered Den", async () => {
-    await admin.navigate(new URL("/dashboard/gateway-providers", world.den.ref.webUrl).toString());
-    await admin.see({ role: "button", label: "Create policy" }, { timeoutMs: 90_000 });
-    await admin.click({ role: "button", label: "Create policy" });
-    await admin.see({ role: "combobox", label: "Timeframe 1" }, { value: "1 month" });
-    await admin.type({ role: "textbox", label: "Policy name" }, policyName);
-    await admin.type({ role: "textbox", label: "USD Amount 1" }, "1.000000");
-    await capture("Den policy editor", admin, probe.on(world.admin), '[role="dialog"]');
-    await admin.click({ role: "button", label: "Save policy" });
-    await admin.see({ role: "button", label: `Assignments for ${policyName}` });
+  const policy = await step("admin sets Usage Member's monthly hard limit on the New limit page", async () => {
+    await admin.navigate(new URL("/dashboard/ai-gateway?tab=limits", world.den.ref.webUrl).toString());
+    await admin.see({ testId: "gateway-limits-empty" }, { timeoutMs: 90_000 });
+    await expectAdminRoute("/dashboard/ai-gateway?tab=limits", "Limits");
+    await admin.notSee({ testId: "gateway-users-teams" });
+    await admin.click({ testId: "gateway-limit-new" });
+    await admin.see({ testId: "gateway-limit-editor" }, { timeoutMs: 30_000 });
+    await expectAdminRoute("/dashboard/ai-gateway/limits/new", "Limits");
+    await admin.click({ role: "switch", label: "Everyone in the organization" });
+    await admin.click({ testId: "gateway-limit-add-person" });
+    await admin.click({ role: "combobox", label: "Person" });
+    await admin.click({ role: "option", label: /Usage Member/ });
+    await admin.see({ testId: "gateway-limit-who-row" }, { text: /Usage Member/ });
+    await admin.type({ testId: "gateway-limit-amount-month" }, "1.000000");
+    await capture("Den New spend limit amounts", admin, adminProbe, '[data-testid="gateway-limit-period-month"]');
+    await admin.click({ testId: "gateway-limit-save" });
+    await admin.see({ testId: "gateway-limit-row" }, { text: /\$1\.00 a month each/, timeoutMs: 30_000 });
+    await expectAdminRoute("/dashboard/ai-gateway?tab=limits", "Limits");
     const saved = (await policies()).find((entry) => entry.name === policyName);
-    expect(saved).toMatchObject({ hardLimit: true, allowRequestReset: true, limits: [{ timeframe: "month", costLimitMicroUsd: 1_000_000 }], assignments: [] });
-    if (!saved) throw new Error("Policy not persisted by the editor");
-    await admin.click({ role: "button", label: `Assignments for ${policyName}` });
-    await admin.type({ label: "Find person to assign" }, world.member.email);
-    await admin.click({ role: "button", label: `Usage Member (${world.member.email})` });
-    await admin.click({ role: "button", label: "Assign policy" });
-    await probe.eventually(async () => (await policies()).find((entry) => entry.id === saved.id)?.assignments, {
-      within: 15_000, intervalMs: 200, label: "Den assignment persisted",
-      until: (assignments) => assignments?.length === 1 && assignments[0]?.memberId === world.memberId,
+    expect(saved).toMatchObject({ hardLimit: true, allowRequestReset: true, limits: [{ timeframe: "month", costLimitMicroUsd: 1_000_000 }] });
+    if (!saved) throw new Error("Policy not persisted by the New limit page");
+    expect(saved.assignments).toEqual([{ id: expect.any(String), memberId: world.memberId, teamId: null, organization: false }]);
+    expect((await adminProbe.dom('[data-testid="gateway-limit-row"]')).elements).toHaveLength(1);
+    await capture("Den Limits row", admin, adminProbe, '[data-testid="gateway-limit-row"]');
+    await admin.click({ role: "tab", label: "Users & Teams" });
+    await admin.see({ testId: "gateway-users-teams" });
+    await expectAdminRoute("/dashboard/ai-gateway?tab=users-and-teams", "Users & Teams");
+    await admin.notSee({ testId: "gateway-limit-new" });
+    await admin.notSee({ role: "combobox", label: "Find a person" });
+    await admin.notSee({ role: "button", label: "Refresh requests" });
+    const personRow = (memberId: string) => adminProbe.eventually(() => adminProbe.dom(`[data-testid="gateway-directory-person-row"][data-member-id="${memberId}"]`), {
+      within: 30_000, intervalMs: 250, label: `directory row for ${memberId}`, until: (value) => value.elements.length === 1,
     });
-    expect((await policies()).find((entry) => entry.id === saved.id)?.assignments).toEqual([{ id: expect.any(String), memberId: world.memberId, teamId: null }]);
+    expect((await personRow(world.memberId)).elements[0]?.text).toMatch(/Usage Member[\s\S]*\$1\.00 a month[\s\S]*Their own limit/);
+    expect((await personRow(world.controlId)).elements[0]?.text).toMatch(/Usage Control[\s\S]*No limit/);
+    await admin.notSee({ role: "button", label: `Unassign ${policyName} from Usage Member` });
+    expect((await adminProbe.dom('[data-testid="gateway-directory-person-row"]')).elements).toHaveLength(3);
+    expect((await adminProbe.dom('[data-testid="gateway-directory-everyone"] [aria-label="Can use Usage journey provider"]')).elements).toHaveLength(1);
+    await capture("Den Users and Teams directory", admin, adminProbe, '[data-testid="gateway-users-teams"]');
+    await admin.click({ role: "link", label: /Usage Member/ });
+    await expectAdminRoute(`/dashboard/ai-gateway/people/${world.memberId}`, "Users & Teams");
+    await admin.see({ testId: "gateway-person-access-row" }, { text: /Usage journey provider[\s\S]*Everyone has it/, timeoutMs: 30_000 });
+    await admin.click({ role: "link", label: "Back to Users & Teams" });
+    await admin.see({ testId: "gateway-directory-everyone" }, { timeoutMs: 30_000 });
     return saved;
   });
   const initial = await own();
@@ -125,6 +155,67 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
   const initialBucket = initial.buckets[0];
   if (!initialBucket) throw new Error("Assigned bucket missing");
   expect(new Date(initialBucket.resetAt).getUTCHours()).toBe(5);
+
+  await step("nested provider forms retain AI Providers and each person has a page with their limit", async () => {
+    await admin.click({ role: "tab", label: "AI Providers" });
+    await admin.see({ testId: "gateway-provider-create" });
+    await expectAdminRoute("/dashboard/ai-gateway?tab=ai-providers", "AI Providers");
+    await admin.notSee({ testId: "gateway-users-teams" });
+    await admin.click({ testId: "gateway-provider-create" });
+    await admin.see({ role: "heading", label: "Add a provider" });
+    await expectAdminRoute("/dashboard/ai-gateway/providers/new", "AI Providers");
+    await admin.see({ testId: "gateway-provider-catalog-filter" });
+    await admin.click({ role: "link", label: "Back to AI Providers" });
+    await admin.see({ testId: "gateway-provider-open" });
+    await admin.click({ testId: "gateway-provider-open" });
+    await admin.see({ testId: "gateway-provider-title" }, { timeoutMs: 30_000 });
+    await expectAdminRoute(`/dashboard/ai-gateway/providers/${world.providerId}`, "AI Providers");
+    await admin.see({ testId: "gateway-provider-save" });
+    await admin.navigate(new URL(`/dashboard/ai-gateway/providers/${world.providerId}/edit`, world.den.ref.webUrl).toString());
+    await admin.see({ testId: "gateway-provider-title" }, { timeoutMs: 30_000 });
+    await expectAdminRoute(`/dashboard/ai-gateway/providers/${world.providerId}/edit`, "AI Providers");
+    await admin.notSee({ role: "button", label: "Apply new usage limit" });
+    await admin.click({ role: "tab", label: "Limits" });
+    await admin.see({ role: "combobox", label: "Find a person" });
+    await expectAdminRoute("/dashboard/ai-gateway?tab=limits", "Limits");
+    await admin.click({ role: "combobox", label: "Find a person" });
+    await admin.type({ role: "combobox", label: "Find a person" }, world.member.email);
+    await admin.click({ role: "option", label: /Usage Member[\s\S]*usage-member@example\.test/ });
+    await expectAdminRoute(`/dashboard/ai-gateway/people/${world.memberId}`, "Users & Teams");
+    await admin.see({ testId: "gateway-person-limit" }, { text: /Within the limit/ });
+    await admin.see({ testId: "gateway-person-limit-row" }, { text: /\$0\.00 used/ });
+    await admin.see({ testId: "gateway-person-limit-row" }, { text: /\$1\.00 a month/ });
+    await admin.navigate(new URL(`/dashboard/ai-gateway/people/${world.controlId}`, world.den.ref.webUrl).toString());
+    await admin.see({ testId: "gateway-person-limit" }, { text: /No limit/, timeoutMs: 60_000 });
+    await admin.notSee({ testId: "gateway-person-limit-row" });
+    await admin.notSee({ role: "link", label: "Old Gateway" });
+    for (const oldPath of [
+      "/dashboard/gateway-providers",
+      "/dashboard/gateway-providers/new",
+      `/dashboard/gateway-providers/${world.providerId}`,
+      `/dashboard/gateway-providers/${world.providerId}/edit`,
+    ]) {
+      await admin.navigate(new URL(oldPath, world.den.ref.webUrl).toString());
+      await admin.see({ role: "heading", label: "404" });
+      await admin.notSee({ testId: "gateway-provider-open" });
+      await admin.notSee({ testId: "ai-gateway-tabs" });
+      expect(await adminProbe.eval(browserScript(() => location.pathname, []))).toBe(oldPath);
+    }
+    await admin.navigate(new URL("/dashboard/inference?source=legacy&tag=one&tag=two&tab=limits", world.den.ref.webUrl).toString());
+    await admin.see({ role: "heading", label: "OpenWork Models" });
+    await expectAdminRoute("/dashboard/ai-gateway?tab=openwork-models&source=legacy&tag=one&tag=two", "OpenWork Models");
+    await admin.see({ role: "heading", label: "Models" });
+    await admin.notSee({ role: "link", label: "OpenWork Models" });
+    await admin.notSee({ role: "button", label: "Apply new usage limit" });
+    expect((await adminProbe.dom("h1")).elements).toHaveLength(1);
+    await capture("Den OpenWork Models tab", admin, adminProbe, '[role="tabpanel"][aria-label="OpenWork Models"]');
+    await admin.navigate(new URL("/dashboard/ai-gateway?tab=limits", world.den.ref.webUrl).toString());
+    await admin.see({ role: "button", label: "Refresh requests" });
+    await expectAdminRoute("/dashboard/ai-gateway?tab=limits", "Limits");
+    expect(await policies()).toHaveLength(1);
+    expect(world.upstreamCount()).toBe(0);
+    evidence.recordAssertionEvidence("AI Gateway tab and nested form ownership", "New/edit provider forms stay within AI Providers without saving changes. The old Gateway sidebar link is absent and its list/new/detail/edit URLs show 404 without redirecting. The New limit page assigns only Usage Member; Usage Member's page reports $0.00 used of $1.00 a month and the unassigned control's page shows No limit. The legacy Models URL forwards to the OpenWork Models tab with repeated query values intact and no duplicate sidebar link or page heading. No upstream inference calls occurred.", true);
+  });
 
   const sessionId = await step("member selects the actual managed Gateway model in a real Desktop session", async () => {
     await memberAgent.run("route.settings.appearance");
@@ -144,6 +235,19 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     return id;
   });
 
+  const openUsageFromAccountMenu = async (left: RegExp) => {
+    await member.click({ role: "button", label: "Account menu" });
+    await member.see({ testId: "gateway-usage-menu-item" }, { text: left, timeoutMs: 30_000 });
+    await member.click({ testId: "gateway-usage-menu-item" });
+    await member.see({ testId: "gateway-usage-settings" }, { timeoutMs: 30_000 });
+  };
+  const backToSession = async () => {
+    await member.click({ role: "button", label: "Back to app" });
+    await member.see("composer", { editable: true });
+    expect(await memberAgent.run("session.open", { sessionId })).toMatchObject({ ok: true });
+    await member.see("composer", { editable: true });
+  };
+
   await step("own status is identity scoped and members cannot administer policies or another person's usage", async () => {
     expect(await own(world.control, `?memberId=${world.memberId}`)).toMatchObject({ memberId: world.controlId, state: "unlimited", buckets: [] });
     for (const path of [policiesPath, requestsPath, `/v1/gateway/usage-limits/members/${world.controlId}`]) {
@@ -151,11 +255,10 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     }
     expect((await seed.api(world.member, policiesPath, { method: "POST", body: JSON.stringify({ name: "Unauthorized policy", limits: [{ timeframe: "month", costUsd: "100" }] }) })).response.status).toBe(403);
     expect(await policies()).toHaveLength(1);
-    await member.see({ role: "button", label: "Usage limits" }, { timeoutMs: 90_000 });
-    await member.click({ role: "button", label: "Usage limits" });
-    await member.see({ role: "heading", label: "Monthly" });
-    await member.see({ text: "$0.00 used / $1.00 total" });
-    await member.notSee({ role: "button", label: "Request Increase — Monthly" });
+    await member.see({ role: "button", label: "Account menu" }, { timeoutMs: 90_000 });
+    await openUsageFromAccountMenu(/This month\s*100% left/);
+    await member.see({ text: /\$1\.00 of \$1\.00 left/ });
+    await member.notSee({ role: "button", label: "Ask for $0.25 more" });
   });
   evidence.recordAssertionEvidence("Rendered Den assignment reaches only the intended member's real Desktop", "Monthly $1 hard/reset-enabled policy persisted through Den UI. Own-status identity injection did not change the control member; management requests returned 403; Desktop rendered zero used of $1.", true);
 
@@ -173,16 +276,17 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     expect(world.upstreamCount()).toBe(1);
     expect((await own()).buckets).toEqual(status.buckets);
     expect(await own(world.control)).toMatchObject({ state: "unlimited", buckets: [] });
-    await member.click({ role: "button", label: "Refresh usage" });
-    await member.see({ text: "$1.00 used / $1.00 total" });
-    await member.see({ role: "button", label: "Request Increase — Monthly" });
-    await capture("Desktop exhausted usage", member, memberProbe, '[aria-label="Monthly usage"]');
+    await backToSession();
+    await openUsageFromAccountMenu(/This month\s*0% left/);
+    await member.see({ text: /\$0\.00 of \$1\.00 left/ });
+    await member.see({ role: "button", label: "Ask for $0.25 more" });
+    await capture("Desktop exhausted usage", member, memberProbe, '[aria-label="This month usage"]');
     return status;
   });
   evidence.recordAssertionEvidence("Gateway, not Desktop, blocks after known consumption", "First request settled 1000000 micro-USD; second returned trusted policy HTTP 429 without a second upstream call or charge. Desktop rendered exhaustion; the unassigned control stayed unlimited.", true);
 
   await step("real composer submission reaches the Gateway through the native engine and shows truthful own-status exhaustion", async () => {
-    await member.press("Escape");
+    await backToSession();
     const rejectedBefore = await probe.eventually(() => world.rejectedCalls(), {
       within: 15_000, intervalMs: 200, label: "direct Gateway rejection finalized",
       until: (rows) => rows.length === 1,
@@ -210,42 +314,39 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
       },
     });
     expect(native.ok).toBe(true);
+    const nativeErrors = usageRecords(Array.isArray(native.body) ? native.body : usageRecord(native.body).data)
+      .map((entry) => usageRecord(entry.info ?? entry)).filter((info) => Boolean(info.error)).map((info) => info.error);
+    evidence.recordAssertionEvidence("Native engine reports the Gateway rejection", JSON.stringify(nativeErrors).slice(0, 2000), nativeErrors.length > 0);
     expect(world.upstreamCount()).toBe(1);
     expect((await own()).buckets).toEqual(exhausted.buckets);
-    await member.see({ testId: "gateway-usage-notice" }, { text: /Out of usage/ });
+    await member.see({ testId: "gateway-usage-notice" }, { text: /used this month’s \$1\.00/ });
+    await member.notSee({ text: /receiving too many requests/ });
     expect((await memberProbe.dom('[data-testid="gateway-usage-notice"]')).elements).toHaveLength(1);
     expect(await memberProbe.composer()).toMatchObject({ composerEditable: true, modelUnavailable: false });
     await capture("Desktop blocked composer", member, memberProbe, '[data-testid="gateway-usage-notice"]');
     evidence.recordAssertionEvidence("Native composer reaches the real Gateway and own status corroborates the custom notice", JSON.stringify({ engine: world.engine, rejectedBefore: rejectedBefore.length, rejectedAfter: rejectedAfter.length, upstreamRequests: world.upstreamCount(), nativePromptRecorded: true, nativeAssistantErrorRecorded: true, usedMicroUsd: exhausted.buckets[0]?.usedMicroUsd }), true);
-    await member.see({ role: "button", label: /^Request Increase$/ });
+    await member.see({ role: "button", label: "Ask for $0.25 more" });
   });
 
   const pending = await step("member submits a required reason from Desktop and cannot review the request", async () => {
     const blank = await seed.api(world.member, requestsPath, { method: "POST", body: JSON.stringify({ bucketId: initialBucket.id, reason: "   " }) });
     expect(blank.response.status).toBe(400);
     expect(await requests()).toEqual([]);
-    await member.click({ role: "button", label: /^Request Increase$/ });
-    await member.see({ role: "textbox", label: "Reason (required)" });
-    await member.type({ role: "textbox", label: "Reason (required)" }, reason);
-    await capture("Desktop direct increase form", member, memberProbe, '[role="dialog"]');
-    const submit = await memberProbe.dom('[role="dialog"] button[type="submit"]');
-    expect(submit.elements).toHaveLength(1);
-    expect(submit.elements[0]?.text).toBe("Request Increase");
-    expect((await memberProbe.dom("button")).elements.filter((element) => element.text === "Request Increase")).toHaveLength(2);
-    await member.click({ role: "button", label: /^Request Increase$/, nth: 1 });
+    await member.click({ role: "button", label: "Ask for $0.25 more" });
+    await member.see({ role: "textbox", label: "What do you need it for?" });
+    expect((await memberProbe.dom('[role="dialog"]')).elements).toHaveLength(0);
+    await member.type({ role: "textbox", label: "What do you need it for?" }, reason);
+    await capture("Desktop direct increase form", member, memberProbe, '[data-testid="gateway-usage-notice"]');
+    await member.click({ role: "button", label: "Send request" });
     await probe.eventually(() => requests(world.member, "/me"), {
       within: 15_000, intervalMs: 200, label: "one Desktop increase request persisted",
       until: (rows) => rows.length === 1 && rows[0]?.reason === reason && rows[0]?.status === "pending",
     });
-    await memberProbe.eventually(() => memberProbe.dom('[role="dialog"]'), {
-      within: 15_000, intervalMs: 200, label: "submitted increase dialog closes",
-      until: (value) => value.elements.length === 0,
-    });
-    await member.notSee({ role: "textbox", label: "Reason (required)" });
-    await member.click({ role: "button", label: "Usage limits", nth: 0 });
-    await member.see({ text: "Increase request pending" });
-    await member.notSee({ role: "button", label: "Request Increase — Monthly" });
-    await capture("Desktop pending increase", member, memberProbe, '[aria-label="Monthly usage"]');
+    await member.see({ testId: "gateway-usage-notice" }, { text: /Asked for \$0\.25 more this month[\s\S]*Waiting for an admin/, timeoutMs: 15_000 });
+    await member.notSee({ role: "textbox", label: "What do you need it for?" });
+    await member.notSee({ role: "button", label: "Ask for $0.25 more" });
+    expect((await memberProbe.dom('[data-testid="gateway-usage-notice"]')).elements).toHaveLength(1);
+    await capture("Desktop pending increase", member, memberProbe, '[data-testid="gateway-usage-notice"]');
     const rows = await requests();
     expect(rows).toHaveLength(1);
     const request = rows[0];
@@ -283,14 +384,16 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     await admin.notSee({ role: "button", label: "Load more history" });
     await admin.see({ text: "Reviewer: Usage Admin" });
     await capture("Den approved history", admin, probe.on(world.admin), '#gateway-reset-history tbody tr');
-    await member.click({ role: "button", label: "Refresh usage" });
-    await member.see({ text: "$1.00 used / $1.25 total" });
-    await member.see({ text: "Increase request: approved" });
-    await member.notSee({ text: "Increase request pending" });
-    await member.notSee({ role: "button", label: "Request Increase — Monthly" });
-    await member.press("Escape");
+    await openUsageFromAccountMenu(/This month\s*20% left/);
+    await member.see({ text: /\$0\.25 of \$1\.25 left/ });
+    await member.see({ text: /Added \$0\.25/ });
+    await member.notSee({ text: /waiting for an admin/ });
+    await member.notSee({ role: "button", label: "Ask for $0.25 more" });
+    await capture("Desktop usage after approval", member, memberProbe, '[data-testid="gateway-usage-settings"]');
+    await backToSession();
     await member.notSee({ testId: "gateway-usage-notice" }, { timeoutMs: 60_000 });
-    await member.see({ testId: "gateway-usage-approved-notice" }, { text: /Usage increase approved/ });
+    await member.see({ testId: "gateway-usage-approved-notice" }, { text: /You got \$0\.25 more this month/ });
+    await member.notSee({ text: /receiving too many requests/ });
     expect(await memberProbe.composer()).toMatchObject({ selectedModelLabel: world.modelName, composerEditable: true, modelUnavailable: false });
     await capture("Desktop approved increase", member, memberProbe, '[data-testid="gateway-usage-approved-notice"]');
     expect(await own(world.control)).toMatchObject({ state: "unlimited", buckets: [] });

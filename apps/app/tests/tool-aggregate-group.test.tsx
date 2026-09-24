@@ -84,6 +84,23 @@ const failedCommand: DynamicToolUIPart = {
 };
 
 describe("tool aggregate running feedback", () => {
+  test.each([true, false])("unfinished solo files stay quiet with current membership %s", (current) => {
+    const part: DynamicToolUIPart = {
+      type: "dynamic-tool", toolName: "read", toolCallId: "unfinished-file",
+      state: "input-available", input: { filePath: "/repo/brief.md" },
+    };
+    const markup = renderToStaticMarkup(
+      <CurrentToolLifecycleProvider activityStatus="idle" currentToolCallIds={new Set(current ? [part.toolCallId] : [])}>
+        <ToolAggregateGroup parts={[part]} />
+      </CurrentToolLifecycleProvider>,
+    );
+    expect(markup).toContain('data-tool-lifecycle="unknown"');
+    expect(markup).toContain("Status unknown for");
+    expect(markup).not.toContain("ow-text-shimmer");
+    expect(markup).not.toContain("animate-spin");
+    expect(markup).not.toContain("Retry to continue");
+    expect(markup).not.toContain('role="alert"');
+  });
   test("classifies only lifecycle facts the aggregate can prove", () => {
     expect(getToolAggregateLifecycle([runningCommand], "running")).toBe("running");
     expect(getToolAggregateLifecycle([runningCommand], "waiting")).toBe("waiting");
@@ -207,7 +224,11 @@ describe("tool aggregate running feedback", () => {
       input: { filePath: "/repo/message-list.tsx" },
     };
 
-    const markup = renderToStaticMarkup(<ToolAggregateGroup parts={[runningEdit]} />);
+    const markup = renderToStaticMarkup(
+      <CurrentToolLifecycleProvider activityStatus="responding" currentToolCallIds={new Set([runningEdit.toolCallId])}>
+        <ToolAggregateGroup parts={[runningEdit]} />
+      </CurrentToolLifecycleProvider>,
+    );
 
     expect(markup).not.toContain("Editing 1 file");
     expect(markup).toContain("ow-text-shimmer");

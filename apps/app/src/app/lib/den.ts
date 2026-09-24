@@ -7,6 +7,7 @@ import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER,
 } from "@openwork/types/automations";
 import type { GatewayProviderSummary } from "@openwork/types/den/gateway";
+import { parseDenMcpDiscovery, type DenMcpDiscovery } from "./den-mcp-discovery";
 import type {
   AutomationDetail,
   AutomationDesktopRunnerPresence,
@@ -149,6 +150,20 @@ import type {
   DenSettings,
   DenUser,
 } from "./den-types";
+import {
+  parseDenLibraryAccessGrant,
+  parseDenLibraryAccessGrants,
+  parseDenLibraryConfigObjectVersion,
+  parseDenLibraryItems,
+  parseDenLibraryOrgDirectory,
+  parseDenLibraryPluginFiles,
+  parseDenPluginListAccess,
+  type DenLibraryAccessGrant,
+  type DenLibraryConfigObjectVersion,
+  type DenLibraryItem,
+  type DenLibraryOrgDirectory,
+  type DenLibraryPluginFile,
+} from "./den-library";
 
 type DenBaseUrls = {
   baseUrl: string;
@@ -377,6 +392,8 @@ export type DenExternalMcpPreset = {
   description: string;
   url: string;
   authType: "oauth" | "apikey" | "none";
+  /** The provider needs its own OAuth app (two codes from its settings) before anyone can sign in. */
+  requiresOAuthClient?: boolean;
 };
 
 export type DenMcpConnectionConnectStart = {
@@ -2225,6 +2242,7 @@ function parseDenExternalMcpPreset(value: unknown): DenExternalMcpPreset | null 
     description: value.description,
     url: value.url,
     authType: value.authType,
+    ...(value.requiresOAuthClient === true ? { requiresOAuthClient: true } : {}),
   };
 }
 
@@ -3543,6 +3561,19 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       return getDenExternalMcpPresets(payload);
     },
 
+    async discoverMcpConnectionRequirements(orgId: string, url: string): Promise<DenMcpDiscovery> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        "/v1/mcp-connections/discover",
+        { method: "POST", token, organizationId: orgId, body: { url } },
+      );
+      const discovery = parseDenMcpDiscovery(payload);
+      if (!discovery) {
+        throw new DenApiError(500, "invalid_mcp_discovery_payload", "MCP discovery response was invalid.");
+      }
+      return discovery;
+    },
+
     async startMcpConnectionConnect(orgId: string, connectionId: string): Promise<DenMcpConnectionConnectStart> {
       const payload = await requestJson<unknown>(
         baseUrls,
@@ -3668,6 +3699,102 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         throw new DenApiError(500, "invalid_plugin_payload", "Plugin was created but no id was returned.");
       }
       return pluginId;
+    },
+
+    async listMeLibraryItems(orgId: string): Promise<DenLibraryItem[]> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/me/library", { method: "GET", token, organizationId: orgId });
+      return parseDenLibraryItems(payload);
+    },
+
+    async getLibraryOrgDirectory(orgId: string): Promise<DenLibraryOrgDirectory> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/org", { method: "GET", token, organizationId: orgId });
+      return parseDenLibraryOrgDirectory(payload);
+    },
+
+    async listPluginAccess(orgId: string, pluginId: string): Promise<DenLibraryAccessGrant[]> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins/${encodeURIComponent(pluginId)}/access?limit=100`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      return parseDenLibraryAccessGrants(payload);
+    },
+
+    /** Access for every active plugin the caller manages, in one request. */
+    async listManagedPluginAccess(orgId: string): Promise<Map<string, DenLibraryAccessGrant[]>> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        "/v1/plugins?status=active&limit=100&includeAccess=true",
+        { method: "GET", token, organizationId: orgId },
+      );
+      return parseDenPluginListAccess(payload);
+    },
+
+    async grantPluginAccess(
+      orgId: string,
+      pluginId: string,
+      target: { teamId: string } | { orgMembershipId: string } | { orgWide: true },
+    ): Promise<DenLibraryAccessGrant | null> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins/${encodeURIComponent(pluginId)}/access`,
+        { method: "POST", token, organizationId: orgId, body: { ...target, role: "viewer" } },
+      );
+      return parseDenLibraryAccessGrant(payload);
+    },
+
+    async revokePluginAccess(orgId: string, pluginId: string, grantId: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins/${encodeURIComponent(pluginId)}/access/${encodeURIComponent(grantId)}`,
+        { method: "DELETE", token, organizationId: orgId },
+      );
+    },
+
+    async archivePlugin(orgId: string, pluginId: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins/${encodeURIComponent(pluginId)}/archive`,
+        { method: "POST", token, organizationId: orgId, body: {} },
+      );
+    },
+
+    async restorePlugin(orgId: string, pluginId: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins/${encodeURIComponent(pluginId)}/restore`,
+        { method: "POST", token, organizationId: orgId, body: {} },
+      );
+    },
+
+    async listPluginFiles(orgId: string, pluginId: string): Promise<DenLibraryPluginFile[]> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins/${encodeURIComponent(pluginId)}/config-objects`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      return parseDenLibraryPluginFiles(payload);
+    },
+
+    async getLatestConfigObjectVersion(orgId: string, configObjectId: string): Promise<DenLibraryConfigObjectVersion | null> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/config-objects/${encodeURIComponent(configObjectId)}/versions/latest`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      return parseDenLibraryConfigObjectVersion(payload);
+    },
+
+    async createConfigObjectVersion(
+      orgId: string,
+      configObjectId: string,
+      input: { rawSourceText: string; metadata: { name: string; description?: string } },
+    ): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/config-objects/${encodeURIComponent(configObjectId)}/versions`,
+        { method: "POST", token, organizationId: orgId, body: { input } },
+      );
     },
 
     async getBillingStatus(options: { includePortal?: boolean; includeInvoices?: boolean } = {}): Promise<DenBillingSummary> {

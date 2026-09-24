@@ -1,5 +1,7 @@
 import { applyEdits, modify } from "jsonc-parser";
 import type { ProviderConfig } from "@opencode-ai/sdk/v2/client";
+import type { GatewayUsableModel } from "@openwork/types/den/gateway";
+import type { ModelOption, ModelRef } from "@/app/types";
 import { catalogFastVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 
 import type {
@@ -129,6 +131,7 @@ export const OPENWORK_GATEWAY_BADGE_LABEL = "via OpenWork Gateway";
 export type GatewayConnectProvider = {
   cloudProviderId: string;
   credentialSetId?: string;
+  models?: GatewayUsableModel[];
   providerId: string;
   name: string;
   /** Legacy metadata only; never opened or sent to an authenticated endpoint. */
@@ -154,7 +157,7 @@ export const gatewayConnectCopy = (name: string) => `Sign in to ${name} to use i
 /** Skipped sync entries that need the member's own sign-in, in server order. */
 export const resolveGatewayConnectProviders = (
   skippedProviders:
-    | Record<string, { cloudProviderId: string; credentialSetId?: string; providerId: string; name: string; reason: string; authUrl?: string | null }>
+    | Record<string, { cloudProviderId: string; credentialSetId?: string; models?: GatewayUsableModel[]; providerId: string; name: string; reason: string; authUrl?: string | null }>
     | undefined
     | null,
 ): GatewayConnectProvider[] =>
@@ -163,23 +166,44 @@ export const resolveGatewayConnectProviders = (
     .map((provider) => ({
       cloudProviderId: provider.cloudProviderId,
       credentialSetId: provider.credentialSetId,
+      ...(provider.models === undefined ? {} : { models: provider.models }),
       providerId: provider.providerId,
       name: provider.name,
       authUrl: provider.authUrl ?? null,
     }));
 
-export const GATEWAY_CONNECT_POLL_INTERVAL_MS = 10_000;
-export const GATEWAY_CONNECT_POLL_ATTEMPTS = 6;
+export function pendingGatewayModelOptions(providers: readonly GatewayConnectProvider[]): ModelOption[] {
+  return providers.flatMap((provider) => (provider.models ?? []).flatMap((model) => {
+    if (!provider.credentialSetId || model.credentialSetId !== provider.credentialSetId) return [];
+    return [{
+      providerID: provider.providerId, modelID: model.id, title: model.name,
+      description: provider.name, footer: "Sign-in required", source: "cloud",
+      behaviorTitle: "Reasoning", behaviorLabel: "Default", behaviorDescription: "",
+      behaviorValue: null, isFree: false,
+      gatewayAuthorization: { cloudProviderId: provider.cloudProviderId, credentialSetId: provider.credentialSetId },
+    } satisfies ModelOption];
+  }));
+}
 
-/**
- * Starts OAuth over the authenticated local server, then re-syncs cloud
- * providers a few times (~60s by default) so the provider appears once the
- * member finishes the grant in the browser. Stops early when `isConnected`
- * reports the provider is no longer waiting on sign-in.
- */
+export function isGatewayModelReady(
+  provider: GatewayConnectProvider,
+  model: ModelRef,
+  snapshot: { importedCloudProviders: Record<string, CloudImportedProvider>; cloudProviderServerSync: { reloadPending: boolean; skippedProviders: Record<string, { cloudProviderId: string; credentialSetId?: string }> } | null; gatewayUsageProviderScope?: number | null },
+) {
+  return Boolean(provider.credentialSetId) && model.modelID.split("_")[2] === provider.credentialSetId?.slice(4)
+    && snapshot.gatewayUsageProviderScope != null && snapshot.cloudProviderServerSync?.reloadPending === false
+    && !snapshot.cloudProviderServerSync.skippedProviders[gatewayConnectProviderKey(provider)]
+    && snapshot.importedCloudProviders[provider.cloudProviderId]?.providerId === model.providerID
+    && snapshot.importedCloudProviders[provider.cloudProviderId]?.modelIds.includes(model.modelID) === true;
+}
+
+export const GATEWAY_CONNECT_POLL_INTERVAL_MS = 10_000;
+export const GATEWAY_CONNECT_POLL_ATTEMPTS = 60;
+export const GATEWAY_CONNECT_TIMEOUT_MESSAGE = "Sign-in has not been confirmed. Check the browser, then refresh AI Providers. If consent expired or was canceled, retry sign-in.";
+
 export async function connectGatewayProvider(input: {
   provider: GatewayConnectProvider;
-  startOAuth: (providerId: string, credentialSetId?: string) => Promise<{ authorizationUrl: string }>;
+  startOAuth: (providerId: string, credentialSetId?: string, signal?: AbortSignal) => Promise<{ authorizationUrl: string }>;
   signal: AbortSignal;
   openUrl: (url: string) => void | Promise<void>;
   resync: () => Promise<unknown>;
@@ -190,9 +214,10 @@ export async function connectGatewayProvider(input: {
   attempts?: number;
 }): Promise<boolean> {
   if (input.signal.aborted) return false;
-  const { authorizationUrl } = await input.startOAuth(input.provider.cloudProviderId, input.provider.credentialSetId);
+  const { authorizationUrl } = await input.startOAuth(input.provider.cloudProviderId, input.provider.credentialSetId, input.signal);
   if (input.signal.aborted) return false;
   await input.openUrl(authorizationUrl);
+  if (input.signal.aborted) return false;
   const wait = input.wait ?? ((ms: number) => new Promise<void>((resolve) => {
     const finish = () => {
       clearTimeout(timer);
@@ -206,17 +231,18 @@ export async function connectGatewayProvider(input: {
   const attempts = input.attempts ?? GATEWAY_CONNECT_POLL_ATTEMPTS;
   const interval = input.pollIntervalMs ?? GATEWAY_CONNECT_POLL_INTERVAL_MS;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (input.signal.aborted) return false;
     await wait(interval);
     if (input.signal.aborted) return false;
     try {
       await input.resync();
     } catch {
-      // A failed poll is not fatal: the next scheduled sync will pick it up.
+      continue;
     }
     if (input.signal.aborted) return false;
     if (input.isConnected()) return true;
   }
-  return input.isConnected();
+  return false;
 }
 
 export const resolveGatewayProviderIds = (

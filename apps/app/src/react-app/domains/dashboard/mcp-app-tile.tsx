@@ -1,9 +1,8 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import { DashboardConnectionCard } from "./dashboard-connection-card";
-import { connectionCardPayloadFromChatToolResult, reconnectActionFromChatToolResult } from "@/components/tools/error-attribution";
+import { connectionCardPayloadFromChatToolResult } from "@/components/tools/error-attribution";
 import type { ConnectionActionPayload } from "@openwork/types/connection-action-app";
-import type { ChatToolReconnectAction } from "@/components/tools/error-attribution";
 import { Play } from "lucide-react";
 
 import {
@@ -62,7 +61,7 @@ type TileState =
   | { phase: "idle"; revokeAutoLaunch?: boolean }
   | { phase: "loading" }
   | ReadyTileState
-  | { phase: "connection"; connection: ConnectionActionPayload; action: ChatToolReconnectAction | null; output: unknown }
+  | { phase: "connection"; connection: ConnectionActionPayload; output: unknown }
   | { phase: "closed" }
   | { phase: "error"; message: string; preservePrevious?: boolean };
 
@@ -145,7 +144,6 @@ function tileConnectionState(entry: DashboardMcpAppEntry, value: unknown, args: 
     const connection = connectionCardPayloadFromChatToolResult(entry.projectedToolName, output, args);
     if (connection) matches.set(connection.connectionId, {
       phase: "connection", connection, output,
-      action: reconnectActionFromChatToolResult(entry.projectedToolName, output, args),
     });
   }
   return matches.size === 1 ? matches.values().next().value ?? null : null;
@@ -647,7 +645,7 @@ function McpAppTileContent({
         ) : null}
         {state.phase === "connection" ? <DashboardConnectionCard key={JSON.stringify([cacheScopeKey, state.connection.connectionId, nonce])}
           toolName={entry.projectedToolName} toolCallId={`${entry.id}:${nonce}`} output={state.output}
-          connection={state.connection} action={state.action} onConnected={run} /> : null}
+          onConnected={run} /> : null}
         {state.phase === "error" ? (
           <p className="pt-3 text-xs text-muted-foreground" role="status">{state.message}</p>
         ) : null}

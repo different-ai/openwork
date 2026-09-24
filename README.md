@@ -26,7 +26,7 @@ Install OpenWork on my computer, set up my first workspace, and open it ready to
 
 The OpenWork MCP brings your assigned skills, plugins, MCP connections, Google Workspace, and Microsoft 365 capabilities into any compatible agent.
 
-It exposes two tools: `search_capabilities` finds what you can use, and `execute_capability` runs it. After adding the MCP, your client opens a browser so you can sign in and choose your OpenWork organization.
+It exposes four tools: `search_capabilities` finds what you can use, `execute_capability` runs it, and `list_skills` / `get_skill` list your skills and read one SKILL.md directly. After adding the MCP, your client opens a browser so you can sign in and choose your OpenWork organization.
 
 ### Codex
 

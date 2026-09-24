@@ -113,6 +113,18 @@ function buildInternalRequest(input: {
   })
 }
 
+export type McpOperationResult = {
+  isError: boolean
+  content: Awaited<ReturnType<typeof buildRestToolContent>>
+  /**
+   * The route's full JSON/text response before model-visible truncation.
+   * Present only when `includePayload` is set; Code Mode scripts use it so a
+   * script can read past the 20,000-character model-visible cap and decide what
+   * to return. Never forward this field to an MCP client.
+   */
+  payload?: unknown
+}
+
 export async function invokeMcpOperation(input: {
   app: Hono
   env: unknown
@@ -120,7 +132,8 @@ export async function invokeMcpOperation(input: {
   principal: McpPrincipal
   nativeConnectionId?: string
   toolInput: ToolInput
-}) {
+  includePayload?: boolean
+}): Promise<McpOperationResult> {
   const requiredScope = requiredScopeForMethod(input.operation.method)
   if (!input.principal.scopes.has(requiredScope)) {
     return {
@@ -146,5 +159,6 @@ export async function invokeMcpOperation(input: {
   return {
     isError: response.status >= 400,
     content: await buildRestToolContent(payload),
+    ...(input.includePayload ? { payload } : {}),
   }
 }

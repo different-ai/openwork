@@ -12,7 +12,6 @@ export default defineConfig({
     workflows: "src/workflows.ts",
     "skill-created-app": "src/skill-created-app.ts",
     "connection-action-app": "src/connection-action-app.ts",
-    "plugin-flow-app": "src/plugin-flow-app.ts",
     "den/desktop-app-restrictions": "src/den/desktop-app-restrictions.ts",
     "den/desktop-policies": "src/den/desktop-policies.ts",
     "den/connect-diagnostics": "src/den/connect-diagnostics.ts",

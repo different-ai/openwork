@@ -147,6 +147,14 @@ afterAll(() => {
   mock.restore()
 })
 
+test("registers the direct skill tools next to the capability-routing tools", async () => {
+  const tools = listedToolNames(await rpc(buildApp(), "tools/list"))
+  expect(tools).toContain("search_capabilities")
+  expect(tools).toContain("execute_capability")
+  expect(tools).toContain("list_skills")
+  expect(tools).toContain("get_skill")
+})
+
 test("registers execute_capability_script without any org rollout flag", async () => {
   const tools = listedToolNames(await rpc(buildApp(), "tools/list"))
   expect(tools).toContain("execute_capability_script")

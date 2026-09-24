@@ -118,7 +118,7 @@ test("world arguments expose only script lifecycle flags and forward arguments a
   const invalidPlace = parseWorldArgs(["up", "dev-headless", "--place", "remote"]);
   assert.equal(invalidPlace.kind, "help");
   if (invalidPlace.kind !== "help") throw new Error("expected help");
-  assert.match(invalidPlace.error ?? "", /local or daytona/);
+  assert.match(invalidPlace.error ?? "", /local, daytona, or freestyle/);
 
   const emptyStage = parseWorldArgs(["up", "dev-headless", "--stage", "---"]);
   assert.equal(emptyStage.kind, "help");
