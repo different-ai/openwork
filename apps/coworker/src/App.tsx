@@ -912,6 +912,21 @@ export default function App() {
     setLiveActivityBySlug((current) => mergeActivityReads(current, [{ slug: selectedSlug, scope: selectedPreparation, activity }], currentPreparationScope));
   }, [currentPreparationScope, selectedSlug, selectedPreparation?.runtimeKey, selectedPreparation?.workspaceKey, selectedPreparation?.configurationKey]);
 
+  // Opening a conversation reads it: its activity leaves the unread list, the way
+  // opening a thread clears its badge in a messaging app. Only while the chat is on screen.
+  const openGroupId = groups.some((group) => group.id === selectedGroupId) ? selectedGroupId : "";
+  const readingSlug = openGroupId ? "" : selected?.slug ?? "";
+  const readingCreatedAt = openGroupId ? "" : selected?.createdAt ?? "";
+  const chatOnScreen = mainContent === "chat" && !globalSettings && !factoryResetOpen && !replayOnboarding;
+  const unreadInOpenChat = inbox.items.filter((item) => item.readAt === null && item.kind !== "event-reminder" && (openGroupId
+    ? item.target.kind === "group" && item.target.groupId === openGroupId
+    : item.target.kind === "private" && item.slug === readingSlug && item.coworkerCreatedAt === readingCreatedAt)).map((item) => item.id).join(",");
+  const markOpenChatRead = inbox.markRead;
+  useEffect(() => {
+    if (!chatOnScreen || !unreadInOpenChat || document.visibilityState !== "visible") return;
+    void markOpenChatRead(unreadInOpenChat.split(","), true).catch(() => undefined);
+  }, [chatOnScreen, unreadInOpenChat, markOpenChatRead]);
+
   if (bootError) {
     return (
       <div className="window-shell window-drag flex h-full items-center justify-center p-8">

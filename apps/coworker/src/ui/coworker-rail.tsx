@@ -502,7 +502,8 @@ export function CoworkerRail({
           </button>
         </Tooltip>
       </div>
-      {!activityMode ? <div
+      {/* The rail resizes in every mode, Activity included. */}
+      <div
         {...panel.separatorProps}
         aria-label="Resize team rail"
         className="window-no-drag group absolute inset-y-0 -right-[5px] z-30 w-[10px] cursor-col-resize outline-none"
@@ -510,7 +511,7 @@ export function CoworkerRail({
         data-testid="coworker-rail-resizer"
       >
         <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-spark/45 group-focus-visible:bg-spark/70" />
-      </div> : null}
+      </div>
       {showGroupFilters && !calendarMode ? createPortal(<div ref={filterMenuRef} id={filterMenuId} role="menu" aria-label="Conversation types" data-testid="group-filter-menu" className="window-no-drag fixed z-50 max-h-[calc(100vh-16px)] w-44 max-w-[calc(100vw-16px)] overflow-y-auto rounded-xl border border-line bg-ink p-1 shadow-[0_8px_24px_rgb(0_0_0/0.45)]" style={filterPosition ?? { top: 0, left: 0, visibility: "hidden" }} onKeyDown={(event) => {
         if (event.key === "Tab") { closeGroupFilters(true); return; }
         if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;

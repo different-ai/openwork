@@ -60,7 +60,8 @@ type HistoryEntry = {
   coworker?: CoworkerSummary;
   eventTarget?: CalendarEventTarget;
 } & (
-  | { kind: "activity"; item: CoworkerActivityItem; category: "events" | "chats" }
+  // `item` is the newest in its conversation; `thread` holds every item grouped into this row, newest first.
+  | { kind: "activity"; item: CoworkerActivityItem; thread: CoworkerActivityItem[]; category: "events" | "chats" }
   | { kind: "document"; target: ActivityDocumentTarget; category: "documents" }
 );
 
@@ -189,6 +190,16 @@ function RefreshIcon() {
   );
 }
 
+/** Which conversation an activity item belongs to, so its replies share one row. */
+function conversationKey(item: Exclude<CoworkerActivityItem, { kind: "event-reminder" }>): string {
+  return item.target.kind === "private" ? `private:${item.slug}:${item.coworkerCreatedAt}:${item.target.threadId}` : `group:${item.target.groupId}`;
+}
+
+/** A one-line plain reading of a reply's Markdown for the preview line. */
+function plainPreview(text: string): string {
+  return text.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[`*_~>#]+/g, "").replace(/^\s*[-+]\s+/gm, "").replace(/\s+/g, " ").trim();
+}
+
 function dateBucket(at: number, now: Date): { key: string; label: string } {
   const date = new Date(at);
   if (!Number.isFinite(date.getTime())) return { key: "unknown", label: "Date unavailable" };
@@ -218,35 +229,36 @@ function HistoryRow({ entry, selected, disabled, activity, onOpen, onMarkRead, o
   onMarkRead: () => void;
   onOpenEvent: (target: CalendarEventTarget) => void;
 }) {
-  const unread = entry.kind === "activity" && entry.item.readAt === null;
+  const unreadCount = entry.kind === "activity" ? entry.thread.filter((item) => item.readAt === null).length : 0;
+  const unread = unreadCount > 0;
   const reminder = entry.kind === "activity" && entry.item.kind === "event-reminder";
   const date = new Date(entry.at);
   const validDate = Number.isFinite(date.getTime());
   const currentConversation = entry.kind === "activity" && entry.item.target.kind === "private" && activity?.threadId === entry.item.target.threadId;
   const status = currentConversation && activity && activity.state !== "ready" && activity.state !== "recent" ? describeHeaderStatus(activity, true).word : "";
   const coworker = entry.coworker;
+  const preview = plainPreview(entry.preview) || (entry.kind === "document" ? "Open the saved document." : "Open the conversation to read the message.");
+  // "Builder replied" reads as "replied" beside the name already shown above it.
+  const action = coworker && entry.label.startsWith(`${coworker.name} `) ? entry.label.slice(coworker.name.length + 1) : entry.label;
+  const where = [entry.location, status ? `Now: ${status}` : action].filter(Boolean).join(" · ");
   return (
-    <li data-testid={reminder ? "event-reminder" : entry.kind === "document" ? "activity-document" : "coworker-activity-row"} data-activity-id={entry.id} className={`flex min-w-0 items-start rounded-lg ${selected ? "bg-spark/15 ring-1 ring-inset ring-spark/30" : unread ? "bg-spark/5" : ""}`}>
-      <button type="button" disabled={disabled} onClick={onOpen} aria-current={selected ? "page" : undefined} title={`${entry.title} · ${entry.location}${unread ? " · Unread" : ""}`} className={`flex min-h-11 min-w-0 flex-1 items-start gap-2 rounded-lg px-2 py-2.5 text-left hover:bg-white/4 disabled:cursor-wait ${FOCUS}`}>
+    <li data-testid={reminder ? "event-reminder" : entry.kind === "document" ? "activity-document" : "coworker-activity-row"} data-activity-id={entry.id} data-thread-count={entry.kind === "activity" ? entry.thread.length : undefined} className={`group/row relative flex min-w-0 items-center rounded-lg ${selected ? "bg-spark/15 ring-1 ring-inset ring-spark/30" : unread ? "bg-spark/5" : ""}`}>
+      <button type="button" disabled={disabled} onClick={onOpen} aria-current={selected ? "page" : undefined} title={`${entry.title} · ${entry.location}${unread ? " · Unread" : ""}`} className={`flex min-w-0 flex-1 items-start gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-white/4 disabled:cursor-wait ${FOCUS}`}>
         <span className="sr-only">{entry.kind === "document" ? "Open document. " : reminder ? "Open event. " : "Open conversation. "}</span>
-        {coworker ? <span aria-hidden="true" className="mt-0.5 shrink-0"><CoworkerAvatar identity={coworker.slug} name={coworker.name} color={coworker.avatarColor} glasses={coworker.avatarGlasses} size={24} animated={false} gaze={false} /></span> : null}
+        {coworker ? <span aria-hidden="true" className="mt-0.5 shrink-0"><CoworkerAvatar identity={coworker.slug} name={coworker.name} color={coworker.avatarColor} glasses={coworker.avatarGlasses} size={22} animated={false} gaze={false} /></span> : null}
         <span className="block min-w-0 flex-1">
-          <span className="flex items-baseline justify-between gap-2">
+          <span className="flex items-baseline gap-1.5">
             <span className={`min-w-0 truncate text-xs leading-5 text-snow ${unread ? "font-semibold" : "font-medium"}`}>{entry.title}</span>
-            <time dateTime={validDate ? date.toISOString() : undefined} title={validDate ? date.toLocaleString() : undefined} className="shrink-0 text-[10px] tabular-nums text-mist">{validDate ? date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "—"}</time>
+            {unreadCount > 1 ? <span className="shrink-0 rounded-full bg-spark/20 px-1.5 text-[10px] font-semibold leading-4 text-spark" data-testid="activity-thread-count">{unreadCount} new</span> : unread ? <span aria-hidden="true" className="size-1.5 shrink-0 self-center rounded-full bg-spark" /> : null}
+            <time dateTime={validDate ? date.toISOString() : undefined} title={validDate ? date.toLocaleString() : undefined} className="ml-auto shrink-0 text-[10px] tabular-nums text-mist">{validDate ? date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "—"}</time>
           </span>
-          <span className="block truncate text-[11px] leading-4 text-mist">{entry.location}</span>
-          <span className="flex flex-wrap items-center gap-x-2 text-[10px] leading-4 text-mist">
-            <span>{entry.label}</span>
-            {unread ? <span className="inline-flex items-center gap-1 font-medium text-spark"><span aria-hidden="true" className="size-1.5 rounded-full bg-spark" />Unread</span> : null}
-            {status ? <span data-testid="coworker-activity-chip" title={activity?.summary || activity?.reason || activity?.detail}>Now: {status}</span> : null}
-          </span>
-          <span className={`mt-0.5 block line-clamp-2 text-[11px] leading-4 [overflow-wrap:anywhere] ${unread ? "text-snow/90" : "text-mist"}`}>{entry.preview || (entry.kind === "document" ? "Open the saved document." : "Open the conversation to read the message.")}</span>
+          <span className="block truncate text-[10.5px] leading-4 text-mist" data-testid={status ? "coworker-activity-chip" : undefined}>{where}{unread ? <span className="sr-only"> · Unread</span> : null}</span>
+          <span className={`block truncate text-[11px] leading-4 ${unread ? "text-snow/85" : "text-mist"}`}>{preview}</span>
         </span>
       </button>
-      {entry.kind === "activity" ? <div className="flex shrink-0 flex-col pr-1 pt-1.5">
-        <IconButton label={`${unread ? "Mark as read" : "Mark as unread"}: ${entry.title}, ${entry.location}`} tooltip={unread ? "Mark as read" : "Mark as unread"} disabled={disabled} onClick={onMarkRead} className={`min-h-8 min-w-8 ${FOCUS} ${unread ? "text-spark" : "text-mist"}`}><ReadIcon read={unread} /></IconButton>
-        {entry.eventTarget ? <IconButton label={`${entry.eventTarget.runId ? "View session" : "View event"}: ${entry.title}`} tooltip={entry.eventTarget.runId ? "View this Event session" : "View event in Calendar"} disabled={disabled} onClick={() => { if (entry.eventTarget) onOpenEvent(entry.eventTarget); }} className={`min-h-8 min-w-8 ${FOCUS}`}><CalendarIcon /></IconButton> : null}
+      {entry.kind === "activity" ? <div className="flex shrink-0 items-center pr-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/row:opacity-100">
+        <IconButton label={`${unread ? "Mark as read" : "Mark as unread"}: ${entry.title}, ${entry.location}`} tooltip={unread ? "Mark as read" : "Mark as unread"} disabled={disabled} onClick={onMarkRead} className={`min-h-7 min-w-7 ${FOCUS} ${unread ? "text-spark" : "text-mist"}`}><ReadIcon read={unread} /></IconButton>
+        {entry.eventTarget ? <IconButton label={`${entry.eventTarget.runId ? "View session" : "View event"}: ${entry.title}`} tooltip={entry.eventTarget.runId ? "View this Event session" : "View event in Calendar"} disabled={disabled} onClick={() => { if (entry.eventTarget) onOpenEvent(entry.eventTarget); }} className={`min-h-7 min-w-7 ${FOCUS}`}><CalendarIcon /></IconButton> : null}
       </div> : null}
     </li>
   );
@@ -323,7 +335,7 @@ export function ActivityInbox({ active, selectedId, items, loading, error, busy,
   const histories: HistoryEntry[] = [...documents.entries];
   for (const item of items) {
     if (item.kind === "event-reminder") {
-      histories.push({ kind: "activity", category: "events", item, id: item.id, at: item.at, title: item.title, location: `Event · ${eventTime(item.target.scheduledFor)}`, label: "Event reminder", preview: item.preview });
+      histories.push({ kind: "activity", category: "events", item, thread: [item], id: item.id, at: item.at, title: item.title, location: `Event · ${eventTime(item.target.scheduledFor)}`, label: "Event reminder", preview: item.preview });
       continue;
     }
     const coworker = bySlug.get(item.slug);
@@ -336,17 +348,27 @@ export function ActivityInbox({ active, selectedId, items, loading, error, busy,
     const event = eventTarget ? eventForTarget(calendar.events, calendar.eventRuns, eventTarget) : undefined;
     const workplaceEventId = eventTarget?.eventId;
     histories.push({
-      kind: "activity", category: workplaceEventId ? "events" : "chats", item, id: item.id, at: item.at,
+      kind: "activity", category: workplaceEventId ? "events" : "chats", item, thread: [item], id: item.id, at: item.at,
       title: workplaceEventId ? event?.title || group?.name || coworker.name : coworker.name,
       location: item.target.kind === "private" ? "Private chat" : `${workplaceEventId ? "Event" : "Group"} · ${group?.name || "Group chat"}`,
       label: `${coworker.name} ${item.kind === "mention" ? "mentioned you" : "replied"}`,
       preview: item.preview.trim(), coworker, eventTarget,
     });
   }
+  // New replies in one conversation fold into its one row, newest on top.
+  const threads = new Map<string, HistoryEntry>();
+  const entries: HistoryEntry[] = [];
+  for (const entry of histories.sort((a, b) => b.at - a.at)) {
+    const key = entry.kind === "activity" && entry.item.kind !== "event-reminder" ? conversationKey(entry.item) : "";
+    const existing = key ? threads.get(key) : undefined;
+    if (existing?.kind === "activity" && entry.kind === "activity") { existing.thread.push(entry.item); continue; }
+    if (key) threads.set(key, entry);
+    entries.push(entry);
+  }
   const search = query.trim().toLocaleLowerCase();
-  const matching = histories.filter((entry) => {
-    if (unreadOnly && (entry.kind !== "activity" || entry.item.readAt !== null)) return false;
-    if (filter === "mentions" ? entry.kind !== "activity" || entry.item.kind !== "mention" : filter !== "all" && entry.category !== filter) return false;
+  const matching = entries.filter((entry) => {
+    if (unreadOnly && (entry.kind !== "activity" || !entry.thread.some((item) => item.readAt === null))) return false;
+    if (filter === "mentions" ? entry.kind !== "activity" || !entry.thread.some((item) => item.kind === "mention") : filter !== "all" && entry.category !== filter) return false;
     return !search || `${entry.title} ${entry.location} ${entry.label} ${entry.preview}`.toLocaleLowerCase().includes(search);
   }).sort((a, b) => b.at - a.at || a.id.localeCompare(b.id));
   const visible = filter === "all" || filter === "documents" ? matching.slice(0, RECENT_LIMIT) : matching;
@@ -405,7 +427,11 @@ export function ActivityInbox({ active, selectedId, items, loading, error, busy,
             <h3 id={`${feedId}-${index}`} className="px-2 pb-1 pt-2 text-[10px] font-medium text-mist">{section.label}</h3>
             <ul className="space-y-0.5">{section.entries.map((entry) => <HistoryRow key={entry.id} entry={entry} selected={selectedId === entry.id} disabled={disabled} activity={entry.coworker ? activityBySlug[entry.coworker.slug] : undefined}
               onOpen={() => void act(() => entry.kind === "document" ? onOpenDocument(entry.target) : onOpen(entry.item), entry.kind === "document" ? "Could not open this document." : "Could not open this conversation.")}
-              onMarkRead={() => { if (entry.kind === "activity") void act(() => onMarkRead([entry.item.id], entry.item.readAt === null), "Could not update read status."); }} onOpenEvent={onOpenEvent} />)}</ul>
+              onMarkRead={() => {
+                if (entry.kind !== "activity") return;
+                const unreadInThread = entry.thread.filter((item) => item.readAt === null).map((item) => item.id);
+                void act(() => unreadInThread.length ? onMarkRead(unreadInThread, true) : onMarkRead([entry.item.id], false), "Could not update read status.");
+              }} onOpenEvent={onOpenEvent} />)}</ul>
           </section>)}
           {matching.length > visible.length ? <p className="px-2 pt-3 text-[11px] text-mist">Showing the most recent {RECENT_LIMIT} matches. Search to narrow the history.</p> : null}
         </div>
