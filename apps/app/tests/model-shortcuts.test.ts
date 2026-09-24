@@ -98,6 +98,13 @@ describe("shortcut store", () => {
     expect(edited.map((entry) => `${entry.id}:${entry.keys}:${entry.action.effort}`)).toEqual(["sc_new:Mod+Alt+5:high", "sc_2:Mod+Alt+2:null"]);
     expect(shortcutForKeys(edited, "Mod+Alt+2")?.id).toBe("sc_2");
   });
+
+  test("editing a shortcut's Fast preference keeps its key and position", () => {
+    const first = shortcut();
+    const second = shortcut({ id: "sc_2", keys: "Mod+Alt+2", action: { modelID: "gpt-5-mini" } });
+    const edited = upsertShortcut([first, second], shortcut({ action: { fast: true } }));
+    expect(edited.map((entry) => `${entry.id}:${entry.keys}:${entry.action.fast}`)).toEqual(["sc_1:Mod+Alt+1:true", "sc_2:Mod+Alt+2:false"]);
+  });
 });
 
 describe("pressing a model shortcut", () => {
