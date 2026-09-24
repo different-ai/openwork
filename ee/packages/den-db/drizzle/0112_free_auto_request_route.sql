@@ -1,0 +1,2 @@
+ALTER TABLE `gateway_request_logs` MODIFY COLUMN `route` enum('openwork_openrouter','org_provider','openwork_free') NOT NULL;--> statement-breakpoint
+ALTER TABLE `gateway_usage_rollups` MODIFY COLUMN `route` enum('openwork_openrouter','org_provider','openwork_free') NOT NULL;
