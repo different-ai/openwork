@@ -78,6 +78,7 @@ test("fresh profiles isolate every state path and do not inherit credentials or 
     assert.equal(env.DAYTONA_SECRETS_ENV, "/dev/null");
     assert.equal(env.COREPACK_HOME, "/opt/openwork-preview/corepack");
     assert.equal(env.COREPACK_ENABLE_NETWORK, "0");
+    assert.equal(env.BROWSER, "/usr/local/bin/openwork-preview-browser");
     assert.equal(env.pnpm_config_verify_deps_before_run, "false");
     const options = { env: { ...env, OPENWORK_DEV_MODE: "1" }, platform: "linux", userDataDir: first.userDataPath };
     assert.equal(first.userDataPath, join(first.rootPath, "electron", "user-data"));

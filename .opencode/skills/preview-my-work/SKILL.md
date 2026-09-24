@@ -11,7 +11,7 @@ world or an existing test sandbox. Run from the requested worktree.
 
 ## Choose a preview
 
-- Discover the actual primitives first: `pnpm world help`, `pnpm world list`,
+- Discover the actual primitives first: `pnpm world help`, `pnpm world list` (declared targets are shown; undeclared scripts cannot run remotely),
   then inspect the requested script in `worlds/` and its options in `worlds/lib/`.
   A preset's restrictions are not restrictions of the generic world CLI.
   For another composition, inspect `packages/world/src/index.ts` and
@@ -41,10 +41,15 @@ Do not describe these fixtures as capable of live model/provider requests.
 
 Use `--scenario blank --release <x.y.z> --distribution <name>` to preview exact
 published Linux x64 tarball bytes with a completely isolated, unseeded profile.
-Supported distributions are `public`, `cloud`, and `enterprise`; other
-platforms, architectures, package formats, prereleases, and mutable/latest
-versions are not supported. The installer resolves the exact `v<x.y.z>` GitHub
-release asset and verifies its API-published SHA-256 digest before extraction.
+Add `--os windows` before `--` to preview the published Windows x64 installer
+in a private Windows Daytona VM. Windows launches as the logged-in Administrator
+through a world-owned interactive task (never SYSTEM/session 0); its private
+noVNC viewer and CDP are probed before reporting readiness. Supported
+distributions are `public`, `cloud`, and `enterprise`; arm64, prereleases,
+mutable/latest versions and Windows source previews are not supported.
+Windows accepts `--lifetime 0-1410` (0 until stopped), reserving 30 minutes
+for a VM provider TTL after startup. The installer resolves the exact `v<x.y.z>` GitHub release asset and verifies
+its API-published SHA-256 digest inside the VM before installation.
 
 ## Start and open
 
@@ -149,6 +154,9 @@ For an immutable published desktop preview, run:
 
 ```sh
 pnpm world up preview-desktop --stage pr-1234 --place daytona --detach --timeout 600000 -- --release 0.18.44 --distribution enterprise --scenario blank
+# Windows published x64, with a private signed viewer:
+pnpm world up preview-desktop --stage pr-1234-win --place daytona --os windows --detach --timeout 600000 --source desktop=release:0.18.52/enterprise --seed blank
+pnpm world outputs preview-desktop --stage pr-1234-win --reveal
 ```
 
 `OPENWORK_EVAL_REF` pins only the independently provisioned Den source; omit
@@ -156,10 +164,17 @@ it to use the current remote `dev` commit, independently of the desktop version.
 The world driver and release installer run from the local checkout's HEAD, and
 the desktop sandbox uses the snapshot's inherited display/browser helpers.
 `--release` selects desktop bytes; none of these identities falls back to
-another. Release sandboxes do not mount shared secrets and do not run a source
-checkout, `pnpm install`, Electron source launch, or Vite. Their viewer,
-startup observation, release digest, Den URLs, log/profile paths, relaunch
-shortcut, browser shortcut, and protocol handler are reported as outputs. A
+another. For preview recipes only, the equivalent composable inputs before `--`
+are `--source desktop=release:0.18.52/enterprise --source den=sha:<full-pushed-sha> --seed blank`.
+Do not combine `--source desktop=...` with `-- --release`. `--source den=ref:dev`
+resolves origin/dev to a full SHA before adoption; otherwise the CLI pins the
+remote dev SHA for Daytona previews. For Windows, add `--os windows` before
+`--`, or use the composable source/seed syntax above; only exact blank published
+Windows x64 releases are supported. Freestyle does not support Windows or these
+preview presets. Release sandboxes do not mount shared secrets and do not run a
+source checkout, `pnpm install`, Electron source launch, or Vite. Their viewer,
+startup observation, release digest, Den URLs and log/profile paths are outputs.
+Linux additionally reports relaunch/browser shortcuts and a protocol handler. A
 crashed or unresponsive app is retained for inspection and is not reported as
 healthy; CDP is output only when it actually responded.
 

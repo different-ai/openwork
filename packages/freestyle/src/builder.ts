@@ -97,7 +97,7 @@ ${dependencies}`, options);
     parent: async () => deps.id,
     prepare: async (vm) => runScript(vm, "compiled", `${checkoutRecipe(sha)}\n${compile}`, options),
   }, api);
-  const controllerFiles = ["builder.ts", "cache.ts", "build-recipes.ts", "gateway.mjs", "runtime.mjs", "acme-runtime.mjs", "health.mjs", "origins.mjs", "resume.mjs", "desktop.mjs", "refresh.mjs", "desktop-runtime.mjs", "desktop-state.mjs", "desktop-health.mjs", "desktop-refresh.mjs"];
+  const controllerFiles = ["builder.ts", "cache.ts", "build-recipes.ts", "browser-recipe.ts", "browser-health.mjs", "gateway.mjs", "runtime.mjs", "acme-runtime.mjs", "health.mjs", "origins.mjs", "resume.mjs", "desktop.mjs", "refresh.mjs", "desktop-runtime.mjs", "desktop-state.mjs", "desktop-health.mjs", "desktop-refresh.mjs"];
   const controller = (await Promise.all(controllerFiles.map((name) => readFile(new URL(`./${name}`, import.meta.url), "utf8")))).join("\n");
   const runningSlug = `ow-warm-v1-${world}-${digest(compiledSlug + controller + runningFingerprint(entries, world))}`;
   const running = await ensureLayer({ slug: runningSlug, stage: "running-template", observe, ttlSeconds: 86400,
@@ -105,7 +105,7 @@ ${dependencies}`, options);
     prepare: async (vm) => {
       log(`Preparing ${world} at ${sha} from cached dependencies`);
       for (const [target, source] of [
-        ["gateway.mjs", "gateway.mjs"], ["runtime.mjs", world === "desktop" ? "desktop-runtime.mjs" : world === "acme-web" ? "acme-runtime.mjs" : "runtime.mjs"],
+        ["browser-health.mjs", "browser-health.mjs"], ["gateway.mjs", "gateway.mjs"], ["runtime.mjs", world === "desktop" ? "desktop-runtime.mjs" : world === "acme-web" ? "acme-runtime.mjs" : "runtime.mjs"],
         ["health.mjs", world === "desktop" ? "desktop-health.mjs" : "health.mjs"], ["origins.mjs", "origins.mjs"], ["resume.mjs", "resume.mjs"], ["desktop.mjs", "desktop.mjs"],
         ["refresh.mjs", world === "desktop" ? "desktop-refresh.mjs" : "refresh.mjs"], ["desktop-state.mjs", "desktop-state.mjs"],
       ]) {
