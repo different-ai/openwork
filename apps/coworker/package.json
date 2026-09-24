@@ -45,6 +45,7 @@
     "@openwork/headless-threads": "workspace:*",
     "@openwork/ui": "workspace:*",
     "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-virtual": "^3.13.23",
     "@types/node": "^24.9.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",

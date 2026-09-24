@@ -206,12 +206,15 @@ export function groupConversationRows(events: readonly GroupTimelineEvent[], exe
 /** Keep paired publication receipts and executions, never join different native requests. */
 export function reconcileGroupActivity(previous: { timeline: GroupTimelineEvent[]; executions: ExecutionActivity[] }, incoming: { timeline: GroupTimelineEvent[]; executions: ExecutionActivity[] }, speakerOrder: readonly string[] = []) {
   const timeline = [...previous.timeline];
+  const positions = new Map(timeline.map((event, index) => [groupMessageKey(event), index]));
   for (const event of incoming.timeline) {
-    const index = timeline.findIndex((item) => groupMessageKey(item) === groupMessageKey(event));
-    if (index < 0) timeline.push(event);
+    const key = groupMessageKey(event);
+    const index = positions.get(key);
+    if (index === undefined) { positions.set(key, timeline.length); timeline.push(event); }
     else timeline[index] = event;
   }
-  const executions = incoming.executions.filter((entry) => !timeline.some((event) => groupMessageKey(event) === `execution:${entry.executionId}` || event.id === entry.timelineEventId)).map((entry) => {
+  const timelineIds = new Set(timeline.map((event) => event.id));
+  const executions = incoming.executions.filter((entry) => !positions.has(`execution:${entry.executionId}`) && (!entry.timelineEventId || !timelineIds.has(entry.timelineEventId))).map((entry) => {
     const before = previous.executions.find((item) => item.executionId === entry.executionId && item.messageId === entry.messageId && item.threadId === entry.threadId && item.slug === entry.slug);
     if (!before) return entry;
     const parts = mergeGroupReplyParts(groupReplyParts(before), groupReplyParts(entry));

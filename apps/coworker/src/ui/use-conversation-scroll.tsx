@@ -12,7 +12,12 @@ export function useConversationScroll(scope: string, active: boolean, ready: boo
   const [away, setAway] = useState(!position.current.pinned);
   const follow = useRef<() => void>(() => {});
   const revealAnchor = useRef<(anchor: string) => boolean>(() => false);
+  const virtualAnchors = useRef<{ indexFor: (anchor: string) => number; scrollToIndex: (index: number) => void } | null>(null);
   const reveal = useCallback((anchor: string) => revealAnchor.current(anchor), []);
+  const registerVirtualAnchors = useCallback((navigation: typeof virtualAnchors.current) => {
+    virtualAnchors.current = navigation;
+    return () => { if (virtualAnchors.current === navigation) virtualAnchors.current = null; };
+  }, []);
 
   const jumpToLatest = useCallback(() => {
     position.current = { top: 0, pinned: true, anchor: null, offset: 0 };
@@ -41,7 +46,11 @@ export function useConversationScroll(scope: string, active: boolean, ready: boo
     const restore = () => {
       const saved = position.current;
       const anchor = saved.anchor ? anchors().find((node) => node.dataset.scrollAnchor === saved.anchor) : null;
-      box.scrollTop = saved.pinned ? box.scrollHeight : anchor ? box.scrollTop + anchor.getBoundingClientRect().top - box.getBoundingClientRect().top - saved.offset : saved.top;
+      const virtualIndex = saved.anchor && !anchor ? virtualAnchors.current?.indexFor(saved.anchor) ?? -1 : -1;
+      if (saved.pinned) box.scrollTop = box.scrollHeight;
+      else if (anchor) box.scrollTop += anchor.getBoundingClientRect().top - box.getBoundingClientRect().top - saved.offset;
+      else if (virtualIndex >= 0) virtualAnchors.current?.scrollToIndex(virtualIndex);
+      else box.scrollTop = saved.top;
       writtenTop = box.scrollTop;
       height = box.scrollHeight;
       viewport = box.clientHeight;
@@ -74,7 +83,16 @@ export function useConversationScroll(scope: string, active: boolean, ready: boo
     follow.current = schedule;
     revealAnchor.current = (anchor) => {
       const node = anchors().find((entry) => entry.dataset.scrollAnchor === anchor);
-      if (!node) return false;
+      if (!node) {
+        const index = virtualAnchors.current?.indexFor(anchor) ?? -1;
+        if (index < 0) return false;
+        cancelAnimationFrame(frame);
+        position.current.pinned = false;
+        setAway(true);
+        virtualAnchors.current?.scrollToIndex(index);
+        requestAnimationFrame(() => anchors().find((entry) => entry.dataset.scrollAnchor === anchor)?.focus({ preventScroll: true }));
+        return true;
+      }
       cancelAnimationFrame(frame);
       position.current.pinned = false;
       box.scrollTop += node.getBoundingClientRect().top - box.getBoundingClientRect().top - Math.max(16, (box.clientHeight - node.offsetHeight) / 2);
@@ -108,7 +126,7 @@ export function useConversationScroll(scope: string, active: boolean, ready: boo
     };
   }, [active, ready, scope]);
 
-  return { scrollRef, contentRef, away, jumpToLatest, reveal };
+  return { scrollRef, contentRef, away, jumpToLatest, reveal, registerVirtualAnchors };
 }
 
 export function JumpToLatest({ onClick }: { onClick: () => void }) {

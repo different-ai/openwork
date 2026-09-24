@@ -113,6 +113,7 @@ import { applyStreamEvent, type LivePart, type LiveStream } from "@/lib/live-str
 import { waitForGroup as waitForObservation } from "@/lib/group-continuity";
 import { useAutoGrow } from "@/ui/use-auto-grow";
 import { JumpToLatest, useConversationScroll } from "@/ui/use-conversation-scroll";
+import { ConversationWindow, useConversationWindow } from "@/ui/conversation-window";
 import { InteractionCard, InteractionCards, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
 import { acknowledgeCoworker, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { InlineLoader } from "@/ui/brand";
@@ -182,8 +183,8 @@ function recentTranscript(key: string) {
 }
 function rememberTranscript(key: string, title: string, messages: TranscriptMessage[]) {
   recentTranscripts.delete(key);
-  recentTranscripts.set(key, { title, messages: messages.slice(-80), readAt: Date.now() });
-  while (recentTranscripts.size > 8) {
+  recentTranscripts.set(key, { title, messages: messages.slice(-300), readAt: Date.now() });
+  while (recentTranscripts.size > 4) {
     const oldest = recentTranscripts.keys().next().value;
     if (oldest === undefined) break;
     recentTranscripts.delete(oldest);
@@ -1530,13 +1531,27 @@ function ThreadView({
         setLiveStream((current) => applyStreamEvent(current, event, threadId));
       }
     });
-    const timer = window.setInterval(() => void refresh(), 5_000);
+    // Native v2 snapshots read the whole paged history. Live turns still need a
+    // quick check; an idle conversation can rely on its cached view between reads.
+    let lastIdleRead = Date.now();
+    const poll = () => {
+      if (document.visibilityState === "hidden") return;
+      if (!activeTurnRef.current && !turnStateRef.current.pending) {
+        if (Date.now() - lastIdleRead < 15_000) return;
+        lastIdleRead = Date.now();
+      }
+      void refresh();
+    };
+    const visible = () => { if (document.visibilityState === "visible") { lastIdleRead = Date.now(); void refresh(); } };
+    const timer = window.setInterval(poll, 5_000);
+    document.addEventListener("visibilitychange", visible);
     return () => {
       refreshScope.active = false;
       if (refreshGeneration.current === generation) refreshGeneration.current += 1;
       refreshReads.clear();
       unsubscribe();
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", visible);
     };
   }, [refresh, refreshReads, refreshScope, threadId, threads]);
 
@@ -2369,6 +2384,7 @@ function ThreadView({
   const currentWords = useMemo(() => writingText(correlatedStream, activeReply), [correlatedStream, activeReply]);
   const streamingMessageIds = useMemo(() => new Set(correlatedStream?.parts.filter((part) => part.type === "text").map((part) => part.messageId)), [correlatedStream]);
   const blocks = useMemo(() => conversationBlocks(visibleMessages, (message, index) => working && message.role === "assistant" && (index === lastAssistantIndex || streamingMessageIds.has(message.id))), [visibleMessages, working, lastAssistantIndex, streamingMessageIds]);
+  const conversationWindow = useConversationWindow(scrollRef, blocks, (block) => block.kind === "actions" || block.kind === "documents" ? block.id : block.message.id);
   // What the coworker is doing this moment comes from what is streaming, not from a label:
   // a reasoning part is thinking, a text part is writing, an unsettled tool call is a tool.
   const phase: LivePhase = livePhase({
@@ -2517,7 +2533,7 @@ function ThreadView({
           {!transcriptLoaded && !readErrors.transcript ? <p role="status" className="text-xs text-mist">Loading conversation...</p> : null}
           {freshDiscussion ? <QuietEmptyConversation coworker={coworker} proposerName={team?.coworkers.find((member) => member.slug === coworker.suggestedBy?.slug)?.name ?? ""} /> : null}
           <TranscriptAppContext.Provider value={{ sessionId: threadId, engine: "v2", readOnly: !active || kind !== "discussion" }}>
-          {blocks.map((block) => {
+          <ConversationWindow items={blocks} {...conversationWindow} render={(block) => {
             const retriedWith = block.kind === "message" ? executionsByMessage.get(block.message.id)?.retryLabel : undefined;
             if (block.kind === "actions") {
                return <ActionLine key={block.id} review={block.review} calls={block.calls} client={mcpClient} />;
@@ -2568,7 +2584,7 @@ function ThreadView({
                 {retriedWith ? <QuietLine outcome="retried" text={`Retried with ${safeWorkLabel(retriedWith, "the selected model")}`} /> : resolution && block.message.id === resolution.messageId && replyStateFor(visibleMessages, resolution.messageId).state === "complete" ? <QuietLine outcome="retried" text={resolution.note} /> : null}
               </div>
             );
-          })}
+          }} />
           </TranscriptAppContext.Provider>
           <CollaborationReceipts receipts={collaborationReceipts} />
           <InteractionCards
