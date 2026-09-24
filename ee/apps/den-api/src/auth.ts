@@ -623,6 +623,13 @@ function removeSsoTestSessionCookie(ctx: Parameters<Parameters<typeof createAuth
 export const auth = betterAuth({
   baseURL: env.betterAuthUrl,
   secret: env.betterAuthSecret,
+  onAPIError: {
+    // OAuth authorization errors that cannot be returned to the client
+    // (unknown client, unregistered redirect URI, malformed request) and the
+    // other Better Auth error redirects land on Den web's branded page instead
+    // of Better Auth's built-in card (or, in production, a bare `/?error=`).
+    errorURL: `${env.betterAuthUrl}/connect/error`,
+  },
   trustedOrigins:
     env.betterAuthTrustedOrigins.length > 0
       ? env.betterAuthTrustedOrigins
