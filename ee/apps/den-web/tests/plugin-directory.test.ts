@@ -10,9 +10,11 @@ test("plugin directory requests scope every cursor page to the selected audience
   expect(first.get("name")).toBe("call & prep");
   expect(first.get("teamId")).toBe("team_1");
   expect(first.get("includeTotal")).toBe("true");
+  expect(first.get("includeFacets")).toBe("true");
   expect(first.has("cursor")).toBe(false);
   expect(next.get("cursor")).toBe("opaque-cursor");
   expect(next.has("includeTotal")).toBe(false);
+  expect(next.has("includeFacets")).toBe(false);
   expect(next.get("teamId")).toBe("team_1");
   expect(pluginDirectoryParams({ q: "", teamId: null, memberId: "member_1" }, "").get("memberId")).toBe("member_1");
 });
@@ -35,4 +37,20 @@ test("plugin directory windows deep rows without mounting the full list", () => 
   expect(deep.end).toBe(1012);
   expect(deep.end - deep.start).toBeLessThan(20);
   expect(pluginDirectoryRange(68 * 1200, 544, 68, 1204).end).toBe(1204);
+});
+
+
+test("owner is independent from the team audience and scopes every cursor page", () => {
+  const filters = { q: "call", teamId: "team_1", memberId: null, ownerId: "member_1" };
+  for (const cursor of ["", "next-page"]) {
+    const params = pluginDirectoryParams(filters, cursor);
+    expect(params.get("ownerId")).toBe("member_1");
+    expect(params.get("teamId")).toBe("team_1");
+    expect(params.has("memberId")).toBe(false);
+  }
+  expect(pluginDirectoryQueryKey("org_a", "viewer", filters)).not.toEqual(pluginDirectoryQueryKey("org_a", "viewer", { ...filters, ownerId: "member_2" }));
+  const params = pluginDirectoryUrlParams("", { name: "call", teamId: "team_1", memberId: null, ownerId: "member_1" });
+  expect(new URLSearchParams(params).get("ownerId")).toBe("member_1");
+  const cleared = pluginDirectoryUrlParams(params, { name: "", teamId: null, memberId: null, ownerId: null });
+  expect(cleared).toBe("");
 });

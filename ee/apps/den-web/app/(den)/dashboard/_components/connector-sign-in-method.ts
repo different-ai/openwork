@@ -11,12 +11,13 @@ import type { ExternalMcpPreset, McpRequirementsDiscovery } from "./mcp-connecti
 export type ConnectorSignInMethod = "sign_in" | "oauth_app" | "api_key" | "none" | "unsupported";
 
 type DiscoveryAuthentication = Pick<McpRequirementsDiscovery, "authentication">;
-type PresetAuth = Pick<ExternalMcpPreset, "authType" | "requiresOAuthClient">;
+type PresetAuth = Pick<ExternalMcpPreset, "authType" | "requiresOAuthClient" | "defaultOAuthClientId">;
 
 /** A curated preset's auth type stays authoritative over the live probe, as it did in the full editor. */
 export function connectorSignInMethod(discovery: DiscoveryAuthentication, preset?: PresetAuth | null): ConnectorSignInMethod {
   if (preset?.authType === "apikey") return "api_key";
   if (preset?.authType === "none") return "none";
+  if (preset?.authType === "oauth" && preset.defaultOAuthClientId) return "sign_in";
   if (preset?.authType === "oauth" && preset.requiresOAuthClient === true) return "oauth_app";
   const authentication = discovery.authentication;
   if (preset?.authType === "oauth") return authentication.kind === "oauth" ? oauthMethod(authentication) : "sign_in";

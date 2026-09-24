@@ -40,6 +40,11 @@ describe("step two: how people sign in", () => {
     expect(connectorSignInMethod(discovery({ availableRegistrationMethods: [] }))).toBe("oauth_app");
   });
 
+  test("a preset with OpenWork's public OAuth app goes straight to sign-in", () => {
+    expect(connectorSignInMethod(discovery({ availableRegistrationMethods: ["pre_registered"] }), { authType: "oauth", defaultOAuthClientId: "openwork" })).toBe("sign_in");
+    expect(connectorSignInMethod(discovery({ kind: "manual_bearer" }), { authType: "apikey", defaultOAuthClientId: "openwork" })).toBe("api_key");
+  });
+
   test("a preset that requires an OAuth app asks for it even when the server registers clients itself", () => {
     expect(connectorSignInMethod(discovery({ availableRegistrationMethods: ["dynamic"] }), { authType: "oauth", requiresOAuthClient: true })).toBe("oauth_app");
   });
