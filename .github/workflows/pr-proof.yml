@@ -21,6 +21,8 @@ jobs:
       selected: ${{ steps.select.outputs.selected }}
       liveMatrix: ${{ steps.select.outputs.liveMatrix }}
       liveSelected: ${{ steps.select.outputs.liveSelected }}
+      packagedMatrix: ${{ steps.select.outputs.packagedMatrix }}
+      packagedSelected: ${{ steps.select.outputs.packagedSelected }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -51,11 +53,12 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup-tests
-      - name: Prepare a virtual display, local Den dependencies and the review app
+      - uses: ./.github/actions/setup-browser
+        with:
+          oauth-handoff: "true"
+      - name: Build local Den dependencies and the review app
+        shell: bash
         run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y xvfb x11-utils libgtk-3-0 libnss3 libasound2t64 libgbm1
           pnpm --filter @openwork/types build
           pnpm --filter @openwork-ee/den-db build
           pnpm --filter @openwork/email build
@@ -72,7 +75,64 @@ jobs:
         run: |
           set -euo pipefail
           test "$(id -u)" -ne 0
-          xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local
+          if node evals/scripts/run-parity-proof.mjs --supports "$PROOF_SPEC"; then
+            xvfb-run -a node evals/scripts/run-parity-proof.mjs "$PROOF_SPEC"
+          else
+            xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local
+          fi
+      - name: Save selected native testkit and Vitest records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr-proof-${{ github.run_attempt }}-${{ matrix.key }}
+          path: |
+            evals/results/test-runs/
+            evals/results/.testkit/cli-run-*.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+
+  # Packaged specs need a packaged desktop binary. Build the same Linux
+  # artifacts as the packaged smoke gate and run only the changed journey.
+  packaged-proof:
+    needs: select
+    if: needs.select.outputs.packagedSelected == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.select.outputs.packagedMatrix) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Cache Electron and pinned sidecars
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            apps/desktop/resources/sidecars
+          key: ${{ runner.os }}-${{ runner.arch }}-desktop-smoke-${{ hashFiles('constants.json', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-sidecar.mjs') }}
+      - uses: ./.github/actions/setup-tests
+      - name: Bundle the server plugins the way packaged builds do
+        run: |
+          rm -rf packages/types/dist
+          pnpm --filter openwork-server build
+      - name: Run the selected packaged spec against the packaged desktop
+        timeout-minutes: 20
+        env:
+          PROOF_JOURNEY: ${{ matrix.journey }}
+          OPENWORK_PACKAGED_SMOKE_DIR: ${{ runner.temp }}/openwork-packaged-smoke
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # Same Chromium SUID-sandbox constraint as the proof job above.
+          OPENWORK_EVAL_CONTAINER_ELECTRON: "1"
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          node apps/desktop/scripts/packaged-smoke.mjs --server-built --journey "$PROOF_JOURNEY"
       - name: Save selected native testkit and Vitest records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -100,7 +160,7 @@ jobs:
       github.triggering_actor != 'dependabot[bot]'
     environment: pr-slow-specs
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -111,33 +171,18 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup-tests
-      - name: Prepare a virtual display and verified Linux browser
+      - uses: ./.github/actions/setup-browser
+        with:
+          oauth-handoff: "true"
+      - name: Build local app dependencies without live credentials
         run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y xvfb x11-utils libgtk-3-0 libnss3 libasound2t64 libgbm1 ca-certificates curl gnupg
-          chrome="$(command -v google-chrome || command -v chromium || command -v chromium-browser || true)"
-          if [ -z "$chrome" ]; then
-            curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-              https://dl.google.com/linux/linux_signing_key.pub -o "$RUNNER_TEMP/google-linux-signing-key.pub"
-            gpg --batch --yes --dearmor --output "$RUNNER_TEMP/google-chrome.gpg" "$RUNNER_TEMP/google-linux-signing-key.pub"
-            sudo install -m 0644 "$RUNNER_TEMP/google-chrome.gpg" /usr/share/keyrings/openwork-google-chrome.gpg
-            printf '%s\n' 'deb [arch=amd64 signed-by=/usr/share/keyrings/openwork-google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main' \
-              | sudo tee /etc/apt/sources.list.d/openwork-google-chrome.list >/dev/null
-            sudo apt-get update -qq
-            sudo apt-get install -y google-chrome-stable
-          fi
-          chrome="$(command -v google-chrome || command -v chromium || command -v chromium-browser || true)"
-          if [ -z "$chrome" ]; then
-            printf '%s\n' '::error::Live appWeb proof requires Google Chrome or Chromium on PATH. Repair the runner browser installation and rerun this job.' >&2
-            exit 1
-          fi
-          "$chrome" --version
-          printf 'CHROME_BIN=%s\n' "$chrome" >> "$GITHUB_ENV"
-      - name: Build local appWeb dependencies without live credentials
-        run: pnpm --filter @openwork/types build
-      - name: Run the whole selected live spec on local v1 appWeb
-        timeout-minutes: 20
+          pnpm --filter @openwork/types build
+          pnpm --filter @openwork-ee/den-db build
+          pnpm --filter @openwork/email build
+          pnpm --filter @openwork/review-app build
+          pnpm dev:den:mysql
+      - name: Run the whole selected live spec with real inference
+        timeout-minutes: 45
         env:
           PROOF_SPEC: ${{ matrix.spec }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -146,7 +191,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(id -u)" -ne 0
-          if [ "$PROOF_SPEC" != 'evals/specs/live-stream-continuity.e2e.test.ts' ]; then
+          if [ "$PROOF_SPEC" != 'evals/specs/live-stream-continuity.e2e.test.ts' ] && [ "$PROOF_SPEC" != 'evals/specs/engine-live-chat.e2e.test.ts' ]; then
             printf '%s\n' '::error::Unsupported live proof selection. Add an explicit reviewed live-spec policy before running another file.' >&2
             exit 1
           fi
@@ -154,7 +199,13 @@ jobs:
             printf '%s\n' '::error::OPENAI_API_KEY is required for selected live proof. Configure repository/environment access and approve pr-slow-specs; this proof cannot be skipped.' >&2
             exit 1
           fi
-          xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --engine v1 --surface web
+          if [ "$PROOF_SPEC" = 'evals/specs/engine-live-chat.e2e.test.ts' ]; then
+            OPENWORK_LIVE_PROVIDER=OpenAI OPENWORK_LIVE_KEY_ENV=OPENAI_API_KEY \
+              OPENWORK_LIVE_MODELS=gpt-5.4,gpt-4.1-mini OPENWORK_EVAL_CONTAINER_ELECTRON=1 \
+              xvfb-run -a node evals/scripts/run-parity-proof.mjs "$PROOF_SPEC"
+          else
+            xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --engine v1 --surface web
+          fi
       - name: Save selected native testkit and Vitest records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

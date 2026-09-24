@@ -22,6 +22,8 @@ import {
   serverSandboxName,
   startFaultProxyOnSandbox,
   startMockOnSandbox,
+  startScriptOnSandbox,
+  parseDenUrlsFile,
 } from "../src/provision.ts";
 import type { ConnectorE2eTestEnv } from "../src/provision.ts";
 import type { DaytonaExec } from "../src/daytona.ts";
@@ -829,6 +831,46 @@ test("startFaultProxyOnSandbox uploads and detaches the proxy after resolving it
   assert.match(calls.at(-1)?.args[3] ?? "", /pkill -f openwork-fault-proxy\.mjs/);
 });
 
+test("startScriptOnSandbox uploads a witness, detaches it with its env, and waits for loopback health", async () => {
+  const calls: ExecCall[] = [];
+  const exec: DaytonaExec = async (args, opts) => {
+    calls.push({ args: [...args], opts });
+    const script = args[3] ?? "";
+    if (script.includes("curl -s -o /dev/null")) return { stdout: calls.length < 6 ? "000\n" : "200\n", stderr: "", code: 0 };
+    return { stdout: "", stderr: "", code: 0 };
+  };
+  const source = "console.log('witness')";
+  const witness = await startScriptOnSandbox({
+    sandbox: "den-1", exec, log: () => undefined, label: "acme-upstream", port: 3990, scriptSource: source,
+    env: { ACME_UPSTREAM_KEY: "k e'y", ACME_MODEL: "claude" },
+  });
+  assert.equal(witness.loopbackUrl, "http://127.0.0.1:3990");
+  assert.equal(witness.sourceFingerprint, createHash("sha256").update(source).digest("hex"));
+  assert(calls.every((call) => call.args[0] === "exec"), "no preview URL is minted for a loopback witness");
+  const scripts = calls.map((call) => call.args[3] ?? "");
+  assert.match(scripts[0] ?? "", /pkill -f \[o\]penwork-acme-upstream- \|\| true/);
+  const detach = scripts.find((script) => script.includes("start_new_session=True")) ?? "";
+  const encode = (value: string) => Buffer.from(value).toString("base64");
+  assert.match(detach, new RegExp(`"ACME_UPSTREAM_KEY":"${encode("k e'y")}"`));
+  assert.match(detach, new RegExp(`"PORT":"${encode("3990")}"`));
+  assert(!detach.includes("k e'y"), "secrets never appear in clear text on the remote command line");
+  assert.match(detach, /\["node", "\/tmp\/openwork-acme-upstream-[0-9a-f]{16}\.mjs"\], cwd="\/workspace", env=env/);
+  assert.match(detach, /\/tmp\/openwork-acme-upstream\.log/);
+  assert.match(scripts.at(-1) ?? "", /curl -s -o \/dev\/null -w %\{http_code\} http:\/\/127\.0\.0\.1:3990\/health \|\| true/);
+  assertRemoteCommandsAreSingleArgument(calls);
+
+  await witness.stop();
+  assert.match(calls.at(-1)?.args[3] ?? "", /pkill -f \[\/\]tmp\/openwork-acme-upstream-[0-9a-f]{16}\.mjs \|\| true; rm -f \/tmp\/openwork-acme-upstream-/);
+});
+
+test("startScriptOnSandbox rejects unsafe labels, ports and env names before touching the sandbox", async () => {
+  const exec: DaytonaExec = async () => { throw new Error("must not exec"); };
+  const base = { sandbox: "den-1", exec, log: () => undefined, port: 3990, scriptSource: "x" };
+  await assert.rejects(startScriptOnSandbox({ ...base, label: "Bad Label" }), /Unsafe sandbox script label/);
+  await assert.rejects(startScriptOnSandbox({ ...base, label: "ok", port: 80 }), /between 1024 and 65535/);
+  await assert.rejects(startScriptOnSandbox({ ...base, label: "ok", env: { "bad-name": "x" } }), /Unsafe sandbox script environment name/);
+});
+
 test("startFaultProxyOnSandbox rejects a health response with the wrong issuer", async () => {
   const exec: DaytonaExec = async (args) => {
     if (args[0] === "preview-url") {
@@ -862,4 +904,13 @@ test("deleteSandboxes answers the confirmation prompt and tolerates a missing sa
     ["delete", "gone-2"],
   ]);
   assert.equal(calls[0]?.opts?.input, "y\n");
+});
+
+test("parseDenUrlsFile hands back the co-located AI Gateway origin only when the provisioner wrote one", () => {
+  const base = "DEN_WEB_URL=https://3005-a.proxy.test\nDEN_API_URL=https://8788-a.proxy.test\n";
+  assert.deepEqual(parseDenUrlsFile(base), { webUrl: "https://3005-a.proxy.test", apiUrl: "https://8788-a.proxy.test" });
+  assert.deepEqual(parseDenUrlsFile(`${base}GATEWAY_URL=https://8791-a.proxy.test\n`), {
+    webUrl: "https://3005-a.proxy.test", apiUrl: "https://8788-a.proxy.test", gatewayUrl: "https://8791-a.proxy.test",
+  });
+  assert.equal(parseDenUrlsFile("GATEWAY_URL=https://8791-a.proxy.test\n"), null);
 });

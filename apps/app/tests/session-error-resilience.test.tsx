@@ -251,7 +251,6 @@ describe("session error resilience", () => {
         onEditUserMessage={() => undefined}
         onMcpReconnect={async () => "connected"}
         onMcpReopenAuthorization={async () => undefined}
-        onMcpRetry={() => undefined}
       >
         <MessageList messages={[message]} status="ready" />
       </MessageListProvider>,
@@ -285,7 +284,6 @@ describe("session error resilience", () => {
         onResumeInterrupted={() => undefined}
         onMcpReconnect={async () => "connected"}
         onMcpReopenAuthorization={async () => undefined}
-        onMcpRetry={() => undefined}
       >
         <MessageList messages={[message, ...trailing]} status="ready" />
       </MessageListProvider>,
@@ -530,7 +528,6 @@ describe("session error resilience", () => {
             onEditUserMessage={() => undefined}
             onMcpReconnect={async () => "connected"}
             onMcpReopenAuthorization={async () => undefined}
-            onMcpRetry={() => undefined}
           >
             <MessageList
               messages={[{
@@ -647,7 +644,6 @@ describe("session error technical details", () => {
         onEditUserMessage={() => undefined}
         onMcpReconnect={async () => "connected"}
         onMcpReopenAuthorization={async () => undefined}
-        onMcpRetry={() => undefined}
       >
         <MessageList messages={[message]} status="ready" />
       </MessageListProvider>,

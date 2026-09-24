@@ -300,15 +300,15 @@ async function startV2Proxy(options?: MockReadOptions) {
   const engine = startMockOpencode({ ...options, nativeV2Directory: workspaceRoot, foreignSessionDirectory: secondWorkspaceRoot });
   const provider = readinessGate();
   const mcp = readinessGate();
-  const status = () => ({ enabled: true, chatRouting: true, running: true,
+  const status = (): engineV2Preview.EngineV2PreviewStatus => ({ migration: { state: "idle", imported: 0, skipped: 0, total: 0 }, enabled: true, chatRouting: true, running: true,
     mirroredProviderIds: [], skippedProviderIds: [], catalogModelIds: [] });
   // Hold only execution preparation; requests still cross the real HTTP server,
   // auth/policy checks, native proxy and ownership lookup into a loopback witness.
   const preview = spyOn(engineV2Preview, "createEngineV2Preview").mockReturnValue({
-    start() {}, status, setEnabled: async () => status(), setChatRouting: async () => status(),
+    start() {}, migrateHistory: status, status, setEnabled: async () => status(), setChatRouting: async () => status(),
     connection: () => ({ url: `http://127.0.0.1:${engine.server.port}`, username: "opencode", password: "fixture" }),
-    ensureWorkspaceReady: provider.wait, syncWorkspaceMcp: mcp.wait,
-    syncCloudSkills: async () => ({ root: join(workspaceRoot, "cloud-skills"), state: { root: null, skills: [] } }),
+    ensureWorkspaceReady: provider.wait, refreshProviders: async () => {}, syncWorkspaceMcp: mcp.wait,
+    syncWorkspaceSkills: async () => {},
     stop: async () => {},
   });
   try {
@@ -334,6 +334,19 @@ async function waitUntil(predicate: () => boolean, attempts = 20) {
 }
 
 describe("workspace OpenCode proxy", () => {
+  test.serial("history migration requires the host token and explicit consent", async () => {
+    const fixture = await startV2Proxy();
+    const url = `${fixture.base}/experimental/engine-v2-preview/migrate`;
+    const post = (headers: Record<string, string>, body: unknown) => fetch(url, {
+      method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    expect((await post(auth(fixture.token), { confirm: true })).status).toBe(401);
+    const host = { "x-openwork-host-token": fixture.config.hostToken };
+    expect((await post(host, {})).status).toBe(400);
+    expect((await post(host, { confirm: false })).status).toBe(400);
+    expect((await post(host, { confirm: true })).status).toBe(200);
+  });
+
   test.serial("prompt admission bypasses held same-directory maintenance", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const engine = startMockOpencode();
@@ -785,8 +798,8 @@ describe("workspace OpenCode proxy", () => {
     expect((await prompt).status).toBe(200);
     expect(fixture.provider.calls).toEqual([[fixture.workspaceRoot]]);
     expect(fixture.mcp.calls).toEqual([["ws_1", fixture.workspaceRoot]]);
-    expect(fixture.engine.requests.slice(-5).map((item) => `${item.method} ${item.pathname}`)).toEqual([
-      "GET /api/session/ses_1", "GET /api/mcp", "GET /api/skill",
+    expect(fixture.engine.requests.slice(-4).map((item) => `${item.method} ${item.pathname}`)).toEqual([
+      "GET /api/session/ses_1", "GET /api/mcp",
       "PUT /api/session/ses_1/instructions/entries/openwork.context", "POST /api/session/ses_1/prompt",
     ]);
   });

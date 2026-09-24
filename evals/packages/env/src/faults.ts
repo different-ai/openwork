@@ -96,12 +96,27 @@ function writeUpstreamResponse(client: ServerResponse, status: number, message: 
   else client.writeHead(status, headers);
 }
 
+/**
+ * Local Den web answers `/api/den/*` with a 307 to den-api on another origin,
+ * and fetch drops `Authorization` on cross-origin redirects, so every bearer
+ * call through the proxy would 401. Send those paths straight to den-api, as
+ * the single-origin Daytona remote effectively does. Returns the upstream path
+ * or null for a web path.
+ */
+function denApiPath(requested: URL, api: URL): string | null {
+  const prefix = "/api/den";
+  if (requested.pathname !== prefix && !requested.pathname.startsWith(`${prefix}/`)) return null;
+  const base = api.pathname.replace(/\/+$/, "");
+  return `${base}${requested.pathname.slice(prefix.length) || "/"}${requested.search}`;
+}
+
 function forward(
   incoming: IncomingMessage,
   client: ServerResponse,
   upstream: URL,
   faulted: boolean,
   requests: FaultRequest[],
+  api?: URL,
 ): void {
   const path = incoming.url ?? "/";
   const onResponse = (response: IncomingMessage): void => {
@@ -115,15 +130,17 @@ function forward(
   // steer this fetch at an arbitrary host, because `new URL(absolute, base)`
   // discards the base.
   const requested = new URL(path, "http://request-target.invalid");
+  const apiPath = api ? denApiPath(requested, api) : null;
+  const target = apiPath === null ? upstream : api ?? upstream;
   const options = {
-    protocol: upstream.protocol,
-    hostname: upstream.hostname,
-    port: upstream.port,
-    path: `${requested.pathname}${requested.search}`,
+    protocol: target.protocol,
+    hostname: target.hostname,
+    port: target.port,
+    path: apiPath ?? `${requested.pathname}${requested.search}`,
     method: incoming.method ?? "GET",
-    headers: forwardedHeaders(incoming.headers, upstream.host),
+    headers: forwardedHeaders(incoming.headers, target.host),
   };
-  const outbound = upstream.protocol === "https:"
+  const outbound = target.protocol === "https:"
     ? httpsRequest(options, onResponse)
     : httpRequest(options, onResponse);
   outbound.on("error", (error) => {
@@ -141,6 +158,10 @@ function forward(
 
 async function localFaultProxy(ref: DenRef): Promise<FaultProxy> {
   const upstream = new URL(ref.webUrl);
+  // A single-origin Den (Daytona remote, or a test double) serves /api/den
+  // itself; only a split local Den needs its API calls routed around den-web.
+  const apiOrigin = new URL(ref.apiUrl);
+  const api = apiOrigin.origin === upstream.origin ? undefined : apiOrigin;
   const port = await allocateFreePort();
   const rules: FaultRule[] = [];
   const requests: FaultRequest[] = [];
@@ -160,7 +181,7 @@ async function localFaultProxy(ref: DenRef): Promise<FaultProxy> {
         return;
       }
       if (rule?.kind === "latency") await delay(rule.delayMs);
-      forward(incoming, response, upstream, rule !== null, requests);
+      forward(incoming, response, upstream, rule !== null, requests, api);
     })().catch((error: unknown) => {
       if (response.headersSent) {
         response.destroy(error instanceof Error ? error : undefined);

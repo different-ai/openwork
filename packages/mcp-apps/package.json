@@ -4,13 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./skill-created": {
-      "types": "./dist/skill-created.d.ts",
-      "default": "./dist/skill-created.js"
-    },
-    "./plugin-flow": {
-      "types": "./dist/plugin-flow.d.ts",
-      "default": "./dist/plugin-flow.js"
+    "./connection-action": {
+      "types": "./dist/connection-action.d.ts",
+      "default": "./dist/connection-action.js"
     }
   },
   "files": [

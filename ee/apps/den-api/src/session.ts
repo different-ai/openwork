@@ -421,8 +421,12 @@ export async function getRequestSession(headers: Headers, context?: Context): Pr
 }
 
 export function shouldSkipRequestSession(request: Request) {
-  return request.method.toUpperCase() === "POST"
-    && new URL(request.url).pathname === "/api/auth/sign-out"
+  const method = request.method.toUpperCase()
+  const path = new URL(request.url).pathname
+  // Browser readiness reads its signed cookie and live session directly. Polling
+  // must not renew sessions or accept a bearer in place of browser authentication.
+  return (method === "POST" && path === "/api/auth/sign-out")
+    || (method === "GET" && path === "/v1/inference-providers/oauth/browser-status")
 }
 
 export const sessionMiddleware: MiddlewareHandler<{ Variables: AuthContextVariables }> = async (c, next) => {

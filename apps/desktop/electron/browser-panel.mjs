@@ -12,7 +12,7 @@ import {
   foregroundTabEmulationCommands,
 } from "@openwork/browser-tabs";
 import { runDetachedTask } from "./process-resilience.mjs";
-import { listInstalledBrowsers } from "./installed-browsers.mjs";
+import { openExternalUrl } from "./open-external.mjs";
 import { BrowserTaskError, createBrowserTaskHost } from "./browser-task.mjs";
 import { createWebMcpBroker } from "./webmcp-host.mjs";
 import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
@@ -133,6 +133,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   let browserControlEnabled = true;
   let menuRequest = null;
   let menuShowSerial = 0;
+  let linkChoiceRequest = null;
+  let linkChoiceCounter = 0;
   const webMcpRefreshTimers = new Map();
 
   function window() {
@@ -403,8 +405,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const parsed = new URL(url);
     if (parsed.username || parsed.password || /[\u0000-\u001f\u007f]/.test(url)) return;
     if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
-    // Capture ownership before discovery; a later focus change must not retarget
-    // the link. Dismissals invalidate pending discovery through the serial.
+    // A later focus change must not retarget the captured link.
     const ownerSessionId = normalizeSessionId(sessionId) ?? registry.visibleSessionId();
     await showContextMenu({
       source: "link",
@@ -488,12 +489,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     tab?.view.webContents.on("did-start-navigation", navigated);
     try {
       if (request.source === "link") {
-        request.browsers = await listInstalledBrowsers();
-        if (!isCurrent()) return;
         request.items = [
           { type: "item", id: "open-builtin", label: "Open in OpenWork" },
-          { type: "item", id: "open-external", label: "Open in Default Browser" },
-          ...request.browsers.map(({ id, name }) => ({ type: "item", id: `browser:${id}`, label: `Open in ${name}` })),
+          { type: "item", id: "open-external", label: "Open in external browser" },
           { type: "separator" },
           { type: "item", id: "copy-url", label: "Copy Link Address" },
         ];
@@ -525,11 +523,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         if (!isCurrent()) return;
         if (!external) {
           createBrowserTab(request.url, { ownerSessionId: request.ownerSessionId, initializeBlank: false });
-        } else if (itemId === "open-external") {
-          await shell.openExternal(request.url);
         } else {
-          const browser = request.browsers.find(({ id }) => `browser:${id}` === itemId);
-          await browser.open(request.url);
+          const result = await openExternalUrl(request.url);
+          if (!result.ok) throw new Error(result.error);
         }
       } catch (error) {
         if (isCurrent()) {
@@ -1450,6 +1446,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   function destroyBrowserView() {
+    linkChoiceRequest?.finish(null);
     hideBrowserView();
     menuShowSerial += 1;
     closeAllBrowserTabs();
@@ -1587,6 +1584,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return browserControlEnabled;
     });
     ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
+    ipcMain.handle("openwork:browser:chooseLinkDestination", (event, id, destination) => {
+      const contents = window()?.webContents;
+      if (!contents || event.sender !== contents || event.senderFrame !== contents.mainFrame) return false;
+      if (!linkChoiceRequest || linkChoiceRequest.id !== id) return false;
+      if (destination !== null && destination !== "openwork" && destination !== "external") return false;
+      return linkChoiceRequest.finish(destination);
+    });
     ipcMain.on("openwork:browser:linkClick", (event, payload) => {
       const contents = window()?.webContents;
       if (!contents || event.sender !== contents || event.senderFrame !== contents.mainFrame) return;
@@ -1594,18 +1598,49 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       if (typeof url !== "string" || !isHttpUrl(url) || url.length > 32_768) return;
       const parsed = new URL(url);
       if (parsed.username || parsed.password || /[\u0000-\u001f\u007f]/.test(url)) return;
+      // A second activation must not replace the link the open dialog names.
+      if (linkChoiceRequest) return;
       const ownerSessionId = normalizeSessionId(payload.sessionId) ?? registry.visibleSessionId();
       const sourceFrame = event.senderFrame;
       let navigated = false;
-      const invalidate = (_event, _url, isInPlace, isMainFrame) => {
-        if (isMainFrame && !isInPlace) navigated = true;
+      let cancelChoice = () => {};
+      const isCurrent = () => !navigated && !contents.isDestroyed() && window()?.webContents === contents
+        && contents.mainFrame === sourceFrame;
+      const cleanup = () => {
+        contents.removeListener("did-start-navigation", invalidate);
+        contents.removeListener("destroyed", destroyed);
       };
+      const open = (external) => runDetachedTask("open clicked browser link", () => handleMenuChoice(
+        { source: "link", url, ownerSessionId }, external ? "open-external" : "open-builtin", isCurrent,
+      ).finally(cleanup));
+      const cancel = () => {
+        navigated = true;
+        cancelChoice();
+      };
+      const invalidate = (_event, _url, isInPlace, isMainFrame) => {
+        if (isMainFrame && !isInPlace) cancel();
+      };
+      const destroyed = () => cancel();
       contents.on("did-start-navigation", invalidate);
-      runDetachedTask("open clicked browser link", () => handleMenuChoice(
-        { source: "link", url, ownerSessionId }, "open-builtin",
-        () => !navigated && !contents.isDestroyed() && window()?.webContents === contents
-          && contents.mainFrame === sourceFrame,
-      ).finally(() => contents.removeListener("did-start-navigation", invalidate)));
+      contents.on("destroyed", destroyed);
+      if (payload.ask === true) {
+        const id = `link_${++linkChoiceCounter}`;
+        cancelChoice = () => { if (linkChoiceRequest?.id === id) linkChoiceRequest.finish(null); };
+        linkChoiceRequest = {
+          id,
+          finish(destination) {
+            if (linkChoiceRequest?.id !== id) return false;
+            linkChoiceRequest = null;
+            sendToRenderer("openwork:browser:link-open-request", null);
+            if (destination === null || !isCurrent()) { cleanup(); return false; }
+            open(destination === "external");
+            return true;
+          },
+        };
+        sendToRenderer("openwork:browser:link-open-request", { id, url });
+      } else {
+        open(payload.external === true);
+      }
     });
     ipcMain.on("openwork:browser:linkContextMenu", (event, payload) => {
       const mainContents = window()?.webContents;

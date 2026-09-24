@@ -834,7 +834,7 @@ function buildToolTitle(state: any, toolName: string): string {
 
   if (lower === "skill") {
     const name = pick("name");
-    return name ? `Load skill ${name}` : "Load skill";
+    return name ? `Using your ${name} skill` : "Using a skill";
   }
 
   const stateTitle = normalizeStepText(state?.title);
@@ -1038,7 +1038,7 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
     
     // Detect skill trigger
     if (category === "skill") {
-      const skillName = state.metadata?.name || title.replace(/^(Loaded skill:\s*|Load skill\s+)/i, "");
+      const skillName = state.metadata?.name || /^Using your (.+) skill$/i.exec(title)?.[1] || title.replace(/^(Loaded skill:\s*|Load skill\s+)/i, "");
       return { title, isSkill: true, skillName, detail: finalDetail, toolCategory: category, status };
     }
     

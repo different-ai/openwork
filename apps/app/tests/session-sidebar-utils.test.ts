@@ -61,7 +61,7 @@ describe("sidebar session rows", () => {
 
   test("keeps large-inventory preview counts, manual order, and original session identities", () => {
     const inventory: SidebarSessionItem[] = Array.from({ length: 10_000 }, (_, index) => ({
-      id: `session-${index}`, title: `Session ${index}`,
+      id: `session-${String(index).padStart(5, "0")}`, title: `Session ${index}`,
     }));
     const pinned = inventory[9_999]!;
     const ordered = inventory[9_998]!;

@@ -22,14 +22,21 @@ world or an existing test sandbox. Run from the requested worktree.
   not the Cloud-off `seed.appWeb` test fixture. No Den or activation is seeded.
 - `preview-den`: signup, team administration, onboarding, connectors, policies.
 - `preview-desktop`: real Electron plus its own Den; workspaces, chat and native
-  app interactions. This is Linux Electron, not a macOS/Windows parity check.
+  app interactions. On `--place daytona` this is Linux Electron in a noVNC
+  viewer, not a macOS/Windows parity check. `--place local` runs this checkout:
+  Den on the local MySQL/Redis and the desktop as a native window on this
+  machine (source previews only; `--release` requires Daytona). Freestyle
+  supports `app-web`/`acme-web`, not these presets.
 
 For the isolated `preview-den`/`preview-desktop` presets, choose `--scenario fresh`
 for signup/first use, `team` for an owner with Notion
 and Linear available (individual accounts remain unconnected), `restricted`
 for that team with the API's canonical restricted policy values, or `workspace`
-for a signed-in desktop workspace without pre-added tools. Fresh desktop creates
-its local workspace but does not sign into Den. No model credentials are seeded.
+for a signed-in desktop workspace without pre-added tools. Fresh desktop is a
+true first launch: the harness adds no workspace and does not sign into Den.
+Because the preview's own Den is configured through a bootstrap file, the app
+behaves like a bootstrapped install and skips the public-download "OpenWork
+Chat" starter workspace, so the sidebar shows no workspaces. No model credentials are seeded.
 Do not describe these fixtures as capable of live model/provider requests.
 
 Use `--scenario blank --release <x.y.z> --distribution <name>` to preview exact

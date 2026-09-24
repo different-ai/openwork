@@ -38,29 +38,35 @@ async function dialogLayerCanOpen() {
 const dialogLayerInert = !(await dialogLayerCanOpen());
 
 describe("Add to your Library picker", () => {
-  test("only offers Cloud MCPs, Skills, and Plugins", () => {
-    expect(libraryAddKindsForFilter("all")).toEqual(["mcp", "skill", "plugin"]);
+  test("offers Skill, Connector, and Plugin", () => {
+    expect(libraryAddKindsForFilter("all")).toEqual(["skill", "connection", "plugin"]);
     expect(libraryAddKindsForFilter("mcp")).toEqual(["mcp"]);
     expect(libraryAddKindsForFilter("skill")).toEqual(["skill"]);
     expect(libraryAddKindsForFilter("plugin")).toEqual(["plugin"]);
   });
 
-  test.skipIf(dialogLayerInert)("lists those three choices without workspace MCP and dispatches the selected kind", async () => {
+  test.skipIf(dialogLayerInert)("lists Connector first with its logos, then Skill and Plugin; Continue dispatches the selected kind", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
     const onSelect = mock(() => {});
+    const onClose = mock(() => {});
+    const cues = [{ id: "notion", name: "Notion", iconSlug: "notion" }, { id: "slack", name: "Slack", iconSlug: "slack" }];
     try {
-      await act(async () => root.render(<LibraryAddKindPicker open kinds={libraryAddKindsForFilter("all")} onClose={() => {}} onSelect={onSelect} />));
+      await act(async () => root.render(<LibraryAddKindPicker open kinds={libraryAddKindsForFilter("all")} connectorCues={cues} onClose={onClose} onSelect={onSelect} />));
       const choices = [...document.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
-      expect(choices.map((choice) => choice.dataset.kind)).toEqual(["mcp", "skill", "plugin"]);
+      expect(choices.map((choice) => choice.dataset.kind)).toEqual(["connection", "skill", "plugin"]);
+      expect(choices[0]?.getAttribute("aria-checked")).toBe("true");
+      expect([...choices[0]?.querySelectorAll("[data-connector-cue]") ?? []].map((cue) => cue.getAttribute("data-connector-cue"))).toEqual(["notion", "slack"]);
+      expect(choices[1]?.querySelector("[data-connector-cue]")).toBeNull();
       expect(document.body.textContent).not.toContain("workspace MCP");
-      await act(async () => choices[2].click());
-      expect(choices[2].getAttribute("aria-checked")).toBe("true");
+      await act(async () => choices[2]?.click());
+      expect(choices[2]?.getAttribute("aria-checked")).toBe("true");
+      expect(onSelect).not.toHaveBeenCalled();
       const continueButton = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Continue");
-      expect(continueButton).toBeDefined();
       await act(async () => continueButton?.click());
       expect(onSelect).toHaveBeenCalledWith("plugin");
+      expect(onClose).toHaveBeenCalledTimes(1);
     } finally {
       await act(async () => root.unmount());
       host.remove();

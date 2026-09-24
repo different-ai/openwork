@@ -43,7 +43,7 @@ test("notification center keeps background events and leaves action confirmation
 
   await step("a fresh desktop has an empty center whose copy states what belongs there", async () => {
     expect(await center()).toEqual([]);
-    expect(await world.bell()).toEqual({ label: "Notifications", badge: null });
+    expect(await world.bell()).toEqual({ label: "Notifications", unread: false });
     await user.click(bell);
     await user.see(emptyTitle);
     await user.see(emptyHint);
@@ -65,14 +65,14 @@ test("notification center keeps background events and leaves action confirmation
       });
       expect(stamps[candidateId]).toBeGreaterThan(0);
       expect(await center()).toEqual([]);
-      expect(await world.bell()).toEqual({ label: "Notifications", badge: null });
+      expect(await world.bell()).toEqual({ label: "Notifications", unread: false });
       await user.click(undoButton);
       await user.notSee(archivedToast);
       await probe.eventually(() => world.archivedAt(), {
         within: 30_000, label: "Undo restores the candidate", until: (value) => value[candidateId] === 0,
       });
       expect(await center()).toEqual([]);
-      expect(await world.bell()).toEqual({ label: "Notifications", badge: null });
+      expect(await world.bell()).toEqual({ label: "Notifications", unread: false });
     });
   }
 
@@ -82,7 +82,7 @@ test("notification center keeps background events and leaves action confirmation
       within: 10_000, label: "provider sync reaches the center", until: (value) => value.length > 0,
     });
     expect(first).toEqual([{ kind: "providers", title: "1 new provider available", readAt: null, count: 1, actionType: "open-model-picker" }]);
-    expect(await world.bell()).toEqual({ label: "Notifications (1)", badge: "1" });
+    expect(await world.bell()).toEqual({ label: "Notifications (1)", unread: true });
     await user.notSee({ text: "1 new provider available" });
 
     expect(await world.providerSync([{ id: "sync-beta", name: "Beta", providerId: "beta" }])).toBe(1);
@@ -91,32 +91,32 @@ test("notification center keeps background events and leaves action confirmation
     });
     expect(merged).toHaveLength(1);
     expect(merged[0]).toMatchObject({ kind: "providers", readAt: null, actionType: "open-model-picker" });
-    expect(await world.bell()).toEqual({ label: "Notifications (1)", badge: "1" });
+    expect(await world.bell()).toEqual({ label: "Notifications (1)", unread: true });
 
     expect(await world.providerSync([{ id: "sync-alpha", name: "Alpha", providerId: "alpha" }])).toBe(1);
     await user.notSee({ text: "3 new providers available" });
     expect(await center()).toEqual(merged);
   });
 
-  await step("the entry survives a reload unread, then reading it clears the badge and persists", async () => {
+  await step("the entry survives a reload unread, then opening it clears the dot and persists", async () => {
     await user.reload();
     const persisted = await probe.eventually(center, {
       within: 30_000, label: "notification center restores from storage", until: (value) => value.length === 1,
     });
     expect(persisted[0]).toMatchObject({ title: "2 new providers available", readAt: null });
-    expect(await world.bell()).toEqual({ label: "Notifications (1)", badge: "1" });
+    expect(await world.bell()).toEqual({ label: "Notifications (1)", unread: true });
 
     await user.click(bell);
     await user.see({ text: "2 new providers available" });
     await user.see({ role: "button", label: "Select a model" });
     await user.notSee(emptyTitle);
-    await user.screenshot();
-    await closeCenter("2 new providers available");
     const read = await probe.eventually(center, {
-      within: 10_000, label: "closing the panel marks the entry read", until: (value) => value[0]?.readAt !== null,
+      within: 10_000, label: "opening the panel marks the entry read", until: (value) => value[0]?.readAt !== null,
     });
     expect(read).toHaveLength(1);
-    expect(await world.bell()).toEqual({ label: "Notifications", badge: null });
+    expect(await world.bell()).toEqual({ label: "Notifications", unread: false });
+    await user.screenshot();
+    await closeCenter("2 new providers available");
 
     await user.reload();
     const stillRead = await probe.eventually(center, {
@@ -124,6 +124,20 @@ test("notification center keeps background events and leaves action confirmation
     });
     expect(stillRead[0]).toMatchObject({ title: "2 new providers available" });
     expect(typeof stillRead[0]?.readAt).toBe("number");
-    expect(await world.bell()).toEqual({ label: "Notifications", badge: null });
+    expect(await world.bell()).toEqual({ label: "Notifications", unread: false });
+  });
+
+  await step("the same notifications remain reachable with the sidebar hidden", async () => {
+    await user.click({ testId: "sidebar-sidebar-toggle" });
+    await probe.eventually(() => probe.dom('[data-session-header] [data-notification-bell]'), {
+      within: 5_000, label: "bell moves to the main titlebar", until: (value) => value.elements.length === 1,
+    });
+    await user.click(bell);
+    await user.see({ text: "2 new providers available" });
+    expect(await world.bell()).toEqual({ label: "Notifications", unread: false });
+    await user.screenshot();
+    await closeCenter("2 new providers available");
+    await user.click({ testId: "main-sidebar-toggle" });
+    await user.see({ role: "button", label: "New session" });
   });
 });

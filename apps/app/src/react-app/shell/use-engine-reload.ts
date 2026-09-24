@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { engineInfo } from "@/app/lib/desktop";
+import { isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import type { EngineInfo } from "@/app/lib/desktop-types";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
@@ -27,6 +28,7 @@ function taskCreateUnavailableToastId(workspaceId: string) {
 export type UseEngineReloadInput = {
   client: OpenworkServerClient | null;
   workspaceId: string;
+  opencodeBaseUrl: string;
   workspace: RouteWorkspace | null | undefined;
   endpointForWorkspace: (
     workspace: RouteWorkspace | null | undefined,
@@ -40,6 +42,7 @@ export function useEngineReload(input: UseEngineReloadInput) {
   const {
     client,
     workspaceId,
+    opencodeBaseUrl,
     workspace,
     endpointForWorkspace,
     activeReloadBlockingSessions,
@@ -107,12 +110,18 @@ export function useEngineReload(input: UseEngineReloadInput) {
 
   useEffect(() => {
     return reloadCoordinator.registerWorkspaceReloadControls({
+      workspaceId,
+      applyLiveChanges: async () => {
+        if (!isOpencodeV2BaseUrl(opencodeBaseUrl)) return false;
+        await refreshProviderListQueries(getReactQueryClient()).catch(() => undefined);
+        return true;
+      },
       canReloadWorkspaceEngine: () => Boolean(client && workspaceId),
       reloadWorkspaceEngine: reloadWorkspaceEngineFromUi,
       activeSessions: () => activeReloadBlockingSessions,
       allowsBusyReload: () => engineRolloverAvailable,
     });
-  }, [activeReloadBlockingSessions, client, engineRolloverAvailable, reloadCoordinator, reloadWorkspaceEngineFromUi, workspaceId]);
+  }, [activeReloadBlockingSessions, client, engineRolloverAvailable, opencodeBaseUrl, reloadCoordinator, reloadWorkspaceEngineFromUi, workspaceId]);
 
   useEffect(() => {
     if (!reloadCoordinator.canReloadWorkspaceEngine) return;
@@ -154,6 +163,13 @@ export function useEngineReload(input: UseEngineReloadInput) {
         // agent while the session page is open.
         if (currentCursor === undefined || currentCursor === null) return;
         for (const event of response.items ?? []) {
+          // V2 watches these changes in the running location. Refresh the
+          // visible catalog without scheduling the legacy engine disposal.
+          if (isOpencodeV2BaseUrl(opencodeBaseUrl)
+            && (event.reason === "skills" || event.reason === "mcp" || event.reason === "config")) {
+            await refreshProviderListQueries(getReactQueryClient());
+            continue;
+          }
           reloadCoordinator.markReloadRequired(event.reason, event.trigger);
         }
       } catch {
@@ -168,7 +184,7 @@ export function useEngineReload(input: UseEngineReloadInput) {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [client, endpointForWorkspace, reloadCoordinator, workspace, workspaceId]);
+  }, [client, endpointForWorkspace, opencodeBaseUrl, reloadCoordinator, workspace, workspaceId]);
 
   useEffect(() => {
     if (!isDesktopRuntime()) return;

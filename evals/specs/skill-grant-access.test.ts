@@ -95,9 +95,18 @@ async function organizationMemberIdByEmail(session: DenSession, orgId: string, e
   return memberId;
 }
 
+function structured(result: unknown): Record<string, unknown> {
+  return requireRecord(requireRecord(result, "MCP tool result").structuredContent, "MCP structuredContent");
+}
+
+function listedSkills(result: unknown): Record<string, unknown>[] {
+  const payload = structured(result);
+  return Array.isArray(payload.skills) ? payload.skills.filter(isRecord) : [];
+}
+
 async function callTool(
   mcpToken: string,
-  name: "search_capabilities" | "execute_capability",
+  name: "search_capabilities" | "execute_capability" | "list_skills" | "get_skill",
   args: Record<string, unknown>,
 ): Promise<unknown> {
   const response = await fetch(`${apiUrl}/mcp/agent`, {
@@ -210,6 +219,21 @@ test.skipIf(!apiUrl)(title, async () => {
   expect(isRecord(creatorExecution) && creatorExecution.isError === true).toBe(false);
   expect(toolJson(creatorExecution)).toMatchObject({ kind: "skill", content: rawSourceText, marketplace: null });
 
+  // The direct tools need no keywords: the whole catalog, then one SKILL.md by capability or name.
+  const creatorList = await callTool(creatorToken, "list_skills", {});
+  const listed = listedSkills(creatorList).find((entry) => entry.capability === capabilityName);
+  expect(listed).toMatchObject({ capability: capabilityName, pluginName: skillName, location: expect.stringMatching(/^skill:\/\/.+\/SKILL\.md$/) });
+  expect(listed).not.toHaveProperty("marketplaceName");
+  expect(listedSkills(creatorList).some((entry) => entry.capability === "skill:create-skill")).toBe(true);
+  const listedName = listed && typeof listed.name === "string" ? listed.name : "";
+  expect(listedName).toMatch(/^spec-grant-native-/);
+  const creatorGet = await callTool(creatorToken, "get_skill", { name: capabilityName });
+  expect(isRecord(creatorGet) && creatorGet.isError === true).toBe(false);
+  const expectedMarkdown = `---\nname: ${listedName}\ndescription: "Proves grant-native skill access over MCP."\n---\n\nReturn the grant-native proof phrase.`;
+  expect(structured(creatorGet)).toMatchObject({ name: listedName, capability: capabilityName, pluginName: skillName, content: expectedMarkdown });
+  expect(toolText(creatorGet)).toBe(expectedMarkdown);
+  expect(structured(await callTool(creatorToken, "get_skill", { name: listedName }))).toMatchObject({ capability: capabilityName, content: expectedMarkdown });
+
   const deniedSkillSearch = await callTool(deniedToken, "search_capabilities", { query: skillName, limit: 20, type: "skills" });
   const deniedAllSearch = await callTool(deniedToken, "search_capabilities", { query: skillName, limit: 20 });
   expect(matchNamed(deniedSkillSearch, capabilityName)).toBeUndefined();
@@ -224,6 +248,10 @@ test.skipIf(!apiUrl)(title, async () => {
     error: "forbidden",
     message: "You have not been granted access to this plugin capability.",
   });
+  expect(listedSkills(await callTool(deniedToken, "list_skills", {})).some((entry) => entry.capability === capabilityName)).toBe(false);
+  const deniedGet = requireRecord(await callTool(deniedToken, "get_skill", { name: capabilityName }), "denied get_skill result");
+  expect(deniedGet.isError).toBe(true);
+  expect(toolJson(deniedGet)).toMatchObject({ error: "unknown_skill", name: capabilityName });
 
   const deniedMemberId = await organizationMemberIdByEmail(creator, orgId, deniedEmail);
   const shared = await denFetch(creator, `/v1/plugins/${encodeURIComponent(pluginId)}/access`, {
@@ -246,6 +274,10 @@ test.skipIf(!apiUrl)(title, async () => {
   const sharedExecution = await callTool(deniedToken, "execute_capability", { name: capabilityName });
   expect(isRecord(sharedExecution) && sharedExecution.isError === true).toBe(false);
   expect(toolJson(sharedExecution)).toMatchObject({ kind: "skill", content: rawSourceText, marketplace: null });
+  expect(listedSkills(await callTool(deniedToken, "list_skills", { query: skillName })).map((entry) => entry.capability)).toEqual([capabilityName]);
+  const sharedGet = await callTool(deniedToken, "get_skill", { name: capabilityName });
+  expect(isRecord(sharedGet) && sharedGet.isError === true).toBe(false);
+  expect(structured(sharedGet)).toMatchObject({ name: listedName, capability: capabilityName, content: expectedMarkdown });
 
   const thirdMemberId = await organizationMemberIdByEmail(creator, orgId, thirdEmail);
   const reshared = await denFetch(denied, `/v1/plugins/${encodeURIComponent(pluginId)}/access`, {

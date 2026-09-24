@@ -252,6 +252,17 @@ export async function skillJitWeb(seed: Seed, context: { place: Place }) {
       if (result.status !== 200) throw new Error(`Native skill registry unavailable: HTTP ${result.status}`);
       return parseNativeSkills(result.json).filter((skill) => skill.id.startsWith(cloudNativeSkillIdPrefix));
     },
+    async conversationState() {
+      const result = await request(`/workspace/${workspace.workspaceId}/opencode2/api/session/${session.sessionId}/message`);
+      const messages = isRecord(result.json) && Array.isArray(result.json.data) ? result.json.data.filter(isRecord) : [];
+      return {
+        users: messages.filter(message => message.type === "user").map(message => {
+          if (typeof message.text !== "string") throw new Error("Native user message is missing its text");
+          return message.text;
+        }),
+        completed: messages.filter(message => message.type === "assistant" && message.finish === "stop").map(message => message.id),
+      };
+    },
     /** PID of the running v2 conversation runtime. */
     async runtimeIdentity(): Promise<number> {
       const result = await request("/experimental/engine-v2-preview/status");

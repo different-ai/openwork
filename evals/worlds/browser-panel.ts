@@ -3,6 +3,7 @@ import { control, readBrowserTabMetrics } from "@openwork/behaviors";
 import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets, navigate } from "@openwork/cdp";
 import type { AttachedSurface, CdpClient, Surface } from "@openwork/cdp";
 import { resolveEvalEngine, type Seed } from "@openwork/env";
+import { browserScriptValue, runBrowserHost } from "../packages/env/src/browser-task.ts";
 
 export const CAPTURE_VIEWPORT = { width: 1440, height: 900 };
 
@@ -109,10 +110,16 @@ function parseBrowserState(value: unknown): BrowserState {
     }),
     tabs: value.tabs.map((tab) => {
       if (!isRecord(tab)) throw new Error("Browser state listed a malformed tab.");
+      // A native tab can exist before its first navigation commits. Keep it in
+      // the snapshot; readiness belongs to the assertion about that page.
+      if (typeof tab.url !== "string") throw new Error("Browser state listed a malformed tab URL.");
       return {
         id: stringField(tab.id),
         label: stringField(tab.label),
-        url: stringField(tab.url),
+        // A native tab can exist before its first navigation commits. Keep it in
+        // the snapshot; readiness belongs to the assertion about that page.
+        // Electron can report an empty URL while a newly created page starts loading.
+        url: stringValue(tab.url),
         ownerSessionId: typeof tab.ownerSessionId === "string" ? tab.ownerSessionId : null,
       };
     }),
@@ -128,13 +135,24 @@ function stringField(value: unknown): string {
   return value;
 }
 
+function stringValue(value: unknown): string {
+  if (typeof value !== "string") throw new Error("Expected a string from the desktop bridge.");
+  return value;
+}
+
 /** Explicit human-created initial state, not an automation navigation or consent grant. */
 async function seedBrowserTab(seed: Seed, app: Surface, url: string, ownerSessionId: string | null) {
   const { tabId } = await seed.evalIn(app, browserScript((url, ownerSessionId) => window.__OPENWORK_ELECTRON__.browser.createTab(url, ownerSessionId), [url, ownerSessionId]));
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     const targets = (await listTargets(app.handle.cdpUrl)).filter((target) => target.type === "page" && target.url === url);
-    if (targets.length === 1) return { tabId, targetId: targets[0].id };
+    if (targets.length === 1) {
+      const state = await seed.evalIn(app, () => window.__OPENWORK_ELECTRON__.browser.getState(), { awaitPromise: true });
+      const nativeTab = parseBrowserState(state).tabs.find((tab) => tab.id === tabId);
+      // Target discovery can announce the destination before the native view
+      // commits it. Baselines must describe the loaded page, not that transition.
+      if (nativeTab?.url === url && nativeTab.label !== "New tab") return { tabId, targetId: targets[0].id };
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error("The seeded browser page did not finish opening.");
@@ -538,8 +556,10 @@ export async function browserLoginSyncWorld(seed: Seed) {
 
 /** Arrange a persisted transcript link and its neighboring conversation. */
 export async function transcriptLinkWorld(seed: Seed) {
-  const world = await createBuiltinBrowserWorld(seed);
+  const world = await createBuiltinBrowserWorld(seed, { OPENWORK_DEV_MODE: "1", OPENWORK_EVAL_CAPTURE_EXTERNAL_OPENS: "1" });
   const { app, workspace } = world;
+  const profileDir = app.handle.profileDir;
+  if (!profileDir) throw new Error("The link fixture desktop did not expose its isolated profile.");
   const reading = { ...world.session, title: "Reading a shared link" };
   await world.renameSession(reading.sessionId, reading.title);
   const neighbor = await world.openSession("Unrelated browser research");
@@ -572,6 +592,23 @@ export async function transcriptLinkWorld(seed: Seed) {
     neighborTab,
     linkUrl,
     note,
+
+    // Observe the shipping external-open boundary using its existing dev-only
+    // capture, so the test never opens a browser in the person's real profile.
+    async externalOpens(): Promise<string[]> {
+      const text = await runBrowserHost(app, `
+        const { readFile } = await import("node:fs/promises");
+        const { join } = await import("node:path");
+        try { return await readFile(join(${browserScriptValue(profileDir)}, "electron-userdata", "openwork-eval-external-opens.jsonl"), "utf8"); }
+        catch (error) { if (error.code === "ENOENT") return ""; throw error; }
+      `);
+      if (typeof text !== "string") throw new Error("External-open capture did not return text.");
+      return text.trim() ? text.trim().split("\n").map((line) => {
+        const value: unknown = JSON.parse(line);
+        if (typeof value !== "string") throw new Error("Invalid external-open capture.");
+        return value;
+      }) : [];
+    },
 
     async readLink() {
       return evaluate(app.client, browserScript((linkUrl) => {
@@ -666,7 +703,8 @@ export async function attachBuiltinTab(app: Surface, targetId: string): Promise<
 }
 
 export async function builtinBrowserWorld(seed: Seed, options: { workspacePath?: string } = {}) {
-  const app = await seed.desktop({ name: "builtin-browser" });
+  // Pixel witnesses use CSS sRGB colors, not the host display's ICC profile.
+  const app = await seed.desktop({ name: "builtin-browser", env: { ELECTRON_EXTRA_LAUNCH_ARGS: "--force-color-profile=srgb" } });
   const workspace = await seed.workspace(app, options.workspacePath ?? seed.tmpPath("builtin-browser"), { create: true });
   const session = await seed.session(app, { title: "Browser project" });
   const info = await seed.evalIn(app, () => window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo"), { awaitPromise: true });

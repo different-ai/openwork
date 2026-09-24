@@ -8,6 +8,8 @@ import {
 } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 
+import type { OpenworkServerClient } from "@/app/lib/openwork-server";
+import { useOpencodeEngineControls } from "./opencode-engine-controls";
 import { t } from "@/i18n";
 import {
   Command,
@@ -29,6 +31,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ChevronLeftIcon } from "lucide-react";
 import type { ModelOption, ModelRef } from "@/app/types";
+import { useGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
 import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { usePlatform } from "../kernel/platform";
 import {
@@ -85,6 +88,7 @@ export type SessionGroupOption = {
 };
 
 export type CommandPaletteProps = {
+  engineClient?: OpenworkServerClient | null;
   open: boolean;
   onClose: () => void;
   developerMode: boolean;
@@ -138,6 +142,7 @@ export type CommandPaletteProps = {
  */
 export function CommandPalette(props: CommandPaletteProps) {
   const platform = usePlatform();
+  const engine = useOpencodeEngineControls(props.engineClient, props.open);
   const [mode, setMode] = useState<CommandPaletteMode>("root");
   const [query, setQuery] = useState("");
   const [recents, setRecents] = useState(loadPaletteRecents);
@@ -413,9 +418,10 @@ export function CommandPalette(props: CommandPaletteProps) {
       ...rootItems,
       ...coreActionItems,
       ...settingsItems,
+      ...engine.items.map((item) => ({ ...item, action: () => { props.onClose(); item.action(); } })),
       ...(props.extraItems ?? []),
     ],
-    [coreActionItems, props.extraItems, rootItems, settingsItems],
+    [coreActionItems, engine.items, props.extraItems, props.onClose, rootItems, settingsItems],
   );
 
   const rootGroups = useMemo(
@@ -503,28 +509,28 @@ export function CommandPalette(props: CommandPaletteProps) {
     }))
   ), [props]);
 
+  const gatewaySelection = useGatewayModelSelection(JSON.stringify([props.selectedModel, props.selectedModelBehavior]));
   const modelItems = useMemo<PaletteItem[]>(() => (
     buildCommandPaletteModelItems(props.modelOptions ?? [], props.selectedModel).map((item) => ({
       id: item.id,
       title: item.title,
       detail: item.detail,
-      meta: item.meta,
+      meta: item.option.gatewayAuthorization ? "Sign-in required" : item.meta,
       searchText: item.searchText,
       disabled: item.option.disabled,
       action: () => {
-        if ((item.option.behaviorOptions?.length ?? 0) > 0) {
+        if (!item.option.gatewayAuthorization && (item.option.behaviorOptions?.length ?? 0) > 0) {
           setBehaviorModel(item.option);
           setMode("model-behavior");
           return;
         }
-        props.onSelectModel?.(
-          { providerID: item.option.providerID, modelID: item.option.modelID },
-          null,
-        );
-        props.onClose();
+        gatewaySelection.select(item.option, () => {
+          props.onSelectModel?.({ providerID: item.option.providerID, modelID: item.option.modelID }, null);
+          props.onClose();
+        });
       },
     }))
-  ), [props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel]);
+  ), [gatewaySelection.select, props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel]);
 
   const behaviorItems = useMemo<PaletteItem[]>(() => {
     if (!behaviorModel) return [];
@@ -539,14 +545,15 @@ export function CommandPalette(props: CommandPaletteProps) {
       meta: item.meta,
       searchText: item.searchText,
       action: () => {
-        props.onSelectModel?.(
-          { providerID: behaviorModel.providerID, modelID: behaviorModel.modelID },
-          item.option.value,
-        );
-        props.onClose();
+        const currentOption = props.modelOptions?.find((option) => option.providerID === behaviorModel.providerID && option.modelID === behaviorModel.modelID);
+        if (!currentOption) return;
+        gatewaySelection.select(currentOption, () => {
+          props.onSelectModel?.({ providerID: behaviorModel.providerID, modelID: behaviorModel.modelID }, item.option.value);
+          props.onClose();
+        });
       },
     }));
-  }, [behaviorModel, props.onClose, props.onSelectModel, props.selectedModel, props.selectedModelBehavior]);
+  }, [behaviorModel, gatewaySelection.select, props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel, props.selectedModelBehavior]);
 
   const navigateBack = () => {
     const nextMode = commandPaletteBackMode(mode);
@@ -556,6 +563,7 @@ export function CommandPalette(props: CommandPaletteProps) {
   };
 
   const handleEscape = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (gatewaySelection.loginOpen) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -632,6 +640,8 @@ export function CommandPalette(props: CommandPaletteProps) {
   );
 
   return (
+    <>
+    {engine.dialog}
     <CommandDialog open={props.open} onOpenChange={handleOpenChange}>
       <CommandDialogPopup onKeyDownCapture={handleEscape}>
         <CommandDialogTitle>
@@ -714,5 +724,6 @@ export function CommandPalette(props: CommandPaletteProps) {
         </Command>
       </CommandDialogPopup>
     </CommandDialog>
+    </>
   );
 }

@@ -56,7 +56,7 @@ export async function gatewayUsagePolicy(seed: Seed, { place }: { place: Place }
   });
   const databaseUrl = den.database?.url;
   if (!databaseUrl || !new URL(databaseUrl).pathname.startsWith("/openwork_eval_")) throw new Error("Expected testkit scratch database");
-  for (const name of ["0105_gateway_incremental_usage", "0106_gateway_usage_lifecycle", "0107_gateway_usage_durable_capture"]) {
+  for (const name of ["0105_gateway_incremental_usage", "0106_gateway_usage_lifecycle", "0107_gateway_usage_durable_capture", "0108_gateway_usage_organization_assignments"]) {
     const migration = await readFile(`${root}/ee/packages/den-db/drizzle/${name}.sql`, "utf8");
     const migrationHash = createHash("sha256").update(migration).digest("hex");
     const migrationReceipts = await queryDenDatabase(databaseUrl, "SELECT hash FROM __drizzle_migrations WHERE hash = ?", [migrationHash]);
@@ -73,9 +73,8 @@ export async function gatewayUsagePolicy(seed: Seed, { place }: { place: Place }
   const memberId = usageString(members.find((row) => usageRecord(row.user).email === member.email)?.id);
   const controlId = usageString(members.find((row) => usageRecord(row.user).email === control.email)?.id);
   const adminId = usageString(usageRecord(org.currentMember).id);
-  await queryDenDatabase(databaseUrl, "UPDATE organization SET metadata = JSON_SET(COALESCE(metadata, '{}'), '$.capabilities', COALESCE(JSON_EXTRACT(metadata, '$.capabilities'), JSON_OBJECT()), '$.capabilities.gatewayDashboard', JSON_EXTRACT('true', '$')) WHERE id = ?", [orgId]);
-  const capabilityResponse = await seed.api(den.admin, "/v1/org");
-  if (!capabilityResponse.response.ok || usageRecord(usageRecord(capabilityResponse.body).capabilities).gatewayDashboard !== true) throw new Error("Synthetic org Gateway dashboard capability was not enabled");
+  const orgMetadata = await queryDenDatabase(databaseUrl, "SELECT JSON_CONTAINS_PATH(COALESCE(metadata, '{}'), 'one', '$.capabilities.gatewayDashboard') AS hasGatewayDashboard FROM organization WHERE id = ?", [orgId]);
+  if (orgMetadata.length !== 1 || usageRecord(orgMetadata[0]).hasGatewayDashboard !== 0) throw new Error("Fresh Gateway journey organization must not have a dashboard capability override");
   const child = spawn(process.execPath, ["--conditions=development", "--import", "tsx", "src/server.ts"], {
     cwd: `${root}/ee/apps/gateway`, stdio: ["ignore", "pipe", "pipe"],
     env: {
@@ -106,6 +105,10 @@ export async function gatewayUsagePolicy(seed: Seed, { place }: { place: Place }
     if (await fetch(`${gatewayUrl}/ready`, { signal: AbortSignal.timeout(2000) }).then((response) => response.ok).catch(() => false)) break;
     await delay(500);
   }
+  for (const path of ["/v1/inference-providers?scope=manageable", "/v1/gateway/usage-limit-policies"]) {
+    const response = await seed.api(den.admin, path);
+    if (response.response.status !== 200) throw new Error(`Default organization Gateway management requires no opt-in: ${path}, HTTP ${response.response.status}`);
+  }
   const providerResponse = await seed.api(den.admin, "/v1/inference-providers", {
     method: "POST", body: JSON.stringify({
       name: "Usage journey provider", providerId: "openrouter", modelIds: ["openai/gpt-4o-mini"],
@@ -122,7 +125,7 @@ export async function gatewayUsagePolicy(seed: Seed, { place }: { place: Place }
   const modelId = usageString(usageRecords(connected.models)[0]?.id);
   const baseUrl = usageString(usageRecord(connected.providerConfig).api);
   if (new URL(baseUrl).origin !== gatewayUrl) throw new Error("Gateway connect escaped the owned loopback origin");
-  const admin = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/gateway-providers", headless: true, viewport: { width: 1440, height: 1200 } }).catch((error: unknown) => {
+  const admin = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/ai-gateway?tab=limits", headless: true, viewport: { width: 1440, height: 1200 } }).catch((error: unknown) => {
     if (error instanceof Error && "error" in error && "suppressed" in error) {
       throw new AggregateError([error.suppressed, error.error], "Den browser setup and disposal failed");
     }

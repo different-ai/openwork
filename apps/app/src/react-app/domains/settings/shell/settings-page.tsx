@@ -8,6 +8,7 @@ import {
   CloudCog,
   Cog,
   FolderLock,
+  Gauge,
   Paintbrush,
   Puzzle,
   RefreshCcw,
@@ -70,6 +71,8 @@ export function getSettingsTabIcon(tab: SettingsTab) {
       return FolderLock;
     case "cloud-account":
       return UserCircle;
+    case "usage":
+      return Gauge;
     case "connect":
       return Cable;
     case "cloud-marketplaces":
@@ -109,6 +112,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return "Permissions";
     case "cloud-account":
       return t("settings.tab_cloud_account");
+    case "usage":
+      return "Usage";
     case "connect":
       return t("settings.tab_connect");
     case "cloud-marketplaces":
@@ -150,6 +155,8 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return "Authorized folders and file access";
     case "cloud-account":
       return t("settings.tab_description_cloud_account");
+    case "usage":
+      return "How much of your limits is left";
     case "connect":
       return t("settings.tab_description_connect");
     case "cloud-marketplaces":
@@ -195,6 +202,7 @@ export function getGlobalSettingsTabs(
 
 export const CLOUD_SETTINGS_TABS: SettingsTab[] = [
   "cloud-account",
+  "usage",
 ];
 
 export function isSettingsTabBeta(_tab: SettingsTab) {

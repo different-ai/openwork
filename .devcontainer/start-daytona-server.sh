@@ -89,6 +89,18 @@ export DEN_BETTER_AUTH_TRUSTED_ORIGINS="${DEN_BETTER_AUTH_TRUSTED_ORIGINS:-$CORS
 # which browsers reject, so den-web-in-a-browser could never reach den-api.
 export DEN_CORS_HANDLED_BY_EDGE="${DEN_CORS_HANDLED_BY_EDGE:-${PREVIEW_PROXY_WILDCARD:+true}}"
 
+# AI Gateway: when the caller turns it on, den-api needs both gateway origins
+# at boot and the gateway service runs here, sharing Den's database and key.
+# The proxy origin is this sandbox's loopback; the public origin is the
+# desktop-reachable preview URL the runner derived for GATEWAY_PORT.
+GATEWAY_ENABLED="${GATEWAY_ENABLED:-false}"
+if [ "$GATEWAY_ENABLED" = "true" ]; then
+  export GATEWAY_PORT="${GATEWAY_PORT:-8791}"
+  export GATEWAY_PROXY_BASE_URL="${GATEWAY_PROXY_BASE_URL:-http://127.0.0.1:$GATEWAY_PORT}"
+  export GATEWAY_PUBLIC_BASE_URL="${GATEWAY_PUBLIC_BASE_URL:-${GATEWAY_PUBLIC_URL:-$GATEWAY_PROXY_BASE_URL}}"
+  export GATEWAY_WEBHOOK_SECRET="${GATEWAY_WEBHOOK_SECRET:-daytona-gateway-webhook-secret-not-for-production}"
+fi
+
 run_root() {
   if [ "$(id -u)" -eq 0 ]; then
     "$@"
@@ -219,6 +231,22 @@ nohup env \
 
 wait_for_http "http://127.0.0.1:$DEN_API_PORT/health" "Den API" 180
 
+if [ "$GATEWAY_ENABLED" = "true" ]; then
+  echo "==> Starting AI Gateway on :$GATEWAY_PORT..."
+  pkill -f "tsx src/server.ts" >/dev/null 2>&1 || true
+  # GATEWAY_* and DATABASE_URL are already exported above; only the process
+  # port and the shared runtime flags need naming here.
+  nohup env \
+    PORT="$GATEWAY_PORT" \
+    DB_MODE=mysql \
+    NODE_ENV=test \
+    SENTRY_DSN= \
+    SENTRY_LOG_LEVEL=off \
+    NODE_OPTIONS="--conditions=development" \
+    pnpm --filter @openwork-ee/gateway exec tsx src/server.ts > /tmp/gateway.log 2>&1 &
+  wait_for_http "http://127.0.0.1:$GATEWAY_PORT/ready" "AI Gateway" 180
+fi
+
 if [ "${RUN_SEED:-0}" = "1" ]; then
   demo_email="${DEN_DEMO_OWNER_EMAIL:-alex@acme.test}"
   demo_password="${DEN_DEMO_OWNER_PASSWORD:-OpenWorkDemo123!}"
@@ -274,6 +302,7 @@ else
     DEN_ORG_MODE="$DEN_ORG_MODE" \
     OPENWORK_DEV_MODE="$OPENWORK_DEV_MODE" \
     DEN_WEB_ALLOWED_DEV_ORIGINS="$DEN_WEB_ALLOWED_DEV_ORIGINS" \
+    DEN_WEB_BUILD_CPUS="${DEN_WEB_BUILD_CPUS:-4}" \
     bash -c 'pnpm --filter @openwork/ui build && pnpm --filter @openwork-ee/utils build && pnpm --filter @openwork-ee/den-web build' > /tmp/den-web-build.log 2>&1; then
     echo "ERROR: Den Web build failed. Last 80 lines:" >&2
     tail -n 80 /tmp/den-web-build.log >&2
@@ -310,6 +339,7 @@ DEN_WEB_URL=$DEN_WEB_PUBLIC_URL
 BETTER_AUTH_URL=$BETTER_AUTH_URL
 DEN_MCP_RESOURCE_URL=$DEN_MCP_RESOURCE_URL
 DEN_PROVISIONER_MODE=$DEN_PROVISIONER_MODE
+${GATEWAY_PUBLIC_BASE_URL:+GATEWAY_URL=$GATEWAY_PUBLIC_BASE_URL}
 EOF
 
 echo ""
@@ -318,9 +348,11 @@ echo "  OpenWork Daytona server stack ready"
 echo ""
 echo "  Den Web:       $DEN_WEB_PUBLIC_URL"
 echo "  Den API:       $DEN_API_PUBLIC_URL"
+[ "$GATEWAY_ENABLED" = "true" ] && echo "  AI Gateway:    $GATEWAY_PUBLIC_BASE_URL"
 echo ""
 echo "  Logs:"
 echo "    /tmp/den-api.log"
 echo "    /tmp/den-web.log"
+[ "$GATEWAY_ENABLED" = "true" ] && echo "    /tmp/gateway.log"
 echo "    /tmp/den-db-push.log"
 echo "============================================"

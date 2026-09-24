@@ -442,6 +442,14 @@ export function toInstanceResponse(instance: WorkerInstanceRow | null) {
   }
 }
 
+export function canControlWorker(worker: Pick<WorkerRow, "destination" | "created_by_user_id">, userId: string | undefined) {
+  return worker.destination === "local" || Boolean(userId && worker.created_by_user_id === userId)
+}
+
+export function workerControlForbiddenPayload() {
+  return { error: "forbidden", message: "Only the worker owner can access or control this cloud worker." }
+}
+
 export function toWorkerResponse(row: WorkerRow, userId: string) {
   return {
     id: row.id,

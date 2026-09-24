@@ -8,10 +8,22 @@ GlobalRegistrator.register();
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 afterAll(() => GlobalRegistrator.unregister());
 const { act } = await import("react");
+const { DenCombobox } = await import("../app/(den)/_components/ui/combobox");
 const { createRoot } = await import("react-dom/client");
 const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
 const requests = await import("../app/(den)/_lib/den-flow");
+const navigation = await import("next/navigation");
+const pushed: string[] = [];
+const replaced: string[] = [];
+let searchParams = new URLSearchParams();
+const router = { push: (href: string) => { pushed.push(href); }, replace: (href: string) => { replaced.push(href); }, back: () => {}, forward: () => {}, refresh: () => {}, prefetch: () => {} };
+const routerSpy = spyOn(navigation, "useRouter").mockImplementation(() => router);
+const searchSpy = spyOn(navigation, "useSearchParams").mockImplementation(() => new navigation.ReadonlyURLSearchParams(searchParams));
+afterAll(() => { routerSpy.mockRestore(); searchSpy.mockRestore(); });
 const { GatewayUsageLimitsSection, GatewayMemberUsageDetails } = await import("../app/(den)/dashboard/_components/gateway-usage-limits-section");
+const { GatewayLimitEditor } = await import("../app/(den)/dashboard/_components/gateway-limit-editor-screen");
+const { GatewayPerson } = await import("../app/(den)/dashboard/_components/gateway-person-screen");
+const { getAiGatewayLimitRoute, getAiGatewayLimitsRoute, getAiGatewayPersonRoute, getNewAiGatewayLimitRoute } = await import("../app/(den)/_lib/den-org");
 const { GatewayUsageResetRequests } = await import("../app/(den)/dashboard/_components/gateway-usage-reset-requests");
 const { gatewayLimitsKey, mutateGatewayLimits, formatLimitMoney, microUsdDecimal, newGatewayPolicy, useGatewayLimitsMutation } = await import("../app/(den)/dashboard/_components/gateway-usage-limits-data");
 const { gatewayUsagePolicyWriteSchema, gatewayUsdToMicroUsd, MAX_GATEWAY_ALLOWANCE_MICRO_USD } = await import("@openwork/types/den/gateway-usage-limits");
@@ -65,7 +77,17 @@ function defaultReply({ path }: Call): Reply {
   if (path.startsWith(`${membersPath}?`)) return { payload: { members: [person] } };
   if (path === `${membersPath}/${person.id}`) return { payload: status() };
   if (path.endsWith("/assignments")) return { payload: { assignments: [] } };
+  if (path.startsWith("/v1/inference-providers/usage")) return { status: 503, payload: { error: "unavailable", message: "Usage unavailable" } };
+  if (path === "/v1/inference-providers?scope=manageable") return { payload: { inferenceProviders: [accessProvider("provider-everyone", "Everyone Provider", { type: "organization" }), accessProvider("provider-other", "Other Provider", { type: "team", teamId: "team-other" })] } };
   throw new Error(`Unexpected request ${path}`);
+}
+function accessProvider(id: string, name: string, audience: { type: "organization" } | { type: "team"; teamId: string }) {
+  return {
+    id, providerId: "openai", name, credentialMode: "org", status: "active", modelIds: [],
+    modelGroups: [{ id: "group", name: "Models", description: null, status: "active", modelIds: ["model-one"] }],
+    credentialSets: [{ id: "key", name: "Shared", credentialMode: "org", status: "active", configured: true, credentialStatus: "ready" }],
+    accessGrants: [{ id: `${id}-grant`, audience, modelGroupId: "group", credentialSetId: "key" }],
+  };
 }
 const tick = async () => { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); }); };
 async function mount(node: ReactNode, handler: Handler = defaultReply) {
@@ -124,7 +146,19 @@ function expectField(scope: ParentNode, label: string, value: string) {
   expect(term?.nextElementSibling?.tagName).toBe("DD");
   expect(term?.nextElementSibling?.textContent).toBe(value);
 }
-const section = () => <GatewayUsageLimitsSection orgId={orgId} teams={[team]} members={[member]} />;
+const orgSlug = "fixture";
+const section = () => <GatewayUsageLimitsSection orgId={orgId} orgSlug={orgSlug} teams={[team]} members={[member]} />;
+const editor = (props: { policyId?: string; target?: { memberId: string } | { teamId: string } } = {}) => <GatewayLimitEditor orgId={orgId} orgSlug={orgSlug} teams={[team]} members={[member]} {...props} />;
+const personPage = () => <GatewayPerson orgId={orgId} orgSlug={orgSlug} member={member} teams={[team]} members={[member]} />;
+async function press(selector: string) {
+  const element = document.querySelector(selector);
+  if (!(element instanceof HTMLElement)) throw new Error(`Missing ${selector}`);
+  await act(async () => element.click());
+  await tick();
+}
+function postBodies(calls: Call[]) {
+  return calls.filter((call) => call.init.method === "POST").map((call) => ({ path: call.path, body: JSON.parse(String(call.init.body)) }));
+}
 
 test("shared validation defaults, unique frames, exact precision, zero and overflow", () => {
   expect(newGatewayPolicy()).toEqual({ name: "", hardLimit: true, allowRequestReset: true, limits: [{ timeframe: "month", costUsd: "" }] });
@@ -140,154 +174,120 @@ test("shared validation defaults, unique frames, exact precision, zero and overf
   expect(formatLimitMoney(1)).toBe("$0.000001");
 });
 
-test("policy form defaults, duplicate frames and precision validate before a real create mutation", async () => {
-  const view = await mount(section(), (call) => call.init.method === "POST" ? { payload: policy() } : defaultReply(call));
+test("new limit validates amounts and who before creating the policy and applying it", async () => {
+  pushed.length = 0;
+  const view = await mount(editor({ target: { memberId: person.id } }), (call) => call.init.method === "POST" ? { payload: policy() } : defaultReply(call));
   try {
-    await click("Create policy");
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Create usage limit policy");
-    expect(document.querySelector('[aria-label="Hard limit"]')?.getAttribute("aria-checked")).toBe("true");
-    expect(document.querySelector('[aria-label="Allow request usage increase"]')?.getAttribute("aria-checked")).toBe("true");
-    expect(document.querySelector<HTMLInputElement>('[aria-label="Timeframe 1"]')?.value).toBe("1 month");
-    expect(document.querySelector<HTMLInputElement>('[aria-label="USD Amount 1"]')?.value).toBe("");
-    const dialog = document.querySelector('[role="dialog"]');
-    if (!dialog) throw new Error("Missing policy editor");
-    expect(dialog.classList.contains("border")).toBe(true);
-    expect(dialog.classList.contains("border-[var(--ow-line)]/60")).toBe(true);
-    expect([...dialog.classList].some((name) => name.startsWith("shadow"))).toBe(false);
-    expect(document.getElementById(dialog.getAttribute("aria-labelledby") ?? "")?.textContent).toBe("Create usage limit policy");
-    expect(dialog.hasAttribute("aria-describedby")).toBe(false);
-    for (const [label, description] of [
-      ["Hard limit", "Hard limits block further requests after exhaustion. Soft limits only warn. In-flight requests may exceed the allowance; estimates are not an invoice ceiling."],
-      ["Allow request usage increase", "Allow user to request an increase from within the app once their usage runs out"],
-    ]) {
-      const control = dialog.querySelector(`[aria-label="${label}"]`);
-      expect(document.getElementById(control?.getAttribute("aria-describedby") ?? "")?.textContent).toBe(description);
-    }
-    expect(dialog.textContent).toContain("USD Amount");
-    expect(dialog?.textContent).toContain("Monthly: Resets on 1st of the month");
-    expect(dialog?.textContent).not.toContain("Weekly: Resets on Monday");
-    expect(dialog?.textContent).not.toContain("Daily: Resets at");
-    expect(dialog?.textContent).not.toContain("Enter a nonnegative decimal");
-    await fill('[role="dialog"] input[maxlength="120"]', "New policy");
-    await fill('[aria-label="USD Amount 1"]', "0.0000001");
-    await click("Save policy");
-    expect(document.body.textContent).toContain("maximum six decimal places");
-    expect(dialog?.textContent).toContain("Enter a nonnegative decimal");
+    expect(document.querySelector('[aria-label="Limit per month"]')?.getAttribute("aria-checked")).toBe("true");
+    expect(document.querySelector('[aria-label="Limit per day"]')?.getAttribute("aria-checked")).toBe("false");
+    expect(document.querySelector('[aria-label="Let them ask for 25% more"]')?.getAttribute("aria-checked")).toBe("true");
+    expect(view.container.textContent).toContain("Example Member");
+    expect(view.container.textContent).toContain("Resets on the 1st");
+    expect(view.container.querySelector('[aria-label="Amount a day"]')).toBeNull();
+    await fill('[aria-label="Amount a month"]', "0.0000001");
+    await click("Save limit");
+    expect(view.container.textContent).toContain("Enter an amount like 20 or 12.50.");
     expect(view.calls.some((call) => call.init.method === "POST")).toBe(false);
-    await fill('[aria-label="USD Amount 1"]', "1.000001");
-    expect(dialog?.textContent).not.toContain("Enter a nonnegative decimal");
-    await click("Add limit");
-    expect(dialog?.textContent).toContain("Daily: Resets at");
-    await fill('[aria-label="USD Amount 2"]', "0");
-    await choose("Timeframe 2", "1 month");
-    await click("Save policy");
-    expect(document.body.textContent).toContain("Timeframes must be unique");
+    await fill('[aria-label="Amount a month"]', "1.000001");
+    expect(view.container.textContent).not.toContain("Enter an amount like 20 or 12.50.");
+    await click("Remove");
+    await click("Save limit");
+    expect(view.container.textContent).toContain("Choose who this limit applies to.");
     expect(view.calls.some((call) => call.init.method === "POST")).toBe(false);
-    await choose("Timeframe 2", "1 day");
-    await click("Hard limit");
-    await click("Allow request usage increase");
-    await click("Save policy");
-    const save = view.calls.find((call) => call.init.method === "POST");
-    expect(save?.path).toBe(policiesPath);
-    expect(JSON.parse(String(save?.init.body))).toEqual({ name: "New policy", hardLimit: false, allowRequestReset: false, limits: [{ timeframe: "month", costUsd: "1.000001" }, { timeframe: "day", costUsd: "0" }] });
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(view.calls.filter((call) => call.path === policiesPath && call.init.method === "GET").length).toBeGreaterThan(1);
+    await click("Everyone in the organization");
+    await click("Everyone in the organization");
+    await press('[data-testid="gateway-limit-add-person"]');
+    await choose("Person", "Example Member");
+    await click("Limit per day");
+    expect(view.container.querySelector('[data-testid="gateway-limit-period-day"]')?.textContent).toContain("Resets every day at 5:00");
+    await fill('[aria-label="Amount a day"]', "0");
+    await press('[data-testid="gateway-limit-soft"]');
+    await click("Let them ask for 25% more");
+    await click("Save limit");
+    expect(postBodies(view.calls)).toEqual([
+      { path: policiesPath, body: { name: "Example Member", hardLimit: false, allowRequestReset: false, limits: [{ timeframe: "day", costUsd: "0" }, { timeframe: "month", costUsd: "1.000001" }] } },
+      { path: `${policiesPath}/policy-fixture/assignments`, body: { memberId: person.id } },
+    ]);
+    expect(pushed.at(-1)).toBe(getAiGatewayLimitsRoute(orgSlug));
   } finally { await view.close(); }
 });
 
-test("edit retains revision, handles a 409 without overwriting edits, then explicitly reloads", async () => {
+test("edit retains revision and blocks after a 409 without discarding local edits", async () => {
   let current = policy();
-  let conflict = true;
-  const view = await mount(section(), (call) => {
+  const view = await mount(editor({ policyId: current.id }), (call) => {
     if (call.path === policiesPath) return { payload: { policies: [current] } };
     if (call.init.method === "PATCH") {
-      if (conflict) { current = { ...current, name: "Changed remotely", revision: 8 }; return { status: 409, payload: { error: "revision_conflict", message: "Revision is stale." } }; }
-      current = { ...current, revision: 9 };
-      return { payload: current };
+      current = { ...current, name: "Changed remotely", revision: 8 };
+      return { status: 409, payload: { error: "revision_conflict", message: "Revision is stale." } };
     }
     return defaultReply(call);
   });
   try {
-    await click("Edit Standard");
-    expect(document.querySelector<HTMLInputElement>('[aria-label="USD Amount 1"]')?.value).toBe("100.000001");
-    await fill('[role="dialog"] input[maxlength="120"]', "Local edit");
-    await click("Save policy");
+    expect(document.querySelector<HTMLInputElement>('[aria-label="Amount a month"]')?.value).toBe("100.000001");
+    await fill('[aria-label="Amount a month"]', "150");
+    await click("Save changes");
     const write = view.calls.find((call) => call.init.method === "PATCH");
     expect(write?.path).toBe(`${policiesPath}/policy-fixture`);
-    expect(JSON.parse(String(write?.init.body)).revision).toBe(7);
+    expect(JSON.parse(String(write?.init.body))).toMatchObject({ revision: 7, limits: [{ timeframe: "month", costUsd: "150" }] });
     expect(document.body.textContent).toContain("This policy or request has changed");
-    expect(document.querySelector<HTMLInputElement>('[role="dialog"] input[maxlength="120"]')?.value).toBe("Local edit");
-    expect(button("Save policy").disabled).toBe(true);
-    await click("Load latest revision (discard edits)");
-    expect(document.querySelector<HTMLInputElement>('[role="dialog"] input[maxlength="120"]')?.value).toBe("Changed remotely");
-    conflict = false;
-    await click("Save policy");
-    expect(JSON.parse(String(view.calls.filter((call) => call.init.method === "PATCH")[1]?.init.body)).revision).toBe(8);
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.body.textContent).toContain("changed or was deleted somewhere else");
+    expect(document.querySelector<HTMLInputElement>('[aria-label="Amount a month"]')?.value).toBe("150");
+    expect(button("Save changes").disabled).toBe(true);
+    expect(view.calls.filter((call) => call.init.method === "PATCH")).toHaveLength(1);
   } finally { await view.close(); }
 });
 
-test("archive confirms the consequence and sends the displayed revision", async () => {
-  let archived = false;
-  const view = await mount(section(), (call) => {
-    if (call.init.method === "POST") { archived = true; return { payload: { ...policy(), archivedAt: "2026-01-20T00:00:00.000Z" } }; }
-    if (call.path === policiesPath) return { payload: { policies: archived ? [] : [policy()] } };
+test("delete archives the displayed revision without a confirm and returns to Limits", async () => {
+  pushed.length = 0;
+  const view = await mount(editor({ policyId: "policy-fixture" }), (call) => {
+    if (call.init.method === "POST") return { payload: { ...policy(), revision: 8, archivedAt: "2026-01-20T00:00:00.000Z" } };
     return defaultReply(call);
   });
   try {
-    await click("Archive Standard");
-    const dialog = document.querySelector('[role="alertdialog"]');
-    if (!dialog) throw new Error("Missing archive dialog");
-    expect(dialog.classList.contains("border")).toBe(true);
-    expect(dialog.classList.contains("border-[var(--ow-line)]/60")).toBe(true);
-    expect([...dialog.classList].some((name) => name.startsWith("shadow"))).toBe(false);
-    expect(document.getElementById(dialog.getAttribute("aria-labelledby") ?? "")?.textContent).toBe("Archive Standard?");
-    expect(document.getElementById(dialog.getAttribute("aria-describedby") ?? "")?.textContent).toContain("Consumption and history are retained");
-    expect(view.calls.some((call) => call.init.method === "POST")).toBe(false);
-    await click("Archive policy");
-    expect(view.calls.find((call) => call.init.method === "POST")).toMatchObject({ path: `${policiesPath}/policy-fixture/archive`, init: { body: '{"revision":7}' } });
-    expect(view.container.textContent).toContain("No usage limits configured");
+    await press('[data-testid="gateway-limit-delete"]');
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(postBodies(view.calls)).toEqual([{ path: `${policiesPath}/policy-fixture/archive`, body: { revision: 7 } }]);
+    expect(pushed.at(-1)).toBe(getAiGatewayLimitsRoute(orgSlug, "policy-fixture"));
   } finally { await view.close(); }
 });
 
-test("assigns organization membership and team IDs separately and removes assignments", async () => {
-  const current = policy();
+test("a deleted limit can be restored from the Limits note", async () => {
+  replaced.length = 0;
+  searchParams = new URLSearchParams("tab=limits&deleted=policy-fixture");
+  let archived = true;
   const view = await mount(section(), (call) => {
-    if (call.path === policiesPath) return { payload: { policies: [current] } };
-    if (call.path.endsWith("/assignments")) {
-      if (call.init.method === "POST") {
-        const body = JSON.parse(String(call.init.body));
-        current.assignments.push({ id: `assignment-${current.assignments.length}`, memberId: body.memberId ?? null, teamId: body.teamId ?? null });
-        return { payload: current };
-      }
-      return { payload: { assignments: current.assignments } };
-    }
-    if (call.init.method === "DELETE") { current.assignments = current.assignments.slice(1); return { payload: current }; }
+    if (call.init.method === "POST") { archived = false; return { payload: { ...policy(), revision: 9 } }; }
+    if (call.path === policiesPath) return { payload: { policies: [archived ? { ...policy(), revision: 8, archivedAt: "2026-01-20T00:00:00.000Z" } : { ...policy(), revision: 9 }] } };
     return defaultReply(call);
   });
   try {
-    await click("Assignments for Standard");
-    expect(view.container.textContent).toContain("Allowances are never pooled");
-    await fill('[aria-label="Find person to assign"]', "Example & member");
-    const results = document.querySelector('[aria-label="Find person to assign results"]');
-    if (!results) throw new Error("Missing people results");
-    await click("Example Member (member@example.test)", results);
-    await click("Assign policy");
-    expect(JSON.parse(String(view.calls.find((call) => call.init.method === "POST")?.init.body))).toEqual({ memberId: person.id });
-    expect(view.calls.some((call) => call.path === `${membersPath}?query=Example+%26+member`)).toBe(true);
-    await choose("Assignment type", "Team");
-    await choose("Team to assign", "Example Team");
-    await click("Assign policy");
-    expect(JSON.parse(String(view.calls.filter((call) => call.init.method === "POST")[1]?.init.body))).toEqual({ teamId: team.id });
-    await click("Unassign Example Member (member@example.test)");
-    expect(view.calls.some((call) => call.path === `${policiesPath}/policy-fixture/assignments/assignment-0` && call.init.method === "DELETE")).toBe(true);
-    expect(view.calls.filter((call) => call.path.endsWith("/assignments") && call.init.method === "GET").length).toBeGreaterThan(3);
+    expect(view.container.textContent).toContain("Deleted Standard. It no longer applies to anyone.");
+    expect(view.container.textContent).toContain("No spend limits yet");
+    await press('[data-testid="gateway-limit-undo"]');
+    expect(postBodies(view.calls)).toEqual([{ path: `${policiesPath}/policy-fixture/restore`, body: { revision: 8 } }]);
+    expect(replaced.at(-1)).toBe(getAiGatewayLimitsRoute(orgSlug));
+  } finally { searchParams = new URLSearchParams(); await view.close(); }
+});
+
+test("centralized assignment transport keeps membership, team and organization targets distinct", async () => {
+  const view = await mount(section(), (call) => call.init.method === "POST" || call.init.method === "DELETE" ? { payload: policy() } : defaultReply(call));
+  try {
+    const targets: ({ memberId: string } | { teamId: string } | { organization: true })[] = [{ memberId: person.id }, { teamId: team.id }, { organization: true }];
+    for (const target of targets) await mutateGatewayLimits(orgId, { type: "assign", policyId: "policy/id", target });
+    await mutateGatewayLimits(orgId, { type: "unassign", policyId: "policy/id", assignmentId: "assignment/id" });
+    const writes = view.calls.filter((call) => call.init.method !== "GET");
+    expect(writes.slice(0, 3).map((call) => JSON.parse(String(call.init.body)))).toEqual(targets);
+    for (const call of writes.slice(0, 3)) expect(call.path).toBe(`${policiesPath}/policy%2Fid/assignments`);
+    expect(writes[3]).toMatchObject({ path: `${policiesPath}/policy%2Fid/assignments/assignment%2Fid`, init: { method: "DELETE" } });
+    const { ORG_SCOPE_HEADER } = await import("../app/(den)/_lib/org-scope");
+    for (const call of writes) expect(new Headers(call.init.headers).get(ORG_SCOPE_HEADER)).toBe(orgId);
+    expect(view.container.querySelector('[aria-label="Assignments for Standard"]')).toBeNull();
   } finally { await view.close(); }
 });
 
-test("member inspection distinguishes loading, failures and unlimited and never falls back to stale success", async () => {
-  let state: "unlimited" | "error" | "invalid" = "unlimited";
-  const view = await mount(section(), (call) => {
+test("a person's page distinguishes limit failures, mismatches and no limit without stale success", async () => {
+  let state: "unlimited" | "error" | "invalid" = "error";
+  const view = await mount(personPage(), (call) => {
     if (call.path === `${membersPath}/${person.id}`) {
       if (state === "error") return { status: 503, payload: { error: "unavailable", message: "Accounting unavailable" } };
       if (state === "invalid") return { payload: { ...status(), memberId: "someone-else" } };
@@ -296,34 +296,36 @@ test("member inspection distinguishes loading, failures and unlimited and never 
     return defaultReply(call);
   });
   try {
-    expect(view.container.textContent).not.toContain("Unlimited");
-    await click("Example Member (member@example.test)");
-    expect(view.container.textContent).toContain("No usage limit policy assigned");
-    expect(view.container.textContent).toContain("Accounting is incomplete");
-    state = "error";
-    await click("Refresh usage");
     expect(view.container.textContent).toContain("Accounting unavailable");
-    expect(view.container.textContent).not.toContain("Unlimited");
+    expect(view.container.textContent).not.toContain("No limit");
     state = "invalid";
-    await click("Retry member usage");
+    await click("Retry spend limit");
     expect(view.container.textContent).toContain("different member or organization");
     expect(view.container.textContent).not.toContain("$125");
+    state = "unlimited";
+    await click("Retry spend limit");
+    expect(view.container.textContent).toContain("No limit");
+    expect(view.container.querySelector('[data-testid="gateway-person-set-limit"]')?.getAttribute("href")).toBe(getNewAiGatewayLimitRoute(orgSlug, { memberId: person.id }));
+    expect(view.container.textContent).toContain("Usage unavailable");
   } finally { await view.close(); }
 });
 
-test("effective usage shows estimates, overage, extension, reset state and direct/team candidates", async () => {
-  const direct = { ...policy(), id: "lower-policy", name: "Smaller direct policy", limits: [{ timeframe: "month", costLimitMicroUsd: 50_000_000 }], assignments: [{ id: "direct", memberId: person.id, teamId: null }] } satisfies GatewayUsageLimitPolicy;
-  const inherited = { ...policy(), assignments: [{ id: "team-assignment", memberId: null, teamId: team.id }] };
-  const view = await mount(<GatewayMemberUsageDetails status={status()} policies={[direct, inherited]} teams={[team]} />);
+test("effective usage shows estimates, overage, extension, reset state and direct/team/organization candidates", async () => {
+  const direct = { ...policy(), id: "lower-policy", name: "Smaller direct policy", limits: [{ timeframe: "month", costLimitMicroUsd: 50_000_000 }], assignments: [{ id: "direct", memberId: person.id, teamId: null, organization: false }] } satisfies GatewayUsageLimitPolicy;
+  const inherited = { ...policy(), assignments: [{ id: "team-assignment", memberId: null, teamId: team.id, organization: false }] };
+  const everyone = { ...policy(), id: "org-policy", name: "Organization baseline", limits: [{ timeframe: "month", costLimitMicroUsd: 25_000_000 }], assignments: [{ id: "org-assignment", memberId: null, teamId: null, organization: true }] } satisfies GatewayUsageLimitPolicy;
+  const view = await mount(<GatewayMemberUsageDetails status={status()} policies={[direct, inherited, everyone]} teams={[team]} />);
   try {
-    expect(view.container.textContent).toContain("$130.000001 used / $125.00 allowance");
+    expect(view.container.textContent).toContain("$130.000001 used");
+    expectField(view.container, "Total", "$125.00");
     expect(view.container.textContent).toContain("$5.000001 over allowance");
     expectField(view.container, "Base", "$100.00");
     expectField(view.container, "Extension", "$25.00");
     expectField(view.container, "Increase requests", "Allowed");
     expectField(view.container, "Request status", "approved");
     expect(view.container.textContent).not.toContain("·");
-    expect(view.container.querySelector("h4")?.textContent).toBe("Standard - 1 month");
+    expect(view.container.querySelector("tbody tr")?.textContent).toContain("Standard - 1 month");
+    expect([...view.container.querySelectorAll("th")].map((cell) => cell.textContent)).toEqual(["Policy", "Usage"]);
     const blocked = [...view.container.querySelectorAll("span")].find((element) => element.textContent === "Blocked");
     expect(blocked?.classList.contains("bg-gray-100")).toBe(true);
     expect(blocked?.classList.contains("text-red-600")).toBe(false);
@@ -334,36 +336,50 @@ test("effective usage shows estimates, overage, extension, reset state and direc
     expect(view.container.querySelector("details")?.open).toBe(true);
     expect(view.container.textContent).toContain("Direct assignment");
     expect(view.container.textContent).toContain("Team: Example Team");
+    expect(view.container.textContent).toContain("Organization baseline");
+    expect(view.container.textContent).toContain("Everyone in the org");
     expect(view.container.textContent).toContain("Not selected");
     expect(view.container.textContent).toContain("highest allowance wins");
   } finally { await view.close(); }
 });
 
-test("member inspector groups all bucket details with flat named sections and dividers", async () => {
-  const usage = status();
-  const timeframes: GatewayUsageStatus["buckets"][number]["timeframe"][] = ["day", "week", "month"];
-  usage.buckets = timeframes.map((timeframe) => ({ ...usage.buckets[0], id: `bucket-${timeframe}`, timeframe }));
-  const view = await mount(section(), (call) => call.path === `${membersPath}/${person.id}` ? { payload: usage } : defaultReply(call));
+test("limits are one flat row each with who, amounts, enforcement and an Edit page", async () => {
+  pushed.length = 0;
+  const assigned = { ...policy(), limits: [{ timeframe: "month" as const, costLimitMicroUsd: 300_000_000 }, { timeframe: "day" as const, costLimitMicroUsd: 20_000_000 }], assignments: [{ id: "team-assignment", memberId: null, teamId: team.id, organization: false }] };
+  const view = await mount(section(), (call) => call.path === policiesPath ? { payload: { policies: [assigned, { ...policy(), id: "soft", name: "Soft", hardLimit: false }] } } : defaultReply(call));
   try {
-    const policyRow = view.container.querySelector("tbody tr");
-    if (!policyRow) throw new Error("Missing policy row");
-    expectField(policyRow, "Revision", "7");
-    expectField(policyRow, "Assignments", "0");
-    await click("Example Member (member@example.test)");
-    const buckets = view.container.querySelectorAll('section[aria-label$=" usage"]');
-    expect([...buckets].map((bucket) => bucket.getAttribute("aria-label"))).toEqual(["Standard - 1 day usage", "Standard - 1 week usage", "Standard - 1 month usage"]);
-    for (const bucket of buckets) {
-      expect(bucket.classList.contains("border-t")).toBe(true);
-      expect(bucket.classList.contains("border-[var(--ow-line)]")).toBe(true);
-      expect(bucket.classList.contains("border")).toBe(false);
-      expect([...bucket.classList].some((name) => name.startsWith("rounded"))).toBe(false);
-      const card = bucket.closest(".border");
-      expect(card).not.toBeNull();
-      expect(card?.parentElement?.closest(".border")).toBeNull();
-      expect(bucket.querySelector("details")?.open).toBe(false);
-      expectField(bucket, "Base", "$100.00");
-      expectField(bucket, "Extension", "$25.00");
-    }
+    const rows = view.container.querySelectorAll('[data-testid="gateway-limit-row"]');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.textContent).toContain("Example Team");
+    expect(rows[0]?.textContent).toContain("$20.00 a day, $300.00 a month each");
+    expect(rows[0]?.textContent).toContain("Pauses them");
+    expect(rows[1]?.textContent).toContain("Not applied to anyone yet");
+    expect(rows[1]?.textContent).toContain("Only warns");
+    expect(rows[0]?.querySelector('a[aria-label="Edit Standard"]')?.getAttribute("href")).toBe(getAiGatewayLimitRoute(orgSlug, "policy-fixture"));
+    expect(view.container.querySelector('[data-testid="gateway-limit-new"]')?.getAttribute("href")).toBe(getNewAiGatewayLimitRoute(orgSlug));
+    expect(view.container.querySelector("table")).toBeNull();
+    await choose("Find a person", "Example Member");
+    expect(pushed.at(-1)).toBe(getAiGatewayPersonRoute(orgSlug, person.id));
+  } finally { await view.close(); }
+});
+
+test("a person's page shows each limit period with its policy, usage and technical details", async () => {
+  const view = await mount(personPage());
+  try {
+    const rows = view.container.querySelectorAll('[data-testid="gateway-person-limit-row"]');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("$125.00 a month");
+    expect(rows[0]?.textContent).toContain("Standard · pauses at the limit");
+    expect(rows[0]?.textContent).toContain("$130.000001 used");
+    expect(rows[0]?.querySelector("a")?.getAttribute("href")).toBe(getAiGatewayLimitRoute(orgSlug, "policy-fixture"));
+    expect(view.container.textContent).toContain("Paused");
+    expect(view.container.querySelector("details")?.open).toBe(false);
+    expect(view.container.textContent).toContain("Technical details");
+    const access = view.container.querySelectorAll('[data-testid="gateway-person-access-row"]');
+    expect(access).toHaveLength(1);
+    expect(access[0]?.textContent).toContain("Everyone Provider");
+    expect(access[0]?.textContent).toContain("Everyone has it");
+    expect(view.container.querySelector('[data-testid="gateway-person-access-withheld"]')?.textContent).toContain("Only a removed team");
   } finally { await view.close(); }
 });
 
@@ -472,27 +488,26 @@ test("pending and failed policy reads do not masquerade as empty policy lists", 
   let resolve: ((reply: Reply) => void) | undefined;
   const view = await mount(section(), (call) => call.path === policiesPath ? new Promise<Reply>((done) => { resolve = done; }) : defaultReply(call));
   try {
-    expect(view.container.textContent).toContain("Loading policies");
-    expect(view.container.textContent).not.toContain("No usage limits configured");
+    expect(view.container.textContent).toContain("Loading limits");
+    expect(view.container.textContent).not.toContain("No spend limits yet");
     await act(async () => resolve?.({ status: 403, payload: { error: "forbidden", message: "Only owners and admins can manage limits." } }));
     await tick();
     expect(view.container.textContent).toContain("Only owners and admins");
-    expect(view.container.textContent).not.toContain("No usage limits configured");
+    expect(view.container.textContent).not.toContain("No spend limits yet");
   } finally { await view.close(); }
 });
 
-test("no active policies hides the queue and member inspector without fetching private rows", async () => {
+test("no active limits shows one New limit door and hides the queue and person lookup without private reads", async () => {
   for (const policies of [[], [{ ...policy(), archivedAt: "2026-01-20T00:00:00.000Z" }]]) {
     const view = await mount(<>{section()}<GatewayUsageResetRequests orgId={orgId} members={[member]} /></>, ({ path }) => {
       expect(path).toBe(policiesPath);
       return { payload: { policies } };
     });
     try {
-      expect(view.container.textContent).toContain("No usage limits configured");
-      expect(button("Create policy").disabled).toBe(false);
-      expect(view.container.querySelector('[aria-label="Search usage limit policies"]')).toBeNull();
-      expect(view.container.textContent).not.toContain("Usage Limit Increase Requests");
-      expect(view.container.textContent).not.toContain("Inspect member usage");
+      expect(view.container.textContent).toContain("No spend limits yet");
+      expect(view.container.querySelectorAll('[data-testid="gateway-limit-new"]')).toHaveLength(1);
+      expect(view.container.textContent).not.toContain("Limit increase requests");
+      expect(view.container.querySelector('[aria-label="Find a person"]')).toBeNull();
       expect(view.calls.every((call) => call.path === policiesPath)).toBe(true);
     } finally { await view.close(); }
   }
@@ -528,60 +543,55 @@ test("writes use the shared schema rather than sending unsupported precision", a
   } finally { request.mockRestore(); }
 });
 
-test("form keeps one to three limit rows and requires a nonblank policy name", async () => {
-  const view = await mount(section());
+test("a team target is named and turning off every period blocks save", async () => {
+  const view = await mount(editor({ target: { teamId: team.id } }));
   try {
-    await click("Create policy");
-    expect(button("Remove limit 1").disabled).toBe(true);
-    await fill('[aria-label="USD Amount 1"]', "1");
-    await click("Save policy");
-    expect(document.querySelector('[role="dialog"] input[maxlength="120"]')?.getAttribute("aria-invalid")).toBe("true");
-    await click("Add limit");
-    await click("Add limit");
-    expect(button("Add limit").disabled).toBe(true);
-    expect([...document.querySelectorAll<HTMLInputElement>('[role="dialog"] input[aria-label^="Timeframe"]')].map((input) => input.value)).toEqual(["1 month", "1 day", "1 week"]);
-    await click("Remove limit 2");
-    expect(button("Add limit").disabled).toBe(false);
-    expect(document.querySelector<HTMLInputElement>('[aria-label="Timeframe 2"]')?.value).toBe("1 week");
+    expect(view.container.textContent).toContain("Example Team");
+    expect(view.container.textContent).toContain("1 member, future members included");
+    await click("Limit per month");
+    expect(view.container.querySelector('[aria-label="Amount a month"]')).toBeNull();
+    await click("Save limit");
+    expect(view.container.textContent).toContain("Turn on at least one period.");
     expect(view.calls.some((call) => call.init.method !== "GET")).toBe(false);
   } finally { await view.close(); }
 });
 
 test("unknown create outcome keeps the draft and blocks accidental resubmission", async () => {
-  const view = await mount(section(), (call) => {
+  const view = await mount(editor({ target: { memberId: person.id } }), (call) => {
     if (call.init.method === "POST") throw new Error("Network disconnected");
     return defaultReply(call);
   });
   try {
-    await click("Create policy");
-    await fill('[role="dialog"] input[maxlength="120"]', "Uncertain creation");
-    await fill('[aria-label="USD Amount 1"]', "25");
-    await click("Save policy");
+    await fill('[aria-label="Amount a month"]', "25");
+    await click("Save limit");
     expect(document.body.textContent).toContain("outcome could not be verified");
-    expect(button("Save policy").disabled).toBe(true);
-    await click("Save policy");
+    expect(button("Save limit").disabled).toBe(true);
+    await click("Save limit");
     expect(view.calls.filter((call) => call.init.method === "POST")).toHaveLength(1);
-    expect(document.querySelector<HTMLInputElement>('[role="dialog"] input[maxlength="120"]')?.value).toBe("Uncertain creation");
+    expect(document.querySelector<HTMLInputElement>('[aria-label="Amount a month"]')?.value).toBe("25");
   } finally { await view.close(); }
 });
 
-test("assignment and people failures remain actionable and disable unsafe assignment", async () => {
-  let failAssignments = true;
+test("remote people failures remain retryable without a false empty state, then open the person's page", async () => {
+  pushed.length = 0;
+  let failPeople = true;
   const view = await mount(section(), (call) => {
-    if (call.path.endsWith("/assignments") && failAssignments) return { status: 503, payload: { error: "unavailable", message: "Assignments unavailable" } };
-    if (call.path.startsWith(`${membersPath}?`)) return { status: 503, payload: { error: "unavailable", message: "People unavailable" } };
+    if (call.path.startsWith(`${membersPath}?`) && failPeople) return { status: 503, payload: { error: "unavailable", message: "People unavailable" } };
     return defaultReply(call);
   });
   try {
-    await click("Assignments for Standard");
-    expect(view.container.textContent).toContain("Assignments unavailable");
+    const input = view.container.querySelector<HTMLInputElement>('[aria-label="Find a person"]');
+    if (!input) throw new Error("Missing member search");
+    await act(async () => { input.focus(); input.click(); });
+    await tick();
     expect(view.container.textContent).toContain("People unavailable");
-    expect(button("Assign policy").disabled).toBe(true);
-    failAssignments = false;
-    await click("Retry assignments");
-    expect(view.container.textContent).toContain("No people or teams assigned");
-    expect(button("Assign policy").disabled).toBe(true);
-    expect(view.container.textContent).not.toContain("No people match this search");
+    expect(view.container.querySelector('[role="option"]')).toBeNull();
+    expect(view.container.textContent).not.toContain("No people match");
+    failPeople = false;
+    await click("Retry people");
+    await choose("Find a person", "Example Member");
+    expect(pushed.at(-1)).toBe(getAiGatewayPersonRoute(orgSlug, person.id));
+    expect(view.calls.every((call) => call.init.method === "GET")).toBe(true);
   } finally { await view.close(); }
 });
 
@@ -753,10 +763,9 @@ test("inspector preserves server-selected provenance/revision and reports quaran
     { kind: "direct", assignmentId: "snapshot-direct", memberId: person.id, teamId: null },
     { kind: "team", assignmentId: "snapshot-team", memberId: null, teamId: team.id, teamName: "Snapshot Team" },
   ] })) };
-  const view = await mount(section(), (call) => call.path === `${membersPath}/${person.id}` ? { payload: usage } : defaultReply(call));
+  const view = await mount(<GatewayMemberUsageDetails status={usage} policies={[policy()]} teams={[team]} />);
   try {
-    await click("Example Member (member@example.test)");
-    const summary = view.container.querySelector("summary");
+    const summary = view.container.querySelector<HTMLElement>('summary[aria-label="Effective policy and assignment context for Standard - 1 month"]');
     await act(async () => summary?.click());
     const snapshot = view.container.querySelector('[aria-label="Server-selected assignment snapshot"]');
     if (!snapshot) throw new Error("Missing server-selected snapshot");
@@ -796,15 +805,85 @@ test.each([
   { name: "settled writes with unresolved costs", coverage: trackedCoverage({ unpricedRequests: 3, incompleteRequests: 4 }), shown: ["No tracked requests are awaiting settlement", "3 recorded requests have unresolved cost", "4 recorded requests have incomplete accounting"], hidden: ["Accounting coverage complete"] },
   { name: "legacy incomplete coverage with zero priced gaps", coverage: { complete: false, unpricedRequests: 0 }, shown: ["Accounting is incomplete", "Known costs are a subtotal"], hidden: ["0 requests", "0 recorded requests", "tracking has not started", "No tracked requests"] },
   { name: "legacy counters with unknown coverage", coverage: trackedCoverage({ historicalUnknownReason: "legacy_counter" }), shown: ["older counters with unknown coverage"], hidden: ["Accounting coverage complete", "0 recorded requests"] },
-])("member inspector preserves and distinguishes $name", async ({ coverage, shown, hidden }) => {
+])("usage details preserve and distinguish $name", async ({ coverage, shown, hidden }) => {
   const usage: GatewayUsageStatus = { ...status(), state: "unlimited", buckets: [], coverage };
-  const view = await mount(section(), (call) => call.path === `${membersPath}/${person.id}` ? { payload: usage } : defaultReply(call));
+  const view = await mount(<GatewayMemberUsageDetails status={usage} policies={[]} teams={[]} />);
   try {
-    await click("Example Member (member@example.test)");
     for (const text of shown) expect(view.container.textContent).toContain(text);
     for (const text of hidden) expect(view.container.textContent).not.toContain(text);
     expect(view.container.textContent).toContain("No usage limit policy assigned");
     expect(view.container.textContent).not.toContain("request_settled");
+  } finally { await view.close(); }
+});
+
+test("remote combobox retains the selected label but never selects pending, removed or failed results", async () => {
+  const selected: string[] = [];
+  const searches: string[] = [];
+  const option = { value: person.id, label: person.name, description: person.email };
+  const node = (options: typeof option[], optionsDisabled = false, value = person.id) => <DenCombobox ariaLabel="Remote person" value={value} options={options} optionsDisabled={optionsDisabled} serverFiltered maxSearchLength={200} onSearchChange={(query) => searches.push(query)} onChange={(id) => selected.push(id)} />;
+  const view = await mount(node([option]));
+  try {
+    await view.rerender(node([]));
+    const input = view.container.querySelector<HTMLInputElement>('[aria-label="Remote person"]');
+    if (!input) throw new Error("Missing remote picker");
+    expect(input.value).toBe(person.name);
+    await act(async () => { input.focus(); input.click(); });
+    await fill('[aria-label="Remote person"]', "not a local match");
+    await view.rerender(node([option], true));
+    expect(input.getAttribute("aria-activedescendant")).toBeNull();
+    expect(view.container.querySelector<HTMLButtonElement>('[role="option"]')?.disabled).toBe(true);
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      view.container.querySelector('[role="option"]')?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    expect(selected).toEqual([]);
+    await view.rerender(node([option]));
+    expect(view.container.querySelector('[role="option"]')?.textContent).toContain(person.name);
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(selected).toEqual([person.id]);
+    await tick();
+    await view.rerender(node([], true));
+    await act(async () => { input.focus(); input.click(); });
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(selected).toEqual([person.id]);
+    expect(searches).toContain("not a local match");
+    await view.rerender(node([], false, "different-member"));
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(input.value).toBe("");
+  } finally { await view.close(); }
+});
+
+test("person lookup pins encoded search to the latest response and cannot select an earlier request", async () => {
+  pushed.length = 0;
+  let resolveEarlier: ((reply: Reply) => void) | undefined;
+  let resolveLatest: ((reply: Reply) => void) | undefined;
+  const view = await mount(section(), (call) => {
+    if (call.path === `${membersPath}?query=Earlier`) return new Promise<Reply>((resolve) => { resolveEarlier = resolve; });
+    if (call.path === `${membersPath}?query=Example+%26+member`) return new Promise<Reply>((resolve) => { resolveLatest = resolve; });
+    return defaultReply(call);
+  });
+  try {
+    const input = view.container.querySelector<HTMLInputElement>('[aria-label="Find a person"]');
+    if (!input) throw new Error("Missing member search");
+    await act(async () => { input.focus(); input.click(); });
+    expect(input.maxLength).toBe(200);
+    await fill('[aria-label="Find a person"]', "Earlier");
+    await fill('[aria-label="Find a person"]', "Example & member");
+    expect(resolveEarlier).toBeDefined();
+    expect(resolveLatest).toBeDefined();
+    await act(async () => resolveEarlier?.({ payload: { members: [{ ...person, id: "stale-member", name: "Stale person" }] } }));
+    await tick();
+    expect(view.container.textContent).not.toContain("Stale person");
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(view.calls.some((call) => call.path.startsWith(`${membersPath}/`))).toBe(false);
+    await act(async () => resolveLatest?.({ payload: { members: [person] } }));
+    await tick();
+    await choose("Find a person", "Example Member");
+    expect(pushed.at(-1)).toBe(getAiGatewayPersonRoute(orgSlug, person.id));
+    expect(view.calls.some((call) => call.path.startsWith(`${membersPath}/`))).toBe(false);
+    const { ORG_SCOPE_HEADER } = await import("../app/(den)/_lib/org-scope");
+    for (const call of view.calls) expect(new Headers(call.init.headers).get(ORG_SCOPE_HEADER)).toBe(orgId);
   } finally { await view.close(); }
 });
 
@@ -813,7 +892,7 @@ test("soft exhaustion explicitly leaves requests allowed with complete estimated
   const view = await mount(<GatewayMemberUsageDetails status={usage} policies={[]} teams={[]} />);
   try {
     expect(view.container.textContent).toContain("Requests are still allowed");
-    expect(view.container.textContent).toContain("Accounting coverage complete");
+    expect(view.container.textContent).toContain("Recorded accounting complete. All costs are estimates.");
     expect(view.container.textContent).not.toContain("blocks further");
   } finally { await view.close(); }
 });

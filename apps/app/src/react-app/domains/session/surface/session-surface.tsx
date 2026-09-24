@@ -144,11 +144,14 @@ import type {
   ChatToolReconnectProgress,
   ChatToolReconnectResult,
 } from "@/components/tools/error-attribution";
-import { useChatMcpReconnectStore } from "@/components/tools/mcp-reconnect-state";
 import { MERMAID_LIMITS } from "@/components/markdown/mermaid";
 import {
   isChatMcpReconnectScopeCurrent,
-  waitForFreshMcpAuthorization,
+  isCurrentChatConnectionDecision,
+  nativeChatConnectionDecision,
+  composerQuestionForConnectionDecision,
+  type ChatConnectionDecisionBinding,
+  authenticateChatConnection,
   type ChatMcpReconnectScope,
 } from "./mcp-chat-reconnect";
 import { OpenTargetProvider, type OpenTargetOptions } from "@/lib/target-provider";
@@ -647,7 +650,7 @@ export type SessionSurfaceProps = {
   respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
   activeQuestion?: PendingQuestion | null;
   questionReplyBusy?: boolean;
-  respondQuestion?: (requestID: string, answers: string[][]) => void;
+  respondQuestion?: (requestID: string, answers: string[][]) => void | Promise<void>;
   safeStringify?: (value: unknown) => string;
   onChangeModel?: (model: { providerID: string; modelID: string }) => void;
   onUploadInboxFiles?: ((files: File[], options?: { notify?: boolean }) => void | Promise<unknown>) | null;
@@ -1563,7 +1566,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
   const gatewaySelected = isGatewayUsageModel(sessionModel.selectedModel.providerID, props.gatewayProviderIds);
   const latestUsageMessage = renderedMessages.at(-1);
-  const latestUsageEvidence = useMemo(() => latestUsageMessage ? sessionErrorPresentationFromUIMessage(latestUsageMessage)?.gatewayUsage ?? null : null, [latestUsageMessage]);
+  // The turn's error, not whatever renders last: a trailing empty or retry message must not hide it.
+  const usageError = useMemo(() => {
+    for (let index = renderedMessages.length - 1; index >= 0; index--) {
+      const message = renderedMessages[index];
+      if (message.role === "user") return null;
+      const presentation = sessionErrorPresentationFromUIMessage(message);
+      if (presentation) return { message, presentation };
+    }
+    return null;
+  }, [renderedMessages]);
+  const latestUsageEvidence = usageError?.presentation.gatewayUsage ?? null;
   const gatewayUsage = useGatewayUsage(gatewaySelected, false, gatewayUsageRefreshKey({
     sessionOwner,
     providerId: sessionModel.selectedModel.providerID,
@@ -1575,13 +1588,24 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const gatewayNotice = gatewayUsageNoticeState({ gatewaySelected: gatewayUsage.active, status: gatewayUsage.data });
   const hideGatewayError = useGatewayUsageErrorHandled({
     scopeKey: gatewayUsage.scopeKey, sessionOwner, gatewaySelected: gatewayUsage.active, status: gatewayUsage.data,
-    errorKey: latestUsageMessage?.id ?? null, evidence: latestUsageEvidence,
+    errorKey: usageError?.message.id ?? null, evidence: latestUsageEvidence, rateLimited: usageError?.presentation.kind === "rate-limited",
   });
   const hideDirectGatewayError = useGatewayUsageErrorHandled({
     scopeKey: gatewayUsage.scopeKey, sessionOwner, gatewaySelected: gatewayUsage.active, status: gatewayUsage.data,
-    errorKey: error?.message ?? null, evidence: error?.presentation?.gatewayUsage ?? null,
+    errorKey: error?.message ?? null, evidence: error?.presentation?.gatewayUsage ?? null, rateLimited: error?.presentation?.kind === "rate-limited",
   });
-  const visibleMessages = hideGatewayError ? renderedMessages.filter((message) => message !== latestUsageMessage) : renderedMessages;
+  const visibleMessages = useMemo(() => {
+    if (!hideGatewayError) return renderedMessages;
+    let lastUser = -1;
+    renderedMessages.forEach((message, index) => { if (message.role === "user") lastUser = index; });
+    // Engine retries leave one error per attempt; the confirmed block explains every one of them.
+    return renderedMessages.filter((message, index) => {
+      if (message === usageError?.message) return false;
+      if (index < lastUser) return true;
+      const presentation = sessionErrorPresentationFromUIMessage(message);
+      return !presentation || (presentation.kind !== "rate-limited" && !presentation.gatewayUsage);
+    });
+  }, [hideGatewayError, renderedMessages, usageError]);
   const renderedMessagesRef = useRef(renderedMessages);
   useEffect(() => {
     renderedMessagesRef.current = renderedMessages;
@@ -3025,8 +3049,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [handleResumeInterrupted]);
 
   useEffect(() => {
-    const resetReconnectState = () => {
-      useChatMcpReconnectStore.getState().reset();
+    const refreshConnectionInventory = () => {
       clearCloudInventoryCache();
       setToolSkills((current) => current.filter((skill) => skill.origin !== "openwork-connect"));
       setToolMcpServers((current) => current.filter((server) => server.origin !== "openwork-connect"));
@@ -3037,10 +3060,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const refreshImportedPlugins = () => {
       void listImportedPlugins();
     };
-    window.addEventListener(denSettingsChangedEvent, resetReconnectState);
+    window.addEventListener(denSettingsChangedEvent, refreshConnectionInventory);
     window.addEventListener(CLOUD_INVENTORY_CHANGED_EVENT, refreshImportedPlugins);
     return () => {
-      window.removeEventListener(denSettingsChangedEvent, resetReconnectState);
+      window.removeEventListener(denSettingsChangedEvent, refreshConnectionInventory);
       window.removeEventListener(CLOUD_INVENTORY_CHANGED_EVENT, refreshImportedPlugins);
     };
   }, []);
@@ -3048,7 +3071,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const handleMcpReconnect = useCallback(async (
     action: ChatToolReconnectAction,
     onProgress: (progress: ChatToolReconnectProgress) => void,
+    isCurrent: () => boolean = () => true,
   ): Promise<ChatToolReconnectResult> => {
+    if (!isCurrent()) throw new Error("This connection request is no longer pending.");
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     const organizationId = settings.activeOrgId?.trim() ?? "";
@@ -3072,48 +3097,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
     try {
       const denClient = createDenClient({ baseUrl: settings.baseUrl, token });
-      const connections = await denClient.listMcpConnections(organizationId, "usable");
-      if (!isChatMcpReconnectScopeCurrent(scope, currentScope())) throw new Error("Your OpenWork account changed. Try connecting again.");
-      const connection = connections.find((entry) => entry.id === action.connectionId);
-      if (!connection || connection.authType !== "oauth" || connection.credentialMode !== "per_member") {
-        throw new Error(`${action.connectionName} is no longer available as your reconnectable account.`);
-      }
-
-      recordInspectorEvent("mcp.chat_reconnect.started", {
-        workspaceId: props.workspaceId,
-        sessionId: props.sessionId,
-        connectionId: action.connectionId,
-      });
-      onProgress({ phase: "opening" });
-      const result = await denClient.startMcpConnectionConnect(organizationId, action.connectionId);
-      if (!isChatMcpReconnectScopeCurrent(scope, currentScope())) throw new Error("Your OpenWork account changed. Try connecting again.");
-      if (result.status === "connected") {
-        recordInspectorEvent("mcp.chat_reconnect.completed", {
-          workspaceId: props.workspaceId,
-          sessionId: props.sessionId,
-          connectionId: action.connectionId,
-          completion: "already_connected",
-        });
-        return "connected";
-      }
-      if (!result.authorizeUrl) throw new Error(`Could not start ${action.connectionName} authorization.`);
-
-      await openDesktopUrl(result.authorizeUrl);
-      onProgress({ phase: "authorization_opened", authorizeUrl: result.authorizeUrl });
-      await waitForFreshMcpAuthorization({
+      const isAuthorizationCurrent = () => isCurrent() && isChatMcpReconnectScopeCurrent(scope, currentScope());
+      const result = await authenticateChatConnection({
         connectionId: action.connectionId,
         connectionName: action.connectionName,
-        previousConnectedAt: connection.connectedAt,
         listConnections: () => denClient.listMcpConnections(organizationId, "usable"),
-        isScopeCurrent: () => isChatMcpReconnectScopeCurrent(scope, currentScope()),
+        startConnect: () => denClient.startMcpConnectionConnect(organizationId, action.connectionId),
+        openUrl: openDesktopUrl,
+        isCurrent: isAuthorizationCurrent,
+        onProgress,
       });
+      if (!isAuthorizationCurrent()) throw new Error("The connection request or account changed.");
       recordInspectorEvent("mcp.chat_reconnect.completed", {
         workspaceId: props.workspaceId,
         sessionId: props.sessionId,
         connectionId: action.connectionId,
-        completion: "fresh_authorization",
       });
-      return "connected";
+      return result;
     } catch (error) {
       recordInspectorEvent("mcp.chat_reconnect.failed", {
         workspaceId: props.workspaceId,
@@ -3128,8 +3128,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const handleMcpReopenAuthorization = useCallback(async (
     action: ChatToolReconnectAction,
     authorizeUrl: string,
+    isCurrent: () => boolean = () => true,
   ) => {
+    if (!isCurrent()) throw new Error("This connection request is no longer pending.");
     await openDesktopUrl(authorizeUrl);
+    if (!isCurrent()) throw new Error("This connection request is no longer pending.");
     recordInspectorEvent("mcp.chat_reconnect.authorization_reopened", {
       workspaceId: props.workspaceId,
       sessionId: props.sessionId,
@@ -3137,17 +3140,39 @@ export function SessionSurface(props: SessionSurfaceProps) {
     });
   }, [props.sessionId, props.workspaceId]);
 
-  const handleMcpRetry = useCallback(async (action: ChatToolReconnectAction) => {
-    if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
-    const prompt = `The ${action.connectionName} connection is restored. Search for the capability again and retry the previous request. Before repeating any write action, confirm it did not already complete.`;
-    await typeComposerText(prompt);
-    props.onDraftChange(buildDraft(prompt, attachments));
-    recordInspectorEvent("mcp.chat_reconnect.retry_drafted", {
-      workspaceId: props.workspaceId,
-      sessionId: props.sessionId,
-      connectionId: action.connectionId,
-    });
-  }, [archived, archiveStateKnown, attachments, buildDraft, props.onDraftChange, props.opencodeBaseUrl, props.sessionId, props.workspaceId, typeComposerText]);
+  const nativeConnectionRequest = props.respondQuestion && props.draftScope && props.isControlTarget && !archived && archiveStateKnown && !archiveHeld
+    ? nativeChatConnectionDecision({ question: props.activeQuestion, owner: sessionOwner, sessionId: props.sessionId, messages: baseRenderedMessages })
+    : null;
+  const connectionContextRef = useRef({ owner: sessionOwner, messages: baseRenderedMessages, request: nativeConnectionRequest, respond: props.respondQuestion });
+  connectionContextRef.current = { owner: sessionOwner, messages: baseRenderedMessages, request: nativeConnectionRequest, respond: props.respondQuestion };
+  const getConnectionDecision = useCallback((toolCallId: string): ChatConnectionDecisionBinding | null => {
+    const request = connectionContextRef.current.request;
+    if (!request || request.toolCallId !== toolCallId) return null;
+    const account = readDenSettings();
+    const isCurrent = () => {
+      const context = connectionContextRef.current;
+      const currentAccount = readDenSettings();
+      return account.baseUrl === currentAccount.baseUrl && account.authToken === currentAccount.authToken
+        && account.activeOrgId === currentAccount.activeOrgId && context.owner === sessionOwner
+        && isCurrentChatConnectionDecision(request, context.owner, props.sessionId, context.messages);
+    };
+    const isPending = () => isCurrent() && connectionContextRef.current.request?.requestId === request.requestId
+      && connectionContextRef.current.request.connectionId === request.connectionId;
+    if (!isPending()) return null;
+    return {
+      request,
+      isPending,
+      respond: async response => {
+        const respond = connectionContextRef.current.respond;
+        if (!isPending() || !respond) throw new Error("This connection request is no longer pending.");
+        const reply = respond(request.requestId, [[response.outcome === "connected" ? "Authenticate" : "Skip"]]);
+        if (!reply) throw new Error("The question reply was not acknowledged.");
+        await reply;
+        if (!isCurrent()) throw new Error("The active conversation or account changed.");
+      },
+    };
+  }, [props.sessionId, sessionOwner, props.activeQuestion, props.respondQuestion, baseRenderedMessages, props.isControlTarget, props.draftScope, archived, archiveStateKnown, archiveHeld]);
+  const composerQuestion = composerQuestionForConnectionDecision(props.activeQuestion, nativeConnectionRequest);
 
   const handleRevertToUserMessage = useCallback((messageId: string) => {
     if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
@@ -3410,12 +3435,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onResumeInterrupted={archived ? undefined : handleResumeInterrupted}
                       onMcpReconnect={handleMcpReconnect}
                       onMcpReopenAuthorization={handleMcpReopenAuthorization}
-                      onMcpRetry={handleMcpRetry}
+                      getConnectionDecision={getConnectionDecision}
+                      connectionQuestionToolCallId={nativeConnectionRequest?.questionToolCallId ?? null}
                     >
                       <MessageList
                         messageIdReplacements={pendingReconciliation.messageIdReplacements}
                         viewport={messageViewport}
                         messages={visibleMessages}
+                        sessionErrorHandled={hideGatewayError}
                         status={status}
                         activityStatus={effectiveActivityStatus}
                         retryStatus={liveStatus.type === "retry" ? liveStatus : null}
@@ -3578,9 +3605,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         isRemoteWorkspace={props.isRemoteWorkspace}
           isSandboxWorkspace={props.isSandboxWorkspace}
           onUploadInboxFiles={props.onUploadInboxFiles ?? handleUploadInboxFiles}
-          compactTopSpacing={Boolean(props.activeQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedItems.length > 0)}
+          compactTopSpacing={Boolean(composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedItems.length > 0)}
           topAccessory={
-            props.activeQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedItems.length > 0 ? (
+            composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedItems.length > 0 ? (
               <div>
                 {queuedItems.length > 0 ? (
                   <QueuedMessagesPanel
@@ -3593,13 +3620,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     sendingId={sendingQueuedId}
                   />
                 ) : null}
-                {props.activeQuestion ? (
+                {composerQuestion ? (
                   <QuestionPanel
-                    questions={props.activeQuestion.questions}
+                    questions={composerQuestion.questions}
                     busy={props.questionReplyBusy ?? false}
                     onReply={(answers) => {
-                      if (props.activeQuestion) {
-                        props.respondQuestion?.(props.activeQuestion.id, answers);
+                      if (composerQuestion) {
+                        void Promise.resolve(props.respondQuestion?.(composerQuestion.id, answers)).catch(() => {});
                       }
                     }}
                   />

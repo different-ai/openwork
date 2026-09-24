@@ -750,6 +750,27 @@
       "when": 1789686477369,
       "tag": "0107_gateway_usage_durable_capture",
       "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "5",
+      "when": 1789739648235,
+      "tag": "0108_gateway_usage_organization_assignments",
+      "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "5",
+      "when": 1790127413187,
+      "tag": "0109_organization_web_origins",
+      "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "5",
+      "when": 1790207299296,
+      "tag": "0110_early_hiroim",
+      "breakpoints": true
     }
   ]
 }

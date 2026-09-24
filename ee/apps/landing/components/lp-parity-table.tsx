@@ -47,9 +47,9 @@ function OpenWorkCheck() {
   return (
     <span
       className="inline-flex items-center justify-center text-[var(--lp-ink)]"
-      aria-label="Included"
     >
       <CheckCircle2 className="h-5 w-5" strokeWidth={1.75} aria-hidden="true" />
+      <span className="sr-only">Included</span>
     </span>
   );
 }
@@ -61,18 +61,18 @@ function CoworkCell({ support }: { support: CoworkSupport }) {
 
   if (support === "none") {
     return (
-      <span className="text-[13px] text-[var(--lp-faint)]" aria-label="Not available">
+      <span className="text-[13px] text-[var(--lp-faint)]">
         <Minus className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        <span className="sr-only">Not available</span>
       </span>
     );
   }
 
   return (
-    <Check
-      className="h-5 w-5 text-[var(--lp-faint)]"
-      strokeWidth={1.75}
-      aria-label="Included"
-    />
+    <span className="inline-flex text-[var(--lp-faint)]">
+      <Check className="h-5 w-5" strokeWidth={1.75} aria-hidden="true" />
+      <span className="sr-only">Included</span>
+    </span>
   );
 }
 
@@ -98,7 +98,7 @@ function Capability({ row }: { row: ParityRow }) {
       <span>{row.capability}</span>
       {row.badge === "alpha" ? <LpAlphaBadge /> : null}
       {row.badge === "openwork" ? (
-        <span className="rounded-full bg-[#dbeafe] px-2 py-0.5 text-[9.5px] font-bold tracking-[0.08em] text-[var(--lp-blue)]">
+        <span className="rounded-full bg-[#dbeafe] px-2 py-0.5 text-[9.5px] font-bold tracking-[0.08em] text-[#1d4ed8]">
           OPENWORK ONLY
         </span>
       ) : null}

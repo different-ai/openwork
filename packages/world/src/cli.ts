@@ -31,7 +31,7 @@ export type WorldCommand =
       detach?: boolean;
       timeoutMs?: number;
       stage?: string;
-      place?: "local" | "daytona";
+      place?: "local" | "daytona" | "freestyle";
       env?: string[];
       plain?: true;
       args: string[];
@@ -93,7 +93,7 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
     let detach = false;
     let timeoutMs: number | undefined;
     let stage: string | undefined;
-    let place: "local" | "daytona" | undefined;
+    let place: "local" | "daytona" | "freestyle" | undefined;
     let plain = false;
     const env: string[] = [];
     for (let index = 0; index < options.length; index += 1) {
@@ -133,8 +133,8 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
       }
       if (option === "--place" && place === undefined) {
         const value = options[index + 1];
-        if (value !== "local" && value !== "daytona") {
-          return helpError("Use --place followed by local or daytona.");
+        if (value !== "local" && value !== "daytona" && value !== "freestyle") {
+          return helpError("Use --place followed by local, daytona, or freestyle.");
         }
         place = value;
         index += 1;
@@ -287,7 +287,7 @@ async function helpText(options: WorldCliOptions): Promise<string> {
   const discovered = await discoverWorlds(options.worldsDirectory);
   const sources = discovered.map((world) => displayWorldPath(world.path, options.cwd));
   return `Usage:
-  pnpm world up <script-path-or-name> [--detach] [--timeout <ms>] [--stage <value>] [--place <local|daytona>] [--env <KEY>]... [--plain] [-- <script args...>]
+  pnpm world up <script-path-or-name> [--detach] [--timeout <ms>] [--stage <value>] [--place <local|daytona|freestyle>] [--env <KEY>]... [--plain] [-- <script args...>]
   pnpm world attach <name> [--stage <value>] [--plain]
   pnpm world outputs <name> [--stage <value>] [--reveal] [--json]
   pnpm world plan <script-path-or-name> [--stage <value>]
@@ -493,7 +493,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       const stage = resolveStage(process.env, command.stage);
       const recipeHash = await computeRecipeHash(script.path);
       const place = command.place ?? process.env.OPENWORK_WORLD_PLACE ?? "local";
-      if (place !== "local" && place !== "daytona") throw new Error("World placement must be local or daytona.");
+      if (place !== "local" && place !== "daytona" && place !== "freestyle") throw new Error("World placement must be local, daytona, or freestyle.");
       const env: NodeJS.ProcessEnv = Object.fromEntries((command.env ?? []).map((key) => [key, process.env[key]]));
        const sourceHash = place === "local" ? await computeLocalSourceHash(options.cwd) : undefined;
        const invocationHash = computeInvocationHash(recipeHash, command.args, place, env, sourceHash);

@@ -146,12 +146,14 @@ function request(path: string) {
   return principalRequest(userId, path)
 }
 
-function principalRequest(principalUserId: string, path: string, method = "GET") {
+function principalRequest(principalUserId: string, path: string, method = "GET", body?: unknown) {
   return app.fetch(new Request(`http://den-api.local${path}`, {
     method,
     headers: {
       "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({ userId: principalUserId, organizationId }),
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
     },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   }))
 }
 
@@ -271,6 +273,14 @@ test("requirements discovery is side-effect free", async () => {
   expect(body).toMatchObject({ status: "unreachable" })
   const after = await db.select({ id: schema.ExternalMcpConnectionTable.id }).from(schema.ExternalMcpConnectionTable)
   expect(after).toEqual(before)
+})
+
+test("members can check an MCP server before adding it to their own Library", async () => {
+  const response = await principalRequest(regularUserId, "/v1/mcp-connections/discover", "POST", {
+    url: "http://127.0.0.1:9/mcp",
+  })
+  expect(response.status).toBe(200)
+  expect(await response.json()).toMatchObject({ status: "unreachable", server: { initialize: "failed" } })
 })
 
 test("public client metadata exposes only the deployment-wide web callback", async () => {

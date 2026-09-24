@@ -91,6 +91,7 @@ function parseModels(value: unknown): ModelFacts[] {
 
 export async function readAvailableModels(app: Surface): Promise<ModelFacts[]> {
   await openModelPicker(app);
+  await fill(app, MODEL_SEARCH_INPUT, "");
   await evalIn(app, browserScript((MODEL_DIALOG) => {
     const dialog = document.querySelector<HTMLElement>(MODEL_DIALOG);
     if (!dialog) return false;

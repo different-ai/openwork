@@ -1,7 +1,7 @@
 "use client"
 
 import { Fragment, useState } from "react"
-import { AlertTriangle, Check, ChevronUp, CircleHelp, CirclePause, Copy, MoreHorizontal } from "lucide-react"
+import { Check, ChevronUp, CircleHelp, CirclePause, Copy, MoreHorizontal } from "lucide-react"
 
 import { FileChip } from "@/components/chat/file-chip"
 import { ShellCommandText } from "@/components/chat/shell-command-text"
@@ -255,17 +255,19 @@ export function ToolAggregateGroup({ parts, messageId, thoughts = [], className 
   const soloRow = rows.length === 1 && thoughts.length === 0 ? rows[0] : undefined
   const soloFile = soloRow ? getAggregateRowFile(soloRow.part) : null
   if (soloRow && soloFile) {
-    const status = currentLifecycle ?? persistedRowStatus(soloRow.part)
+    const status = isToolPartInFlight(soloRow.part)
+      ? currentLifecycle === "running" || currentLifecycle === "waiting" ? currentLifecycle : "unknown"
+      : persistedRowStatus(soloRow.part)
     const failure = failureText(soloRow.part)
     return (
       <div
         className={className}
         data-tool-aggregate={latestToolCallId}
-        data-tool-lifecycle={currentLifecycle ?? (visiblyRunning ? "running" : "settled")}
+        data-tool-lifecycle={status}
       >
         <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
           <span className={cn("shrink-0", status === "running" && "text-foreground ow-text-shimmer")}>
-            {soloFile.verb}
+            {status === "unknown" ? "Status unknown for" : soloFile.verb}
           </span>
           <FileChip path={soloFile.path} className="min-w-0" />
           {soloRow.repeat > 1 ? (
@@ -283,12 +285,6 @@ export function ToolAggregateGroup({ parts, messageId, thoughts = [], className 
           <div className="mt-1 flex items-center gap-1.5 text-xs text-amber-11" role="status">
             <CirclePause aria-hidden="true" className="size-3.5 shrink-0" />
             <span>Choose an option or approve the request to continue.</span>
-          </div>
-        ) : null}
-        {status === "interrupted" ? (
-          <div className="mt-1 flex items-center gap-1.5 text-xs text-destructive" role="alert">
-            <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" />
-            <span>This step stopped before it finished. Retry to continue.</span>
           </div>
         ) : null}
         {failure ? (
