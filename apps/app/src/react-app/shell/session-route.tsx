@@ -257,6 +257,11 @@ import { resolveOpenworkConnection } from "./openwork-connection";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { useShellConfig } from "./shell-config";
 import { useShellShortcuts } from "./use-shell-shortcuts";
+import { shortcutModelRef, type Shortcut } from "@/react-app/domains/shortcuts/model-shortcuts-store";
+import { decideModelShortcut } from "@/react-app/domains/shortcuts/resolve-model-shortcut";
+import { switchedNoticeCopy, unavailableNoticeCopy } from "@/react-app/domains/shortcuts/model-shortcut-messages";
+import { useModelShortcutNoticeStore } from "@/react-app/domains/shortcuts/model-shortcut-notice";
+import { useModelShortcutKeys } from "@/react-app/domains/shortcuts/use-model-shortcut-keys";
 import { useEngineReload } from "./use-engine-reload";
 import { useSessionGroupSync } from "./use-session-group-sync";
 import { useUiStateStore } from "./ui-state-store";
@@ -2688,6 +2693,110 @@ export function SessionRoute() {
     },
   }), [cycleFavoriteModel]);
   useControlAction(cycleFavoriteModelControlAction);
+
+  // Model shortcuts (ENG-398): a saved key switches the focused conversation
+  // to a saved model + reasoning + Fast preference. An unavailable model never
+  // changes the current model and never removes the shortcut.
+  const applyModelShortcutRef = useRef<(shortcut: Shortcut, chordLabel: string, attempt?: number) => void>(() => {});
+  const applyModelShortcut = useCallback((shortcut: Shortcut, chordLabel: string, attempt = 0) => {
+    const target = captureFavoriteModelTarget(useWorkbenchStore.getState(), favoriteModelScope.current);
+    if (!target) return;
+    const activeSessionId = target.sessionId;
+    const action = shortcut.action;
+    const modelRef = shortcutModelRef(shortcut);
+    const selection = activeSessionId ? getSessionModelSelection(activeSessionId) : null;
+    const previousDefaultModel = local.prefs.defaultModel ?? null;
+    const previousDefaultVariant = local.prefs.modelVariant ?? null;
+    const option = modelPicker.options.find((entry) => entry.providerID === modelRef.providerID && entry.modelID === modelRef.modelID) ?? null;
+    const decision = decideModelShortcut({
+      action,
+      option,
+      availability: resolveModelAvailability(modelRef),
+      current: {
+        model: selection?.model ?? previousDefaultModel,
+        variant: selection ? selection.variant : modelVariantValue,
+      },
+    });
+    const modelTitle = option?.title || providerCatalog?.[modelRef.providerID]?.[modelRef.modelID]?.name || action.modelTitle || modelRef.modelID;
+    const providerName = option?.description ?? action.providerName ?? null;
+    const notices = useModelShortcutNoticeStore.getState();
+    const targetSessionId = activeSessionId ?? null;
+    const pickAnother = () => window.dispatchEvent(new CustomEvent(openModelPickerEvent, activeSessionId ? { detail: { sessionId: activeSessionId } } : undefined));
+    const reconnect = () => window.dispatchEvent(new Event(openProviderAuthEvent));
+
+    if (decision.kind === "pending") {
+      // Catalog still settling: retry briefly instead of flashing a denial.
+      if (attempt < 10) {
+        window.setTimeout(() => applyModelShortcutRef.current(shortcut, chordLabel, attempt + 1), 500);
+      }
+      return;
+    }
+    if (decision.kind === "already_active") return;
+    if (decision.kind === "unavailable") {
+      const copy = unavailableNoticeCopy({ modelTitle, providerName, reason: decision.reason });
+      notices.show({
+        targetSessionId,
+        tone: copy.tone,
+        title: copy.title,
+        detail: copy.detail,
+        chordLabel,
+        actions: copy.actions.map((entry) => ({
+          label: entry.label,
+          primary: entry.primary,
+          onClick: entry.kind === "reconnect" ? reconnect : pickAnother,
+        })),
+      });
+      return;
+    }
+    if (!option) return;
+
+    const labelFor = (value: string | null) => value === null
+      ? null
+      : option.behaviorOptions?.find((entry) => entry.value === value)?.label ?? value;
+    const copy = switchedNoticeCopy({
+      modelTitle,
+      effortLabel: labelFor(decision.effort),
+      fastApplied: decision.fastApplied,
+      fastSkipped: decision.fastSkipped,
+      effortSkipped: decision.effortSkipped,
+      requestedEffortLabel: action.effort ? labelFor(action.effort) ?? action.effort : null,
+    });
+    const undo = () => {
+      const restoreModel = selection?.model ?? previousDefaultModel;
+      const restoreVariant = selection ? selection.variant : previousDefaultVariant;
+      if (activeSessionId && restoreModel) {
+        const sessionModels = useSessionModelStore.getState();
+        sessionModels.setModel(activeSessionId, restoreModel, restoreVariant);
+        sessionModels.setVariant(activeSessionId, restoreVariant);
+      }
+      local.setPrefs((previous) => ({ ...previous, defaultModel: previousDefaultModel ?? previous.defaultModel, modelVariant: previousDefaultVariant }));
+    };
+    const apply = () => {
+      if (activeSessionId) {
+        const sessionModels = useSessionModelStore.getState();
+        sessionModels.setModel(activeSessionId, modelRef, decision.variant);
+        sessionModels.setVariant(activeSessionId, decision.variant);
+      }
+      useModelCollectionsStore.getState().recordRecent(modelRef);
+      local.setPrefs((previous) => ({ ...previous, defaultModel: modelRef, modelVariant: decision.variant }));
+      notices.show({
+        targetSessionId,
+        tone: copy.tone,
+        title: copy.title,
+        detail: copy.detail,
+        fast: copy.fast,
+        chordLabel,
+        actions: [{ label: "Undo", onClick: undo }],
+      });
+    };
+    const isCurrent = () => isFavoriteModelTargetCurrent(target, useWorkbenchStore.getState(), favoriteModelScope.current)
+      && (!activeSessionId || getSessionModelSelection(activeSessionId) === selection);
+    const gateway = gatewayModelSelectionRef.current;
+    if (gateway) gateway.select(option, apply, isCurrent);
+    else apply();
+  }, [local, modelPicker.options, modelVariantValue, providerCatalog, resolveModelAvailability]);
+  applyModelShortcutRef.current = applyModelShortcut;
+  useModelShortcutKeys(applyModelShortcut);
 
   const {
     commandPaletteOpen,

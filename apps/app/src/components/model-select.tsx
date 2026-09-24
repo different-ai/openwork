@@ -60,6 +60,8 @@ import {
   useModelCollectionsStore,
 } from "@/react-app/domains/session/models/model-collections-store";
 import { favoriteModelShortcutLabel } from "@/react-app/shell/favorite-model-shortcut";
+import { useModelShortcutsStore } from "@/react-app/domains/shortcuts/model-shortcuts-store";
+import { formatChord, resolveShortcutOs } from "@/react-app/domains/shortcuts/shortcut-keys";
 
 function getProviderDisplayName(providerId: string) {
   return providerId
@@ -269,6 +271,12 @@ export function ModelSelect({
   const shortcutLabel = thinkingModeShortcutLabel(shortcutOs);
   const reverseShortcutLabel = thinkingModeShortcutLabel(shortcutOs, "reverse");
   const favoriteShortcutLabel = shortcutOs === "macos" ? "⌃⇧M" : favoriteModelShortcutLabel;
+  const modelShortcuts = useModelShortcutsStore((state) => state.shortcuts);
+  const modelShortcutOs = resolveShortcutOs(platform.os, typeof navigator === "undefined" ? "" : navigator.platform);
+  const modelShortcutLabels = React.useMemo(() => new Map(modelShortcuts.map((shortcut) => [
+    modelRefKey({ providerID: shortcut.action.providerID, modelID: shortcut.action.modelID }),
+    formatChord(shortcut.keys, modelShortcutOs),
+  ])), [modelShortcutOs, modelShortcuts]);
 
   const isMobile = useIsMobile();
   const modelButtonRef = React.useRef<HTMLButtonElement>(null);
@@ -553,6 +561,11 @@ export function ModelSelect({
                 >
                   <ProviderIcon providerId={option.providerID} providerName={option.description} className="size-3.5 opacity-70" size={14} />
                   <span className="min-w-0 flex-1 truncate text-foreground">{option.title}</span>
+                  {modelShortcutLabels.get(modelRefKey(option)) ? (
+                    <kbd data-testid="model-shortcut-key" className="shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground">
+                      {modelShortcutLabels.get(modelRefKey(option))}
+                    </kbd>
+                  ) : null}
                    {option.gatewayAuthorization ? <span className="text-xs text-muted-foreground">Sign-in required</span> : isSameModel(value, option) ? <Check className="size-3.5 shrink-0 text-muted-foreground" /> : null}
                 </button>
               ))}
@@ -649,6 +662,11 @@ export function ModelSelect({
                                 <span className="block truncate text-foreground">{option.title}</span>
                                 <span className="block truncate text-xs text-muted-foreground">{option.gatewayAuthorization ? "Sign-in required" : option.description ?? getProviderDisplayName(option.providerID)}</span>
                               </span>
+                              {modelShortcutLabels.get(modelRefKey(option)) ? (
+                                <kbd data-testid="model-shortcut-key" className="shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground">
+                                  {modelShortcutLabels.get(modelRefKey(option))}
+                                </kbd>
+                              ) : null}
                               <button
                                 type="button"
                                 className="cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"

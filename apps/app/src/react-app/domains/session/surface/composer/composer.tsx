@@ -14,6 +14,7 @@ import {
   slugifyLibraryItemName,
   type ComposerSettingsSection,
 } from "@/react-app/domains/settings/library";
+import { ModelShortcutNoticeBar } from "@/react-app/domains/shortcuts/model-shortcut-notice";
 import { ModelSelect } from "@/components/model-select";
 import { ImageLightbox } from "@/components/chat/image-lightbox";
 import { LexicalPromptEditor, syncAttachmentChipStatus, type ComposerAttachmentToken, type LexicalPromptEditorHandle } from "./editor";
@@ -1314,6 +1315,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       }}
     >
       <div className={props.flush ? "" : "max-w-[800px] mx-auto"}>
+        <ModelShortcutNoticeBar sessionId={props.sessionId} />
         {/* Main composer panel */}
         <div
           className={`@container/composer relative overflow-visible rounded-[18px] border border-dls-border bg-dls-surface transition-all ${panelRoundedClass}`}
