@@ -58,14 +58,17 @@ test("session archive is honest about availability and can be undone when suppor
   if (world.engine === "v2") {
     await step("v2 archive is unavailable without changing either session or claiming success", async () => {
       await user.hover(candidateRow);
-      await user.see(archiveButton);
-      expect(await world.sidebar()).toMatchObject({
-        archiveButtonDisabled: true,
-        archiveButtonTitle: "Archiving and unarchiving are not available in the OpenCode v2 preview.",
+      await user.notSee(archiveButton);
+      expect((await probe.dom(`[data-testid="session-archive-${candidateId}"]`)).elements).toHaveLength(0);
+      await step("v2 session row without unsupported archive button", () => user.screenshot());
+      await user.rightClick(candidateRow);
+      const menu = await probe.eventually(() => world.nativeMenu(), {
+        within: 10_000, label: "native session menu opens",
+        until: value => typeof value === "object" && value !== null && "open" in value && value.open === true,
       });
-      await world.hoverArchiveButton();
-      // Reference only: the button, not a native tooltip or context menu.
-      await step("v2 disabled archive button", () => user.screenshot());
+      expect(menu).toMatchObject({ current: { items: expect.arrayContaining([expect.objectContaining({ id: "pin" })]) } });
+      expect(menu).not.toMatchObject({ current: { items: expect.arrayContaining([expect.objectContaining({ id: "archive" })]) } });
+      expect(await world.dismissMenu()).toBe(true);
       expect(await agent.actions()).toEqual(expect.arrayContaining([expect.objectContaining({ id: "session.archive", disabled: true })]));
       for (const archived of [true, false]) {
         await expect(agent.run("session.archive", { sessionId: candidateId, archived })).rejects.toThrow("Action is disabled");

@@ -418,11 +418,10 @@ function useSessionMenuActions({
     type: "item", id: "move-to-group", label: t("session_management.move_to_group"), icon: <Tag className="size-4" />,
     submenu: groupActions, submenuClassName: { dropdown: "w-52" },
   });
-  if (ctx.onArchiveSession) actions.push({
+  if (ctx.onArchiveSession && !ctx.archiveDisabledReason) actions.push({
     type: "item", id: "archive",
     label: isArchived ? t("session_management.unarchive_session") : t("session_management.archive_session"),
     icon: isArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />,
-    disabled: Boolean(ctx.archiveDisabledReason), disabledReason: ctx.archiveDisabledReason,
     onSelect: () => ctx.onArchiveSession?.(sessionId, !isArchived),
   });
   if (ctx.onOpenDeleteSession) actions.push({ type: "separator" }, {
@@ -491,15 +490,13 @@ function SessionHoverQuickActions({
       >
         {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
       </Button>
-      {ctx.onArchiveSession ? (
+      {ctx.onArchiveSession && !ctx.archiveDisabledReason ? (
         <Button
           variant="ghost"
           size="icon"
           className="size-5 text-muted-foreground hover:bg-transparent hover:text-foreground"
           aria-label={isArchived ? t("session_management.unarchive_session") : t("session_management.archive_session")}
           data-testid={`session-archive-${sessionId}`}
-          disabled={Boolean(ctx.archiveDisabledReason)}
-          title={ctx.archiveDisabledReason}
           onClick={(event) => {
             event.stopPropagation();
             ctx.onArchiveSession?.(sessionId, !isArchived);
