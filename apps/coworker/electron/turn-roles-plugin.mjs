@@ -188,6 +188,12 @@ export default Plugin.define({ id: "coworker.turn-roles", effect: (ctx) => Effec
     const blocked = denied.get(event.agent);
     if (blocked && !prepared) throw new Error("Native turn role inheritance is not ready.");
     if (blocked) for (const name of Object.keys(event.tools)) if (blocked.has(name)) delete event.tools[name];
+    // With OpenWork Connect on this turn, web search goes through its capabilities.
+    // Removing the native tool also removes its provider-consent prompt.
+    if (event.tools["openwork-cloud_search_capabilities"] && event.tools.websearch) {
+      delete event.tools.websearch;
+      event.system.push({ type: "text", text: "Search the web through OpenWork Connect: call openwork-cloud_search_capabilities for a web search capability, then openwork-cloud_execute_capability with the exact returned identifier. If Connect has no web search, read known pages with webfetch or the built-in browser." });
+    }
     if ((event.agent === "build" || event.agent.startsWith("coworker-") || blocked) && event.tools.execute) event.system.push({ type: "text", text: "Use native execute for eligible multi-step tool reads: combine independent reads, filter the results, and return a concise answer. Discover exact available signatures from the native tool catalog; do not guess names or copy an inventory. Keep Coworker's mutations, rich receipts, delegation, and browser/computer controls on their direct tools. Code Mode does not grant permissions or bypass this turn's role. Do not retry an uncertain action." });
   }));
   yield* ctx.tool.hook("execute.before", (event) => checkPolicy.pipe(Effect.andThen(() => denied.has(event.agent) && (!prepared || denied.get(event.agent).has(event.tool))

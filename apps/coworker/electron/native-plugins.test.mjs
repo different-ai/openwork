@@ -336,6 +336,18 @@ test("published native tools preserve trusted identity, broker payloads, file im
   assert.deepEqual(disabled, { agent: "build", tools: {}, system: [] }, "guidance never restores a configured execute deny");
 });
 
+test("with OpenWork Connect on a turn, web search goes through Connect and the native provider prompt cannot appear", async (t) => {
+  const f = await fixture(t, TURN_ROLES_PLUGIN, {});
+  const connected = { agent: "coworker-owner-builder", tools: { websearch: {}, webfetch: {}, "openwork-cloud_search_capabilities": {}, "openwork-cloud_execute_capability": {} }, system: [] };
+  await f.run("session", "context", connected);
+  assert.equal(connected.tools.websearch, undefined);
+  assert.ok(connected.tools.webfetch && connected.tools["openwork-cloud_execute_capability"]);
+  assert.ok(connected.system.some((part) => /openwork-cloud_search_capabilities/.test(part.text)));
+  const local = { agent: "coworker-owner-builder", tools: { websearch: {}, webfetch: {} }, system: [] };
+  await f.run("session", "context", local);
+  assert.ok(local.tools.websearch, "without Connect the native web search stays available");
+});
+
 test("native abilities enforce selected attachments, permission evaluation and Code Mode leaves with live identity", async (t) => {
   const uri = "skill://native-ability/SKILL.md";
   const capability = "plugin:plg_fixture:cob_skill";
