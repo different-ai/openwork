@@ -43,6 +43,8 @@ export class AnonymousInferenceService {
   private readonly settings: RelaySettings;
   private readonly enabled: boolean;
   private localAccessToken = freshLocalToken();
+  // The member credential the engine's relay token is bound to. Held only in memory, like the credential itself,
+  // and compared directly: it is an identity, not something to derive a digest from.
   private relayPrincipal: string | null = null;
   private relayPrincipalPending = false;
   private boundPort: number | null = null;
@@ -157,9 +159,8 @@ export class AnonymousInferenceService {
       signal.throwIfAborted();
       if (this.memberSession !== session) throw new Error("Desktop free access identity changed.");
       const authorization = `Bearer ${apiKey}`;
-      const principal = createHash("sha256").update(authorization).digest("hex");
-      if (this.relayPrincipal && this.relayPrincipal !== principal) this.rotateRelayCredential();
-      this.relayPrincipal = principal;
+      if (this.relayPrincipal && this.relayPrincipal !== authorization) this.rotateRelayCredential();
+      this.relayPrincipal = authorization;
       this.relayPrincipalPending = false;
       await this.relayConfigUpdate;
       signal.throwIfAborted();
@@ -285,7 +286,7 @@ export class AnonymousInferenceService {
       await this.assertDispatchAllowed();
       signal.throwIfAborted();
       const authorization = await this.memberAuthorization();
-      const key = createHash("sha256").update(authorization ?? "guest").digest("hex");
+      const key = authorization ?? "guest";
       signal.throwIfAborted();
       if (!force && this.cachedStatus?.key === key && this.cachedStatus.expiresAt > Date.now()) return this.cachedStatus.value;
       if (force) this.failures.clear();
@@ -449,7 +450,7 @@ export class AnonymousInferenceService {
       const member = await this.memberAuthorization();
       signal.throwIfAborted();
       this.assertRelayIdentity(relayToken);
-      requestKey = createHash("sha256").update(member ?? "guest").update(endpoint).update(body).digest("hex");
+      requestKey = `${member ?? "guest"}\n${endpoint}\n${createHash("sha256").update(body).digest("hex")}`;
       const cached = this.failures.get(requestKey);
       if (cached && cached.expiresAt > Date.now()) return cached.failure.response();
       if (endpoint !== "models") {
