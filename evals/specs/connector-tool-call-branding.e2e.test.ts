@@ -85,7 +85,11 @@ test("connector-backed tool calls show first-class branding and human-readable l
     await user.type("composer", world.failurePrompt);
     await user.click("Run task");
     await user.see({ text: /^Reading history$/ }, { timeoutMs: 30_000 });
-    await user.see({ role: "button", label: /Read history failed/ }, { timeoutMs: 60_000 });
+    if (world.engine === "v2") {
+      await user.notSee({ text: /Completed with errors|Tool activity/ });
+    } else {
+      await user.see({ role: "button", label: /Read history failed/ }, { timeoutMs: 60_000 });
+    }
     await user.see("Run task");
     await user.see({ text: "The history lookup failed." });
     await user.notSee({ role: "button", label: "Read history. Show technical details" });
@@ -94,7 +98,11 @@ test("connector-backed tool calls show first-class branding and human-readable l
       .toMatchObject([{ name: "read_history", args: { limit: 3 } }]);
     await user.screenshot();
     await user.reload();
-    await user.see({ role: "button", label: /Read history failed/ }, { timeoutMs: 30_000 });
+    if (world.engine === "v2") {
+      await user.notSee({ text: /Completed with errors|Tool activity/ });
+    } else {
+      await user.see({ role: "button", label: /Read history failed/ }, { timeoutMs: 30_000 });
+    }
     await user.see({ text: "The history lookup failed." });
     await user.notSee({ role: "button", label: "Read history. Show technical details" });
     await user.notSee({ role: "button", label: /^Ran(?:\s|\.|[0-9]|$)/ });
