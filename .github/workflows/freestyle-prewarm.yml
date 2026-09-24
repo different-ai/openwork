@@ -5,6 +5,15 @@ on:
     branches: [dev]
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
+    inputs:
+      soak_runs:
+        description: "After the normal checks, repeat the full ACME verification this many times against the same snapshot (0 = off, max 60). Fails unless every run passes."
+        type: number
+        default: 0
+      soak_concurrency:
+        description: "How many soak runs launch at once (1-10)."
+        type: number
+        default: 5
 
 permissions:
   contents: read
@@ -16,7 +25,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-latest
-    timeout-minutes: 16
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.soak_runs > 0 && 50 || 16 }}
     strategy:
       fail-fast: false
       matrix:
@@ -41,6 +50,7 @@ jobs:
       - name: Install snapshot controller only
         run: pnpm --filter @openwork/freestyle... install --frozen-lockfile --ignore-scripts
       - name: Prepare reusable snapshot
+        id: prepare
         env:
           FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
           # Only the pinned host controller reads public Git tree metadata.
@@ -100,3 +110,22 @@ jobs:
           path: freestyle-launch-proof.json
           retention-days: 7
           if-no-files-found: error
+      # Manual only: `gh workflow run freestyle-prewarm.yml --ref <branch> -f soak_runs=30`.
+      # Runs even when the single verification above failed, so a soak measures
+      # the snapshot rather than stopping at the first flake.
+      - name: Soak the ACME snapshot with repeated independent launches
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && matrix.world == 'acme-web' && github.event_name == 'workflow_dispatch' && inputs.soak_runs > 0 }}
+        env:
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          PREVIEW_SHA: ${{ github.sha }}
+          SOAK_RUNS: ${{ inputs.soak_runs }}
+          SOAK_CONCURRENCY: ${{ inputs.soak_concurrency }}
+        run: node scripts/soak-freestyle-preview.ts "$PREVIEW_SHA" "$SOAK_RUNS" "$SOAK_CONCURRENCY"
+      - name: Save sanitized soak results
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && matrix.world == 'acme-web' && github.event_name == 'workflow_dispatch' && inputs.soak_runs > 0 }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: freestyle-soak-proof
+          path: freestyle-soak-proof.json
+          retention-days: 7
+          if-no-files-found: warn

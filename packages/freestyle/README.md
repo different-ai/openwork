@@ -66,6 +66,15 @@ and startup commands still do.
 Changing dependencies or build inputs can still take several minutes. The fastest path
 is a frontend change whose backend and build inputs are already cached.
 
+To measure reliability on a branch before merging, dispatch the prewarm workflow
+against it with a soak: `gh workflow run freestyle-prewarm.yml --ref <branch> -f soak_runs=30`.
+After the normal checks, the ACME job repeats the complete verification that many
+times against the same snapshot (five at a time by default), uploads
+`freestyle-soak-proof.json`, and fails unless every run passes. Thirty clean runs
+bound the failure rate below 10% at 95% confidence; sixty, below 5%. The branch's
+workflow pin decides which controller runs. Locally:
+`node --env-file=.env.freestyle.local scripts/soak-freestyle-preview.ts <sha> 10 5`.
+
 CI uploads `freestyle-build-proof-<world>.json` and writes a stage table to its job
 summary. `totalMs` measures preparation through a fully materialized running snapshot,
 including cache misses, and excludes runner setup and subsequent independent-clone
