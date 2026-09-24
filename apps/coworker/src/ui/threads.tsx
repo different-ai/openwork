@@ -1069,7 +1069,7 @@ function DiscussionSwitcher({
           role="menu"
           aria-label="Discussions"
           data-testid="coworker-discussion-menu"
-          className="absolute left-1/2 top-full z-20 mt-2 w-80 max-w-[70vw] -translate-x-1/2 rounded-xl border border-line bg-ink/95 p-1.5 shadow-2xl backdrop-blur"
+          className="absolute left-1/2 top-full z-40 mt-2 w-80 max-w-[70vw] -translate-x-1/2 rounded-xl border border-line bg-[#0d121b] p-1.5 shadow-2xl"
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing) return;
             if (event.key === "Escape" || event.key === "Tab") {
