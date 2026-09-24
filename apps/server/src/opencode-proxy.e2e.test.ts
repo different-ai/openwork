@@ -729,7 +729,7 @@ describe("workspace OpenCode proxy", () => {
     }
   }
 
-  test.serial("v2 session list resolves each directory once per page without caching ownership across pages", async () => {
+  test.serial("v2 session list keeps the original home while resolving a changed working directory once per page", async () => {
     const alias = join(await createWorkspaceRoot(), "alias");
     const sessions = { items: [
       { id: "ses_a", location: { directory: alias } },
@@ -748,7 +748,10 @@ describe("workspace OpenCode proxy", () => {
       await symlink(fixture.secondWorkspaceRoot, alias, "dir");
       const second = await fixture.request("/api/session?cursor=next-page&limit=50");
       expect(second.status).toBe(200);
-      await expect(second.json()).resolves.toEqual({ data: { ...sessions, items: [] } });
+      await expect(second.json()).resolves.toEqual({ data: { ...sessions, items: [
+        { ...sessions.items[0], openworkHomeDirectory: await fs.realpath(fixture.workspaceRoot) },
+        { info: { id: "ses_b", location: { directory: alias }, openworkHomeDirectory: await fs.realpath(fixture.workspaceRoot) } },
+      ] } });
       expect(resolvePath.mock.calls.filter(([directory]) => directory === alias)).toHaveLength(2);
       expect(fixture.provider.calls).toEqual([]);
       expect(fixture.mcp.calls).toEqual([]);
@@ -782,6 +785,7 @@ describe("workspace OpenCode proxy", () => {
       const reads = fixture.engine.requests.slice(before);
       expect(reads.map((item) => item.pathname)).toEqual([
         "/api/session",
+        ...(gate === fixture.provider ? ["/api/session/ses_1/message", "/api/session/ses_foreign/message"] : []),
         "/api/session/ses_1", "/api/session/ses_1",
         "/api/session/ses_1", "/api/session/ses_1/message",
         "/api/session/ses_1", "/api/session/ses_1/message/msg_1",

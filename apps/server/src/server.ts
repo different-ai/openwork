@@ -1,3 +1,4 @@
+import { createV2SessionHomes, nativeSession, nativeSessionDirectory } from "./opencode-v2-session-home.js";
 import { createNativeCloudMcpResolver, createRoutedCloudMcpRegistrar } from "./cloud-mcp-v2.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { createTaskRecovery, setTaskRecovery } from "./task-recovery.js";
@@ -970,6 +971,10 @@ export async function startServer(
             proxyPath: mount.restPath,
             connection,
             syncWorkspaceSkills: engineV2Preview.syncWorkspaceSkills,
+            prepareSessionDirectory: async (directory) => {
+              await engineV2Preview.ensureWorkspaceReady(directory);
+              await engineV2Preview.syncWorkspaceMcp(workspace.id, directory);
+            },
             actor,
             recoverySignal: taskRecovery?.owns(request) ? request.signal : undefined,
           });
@@ -1238,6 +1243,7 @@ export async function proxyOpencodeV2Request(input: {
   proxyPath: string;
   connection: { url: string; username: string; password: string };
   syncWorkspaceSkills: EngineV2Preview["syncWorkspaceSkills"];
+  prepareSessionDirectory?: (directory: string) => Promise<void>;
   recoverySignal?: AbortSignal;
 }): Promise<Response> {
   const method = input.request.method.toUpperCase();
@@ -1276,38 +1282,30 @@ export async function proxyOpencodeV2Request(input: {
   headers.delete("origin");
   headers.set("authorization", `Basic ${Buffer.from(`opencode:${input.connection.password}`).toString("base64")}`);
 
-  // The v2 daemon has a global session namespace: a location query does not
-  // prevent reading a session owned by another workspace. Match the v1 mount's
-  // ownership boundary before forwarding session reads or mutations.
+  const readNative = async (path: string): Promise<unknown> => {
+    const url = new URL(path, input.connection.url);
+    url.searchParams.set("location[directory]", input.workspace.path);
+    const result = await loopbackFetch(url.toString(), {
+      headers: { authorization: headers.get("authorization") ?? "" },
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
+    });
+    if (!result.ok) throw new ApiError(result.status, "session_unavailable", "Conversation could not be read");
+    return result.json();
+  };
+  const homes = createV2SessionHomes(input.config, readNative);
+  const expectedHome = await homes.canonical(input.workspace.path);
   const sessionMatch = forwardedPath.match(/^\/api\/session\/([^/]+)(?:\/|$)/);
   const sessionId = sessionMatch?.[1] ? decodeURIComponent(sessionMatch[1]) : null;
+  let executionDirectory = input.workspace.path;
+  // Authorization follows the persistent home, not the agent's mutable CWD.
+  // The actual native location still controls execution and tool discovery.
   if (sessionId?.startsWith("ses_")) {
-    const sessionUrl = new URL(target);
-    sessionUrl.pathname = `/api/session/${encodeURIComponent(sessionId)}`;
-    sessionUrl.search = "";
-    sessionUrl.searchParams.set("location[directory]", input.workspace.path);
-    const sessionHeaders = new Headers(headers);
-    sessionHeaders.delete("content-length");
-    sessionHeaders.delete("transfer-encoding");
-    const sessionResponse = await loopbackFetch(sessionUrl.toString(), {
-      headers: sessionHeaders,
-      signal: method === "GET"
-        ? AbortSignal.any([input.request.signal, AbortSignal.timeout(10_000)])
-        : AbortSignal.timeout(10_000),
-    });
-    if (!sessionResponse.ok) return sanitizeProxyResponse(sessionResponse);
-    const payload: unknown = await sessionResponse.json();
-    const data = isRecord(payload) && isRecord(payload.data) ? payload.data : payload;
-    const session = isRecord(data) && isRecord(data.info) ? data.info : data;
-    const location = isRecord(session) && isRecord(session.location) ? session.location : null;
-    const directory = location && typeof location.directory === "string" ? location.directory : null;
-    const [expected, actual] = await Promise.all([
-      realpath(input.workspace.path).catch(() => input.workspace.path),
-      directory ? realpath(directory).catch(() => directory) : null,
-    ]);
-    if (!actual || actual !== expected) {
+    const session = await readNative(`/api/session/${encodeURIComponent(sessionId)}`);
+    if (await homes.resolve(session) !== expectedHome) {
       throw new ApiError(404, "session_not_found", "Session not found");
     }
+    executionDirectory = nativeSessionDirectory(session) ?? input.workspace.path;
+    target.searchParams.set("location[directory]", executionDirectory);
   }
 
   if (method !== "GET" && method !== "HEAD"
@@ -1316,6 +1314,7 @@ export async function proxyOpencodeV2Request(input: {
   }
 
   if (method === "POST" && sessionId && /^\/api\/session\/[^/]+\/(?:prompt|command|generate)$/.test(forwardedPath)) {
+    if (executionDirectory !== input.workspace.path) await input.prepareSessionDirectory?.(executionDirectory);
     // Session ownership was verified above. Replace one native instruction
     // entry immediately before admission; never append to conversation text.
     const mcpUrl = new URL(target);
@@ -1327,7 +1326,7 @@ export async function proxyOpencodeV2Request(input: {
       isRecord(entry) && entry.name === "openwork-cloud" && isRecord(entry.status) && entry.status.status === "connected");
     // Keep organization skill discovery on demand through Connect. The full
     // catalog can exceed the engine's instruction-entry request limit.
-    await input.syncWorkspaceSkills(input.workspace.path);
+    await input.syncWorkspaceSkills(executionDirectory);
     const value = buildOpenWorkV2Instructions(connectReady);
     const instructionUrl = new URL(target);
     instructionUrl.pathname = `/api/session/${encodeURIComponent(sessionId)}/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`;
@@ -1410,7 +1409,6 @@ export async function proxyOpencodeV2Request(input: {
     return jsonResponse({ data: Array.isArray(raw) ? raw.map(publicModel) : publicModel(raw) });
   }
   if (method === "GET" && /^\/api\/event\/*$/.test(decodeURIComponent(forwardedPath)) && response.ok && response.body) {
-    const expected = await realpath(input.workspace.path);
     const frames = new BoundedSseFrameBuffer();
     const encoder = new TextEncoder();
     const scopedBody = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
@@ -1426,30 +1424,37 @@ export async function proxyOpencodeV2Request(input: {
           if (typeof payload === "string") {
             try { payload = JSON.parse(payload); } catch { continue; }
           }
-          // v2 execution lifecycle events omit location. Resolve their session
-          // through the daemon before forwarding; the event's session ID alone
-          // is not proof of workspace ownership.
-          if (isRecord(payload) && payload.location === undefined
-            && typeof payload.type === "string"
-            && /^session\.execution\.(started|succeeded|failed|interrupted)$/.test(payload.type)
-            && isRecord(payload.data) && typeof payload.data.sessionID === "string"
-            && payload.data.sessionID.startsWith("ses_")) {
-            const sessionUrl = new URL(input.connection.url);
-            sessionUrl.pathname = `/api/session/${encodeURIComponent(payload.data.sessionID)}`;
-            const ownedSession: unknown = await loopbackFetch(sessionUrl.toString(), {
-              headers: { authorization: `Basic ${Buffer.from(`opencode:${input.connection.password}`).toString("base64")}` },
-              signal: AbortSignal.any([input.request.signal, AbortSignal.timeout(5_000)]),
-            }).then(async (result) => result.ok ? result.json() : null).catch(() => null);
-            const data = isRecord(ownedSession) && isRecord(ownedSession.data) ? ownedSession.data : ownedSession;
-            const session = isRecord(data) && isRecord(data.info) ? data.info : data;
-            if (isRecord(session) && isRecord(session.location)) {
-              payload = { ...payload, location: session.location };
-              scopedFrame = `data: ${JSON.stringify(payload)}`;
+          const eventData = isRecord(payload) && isRecord(payload.data) ? payload.data : null;
+          const eventSessionId = eventData && typeof eventData.sessionID === "string" ? eventData.sessionID : null;
+          if (isRecord(payload) && eventSessionId?.startsWith("ses_")) {
+            let home = await homes.stored(eventSessionId);
+            if (payload.type === "session.created" && eventData && isRecord(eventData.location)
+              && typeof eventData.location.directory === "string") {
+              const parent = typeof eventData.parentID === "string"
+                ? await homes.resolve(await readNative(`/api/session/${encodeURIComponent(eventData.parentID)}`)) : null;
+              home = await homes.created(eventSessionId, parent ?? eventData.location.directory);
             }
+            if (!home && payload.type !== "session.deleted") {
+              try { home = await homes.resolve(await readNative(`/api/session/${encodeURIComponent(eventSessionId)}`)); }
+              catch (error) {
+                // A late event for an already-deleted unknown session must not
+                // disconnect all other conversations in this workspace.
+                if (error instanceof ApiError && error.status === 404) continue;
+                throw error;
+              }
+            }
+            if (home !== expectedHome) continue;
+            // The compatibility stream is scoped to the UI home. Preserve the
+            // native directory separately; the move's data remains untouched.
+            payload = { ...payload, data: { ...eventData, openworkHomeDirectory: home },
+              openworkWorkingLocation: payload.location,
+              location: { directory: input.workspace.path } };
+            scopedFrame = `data: ${JSON.stringify(payload)}`;
+          } else {
+            const location = isRecord(payload) && isRecord(payload.location) ? payload.location : null;
+            const directory = location && typeof location.directory === "string" ? location.directory : null;
+            if (!directory || await homes.canonical(directory) !== expectedHome) continue;
           }
-          const location = isRecord(payload) && isRecord(payload.location) ? payload.location : null;
-          const directory = location && typeof location.directory === "string" ? location.directory : null;
-          if (!directory || await realpath(directory).catch(() => null) !== expected) continue;
           controller.enqueue(encoder.encode(`${scopedFrame}\n\n`));
         }
       },
@@ -1464,24 +1469,9 @@ export async function proxyOpencodeV2Request(input: {
     const data = isRecord(payload) && "data" in payload ? payload.data : payload;
     const items = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.items) ? data.items : null;
     if (!items) throw new ApiError(502, "invalid_engine_response", "Invalid session list response");
-    const directories = new Map<string, Promise<string>>();
-    const resolveDirectory = (directory: string) => {
-      let resolved = directories.get(directory);
-      if (!resolved) {
-        resolved = realpath(directory).catch(() => directory);
-        directories.set(directory, resolved);
-      }
-      return resolved;
-    };
-    const expected = await resolveDirectory(input.workspace.path);
-    const scoped = (await Promise.all(items.map(async (item: unknown) => {
-      const session = isRecord(item) && isRecord(item.info) ? item.info : item;
-      const location = isRecord(session) && isRecord(session.location) ? session.location : null;
-      const directory = location && typeof location.directory === "string" ? location.directory : null;
-      if (!directory) return null;
-      const actual = await resolveDirectory(directory);
-      return actual === expected ? item : null;
-    }))).filter((item) => item !== null);
+    const scoped = (await Promise.all(items.map(async (item: unknown) =>
+      await homes.resolve(item) === expectedHome ? homes.project(item) : null,
+    ))).filter((item) => item !== null);
     signal?.throwIfAborted();
     const scopedData = isRecord(data) ? { ...data, items: scoped } : scoped;
     const scopedPayload = isRecord(payload) && "data" in payload ? { ...payload, data: scopedData } : scopedData;
@@ -1490,6 +1480,25 @@ export async function proxyOpencodeV2Request(input: {
     responseHeaders.delete("content-encoding");
     return sanitizeProxyResponse(new Response(JSON.stringify(scopedPayload), { status: response.status, headers: responseHeaders }));
   }
+  if (response.ok && method === "GET" && forwardedPath === "/api/session/active") {
+    const payload: unknown = await response.json();
+    const data = isRecord(payload) && isRecord(payload.data) ? payload.data : {};
+    const entries = await Promise.all(Object.entries(data).map(async ([id, status]) => {
+      const home = await homes.stored(id) ?? await homes.resolve(await readNative(`/api/session/${encodeURIComponent(id)}`));
+      return home === expectedHome ? [id, status] : null;
+    }));
+    return jsonResponse({ data: Object.fromEntries(entries.filter(entry => entry !== null)) });
+  }
+  if (response.ok && ((method === "GET" && forwardedPath === `/api/session/${sessionId}`)
+    || (method === "POST" && (forwardedPath === "/api/session" || forwardedPath.endsWith("/fork"))))) {
+    const payload: unknown = await response.json();
+    const session = nativeSession(payload);
+    if (method === "POST" && typeof session?.id === "string") await homes.created(session.id, expectedHome);
+    const data = isRecord(payload) && "data" in payload ? payload.data : payload;
+    return jsonResponse({ data: await homes.project(data) });
+  }
+  // Keep the home after deletion so a delayed session.deleted event still
+  // reaches its subscribers. Successful creation replaces a reused ID's home.
   return sanitizeProxyResponse(response);
 }
 

@@ -385,7 +385,7 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
     id,
     slug: readString(source, "slug") ?? id,
     projectID: readString(source, "projectID") ?? "v2",
-    directory: readString(source, "directory") ?? readString(location, "directory") ?? directory ?? "",
+    directory: readString(source, "openworkHomeDirectory") ?? readString(source, "directory") ?? readString(location, "directory") ?? directory ?? "",
     // Keep native untitled sessions eligible for compatibility title recovery.
     title: readString(source, "title") || `New session - ${new Date(created).toISOString()}`,
     version: readString(source, "version") ?? "v2",
@@ -1057,6 +1057,15 @@ export function translateV2Event(
   if (!type) return null;
   const properties = eventProperties(value);
   const sessionID = readSessionID(properties);
+
+  if (type === "session.moved") {
+    // The server keeps this stream attached to the conversation's home while
+    // routing native operations to its current working directory.
+    const home = readString(readRecord(value, "location") ?? {}, "directory");
+    return sessionID && home ? [{ type: "session.updated", properties: {
+      info: { id: sessionID, directory: home },
+    } }] : null;
+  }
 
   if (type === "session.inbox.enqueued") {
     const messageID = readString(properties, "inboxID");

@@ -385,6 +385,18 @@ describe("OpenCode v2 event translation", () => {
     } }, state)).toBeNull();
   });
 
+  test("a native move updates the stable UI home without settling the active execution", () => {
+    const state = createV2EventTranslationState();
+    translateV2Event({ type: "session.execution.started", data: { sessionID: "ses_move" } }, state);
+    expect(translateV2Event({
+      type: "session.moved", location: { directory: "/home" },
+      openworkWorkingLocation: { directory: "/worktree" },
+      data: { sessionID: "ses_move", location: { directory: "/worktree" } },
+    }, state)).toEqual([{ type: "session.updated", properties: { info: { id: "ses_move", directory: "/home" } } }]);
+    expect(translateV2Event({ type: "session.execution.interrupted", data: { sessionID: "ses_move", reason: "user" } }, state))
+      .toEqual([{ type: "session.execution.interrupted", properties: { sessionID: "ses_move", reason: "user", sequence: undefined } }]);
+  });
+
   test("uses the created envelope timestamp for an untitled session", () => {
     const created = 1_788_548_737_221;
     const event = {
