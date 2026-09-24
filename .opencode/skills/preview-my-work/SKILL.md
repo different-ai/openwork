@@ -11,7 +11,7 @@ world or an existing test sandbox. Run from the requested worktree.
 
 ## Choose a preview
 
-- Discover the actual primitives first: `pnpm world help`, `pnpm world list`,
+- Discover the actual primitives first: `pnpm world help`, `pnpm world list` (declared targets are shown; undeclared scripts cannot run remotely),
   then inspect the requested script in `worlds/` and its options in `worlds/lib/`.
   A preset's restrictions are not restrictions of the generic world CLI.
   For another composition, inspect `packages/world/src/index.ts` and
@@ -156,7 +156,13 @@ it to use the current remote `dev` commit, independently of the desktop version.
 The world driver and release installer run from the local checkout's HEAD, and
 the desktop sandbox uses the snapshot's inherited display/browser helpers.
 `--release` selects desktop bytes; none of these identities falls back to
-another. Release sandboxes do not mount shared secrets and do not run a source
+another. For preview recipes only, the equivalent composable inputs before `--`
+are `--source desktop=release:0.18.52/enterprise --source den=sha:<full-pushed-sha> --seed blank`.
+Do not combine `--source desktop=...` with `-- --release`. `--source den=ref:dev`
+resolves origin/dev to a full SHA before adoption; otherwise the CLI pins the
+remote dev SHA for Daytona previews. `--os windows` is rejected before provisioning
+until an interactive Windows desktop host is wired. Freestyle does not support
+Windows or these preview presets. Release sandboxes do not mount shared secrets and do not run a source
 checkout, `pnpm install`, Electron source launch, or Vite. Their viewer,
 startup observation, release digest, Den URLs, log/profile paths, relaunch
 shortcut, browser shortcut, and protocol handler are reported as outputs. A

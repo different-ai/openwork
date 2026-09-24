@@ -1,3 +1,5 @@
+export const supportedTargets = ["local/host", "daytona/linux", "freestyle/linux"];
+
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";

@@ -1,3 +1,5 @@
+export const supportedTargets = ["local/host", "daytona/linux"];
+
 import { seedSessions } from "../evals/packages/behaviors/src/sessions.ts";
 import { app } from "../evals/packages/env/src/desktop-app.ts";
 import type { App } from "../evals/packages/env/src/desktop-app.ts";

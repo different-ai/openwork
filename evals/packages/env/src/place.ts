@@ -4,6 +4,7 @@ import { provisionDesktopSandbox, provisionWebSandbox, deleteSandboxes, daytonaS
 import { createConnection } from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
 import { daytonaPlacement, resolveEvalRef } from "./eval-ref.ts";
+import { targetFromEnv } from "@openwork/world";
 import type {
   ChromeSurfaceOptions,
   DesktopSandbox,
@@ -334,8 +335,13 @@ class DaytonaPlace implements Place {
 
 /** Resolve placement once; resources never inspect placement environment again. */
 export function resolvePlace(env: NodeJS.ProcessEnv = process.env): Place {
-  if (env.OPENWORK_WORLD_PLACE === "freestyle") {
-    throw new Error("Freestyle placement supports app-web. This recipe does not yet support Freestyle.");
+  // Explicit values must not silently fall through to a local runtime.
+  const target = targetFromEnv(env);
+  if (target.provider === "freestyle") {
+    throw new Error("Freestyle placement supports app-web and acme-web; this recipe does not support Freestyle.");
+  }
+  if (target.provider === "daytona" && target.os === "windows") {
+    throw new Error("Daytona Windows desktop host is not implemented yet; use a Linux world or the manual Windows sandbox.");
   }
   if (daytonaPlacement(env)) {
     return new DaytonaPlace(
