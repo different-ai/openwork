@@ -94,6 +94,18 @@ test("Cloud readiness returns native ID/source only after exact bodies and stale
   });
 });
 
+test("native-2 skill paths become locations after exact workspace readiness", async () => {
+  await withWorkspace(async (root) => {
+    const file = join(root, ".opencode", "skill", "quick", "SKILL.md");
+    await mkdir(join(file, ".."), { recursive: true });
+    await writeFile(file, "---\nname: quick\n---\n\nQuick guidance.\n");
+    const catalog = await waitForNativeOpenWorkV2Skills(root, async () => ({ data: [
+      { id: "quick", name: "quick", path: file, content: "Quick guidance." },
+    ] }));
+    expect(catalog.data).toMatchObject([{ id: "quick", location: file, content: "Quick guidance." }]);
+  });
+});
+
 test("v2 guidance routes all skills natively without XML or Connect skill prose", () => {
   for (const connected of [true, false]) {
     const baseline = buildOpenWorkV2Instructions(connected);

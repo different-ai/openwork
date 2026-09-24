@@ -675,7 +675,7 @@ async function originHintFixture() {
       assert.match(new URL(url).pathname, /\/prompt$/);
       calls.prompts.push({ headers: new Headers(init.headers), body: JSON.parse(init.body) });
       await state.beforePrompt();
-      if (!state.allowed || new Headers(init.headers).get("x-openwork-native-skills-scope") !== state.catalog[0]?.source.scope) return new Response(null, { status: 403 });
+      if (!state.allowed || new Headers(init.headers).get("x-openwork-native-skills-scope") !== (state.catalog[0]?.source?.scope ?? null)) return new Response(null, { status: 403 });
       calls.forwarded.push(state.catalog.map((skill) => skill.content));
       return Response.json({});
     },
@@ -690,7 +690,7 @@ async function originHintFixture() {
 }
 
 test("native main uses private origin hints only for unselected owned workspaces and keeps selected skills fresh", async () => {
-  for (const mode of ["warm", "older", "missing", "empty", "mutable", "invalid", "error", "foreign-workspace", "foreign-token", "selected"]) {
+  for (const mode of ["warm", "older", "missing", "mutable", "invalid", "error", "foreign-workspace", "foreign-token", "selected"]) {
     const f = await originHintFixture();
     if (mode === "warm") {
       f.entry.model = { providerId: "fixture", modelId: "b".repeat(64) };
@@ -698,7 +698,6 @@ test("native main uses private origin hints only for unselected owned workspaces
     }
     if (mode === "older") delete f.handle.nativeSkillOriginSnapshot;
     if (mode === "missing") f.state.hint = null;
-    if (mode === "empty") f.state.hint = Object.freeze({ scopes: Object.freeze([]) });
     if (mode === "mutable") f.state.hint = { scopes: [f.cloud.source.scope] };
     if (mode === "invalid") f.state.hint = f.frozen("unverified");
     if (mode === "error") f.state.beforeHint = async () => { throw new Error("Private hint unavailable"); };
@@ -722,6 +721,15 @@ test("native main uses private origin hints only for unselected owned workspaces
     assert.deepEqual(f.calls.forwarded, [["FRESH_BODY_CANARY"]], "origin preparation does not skip the final prompt path");
     assert.doesNotMatch(JSON.stringify([f.entry.cloudSkillOrigin, f.calls.prompts[0].body]), /PRIVATE_BODY_CANARY|FRESH_BODY_CANARY|fixture-principal-token|fixture-owner-token|SKILL\.md/);
   }
+  const empty = await originHintFixture();
+  empty.state.hint = Object.freeze({ scopes: Object.freeze([]) });
+  empty.state.catalog = [];
+  await empty.send();
+  assert.equal(empty.calls.hints.length, 2, "an empty native snapshot is checked again before admission");
+  assert.equal(empty.calls.catalogs, 0, "plain chat does not fetch the full skill catalog");
+  assert.equal(empty.calls.principals, 0);
+  assert.equal(empty.entry.cloudSkillOrigin.scope, null);
+  assert.equal(empty.calls.prompts[0].headers.get("x-openwork-native-skills-scope"), null);
   for (const phase of ["selected-origin", "final-prompt"]) {
     const f = await originHintFixture();
     if (phase === "selected-origin") {

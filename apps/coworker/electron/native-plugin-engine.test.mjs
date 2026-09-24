@@ -976,4 +976,27 @@ test("source native embedded setup preserves broad shell approvals in one locati
     }
     assert.deepEqual([...activations].sort(), [runtime, ...[...legacyThreads.keys()].map((slug) => owners.get(slug).path)].sort());
   });
+  await t.test("rapid teammate additions keep the shared native role ready", async () => {
+    for (const name of ["Epsilon", "Zeta"]) {
+      const created = await createCoworker(team, { name });
+      const owner = await updateCoworker(team, created.slug, { workspaceId });
+      owners.set(owner.slug, owner);
+      await updateTeamWorkspaceConfig(team, [...owners.values()]);
+      await installAbilitiesPlugin({ path: runtime, workspaceId }, { url: witnessUrl + "/context", token: "synthetic-scope", coworkers: [...owners.values()] });
+      const registration = await host("/workspaces/local", "POST", { folderPath: runtime, name: "Synthetic team", preset: "minimal" });
+      assert.equal(registration.activeId, workspaceId);
+      const pluginResponse = await fetch(`${url}/workspace/${workspaceId}/opencode2/api/plugin`, { headers });
+      assert.equal(pluginResponse.ok, true, `plugin ${name}: ${await pluginResponse.clone().text()}`);
+      const roleResponse = await fetch(`${url}/workspace/${workspaceId}/opencode2/api/rpc/coworker.turn-roles/prepare`, {
+        method: "POST", headers, body: JSON.stringify({ input: {} }), signal: AbortSignal.timeout(15000),
+      });
+      assert.equal(roleResponse.ok, true, `role ${name}: ${await roleResponse.clone().text()}`);
+      assert.equal((await roleResponse.json()).output.ready, true);
+      const agents = await api("/api/agent");
+      const configured = JSON.parse(await readFile(path.join(runtime, "opencode.json"), "utf8")).agents[`coworker-owner-${owner.slug}`];
+      const active = agents.data.find((agent) => agent.id === `coworker-owner-${owner.slug}`);
+      assert.ok(active?.system?.endsWith(configured.system), `${name} must carry its own native system policy`);
+      assert.ok(agents.data.some((agent) => agent.id === `coworker-owner-${owner.slug}:worker`));
+    }
+  });
 });

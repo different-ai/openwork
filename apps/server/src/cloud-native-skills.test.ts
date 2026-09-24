@@ -61,6 +61,28 @@ test("skill IDs and authorization scopes are stable opaque hashes", () => {
   for (const config of [null, { url: "https://example.test/mcp" }, { ...cloudConfig("t"), enabled: false }, { ...cloudConfig("t"), disabled: true }]) expect(cloudNativeSkillScopeKey(config)).toBeNull();
 });
 
+test("a plain turn can recheck the same empty signed-in skill scope without repeated invalidation", async () => {
+  await withRoot(async (root) => {
+    const cloud = fakeCloud({ index: indexFor([BRIEFING_URI]), bodies: { [BRIEFING_URI]: BRIEFING_BODY } });
+    const registrations: Array<string | null> = [];
+    let config = cloudConfig("a");
+    const sync = createCloudNativeSkillSync({ root, fetcher: cloud.fetcher,
+      readCloudConfig: async () => config, register: async (directory) => { registrations.push(directory); } });
+    await sync.reconcileScope();
+    const generation = sync.generation();
+    await sync.reconcileScope();
+    expect(sync.generation()).toBe(generation);
+    expect(sync.current().root).toBeNull();
+    expect(cloud.reads).toEqual([]);
+    const loaded = await sync.sync();
+    expect(loaded.skills).toHaveLength(1);
+    config = cloudConfig("b");
+    await sync.reconcileScope();
+    expect(sync.current().root).toBeNull();
+    expect(registrations.at(-1)).toBeNull();
+  });
+});
+
 test("fresh same-session bodies are private, update with stable IDs and remove revoked files", async () => {
   await withRoot(async (root) => {
     const bodies: Record<string, string> = { [BRIEFING_URI]: BRIEFING_BODY, [TRIAGE_URI]: TRIAGE_BODY };

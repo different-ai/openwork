@@ -106,7 +106,7 @@ export interface EngineV2Preview {
   /** One serialized fresh Cloud read + native readiness barrier for discovery/admission. */
   assertNativeSkillsScope(expectedScope: string | null): Promise<void>;
   nativeSkillOriginSnapshot?(input: NativeSkillOriginInput): Promise<NativeSkillOriginSnapshot | null>;
-  withNativeSkills<T>(directory: string, use: (catalog: Awaited<ReturnType<typeof waitForNativeOpenWorkV2Skills>>, assertCurrent: () => Promise<void>) => Promise<T>, expectedScope?: string | null): Promise<T>;
+  withNativeSkills<T>(directory: string, use: (catalog: Awaited<ReturnType<typeof waitForNativeOpenWorkV2Skills>>, assertCurrent: () => Promise<void>) => Promise<T>, expectedScope?: string | null, plainTurn?: boolean): Promise<T>;
   request(directory: string, path: string, init?: { method?: string; body?: unknown; timeoutMs?: number }): Promise<{ status: number; json: unknown }>;
   createNativeCleanupRequest(isCurrent: () => boolean, hostSignal: AbortSignal): (input: NativeCleanupRequest) => Promise<Response>;
   stop(): Promise<void>;
@@ -459,6 +459,8 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     } catch { return null; }
   }
   let skillAdmissions: Promise<unknown> = Promise.resolve();
+  let skillAdmissionsPending = 0;
+  const emptyNativeSkillOrigin = Object.freeze({ scopes: Object.freeze([] as string[]) });
   const cloudSkills = createCloudNativeSkillSync({
     root: cloudSkillsRoot,
     readCloudConfig: () => readGlobalRuntimeMcpConfig(config, OPENWORK_CLOUD_MCP_NAME),
@@ -473,7 +475,25 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     input.signal?.throwIfAborted();
     const active = sidecar;
     const origin = skillOrigins.get(input.workspaceId);
-    if (!mandatory || !allowRunning || !running || !active?.isAlive() || !origin) return null;
+    if (!mandatory || !allowRunning || !running || !active?.isAlive()) return null;
+    if (!origin && !skillAdmissionsPending && !cloudSkills.current().root) {
+      // A stable, empty native registration is enough to admit a plain turn
+      // without a catalog fetch. Verify this exact local workspace first.
+      const workspaces = config.workspaces.filter((entry) => entry.id === input.workspaceId ||
+        entry.workspaceType === "local" && resolve(entry.path) === resolve(input.directory));
+      if (workspaces.length !== 1 || workspaces[0]?.id !== input.workspaceId || workspaces[0].workspaceType !== "local"
+        || resolve(workspaces[0].path) !== resolve(input.directory)) return null;
+      const directory = await realpath(input.directory).catch(() => null);
+      const configured = await realpath(workspaces[0].path).catch(() => null);
+      const roots = await Promise.all(config.authorizedRoots.map((root) => realpath(root).catch(() => null)));
+      if (!directory || directory !== configured || !roots.some((root) => root !== null
+        && (directory === root || directory.startsWith(root.endsWith(sep) ? root : `${root}${sep}`)))) return null;
+      await cloudSkills.reconcileScope();
+      input.signal?.throwIfAborted();
+      return sidecar === active && active.isAlive() && !skillAdmissionsPending && !cloudSkills.current().root
+        ? emptyNativeSkillOrigin : null;
+    }
+    if (!origin) return null;
     const context = await skillOriginContext(input.directory, input.signal);
     input.signal?.throwIfAborted();
     if (!allowRunning || !running || sidecar !== active || !active.isAlive() || skillOrigins.get(input.workspaceId) !== origin
@@ -504,9 +524,10 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     }
   }
 
-  function withNativeSkills<T>(directory: string, use: (catalog: Awaited<ReturnType<typeof waitForNativeOpenWorkV2Skills>>, assertCurrent: () => Promise<void>) => Promise<T>, expectedScope: string | null = null): Promise<T> {
+  function withNativeSkills<T>(directory: string, use: (catalog: Awaited<ReturnType<typeof waitForNativeOpenWorkV2Skills>>, assertCurrent: () => Promise<void>) => Promise<T>, expectedScope: string | null = null, plainTurn = false): Promise<T> {
     const sync = cloudSkills;
     if (!sync) return Promise.reject(new Error("Cloud-native skills require a mandatory v2 host"));
+    skillAdmissionsPending++;
     const pending = skillAdmissions.catch(() => undefined).then(async () => {
       for (let retry = 0; retry < 3; retry++) {
         // This is the caller's ingress expectation, never the account found
@@ -514,6 +535,17 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
         await assertNativeSkillsScope(expectedScope);
         const active = sidecar;
         if (!allowRunning || !active?.isAlive()) throw new CloudNativeSkillSyncError("cloud_skill_engine_unavailable", "OpenCode v2 is not running");
+        if (plainTurn && expectedScope === null) {
+          await sync.reconcileScope();
+          if (!sync.current().root) {
+            const generation = sync.generation();
+            return use({ data: [] }, async () => {
+              await sync.reconcileScope();
+              if (!allowRunning || sidecar !== active || !active.isAlive() || generation !== sync.generation()
+                || sync.current().root) throw new CloudNativeSkillSyncError("cloud_skill_sync_stale", "Native skills changed before admission");
+            });
+          }
+        }
         skillOrigins.clear();
         const origin = await skillOriginContext(directory);
         let state;
@@ -561,7 +593,7 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
       throw new CloudNativeSkillSyncError("cloud_skill_sync_stale", "OpenWork Cloud configuration kept changing during skill preparation");
     });
     skillAdmissions = pending;
-    return pending;
+    return pending.finally(() => { skillAdmissionsPending--; });
   }
 
   async function syncWorkspaceMcp(workspaceId: string, directory: string, forceNames?: string[]): Promise<void> {

@@ -293,7 +293,11 @@ test("malformed history, cross-session inbox, repeated cursor, redirect and canc
   assert.equal(state.requests.length, count);
   state.overrides.set(`GET ${mount}/session/${sid}`, { status: 302, body: {} });
   await assert.rejects(client.getSession(sid), { code: "request_failed" });
-  assert.equal(state.requests.length, count + 1);
+  state.overrides.set(`GET ${mount}/session/${sid}`, { status: 400,
+    body: { code: "cloud_skill_sync_stale", message: "private-provider-detail" } });
+  await assert.rejects(client.getSession(sid), (error: Error) =>
+    error.message.includes("HTTP 400 (cloud_skill_sync_stale)") && !error.message.includes("private-provider-detail"));
+  assert.equal(state.requests.length, count + 2);
   assert.ok(state.requests.every((request) => !request.path.includes("must-not-follow")));
 });
 

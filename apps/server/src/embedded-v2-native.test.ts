@@ -333,7 +333,10 @@ process.stdout.write(JSON.stringify({jsonrpc:"2.0",id:message.id,result})+"\\n")
     await expect(client.admitInput(sessionId, { id: "msg_fixture_unauthorized", type: "user", text: "Read the briefing.", skills: [{ id: skillId }] })).rejects.toMatchObject({ code: "skill_unavailable" });
     expect(enginePaths.filter((path) => path.endsWith("/prompt"))).toHaveLength(beforeRejected);
     // Ordinary chat still admits with an empty Cloud catalog after failed refresh.
+    const ordinarySkillBarrier = spyOn(native, "withNativeSkills");
     await turn("msg_fixture_without_cloud", false);
+    expect(ordinarySkillBarrier).toHaveBeenCalledWith(workspace, expect.any(Function), null, true);
+    ordinarySkillBarrier.mockRestore();
     const instructionResponse = await native.request(workspace, `/api/session/${sessionId}/instructions/entries`);
     expect(instructionResponse.status).toBe(200);
     const instructions = JSON.stringify(instructionResponse.json);

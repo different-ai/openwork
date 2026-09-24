@@ -126,7 +126,15 @@ export async function waitForNativeOpenWorkV2Skills(
   do {
     const payload = await readNative();
     if (!record(payload) || !Array.isArray(payload.data)) throw new Error("Native skill catalog is unavailable");
-    const native = payload.data.filter(record).filter((skill) => typeof skill.location === "string" && typeof skill.content === "string");
+    // Native-2 calls the file field `path`; the older v2 API used `location`.
+    // Normalize at this boundary so readiness and the app's skill picker see
+    // the same native entry without weakening exact path/body checks.
+    const native = payload.data.filter(record).flatMap((skill) => {
+      const location = typeof skill.location === "string" ? skill.location : typeof skill.path === "string" ? skill.path : null;
+      return location && typeof skill.content === "string"
+        && (skill.location === undefined || skill.path === undefined || skill.location === skill.path)
+        ? [{ ...skill, location, content: skill.content } as Record<string, unknown> & { location: string; content: string }] : [];
+    });
     const canonical = await Promise.all(native.map(async (skill) => ({
       skill, path: await canonicalPath(String(skill.location)),
     })));

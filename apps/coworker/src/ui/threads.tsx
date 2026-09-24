@@ -105,7 +105,7 @@ import {
   type TurnOutcome,
   type TurnReplyState,
 } from "@/lib/turn-outcome";
-import { describeTurnFailure, failureText } from "@/lib/turn-failure";
+import { describeConversationError, describeTurnFailure, failureText } from "@/lib/turn-failure";
 import { composerDraftStore, useComposerDraft, useSelectedComposerDraft } from "@/ui/use-composer-draft";
 import { mergeSkillSelections, sameSkillFields, selectionFields, type ComposerDraftSnapshot, type ComposerDraftSubmission, type SelectedSkill } from "@/lib/skill-selection";
 import { classifyFailure, retryDelayMs } from "@/lib/turn-retry";
@@ -1241,6 +1241,7 @@ function ThreadView({
   }, [coworker.slug]);
   /** A different connected, tool-capable model to fall back to after a model-related failure. */
   const [recommendedModel, setRecommendedModel] = useState<EngineModelOption | null>(null);
+  const [activeModelLabel, setActiveModelLabel] = useState("");
   const defaultDiscussionTitle = discussionTitle(coworker.name);
   // Until the transcript answers, a discussion carries its default title (which reads as "New
   // discussion" while empty); only an assignment falls back to the generic placeholder.
@@ -1631,7 +1632,7 @@ function ThreadView({
         if (!usesAppConversationDefault(owner) && (!automatic || turnModelId === owner.model || !owner.model)) {
           onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: next.id, modelVariant: carryVariant(owner.modelVariant, next), modelChosenBy: "app", useAppModelDefaults: false }));
         }
-        setProviderRefreshNote(`${turnModelId} could not answer, so ${coworker.name} is trying ${next.modelLabel} instead.`);
+        setProviderRefreshNote(`${coworker.name} is trying ${next.modelLabel} after the previous AI model could not answer.`);
         voiceFollowup = true;
         window.setTimeout(() => void submitTurn(prompt, messageId, { ...send, mode: "retry", attempt, switchedTo: next.modelLabel, voice: voiceIntent }, { ...nextModel, ...(variant ? { variant } : {}) }, excluded, selection), 0);
         return true;
@@ -1954,22 +1955,33 @@ function ThreadView({
     // Closing one assistant message is not the native turn's idle outcome.
     return reply.state === "complete" && outcome !== "succeeded" ? { ...reply, state: "writing" } : reply;
   }, [messages, nativeState, pendingTurn]);
+  const failedModelId = useMemo(() => {
+    const reply = [...messages].reverse().find((message) => message.role === "assistant" && message.parentId === pendingTurn?.messageId && message.model);
+    return reply?.model ? `${reply.model.providerId}/${reply.model.modelId}` : "";
+  }, [messages, pendingTurn?.messageId]);
   const needsModelFallback = failure !== "" || pendingReply.state === "error";
   useEffect(() => {
     if (!needsModelFallback) {
       setRecommendedModel(null);
+      setActiveModelLabel("");
       return;
     }
     let cancelled = false;
-    void threads.listModelCatalog()
-      .then((catalog) => {
-        if (!cancelled) setRecommendedModel(recommendModel(catalog, { exclude: coworker.model }));
+    void Promise.all([threads.listModelCatalog(), coworkerBridge.settings.get()])
+      .then(([catalog, settings]) => {
+        if (!cancelled) {
+          const owner = kind === "discussion" ? coworker : { ...coworker, useAppModelDefaults: false };
+          const selected = resolveDiscussionModel(catalog, owner, turnStateRef.current.pending?.prompt ?? "", settings.modelDefaults).model;
+          const modelId = failedModelId || selected?.id || coworker.model;
+          setRecommendedModel(recommendModel(catalog, { exclude: modelId }));
+          setActiveModelLabel(catalog.models.find((model) => model.id === modelId)?.modelLabel ?? selected?.modelLabel ?? "");
+        }
       })
       .catch(() => {
-        if (!cancelled) setRecommendedModel(null);
+        if (!cancelled) { setRecommendedModel(null); setActiveModelLabel(""); }
       });
     return () => { cancelled = true; };
-  }, [coworker.model, needsModelFallback, threads]);
+  }, [coworker, failedModelId, kind, needsModelFallback, threads]);
 
   /** The moment the turn this view is driving lets go (its wait has ended and its record is settled). */
   const untilTurnReleased = useCallback(() => new Promise<void>((resolve) => {
@@ -2122,21 +2134,25 @@ function ThreadView({
       const run = await onSyncProviders();
       if (run.status === "failed") {
         voice.abandonReply(voiceIntent);
-        setProviderRefreshNote(`OpenWork provider refresh failed: ${run.message || "unknown error"}`);
+        setProviderRefreshNote("Providers could not be refreshed. You can still use a suggested model above or choose one in Coworker settings.");
         return;
       }
       const catalog = await threads.listModelCatalog();
-      const available = !coworker.model.trim() || catalog.models.some((model) => model.id === coworker.model);
-      if (!available) {
+      const settings = await coworkerBridge.settings.get();
+      const selectionOwner = kind === "discussion" ? coworker : { ...coworker, useAppModelDefaults: false };
+      const decision = resolveDiscussionModel(catalog, selectionOwner, turnStateRef.current.pending?.prompt ?? "", settings.modelDefaults);
+      if (!decision.model) {
         voice.abandonReply(voiceIntent);
-        setProviderRefreshNote(`Providers refreshed, but "${coworker.model}" is still unavailable. Choose another AI model in Coworker settings.`);
+        setRecommendedModel(recommendModel(catalog, { exclude: failedModelId || coworker.model }));
+        setProviderRefreshNote("Providers refreshed, but the selected model is still unavailable. Use the suggestion above or choose another AI model in Coworker settings.");
         return;
       }
       setProviderRefreshNote("");
-      void retryPending(undefined, voiceIntent);
+      const pick = decision.model;
+      void retryPending({ model: { providerId: pick.providerId, modelId: pick.modelId, ...(decision.variant ? { variant: decision.variant } : {}) }, label: pick.modelLabel }, voiceIntent);
     } catch (cause) {
       voice.abandonReply(voiceIntent);
-      setProviderRefreshNote(cause instanceof Error ? cause.message : String(cause));
+      setProviderRefreshNote("Providers could not be refreshed. You can still use a suggested model above or choose one in Coworker settings.");
     }
   }
 
@@ -2193,8 +2209,7 @@ function ThreadView({
         onOpenProviders();
         return;
       case "refresh-providers":
-        void refreshProvidersAndRetry();
-        return;
+        return refreshProvidersAndRetry();
       case "stop":
         void stop();
         return;
@@ -2570,7 +2585,7 @@ function ThreadView({
             <QuietLine outcome={outcome.kind} text={outcome.line} choices={outcome.choices} onChoose={chooseTurnAction} />
           ) : null}
           {outcome?.kind === "failed" ? (
-            <TurnFailureBubble coworkerName={coworker.name} outcome={outcome} onChoose={chooseTurnAction} />
+            <TurnFailureBubble coworkerName={coworker.name} modelLabel={activeModelLabel} outcome={outcome} onChoose={chooseTurnAction} />
           ) : null}
           {providerRefreshNote ? (
             <p className="px-1 text-[11px] leading-relaxed text-mist" data-testid="coworker-provider-refresh">{providerRefreshNote}</p>
@@ -2581,7 +2596,7 @@ function ThreadView({
             void Promise.all([refresh(), waitForObservation(coworkerBridge.turns.activity(coworker.slug, threadId)).then((executions) => { if (viewMounted.current) setNativeActivity({ scope: activityScope, executions }); })])
               .catch(() => setError("Status is still unavailable. You can check again or Stop."))
               .finally(() => { confirmationReading.current = false; });
-          }}>Check again</button> or use Stop.</p> : error || (!working && !needsYou && !acceptedObservationUnavailable && workspacePreparation.error) ? <ErrorNote>{error || workspacePreparation.error}</ErrorNote> : null}
+          }}>Check again</button> or use Stop.</p> : outcome?.kind !== "failed" && (error || (!working && !needsYou && !acceptedObservationUnavailable && workspacePreparation.error)) ? <ConversationErrorCard message={error || workspacePreparation.error || ""} modelLabel={activeModelLabel} /> : null}
           {Object.values(readErrors).some(Boolean) || acceptedObservationUnavailable ? <p role="status" className="px-1 text-xs text-mist">{admissionState === "accepted" ? "Message accepted. Its activity is not available yet; shown messages and queued work are kept." : readErrors.transcript || "Some activity could not be refreshed. Shown messages and queued work are kept."} <button type="button" className="underline" onClick={() => void refresh()}>Try again</button></p> : null}
         </div>
       </div>
@@ -2944,7 +2959,7 @@ const MessageBubble = memo(function MessageBubble({
   // bubble is the live view, in the same place and shape it keeps once the text has landed.
   const liveWords = liveStream ? writingText(liveStream, message) : message.text;
   const live = liveWords !== message.text;
-  const answeredBy = message.model ? `Answered by ${message.model.providerId}/${message.model.modelId}` : "";
+  const answeredBy = message.model ? "Answered by an AI model" : "";
   const tooltip = [answeredBy, speed].filter(Boolean).join(" · ");
   return (
     <article className={`flex flex-col items-start gap-2 ${continued ? "-mt-1" : ""}`} data-message-role="assistant" data-message-id={message.id} data-continued={continued ? "true" : "false"} {...(live ? { "data-live": "true" } : {})}>
@@ -3070,7 +3085,7 @@ function QuietLine({ outcome, text, choices = [], onChoose }: { outcome: string;
  * (never more than three), with the raw text folded away. It sits at the
  * transcript's bubble width, never across the whole column.
  */
-function TurnFailureBubble({ coworkerName, outcome, onChoose }: { coworkerName: string; outcome: TurnOutcome; onChoose: (choice: TurnChoice) => void }) {
+function TurnFailureBubble({ coworkerName, modelLabel, outcome, onChoose }: { coworkerName: string; modelLabel: string; outcome: TurnOutcome; onChoose: (choice: TurnChoice) => void | Promise<void> }) {
   const [busy, setBusy] = useState("");
   useEffect(() => {
     setBusy("");
@@ -3079,7 +3094,10 @@ function TurnFailureBubble({ coworkerName, outcome, onChoose }: { coworkerName: 
     if (busy) return;
     // Opening a screen is not acting on the turn: the card stays ready for the person's return.
     if (!choiceNavigates(choice.id)) setBusy(choice.id);
-    onChoose(choice);
+    const action = onChoose(choice);
+    // A refresh can leave the same failed turn in place. Restore its choices
+    // when that read finishes, including when the provider remains unavailable.
+    if (choice.id === "refresh-providers") void Promise.resolve(action).finally(() => setBusy(""));
   };
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -3102,6 +3120,7 @@ function TurnFailureBubble({ coworkerName, outcome, onChoose }: { coworkerName: 
         detail={outcome.detail || undefined}
         needsYou
       >
+        {modelLabel ? <p className="mt-3 text-[11px] font-medium text-mist">AI model · {modelLabel}</p> : null}
         <div className="mt-3 divide-y divide-line/70 rounded-xl border border-line/70" role="listbox" aria-label="What to do">
           {outcome.choices.map((choice, index) => (
             <OptionRow
@@ -3118,6 +3137,16 @@ function TurnFailureBubble({ coworkerName, outcome, onChoose }: { coworkerName: 
         {outcome.technical ? <TechnicalText text={outcome.technical} testId="coworker-turn-technical" /> : null}
       </InteractionCard>
     </div>
+  );
+}
+
+function ConversationErrorCard({ message, modelLabel }: { message: string; modelLabel: string }) {
+  const issue = describeConversationError(message);
+  return (
+    <InteractionCard label="Conversation needs attention" title={issue.headline} detail={issue.detail} testId="coworker-conversation-error">
+      {modelLabel && /^Choose an available AI model$/.test(issue.headline) ? <p className="mt-3 text-[11px] font-medium text-mist">AI model · {modelLabel}</p> : null}
+      {issue.technical ? <TechnicalText text={issue.technical} testId="coworker-conversation-error-technical" /> : null}
+    </InteractionCard>
   );
 }
 
@@ -3156,15 +3185,15 @@ function describeUnavailableModel(model: string, available: EngineModelOption[],
   const providerModels = available.filter((option) => option.providerId === providerId);
   if (providerModels.length > 0) {
     const sample = providerModels[0];
-    return `The saved model "${model}" is not offered by ${sample?.providerLabel ?? providerId} (${modelSourceLabel(sample?.source ?? "local")}) any more. Choose one of its ${providerModels.length} available AI model${providerModels.length === 1 ? "" : "s"}.`;
+    return `The saved AI model is no longer offered by ${sample?.providerLabel ?? "its provider"} (${modelSourceLabel(sample?.source ?? "local")}). Choose one of its ${providerModels.length} available AI model${providerModels.length === 1 ? "" : "s"}.`;
   }
   const cloudManaged = isCloudManagedProviderId(providerId);
   if (cloudManaged) {
     return session
-      ? `The saved model "${model}" belongs to an OpenWork Cloud provider that is not available right now. Refresh your OpenWork providers or choose another AI model.`
-      : `The saved model "${model}" belongs to an OpenWork Cloud provider, but no OpenWork account is signed in here. Continue with OpenWork or choose an AI model from this Mac.`;
+      ? "The saved AI model is unavailable through OpenWork Cloud right now. Refresh your OpenWork providers or choose another AI model."
+      : "The saved AI model needs an OpenWork account. Continue with OpenWork or choose an AI model from this Mac.";
   }
-  return `The saved model "${model}" is not available: provider "${providerId}" is not connected on this Mac. Choose another AI model or connect that provider in OpenWork.`;
+  return "The saved AI model is unavailable because its provider is not connected on this Mac. Choose another AI model or connect that provider in OpenWork.";
 }
 
 /** Only safe categories and observed states appear in either level of the receipt. */

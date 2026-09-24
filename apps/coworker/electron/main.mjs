@@ -1628,10 +1628,14 @@ function skillAwareClient({ captureSkillOrigin = false, nativeWorkspaceId, ...op
     const accountKey = skillAccountKey(session);
     const preparationSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000);
     const assertCurrent = () => {
+      if (preparationSignal.aborted && preparationSignal.reason?.name === "TimeoutError") {
+        throw new Error("Checking skills took too long before OpenCode received your message. Your message is kept; nothing was sent.");
+      }
       preparationSignal.throwIfAborted();
       if (denSession !== session || skillAccountKey(denSession) !== accountKey) throw new Error("The OpenWork account changed while checking selected skills. Your words are kept.");
     };
     let binding = null;
+    let emptyNativeSkillOrigin = false;
     if (session) {
       try {
         const handle = !validated && !turn.skills?.length && !turn.skillSelections?.length && typeof serverHandle?.nativeSkillOriginSnapshot === "function" ? serverHandle : null;
@@ -1648,23 +1652,29 @@ function skillAwareClient({ captureSkillOrigin = false, nativeWorkspaceId, ...op
           const hint = await handle.nativeSkillOriginSnapshot({ workspaceId: preparationWorkspaceId, directory, signal: preparationSignal });
           assertCurrent();
           return hintCurrent() && Array.isArray(hint?.scopes) && Object.isFrozen(hint) && Object.isFrozen(hint.scopes)
-            && hint.scopes.length === 1 && typeof hint.scopes[0] === "string" && /^[0-9a-f]{64}$/.test(hint.scopes[0]) ? hint : null;
+            && (hint.scopes.length === 0 || hint.scopes.length === 1 && typeof hint.scopes[0] === "string" && /^[0-9a-f]{64}$/.test(hint.scopes[0])) ? hint : null;
         };
         try {
           const hint = await readHint();
           if (hint) {
-            const account = (await currentSkillAccount(session, preparationSignal)).scope;
-            assertCurrent();
-            if (await readHint() === hint) {
-              assertSkillSession(session);
-              binding = { account, scope: hint.scopes[0] };
+            if (hint.scopes.length === 0) {
+              emptyNativeSkillOrigin = await readHint() === hint;
+            } else {
+              const account = (await currentSkillAccount(session, preparationSignal)).scope;
+              assertCurrent();
+              if (await readHint() === hint) {
+                assertSkillSession(session);
+                binding = { account, scope: hint.scopes[0] };
+              }
             }
           }
         } catch (error) {
           assertCurrent();
           if (error?.name === "AbortError") throw error;
         }
-        if (!binding) {
+        // Only an explicit, stable empty native snapshot can skip discovery.
+        // A missing hint can mean that Cloud skills are present but stale.
+        if (!binding && !emptyNativeSkillOrigin) {
           const catalog = await client.nativeSkills.listSkills(preparationSignal);
           assertCurrent();
           const scopes = [...new Set(catalog.flatMap((skill) => skill.source ? [skill.source.scope] : []))];
@@ -2239,6 +2249,13 @@ function startLocalResponsibilitiesScheduler() {
 /** Register the coworker directory as a native OpenWork workspace. */
 async function registerCoworkerWorkspace(coworker, readyHandle) {
   const handle = readyHandle ?? await ensurePlatformServer();
+  const team = teamWorkspace();
+  const matches = handle.config.workspaces.filter((workspace) => workspace.id === team.workspaceId
+    || (typeof workspace.path === "string" && path.resolve(workspace.path) === path.resolve(team.path)));
+  const exact = matches.length === 1 && matches[0].id === team.workspaceId && matches[0].workspaceType === "local"
+    && typeof matches[0].path === "string" && path.resolve(matches[0].path) === path.resolve(team.path);
+  if (matches.length && !exact) throw new Error("The shared coworker workspace conflicts with its saved registration.");
+  if (exact && handle.config.authorizedRoots.some((root) => path.resolve(root) === path.resolve(team.path))) return team.workspaceId;
   const tokens = await loadOrCreateTokens();
   const payload = await fetchJson(`${handle.url}/workspaces/local`, {
     method: "POST",
@@ -2246,10 +2263,10 @@ async function registerCoworkerWorkspace(coworker, readyHandle) {
       "Content-Type": "application/json",
       "X-OpenWork-Host-Token": tokens.hostToken,
     },
-    body: JSON.stringify({ folderPath: teamWorkspace().path, name: teamWorkspace().name, preset: "minimal" }),
+    body: JSON.stringify({ folderPath: team.path, name: team.name, preset: "minimal" }),
   });
   const workspaceId = typeof payload?.activeId === "string" ? payload.activeId : "";
-  if (!workspaceId) throw new Error("Workspace registration did not return an id");
+  if (workspaceId !== team.workspaceId) throw new Error("Workspace registration did not return the shared team id");
   return workspaceId;
 }
 

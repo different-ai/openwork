@@ -123,7 +123,8 @@ export default Plugin.define({ id: "coworker.turn-roles", effect: (ctx) => Effec
     catch (error) { if (error.code === "ENOENT") return false; throw error; }
   }, catch: () => new Tool.Error({ message: "The native coworker connection is unavailable." }) }).pipe(Effect.orDie);
   let homePolicyText = teamMode ? yield* Effect.promise(() => readFile(path.join(ctx.location.directory, "opencode.json"), "utf8")) : "";
-  const homePolicyCounts = new Map(Object.entries(teamMode ? JSON.parse(homePolicyText).agents ?? {} : {}).map(([id, agent]) => [id, agent.permissions?.length ?? 0]));
+  let homePolicy = teamMode ? JSON.parse(homePolicyText) : {};
+  const homePolicyCounts = new Map(Object.entries(homePolicy.agents ?? {}).map(([id, agent]) => [id, agent.permissions?.length ?? 0]));
   const refreshPolicy = Effect.gen(function* () {
     if (!teamMode) return;
     const text = yield* Effect.promise(() => readFile(path.join(ctx.location.directory, "opencode.json"), "utf8"));
@@ -132,26 +133,26 @@ export default Plugin.define({ id: "coworker.turn-roles", effect: (ctx) => Effec
     const unrelated = (config) => ({ ...config, agents: Object.fromEntries(Object.entries(config.agents ?? {}).filter(([id]) => !id.startsWith("coworker-owner-"))) });
     if (JSON.stringify(unrelated(previous)) !== JSON.stringify(unrelated(next))) throw new Error("Non-owner native configuration changed; refresh that configuration before admission.");
     if (typeof ctx.agent.reload !== "function") throw new Error("This runtime cannot refresh native owner policies.");
+    // Native config-agent reloads its own file snapshot from a watched event.
+    // A newly written teammate may reach this RPC before that event does. The
+    // app owns only coworker-owner-* entries, so materialize those exact entries
+    // in our existing agent transform instead of waiting for a watcher or
+    // restarting the engine. Other native config remains under its own plugin.
+    homePolicy = next;
     homePolicyCounts.clear();
     for (const [id, agent] of Object.entries(next.agents ?? {})) homePolicyCounts.set(id, agent.permissions?.length ?? 0);
-    for (let attempt = 0; attempt < 50; attempt++) {
-      yield* ctx.agent.reload().pipe(Effect.catchCause(() => Effect.void));
-      let ready = true;
-      for (const [id, expected] of Object.entries(next.agents ?? {})) {
-        if (!id.startsWith("coworker-owner-")) continue;
-        const result = yield* ctx.agent.get({ agentID: id }).pipe(Effect.match({ onFailure: () => null, onSuccess: (value) => value }));
-        const rules = expected.permissions ?? [];
-        if (!result?.data || !result.data.system?.endsWith(expected.system) || (rules.length && JSON.stringify(result.data.permissions.slice(-rules.length)) !== JSON.stringify(rules))) ready = false;
+    yield* ctx.agent.reload();
+    for (const [id, expected] of Object.entries(next.agents ?? {})) {
+      if (!id.startsWith("coworker-owner-")) continue;
+      const result = yield* ctx.agent.get({ agentID: id });
+      const rules = expected.permissions ?? [];
+      if (!result.data.system?.endsWith(expected.system) || (rules.length && JSON.stringify(result.data.permissions.slice(-rules.length)) !== JSON.stringify(rules))) {
+        throw new Error("The native owner policy did not match the current configuration.");
       }
-      if (ready) {
-        const current = yield* Effect.promise(() => readFile(path.join(ctx.location.directory, "opencode.json"), "utf8"));
-        if (current !== text) throw new Error("Native owner policies changed again during preparation.");
-        homePolicyText = text;
-        return;
-      }
-      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 100)));
     }
-    throw new Error("Native owner policies did not reach the current configuration.");
+    const current = yield* Effect.promise(() => readFile(path.join(ctx.location.directory, "opencode.json"), "utf8"));
+    if (current !== text) throw new Error("Native owner policies changed again during preparation.");
+    homePolicyText = text;
   });
   const checkPolicy = teamMode ? Effect.tryPromise({ try: async () => {
     if (await readFile(path.join(ctx.location.directory, "opencode.json"), "utf8") !== homePolicyText) throw new Error("The team configuration changed. Reload native configuration before another tool invocation.");
@@ -159,8 +160,13 @@ export default Plugin.define({ id: "coworker.turn-roles", effect: (ctx) => Effec
   if (teamMode) yield* ctx.agent.transform((editor) => {
     const build = editor.get("build");
     if (!build) throw new Error("The native build policy is unavailable.");
-    for (const id of homePolicyCounts.keys()) if (id.startsWith("coworker-owner-") && !editor.get(id)) editor.update(id, (agent) => {
-      Object.assign(agent, structuredClone(build), { id, name: id, mode: "primary", hidden: false });
+    const owners = Object.entries(homePolicy.agents ?? {}).filter(([id]) => id.startsWith("coworker-owner-"));
+    const ownerIds = new Set(owners.map(([id]) => id));
+    for (const agent of editor.list()) if (agent.id.startsWith("coworker-owner-") && !ownerIds.has(agent.id.split(separator)[0])) editor.remove(agent.id);
+    for (const [id, spec] of owners) editor.update(id, (agent) => {
+      Object.assign(agent, structuredClone(build), { id, name: id, mode: spec.mode, hidden: false,
+        description: spec.description, system: spec.system,
+        permissions: [...structuredClone(build.permissions), ...structuredClone(spec.permissions ?? [])] });
     });
   });
   yield* ctx.tool.transform((editor) => {

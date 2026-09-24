@@ -245,7 +245,13 @@ export function createCloudNativeSkillSync(options: {
       const scope = cloudNativeSkillScopeKey(await options.readCloudConfig());
       if (scope === activeScope) return;
       generation++;
-      await enqueue(clearAll);
+      await enqueue(async () => {
+        await clearAll();
+        // Remember the verified empty scope too. A signed-in host can admit
+        // a plain turn before its first Cloud skill discovery; checking again
+        // must not invalidate the same empty registration each time.
+        activeScope = scope;
+      });
     },
     reset() {
       generation++;

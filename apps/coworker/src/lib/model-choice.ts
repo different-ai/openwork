@@ -191,11 +191,11 @@ export function resolveDiscussionModel(
     ? inherited
       ? chooseAutomaticRoleModel(catalog, "conversation", { standard: coworker.model || undefined, preferences: coworker.modelSelectionPreferences })
       : chooseIndexedModel(catalog, lane, { standard: coworker.model, preferences: coworker.modelSelectionPreferences })
-    : { model: fixed, reason: fixed ? "Kept the exact fixed model; automatic model preferences do not apply." : `The saved model "${fixedId}" is not available. Choose another AI model or connect its provider. No replacement was selected.`, indexVersion: MODEL_INTELLIGENCE_INDEX.version };
+    : { model: fixed, reason: fixed ? "Kept the exact fixed model; automatic model preferences do not apply." : "The saved AI model is unavailable. Choose another AI model or connect its provider. No replacement was selected.", indexVersion: MODEL_INTELLIGENCE_INDEX.version };
   if (!choice.model) return { ...choice, variant: "", lane };
   const fixedVariant = selected.modelVariant?.trim() ?? "";
   if (fixedVariant && !choice.model.variants.includes(fixedVariant)) {
-    return { ...choice, model: null, variant: "", lane, reason: `The ${inherited ? "app conversation" : "selected"} model "${choice.model.id}" no longer offers thinking effort "${fixedVariant}". Update ${inherited ? "the app model defaults" : "this coworker's effort setting"}; no different effort was selected.` };
+    return { ...choice, model: null, variant: "", lane, reason: `The ${inherited ? "app conversation" : "selected"} model ${choice.model.modelLabel} no longer offers thinking effort "${fixedVariant}". Update ${inherited ? "the app model defaults" : "this coworker's effort setting"}; no different effort was selected.` };
   }
   return {
     ...choice,

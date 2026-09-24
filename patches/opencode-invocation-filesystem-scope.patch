@@ -1737,3 +1737,59 @@ index 572c29ce1e2ff6aa77d26f990d55edcd1e0e3998..8a97ddb4aeee27d418feb218d8f62c98
  export { Error } from "@opencode/schema/tool"
 +export type { FilesystemScope, FilesystemScopeInput } from "@opencode/schema/tool"
  export type { ToolContext as Context, Info } from "@opencode/plugin/promise/tool"
+diff --git a/packages/ai/src/protocols/anthropic-messages.ts b/packages/ai/src/protocols/anthropic-messages.ts
+index 4213dc0..bd6d260 100644
+--- a/packages/ai/src/protocols/anthropic-messages.ts
++++ b/packages/ai/src/protocols/anthropic-messages.ts
+@@ -526,10 +526,50 @@ const redactedDataFromMetadata = (metadata: ProviderMetadata | undefined, key: s
+   return typeof provider.redactedData === "string" ? provider.redactedData : undefined
+ }
+ 
++const anthropicToolSchema = (schema: JsonSchema): JsonSchema => {
++  const combinators = ["anyOf", "oneOf", "allOf"] as const
++  const key = combinators.find((item) => Array.isArray(schema[item]))
++  if (!key) return schema.type === undefined ? { ...schema, type: "object" } : schema
++
++  const variants = (schema[key] as unknown[])
++    .filter((item): item is JsonSchema => typeof item === "object" && item !== null && !Array.isArray(item))
++    .map(anthropicToolSchema)
++  const properties: Record<string, unknown> =
++    typeof schema.properties === "object" && schema.properties !== null && !Array.isArray(schema.properties)
++      ? { ...schema.properties }
++      : {}
++  const requiredList = (value: unknown): string[] =>
++    Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
++  const requiredByVariant = variants.map((variant) => requiredList(variant.required))
++  for (const variant of variants) {
++    if (typeof variant.properties !== "object" || variant.properties === null || Array.isArray(variant.properties)) continue
++    for (const [name, property] of Object.entries(variant.properties)) {
++      if (!(name in properties)) properties[name] = property
++    }
++  }
++  const commonRequired = key === "allOf"
++    ? requiredByVariant.flat()
++    : (requiredByVariant[0] ?? []).filter((name) => requiredByVariant.every((items) => items.includes(name)))
++  const required = [...new Set([...requiredList(schema.required), ...commonRequired])]
++    .filter((name) => name in properties)
++  const result: Record<string, unknown> = { ...schema, type: "object", properties }
++  for (const item of combinators) delete result[item]
++  if (required.length) result.required = required
++  else delete result.required
++  if (key !== "allOf" && requiredByVariant.some((items) => items.length)) {
++    const hint = requiredByVariant.map((items) => `(${items.length ? items.join(", ") : "none"})`).join(" or ")
++    const description = typeof schema.description === "string" && schema.description ? `${schema.description}\n` : ""
++    result.description = `${description}Provide fields matching exactly one input variant; variant required fields: ${hint}.`
++  }
++  return result
++}
++
+ const lowerTool = (breakpoints: Cache.Breakpoints, tool: ToolDefinition, inputSchema: JsonSchema): AnthropicTool => ({
+   name: tool.name,
+   description: tool.description,
+-  input_schema: inputSchema,
++  // Anthropic requires an object root without top-level combinators. Some MCP
++  // tools provide an empty schema or a union of argument shapes instead.
++  input_schema: anthropicToolSchema(inputSchema),
+   cache_control: cacheControl(breakpoints, tool.cache),
+ })
+ 

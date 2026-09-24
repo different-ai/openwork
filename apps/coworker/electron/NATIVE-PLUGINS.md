@@ -4,7 +4,8 @@ Native-v2 is integrated into the Coworker feature branch, September 12, 2026.
 Main/server/renderer select the native engine while retaining Calendar/Events,
 Activity, Abilities and current Computer Use. The legacy server/browser/ORM runtime
 edges are removed. Source checks and the local unsigned build pass; packaged
-application behavior and signed distribution remain unverified. See RELEASE-SIZE
+application behavior has since been checked in an isolated unsigned package; signed
+distribution remains a separate CI check. See RELEASE-SIZE
 for the measured package boundary rather than treating compilation as runtime proof.
 Legacy history import is optional separate work, not a fresh-profile prerequisite.
 No real user profile or paid provider is used by the checks below.
@@ -16,7 +17,7 @@ Packaging uses the checked-in `native-source.json` recipe and
 `node apps/coworker/scripts/build-native-source.mjs` fetches upstream commit
 `8520617ca86ba0acd883f7169324db2b3a3f2a59`, checks the patch SHA-256, applies it
 with Git's index checks, and requires the exact patched tree
-`31c9fde67b85d6bd1579d0b318c6c5431d789570`. Bun **1.4.2** must be on PATH.
+`8496cfdb3d788c56bdb9b920f687ffad06f5f440`. Bun **1.4.2** must be on PATH.
 It installs the immutable source's frozen lockfile, builds schema/plugin/SDK,
 and compiles the host target with web UI and source maps excluded. x64 uses the
 upstream baseline target; no cross-target package is inferred from the host.
@@ -42,10 +43,17 @@ virtual locations and embedded-file read after removing its source directory.
 `build:electron` builds the shared prerequisites before loading the plugin helper,
 then bundles all nine plugins against that source SDK, including compatibility
 for the older `@opencode-ai` import namespace. Production identity is
-`0.0.0-local-coworker-8520617-504f1d081f9b`, a stable source-build version accepted
+`0.0.0-local-coworker-8520617-249c350a376d`, a stable source-build version accepted
 by the explicit `native-2` profile, not a registry release. The build receipt records
 the actual target's executable and SDK hashes; unbuilt targets have no invented
 hashes. The upstream MIT license is retained as `electron-dist/OPENCODE-LICENSE`.
+
+The source patch also ensures Anthropic tool definitions have a root object schema
+without root `anyOf`, `oneOf`, or `allOf`.
+Native-v2 forwards MCP tool schemas directly through `packages/ai`; a tool with an
+empty root schema otherwise reaches Claude without `input_schema.type` and the
+provider rejects the entire turn. The older server fetch plugin does not handle
+native-v2 requests, so this normalization belongs at the native protocol boundary.
 
 The following helper remains the **beta development/test** preparation path.
 It is loaded after the headless v2 and server builds; its memory plugin imports

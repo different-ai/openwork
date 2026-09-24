@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { describeTurnFailure, failureText } from "./turn-failure.ts";
+import { describeConversationError, describeTurnFailure, failureText } from "./turn-failure.ts";
+
+test("conversation errors give a calm next step and keep the exact cause in details", () => {
+  const timeout = describeConversationError("The operation was aborted due to timeout");
+  assert.equal(timeout.headline, "This is taking longer than expected");
+  assert.match(timeout.detail, /before sending the message again/);
+  assert.equal(timeout.technical, "The operation was aborted due to timeout");
+
+  const service = describeConversationError("The native AI service answered with HTTP 500.");
+  assert.equal(service.headline, "The AI service had a problem");
+  assert.equal(service.technical, "The native AI service answered with HTTP 500.");
+
+  const model = describeConversationError('The saved model "anthropic/claude-opus" is not available.');
+  assert.equal(model.headline, "Choose an available AI model");
+});
 
 test("provider rejections point at the model or account; other failures stay neutral", () => {
   const rejected = describeTurnFailure("ProviderError: 401 Unauthorized", "Scout");

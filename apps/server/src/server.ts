@@ -923,6 +923,11 @@ export async function startServer(config: ServerConfig): Promise<ServeResult & {
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
           assertNativeProxyManagementAllowed(request.method, nativeProxyPolicyPath(mount.restPath.slice("/opencode2".length), config.opencodeV2?.apiContract));
+          // Parse only after authentication and policy checks. Plain turns can
+          // skip the Cloud catalog refresh; selected skills keep the barrier.
+          const plainNativeAdmission = nativeAdmission
+            && await request.clone().json().then((body: unknown) => isRecord(body)
+              && (body.skills === undefined || Array.isArray(body.skills) && body.skills.length === 0), () => false);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
           const connection = engineV2Preview.connection();
           if (!connection) {
@@ -969,7 +974,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult & {
           const preparesSkills = config.engine === "v2" && ((request.method === "GET" && mount.restPath === "/opencode2/api/skill") || nativeAdmission);
           const send = async () => {
             if (!preparesSkills) return forward();
-            try { return await engineV2Preview.withNativeSkills(workspace.path, forward, expectedNativeSkillsScope); }
+            try { return await engineV2Preview.withNativeSkills(workspace.path, forward, expectedNativeSkillsScope, plainNativeAdmission); }
             catch (error) {
               if (error instanceof ApiError) throw error;
               throw new ApiError(error instanceof CloudNativeSkillSyncError && ["cloud_skill_sync_stale", "cloud_skill_scope_mismatch"].includes(error.code) ? 400 : 502,

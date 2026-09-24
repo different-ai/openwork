@@ -256,8 +256,33 @@ export function createNativeV2Client(options: NativeV2ClientOptions) {
       throw failure("request_failed", method, path, method === "GET" ? "Native v2 observation failed. Execution status is unavailable." : "Native v2 request failed; a write may have been admitted.");
     }
     if (!response.ok) {
-      await response.body?.cancel();
-      throw failure("request_failed", method, path, `OpenWork returned HTTP ${response.status}.`, response.status);
+      let publicCode: string | null = null;
+      if (response.headers.get("content-type")?.includes("application/json")) {
+        const reader = response.body?.getReader();
+        if (reader) {
+          const chunks: Uint8Array[] = [];
+          let bytes = 0;
+          try {
+            while (bytes <= 4096) {
+              const part = await reader.read();
+              if (part.done) break;
+              bytes += part.value.byteLength;
+              chunks.push(part.value);
+            }
+            if (bytes <= 4096) {
+              const data = new Uint8Array(bytes);
+              let offset = 0;
+              for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.byteLength; }
+              const payload: unknown = JSON.parse(new TextDecoder().decode(data));
+              if (payload && typeof payload === "object" && !Array.isArray(payload) && "code" in payload
+                && typeof payload.code === "string" && /^[a-z][a-z0-9_]{1,79}$/.test(payload.code)) publicCode = payload.code;
+            }
+          } catch { /* The HTTP status remains the useful error. */ }
+          finally { await reader.cancel().catch(() => undefined); }
+        }
+      } else await response.body?.cancel();
+      throw failure("request_failed", method, path,
+        `OpenWork returned HTTP ${response.status}${publicCode ? ` (${publicCode})` : ""}.`, response.status);
     }
     try {
       if (response.status !== status) throw new Error("Unexpected status");

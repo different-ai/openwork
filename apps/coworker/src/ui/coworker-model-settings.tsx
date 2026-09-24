@@ -151,7 +151,7 @@ export function CoworkerModelSettings({ runtime, session, coworker, onCoworkerCh
           <div className="space-y-1 break-words text-xs leading-relaxed text-mist">
             <p className="font-semibold text-snow">{defaults && !defaults.conversation.model ? "Automatic" : "App conversation default"}</p>
             <p data-testid="coworker-automatic-current">{previewLoading || catalogLoading ? "Reading current model choice..." : describeModelPreview(preview("conversation"))}</p>
-            <p>Conversations use the app default, including its thinking effort. {coworker.model ? `Saved personal model: ${coworker.model}. Choose Customize to use it again.` : "No personal model is saved yet. Choose Customize to pick one."}</p>
+            <p>Conversations use the app default, including its thinking effort. {coworker.model ? `Saved personal model: ${modelCatalog?.models.find((model) => model.id === coworker.model)?.modelLabel ?? "currently unavailable"}. Choose Customize to use it again.` : "No personal model is saved yet. Choose Customize to pick one."}</p>
           </div>
         ) : <ModelPicker {...pickerProps} automaticPreview={preview("conversation")} value={coworker.model} modelVariant={coworker.modelVariant} chosenBy={coworker.modelChosenBy} modelMode={coworker.modelMode} onChange={(selection) => void update({ ...selection, modelChosenBy: "person", useAppModelDefaults: false })} />}
         <details className="mt-4 text-xs text-mist" data-testid="model-selection-preferences">

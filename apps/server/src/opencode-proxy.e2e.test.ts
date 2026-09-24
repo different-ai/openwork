@@ -218,6 +218,7 @@ async function startOpenworkServer(input: {
   workspaceRoot: string;
   secondWorkspaceRoot?: string;
   opencodeBaseUrl?: string;
+  engine?: "v2";
   readOnly?: boolean;
   resumeInterruptedTasks?: boolean;
 }) {
@@ -256,6 +257,7 @@ async function startOpenworkServer(input: {
     hostTokenSource: "cli",
     logFormat: "pretty",
     logRequests: false,
+    engine: input.engine,
   };
   const server = await startServer(config) as Served;
   stops.push(() => server.stop(true));
@@ -298,6 +300,7 @@ async function startV2Proxy(options?: MockRequestOptions) {
   const engine = startMockOpencode({ ...options, nativeV2Directory: workspaceRoot, foreignSessionDirectory: secondWorkspaceRoot });
   const provider = readinessGate();
   const mcp = readinessGate();
+  const skillPreparations: boolean[] = [];
   const status = () => ({ enabled: true, chatRouting: true, running: true,
     mirroredProviderIds: [], skippedProviderIds: [], catalogModelIds: [] });
   // Hold only execution preparation; requests still cross the real HTTP server,
@@ -310,20 +313,23 @@ async function startV2Proxy(options?: MockRequestOptions) {
     refresh: async () => {},
     process: () => ({ pid: null, isAlive: () => true }),
     assertNativeSkillsScope: async () => {},
-    withNativeSkills: async (_directory, use) => use({ data: [] }, async () => {}),
+    withNativeSkills: async (_directory, use, _scope, plainTurn) => {
+      skillPreparations.push(plainTurn === true);
+      return use({ data: [] }, async () => {});
+    },
     request: async () => { throw new Error("Direct native requests are outside this proxy fixture"); },
     createNativeCleanupRequest: () => async () => { throw new Error("Host cleanup is outside this proxy fixture"); },
     stop: async () => {},
   });
   try {
-    const openwork = await startOpenworkServer({ workspaceRoot, secondWorkspaceRoot, readOnly: false });
+    const openwork = await startOpenworkServer({ workspaceRoot, secondWorkspaceRoot, readOnly: false, engine: "v2" });
     stops.push(() => { provider.release(); mcp.release(); });
     const base = `http://127.0.0.1:${openwork.server.port}`;
     const request = (path: string, init: RequestInit = {}, workspaceId = "ws_1") => fetch(
       `${base}/workspace/${workspaceId}/opencode2${path}`,
       { signal: AbortSignal.timeout(2_000), headers: auth(openwork.token), ...init },
     );
-    return { ...openwork, base, request, engine, provider, mcp, workspaceRoot, secondWorkspaceRoot };
+    return { ...openwork, base, request, engine, provider, mcp, skillPreparations, workspaceRoot, secondWorkspaceRoot };
   } finally {
     preview.mockRestore();
   }
@@ -594,10 +600,17 @@ describe("workspace OpenCode proxy", () => {
     expect((await prompt).status).toBe(200);
     expect(fixture.provider.calls).toEqual([[fixture.workspaceRoot]]);
     expect(fixture.mcp.calls).toEqual([["ws_1", fixture.workspaceRoot]]);
-    expect(fixture.engine.requests.slice(-5).map((item) => `${item.method} ${item.pathname}`)).toEqual([
-      "GET /api/session/ses_1", "GET /api/mcp", "GET /api/skill",
+    expect(fixture.skillPreparations).toEqual([true]);
+    expect(fixture.engine.requests.slice(-4).map((item) => `${item.method} ${item.pathname}`)).toEqual([
+      "GET /api/session/ses_1", "GET /api/mcp",
       "PUT /api/session/ses_1/instructions/entries/openwork.context", "POST /api/session/ses_1/prompt",
     ]);
+    const selected = await fixture.request("/api/session/ses_1/prompt", {
+      method: "POST", body: JSON.stringify({ parts: [], skills: [{ id: "missing" }] }),
+    });
+    expect(selected.status).toBe(400);
+    expect(await selected.json()).toMatchObject({ code: "skill_unavailable" });
+    expect(fixture.skillPreparations).toEqual([true, false]);
   });
 
   for (const failingGate of ["provider", "mcp"]) {

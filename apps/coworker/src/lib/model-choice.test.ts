@@ -445,7 +445,7 @@ test("fixed discussion models ignore automatic preferences and never replace an 
       assert.equal(choice.model, null);
       assert.equal(choice.variant, "");
       if (modelMode === "fixed" && model === "gone/model") {
-        assert.ok(choice.reason.includes(model));
+        assert.doesNotMatch(choice.reason, /gone\/model/, "an unavailable internal model ID stays out of the user-facing error");
         const failure = describeTurnFailure(choice.reason, "Editor");
         assert.equal(failure.headline, "Editor's AI model is not available.");
         assert.equal(failure.modelRelated, true);
