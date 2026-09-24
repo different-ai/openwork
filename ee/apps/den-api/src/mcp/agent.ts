@@ -1015,6 +1015,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           handlers.notify.toolsChanged(notificationScope)
           handlers.notify.resourcesChanged(notificationScope)
         },
+        allowLegacyCreation: !externalMcpConnectionsEnabled,
       })
 
       const exactResource = requestInfo.resourceUri ? parseArtifactViewResourceUri(requestInfo.resourceUri) : null

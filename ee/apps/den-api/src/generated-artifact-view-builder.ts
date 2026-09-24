@@ -92,7 +92,9 @@ const HOST_GLOBAL_DEFINES = Object.fromEntries(HOST_GLOBAL_NAMES.map((name, inde
   `__openwork_forbidden_host_global_${index}__`,
 ]))
 
-const AUTHORED_MODULE_PATTERN = /\b(?:import|require)\s*(?:\(|\.|["'{*]|[\w$])|\bexport\s*(?:type\s+)?(?:\*|\{[^}]*\})\s*(?:as\s+[\w$]+\s*)?from\b/u
+// Real imports are also rejected by the bundler; this pattern only needs to
+// catch module syntax without matching prose such as "required" or "import your files".
+const AUTHORED_MODULE_PATTERN = /\bimport\s*(?:\(|\.|(?:type\s+)?(?:["'{*]|[\w$]+\s*(?:,|from\b)))|\brequire\s*\(|\bexport\s*(?:type\s+)?(?:\*|\{[^}]*\})\s*(?:as\s+[\w$]+\s*)?from\b/u
 const SAFE_REACT_FACTORY = "__openworkSafeReact"
 
 async function sourcePolicyDiagnostic(reactSource: string, cssSource: string, runtime: "artifact" | "mcp-app"): Promise<GeneratedArtifactViewBuildDiagnostic | null> {
@@ -102,14 +104,21 @@ async function sourcePolicyDiagnostic(reactSource: string, cssSource: string, ru
   if (cssBytes > MAX_CSS_BYTES) return diagnostic(`CSS source exceeds ${MAX_CSS_BYTES} bytes.`)
 
   const subject = runtime === "mcp-app" ? "MCP Apps" : "Artifact views"
+  // MCP Apps rely on the scope-aware host-global pass below for network APIs,
+  // so prose and tool names such as "Worker" or "web.fetch" stay usable, and
+  // only DOM (lowercase) elements carry URL-bearing attributes; components
+  // may take props such as data={rows}. The runtime guard still checks DOM props.
+  const mcpApp = runtime === "mcp-app"
   const forbidden = [
     { pattern: AUTHORED_MODULE_PATTERN, label: "module imports or reexports" },
     { pattern: /@jsx(?:Runtime|ImportSource|Frag)?\b/u, label: "JSX compiler directives" },
     { pattern: /\b__openworkSafeReact\b/u, label: "reserved compiler bindings" },
-    { pattern: /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|Worker)\b/u, label: "network APIs" },
+    ...(mcpApp ? [] : [{ pattern: /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|Worker)\b/u, label: "network APIs" }]),
     { pattern: /\b(?:eval|Function|setTimeout|setInterval)\s*\(/u, label: "dynamic code or timers" },
     { pattern: /dangerouslySetInnerHTML/u, label: "dangerous HTML injection" },
-    { pattern: /<[A-Za-z][^<>]*\b(?:href|src|srcSet|action|formAction|poster|ping|cite|xlinkHref|data)\s*=/u, label: "URL-bearing attributes" },
+    { pattern: mcpApp
+      ? /<[a-z][^<>]*\b(?:href|src|srcSet|action|formAction|poster|ping|cite|xlinkHref|data)\s*=/u
+      : /<[A-Za-z][^<>]*\b(?:href|src|srcSet|action|formAction|poster|ping|cite|xlinkHref|data)\s*=/u, label: "URL-bearing attributes" },
     { pattern: /<[A-Za-z][^<>]*\bstyle\s*=\s*\{\{[^<>]*?(?:url\s*\(|@import)/u, label: "styles that reference external resources" },
     { pattern: /<\/?(?:script|iframe|object|embed|form|base|link|meta|style|svg|math)\b/iu, label: "unsafe HTML elements" },
   ]

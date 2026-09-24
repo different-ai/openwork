@@ -79,6 +79,7 @@ async function withClient<T>(
     save: () => Promise<GeneratedArtifactView>
     activate: (request: { artifactViewId: string; revisionId: string }) => Promise<GeneratedArtifactView>
     retire: () => Promise<GeneratedArtifactView>
+    allowLegacyCreation: boolean
   }> = {},
 ): Promise<T> {
   const server = new McpServer(
@@ -98,6 +99,7 @@ async function withClient<T>(
       server.sendToolListChanged()
       server.sendResourceListChanged()
     },
+    allowLegacyCreation: overrides.allowLegacyCreation,
   })
   const client = new Client({ name: "host", version: "1.0.0" }, { capabilities: {} })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -571,5 +573,20 @@ test("legacy views retain snapshot inputs and do not advertise live execution", 
       receiptId = request.receiptId
       return { ok: true, payload, markdown: "# Snapshot" }
     },
+  })
+})
+
+test("legacy creation keeps working where create_app is unavailable", async () => {
+  let saves = 0
+  await withClient(async (client) => {
+    const result = await client.callTool({
+      name: "save_artifact_view",
+      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+    })
+    expect(JSON.stringify(result.content)).not.toContain("deprecated_creation")
+    expect(saves).toBe(1)
+  }, {
+    save: async () => { saves += 1; return view },
+    allowLegacyCreation: true,
   })
 })

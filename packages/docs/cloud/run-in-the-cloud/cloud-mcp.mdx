@@ -232,13 +232,18 @@ MCP Apps from third-party providers render in OpenWork through its private App h
 ### Build a portable App
 
 Use `create_app` directly for a new App, dashboard, or interactive view. No
-Workflow, receipt, output schema, or Automation is required. It accepts:
+Workflow, receipt, output schema, or Automation is required. Authored App tools
+are available when the organization has member-facing MCP connections enabled
+(the default); where they are turned off, `save_artifact_view` keeps its legacy
+creation path. It accepts:
 
 - `title`, `reactSource`, and a non-empty `textFallback`.
 - Optional `description`, `cssSource`, and `pluginId`.
 
-Omit `pluginId` to create a new private Plugin. Supply an existing Plugin only
-when authorized to edit it. The result is a text summary and structured
+Omit `pluginId` to create a new private Plugin named after the App. If you
+already have a Plugin with that name, creation returns `duplicate_plugin` with
+its ID: pass that `pluginId` or choose another title. Supply an existing Plugin
+only when authorized to edit it. The result is a text summary and structured
 `{ app }`, including `appId`, `pluginId`, `revisionId`, `title`, `description`,
 `textFallback`, `toolName`, and `resourceUri`. Creation does not open a panel,
 run tools, or create a Workflow.
@@ -279,8 +284,9 @@ forwarding.
 
 Default-export a React component receiving `{ app, input, result, hostContext }`.
 `React` is injected; use `React.useState` and other React APIs without imports.
-`input` is the launch input, `result` is the launch tool result, and `hostContext`
-is supplied by the host. Authored source cannot import modules, fetch, use
+`input` is the launch input, `result` is the launch `CallToolResult` (read
+`result?.structuredContent`; it is `undefined` until the host delivers it), and
+`hostContext` is supplied by the host. Authored source cannot import modules, fetch, use
 browser/host globals, execute dynamic code, load external resources, or use
 URL-bearing elements. Native `<form>` elements are blocked: use labeled inputs
 and explicit `type="button"` controls.
@@ -310,8 +316,13 @@ Use exact discovered names and argument shapes for subsequent calls.
 `search_capabilities`, `execute_capability`, and Workflows remain ordinary tools;
 they are not a required parent runtime. Normal host consent, connection grants,
 organization policy, and MCP scopes still apply, including `mcp:write` for every
-external provider invocation. Apps add neither a per-App tool grant nor a
-blanket read-only restriction. Nested provider visibility is not independently
+external provider invocation. Apps add no per-App tool grant. Check
+`app.getHostCapabilities()?.serverTools` before calling tools. Hosts may require
+a user click before calling a tool that is not read-only: OpenWork does, and
+`execute_capability` is not read-only. So only read-only tools such as
+`search_capabilities` may run on mount; start data loads and actions that use
+`execute_capability` from an explicit button and show `tool_requires_approval`
+as a blocked state. Nested provider visibility is not independently
 verified by this builder. Existing Workflow and passthrough authorization is
 unchanged.
 

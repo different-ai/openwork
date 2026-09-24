@@ -179,6 +179,8 @@ export function registerAgentGeneratedArtifactViews(input: {
   retire: (request: { artifactViewId: string }) => Promise<GeneratedArtifactView>
   readSource?: (request: { artifactViewId: string }) => Promise<{ view: GeneratedArtifactView; reactSource: string; cssSource: string }>
   notifyCatalogChanged: () => void
+  /** Keeps legacy creation where create_app is unavailable, so no org is left without a creation path. */
+  allowLegacyCreation?: boolean
 }) {
   const registeredResources = new Map<string, RegisteredResource>()
   const registeredTools = new Map<string, { revisionId: string; registration: RegisteredTool }>()
@@ -241,7 +243,7 @@ export function registerAgentGeneratedArtifactViews(input: {
     {
       title: "Edit a legacy Artifact view",
       description: [
-        "Legacy edit-only tool. An existing artifactViewId is required; new creation returns deprecated_creation. Use create_app for every new app, dashboard, or interactive view. This tool does not migrate or rebind a legacy view.",
+        "Legacy edit-only tool. An existing artifactViewId is required; where create_app is available, new creation returns deprecated_creation. Use create_app for every new app, dashboard, or interactive view. This tool does not migrate or rebind a legacy view.",
         "Compile a replacement React revision for the existing Workflow-bound Artifact view. Preserve its artifactViewId, configObjectId, and immutable data mode. The current saved Workflow must declare outputSchema. Existing live previews execute the saved version as the viewer with server-supplied input.runtime.{now,today,timeZone,dayStart,dayEnd}. Snapshot receipts remain private to their caller.",
         "Provide a default-exported React component that receives { data, artifact }. React is already injected: use React.useState and other React APIs without imports. Do not import modules, fetch data, access browser globals, or add URL-bearing elements; all render-time data comes from data.",
         "Every successful build is a draft. Show the preview so the user can try it and choose Save in OpenWork to keep the workflow and app together on their dashboard. Never activate a draft merely because it built successfully. Editing never changes the saved app. Use one friendly name for the workflow and app. Only create an Automation when the user asks for a schedule. Generated views display, filter, and explore results; they do not submit approvals or other writes.",
@@ -260,7 +262,7 @@ export function registerAgentGeneratedArtifactViews(input: {
       outputSchema: saveOutputSchema,
     },
     async (request) => {
-      if (!request.artifactViewId) {
+      if (!request.artifactViewId && !input.allowLegacyCreation) {
         return errorToolResult("deprecated_creation", "save_artifact_view only edits existing legacy views. Call create_app with React/CSS source and textFallback for a new App; no Workflow is required.")
       }
       let view: GeneratedArtifactView

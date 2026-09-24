@@ -255,6 +255,18 @@ describe.skipIf(!process.env.DEN_TEST_DATABASE_URL)("authored MCP Apps with isol
     expect(await db.select().from(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.organizationId, access(context).organizationId))).toHaveLength(0)
   })
 
+  test("a repeated title explains the existing Plugin instead of failing opaquely", async () => {
+    const context = await actor()
+    const first = await apps.createMcpApp({ context, ...source })
+    const repeated = apps.createMcpApp({ context, ...source })
+    await expect(repeated).rejects.toMatchObject({ code: "duplicate_plugin" })
+    await expect(repeated).rejects.toThrow(first.pluginId)
+    await expect(repeated).rejects.toThrow("pass its pluginId")
+    expect(await apps.listAccessibleMcpApps(access(context))).toEqual([first])
+    const second = await apps.createMcpApp({ context, ...source, pluginId: first.pluginId })
+    expect(second.pluginId).toBe(first.pluginId)
+  })
+
   test("existing Plugin sharing enables resources, not source edits or viewer resharing", async () => {
     const context = await actor()
     const viewer = await actor(access(context).organizationId)

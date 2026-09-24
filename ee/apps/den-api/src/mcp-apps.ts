@@ -27,7 +27,7 @@ import {
   requirePluginArchResourceRole,
   type PluginArchActorContext,
 } from "./routes/org/plugin-system/access.js"
-import { createConfigObject, createPlugin, INTERNAL_MCP_APP_WRITE } from "./routes/org/plugin-system/store.js"
+import { createConfigObject, createPlugin, INTERNAL_MCP_APP_WRITE, PluginArchRouteFailure, setPluginLifecycle } from "./routes/org/plugin-system/store.js"
 
 export class McpAppError extends Error {
   constructor(readonly status: 400 | 404 | 409 | 413 | 422, readonly code: string, message: string) {
@@ -199,11 +199,19 @@ export async function createMcpApp({ context, ...source }: CreateMcpAppInput & {
   const input = parsed.data
   let pluginId = input.pluginId ? await editablePlugin(context, input.pluginId) : null
   const compiled = await compile(input, pluginId ?? createDenTypeId("plugin"))
+  let createdPluginId: DenTypeId<"plugin"> | null = null
   if (pluginId) {
     await editablePlugin(context, pluginId)
   } else {
-    const plugin = await createPlugin({ context, name: input.title, description: input.description })
-    pluginId = plugin.id
+    try {
+      const plugin = await createPlugin({ context, name: input.title, description: input.description })
+      pluginId = createdPluginId = plugin.id
+    } catch (error) {
+      if (error instanceof PluginArchRouteFailure && error.error === "duplicate_plugin") {
+        throw new McpAppError(409, "duplicate_plugin", `${error.message} To add this App to it, pass its pluginId; otherwise choose a different title. No App was created.`)
+      }
+      throw error
+    }
   }
   const payload = { ...compiled.payload, pluginId }
   const saved = await createConfigObject({
@@ -217,7 +225,12 @@ export async function createMcpApp({ context, ...source }: CreateMcpAppInput & {
       rawSourceText: compiled.rawSourceText,
       schemaVersion: MCP_APP_CONFIG_SCHEMA_VERSION,
     },
-  }, INTERNAL_MCP_APP_WRITE)
+  }, INTERNAL_MCP_APP_WRITE).catch(async (error: unknown) => {
+    // Do not leave an empty private Plugin behind; it would also block a retry
+    // with the same title as a duplicate.
+    if (createdPluginId) await setPluginLifecycle({ action: "archive", context, pluginId: createdPluginId }).catch(() => undefined)
+    throw error
+  })
   if (!saved.latestVersion) throw new McpAppError(422, "mcp_app_save_failed", "The MCP App revision could not be retrieved.")
   return summarizeMcpAppRevision({ appId: saved.id, revisionId: saved.latestVersion.id, payload })
 }

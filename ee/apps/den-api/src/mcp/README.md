@@ -80,7 +80,9 @@ They are required for OAuth/MCP setup, but should not appear as callable MCP too
 
 ### Authored Apps
 
-New generation uses `create_app`, not a Workflow-first sequence. Supply complete
+New generation uses `create_app`, not a Workflow-first sequence. These tools
+register only when member-facing MCP connections are enabled (the default);
+otherwise legacy `save_artifact_view` creation stays available. Supply complete
 React/CSS source and a text fallback; `read_app` and `update_app` edit the same
 App using optimistic revision IDs. Creation is private unless an authorized
 existing Plugin is selected. Source reads require editor access. Plugin and
@@ -89,8 +91,8 @@ Marketplace sharing do not share credentials.
 The component receives `{ app, input, result, hostContext }`, with React injected.
 Imports, fetch, host globals, and native forms are blocked. Use
 `app.callServerTool({ name, arguments })` for discovered ordinary tools with
-normal host consent and MCP scopes. There is no per-App grant or new read-only
-restriction. The standard bridge uses `autoResize: true`;
+normal host consent and MCP scopes. There is no per-App grant; OpenWork's host
+runs non-read-only tools such as `execute_capability` only on a user click. The standard bridge uses `autoResize: true`;
 `app.sendSizeChanged({ height })` is a request the host may clamp.
 
 Authored App search results name exact direct `open_app_cob_*` tools. Each tool

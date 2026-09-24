@@ -465,3 +465,63 @@ test("standard MCP App sizing: preserves host container dimensions and component
     await runtime.close()
   }
 })
+
+test("accepts prose, capability names, and component props that resemble blocked syntax", async () => {
+  const result = await buildGeneratedMcpApp({
+    ...input,
+    reactSource: `function Chart({ data }) { return <ul>{data.map((row) => <li key={row}>{row}</li>)}</ul> }
+      export default function View({ app }) {
+        return <main>
+          <label>Email (required)<input aria-required="true" required /></label>
+          <p>This field is required. Ready to import your files. This is important.</p>
+          <p>Persistent Worker status</p>
+          <Chart data={["a", "b"]} />
+          <button type="button" onClick={() => app.callServerTool({ name: "execute_capability", arguments: { name: "web.fetch" } })}>Run</button>
+        </main>
+      }`,
+  })
+  expect(result.diagnostics).toEqual([])
+  expect(result.ok).toBe(true)
+})
+
+test.each([
+  "import React from 'react'",
+  "import * as R from 'react'",
+  "import type { X } from 'x'",
+  "const lazy = import('x')",
+  "const meta = import.meta",
+  "const x = require('x')",
+  "export * from 'x'",
+])("still rejects module syntax: %s", async (statement) => {
+  const result = await buildGeneratedMcpApp({ ...input, reactSource: `${statement}\nexport default function View() { return <p /> }` })
+  expect(result.ok).toBe(false)
+})
+
+test("still rejects URL-bearing attributes on DOM elements", async () => {
+  const result = await buildGeneratedMcpApp({ ...input, reactSource: `export default function View() { return <a href="https://example.com">x</a> }` })
+  expect(result.ok).toBe(false)
+  expect(result.diagnostics[0]?.message).toContain("URL-bearing attributes")
+})
+
+test("a render failure before launch data arrives recovers on the next input or result without remounting healthy trees", async () => {
+  const runtime = await runtimeHarness()
+  try {
+    await runtime.initialize()
+    const Boundary = runtime.trees[0]?.type as unknown as {
+      getDerivedStateFromError: () => { failed: boolean }
+      getDerivedStateFromProps: (props: { revision: number }, state: { failed: boolean; revision: number }) => Partial<{ failed: boolean; revision: number }> | null
+    }
+    const initialRevision = (runtime.trees[0]?.props as { revision: number }).revision
+    const failed = { failed: true, revision: initialRevision }
+    expect(Boundary.getDerivedStateFromError()).toEqual({ failed: true })
+    expect(Boundary.getDerivedStateFromProps({ revision: initialRevision }, failed)).toBeNull()
+    await runtime.bridge.sendToolResult({ content: [], structuredContent: { title: "Ready" } })
+    const nextRevision = (runtime.trees.at(-1)?.props as { revision: number }).revision
+    expect(nextRevision).not.toBe(initialRevision)
+    expect(Boundary.getDerivedStateFromProps({ revision: nextRevision }, failed)).toEqual({ failed: false, revision: nextRevision })
+    expect(Boundary.getDerivedStateFromProps({ revision: nextRevision }, { failed: false, revision: initialRevision })).toEqual({ revision: nextRevision })
+    expect(runtime.trees.every((tree) => tree.key === null)).toBe(true)
+  } finally {
+    await runtime.close()
+  }
+})
