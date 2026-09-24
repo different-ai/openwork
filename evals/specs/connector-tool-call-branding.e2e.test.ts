@@ -19,6 +19,7 @@ test("connector-backed tool calls show first-class branding and human-readable l
   await step("the completed connector action exposes its arguments and survives reload", async () => {
     await user.see({ text: world.proof }, { timeoutMs: 60_000 });
     await user.see("Run task");
+    if (world.engine === "v2") await user.click({ role: "button", label: /Looked up.*Show steps/ });
     expect(await world.den.mocks.connector.toolCalls({ name: "list_channels", sinceIso, atLeast: 1 }))
       .toMatchObject([{ name: "list_channels", args: { limit: 3 } }]);
     // TODO(primitive): probe.connectorBranding
@@ -38,12 +39,44 @@ test("connector-backed tool calls show first-class branding and human-readable l
     await user.see({ text: /"limit":\s*3/ });
     await user.screenshot();
     await user.reload();
+    if (world.engine === "v2") await user.click({ role: "button", label: /Looked up.*Show steps/ });
     await user.see({ text: /^Listed channels$/ }, { timeoutMs: 30_000 });
     expect(await inspect()).toMatchObject({ count: 1, connector: "Slack" });
     await user.notSee({ text: /openwork-cloud_execute_capability/ });
     await user.click({ role: "button", label: "Listed channels. Show technical details" });
     await user.see({ text: /"limit":\s*3/ });
     await user.click({ role: "button", label: "Listed channels. Hide technical details" });
+  });
+
+  await step("before: a note has not yet been created", async () => {
+    await user.notSee({ text: world.mutationProof });
+    await user.screenshot();
+  });
+
+  await step("a member sees the note being created rather than the last lookup", async () => {
+    await user.type("composer", world.mutationPrompt);
+    await user.click("Run task");
+    if (world.engine === "v2") {
+      await user.see({ role: "button", label: /Creating note.*Slack/ }, { timeoutMs: 60_000 });
+      await user.notSee({ text: /Tool activity|Task step|Completed with errors/ });
+    } else {
+      await user.see({ text: /Creating note/ }, { timeoutMs: 60_000 });
+    }
+    await user.screenshot();
+  });
+
+  await step("after: the created note is visible and the result survives reload", async () => {
+    await user.see({ text: world.mutationProof }, { timeoutMs: 60_000 });
+    await user.see("Run task");
+    if (world.engine === "v2") {
+      await user.see({ role: "button", label: /Created note.*Slack/ });
+    } else {
+      await user.see({ text: /Created note/ });
+    }
+    await user.screenshot();
+    await user.reload();
+    await user.see({ text: world.mutationProof }, { timeoutMs: 30_000 });
+    await user.screenshot();
   });
 
   await step("a failed connector action stays identifiable and is not shown as successful", async () => {

@@ -88,6 +88,34 @@ test("unfinished code mode calls do not resume animating after interruption", ()
   }
 });
 
+test("code-mode mutations summarize the outcome, not the last lookup, and fold when finished", () => {
+  const part: DynamicToolUIPart = { type: "dynamic-tool", toolName: "execute", toolCallId: "script-write", state: "output-available", input: { code: "return await tools.linear.create_note({})" }, output: "Saved" };
+  const calls: DynamicToolUIPart[] = [
+    { type: "dynamic-tool", toolName: "linear_create_note", toolCallId: "create", state: "output-available", input: {}, output: undefined },
+    { type: "dynamic-tool", toolName: "linear_list_teams", toolCallId: "read", state: "output-available", input: {}, output: undefined },
+  ];
+  const html = renderToStaticMarkup(<CodeModeTool part={part} calls={calls} lifecycle={null} connectors={[]} />);
+  expect(html).toContain("Created note · Linear");
+  expect(html).toContain("Show steps");
+  expect(html).not.toContain("List teams. Show");
+  expect(html).not.toContain("Tool activity");
+  expect(html).not.toContain("text-destructive");
+});
+
+test("code-mode failures remain neutral and do not hide the failed call", () => {
+  const part: DynamicToolUIPart = { type: "dynamic-tool", toolName: "execute", toolCallId: "script-retry", state: "input-available", input: { code: "retry" } };
+  const calls: DynamicToolUIPart[] = [
+    { type: "dynamic-tool", toolName: "linear_get_note", toolCallId: "first", state: "output-error", input: {}, errorText: "Missing" },
+    { type: "dynamic-tool", toolName: "linear_list_teams", toolCallId: "second", state: "input-available", input: {} },
+  ];
+  const html = renderToStaticMarkup(<CodeModeTool part={part} calls={calls} lifecycle="running" connectors={[]} />);
+  expect(html).toContain("1 failed call");
+  expect(html).toContain("Couldn&#x27;t");
+  expect(html).toContain("ow-text-shimmer");
+  expect(html).not.toContain("text-destructive");
+  expect(html).not.toContain("Completed with errors");
+});
+
 test("renders a connector logo beside a human-readable completed tool call", () => {
   const part: DynamicToolUIPart = {
     type: "dynamic-tool",
