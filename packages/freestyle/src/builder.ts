@@ -4,6 +4,20 @@ import type { Vm } from "freestyle";
 import { client, execChecked, findSnapshot, snapshotSlug, type PreviewWorld } from "./index.ts";
 import { compiledFingerprint, runningFingerprint, dependencyFingerprint, dependencyInput, digest, ensureLayer, sourceTree, startBuildUnit, type ObserveBuild } from "./cache.ts";
 import { checkoutRecipe, compiledRecipe, dependencyRecipe, toolsRecipe } from "./build-recipes.ts";
+import { templateOrigins } from "./origins.mjs";
+
+/**
+ * Template origins are placeholders that only the authenticated edge rewrites,
+ * and only for browsers. Den still advertises them to in-VM clients: the signed-in
+ * desktop's OpenWork Cloud MCP pointed at the template API origin, so every sync
+ * hung at the public edge and the engine kept reloading, starving the 4-vCPU VM
+ * until desktop setup hit the snapshot deadline. Refusing them locally makes those
+ * calls fail at once. Cloud MCP was never reachable in previews either way.
+ */
+export function templateHostsEntries(): string {
+  const hosts = Object.values(templateOrigins).map((origin) => new URL(origin).hostname).join(" ");
+  return `127.0.0.1 ${hosts}\n::1 ${hosts}\n`;
+}
 
 export interface BuildOptions {
   observe?: ObserveBuild;
@@ -83,7 +97,7 @@ ${dependencies}`, options);
     parent: async () => deps.id,
     prepare: async (vm) => runScript(vm, "compiled", `${checkoutRecipe(sha)}\n${compile}`, options),
   }, api);
-  const controllerFiles = ["builder.ts", "cache.ts", "build-recipes.ts", "gateway.mjs", "runtime.mjs", "acme-runtime.mjs", "health.mjs", "origins.mjs", "resume.mjs", "desktop.mjs", "refresh.mjs"];
+  const controllerFiles = ["builder.ts", "cache.ts", "build-recipes.ts", "gateway.mjs", "runtime.mjs", "acme-runtime.mjs", "health.mjs", "origins.mjs", "resume.mjs", "desktop.mjs", "refresh.mjs", "desktop-runtime.mjs", "desktop-state.mjs", "desktop-health.mjs", "desktop-refresh.mjs"];
   const controller = (await Promise.all(controllerFiles.map((name) => readFile(new URL(`./${name}`, import.meta.url), "utf8")))).join("\n");
   const runningSlug = `ow-warm-v1-${world}-${digest(compiledSlug + controller + runningFingerprint(entries, world))}`;
   const running = await ensureLayer({ slug: runningSlug, stage: "running-template", observe, ttlSeconds: 86400,
@@ -91,8 +105,9 @@ ${dependencies}`, options);
     prepare: async (vm) => {
       log(`Preparing ${world} at ${sha} from cached dependencies`);
       for (const [target, source] of [
-        ["gateway.mjs", "gateway.mjs"], ["runtime.mjs", world === "acme-web" ? "acme-runtime.mjs" : "runtime.mjs"],
-        ["health.mjs", "health.mjs"], ["origins.mjs", "origins.mjs"], ["resume.mjs", "resume.mjs"], ["desktop.mjs", "desktop.mjs"], ["refresh.mjs", "refresh.mjs"],
+        ["gateway.mjs", "gateway.mjs"], ["runtime.mjs", world === "desktop" ? "desktop-runtime.mjs" : world === "acme-web" ? "acme-runtime.mjs" : "runtime.mjs"],
+        ["health.mjs", world === "desktop" ? "desktop-health.mjs" : "health.mjs"], ["origins.mjs", "origins.mjs"], ["resume.mjs", "resume.mjs"], ["desktop.mjs", "desktop.mjs"],
+        ["refresh.mjs", world === "desktop" ? "desktop-refresh.mjs" : "refresh.mjs"], ["desktop-state.mjs", "desktop-state.mjs"],
       ]) {
         await vm.fs.writeTextFile(`/opt/openwork-preview/${target}`, await readFile(new URL(`./${source}`, import.meta.url), "utf8"));
       }
@@ -113,6 +128,7 @@ Restart=on-failure
 [Install]
 WantedBy=multi-user.target
 `);
+      if (world === "acme-web") await vm.fs.writeTextFile("/opt/openwork-preview/template-hosts", templateHostsEntries());
       await runScript(vm, "world", `
 stage_start=$(date +%s%3N)
 mark() { now=$(date +%s%3N); printf '{"stage":"%s","durationMs":%s}\\n' "$1" "$((now-stage_start))" >> /opt/openwork-preview/build-stages.jsonl; stage_start=$now; }
@@ -121,6 +137,7 @@ mark checkout
 tar -xf /opt/openwork-preview/compiled.tar -C /workspace
 mark compile
 export PATH="/opt/openwork-preview/tools/node_modules/.bin:$PATH"
+${world === "acme-web" ? "grep -qxF -f /opt/openwork-preview/template-hosts /etc/hosts || cat /opt/openwork-preview/template-hosts >> /etc/hosts" : ""}
 systemctl daemon-reload
 systemctl start openwork-preview-runtime
 ${world === "app-web" ? "curl --retry 20 --retry-delay 1 --retry-all-errors -fsS http://127.0.0.1:5178/ >/dev/null" : `for attempt in $(seq 1 480); do

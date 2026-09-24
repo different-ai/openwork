@@ -1,6 +1,6 @@
 "use client";
 
-import { queryOptions, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { queryOptions, useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
@@ -802,6 +802,47 @@ export function pluginSummariesQueryOptions() {
 
 export function usePluginSummaries({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({ ...pluginSummariesQueryOptions(), enabled });
+}
+
+export function pluginDirectoryParams(filters: { q: string; teamId: string | null; memberId: string | null }, cursor: string) {
+  const params = new URLSearchParams({ status: "active", limit: "50", includeAccess: "true" });
+  if (!cursor) params.set("includeTotal", "true");
+  if (filters.q) params.set("name", filters.q);
+  if (filters.teamId) params.set("teamId", filters.teamId);
+  if (filters.memberId) params.set("memberId", filters.memberId);
+  if (cursor) params.set("cursor", cursor);
+  return params;
+}
+
+export function pluginDirectoryQueryKey(orgId: string | null, viewerId: string | null, filters: { q: string; teamId: string | null; memberId: string | null }) {
+  return [...pluginQueryKeys.summaries(), "directory", orgId, viewerId, filters.q, filters.teamId, filters.memberId];
+}
+
+export function usePluginDirectory(filters: { q: string; teamId: string | null; memberId: string | null }) {
+  const client = useQueryClient();
+  const { orgId, orgContext } = useOrgDashboard();
+  return useInfiniteQuery({
+    queryKey: pluginDirectoryQueryKey(orgId, orgContext?.currentMember.id ?? null, filters),
+    enabled: Boolean(orgId && orgContext?.organization.id === orgId),
+    initialPageParam: "",
+    queryFn: async ({ pageParam }) => {
+      const params = pluginDirectoryParams(filters, pageParam);
+      const { response, payload } = await requestJson(`/v1/plugins?${params}`, { method: "GET" }, 20000);
+      if (!response.ok) throw new Error(getErrorMessage(payload, `Failed to load plugins (${response.status}).`));
+      const items = listItems(payload).flatMap((item) => {
+        const summary = parsePluginSummary(item);
+        if (!summary) return [];
+        if (summary.accessIncluded) client.setQueryData(pluginAccessQueryKeys.detail(summary.id), parsePluginAccessGrants(item.access));
+        return [summary];
+      });
+      return {
+        items,
+        nextCursor: isRecord(payload) ? asString(payload.nextCursor) : null,
+        total: isRecord(payload) && typeof payload.total === "number" ? payload.total : null,
+      };
+    },
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+  });
 }
 
 export function pluginDetailQueryOptions(id: string) {

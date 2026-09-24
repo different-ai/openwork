@@ -3095,11 +3095,6 @@ export type PluginArchPluginListItem = {
   access?: Array<PluginArchAccessGrant>;
 };
 
-export type PluginArchPluginListResponse = {
-  items: Array<PluginArchPluginListItem>;
-  nextCursor: string | null;
-};
-
 export type PluginArchPlugin = {
   /**
    * Den TypeID with 'plg_' prefix and a 26-character base32 suffix.
@@ -21489,14 +21484,33 @@ export type GetV1PluginsData = {
   body?: never;
   path?: never;
   query?: {
+    /**
+     * Opaque cursor returned as nextCursor by the previous page. Omit for the first page.
+     */
     cursor?: string;
     limit?: number;
     status?: "active" | "inactive" | "deleted" | "archived";
     q?: string;
     /**
+     * Case-insensitive substring of the plugin name.
+     */
+    name?: string;
+    /**
+     * Plugins effectively accessible to this team, including organization and collection access.
+     */
+    teamId?: string;
+    /**
+     * Plugins effectively accessible to this member, including team, organization and collection access.
+     */
+    memberId?: string;
+    /**
      * When true, each plugin the caller manages includes its active access grants.
      */
     includeAccess?: "true" | "false";
+    /**
+     * When true, returns the total matching plugins before the cursor.
+     */
+    includeTotal?: "true" | "false";
   };
   url: "/v1/plugins";
 };
@@ -21518,7 +21532,11 @@ export type GetV1PluginsResponses = {
   /**
    * Plugins returned successfully.
    */
-  200: PluginArchPluginListResponse;
+  200: {
+    items: Array<PluginArchPluginListItem>;
+    nextCursor: string | null;
+    total?: number;
+  };
 };
 
 export type GetV1PluginsResponse = GetV1PluginsResponses[keyof GetV1PluginsResponses];

@@ -53,7 +53,7 @@ export async function denLibraryManage(seed: Seed, ctx: { place: Place }, option
     },
     env: { DEN_API_PUBLIC_URL: proxy.ref.webUrl },
     webApiBase: proxy.ref.webUrl,
-    mocks: { slack: seed.mock({ tools: slackTools }), hubspot: seed.mock() },
+    mocks: { slack: seed.mock({ tools: slackTools }), hubspot: seed.mock(), custom: seed.mock({ allowUnauthenticatedMcp: true, tools: slackTools }) },
   });
 
   const org = await seed.api(den.admin, "/v1/org");
@@ -127,6 +127,7 @@ export async function denLibraryManage(seed: Seed, ctx: { place: Place }, option
     web,
     proxy,
     slack,
+    custom: den.mocks.custom,
     people,
     memberIds,
     teamIds,

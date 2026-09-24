@@ -1,6 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
+import { Plus } from "lucide-react";
 import {
   getAddConnectorRoute,
   getAllMcpConnectionsRoute,
@@ -14,6 +15,7 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { connectionForPresetUrl } from "./connector-catalog";
 import { catalogEntriesFromPresets, ConnectorPicker } from "./connector-picker";
 import { ItemHeader, ItemPage } from "./item-header";
+import { LinkButton } from "./item-list";
 import { preloadConnectorLogo } from "./item-logo";
 import { mcpConnectionPresetsQueryOptions, useMcpConnectionPresets, useMcpConnections } from "./mcp-connections-data";
 
@@ -43,6 +45,7 @@ export function ConnectorCatalogScreen({ mode }: { mode: ConnectorFlowMode }) {
   const needsAdminSetup = new Set((presets.data ?? [])
     .filter((preset) => preset.requiresOAuthClient === true || preset.authType === "apikey")
     .map((preset) => preset.presetId));
+  const smartAddHref = (url = "") => `${getAllMcpConnectionsRoute(orgSlug)}?${new URLSearchParams({ addMcp: "1", ...(url ? { url } : {}) }).toString()}`;
   const addHref = (catalogId: string) => mode === "admin" && needsAdminSetup.has(catalogId)
     ? `${getMcpConnectionsRoute(orgSlug)}?${new URLSearchParams({ quickAdd: catalogId }).toString()}`
     : setupRoute(catalogId);
@@ -61,6 +64,12 @@ export function ConnectorCatalogScreen({ mode }: { mode: ConnectorFlowMode }) {
       <ItemHeader
         back={mode === "admin" ? { href: getMcpConnectionsRoute(orgSlug), label: "Connectors" } : { href: getLibraryRoute(orgSlug), label: "My Library" }}
         title="Add a connector"
+        actions={mode === "admin" ? (
+          <LinkButton variant="primary" href={smartAddHref()} data-testid="add-any-mcp">
+            <Plus className="h-4 w-4" aria-hidden />
+            Add any MCP
+          </LinkButton>
+        ) : undefined}
       />
       {presets.error ? (
         <p className="text-[13px] text-red-600">{presets.error instanceof Error ? presets.error.message : "The list did not load."}</p>
@@ -68,8 +77,9 @@ export function ConnectorCatalogScreen({ mode }: { mode: ConnectorFlowMode }) {
       <ConnectorPicker
         entries={entries}
         loading={presets.isLoading}
+        adminSmartAdd={mode === "admin"}
         addHref={(entry) => addHref(entry.id)}
-        customHref={(input) => `${setupRoute("custom")}${customConnectorQuery(input)}`}
+        customHref={(input) => mode === "admin" ? smartAddHref(input.url) : `${setupRoute("custom")}${customConnectorQuery(input)}`}
       />
       {mode === "admin" ? (
         <p className="text-center text-[12px] leading-4 text-gray-400">

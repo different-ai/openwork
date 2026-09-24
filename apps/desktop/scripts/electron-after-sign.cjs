@@ -58,21 +58,15 @@ function verifyComputerUseHelper(appPath, requireDistributionSignature) {
   }
 }
 
-// Electron ignores `--version` and boots the full app, so a healthy build is
-// still running when the deadline hits. Staying alive until the timeout is a
-// successful launch; signing/dyld failures die immediately with a non-zero
-// status or a crash signal.
-function verifyAppCanLaunch(appPath, { spawn = spawnSync, timeoutMs = 20_000 } = {}) {
-  const executable = path.join(appPath, "Contents", "MacOS", "OpenWork");
-  const result = spawn(executable, [], { stdio: "inherit", timeout: timeoutMs, killSignal: "SIGTERM" });
-  const stayedAlive = result.error && result.error.code === "ETIMEDOUT";
-  if (stayedAlive) return;
-  if (result.error || result.status !== 0 || result.signal) {
-    const reason = result.error ? `${result.error.code ?? result.error.message}, ` : "";
-    throw new Error(
-      `Signed OpenWork app failed to launch (${reason}status ${result.status}, signal ${result.signal}).`,
-    );
-  }
+// Offline checks on the signed, notarized, stapled bundle. These read the
+// bundle itself, so they never guess the executable name (it follows each
+// flavor's productName) and never launch the app on the build machine.
+// Launch and render coverage belongs to the packaged-app journeys, which run
+// against the built artifacts rather than inside electron-builder.
+function verifySignedApp(appPath, { runCommand = run } = {}) {
+  runCommand("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]);
+  runCommand("spctl", ["--assess", "--type", "execute", "--verbose=2", appPath]);
+  runCommand("xcrun", ["stapler", "validate", appPath]);
 }
 
 async function afterSign(context) {
@@ -109,8 +103,7 @@ async function afterSign(context) {
     ]);
     // Notarization tickets can take minutes to propagate to Apple's CDN after acceptance; stapler can transiently fail with status 65 ("CloudKit query failed").
     await runWithRetry("xcrun", ["stapler", "staple", appPath], 5);
-    run("xcrun", ["stapler", "validate", appPath]);
-    verifyAppCanLaunch(appPath);
+    verifySignedApp(appPath);
   } finally {
     rmSync(notaryTempDir, { recursive: true, force: true });
   }
@@ -119,4 +112,4 @@ async function afterSign(context) {
 module.exports = afterSign;
 module.exports.default = afterSign;
 module.exports.runWithRetry = runWithRetry;
-module.exports.verifyAppCanLaunch = verifyAppCanLaunch;
+module.exports.verifySignedApp = verifySignedApp;

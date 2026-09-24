@@ -42,6 +42,7 @@ describe("Den org sidebar information architecture", () => {
   test("admins see Manage, then Observability, then Team, with Advanced moved into Settings", () => {
     const plugins = indexOfNeedle('label: "Plugins"');
     const connectors = indexOfNeedle('label: "Connectors"');
+    expect(navigation).toContain('label: "Connectors", icon: Plug, badge: "MCPs"');
     const managedDashboards = indexOfNeedle('label: "Dashboards"');
     const aiGateway = indexOfNeedle('label: "AI Gateway"');
     const desktopPolicies = indexOfNeedle('label: "Desktop policies"');

@@ -8,6 +8,7 @@ import { DenInput } from "../../_components/ui/input";
 import { FilterInput, ItemPanel, ItemRow, ItemRowsSkeleton, LinkButton } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import type { ExternalMcpPreset } from "./mcp-connections-data";
+import { classifySmartAddInput } from "./mcp-connection-smart-add";
 
 /** Catalog copy is written for admins; members get the first plain clause. */
 export function shortDescription(text: string): string {
@@ -99,26 +100,31 @@ function AddMcpForm({ initialName, onCancel, onContinue }: {
 }
 
 /** The one connector catalog, used from My Library and from Manage. */
-export function ConnectorPicker({ entries, loading, addHref, customHref }: {
+export function ConnectorPicker({ entries, loading, addHref, customHref, adminSmartAdd = false }: {
   entries: CatalogEntry[];
   loading: boolean;
   addHref: (entry: CatalogEntry) => string;
   customHref: (input: { name: string; url: string }) => string;
+  adminSmartAdd?: boolean;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [customName, setCustomName] = useState<string | null>(null);
   const needle = query.trim().toLowerCase();
   const visible = entries.filter((entry) => !needle || `${entry.name} ${entry.description}`.toLowerCase().includes(needle));
+  const inputKind = classifySmartAddInput(query);
+  const urlInput = inputKind === "url" || inputKind === "domain";
   const noMatch = !loading && visible.length === 0 && needle.length > 0;
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
-        <FilterInput value={query} onChange={setQuery} size="md" className="flex-1" />
-        <DenButton variant="secondary" size="sm" icon={Plus} className="h-9" onClick={() => setCustomName("")}>
-          Add another MCP
-        </DenButton>
+        <FilterInput value={query} onChange={setQuery} size="md" className="flex-1" placeholder={adminSmartAdd ? "Search apps or paste MCP URL" : "Filter by name"} />
+        {!adminSmartAdd ? (
+          <DenButton variant="secondary" size="sm" icon={Plus} className="h-9" onClick={() => setCustomName("")}>
+            Add another MCP
+          </DenButton>
+        ) : null}
       </div>
       {customName !== null ? (
         <AddMcpForm
@@ -147,10 +153,12 @@ export function ConnectorPicker({ entries, loading, addHref, customHref }: {
         {noMatch ? (
           <div className="flex flex-col items-center gap-1.5 px-6 pb-8 pt-10 text-center" data-testid="connector-picker-no-match">
             <ServerTile />
-            <p className="mt-2.5 text-[15px] font-semibold leading-[22px] text-gray-900">No app called &ldquo;{query.trim()}&rdquo;</p>
-            <p className="text-[13px] leading-5 text-gray-500">Add it with the address your vendor or IT team gave you.</p>
-            <DenButton size="md" icon={Plus} className="mt-3.5" data-testid="connector-picker-no-match-add" onClick={() => setCustomName(query.trim())}>
-              Add another MCP
+            <p className="mt-2.5 text-[15px] font-semibold leading-[22px] text-gray-900">{urlInput ? "Add this MCP server" : <>No app called &ldquo;{query.trim()}&rdquo;</>}</p>
+            {!urlInput && !adminSmartAdd ? <p className="text-[13px] leading-5 text-gray-500">Add it with the address your vendor or IT team gave you.</p> : null}
+            <DenButton size="md" icon={Plus} className="mt-3.5" data-testid="connector-picker-no-match-add" onClick={() => urlInput || adminSmartAdd
+              ? router.push(customHref({ name: "", url: urlInput ? (needle.startsWith("http") ? query.trim() : `https://${query.trim()}`) : "" }))
+              : setCustomName(query.trim())}>
+              {urlInput ? "Add this MCP" : adminSmartAdd ? "Add any MCP" : "Add another MCP"}
             </DenButton>
           </div>
         ) : null}

@@ -303,6 +303,12 @@ async function resolvePluginRoleForIds(context: PluginArchActorContext, pluginId
     return "manager" satisfies PluginArchRole
   }
 
+  const [owned] = await db.select({ id: PluginTable.id }).from(PluginTable).where(and(
+    inArray(PluginTable.id, organizationPluginIds),
+    eq(PluginTable.createdByOrgMembershipId, context.organizationContext.currentMember.id),
+  )).limit(1)
+  if (owned) return "manager" satisfies PluginArchRole
+
   const grants = await db
     .select({
       orgMembershipId: PluginAccessGrantTable.orgMembershipId,
@@ -362,10 +368,12 @@ function groupGrantsBy<TKey, TGrant>(grants: TGrant[], key: (grant: TGrant) => T
 export async function resolvePluginArchPluginRoles(context: PluginArchActorContext, pluginIds: PluginId[]) {
   const roles = new Map<PluginId, PluginArchRole>()
   const organizationId = context.organizationContext.organization.id
-  const organizationPluginIds = await filterPluginIdsInOrganization(organizationId, pluginIds)
-  if (organizationPluginIds.length === 0) {
-    return roles
-  }
+  if (pluginIds.length === 0) return roles
+  const pluginRows = await db.select({ id: PluginTable.id, createdByOrgMembershipId: PluginTable.createdByOrgMembershipId })
+    .from(PluginTable)
+    .where(and(eq(PluginTable.organizationId, organizationId), inArray(PluginTable.id, pluginIds)))
+  const organizationPluginIds = pluginRows.map((plugin) => plugin.id)
+  if (organizationPluginIds.length === 0) return roles
 
   if (isPluginArchOrgAdmin(context)) {
     for (const pluginId of organizationPluginIds) roles.set(pluginId, "manager")
@@ -391,10 +399,11 @@ export async function resolvePluginArchPluginRoles(context: PluginArchActorConte
   const grantsByPlugin = groupGrantsBy(grants, (grant) => grant.pluginId)
 
   const unresolvedPluginIds: PluginId[] = []
-  for (const pluginId of organizationPluginIds) {
-    const role = resolvePluginArchGrantRole({ grants: grantsByPlugin.get(pluginId) ?? [], memberId, teamIds })
-    if (role) roles.set(pluginId, role)
-    else unresolvedPluginIds.push(pluginId)
+  for (const plugin of pluginRows) {
+    const role = resolvePluginArchGrantRole({ grants: grantsByPlugin.get(plugin.id) ?? [], memberId, teamIds })
+    if (plugin.createdByOrgMembershipId === memberId) roles.set(plugin.id, "manager")
+    else if (role) roles.set(plugin.id, role)
+    else unresolvedPluginIds.push(plugin.id)
   }
   if (unresolvedPluginIds.length === 0) {
     return roles
@@ -463,6 +472,11 @@ export async function resolvePluginArchResourceRole(input: ResourceLookupInput) 
   }
 
   if (input.resourceKind === "plugin") {
+    const [plugin] = await db.select({ createdByOrgMembershipId: PluginTable.createdByOrgMembershipId })
+      .from(PluginTable)
+      .where(and(eq(PluginTable.id, input.resourceId), eq(PluginTable.organizationId, input.context.organizationContext.organization.id)))
+      .limit(1)
+    if (plugin?.createdByOrgMembershipId === input.context.organizationContext.currentMember.id) return "manager"
     const grants = await db
       .select({
         orgMembershipId: PluginAccessGrantTable.orgMembershipId,

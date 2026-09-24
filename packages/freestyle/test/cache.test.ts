@@ -153,6 +153,50 @@ test("source tree parses manifests without executing them and fails closed on mi
     ? new Response(null, { status: 404 }) : Response.json(tree)), /Could not read package inputs/);
 });
 
+test("desktop recipes contain only desktop dependencies and never install world services", async () => {
+  const { toolsRecipe, dependencyRecipe, compiledRecipe } = await import("../src/build-recipes.ts");
+  const tools = toolsRecipe("desktop");
+  assert.match(tools, /xfce4-session/);
+  assert.match(tools, /xvfb x11vnc novnc websockify/);
+  assert.match(tools, /build-essential python3/);
+  assert.match(tools, /Node 24 or newer/);
+  assert.match(tools, /bun@1\.3\.14/);
+  assert.match(tools, /node \/opt\/openwork-preview\/tools\/node_modules\/bun\/install\.js\n\/opt\/openwork-preview\/tools\/node_modules\/\.bin\/bun --version/);
+  assert.match(tools, /corepack prepare pnpm@11\.4\.0 --activate/);
+  assert.match(tools, /corepack prepare pnpm@10\.27\.0/);
+  const dependencies = dependencyRecipe("desktop");
+  assert.match(dependencies, /--filter @openwork\/desktop\.\.\./);
+  assert.match(dependencies, /--filter openwork-server\.\.\./);
+  const compiled = compiledRecipe("desktop");
+  assert.match(compiled, /@openwork\/headless-threads build/);
+  assert.match(compiled, /prepare-sidecar/);
+  assert.match(compiled, /rebuild:electron-native/);
+  assert.match(compiled, /await import\("\.\/evals\/packages\/cdp\/src\/index\.ts"\)/);
+  assert.ok(compiled.includes('export PATH="/opt/openwork-preview/tools/node_modules/.bin:$PATH"'));
+  const { spawnSync } = await import("node:child_process");
+  for (const recipe of [tools, dependencies, compiled]) {
+    assert.ok(recipe.includes("export COREPACK_HOME=/opt/openwork-preview/corepack"));
+    const syntax = spawnSync("bash", ["-n"], { input: recipe, encoding: "utf8", timeout: 5_000 });
+    assert.equal(syntax.status, 0, syntax.stderr);
+  }
+  assert.doesNotMatch([tools, dependencies, compiled].join("\n"), /mysql|redis|den-api|den-web|@openwork-ee\/gateway|@openwork\/world|--dir evals/);
+  assert.match(toolsRecipe("acme-web"), /mysql-server redis-server/);
+  assert.match(dependencyRecipe("acme-web"), /@openwork-ee\/den-api/);
+  assert.doesNotMatch(toolsRecipe("app-web"), /xfce|mysql/);
+});
+
+test("desktop cache tracks launcher, profile and CDP while ignoring world services", () => {
+  const tree = [entry("apps/desktop/electron/main.mjs"), entry("apps/desktop/electron/blank-slate-profile.mjs"),
+    entry(".devcontainer/start-daytona-electron.sh"), entry("evals/packages/cdp/src/app-state.ts"),
+    entry("packages/freestyle/src/desktop-state.mjs"), entry("apps/app/src/main.tsx"), entry("worlds/acme-web.ts"), entry("ee/apps/den-api/src/auth.ts")];
+  const before = runningFingerprint(tree, "desktop");
+  for (const [index, item] of tree.entries()) {
+    const after = runningFingerprint(tree.map((value) => value === item ? { ...value, sha: "b".repeat(40) } : value), "desktop");
+    if (index < 5) assert.notEqual(after, before, item.path);
+    else assert.equal(after, before, item.path);
+  }
+});
+
 test("snapshot publication does not wait for provider deletion", async () => {
   let release: () => void = () => {};
   const pending = new Promise<void>((resolve) => { release = resolve; });

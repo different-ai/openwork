@@ -1179,7 +1179,15 @@ jobs:
   verify-npm-hosts:
     name: Verify npm server (${{ matrix.target }})
     needs: [resolve-release, prepare-npm]
-    if: needs.prepare-npm.outputs.publish_server == 'true'
+    # always() is required: resolve-benchmark is skipped on every production
+    # release, and a job whose `if` lacks a status function is skipped when
+    # any transitive dependency was skipped. Without it this matrix never
+    # runs and publish-npm silently skips (v0.18.51, v0.18.52).
+    if: |
+      always() &&
+      needs.resolve-release.result == 'success' &&
+      needs.prepare-npm.result == 'success' &&
+      needs.prepare-npm.outputs.publish_server == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -1215,9 +1223,15 @@ jobs:
         run: |
           set -euo pipefail
           test "$(node -p 'process.arch')" = "${{ matrix.arch }}"
-          package="$RUNNER_TEMP/openwork-server-npm"
-          chmod 755 "$package/dist/bin/openwork-server-bun-$TARGET"*
-          actual="$(node "$package/bin/openwork-server.mjs" --version)"
+          staged="$RUNNER_TEMP/openwork-server-npm"
+          # Reproduce the layout `npm install openwork-server` creates: the
+          # main package plus only the platform package matching this host.
+          installed="$RUNNER_TEMP/install/node_modules"
+          mkdir -p "$installed"
+          cp -R "$staged/openwork-server" "$installed/openwork-server"
+          cp -R "$staged/openwork-server-$TARGET" "$installed/openwork-server-$TARGET"
+          chmod 755 "$installed/openwork-server-$TARGET"/bin/*
+          actual="$(node "$installed/openwork-server/bin/openwork-server.mjs" --version)"
           test "$actual" = "$RELEASE_VERSION"
 
   publish-npm:
@@ -1249,38 +1263,75 @@ jobs:
           name: openwork-server-npm-${{ env.RELEASE_VERSION }}
           path: ${{ runner.temp }}/openwork-server-npm
 
-      - name: Restore executable bits lost in the artifact round-trip
+      # Platform packages go first: the main package pins them as
+      # optionalDependencies, so they must exist before anyone installs it.
+      # Versions already on npm are skipped so a recovery rerun can finish a
+      # partially published release.
+      - name: Pack, verify and publish packages
+        shell: bash
         run: |
           set -euo pipefail
-          chmod 755 "$RUNNER_TEMP/openwork-server-npm/bin/openwork-server.mjs" \
-            "$RUNNER_TEMP/openwork-server-npm"/dist/bin/openwork-server-bun-*
-          for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64 windows-arm64.exe windows-x64.exe; do
-            test -x "$RUNNER_TEMP/openwork-server-npm/dist/bin/openwork-server-bun-$target"
+          staged="$RUNNER_TEMP/openwork-server-npm"
+          packs="$RUNNER_TEMP/npm-packs"
+          mkdir -p "$packs"
+          platforms=(darwin-arm64 darwin-x64 linux-arm64 linux-x64 windows-arm64 windows-x64)
+
+          publish() {
+            local dir="$1" name
+            name="$(node -p "require('$dir/package.json').name")"
+            if [ "$(npm view "$name@$RELEASE_VERSION" version 2>/dev/null || true)" = "$RELEASE_VERSION" ]; then
+              echo "$name@$RELEASE_VERSION is already published; skipping."
+              return
+            fi
+            npm publish "$2" --access public --provenance
+          }
+
+          pack() {
+            (cd "$1" && npm pack --json --pack-destination "$packs" > "$packs/pack.json")
+            echo "$packs/$(node -p "require('$packs/pack.json')[0].filename")"
+          }
+
+          for target in "${platforms[@]}"; do
+            dir="$staged/openwork-server-$target"
+            chmod 755 "$dir"/bin/*
+            tarball="$(pack "$dir")"
+            unpacked="$(mktemp -d)"
+            tar -xzf "$tarball" -C "$unpacked"
+            test -x "$unpacked"/package/bin/openwork-server-bun-"$target"*
+            publish "$dir" "$tarball"
           done
 
-      - name: Pack and verify executable permissions
-        id: npm-pack
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/openwork-server-npm"
-          npm pack --json --pack-destination "$RUNNER_TEMP" > "$RUNNER_TEMP/npm-pack.json"
-          filename="$(node -p 'require(process.env.RUNNER_TEMP + "/npm-pack.json")[0].filename')"
-          tarball="$RUNNER_TEMP/$filename"
+          dir="$staged/openwork-server"
+          chmod 755 "$dir/bin/openwork-server.mjs"
+          tarball="$(pack "$dir")"
           unpacked="$(mktemp -d)"
           tar -xzf "$tarball" -C "$unpacked"
           test -x "$unpacked/package/bin/openwork-server.mjs"
           test -f "$unpacked/package/bin/platform.mjs"
           test -f "$unpacked/package/web/index.html"
           test -d "$unpacked/package/dist/opencode-plugins"
-          for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64 windows-arm64.exe windows-x64.exe; do
-            test -x "$unpacked/package/dist/bin/openwork-server-bun-$target"
+          test ! -e "$unpacked/package/dist/bin"
+          for target in "${platforms[@]}"; do
+            test "$(node -p "require('$unpacked/package/package.json').optionalDependencies['openwork-server-$target']")" = "$RELEASE_VERSION"
           done
-          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          publish "$dir" "$tarball"
 
-      - name: Publish openwork-server
-        env:
-          NPM_TARBALL: ${{ steps.npm-pack.outputs.tarball }}
-        run: npm publish "$NPM_TARBALL" --access public --provenance
+      - name: Install the published package from npm
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            prefix="$(mktemp -d)"
+            if npm install -g --prefix "$prefix" "openwork-server@$RELEASE_VERSION" \
+              && actual="$("$prefix/bin/openwork-server" --version)" \
+              && [ "$actual" = "$RELEASE_VERSION" ]; then
+              echo "npm install -g openwork-server@$RELEASE_VERSION runs $actual"
+              exit 0
+            fi
+            echo "Registry not serving openwork-server@$RELEASE_VERSION yet (attempt $attempt); retrying in 30s."
+            sleep 30
+          done
+          exit 1
 
   publish-daytona-snapshot:
     name: Build + Push Daytona Snapshot

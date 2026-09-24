@@ -116,6 +116,7 @@ export const PluginTable = mysqlTable(
     index("plugin_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("plugin_status").on(table.status),
     index("plugin_name").on(table.name),
+    index("plugin_directory_page").on(table.organizationId, table.status, table.updatedAt, table.id),
   ],
 )
 
