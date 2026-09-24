@@ -6,6 +6,13 @@ commands and migration consent dialog. Switching engines never migrates history.
 V1 remains the default. Desktop packages include both pinned native executables;
 v2's download fallback remains available for standalone servers.
 
+Connect health and repair follow the active local engine. On v2, diagnostics
+read native `/api/mcp` connection status and `/api/model` tool capabilities;
+they do not look for the selected model in v1's catalog or require v1 plugin
+canary tools. Remote workspace diagnostics remain with their owning server.
+The connector parity proof checks health, repair, and real capability execution
+on both engines.
+
 ## What migration does
 
 Migration requires the OpenWork host token and explicit confirmation. It snapshots

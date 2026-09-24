@@ -1,3 +1,4 @@
+import { createNativeCloudMcpResolver, createRoutedCloudMcpRegistrar } from "./cloud-mcp-v2.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { createTaskRecovery, setTaskRecovery } from "./task-recovery.js";
 import { managedPolicyActionSchema } from "./managed-policy-rules.js";
@@ -2454,7 +2455,9 @@ function createRoutes(
     cloudProviderSync.markReloadPending();
     return "deferred";
   };
+  const nativeEngineForWorkspace = createNativeCloudMcpResolver(engineV2Preview);
   registerCoreRoutes({
+    nativeEngineForWorkspace,
     routes,
     config,
     tokens,
@@ -2513,6 +2516,7 @@ function createRoutes(
   });
 
   registerCloudMcpRoutes({
+    nativeEngineForWorkspace,
     routes,
     config,
     jsonResponse,
@@ -2523,14 +2527,14 @@ function createRoutes(
     resolveOpencodeDirectory,
     createWorkspaceOpencodeClient,
     refreshRegistrationFromLiveStatus: refreshEngineMcpRegistrationFromLiveStatus,
-    registerRuntimeMcp: (routeConfig, workspace, onlyNames, options) =>
+    registerRuntimeMcp: createRoutedCloudMcpRegistrar(engineV2Preview, (routeConfig, workspace, onlyNames, options) =>
       syncRuntimeMcpToOpencodeEngine(
         routeConfig,
         workspace,
         onlyNames,
         options,
         engineMcpServerState,
-      ),
+      )),
     serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
   });
 
