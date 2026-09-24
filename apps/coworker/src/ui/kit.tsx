@@ -204,6 +204,12 @@ export function PlusIcon({ className = "size-4" }: { className?: string }) {
   );
 }
 
+/**
+ * The floating conversation header's height. Conversations scroll the full
+ * height beneath it and start their content this far down (see --conversation-top).
+ */
+export const CONVERSATION_TOP = "60px";
+
 /** A rounded square for stopping work in progress. */
 export function StopIcon({ className = "size-4" }: { className?: string }) {
   return (

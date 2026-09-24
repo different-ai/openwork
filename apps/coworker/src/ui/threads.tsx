@@ -959,7 +959,7 @@ function DiscussionWelcome({
         title={<span className="truncate">New discussion</span>}
         actions={startingMessage ? <IconButton label="Stop" tooltip="Cancel starting this message" tooltipSide="bottom" data-testid="coworker-stop" className="border border-line" onClick={() => { startCancelled.current = true; startController.current?.abort(new Error("Starting cancelled. Your draft is kept.")); setStartingMessage(null); setComposerError("Starting cancelled. Your draft is kept."); }}><StopIcon className="size-3.5" /></IconButton> : null}
       />
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 pt-[calc(var(--conversation-top,0px)+2rem)]">
         {problem ? <WorkspaceProblemNote problem={problem} onRetry={onRetry} /> : null}
         {startingMessage ? <div className="space-y-3">
           <article className="flex flex-col items-end" data-message-role="user"><div className="bubble bubble-user max-w-[min(72%,30rem)] whitespace-pre-wrap bubble-tail-right">{startingMessage.value.text}</div></article>
@@ -2529,7 +2529,7 @@ function ThreadView({
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto px-5 py-5"
+        className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-[calc(var(--conversation-top,0px)+1.25rem)]"
         style={{ overflowAnchor: "none" }}
       >
         <div ref={contentRef} className="mx-auto max-w-3xl space-y-3">

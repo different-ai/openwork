@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { coworkerBridge, type CoworkerSummary, type LocalResponsibility, type ProviderSyncRun, type RuntimeInfo, type TeamStates } from "@/lib/bridge";
 import { abilitiesSummary } from "@/lib/abilities";
 import { CoworkerAbilitiesEditor } from "@/ui/coworker-abilities";
@@ -13,7 +13,7 @@ import { CoworkerModelSettings } from "@/ui/coworker-model-settings";
 import { createCoworkerThreads, recommendModel, type CoworkerActivity, type ThreadListItem } from "@/lib/threads";
 import { acknowledgeCoworker, AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
-import { ActivityIcon, AppsIcon, Button, ChevronIcon, ErrorNote, IconButton, MemoryIcon, SlidersIcon } from "@/ui/kit";
+import { ActivityIcon, AppsIcon, Button, CONVERSATION_TOP, ChevronIcon, ErrorNote, IconButton, MemoryIcon, SlidersIcon } from "@/ui/kit";
 import { useResizablePanel } from "@/ui/use-resizable-panel";
 import { PanelContent, PanelHeader, PanelLevel, usePanelNavigation } from "@/ui/panel-nav";
 import { isBackShortcut, pushCrumb, routeDepth, type PanelCrumb } from "@/lib/panel-route";
@@ -492,11 +492,15 @@ export function CoworkerHome({
   const activityLevel = activityScreen(nav.route.path);
   const settingsLevel = settingsScreen(nav.route.path);
 
+  // Notices sit below the floating header; without one, the conversation starts beneath it itself.
+  const headerNotice = Boolean(documentNotice || (besideDocumentId && !canOpenBeside) || !runtime.engineManaged);
+
   return (
     <div className="glass-main relative flex h-full min-w-0 flex-1">
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* No header bar: a way back on the left, a floating pill for where you are, this conversation's controls on the right. Top and side room clear the window's rounded corners. */}
-        <header className="window-drag relative z-30 flex shrink-0 items-center gap-2 px-4 pb-2 pt-3" data-testid="conversation-header">
+      <div className="relative flex min-w-0 flex-1 flex-col" style={{ "--conversation-top": headerNotice ? "0px" : CONVERSATION_TOP } as CSSProperties}>
+        {/* No header bar: it floats over the conversation, which scrolls the full height beneath it. A way back on the left,
+            a pill for where you are, this conversation's controls on the right; top and side room clear the rounded corners. */}
+        <header className="window-drag absolute inset-x-0 top-0 z-30 flex items-center gap-2 bg-[linear-gradient(to_bottom,var(--color-ink)_40%,transparent)] px-4 pb-3 pt-3" data-testid="conversation-header">
           <div className="flex min-w-0 flex-1 basis-0 items-center gap-1">
             {onExitActivity ? <IconButton className="window-no-drag" label="Go to coworker" tooltip={`Leave Activity and open ${coworker.name}`} tooltipSide="bottom" onClick={onExitActivity}><ChevronIcon direction="left" /></IconButton> : null}
             <div ref={setHeaderLeadSlot} className="window-no-drag flex items-center empty:hidden" />
@@ -519,6 +523,7 @@ export function CoworkerHome({
             <HeaderStatusWord activity={activity} engineManaged={runtime.engineManaged} />
           </div>
         </header>
+        {headerNotice ? <div style={{ height: CONVERSATION_TOP }} className="shrink-0" aria-hidden="true" /> : null}
         {documentNotice || (besideDocumentId && !canOpenBeside) ? <p role="status" className="border-b border-line px-6 py-2 text-xs text-mist">{documentNotice || "Your reading pane is kept while space is limited. Close Activity or make room to return to it."}</p> : null}
         {!runtime.engineManaged ? (
           <AiUnavailableNote coworkerName={coworker.name} technical={runtime.engineError} onRestart={onRestartRuntime} />

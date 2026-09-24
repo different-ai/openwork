@@ -1,5 +1,5 @@
 import { useComposerDraft } from "@/ui/use-composer-draft";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ComponentProps, type ReactNode } from "react";
 import { coworkerBridge, type CollaborationReceipt, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type GroupInteraction, type GroupTimelineEvent, type RuntimeInfo } from "@/lib/bridge";
 import { assignmentPrompt, assignmentTitle, timeLabelBetween, type DiscussionMessage } from "@/lib/conversation";
 import { combineSummaryLines, describeCoworkerSummary, type CoworkerSummaryLine } from "@/lib/coworker-summary";
@@ -32,7 +32,7 @@ import { ChatReply } from "@/ui/chat-reply";
 import { MessageReactions, useMessageReactions } from "@/ui/message-reactions";
 import { acknowledgeCoworker, CoworkerAvatar, GroupAvatars } from "@/ui/coworker-avatar";
 import { InteractionCard, InteractionCards, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
-import { ActionMenu, Button, ChevronIcon, ErrorNote, IconButton, PlusIcon, StopIcon, Tooltip } from "@/ui/kit";
+import { ActionMenu, Button, CONVERSATION_TOP, ChevronIcon, ErrorNote, IconButton, PlusIcon, StopIcon, Tooltip } from "@/ui/kit";
 import { CalendarIcon } from "@/ui/main-content-switch";
 import { CollaborationReceipts, SendButton, SummaryLine } from "@/ui/threads";
 import { useAutoGrow } from "@/ui/use-auto-grow";
@@ -772,11 +772,14 @@ function GroupChatView({
             );
 
   };
+  // Notices sit below the floating header; without one, the conversation starts beneath it itself.
+  const groupNotice = Boolean(event || group.eventId || documentNotice || activityNotice);
   return (
     <div className="glass-main flex h-full min-w-0 flex-1" data-testid="group-chat" data-group-id={group.id} data-live={live ? "true" : "false"}>
-      <div className="@container/group flex min-w-0 flex-1 flex-col" data-testid="group-conversation">
-      {/* No header bar: a way back on the left, a floating pill for where you are, this conversation's controls on the right. Top and side room clear the window's rounded corners. */}
-      <header className="window-drag relative z-30 flex shrink-0 items-center gap-2 px-4 pb-2 pt-3" data-testid="conversation-header">
+      <div className="@container/group relative flex min-w-0 flex-1 flex-col" data-testid="group-conversation" style={{ "--conversation-top": groupNotice ? "0px" : CONVERSATION_TOP } as CSSProperties}>
+      {/* No header bar: it floats over the conversation, which scrolls the full height beneath it. A way back on the left,
+          a pill for where you are, this conversation's controls on the right; top and side room clear the rounded corners. */}
+      <header className="window-drag absolute inset-x-0 top-0 z-30 flex items-center gap-2 bg-[linear-gradient(to_bottom,var(--color-ink)_40%,transparent)] px-4 pb-3 pt-3" data-testid="conversation-header">
         <div className="flex min-w-0 flex-1 basis-0 items-center gap-1">
           {onExitActivity ? <IconButton className="window-no-drag" label="Go to chat" tooltip="Leave Activity and open this chat" tooltipSide="bottom" onClick={onExitActivity}><ChevronIcon direction="left" /></IconButton> : null}
         </div>
@@ -844,11 +847,12 @@ function GroupChatView({
           </span>
         </div>
       </header>
+      {groupNotice ? <div style={{ height: CONVERSATION_TOP }} className="shrink-0" aria-hidden="true" /> : null}
       {event || group.eventId ? <p className="border-b border-line/60 px-5 py-2 text-[11px] text-mist">Event conversation. Change participants and future sessions in the event editor. {group.archivedAt ? "This conversation is archived; its history is kept." : ""}</p> : null}
       {documentNotice ? <p role="alert" className="border-b border-line px-5 py-2 text-xs text-mist">{documentNotice}<button type="button" className="ml-2 underline" onClick={() => setDocumentNotice("")}>Dismiss</button></p> : null}
       {activityNotice ? <p role="status" className="border-b border-line px-5 py-2 text-xs text-mist">{activityNotice}<button type="button" className="ml-2 underline" onClick={() => setActivityNotice("")}>Dismiss</button></p> : null}
       <div className="relative flex min-h-0 flex-1 flex-col">
-      <div ref={scrollRef} style={{ overflowAnchor: "none" }} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+      <div ref={scrollRef} style={{ overflowAnchor: "none" }} className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-[calc(var(--conversation-top,0px)+1.25rem)]">
         <div ref={contentRef} className="mx-auto max-w-3xl space-y-3">
           {introduction}
           {observed.groupId !== group.id && !activityError ? <p role="status" className="text-xs text-mist">Loading conversation…</p> : null}
