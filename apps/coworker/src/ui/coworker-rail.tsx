@@ -470,7 +470,7 @@ export function CoworkerRail({
       )}
       </div>
       <div className={calendarMode ? "flex min-h-0 flex-1 flex-col" : "hidden"} data-testid="calendar-rail-content">
-        {panel.collapsed ? <FoldedCalendar data={calendarData} onExpand={() => { setFocusSearchOnExpand(true); panel.expand(); }} /> : <CalendarSidebar coworkers={coworkers} data={calendarData} preferences={calendarPreferences} onPreferencesChange={onCalendarPreferencesChange} query={calendarQuery} />}
+        {panel.collapsed ? <FoldedCalendar data={calendarData} coworkers={coworkers} preferences={calendarPreferences} onPreferencesChange={onCalendarPreferencesChange} onExpand={() => { setFocusSearchOnExpand(true); panel.expand(); }} /> : <CalendarSidebar coworkers={coworkers} data={calendarData} preferences={calendarPreferences} onPreferencesChange={onCalendarPreferencesChange} query={calendarQuery} />}
       </div>
       <div className={activityMode ? "flex min-h-0 flex-1 flex-col" : "hidden"} data-testid="activity-rail-content">{activityContent}</div>
       <div className="window-no-drag shrink-0 border-t border-line/60 p-2">
@@ -535,7 +535,20 @@ export function CoworkerRail({
  * and the next few things on it, each a time and a title initial. Any of it
  * unfolds the rail to the full calendar list.
  */
-function FoldedCalendar({ data, onExpand }: { data: CalendarData; onExpand: () => void }) {
+function FoldedCalendar({ data, coworkers, preferences, onPreferencesChange, onExpand }: {
+  data: CalendarData;
+  coworkers: CoworkerSummary[];
+  preferences: CalendarPreferences;
+  onPreferencesChange: CalendarPreferencesChange;
+  onExpand: () => void;
+}) {
+  const slugs = coworkers.map((coworker) => coworker.slug);
+  const shown = (slug: string) => preferences.coworkerSlugs === null || preferences.coworkerSlugs.includes(slug);
+  // Same preference as the full calendar list: tap a coworker to show or hide their events.
+  const toggle = (slug: string) => onPreferencesChange((value) => {
+    const current = value.coworkerSlugs ?? slugs;
+    return { ...value, coworkerSlugs: current.includes(slug) ? current.filter((item) => item !== slug) : [...current, slug] };
+  });
   const now = new Date();
   const upcoming = calendarItems({ events: data.events, eventRuns: data.eventRuns, responsibilities: data.responsibilities, start: now.getTime(), end: now.getTime() + 7 * 86_400_000, now: now.getTime() })
     .filter((item) => item.planned).slice(0, 3);
@@ -548,6 +561,16 @@ function FoldedCalendar({ data, onExpand }: { data: CalendarData; onExpand: () =
           <span className="py-1 text-lg font-semibold leading-none text-snow tabular-nums">{now.getDate()}</span>
         </button>
       </Tooltip>
+      {coworkers.length ? <div className="flex flex-col items-center gap-1.5 border-b border-line/60 pb-2" role="group" aria-label="Show coworkers on the calendar" data-testid="calendar-rail-people">
+        {coworkers.map((coworker) => (
+          <Tooltip key={coworker.slug} content={`${shown(coworker.slug) ? "Hide" : "Show"} ${coworker.name}'s events`} side="right">
+            <button type="button" aria-pressed={shown(coworker.slug)} aria-label={`${coworker.name} on the calendar`} onClick={() => toggle(coworker.slug)} data-testid="calendar-rail-person"
+              className={`window-no-drag rounded-full transition-[opacity,filter] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/60 ${shown(coworker.slug) ? "" : "opacity-35 grayscale"}`}>
+              <CoworkerAvatar identity={coworker.slug} name={coworker.name} color={coworker.avatarColor} glasses={coworker.avatarGlasses} size={30} animated={false} gaze={false} />
+            </button>
+          </Tooltip>
+        ))}
+      </div> : null}
       {upcoming.map((item) => {
         const when = new Date(item.startsAt);
         const sameDay = when.toDateString() === now.toDateString();
