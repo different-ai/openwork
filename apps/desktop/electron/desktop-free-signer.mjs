@@ -1,12 +1,12 @@
-import { createHash, createHmac, createPrivateKey, createPublicKey, generateKeyPairSync, randomUUID, sign } from "node:crypto";
+import { createPrivateKey, createPublicKey, generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { chmod, link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { readDesktopMachineId } from "./desktop-machine-id.mjs";
 import {
-  DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, DESKTOP_FREE_MODELS_PATH,
-  DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH, DESKTOP_FREE_MACHINE_ID_PATTERN,
-  desktopFreeProofMessage, desktopFreeReleaseTagMessage,
-} from "@openwork/types/desktop-free-access";
+  DESKTOP_FREE_ARCHES, DESKTOP_FREE_MACHINE_ID_PATTERN, DESKTOP_FREE_NONCE_PATTERN, DESKTOP_FREE_PLATFORMS,
+  desktopFreeProofMessage, isDesktopFreeSignableRoute,
+} from "@openwork/free-auto";
+import { releaseTag as desktopFreeReleaseTag, sha256Hex } from "@openwork/free-auto/node";
 
 export function desktopFreeBootstrapEligible(distribution, bootstrap) {
   if (distribution.flavor !== "public" || bootstrap.requireSignin === true || bootstrap.requireActivation === true) return false;
@@ -29,7 +29,7 @@ export function createDesktopFreeSigner({ filePath, loadSafeStorage, appVersion,
   let pending = null;
   let machine = null;
   const permitted = () => {
-    if (!isEligible() || !["darwin", "win32", "linux"].includes(platform) || !["arm64", "x64"].includes(arch)) {
+    if (!isEligible() || !DESKTOP_FREE_PLATFORMS.includes(platform) || !DESKTOP_FREE_ARCHES.includes(arch)) {
       throw new Error("Desktop free inference is not available for this installation.");
     }
     return { platform, arch };
@@ -91,16 +91,12 @@ export function createDesktopFreeSigner({ filePath, loadSafeStorage, appVersion,
       return { publicKey, machineId, appVersion, ...permitted() };
     },
     async sign({ method, path: requestPath, body, authorization, nonce = undefined }) {
-      const allowed = method === "POST"
-        ? [DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_CHAT_PATH]
-        : method === "GET" ? [DESKTOP_FREE_STATUS_PATH, DESKTOP_FREE_MODELS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_STATUS_PATH] : [];
-      if (!allowed.includes(requestPath)) throw new Error("Unsupported desktop free proof request.");
+      if (!isDesktopFreeSignableRoute(method, requestPath)) throw new Error("Unsupported desktop free proof request.");
       const [{ privateKey, publicKey, machineId }, secret] = await Promise.all([identity(), releaseSecret()]);
-      if (nonce !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(nonce)) throw new Error("Invalid desktop free proof nonce.");
+      if (nonce !== undefined && !DESKTOP_FREE_NONCE_PATTERN.test(nonce)) throw new Error("Invalid desktop free proof nonce.");
       const base = { publicKey, machineId, appVersion, ...permitted(), timestamp: Date.now(), nonce: nonce ?? randomUUID() };
-      const request = { method, path: requestPath, bodyHash: createHash("sha256").update(body).digest("hex"),
-        authorizationHash: createHash("sha256").update(authorization).digest("hex") };
-      const releaseTag = secret ? createHmac("sha256", secret).update(desktopFreeReleaseTagMessage({ ...base, ...request })).digest("hex") : null;
+      const request = { method, path: requestPath, bodyHash: sha256Hex(body), authorizationHash: sha256Hex(authorization) };
+      const releaseTag = secret ? desktopFreeReleaseTag(secret, { ...base, ...request }) : null;
       // Literal objects keep `version` narrow for the message helper's discriminated claims type.
       const message = releaseTag !== null
         ? desktopFreeProofMessage({ version: 3, ...base, releaseTag, ...request })

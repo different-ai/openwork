@@ -3,10 +3,11 @@
 // into the Electron main bundle in a split, masked form. The gateway derives the
 // same secret from the version each proof claims, so this only ever proves
 // "built by us as version X" and expires with the release support window.
-import { createHmac, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { deriveReleaseSecret as deriveSharedReleaseSecret } from "@openwork/free-auto/node";
 
 const CHUNK = 8;
 // Fixed shuffle of the 8 stored parts (4 mask chunks, 4 masked-secret chunks).
@@ -16,7 +17,8 @@ const STABLE_VERSION = /^\d+\.\d+\.\d+$/;
 export function deriveReleaseSecret(masterKey, version) {
   if (typeof masterKey !== "string" || masterKey.trim().length < 32) throw new Error("DESKTOP_FREE_RELEASE_KEY must be at least 32 characters.");
   if (typeof version !== "string" || !version) throw new Error("A release version is required.");
-  return createHmac("sha256", masterKey.trim()).update(version).digest();
+  // One derivation, shared with the gateway that checks the tags.
+  return Buffer.from(deriveSharedReleaseSecret(masterKey, version));
 }
 
 function chunks(bytes) {

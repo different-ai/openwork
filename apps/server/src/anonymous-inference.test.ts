@@ -8,7 +8,7 @@ import {
   DESKTOP_FREE_STATUS_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH,
   MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH, desktopFreeSessionPowMessage, leadingZeroBits,
   type DesktopFreeAccessStatus,
-} from "@openwork/types/desktop-free-access";
+} from "@openwork/free-auto";
 import { AnonymousInferenceService, isOwnedProvider } from "./anonymous-inference.js";
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
 import { EnvService } from "./env-file.js";

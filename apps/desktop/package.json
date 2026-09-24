@@ -38,6 +38,7 @@
     "@openwork/enterprise-mcp-client": "workspace:*",
     "@openwork/headless-threads": "workspace:*",
     "@openwork/paths": "workspace:*",
+    "@openwork/free-auto": "workspace:*",
     "@openwork/types": "workspace:*",
     "@sentry/electron": "^7.16.0",
     "ajv": "^8.17.1",

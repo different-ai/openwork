@@ -1,5 +1,5 @@
 import type { WorkspaceWire } from "@openwork/types/workspace";
-import type { DesktopFreeProofClaims } from "@openwork/types/desktop-free-access";
+import type { DesktopFreeProofClaims } from "@openwork/free-auto";
 
 export type WorkspaceType = "local" | "remote";
 
