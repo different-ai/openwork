@@ -24,10 +24,10 @@ const storePath = (directory, scope) => scope.kind === "private"
   ? path.join(directory, scope.slug, `.message-reactions-${hash(scope.threadId)}.json`)
   : path.join(directory, ".groups", scope.groupId, ".message-reactions.json");
 
-test("reaction opportunities stay near one third and follow personality", () => {
+test("reaction opportunities come on most turns and follow personality", () => {
   const samples = Array.from({ length: 2000 }, (_, index) => `coworker:turn-${index}`);
   const count = (personality) => samples.filter((seed) => reactionOpportunity(personality, seed)).length;
-  assert.ok(count("neutral") > 500 && count("neutral") < 700);
+  assert.ok(count("neutral") > 1200 && count("neutral") < 1400);
   assert.ok(count("playful") > count("neutral"));
   assert.ok(count("neutral") > count("dry"));
   assert.equal(reactionOpportunity("neutral", samples[0]), reactionOpportunity("neutral", samples[0]), "retries keep the same opportunity");
