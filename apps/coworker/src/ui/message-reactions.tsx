@@ -115,6 +115,9 @@ export const MessageReactions = memo(function MessageReactions({ messageId, reac
   className?: string;
 }) {
   if (!reactions?.length) return null;
+  // A touch lighter than reply bubbles so it lifts off them; only the round
+  // bubble is ringed, so the tail dots blend smoothly into it.
+  const surface = "bg-[#2b3547]";
   const ring = "shadow-[0_0_0_2.5px_var(--color-ink)]";
   // As in Messages, the tail dots trail outward from the small speech bubble,
   // away from the message, so they rest on the page rather than the bubble.
@@ -124,9 +127,9 @@ export const MessageReactions = memo(function MessageReactions({ messageId, reac
     // conversation, ringed in the page color so it reads as resting on top.
     // The parent is the message bubble's positioned wrapper.
     <div className={`absolute -top-6 z-10 ${side === "left" ? "-left-5" : "-right-5"} ${className}`} role="group" aria-label="Message reactions" data-testid="message-reactions" data-message-id={messageId}>
-      <span aria-hidden="true" className={`absolute -bottom-0.5 size-2.5 rounded-full bg-panel-2 ${ring} ${toward === "right" ? "right-0" : "left-0"}`} />
-      <span aria-hidden="true" className={`absolute -bottom-2 size-1.5 rounded-full bg-panel-2 ${ring} ${toward === "right" ? "-right-1" : "-left-1"}`} />
-      <div className={`relative flex h-8 min-w-8 items-center justify-center gap-0.5 rounded-full bg-panel-2 px-1.5 ${ring}`}>
+      <span aria-hidden="true" className={`absolute bottom-0 size-3 rounded-full ${surface} ${toward === "right" ? "right-0" : "left-0"}`} />
+      <span aria-hidden="true" className={`absolute -bottom-2 size-1.5 rounded-full ${surface} ${toward === "right" ? "-right-1" : "-left-1"}`} />
+      <div className={`relative flex h-8 min-w-8 items-center justify-center gap-0.5 rounded-full px-1.5 ${surface} ${ring}`}>
         {reactions.map((reaction) => {
           const label = `${reaction.actor.name} reacted ${reaction.emoji}`;
           return (
