@@ -66,9 +66,22 @@ function LinkPreviewCard({ url }: { url: string }) {
   if (!preview) return null;
   return (
     <button type="button" onClick={() => void coworkerBridge.openUntrustedExternal(preview.url)} data-testid="reply-link-preview" data-url={preview.url}
+      aria-label={`${preview.video ? "Watch" : "Open"} ${preview.title || preview.siteName} on ${preview.siteName}`}
       title={preview.url}
       className="w-72 max-w-full min-w-0 overflow-hidden rounded-2xl border border-white/8 bg-panel-2 text-left transition-colors hover:bg-[#232c3b] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50">
-      {preview.image ? <img src={preview.image} alt="" className="aspect-[1.91] w-full object-cover" /> : null}
+      {preview.image ? (
+        <span className="relative block">
+          <img src={preview.image} alt="" className={`w-full object-cover ${preview.video ? "aspect-video" : "aspect-[1.91]"}`} />
+          {preview.video ? (
+            // A video page: a play badge, as in a messaging app; tapping opens it.
+            <span aria-hidden="true" className="absolute inset-0 flex items-center justify-center" data-testid="reply-link-preview-video">
+              <span className="flex size-11 items-center justify-center rounded-full bg-black/55 backdrop-blur-sm">
+                <svg viewBox="0 0 16 16" className="ml-0.5 size-5 text-white" fill="currentColor"><path d="M5 3.2v9.6a.6.6 0 0 0 .9.5l7.6-4.8a.6.6 0 0 0 0-1L5.9 2.7a.6.6 0 0 0-.9.5Z" /></svg>
+              </span>
+            </span>
+          ) : null}
+        </span>
+      ) : null}
       <span className="block px-3 py-2.5">
         <span className="line-clamp-2 block text-sm font-semibold leading-snug text-snow">{preview.title || preview.siteName}</span>
         {preview.description ? <span className="mt-0.5 line-clamp-2 block text-xs leading-relaxed text-mist">{preview.description}</span> : null}

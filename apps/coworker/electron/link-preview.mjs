@@ -9,7 +9,9 @@ import { isIP } from "node:net";
  * link-local addresses are refused before connecting and after every redirect.
  * Reads are small and short, and the image comes back inline, bounded in size.
  */
-const PAGE_BYTES = 512 * 1024;
+// Some pages (YouTube) put their preview tags deep in the page; reading stops as
+// soon as a title and an image have arrived, and never goes past this ceiling.
+const PAGE_BYTES = 2 * 1024 * 1024;
 const IMAGE_BYTES = 400 * 1024;
 const TIMEOUT_MS = 5_000;
 const REDIRECTS = 3;
@@ -63,17 +65,24 @@ export function pageMetadata(html, pageUrl) {
   }
   const first = (...keys) => keys.map((key) => meta.get(key)).find((value) => value && value.trim()) ?? "";
   const title = clean(first("og:title", "twitter:title") || head.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "");
+  const video = /^video/i.test(first("og:type")) || Boolean(first("og:video", "og:video:url", "og:video:secure_url", "twitter:player"));
   const description = clean(first("og:description", "twitter:description", "description"));
   const siteName = clean(first("og:site_name", "application-name")) || pageUrl.hostname.replace(/^www\./, "");
   let image = "";
   const imageValue = first("og:image:secure_url", "og:image", "twitter:image", "twitter:image:src").trim();
   if (imageValue) { try { image = new URL(decodeEntities(imageValue), pageUrl).href; } catch { image = ""; } }
-  return { title, description, siteName, image };
+  return { title, description, siteName, image, video };
 }
 
-async function readLimited(response, limit) {
+/** A page has said enough for a preview once its title and image tags are both in. */
+const describedEnough = (html) => /<meta\b[^>]*(?:property|name)\s*=\s*["'](?:og|twitter):title["'][^>]*>/i.test(html)
+  && /<meta\b[^>]*(?:property|name)\s*=\s*["'](?:og|twitter):image["'][^>]*>/i.test(html);
+
+async function readLimited(response, limit, enough) {
   const reader = response.body?.getReader();
   if (!reader) return new Uint8Array();
+  const decoder = enough ? new TextDecoder() : null;
+  let text = "";
   const chunks = [];
   let total = 0;
   while (total < limit) {
@@ -81,6 +90,10 @@ async function readLimited(response, limit) {
     if (done) break;
     chunks.push(value);
     total += value.byteLength;
+    if (decoder) {
+      text += decoder.decode(value, { stream: true });
+      if (enough(text)) break;
+    }
   }
   await reader.cancel().catch(() => undefined);
   const bytes = new Uint8Array(Math.min(total, limit));
@@ -119,7 +132,7 @@ export function createLinkPreviews({ fetchImpl = fetch, resolve = lookup, now = 
       await page?.response.body?.cancel().catch(() => undefined);
       return null;
     }
-    const html = new TextDecoder().decode(await readLimited(page.response, PAGE_BYTES));
+    const html = new TextDecoder().decode(await readLimited(page.response, PAGE_BYTES, describedEnough));
     const metadata = pageMetadata(html, page.url);
     if (!metadata.title && !metadata.description) return null;
     let image = "";
@@ -132,7 +145,7 @@ export function createLinkPreviews({ fetchImpl = fetch, resolve = lookup, now = 
         if (bytes.byteLength <= IMAGE_BYTES) image = `data:${type};base64,${Buffer.from(bytes).toString("base64")}`;
       } else await picture?.response.body?.cancel().catch(() => undefined);
     }
-    return { url: page.url.href, title: metadata.title, description: metadata.description, siteName: metadata.siteName, image };
+    return { url: page.url.href, title: metadata.title, description: metadata.description, siteName: metadata.siteName, image, video: metadata.video };
   }
 
   return {

@@ -18,9 +18,10 @@ test("page metadata prefers Open Graph and falls back to the title", () => {
   const og = pageMetadata(`<head><title>Ignored</title><meta property="og:title" content="Jev &amp; typed outputs">
     <meta name="description" content="Decision model">
     <meta property="og:site_name" content="TypeSafe"><meta property="og:image" content="/cover.png"></head>`, url);
-  assert.deepEqual(og, { title: "Jev & typed outputs", description: "Decision model", siteName: "TypeSafe", image: "https://www.example.com/cover.png" });
+  assert.deepEqual(og, { title: "Jev & typed outputs", description: "Decision model", siteName: "TypeSafe", image: "https://www.example.com/cover.png", video: false });
+  assert.equal(pageMetadata('<meta property="og:type" content="video.other"><meta property="og:title" content="Clip">', url).video, true);
   const plain = pageMetadata("<title> Plain page </title>", url);
-  assert.deepEqual(plain, { title: "Plain page", description: "", siteName: "example.com", image: "" });
+  assert.deepEqual(plain, { title: "Plain page", description: "", siteName: "example.com", image: "", video: false });
 });
 
 test("a redirect to a private address is not followed, and images come back inline", async () => {
@@ -34,7 +35,7 @@ test("a redirect to a private address is not followed, and images come back inli
   assert.equal(await previews.read("https://example.com/"), null);
   assert.ok(!fetched.some((url) => url.includes("127.0.0.1")), "the private redirect target is never requested");
   const preview = await previews.read("https://example.com/ok");
-  assert.deepEqual(preview, { url: "https://example.com/ok", title: "Hello", description: "", siteName: "example.com", image: "data:image/png;base64,AQID" });
+  assert.deepEqual(preview, { url: "https://example.com/ok", title: "Hello", description: "", siteName: "example.com", image: "data:image/png;base64,AQID", video: false });
   const requests = fetched.length;
   await previews.read("https://example.com/ok");
   assert.equal(fetched.length, requests, "a repeated preview is served from the cache");

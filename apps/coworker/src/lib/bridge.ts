@@ -148,7 +148,7 @@ export type GroupTimelineEvent = {
 };
 
 /** What a shared link says about itself, read by the main process. `image` is an inline data URL or "". */
-export type LinkPreview = { url: string; title: string; description: string; siteName: string; image: string };
+export type LinkPreview = { url: string; title: string; description: string; siteName: string; image: string; video: boolean };
 
 export type CoworkerSummary = {
   slug: string;
