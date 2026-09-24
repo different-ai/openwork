@@ -45,6 +45,8 @@ export type ExtensionCardProps = {
   disabledReason?: string | null;
   /** Secondary meta line under the description (e.g. "from Acme"). */
   meta?: string | null;
+  /** Keep the row's chevron next to its next action, so every row reads as openable. */
+  alwaysChevron?: boolean;
   /** Action label shown at bottom. */
   actionLabel?: string;
   /** Optional primary next-step label (signin/connect). */
@@ -67,6 +69,7 @@ const taxonomyStyle: Record<ExtensionTaxonomy, string> = {
   command: "bg-orange-3 text-orange-11",
   agent: "bg-pink-3 text-pink-11",
   plugin: "bg-violet-3 text-violet-11",
+  model: "bg-dls-hover text-dls-secondary",
 };
 
 type ReadinessState = "ready" | "partial" | "none";
@@ -303,7 +306,8 @@ export function ExtensionCard(props: ExtensionCardProps) {
           >
             {nextActionLabel}
           </span>
-        ) : props.trailing ? null : (
+        ) : null}
+        {props.trailing || (!props.alwaysChevron && !disabledReason && !connecting && nextActionLabel) ? null : (
           <ChevronRight size={14} className="shrink-0 text-dls-secondary" />
         )}
       </button>

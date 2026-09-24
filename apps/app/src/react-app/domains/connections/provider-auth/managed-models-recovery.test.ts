@@ -11,7 +11,6 @@ import {
   isManagedModelAvailabilityPending,
   isOrganizationModelsEmpty,
   refreshOrganizationModels,
-  shouldAutoOpenUnavailableModelPicker,
   shouldWaitForCloudProviderSyncBeforePolicyReconcile,
 } from "./managed-models-recovery";
 
@@ -81,7 +80,7 @@ describe("managed model sync ordering", () => {
 });
 
 describe("managed model empty state", () => {
-  test("suppresses unavailable-model auto-open when managed model sync settled empty", () => {
+  test("reads an organization with no models once managed model sync settles empty", () => {
     const organizationModelsEmpty = isOrganizationModelsEmpty({
       workspaceReady: true,
       loading: false,
@@ -91,14 +90,6 @@ describe("managed model empty state", () => {
     });
 
     expect(organizationModelsEmpty).toBe(true);
-    expect(shouldAutoOpenUnavailableModelPicker({
-      selectedModelUnavailableKey: "opencode:gpt-5",
-      signedIn: true,
-      cloudProviderSyncReady: true,
-      entitledOrgDefaultModel: false,
-      organizationModelsEmpty,
-      autoOpenedUnavailableModelKey: null,
-    })).toBe(false);
   });
 });
 
@@ -145,10 +136,7 @@ describe("managed model recovery", () => {
     )).toBe(false);
   });
 
-  test("reconciles the stored default after server-managed provider syncs", () => {
-    expect(providerAuthStoreSource.includes(
-      "preselectEntitledOrgDefaultModel(providerList)",
-    )).toBe(true);
+  test("refreshes providers after server-managed provider syncs", () => {
     expect(providerAuthStoreSource.includes(
       "await refreshProvidersAfterCloudSync({ force: true }, isCurrent);",
     )).toBe(true);

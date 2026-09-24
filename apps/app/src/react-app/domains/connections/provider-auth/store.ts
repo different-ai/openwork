@@ -97,7 +97,6 @@ import {
 import {
   isProviderAddRestrictedByDesktopPolicy,
   isProviderAllowedByDesktopPolicy,
-  resolveEntitledOrgDefaultModel,
   type ModelEntitlementOption,
 } from "./provider-policy";
 import {
@@ -2136,27 +2135,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     );
   };
 
-  const preselectEntitledOrgDefaultModel = (
-    providerList: ProviderListResponse | null | undefined,
-  ) => {
-    const replacement = resolveEntitledOrgDefaultModel(
-      providerListModelEntitlementOptions(providerList),
-      {
-        currentDefault: readStoredDefaultModel(),
-        restrictToCloud: options.checkDesktopAppRestriction({ restriction: "allowCustomProviders" }),
-        checkRestriction: options.checkDesktopAppRestriction,
-      },
-    );
-    if (replacement && !hasPendingGatewayModelSelection()) writeStoredDefaultModel(replacement);
-  };
-
   const refreshProvidersAfterCloudSync = async (optionsArg: {
     dispose?: boolean;
     force?: boolean;
   }, isCurrent = () => !disposed) => {
     const providerList = await refreshProviders(optionsArg, isCurrent);
     if (!isCurrent()) return null;
-    preselectEntitledOrgDefaultModel(providerList);
     return providerList;
   };
 
@@ -2330,7 +2314,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const orgId = readDenSettings().activeOrgId;
     const client = options.openworkServer.getSnapshot().openworkServerClient;
     if (!orgId || !client) throw new Error("Sign in to OpenWork before connecting this provider.");
-    if (getOpenworkGatewayOrigin()) throw new Error("Open My Model Connections in Den to connect your Google account, then refresh models here.");
+    if (getOpenworkGatewayOrigin()) throw new Error("Sign in from My Library › Models in OpenWork Cloud, then refresh models here.");
     const contextKey = getCloudProviderSyncContextKey();
     const isCurrent = () => !disposed && !signal?.aborted && contextKey === getCloudProviderSyncContextKey();
     if (!isCurrent() || !await pushDenSession() || !isCurrent()) {

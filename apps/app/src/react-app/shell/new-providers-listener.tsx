@@ -39,6 +39,17 @@ function markProvidersSeen(ids: string[]): void {
 }
 
 /**
+ * Open the model picker so a person can sign in where the model lives. Used
+ * when someone picks a model that needs their sign-in from a place that has
+ * no room to show it, such as the command palette or the composer menu.
+ */
+export function openModelPickerForSignIn(target: { sessionId?: string; providerId?: string } = {}): void {
+  window.dispatchEvent(new CustomEvent(openModelPickerEvent, {
+    detail: { ...(target.sessionId ? { sessionId: target.sessionId } : {}), ...(target.providerId ? { focusProviderId: target.providerId } : {}) },
+  }));
+}
+
+/**
  * Open the model picker focused on the given new providers. If no session
  * surface picks the event up, fall back to navigating to preferences.
  */

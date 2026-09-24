@@ -149,6 +149,15 @@ import {
 import { LibraryDeleteDialog } from "./library-delete-dialog";
 import { LibraryEditSkillPage, type LibrarySkillDraft } from "./library-edit-skill-page";
 import { LibraryRowMenu, type LibraryRowMenuAction } from "./library-row-menu";
+import { LibraryModelPage } from "./library-model-page";
+import {
+  libraryModelDetailId,
+  libraryModelSignInKey,
+  type LibraryModelProvider,
+  modelNamesSummary,
+  parseLibraryModelDetailId,
+} from "../library-models";
+import type { GatewayConnectProvider } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { kindLabel, LibrarySharePage, targetsFor } from "./library-share-page";
 import {
   openInDenLibraryUrl,
@@ -264,6 +273,15 @@ export type McpViewProps = {
   /** OpenCode plugin management, shown under the Plugins category. */
   pluginsContent?: ReactNode;
   onOpenCloudAccount?: () => void;
+  /** Model providers this person can use, for the Models filter. */
+  modelProviders?: LibraryModelProvider[];
+  /** The credential set whose sign-in is in progress, keyed like the sign-in engine. */
+  modelSignInKey?: string | null;
+  onModelSignIn?: (provider: GatewayConnectProvider) => void;
+  onCancelModelSignIn?: () => void;
+  onRemoveModelProvider?: (providerId: string) => void;
+  /** Open the add-a-provider (API key) flow. */
+  onAddModelProvider?: () => void;
 };
 
 const builtInExtensionDisabledReason = () => t("extensions.disabled_by_organization");
@@ -420,6 +438,7 @@ export function McpView(props: McpViewProps) {
   const denBaseUrl = readDenSettings().baseUrl;
   const useRoutedDetail = typeof props.onDetailIdChange === "function";
   const [detailTarget, setDetailTarget] = useState<ExtensionDetailTarget | null>(null);
+  const [modelDetail, setModelDetail] = useState<string | null>(null);
   const [mcpConnectFailure, setMcpConnectFailure] = useState<{ id: string; message: string } | null>(null);
   const [pendingPlugin, setPendingPlugin] = useState<CloudImportedPlugin | null>(null);
   const [landingConnector, setLandingConnector] = useState<{ pluginId: string; name: string } | null>(null);
@@ -573,7 +592,9 @@ export function McpView(props: McpViewProps) {
   const addDisabledReason = cloudIssue ?? (!props.createLibraryItem ? t("extensions.cloud_unavailable") : undefined);
   const signedOut = !libraryCloudSignedIn && denAuth.status !== "checking";
   // Signed out, every add kind needs Cloud: the sign-in banner carries the action instead.
-  const addControl = signedOut ? null : (
+  const addControl = filter === "model" && props.onAddModelProvider ? (
+    <Button onClick={props.onAddModelProvider}>{t("extensions.add_to_library")}</Button>
+  ) : signedOut ? null : (
     <LibraryAddControl
       kinds={libraryAddKindsForFilter("all")}
       connectorCues={connectorCues}
@@ -843,6 +864,20 @@ export function McpView(props: McpViewProps) {
     setDetailSkillContent(null);
     setMcpConnectFailure(null);
     props.onDetailIdChange?.(null);
+  };
+
+  // Back from a provider's page returns to the Models filter it was opened from.
+  const closeModelDetail = () => {
+    setModelDetail(null);
+    setFilter("model");
+    if (!useRoutedDetail) return;
+    if (props.onFilterChange) props.onFilterChange("model");
+    else props.onDetailIdChange?.(null);
+  };
+
+  const openModelProvider = (provider: LibraryModelProvider) => {
+    if (useRoutedDetail) props.onDetailIdChange?.(libraryModelDetailId(provider));
+    else setModelDetail(provider.key);
   };
 
   const openDetail = (target: ExtensionDetailTarget) => {
@@ -1841,6 +1876,34 @@ export function McpView(props: McpViewProps) {
     });
   }
 
+  for (const provider of props.modelProviders ?? []) {
+    const signInKey = libraryModelSignInKey(provider);
+    const waiting = signInKey !== null && props.modelSignInKey === signInKey;
+    const pending = provider.pending[0];
+    rows.push({
+      key: libraryModelDetailId(provider),
+      section: provider.section,
+      taxonomy: "model",
+      searchText: `${provider.name} ${provider.models.map((model) => model.name).join(" ")}`,
+      node: (
+        <ExtensionCard
+          layout={layout}
+          name={provider.name}
+          description={modelNamesSummary(provider.models)}
+          iconSlug={provider.iconSlug ?? undefined}
+          taxonomy="model"
+          connected={provider.state !== "needs_signin"}
+          connecting={waiting}
+          meta={provider.state === "needs_signin" ? null : t("extensions.model_ready")}
+          nextActionLabel={provider.state === "needs_signin" && props.onModelSignIn ? t("extensions.model_sign_in") : undefined}
+          alwaysChevron
+          onNextAction={pending && props.onModelSignIn ? () => props.onModelSignIn?.(pending) : undefined}
+          onClick={() => openModelProvider(provider)}
+        />
+      ),
+    });
+  }
+
   const sharedOwned = ownedPlugins.filter((plugin) => isLibraryAudienceShared(libraryCloud.audienceFor(plugin.id)));
   const firstSharedOwned = sharedOwned[0];
   const openworkRowCount = rows.filter((row) => row.section === "openwork").length;
@@ -1958,6 +2021,21 @@ export function McpView(props: McpViewProps) {
           });
           finishCreate(pluginId, { name, description: draft.description });
         }}
+      />
+    );
+  }
+
+  const modelDetailKey = modelDetail ?? (useRoutedDetail && props.detailId ? parseLibraryModelDetailId(props.detailId) : null);
+  const modelDetailProvider = modelDetailKey ? (props.modelProviders ?? []).find((provider) => provider.key === modelDetailKey) ?? null : null;
+  if (modelDetailProvider) {
+    return (
+      <LibraryModelPage
+        provider={modelDetailProvider}
+        signingInKey={props.modelSignInKey ?? null}
+        onBack={closeModelDetail}
+        onSignIn={props.onModelSignIn}
+        onCancelSignIn={props.onCancelModelSignIn}
+        onRemove={props.onRemoveModelProvider ? (providerId) => { props.onRemoveModelProvider?.(providerId); closeModelDetail(); } : undefined}
       />
     );
   }
@@ -2271,11 +2349,13 @@ export function LibraryEmptyState(props: {
       ? t("extensions.cloud_unavailable")
       : props.cloudIssue && category !== "all"
         ? t("extensions.cloud_library_title")
-        : t(category === "skill" ? "extensions.empty_skill_title" : category === "plugin" ? "extensions.empty_plugin_title" : "extensions.empty_all_title");
+        : t(category === "skill" ? "extensions.empty_skill_title" : category === "plugin" ? "extensions.empty_plugin_title" : category === "model" ? "extensions.models_empty_title" : "extensions.empty_all_title");
   const description = props.searching
     ? t("extensions.empty_filtered_hint")
-    : props.error || (category !== "all" ? props.cloudIssue : undefined)
-      || t(category === "skill" ? "extensions.empty_skill_hint" : category === "plugin" ? "extensions.empty_plugin_hint" : "extensions.empty_all_hint");
+    : category === "model"
+      ? t("extensions.models_empty")
+      : props.error || (category !== "all" ? props.cloudIssue : undefined)
+        || t(category === "skill" ? "extensions.empty_skill_hint" : category === "plugin" ? "extensions.empty_plugin_hint" : "extensions.empty_all_hint");
   const addKind = libraryAddKindsForFilter(category)[0];
   return (
     <div className="flex flex-col items-center gap-3 rounded-[10px] border border-dashed border-dls-border bg-dls-surface px-6 py-12 text-center">
@@ -2319,7 +2399,7 @@ function librarySectionLabel(section: LibrarySection) {
 function LibrarySectionHeader(props: { section: LibrarySection; label: string; meta?: string | null }) {
   return (
     <div className="flex items-center justify-between gap-3 px-0.5">
-      <h2 className="flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.06em] text-dls-secondary uppercase">
+      <h2 className="flex items-center gap-1.5 text-[13px] font-medium text-dls-secondary">
         {props.section === "mac" ? <Laptop size={12} /> : null}
         {props.label}
       </h2>

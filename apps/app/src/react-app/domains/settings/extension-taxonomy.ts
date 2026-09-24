@@ -8,8 +8,9 @@ import { t } from "../../../i18n";
  * - mcp: an MCP server configured in this workspace
  * - skill / command / agent: composer capabilities managed in Library
  * - plugin: organization bundles
+ * - model: a model provider, with the models it gives this person
  */
-export type ExtensionTaxonomy = "app" | "connection" | "mcp" | "skill" | "command" | "agent" | "plugin";
+export type ExtensionTaxonomy = "app" | "connection" | "mcp" | "skill" | "command" | "agent" | "plugin" | "model";
 
 export type ExtensionInventoryFilter = "all" | ExtensionTaxonomy;
 
@@ -22,6 +23,7 @@ export const extensionInventoryFilters: ExtensionInventoryFilter[] = [
   "connection",
   "skill",
   "plugin",
+  "model",
 ];
 
 /**
@@ -32,6 +34,7 @@ export const extensionInventoryFilters: ExtensionInventoryFilter[] = [
 export function primaryLibraryFilter(filter?: ExtensionInventoryFilter): ExtensionInventoryFilter {
   if (filter === "skill" || filter === "command" || filter === "agent") return "skill";
   if (filter === "connection" || filter === "mcp") return "connection";
+  if (filter === "model") return "model";
   return filter === "plugin" ? "plugin" : "all";
 }
 
@@ -79,6 +82,8 @@ export function extensionFilterLabel(filter: ExtensionInventoryFilter) {
       return t("extensions.filter_agents");
     case "plugin":
       return t("extensions.filter_plugins");
+    case "model":
+      return t("extensions.filter_models");
   }
 }
 
@@ -98,5 +103,7 @@ export function extensionTaxonomyLabel(taxonomy: ExtensionTaxonomy) {
       return t("extensions.badge_agent");
     case "plugin":
       return t("extensions.badge_plugin");
+    case "model":
+      return t("extensions.badge_model");
   }
 }

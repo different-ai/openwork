@@ -17,8 +17,8 @@ function text(value: unknown, label: string): string {
   return value;
 }
 
-const GOOGLE_ACCOUNT = "sam@example.com";
-const OAUTH_CLIENT_ID = "fixture-client.apps.googleusercontent.com";
+export const GOOGLE_ACCOUNT = "sam@example.com";
+export const OAUTH_CLIENT_ID = "fixture-client.apps.googleusercontent.com";
 
 /**
  * A stand-in for Google's token, revocation and signing-key endpoints. Den's
@@ -27,7 +27,7 @@ const OAUTH_CLIENT_ID = "fixture-client.apps.googleusercontent.com";
  * same seam inference-gateway-lifecycle uses). It signs a real RS256 ID token
  * for the fixture account, so Den's identity verification runs for real.
  */
-async function googleStandIn() {
+export async function googleStandIn() {
   const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const kid = randomUUID();
   const jwk = { ...publicKey.export({ format: "jwk" }), kid, alg: "RS256", use: "sig" };
@@ -101,7 +101,7 @@ globalThis.fetch = async (input, init) => {
  * loads accounts.google.com: it reads the request Den sent and answers the
  * way Google would, with Den's own callback address.
  */
-async function answerGoogleSignIn(tab: { webSocketDebuggerUrl: string }, decision: "approve" | "deny") {
+export async function answerGoogleSignIn(tab: { webSocketDebuggerUrl: string }, decision: "approve" | "deny") {
   const socket = new WebSocket(tab.webSocketDebuggerUrl);
   let nextId = 0;
   const pending = new Map<number, (value: unknown) => void>();

@@ -19,12 +19,12 @@ const policy = await import("../src/react-app/domains/cloud/desktop-config-provi
 const { createDefaultPlatform, PlatformProvider } = await import("../src/react-app/kernel/platform");
 const { GatewayModelAccessProvider } = await import("../src/react-app/domains/connections/provider-auth/gateway-model-access");
 const { ModelPickerModal } = await import("../src/react-app/domains/session/modals/model-picker-modal");
-const { GatewayConnectRow } = await import("../src/react-app/domains/settings/pages/ai-view");
-const { renderToStaticMarkup } = await import("react-dom/server");
 const { ModelSelect } = await import("../src/components/model-select");
 const { WorkspaceProvider } = await import("../src/react-app/shell/workspace-provider");
 const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
 const { useModelCollectionsStore } = await import("../src/react-app/domains/session/models/model-collections-store");
+// Imported after the DOM exists: its module chain reads the DOM when it loads.
+const { openModelPickerEvent } = await import("../src/react-app/shell/new-providers-listener");
 
 afterAll(async () => { await GlobalRegistrator.unregister(); });
 
@@ -83,7 +83,7 @@ function deferred() {
 }
 
 function picker(input: {
-  login?: (provider: GatewayConnectProvider, signal: AbortSignal, model: ModelRef) => Promise<boolean>;
+  login?: (provider: GatewayConnectProvider, signal: AbortSignal, model?: ModelRef) => Promise<boolean>;
   scope?: string;
   current?: ModelRef;
   assigned?: GatewayConnectProvider[];
@@ -114,19 +114,31 @@ test("only assigned member-auth models are offered; missing org credentials and 
   expect(pendingGatewayModelOptions([{ ...providers[0]!, credentialSetId: providers[1]!.credentialSetId }])).toEqual([]);
 });
 
-test("pending models are visible and Cancel leaves the current model unchanged without OAuth", async () => {
+test("a model that needs sign-in starts it right on its group; Cancel leaves the current model", async () => {
   const selected: ModelRef[] = [];
-  let starts = 0;
-  await act(async () => root.render(picker({ selected, login: async () => { starts++; return true; } })));
-  expect(document.body.textContent).toContain("Sign-in required");
-  await choose("Personal");
-  expect(document.body.textContent).toContain("Log in to this provider to use the models");
-  expect(selected).toEqual([]);
-  expect(starts).toBe(0);
-  await click("Cancel");
-  expect(selected).toEqual([]);
-  expect(starts).toBe(0);
+  const result = deferred();
+  let signal: AbortSignal | undefined;
+  await act(async () => root.render(picker({ selected, login: async (_provider, nextSignal) => { signal = nextSignal; return result.promise; } })));
+  expect(document.body.textContent).toContain("Sign in with Assigned provider / Personal");
   expect(document.body.textContent).not.toContain("Log in to this provider to use the models");
+  expect(document.body.textContent).not.toContain("via OpenWork Gateway");
+  await choose("Personal");
+  expect(document.body.textContent).toContain("Finish signing in in your browser");
+  expect(selected).toEqual([]);
+  await click("Cancel");
+  expect(signal?.aborted).toBe(true);
+  await act(async () => { result.resolve(true); await result.promise; });
+  expect(selected).toEqual([]);
+  expect(document.body.textContent).not.toContain("Finish signing in in your browser");
+});
+
+test("the group's Sign in unlocks it without changing the current model", async () => {
+  const selected: ModelRef[] = [];
+  const models: Array<ModelRef | undefined> = [];
+  await act(async () => root.render(picker({ selected, login: async (_provider, _signal, model) => { models.push(model); return true; } })));
+  await click("Sign in with Assigned provider / Personal");
+  expect(models).toEqual([undefined]);
+  expect(selected).toEqual([]);
 });
 
 test("Login uses the shared Settings OAuth helper with the selected credential set and applies only after sync", async () => {
@@ -135,8 +147,8 @@ test("Login uses the shared Settings OAuth helper with the selected credential s
   const opened: string[] = [];
   const wait = deferred();
   let synced = false;
-  const login = async (provider: GatewayConnectProvider, signal: AbortSignal, model: ModelRef) => {
-    expect(model.modelID).toBe(options[1]!.modelID);
+  const login = async (provider: GatewayConnectProvider, signal: AbortSignal, model?: ModelRef) => {
+    expect(model?.modelID).toBe(options[1]!.modelID);
     return connectGatewayProvider({
       provider, signal,
       startOAuth: async (id, set) => { started.push([id, set]); return { authorizationUrl: "https://oauth.example.test/authoritative" }; },
@@ -146,8 +158,6 @@ test("Login uses the shared Settings OAuth helper with the selected credential s
   };
   await act(async () => root.render(picker({ selected, login })));
   await choose("Work");
-  expect(opened).toEqual([]);
-  await click("Login");
   expect(started).toEqual([[providers[1]!.cloudProviderId, providers[1]!.credentialSetId]]);
   expect(opened).toEqual(["https://oauth.example.test/authoritative"]);
   expect(selected).toEqual([]);
@@ -178,8 +188,6 @@ test("first-org sync cannot repair the default before the explicit second alias 
   }
   await act(async () => root.render(<FirstOrgPicker />));
   await choose("Work");
-  expect(hasPendingGatewayModelSelection()).toBe(true);
-  await click("Login");
   expect(repairAttempted).toBe(true);
   expect(host.querySelector("[data-current-model]")?.textContent).toBe(original.modelID);
   expect(selected).toEqual([]);
@@ -196,7 +204,6 @@ test.each(["cancel", "session", "model", "account", "organization", "unmount", "
   const login = async (_provider: GatewayConnectProvider, nextSignal: AbortSignal) => { signal = nextSignal; return result.promise; };
   await act(async () => root.render(picker({ selected, login })));
   await choose("Personal");
-  await click("Login");
   if (change === "cancel") await click("Cancel");
   else if (change === "session") await act(async () => root.render(picker({ selected, login, scope: "account/org/other-session" })));
   else if (change === "model") await act(async () => root.render(picker({ selected, login, current: { providerID: "local", modelID: "other" } })));
@@ -211,15 +218,23 @@ test.each(["cancel", "session", "model", "account", "organization", "unmount", "
   expect(selected).toEqual([]);
 });
 
-test("failed Login keeps the current model unchanged and offers retry or cancel", async () => {
+test("a sign-in that doesn't finish keeps the current model and offers Try again on the group", async () => {
   const selected: ModelRef[] = [];
-  await act(async () => root.render(picker({ selected, login: async () => false })));
+  let starts = 0;
+  await act(async () => root.render(picker({ selected, login: async () => { starts++; return false; } })));
   await choose("Personal");
-  await click("Login");
   expect(selected).toEqual([]);
-  expect(document.querySelector('[role="alert"]')?.textContent).toContain("Sign-in has not been confirmed");
-  expect(button("Login").disabled).toBe(false);
-  await click("Cancel");
+  expect(document.body.textContent).toContain("Sign-in didn't finish.");
+  await click("Try again");
+  expect(starts).toBe(2);
+});
+
+test("a sign-in that cannot start says why, in place", async () => {
+  const selected: ModelRef[] = [];
+  await act(async () => root.render(picker({ selected, login: async () => { throw new Error("Sign in from My Library › Models in OpenWork Cloud, then refresh models here."); } })));
+  await choose("Personal");
+  expect(document.body.textContent).toContain("Sign in from My Library › Models in OpenWork Cloud");
+  expect(selected).toEqual([]);
 });
 
 test("exact alias readiness rejects a different set, deferred reload, pending skip and unverified sync", () => {
@@ -238,12 +253,6 @@ test("exact alias readiness rejects a different set, deferred reload, pending sk
   expect(isGatewayModelReady(provider, model, { ...snapshot, gatewayUsageProviderScope: null })).toBe(false);
   expect(isGatewayModelReady(provider, model, { ...snapshot, cloudProviderServerSync: { reloadPending: true, skippedProviders: {} } })).toBe(false);
   expect(isGatewayModelReady(provider, model, { ...snapshot, cloudProviderServerSync: { reloadPending: false, skippedProviders: { [`${provider.cloudProviderId}:${provider.credentialSetId}`]: provider } } })).toBe(false);
-});
-
-test("Settings gateway OAuth row says Login", () => {
-  const html = renderToStaticMarkup(<GatewayConnectRow provider={providers[0]!} busy={false} onConnect={() => undefined} />);
-  expect(html).toContain("Login");
-  expect(html).not.toContain(">Connect<");
 });
 
 test.each(["Favorites", "Recent", "Next"])("compact %s selection cannot bypass Login or record a recent model early", async (entry) => {
@@ -274,14 +283,16 @@ test.each(["Favorites", "Recent", "Next"])("compact %s selection cannot bypass L
   if (!choice) throw new Error(`Missing ${entry} model ${pending.modelID}`);
   if (entry !== "Next") {
     expect(choice.textContent).toContain("Personal");
-    expect(choice.textContent).toContain("Sign-in required");
+    expect(choice.textContent).toContain("Sign in to use");
   }
+  let pickerOpened = 0;
+  const onOpen = () => { pickerOpened++; };
+  window.addEventListener(openModelPickerEvent, onOpen);
   await act(async () => choice.click());
-  expect(document.body.textContent).toContain("Log in to this provider to use the models");
+  window.removeEventListener(openModelPickerEvent, onOpen);
+  expect(pickerOpened).toBe(1);
   expect(selected).toEqual([]);
   expect(useModelCollectionsStore.getState().recent).toEqual(before);
-  await click("Cancel");
-  expect(selected).toEqual([]);
   queryClient.clear();
 });
 
@@ -301,9 +312,8 @@ test("disabled pending-only provider retains Enable without allowing Login or ma
   expect(starts).toBe(0);
   expect(selected).toEqual([]);
   await choose("Personal");
-  expect(document.body.textContent).toContain("Log in to this provider to use the models");
-  expect(starts).toBe(0);
-  await click("Cancel");
+  expect(starts).toBe(1);
+  expect(selected).toEqual([{ providerID: options[0]!.providerID, modelID: options[0]!.modelID }]);
 });
 
 test("disabled pending and ready favorites/recents stay out of the compact picker", async () => {
@@ -338,7 +348,7 @@ test("the selection gate rejects stale disabled options even if a caller bypasse
     <span>Fixture</span>
   </GatewayModelAccessProvider>));
   await act(async () => { selectionRef.current?.select(options[0]!, () => selected.push(options[0]!), () => true); });
-  expect(document.body.textContent).not.toContain("Log in to this provider to use the models");
+  expect(document.body.textContent).not.toContain("Finish signing in in your browser");
   expect(selected).toEqual([]);
 });
 
@@ -362,14 +372,12 @@ test.each(["session", "workspace", "pane", "provider-scope"])("secondary favorit
     sessions.session_a = options[0]!;
     globalDefault = options[0]!;
   }, () => isFavoriteModelTargetCurrent(target, workbench, scope) && sessions.session_a === original); });
-  await click("Login");
   if (change === "session") workbench = { ...workbench, secondary: { workspaceId: "ws_a", sessionId: "session_b" } };
   if (change === "workspace") workbench = { ...workbench, secondary: { workspaceId: "ws_b", sessionId: "session_a" } };
   if (change === "pane") workbench = { ...workbench, focusedPane: "primary" };
   if (change === "provider-scope") scope = { ...scope, providerScopeKey: "account/org/engine-b" };
   expect(isFavoriteModelTargetCurrent(target, workbench, scope)).toBe(false);
   await act(async () => { result.resolve(true); await result.promise; });
-  expect(signal?.aborted).toBe(true);
   expect(globalDefault).toBe(original);
   expect(sessions).toEqual({ session_a: original, session_b: original });
   expect(hasPendingGatewayModelSelection()).toBe(false);
@@ -415,14 +423,17 @@ test("picker merges pending assignments without exposing the unconnected engine 
   queryClient.clear();
 });
 
-test("command palette pending selection cannot bypass Login via model or fast choices", async () => {
+test("command palette sends a model that needs sign-in to the picker instead of picking it", async () => {
   const { CommandPalette } = await import("../src/react-app/shell/command-palette");
   const selected: ModelRef[] = [];
+  let closed = 0;
+  let pickerOpened = 0;
+  const onOpen = () => { pickerOpened++; };
   await act(async () => root.render(<PlatformProvider value={createDefaultPlatform()}>
     <GatewayModelAccessProvider providers={providers} scopeKey="org/session" login={async () => true}>
       <CommandPalette open developerMode={false} sessions={[]} selectedModel={original}
         modelOptions={options.map((option) => ({ ...option, behaviorOptions: [{ value: "fast", label: "Fast", description: "" }] }))}
-        onSelectModel={(model) => selected.push(model)} onClose={() => undefined} onOpenSession={() => undefined}
+        onSelectModel={(model) => selected.push(model)} onClose={() => { closed++; }} onOpenSession={() => undefined}
         onCreateNewSession={() => undefined} onOpenSettings={() => undefined} onOpenExtensions={() => undefined} />
     </GatewayModelAccessProvider>
   </PlatformProvider>));
@@ -431,9 +442,10 @@ test("command palette pending selection cannot bypass Login via model or fast ch
   await act(async () => models.click());
   const model = Array.from(document.querySelectorAll<HTMLElement>("[data-command-palette-item]")).find((item) => item.textContent?.includes("Personal"));
   if (!model) throw new Error("Missing palette pending model");
+  window.addEventListener(openModelPickerEvent, onOpen);
   await act(async () => model.click());
-  expect(document.body.textContent).toContain("Log in to this provider to use the models");
-  expect(selected).toEqual([]);
-  await click("Cancel");
+  window.removeEventListener(openModelPickerEvent, onOpen);
+  expect(pickerOpened).toBe(1);
+  expect(closed).toBe(1);
   expect(selected).toEqual([]);
 });

@@ -169,6 +169,42 @@ export function writeStoredDefaultModel(model: ModelRef): void {
   }
 }
 
+const OWN_MODEL_PICK_KEY = "openwork.ownModelPick";
+export const ownModelPickChangedEvent = "openwork.ownModelPickChanged";
+
+/**
+ * The model this person chose themselves, or null when they never chose one.
+ * The stored default above is only the model new chats currently start on;
+ * it is worked out again every launch and must not be read as a choice.
+ * Before this key existed, the stored default was the only record, so a
+ * non-starter value there counts as the person's pick once.
+ */
+export function readOwnModelPick(): ModelRef | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const own = window.localStorage.getItem(OWN_MODEL_PICK_KEY);
+    if (own !== null) return parseModelRef(own);
+    const legacy = parseModelRef(window.localStorage.getItem(MODEL_PREF_KEY));
+    if (!legacy || (legacy.providerID === DEFAULT_MODEL.providerID && legacy.modelID === DEFAULT_MODEL.modelID)) return null;
+    window.localStorage.setItem(OWN_MODEL_PICK_KEY, formatModelRef(legacy));
+    return legacy;
+  } catch {
+    return null;
+  }
+}
+
+export function writeOwnModelPick(model: ModelRef): void {
+  if (typeof window === "undefined") return;
+  try {
+    const value = formatModelRef(model);
+    if (window.localStorage.getItem(OWN_MODEL_PICK_KEY) === value) return;
+    window.localStorage.setItem(OWN_MODEL_PICK_KEY, value);
+    window.dispatchEvent(new Event(ownModelPickChangedEvent));
+  } catch {
+    // ignore quota errors
+  }
+}
+
 /**
  * Minimal React hook covering the default model picker state. The richer
  * session/workspace model overrides from context/model-config.ts will be

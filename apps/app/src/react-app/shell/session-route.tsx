@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import { useLocation, useNavigate } from "react-router";
+import { DEFAULT_MODEL } from "@/app/constants";
 import { toast } from "@/components/ui/sonner";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
@@ -168,18 +169,19 @@ import {
   isGatewaySetConnected,
   type GatewayConnectProvider,
   isCloudManagedProviderKey,
+  pendingGatewayModelOptions,
   resolveGatewayConnectProviders,
   resolveGatewayProviderIds,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import { resolveDefaultModel } from "@/react-app/domains/connections/provider-auth/default-model-rule";
 import { assignedModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
 import {
   filterEntitledModelOptions,
-  resolveOrgDefaultModelReplacement,
+  isProviderAllowedByDesktopPolicy,
   type ModelEntitlementOption,
 } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import {
   isOrganizationModelsEmpty,
-  shouldAutoOpenUnavailableModelPicker,
 } from "@/react-app/domains/connections/provider-auth/managed-models-recovery";
 import { useSessionProviderAuth } from "@/react-app/domains/connections/provider-auth/use-session-provider-auth";
 import {
@@ -284,7 +286,7 @@ import {
 import { WorkspaceProvider } from "./workspace-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { SettingsSurface } from "./settings-route";
-import { writeStoredDefaultModel } from "@/react-app/kernel/model-config";
+import { ownModelPickChangedEvent, readOwnModelPick, writeStoredDefaultModel } from "@/react-app/kernel/model-config";
 import {
   ensureProviderListQuery,
   getConnectedProviderItems,
@@ -1042,6 +1044,10 @@ export function SessionRoute() {
     () => resolveGatewayProviderIds(sessionProviderAuthSnapshot.importedCloudProviders),
     [sessionProviderAuthSnapshot.importedCloudProviders],
   );
+  const gatewayProviderNames = useMemo(
+    () => Object.fromEntries(providers.flatMap((provider) => gatewayProviderIds.has(provider.id) ? [[provider.id, provider.name]] : [])),
+    [gatewayProviderIds, providers],
+  );
   const gatewayConnectProviders = useMemo(
     () => denAuth.isSignedIn ? resolveGatewayConnectProviders(sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders) : [],
     [denAuth.isSignedIn, sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders],
@@ -1058,7 +1064,7 @@ export function SessionRoute() {
       window.removeEventListener(denSettingsChangedEvent, cancel);
     };
   }, []);
-  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider, request?: { signal: AbortSignal; model: ModelRef }) {
+  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider, request?: { signal: AbortSignal; model?: ModelRef }) {
     gatewayConnectAbort.current?.abort();
     const controller = new AbortController();
     gatewayConnectAbort.current = controller;
@@ -1075,7 +1081,7 @@ export function SessionRoute() {
           await refreshCloudProviderSync("manual");
           synced = sessionProviderAuthStore.getSnapshot().gatewayUsageProviderScope != null;
         },
-        isConnected: () => synced && (request
+        isConnected: () => synced && (request?.model
           ? sessionProviderAuthStore.isGatewayModelAvailable(provider, request.model)
           : isGatewaySetConnected(provider, sessionProviderAuthStore.getSnapshot().importedCloudProviders)),
       });
@@ -1086,7 +1092,9 @@ export function SessionRoute() {
       }
       return connected && !signal.aborted;
     } catch (error) {
-      if (!signal.aborted && !request) toast.error(describeRouteError(error));
+      // In place (the picker), the caller shows why; elsewhere a toast does.
+      if (request && !signal.aborted) throw error;
+      if (!signal.aborted) toast.error(describeRouteError(error));
       return false;
     }
   }, [platform, refreshCloudProviderSync, sessionProviderAuthStore]);
@@ -1165,32 +1173,24 @@ export function SessionRoute() {
     window.addEventListener(openModelPickerEvent, handler);
     return () => window.removeEventListener(openModelPickerEvent, handler);
   }, []);
-  const entitledOrgDefaultModel = useMemo(() => {
-    const runtimeProviderList = cloudProviderList ?? providerListQuery.data;
-    return resolveOrgDefaultModelReplacement({
-      runtimeOptions: providerListModelEntitlementOptions(runtimeProviderList),
-      // Same pending rule as computeModelAvailability: a connected workspace
-      // engine whose catalog has not answered (e.g. still reloading after a
-      // provider was configured) must not be read as "provider missing".
-      runtimeCatalogPending: Boolean(selectedWorkspaceId && opencodeClient) && !runtimeProviderList,
-      assignedOptions: organizationAssignedModelOptions,
-      currentDefault: local.prefs.defaultModel,
-      restrictToCloud: restrictToCloudProviders,
-      checkRestriction: checkDesktopRestriction,
-    });
-  }, [
-    checkDesktopRestriction,
-    cloudProviderList,
-    local.prefs.defaultModel,
-    opencodeClient,
-    organizationAssignedModelOptions,
-    providerListQuery.data,
-    restrictToCloudProviders,
-    selectedWorkspaceId,
-  ]);
+  // Default for new chats, worked out fresh every launch: the person's own
+  // pick while they're still offered it, otherwise the starter model. Only the person's own pick is ever saved; the result
+  // here is only where new chats start.
+  const [ownModelPick, setOwnModelPick] = useState<ModelRef | null>(() => readOwnModelPick());
   useEffect(() => {
-    if (entitledOrgDefaultModel && !hasPendingGatewayModelSelection()) writeStoredDefaultModel(entitledOrgDefaultModel);
-  }, [entitledOrgDefaultModel]);
+    const update = () => setOwnModelPick(readOwnModelPick());
+    window.addEventListener(ownModelPickChangedEvent, update);
+    return () => window.removeEventListener(ownModelPickChangedEvent, update);
+  }, []);
+  // A catalog or cloud sync that hasn't answered yet can make a model look
+  // missing; decide nothing until both have.
+  const runtimeCatalogPending = Boolean(selectedWorkspaceId && opencodeClient) && !(cloudProviderList ?? providerListQuery.data);
+  const defaultModelRuleReady = !runtimeCatalogPending && (!denAuth.isSignedIn || cloudProviderSyncReady);
+  const starterModel = isProviderAllowedByDesktopPolicy({
+    providerId: DEFAULT_MODEL.providerID,
+    restrictToCloud: restrictToCloudProviders,
+    checkRestriction: checkDesktopRestriction,
+  }) ? DEFAULT_MODEL : null;
   // Availability is resolved per effective model identity: the New Task
   // composer validates the global default while each conversation validates
   // its OWN remembered provider/model against the current workspace's
@@ -1210,7 +1210,12 @@ export function SessionRoute() {
     (value: number) => value + 1,
     0,
   );
+  // A model that waits on the person's own sign-in isn't missing: sending
+  // keeps the message and it goes once they sign in.
+  const signInWaitingModelKeys = useMemo(() => new Set(pendingGatewayModelOptions(gatewayConnectProviders)
+    .map((option) => `${option.providerID}\u0000${option.modelID}`)), [gatewayConnectProviders]);
   const resolveModelAvailability = useCallback((model: ModelRef | null): ModelAvailability =>
+    model && signInWaitingModelKeys.has(`${model.providerID}\u0000${model.modelID}`) ? { status: "pending" } :
     modelAvailabilityGate.confirm(model, computeModelAvailability(model, {
       workspaceReady: Boolean(selectedWorkspaceId && opencodeClient),
       loading,
@@ -1235,7 +1240,22 @@ export function SessionRoute() {
     providerListQuery.data,
     restrictToCloudProviders,
     selectedWorkspaceId,
+    signInWaitingModelKeys,
   ]);
+  // The person's pick counts as gone only once availability confirms it: a
+  // catalog that is reloading, or a model waiting on their sign-in, never
+  // swaps it out (and never flips the composer back and forth).
+  const ownPickAvailability = ownModelPick ? resolveModelAvailability(ownModelPick).status : null;
+  const ruleDefaultModel = useMemo(() => defaultModelRuleReady ? resolveDefaultModel({
+    ownPick: ownModelPick,
+    offered: ownModelPick && ownPickAvailability !== "unavailable" ? [ownModelPick] : [],
+    starter: starterModel,
+    firstCompanyModel: entitledModelOptions.find((option) => isCloudManagedProviderKey(option.providerID)) ?? null,
+  }) : null, [defaultModelRuleReady, entitledModelOptions, ownModelPick, ownPickAvailability, starterModel]);
+  useEffect(() => {
+    if (!ruleDefaultModel || hasPendingGatewayModelSelection()) return;
+    writeStoredDefaultModel(ruleDefaultModel);
+  }, [ruleDefaultModel]);
   useEffect(() => {
     const delay = modelAvailabilityGate.nextRecheckDelay();
     if (delay === null) return;
@@ -1255,44 +1275,6 @@ export function SessionRoute() {
   const selectedModelUnavailableKey = activeComposerAvailability.status === "unavailable" && activeComposerModel
     ? `${activeComposerTargetsSession ? selectedSessionId : "default"}:${activeComposerModel.providerID}:${activeComposerModel.modelID}`
     : null;
-  const autoOpenedUnavailableModelRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (hasPendingGatewayModelSelection()) return;
-    if (!selectedModelUnavailableKey) {
-      // The active composer's model is fine (or pending). If the picker was
-      // auto-opened for a previously broken composer — e.g. the New Task
-      // default — do not let that recovery modal follow the user into a
-      // conversation whose own model is valid.
-      if (autoOpenedUnavailableModelRef.current) {
-        modelPicker.setOpen(false);
-      }
-      autoOpenedUnavailableModelRef.current = null;
-      return;
-    }
-    if (!shouldAutoOpenUnavailableModelPicker({
-      selectedModelUnavailableKey,
-      signedIn: denAuth.isSignedIn,
-      cloudProviderSyncReady,
-      // Silent default repair only applies when the broken selection IS the
-      // default; a conversation's own unavailable model must surface the
-      // picker for that conversation instead.
-      entitledOrgDefaultModel: activeComposerTargetsSession ? false : Boolean(entitledOrgDefaultModel),
-      organizationModelsEmpty,
-      autoOpenedUnavailableModelKey: autoOpenedUnavailableModelRef.current,
-    })) return;
-    if (!activeComposerTargetsSession && entitledOrgDefaultModel) {
-      writeStoredDefaultModel(entitledOrgDefaultModel);
-      return;
-    }
-
-    autoOpenedUnavailableModelRef.current = selectedModelUnavailableKey;
-    setModelPickerSessionId(activeComposerTargetsSession ? selectedSessionId : null);
-    modelPicker.setQuery("");
-    modelPicker.setRecentProviderIds(new Set());
-    modelPicker.setCompactOpen(false);
-    modelPicker.setOpen(true);
-  }, [activeComposerTargetsSession, cloudProviderSyncReady, denAuth.isSignedIn, entitledOrgDefaultModel, modelPicker.setCompactOpen, modelPicker.setOpen, modelPicker.setQuery, modelPicker.setRecentProviderIds, organizationModelsEmpty, selectedModelUnavailableKey, selectedSessionId]);
 
   // Optimistic model selection: a remembered model is treated as valid until
   // the availability gate CONFIRMS it absent (selectedModelUnavailable).
@@ -1500,6 +1482,7 @@ export function SessionRoute() {
       },
       providerCatalog,
       gatewayProviderIds,
+      gatewayProviderNames,
       gatewayUsageProviderScope: sessionProviderAuthSnapshot.gatewayUsageProviderScope ?? null,
       modelPickerOpen: modelPicker.compactOpen,
       // Legacy fallback only; each surface resolves availability for its own
@@ -1815,6 +1798,7 @@ export function SessionRoute() {
     navigate,
     providerCatalog,
     gatewayProviderIds,
+    gatewayProviderNames,
     sessionProviderAuthSnapshot.gatewayUsageProviderScope,
     openWorkModelsEntitled,
     openWorkModelsSyncing,
@@ -4059,6 +4043,7 @@ export function SessionRoute() {
     />
     <ModelPickerModal
       open={modelPicker.open}
+      focusProviderId={modelPicker.focusProviderId}
       options={modelPicker.displayOptions}
       organizationModelsEmpty={organizationModelsEmpty}
       organizationModelsSettingsUrl={organizationModelsSettingsUrl}
@@ -4091,7 +4076,10 @@ export function SessionRoute() {
       disabledProviders={disabledProviderIds}
       gatewayProviderIds={gatewayProviderIds}
       gatewayConnectProviders={gatewayConnectProviders}
-      onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
+      onManageModels={() => {
+        modelPicker.setOpen(false);
+        handleOpenExtensions("models");
+      }}
       onBehaviorChange={(model, value) => {
         if (modelPickerSessionId) {
           const store = useSessionModelStore.getState();
@@ -4141,3 +4129,4 @@ export function SessionRoute() {
     </WorkspaceProvider>
   );
 }
+

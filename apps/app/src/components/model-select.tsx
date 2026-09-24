@@ -47,7 +47,7 @@ import {
   CommandList,
   CommandPanel,
 } from "@/components/ui/command";
-import { openModelPickerEvent, openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
+import { openModelPickerEvent, openModelPickerForSignIn, openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
 import { newProvidersEvent } from "@/app/lib/provider-events";
 import { usePlatform } from "@/react-app/kernel/platform";
 import {
@@ -291,6 +291,9 @@ export function ModelSelect({
     if (target === searchInputRef.current) searchInputRef.current?.select();
   }, [isMobile, open, pane]);
 
+  // A model waiting on the person's own sign-in says so on the button, and the
+  // button opens the full picker at that provider, where sign-in has room.
+  const waitingProvider = gatewaySelection.providerFor(value);
   const selectedOption = modelOptions?.find((option) =>
     isSameModel(value, {
       providerID: option.providerID,
@@ -347,6 +350,12 @@ export function ModelSelect({
   const applyModel = (option: ModelOption, behavior?: string | null) => {
     const currentOption = optionsByKey.get(modelRefKey(option));
     if (!currentOption) return;
+    if (currentOption.gatewayAuthorization) {
+      // Sign-in needs room to show its progress; the full picker has it.
+      onOpenChange(false);
+      openModelPickerForSignIn({ sessionId, providerId: currentOption.providerID });
+      return;
+    }
     gatewaySelection.select(currentOption, () => {
       useModelCollectionsStore.getState().recordRecent(option);
       onChange({ providerID: option.providerID, modelID: option.modelID }, behavior);
@@ -410,6 +419,11 @@ export function ModelSelect({
     <Popover
       open={open}
       onOpenChange={(nextOpen) => {
+        if (nextOpen && waitingProvider) {
+          onOpenChange(false);
+          openModelPickerForSignIn({ sessionId, providerId: waitingProvider.providerId });
+          return;
+        }
         onOpenChange(nextOpen);
 
         if (nextOpen) {
@@ -440,7 +454,9 @@ export function ModelSelect({
                 ? "Select model"
                 : (selectedOption?.title || "Select model")}
             </span>
-            {showBehavior ? (
+            {waitingProvider && !hideValue ? (
+              <span data-testid="model-select-sign-in" className="shrink-0 font-medium text-warning">Sign in</span>
+            ) : showBehavior ? (
               <span className="shrink-0 text-gray-9">· {triggerBehaviorLabel}</span>
             ) : null}
           </span>
@@ -553,7 +569,7 @@ export function ModelSelect({
                 >
                   <ProviderIcon providerId={option.providerID} providerName={option.description} className="size-3.5 opacity-70" size={14} />
                   <span className="min-w-0 flex-1 truncate text-foreground">{option.title}</span>
-                   {option.gatewayAuthorization ? <span className="text-xs text-muted-foreground">Sign-in required</span> : isSameModel(value, option) ? <Check className="size-3.5 shrink-0 text-muted-foreground" /> : null}
+                   {option.gatewayAuthorization ? <span className="text-xs text-muted-foreground">Sign in to use</span> : isSameModel(value, option) ? <Check className="size-3.5 shrink-0 text-muted-foreground" /> : null}
                 </button>
               ))}
             </div>
@@ -647,7 +663,7 @@ export function ModelSelect({
                               <ProviderIcon providerId={option.providerID} providerName={option.description} className="size-3.5 opacity-70" size={14} />
                               <span className="min-w-0 flex-1">
                                 <span className="block truncate text-foreground">{option.title}</span>
-                                <span className="block truncate text-xs text-muted-foreground">{option.gatewayAuthorization ? "Sign-in required" : option.description ?? getProviderDisplayName(option.providerID)}</span>
+                                <span className="block truncate text-xs text-muted-foreground">{option.gatewayAuthorization ? "Sign in to use" : option.description ?? getProviderDisplayName(option.providerID)}</span>
                               </span>
                               <button
                                 type="button"

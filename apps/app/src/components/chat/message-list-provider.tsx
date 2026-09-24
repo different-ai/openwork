@@ -48,7 +48,13 @@ interface MessageListContextValue {
     isCurrent?: () => boolean,
   ) => Promise<ChatToolReconnectResult>
   onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string, isCurrent?: () => boolean) => Promise<void>
+  /** The conversation's model, for errors that name it. */
+  modelLabel?: string | null
+  /** The conversation's Gateway provider, for errors about the person's own account there. */
+  gatewayProvider?: GatewayProviderIdentity | null
 }
+
+export type GatewayProviderIdentity = { providerId: string; providerName: string }
 
 const MessageListContext = React.createContext<MessageListContextValue | null>(null)
 
@@ -83,6 +89,8 @@ interface MessageListProviderProps {
   syncDegraded?: boolean
   dispatchAction: (action: DispatchAction) => void
   setPrompt: (prompt: string) => void
+  modelLabel?: string | null
+  gatewayProvider?: GatewayProviderIdentity | null
 }
 
 export interface DispatchAction {
@@ -118,6 +126,8 @@ export function MessageListProvider({
   onResumeInterrupted,
   onMcpReconnect,
   onMcpReopenAuthorization,
+  modelLabel = null,
+  gatewayProvider = null,
 }: MessageListProviderProps) {
   const handlersRef = React.useRef({
     dispatchAction,
@@ -193,6 +203,8 @@ export function MessageListProvider({
       providerConnectedCount,
       connectorIdentities,
       syncDegraded,
+      modelLabel,
+      gatewayProvider,
       ...stableHandlers,
       onOpenSubagentSession: canOpenSubagentSession
         ? stableHandlers.onOpenSubagentSession
@@ -217,6 +229,8 @@ export function MessageListProvider({
       providerConnectedCount,
       connectorIdentities,
       syncDegraded,
+      modelLabel,
+      gatewayProvider,
       stableHandlers,
       canOpenSubagentSession,
       canResumeInterrupted,

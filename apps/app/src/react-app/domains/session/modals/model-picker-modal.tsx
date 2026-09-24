@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Check, ChevronDown, ChevronRight, RefreshCw, Search, Star } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Loader2, RefreshCw, Search, Star } from "lucide-react";
 
 import {
   Dialog,
@@ -17,18 +17,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
 import { t } from "@/i18n";
 import { readDenSettings } from "@/app/lib/den";
+import type { GatewaySignInState } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
 import { FAST_PRICING_WARNING, getModelBehaviorControls, getModelBehaviorSelection } from "@/app/lib/model-behavior";
 import {
-  gatewayConnectCopy,
   gatewayConnectProviderKey,
   type GatewayConnectProvider,
-  OPENWORK_GATEWAY_BADGE_LABEL,
+  gatewaySignInBrand,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { modelEquals, resolveProviderDisplayName } from "../../../../app/utils";
 import type { ModelOption, ModelRef } from "../../../../app/types";
@@ -75,7 +74,12 @@ export type ModelPickerModalProps = {
   gatewayProviderIds?: ReadonlySet<string>;
   /** Gateway providers waiting on this member's sign-in; shown as a compact "Connect" hint. */
   gatewayConnectProviders?: GatewayConnectProvider[];
+  /** Legacy: sign-in now runs through the gateway model access context. */
   onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
+  /** Open Library, Models. */
+  onManageModels?: () => void;
+  /** Expand and scroll to this provider's group when the picker opens (e.g. to sign in there). */
+  focusProviderId?: string | null;
 };
 
 type ProviderGroup = {
@@ -88,6 +92,8 @@ type ProviderGroup = {
   hasCurrent: boolean;
   recommended: ModelOption[];
   other: ModelOption[];
+  /** The credential set this person signs in to before these models work. */
+  pending: GatewayConnectProvider | null;
 };
 
 export type ModelPickerEmptyState = {
@@ -96,23 +102,6 @@ export type ModelPickerEmptyState = {
   showRefreshOrganizationModels: boolean;
   showOrganizationModelsSettings: boolean;
 };
-
-export type ProviderGroupBadge = { label: string; className: string };
-
-/** Header badges for one provider group, in display order. */
-export function resolveProviderGroupBadges(
-  group: Pick<ProviderGroup, "isNew" | "isCloud" | "isGateway" | "hasCurrent">,
-  organizationProviderLabel: string,
-): ProviderGroupBadge[] {
-  const badges: ProviderGroupBadge[] = [];
-  if (group.isNew) badges.push({ label: "New", className: "bg-blue-3 text-blue-11" });
-  if (group.isCloud) badges.push({ label: organizationProviderLabel, className: "bg-blue-3/50 text-blue-11/70" });
-  if (group.isGateway) {
-    badges.push({ label: OPENWORK_GATEWAY_BADGE_LABEL, className: "border-dls-border text-dls-secondary" });
-  }
-  if (group.hasCurrent) badges.push({ label: "Current", className: "bg-green-3 text-green-11" });
-  return badges;
-}
 
 export function resolveModelPickerEmptyState(input: {
   providerGroupCount: number;
@@ -155,10 +144,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   const denAuth = useDenAuth();
   const platform = usePlatform();
   const organizationModelsSettingsUrl = props.organizationModelsSettingsUrl;
-  const organizationProviderLabel = useMemo(
-    () => readDenSettings().activeOrgName?.trim() || t("settings.provider_source_organization"),
-    [denAuth.status],
-  );
+  const organizationName = useMemo(() => readDenSettings().activeOrgName?.trim() || null, [denAuth.status]);
 
   const disabledSet = useMemo(
     () => new Set(props.disabledProviders ?? []),
@@ -206,9 +192,16 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           hasCurrent: false,
           recommended: [],
           other: [],
+          pending: null,
         };
         map.set(opt.providerID, group);
       }
+      if (opt.gatewayAuthorization && !group.pending) {
+        const key = gatewayConnectProviderKey(opt.gatewayAuthorization);
+        group.pending = props.gatewayConnectProviders?.find((provider) => gatewayConnectProviderKey(provider) === key) ?? null;
+      }
+      // Sync names a pending set "<provider> / <credential set>"; people know the provider.
+      if (group.pending) group.name = group.name.split(" / ")[0]?.trim() || group.name;
       if (isRecommendedModel(opt.modelID)) {
         group.recommended.push(opt);
       } else {
@@ -216,6 +209,16 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
       }
       if (modelEquals(props.current, { providerID: opt.providerID, modelID: opt.modelID })) {
         group.hasCurrent = true;
+      }
+    }
+    // A provider waiting on sign-in with no models listed yet still gets a group to sign in from.
+    if (!props.query.trim()) {
+      for (const provider of props.gatewayConnectProviders ?? []) {
+        if (provider.models?.length || map.has(provider.providerId)) continue;
+        map.set(provider.providerId, {
+          id: provider.providerId, name: provider.name, isNew: false, isCloud: true, isGateway: true,
+          isDisabled: disabledSet.has(provider.providerId), hasCurrent: false, recommended: [], other: [], pending: provider,
+        });
       }
     }
     const groups = [...map.values()];
@@ -229,7 +232,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
       if (a.hasCurrent !== b.hasCurrent) return a.hasCurrent ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
-  }, [filteredOptions, props.current, props.gatewayProviderIds, disabledSet]);
+  }, [filteredOptions, props.current, props.gatewayProviderIds, props.gatewayConnectProviders, props.query, disabledSet]);
 
   // Auto-expand on search
   useEffect(() => {
@@ -265,6 +268,30 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
       return next;
     });
   }, [props.open, providerGroups]);
+
+  // Opened to sign in somewhere: show that provider's group, expanded.
+  const groupsRef = useRef<HTMLDivElement | null>(null);
+  const focusedProviderRef = useRef<string | null>(null);
+  const [scrollToProvider, setScrollToProvider] = useState<string | null>(null);
+  useEffect(() => {
+    if (!props.open) {
+      focusedProviderRef.current = null;
+      return;
+    }
+    const focusId = props.focusProviderId;
+    if (!focusId || focusedProviderRef.current === focusId || !providerGroups.some((group) => group.id === focusId)) return;
+    focusedProviderRef.current = focusId;
+    setExpandedProviders((prev) => new Set(prev).add(focusId));
+    setScrollToProvider(focusId);
+  }, [props.focusProviderId, props.open, providerGroups]);
+  // Runs after the expanded group has rendered.
+  useEffect(() => {
+    if (!scrollToProvider) return;
+    const target = [...(groupsRef.current?.querySelectorAll<HTMLElement>("[data-provider-group]") ?? [])]
+      .find((element) => element.dataset.providerGroup === scrollToProvider);
+    target?.scrollIntoView({ block: "start" });
+    setScrollToProvider(null);
+  }, [expandedProviders, scrollToProvider]);
 
   const toggleProvider = useCallback((id: string) => {
     setExpandedProviders((prev) => {
@@ -302,19 +329,19 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
 
   // Escape
   useEffect(() => {
-    if (!props.open || gatewaySelection.loginOpen) return;
+    if (!props.open) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); props.onClose(); }
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [props.open, gatewaySelection.loginOpen]);
+  }, [props.open]);
 
   return (
     <Dialog
       open={props.open}
       onOpenChange={(open) => {
-        if (!open && !gatewaySelection.loginOpen) props.onClose();
+        if (!open) props.onClose();
       }}
     >
       <DialogContent initialFocus={() => isMobile ? titleRef.current : searchInputRef.current} className="flex max-h-[calc(100dvh-2rem)] min-h-0 flex-col overflow-hidden lg:max-w-3xl">
@@ -355,37 +382,8 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             </div>
           ) : null}
 
-          <div className="max-h-40 shrink-0 overflow-x-hidden overflow-y-auto">
-          {props.gatewayConnectProviders?.filter((provider) => !provider.models?.length).map((provider) => (
-            <div
-              key={gatewayConnectProviderKey(provider)}
-              className="mb-3 flex shrink-0 items-center gap-3 rounded-2xl border border-dashed border-dls-border px-3 py-2.5"
-            >
-              <ProviderIcon providerId={provider.providerId} providerName={provider.name} size={18} className="shrink-0 text-dls-secondary" />
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 flex-col items-start gap-1 text-[13px] font-medium text-dls-text">
-                  <span className="max-w-full truncate" title={provider.name}>{provider.name}</span>
-                  <Badge variant="outline" title={OPENWORK_GATEWAY_BADGE_LABEL} className="h-auto min-w-0 max-w-full rounded-md px-1.5 py-0.5 text-[10px] text-dls-secondary">
-                    <span className="truncate">{OPENWORK_GATEWAY_BADGE_LABEL}</span>
-                  </Badge>
-                </div>
-                <div className="truncate text-[11px] text-dls-secondary" title={gatewayConnectCopy(provider.name)}>{gatewayConnectCopy(provider.name)}</div>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!props.onConnectGatewayProvider || disabledSet.has(provider.providerId)}
-                onClick={() => void props.onConnectGatewayProvider?.(provider)}
-              >
-                Login
-              </Button>
-            </div>
-          ))}
-
-          </div>
-
           {/* Content */}
-          <div className="min-h-0 flex-1 space-y-1 overflow-x-hidden overflow-y-auto pr-1 -mr-1">
+          <div ref={groupsRef} className="min-h-0 flex-1 space-y-1 overflow-x-hidden overflow-y-auto">
             {currentOption && !disabledSet.has(currentOption.providerID) ? (
               <section aria-label={`Settings for ${currentOption.title}`} className="mb-3 rounded-xl border border-dls-border p-3" data-testid="current-model-settings">
                 <div className="truncate text-xs font-medium" title={`${currentOption.title} · ${currentBehavior.label}`}>{currentOption.title} · {currentBehavior.label}</div>
@@ -415,7 +413,9 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             {emptyState ? (
               <div className="space-y-3 rounded-2xl border border-dls-border bg-dls-hover/30 px-4 py-6 text-center">
                 <div className="text-sm text-dls-secondary">
-                  {t(emptyState.messageKey)}
+                  {emptyState.messageKey === "models.organization_models_empty" && organizationName
+                    ? `${organizationName} hasn't added any models for you yet.`
+                    : t(emptyState.messageKey)}
                 </div>
                 {emptyState.showRefreshOrganizationModels ? (
                   <Button variant="outline" onClick={() => void handleRefreshOrganizationModels()} disabled={refreshingOrganizationModels}>
@@ -445,7 +445,9 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                   onToggleExpand={() => toggleProvider(group.id)}
                   onToggleProvider={props.onToggleProvider}
                   onSelect={handleSelect}
-                  organizationProviderLabel={organizationProviderLabel}
+                  signIn={group.pending && gatewaySelection.signIn?.providerKey === gatewayConnectProviderKey(group.pending) ? gatewaySelection.signIn : null}
+                  onSignIn={group.pending ? () => { if (group.pending) gatewaySelection.signInProvider(group.pending); } : undefined}
+                  onCancelSignIn={gatewaySelection.cancel}
                 />
               ))
             )}
@@ -454,7 +456,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
 
         {/* Footer */}
         <DialogFooter className="shrink-0">
-          {denAuth.isSignedIn ? <Button variant="outline" onClick={() => platform.openLink(new URL("/dashboard/model-connections", readDenSettings().baseUrl).toString())}>My Model Connections</Button> : null}
+          {props.onManageModels ? <Button variant="outline" onClick={props.onManageModels}>{t("models.manage_models")}</Button> : null}
           <DialogClose render={<Button variant="outline" />}>
             {t("models.done")}
           </DialogClose>
@@ -476,7 +478,9 @@ function ProviderAccordion({
   onToggleExpand,
   onToggleProvider,
   onSelect,
-  organizationProviderLabel,
+  signIn,
+  onSignIn,
+  onCancelSignIn,
 }: {
   group: ProviderGroup;
   expanded: boolean;
@@ -485,13 +489,15 @@ function ProviderAccordion({
   onToggleExpand: () => void;
   onToggleProvider?: (providerId: string, enabled: boolean) => void;
   onSelect: (opt: ModelOption) => void;
-  organizationProviderLabel: string;
+  signIn: GatewaySignInState | null;
+  onSignIn?: () => void;
+  onCancelSignIn: () => void;
 }) {
   const totalModels = group.recommended.length + group.other.length;
   const Chevron = expanded ? ChevronDown : ChevronRight;
 
   return (
-    <div className={group.isDisabled ? "opacity-50" : ""}>
+    <div data-provider-group={group.id} className={group.isDisabled ? "opacity-50" : ""}>
       {/* Provider header */}
       <div className="flex items-center gap-1">
         <button
@@ -500,30 +506,30 @@ function ProviderAccordion({
           onClick={onToggleExpand}
         >
           <Chevron size={14} className="shrink-0 text-dls-secondary" />
-          <ProviderIcon providerId={group.id} size={18} className="shrink-0 text-dls-text" />
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-baseline gap-2">
-              <span className="truncate text-[13px] font-medium text-dls-text" title={group.name}>{group.name}</span>
-              {" "}
-              <span className="shrink-0 whitespace-nowrap text-[11px] text-dls-secondary">
-                {totalModels} model{totalModels === 1 ? "" : "s"}
-              </span>
-            </div>
-            {" "}
-            <div className="flex flex-wrap items-center gap-1.5 empty:hidden">
-              {resolveProviderGroupBadges(group, organizationProviderLabel).map((badge) => (
-                <Badge
-                  key={badge.label}
-                  variant="outline"
-                  title={badge.label}
-                  className={`h-auto min-w-0 max-w-full rounded-md border-transparent px-1.5 py-0.5 text-[10px] ${badge.className}`}
-                >
-                  <span className="truncate">{badge.label}</span>
-                </Badge>
-              ))}
-            </div>
+          <ProviderIcon providerId={group.id} providerName={group.name} size={18} className="shrink-0 text-dls-text" />
+          <div className="flex min-w-0 flex-1 items-baseline gap-2">
+            <span className="truncate text-[13px] font-medium text-dls-text" title={group.name}>{group.name}</span>
+            <span className="shrink-0 text-[11px] text-dls-secondary" aria-label={`${totalModels} model${totalModels === 1 ? "" : "s"}`}>{totalModels}</span>
           </div>
         </button>
+        {group.pending && !group.isDisabled ? (
+          <div className="mr-2 flex shrink-0 items-center gap-2" data-testid="model-picker-group-sign-in">
+            {signIn?.kind === "waiting" ? (
+              <>
+                <Loader2 size={13} className="animate-spin text-dls-secondary" />
+                <span className="text-xs text-dls-secondary">Finish signing in in your browser</span>
+                <Button size="sm" variant="ghost" onClick={onCancelSignIn}>Cancel</Button>
+              </>
+            ) : signIn?.kind === "failed" ? (
+              <>
+                <span className="text-xs text-dls-secondary">{signIn.message}</span>
+                <Button size="sm" variant="outline" onClick={onSignIn}>Try again</Button>
+              </>
+            ) : (
+              <Button size="sm" variant="outline" onClick={onSignIn}>{`Sign in with ${gatewaySignInBrand(group.pending)}`}</Button>
+            )}
+          </div>
+        ) : null}
         {canToggleProvider ? (
           <button
             type="button"
@@ -546,7 +552,7 @@ function ProviderAccordion({
         <div className="ml-9 space-y-0.5 pb-2 pt-0.5">
           {group.recommended.length > 0 ? (
             <>
-              <div className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-dls-secondary">
+              <div className="px-2 pb-1 pt-2 text-[12px] text-dls-secondary">
                 Recommended
               </div>
               {group.recommended.map((opt) => (
@@ -557,7 +563,7 @@ function ProviderAccordion({
           {group.other.length > 0 ? (
             <>
               {group.recommended.length > 0 ? (
-                <div className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-dls-secondary">
+                <div className="px-2 pb-1 pt-2 text-[12px] text-dls-secondary">
                   All models
                 </div>
               ) : null}
@@ -586,8 +592,9 @@ function DefaultModelRow({
   return (
     <button
       type="button"
+      data-model-id={opt.modelID}
       className={[
-        "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
+        "group/row flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
         active ? "bg-green-3/50" : "hover:bg-dls-hover",
       ].join(" ")}
       onClick={() => onSelect(opt)}
@@ -595,9 +602,13 @@ function DefaultModelRow({
       {recommended ? <Star size={12} className="shrink-0 text-amber-9" /> : <div className="w-3 shrink-0" />}
       <div className="min-w-0 flex-1">
         <span className={["block truncate text-[12px]", active ? "font-medium text-dls-text" : "text-dls-text"].join(" ")} title={opt.title}>{opt.title}</span>
-        <span className="block truncate font-mono text-[10px] text-dls-secondary/60" title={opt.modelID}>{opt.modelID}</span>
       </div>
-      {opt.gatewayAuthorization ? <span className="shrink-0 text-xs text-muted-foreground">Sign-in required</span> : active ? <Check size={14} className="shrink-0 text-green-11" /> : null}
+      {/* One fixed slot so status words line up down the list. */}
+      <span className="flex w-16 shrink-0 justify-end text-xs">
+        {opt.gatewayAuthorization
+          ? <span className="text-warning">Sign in</span>
+          : active ? <Check size={14} className="text-green-11" /> : null}
+      </span>
     </button>
   );
 }

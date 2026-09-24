@@ -17,8 +17,8 @@ function builtInEntry(id: string): McpDirectoryInfo {
 }
 
 describe("extension taxonomy", () => {
-  test("All, Connectors, Skills, and Plugins are primary, with All as the default", () => {
-    expect(extensionInventoryFilters).toEqual(["all", "connection", "skill", "plugin"]);
+  test("All, Connectors, Skills, Plugins, and Models are primary, with All as the default", () => {
+    expect(extensionInventoryFilters).toEqual(["all", "connection", "skill", "plugin", "model"]);
     expect(primaryLibraryFilter()).toBe("all");
     expect(primaryLibraryFilter("all")).toBe("all");
     expect(primaryLibraryFilter("connection")).toBe("connection");

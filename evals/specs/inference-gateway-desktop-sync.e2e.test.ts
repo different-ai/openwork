@@ -1,5 +1,4 @@
 import { expect, onTestFinished } from "vitest";
-import { screenshot, validate } from "@openwork/test-evidence";
 import { setViewport } from "@openwork/cdp";
 import { denFetch, evalIn, go, readAvailableModels } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
@@ -10,7 +9,8 @@ import { app, browserScript, eventually, needs, server, SkipError, test } from "
  * sync, one runtime opencode provider exists per `inference_providers` row —
  * id = the `ipr_` id, `api`/`options.baseURL` = the gateway URL, the scoped env
  * name from /connect set to the member's `ow_gw_` key — and the model
- * picker badges that provider group "via OpenWork Gateway".
+ * picker lists that provider group without a gateway badge (the Library, not
+ * the picker, says where a model comes from).
  *
  * The inference app is not booted here: materialization depends only on
  * den-api's connect payload. The gateway round-trip is proved by
@@ -199,7 +199,7 @@ async function readLocalServer(desktopApp: Parameters<typeof evalIn>[0], iprId: 
   };
 }
 
-test("a gateway provider materializes on the desktop as its own ipr_ provider with the member's OpenWork key and a gateway badge", async ({ evidence, place }) => {
+test("a gateway provider materializes on the desktop as its own ipr_ provider with the member's OpenWork key", async ({ evidence, place }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
   if (process.env.OPENWORK_EVAL_DEN_API_URL?.trim()) throw new SkipError("Gateway deployment configuration requires an isolated Den, not an attached service");
   await using den = await server({
@@ -284,7 +284,7 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
     local.envValue === memberKey && !local.envDump.includes(FAKE_UPSTREAM_KEY),
   );
 
-  // --- Picker: the model is selectable under a group badged "via OpenWork Gateway". ---
+  // --- Picker: the model is selectable under its provider group, which carries no gateway badge. ---
   await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
   const models = await readAvailableModels(desktopApp);
   const gatewayModel = models.find((model) => model.id === wireModelId && model.providerName === PROVIDER_NAME) ?? null;
@@ -296,12 +296,13 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
     if (!dialog) throw new Error("dialog missing");
     const rect = dialog.getBoundingClientRect();
     const overflow = [dialog, ...dialog.querySelectorAll<HTMLElement>("div, button, span")].filter((node) => {
-      if (!node.clientWidth) return false;
+      // Screen-reader-only text is clipped to 1px on purpose; it never shows.
+      if (!node.clientWidth || node.closest(".sr-only")) return false;
       const box = node.getBoundingClientRect();
       return box.left < rect.left - 1 || box.right > rect.right + 1
         || (node.scrollWidth > node.clientWidth + 1 && getComputedStyle(node).textOverflow !== "ellipsis");
     }).map((node) => `${node.tagName}.${node.className}`);
-    const labels = [["span.font-mono", modelID], ["button span.text-dls-text", providerName]].map(([selector, text]) => {
+    const labels = [["button span.text-dls-text", providerName]].map(([selector, text]) => {
       const node = [...dialog.querySelectorAll<HTMLElement>(selector)].find((span) => span.textContent === text);
       if (!node) return null;
       const style = getComputedStyle(node);
@@ -312,8 +313,10 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
           && style.whiteSpace === "nowrap" && style.textOverflow === "ellipsis" && style.overflowX === "hidden",
       };
     });
-    // Group headers read "<provider> <n> model(s) <badges…>"; badges follow the count.
-    const headers = [...dialog.querySelectorAll("button")].filter((button) => /\b\d+ models?\b/.test((button.textContent ?? "").replace(/\s+/g, " ").trim()));
+    // Group headers read "<provider> <n>"; the count is labeled "<n> model(s)" for screen readers.
+    const headers = [...dialog.querySelectorAll("button")].filter((button) => [...button.querySelectorAll("[aria-label]")]
+      .some((node) => /^\d+ models?$/.test(node.getAttribute("aria-label") ?? "")));
+    void modelID;
     const describe = (header: HTMLButtonElement) => ({
       text: (header.textContent ?? "").replace(/\s+/g, " ").trim(),
       badged: [...header.querySelectorAll("span")].some((span) => (span.textContent ?? "").trim() === badgeLabel),
@@ -335,14 +338,14 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
   const gatewayGroup = isRecord(badgeState) && isRecord(badgeState.gatewayGroup) ? badgeState.gatewayGroup : null;
   const otherBadged = isRecord(badgeState) && Array.isArray(badgeState.otherBadgedGroups) ? badgeState.otherBadgedGroups : [];
   const unbadged = isRecord(badgeState) && Array.isArray(badgeState.unbadgedGroups) ? badgeState.unbadgedGroups : [];
-  expect(gatewayGroup?.badged, JSON.stringify(badgeState)).toBe(true);
+  expect(gatewayGroup, JSON.stringify(badgeState)).not.toBeNull();
+  expect(gatewayGroup?.badged, JSON.stringify(badgeState)).toBe(false);
   expect(otherBadged).toHaveLength(0);
-  // Negative half needs a witness: at least one non-gateway group exists and is not badged.
   expect(unbadged.length).toBeGreaterThan(0);
   evidence.recordAssertionEvidence(
-    "The picker badges only the gateway provider group as via OpenWork Gateway",
-    `Model ${wireModelId} is selectable under ${String(gatewayModel?.providerName)}; group header ${JSON.stringify(gatewayGroup?.text)} carries the badge, ${otherBadged.length} other group(s) do, and ${unbadged.length} non-gateway group(s) do not.`,
-    gatewayModel?.selectable === true && gatewayGroup?.badged === true && otherBadged.length === 0 && unbadged.length > 0,
+    "The gateway model is selectable under its provider group, with no gateway badge on any group",
+    `Model ${wireModelId} is selectable under ${String(gatewayModel?.providerName)}; group header ${JSON.stringify(gatewayGroup?.text)} carries no "${GATEWAY_BADGE_LABEL}" badge, and neither do the ${unbadged.length} other group(s).`,
+    gatewayModel?.selectable === true && gatewayGroup?.badged === false && otherBadged.length === 0,
   );
   try {
     for (const width of [320, 390, 1024, 1440]) {
@@ -354,7 +357,7 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
         expect(layout.dialogFits, detail).toBe(true);
         if (width >= 1024) expect(layout.dialogWidth, detail).toBeGreaterThan(512);
         expect(layout.overflow, detail).toEqual([]);
-        expect(layout.labels, detail).toEqual([wireModelId, PROVIDER_NAME].map((text) => ({
+        expect(layout.labels, detail).toEqual([PROVIDER_NAME].map((text) => ({
           text, title: text, singleLineEllipsis: true,
         })));
         return true;
@@ -362,14 +365,5 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
     }
   } finally {
     await setViewport(desktopApp, badgeState.viewport);
-  }
-  {
-    const shot = await screenshot(desktopApp);
-    const seen = await validate(shot, [
-      `The open Models picker shows a provider group named ${PROVIDER_NAME}`,
-      `That group header carries a "${GATEWAY_BADGE_LABEL}" badge`,
-      "No error or crash message is visible",
-    ]);
-    expect(seen.ok, seen.why).toBe(true);
   }
 });

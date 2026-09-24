@@ -154,7 +154,7 @@ describe("Library sections", () => {
     );
     expect(host.querySelector('[data-testid="library-sign-up-banner"]')?.textContent).toContain("Sign in to add skills and connectors, and to use the ones your team shares.");
     const locked = host.querySelector<HTMLElement>('[data-library-section="locked"]');
-    expect(locked?.textContent).toContain("From OpenWork · Sign in to use");
+    expect(locked?.textContent).toContain("From OpenWork, after you sign in");
     expect(locked?.querySelectorAll("[data-library-locked]").length).toBeGreaterThan(0);
     expect(locked?.querySelector("button[data-library-row]")?.hasAttribute("disabled")).toBe(true);
     await act(async () => host.querySelector<HTMLButtonElement>('[data-testid="library-sign-up-banner"] button')?.click());

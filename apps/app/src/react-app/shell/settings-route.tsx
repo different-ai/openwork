@@ -75,6 +75,7 @@ import {
   connectGatewayProvider,
   GATEWAY_CONNECT_TIMEOUT_MESSAGE,
   gatewayConnectProviderKey,
+  isCloudManagedProviderKey,
   isGatewaySetConnected,
   type GatewayConnectProvider,
   resolveGatewayConnectProviders,
@@ -208,7 +209,9 @@ import {
   workspaceSettingsRoute,
 } from "./workspace-routes";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
-import { refreshProviderListQueries } from "@/react-app/infra/provider-list-query";
+import { getConnectedProviderItems, refreshProviderListQueries, useProviderListQuery } from "@/react-app/infra/provider-list-query";
+import { isProviderAllowedByDesktopPolicy } from "@/react-app/domains/connections/provider-auth/provider-policy";
+import { buildLibraryModelProviders } from "@/react-app/domains/settings/library-models";
 import {
   createWorkspaceServerClientResolver,
   useWorkspaceServerClient,
@@ -351,6 +354,7 @@ export function parseSettingsPath(pathname: string): {
         || tail === "commands"
         || tail === "agents"
         || tail === "plugins"
+        || tail === "models"
         || tail === "needs-sign-in"
         || tail === "needs-admin-setup"
         || tail === "ready"
@@ -879,7 +883,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       window.removeEventListener(denSettingsChangedEvent, cancel);
     };
   }, []);
-  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider, request?: { signal: AbortSignal; model: ModelRef }) {
+  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider, request?: { signal: AbortSignal; model?: ModelRef }) {
     gatewayConnectAbort.current?.abort();
     const controller = new AbortController();
     gatewayConnectAbort.current = controller;
@@ -897,7 +901,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           const result = await providerAuthStore.runCloudProviderSync("manual");
           synced = result?.outcome === "handled_server_side";
         },
-        isConnected: () => synced && (request
+        isConnected: () => synced && (request?.model
           ? providerAuthStore.isGatewayModelAvailable(provider, request.model)
           : isGatewaySetConnected(provider, providerAuthStore.getSnapshot().importedCloudProviders)),
       });
@@ -908,7 +912,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       }
       return connected && !signal.aborted;
     } catch (error) {
-      if (!signal.aborted && !request) toast.error(describeRouteError(error));
+      // In place (the picker), the caller shows why; elsewhere a toast does.
+      if (request && !signal.aborted) throw error;
+      if (!signal.aborted) toast.error(describeRouteError(error));
       return false;
     } finally {
       if (gatewayConnectAbort.current === controller) setConnectingGatewayProviderId(null);
@@ -1204,6 +1210,25 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     disabledProviders,
     cloudProvidersEnabled: cloudSession.isSignedIn,
   });
+  // The Library's Models filter lists the same providers as the model picker,
+  // so it keeps the provider list fresh while the Library is open.
+  const libraryProviderList = useProviderListQuery({
+    client: opencodeClient,
+    baseUrl: opencodeBaseUrl,
+    directory: selectedWorkspaceRoot || undefined,
+    enabled: route.tab === "extensions",
+  });
+  const libraryModelProviders = useMemo(() => {
+    const restrictToCloud = checkDesktopRestriction({ restriction: "allowCustomProviders" });
+    return buildLibraryModelProviders({
+      connected: getConnectedProviderItems(libraryProviderList.data),
+      pending: gatewayConnectProviders,
+      importedCloudProviders: providerAuthSnapshot.importedCloudProviders ?? {},
+      isAllowed: (providerId) => (cloudSession.isSignedIn || !isCloudManagedProviderKey(providerId))
+        && !disabledProviders.includes(providerId)
+        && isProviderAllowedByDesktopPolicy({ providerId, restrictToCloud, checkRestriction: checkDesktopRestriction }),
+    });
+  }, [checkDesktopRestriction, cloudSession.isSignedIn, disabledProviders, gatewayConnectProviders, libraryProviderList.data, providerAuthSnapshot.importedCloudProviders]);
   const currentCloudMcpModel = useMemo<OpenworkCloudMcpProviderModelContext | null>(() => {
     const provider = local.prefs.defaultModel?.providerID.trim() ?? "";
     const model = local.prefs.defaultModel?.modelID.trim() ?? "";
@@ -2458,16 +2483,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               ...Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((p) => p.providerId),
               ...(openWorkModelsEntitled || openWorkModelsAvailable ? ["openwork"] : []),
             ])}
-            gatewayProviderIds={gatewayProviderIds}
-            gatewayConnectProviders={gatewayConnectProviders}
-            connectingGatewayProviderId={connectingGatewayProviderId}
-            onOpenModelConnections={cloudSession.isSignedIn ? () => { void platform.openLink(new URL("/dashboard/model-connections", readDenSettings().baseUrl).toString()); } : undefined}
-            onCancelGatewayConnect={() => {
-              gatewayConnectAbort.current?.abort();
-              setConnectingGatewayProviderId(null);
-              toast.info("Stopped waiting. Browser sign-in was not revoked. Refresh AI Providers after finishing, or Connect again to retry.");
-            }}
-            onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
             showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
             showOpenWorkModelsConnect={showOpenWorkModelsConnect}
             showOpenWorkModelsSyncing={showOpenWorkModelsSyncing}
@@ -2564,6 +2579,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             mcpView={({ initialFilter, onFilterChange, initialState, pluginsContent, detailId, onDetailIdChange, onRefresh }) => (
               <McpView
                 headerActionsTarget={props.libraryHeaderActionsTarget}
+                modelProviders={libraryModelProviders}
+                modelSignInKey={connectingGatewayProviderId}
+                onModelSignIn={(provider) => { void handleConnectGatewayProvider(provider); }}
+                onCancelModelSignIn={() => {
+                  gatewayConnectAbort.current?.abort();
+                  setConnectingGatewayProviderId(null);
+                }}
+                onRemoveModelProvider={(providerId) => { void providerAuthStore.disconnectProvider(providerId); }}
+                onAddModelProvider={handleOpenProviderAuth}
                 pluginsContent={pluginsContent}
                 onOpenCloudAccount={() => navigate(selectedWorkspaceId ? workspaceSettingsRoute(selectedWorkspaceId, "cloud-account") : "/settings/cloud-account")}
                 busy={busy}
@@ -2982,7 +3006,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         disabledProviders={disabledProviders}
         gatewayProviderIds={gatewayProviderIds}
         gatewayConnectProviders={gatewayConnectProviders}
-        onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
+        onManageModels={() => {
+          modelPicker.setOpen(false);
+          navigateSettingsPath("extensions/models");
+        }}
         query={modelPicker.query}
         setQuery={modelPicker.setQuery}
         target="default"
