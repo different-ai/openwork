@@ -4,6 +4,7 @@
 // remaining source IDs; inserting new raw rows is NEW consumption, not replay.
 import { timingSafeEqual } from "node:crypto"
 import { GatewayProviderOauthStateTable, GatewayRequestLogTable, GatewayUsageRollupTable, GatewayRollupLockTable } from "@openwork-ee/den-db"
+import { assertUsageRetentionSafe } from "@openwork-ee/den-db/gateway-usage-limits"
 import { gatewayRollupDimensionKey } from "@openwork-ee/utils/gateway-rollups"
 import { and, eq, gte, inArray, lt, sql } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
@@ -197,7 +198,7 @@ const hourSums = {
   source_row_count: sum(sql`${rollup.source_row_count}`),
 }
 
-function createDbRollupStore(executor: DbExecutor): RollupStore {
+function createDbRollupStore(executor: Parameters<Parameters<typeof import("./db.js").db.transaction>[0]>[0]): RollupStore {
   return {
     async aggregateRawHour(bucketStart, limit) {
       const end = new Date(bucketStart.getTime() + HOUR_MS)
@@ -264,6 +265,7 @@ function createDbRollupStore(executor: DbExecutor): RollupStore {
     },
     async deleteRawIds(ids) {
       if (!ids.length) return 0
+      await assertUsageRetentionSafe(executor, ids)
       const result = await executor.delete(raw).where(inArray(raw.id, ids))
       return affectedRows(result)
     },

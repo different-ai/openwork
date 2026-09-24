@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   classifySmartAddInput,
   filterPresetSuggestions,
+  pastedMcpAddress,
   planSmartAdd,
   smartAddAuthLabel,
 } from "../app/(den)/dashboard/_components/mcp-connection-smart-add";
@@ -142,5 +143,20 @@ describe("smartAddAuthLabel", () => {
     expect(smartAddAuthLabel(discovery({ kind: "oauth" }))).toBe("OAuth sign-in");
     expect(smartAddAuthLabel(discovery({ kind: "manual_bearer" }))).toBe("API key");
     expect(smartAddAuthLabel(discovery({ kind: "unknown" }))).toBe("Sign-in unclear");
+  });
+});
+
+describe("pastedMcpAddress", () => {
+  test("turns a pasted URL or bare domain into the Add MCP row's host and address", () => {
+    expect(pastedMcpAddress("https://mcp.example.com/mcp")).toEqual({ host: "mcp.example.com", url: "https://mcp.example.com/mcp" });
+    expect(pastedMcpAddress("  mcp.example.com/mcp  ")).toEqual({ host: "mcp.example.com", url: "https://mcp.example.com/mcp" });
+    expect(pastedMcpAddress("http://127.0.0.1:4100/mcp")).toEqual({ host: "127.0.0.1:4100", url: "http://127.0.0.1:4100/mcp" });
+  });
+
+  test("leaves names, empty input and credentialed URLs to the catalog filter", () => {
+    expect(pastedMcpAddress("")).toBeNull();
+    expect(pastedMcpAddress("slack")).toBeNull();
+    expect(pastedMcpAddress("Google Drive")).toBeNull();
+    expect(pastedMcpAddress("https://user:secret@mcp.example.com/mcp")).toBeNull();
   });
 });

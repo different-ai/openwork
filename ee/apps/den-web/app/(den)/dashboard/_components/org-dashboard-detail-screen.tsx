@@ -434,10 +434,10 @@ function ConnectionAppRow({
           Each launch input adds its own tile, so the same app can appear more than once with different input.
         </p>
       ) : null}
-      <div className="mt-3 flex items-start justify-between gap-4 rounded-xl bg-amber-50 px-3 py-2.5">
+      <div className="mt-3 flex items-start justify-between gap-4 rounded-xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-3 py-2.5">
         <div>
-          <p className="text-[12px] font-medium text-amber-950">Run automatically</p>
-          <p className="mt-0.5 text-[11.5px] leading-4 text-amber-800">
+          <p className="text-[12px] font-medium text-[var(--dls-text-primary)]">Run automatically</p>
+          <p className="mt-0.5 text-[11.5px] leading-4 text-[var(--dls-text-secondary)]">
             Run on dashboard load and refresh, even if this app modifies data.
           </p>
         </div>

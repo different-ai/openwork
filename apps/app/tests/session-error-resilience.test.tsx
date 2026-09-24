@@ -7,6 +7,7 @@ import { createRoot } from "react-dom/client"
 import { renderToStaticMarkup } from "react-dom/server"
 
 import { MessageList } from "../src/components/chat/message-list"
+import { TaskRecovery } from "../src/components/chat/task-recovery"
 import { MessageListProvider } from "../src/components/chat/message-list-provider"
 import { getReactQueryClient } from "../src/react-app/infra/query-client"
 import { createSessionErrorUIMessage } from "../src/react-app/domains/session/sync/usechat-adapter"
@@ -25,7 +26,54 @@ afterEach(() => {
   getReactQueryClient().clear()
 })
 
+test("the quiet retry control preserves the recovery callback and disabled state", async () => {
+  const registered = typeof window === "undefined"
+  if (registered) GlobalRegistrator.register({ url: "http://localhost/" })
+  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true })
+  const container = document.createElement("div")
+  document.body.append(container)
+  const root = createRoot(container)
+  const retry = mock(() => undefined)
+  try {
+    await act(async () => root.render(<TaskRecovery state="paused" title="Response interrupted" onRetry={retry} />))
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Retry task"]')
+    if (!button) throw new Error("Missing retry control")
+    expect(button.textContent).toBe("")
+    await act(async () => { button.focus(); button.click() })
+    expect(retry).toHaveBeenCalledTimes(1)
+    await act(async () => root.render(<TaskRecovery state="paused" title="Response interrupted" onRetry={retry} retryDisabled />))
+    expect(button.disabled).toBe(true)
+    await act(async () => button.click())
+    expect(retry).toHaveBeenCalledTimes(1)
+  } finally {
+    await act(async () => root.unmount())
+    container.remove()
+    if (registered) GlobalRegistrator.unregister()
+  }
+})
+
 describe("session error resilience", () => {
+  test.each([
+    { name: "APIError", data: { message: "Too Many Requests", statusCode: 429 }, kind: "rate-limited", title: "This model is receiving too many requests" },
+    { name: "APIError", data: { message: "invalid_api_key", statusCode: 401 }, kind: "provider-credentials", title: "Your API key wasn’t accepted" },
+    { name: "ContextOverflowError", data: { message: "Prompt too long" }, kind: "conversation-too-long", title: "This conversation is too long for the model" },
+    { name: "StructuredOutputError", data: { message: "Failed to parse output" }, kind: "output-invalid", title: "The model couldn’t finish a usable response" },
+    { name: "MessageOutputLengthError", data: { message: "output limit" }, kind: "output-limit", title: "The response reached the model’s length limit" },
+    { name: "TimeoutError", data: { message: "The operation was aborted due to timeout" }, kind: "provider-timeout", title: "Provider did not respond in time" },
+    { name: "APIError", data: { message: "fetch failed", code: "ENOTFOUND" }, kind: "network-unavailable", title: "Can’t reach the model service" },
+    { name: "APIError", data: { message: "file part media type application/pdf not supported", statusCode: 400 }, kind: "attachment-unsupported", title: "This model can’t read an attached file" },
+  ])("explains $kind and retains the original error in details", ({ name, data, kind, title }) => {
+    const result = presentOpencodeSessionError({ name, data })
+    expect(result.kind).toBe(kind)
+    expect(result.title).toBe(title)
+    expect(result.description).toBeTruthy()
+    expect(result.technicalDetails).toContain(data.message)
+    if (["provider-credentials", "conversation-too-long", "attachment-unsupported"].includes(kind)) expect(result.recoveryPrompt).toBeNull()
+  })
+
+  test("an explicit Stop is not mistaken for a timeout mentioned by the provider", () => {
+    expect(presentOpencodeSessionError({ name: "MessageAbortedError", data: { message: "aborted due to timeout" } }).kind).toBe("aborted")
+  })
   const freeTierFailure = {
     name: "APIError",
     data: {
@@ -203,7 +251,6 @@ describe("session error resilience", () => {
         onEditUserMessage={() => undefined}
         onMcpReconnect={async () => "connected"}
         onMcpReopenAuthorization={async () => undefined}
-        onMcpRetry={() => undefined}
       >
         <MessageList messages={[message]} status="ready" />
       </MessageListProvider>,
@@ -216,7 +263,7 @@ describe("session error resilience", () => {
     expect(html).not.toContain('data-testid="session-error-details-trigger"')
   })
 
-  const renderErrorTranscriptWithResume = (error: unknown) => {
+  const renderErrorTranscriptWithResume = (error: unknown, trailing: UIMessage[] = []) => {
     const message = createSessionErrorUIMessage(
       "assistant-turn",
       presentOpencodeSessionError(error),
@@ -237,12 +284,65 @@ describe("session error resilience", () => {
         onResumeInterrupted={() => undefined}
         onMcpReconnect={async () => "connected"}
         onMcpReopenAuthorization={async () => undefined}
-        onMcpRetry={() => undefined}
       >
-        <MessageList messages={[message]} status="ready" />
+        <MessageList messages={[message, ...trailing]} status="ready" />
       </MessageListProvider>,
     )
   }
+
+  test.each([
+    { message: "API key expired", title: "Your API key has expired", description: "Replace your API key in model settings." },
+    { responseBody: '{"error":{"message":"API key expired"}}', title: "Your API key has expired", description: "Replace your API key in model settings." },
+    { responseBody: '{"error_description":"API key expired"}', title: "Your API key has expired", description: "Replace your API key in model settings." },
+    { responseBody: '{"error":{"code":"invalid_api_key"}}', title: "Your API key wasn’t accepted", description: "Check or replace your API key in model settings." },
+    { message: "Invalid API key", title: "Your API key wasn’t accepted", description: "Check or replace your API key in model settings." },
+    { message: "Token refresh failed: 401", title: "Your provider sign-in couldn’t be renewed", description: "Sign in to your provider again in model settings." },
+    { responseBody: '{"error":{"error_description":"OAuth token refresh failed"}}', title: "Your provider sign-in couldn’t be renewed", description: "Sign in to your provider again in model settings." },
+  ])("uses fixed credential copy for $title", ({ message, responseBody, title, description }) => {
+    for (const name of ["APIError", "ProviderAuthError"]) {
+      const error = { name, data: { message, responseBody, statusCode: 401, isRetryable: true } }
+      const presentation = presentOpencodeSessionError(error)
+      expect(presentation).toMatchObject({ kind: "provider-credentials", title, description, recoveryPrompt: null })
+      expect(sessionErrorPresentationFromUIMessage(createSessionErrorUIMessage("turn", presentation))).toEqual(presentation)
+      const html = renderErrorTranscriptWithResume(error)
+      expect(html).toContain(title)
+      expect(html).not.toContain('aria-label="Retry task"')
+      expect(html).not.toContain('data-testid="session-error-resume"')
+      expect(html).toContain('data-testid="session-error-gateway-connect"')
+      expect(presentation.connectUrl).toBeUndefined()
+      expect(html).not.toContain("Status: 401")
+    }
+  })
+
+  test.each([
+    {},
+    { message: "Unauthorized" },
+    { message: "OAuth token expired" },
+    { message: "invalid_grant" },
+    { message: "Unrelated text: API key expired; diagnostic-marker" },
+    { responseBody: '{"debug":{"message":"API key expired"}}' },
+    { responseBody: '{"error":{"message":"API key expired; diagnostic-marker"}}' },
+    { responseBody: "API key expired" },
+    { responseBody: '{"error_description":"API key expired"' },
+    { responseBody: JSON.stringify({ error_description: "API key expired", padding: "x".repeat(16_384) }) },
+  ])("keeps ambiguous or unsupported credential evidence generic: %j", (data) => {
+    const error = { name: "APIError", data: { ...data, statusCode: 401 } }
+    expect(presentOpencodeSessionError(error)).toMatchObject({
+      kind: "provider-credentials", title: "Check your model connection", description: "Update your connection in model settings.", recoveryPrompt: null,
+    })
+    expect(renderErrorTranscriptWithResume(error)).not.toContain("diagnostic-marker")
+  })
+
+  test.each([
+    { name: "APIError", data: { statusCode: 401, code: "openwork_auth_required" }, kind: "gateway-auth-required", title: "Sign in to keep using this model" },
+    { name: "APIError", data: { statusCode: 403 }, kind: "provider-access-denied", title: "You don’t have access to this model" },
+    { name: "APIError", data: { code: "ENOTFOUND" }, kind: "network-unavailable", title: "Can’t reach the model service" },
+    { name: "TimeoutError", data: { statusCode: 401 }, kind: "provider-timeout", title: "Provider did not respond in time" },
+  ])("preserves $kind precedence over credential copy", ({ name, data, kind, title }) => {
+    const result = presentOpencodeSessionError({ name, data: { ...data, message: "API key expired" } })
+    expect(result).toMatchObject({ kind, title })
+    expect(result.recoveryPrompt === null).toBe(["gateway-auth-required", "provider-access-denied"].includes(kind))
+  })
 
   test.each(["upstream_incomplete", "upstream_interrupted", "upstream_malformed_stream", "upstream_malformed_response", "upstream_timeout"])("renders the %s safety warning with Resume without exposing diagnostics", (code) => {
     const error = {
@@ -259,7 +359,7 @@ describe("session error resilience", () => {
     expect(presentation.recoveryPrompt).toContain("do not repeat side effects")
     const html = renderErrorTranscriptWithResume(error)
     expect(html).toContain('data-testid="session-error-interruption-warning"')
-    expect(html).toContain("The response may contain partial text or incomplete tool calls. Review them before continuing.")
+    expect(html).toContain("Some steps may have finished. Check before continuing.")
     expect(html).toContain('data-testid="session-error-resume"')
     expect(html).not.toContain('data-testid="session-error-details-toggle"')
     expect(html).not.toContain(code)
@@ -277,7 +377,7 @@ describe("session error resilience", () => {
     })
 
     expect(presentation.kind).toBe("gateway-auth-required")
-    expect(presentation.title).toBe("Sign in to this OpenWork Gateway provider to keep using it")
+    expect(presentation.title).toBe("Sign in to keep using this model")
     expect(presentation.description).toBe("Sign in to Member Vertex to continue.")
     expect(presentation.connectUrl).toBeNull()
     expect(presentation.recoveryPrompt).toBeNull()
@@ -309,18 +409,41 @@ describe("session error resilience", () => {
       name: "APIError",
       data: { message: "invalid_api_key", statusCode: 401 },
     })
-    expect(presentation.kind).toBe("generic")
+    expect(presentation.kind).toBe("provider-credentials")
     expect(presentation.connectUrl).toBeUndefined()
   })
 
-  test("offers Resume on the error card for an engine abort", () => {
+  test("offers an accessible icon-only retry below an interrupted message", () => {
     const html = renderErrorTranscriptWithResume({
       name: "MessageAbortedError",
       data: { message: "Aborted" },
     })
 
     expect(html).toContain('data-testid="session-error-resume"')
-    expect(html).toContain("Resume")
+    expect(html).toContain('aria-label="Retry task"')
+    expect(html).not.toContain(">Resume<")
+  })
+
+  test("historical interruptions do not offer a retry for an already superseded task", () => {
+    const html = renderErrorTranscriptWithResume({ name: "MessageAbortedError", data: { message: "Aborted" } }, [
+      { id: "later-answer", role: "assistant", parts: [{ type: "text", text: "The next task is complete." }] },
+    ])
+    expect(html).toContain("Task interrupted")
+    expect(html).not.toContain('aria-label="Retry task"')
+  })
+
+  test("explains local workspace and model access errors without exposing machine details", () => {
+    const local = presentOpencodeSessionError(new Error("Error invoking remote method 'openwork:desktop': TypeError: fetch failed: connect ECONNREFUSED 127.0.0.1:12345"))
+    expect(local.title).toBe("Can’t reach this workspace")
+    expect(local.technicalDetails).toContain("ECONNREFUSED")
+    expect(local.recoveryPrompt).toBeNull()
+    const denied = { name: "APIError", data: { message: "Forbidden", statusCode: 403 } }
+    expect(presentOpencodeSessionError(denied).title).toBe("You don’t have access to this model")
+    const html = renderErrorTranscriptWithResume(denied)
+    expect(html).toContain("Change model")
+    expect(html).not.toContain('aria-label="Retry task"')
+    expect(html).not.toContain("Forbidden")
+    expect(presentOpencodeSessionError("connect ECONNREFUSED 127.0.0.1:12345").kind).toBe("generic")
   })
 
   test("renders a resumable interruption as a quiet status line, not an error card", () => {
@@ -337,13 +460,14 @@ describe("session error resilience", () => {
     expect(html).not.toContain("bg-destructive/5")
   })
 
-  test("keeps the destructive card for errors that cannot be resumed", () => {
+  test("keeps a failure alert for errors that cannot be resumed", () => {
     const html = renderErrorTranscriptWithResume({
       name: "ProviderAuthError",
       data: { message: "Provider authentication failed" },
     })
 
-    expect(html).toContain("border-destructive/30")
+    expect(html).toContain('role="alert"')
+    expect(html).toContain("Check your model connection")
   })
 
   test("offers Resume on the error card for a provider timeout", () => {
@@ -404,7 +528,6 @@ describe("session error resilience", () => {
             onEditUserMessage={() => undefined}
             onMcpReconnect={async () => "connected"}
             onMcpReopenAuthorization={async () => undefined}
-            onMcpRetry={() => undefined}
           >
             <MessageList
               messages={[{
@@ -469,6 +592,20 @@ describe("session error resilience", () => {
 
       expect(container.textContent).toContain("Account rate limit reached")
       expect(container.textContent).toContain("Review account")
+
+      await renderRetry({ type: "retry", attempt: 4, next: Date.now() + 11000, message: "Internal server error" })
+      expect(container.querySelector('[role="status"]')?.textContent).toBe("The model couldn’t respond. Retrying…")
+      expect(container.textContent).not.toContain("Internal server error")
+      expect(container.textContent).not.toContain("attempt 4")
+      const details = container.querySelector<HTMLButtonElement>('[data-testid="session-error-details-toggle"]')
+      if (!details) throw new Error("Missing retry details")
+      expect(details.textContent).toBe("")
+      expect(details.getAttribute("aria-label")).toBe("Technical details")
+      expect(container.querySelector('[data-testid="session-retrying"] .lucide-triangle-alert')).toBeNull()
+      expect(container.querySelector('[data-testid="session-retrying"] .animate-spin')).toBeNull()
+      await act(async () => details.click())
+      expect(container.querySelector('[data-testid="session-error-details"]')?.textContent).toContain("attempt 4")
+      expect(container.querySelector('[role="status"]')?.textContent).not.toContain("attempt")
     } finally {
       await act(async () => root.unmount())
       container.remove()
@@ -507,7 +644,6 @@ describe("session error technical details", () => {
         onEditUserMessage={() => undefined}
         onMcpReconnect={async () => "connected"}
         onMcpReopenAuthorization={async () => undefined}
-        onMcpRetry={() => undefined}
       >
         <MessageList messages={[message]} status="ready" />
       </MessageListProvider>,
@@ -517,7 +653,7 @@ describe("session error technical details", () => {
   test("end users see only the plain error card", () => {
     const html = renderErrorTranscript(providerFailure, false)
 
-    expect(html).toContain("Rate limit reached")
+    expect(html).toContain("This model is receiving too many requests")
     expect(html).not.toContain('data-testid="session-error-details-toggle"')
     expect(html).not.toContain("Status: 429")
     expect(html).not.toContain("req_01JZK4W9N7X2Q8M3V5T6B1C0DE")
@@ -538,7 +674,7 @@ describe("session error technical details", () => {
       name: "APIError",
       data: { message: "upstream_incomplete: Connection closed before completion" },
     }, false)
-    expect(html).toContain("The response may contain partial text or incomplete tool calls. Review them before continuing.")
+    expect(html).toContain("Some steps may have finished. Check before continuing.")
     expect(html).not.toContain('data-testid="session-error-resume"')
     expect(html).not.toContain('data-testid="session-error-details-toggle"')
     expect(html).not.toContain("upstream_incomplete")

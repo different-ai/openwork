@@ -68,7 +68,7 @@ const statusBadgeVariants = cva("", {
   variants: {
     tone: {
       ready: "border-green-7/30 bg-green-3/20 text-green-11",
-      warning: "border-amber-7/30 bg-amber-3/20 text-amber-11",
+      warning: "border-dls-border bg-dls-hover text-dls-text",
       error: "border-red-7/30 bg-red-3/20 text-red-11",
       neutral: "border-gray-6/60 bg-gray-3/20 text-gray-11",
     },

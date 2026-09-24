@@ -27,10 +27,25 @@ export function messageHasVisibleAssistantOutput(message: UIMessage): boolean {
 }
 
 export function findLastUserMessageIndex(messages: readonly UIMessage[]): number {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]?.role === "user") return index;
+  let latest = -1;
+  for (let index = 0; index < messages.length; index += 1) {
+    if (messages[index]?.role !== "user") continue;
+    const created = messageIdentity(messages[index]).created;
+    const previous = latest < 0 ? undefined : messageIdentity(messages[latest]).created;
+    if (created === undefined || previous === undefined || created >= previous) latest = index;
   }
-  return -1;
+  return latest;
+}
+
+function messageIdentity(message: UIMessage): { parentID?: string; created?: number } {
+  const metadata = message.metadata;
+  if (!metadata || typeof metadata !== "object" || !("opencode" in metadata)) return {};
+  const info = metadata.opencode;
+  if (!info || typeof info !== "object") return {};
+  return {
+    ...("parentID" in info && typeof info.parentID === "string" ? { parentID: info.parentID } : {}),
+    ...("created" in info && typeof info.created === "number" && Number.isFinite(info.created) ? { created: info.created } : {}),
+  };
 }
 
 export type AdmissionOutcomeInput = {
@@ -50,8 +65,8 @@ export type AdmissionOutcome = "settled" | "pending" | "unresolved";
 /**
  * Decide the terminal state of the most recent accepted admission.
  *
- * "unresolved" means the last admitted user message has no visible assistant
- * result after it while the session reports idle with no other terminal
+ * "unresolved" means the latest admitted user message has no visible assistant
+ * result belonging to it while the session reports idle with no other terminal
  * surface (question, permission, error). The UI must then show a recovery
  * card after {@link ADMISSION_OUTCOME_GRACE_MS} instead of plain idle.
  *
@@ -61,9 +76,14 @@ export type AdmissionOutcome = "settled" | "pending" | "unresolved";
 export function resolveAdmissionOutcome(input: AdmissionOutcomeInput): AdmissionOutcome {
   const lastUserIndex = findLastUserMessageIndex(input.messages);
   if (lastUserIndex === -1) return "settled";
-  const answered = input.messages
-    .slice(lastUserIndex + 1)
-    .some(messageHasVisibleAssistantOutput);
+  const user = input.messages[lastUserIndex];
+  const answered = input.messages.some((message, index) => {
+    if (!messageHasVisibleAssistantOutput(message)) return false;
+    const { parentID } = messageIdentity(message);
+    // Live events can arrive out of order. An explicit parent always wins;
+    // order is only a compatibility fallback for older, unlinked transcripts.
+    return parentID === undefined ? index > lastUserIndex : parentID === user.id;
+  });
   if (answered) return "settled";
   if (input.hasSessionError) return "settled";
   if (input.sending || input.statusType !== "idle") return "pending";

@@ -2,6 +2,9 @@ name: Build and core checks
 run-name: ${{ github.event_name == 'schedule' && 'Full regression — component checks' || 'Build and core checks' }}
 
 on:
+  pull_request:
+    branches:
+      - dev
   push:
     branches:
       - dev
@@ -26,6 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       lane: ${{ steps.classify.outputs.lane }}
+      den_contract: ${{ steps.classify.outputs.den_contract }}
     steps:
       - name: Classify changed files
         id: classify
@@ -34,6 +38,8 @@ jobs:
           script: |
             if (context.eventName !== "pull_request") {
               core.setOutput("lane", "full")
+              // Pushes to dev keep their dedicated Generated Den SDK and API Contract workflows.
+              core.setOutput("den_contract", "false")
               core.info("Selected lane: full")
               return
             }
@@ -45,12 +51,24 @@ jobs:
               per_page: 100,
             })
             const snapshotOnly = files.length === 1
+              && files[0].status === "modified"
               && files[0].filename === "ee/apps/gateway/src/models/base.json"
             const docsOnly = files.length > 0
-              && files.every((file) => file.filename.startsWith("packages/docs/"))
+              && files.every((file) => file.filename.startsWith("packages/docs/")
+                && (!file.previous_filename || file.previous_filename.startsWith("packages/docs/")))
             const lane = snapshotOnly ? "snapshot" : docsOnly ? "docs" : "full"
             core.setOutput("lane", lane)
             core.info(`Selected lane: ${lane}`)
+
+            // Route, schema, or contract changes must ship the regenerated
+            // packages/docs/openapi.json and packages/sdk/src/gen.
+            const denContractPrefixes = ["ee/apps/den-api/", "ee/packages/", "packages/types/", "packages/sdk/"]
+            // The workflow itself is listed so changes to this check exercise it.
+            const denContractFiles = new Set(["packages/docs/openapi.json", ".spectral.yaml", ".spectral-baseline.json", "scripts/api-lint.mjs", ".github/workflows/ci-tests.yml"])
+            const touchesDenContract = (name) => Boolean(name) && (denContractFiles.has(name) || denContractPrefixes.some((prefix) => name.startsWith(prefix)))
+            const denContract = lane === "full" && files.some((file) => touchesDenContract(file.filename) || touchesDenContract(file.previous_filename))
+            core.setOutput("den_contract", denContract ? "true" : "false")
+            core.info(`Den API contract check: ${denContract ? "required" : "not affected"}`)
 
   openwork-tests-core:
     needs: classify-changes
@@ -66,7 +84,7 @@ jobs:
       - name: Run core product regressions
         run: pnpm test:core
       - name: Check journey selection, reporting, and alerts
-        run: node --test evals/scripts/journey-ci.test.mjs evals/scripts/flake-report.test.mjs
+        run: node --test evals/scripts/journey-ci.test.mjs evals/scripts/flake-report.test.mjs .github/scripts/warden-report.test.mjs
 
   workflow-authoring:
     needs: classify-changes
@@ -222,7 +240,7 @@ jobs:
       - name: Typecheck Electron main against the IPC contract
         run: pnpm --filter @openwork/desktop typecheck:electron
       - name: Check virtual display bootstrap contract
-        run: node --test scripts/ci/ubuntu-apt-https.test.mjs
+        run: node --test scripts/ci/ubuntu-apt-https.test.mjs apps/desktop/scripts/packaged-smoke-runner.test.mjs
       - name: Package and smoke-test the installed desktop
         timeout-minutes: 7
         env:
@@ -238,6 +256,7 @@ jobs:
             ${{ runner.temp }}/openwork-packaged-smoke/timing.json
             ${{ runner.temp }}/openwork-packaged-smoke/profiles/**/electron.log
             evals/results/test-runs/**
+          include-hidden-files: true
           retention-days: 7
 
   # Broad tests, source-layout guards, and test-framework checks remain visible
@@ -372,10 +391,70 @@ jobs:
       - name: Check for broken links and images
         run: npx -y mint@4.2.868 broken-links
 
+  # Pull requests that change Den API routes or schemas must commit the
+  # regenerated OpenAPI snapshot and SDK. Pushes to dev keep the dedicated
+  # Generated Den SDK and API Contract workflows.
+  den-contract:
+    needs: classify-changes
+    if: needs.classify-changes.outputs.den_contract == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Loading the live app initializes Better Auth's OAuth resource registry,
+    # which needs a reachable database even though generation never reads one.
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: openwork_den_contract_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -ppassword"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      DATABASE_URL: mysql://root:password@127.0.0.1:3306/openwork_den_contract_ci
+      DEN_DB_ENCRYPTION_KEY: local-dev-db-encryption-key-please-change-1234567890
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build den-api workspace dependencies
+        run: pnpm --filter @openwork-ee/den-api build:workspace-dependencies
+      - name: Prepare the throwaway schema-export database
+        run: pnpm --filter @openwork-ee/den-db exec node --import tsx ./node_modules/drizzle-kit/bin.cjs push --force
+        env:
+          NODE_OPTIONS: --conditions=development
+      - name: Regenerate the OpenAPI snapshot and SDK
+        run: pnpm den:contract
+      - name: Fail if the committed contract drifted from the route source
+        run: |
+          set -euo pipefail
+          if ! git diff --exit-code --stat -- packages/docs/openapi.json packages/sdk/src/gen; then
+            echo "::error::The Den API contract is out of date. With MySQL on 127.0.0.1:3306 (pnpm dev:den:mysql), run 'pnpm den:contract' and commit packages/docs/openapi.json and packages/sdk/src/gen."
+            exit 1
+          fi
+          echo "OpenAPI snapshot and generated SDK match the route source."
+      - name: Lint the contract and typecheck the SDK
+        run: pnpm api:lint && pnpm --filter @openwork/sdk typecheck
+
   # Single stable context for branch rulesets to require. Green only when
   # the lane selected by classification succeeds; always reports.
   openwork-tests-required:
-    needs: [classify-changes, openwork-tests-core, openwork-tests-build, workflow-authoring, validate-models-snapshot, validate-docs]
+    needs: [classify-changes, openwork-tests-core, openwork-tests-build, workflow-authoring, validate-models-snapshot, validate-docs, den-contract]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -388,8 +467,11 @@ jobs:
           AUTHORING_RESULT: ${{ needs.workflow-authoring.result }}
           SNAPSHOT_RESULT: ${{ needs.validate-models-snapshot.result }}
           DOCS_RESULT: ${{ needs.validate-docs.result }}
+          DEN_CONTRACT: ${{ needs.classify-changes.outputs.den_contract }}
+          DEN_CONTRACT_RESULT: ${{ needs.den-contract.result }}
         run: |
           echo "classification: $CLASSIFY_RESULT ($LANE)"
+          echo "Den API contract (required: $DEN_CONTRACT): $DEN_CONTRACT_RESULT"
           echo "core product regressions: $CORE_RESULT"
           echo "packaging and IPC contract: $BUILD_RESULT"
           echo "workflow authoring contracts: $AUTHORING_RESULT"
@@ -398,6 +480,15 @@ jobs:
 
           if [ "$CLASSIFY_RESULT" != "success" ]; then
             echo "Changed-file classification did not succeed; blocking merge." >&2
+            exit 1
+          fi
+
+          if [ "$DEN_CONTRACT" = "true" ] && [ "$DEN_CONTRACT_RESULT" != "success" ]; then
+            echo "The Den API contract check did not pass; regenerate with 'pnpm den:contract'." >&2
+            exit 1
+          fi
+          if [ "$DEN_CONTRACT" != "true" ] && [ "$DEN_CONTRACT_RESULT" != "skipped" ]; then
+            echo "The Den API contract check ran without being selected; blocking merge." >&2
             exit 1
           fi
 

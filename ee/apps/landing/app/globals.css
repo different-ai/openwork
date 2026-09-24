@@ -18,8 +18,8 @@
   --lp-page: #fcfdfe;
   --lp-tonal: #f0f4f9;
   --lp-body: #4b5563;
-  --lp-muted: #6b7280;
-  --lp-faint: #9ca3af;
+  --lp-muted: #5e6877;
+  --lp-faint: #5b6b80;
   --lp-border: #e5e7eb;
   --lp-blue: #2563eb;
   --lp-status: #059669;
@@ -44,6 +44,12 @@ body {
 ::selection {
   background: var(--lp-ink);
   color: #fff;
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--lp-ink);
+  outline-offset: 4px;
 }
 
 .lp-pill-primary,
@@ -204,39 +210,26 @@ body {
   letter-spacing: -0.05em;
 }
 
-/* Hero dither mask, in page coordinates (the nav is 97px tall, the wordmark band ends
-   around 400px). The visible region is the union of two areas:
-     1. a soft radial sweeping in from the top-right corner, outside the content column,
-        so the dither resumes past the "k" on a curved, fading edge;
-     2. the right half of the page below the wordmark band (clear behind the headline
-        column), fading out toward the bottom.
-   Layer order: radial, then (below-band  intersect  right-half). */
+/* Keep the existing dither to the right of the wider copy column and fade it
+   before the next section. Narrow layouts leave the reading surface clear.
+   Layer order: radial, then (below-band intersect right-half). */
 .lp-hero-dither {
+  opacity: 0.65;
   -webkit-mask-image:
     radial-gradient(1100px 800px at calc(50% + 1000px) 157px, #000 0, #000 20%, rgba(0, 0, 0, 0.5) 32%, rgba(0, 0, 0, 0.15) 40%, transparent 46%),
-    linear-gradient(to bottom, transparent 0, transparent 395px, rgba(0, 0, 0, 0.45) 455px, #000 525px, #000 620px, rgba(0, 0, 0, 0.5) 820px, transparent 1080px),
-    linear-gradient(to right, transparent 0, transparent calc(50% + 10px), rgba(0, 0, 0, 0.6) calc(50% + 170px), #000 calc(50% + 260px), #000 100%);
+    linear-gradient(to bottom, transparent 0, transparent 395px, rgba(0, 0, 0, 0.45) 455px, #000 525px, #000 620px, rgba(0, 0, 0, 0.25) 780px, transparent 850px),
+    linear-gradient(to right, transparent 0, transparent calc(50% + 90px), rgba(0, 0, 0, 0.6) calc(50% + 170px), #000 calc(50% + 260px), #000 100%);
   mask-image:
     radial-gradient(1100px 800px at calc(50% + 1000px) 157px, #000 0, #000 20%, rgba(0, 0, 0, 0.5) 32%, rgba(0, 0, 0, 0.15) 40%, transparent 46%),
-    linear-gradient(to bottom, transparent 0, transparent 395px, rgba(0, 0, 0, 0.45) 455px, #000 525px, #000 620px, rgba(0, 0, 0, 0.5) 820px, transparent 1080px),
-    linear-gradient(to right, transparent 0, transparent calc(50% + 10px), rgba(0, 0, 0, 0.6) calc(50% + 170px), #000 calc(50% + 260px), #000 100%);
+    linear-gradient(to bottom, transparent 0, transparent 395px, rgba(0, 0, 0, 0.45) 455px, #000 525px, #000 620px, rgba(0, 0, 0, 0.25) 780px, transparent 850px),
+    linear-gradient(to right, transparent 0, transparent calc(50% + 90px), rgba(0, 0, 0, 0.6) calc(50% + 170px), #000 calc(50% + 260px), #000 100%);
   -webkit-mask-composite: source-over, source-in, source-over;
   mask-composite: add, intersect, add;
 }
 
-/* Below lg the headline spans the full width and the wordmark is short, so the dither
-   is kept clear of the wordmark band, pushed to the right edge, and softened. */
 @media (max-width: 1023px) {
   .lp-hero-dither {
-    opacity: 0.4;
-    -webkit-mask-image:
-      linear-gradient(to right, transparent 0, transparent 52%, rgba(0, 0, 0, 0.35) 70%, #000 88%, #000 100%),
-      linear-gradient(to bottom, transparent 0, transparent 230px, rgba(0, 0, 0, 0.25) 290px, #000 360px, #000 520px, rgba(0, 0, 0, 0.5) 700px, transparent 900px);
-    mask-image:
-      linear-gradient(to right, transparent 0, transparent 52%, rgba(0, 0, 0, 0.35) 70%, #000 88%, #000 100%),
-      linear-gradient(to bottom, transparent 0, transparent 230px, rgba(0, 0, 0, 0.25) 290px, #000 360px, #000 520px, rgba(0, 0, 0, 0.5) 700px, transparent 900px);
-    -webkit-mask-composite: source-in;
-    mask-composite: intersect;
+    display: none;
   }
 }
 

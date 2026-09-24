@@ -32,7 +32,7 @@ export interface MockAgentToolStep {
   /** Emit an unadvertised tool call to exercise the engine's rejection boundary. */
   allowUnadvertisedTool?: boolean;
   /** Derive the handoff from the actual model input instead of fixture arguments. */
-  argumentsFrom?: "computer-mention" | "skill-catalog" | "capability-search";
+  argumentsFrom?: "computer-mention" | "skill-catalog" | "capability-search" | "skill-list";
   tool: string;
   arguments: Record<string, unknown>;
 }
@@ -40,6 +40,8 @@ export interface MockAgentToolStep {
 export interface MockAgentWorkload {
   /** Chat Completions: return this many 429s with Retry-After before serving the workload. */
   rateLimitAttempts?: number;
+  /** Chat Completions: return this many HTTP 500s before serving the workload. */
+  serverErrorAttempts?: number;
   /** Chat Completions: match the latest user message and count only its tool rounds. */
   latestUserTurn?: boolean;
   promptMarker: string;
@@ -52,7 +54,7 @@ export interface MockAgentWorkload {
   finalReplyChunkSize?: number;
   /** Exact content-delta boundaries. Their concatenation must equal finalReply. */
   finalReplyChunks?: string[];
-  /** Initially release this many exact chunks, then wait for releaseAgentReply(). */
+  /** Initially release this many exact chunks, then wait for releaseAgentReply(). 0 holds the whole reply. */
   finalReplyInitiallyReleasedChunks?: number;
   /** Hold the final response before sending headers, to exercise loading transitions. */
   finalReplyDelayMs?: number;

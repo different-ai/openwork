@@ -161,6 +161,42 @@ test("gated agent replies bind hermetically and clear waiters when the client di
   assert.equal(aborted.timedOut, false);
 });
 
+test("a zero-chunk hold accepts implicit chunks and stays off the final witness until released", async () => {
+  const marker = "agent-gate-zero-hold";
+  const reply = "No connection outcome was observed.";
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    isolatedProcessEnv: true,
+    agentWorkloads: [{
+      promptMarker: marker,
+      finalReply: reply,
+      finalReplyInitiallyReleasedChunks: 0,
+      steps: [],
+    }],
+  });
+  const response = await fetch(`${mock.url}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(completionBody(marker, 0)),
+  });
+  assert.equal(response.status, 200);
+  const held = await pollUntil(
+    () => mock.agentReplyState(marker),
+    (state) => state.deliveredChunks === 0 && state.waiting === 1,
+  );
+  assert.equal(held.complete, false);
+  assert.equal((await mock.agentRequests({ promptMarker: marker })).some((request) => request.kind === "final"), false);
+  await mock.releaseAgentReply(marker);
+  const text = await response.text();
+  assert.match(text, /No connection outcome was observed/);
+  const finished = await pollUntil(
+    () => mock.agentReplyState(marker),
+    (state) => state.complete,
+  );
+  assert.equal(finished.deliveredChunks, 1);
+  assert.equal((await mock.agentRequests({ promptMarker: marker })).some((request) => request.kind === "final"), true);
+});
+
 test("unadvertised calls require an explicit adversarial workload", async () => {
   await using mock = await startMockMcp({
     port: await allocateFreePort(),

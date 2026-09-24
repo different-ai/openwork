@@ -1,0 +1,89 @@
+name: Evidence review candidate checks
+
+on:
+  pull_request:
+    paths:
+      - apps/review/**
+      - packages/review/**
+      - evals/packages/test-artifacts/**
+      - evals/packages/test-evidence/**
+      - evals/scripts/publish-review*.mjs
+      - evals/scripts/pr-proof*.mjs
+      - evals/specs/*review*.test.ts
+      - evals/worlds/*review*.ts
+      - .github/scripts/pr-proof*.mjs
+      - .github/scripts/evidence-presentation*.mjs
+      - .github/scripts/evidence-preview-card*.mjs
+      - .github/actions/setup-browser/**
+      - .github/workflows/evidence-review*.yml
+      - .github/workflows/pr-proof.yml
+      - .github/workflows/ci-tests.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evidence-review-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check-browser:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - run: node --test .github/actions/setup-browser/probe-handoff.test.mjs
+      - uses: ./.github/actions/setup-browser
+      - name: Verify browser-only setup leaves OAuth handoff disabled
+        shell: bash
+        run: |
+          "$CHROME_BIN" --version
+          test -z "${BROWSER:-}"
+      - uses: ./.github/actions/setup-browser
+        with:
+          oauth-handoff: "true"
+  check-publisher:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+      - run: |
+          pnpm --filter @openwork/review... install --frozen-lockfile --ignore-scripts
+          pnpm --dir evals install --frozen-lockfile --ignore-scripts
+      - name: Verify selection, workflow trust and publication contracts
+        run: node --test .github/scripts/evidence-preview-card.test.mjs .github/scripts/evidence-presentation.test.mjs .github/scripts/pr-proof.test.mjs evals/scripts/run-parity-proof.test.mjs evals/packages/test-artifacts/test/*.test.ts evals/scripts/publish-review.test.mjs
+  check-app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+      - run: |
+          pnpm --filter @openwork/review-app... --filter @openwork/world... --filter @openwork/types... install --frozen-lockfile --ignore-scripts
+          pnpm --dir evals install --frozen-lockfile --ignore-scripts
+      - name: Build and verify the existing review journey
+        env:
+          OPENWORK_EVAL_REVIEW: "1"
+        run: |
+          pnpm --filter @openwork/review-app build
+          node --test evals/bin/evals.test.mjs
+          pnpm evals:pr specs/evidence-review.test.ts

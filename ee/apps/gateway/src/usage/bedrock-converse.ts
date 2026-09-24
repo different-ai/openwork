@@ -144,6 +144,7 @@ export function createBedrockConverseEventStreamUsageParser(options: { maxBuffer
     push(chunkText) {
       pushBytes(encoder.encode(chunkText))
     },
+    complete() { return !failed && buffer.length === 0 && usage.found && !usage.streamError },
     result() {
       return failed ? { ...emptyUsage(), ...(usage.streamError ? { streamError: usage.streamError } : {}) } : { ...usage }
     },

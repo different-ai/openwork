@@ -11,7 +11,7 @@ const ROUTINE_SECURITY_MESSAGES = new Set([
 const toneClasses: Record<DenNoticeTone, string> = {
   error: "border-red-200 bg-red-50 text-red-700",
   info: "border-sky-200 bg-sky-50 text-slate-700",
-  warning: "border-amber-200 bg-amber-50 text-amber-800",
+  warning: "border-[var(--dls-border)] bg-[var(--dls-hover)] text-[var(--dls-text-primary)]",
   neutral: "border-gray-200 bg-gray-50 text-gray-600",
 };
 
@@ -47,7 +47,7 @@ export function DenNotice({
         .filter(Boolean)
         .join(" ")}
     >
-      <Icon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+      <Icon className={`mt-0.5 size-4 shrink-0 ${resolvedTone === "warning" ? "text-[var(--ow-warning)]" : ""}`} aria-hidden="true" />
       <span>{message}</span>
     </div>
   );

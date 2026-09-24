@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { beginPendingGatewayModelSelection } from "../src/react-app/domains/connections/provider-auth/pending-gateway-model-selection";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 import type { CloudImportedProvider } from "../src/app/cloud/import-state";
@@ -372,6 +373,30 @@ describe("session-route cloud provider sync wiring", () => {
     console.info = originalConsoleInfo;
     if (originalDeployment === undefined) delete process.env.VITE_OPENWORK_DEPLOYMENT;
     else process.env.VITE_OPENWORK_DEPLOYMENT = originalDeployment;
+  });
+
+  test("successful first-org sync defers automatic default repair while an explicit gateway selection is pending", async () => {
+    const storage = installWindow();
+    installCloudSession(storage);
+    storage.setItem("openwork.defaultModel", "opencode/old-default");
+    const provider = logoutProvider("ipr_first_org", "api");
+    const base = provider.models["fixture-model"]!;
+    const first = "gwm_00000000000000000000000001_00000000000000000000000002_00000000000000000000000003";
+    const chosen = "gwm_00000000000000000000000001_00000000000000000000000004_00000000000000000000000003";
+    provider.models = { [first]: { ...base, id: first, name: "First alias" }, [chosen]: { ...base, id: chosen, name: "Chosen alias" } };
+    const requests: RecordedRequest[] = [];
+    installFetchMock(requests, { respond: (request) => new URL(request.url).pathname === "/provider"
+      ? jsonResponse({ all: [provider], connected: [provider.id], default: { [provider.id]: first } }) : undefined });
+    const store = createSessionRouteStore({ endpoint: makeEndpoint({ origin: "https://server.example", isRemote: false }), hostToken: "host-token" });
+    const release = beginPendingGatewayModelSelection();
+    try {
+      await store.runCloudProviderSync("manual");
+      expect(store.getProviderState().connected).toContain(provider.id);
+      expect(storage.getItem("openwork.defaultModel")).toBe("opencode/old-default");
+      release();
+      await store.runCloudProviderSync("manual");
+      expect(storage.getItem("openwork.defaultModel")).toBe(`${provider.id}/${first}`);
+    } finally { release(); store.dispose(); }
   });
 
   test("startup hydrates assigned organization models without a workspace endpoint", async () => {
@@ -766,7 +791,7 @@ describe("session-route cloud provider sync wiring", () => {
   });
 
   for (const trigger of ["startup/options", "sign_in"]) {
-    for (const missing of ["engine", "workspace", "engine and workspace"]) {
+    for (const missing of ["engine", "engine and workspace"]) {
       test(`${trigger} delivers the local Den session without ${missing} readiness and syncs only after recovery`, async () => {
         const storage = installWindow();
         const requests: RecordedRequest[] = [];
@@ -817,6 +842,43 @@ describe("session-route cloud provider sync wiring", () => {
         }
       });
     }
+
+    test(`${trigger} syncs organization providers into a ready engine before the first workspace exists`, async () => {
+      // The local server runs its managed engine before any workspace and
+      // materializes providers itself, so a member who signed in but has not
+      // created a workspace still receives the organization's providers.
+      const storage = installWindow();
+      const requests: RecordedRequest[] = [];
+      installFetchMock(requests);
+      let providerStateWrites = 0;
+      const store = createSessionRouteStore({
+        endpoint: makeEndpoint({ origin: LOCAL_SERVER_ORIGIN, isRemote: false }),
+        hostToken: "host-token-live",
+        engineReady: true,
+        workspaceReady: false,
+        onProviderStateWrite: () => { providerStateWrites += 1; },
+      });
+      try {
+        if (trigger === "startup/options") {
+          installCloudSession(storage);
+          store.start();
+          store.syncFromOptions();
+        } else {
+          store.start();
+          installCloudSession(storage);
+          window.dispatchEvent(new CustomEvent(denSessionUpdatedEvent, { detail: { status: "success" } }));
+        }
+        await waitFor(() => syncRuns(requests).length > 0 && providerStateWrites > 0);
+        expect(sessionPuts(requests).length).toBeGreaterThan(0);
+        expect(sessionPuts(requests)[0]).toMatchObject({
+          url: `${LOCAL_SERVER_ORIGIN}/den-session`,
+          headers: { "x-openwork-host-token": "host-token-live" },
+        });
+        expect(requests.indexOf(sessionPuts(requests)[0]!)).toBeLessThan(requests.indexOf(syncRuns(requests)[0]!));
+      } finally {
+        store.dispose();
+      }
+    });
 
     for (const target of ["remote", "hostless", "non-loopback", "gateway"]) {
       test(`${trigger} never delivers desktop credentials to ${target} with a null engine client`, async () => {

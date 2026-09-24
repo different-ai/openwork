@@ -338,11 +338,10 @@ describe("cloud provider sync gateway", () => {
       return Response.json(true);
     } });
     stops.push(() => engine.stop(true));
-    let denyPolicyB = true;
     const den = Bun.serve({ port: 0, fetch(request) {
       const path = new URL(request.url).pathname;
       const org = request.headers.get("x-openwork-legacy-org-id");
-      if (path === "/v1/me/desktop-config") return org === "org_b" && denyPolicyB
+      if (path === "/v1/me/desktop-config") return org === "org_b"
         ? Response.json({ error: "denied" }, { status: 401 }) : Response.json({});
       if (org === "org_b") return Response.json({ error: "not_found" }, { status: 404 });
       if (path === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
@@ -367,10 +366,10 @@ describe("cloud provider sync gateway", () => {
     busy = true;
     engineRequests.length = 0;
 
-    // Repeated early A delivery and a rejected B identity must both retain A's
-    // actual ownership. Resuming A is reconciliation, never forced cleanup.
+    // Early identity delivery does not authorize Cloud resources or replace
+    // materialized ownership. Policy failure cannot reject the local identity.
     for (const org of ["org_a", "org_a", "org_b"]) {
-      expect((await put("/den-session/identity", org)).status).toBe(org === "org_b" ? 403 : 204);
+      expect((await put("/den-session/identity", org)).status).toBe(204);
       expect(await runSync(base, "suspended")).toEqual({ status: "no_session" });
     }
     expect((await put("/den-session", "org_a")).status).toBe(204);
@@ -379,7 +378,6 @@ describe("cloud provider sync gateway", () => {
     expect(await readFile(openworkRuntimeConfigFilePath(config), "utf8")).toBe(configBefore);
     expect(engineRequests.filter((request) => !request.startsWith("GET "))).toEqual([]);
 
-    denyPolicyB = false;
     expect((await put("/den-session/identity", "org_b")).status).toBe(204);
     expect((await put("/den-session", "org_b")).status).toBe(204);
     await waitForLastRun(base, "failed");
@@ -923,13 +921,41 @@ describe("cloud provider sync gateway", () => {
     stops.push(() => sync.stop());
     await sync.setSession({ baseUrl: "https://den.example.test", token: "synthetic", orgId: "org_test" });
     expect((await sync.run()).status).toBe("applied");
-    expect(sync.status().providers[0]?.modelConfigVersion).toBe(2);
+    expect(sync.status().providers[0]?.modelConfigVersion).toBe(3);
     const written = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).lpr_test;
     const model = expectRecord(expectRecord(written.models, "serialized models").model, "serialized model");
     expect(model.variants).toEqual({ __openwork_catalog_fast_v1: {
       disabled: true, openworkNativeFast: 1, reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
     } });
     expect(JSON.stringify(written)).not.toContain('"experimental"');
+    expect((await sync.run()).status).toBe("noop");
+  });
+
+  test("syncs Anthropic catalog effort levels for opaque gateway model IDs", async () => {
+    const root = await createRoot();
+    const config = serverConfig(root, "https://engine.example.test");
+    config.workspaces = [];
+    const provider = buildProvider([{ id: "gateway-model-1", name: "Claude Opus 5.5", config: {
+      reasoning: true,
+      reasoning_options: [{ type: "effort", values: ["low", "medium", "high", "xhigh", "max"] }],
+      variants: { low: { disabled: true }, high: { effort: "high", custom: "preserved" } },
+    } }]);
+    provider.providerConfig.npm = "@ai-sdk/anthropic";
+    const sync = new CloudProviderSync({
+      config, env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }), reloadEngine: reloadedInPlace,
+      fetchImpl: Object.assign(async (input: URL | RequestInfo) => {
+        const { pathname } = new URL(String(input));
+        if (pathname === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
+        return Response.json(pathname.endsWith("/connect") ? { llmProvider: provider } : { llmProviders: [provider] });
+      }, { preconnect: () => {} }),
+    });
+    stops.push(() => sync.stop());
+    await sync.setSession({ baseUrl: "https://den.example.test", token: "synthetic", orgId: "org_test" });
+    expect((await sync.run()).status).toBe("applied");
+    const written = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).lpr_test;
+    const model = expectRecord(expectRecord(written.models, "models")["gateway-model-1"], "model");
+    expect(model.variants).toEqual({ low: { disabled: true }, medium: { effort: "medium" },
+      high: { effort: "high", custom: "preserved" }, xhigh: { effort: "xhigh" }, max: { effort: "max" } });
     expect((await sync.run()).status).toBe("noop");
   });
 
@@ -989,6 +1015,12 @@ describe("cloud provider sync gateway", () => {
     const modelSuffix = "00000000000000000000000003";
     const modelId = `gwm_${groupSuffix}_${setSuffix}_${modelSuffix}`;
     const pendingSetId = "gcs_00000000000000000000000004";
+    const pendingModelId = `gwm_${groupSuffix}_${pendingSetId.slice(4)}_${modelSuffix}`;
+    const pendingModels = [{
+      id: pendingModelId, name: "Assigned pending model", config: { id: pendingModelId },
+      upstreamModelId: "assigned-upstream", modelGroupId: `gmg_${groupSuffix}`, modelGroupName: "Assigned models",
+      credentialSetId: pendingSetId, credentialSetName: "Personal Google",
+    }];
     const pendingAuthUrl = `https://den.example.test/v1/inference-providers/ipr_pending/oauth/start?credentialSetId=${pendingSetId}`;
     const gatewayBaseUrl = "https://inference.example.test/api/v1/providers/ipr_ready";
     const llmProvider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
@@ -1002,8 +1034,8 @@ describe("cloud provider sync gateway", () => {
       credentialStatus: "ready",
       status: "active",
       authUrl: null,
-      authorizationRequests: [],
-      modelIds: ["claude-sonnet"],
+      authorizationRequests: [{ credentialSetId: pendingSetId, name: "Personal Google", authUrl: pendingAuthUrl, models: pendingModels }],
+      modelIds: ["claude-sonnet", "unassigned-upstream"],
       updatedAt: "2026-08-20T00:00:00.000Z",
       providerConfig: {
         env: ["IPR_READY_ANTHROPIC_API_KEY"],
@@ -1026,7 +1058,7 @@ describe("cloud provider sync gateway", () => {
       credentialMode: "member",
       credentialStatus: "member_auth_required",
       authUrl: pendingAuthUrl,
-      authorizationRequests: [{ credentialSetId: pendingSetId, name: "Personal Google", authUrl: pendingAuthUrl }],
+      authorizationRequests: [{ credentialSetId: pendingSetId, name: "Personal Google", authUrl: pendingAuthUrl, models: pendingModels }],
       models: [],
       modelIds: [],
       providerConfig: { env: ["IPR_PENDING_GOOGLE_GENERATIVE_AI_API_KEY"], npm: "@ai-sdk/google" },
@@ -1122,11 +1154,19 @@ describe("cloud provider sync gateway", () => {
     });
     expect(status.providers[1]?.source).toBe("custom");
     expect(status.skippedProviders).toEqual([{
+      cloudProviderId: "ipr_ready",
+      providerId: "ipr_ready",
+      credentialSetId: pendingSetId,
+      name: "Team Anthropic / Personal Google",
+      reason: "member_auth_required",
+      models: pendingModels,
+    }, {
       cloudProviderId: "ipr_pending",
       providerId: "ipr_pending",
       credentialSetId: pendingSetId,
       name: "Member Google / Personal Google",
       reason: "member_auth_required",
+      models: pendingModels,
     }]);
 
     const runtimeProviders = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
@@ -1145,6 +1185,9 @@ describe("cloud provider sync gateway", () => {
     expect(storedEnv.some((entry) => entry.key === "GOOGLE_GENERATIVE_AI_API_KEY")).toBe(false);
 
     expect(engineRequests).toContain("PUT /auth/ipr_ready");
+    expect(engineRequests).not.toContain("PUT /auth/ipr_pending");
+    expect(JSON.stringify(runtimeProviders)).not.toContain(pendingModelId);
+    expect(JSON.stringify(sync.status())).not.toContain("unassigned-upstream");
     const readState = async () => ({
       runtime: await readGlobalRuntimeOpencodeConfig(config),
       runtimeFile: await readFile(openworkRuntimeConfigFilePath(config), "utf8"),
@@ -1187,6 +1230,14 @@ describe("cloud provider sync gateway", () => {
         const malformedGateway = { ...readyGateway, models: [{ ...readyGateway.models[0], credentialSetId: undefined }] };
         cases.push({
           respond: () => Response.json({ inferenceProviders: [malformedGateway], inferenceProvider: malformedGateway }),
+          message: endpoint.invalid,
+        });
+        const malformedPending = { ...readyGateway, authorizationRequests: [{
+          credentialSetId: pendingSetId, name: "Personal Google", authUrl: pendingAuthUrl,
+          models: [{ ...pendingModels[0], credentialSetId: `gcs_${setSuffix}` }],
+        }] };
+        cases.push({
+          respond: () => Response.json({ inferenceProviders: [malformedPending], inferenceProvider: malformedPending }),
           message: endpoint.invalid,
         });
         if (!endpoint.list) cases.push({
@@ -1741,8 +1792,8 @@ describe("cloud provider sync gateway", () => {
     expect((await deliverIdentity()).status).toBe(403);
     config.readOnly = false;
     policyFailure = true;
-    expect((await deliverIdentity()).status).toBe(403);
-    expect(await runSync(base, "unverified-identity")).toEqual({ status: "no_session" });
+    expect((await deliverIdentity()).status).toBe(204);
+    expect(await runSync(base, "policy-is-optional")).toEqual({ status: "no_session" });
     policyFailure = false;
     const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
     const envBefore = await env.list();
@@ -1752,8 +1803,8 @@ describe("cloud provider sync gateway", () => {
     expect((await deliverIdentity()).status).toBe(204);
     await Bun.sleep(80);
     expect(await runSync(base, "identity-is-not-ready")).toEqual({ status: "no_session" });
-    expect(denRequests.every((request) => request.path === "/v1/me/desktop-config")).toBe(true);
-    expect((await readGlobalRuntimeOpencodeConfig(config)).managedPolicy).toBeDefined();
+    expect(denRequests).toEqual([]);
+    expect((await readGlobalRuntimeOpencodeConfig(config)).managedPolicy).toBeUndefined();
     expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))).toEqual(providersBefore);
     expect(await env.list()).toEqual(envBefore);
     expect(await readFile(openworkRuntimeConfigFilePath(config), "utf8").catch(() => null)).toBe(fileBefore);

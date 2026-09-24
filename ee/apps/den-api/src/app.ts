@@ -19,6 +19,7 @@ import { registerMcpRoutes } from "./mcp/index.js"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "./middleware/index.js"
 import { buildOperationId, emptyResponse, htmlResponse, jsonResponse } from "./openapi.js"
 import { appLogger } from "./observability/logger.js"
+import { isWebOriginApprovedByAnyOrganization } from "./organization-web-origins.js"
 import { createRequestAccessLogMiddleware, createTelemetryErrorSanitizerMiddleware, registerAppErrorHandler, registerObservabilityMiddleware } from "./observability/hono.js"
 import { registerAdminRoutes } from "./routes/admin/index.js"
 import { registerAuthRoutes } from "./routes/auth/index.js"
@@ -152,16 +153,40 @@ if (!env.corsHandledByEdge) {
 // preflights before the credentialed browser allowlist can intercept OPTIONS.
 registerCloudWorkerCompatibilityPreflightRoute(app)
 
-if (env.corsOrigins.length > 0 && !env.corsHandledByEdge) {
+const corsLogger = appLogger.child({ component: "cors" })
+const WEB_ORIGIN_LOOKUP_FAILURE_LOG_INTERVAL_MS = 60_000
+let lastWebOriginLookupFailureLoggedAt = 0
+
+// Operator CORS_ORIGINS plus the exact origins organizations approved in
+// Org settings. The database list is cached per process for 30 seconds and a
+// lookup failure fails closed rather than failing the request.
+async function resolveStrictCorsOrigin(origin: string) {
+  if (!origin) return null
+  if (env.corsOrigins.includes(origin)) return origin
+  try {
+    return await isWebOriginApprovedByAnyOrganization(origin) ? origin : null
+  } catch (error) {
+    const now = Date.now()
+    if (now - lastWebOriginLookupFailureLoggedAt >= WEB_ORIGIN_LOOKUP_FAILURE_LOG_INTERVAL_MS) {
+      lastWebOriginLookupFailureLoggedAt = now
+      corsLogger.warn("approved web origin lookup failed; denying CORS", {
+        error_name: error instanceof Error ? error.name : typeof error,
+      })
+    }
+    return null
+  }
+}
+
+if (!env.corsHandledByEdge) {
   app.use(
     "*",
-      cors({
-        origin: env.corsOrigins,
-        credentials: true,
-        allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id"],
-        allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        exposeHeaders: ["Content-Length"],
-        maxAge: 600,
+    cors({
+      origin: resolveStrictCorsOrigin,
+      credentials: true,
+      allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id"],
+      allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      exposeHeaders: ["Content-Length"],
+      maxAge: 600,
     }),
   )
 }
@@ -374,6 +399,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "LLM Providers", description: "Organization LLM provider catalog, configuration, and access routes." },
       { name: "Inference", description: "Organization inference settings." },
       { name: "Inference Providers", description: "Organization inference Gateway providers, model groups, credential sets, access grants, member connections, and usage." },
+      { name: "Gateway Usage Limits", description: "Estimated-cost policies, independent member calendar buckets, assignments, and audited usage-extension requests." },
       { name: "Cloud", description: "Organization Cloud instance lifecycle and browser gateway resolution." },
       { name: "Workers", description: "Worker lifecycle, billing, and runtime routes." },
       { name: "Worker Runtime", description: "Worker runtime inspection and upgrade routes." },

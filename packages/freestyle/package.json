@@ -1,0 +1,17 @@
+{
+  "name": "@openwork/freestyle",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./builder": "./src/builder.ts",
+    "./outputs": "./src/outputs.ts"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts test/*.test.mjs"
+  },
+  "dependencies": {
+    "freestyle": "0.2.13"
+  }
+}

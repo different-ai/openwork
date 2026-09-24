@@ -2,8 +2,9 @@
 
 How OpenWork UI is designed. Agents read this before building or reviewing any
 user-facing surface (`apps/app`, `apps/desktop`, `ee/apps/den-web`, MCP Apps,
-generated artifact views). Warden's `design-spec-review` skill checks PRs
-against the numbered rules below and *warns* — it never blocks.
+generated artifact views). The optional `.warden/skills/design-spec-review` skill
+can review the numbered rules below locally. Automated Warden reviews focus on
+security and confidentiality.
 
 ## Who we design for
 
@@ -45,6 +46,13 @@ advanced options discoverable but quiet.
   state line. No apologies, no "please".
 - **P10 · Evidence or it didn't ship.** New or changed UI needs a screenshot
   (or short recording) in the PR at the real size. No screenshot, no review.
+- **P11 · Continuity over lifecycle.** A person's action produces the object
+  they asked for; the system's internal steps to get there are not UI states.
+  Keep the user's object and layout on screen while work continues (their
+  message, row, or document stays put), and add a visible intermediate state
+  only when it needs a decision or recovery. Interstitials such as
+  "Creating…", "Preparing…", or setup screens invented from implementation
+  steps are defects.
 
 ## Structure
 
@@ -90,7 +98,8 @@ Every data-bearing surface designs, and the PR shows, these states where they
 apply: loading (layout-matching skeleton, not "Loading…" text), empty,
 error, blocked/locked, offline or "couldn't verify" (show the last known
 state and when it was confirmed), and success. Never rely on model text alone
-to communicate system status.
+to communicate system status. Loading preserves the destination layout: the
+object appears where it will live, then fills in.
 
 ## Visual system
 
@@ -156,3 +165,5 @@ Tokens live in `apps/app/src/app/index.css`, `styles/colors.css`,
       (V5).
 - [ ] Tokens only; no hex/px literals that duplicate a token (V2–V4).
 - [ ] Motion within V6; focus ring visible; reduced-motion respected.
+- [ ] Async flows keep the user's object and layout in place; no interstitial
+      built from an internal step (P11).

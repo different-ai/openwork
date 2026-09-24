@@ -9,7 +9,7 @@ export const provider: GatewayProvider = {
 }
 export const credentialSet: GatewayAccessRow["credentialSet"] = {
   id: "gcs_00000000000000000000000001", gateway_provider_id: provider.id, name: "Member tokens", credential_mode: "member", status: "active",
-  oauth_client_id: "client-id", oauth_client_secret: "client-secret", created_at: now, updated_at: now,
+  oauth_client_id: "client-id", oauth_client_secret: "client-secret", created_at: now, updated_at: now, created_by_org_membership_id: null,
 }
 export function matrixRow(overrides: Partial<GatewayAccessRow> = {}): GatewayAccessRow {
   return {
@@ -36,7 +36,7 @@ export function row(overrides: Partial<OauthCredentialRow> = {}): OauthCredentia
     secret: JSON.stringify({ accessToken: "old", refreshToken: "rt-1" }),
     secret_revision: "ciphertext-revision-1",
     expires_at: new Date(now.getTime() - 1), status: "active", updated_at: now,
-    refreshing_until: null, last_refreshed_at: null, ...overrides,
+    refreshing_until: null, last_refreshed_at: null, last_error: null, ...overrides,
   }
 }
 export function deferred<T>() {
@@ -46,7 +46,7 @@ export function deferred<T>() {
 }
 export function memoryStore(initial = row()) {
   const state: { row: OauthCredentialRow | null; lastError: string | null; client: typeof credentialSet; saves: number; failures: number } = {
-    row: structuredClone(initial), lastError: null, client: { ...credentialSet }, saves: 0, failures: 0,
+    row: structuredClone(initial), lastError: initial.last_error ?? null, client: { ...credentialSet }, saves: 0, failures: 0,
   }
   const authorized = (scope: RefreshScope) => state.row && state.client.status === "active"
     && state.client.oauth_client_id === scope.provider.oauth_client_id && state.client.oauth_client_secret === scope.provider.oauth_client_secret
@@ -62,7 +62,7 @@ export function memoryStore(initial = row()) {
   const store: GoogleOauthRefreshStore = {
     async reloadCredential(scope) { return authorized(scope) ? structuredClone(state.row) : null },
     async tryAcquireRefreshLock(input) {
-      if (!authorized(input.scope) || !state.row || state.row.status !== "active"
+      if (!authorized(input.scope) || !state.row || state.row.status !== "active" || state.row.last_error === "invalid_client"
         || JSON.stringify(state.row) !== JSON.stringify(input.credential)
         || (state.row.refreshing_until && state.row.refreshing_until >= input.now)) return null
       state.row.refreshing_until = input.until
@@ -78,6 +78,7 @@ export function memoryStore(initial = row()) {
       state.row.refreshing_until = null
       state.row.last_refreshed_at = input.now
       state.lastError = null
+      state.row.last_error = null
       bump(input.now)
       return true
     },
@@ -85,6 +86,7 @@ export function memoryStore(initial = row()) {
       if (!owns(input.lock) || !state.row?.refreshing_until || state.row.refreshing_until <= input.now) return false
       state.failures++
       state.lastError = input.error
+      state.row.last_error = input.error
       state.row.refreshing_until = null
       if (input.permanent) state.row.status = "refresh_failed"
       bump(input.now)

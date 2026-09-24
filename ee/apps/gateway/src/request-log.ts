@@ -1,4 +1,5 @@
 import { GatewayRequestLogTable } from "@openwork-ee/den-db"
+import { startGatewayUsageLog, safeUsageDatabaseCode, type GatewayUsageSnapshot } from "@openwork-ee/den-db/gateway-usage-limits"
 import { eq, sql } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type {
@@ -12,10 +13,11 @@ import type { InferenceContext } from "./middleware/inference-auth.js"
 import type { GatewayContext } from "./middleware/gateway-auth.js"
 import { estimateCostMicroUsd, loadPricingCatalogFromFile } from "./pricing.js"
 import type { PricingCatalog } from "./pricing.js"
+import { gatewayUsageWrites, UsageWriteAdmissionError } from "./usage-write-queue.js"
 
 export type GatewayRequestLogRow = typeof GatewayRequestLogTable.$inferInsert
 
-export type InsertRequestLog = (row: GatewayRequestLogRow) => Promise<void>
+export type InsertRequestLog = (row: GatewayRequestLogRow, options?: { signal?: AbortSignal }) => Promise<void>
 export type UpdateRequestLog = (row: GatewayRequestLogRow) => Promise<boolean>
 
 export type RequestLogStartInput = {
@@ -38,9 +40,12 @@ export type RequestLogStartInput = {
   accessGrantId?: GatewayRequestLogRow["access_grant_id"]
   requestBytes?: number | null
   startedAt?: Date
+  gatewayUsage?: GatewayUsageSnapshot
+  signal?: AbortSignal
 }
 
 export type RequestLogUsageInput = {
+  complete?: boolean
   usageSource: GatewayUsageSource
   upstreamModel?: string | null
   inputTokens?: number | null
@@ -82,14 +87,21 @@ export type RequestLogRecorder = {
   finish(input: RequestLogFinishInput): Promise<void>
 }
 
-export const insertRequestLogIntoDb: InsertRequestLog = async (row) => {
-  const { db } = await import("./db.js")
+export const insertRequestLogIntoDb: InsertRequestLog = async (row, options) => {
+  const { db, usageWriteDatabase } = await import("./db.js")
+  if (row.route === "org_provider") {
+    return gatewayUsageWrites.start(row.org_membership_id, row.openwork_request_id, () => usageWriteDatabase().transaction((tx) => startGatewayUsageLog(tx, row, new Date(), options?.signal)), options?.signal)
+  }
   await db.insert(GatewayRequestLogTable).values(row)
     .onDuplicateKeyUpdate({ set: { id: sql`${GatewayRequestLogTable.id}` } })
 }
 
 export async function updateRequestLogInDb(row: GatewayRequestLogRow): Promise<boolean> {
-  const { db } = await import("./db.js")
+  const { db, usageWriteDatabase } = await import("./db.js")
+  if (row.route === "org_provider") {
+    const { createGatewayUsageLimits } = await import("@openwork-ee/den-db/gateway-usage-limits")
+    return gatewayUsageWrites.settle(row.org_membership_id, row.openwork_request_id, () => createGatewayUsageLimits(usageWriteDatabase()).record(row))
+  }
   // A transaction/locking read also distinguishes a no-op retry from a missing
   // row without relying on driver-specific affectedRows/CLIENT_FOUND_ROWS.
   return db.transaction(async (tx) => {
@@ -159,9 +171,12 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
     }
   }
 
-  async function persist(write: () => Promise<boolean>, reason: string) {
+  async function persist(write: () => Promise<boolean>, reason: string, signal?: AbortSignal) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      try { return await write() } catch {
+      const started = performance.now()
+      try { return await write() } catch (error) {
+        console.warn("[gateway-usage]", { stage: "request_log_persist", durationMs: Math.round(performance.now() - started), code: error instanceof UsageWriteAdmissionError ? error.code : safeUsageDatabaseCode(error) })
+        if (signal?.aborted || error instanceof UsageWriteAdmissionError) { report(reason); return false }
         if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 25 : 100))
       }
     }
@@ -193,10 +208,13 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         // Existing enum placeholder; completed_at NULL is the pending marker.
         outcome: "client_aborted", usage_source: "missing",
         openwork_request_id: input.openworkRequestId, request_bytes: input.requestBytes ?? null,
-        ...(input.requestedModelSource ? { metadata: { requested_model_source: input.requestedModelSource } } : {}),
+        metadata: {
+          ...(input.requestedModelSource ? { requested_model_source: input.requestedModelSource } : {}),
+          ...(input.gatewayUsage ? { gateway_usage: input.gatewayUsage } : {}),
+        },
       }
       const row = pending
-      startWrite = persist(async () => { await dependencies.insertRequestLog(row); return true }, "request_log_insert_failed")
+      startWrite = persist(async () => { await dependencies.insertRequestLog(row, { signal: input.signal }); return true }, "request_log_insert_failed", input.signal)
     },
     whenStarted() {
       return startWrite
@@ -259,10 +277,13 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         metadata: { ...pending.metadata, cost_source: costMicroUsd(usage?.costUsd) !== null ? "upstream" : "catalog_estimate" },
       }
       if (row.cost_micro_usd === null) row.metadata = { ...pending.metadata, cost_source: "unknown" }
+      row.metadata = { ...row.metadata, cost_complete: row.outcome === "ok" && row.cost_micro_usd !== null && usage?.complete !== false && (costMicroUsd(usage?.costUsd) !== null || typeof usage?.inputTokens === "number" && typeof usage?.outputTokens === "number") }
       finishWrite = (async () => {
-        if (!await startWrite) return
-        const saved = await persist(() => (dependencies.updateRequestLog ?? updateRequestLogInDb)(row), "request_log_update_failed")
-        if (!saved) report("request_log_not_finalized")
+        try {
+          if (!await startWrite) return
+          const saved = await persist(() => (dependencies.updateRequestLog ?? updateRequestLogInDb)(row), "request_log_update_failed")
+          if (!saved) report("request_log_not_finalized")
+        } finally { gatewayUsageWrites.releaseFailedSettlement(row.openwork_request_id) }
       })()
       return finishWrite
     },

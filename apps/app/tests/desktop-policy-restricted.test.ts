@@ -92,9 +92,10 @@ describe("restricted desktop policy mode", () => {
 
 describe("allowManageExtensions Library gate", () => {
   test("removes only the local add flows and keeps organization-approved ones", () => {
-    const signedInRestricted = { cloudSignedIn: true, allowManageExtensions: false, canManageCloudConnections: true };
+    const signedInRestricted = { cloudSignedIn: true, allowManageExtensions: false };
     expect(libraryAddAction("workspace-mcp", signedInRestricted)).toBeNull();
-    expect(libraryAddAction("mcp", signedInRestricted)).toEqual({ type: "den-url", kind: "connection" });
+    expect(libraryAddAction("connection", signedInRestricted)).toEqual({ type: "connector-catalog" });
+    expect(libraryAddAction("mcp", signedInRestricted)).toEqual({ type: "den-modal", kind: "mcp" });
     expect(libraryAddAction("skill", signedInRestricted)).toEqual({ type: "den-modal", kind: "skill" });
     expect(libraryAddAction("workspace-mcp", { cloudSignedIn: true, allowManageExtensions: true })).toEqual({ type: "workspace-mcp" });
   });
@@ -107,15 +108,15 @@ describe("allowControlSettings settings gate", () => {
     }
   });
 
-  test("keeps only the Cloud tabs when the organization blocks settings control", () => {
+  test("keeps all settings reachable even when the organization policy blocks them", () => {
     const allowed = SETTINGS_TAB_VALUES.filter((tab) =>
       isSettingsTabAllowed({ tab, checkRestriction: restrictedChecker }),
     );
-    expect(allowed).toEqual(["cloud-account"]);
+    expect(allowed).toEqual(SETTINGS_TAB_VALUES);
     expect(allowed).toContain(SETTINGS_TAB_WITHOUT_CONTROL);
-    expect(isSettingsTabAllowed({ tab: "general", checkRestriction: restrictedChecker })).toBe(false);
-    expect(isSettingsTabAllowed({ tab: "extensions", checkRestriction: restrictedChecker })).toBe(false);
-    expect(isSettingsTabAllowed({ tab: "ai", checkRestriction: restrictedChecker })).toBe(false);
+    expect(isSettingsTabAllowed({ tab: "general", checkRestriction: restrictedChecker })).toBe(true);
+    expect(isSettingsTabAllowed({ tab: "extensions", checkRestriction: restrictedChecker })).toBe(true);
+    expect(isSettingsTabAllowed({ tab: "ai", checkRestriction: restrictedChecker })).toBe(true);
   });
 
   test("explains blocked capabilities with the catalog notice", () => {

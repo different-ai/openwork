@@ -1,4 +1,5 @@
 import type { DesktopConfig, DesktopExecutionPolicy, DesktopPolicyKey } from "@openwork/types/den/desktop-policies";
+import { DESKTOP_POLICY_ENFORCEMENT_ENABLED } from "@openwork/types/den/desktop-policies-runtime";
 import { z } from "zod";
 
 export const managedPolicyActionSchema = z.enum([
@@ -25,7 +26,7 @@ export const executionPolicyTargets = {
 
 export type EnginePermissionRule = { action: string; resource: string; effect: "allow" | "deny" };
 export function executionRules(policy: DesktopExecutionPolicy | undefined): EnginePermissionRule[] {
-  if (!policy) return [];
+  if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED || !policy) return [];
   const rules: EnginePermissionRule[] = [];
   if (policy.commands === "deny") rules.push({ action: "shell", resource: "*", effect: "deny" });
   for (const resource of policy.blockedCommands) rules.push({ action: "shell", resource, effect: "deny" });

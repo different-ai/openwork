@@ -1,4 +1,5 @@
 import { eq } from "@openwork-ee/den-db/drizzle"
+import { expireUsageRequestsForMembers } from "@openwork-ee/den-db/gateway-usage-limits"
 import {
   AuthAccountTable,
   AuthApiKeyTable,
@@ -35,6 +36,7 @@ export async function deleteGlobalAuthUser(userId: UserId) {
   const { oauthConsents, gatewayCredentials } = await db.transaction(async (tx) => {
     const members = await tx.select({ id: MemberTable.id }).from(MemberTable)
       .where(eq(MemberTable.userId, userId)).orderBy(MemberTable.id).for("update")
+    await expireUsageRequestsForMembers(tx, members.map((member) => member.id))
     const credentials = await revokeInferenceCredentialsForMembers(tx, members.map((member) => member.id))
     const consentRows = await tx
       .select({ id: OAuthConsentTable.id })

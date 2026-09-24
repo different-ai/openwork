@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +9,7 @@ import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
 import * as OpenWorkExtensionsPreviewEntry from "./openwork-extensions-preview.js";
 import { sessionActivityFrom } from "./session-activity.js";
 import {
-  OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION,
+  OPENWORK_ON_DEMAND_DISCOVERY_INSTRUCTION,
   OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
   OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION,
 } from "./openwork-extensions-preview-steering.js";
@@ -229,6 +229,10 @@ function startFakeOpenWorkServer(options: {
           }],
           instruction: "<available_remote_skills><skill name=\"customer-briefing\" capability=\"skill:skill_customer_briefing\">Customer briefing</skill></available_remote_skills>",
         });
+      }
+
+      if (url.pathname === "/experimental/connect/automations") {
+        return Response.json({ ok: true, schemaVersion: 1, instruction: "<available_automations>Daily summary</available_automations>" });
       }
 
       if (url.pathname === "/workspaces") {
@@ -937,7 +941,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(fake.requests.some((request) => request.pathname === "/workspace/ws_2/opencode/session")).toBe(true);
   });
 
-  test("merges factory directory into transform steering when hook input omits it", async () => {
+  test("transform discovers on demand without loading Cloud catalogs", async () => {
     const fake = startFakeOpenWorkServer();
     const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
     const output: { system: string[] } = { system: [] };
@@ -947,39 +951,41 @@ describe("OpenWorkExtensionsPreview session tools", () => {
       model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
     }, output);
 
-    const connectStateRequest = fake.requests.find((request) => request.pathname === "/experimental/connect/state");
-    const connectSkillsRequest = fake.requests.find((request) => request.pathname === "/experimental/connect/skills");
-    expect(connectStateRequest?.search).toBe("?directory=%2Ftmp%2Farchive&provider=anthropic&model=claude-sonnet-4");
-    expect(connectSkillsRequest?.search).toBe("");
-    expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
-    expect(output.system.join("\n")).toContain(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
-    expect(output.system.join("\n")).not.toContain(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
-    expect(output.system.join("\n")).toContain('<skill name="customer-briefing"');
+    expect(fake.requests).toEqual([]);
+    expect(output.system.join("\n")).toContain(OPENWORK_ON_DEMAND_DISCOVERY_INSTRUCTION);
+    expect(output.system.join("\n")).not.toContain('<skill name="customer-briefing"');
   });
 
-  test("uses the factory engine client as transform steering source of truth", async () => {
+  test("transform completes immediately with zero calls to never-settling fetch and engine MCP status", async () => {
     startFakeOpenWorkServer();
-    const requests: unknown[] = [];
+    const pendingFetch = Object.assign(() => new Promise<Response>(() => {}), {
+      preconnect: globalThis.fetch.preconnect,
+    });
+    const fetchMock = spyOn(globalThis, "fetch").mockImplementation(pendingFetch);
+    stops.push(() => fetchMock.mockRestore());
+    let statusCalls = 0;
     const mcp = {
-      result: { data: { "openwork-cloud": { status: "connected" } } },
-      async status(request: unknown) {
-        requests.push(request);
-        return this.result;
+      status() {
+        statusCalls += 1;
+        return new Promise<unknown>(() => {});
       },
     };
     const plugin = await OpenWorkExtensionsPreview({ client: { mcp }, directory: "/tmp/archive" });
     const output: { system: string[] } = { system: [] };
 
-    await plugin["experimental.chat.system.transform"]({}, output);
-
-    expect(requests).toEqual([{ query: { directory: "/tmp/archive" } }]);
-    expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
-    expect(output.system.join("\n")).toContain(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
-    expect(output.system.join("\n")).not.toContain(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
+    let completed = false;
+    void plugin["experimental.chat.system.transform"]({}, output).then(() => { completed = true; });
+    await Promise.resolve();
+    expect(completed).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(0);
+    expect(statusCalls).toBe(0);
+    expect(output.system.join("\n")).toContain(OPENWORK_ON_DEMAND_DISCOVERY_INSTRUCTION);
+    expect(output.system.join("\n")).toContain(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
+    expect(output.system.join("\n")).not.toMatch(/verified ready|is not signed in|is explicitly disabled|Cloud is unavailable/);
   });
 
-  test("uses neutral transform steering when the engine reports failed Cloud status", async () => {
-    startFakeOpenWorkServer();
+  test("explicit context still calls discovery and returns skill and Automation catalogs", async () => {
+    const fake = startFakeOpenWorkServer();
     const requests: unknown[] = [];
     const mcp = {
       result: { data: { "openwork-cloud": { status: "failed" } } },
@@ -989,21 +995,14 @@ describe("OpenWorkExtensionsPreview session tools", () => {
       },
     };
     const plugin = await OpenWorkExtensionsPreview({ client: { mcp }, directory: "/tmp/archive" });
-    const output: { system: string[] } = { system: [] };
-
-    await plugin["experimental.chat.system.transform"]({}, output);
-
-    expect(requests).toEqual([{ query: { directory: "/tmp/archive" } }]);
-    expect(output.system).toHaveLength(1);
-    // App-control mechanics lead; the live steering follows them.
-    expect(output.system[0].startsWith("## OpenWork app context")).toBe(true);
-    expect(output.system[0]).toContain(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(output.system[0].indexOf("## Built-in Browser")).toBeLessThan(output.system[0].indexOf(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION));
-    expect(output.system[0]).toContain(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
-    expect(output.system[0]).not.toContain(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
-    expect(output.system[0]).not.toContain("not ready");
-    expect(output.system[0]).not.toContain("Repair and test");
-    expect(output.system[0]).not.toContain("Do not use OpenWork documentation tools");
+    const output = await plugin.tool.openwork_context.execute();
+    expect(requests).toEqual(Array(2).fill({ query: { directory: "/tmp/archive" } }));
+    expect(fake.requests.some((request) => request.pathname === "/experimental/connect/skills")).toBe(true);
+    expect(fake.requests.some((request) => request.pathname === "/experimental/connect/automations")).toBe(true);
+    const result = z.object({ instructions: z.object({ routing: z.string(), skills: z.string(), automations: z.string() }) }).parse(JSON.parse(output));
+    expect(result.instructions.routing).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(result.instructions.skills).toContain('<skill name="customer-briefing"');
+    expect(result.instructions.automations).toContain("Daily summary");
   });
 
   test("extends the engine system entry instead of adding a second system message", async () => {
@@ -1020,7 +1019,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 
     expect(output.system).toHaveLength(1);
     expect(output.system[0].startsWith("engine header\n\n")).toBe(true);
-    expect(output.system[0]).toContain("verified ready for this exact workspace/model");
+    expect(output.system[0]).toContain(OPENWORK_ON_DEMAND_DISCOVERY_INSTRUCTION);
     expect(output.system[0]).toContain("## Built-in Browser (external websites)");
   });
 
@@ -1566,7 +1565,8 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 });
 
 describe("OpenWorkExtensionsPreview semantic tool surface", () => {
-  test("exposes semantic tools, native visualization and the WebMCP browser broker", async () => {
+  test("exposes semantic tools and the WebMCP browser broker without retired presentation tools", async () => {
+    startFakeOpenWorkServer();
     const plugin = await OpenWorkExtensionsPreview();
     const tools = Object.keys(plugin.tool).sort();
 
@@ -1574,7 +1574,6 @@ describe("OpenWorkExtensionsPreview semantic tool surface", () => {
       "openwork_context",
       "openwork_execute",
       "openwork_query",
-      "openwork_visualization",
       "webmcp_call_tool",
       "webmcp_list_tools",
     ]);
@@ -1587,7 +1586,8 @@ describe("OpenWorkExtensionsPreview semantic tool surface", () => {
     expect(system).not.toContain("openwork_extension_");
     expect(system).not.toContain("openwork_browser_");
     expect(system).toContain("Use openwork_context");
-    expect(system).toContain("use openwork_visualization");
+    expect(system).not.toContain("openwork_visualization");
+    expect(system).toContain("Tool results must not open panels or move focus automatically");
     expect(system).toContain("session.search");
     expect(system).toContain("Start with browser_tabs");
     expect(system).toContain("Use webmcp_list_tools with the chosen tabId");
@@ -1637,25 +1637,6 @@ describe("OpenWorkExtensionsPreview semantic tool surface", () => {
         body: { toolId: "site_tool_1", input: { detail: "full" }, sessionId: "browser-test" },
       },
     ]);
-  });
-
-  test("renders a bounded visualization without calling a backend", async () => {
-    const fake = startFakeOpenWorkServer();
-    const plugin = await OpenWorkExtensionsPreview();
-    const design = {
-      id: "project-overview", title: "Project overview", revision: 1,
-      sections: [{ title: "Projects", columns: "two", blocks: [
-        { kind: "metric", label: "Active", value: "12" },
-        { kind: "text", label: "Note", value: "<script>alert(1)</script>" },
-      ] }],
-    };
-    expect(JSON.parse(await plugin.tool.openwork_visualization.execute(design))).toEqual(design);
-    expect(fake.requests).toHaveLength(0);
-    await expect(plugin.tool.openwork_visualization.execute({ ...design, sections: [] })).rejects.toThrow();
-    await expect(plugin.tool.openwork_visualization.execute({ ...design, revision: 0 })).rejects.toThrow();
-    await expect(plugin.tool.openwork_visualization.execute({ ...design, sections: Array(9).fill(design.sections[0]) })).rejects.toThrow();
-    await expect(plugin.tool.openwork_visualization.execute({ ...design, sections: [{ title: "Unsafe", blocks: [{ kind: "html", label: "Code" }] }] })).rejects.toThrow();
-    expect(fake.requests).toHaveLength(0);
   });
 
   test("proposes an Automation without creating anything or calling a backend", async () => {

@@ -4,7 +4,7 @@ import { register } from "node:module";
 import test from "node:test";
 import { createContext, runInContext } from "node:vm";
 
-// Keep Electron and installed-browser discovery in memory: these guards must
+// Keep Electron in memory: these guards must
 // never touch the clipboard, show a dialog, or launch a real browser.
 const electronStub = `
 import { EventEmitter } from "node:events";
@@ -12,7 +12,7 @@ export const effects = [];
 export const controls = {
   ready: true,
   focusedContents: null,
-  confirm: async () => 0, beforeLoad: async () => {}, beforeCommand: async () => {}, beforeDiscovery: async () => {},
+  confirm: async () => 0, beforeLoad: async () => {}, beforeCommand: async () => {},
   invoke: async () => true,
 };
 export const exposed = {};
@@ -169,28 +169,14 @@ export class WebContentsView {
 }
 `;
 
-const installedBrowsersStub = `
-import { effects, controls } from "electron";
-export async function listInstalledBrowsers() {
-  await controls.beforeDiscovery();
-  return [["chrome", "Google Chrome"], ["firefox", "Firefox"]].map(([id, name]) => ({
-    id, name,
-    async open(url) { effects.push({ type: "browser", id, url }); },
-  }));
-}
-`;
-
 const hooks = `
 const stub = ${JSON.stringify(electronStub)};
-const browsers = ${JSON.stringify(installedBrowsersStub)};
 export function resolve(specifier, context, next) {
   if (specifier === "electron") return { url: "electron-stub:main", shortCircuit: true };
-  if (specifier === "./installed-browsers.mjs") return { url: "installed-browsers-stub:main", shortCircuit: true };
   return next(specifier, context);
 }
 export function load(url, context, next) {
   if (url === "electron-stub:main") return { format: "module", source: stub, shortCircuit: true };
-  if (url === "installed-browsers-stub:main") return { format: "module", source: browsers, shortCircuit: true };
   return next(url, context);
 }
 `;
@@ -214,7 +200,6 @@ function createPanel(checkPolicy = async (_request) => {}, remoteDebugPort = 0) 
   controls.confirm = async () => 0;
   controls.beforeLoad = async () => {};
   controls.beforeCommand = async () => {};
-  controls.beforeDiscovery = async () => {};
   browserSession.removeAllListeners("will-download");
   const policies = [];
   const children = [];
@@ -706,7 +691,7 @@ test("preload routes only trusted unmodified primary anchor clicks, never script
     return event.defaultPrevented;
   };
   assert.equal(click(), true);
-  assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "A" }] }]);
+  assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "A", external: false, ask: true }] }]);
   assert.equal(exposed.__OPENWORK_ELECTRON__.browser.linkClick, undefined);
   for (const overrides of [{ isTrusted: false }, { button: 1 }, { button: 2 }, { metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }]) {
     assert.equal(click(overrides), false);
@@ -715,6 +700,29 @@ test("preload routes only trusted unmodified primary anchor clicks, never script
     assert.equal(click({}, Object.assign(new Anchor(), change)), false);
   }
   assert.equal(preloadCalls.length, 1);
+  // The same listener reads a saved setting at each activation, including an
+  // Enter-generated click (detail: 0). Missing/invalid storage keeps OpenWork.
+  for (const [stored, external, ask = true] of [
+    [null, false], ["{}", false], ['{"linkOpenDestination":"external"}', true],
+    ['{"linkOpenDestination":"openwork"}', false], ['{"linkOpenDestination":"chrome"}', false],
+    ["invalid JSON", false], ["null", false],
+    ['{"linkOpenDestination":"external","askBeforeOpeningLinks":false}', true, false],
+    ['{"linkOpenDestination":"openwork","askBeforeOpeningLinks":false}', false, false],
+    ['{"linkOpenDestination":"external","askBeforeOpeningLinks":"false"}', true, true],
+  ]) {
+    Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem(key) { assert.equal(key, "openwork.preferences"); return stored; } } });
+    preloadCalls.length = 0;
+    assert.equal(click({ detail: 0 }), true);
+    assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "A", external, ask }] }]);
+  }
+  Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem() { throw new Error("Storage unavailable"); } } });
+  preloadCalls.length = 0;
+  assert.equal(click(), true);
+  assert.equal(preloadCalls[0].args[0].external, false);
+  assert.equal(preloadCalls[0].args[0].ask, true);
+  preloadCalls.length = 0;
+  exposed.__OPENWORK_ELECTRON__.browser.openLink(LINK.url, "B");
+  assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "B", external: false, ask: true }] }]);
 });
 
 test("browser manager construction before app readiness defers session hooks until the first tab", async (t) => {
@@ -1418,43 +1426,37 @@ test("deletion cancels pending suspension and restoration without resurrecting s
   }
 });
 
-test("a native choice launches only the selected installed or default browser with the exact link", async () => {
-  for (const itemId of ["browser:chrome", "browser:firefox", "open-external"]) {
-    const { openLinkMenu, invoke, policies, views } = createPanel();
-    const { request, choose } = await openLinkMenu();
-    assert.deepEqual(request, {
-      point: LINK.point,
-      items: [
-        { type: "item", id: "open-builtin", label: "Open in OpenWork" },
-        { type: "item", id: "open-external", label: "Open in Default Browser" },
-        { type: "item", id: "browser:chrome", label: "Open in Google Chrome" },
-        { type: "item", id: "browser:firefox", label: "Open in Firefox" },
-        { type: "separator" },
-        { type: "item", id: "copy-url", label: "Copy Link Address" },
-      ],
-    });
-    assert.deepEqual(policies, [], "showing the popup does not open the destination");
-    assert.deepEqual(effects, []);
-    choose(itemId);
-    await flush();
+test("the simplified native menu launches the external browser once with the exact link", async () => {
+  const { openLinkMenu, invoke, policies, views } = createPanel();
+  const { request, choose } = await openLinkMenu();
+  assert.deepEqual(request, {
+    point: LINK.point,
+    items: [
+      { type: "item", id: "open-builtin", label: "Open in OpenWork" },
+      { type: "item", id: "open-external", label: "Open in external browser" },
+      { type: "separator" },
+      { type: "item", id: "copy-url", label: "Copy Link Address" },
+    ],
+  });
+  assert.deepEqual(policies, [], "showing the popup does not open the destination");
+  assert.deepEqual(effects, []);
+  choose("open-external");
+  await flush();
 
-    assert.deepEqual(policies, [{ url: LINK.url, external: true }]);
-    assert.deepEqual(effects, [itemId === "open-external"
-      ? { type: "external", url: LINK.url }
-      : { type: "browser", id: itemId.slice("browser:".length), url: LINK.url }]);
-    assert.deepEqual(invoke("openwork:browser:state").tabs, []);
-    assert.deepEqual(views(), [], "native menus allocate no overlay renderer");
-  }
+  assert.deepEqual(policies, [{ url: LINK.url, external: true }]);
+  assert.deepEqual(effects, [{ type: "external", url: LINK.url }]);
+  assert.deepEqual(invoke("openwork:browser:state").tabs, []);
+  assert.deepEqual(views(), [], "native menus allocate no overlay renderer");
 });
 
-test("external policy denial prevents catalog and default launches without a built-in fallback", async () => {
-  for (const itemId of ["browser:firefox", "open-external"]) {
+test("policy denial prevents either link menu destination without a fallback", async () => {
+  for (const itemId of ["open-builtin", "open-external"]) {
     const { openLinkMenu, invoke, policies } = createPanel(async () => { throw new Error("blocked"); });
     const { choose } = await openLinkMenu();
     choose(itemId);
     await flush();
 
-    assert.deepEqual(policies, [{ url: LINK.url, external: true }], itemId);
+    assert.deepEqual(policies, [{ url: LINK.url, external: itemId === "open-external" }], itemId);
     assert.deepEqual(effects, [{ type: "dialog" }], itemId);
     assert.deepEqual(invoke("openwork:browser:state").tabs, [], itemId);
   }
@@ -1577,7 +1579,7 @@ test("native results cannot invoke disabled, missing, or cross-menu action IDs",
     choose(itemId);
     await done;
   }
-  for (const itemId of ["browser:unlisted", "close-tab", "close-all-tabs", undefined]) {
+  for (const itemId of ["browser:chrome", "browser:firefox", "browser:unlisted", "close-tab", "close-all-tabs", undefined]) {
     const { choose } = await openLinkMenu();
     choose(itemId);
     await flush();
@@ -1627,37 +1629,6 @@ test("link points stay in CSS coordinates and native cancellation releases liste
   assert.equal(mainContents.listenerCount("destroyed"), 0);
 });
 
-test("late installed-browser discovery cannot reopen dismissed, superseded or destroyed menus", async () => {
-  for (const ending of ["dismiss", "blur", "navigate", "destroy", "renderer-destroyed", "session", "supersede"]) {
-    const { invoke, openLinkMenu, mainWindow, mainContents, menus, policies, views } = createPanel();
-    const discovery = gate();
-    let calls = 0;
-    controls.beforeDiscovery = () => ++calls === 1 ? discovery.promise : undefined;
-    invoke("openwork:browser:linkContextMenu", LINK);
-    // End the request immediately, even before its first asynchronous turn.
-    if (ending === "dismiss") invoke("openwork:menu-overlay:dismiss");
-    if (ending === "blur") mainWindow.emit("blur");
-    if (ending === "navigate") mainContents.emit("did-start-navigation", null, "http://localhost/next", false, true);
-    if (ending === "destroy") invoke("openwork:browser:destroy");
-    if (ending === "renderer-destroyed") { mainContents.destroyed = true; mainContents.emit("destroyed"); }
-    if (ending === "session") invoke("openwork:browser:setVisibleSession", "B");
-    const newer = ending === "supersede" ? await openLinkMenu({ ...LINK, url: "https://newer.example/" }) : null;
-    discovery.finish();
-    await flush();
-    assert.equal(menus.length, newer ? 1 : 0, ending);
-    assert.deepEqual(policies, [], ending);
-    assert.deepEqual(effects, [], ending);
-    assert.deepEqual(views(), [], ending);
-    if (newer) {
-      assert.equal(newer.closed, false, "stale discovery cannot close a newer native popup");
-      newer.choose("copy-url");
-      await flush();
-      assert.deepEqual(effects, [{ type: "copy", url: "https://newer.example/" }]);
-    }
-    assert.equal(mainWindow.listenerCount("blur"), 0, ending);
-  }
-});
-
 test("late native selections are ignored after dismissal, blur, navigation or destruction", async () => {
   for (const ending of ["dismiss", "blur", "navigate", "destroy", "renderer-destroyed", "window-destroyed", "session", "hide"]) {
     const { invoke, openLinkMenu, mainWindow, mainContents, policies, views } = createPanel();
@@ -1702,7 +1673,7 @@ test("tab and link popups supersede each other without executing or closing the 
 });
 
 test("selected link actions cannot run after a newer request or destroyed document while policy waits", async () => {
-  for (const itemId of ["open-builtin", "open-external", "browser:firefox"]) {
+  for (const itemId of ["open-builtin", "open-external"]) {
     for (const ending of ["supersede", "destroy", "navigate", "renderer-destroyed"]) {
       const policy = gate();
       const { invoke, openLinkMenu, mainContents, policies, views } = createPanel(() => policy.promise);
@@ -1927,19 +1898,26 @@ test("denied, canceled, closed and background task opens never load and release 
   }
 });
 
-test("the task timeout cancels the longer approval dialog and late acceptance cannot navigate", async (t) => {
+test("thread consent can outlive the operation timeout without navigating early", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const { invoke, panel, views } = createPanel();
   invoke("openwork:browser:show", PANEL_BOUNDS, "A");
-  const opening = panel.browserTask({ sessionId: "A", operation: "open", args: { url: "https://slow.example/" } });
+  let settled = false;
+  let earlyResult;
+  const opening = panel.browserTask({ sessionId: "A", operation: "open", args: { url: "https://slow.example/" } })
+    .then((result) => { settled = true; earlyResult = result; return result; });
   await flush();
   const tab = invoke("openwork:browser:state").tabs[0];
-  t.mock.timers.tick(30_000);
-  assert.equal((await opening).code, "timeout");
-  assert.equal(invoke("openwork:browser:approve", tab.id, tab.browserApproval.id, true), false);
+  t.mock.timers.tick(31_000);
+  await flush();
+  assert.equal(settled, false, JSON.stringify(earlyResult));
+  assert.equal(invoke("openwork:browser:state").tabs[0].browserApproval.id, tab.browserApproval.id);
   assert.deepEqual(views()[0].webContents.loads, []);
   assert.deepEqual(views()[0].webContents.destinations, []);
-  assert.deepEqual(invoke("openwork:browser:state").tabs, []);
+  assert.equal(invoke("openwork:browser:approve", tab.id, tab.browserApproval.id, true), true);
+  assert.equal((await opening).ok, true);
+  assert.deepEqual(views()[0].webContents.loads, ["https://slow.example/"]);
+  assert.deepEqual(views()[0].webContents.destinations, ["https://slow.example/"]);
 });
 
 test("human link clicks open without control state but later agent reads require consent", async () => {
@@ -1974,6 +1952,91 @@ test("human link clicks open without control state but later agent reads require
     else assert.equal(result.text, undefined);
     assert.equal(reads > 0, allowed);
     invoke("openwork:browser:destroy");
+  }
+});
+
+test("human external link clicks open exactly once, respect policy, and leave owned tabs alone", async () => {
+  for (const denied of [false, true]) {
+    const { invoke, policies, views } = createPanel(async ({ external }) => {
+      if (denied && external) throw new Error("managed denial");
+    });
+    invoke("openwork:browser:createTab", "https://neighbor.example/", "B");
+    await flush();
+    const tabs = invoke("openwork:browser:state").tabs;
+    policies.length = 0;
+    invoke("openwork:browser:linkClick", { ...LINK, external: true });
+    await flush();
+    assert.deepEqual(policies, [{ url: LINK.url, external: true }]);
+    assert.deepEqual(effects, denied ? [{ type: "dialog" }] : [{ type: "external", url: LINK.url }]);
+    assert.deepEqual(invoke("openwork:browser:state").tabs, tabs);
+    assert.equal(views().length, 1);
+  }
+});
+
+test("the link chooser waits without opening and consumes only one trusted choice for the captured link", async () => {
+  for (const destination of ["openwork", "external", null]) {
+    const { invoke, emit, mainContents, messages, policies, views } = createPanel();
+    invoke("openwork:browser:linkClick", { ...LINK, ask: true });
+    const request = messages("openwork:browser:link-open-request")[0];
+    assert.equal(request.url, LINK.url);
+    assert.deepEqual(policies, []);
+    assert.deepEqual(views(), []);
+    assert.deepEqual(effects, []);
+    invoke("openwork:browser:linkClick", { ...LINK, url: "https://second.example/", ask: true });
+    assert.equal(messages("openwork:browser:link-open-request").length, 1, "rapid clicks do not retarget the popup");
+    for (const event of [{ sender: {}, senderFrame: mainContents.mainFrame }, { sender: mainContents, senderFrame: {} }]) {
+      assert.equal(emit("openwork:browser:chooseLinkDestination", event, request.id, "external"), false);
+    }
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", "forged", "external"), false);
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", request.id, "chrome"), false);
+    invoke("openwork:browser:setVisibleSession", "B");
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", request.id, destination), destination !== null);
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", request.id, destination), false);
+    await flush();
+    assert.equal(messages("openwork:browser:link-open-request").at(-1), null);
+    if (destination === "openwork") {
+      assert.equal(views().length, 1);
+      assert.deepEqual(views()[0].webContents.destinations, [LINK.url]);
+      assert.equal(invoke("openwork:browser:state").tabs[0].ownerSessionId, "A");
+    } else {
+      assert.deepEqual(views(), []);
+      assert.deepEqual(policies, destination === null ? [] : [{ url: LINK.url, external: true }]);
+    }
+    assert.deepEqual(effects, destination === "external" ? [{ type: "external", url: LINK.url }] : []);
+    assert.equal(mainContents.listenerCount("destroyed"), 0);
+  }
+});
+
+test("cancelled or stale chooser requests cannot be revived, including while policy is pending", async () => {
+  for (const ending of ["navigate", "destroyed", "frame", "close"]) {
+    const { invoke, mainContents, messages, views, policies } = createPanel();
+    invoke("openwork:browser:linkClick", { ...LINK, ask: true });
+    const request = messages("openwork:browser:link-open-request")[0];
+    if (ending === "navigate") mainContents.emit("did-start-navigation", null, "http://localhost/next", false, true);
+    if (ending === "destroyed") { mainContents.destroyed = true; mainContents.emit("destroyed"); }
+    if (ending === "frame") mainContents.mainFrame = {};
+    if (ending === "close") invoke("openwork:browser:destroy");
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", request.id, "external"), false);
+    await flush();
+    assert.deepEqual(policies, []);
+    assert.deepEqual(views(), []);
+    assert.deepEqual(effects, []);
+  }
+  for (const denied of [true, false]) {
+    const held = gate();
+    const { invoke, mainContents, messages, views, policies } = createPanel(async () => {
+      if (denied) throw new Error("managed denial");
+      await held.promise;
+    });
+    invoke("openwork:browser:linkClick", { ...LINK, ask: true });
+    const request = messages("openwork:browser:link-open-request")[0];
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", request.id, "external"), true);
+    if (!denied) mainContents.emit("did-start-navigation", null, "http://localhost/next", false, true);
+    held.finish();
+    await flush();
+    assert.deepEqual(policies, [{ url: LINK.url, external: true }]);
+    assert.deepEqual(views(), []);
+    assert.deepEqual(effects, denied ? [{ type: "dialog" }] : []);
   }
 });
 

@@ -40,6 +40,7 @@ export interface PublishPrResult {
   posted: boolean;
   updated: boolean;
   urls: Record<string, string>;
+  evidence?: { gitSha: string; verdict: string; tests: number; passedTests: number; assertions: number; passedAssertions: number };
 }
 
 function commandRunner(command: string, args: string[], opts: CommandOptions = {}): CommandResult {
@@ -241,6 +242,10 @@ export async function publishReviewPr(
     dryRun?: boolean;
     preserveCurrentReport?: boolean;
     automatic?: boolean;
+    /** Replace older automatic evidence selections, while still preserving a human-selected report. */
+    replaceAutomatic?: boolean;
+    /** Trusted Actions publishes checks and deployments instead of a comment. */
+    presentation?: "native";
   },
   dependencies: PublishDependencies = {},
 ): Promise<PublishPrResult> {
@@ -296,9 +301,9 @@ export async function publishReviewPr(
       for (const existing of payload.comments) {
         if (!isRecord(existing) || typeof existing.body !== "string" || !existing.body.includes(MARKER)
           || !existing.body.includes(`Commit \`${report.gitSha}\``) || !existing.body.includes("[Open review report](")) continue;
-        const automatic = /<!-- test-evidence-selection:auto-v1:([a-f0-9]{64}(?:,[a-f0-9]{64})*) -->/.exec(existing.body);
-        if (!options.automatic || !automatic || existing.body.includes("<!-- test-evidence-selection:manual-v1 -->")
-          || automatic[1].split(",").some((fingerprint) => !fingerprints.includes(fingerprint))) return existing.body;
+         const automatic = /<!-- test-evidence-selection:auto-v1:([a-f0-9]{64}(?:,[a-f0-9]{64})*) -->/.exec(existing.body);
+         if (!options.automatic || !automatic || existing.body.includes("<!-- test-evidence-selection:manual-v1 -->")) return existing.body;
+         if (!options.replaceAutomatic && automatic[1].split(",").some((fingerprint) => !fingerprints.includes(fingerprint))) return existing.body;
       }
     }
   };
@@ -317,6 +322,11 @@ export async function publishReviewPr(
   const concurrentSelection = protectedReport(viewed.stdout);
   if (concurrentSelection) return { markdown: concurrentSelection, posted: false, updated: false, urls: {} };
   requireCurrentHead();
+  if (options.presentation === "native") {
+    const { summarizeReview } = await import("@openwork/review");
+    return { markdown, posted: true, updated: false, urls: { report: reportUrl },
+      evidence: { gitSha: report.gitSha, ...summarizeReview(report) } };
+  }
   const commentId = stickyCommentId(viewed.stdout);
   const posted = commentId
     ? exec(

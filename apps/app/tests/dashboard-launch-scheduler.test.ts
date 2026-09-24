@@ -140,10 +140,10 @@ describe("dashboard launch scheduler", () => {
     const cancelled = schedule(run, { signal: controller.signal });
     const nextRun = mock(async () => "next");
     const next = schedule(nextRun, options);
-    const rejection = expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+    const rejection = cancelled.catch((error: unknown) => error);
 
     controller.abort(new Error("stale tile"));
-    await rejection;
+    expect(await rejection).toMatchObject({ name: "AbortError" });
     expect(run).not.toHaveBeenCalled();
     expect(nextRun).not.toHaveBeenCalled();
     phase.resolve();
@@ -174,7 +174,7 @@ describe("dashboard launch scheduler", () => {
       return Promise.reject(failure);
     });
     const failed = schedule(failingRun, options);
-    const rejection = expect(failed).rejects.toBe(failure);
+    const rejection = failed.catch((error: unknown) => error);
     const nextPhase = deferred();
     const nextRun = mock(() => nextPhase.promise);
     const next = schedule(nextRun, options);
@@ -183,7 +183,7 @@ describe("dashboard launch scheduler", () => {
 
     phase.resolve();
     await blocking;
-    await rejection;
+    expect(await rejection).toBe(failure);
     expect(failingRun).toHaveBeenCalledTimes(1);
     expect(nextRun).toHaveBeenCalledTimes(1);
     expect(lastRun).not.toHaveBeenCalled();

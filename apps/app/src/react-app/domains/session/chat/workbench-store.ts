@@ -2,10 +2,13 @@ import type { OpenworkSessionRef } from "@openwork/types/openwork-context";
 import { useEffect, useMemo } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { NewSessionDestination } from "./new-session-destination";
 
 export type WorkbenchPane = "primary" | "secondary";
 export type WorkbenchSessionTab = OpenworkSessionRef & {
   workspaceTitle?: string;
+  draftDestination?: NewSessionDestination;
+  pendingConversationId?: string;
 };
 
 export type WorkbenchSnapshot = {

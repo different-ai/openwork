@@ -124,12 +124,12 @@ mock.module("@/app/lib/app-inspector", () => ({
 
 const { useWorkspaceRouteState } = await import("../src/react-app/shell/use-workspace-route-state");
 const handle: { current: ReturnType<typeof useWorkspaceRouteState> | null } = { current: null };
-const router: { navigate: ReturnType<typeof useNavigate> | null; pathname: string } = { navigate: null, pathname: "" };
+const router: { navigate: ReturnType<typeof useNavigate> | null; pathname: string; search: string } = { navigate: null, pathname: "", search: "" };
 let probeMounts = 0;
 let probeUnmounts = 0;
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
-const input = { developerMode: false, onServerSettingsChanged: () => undefined, onHostInfo: () => undefined };
+const input = { developerMode: false, preservePendingConversationRoute: false, onServerSettingsChanged: () => undefined, onHostInfo: () => undefined };
 
 function Probe() {
   handle.current = useWorkspaceRouteState(input);
@@ -143,6 +143,7 @@ function Probe() {
 function NavigationProbe() {
   router.navigate = useNavigate();
   router.pathname = useLocation().pathname;
+  router.search = useLocation().search;
   return null;
 }
 
@@ -160,16 +161,17 @@ function route() {
   return handle.current;
 }
 
-async function mount(workspaceId = "ws_1", sessionId?: string) {
+async function mount(workspaceId = "ws_1", sessionId?: string, initialPath?: string) {
   container = document.createElement("div");
   document.body.appendChild(container);
   const mountedRoot = createRoot(container);
   root = mountedRoot;
   await act(async () => {
     mountedRoot.render(
-      <MemoryRouter initialEntries={[`/workspace/${workspaceId}/session${sessionId ? `/${sessionId}` : ""}`]}>
+      <MemoryRouter initialEntries={[initialPath ?? `/workspace/${workspaceId}/session${sessionId ? `/${sessionId}` : ""}`]}>
         <NavigationProbe />
         <Routes>
+          <Route path="/session" element={<Probe />} />
           <Route path="/workspace/:workspaceId/session" element={<Probe />} />
           <Route path="/workspace/:workspaceId/session/:sessionId" element={<Probe />} />
           <Route path="/workspace/:workspaceId/settings/*" element={<div>Settings</div>} />
@@ -188,6 +190,7 @@ async function publishRouting(v2: boolean) {
 }
 
 beforeEach(() => {
+  input.preservePendingConversationRoute = false;
   window.localStorage.clear();
   workspaces = defaultWorkspaces;
   requests.length = 0;
@@ -216,6 +219,34 @@ afterEach(async () => {
 });
 
 afterAll(async () => { if (ownedDom) await GlobalRegistrator.unregister(); });
+
+test("workspace initialization preserves an owned pending route and never hydrates its local identity", async () => {
+  input.preservePendingConversationRoute = true;
+  await mount("ws_1", undefined, "/session?pendingConversation=local-pending");
+  await publishRouting(false);
+  expect(route().selectedWorkspaceId).toBe("ws_1");
+  expect(router.pathname).toBe("/session");
+  expect(router.search).toBe("?pendingConversation=local-pending");
+  expect(route().selectedSessionId).toBeNull();
+  expect(hydrationRequests).toHaveLength(0);
+  await navigate("/workspace/ws_1/session/ses_created");
+  expect(new Set(hydrationRequests.map((request) => request.sessionId))).toEqual(new Set(["ses_created"]));
+});
+
+test("first-send publication updates the inventory ref before a stale list response lands", async () => {
+  await mount("ws_1");
+  await publishRouting(false);
+  const inventory = requests.find((request) => request.workspaceId === "ws_1");
+  if (!inventory) throw new Error("Expected an in-flight session inventory");
+  await act(async () => {
+    route().rememberPendingCreatedSession("ws_1", "ses_created");
+    const next = { ...route().sessionsByWorkspaceIdRef.current, ws_1: [session("ws_1", "ses_created")] };
+    route().sessionsByWorkspaceIdRef.current = next;
+    route().setSessionsByWorkspaceId(next);
+    inventory.response.resolve([]);
+  });
+  expect(route().sessionsByWorkspaceId.ws_1.map((session) => session.id)).toEqual(["ses_created"]);
+});
 
 const unchangedDenSettings = {
   settings: { baseUrl: "https://den.invalid", authToken: "den-token", activeOrgId: "org_1" },
@@ -335,6 +366,32 @@ for (const v2 of [false, true]) {
       expect(route().isSessionReferenceCurrent({ workspaceId: "ws_1", sessionId: "selected" })).toBe(false);
     });
   }
+}
+
+for (const v2 of [false, true]) {
+  const engine = v2 ? "v2" : "v1";
+  test(`${engine} cold deep link keeps an indexed session listed after selecting another one when its direct read lands first`, async () => {
+    workspaces = [defaultWorkspaces[0]];
+    await mount("ws_1", "other");
+    await publishRouting(v2);
+    const inventory = requests.find((request) => request.workspaceId === "ws_1");
+    if (!inventory) throw new Error("Expected an in-flight session inventory");
+    expect(hydrationRequests.map((request) => request.sessionId)).toEqual(["other"]);
+    // The direct session read settles a beat before the inventory that already contains it.
+    await act(async () => {
+      hydrationRequests[0].response.resolve(session("ws_1", "other"));
+      inventory.response.resolve([session("ws_1", "long"), session("ws_1", "other")]);
+    });
+    expect(route().sessionsByWorkspaceId.ws_1.map((item) => item.id).sort()).toEqual(["long", "other"]);
+    expect(route().isSessionReferenceCurrent({ workspaceId: "ws_1", sessionId: "other" })).toBe(true);
+    await navigate("/workspace/ws_1/session/long");
+    expect(route().selectedSessionId).toBe("long");
+    expect(route().sessionsByWorkspaceId.ws_1.map((item) => item.id).sort()).toEqual(["long", "other"]);
+    await navigate("/workspace/ws_1/session/other");
+    expect(route().selectedSessionId).toBe("other");
+    expect(hydrationRequests).toHaveLength(1);
+    expect(route().sessionsByWorkspaceId.ws_1.map((item) => item.id).sort()).toEqual(["long", "other"]);
+  });
 }
 
 test("routing readiness starts the fifth selected local workspace before slow background lists finish", async () => {

@@ -437,6 +437,7 @@ export async function managedPolicyRecovery(seed: Seed) {
       revokeProviderAccess,
       syncProviders,
       updateBuiltInModel,
+      refreshPolicy: () => request("/managed-policy"),
       evaluate: (body: Record<string, unknown>) => request("/managed-policy/evaluate", { method: "POST", body }),
       async [Symbol.asyncDispose]() {
         if (disposed) return;

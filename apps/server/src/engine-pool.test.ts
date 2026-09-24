@@ -11,6 +11,7 @@ import {
   enginePoolForConfig,
   isEngineConnectionFailure,
   setEnginePoolForConfig,
+  rolloverOutcomeApplied,
   type EnginePoolHooks,
   type EngineSpawnTemplate,
 } from "./engine-pool.js";
@@ -30,6 +31,12 @@ const ENV_NAMES = [
 ];
 
 const cleanups: Array<() => void | Promise<void>> = [];
+
+test("a completed native live update clears pending refreshes while deferred changes do not", () => {
+  expect(rolloverOutcomeApplied({ action: "updated_live" })).toBe(true);
+  expect(rolloverOutcomeApplied({ action: "coalesced" })).toBe(false);
+  expect(rolloverOutcomeApplied({ action: "skipped", reason: "unchanged" })).toBe(false);
+});
 const savedEnv = new Map<string, string | undefined>();
 
 afterEach(async () => {
@@ -402,6 +409,59 @@ describe("engine pool", () => {
     expect(outcome).toEqual({ action: "skipped", reason: "unchanged" });
     expect(pool.snapshot().generations).toHaveLength(1);
     expect(fixture.hookCalls.reloadInPlace).toBe(0);
+  });
+
+  test("explicit engine reload refreshes an idle engine even when its config is unchanged", async () => {
+    const fixture = await createFixture();
+    const { pool, primary } = await createPool(fixture);
+    const fingerprint = await computeEngineConfigFingerprint(fixture.template);
+    const server = await startServer(fixture.config);
+    cleanups.push(() => server.stop());
+
+    // Provider credentials live outside the runtime config. Saving or rotating
+    // a key must refresh the cached provider list even with identical config.
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_pool/engine/reload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${fixture.config.token}` },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ ok: true });
+      expect(fixture.hookCalls.reloadInPlace).toBe(attempt);
+      expect(pool.primaryUrl()).toBe(primary.url);
+      expect(await computeEngineConfigFingerprint(fixture.template)).toBe(fingerprint);
+    }
+
+    // Background reconciliation should retain its unchanged-config fast path.
+    expect(await pool.requestRollover({ reason: "unchanged", workspace: fixture.workspace }))
+      .toEqual({ action: "skipped", reason: "unchanged" });
+    expect(fixture.hookCalls.reloadInPlace).toBe(2);
+  });
+
+  test("explicit engine reload with unchanged config preserves busy sessions on the old engine", async () => {
+    const fixture = await createFixture();
+    const { pool, primary } = await createPool(fixture);
+    const oldPort = portOf(primary.url);
+    await fixture.setBusy(oldPort, ["ses_live"]);
+    const server = await startServer(fixture.config);
+    cleanups.push(() => server.stop());
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_pool/engine/reload`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${fixture.config.token}` },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true });
+    expect(pool.primaryUrl()).not.toBe(primary.url);
+    expect(primary.isAlive()).toBe(true);
+    expect(fixture.hookCalls.reloadInPlace).toBe(0);
+    expect(pool.routeRequest("POST", "/session/ses_live/prompt_async")?.target.baseUrl).toBe(primary.url);
+    const primaryUrl = pool.primaryUrl();
+    if (primaryUrl === null) throw new Error("Explicit reload left no primary engine");
+    expect(pool.routeRequest("POST", "/session/ses_new/prompt_async")?.target.baseUrl).toBe(primaryUrl);
+
+    await fixture.setBusy(oldPort, []);
+    expect(await waitUntil(() => !primary.isAlive(), 5_000)).toBe(true);
   });
 
   test("reloads in place instead of spawning when the engine is idle", async () => {

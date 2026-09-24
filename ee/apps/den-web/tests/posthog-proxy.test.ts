@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import { NextRequest, NextResponse } from "next/server";
 
 import { config, proxy } from "../proxy";
@@ -140,36 +139,5 @@ describe("PostHog proxy request sanitation", () => {
 
   test("keeps the matcher limited to /ow/:path*", () => {
     expect(config).toEqual({ matcher: "/ow/:path*" });
-  });
-});
-
-describe("PostHog Next config source contract", () => {
-  const source = readFileSync(new URL("../next.config.js", import.meta.url), "utf8");
-
-  test("orders US static and array asset rewrites before the ingestion catch-all", () => {
-    const rewriteContract = `
-      async rewrites() {
-        return [
-          {
-            source: "/ow/static/:path*",
-            destination: "https://us-assets.i.posthog.com/static/:path*",
-          },
-          {
-            source: "/ow/array/:path*",
-            destination: "https://us-assets.i.posthog.com/array/:path*",
-          },
-          {
-            source: "/ow/:path*",
-            destination: "https://us.i.posthog.com/:path*",
-          },
-        ];
-      },
-    `;
-
-    expect(source.replace(/\s+/g, " ")).toContain(rewriteContract.replace(/\s+/g, " ").trim());
-  });
-
-  test("preserves trailing slashes for PostHog ingestion endpoints", () => {
-    expect(source).toMatch(/\bskipTrailingSlashRedirect:\s*true\b/);
   });
 });

@@ -15,7 +15,6 @@ import {
 import {
   CLOUD_WORKSPACE_SLOW_BOOT_MS,
   cloudWorkspaceBootIsSlow,
-  cloudWorkspaceBootStages,
   cloudWorkspaceFailureLogFields,
   cloudWorkspaceStatusHasReadyContent,
   cloudWorkspaceTakeoverCopy,
@@ -270,39 +269,13 @@ describe("cloud workspace overlay state", () => {
   });
 });
 
-describe("cloud workspace boot stages", () => {
-  test("derives one active checkpoint per booting state and none once ready", () => {
-    const provisioning = cloudWorkspaceBootStages("provisioning");
-    const waking = cloudWorkspaceBootStages("waking");
-
-    // A provisioning sandbox is still being reserved; a waking one demonstrably
-    // exists already, so its first checkpoint is genuinely done.
-    expect(provisioning.map((stage) => stage.state)).toEqual(["active", "pending", "pending"]);
-    expect(waking.map((stage) => stage.state)).toEqual(["done", "active", "pending"]);
-    expect(provisioning[0].label).toBe("Reserving your computer");
-    expect(waking[1].label).toBe("Restoring your files");
-
-    expect(cloudWorkspaceBootStages("ready")).toEqual([]);
-    expect(cloudWorkspaceBootStages("stale")).toEqual([]);
-    expect(cloudWorkspaceBootStages("failed")).toEqual([]);
-  });
-
-  test("gives the update path its own checkpoint labels", () => {
-    const updating = cloudWorkspaceBootStages("updating");
-
-    expect(updating.map((stage) => stage.label)).toEqual([
-      "Saving your session",
-      "Applying the latest image",
-      "Reconnecting the app",
-    ]);
-    expect(updating.map((stage) => stage.state)).toEqual(["done", "active", "pending"]);
-  });
-
-  test("never reports more than one active checkpoint", () => {
-    for (const variant of ["provisioning", "waking", "updating"] as const) {
-      const active = cloudWorkspaceBootStages(variant).filter((stage) => stage.state === "active");
-      expect(active.length).toBe(1);
-    }
+describe("cloud workspace readiness handoff", () => {
+  test("retains startup while a ready instance has no connected route, but not on desktop", () => {
+    expect(mapCloudWorkspaceMainContentDecision({ status: "ready", hasWorkspaces: true, gatewayMode: true, startupPending: true })).toBe("takeover");
+    expect(mapCloudWorkspaceMainContentDecision({ status: "ready", hasWorkspaces: true, gatewayMode: true, startupPending: false })).toBe("content");
+    expect(mapCloudWorkspaceMainContentDecision({ status: "ready", hasWorkspaces: true, gatewayMode: false, startupPending: true })).toBe("content");
+    expect(cloudWorkspaceTakeoverCopy({ variant: "ready", slow: false, connecting: true }).title).toBe("Connecting to your workspace…");
+    expect(cloudWorkspaceTakeoverCopy({ variant: "waking", slow: false, checking: true }).title).toBe("Checking cloud workspace…");
   });
 });
 
@@ -315,8 +288,8 @@ describe("cloud workspace slow boot escalation", () => {
     const early = cloudWorkspaceTakeoverCopy({ variant: "provisioning", slow: false });
     const late = cloudWorkspaceTakeoverCopy({ variant: "provisioning", slow: true });
 
-    expect(early.title).toBe("Starting your workspace…");
-    expect(late.title).toBe("Still working on it…");
+    expect(early.title).toBe("Creating your cloud workspace…");
+    expect(late.title).toBe("Your cloud workspace is taking longer than usual");
     expect(late.body).toContain("check again");
   });
 
@@ -377,13 +350,14 @@ describe("cloud workspace boot takeover", () => {
     Object.defineProperty(globalThis, "window", { configurable: true, value: stashedWindow });
   });
 
-  test("shows the checkpoint ladder instead of a progress bar that cannot complete", () => {
+  test("shows measured elapsed time without an inferred file-restoration ladder", () => {
     const html = renderTakeover("provisioning");
 
-    expect(html).toContain("cloud-workspace-boot-stages");
-    expect(html).toContain("Reserving your computer");
-    expect(html).toContain("Restoring your files");
-    expect(html).toContain("Connecting the app");
+    expect(html).toContain("cloud-workspace-elapsed");
+    expect(html).toContain('role="timer" aria-live="off"');
+    expect(html).not.toContain("cloud-workspace-boot-stages");
+    expect(html).not.toContain("Restoring your files");
+    expect(html).not.toContain("Connecting the app");
     // The old bar was hardcoded to two thirds and pulsed there forever.
     expect(html).not.toContain("w-2/3");
     expect(html).not.toContain("animate-pulse");
@@ -410,7 +384,7 @@ describe("cloud workspace boot takeover", () => {
       gatewayMode: true,
       signedIn: true,
       variant: "ready",
-    })).toBe(false);
+    })).toBe(true);
     expect(shouldSuppressBootOverlayForGateway({
       gatewayMode: false,
       signedIn: true,
@@ -418,11 +392,11 @@ describe("cloud workspace boot takeover", () => {
     })).toBe(false);
   });
 
-  test("keeps the wait calm until the promised minute is at risk", () => {
+  test("keeps the wait calm without a timing promise or premature recovery actions", () => {
     const html = renderTakeover("waking");
 
     expect(html).toContain('data-cloud-workspace-wait="normal"');
-    expect(html).toContain("We’ll open your workspace automatically when it’s ready.");
+    expect(html).toContain("Starting your cloud workspace…");
     expect(html).not.toContain("Retry");
   });
 

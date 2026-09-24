@@ -310,7 +310,7 @@ export function ApiKeysScreen() {
             colors={["#E6FFFA", "#0F766E", "#14B8A6", "#99F6E4"]}
         >
             {!access.canViewSettings ? (
-                <div className="rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">
+                <div className="rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-6 py-5 text-[14px] text-[var(--dls-text-primary)]">
                     Only workspace admins can view API keys.
                 </div>
             ) : (
@@ -320,7 +320,7 @@ export function ApiKeysScreen() {
                     ) : null}
 
                     {!access.canManageApiKeys ? (
-                        <div className="mb-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] text-amber-800">
+                        <div className="mb-6 rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-4 text-[14px] text-[var(--dls-text-primary)]">
                             Read-only: owners and super-admins can create or delete API keys.
                         </div>
                     ) : null}

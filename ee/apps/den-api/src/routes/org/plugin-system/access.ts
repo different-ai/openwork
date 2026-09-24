@@ -303,6 +303,12 @@ async function resolvePluginRoleForIds(context: PluginArchActorContext, pluginId
     return "manager" satisfies PluginArchRole
   }
 
+  const [owned] = await db.select({ id: PluginTable.id }).from(PluginTable).where(and(
+    inArray(PluginTable.id, organizationPluginIds),
+    eq(PluginTable.createdByOrgMembershipId, context.organizationContext.currentMember.id),
+  )).limit(1)
+  if (owned) return "manager" satisfies PluginArchRole
+
   const grants = await db
     .select({
       orgMembershipId: PluginAccessGrantTable.orgMembershipId,
@@ -347,6 +353,98 @@ async function resolveMarketplaceRoleForIds(context: PluginArchActorContext, mar
   return resolveGrantRole({ context, grants })
 }
 
+function groupGrantsBy<TKey, TGrant>(grants: TGrant[], key: (grant: TGrant) => TKey) {
+  const grouped = new Map<TKey, TGrant[]>()
+  for (const grant of grants) {
+    const id = key(grant)
+    const existing = grouped.get(id)
+    if (existing) existing.push(grant)
+    else grouped.set(id, [grant])
+  }
+  return grouped
+}
+
+/** Resolves the caller's role for many plugins with the same rules as resolvePluginArchResourceRole. */
+export async function resolvePluginArchPluginRoles(context: PluginArchActorContext, pluginIds: PluginId[]) {
+  const roles = new Map<PluginId, PluginArchRole>()
+  const organizationId = context.organizationContext.organization.id
+  if (pluginIds.length === 0) return roles
+  const pluginRows = await db.select({ id: PluginTable.id, createdByOrgMembershipId: PluginTable.createdByOrgMembershipId })
+    .from(PluginTable)
+    .where(and(eq(PluginTable.organizationId, organizationId), inArray(PluginTable.id, pluginIds)))
+  const organizationPluginIds = pluginRows.map((plugin) => plugin.id)
+  if (organizationPluginIds.length === 0) return roles
+
+  if (isPluginArchOrgAdmin(context)) {
+    for (const pluginId of organizationPluginIds) roles.set(pluginId, "manager")
+    return roles
+  }
+
+  const memberId = context.organizationContext.currentMember.id
+  const teamIds = context.memberTeams.map((team) => team.id)
+  const grants = await db
+    .select({
+      orgMembershipId: PluginAccessGrantTable.orgMembershipId,
+      orgWide: PluginAccessGrantTable.orgWide,
+      pluginId: PluginAccessGrantTable.pluginId,
+      removedAt: PluginAccessGrantTable.removedAt,
+      role: PluginAccessGrantTable.role,
+      teamId: PluginAccessGrantTable.teamId,
+    })
+    .from(PluginAccessGrantTable)
+    .where(and(
+      inArray(PluginAccessGrantTable.pluginId, organizationPluginIds),
+      eq(PluginAccessGrantTable.organizationId, organizationId),
+    ))
+  const grantsByPlugin = groupGrantsBy(grants, (grant) => grant.pluginId)
+
+  const unresolvedPluginIds: PluginId[] = []
+  for (const plugin of pluginRows) {
+    const role = resolvePluginArchGrantRole({ grants: grantsByPlugin.get(plugin.id) ?? [], memberId, teamIds })
+    if (plugin.createdByOrgMembershipId === memberId) roles.set(plugin.id, "manager")
+    else if (role) roles.set(plugin.id, role)
+    else unresolvedPluginIds.push(plugin.id)
+  }
+  if (unresolvedPluginIds.length === 0) {
+    return roles
+  }
+
+  const memberships = await db
+    .select({ marketplaceId: MarketplacePluginTable.marketplaceId, pluginId: MarketplacePluginTable.pluginId })
+    .from(MarketplacePluginTable)
+    .where(and(inArray(MarketplacePluginTable.pluginId, unresolvedPluginIds), isNull(MarketplacePluginTable.removedAt)))
+  const organizationMarketplaceIds = await filterMarketplaceIdsInOrganization(
+    organizationId,
+    [...new Set(memberships.map((membership) => membership.marketplaceId))],
+  )
+  if (organizationMarketplaceIds.length === 0) {
+    return roles
+  }
+
+  const marketplaceGrants = await db
+    .select({
+      marketplaceId: MarketplaceAccessGrantTable.marketplaceId,
+      orgMembershipId: MarketplaceAccessGrantTable.orgMembershipId,
+      orgWide: MarketplaceAccessGrantTable.orgWide,
+      removedAt: MarketplaceAccessGrantTable.removedAt,
+      role: MarketplaceAccessGrantTable.role,
+      teamId: MarketplaceAccessGrantTable.teamId,
+    })
+    .from(MarketplaceAccessGrantTable)
+    .where(and(
+      inArray(MarketplaceAccessGrantTable.marketplaceId, organizationMarketplaceIds),
+      eq(MarketplaceAccessGrantTable.organizationId, organizationId),
+    ))
+  const grantsByMarketplace = groupGrantsBy(marketplaceGrants, (grant) => grant.marketplaceId)
+  const visibleMarketplaceIds = new Set(organizationMarketplaceIds.filter((marketplaceId) =>
+    resolvePluginArchGrantRole({ grants: grantsByMarketplace.get(marketplaceId) ?? [], memberId, teamIds }) !== null))
+
+  for (const membership of memberships) {
+    if (visibleMarketplaceIds.has(membership.marketplaceId)) roles.set(membership.pluginId, "viewer")
+  }
+  return roles
+}
+
 export async function resolvePluginArchResourceRole(input: ResourceLookupInput) {
   if (!(await resourceExistsInOrganization(input))) {
     return null
@@ -374,6 +472,11 @@ export async function resolvePluginArchResourceRole(input: ResourceLookupInput) 
   }
 
   if (input.resourceKind === "plugin") {
+    const [plugin] = await db.select({ createdByOrgMembershipId: PluginTable.createdByOrgMembershipId })
+      .from(PluginTable)
+      .where(and(eq(PluginTable.id, input.resourceId), eq(PluginTable.organizationId, input.context.organizationContext.organization.id)))
+      .limit(1)
+    if (plugin?.createdByOrgMembershipId === input.context.organizationContext.currentMember.id) return "manager"
     const grants = await db
       .select({
         orgMembershipId: PluginAccessGrantTable.orgMembershipId,

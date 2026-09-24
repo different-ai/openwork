@@ -90,25 +90,6 @@ export async function createRouteSession(endpoint: ResolvedWorkspaceEndpoint, di
   return (await createRouteSessionOnEngine(endpoint, directory)).session;
 }
 
-/** Sidebar creation starts a main conversation, independent of side-chat focus. */
-export async function startSidebarTask(options: {
-  workspaceId: string;
-  groupId?: string;
-  hasWorkspaceError: boolean;
-  openEmptyComposer: (workspaceId: string) => void;
-  createTask: (workspaceId: string, openAs: "primary", source: "new_task") => Promise<string | null>;
-  assignGroup: (workspaceId: string, sessionId: string, groupId: string) => void;
-}): Promise<void> {
-  const { workspaceId, groupId } = options;
-  if (!groupId && !options.hasWorkspaceError) {
-    // Opening an empty composer must not wait for an engine request.
-    options.openEmptyComposer(workspaceId);
-    return;
-  }
-  const sessionId = await options.createTask(workspaceId, "primary", "new_task");
-  if (sessionId && groupId) options.assignGroup(workspaceId, sessionId, groupId);
-}
-
 export async function deleteRouteSession(endpoint: ResolvedWorkspaceEndpoint, sessionId: string): Promise<boolean> {
   return deleteNativeSession(await routeSessionEndpoint(endpoint), sessionId);
 }

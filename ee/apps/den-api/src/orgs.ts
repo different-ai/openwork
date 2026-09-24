@@ -1,4 +1,4 @@
-import { and, asc, count, eq, gt, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, count, eq, gt, inArray, isNotNull, isNull, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AuthSessionTable,
   AuthUserTable,
@@ -43,7 +43,7 @@ import {
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js"
 import { getScimManagedTeamIds } from "./scim-groups.js"
-import { effectiveOrganizationRole, listOrganizationAdminTeamGrants, withOrganizationTeamMutation, type OrganizationAdminTeam } from "./organization-team-roles.js"
+import { effectiveOrganizationRole, listOrganizationAdminTeamGrants, withOrganizationMembershipUsageMutation, withOrganizationTeamMutation, type OrganizationAdminTeam } from "./organization-team-roles.js"
 import {
   DEFAULT_ORGANIZATION_LIMITS,
   normalizeOrganizationMetadata,
@@ -740,7 +740,7 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
   }
 
   const availableRoles = await listAssignableRoles(invitation.organizationId)
-  return withOrganizationTeamMutation(invitation.organizationId, async (tx) => {
+  return withOrganizationMembershipUsageMutation(invitation.organizationId, async (tx) => {
     const lockedInvitations = await tx
       .select()
       .from(InvitationTable)
@@ -922,7 +922,7 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
       .where(and(eq(InvitationTable.id, currentInvitation.id), eq(InvitationTable.status, "pending")))
 
     return { status: "accepted" as const, invitation: currentInvitation, member, newlyAccepted: true }
-  })
+  }, async (tx) => (await tx.select({ id: MemberTable.id }).from(MemberTable).where(and(eq(MemberTable.organizationId, invitation.organizationId), or(eq(MemberTable.userId, userId), eq(MemberTable.inviteId, invitation.id))))).map((row) => row.id))
 }
 
 export async function acceptInvitationForUser(input: {
@@ -1795,7 +1795,7 @@ export async function updateOrganizationMemberRole(input: {
   memberId: MemberRow["id"]
   nextRole: string
 }): Promise<MemberRoleUpdateResult> {
-  const updated = await db.transaction(async (tx): Promise<MemberRoleUpdateResult> => {
+  const updated = await withOrganizationTeamMutation(input.organizationId, async (tx): Promise<MemberRoleUpdateResult> => {
     const activeRows = await tx
       .select({ member: MemberTable, userId: AuthUserTable.id })
       .from(MemberTable)
@@ -1905,7 +1905,7 @@ export async function transferOrganizationOwnership(input: {
     )
   }
 
-  const transfer: OwnershipTransferCommitResult = await db.transaction(async (tx): Promise<OwnershipTransferCommitResult> => {
+  const transfer: OwnershipTransferCommitResult = await withOrganizationTeamMutation(input.organizationId, async (tx): Promise<OwnershipTransferCommitResult> => {
     const memberRows = await tx
       .select({ member: MemberTable, userId: AuthUserTable.id })
       .from(MemberTable)
@@ -2026,12 +2026,12 @@ export async function removeOrganizationMember(input: {
   removedByOrgMemberId?: MemberRow["id"]
 }): Promise<MemberMutationResult> {
   let gatewayCredentials: Awaited<ReturnType<typeof revokeInferenceCredentialsForMembers>> = []
-  const removed = await withOrganizationTeamMutation(input.organizationId, async (tx): Promise<MemberMutationResult> => {
+  const removed = await withOrganizationMembershipUsageMutation(input.organizationId, async (tx): Promise<MemberMutationResult> => {
     const activeRows = await tx
       .select({ member: MemberTable, userId: AuthUserTable.id })
       .from(MemberTable)
       .leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
-      .where(and(eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
+      .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.id, input.memberId), isNull(MemberTable.removedAt)))
       .for("update")
 
     const memberRow = activeRows.find((row) => row.member.id === input.memberId) ?? null
@@ -2059,8 +2059,9 @@ export async function removeOrganizationMember(input: {
         .innerJoin(TeamMemberTable, eq(TeamMemberTable.teamId, TeamTable.id))
         .where(and(eq(TeamTable.organizationId, input.organizationId), eq(TeamTable.grantsOrganizationAdmin, true), eq(TeamMemberTable.orgMembershipId, member.id)))
         .limit(1)
-      const actor = activeRows.find((row) => row.member.id === input.removedByOrgMemberId)
-      if (adminTeams.length > 0 && (!actor || !organizationRoleValueSatisfies({ roleValue: actor.member.role, requiredRole: "super-admin" }))) {
+      const [actor] = await tx.select({ role: MemberTable.role }).from(MemberTable)
+        .where(and(eq(MemberTable.id, input.removedByOrgMemberId), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt), isNotNull(MemberTable.userId))).for("share")
+      if (adminTeams.length > 0 && (!actor || !organizationRoleValueSatisfies({ roleValue: actor.role, requiredRole: "super-admin" }))) {
         return { ok: false, error: "forbidden", message: "Only workspace owners and super-admins can remove members with Admin team access." }
       }
     }
@@ -2157,7 +2158,7 @@ export async function removeOrganizationMember(input: {
       .where(and(eq(MemberTable.id, member.id), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
 
     return { ok: true, member }
-  })
+  }, [input.memberId])
 
   if (!removed.ok) {
     return removed

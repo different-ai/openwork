@@ -12,7 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { toast } from "@/components/ui/sonner";
+import { TaskRecovery } from "@/components/chat/task-recovery";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { type ArtifactPanelTab, usePanelTabStore } from "../panel/panel-tab-store";
@@ -93,6 +93,9 @@ export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRo
 }
 
 function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRemoteWorkspace = false, target, onClose }: ArtifactPanelViewProps) {
+  const [failure, setFailure] = useState<{ owner: string; title: string; details: string } | null>(null);
+  const owner = JSON.stringify([sessionId, workspaceId, target.id]);
+  const reportFailure = (title: string, error: unknown) => setFailure({ owner, title, details: error instanceof Error ? error.message : String(error) });
   const platform = usePlatform();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
@@ -179,6 +182,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
   }, [data]);
 
   const { mutate, mutateAsync, isPending: isSaving } = useMutation({
+    onMutate: () => ({ owner }),
     mutationFn: async (input: SaveArtifactInput) => {
       if (target.kind !== "file") {
         throw new Error("Cannot save non-file artifact.");
@@ -190,7 +194,9 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
 
       return client.writeWorkspaceBinaryFile(workspaceId, { path: target.value, data: input.data, baseUpdatedAt: input.baseUpdatedAt });
     },
-    onSuccess: (result, input) => {
+    onSuccess: (result, input, context) => {
+      if (context?.owner !== owner) return;
+      setFailure((current) => current?.owner === owner ? null : current);
       queryClient.setQueryData<ArtifactQueryState>(
         ["artifact-panel", workspaceId, target.id, target.updatedAt ?? null] as const,
         input.kind === "text"
@@ -203,12 +209,13 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
         failedDraftRef.current = null;
       }
     },
-    onError: (cause, input) => {
+    onError: (cause, input, context) => {
+      if (context?.owner !== owner) return;
       if (input.kind === "text") {
         failedDraftRef.current = input.data;
       }
 
-      toast.error(cause instanceof Error ? cause.message : "Could not save changes.");
+      reportFailure("Could not save changes. Check the file before saving again.", cause);
     },
   });
 
@@ -226,7 +233,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
 
   const openFileExternally = async (path: string) => {
     if (isRemoteWorkspace) {
-      await downloadFile(path, path.split(/[/\\]/).pop() ?? path);
+      await downloadFile(path, path.split(/[/\\]/).pop() ?? path).catch((error: unknown) => reportFailure("Could not download this file. Try again.", error));
 
       return;
     }
@@ -234,7 +241,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
     try {
       await openDesktopPath(absoluteWorkspacePath(workspaceRoot, path));
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "Could not open this file.");
+      reportFailure("Could not open this file. Try opening it again.", cause);
     }
   };
 
@@ -243,7 +250,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
     try {
       await revealDesktopItemInDir(absoluteWorkspacePath(workspaceRoot, path));
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "Could not show this file in your file manager.");
+      reportFailure("Could not show this file in your file manager.", cause);
     }
   };
 
@@ -252,7 +259,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
       return;
     }
 
-    await downloadFile(target.value, target.name);
+    await downloadFile(target.value, target.name).catch((error: unknown) => reportFailure("Could not download this file. Try again.", error));
   };
 
   const openExternal = async () => {
@@ -306,6 +313,8 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
+      {failure?.owner === owner ? <div className="shrink-0 px-3 py-2"><TaskRecovery compact title={failure.title} technicalDetails={failure.details}
+        actions={<Button variant="ghost" size="xs" onClick={() => setFailure(null)}>Dismiss</Button>} /></div> : null}
       <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
         <div className="flex h-10 items-center gap-2 pe-2 ps-2">
           <Tooltip>

@@ -215,6 +215,9 @@ for (const outcome of ["preview", "complete", "empty", "error"]) test(`a session
       });
     },
   }));
+  mock.module("../src/react-app/domains/cloud/den-auth-provider", () => ({
+    useDenAuth: () => ({ isSignedIn: false, verifiedIdentity: null }),
+  }));
   const { SessionSurface } = await import("../src/react-app/domains/session/surface/session-surface");
   const { snapshotKey, statusKey } = await import("../src/react-app/domains/session/sync/session-sync");
   const queryClient = getReactQueryClient();

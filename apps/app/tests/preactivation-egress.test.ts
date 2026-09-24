@@ -165,10 +165,10 @@ describe("outboundEgressAllowed", () => {
     expect(outboundEgressAllowed(publicDistribution, {}, { desktopConfigLoading: true })).toBe(true);
   });
 
-  test("holds an activation-required install back until activated and its desktop config has resolved once", () => {
+  test("holds an activation-required install back until activated, independently of desktop policy readiness", () => {
     expect(outboundEgressAllowed(enterpriseDistribution, {})).toBe(false);
     expect(outboundEgressAllowed(enterpriseDistribution, {}, { desktopConfigLoading: false })).toBe(false);
-    expect(outboundEgressAllowed(enterpriseDistribution, { enterpriseActivation: activation }, { desktopConfigLoading: true })).toBe(false);
+    expect(outboundEgressAllowed(enterpriseDistribution, { enterpriseActivation: activation }, { desktopConfigLoading: true })).toBe(true);
     expect(outboundEgressAllowed(enterpriseDistribution, { enterpriseActivation: activation }, { desktopConfigLoading: false })).toBe(true);
     expect(outboundEgressAllowed(enterpriseDistribution, { enterpriseActivation: activation })).toBe(true);
   });

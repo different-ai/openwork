@@ -27,6 +27,8 @@ test("composer recalls durable prompts across reloads and a real desktop restart
       await user.click("composer");
       await user.press("ArrowUp");
       await user.see("composer", { text: longHistoryLast });
+      // Reviewers see the recalled prompt in the composer after each boot.
+      await user.screenshot();
       await user.press("ArrowUp");
       await user.see("composer", { text: "Stored history message 149 of 150." });
       await user.press("ArrowDown");
@@ -45,6 +47,7 @@ test("composer recalls durable prompts across reloads and a real desktop restart
     await user.click("composer");
     await user.press("ArrowUp");
     await user.see("composer", { text: draft });
+    await user.screenshot();
   });
   await step("an unrelated empty conversation has no recall history", async () => {
     await user.click({ role: "button", label: new RegExp(`^${longHistoryOtherTitle}`) });

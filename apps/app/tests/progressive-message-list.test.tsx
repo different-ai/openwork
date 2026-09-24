@@ -268,6 +268,107 @@ function fixture(initial = groups(), options: Partial<MessageListViewport> = {},
 }
 
 describe("progressive whole-group rendering", () => {
+  test("reopening a newest page of aggregated tools fills the viewport without a scroll gesture", async () => {
+    const tail: Group = { id: "tool-turn", messages: Array.from({ length: 24 }, (_, index) => ({ id: `tool-${index}`, height: index === 0 ? 48 : 0 })) }
+    const render = (group: Group) => <div data-message-id={group.messages[0].id}>{group.id === tail.id ? "Running synthetic commands" : "Earlier synthetic answer"}</div>
+    for (let visit = 0; visit < 3; visit++) {
+      let finish = () => {}
+      const load = mock(() => new Promise<void>((resolve) => { finish = resolve }))
+      const pages = { version: {}, hasOlder: true, hasNewer: false, loading: false, failed: false, load }
+      const view = fixture([tail], { sessionKey: "aggregated-tool-return", historyComplete: false, leadingHeight: 0, trailingHeight: 0 }, false, false, 612, 16, "immediate", {
+        scrollOptions: { historyPages: pages, windowReady: true },
+      })
+      await view.render(undefined, {}, render)
+      for (let index = 0; index < 12 && frames.size; index++) await batch()
+      expect(view.position("tool-0")).toBe(16)
+      expect(load.mock.calls).toEqual([["older"]])
+      await act(async () => view.resize())
+      expect(load).toHaveBeenCalledTimes(1)
+      pages.version = {}
+      const earlier = groups(24)
+      await view.render([...earlier, tail], {}, render)
+      await act(async () => finish())
+      for (let index = 0; index < 12 && frames.size; index++) await batch()
+      const bounds = view.container.getBoundingClientRect()
+      expect(view.message("m23").getBoundingClientRect().bottom).toBeGreaterThan(bounds.top)
+      expect(view.message("tool-0").getBoundingClientRect().bottom).toBe(bounds.bottom)
+      expect(load).toHaveBeenCalledTimes(1)
+      expect(view.mounted.length).toBeLessThan(earlier.length)
+      expect(view.placeholders.some((node) => {
+        const rect = node.getBoundingClientRect()
+        return rect.bottom > bounds.top && rect.top < bounds.bottom
+      })).toBe(false)
+      await view.unmount()
+    }
+  })
+
+  test("viewport fill serializes short pages and stops when the cursor is exhausted", async () => {
+    let finish = () => {}
+    const load = mock(() => new Promise<void>((resolve) => { finish = resolve }))
+    const pages = { version: {}, hasOlder: true, hasNewer: false, loading: false, failed: false, load }
+    const data = [{ id: "tools", messages: [{ id: "tools", height: 48 }] }]
+    const view = fixture(data, { historyComplete: false, leadingHeight: 0, trailingHeight: 0 }, false, false, 612, 16, "immediate", {
+      scrollOptions: { historyPages: pages, windowReady: true },
+    })
+    await view.render()
+    await batch()
+    expect(load).toHaveBeenCalledTimes(1)
+    for (let page = 0; page < 2; page++) {
+      pages.version = {}
+      await view.render([...data])
+      expect(load).toHaveBeenCalledTimes(page + 1)
+      await act(async () => finish())
+      await batch()
+      expect(load).toHaveBeenCalledTimes(page + 2)
+    }
+    pages.hasOlder = false
+    pages.version = {}
+    await view.render(data, { historyComplete: true })
+    await act(async () => finish())
+    await batch()
+    expect(load.mock.calls).toEqual([["older"], ["older"], ["older"]])
+    await act(async () => view.resize())
+    await batch()
+    expect(load).toHaveBeenCalledTimes(3)
+  })
+
+  test.each(["manual", "newer", "loading", "failed", "not-ready", "hidden", "complete"])("underfilled history does not auto-page when %s", async (boundary) => {
+    const sessionKey = `fill-boundary-${++sessionId}`
+    if (boundary === "manual") useSessionScrollStore.getState().setManualScroll(sessionKey, 0, null, { messageId: "tools", offset: 16 })
+    const load = mock(async () => {})
+    const pages = { version: {}, hasOlder: boundary !== "complete", hasNewer: boundary === "newer", loading: boundary === "loading", failed: boundary === "failed", load }
+    const view = fixture([{ id: "tools", messages: [{ id: "tools", height: 48 }] }], {
+      sessionKey, historyComplete: boundary === "complete", leadingHeight: 0, trailingHeight: 0,
+    }, false, false, boundary === "hidden" ? 0 : 612, 16, "immediate", {
+      scrollOptions: { historyPages: pages, windowReady: boundary !== "not-ready" },
+    })
+    await view.render()
+    for (let index = 0; index < 12 && frames.size; index++) await batch()
+    await act(async () => view.resize())
+    await batch()
+    expect(load).not.toHaveBeenCalled()
+  })
+
+  test("an unchanged short page is not repeatedly requested and unmount cancels its pending fill", async () => {
+    let finish = () => {}
+    const load = mock(() => new Promise<void>((resolve) => { finish = resolve }))
+    const pages = { version: {}, hasOlder: true, hasNewer: false, loading: false, failed: false, load }
+    const view = fixture([{ id: "tools", messages: [{ id: "tools", height: 48 }] }], {
+      historyComplete: false, leadingHeight: 0, trailingHeight: 0,
+    }, false, false, 612, 16, "immediate", { scrollOptions: { historyPages: pages, windowReady: true } })
+    await view.render()
+    await act(async () => finish())
+    for (let index = 0; index < 12 && frames.size; index++) await batch()
+    expect(load).toHaveBeenCalledTimes(1)
+    pages.version = {}
+    await view.render()
+    expect(load).toHaveBeenCalledTimes(2)
+    await view.unmount()
+    await act(async () => finish())
+    expect(frames.size).toBe(0)
+    expect(load).toHaveBeenCalledTimes(2)
+  })
+
   test("Home paging preserves the padded newest-page boundary through measured prepend and the next PageUp selects older history", async () => {
     const data = Array.from({ length: 150 }, (_, index) => ({ id: `g${index + 1}`, messages: [{ id: `m${index + 1}`, height: 84 }] }))
     const newest = { before: null, limit: 24, lineage: [null] }

@@ -35,6 +35,7 @@ import {
 import {
   connectedConnectionActionPayload,
   connectionActionPayloadFromStatus,
+  connectionActionAppMeta,
   connectionActionTextFallback,
 } from "./connection-action.js"
 import {
@@ -47,7 +48,6 @@ import {
   type ExternalCapabilityExecuteResult,
   type McpMemberIdentity,
 } from "./external-capabilities.js"
-import { attachPluginFlowCard } from "./plugin-flow-app.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
 import {
   executeMarketplaceCapability,
@@ -288,6 +288,7 @@ export function externalCapabilityErrorToolResult(
     isError: true,
     content: textContent(JSON.stringify(payload)),
     structuredContent: connectionActionPayloadFromStatus(result.connectionStatus),
+    _meta: connectionActionAppMeta(result.connectionStatus.connectionId),
   }
 }
 
@@ -464,7 +465,7 @@ const catalogSource: CapabilitySource = {
         body,
       },
     })
-    return attachPluginFlowCard({ name: parsed.name, path, body, result })
+    return result
   },
 }
 
@@ -564,6 +565,7 @@ const externalMcpSource: CapabilitySource = {
       return {
         content: textContent(connectionActionTextFallback(payload)),
         structuredContent: { ...payload },
+        _meta: connectionActionAppMeta(payload.connectionId),
       }
     }
     const result = await executeExternalCapability({

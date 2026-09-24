@@ -664,7 +664,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
           ) : null}
 
           {!isBusy && isPreparingReload ? (
-            <div className="space-y-4 rounded-xl border border-amber-6/60 bg-amber-2/40 px-5 py-6 text-center">
+            <div className="space-y-4 rounded-xl border border-border bg-muted/30 px-5 py-6 text-center">
               <div className="flex items-center justify-center">
                 <Loader2 size={32} className="animate-spin text-amber-11" />
               </div>
@@ -685,7 +685,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
                   {(props.activeSessions ?? []).map((session) => (
                     <div
                       key={session.id}
-                      className="flex items-center justify-between gap-3 rounded-lg border border-amber-6/50 bg-amber-1/40 px-3 py-2"
+                      className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2"
                     >
                       <span className="text-xs text-gray-11">
                         {t("mcp.auth.waiting_for_session", { session: session.title })}

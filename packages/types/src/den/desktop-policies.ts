@@ -1,5 +1,24 @@
 import { z } from "zod";
 
+/** Desktop enforcement is suspended pending redesign. This is not a Cloud
+ * authorization switch: schemas, assignments and resource entitlements remain
+ * authoritative in Den. Keep all desktop enforcement entry points on this flag. */
+export const DESKTOP_POLICY_ENFORCEMENT_ENABLED: boolean = false;
+
+export function desktopSigninRequired(requireSignin: boolean, desktop: boolean): boolean {
+  return requireSignin && (!desktop || DESKTOP_POLICY_ENFORCEMENT_ENABLED);
+}
+
+/** Runtime-only projection; never persist this over the control-plane config. */
+export function desktopCapabilityConfig(config: DesktopConfig): DesktopConfig {
+  if (DESKTOP_POLICY_ENFORCEMENT_ENABLED) return config;
+  const { execution: _execution, allowedDesktopVersions: _versions, ...effective } = config;
+  for (const key of desktopPolicyKeys) {
+    if (key !== "showWelcomePage") delete effective[key];
+  }
+  return effective;
+}
+
 type DesktopPolicyDefinitionEntry = {
   id: string;
   name: string;

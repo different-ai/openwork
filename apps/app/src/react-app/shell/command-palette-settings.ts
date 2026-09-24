@@ -23,6 +23,7 @@ const SETTINGS_KEYWORDS: Partial<Record<SettingsTab, string[]>> = {
   appearance: ["theme", "dark mode", "light mode", "color", "font", "look"],
   updates: ["version", "upgrade", "check for updates", "release"],
   debug: ["logs", "diagnostics", "developer mode"],
+  usage: ["usage", "limit", "spend", "budget", "quota", "increase"],
   "cloud-account": ["sign in", "log in", "login", "account", "organization", "org", "den", "cloud", "openwork cloud"],
   general: ["settings", "preferences", "options", "configure"],
 };

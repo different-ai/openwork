@@ -1,5 +1,6 @@
 const path = require("path");
 const { denApiRedirects } = require("./next-config-den-api-redirects.cjs");
+const { legacyConnectorRedirects } = require("./next-config-legacy-connector-redirects.cjs");
 const { withObservabilityNextConfig } = require("./observability/next-config-observability.cjs");
 
 // Baseline OWASP security headers (OWASP WSTG-CLNT-09 clickjacking, secure headers).
@@ -25,18 +26,40 @@ const securityHeaders = [
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
 ];
 
-// Next.js inlines this PUBLIC project token at build time. Keep the previous
-// server variable as a build-time fallback, not a runtime client configuration.
-// An explicitly blank public token disables tracking instead of falling back.
-const posthogKey = (process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN ?? process.env.DEN_WEB_POSTHOG_KEY ?? "").trim();
+// Keep the existing public key name. The other spellings are fallback-only for
+// rollout compatibility; an explicitly blank KEY disables tracking.
+const posthogKey = (
+  process.env.NEXT_PUBLIC_POSTHOG_KEY
+  ?? process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN
+  ?? process.env.DEN_WEB_POSTHOG_KEY
+  ?? ""
+).trim();
+
 const posthogEnabled = process.env.NODE_ENV === "production"
   && process.env.VERCEL_ENV === "production"
-  && (!process.env.OPENWORK_DEV_MODE || process.env.OPENWORK_DEV_MODE === "0");
+  && (!process.env.OPENWORK_DEV_MODE || process.env.OPENWORK_DEV_MODE === "0")
+  && /^phc_[A-Za-z0-9_-]{1,200}$/.test(posthogKey);
+
+// HOST selects the Cloud upstream, never a browser-side bypass of /ow.
+// Accept the legacy US UI hostname and the existing proxy path as well.
+const configuredPosthogHost = (process.env.NEXT_PUBLIC_POSTHOG_HOST?.trim() || "https://us.i.posthog.com").replace(/\/+$/, "");
+const configuredPosthogRegion = ["/ow", "https://us.i.posthog.com", "https://us.posthog.com", "https://app.posthog.com"].includes(configuredPosthogHost)
+  ? "us"
+  : ["https://eu.i.posthog.com", "https://eu.posthog.com"].includes(configuredPosthogHost) ? "eu" : null;
+if (posthogEnabled && !configuredPosthogRegion) {
+  throw new Error("NEXT_PUBLIC_POSTHOG_HOST must be a US/EU PostHog Cloud HTTPS origin or /ow.");
+}
+// An unused analytics setting must not break preview/dev startup. Never forward
+// to an unsupported host; retain the previous US proxy default while disabled.
+const posthogRegion = configuredPosthogRegion ?? "us";
+const posthogApiHost = `https://${posthogRegion}.i.posthog.com`;
+const posthogAssetsHost = `https://${posthogRegion}-assets.i.posthog.com`;
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   env: {
-    NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: posthogEnabled && /^phc_[A-Za-z0-9_-]{1,200}$/.test(posthogKey) ? posthogKey : "",
+    NEXT_PUBLIC_POSTHOG_KEY: posthogEnabled ? posthogKey : "",
+    NEXT_PUBLIC_POSTHOG_HOST: posthogApiHost,
   },
   reactStrictMode: true,
   skipTrailingSlashRedirect: true,
@@ -47,21 +70,21 @@ const nextConfig = {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },
   async redirects() {
-    return denApiRedirects(process.env);
+    return [...legacyConnectorRedirects(), ...denApiRedirects(process.env)];
   },
   async rewrites() {
     return [
       {
         source: "/ow/static/:path*",
-        destination: "https://us-assets.i.posthog.com/static/:path*",
+        destination: `${posthogAssetsHost}/static/:path*`,
       },
       {
         source: "/ow/array/:path*",
-        destination: "https://us-assets.i.posthog.com/array/:path*",
+        destination: `${posthogAssetsHost}/array/:path*`,
       },
       {
         source: "/ow/:path*",
-        destination: "https://us.i.posthog.com/:path*",
+        destination: `${posthogApiHost}/:path*`,
       },
     ];
   },
@@ -76,6 +99,14 @@ const allowedDevOrigins = (process.env.DEN_WEB_ALLOWED_DEV_ORIGINS || defaultAll
 
 if (allowedDevOrigins.length > 0) {
   nextConfig.allowedDevOrigins = allowedDevOrigins;
+}
+
+// Next sizes its build workers from the host CPU count, which inside a cgroup
+// limited sandbox (Daytona: 4 CPUs, 8 GB) spawns ~95 workers and gets OOM
+// killed while collecting page data. Sandboxes opt in to a fixed cap.
+const buildCpus = Number.parseInt(process.env.DEN_WEB_BUILD_CPUS ?? "", 10);
+if (Number.isInteger(buildCpus) && buildCpus > 0) {
+  nextConfig.experimental = { ...nextConfig.experimental, cpus: buildCpus };
 }
 
 module.exports = withObservabilityNextConfig(nextConfig);

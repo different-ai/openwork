@@ -1,8 +1,7 @@
 /** @jsxImportSource react */
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { AppWindowMac, Cloud, Monitor, ArrowUp, Check, ChevronDown, ChevronRight, FileText, LoaderCircle, Paperclip, Plus, RefreshCw, Settings, Square, Terminal, X, Zap } from "lucide-react";
+import { AppWindowMac, Cloud, Monitor, ArrowUp, Check, ChevronDown, FileText, LoaderCircle, RefreshCw, Square, Terminal, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
@@ -24,7 +23,6 @@ import type { ComposerMentionKind } from "./mention-encoding";
 import {
   connectSkillSlashCommandOptions,
   getSlashCommandQuery,
-  skillMenuSlashCommandName,
   skillSlashCommandName,
   type ComposerSlashCommandOption,
 } from "./slash-command";
@@ -37,6 +35,9 @@ import {
   mergeComposerConnectionInventory,
 } from "./composer-connections";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
+import { encodeConnectorToken } from "./connector-token";
+import { ComposerPlusMenu, type ComposerPlusMenuPick } from "./composer-plus-menu";
+import type { PlusMenuAgent, PlusMenuConnector, PlusMenuSection } from "./composer-plus-menu-model";
 import { connectionDiagnosticHistory, type ConnectionDiagnosticSource, type SendDiagnosticReason } from "@/app/lib/connection-diagnostic-history";
 import { composerDiagnosticBlockers } from "./composer-diagnostics";
 
@@ -48,7 +49,6 @@ type MentionItem = {
   description?: string;
 };
 
-type ToolMenuSection = "agents" | "commands" | "skills" | "connections" | "plugins" | `plugin:${string}`;
 
 type ComposerProps = {
   draft: string;
@@ -125,6 +125,7 @@ type ComposerProps = {
   flush?: boolean;
   topAccessory?: ReactNode;
   runModeControl?: ReactNode;
+  contextControl?: ReactNode;
 };
 
 const FLUSH_PROMPT_EVENT = "openwork:flushPromptDraft";
@@ -164,62 +165,23 @@ function isImageAttachment(attachment: ComposerAttachment) {
   return attachment.kind === "image" || attachment.mimeType.startsWith("image/");
 }
 
-function isLocalCapability(origin: SkillCard["origin"] | McpServerEntry["origin"]) {
-  return origin !== "openwork-connect";
-}
-
-function formatPluginObjectType(type: string) {
-  const normalized = type.trim().toLowerCase();
-  if (!normalized) return "File";
-  if (normalized === "mcp") return "MCP";
-  return `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`;
-}
-
-function isToolMenuPluginsSection(section: ToolMenuSection) {
-  return section === "plugins" || section.startsWith("plugin:");
-}
-
 function mcpEntryStatus(entry: McpServerEntry, statuses: McpStatusMap | undefined) {
   if (!statuses) return undefined;
   if (entry.id && statuses[entry.id]) return statuses[entry.id];
   return statuses[entry.name];
 }
 
-function toolMenuMcpStatusLabel(status: McpStatus | undefined) {
+function plusMenuConnectorNote(status: McpStatus | undefined) {
   if (!status) return null;
   switch (status.status) {
-    case "connected":
-      return t("mcp.friendly_status_ready");
     case "disabled":
       return t("mcp.friendly_status_paused");
-    case "needs_auth":
-      return t("mcp.friendly_status_needs_signin");
-    case "reconnect_required":
-      return t("mcp.friendly_status_reconnect_required");
     case "failed":
     case "needs_client_registration":
       return t("mcp.friendly_status_issue");
+    default:
+      return null;
   }
-}
-
-type ToolMenuLayout = {
-  left: number;
-  bottom: number;
-  width: number;
-  maxHeight: number;
-};
-
-function measureToolMenuLayout(trigger: HTMLElement): ToolMenuLayout {
-  const rect = trigger.getBoundingClientRect();
-  const gap = 12;
-  const width = Math.min(window.innerWidth - 40, 544);
-  const header = trigger.closest("main")?.querySelector("header");
-  const headerBottom = header instanceof HTMLElement ? header.getBoundingClientRect().bottom : 0;
-  const ceiling = Math.max(headerBottom, 8);
-  const maxHeight = Math.max(180, Math.min(520, rect.top - gap - ceiling));
-  const left = Math.min(Math.max(16, rect.left), Math.max(16, window.innerWidth - width - 16));
-  const bottom = window.innerHeight - rect.top + gap;
-  return { left, bottom, width, maxHeight };
 }
 
 function pluginSlashCommandName(file: CloudImportedPluginFile) {
@@ -236,7 +198,7 @@ function pluginSlashCommandName(file: CloudImportedPluginFile) {
 }
 
 export const ReactSessionComposer = memo(function ReactSessionComposer(props: ComposerProps) {
-  let fileInput: HTMLInputElement | undefined;
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const orgMcp = useOrgMcpConnections();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
@@ -249,8 +211,8 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const [pluginsLoading, setPluginsLoading] = useState(false);
   const [slashOpen, setSlashOpen] = useState(false);
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
-  const [toolMenuLayout, setToolMenuLayout] = useState<ToolMenuLayout | null>(null);
-  const [toolMenuSection, setToolMenuSection] = useState<ToolMenuSection>("commands");
+  const [plusMenuQuery, setPlusMenuQuery] = useState("");
+  const [workspaceFileResults, setWorkspaceFileResults] = useState<string[]>([]);
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
   const [activeMentionQuery, setActiveMentionQuery] = useState<string | null>(null);
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -279,8 +241,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const [agentMenuIndex, setAgentMenuIndex] = useState(0);
   const agentItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [dropzoneActive, setDropzoneActive] = useState(false);
-  const toolMenuRef = useRef<HTMLDivElement | null>(null);
-  const toolMenuPanelRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<LexicalPromptEditorHandle | null>(null);
   const agentMenuRef = useRef<HTMLDivElement | null>(null);
   // IME composition guard: while an IME composition is active, we must not
@@ -387,9 +347,9 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   }, [mentionOpenNext, mentionQuery]);
 
   useEffect(() => {
-    if (!agentMenuOpen && !(toolMenuOpen && toolMenuSection === "agents")) return;
+    if (!agentMenuOpen && !toolMenuOpen) return;
     void props.listAgents().then(setAgents).catch(() => setAgents([]));
-  }, [agentMenuOpen, toolMenuOpen, toolMenuSection, props.listAgents]);
+  }, [agentMenuOpen, toolMenuOpen, props.listAgents]);
 
   useEffect(() => {
     if (!showAgentPicker) setAgentMenuOpen(false);
@@ -562,38 +522,31 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   }, [mentionOpen, mentionQuery, props.listAgents, props.recentFiles, props.searchFiles]);
 
   useEffect(() => {
-    if (!toolMenuOpen) return;
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (toolMenuRef.current?.contains(target)) return;
-      if (toolMenuPanelRef.current?.contains(target)) return;
-      setToolMenuOpen(false);
-    };
-    window.addEventListener("mousedown", handlePointerDown);
-    return () => {
-      window.removeEventListener("mousedown", handlePointerDown);
-    };
-  }, [toolMenuOpen]);
-
-  useLayoutEffect(() => {
     if (!toolMenuOpen) {
-      setToolMenuLayout(null);
+      setPlusMenuQuery("");
+      setWorkspaceFileResults([]);
       return;
     }
-    const trigger = toolMenuRef.current;
-    if (!trigger) return;
-    const update = () => {
-      setToolMenuLayout(measureToolMenuLayout(trigger));
-    };
-    update();
-    window.addEventListener("resize", update);
-    window.addEventListener("scroll", update, true);
+    const query = plusMenuQuery.trim();
+    if (query.length < 2) {
+      setWorkspaceFileResults([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void props.searchFiles(query)
+        .then((files) => {
+          if (!cancelled) setWorkspaceFileResults(files);
+        })
+        .catch(() => {
+          if (!cancelled) setWorkspaceFileResults([]);
+        });
+    }, 200);
     return () => {
-      window.removeEventListener("resize", update);
-      window.removeEventListener("scroll", update, true);
+      cancelled = true;
+      clearTimeout(timer);
     };
-  }, [toolMenuOpen]);
+  }, [plusMenuQuery, props.searchFiles, toolMenuOpen]);
 
   useEffect(() => {
     if (!agentMenuOpen) return;
@@ -689,7 +642,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   useEffect(() => {
     if (!slashOpen && !toolMenuOpen) return;
     const openId = toolMenuLoadRef.current.openId;
-    if ((slashOpen || toolMenuSection === "skills") && (!toolMenuOpen || !toolMenuLoadRef.current.skills)) {
+    if (!toolMenuOpen || !toolMenuLoadRef.current.skills) {
       let cancelled = false;
       if (toolMenuOpen) toolMenuLoadRef.current.skills = true;
       setSkillsLoading(true);
@@ -717,7 +670,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       };
     }
     return undefined;
-  }, [loadSkills, slashOpen, toolMenuOpen, toolMenuSection]);
+  }, [loadSkills, slashOpen, toolMenuOpen]);
 
   const slashItems = useMemo<ComposerSlashCommandOption[]>(
     () => [...commands, ...connectSkillSlashCommandOptions(skills)],
@@ -782,9 +735,39 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     }),
     [orgMcp.connections, props.mcpServers, props.mcpStatuses],
   );
-  const activePlugin = toolMenuSection.startsWith("plugin:")
-    ? importedPlugins.find((plugin) => `plugin:${plugin.pluginId}` === toolMenuSection) ?? null
-    : null;
+  const plusMenuConnectors = useMemo<PlusMenuConnector[]>(
+    () => connectionInventory.servers.map((server) => {
+      const status = mcpEntryStatus(server, connectionInventory.statuses);
+      const connection = orgMcp.connections.find((entry) => entry.id === server.orgMcpConnectionId);
+      const signIn = composerConnectionSignIn({ server, status, connection });
+      const url = server.config.type === "remote" ? server.config.url : undefined;
+      return {
+        key: server.id ?? server.name,
+        name: server.name,
+        serviceUrl: url,
+        signIn,
+        connecting: Boolean(signIn && orgMcp.connectingId === signIn.connectionId),
+        note: signIn ? null : plusMenuConnectorNote(status),
+      };
+    }),
+    [connectionInventory, orgMcp.connectingId, orgMcp.connections],
+  );
+  const plusMenuAgents = useMemo<PlusMenuAgent[]>(
+    () => [
+      { name: null, label: t("composer.default_agent"), selected: props.selectedAgent === null },
+      ...nonDefaultAgents.map((agent) => ({
+        name: agent.name,
+        label: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
+        description: agent.description,
+        selected: props.selectedAgent === agent.name,
+      })),
+    ],
+    [nonDefaultAgents, props.selectedAgent],
+  );
+  const plusMenuFiles = useMemo(
+    () => [...new Set([...props.recentFiles, ...workspaceFileResults])],
+    [props.recentFiles, workspaceFileResults],
+  );
   const canSend = props.draft.trim().length > 0 || props.attachments.length > 0;
   const diagnosticsRef = useRef<ConnectionDiagnosticSource | null>(null);
   useEffect(() => {
@@ -806,71 +789,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       preparingReasons: props.preparingReasons,
     }));
   });
-
-  const renderConnectionRows = () => {
-    const servers = connectionInventory.servers;
-    if (servers.length === 0) {
-      return (
-        <div className="px-3 py-2 text-xs text-gray-10">
-          {(!mcpLoaded && mcpLoading) || (orgMcp.loading && !orgMcp.loaded)
-            ? t("composer.loading_commands")
-            : t("composer.no_connections_mcps")}
-        </div>
-      );
-    }
-    return (
-      <div className="grid gap-1">
-        {servers.map((server) => {
-          const status = mcpEntryStatus(server, connectionInventory.statuses);
-          const statusLabel = toolMenuMcpStatusLabel(status);
-          const connection = orgMcp.connections.find((entry) => entry.id === server.orgMcpConnectionId);
-          const signIn = composerConnectionSignIn({ server, status, connection });
-          const connecting = Boolean(signIn && orgMcp.connectingId === signIn.connectionId);
-          const source = [server.marketplaceName, server.pluginName].filter(Boolean).join(" · ");
-          return (
-            <div
-              key={server.id ?? server.name}
-              className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11">{server.name}</div>
-                  {signIn ? (
-                    <button
-                      type="button"
-                      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-gray-12 px-2 py-0.5 text-[10px] font-medium text-gray-1 transition-colors hover:bg-gray-11 disabled:opacity-60"
-                      disabled={connecting}
-                      onClick={() => {
-                        void orgMcp.connect(signIn.connectionId, { forceFreshAuthorization: signIn.reconnect });
-                      }}
-                    >
-                      {connecting ? <LoaderCircle size={10} className="animate-spin" /> : null}
-                      {signIn.reconnect ? t("mcp.org_connection_reconnect_action") : t("mcp.org_connection_connect_action")}
-                    </button>
-                  ) : statusLabel ? (
-                    <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                      {statusLabel}
-                    </span>
-                  ) : isLocalCapability(server.origin) ? (
-                    <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                      {t("composer.source_local")}
-                    </span>
-                  ) : null}
-                </div>
-                {source ? <div className="truncate text-[10px] text-gray-9">{source}</div> : null}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-
-  useEffect(() => {
-    if (!toolMenuSection.startsWith("plugin:")) return;
-    if (activePlugin || !pluginsLoaded) return;
-    setToolMenuSection("plugins");
-  }, [activePlugin, pluginsLoaded, toolMenuSection]);
 
   useEffect(() => {
     if (!activeItems.length) {
@@ -984,8 +902,58 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     setToolMenuOpen(false);
   };
 
-  const openToolMenuSettings = () => {
-    props.onOpenSettingsSection?.(composerConfigureSectionForMenu(toolMenuSection));
+
+  const openFilePicker = () => {
+    if (!props.attachmentsEnabled) {
+      toast.warning(props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"));
+      return;
+    }
+    fileInputRef.current?.click();
+  };
+
+  const applyConnectorSelection = (name: string) => {
+    const editor = editorRef.current;
+    if (editor) {
+      editor.insertConnectorAtSelection(name);
+    } else {
+      const separator = props.draft.length > 0 && !/\s$/.test(props.draft) ? " " : "";
+      props.onDraftChange(`${props.draft}${separator}${encodeConnectorToken(name)} `);
+    }
+    setToolMenuOpen(false);
+  };
+
+  const applyFileSelection = (path: string) => {
+    const draft = editorRef.current?.insertFileMentionAtSelection(path);
+    props.onInsertMention("file", path, draft);
+    setToolMenuOpen(false);
+  };
+
+  const handlePlusMenuPick = (item: ComposerPlusMenuPick) => {
+    switch (item.kind) {
+      case "skill":
+        applySkillSelection(item.skill);
+        return;
+      case "connector":
+        applyConnectorSelection(item.connector.name);
+        return;
+      case "plugin-file":
+        applyPluginFileSelection(item.file);
+        return;
+      case "agent":
+        applyAgentSelection(item.agent.name);
+        return;
+      case "command":
+        applyCommandSelection(item.command);
+        return;
+      case "file":
+        applyFileSelection(item.path);
+        return;
+    }
+  };
+
+  const handlePlusMenuManage = (section: PlusMenuSection) => {
+    const target = section === "connectors" ? "connections" : section === "agents-commands" ? "commands" : section;
+    props.onOpenSettingsSection?.(composerConfigureSectionForMenu(target));
   };
 
   const applyMentionSelection = (item: MentionItem) => {
@@ -1023,7 +991,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       if (useComposerStateStore.getState().pendingFocusSessionId !== props.sessionId) return;
       const editable = rootRef.current?.querySelector<HTMLElement>("[contenteditable='true']");
       if (!editable) return;
-      editable.focus();
+      editable.focus({ preventScroll: window.matchMedia("(max-width: 1023px)").matches });
       useComposerStateStore.setState({ pendingFocusSessionId: null });
     });
     return () => cancelAnimationFrame(frame);
@@ -1037,7 +1005,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       const root = rootRef.current;
       if (!root) return;
       const editable = root.querySelector<HTMLElement>("[contenteditable='true']");
-      editable?.focus();
+      editable?.focus({ preventScroll: window.matchMedia("(max-width: 1023px)").matches });
     };
     const handleFlush = () => {
       // onDraftChange always runs synchronously on every keystroke, so this
@@ -1113,9 +1081,23 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       }
     }
 
-    if (toolMenuOpen && event.key === "Escape") {
+    // The + menu renders in a portal, but its key events still bubble through this
+    // React tree; the menu handles its own keys.
+    const fromComposerDom = event.target instanceof Node && Boolean(rootRef.current?.contains(event.target));
+    if (toolMenuOpen && event.key === "Escape" && fromComposerDom) {
       event.preventDefault();
       setToolMenuOpen(false);
+      return;
+    }
+    if (
+      fromComposerDom
+      && (event.metaKey || event.ctrlKey)
+      && !event.altKey
+      && !event.shiftKey
+      && event.key.toLowerCase() === "u"
+    ) {
+      event.preventDefault();
+      openFilePicker();
       return;
     }
 
@@ -1321,7 +1303,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     <DevProfiler id="SessionComposer">
     <div
       ref={rootRef}
-      className={props.flush ? `relative ${toolMenuOpen ? "z-50" : "z-20"}` : `sticky bottom-0 ${toolMenuOpen ? "z-50" : "z-20"} bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-[max(0.5rem,calc(env(safe-area-inset-bottom)+var(--keyboard-inset,0px)))] max-lg:px-3 lg:px-8 ${props.compactTopSpacing ? "pt-0" : "pt-1"}`}
+      className={props.flush ? `relative ${toolMenuOpen ? "z-50" : "z-20"}` : `sticky bottom-0 shrink-0 ${toolMenuOpen ? "z-50" : "z-20"} bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-[max(0.5rem,env(safe-area-inset-bottom))] max-lg:px-3 lg:px-8 ${props.compactTopSpacing ? "pt-0" : "pt-1"}`}
       style={{ contain: "layout style" }}
       onKeyDownCapture={handleKeyDownCapture}
       onCompositionStart={() => {
@@ -1455,13 +1437,11 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                 {t("composer.escape_to_stop")}
               </div>
             ) : null}
-            <div data-composer-toolbar className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-1.5 gap-y-2 @min-[560px]/composer:flex">
+            <div data-composer-toolbar className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-1.5 gap-y-2 max-lg:flex @min-[560px]/composer:flex">
               <div className="contents">
                 <div className="col-start-1 row-start-2 flex shrink-0 items-center gap-1.5">
                 <input
-                  ref={(element) => {
-                    fileInput = element ?? undefined;
-                  }}
+                  ref={fileInputRef}
                   type="file"
                   multiple
                   className="hidden"
@@ -1471,264 +1451,44 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                     event.currentTarget.value = "";
                   }}
                 />
-                <div
-                  ref={toolMenuRef}
-                  className="relative"
-                  onMouseDown={(event) => {
-                    const target = event.target;
-                    if (target instanceof Element && target.closest("button")) event.preventDefault();
-                  }}
-                >
-                  <button
-                    type="button"
-                    className={`inline-flex h-9 max-h-9 w-9 shrink-0 items-center justify-center rounded-md transition-colors ${toolMenuOpen ? "bg-gray-3 text-gray-12" : "text-gray-10 hover:bg-gray-3"}`}
-                    onClick={() => {
+                <ComposerPlusMenu
+                  open={toolMenuOpen}
+                  onOpenChange={(open) => {
+                    if (open) {
                       setMentionOpen(false);
                       setMentionItems([]);
                       setSlashOpen(false);
-                      setToolMenuOpen((value) => !value);
-                    }}
-                    aria-expanded={toolMenuOpen}
-                    aria-haspopup="dialog"
-                    title={t("composer.tools_label")}
-                    aria-label={t("composer.tools_label")}
-                  >
-                    <Plus size={16} />
-                  </button>
-                  {toolMenuOpen && toolMenuLayout
-                    ? createPortal(
-                    <div
-                      ref={toolMenuPanelRef}
-                      className="fixed z-[200] flex overflow-hidden rounded-[22px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]"
-                      style={{
-                        left: toolMenuLayout.left,
-                        bottom: toolMenuLayout.bottom,
-                        width: toolMenuLayout.width,
-                        height: toolMenuLayout.maxHeight,
-                        maxHeight: toolMenuLayout.maxHeight,
-                      }}
-                    >
-                      <div className="flex h-full min-h-0 min-w-0 w-full">
-                        <div className="flex h-full w-[168px] shrink-0 flex-col overflow-y-auto border-r border-dls-border bg-gray-2/30 p-2 sm:w-[192px]">
-                          {([
-                            ["agents", t("composer.agents_label")],
-                            ["commands", t("dashboard.commands")],
-                            ["skills", t("dashboard.skills")],
-                            ["connections", t("composer.connections_mcps_label")],
-                            ["plugins", t("extensions.filter_plugins")],
-                          ] as const).map(([section, label]) => {
-                            const active = section === "plugins"
-                              ? isToolMenuPluginsSection(toolMenuSection)
-                              : toolMenuSection === section;
-                            return (
-                            <button
-                              key={section}
-                              type="button"
-                              className={`mb-1 flex w-full items-center justify-between rounded-[16px] px-3 py-2.5 text-left text-sm transition-colors ${active ? "bg-gray-3 text-gray-12" : "text-gray-11 hover:bg-gray-2"}`}
-                              onClick={() => setToolMenuSection(section)}
-                            >
-                              <span className="truncate">{label}</span>
-                              <ChevronRight size={14} className="shrink-0 text-gray-9" />
-                            </button>
-                            );
-                          })}
-                        </div>
-                        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                          <div className="mb-2 flex shrink-0 justify-end border-b border-dls-border px-3 pb-2 pt-2">
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1.5 rounded-full border border-dls-border px-3 py-1.5 text-[12px] font-medium text-gray-11 transition-colors hover:bg-gray-2"
-                              onClick={() => {
-                                setToolMenuOpen(false);
-                                openToolMenuSettings();
-                              }}
-                            >
-                              <Settings size={12} />
-                              {t("composer.configure")}
-                            </button>
-                          </div>
-                          <div className="min-h-0 flex-1 overflow-y-auto p-2">
-                          {toolMenuSection === "agents" ? (
-                            <div className="grid gap-1">
-                              <button
-                                type="button"
-                                className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${props.selectedAgent === null ? "bg-gray-2 text-gray-12" : "text-gray-11"}`}
-                                onClick={() => applyAgentSelection(null)}
-                              >
-                                <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                <div className="min-w-0 flex-1 truncate text-xs font-semibold">{t("composer.default_agent")}</div>
-                                {props.selectedAgent === null ? <Check size={14} className="mt-0.5 shrink-0 text-gray-10" /> : null}
-                              </button>
-                              {nonDefaultAgents.map((agent) => {
-                                const active = props.selectedAgent === agent.name;
-                                return (
-                                  <button
-                                    key={agent.name}
-                                    type="button"
-                                    className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${active ? "bg-gray-2 text-gray-12" : "text-gray-11"}`}
-                                    onClick={() => applyAgentSelection(agent.name)}
-                                  >
-                                    <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="truncate text-xs font-semibold">{agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}</div>
-                                      {agent.description ? <div className="truncate text-xs text-gray-10">{agent.description}</div> : null}
-                                    </div>
-                                    {active ? <Check size={14} className="mt-0.5 shrink-0 text-gray-10" /> : null}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          ) : null}
-                          {toolMenuSection === "commands" ? (
-                            toolCommandItems.length > 0 ? (
-                              <div className="grid gap-1">
-                                {toolCommandItems.map((command) => (
-                                  <button
-                                    key={command.id}
-                                    type="button"
-                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
-                                    onClick={() => applyCommandSelection(command)}
-                                  >
-                                    <Terminal size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0">
-                                      <div className="truncate text-xs font-semibold text-gray-11">/{command.name}</div>
-                                      {command.description ? <div className="truncate text-xs text-gray-10">{command.description}</div> : null}
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">
-                                {!commandsLoaded && commandsLoading ? t("composer.loading_commands") : t("composer.no_commands")}
-                              </div>
-                            )
-                          ) : null}
-                          {toolMenuSection === "skills" ? (
-                            skillMenuItems.length > 0 ? (
-                              <div className="grid gap-1">
-                                {skillMenuItems.map((skill) => (
-                                  <button
-                                    key={`${skill.origin ?? "local"}:${skill.path || skill.name}`}
-                                    type="button"
-                                    className="flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
-                                    onClick={() => applySkillSelection(skill)}
-                                  >
-                                    <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11">
-                                          /{skillMenuSlashCommandName(skill)}
-                                        </div>
-                                        {isLocalCapability(skill.origin) ? (
-                                          <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                                            {t("composer.source_local")}
-                                          </span>
-                                        ) : null}
-                                      </div>
-                                      {skill.description ? <div className="truncate text-xs text-gray-10">{skill.description}</div> : null}
-                                      {skill.origin === "openwork-connect" ? (
-                                        <div className="truncate text-[10px] text-gray-9">
-                                          {[skill.marketplaceName, skill.pluginName].filter(Boolean).join(" · ")}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">
-                                {(!skillsLoaded && skillsLoading) || (!commandsLoaded && commandsLoading) ? t("composer.loading_commands") : t("context_panel.no_skills")}
-                              </div>
-                            )
-                          ) : null}
-                          {toolMenuSection === "connections" ? renderConnectionRows() : null}
-                          {toolMenuSection === "plugins" ? (
-                            importedPlugins.length > 0 ? (
-                              <div className="grid gap-1">
-                                {importedPlugins.map((plugin) => (
-                                  <button
-                                    key={plugin.pluginId}
-                                    type="button"
-                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
-                                    onClick={() => setToolMenuSection(`plugin:${plugin.pluginId}`)}
-                                  >
-                                    <div className="min-w-0 flex-1">
-                                      <div className="truncate text-xs font-semibold text-gray-11">{plugin.name}</div>
-                                      {plugin.description ? (
-                                        <div className="truncate text-xs text-gray-10">{plugin.description}</div>
-                                      ) : null}
-                                    </div>
-                                    <ChevronRight size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">
-                                {!pluginsLoaded && pluginsLoading ? t("composer.loading_commands") : t("composer.no_plugins")}
-                              </div>
-                            )
-                          ) : null}
-                          {activePlugin ? (
-                            activePlugin.files.length > 0 ? (
-                              <div className="grid gap-1">
-                                {activePlugin.files.map((file) => (
-                                  <button
-                                    key={`${file.configObjectId}:${file.path}`}
-                                    type="button"
-                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
-                                    onClick={() => applyPluginFileSelection(file)}
-                                  >
-                                    <FileText size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="truncate text-xs font-semibold text-gray-11">{file.title}</div>
-                                        <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                                          {formatPluginObjectType(file.objectType)}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">{t("composer.no_plugin_files")}</div>
-                            )
-                          ) : toolMenuSection.startsWith("plugin:") ? (
-                            <div className="px-3 py-2 text-xs text-gray-10">
-                              {!pluginsLoaded && pluginsLoading ? t("composer.loading_commands") : t("composer.plugin_files_unavailable")}
-                            </div>
-                          ) : null}
-                          </div>
-                        </div>
-                      </div>
-                    </div>,
-                    document.body,
-                  ) : null}
-                </div>
-                {props.runModeControl}
-                <button
-                  type="button"
-                  className={`inline-flex h-9 max-h-9 w-9 shrink-0 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-3 ${
-                    !props.attachmentsEnabled ? "cursor-not-allowed opacity-60" : ""
-                  }`}
-                  onClick={() => {
-                    if (!props.attachmentsEnabled) return;
-                    fileInput?.click();
+                    }
+                    setToolMenuOpen(open);
                   }}
-                  disabled={!props.attachmentsEnabled}
-                  title={props.attachmentsDisabledReason ?? t("composer.attach_files")}
-                >
-                  <Paperclip size={16} />
-                </button>
-
+                  loading={commandsLoading || skillsLoading || pluginsLoading || mcpLoading || (orgMcp.loading && !orgMcp.loaded)}
+                  skills={skillMenuItems}
+                  connectors={plusMenuConnectors}
+                  plugins={importedPlugins}
+                  agents={plusMenuAgents}
+                  commands={toolCommandItems}
+                  files={plusMenuFiles}
+                  attachmentsEnabled={props.attachmentsEnabled}
+                  attachmentsDisabledReason={props.attachmentsDisabledReason}
+                  onAttach={openFilePicker}
+                  onPick={handlePlusMenuPick}
+                  onConnect={(connector) => {
+                    if (!connector.signIn) return;
+                    void orgMcp.connect(connector.signIn.connectionId, { forceFreshAuthorization: connector.signIn.reconnect });
+                  }}
+                  onManage={handlePlusMenuManage}
+                  onQueryChange={setPlusMenuQuery}
+                  returnFocus={() => rootRef.current?.querySelector<HTMLElement>("[contenteditable='true']") ?? null}
+                />
+                {props.runModeControl}
                 </div>
 
-                <div data-composer-settings className="col-span-2 row-start-1 flex min-w-0 flex-wrap items-center gap-1 border-b border-dls-border pb-2 @min-[560px]/composer:flex-1 @min-[560px]/composer:border-0 @min-[560px]/composer:pb-0">
+                <div data-composer-settings className="col-span-2 row-start-1 flex min-w-0 flex-wrap items-center gap-1 border-b border-dls-border pb-2 max-lg:flex-1 max-lg:flex-nowrap max-lg:border-0 max-lg:pb-0 @min-[560px]/composer:flex-1 @min-[560px]/composer:border-0 @min-[560px]/composer:pb-0">
                 {/* Agent picker (#2101/#1971). Only shown once a non-default
                     agent is selected. Switching back to Default agent lives in
                     this menu and in the + tools menu. Selection configures
                     subsequent submissions without interrupting the running turn. */}
-                <div ref={agentMenuRef} className={showAgentPicker ? "relative min-w-0 max-w-full shrink-0" : "hidden"}>
+                <div ref={agentMenuRef} className={showAgentPicker ? "relative min-w-0 max-w-full shrink-0 max-lg:max-w-[40%] max-lg:shrink" : "hidden"}>
                   <button
                     type="button"
                     className="flex h-9 max-h-9 max-w-full items-center gap-1 rounded-md px-1.5 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
@@ -1813,7 +1573,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                 {props.modelUnavailable ? props.onRefreshOrganizationModels ? (
                   <button
                     type="button"
-                    className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-full border border-red-5 bg-red-2 px-2.5 text-[11px] font-medium text-red-11 transition-colors hover:border-red-6 hover:bg-red-3 disabled:cursor-wait disabled:opacity-70 sm:max-w-80"
+                    className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 px-2 text-xs text-dls-secondary transition-colors hover:text-foreground disabled:cursor-wait disabled:opacity-70 sm:max-w-80"
                     onClick={() => void handleRefreshOrganizationModels()}
                     disabled={refreshingOrganizationModels}
                     title={t("models.refresh_organization_models")}
@@ -1827,10 +1587,11 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                     </span>
                   </button>
                 ) : (
-                  <span className="min-w-0 max-w-full truncate text-xs font-medium text-red-10">
+                  <span className="min-w-0 max-w-full truncate text-xs text-dls-secondary">
                     {props.modelUnavailableMessage ?? t("models.model_unavailable_short")}
                   </span>
                 ) : null}
+                {props.contextControl}
                 </div>
 
               </div>
@@ -1844,6 +1605,10 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               <div data-composer-actions className="col-start-2 row-start-2 ml-auto flex shrink-0 items-center gap-1.5">
                 <button
                   type="button"
+                  onPointerDown={(event) => {
+                    // Preserve focus until submission succeeds; rejected sends keep the keyboard.
+                    if (event.pointerType === "touch" && window.matchMedia("(max-width: 1023px)").matches) event.preventDefault();
+                  }}
                   onClick={
                     props.busy
                       ? props.onStop

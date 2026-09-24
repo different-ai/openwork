@@ -98,6 +98,8 @@ import {
 } from "./workspace-routes";
 
 export type UseWorkspaceRouteStateInput = {
+  /** A local first-send owner must survive workspace preparation until it has a real session. */
+  preservePendingConversationRoute?: boolean;
   developerMode: boolean;
   workspaceRoute?: "session" | "automations" | "dashboard" | "apps";
   /** Invoked when the openwork-server settings-changed event fires (the route bumps its settings version). */
@@ -1141,6 +1143,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   // session in the URL lands on the empty "new task" state instead of
   // jumping back into the previously opened session.
   useEffect(() => {
+    if (input.preservePendingConversationRoute) return;
     if (loading) return;
     if (routeWorkspaceId && workspaces.length > 0 && !workspaces.some((workspace) => workspace.id === routeWorkspaceId)) {
       const fallbackWorkspaceId = workspaces.some((workspace) => workspace.id === legacySelectedWorkspaceId)
@@ -1155,6 +1158,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       normalizeWorkspaceRoute(selectedWorkspaceId, selectedSessionId, { replace: true });
     }
   }, [
+    input.preservePendingConversationRoute,
     extensionsRouteActive,
     extensionsRoutePath,
     loading,
@@ -1172,11 +1176,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     if (isDesktopRuntime()) return;
     if (loading) return;
     if (workspaces.length > 0) return;
-    if (local.prefs.hasCompletedOnboarding) return;
+    if (input.preservePendingConversationRoute || local.prefs.hasCompletedOnboarding) return;
     if (denAuth.status === "checking") return;
     if (denAuth.isSignedIn) return;
     navigate("/welcome", { replace: true });
-  }, [denAuth.isSignedIn, denAuth.status, loading, local.prefs.hasCompletedOnboarding, navigate, workspaces.length]);
+  }, [denAuth.isSignedIn, denAuth.status, input.preservePendingConversationRoute, loading, local.prefs.hasCompletedOnboarding, navigate, workspaces.length]);
 
   // NOTE: Blueprint seeding was removed from the route.
   // It was firing `materializeBlueprintSessions` + a session re-fetch on every
@@ -1236,9 +1240,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const engineV2ChatRouting = selectedEngineRouting === true;
   useEffect(() => {
     window.addEventListener("openwork-server-settings-changed", engineRoutingPoller.refresh);
+    window.addEventListener("openwork-engine-changed", engineRoutingPoller.refresh);
     return () => {
       engineRoutingPoller.dispose();
       window.removeEventListener("openwork-server-settings-changed", engineRoutingPoller.refresh);
+      window.removeEventListener("openwork-engine-changed", engineRoutingPoller.refresh);
     };
   }, [engineRoutingPoller]);
   useEffect(() => {
@@ -1338,9 +1344,15 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     );
     if (stale.length === 0) return;
     for (const [workspaceId] of stale) delete hydratedRouteSessionIdsRef.current[workspaceId];
+    // A direct read that settled just before its inventory is marked hydrated
+    // after that inventory merged, so the marker alone cannot prove the session
+    // is display-only. Sessions the fetched inventory knows stay listed.
+    const displayOnly = stale.filter(([workspaceId, sessionId]) =>
+      sessionReferenceLoadsRef.current.get(workspaceId)?.sessionIds.has(sessionId) !== true);
+    if (displayOnly.length === 0) return;
     setSessionsByWorkspaceId((current) => {
       let next = current;
-      for (const [workspaceId, sessionId] of stale) {
+      for (const [workspaceId, sessionId] of displayOnly) {
         const items = current[workspaceId] ?? [];
         const filtered = removeWorkspaceRouteSession(items, sessionId);
         if (filtered === items) continue;
@@ -1388,7 +1400,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
               delete hydratedRouteSessionIdsRef.current[selectedWorkspaceId];
               return current;
             }
-            hydratedRouteSessionIdsRef.current[selectedWorkspaceId] = selectedSessionId;
+            if (sessionReferenceLoadsRef.current.get(selectedWorkspaceId)?.sessionIds.has(selectedSessionId) !== true) {
+              hydratedRouteSessionIdsRef.current[selectedWorkspaceId] = selectedSessionId;
+            }
             const nextItems = mergeWorkspaceRouteSession(currentItems, session);
             const next = { ...current, [selectedWorkspaceId]: nextItems };
             sessionsByWorkspaceIdRef.current = next;

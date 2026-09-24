@@ -3,6 +3,7 @@ import { STATUS_CODES } from "node:http"
 import { dirname, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseArgs } from "node:util"
+import { addOpenApiSocialDescriptions } from "./openapi-social-descriptions.js"
 
 type NormalizationCounts = {
   descriptionsFilled: number
@@ -215,6 +216,7 @@ async function main() {
   }
 
   const counts = normalizeOpenApiDocument(document)
+  const social = addOpenApiSocialDescriptions(document)
   const scriptDir = dirname(fileURLToPath(import.meta.url))
   const repoRoot = resolve(scriptDir, "../../../..")
   const { values } = parseArgs({ options: { output: { type: "string" } } })
@@ -222,11 +224,12 @@ async function main() {
     ? resolve(values.output)
     : resolve(repoRoot, "packages/docs/openapi.json")
   await mkdir(dirname(outputPath), { recursive: true })
-  await writeFile(outputPath, JSON.stringify(document))
+  await writeFile(outputPath, JSON.stringify(social.document))
 
   console.log([
     `Wrote ${relative(repoRoot, outputPath)}`,
     `descriptionsFilled=${counts.descriptionsFilled}`,
+    `socialDescriptionsFilled=${social.counts.socialDescriptionsFilled}`,
     `hideKeysDropped=${counts.hideKeysDropped}`,
     `internalOperationsExcluded=${counts.internalOperationsExcluded}`,
     `orphanSchemasPruned=${counts.orphanSchemasPruned}`,

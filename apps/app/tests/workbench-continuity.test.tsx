@@ -283,7 +283,7 @@ function Provider({ owner, children }: { owner: string | null; children: ReactNo
     showThinking developerMode={false} displaySuggestions={false} providerConnectedCount={1}
     dispatchAction={() => {}} setPrompt={() => {}} onRevertToUserMessage={() => {}} onForkAtMessage={() => {}}
     onEditUserMessage={() => {}} onMcpReconnect={async () => { throw new Error("unused"); }}
-    onMcpReopenAuthorization={async () => {}} onMcpRetry={() => {}}>{children}</MessageListProvider></PlatformProvider>;
+    onMcpReopenAuthorization={async () => {}}>{children}</MessageListProvider></PlatformProvider>;
 }
 const command: DynamicToolUIPart = {
   type: "dynamic-tool", toolName: "bash", toolCallId: "call", state: "output-error",

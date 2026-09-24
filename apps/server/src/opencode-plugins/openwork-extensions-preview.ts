@@ -5,7 +5,6 @@ import { uiBridgeRequest } from "./openwork-ui-bridge.js";
 import { createGmailAttachmentFulfillment, type GmailAttachmentDependencies } from "./gmail-attachment-fulfillment.js";
 import { z } from "zod";
 import { sessionActivityFrom, type SessionActivity } from "./session-activity.js";
-import { visualizationSchema } from "@openwork/types/visualization";
 import {
   openworkSessionModelSchema,
   openworkAffordanceResultSchema,
@@ -24,7 +23,8 @@ import {
   createInstructionSection,
 } from "./agent-instruction-compose.js";
 import {
-  composeSkillAuthoringInstruction,
+  OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
+  OPENWORK_ON_DEMAND_DISCOVERY_INSTRUCTION,
   resolveOpenWorkAutomationInstruction,
   resolveOpenWorkConnectSkillInstruction,
   resolveOpenWorkExtensionDiscoveryInstruction,
@@ -142,7 +142,7 @@ const sessionMessageSchema = z.object({
 
 const OPENWORK_AGENT_SURFACE_INSTRUCTION =
   `## OpenWork app context
-For lightweight UI mockups, wireframes, and design iterations, use openwork_visualization to show a native OpenWork-styled sketch in the conversation. Keep the design id when revising, increment revision, and send the complete updated design. Mock controls are illustrative; use the normal app-building workflow when a working app is requested.
+Keep ordinary tool activity compact. Use a standard MCP App only when its interactive view serves the user's requested task; do not launch extra views for incidental discovery or routine confirmations. Tool results must not open panels or move focus automatically.
 Use openwork_context when the request depends on the current OpenWork screen, open tabs, split view, focused pane, sidebar, side panel, settings panel, or available app actions.
 Each affordance declares its effects and executor. Use openwork_query only for side-effect-free affordances whose executor is OpenWork. Use openwork_execute for OpenWork commands without activating the desktop window. If executor names another tool, call that exact tool instead.
 Reading another session does not require opening it. Prefer session.search then session.read for transcript questions; use session.create for new chats and a UI command only when the user asks to navigate.
@@ -304,19 +304,6 @@ function normalizeOpenCodeContext(value: unknown): OpenCodeContext {
     ...(worktree ? { worktree } : {}),
     ...(workspaceId ? { workspaceId } : {}),
     ...(workspaceID ? { workspaceID } : {}),
-  };
-}
-
-function mergeTransformInputWithFactoryContext(input: unknown, factoryContext: OpenCodeContext): unknown {
-  if (Object.keys(factoryContext).length === 0) return input;
-  const inputRecord = isRecord(input) ? input : {};
-  const inputContext = isRecord(inputRecord.context) ? inputRecord.context : {};
-  return {
-    ...inputRecord,
-    context: {
-      ...factoryContext,
-      ...inputContext,
-    },
   };
 }
 
@@ -1298,54 +1285,32 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown, _options
     // so OpenWork can host the UI without replaying the tool call.
     preserveMcpResult(output);
   },
-  "experimental.chat.system.transform": async (input: unknown, output: { system: string[] }) => {
-    const mergedInput = mergeTransformInputWithFactoryContext(input, factoryContext);
-    const [extensionInstruction, skillInstruction, automationInstruction] = await Promise.all([
-      resolveOpenWorkExtensionDiscoveryInstruction(mergedInput, fetch, {
-        client: engineMcpStatusClient,
-        directory: engineMcpStatusDirectory,
-      }),
-      resolveOpenWorkConnectSkillInstruction(mergedInput, fetch),
-      resolveOpenWorkAutomationInstruction(mergedInput, fetch),
-    ]);
-    const skillAuthoring = composeSkillAuthoringInstruction(extensionInstruction);
-    if (process.env.OPENWORK_DEV_MODE === "1") {
-      console.log("[openwork:skill-authoring] system prompt selected", {
-        mode: skillAuthoring.mode,
-        prompt: skillAuthoring.prompt,
-        directory: normalizeOpenCodeContext(mergedInput).directory ?? factoryContext.directory ?? null,
-      });
-    }
-    // One section id per concern — composition drops empties/duplicates so routing,
-    // remote skills, session, and browser guidance never overlap by accident.
-    // Appended into the engine's existing system entry so the request still
-    // carries a single system message. Order: stable mechanics first, then the
-    // live Connect steering and skill-authoring mode, then the catalogs, so
-    // rules are read before the data they govern.
+  "experimental.chat.system.transform": async (_input: unknown, output: { system: string[] }) => {
+    // Prompt composition is static: live discovery belongs to explicit tool calls.
     appendAgentInstructions(
       output.system,
       createInstructionSection("agent-surface", OPENWORK_AGENT_SURFACE_INSTRUCTION),
       createInstructionSection("browser", OPENWORK_BROWSER_INSTRUCTION),
-      createInstructionSection("routing", extensionInstruction),
-      createInstructionSection("skill-authoring", skillAuthoring.prompt),
-      createInstructionSection("connect-skills", skillInstruction),
-      createInstructionSection("automations", automationInstruction),
+      createInstructionSection("routing", OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION),
+      createInstructionSection("discovery", OPENWORK_ON_DEMAND_DISCOVERY_INSTRUCTION),
     );
   },
   tool: {
-    openwork_visualization: {
-      description: "Show a lightweight UI mockup inline in OpenWork using native OpenWork styling. Use for wireframes, screen layouts, and design iteration instead of ASCII UI. Provide a title, optional navigation, and sections of text, metrics, fields, buttons, lists, or image placeholders. These are mock controls, not a working app. For revisions, keep the same id and send the complete updated mockup with an increased revision; earlier versions remain in the conversation. No HTML, scripts, servers, or files needed.",
-      args: visualizationSchema.shape,
-      async execute(rawArgs: unknown) {
-        return JSON.stringify(visualizationSchema.parse(rawArgs));
-      },
-    },
     openwork_context: {
       description: "Read one semantic snapshot of OpenWork: current screen, retained conversation tabs, split view and focused pane, sidebar and side panel state, settings panel, provider contributions, remote skill guidance, and available affordances with explicit effects and executors.",
       args: {},
       async execute() {
+        const [context, routing, skills, automations] = await Promise.all([
+          readOpenworkAgentContext(engineMcpStatusClient, engineMcpStatusDirectory),
+          resolveOpenWorkExtensionDiscoveryInstruction({ context: factoryContext }, fetch, {
+            client: engineMcpStatusClient,
+            directory: engineMcpStatusDirectory,
+          }),
+          resolveOpenWorkConnectSkillInstruction(),
+          resolveOpenWorkAutomationInstruction(),
+        ]);
         return JSON.stringify(
-          await readOpenworkAgentContext(engineMcpStatusClient, engineMcpStatusDirectory),
+          { ...context, instructions: { routing, skills, automations } },
           null,
           2,
         );

@@ -7,11 +7,15 @@ import { createDenClient, readDenSettings } from "@/app/lib/den";
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelOption, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { t } from "@/i18n";
+import { TaskRecovery } from "@/components/chat/task-recovery";
+import { presentOpencodeSessionError, type OpencodeSessionErrorPresentation } from "../sync/session-error";
 import type { ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import { ReactSessionComposer } from "@/react-app/domains/session/surface/composer/composer";
 import { WorkspaceRunModeMenu } from "@/react-app/domains/session/surface/composer/workspace-run-mode-menu";
 import {
   snapshotComposerSessionState,
+  persistableComposerDraftText,
+  useComposerStateStore,
   type ComposerSessionState,
 } from "@/react-app/domains/session/surface/composer-state-store";
 import { encodeComposerMentionValue, type ComposerMentionKind } from "@/react-app/domains/session/surface/composer/mention-encoding";
@@ -27,6 +31,11 @@ import {
 } from "@/react-app/domains/connections/cloud-inventory-cache";
 import { connectPluginsForComposer, EMPTY_CONNECT_CAPABILITY_INVENTORY } from "@/react-app/domains/session/surface/connect-capability-inventory";
 import { resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
+import type { NewSessionDestination } from "./new-session-destination";
+import { draftWorkspaceChangeBlocked, newSessionDraftSlot } from "./new-session-destination";
+import { useSessionManagementStore } from "../sidebar/session-management-store";
+import { NewTaskDestinationMenu } from "./new-task-destination-menu";
+import { clearSessionDraft, saveSessionDraft } from "../sync/draft-store";
 
 /**
  * Workspace-scoped wiring for the new-task composer. Everything here is
@@ -35,9 +44,13 @@ import { resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/
  * hero creates.
  */
 export type NewTaskComposerContext = {
+  destination?: NewSessionDestination;
+  draftSessionId?: string;
+  workspaceOptions?: { id: string; label: string }[];
+  onChangeDestination?: (source: NewSessionDestination, destination: NewSessionDestination, state: ComposerSessionState) => void;
   client: OpenworkServerClient | null;
   workspaceId: string | null;
-  /** Stable identity for draft ownership across workspace, endpoint, and account changes. */
+  /** Stable identity for draft ownership across workspace, group, pane, and account changes. */
   draftOwnerKey?: string;
   /** Account/organization scope the persisted new-task draft is stored under; null while unverified. */
   draftScope?: string | null;
@@ -68,6 +81,7 @@ export type NewTaskComposerContext = {
 };
 
 export type NewTaskComposerProps = {
+  flush?: boolean;
   draft: string;
   onDraftChange: (value: string) => void;
   /** Called with a non-empty draft and in-memory attachments; the caller creates the session (and workspace if needed). */
@@ -82,14 +96,18 @@ export type NewTaskComposerProps = {
 };
 
 export type NewTaskComposerHandoff = {
+  destination?: NewSessionDestination;
   submitted: ComposerSessionState;
   getContinuation: () => ComposerSessionState;
+  /** Transfers ownership synchronously; stale effects/flushes must not restore the source. */
+  consume?: () => void;
 };
 
 type NewTaskContinuationHolder = {
   ownerKey: string;
   state: ComposerSessionState;
   frozen: boolean;
+  consumed?: boolean;
 };
 
 function emptyNewTaskComposerState(): ComposerSessionState {
@@ -118,23 +136,25 @@ const FALLBACK_MODEL: ModelRef = { providerID: "", modelID: "" };
 export function NewTaskComposer(props: NewTaskComposerProps) {
   const context = props.context;
   const draftOwnerKey = context?.draftOwnerKey ?? "legacy";
-  const [mentions, setMentions] = useState<Record<string, ComposerMentionKind>>({});
-  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [initialState] = useState(() => context?.draftOwnerKey ? useComposerStateStore.getState().sessions[draftOwnerKey] : undefined);
+  const [mentions, setMentions] = useState<Record<string, ComposerMentionKind>>(initialState?.mentions ?? {});
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>(initialState?.attachments ?? []);
   const [skills, setSkills] = useState<SkillCard[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerEntry[]>([]);
   const [mcpStatuses, setMcpStatuses] = useState<McpStatusMap>({});
   const [mcpStatus, setMcpStatus] = useState<string | null>(null);
   const [importedPlugins, setImportedPlugins] = useState<CloudImportedPlugin[]>([]);
-  const [pastedText, setPastedText] = useState<PastedTextChip[]>([]);
+  const [pastedText, setPastedText] = useState<PastedTextChip[]>(initialState?.pasteParts ?? []);
   const submittingRef = useRef(false);
   const draftRevisionRef = useRef(0);
   const [pendingSubmission, setPendingSubmission] = useState<ComposerSessionState | null>(null);
-  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [submissionError, setSubmissionError] = useState<OpencodeSessionErrorPresentation | null>(null);
+  const [destinationError, setDestinationError] = useState<string | null>(null);
   const [failedSubmission, setFailedSubmission] = useState<ComposerSessionState | null>(null);
   const draftRef = useRef(props.draft);
   const continuationHolderRef = useRef<NewTaskContinuationHolder>({
     ownerKey: draftOwnerKey,
-    state: { ...emptyNewTaskComposerState(), draft: props.draft },
+    state: { ...(initialState ?? emptyNewTaskComposerState()), draft: props.draft },
     frozen: false,
   });
   const mountedDraftOwnerKeyRef = useRef(draftOwnerKey);
@@ -155,6 +175,16 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
   const pluginConnectPushRef = useRef(0);
   const workspaceClient = context?.client ?? null;
   const workspaceId = context?.workspaceId ?? null;
+  const groupsByWorkspace = useSessionManagementStore((state) => state.groupsByWorkspace);
+
+  useEffect(() => {
+    const holder = continuationHolderRef.current;
+    if (!context?.draftOwnerKey || holder.frozen) return;
+    useComposerStateStore.setState((state) => ({ sessions: {
+      ...state.sessions,
+      [holder.ownerKey]: snapshotComposerSessionState(holder.state),
+    } }));
+  }, [draftOwnerKey, props.draft, attachments, mentions, pastedText]);
 
   useEffect(() => {
     const holder = continuationHolderRef.current;
@@ -170,10 +200,17 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       setPastedText([]);
       setPendingSubmission(null);
       setSubmissionError(null);
+      setDestinationError(null);
       setFailedSubmission(null);
     }
     return () => {
       holder.frozen = true;
+      if (context?.draftOwnerKey && !holder.consumed) {
+        useComposerStateStore.setState((state) => ({ sessions: {
+          ...state.sessions,
+          [holder.ownerKey]: snapshotComposerSessionState(holder.state),
+        } }));
+      }
     };
   }, [draftOwnerKey]);
 
@@ -375,26 +412,49 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     const resolved = resolvePastedTextPlaceholders(originalDraft, submitted.pasteParts);
     setPendingSubmission(submitted);
     setSubmissionError(null);
-    // Transfer the files and preview URLs to the pending turn before clearing input.
-    props.onDraftChange("");
-    draftRef.current = "";
-    submissionHolder.state = emptyNewTaskComposerState();
-    setAttachments([]);
-    setMentions({});
-    setPastedText([]);
+    setDestinationError(null);
     try {
-      await props.onRunTask(resolved, submitted.attachments, {
+      const work = props.onRunTask(resolved, submitted.attachments, {
+        destination: context?.destination,
         submitted,
         getContinuation: () => snapshotComposerSessionState(submissionHolder.state),
+        consume: () => {
+          submissionHolder.consumed = true;
+          submissionHolder.frozen = true;
+          submissionHolder.state = emptyNewTaskComposerState();
+          if (context?.draftOwnerKey) useComposerStateStore.getState().clearSession(context.draftOwnerKey);
+          if (context?.workspaceId) clearSessionDraft(context.draftScope, context.workspaceId, context.draftSessionId);
+        },
       });
+      // onRunTask synchronously establishes the pending owner before the editor clears.
+      props.onDraftChange("");
+      draftRef.current = "";
+      submissionHolder.state = emptyNewTaskComposerState();
+      setAttachments([]);
+      setMentions({});
+      setPastedText([]);
+      await work;
+      if (submissionHolder.consumed) return;
+      submissionHolder.state = emptyNewTaskComposerState();
+      if (context?.draftOwnerKey) useComposerStateStore.getState().clearSession(context.draftOwnerKey);
     } catch (error) {
-      if (continuationHolderRef.current !== submissionHolder || submissionHolder.frozen) return;
+      if (submissionHolder.consumed) return;
+      if (continuationHolderRef.current !== submissionHolder || submissionHolder.frozen) {
+        // A route change must not erase a failed first turn. Never overwrite
+        // a newer draft typed after returning to the same destination.
+        const existing = useComposerStateStore.getState().sessions[submissionHolder.ownerKey];
+        if (context?.draftOwnerKey && !existing?.draft && !existing?.attachments.length) {
+          useComposerStateStore.setState((state) => ({ sessions: { ...state.sessions, [submissionHolder.ownerKey]: submitted } }));
+          if (context.workspaceId) saveSessionDraft(context.draftScope, context.workspaceId, context.draftSessionId, { text: persistableComposerDraftText(submitted.draft), mode: "prompt" });
+        }
+        return;
+      }
       if (draftRevisionRef.current === revision && !draftRef.current) {
         restoreComposer(submitted);
       } else {
         setFailedSubmission(submitted);
       }
-      setSubmissionError(error instanceof Error ? error.message : "Could not create the conversation. Try again.");
+      setSubmissionError(presentOpencodeSessionError(error, "Couldn’t send your message"));
       setPendingSubmission(null);
       submittingRef.current = false;
     }
@@ -406,14 +466,49 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     updateDraft(`${currentDraft}${currentDraft && !currentDraft.endsWith("\n") ? "\n" : ""}${links.join("\n")}`);
   };
 
+  const changeDestination = (destination: NewSessionDestination) => {
+    const source = context?.destination;
+    if (!source || !context?.onChangeDestination || submittingRef.current) return;
+    if (source.workspaceId === destination.workspaceId && newSessionDraftSlot(source) === newSessionDraftSlot(destination)) return;
+    const holder = continuationHolderRef.current;
+    if (draftWorkspaceChangeBlocked(source.workspaceId, destination.workspaceId, holder.state)) {
+      setDestinationError("Remove workspace files before changing workspace.");
+      return;
+    }
+    try {
+      context.onChangeDestination(source, destination, snapshotComposerSessionState(holder.state));
+      holder.state = emptyNewTaskComposerState();
+      props.onDraftChange("");
+    } catch (error) {
+      setDestinationError(error instanceof Error ? error.message : "Could not change destination.");
+    }
+  };
+
   return (
     <div>
-    {submissionError ? <div role="alert" className="mb-2 text-sm text-red-11">{submissionError}</div> : null}
+    {destinationError ? <div role="alert" className="mb-2 text-sm text-red-11">{destinationError}</div> : null}
+    {submissionError ? <TaskRecovery title={submissionError.kind === "generic" ? "Couldn’t send your message" : submissionError.title}
+      description={failedSubmission ? "Your unsent message is saved below." : "Your draft is still here. Try sending it again."}
+      technicalDetails={submissionError.technicalDetails} /> : null}
     {failedSubmission ? <button type="button" disabled={Boolean(props.draft || attachments.length)} className="mb-2 text-sm disabled:opacity-50" onClick={() => {
       restoreComposer(failedSubmission);
       setFailedSubmission(null);
     }}>Clear the current draft to restore the unsent message</button> : null}
     <ReactSessionComposer
+      contextControl={context?.destination?.workspaceId && context.workspaceOptions ? <NewTaskDestinationMenu
+        destination={context.destination}
+        workspaces={context.workspaceOptions}
+        groups={groupsByWorkspace[context.destination.workspaceId]?.groups ?? []}
+        hasDraft={Boolean(props.draft || attachments.length)}
+        disabled={pendingSubmission !== null || failedSubmission !== null}
+        onChange={changeDestination}
+        onDiscard={() => {
+          attachments.forEach(revokeAttachmentPreview);
+          restoreComposer(emptyNewTaskComposerState());
+          setSubmissionError(null);
+          setDestinationError(null);
+        }}
+      /> : null}
       runModeControl={<WorkspaceRunModeMenu client={workspaceClient} workspaceId={workspaceId} busy={props.busy} />}
       draft={props.draft}
       mentions={mentions}
@@ -425,7 +520,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       busy={false}
       steering={false}
       submissionPreparing={props.busy || pendingSubmission !== null || failedSubmission !== null}
-      submissionPreparingLabel={failedSubmission ? "Restore the unsent message before sending" : "Creating conversation..."}
+      submissionPreparingLabel={failedSubmission ? "Restore the unsent message before sending" : "Send"}
       queuedCount={0}
       disabled={Boolean(context?.modelUnavailable)}
       disabledReasons={["send_model_unavailable"]}
@@ -480,8 +575,8 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       isSandboxWorkspace={context?.isSandboxWorkspace ?? false}
       onUploadInboxFiles={null}
       // The hero owns its own page padding, so the composer must fill the hero column and line up with the suggestion cards.
-      flush
-      draftScopeKey={`new-task:${workspaceId ?? "chat-first"}`}
+      flush={props.flush ?? true}
+      draftScopeKey={context?.draftOwnerKey || `new-task:${workspaceId ?? "chat-first"}`}
     />
     </div>
   );

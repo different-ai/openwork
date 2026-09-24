@@ -6,6 +6,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import * as requests from "../app/(den)/_lib/den-flow";
 import { GatewayUsageSection } from "../app/(den)/dashboard/_components/gateway-usage-section";
+import { GatewaySpendBreakdown } from "../app/(den)/dashboard/_components/gateway-spend-breakdown";
+import { gatewayUsageModelFamily, gatewayUsageTotals } from "../app/(den)/dashboard/_components/gateway-usage-data";
 import { assignSeriesColors } from "../app/(den)/dashboard/_features/analytics/series-colors";
 
 test("assigns distinct colors beyond 24 categories and preserves them through filtering and reordering", () => {
@@ -40,7 +42,7 @@ function fixture(): GatewayUsageResponse {
   } };
 }
 
-async function renderUsage(payload: GatewayUsageResponse, check: (container: HTMLDivElement) => Promise<void> | void) {
+async function renderUsage(payload: GatewayUsageResponse, check: (container: HTMLDivElement) => Promise<void> | void, node = <GatewayUsageSection orgId="org-fixture" />) {
   GlobalRegistrator.register();
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
   const container = document.createElement("div");
@@ -50,7 +52,7 @@ async function renderUsage(payload: GatewayUsageResponse, check: (container: HTM
   const request = spyOn(requests, "requestJson").mockResolvedValue({ response: Response.json(payload), payload, text: JSON.stringify(payload) });
   try {
     await act(async () => {
-      root.render(<QueryClientProvider client={client}><GatewayUsageSection orgId="org-fixture" /></QueryClientProvider>);
+      root.render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
     });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     await check(container);
@@ -128,4 +130,29 @@ test("hides the note when all queries are countable and preserves unknown histor
   const invalid = fixture();
   invalid.usage.uncountableRequests = { ok: 10, upstream_error: 0, upstream_unreachable: 0, client_aborted: 0, rejected: 0 };
   await renderUsage(invalid, (container) => expect(container.textContent).toContain("inconsistent daily totals"));
+});
+
+test("totals rank series by estimated cost, keep unknown cost distinct and decode model families", () => {
+  const totals = gatewayUsageTotals(fixture().usage);
+  expect(totals.map((row) => row.id)).toEqual(["model-a", "model-b", "unknown-used"]);
+  expect(totals[0]).toMatchObject({ costMicroUsd: 12345678901, tokens: 100, unpriced: false });
+  expect(totals[2]).toMatchObject({ costMicroUsd: 0, tokens: 10, unpriced: true });
+  expect(gatewayUsageModelFamily("model:616E7468726F706963:636C61756465")).toBe("anthropic");
+  expect(gatewayUsageModelFamily("member_123")).toBeNull();
+  expect(gatewayUsageModelFamily("model:ZZ:00")).toBeNull();
+});
+
+test("spend breakdown lists who spends it with person links and models by share of spend", async () => {
+  const people = fixture();
+  people.usage.groupBy = "person";
+  await renderUsage(people, (container) => {
+    const peopleCard = container.querySelector('[data-testid="gateway-spend-people"]');
+    const rows = peopleCard?.querySelectorAll('[data-testid="gateway-spend-people-row"]') ?? [];
+    expect(rows).toHaveLength(3);
+    expect(rows[0]?.textContent).toContain("Model A");
+    expect(rows[0]?.textContent).toContain("100% of spend");
+    expect(rows[0]?.querySelector("a")?.getAttribute("href")).toBe("/dashboard/ai-gateway/people/model-a");
+    expect(rows[2]?.textContent).toContain("Unknown");
+    expect(container.querySelector('[data-testid="gateway-spend-models"]')?.textContent).toContain("Models people use");
+  }, <GatewaySpendBreakdown orgId="org-fixture" orgSlug={null} />);
 });

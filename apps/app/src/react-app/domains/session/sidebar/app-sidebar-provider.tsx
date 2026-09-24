@@ -4,6 +4,7 @@ import type { WorkspaceConnectionState } from "../../../../app/types";
 import type { SessionNumberShortcutOs } from "../../../shell/session-number-shortcuts";
 
 export type SidebarContextValue = {
+  draftScope?: string | null;
   selectedWorkspaceId: string;
   selectedSessionId: string | null;
   developerMode: boolean;

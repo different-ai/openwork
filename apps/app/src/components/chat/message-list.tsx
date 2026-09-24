@@ -1,6 +1,5 @@
 "use memo";
 
-import { VisualizationTool } from "@/components/tools/visualization-tool"
 import * as React from "react"
 import {
   AlertTriangle,
@@ -33,11 +32,11 @@ import { t } from "@/i18n"
 import { useOpenTargets } from "@/lib/target-provider"
 import { openTargetFromUrl } from "@/react-app/domains/session/artifacts/open-target"
 import { presentOpencodeSessionError, sessionErrorPresentationFromUIMessage } from "@/react-app/domains/session/sync/session-error"
+import { TaskRecovery } from "./task-recovery"
 import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
 import { EditTool } from "@/components/tools/edit"
-import { EnvVarRequestTool } from "@/components/tools/env-var-request"
 import { ReadFileTool, WriteFileTool } from "@/components/tools/file"
 import { GlobTool } from "@/components/tools/glob"
 import { GrepTool } from "@/components/tools/grep"
@@ -46,7 +45,6 @@ import {
   isAutomationProposalToolPart,
   OpenWorkAutomationProposalTool,
 } from "@/components/tools/openwork-automation-proposal"
-import { OpenWorkSessionCreateTool } from "@/components/tools/openwork-session-create"
 import { QuestionTool } from "@/components/tools/question"
 import { SkillTool } from "@/components/tools/skill"
 import { TodoWriteTool } from "@/components/tools/todowrite"
@@ -88,8 +86,11 @@ import {
 import { Tool } from "@/components/ui/tool"
 import { CapabilityCallLine } from "@/components/chat/capability-call-line"
 import { CodeModeTool } from "@/components/chat/code-mode-tool"
+import { ConnectionCard } from "@/components/chat/connection-card"
+import { connectionFromChatToolPart } from "@/components/tools/error-attribution"
+import { isReservedConnectionQuestion, type ChatConnectionDecisionBinding } from "@/react-app/domains/session/surface/mcp-chat-reconnect"
 import { codeModeToolCalls } from "@/lib/code-mode-tools"
-import { hasPreservedMcpAppResult, McpAppFrame } from "@/components/chat/mcp-app-frame"
+import { hasPreservedMcpAppResult, isNativeConnectionAppLaunch, McpAppFrame } from "@/components/chat/mcp-app-frame"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
 import { SubagentRunLine } from "@/components/chat/subagent-run-line"
 import { ToolAggregateGroup } from "@/components/chat/tool-aggregate-group"
@@ -101,7 +102,6 @@ import {
   isApplyPatchToolPart,
   isBashToolPart,
   isEditToolPart,
-  isEnvVarRequestToolPart,
   isGlobToolPart,
   isGrepToolPart,
   isLspToolPart,
@@ -187,11 +187,46 @@ class ToolMessage extends React.Component<ToolMessageProps, { failed: boolean }>
   }
 }
 
+/**
+ * Tool calls in the current assistant turn that present as the native
+ * connection card. One card per connection: the latest report wins, and a
+ * pending native question pins the card to the call it is bound to. Earlier
+ * reports for the same connection stay quiet sentence lines.
+ */
+const ConnectionCardPartsContext = React.createContext<ReadonlySet<string>>(new Set())
+
+function connectionCardPartIds(
+  items: readonly UIMessageWithIndex[],
+  getConnectionDecision: ((toolCallId: string) => ChatConnectionDecisionBinding | null) | undefined,
+): Set<string> {
+  const latest = new Map<string, string>()
+  const bound = new Map<string, string>()
+  for (const item of items) {
+    if (item.message.role !== "assistant" || isSessionErrorMessage(item.message)) continue
+    for (const part of item.message.parts) {
+      if (part.type !== "dynamic-tool" || (part.state !== "output-available" && part.state !== "output-error")) continue
+      const decision = getConnectionDecision?.(part.toolCallId) ?? null
+      const found = connectionFromChatToolPart(part, { allowDiscovery: decision !== null })
+      if (!found) continue
+      if (decision) bound.set(found.connection.connectionId, part.toolCallId)
+      else latest.set(found.connection.connectionId, part.toolCallId)
+    }
+  }
+  return new Set([...latest.entries()].map(([connectionId, toolCallId]) => bound.get(connectionId) ?? toolCallId).concat([...bound.values()]))
+}
+
+/** The reserved native connection question is answered through the card, never as a tool row. */
+function isReservedConnectionQuestionPart(part: ToolUIPart | DynamicToolUIPart): boolean {
+  return part.type === "dynamic-tool" && /(?:^|_)question$/.test(part.toolName) && isReservedConnectionQuestion(part.input)
+}
+
 const ToolMessageInner = ({ part }: ToolMessageProps) => {
-  const { connectorIdentities, onMcpReconnect, onMcpReopenAuthorization, onMcpRetry } = useMessageList()
+  const { connectorIdentities, onMcpReconnect, onMcpReopenAuthorization, connectionQuestionToolCallId, getConnectionDecision } = useMessageList()
   const parentActive = React.useContext(ParentRunActiveContext)
   const resolveLifecycle = useCurrentToolLifecycleResolver()
   const lifecycle = resolveLifecycle(part.toolCallId, isToolPartInFlight(part))
+  const connectionCardParts = React.useContext(ConnectionCardPartsContext)
+  if (part.toolCallId === connectionQuestionToolCallId || isReservedConnectionQuestionPart(part)) return null
 
   // Delegated work has its own lifecycle, even after a parent follow-up/error.
   if (isTaskToolPart(part)) return <SubagentRunLine part={part} parentActive={parentActive} />
@@ -204,7 +239,7 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   if (lifecycle === "waiting") {
     return (
       <div
-        className="flex items-start gap-2 rounded-md border border-amber-7 bg-amber-2 px-3 py-2 text-sm text-amber-12"
+        className="flex items-start gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-foreground"
         data-tool-lifecycle="waiting"
         role="status"
       >
@@ -217,24 +252,15 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     )
   }
 
-  if (lifecycle === "interrupted") {
+  const statusUnknown = isToolPartInFlight(part) && (lifecycle === "interrupted" || (!lifecycle && !parentActive))
+  if (statusUnknown) {
     return (
-      <div
-        className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-        data-tool-lifecycle="interrupted"
-        role="alert"
-      >
-        <AlertTriangle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-        <div>
-          <div className="font-medium">Task interrupted</div>
-          <div className="text-xs text-destructive/80">This step stopped before it finished. Retry to continue.</div>
-        </div>
+      <div className="text-sm text-muted-foreground" data-tool-lifecycle="unknown">
+        {part.type === "dynamic-tool" ? (
+          <CapabilityCallLine part={part} connector={resolveConnectorToolIdentity(part, connectorIdentities)} statusUnknown />
+        ) : "Tool activity — status unavailable"}
       </div>
     )
-  }
-
-  if (part.type === "dynamic-tool" && part.toolName === "openwork_visualization") {
-    return <VisualizationTool part={part} />
   }
 
   if (isBashToolPart(part)) {
@@ -289,16 +315,14 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     return <QuestionTool part={part} />
   }
 
-  if (isEnvVarRequestToolPart(part)) {
-    return <EnvVarRequestTool part={part} />
-  }
-
-  if (part.type === "dynamic-tool" && part.toolName === "openwork_session_create") {
-    return <OpenWorkSessionCreateTool part={part} />
-  }
-
   if (part.type === "dynamic-tool" && isAutomationProposalToolPart(part)) {
     return <OpenWorkAutomationProposalTool part={part} />
+  }
+
+  // OpenWork's own connection reports render as the native card: the host is
+  // the presentation; the Den App remains for external hosts.
+  if (part.type === "dynamic-tool" && connectionCardParts.has(part.toolCallId)) {
+    return <ConnectionCard part={part} allowDiscovery={Boolean(getConnectionDecision?.(part.toolCallId))} />
   }
 
   // Failed calls use the same sentence line with the "failures are
@@ -310,7 +334,6 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
         connector={resolveConnectorToolIdentity(part, connectorIdentities)}
         onReconnect={hasPreservedMcpAppResult(part) ? undefined : onMcpReconnect}
         onReopenAuthorization={onMcpReopenAuthorization}
-        onRetry={onMcpRetry}
       />
     )
   }
@@ -320,7 +343,6 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
       toolPart={part}
       onReconnect={onMcpReconnect}
       onReopenAuthorization={onMcpReopenAuthorization}
-      onRetry={onMcpRetry}
     />
   )
 }
@@ -936,11 +958,13 @@ const MessageComponent = React.memo(
         <ErrorMessage
           error={getMessagesText([message]) || "Session failed"}
           description={presentation?.description}
-          showDescriptionOnResume={presentation?.kind === "provider-incomplete"}
+          showDescriptionOnResume={presentation?.kind !== "aborted" && presentation?.kind !== "provider-timeout"}
           resumePrompt={presentation?.recoveryPrompt}
+          canRetry={isLastMessage && !isStreaming}
           technicalDetails={presentation?.technicalDetails}
-          gatewayConnectUrl={presentation?.kind === "gateway-auth-required" ? presentation.connectUrl ?? null : undefined}
+          gatewayConnectUrl={presentation?.kind === "gateway-auth-required" || presentation?.kind === "provider-credentials" ? presentation.connectUrl ?? null : undefined}
           gatewaySelectionRequired={presentation?.kind === "gateway-selection-required"}
+          changeModel={presentation !== null && ["provider-access-denied", "provider-unavailable", "rate-limited", "conversation-too-long", "attachment-unsupported"].includes(presentation.kind)}
         />
       )
     }
@@ -1036,6 +1060,7 @@ interface ErrorMessageProps {
   showDescriptionOnResume?: boolean
   /** Set only for interrupted runs that can resume. */
   resumePrompt?: string | null
+  canRetry?: boolean
   /** Error type, status, provider, code, response body — for bug reports and support. */
   technicalDetails?: string | null
   /**
@@ -1045,149 +1070,35 @@ interface ErrorMessageProps {
    */
   gatewayConnectUrl?: string | null
   gatewaySelectionRequired?: boolean
+  changeModel?: boolean
 }
 
-/**
- * Details are worth a disclosure only when they say more than the card
- * already does. A bare string error yields "Message: <same text>", which
- * would open to nothing new.
- */
-function hasExtraTechnicalDetails(error: string | null, details: string | null | undefined): details is string {
-  const text = details?.trim()
-  if (!text) return false
-  if (text === error?.trim()) return false
-  return text.replace(/^Message:\s*/, "") !== error?.trim()
-}
-
-function SessionErrorTechnicalDetails({ details, tone }: { details: string; tone: "card" | "line" }) {
-  const [open, setOpen] = React.useState(false)
-  const [copied, setCopied] = React.useState(false)
-  const onCopy = React.useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(details)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // ignore clipboard failures
-    }
-  }, [details])
-
-  return (
-    <div className={cn("flex min-w-0 w-full flex-col", tone === "card" && "border-t border-destructive/20 pt-1.5")}>
-      <button
-        type="button"
-        data-testid="session-error-details-toggle"
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
-        className="flex w-fit min-w-0 cursor-pointer items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ChevronRight
-          aria-hidden="true"
-          className={cn("size-3 shrink-0 transition-transform duration-150", open && "rotate-90")}
-        />
-        <span className="shrink-0">Technical details</span>
-      </button>
-      {open ? (
-        <div
-          data-testid="session-error-details"
-          className="mt-1.5 flex min-w-0 flex-col gap-1.5 rounded-lg bg-muted p-2 text-xs"
-        >
-          <pre className="max-h-60 overflow-auto whitespace-pre-wrap wrap-break-word font-mono text-foreground/90">
-            {details}
-          </pre>
-          <button
-            type="button"
-            onClick={() => void onCopy()}
-            className="flex w-fit cursor-pointer items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-          >
-            {copied ? <Check aria-hidden="true" className="size-3" /> : <Copy aria-hidden="true" className="size-3" />}
-            {copied ? "Copied" : "Copy details"}
-          </button>
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function ErrorMessage({ error, description, showDescriptionOnResume, resumePrompt, technicalDetails, gatewayConnectUrl, gatewaySelectionRequired }: ErrorMessageProps) {
+function ErrorMessage({ error, description, showDescriptionOnResume, resumePrompt, canRetry = true, technicalDetails, gatewayConnectUrl, gatewaySelectionRequired, changeModel }: ErrorMessageProps) {
   const { onResumeInterrupted, developerMode, dispatchAction, sessionId } = useMessageList()
   const selection = error?.includes("gateway_selection_required") ? presentOpencodeSessionError(error) : null
   const displayError = selection?.title ?? error
   const displayDescription = selection?.description ?? description
   const displayDetails = selection?.technicalDetails ?? technicalDetails
-  // Status codes, provider names, and response bodies are for developers,
-  // admins, and support — not the plain-language card end users see. They
-  // surface only with Developer mode (Settings → Advanced), like the
-  // session debug panel.
-  const details = developerMode && hasExtraTechnicalDetails(displayError, displayDetails) ? displayDetails : null
-
-  // A resumable interruption is a pause, not a failure: it renders as a
-  // quiet status line (like "Working 12s"), with Resume as the emphasis.
-  if (resumePrompt && onResumeInterrupted) {
-    return (
-      <Message className="not-prose mx-auto flex w-full max-w-3xl flex-col items-start gap-1 px-2 md:px-10">
-        <div
-          data-testid="session-error-interrupted"
-          className="flex min-w-0 items-center gap-2 py-1 text-sm text-muted-foreground"
-        >
-          <CirclePause aria-hidden="true" className="size-4 shrink-0" />
-          <span className="min-w-0 truncate">{error}</span>
-          <span aria-hidden="true" className="text-muted-foreground/60">·</span>
-          <button
-            type="button"
-            data-testid="session-error-resume"
-            onClick={() => onResumeInterrupted(resumePrompt)}
-            className="shrink-0 cursor-pointer font-medium text-foreground underline-offset-2 transition-colors hover:underline"
-          >
-            {t("session.resume_interrupted")}
-          </button>
-        </div>
-        {showDescriptionOnResume && description ? (
-          <p data-testid="session-error-interruption-warning" className="text-sm text-muted-foreground whitespace-pre-wrap">
-            {description}
-          </p>
-        ) : null}
-        {details ? <SessionErrorTechnicalDetails details={details} tone="line" /> : null}
-      </Message>
-    )
-  }
-
+  const resumable = Boolean(resumePrompt && onResumeInterrupted)
   return (
-    <Message className="not-prose mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-0 md:px-10">
-      <div className="group flex w-full flex-col items-start gap-0">
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
-          <div className="flex flex-row items-start gap-2">
-            <AlertTriangle aria-hidden="true" size={16} className="mt-0.5 shrink-0 text-destructive" />
-            <div className="flex flex-col gap-1">
-              <p className="whitespace-pre-wrap text-destructive">{displayError}</p>
-              {displayDescription && (!resumePrompt || showDescriptionOnResume) ? (
-                <p className="text-sm text-destructive/80 whitespace-pre-wrap">{displayDescription}</p>
-              ) : null}
-            </div>
-          </div>
-          {details ? <SessionErrorTechnicalDetails details={details} tone="card" /> : null}
-          {gatewaySelectionRequired || selection ? (
-            <Button variant="outline" size="sm" className="self-start" data-testid="session-error-gateway-selection"
-              onClick={() => window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { sessionId, initialTab: "available" } }))}>
-              Choose group and credential set
-            </Button>
-          ) : null}
-          {gatewayConnectUrl !== undefined ? (
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="session-error-gateway-connect"
-              className="self-start"
-              onClick={() => {
-                dispatchAction({ target: "settings", action: "open", section: "providers" })
-              }}
-            >
-              Connect
-            </Button>
-          ) : null}
-        </div>
-      </div>
-    </Message>
+    <TaskRecovery title={displayError ?? "Task failed"} state={resumable ? "paused" : "failed"}
+      testId={resumable ? "session-error-interrupted" : undefined}
+      description={showDescriptionOnResume && displayDescription
+        ? <span data-testid="session-error-interruption-warning">{displayDescription}</span>
+        : !resumePrompt ? displayDescription : null}
+      technicalDetails={developerMode ? displayDetails : null}
+      onRetry={canRetry && resumable && resumePrompt ? () => onResumeInterrupted?.(resumePrompt) : undefined}
+      retryTestId="session-error-resume"
+      actions={gatewaySelectionRequired || selection || changeModel || gatewayConnectUrl !== undefined ? <>
+        {gatewaySelectionRequired || selection ? <Button variant="ghost" size="xs" data-testid="session-error-gateway-selection"
+          onClick={() => window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { sessionId, initialTab: "available" } }))}>
+          Choose group and credential set
+        </Button> : null}
+        {changeModel && !gatewaySelectionRequired && !selection ? <Button variant="ghost" size="xs"
+          onClick={() => window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { sessionId, initialTab: "available" } }))}>Change model</Button> : null}
+        {gatewayConnectUrl !== undefined ? <Button variant="ghost" size="xs" data-testid="session-error-gateway-connect"
+          onClick={() => dispatchAction({ target: "settings", action: "open", section: "providers" })}>Connect</Button> : null}
+      </> : null} />
   )
 }
 
@@ -1195,21 +1106,8 @@ interface RetryMessageProps {
   status: RetryStatus
 }
 
-function RetryActionButton(props: { label: string; onClick: () => void }) {
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="h-7 border-amber-500/70 bg-amber-50 text-xs text-amber-950 hover:bg-amber-100"
-      onClick={props.onClick}
-    >
-      {props.label}
-    </Button>
-  )
-}
-
 const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
-  const { dispatchAction } = useMessageList()
+  const { dispatchAction, developerMode } = useMessageList()
   const [seconds, setSeconds] = React.useState(() => retryDelaySeconds(status))
 
   React.useEffect(() => {
@@ -1230,43 +1128,16 @@ const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
     : `Retrying · attempt ${status.attempt}`
   const action = status.action
   const freeModelLimit = action?.reason === "free_tier_limit"
+  const presentation = presentOpencodeSessionError({ name: "APIError", data: { message: status.message } })
 
   return (
-    <Message className="not-prose mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-0 md:px-10">
-      <div className="group flex w-full flex-col items-start gap-0">
-        <div className="text-foreground flex min-w-0 flex-1 flex-col gap-2 rounded-lg border-2 border-amber-300 bg-amber-300/20 px-3 py-2">
-          <div className="flex items-start gap-2">
-            <LoaderCircle size={16} className="mt-0.5 shrink-0 animate-spin text-amber-700" />
-            <div className="min-w-0 space-y-1">
-              <p className="whitespace-pre-wrap text-sm font-medium text-amber-900">
-                {freeModelLimit ? "The free starter model is busy right now" : status.message}
-              </p>
-              <p className="text-xs text-amber-800">{info}</p>
-            </div>
-          </div>
-          {action ? (
-            <div className="ml-6 space-y-1 border-t border-amber-400/60 pt-2">
-              <p className="text-xs font-medium text-amber-950">
-                {freeModelLimit ? "Free model limit reached" : action.title}
-              </p>
-              <p className="text-xs text-amber-900">
-                {freeModelLimit
-                  ? "OpenWork will keep retrying. To keep working now, connect your own model provider."
-                  : action.message}
-              </p>
-              {freeModelLimit ? (
-                <RetryActionButton
-                  label="Connect a model provider"
-                  onClick={() => dispatchAction({ target: "settings", action: "open", section: "providers" })}
-                />
-              ) : action.link ? (
-                <RetryActionButton label={action.label} onClick={openDesktopUrl.bind(null, action.link)} />
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </Message>
+    <TaskRecovery state="retrying" testId="session-retrying"
+      title={`${(freeModelLimit ? "The free starter model is busy right now" : action?.title ?? presentation.title).replace(/[.!…]+$/, "")}. Retrying…`}
+      description={freeModelLimit ? "To keep working now, connect your own model provider." : action?.message}
+      technicalDetails={[info, ...(developerMode ? [presentation.technicalDetails] : [])].join("\n")}
+      actions={freeModelLimit ? <Button variant="ghost" size="xs"
+        onClick={() => dispatchAction({ target: "settings", action: "open", section: "providers" })}>Connect a model provider</Button>
+        : action?.link ? <Button variant="ghost" size="xs" onClick={openDesktopUrl.bind(null, action.link)}>{action.label}</Button> : null} />
   )
 })
 
@@ -1336,6 +1207,7 @@ function collectMcpAppParts(items: UIMessageWithIndex[]): DynamicToolUIPart[] {
         part.type === "dynamic-tool"
         && (part.state === "output-available" || part.state === "output-error")
         && hasPreservedMcpAppResult(part)
+        && !isNativeConnectionAppLaunch(part)
       ) {
         parts.set(part.toolCallId, part)
       }
@@ -1349,7 +1221,8 @@ function MessageGroup({
   isLastGroup,
   isStreaming,
 }: AssistantMessageGroupProps) {
-  const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, showThinking, readOnly } = useMessageList()
+  const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, showThinking, readOnly, getConnectionDecision } = useMessageList()
+  const connectionCardParts = React.useMemo(() => connectionCardPartIds(items, getConnectionDecision), [items, getConnectionDecision])
   const lastItem = items[items.length - 1]
   // Branch/revert must target a real server-side message id. Synthetic
   // client-side messages (e.g. session errors) don't exist on the server and
@@ -1488,6 +1361,7 @@ function MessageGroup({
 
   return (
     <DevProfiler id={`MessageGroup:${lastItem.message.id}`}>
+      <ConnectionCardPartsContext.Provider value={connectionCardParts}>
       <div className="flex flex-col gap-2 group/message-group">
       {/* The scroll area keeps the same 8px rhythm the parts inside a single
           message use, so a step row is spaced identically whether or not a
@@ -1553,6 +1427,7 @@ function MessageGroup({
         </div>
       )}
       </div>
+      </ConnectionCardPartsContext.Provider>
     </DevProfiler>
   )
 }
@@ -1598,6 +1473,8 @@ interface MessageListProps {
   retryStatus?: RetryStatus | null
   syncHealth?: RunSyncHealth
   viewport?: MessageListViewport
+  /** The turn's error is explained elsewhere (a confirmed usage block); do not render it again. */
+  sessionErrorHandled?: boolean
 }
 
 export function shouldShowMessageListLoading(
@@ -1614,7 +1491,7 @@ export function shouldShowRunReconnecting(status: ThreadStatus, syncDegraded: bo
   return status === "submitted" || status === "streaming" || status === "retrying"
 }
 
-export function MessageList({ messages, messageIdReplacements, status, activityStatus, retryStatus, syncHealth, viewport }: MessageListProps) {
+export function MessageList({ messages, messageIdReplacements, status, activityStatus, retryStatus, syncHealth, viewport, sessionErrorHandled = false }: MessageListProps) {
   const { workspaceId, sessionId } = useMessageList()
   const workspace = useWorkspaceMaybe()
   const tasks = React.useMemo(() => activeDelegatedTasks(messages), [messages])
@@ -1743,7 +1620,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
         {showLoading && <LoadingMessage elapsedSeconds={runElapsedSeconds} starting={status === "submitted"} />}
         {showReconnecting && <ReconnectingMessage lastConfirmedAt={syncHealth?.lastConfirmedAt ?? null} />}
         {retryStatus ? <RetryMessage status={retryStatus} /> : null}
-        {error && !hasSessionErrorMessage ? <ErrorMessage error={error} /> : null}
+        {error && !hasSessionErrorMessage && !sessionErrorHandled ? <ErrorMessage error={error} /> : null}
       </ProgressiveMessageList>
     </CurrentToolLifecycleProvider>
     </ParentRunActiveContext.Provider>

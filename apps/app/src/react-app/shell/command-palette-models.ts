@@ -2,7 +2,6 @@ import type { ModelBehaviorOption, ModelOption, ModelRef } from "@/app/types";
 
 export type CommandPaletteMode =
   | "root"
-  | "sessions"
   | "split-sessions"
   | "accessible-items"
   | "agents"

@@ -410,7 +410,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
       ) : (
         <section className="grid gap-5 rounded-[28px] border border-gray-200 bg-white p-6">
           {!canManage ? (
-            <div className="rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
+            <div className="rounded-[22px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-[13px] text-[var(--dls-text-primary)]">
               Read-only: owners and super-admins can edit desktop policies.
             </div>
           ) : null}
@@ -472,7 +472,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
                 <label
                   key={mode.id}
                   className={`flex items-start gap-3 rounded-[22px] border px-5 py-4 ${
-                    draft.mode === mode.id ? "border-gray-900 bg-white" : "border-gray-200 bg-gray-50"
+                    draft.mode === mode.id ? "border-[var(--dls-border)] bg-[var(--dls-active)]" : "border-gray-200 bg-gray-50"
                   }`}
                 >
                   <input

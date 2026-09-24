@@ -41,6 +41,7 @@ import type { GatewayCredential, GatewayProvider, LoadProviderCredential, Resolv
 import { isEventStreamContentType, isJsonContentType, trackStream, readBoundedBody, RequestBodyLimitError, upstreamLifetime } from "./relay.js"
 import { env } from "./env.js"
 import { createRequestLogRecorder } from "./request-log.js"
+import { checkGatewayUsage, type CheckGatewayUsage } from "./usage-limits.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
 import { createAnthropicMessagesSseUsageParser, parseAnthropicMessagesJsonUsage } from "./usage/anthropic-messages.js"
 import {
@@ -68,6 +69,7 @@ export type LoadGatewayProvider = (input: {
 }) => Promise<GatewayProvider | null>
 
 export type GatewayDependencies = {
+  checkUsage: CheckGatewayUsage
   fetch: typeof fetch
   insertRequestLog: InsertRequestLog
   updateRequestLog?: RequestLogRecorderDependencies["updateRequestLog"]
@@ -321,6 +323,8 @@ async function prepareRequest(request: Request, upstream: ResolvedUpstream, prov
         return /^messages(?:\/count_tokens)?$/.test(operation)
       case "google_vertex_anthropic":
         return operation === "messages"
+      case "mistral":
+        return /^(?:chat\/completions|embeddings)$/.test(operation)
       case "openai":
       case "openai_compatible":
       case "azure":
@@ -331,7 +335,7 @@ async function prepareRequest(request: Request, upstream: ResolvedUpstream, prov
   if (["openai-organization", "openai-project", "x-amzn-bedrock-guardrailidentifier", "x-amzn-bedrock-guardrailversion"].some((name) => request.headers.has(name))) {
     return invalid(400, "unsupported_gateway_resource", "Caller-selected provider accounts and resources are not authorized by a Gateway model grant.")
   }
-  if ([...url.searchParams.keys()].some((name) => name.toLowerCase() === GATEWAY_GRANT_HEADER || /model|deployment|preset|fallback|route/i.test(name))) {
+  if ([...new URL(request.url).searchParams.keys()].some((name) => name.toLowerCase() === GATEWAY_GRANT_HEADER || /model|deployment|preset|fallback|route/i.test(name))) {
     return invalid(400, "unsupported_model_selection", "Model selection in query parameters is not supported.")
   }
   let bytes: Uint8Array<ArrayBuffer>
@@ -391,7 +395,7 @@ function rewriteSelectedModel(prepared: PreparedRequest, upstream: ResolvedUpstr
     }
     modified = true
   }
-  if (upstream.protocol === "openai_chat" && json.stream === true) {
+  if (upstream.protocol === "openai_chat" && upstream.family !== "mistral" && json.stream === true) {
     json.stream_options = { ...(isJsonObject(json.stream_options) ? json.stream_options : {}), include_usage: true }
     modified = true
   }
@@ -419,10 +423,35 @@ function buildUpstreamHeaders(request: Request, family: ProtocolFamily, openwork
 function relayHeaders(upstream: Response, openworkRequestId: string) {
   const headers = new Headers()
   upstream.headers.forEach((value, name) => {
-    if (!droppedResponseHeaders.has(name.toLowerCase())) headers.append(name, value)
+    if (!droppedResponseHeaders.has(name.toLowerCase()) && !name.toLowerCase().startsWith("x-openwork-")) headers.append(name, value)
   })
   headers.set("x-openwork-request-id", openworkRequestId)
   return headers
+}
+
+async function relayErrorResponse(upstream: Response, protocol: GatewayRequestProtocol, headers: Headers, recorder: RequestLogRecorder, lifetime: ReturnType<typeof upstreamLifetime>) {
+  try {
+    const bytes = await readBoundedBody({ body: upstream.body, signal: lifetime.signal }, 1_048_576)
+    let body: unknown
+    try { body = JSON.parse(new TextDecoder().decode(bytes)) } catch { body = null }
+    const usage = parseJsonUsage(protocol, body)
+    if (usage) recordUsage(recorder, usage, "json")
+    const pending: unknown[] = [body]
+    while (pending.length) {
+      const value = pending.pop()
+      if (Array.isArray(value)) { pending.push(...value); continue }
+      if (!isJsonObject(value)) continue
+      if (value.source === "openwork_gateway") delete value.source
+      if (typeof value.code === "string" && value.code.startsWith("openwork_gateway_")) value.code = "upstream_error"
+      if (value.type === "usage_limit_error" || value.type === "accounting_unavailable_error") value.type = "upstream_error"
+      for (const child of Object.values(value)) if (typeof child === "object" && child !== null) pending.push(child)
+    }
+    void recorder.finish({ status: upstream.status, outcome: "upstream_error", upstreamRequestId: upstreamRequestId(upstream.headers), responseBytes: bytes.length })
+    return new Response(body === null ? bytes : JSON.stringify(body), { status: upstream.status, headers })
+  } catch {
+    void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode: "upstream_error_body_unavailable" })
+    return gatewayError(upstream.status, "upstream_error", "The provider rejected this request.")
+  } finally { lifetime.dispose() }
 }
 
 function upstreamRequestId(headers: Headers) {
@@ -476,8 +505,9 @@ function createStreamUsageParser(protocol: GatewayRequestProtocol, contentType: 
   return null
 }
 
-function recordUsage(recorder: RequestLogRecorder, usage: ParsedUsage, source: "stream" | "json") {
+function recordUsage(recorder: RequestLogRecorder, usage: ParsedUsage, source: "stream" | "json", complete = true) {
   recorder.setUsage({
+    complete,
     usageSource: usage.found ? source : "missing",
     upstreamModel: usage.model,
     inputTokens: usage.inputTokens,
@@ -509,7 +539,7 @@ function relayStreamResponse(upstream: Response, protocol: GatewayRequestProtoco
   let responseBytes = 0
   const finish = (outcome: GatewayRequestOutcome) => {
     try {
-      if (parser) recordUsage(recorder, parser.result(), isJsonContentType(upstream.headers.get("content-type")) ? "json" : "stream")
+      if (parser) recordUsage(recorder, parser.result(), isJsonContentType(upstream.headers.get("content-type")) ? "json" : "stream", parser.complete?.() ?? false)
     } catch { /* Malformed accounting must not suppress completion. */ }
     void recorder.finish({
       status: upstream.status,
@@ -550,6 +580,7 @@ function restOfPath(pathname: string, inferenceProviderId: string) {
 
 export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRouteDependencies) {
   const dependencies: GatewayDependencies = {
+    checkUsage: input.checkUsage ?? checkGatewayUsage,
     fetch: input.fetch,
     insertRequestLog: input.insertRequestLog,
     updateRequestLog: input.updateRequestLog,
@@ -598,6 +629,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     let selection: GatewayGrantSelection | null = null
     const headerModel = c.req.header(GATEWAY_REQUEST_MODEL_HEADER)
     const modelHint = parseGatewayModelAlias(headerModel) ? headerModel ?? null : null
+    let gatewayUsage: import("@openwork-ee/den-db/gateway-usage-limits").GatewayUsageSnapshot | undefined
     const recorder = createRequestLogRecorder({ insertRequestLog: dependencies.insertRequestLog, updateRequestLog: dependencies.updateRequestLog, reporter: dependencies.reporter, now: dependencies.now })
     const startRecorder = (state: {
       protocol: GatewayRequestProtocol
@@ -631,6 +663,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         credentialSetId: loggedSelection?.row.credentialSet.id ?? null,
         accessGrantId: loggedSelection?.row.grant.id ?? null,
         requestBytes: state.requestBytes,
+        gatewayUsage,
+        signal: c.req.raw.signal,
         startedAt,
       })
     }
@@ -695,7 +729,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       loadProviderCredential: dependencies.loadProviderCredential,
       refreshGoogleOauthToken: dependencies.refreshGoogleOauthToken,
       mintGcpAccessToken: dependencies.mintGcpAccessToken,
-      now: startedAt,
+      clock: dependencies.now,
     })
     if (credential.kind !== "secret" && credential.kind !== "aws_keys") {
       startRecorder({
@@ -721,6 +755,12 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
           response.headers.set("x-openwork-auth-required", "1")
           return reject(response, "member_auth_required", "Member credential required")
         }
+        case "configuration_required":
+          return reject(
+            gatewayError(502, "provider_misconfigured", "The Google OAuth client requires administrator repair. Contact your organization administrator.", { provider_id: provider.id }),
+            "provider_misconfigured",
+            "Google OAuth client configuration requires repair",
+          )
         case "org_credential_missing":
           return reject(
             gatewayError(502, "provider_credential_missing", "No active credential is configured for this inference provider.", { provider_id: provider.id }),
@@ -748,13 +788,26 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       }
     }
 
-    const auth = materializeAuth(credential, provider, resolved.family, startedAt)
+    const auth = materializeAuth(credential, provider, resolved.family, dependencies.now())
     if ("error" in auth) {
       startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: prepared.requestedModel, stream: prepared.stream, credentialId: credential.credentialId })
       return reject(gatewayError(502, "provider_misconfigured", auth.error, { provider_id: provider.id }), "provider_misconfigured", "Misconfigured inference provider")
     }
 
     if (auth.kind === "signer") prepared.url.host = auth.host
+    const usageRejection = await dependencies.checkUsage({
+      organizationId: identity.organizationId,
+      memberId: identity.orgMembershipId,
+      requestId: openworkRequestId,
+      startedAt,
+      onAdmission: (snapshot) => { gatewayUsage = snapshot },
+      protocol: resolved.protocol,
+      providerId: provider.provider_id,
+      modelId: selection.upstreamModel,
+      upstreamOrigin: prepared.url.origin,
+      upstreamPath: prepared.url.pathname,
+      deferred: prepared.json?.background === true || prepared.json?.async === true || prepared.json?.deferred === true,
+    })
     startRecorder({
       protocol: resolved.protocol,
       url: prepared.url,
@@ -771,6 +824,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     if (await recorder.whenStarted?.() === false) {
       return reject(gatewayError(503, "request_log_unavailable", "Inference accounting is temporarily unavailable."), "request_log_unavailable", "Request log unavailable")
     }
+
+    if (usageRejection) return reject(usageRejection, usageRejection.headers.get("x-openwork-error-code") ?? "openwork_gateway_accounting_unavailable", "Gateway usage admission rejected")
 
     // Recheck after accounting awaits. Never reselect or materialize a fallback.
     const currentSelection = selectGatewayGrant(await dependencies.loadGatewayAccess(scope), prepared.requestedModel, selection.row.grant.id)
@@ -825,7 +880,23 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       })
     }
 
+    if ((resolved.family === "google_vertex" || resolved.family === "google_vertex_anthropic") && (upstream.status === 401 || upstream.status === 403)) {
+      const errorCode = upstream.status === 401 ? "provider_authentication_failed" : "provider_permission_denied"
+      const message = upstream.status === 401
+        ? selection.row.credentialSet.credential_mode === "member"
+          ? "Google rejected the provider credential. Sign in again; if the problem persists, contact your organization administrator."
+          : "Google rejected the provider credential. Ask your organization administrator to check provider authentication."
+        : "Google Cloud denied access. Ask your administrator to check project IAM and model access."
+      const response = gatewayError(upstream.status, errorCode, message, { provider_id: provider.id })
+      response.headers.set("x-openwork-request-id", openworkRequestId)
+      void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode })
+      lifetime.dispose()
+      await upstream.body?.cancel().catch(() => {})
+      return response
+    }
+
     const responseHeaders = relayHeaders(upstream, openworkRequestId)
+    if (!upstream.ok) return relayErrorResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
     return relayStreamResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
   }
 

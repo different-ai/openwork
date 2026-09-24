@@ -114,6 +114,11 @@ test("automatic reviews accumulate records but preserve manual, legacy and unava
     });
     assert.equal(cumulative.posted, true);
     assert.deepEqual(counts, [1, 2]);
+    const replacement = await publishReviewPr({ ...options, replaceAutomatic: true }, {
+      exec: recordingExec(calls, [{ databaseId: 77, body: cumulative.markdown }]), upload,
+    });
+    assert.equal(replacement.posted, true);
+    assert.deepEqual(counts, [1, 2, 1]);
     const manual = await publishReviewPr({ ...options, automatic: false }, { exec: recordingExec(calls), upload });
     assert.match(manual.markdown, /selection:manual-v1/);
     for (const body of [cumulative.markdown, manual.markdown, first.markdown.replace(/\n<!-- test-evidence-selection:.* -->/, "")]) {
@@ -124,6 +129,10 @@ test("automatic reviews accumulate records but preserve manual, legacy and unava
       assert.equal(counts.length, before);
       assert.equal(calls.some((call) => call.args.includes("PATCH")), false);
     }
+    const preserveManualReplacement = await publishReviewPr({ ...options, replaceAutomatic: true }, {
+      exec: recordingExec(calls, [{ databaseId: 77, body: manual.markdown }]), upload,
+    });
+    assert.equal(preserveManualReplacement.posted, false);
     // A human selection made during upload is protected by the final comment read.
     let reads = 0;
     const initial = recordingExec(calls);
@@ -445,4 +454,18 @@ test("review publication validates before uploading and preserves the comment wh
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("native publication uploads immutable evidence without posting or editing a comment", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "native-evidence-"));
+  try {
+    const recordDir = await reviewFixture(dir, "Native publication");
+    const calls: RecordedCommand[] = [];
+    const result = await publishReviewPr({ pr: 7, testRunDirs: [recordDir], reviewUrl: "https://review.example.test", automatic: true, presentation: "native" },
+      { exec: recordingExec(calls), upload: async () => "b".repeat(32) });
+    assert.equal(result.posted, true);
+    assert.equal(result.evidence?.gitSha, TEST_RUN_SHA);
+    assert.equal(result.evidence?.verdict, "Passed");
+    assert.ok(!calls.some(call => call.args.includes("PATCH") || call.args.includes("DELETE") || call.args.includes("comment")));
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });

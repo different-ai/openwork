@@ -29,6 +29,10 @@ const storeSource = readFileSync(
   fileURLToPath(new URL("../src/routes/org/plugin-system/store.ts", import.meta.url)),
   "utf8",
 )
+const agentSource = readFileSync(
+  fileURLToPath(new URL("../src/mcp/agent.ts", import.meta.url)),
+  "utf8",
+)
 
 test("access-list reads keep manager authorization without requiring a fresh session", () => {
   const listAccess = storeSource.slice(
@@ -39,6 +43,18 @@ test("access-list reads keep manager authorization without requiring a fresh ses
   expect(listAccess).toContain('requireFreshSession: false')
   expect(listAccess).toContain('role: "manager"')
   expect(accessSource).toContain('input.role !== "viewer" && input.requireFreshSession !== false')
+})
+
+test("MCP update_skill keeps editor authorization without a browser-session step-up", () => {
+  const start = agentSource.indexOf("update: async ({ skillId, skillMarkdown, reason })")
+  const end = agentSource.indexOf("listConfigObjectPlugins({ context: libraryContext, configObjectId })", start)
+  expect(start).toBeGreaterThan(-1)
+  expect(end).toBeGreaterThan(start)
+  const update = agentSource.slice(start, end)
+
+  expect(update).toContain("createConfigObjectVersion({")
+  expect(update).toContain("requireFreshSession: false")
+  expect(storeSource).toContain("input.requireFreshSession\n    ?? await pluginArchResourceHasExpandedAudience")
 })
 
 test("access mutations retain the default fresh-session requirement", () => {
@@ -104,6 +120,8 @@ test("stale-session authoring follows the private versus exposed route matrix", 
   const organizationId = createDenTypeId("organization")
   const userId = createDenTypeId("user")
   const memberId = createDenTypeId("member")
+  const viewerUserId = createDenTypeId("user")
+  const viewerMemberId = createDenTypeId("member")
   const sessionId = createDenTypeId("session")
   const exposedPluginId = createDenTypeId("plugin")
   const exposedConfigObjectId = createDenTypeId("configObject")
@@ -149,6 +167,7 @@ test("stale-session authoring follows the private versus exposed route matrix", 
     await database.delete(MemberTable).where(eq(MemberTable.organizationId, organizationId))
     await database.delete(OrganizationTable).where(eq(OrganizationTable.id, organizationId))
     await database.delete(AuthUserTable).where(eq(AuthUserTable.id, userId))
+    await database.delete(AuthUserTable).where(eq(AuthUserTable.id, viewerUserId))
   }
 
   try {
@@ -164,6 +183,13 @@ test("stale-session authoring follows the private versus exposed route matrix", 
       slug: `freshness-route-${organizationId}`,
     })
     await database.insert(MemberTable).values({ id: memberId, organizationId, userId, role: "owner" })
+    await database.insert(AuthUserTable).values({
+      id: viewerUserId,
+      name: "Freshness Route Viewer",
+      email: `${viewerUserId}@freshness-route.test`,
+      emailVerified: true,
+    })
+    await database.insert(MemberTable).values({ id: viewerMemberId, organizationId, userId: viewerUserId, role: "member" })
     await database.insert(PluginTable).values({
       id: exposedPluginId,
       organizationId,
@@ -454,6 +480,45 @@ test("stale-session authoring follows the private versus exposed route matrix", 
       await expectFreshAuthRequired(await blockedCase.request())
       await blockedCase.verifyNoWrite()
     }
+
+    // MCP tool calls carry no browser session, so update_skill cannot step up;
+    // it opts out of freshness and editor access still decides who may write.
+    const { createConfigObjectVersion } = await import("../src/routes/org/plugin-system/store.js")
+    const mcpContext: PluginArchActorContext = { organizationContext, memberTeams: [], session: null }
+    const mcpSkillSource = "---\nname: exposed-skill\ndescription: Exposed skill fixture.\n---\nUpdated from an MCP client."
+    await expect(createConfigObjectVersion({
+      context: mcpContext,
+      configObjectId: exposedConfigObjectId,
+      value: { rawSourceText: mcpSkillSource },
+    })).rejects.toMatchObject({ error: "reauth" })
+    await createConfigObjectVersion({
+      context: mcpContext,
+      configObjectId: exposedConfigObjectId,
+      reason: "update_skill without a browser session",
+      requireFreshSession: false,
+      value: { rawSourceText: mcpSkillSource },
+    })
+    const mcpVersions = await database.select().from(ConfigObjectVersionTable)
+      .where(eq(ConfigObjectVersionTable.configObjectId, exposedConfigObjectId))
+    expect(mcpVersions).toHaveLength(2)
+    expect(mcpVersions.some((version) => version.rawSourceText === mcpSkillSource)).toBe(true)
+
+    const viewerContext: PluginArchActorContext = {
+      ...mcpContext,
+      organizationContext: {
+        ...organizationContext,
+        currentMember: { ...organizationContext.currentMember, id: viewerMemberId, userId: viewerUserId, role: "member", isOwner: false },
+      },
+    }
+    await expect(createConfigObjectVersion({
+      context: viewerContext,
+      configObjectId: exposedConfigObjectId,
+      requireFreshSession: false,
+      value: { rawSourceText: `${mcpSkillSource}\nViewer edit.` },
+    })).rejects.toMatchObject({ error: "forbidden" })
+    const viewerVersions = await database.select().from(ConfigObjectVersionTable)
+      .where(eq(ConfigObjectVersionTable.configObjectId, exposedConfigObjectId))
+    expect(viewerVersions).toHaveLength(2)
   } finally {
     await cleanup()
     mock.restore()

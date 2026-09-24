@@ -1,9 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { QueryObserver } from "@tanstack/react-query";
+import { createDenClient } from "../src/app/lib/den";
+import { getReactQueryClient } from "../src/react-app/infra/query-client";
+import { gatewayUsageQueryPrefix } from "../src/react-app/domains/cloud/gateway-usage-state";
+import { usageStatus } from "./gateway-usage-fixture";
 
 import { createOpenworkServerClient } from "../src/app/lib/openwork-server";
 import { createClient } from "../src/app/lib/opencode";
 import type { ProviderListItem, WorkspaceDisplay } from "../src/app/types";
 import { createProviderAuthStore } from "../src/react-app/domains/connections/provider-auth/store";
+import { readGatewayUsageScope } from "../src/app/lib/gateway-usage-scope";
+import { resolveGatewayProviderIds } from "../src/react-app/domains/connections/provider-auth/cloud-provider-config";
 
 const originalWindow = globalThis.window;
 const originalFetch = globalThis.fetch;
@@ -107,8 +114,23 @@ function installCloudSession(storage: Storage) {
   storage.setItem("openwork.den.activeOrgId", "org_test");
 }
 
+function observeOwnUsage() {
+  const scope = readGatewayUsageScope();
+  const client = createDenClient({ baseUrl: scope.baseUrl, apiBaseUrl: scope.apiBaseUrl, token: scope.token });
+  const observer = new QueryObserver(getReactQueryClient(), {
+    queryKey: [...gatewayUsageQueryPrefix, scope.generation, scope.organizationId, "user_test"],
+    queryFn: () => client.getGatewayUsageStatus(scope.organizationId ?? ""),
+    initialData: usageStatus({ organizationId: scope.organizationId ?? "", state: "within_limit", buckets: [] }),
+    staleTime: Infinity,
+    retry: false,
+  });
+  const unsubscribe = observer.subscribe(() => {});
+  return { observer, unsubscribe };
+}
+
 function createProviderAuthTestStore(
   configCapabilities: { read: boolean; write: boolean; providerSync?: boolean } = { read: true, write: true },
+  readiness: { client?: boolean; server?: boolean; workspace?: boolean } = {},
 ) {
   const opencodeClient = createClient("https://engine.example", "/tmp/workspace_test", {
     token: "engine-token",
@@ -133,7 +155,7 @@ function createProviderAuthTestStore(
   let reloadCount = 0;
 
   const store = createProviderAuthStore({
-    client: () => opencodeClient,
+    client: () => readiness.client === false ? null : opencodeClient,
     providers: () => providers,
     providerDefaults: () => providerDefaults,
     providerConnectedIds: () => providerConnectedIds,
@@ -141,11 +163,11 @@ function createProviderAuthTestStore(
     checkDesktopAppRestriction: () => false,
     selectedWorkspaceDisplay: () => workspace,
     providerBaseUrl: () => "https://engine.example",
-    selectedWorkspaceRoot: () => "/tmp/workspace_test",
-    runtimeWorkspaceId: () => "ws_1",
+    selectedWorkspaceRoot: () => readiness.workspace === false ? "" : "/tmp/workspace_test",
+    runtimeWorkspaceId: () => readiness.workspace === false ? null : "ws_1",
     openworkServer: {
       getSnapshot: () => ({
-        openworkServerStatus: "connected",
+        openworkServerStatus: readiness.server === false ? "disconnected" : "connected",
         openworkServerClient: openworkClient,
         openworkServerAuth: { token: "server-token", hostToken: "host-token" },
         openworkServerCapabilities: {
@@ -181,6 +203,8 @@ function installProviderSyncFetch(
   requests: RecordedRequest[],
   options: {
     conflict?: boolean;
+    cloudProviders?: Array<ReturnType<typeof cloudProviderPayload>>;
+    onUsage?: () => Response | Promise<Response>;
     runStatuses?: Array<{ status: "applied" | "noop" | "failed" | "no_session"; message?: string }>;
     statusProviders?: Array<Record<string, unknown>>;
     statusReloadPending?: boolean;
@@ -200,8 +224,11 @@ function installProviderSyncFetch(
         body: getRequestBody(init),
       });
 
+      if (["https://den.example", "https://self-hosted.example"].includes(url.origin) && url.pathname === "/api/den/v1/gateway/usage-limits/me") {
+        return options.onUsage?.() ?? jsonResponse(usageStatus());
+      }
       if (url.origin === "https://den.example" && url.pathname === "/api/den/v1/llm-providers") {
-        return jsonResponse({ llmProviders: [cloudProviderPayload(options)] });
+        return jsonResponse({ llmProviders: options.cloudProviders ?? [cloudProviderPayload(options)] });
       }
       if (url.origin === "https://den.example" && url.pathname === "/api/den/v1/llm-providers/lpr_test/connect") {
         return jsonResponse({ llmProvider: cloudProviderPayload(options) });
@@ -269,6 +296,194 @@ function installProviderSyncFetch(
   });
 }
 
+describe("cloud provider sync usage refresh", () => {
+  beforeEach(() => {
+    process.env.VITE_OPENWORK_DEPLOYMENT = "web";
+    console.info = () => undefined;
+  });
+
+  afterEach(() => {
+    getReactQueryClient().clear();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: originalFetch });
+    console.info = originalConsoleInfo;
+    if (originalDeployment === undefined) delete process.env.VITE_OPENWORK_DEPLOYMENT;
+    else process.env.VITE_OPENWORK_DEPLOYMENT = originalDeployment;
+  });
+
+  test.each([false, true])("refreshes fresh healthy own usage without config changes (server sync: %s)", async (providerSync) => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installProviderSyncFetch(requests, { cloudProviders: [] });
+    const { store, reloadCount } = createProviderAuthTestStore({ read: true, write: true, providerSync });
+    const { observer, unsubscribe } = observeOwnUsage();
+    const inactiveKey = [...gatewayUsageQueryPrefix, readGatewayUsageScope().generation, "org_test", "inactive"];
+    getReactQueryClient().setQueryData(inactiveKey, usageStatus());
+    try {
+      expect(observer.getCurrentResult().data?.state).toBe("within_limit");
+      expect(requests).toHaveLength(0);
+      await store.runCloudProviderSync("app_resume");
+      await observer.getCurrentQuery().promise;
+      expect(requests.filter((request) => request.url.endsWith("/gateway/usage-limits/me"))).toHaveLength(1);
+      expect(observer.getCurrentResult().data?.state).toBe("blocked");
+      expect(getReactQueryClient().getQueryState(inactiveKey)?.isInvalidated).toBe(false);
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+      expect(reloadCount()).toBe(0);
+    } finally { unsubscribe(); store.dispose(); }
+  });
+
+  test.each(["gateway", "readonly", "client-not-ready", "server-not-ready", "workspace-not-ready"])("normal sync refreshes active usage without provider requests when %s", async (mode) => {
+    const storage = installWindow({ origin: "https://self-hosted.example", gateway: mode === "gateway" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installProviderSyncFetch(requests);
+    const capabilities = { read: true, write: mode !== "readonly" };
+    const readiness = { client: mode !== "client-not-ready", server: mode !== "server-not-ready", workspace: mode !== "workspace-not-ready" };
+    const { store } = createProviderAuthTestStore(capabilities, readiness);
+    const { store: remount } = createProviderAuthTestStore(capabilities, readiness);
+    const { observer, unsubscribe } = observeOwnUsage();
+    try {
+      expect(observer.getCurrentResult().data?.state).toBe("within_limit");
+      await Promise.all([store.runCloudProviderSync("app_resume"), remount.runCloudProviderSync("sign_in")]);
+      await observer.getCurrentQuery().promise;
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({ method: "GET", url: `${mode === "gateway" ? "https://self-hosted.example" : "https://den.example"}/api/den/v1/gateway/usage-limits/me` });
+      expect(observer.getCurrentResult().data?.state).toBe("blocked");
+      await store.runCloudProviderSync("app_resume");
+      await observer.getCurrentQuery().promise;
+      expect(requests).toHaveLength(2);
+      expect(requests[1]?.url).toBe(requests[0]?.url);
+      expect(store.getSnapshot().providerAuthError).toBeNull();
+    } finally { unsubscribe(); store.dispose(); remount.dispose(); }
+  });
+
+  test.each(["gateway", "readonly"])("queued %s refresh rejects changed identity and disposed stores", async (mode) => {
+    for (const change of ["signout", "organization", "account", "dispose"]) {
+      const storage = installWindow({ origin: "https://self-hosted.example" });
+      installCloudSession(storage);
+      const requests: RecordedRequest[] = [];
+      let release = () => {};
+      let reached = () => {};
+      const pending = new Promise<void>((resolve) => { release = resolve; });
+      const started = new Promise<void>((resolve) => { reached = resolve; });
+      installProviderSyncFetch(requests, { onRun: () => { reached(); return pending; } });
+      const { store: blocker } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+      const blocking = blocker.runCloudProviderSync("app_resume");
+      await started;
+      if (mode === "gateway") Object.defineProperty(window, "__OPENWORK_GATEWAY__", { configurable: true, value: { version: 1 } });
+      const { store } = createProviderAuthTestStore({ read: true, write: false });
+      const { observer, unsubscribe } = observeOwnUsage();
+      let nextUsage: ReturnType<typeof observeOwnUsage> | undefined;
+      try {
+        const queued = store.runCloudProviderSync("app_resume");
+        blocker.dispose();
+        if (change === "signout") storage.clear();
+        else if (change === "organization") storage.setItem("openwork.den.activeOrgId", "org_next");
+        else if (change === "account") storage.setItem("openwork.den.authToken", "next-token");
+        else store.dispose();
+        nextUsage = observeOwnUsage();
+        release();
+        await Promise.all([blocking, queued]);
+        if (change === "dispose" || change === "signout") await store.runCloudProviderSync("app_resume");
+        expect(requests.filter((request) => request.url.endsWith("/gateway/usage-limits/me"))).toHaveLength(0);
+        expect(observer.getCurrentQuery().state.isInvalidated).toBe(false);
+        expect(nextUsage.observer.getCurrentQuery().state.isInvalidated).toBe(false);
+      } finally {
+        release();
+        await blocking;
+        unsubscribe(); nextUsage?.unsubscribe(); store.dispose(); blocker.dispose();
+        getReactQueryClient().clear();
+      }
+    }
+  });
+
+  test.each(["organization", "dispose"])("read-only target resolution rejects an in-flight %s change", async (change) => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installProviderSyncFetch(requests);
+    const { store } = createProviderAuthTestStore({ read: true, write: false });
+    const { observer, unsubscribe } = observeOwnUsage();
+    try {
+      const running = store.runCloudProviderSync("app_resume");
+      if (change === "organization") storage.setItem("openwork.den.activeOrgId", "org_next");
+      else store.dispose();
+      await running;
+      expect(requests).toHaveLength(0);
+      expect(observer.getCurrentQuery().state.isInvalidated).toBe(false);
+    } finally { unsubscribe(); store.dispose(); }
+  });
+
+  test("coalesced callers and remounted stores invalidate usage only once", async () => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    let release = () => {};
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    installProviderSyncFetch(requests, { onRun: () => pending });
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+    const { store: remount } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+    const { observer, unsubscribe } = observeOwnUsage();
+    try {
+      const runs = [store.runCloudProviderSync("app_resume"), store.runCloudProviderSync("sign_in"), remount.runCloudProviderSync("app_resume")];
+      release();
+      await Promise.all(runs);
+      await observer.getCurrentQuery().promise;
+      expect(requests.filter((request) => request.url.endsWith("/cloud-provider-sync/run"))).toHaveLength(1);
+      expect(requests.filter((request) => request.url.endsWith("/gateway/usage-limits/me"))).toHaveLength(1);
+    } finally { release(); unsubscribe(); store.dispose(); remount.dispose(); }
+  });
+
+  test.each(["signout", "organization", "account", "baseUrl"])("an in-flight sync cannot invalidate usage after %s changes", async (change) => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    let nextUsage: ReturnType<typeof observeOwnUsage> | undefined;
+    installProviderSyncFetch(requests, { onRun: () => {
+      if (change === "signout") storage.clear();
+      else if (change === "organization") storage.setItem("openwork.den.activeOrgId", "org_next");
+      else if (change === "account") storage.setItem("openwork.den.authToken", "next-token");
+      else storage.setItem("openwork.den.baseUrl", "https://den-next.example");
+      nextUsage = observeOwnUsage();
+    } });
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+    const { observer, unsubscribe } = observeOwnUsage();
+    try {
+      await store.runCloudProviderSync("app_resume");
+      expect(requests.filter((request) => request.url.endsWith("/gateway/usage-limits/me"))).toHaveLength(0);
+      expect(observer.getCurrentQuery().state.isInvalidated).toBe(false);
+      expect(nextUsage?.observer.getCurrentQuery().state.isInvalidated).toBe(false);
+    } finally { unsubscribe(); nextUsage?.unsubscribe(); store.dispose(); }
+  });
+
+  test.each([false, true])("usage failure neither delays nor fails provider sync/reload (server sync: %s)", async (providerSync) => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    let resolveUsage: (value: Response) => void = () => {};
+    const pending = new Promise<Response>((resolve) => { resolveUsage = resolve; });
+    installProviderSyncFetch(requests, { onUsage: () => pending, runStatuses: [{ status: "applied" }] });
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync });
+    const { observer, unsubscribe } = observeOwnUsage();
+    try {
+      const outcome = await store.runCloudProviderSync("settings_cloud_opened");
+      expect(outcome).toEqual(providerSync ? { outcome: "handled_server_side" } : undefined);
+      expect(observer.getCurrentResult().isFetching).toBe(true);
+      expect(requests.some((request) => new URL(request.url).pathname === "/provider")).toBe(true);
+      expect(store.getSnapshot().providerLoadState.status).toBe("ready");
+      if (!providerSync) expect(requests.some((request) => request.url.endsWith("/engine/reload"))).toBe(true);
+      await store.runCloudProviderSync("app_resume");
+      expect(requests.filter((request) => request.url.endsWith("/gateway/usage-limits/me"))).toHaveLength(1);
+      resolveUsage(jsonResponse({ error: "Usage unavailable" }, 503));
+      await observer.getCurrentQuery().promise?.catch(() => {});
+      expect(observer.getCurrentQuery().state.status).toBe("error");
+      expect(store.getSnapshot().providerAuthError).toBeNull();
+      expect(store.getSnapshot().lastSyncError).toEqual({});
+    } finally { resolveUsage(jsonResponse({})); unsubscribe(); store.dispose(); }
+  });
+});
+
 describe("cloud provider sync in gateway mode", () => {
   beforeEach(() => {
     process.env.VITE_OPENWORK_DEPLOYMENT = "web";
@@ -292,18 +507,44 @@ describe("cloud provider sync in gateway mode", () => {
     }
   });
 
-  test("returns a server-handled outcome without network calls or error state behind the gateway", async () => {
+  test.each(["settings_cloud_opened", "manual"] as const)("rereads hosted runtime providers without client-side materialization on %s", async (reason) => {
     const storage = installWindow({ origin: "https://web.openworklabs.com", gateway: true });
     installCloudSession(storage);
     const requests: RecordedRequest[] = [];
     installProviderSyncFetch(requests);
     const { store } = createProviderAuthTestStore();
 
-    const outcome = await store.runCloudProviderSync("settings_cloud_opened");
+    const outcome = await store.runCloudProviderSync(reason);
 
     expect(outcome).toEqual({ outcome: "handled_server_side" });
-    expect(requests).toEqual([]);
+    expect(requests.some((request) => new URL(request.url).pathname === "/provider")).toBe(true);
+    expect(requests.every((request) => request.method === "GET")).toBe(true);
+    expect(requests.some((request) => request.url.includes("/cloud-provider-sync/run"))).toBe(false);
     expect(store.getSnapshot().providerAuthError).toBeNull();
+  });
+
+  test.each(["session delivery", "OAuth response"])("does not use an OAuth result after an organization switch during %s", async (phase) => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installProviderSyncFetch(requests);
+    const fixtureFetch = globalThis.fetch;
+    const starts: string[] = [];
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = getRequestUrl(input);
+      if (url.endsWith("/den-session") && phase === "session delivery") {
+        storage.setItem("openwork.den.activeOrgId", "org_other");
+      }
+      if (url.endsWith("/oauth/start")) {
+        starts.push(url);
+        if (phase === "OAuth response") storage.setItem("openwork.den.activeOrgId", "org_other");
+        return jsonResponse({ authorizationUrl: "https://den.example/gateway/connect?attempt=fixture" });
+      }
+      return fixtureFetch(input, init);
+    } });
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+    await expect(store.startGatewayProviderOAuth("ipr_fixture", "gcs_fixture", new AbortController().signal)).rejects.toThrow("changed");
+    expect(starts).toHaveLength(phase === "session delivery" ? 0 : 1);
   });
 
   test("keeps the client materialization path active outside gateway mode", async () => {
@@ -380,6 +621,49 @@ describe("cloud provider sync in server-capability mode", () => {
     console.info = originalConsoleInfo;
     if (originalDeployment === undefined) delete process.env.VITE_OPENWORK_DEPLOYMENT;
     else process.env.VITE_OPENWORK_DEPLOYMENT = originalDeployment;
+  });
+
+  test("quota notice provenance stays with org A through delayed/failed B sync and changes only on verified B success", async () => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    const provider = (id: string) => ({ cloudProviderId: id, providerId: id, sourceProviderId: "openai", source: "openwork_gateway", name: "Assigned", modelIds: ["model"] });
+    const options: NonNullable<Parameters<typeof installProviderSyncFetch>[1]> = {
+      statusProviders: [provider("ipr_org_a")], runStatuses: [{ status: "applied" }],
+    };
+    installProviderSyncFetch(requests, options);
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+    const eligible = (id: string) => store.getSnapshot().gatewayUsageProviderScope === readGatewayUsageScope().generation
+      && resolveGatewayProviderIds(store.getSnapshot().importedCloudProviders).has(id);
+    try {
+      await store.refreshImportedCloudProviders();
+      expect(eligible("ipr_org_a")).toBe(false);
+      const readOnlyOptions = { strict: false, verifiedScope: readGatewayUsageScope().generation };
+      await store.refreshImportedCloudProviders(readOnlyOptions);
+      expect(eligible("ipr_org_a")).toBe(false);
+      await store.runCloudProviderSync("manual");
+      expect(eligible("ipr_org_a")).toBe(true);
+      const scopeA = store.getSnapshot().gatewayUsageProviderScope;
+      storage.setItem("openwork.den.activeOrgId", "org_b");
+      storage.setItem("openwork.den.authToken", "token_b");
+      let release: (() => void) | undefined;
+      const delayed = new Promise<void>((resolve) => { release = resolve; });
+      options.onRun = async () => { await delayed; throw new Error("Sync unavailable"); };
+      const syncB = store.runCloudProviderSync("manual");
+      await Promise.resolve();
+      expect(store.getSnapshot().importedCloudProviders.ipr_org_a).toBeDefined();
+      expect(eligible("ipr_org_a")).toBe(false);
+      expect(scopeA).not.toBe(readGatewayUsageScope().generation);
+      release?.();
+      await syncB;
+      expect(store.getSnapshot().importedCloudProviders.ipr_org_a).toBeDefined();
+      expect(eligible("ipr_org_a")).toBe(false);
+      options.onRun = undefined;
+      options.statusProviders = [provider("ipr_org_b")];
+      await store.runCloudProviderSync("manual");
+      expect(eligible("ipr_org_b")).toBe(true);
+      expect(eligible("ipr_org_a")).toBe(false);
+    } finally { store.dispose(); }
   });
 
   test("posts run-now without fetching Den providers in the renderer", async () => {
@@ -551,6 +835,38 @@ describe("cloud provider sync in server-capability mode", () => {
         },
       },
     });
+  });
+
+  test("keeps pending assigned aliases in status only and removes them on an authoritative context refresh", async () => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    const credentialSetId = "gcs_00000000000000000000000002";
+    const id = "gwm_00000000000000000000000001_00000000000000000000000002_00000000000000000000000003";
+    const model = { id, name: "Assigned model", config: { id }, upstreamModelId: "upstream",
+      modelGroupId: "gmg_00000000000000000000000001", modelGroupName: "Assigned group",
+      credentialSetId, credentialSetName: "Personal" };
+    let release: () => void = () => undefined;
+    let hold = Promise.resolve();
+    const options = { onRun: async () => { await hold; }, statusSkipped: [{ cloudProviderId: "ipr_pending", providerId: "ipr_pending", credentialSetId,
+      name: "Member provider", reason: "member_auth_required", models: [model, { ...model, credentialSetId: "gcs_wrong" }] }] };
+    installProviderSyncFetch(requests, options);
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+    try {
+      await store.runCloudProviderSync("manual");
+      expect(store.getSnapshot().cloudProviderServerSync?.skippedProviders[`ipr_pending:${credentialSetId}`]?.models).toEqual([model]);
+      expect(store.getSnapshot().importedCloudProviders).toEqual({});
+      expect(store.isGatewayModelAvailable({ cloudProviderId: "ipr_pending", providerId: "ipr_pending", credentialSetId, name: "Member", authUrl: null }, { providerID: "ipr_pending", modelID: id })).toBe(false);
+      expect(requests.filter((request) => request.method !== "GET").every((request) => ["/den-session", "/cloud-provider-sync/run"].includes(new URL(request.url).pathname))).toBe(true);
+      storage.setItem("openwork.den.activeOrgId", "org_replacement");
+      options.statusSkipped = [];
+      hold = new Promise<void>((resolve) => { release = resolve; });
+      const refresh = store.runCloudProviderSync("manual");
+      expect(store.getSnapshot().cloudProviderServerSync).toBeNull();
+      release();
+      await refresh;
+      expect(store.getSnapshot().cloudProviderServerSync?.skippedProviders).toEqual({});
+    } finally { store.dispose(); }
   });
 
   test("maps imported provider status by cloud provider id", async () => {

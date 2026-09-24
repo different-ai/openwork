@@ -338,7 +338,7 @@ export default function McpSelectOrganizationPage() {
                         <label
                           className={`flex cursor-pointer items-center gap-3 rounded-2xl border bg-white px-4 py-3 transition-colors ${
                             isSelected
-                              ? "border-[var(--dls-accent)] shadow-[0_0_0_4px_rgba(15,23,42,0.06)]"
+                              ? "border-[var(--dls-border)] bg-[var(--dls-active)]"
                               : "border-[var(--dls-border)] hover:bg-[var(--dls-hover)]"
                           } ${isBusy ? "pointer-events-none opacity-70" : ""}`}
                         >

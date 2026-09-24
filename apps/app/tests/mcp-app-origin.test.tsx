@@ -62,7 +62,7 @@ describe("App conversation ownership", () => {
       showThinking={false} developerMode={false} displaySuggestions={false} providerConnectedCount={0}
       dispatchAction={() => {}} setPrompt={() => {}} onRevertToUserMessage={() => {}} onForkAtMessage={() => {}}
       onEditUserMessage={() => {}} onMcpReconnect={async () => { throw new Error("unused"); }}
-      onMcpReopenAuthorization={async () => {}} onMcpRetry={() => {}}>
+      onMcpReopenAuthorization={async () => {}}>
       {Array.from({ length: 40 }, (_, index) => <McpAppFrame key={index} part={{ type: "dynamic-tool", toolName: "fixture_render", toolCallId: `call-${index}`, state: "output-available", input: {}, output: {},
         callProviderMetadata: { openwork: { mcpResult: { content: [], _meta: { "openwork/mcpApp": {
           toolName: "render", resourceUri: "ui://fixture/view", arguments: reverse ? { other: true, id } : { id, other: true },
@@ -118,7 +118,7 @@ describe("App conversation ownership", () => {
         showThinking={false} developerMode={false} displaySuggestions={false} providerConnectedCount={0}
         dispatchAction={() => {}} setPrompt={() => {}} onRevertToUserMessage={() => {}} onForkAtMessage={() => {}}
         onEditUserMessage={() => {}} onMcpReconnect={async () => { throw new Error("unused"); }}
-        onMcpReopenAuthorization={async () => {}} onMcpRetry={() => {}}>
+        onMcpReopenAuthorization={async () => {}}>
         <McpAppFrame part={{ type: "dynamic-tool", toolName: "fixture_render", toolCallId: "call-b", state: "output-available", input: {}, output: {},
           callProviderMetadata: { openwork: { mcpResult: { content: [] } } } }} />
       </MessageListProvider>

@@ -12,5 +12,5 @@ export default async function ReviewPage({
   const { id } = await params;
   const report = await readReview(id);
   if (!report) notFound();
-  return <Report id={id} report={report} />;
+  return <Report id={id} report={report} connected={Boolean(process.env.FREESTYLE_API_KEY?.trim())} />;
 }

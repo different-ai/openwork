@@ -14,7 +14,7 @@ import { loadSavedAppForDisplay, viewerLocalDate } from "./live-generated-app-mo
 import { LiveGeneratedApp, isLiveGeneratedApp, useViewerDay } from "./live-generated-app";
 import { GeneratedAppPreview } from "./generated-app-preview";
 import { DashboardConnectionCard } from "../dashboard/dashboard-connection-card";
-import { connectionCardPayloadFromChatToolResult, reconnectActionFromChatToolResult } from "@/components/tools/error-attribution";
+import { connectionCardPayloadFromChatToolResult } from "@/components/tools/error-attribution";
 
 export type AppReference = { appId: string; revisionId?: string; receiptId?: string };
 
@@ -95,8 +95,8 @@ export function AppArtifact({ appId, revisionId, receiptId, onClose, onAsk, fall
       {askError ? <p role="alert" className="text-sm text-destructive">{askError}</p> : null}
       {confirmation ? <p role="status" className="rounded-lg bg-muted p-3 text-sm">{confirmation}</p> : null}
       <p className="text-xs text-muted-foreground">{saved && isLiveGeneratedApp(app.view) ? "Live results · Refresh to fetch the latest data." : `${saved ? "Results" : "Preview"} · Changes inside this view stay in the preview.`}</p>
-      {connection ? <DashboardConnectionCard toolName={toolName} toolCallId={`preview-${appId}-${revisionId ?? "active"}`} output={connectionOutput} connection={connection}
-        action={reconnectActionFromChatToolResult(toolName, connectionOutput)} onConnected={() => { void query.refetch(); }} /> : app.runError ? <div className="space-y-3"><p role="alert" className="text-sm">{app.previewNotice || "This preview could not be run. Try again."}</p><Button variant="outline" disabled={query.isFetching} onClick={() => void query.refetch()}>Try again</Button></div> : saved && isLiveGeneratedApp(app.view) && revision ? <LiveGeneratedApp view={app.view} revision={revision} fallbackEndpoints={fallbackEndpoints} /> : app.html && app.payload && revision ? <GeneratedAppPreview html={app.html} payload={app.payload} title={app.view.title} revision={revision} /> : <div className="flex flex-wrap items-center gap-3">
+      {connection ? <DashboardConnectionCard toolName={toolName} toolCallId={`preview-${appId}-${revisionId ?? "active"}`} output={connectionOutput}
+        onConnected={() => { void query.refetch(); }} /> : app.runError ? <div className="space-y-3"><p role="alert" className="text-sm">{app.previewNotice || "This preview could not be run. Try again."}</p><Button variant="outline" disabled={query.isFetching} onClick={() => void query.refetch()}>Try again</Button></div> : saved && isLiveGeneratedApp(app.view) && revision ? <LiveGeneratedApp view={app.view} revision={revision} fallbackEndpoints={fallbackEndpoints} /> : app.html && app.payload && revision ? <GeneratedAppPreview html={app.html} payload={app.payload} title={app.view.title} revision={revision} /> : <div className="flex flex-wrap items-center gap-3">
         <p role="status" className="text-sm text-muted-foreground">{app.previewNotice}</p>
         {onUpdate ? <Button variant="outline" size="sm" disabled={asking} onClick={onUpdate}>{asking ? "Opening conversation…" : "Update app"}</Button> : null}
       </div>}

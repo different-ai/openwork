@@ -416,12 +416,13 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
   const activeQuestion = pendingQuestions[0] ?? null;
   const respondQuestion = useCallback(
     async (requestID: string, answers: string[][]) => {
-      if (!client || !workspaceId || !sessionId) return;
-      if (questionReplyBusyRef.current) return;
+      if (!client || !workspaceId || !sessionId) throw new Error("The conversation is no longer available.");
+      if (questionReplyBusyRef.current) throw new Error("A question reply is already in progress.");
+      const pendingQuestion = pendingQuestions.find((question) => question.id === requestID);
+      if (!pendingQuestion) throw new Error("This question is no longer pending.");
       questionReplyBusyRef.current = true;
       setQuestionReplyBusy(true);
       try {
-        const pendingQuestion = pendingQuestions.find((question) => question.id === requestID);
         unwrap(
           await client.question.reply({
             requestID,
@@ -429,13 +430,12 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
             directory: workspaceRoot || undefined,
           }),
         );
-        if (pendingQuestion) {
-          settleQuestionState(workspaceId, pendingQuestion.sessionID, requestID);
-        }
+        settleQuestionState(workspaceId, pendingQuestion.sessionID, requestID);
       } catch (error) {
         toast.error(t("app.error_request_failed"), {
           description: describeRouteError(error),
         });
+        throw error;
       } finally {
         questionReplyBusyRef.current = false;
         setQuestionReplyBusy(false);

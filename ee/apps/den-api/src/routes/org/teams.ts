@@ -1,5 +1,5 @@
 import { declarativeDeleteSchema, declarativeResponses, externalKeyParamsSchema, isDuplicateEntry, type ResourceActionContext, type ResourceOrganizationContext } from "./declarative.js"
-import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   ConfigObjectAccessGrantTable,
   ConnectorInstanceAccessGrantTable,
@@ -21,7 +21,7 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import { invalidateTeamInferenceOAuth } from "../../llm/inference-provider-lifecycle.js"
 import { isScimManagedTeam } from "../../scim-groups.js"
-import { withOrganizationTeamMutation } from "../../organization-team-roles.js"
+import { withOrganizationTeamMutation, withOrganizationMembershipUsageMutation, type TeamMutationTransaction } from "../../organization-team-roles.js"
 import {
   jsonValidator,
   orgRoleRoute,
@@ -94,7 +94,7 @@ async function ensureMembersBelongToOrganization(input: {
   const rows = await database
     .select({ id: MemberTable.id })
     .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
+    .where(and(eq(MemberTable.organizationId, input.organizationId), inArray(MemberTable.id, input.memberIds), isNull(MemberTable.removedAt)))
 
   const memberIds = new Set(rows.map((row) => row.id))
   return input.memberIds.every((memberId) => memberIds.has(memberId))
@@ -176,8 +176,17 @@ async function createTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   })
 }
 
+async function affectedTeamUsageMembers(tx: TeamMutationTransaction, organizationId: typeof TeamTable.$inferSelect.organizationId, rawId: string, added: string[] = []) {
+  let teamId: TeamId, addedIds: MemberId[]
+  try { teamId = parseTeamId(rawId); addedIds = parseMemberIds(added) } catch { return [] }
+  const old = await tx.select({ id: TeamMemberTable.orgMembershipId }).from(TeamMemberTable)
+    .innerJoin(TeamTable, and(eq(TeamTable.id, TeamMemberTable.teamId), eq(TeamTable.organizationId, organizationId)))
+    .where(eq(TeamMemberTable.teamId, teamId))
+  return [...new Set([...addedIds, ...old.flatMap((row) => row.id ? [row.id] : [])])]
+}
+
 async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof updateTeamSchema>) {
-  return withOrganizationTeamMutation(payload.organization.id, async (tx) => {
+  return withOrganizationMembershipUsageMutation(payload.organization.id, async (tx) => {
   const permission = ensureTeamManager(c)
   if (!permission.ok) {
     return c.json(permission.response, orgAccessFailureStatus(permission.response))
@@ -271,11 +280,11 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
       grantsOrganizationAdmin: input.grantsOrganizationAdmin ?? team.grantsOrganizationAdmin,
     },
   })
-  })
+  }, (tx) => input.memberIds === undefined ? Promise.resolve([]) : affectedTeamUsageMembers(tx, payload.organization.id, rawId, input.memberIds))
 }
 
 async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
-  return withOrganizationTeamMutation(payload.organization.id, async (tx) => {
+  return withOrganizationMembershipUsageMutation(payload.organization.id, async (tx) => {
   const permission = ensureTeamManager(c)
   if (!permission.ok) {
     return c.json(permission.response, orgAccessFailureStatus(permission.response))
@@ -344,7 +353,7 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     await tx.delete(TeamTable).where(eq(TeamTable.id, team.id))
 
   return c.body(null, 204)
-  })
+  }, (tx) => affectedTeamUsageMembers(tx, payload.organization.id, rawId))
 }
 
 export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {

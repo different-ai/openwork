@@ -1,4 +1,5 @@
 import type {
+  ApiError,
   FilePart,
   Model,
   Part,
@@ -20,6 +21,7 @@ import type { OpenworkSessionHistory } from "./openwork-server";
 import { isDesktopRuntime } from "./runtime-env";
 import type { OpencodeEvent } from "../types";
 import { normalizeDirectoryPath } from "../utils";
+import { dispatchProviderCatalogChanged } from "./provider-events";
 
 type RequestOptions = {
   signal?: AbortSignal;
@@ -49,7 +51,11 @@ type PromptPart = {
 };
 
 function selectedSkill(part: PromptPart): Record<string, unknown> | null {
-  return part.type === "text" && part.synthetic === true ? readRecord(part.metadata, "openworkSelectedSkill") : null;
+  const selection = part.type === "text" && part.synthetic === true ? readRecord(part.metadata, "openworkSelectedSkill") : null;
+  // Older drafts marked remote capabilities as native attachments. Preserve
+  // their Connect instruction instead of resolving them in the local registry.
+  const id = readString(selection, "id");
+  return id && /^(?:skill|plugin):/.test(id) ? null : selection;
 }
 
 /** The exact native prompt body, also used to correlate text-only user acknowledgements. */
@@ -154,7 +160,7 @@ export type V2MappedMessage = {
       created: number;
       completed?: number;
     };
-    error?: UnknownError;
+    error?: UnknownError | ApiError;
   };
   parts: Part[];
 };
@@ -373,6 +379,8 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
   const updated = readNumber(time, "updated") ?? readNumber(source, "updated") ?? created;
   const archived = readNumber(time, "archived");
   const parentID = readString(source, "parentID");
+  const revert = readRecord(source, "revert");
+  const revertMessageID = revert && readString(revert, "messageID");
   const mapped: Session = {
     id,
     slug: readString(source, "slug") ?? id,
@@ -387,6 +395,7 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
       ...(archived === undefined ? {} : { archived }),
     },
     ...(parentID ? { parentID } : {}),
+    ...(revertMessageID ? { revert: { messageID: revertMessageID } } : {}),
   };
   return mapped;
 }
@@ -625,7 +634,7 @@ function mapV2Message(
         ...(completed === undefined ? {} : { completed }),
       },
       ...(role === "assistant" && error
-        ? { error: { name: "UnknownError", data: { message: errorMessage(error) } } }
+        ? { error: mapV2SessionError(error) }
         : {}),
     },
     parts,
@@ -782,6 +791,27 @@ function mapDefaultModels(value: unknown): Record<string, string> {
     if (typeof item === "string") defaults[key] = item;
   }
   return defaults;
+}
+
+export function mapV2SessionError(value: unknown): UnknownError | ApiError {
+  const data = readRecord(value, "data") ?? value;
+  const reportedStatus = readNumber(data, "statusCode") ?? readNumber(data, "status");
+  const statuses = [readNumber(value, "statusCode"), readNumber(value, "status"), readNumber(data, "status"),
+    readNumber(readRecord(value, "response"), "status"), readNumber(readRecord(data, "response"), "status")];
+  const statusCode = reportedStatus === 429 ? statuses.find((status) => status !== undefined && status !== 429) ?? reportedStatus : reportedStatus;
+  const responseBody = readString(data, "responseBody");
+  if (statusCode !== undefined && responseBody !== undefined) {
+    const rawHeaders = readRecord(data, "responseHeaders");
+    const responseHeaders: Record<string, string> = {};
+    for (const [key, header] of Object.entries(rawHeaders ?? {})) {
+      if (typeof header === "string") responseHeaders[key] = header;
+    }
+    return { name: "APIError", data: {
+      message: errorMessage(data), statusCode, responseBody, responseHeaders,
+      isRetryable: isRecord(data) && data.isRetryable === true,
+    } };
+  }
+  return { name: "UnknownError", data: { message: errorMessage(value) } };
 }
 
 function errorMessage(value: unknown): string {
@@ -1092,7 +1122,7 @@ export function translateV2Event(
     return [{ type, properties: {
       ...properties, sequence: readNumber(value.durable, "seq"),
       ...(type === "session.execution.failed" ? {
-        error: { name: "UnknownError", data: { message: errorMessage(properties.error) } },
+        error: mapV2SessionError(properties.error),
       } : {}),
     } }];
   }
@@ -1364,6 +1394,27 @@ export function translateV2Event(
     return [{ type: "session.updated", properties: { info: { id: sessionID, title } } }];
   }
 
+  if (type === "session.revert.staged") {
+    const revert = readRecord(properties, "revert");
+    const messageID = revert && readString(revert, "messageID");
+    return sessionID && messageID
+      ? [{ type: "session.updated", properties: { info: { id: sessionID, revert: { messageID } } } }]
+      : null;
+  }
+
+  if (type === "session.revert.committed") {
+    const messageID = readString(properties, "to");
+    if (!sessionID || !messageID) return null;
+    return [
+      { type: "session.history.truncated", properties: { sessionID, messageID } },
+      { type: "session.updated", properties: { info: { id: sessionID, revert: undefined } } },
+    ];
+  }
+
+  if (type === "session.revert.cleared") {
+    return sessionID ? [{ type: "session.updated", properties: { info: { id: sessionID, revert: undefined } } }] : null;
+  }
+
   if (type === "session.deleted") {
     const info = mapV2Session(properties, readString(readRecord(value, "location") ?? {}, "directory"));
     const deletedSessionID = sessionID || info?.id || "";
@@ -1389,6 +1440,7 @@ function translateV2Events(
   fetchSession: (sessionID: string, signal: AbortSignal) => Promise<Session | null>,
   taskSessions: TaskSessionAssociations,
   directory?: string,
+  onCatalogChanged?: (directory: string | undefined) => void,
 ): AsyncGenerator<OpencodeEvent> {
   const reader = response.body?.getReader();
   const decoder = new TextDecoder();
@@ -1489,6 +1541,10 @@ function translateV2Events(
           }
           const eventDirectory = isRecord(event) ? readString(readRecord(event, "location") ?? {}, "directory") : undefined;
           if (directory && (!eventDirectory || normalizeDirectoryPath(directory) !== normalizeDirectoryPath(eventDirectory))) continue;
+          if (isRecord(event) && event.type === "catalog.updated") {
+            onCatalogChanged?.(eventDirectory);
+            continue;
+          }
           if (isRecord(event) && event.type === "session.forked") {
             const sessionID = readSessionID(eventProperties(event));
             if (!sessionID || discoveredForks.has(sessionID) || lookups.has(sessionID)) continue;
@@ -1873,7 +1929,9 @@ export function createClientV2(
         const items = responseData(result.payload);
         const hasCursor = isRecord(result.payload) && "cursor" in result.payload;
         const cursor = readRecord(result.payload, "cursor");
-        const next = cursor?.next;
+        // The native binary serializes an exhausted page as next:null, while
+        // the JS server may omit next. Both are terminal cursor values.
+        const next = cursor?.next ?? undefined;
         if (!Array.isArray(items)
           || (hasCursor && (!cursor || (next !== undefined && (typeof next !== "string" || !next))))
           || (hasCursor && Array.isArray(items) && (items.length > 0) !== (next !== undefined))
@@ -2038,9 +2096,36 @@ export function createClientV2(
       );
       return result.response.ok ? successfulResult(result, true) : failedResult(result);
     },
-    fork: async (): Promise<FieldsResult<Session>> => unsupportedResult(baseUrl, "session.fork"),
-    revert: async (): Promise<FieldsResult<Session>> => unsupportedResult(baseUrl, "session.revert"),
-    unrevert: async (): Promise<FieldsResult<Session>> => unsupportedResult(baseUrl, "session.unrevert"),
+    fork: async (
+      parameters: SessionParameters & { messageID?: string },
+      options?: RequestOptions,
+    ): Promise<FieldsResult<Session>> => {
+      // Both adapters exclude the supplied boundary. Omitting it copies the
+      // complete conversation; native v2 calls this a "through" boundary.
+      const result = await request("POST", `/api/session/${encodeURIComponent(parameters.sessionID)}/fork`, {
+        boundary: parameters.messageID ? { type: "before", messageID: parameters.messageID } : { type: "through" },
+      }, options?.signal);
+      if (!result.response.ok) return failedResult(result);
+      const mapped = mapV2Session(result.payload, directory);
+      return mapped ? successfulResult(result, mapped) : failedResult({ ...result, payload: { name: "InvalidV2SessionResponse" } });
+    },
+    revert: async (
+      parameters: SessionParameters & { messageID: string; partID?: string },
+      options?: RequestOptions,
+    ): Promise<FieldsResult<Session>> => {
+      if (parameters.partID) return unsupportedResult(baseUrl, "session.revert.part");
+      const result = await request("POST", `/api/session/${encodeURIComponent(parameters.sessionID)}/revert/stage`, {
+        messageID: parameters.messageID, files: true,
+      }, options?.signal);
+      return result.response.ok ? getSession(parameters, options) : failedResult(result);
+    },
+    unrevert: async (
+      parameters: SessionParameters,
+      options?: RequestOptions,
+    ): Promise<FieldsResult<Session>> => {
+      const result = await request("POST", `/api/session/${encodeURIComponent(parameters.sessionID)}/revert/clear`, undefined, options?.signal);
+      return result.response.ok ? getSession(parameters, options) : failedResult(result);
+    },
     summarize: async (): Promise<FieldsResult<boolean>> => unsupportedResult(baseUrl, "session.summarize"),
     shell: async (): Promise<FieldsResult<Record<string, never>>> => unsupportedResult(baseUrl, "session.shell"),
     command: async (): Promise<FieldsResult<Record<string, never>>> => unsupportedResult(baseUrl, "session.command"),
@@ -2161,7 +2246,7 @@ export function createClientV2(
           stream: translateV2Events(response, options?.signal, async (sessionID, signal) => {
             const result = await request("GET", `/api/session/${encodeURIComponent(sessionID)}`, undefined, signal);
             return result.response.ok ? mapV2Session(result.payload, undefined) : null;
-          }, taskSessions, directory),
+          }, taskSessions, directory, (eventDirectory) => dispatchProviderCatalogChanged({ baseUrl, directory: eventDirectory ?? directory })),
         };
       },
     },

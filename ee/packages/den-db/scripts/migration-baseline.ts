@@ -99,10 +99,13 @@ function checkExpression(value: string) {
   // grouping intact (stripping all parentheses would accept a weaker check).
   // INFORMATION_SCHEMA on MySQL 8.4 escapes the known string delimiters.
   let text = value.replace(/_utf8mb4\\'(member:|team:|organization)\\'/g, "'$1'")
-    .replace(/`gateway_provider_access`\./g, "").replace(/`|\s/g, "")
+    .replace(/`(?:gateway_provider_access|gateway_usage_bucket|gateway_usage_consumption_event|gateway_usage_limit_assignment|gateway_usage_limit_entry|gateway_usage_tracking)`\./g, "").replace(/`|\s/g, "")
     .split(/('[^']*')/).map((part, index) => index % 2 ? part : part.toLowerCase()).join("")
     .replace(/_utf8mb4(?=')/g, "")
-    .replace(/\(((?:org_membership_id|team_id)is(?:not)?null)\)/g, "$1")
+    .replace(/\(((?:org_membership_id|member_id|team_id|cost_micro_usd|organization)is(?:not)?null)\)/g, "$1")
+    .replace(/\((organization=1)\)/g, "$1")
+    .replace(/\((base_allowance_micro_usd\+extension_micro_usd)\)/g, "$1")
+    .replace(/\(((?:used_micro_usd|cost_micro_usd|base_allowance_micro_usd\+extension_micro_usd)between0and9007199254740991|cost_limit_micro_usd>=0|cost_limit_micro_usd<=7205759403792792)\)/g, "$1")
     .replace(/\((case[\s\S]*?end)\)/g, "$1")
     .replace(/\((audience_key=case[\s\S]*?end)\)/g, "$1")
   while (text.startsWith("(") && text.endsWith(")")) {

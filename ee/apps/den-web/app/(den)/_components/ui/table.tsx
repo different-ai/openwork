@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 
 export type DenTableColumn<T> = {
   key: string;
@@ -14,6 +14,7 @@ export type DenTableProps<T> = {
   rows: readonly T[];
   getRowKey: (row: T) => string;
   rowClassName?: string;
+  renderRowDetail?: (row: T) => ReactNode;
   emptyLabel?: string;
   /** `plain` drops the filled header row for tables that sit on a white surface. */
   headerTone?: "muted" | "plain";
@@ -24,6 +25,7 @@ export function DenTable<T>({
   rows,
   getRowKey,
   rowClassName,
+  renderRowDetail,
   emptyLabel = "Nothing here yet.",
   headerTone = "muted",
 }: DenTableProps<T>) {
@@ -54,15 +56,20 @@ export function DenTable<T>({
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-100">
+        <tbody className={renderRowDetail ? undefined : "divide-y divide-gray-100"}>
           {rows.map((row) => (
-            <tr key={getRowKey(row)} className={rowClassName}>
-              {columns.map((column) => (
-                <td key={column.key} className={`px-6 py-3 ${column.align === "right" ? "text-right" : ""}`}>
-                  {column.render(row)}
-                </td>
-              ))}
-            </tr>
+            <Fragment key={getRowKey(row)}>
+              <tr className={rowClassName}>
+                {columns.map((column) => (
+                  <td key={column.key} className={`px-6 py-3 ${column.align === "right" ? "text-right" : ""}`}>
+                    {column.render(row)}
+                  </td>
+                ))}
+              </tr>
+              {renderRowDetail ? <tr className="border-b border-gray-100 last:border-b-0">
+                <td colSpan={columns.length} className="px-6 pb-4 pt-0">{renderRowDetail(row)}</td>
+              </tr> : null}
+            </Fragment>
           ))}
         </tbody>
       </table>

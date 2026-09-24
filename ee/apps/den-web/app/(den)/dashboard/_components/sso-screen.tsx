@@ -478,13 +478,13 @@ export function SsoScreen() {
   return (
     <DashboardPageTemplate icon={Shield} title="SSO" description="Configure one enterprise SSO connection per workspace and share the generated sign-in URL with your team." colors={["#F5F3FF", "#4C1D95", "#8B5CF6", "#DDD6FE"]}>
       {!access.canViewSettings ? (
-        <div className="rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">Only workspace admins can view SSO.</div>
+        <div className="rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-6 py-5 text-[14px] text-[var(--dls-text-primary)]">Only workspace admins can view SSO.</div>
       ) : (
         <>
           {!orgContext.entitlements.sso ? <EnterprisePlanNotice feature="SSO" /> : null}
           {error ? <DenNotice message={error} className="mb-6" /> : null}
           {!access.canManageSso ? (
-            <div className="mb-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] text-amber-800">
+            <div className="mb-6 rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-4 text-[14px] text-[var(--dls-text-primary)]">
               Read-only: owners and super-admins can create, edit, delete, or verify SSO connections.
             </div>
           ) : null}
@@ -611,8 +611,8 @@ export function SsoScreen() {
             {connection ? (
               <div className="mt-5 space-y-4">
                 {!connection.domainVerified ? (
-                  <section data-testid="sso-domain-verification" className="overflow-hidden rounded-[24px] border border-amber-300 bg-[#FFFBEB] text-[14px] text-amber-950 shadow-[0_18px_46px_-34px_rgba(146,64,14,0.55)]">
-                    <div className="flex flex-col gap-4 border-b border-amber-200 bg-amber-100/70 px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
+                  <section data-testid="sso-domain-verification" className="overflow-hidden rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-surface)] text-[14px] text-[var(--dls-text-primary)]">
+                    <div className="flex flex-col gap-4 border-b border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
                       <div className="flex items-start gap-3">
                         <span className="mt-0.5 rounded-full bg-amber-900 p-2 text-amber-50"><ShieldAlert size={18} aria-hidden="true" /></span>
                         <div>
@@ -620,7 +620,7 @@ export function SsoScreen() {
                             <p className="text-[16px] font-semibold tracking-[-0.02em]">Verify your domain first</p>
                             <span className="rounded-full border border-amber-300 bg-white/80 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-800">Pending verification</span>
                           </div>
-                          <p className="mt-1 max-w-2xl leading-6 text-amber-900/80">
+                          <p className="mt-1 max-w-2xl leading-6 text-[var(--dls-text-secondary)]">
                             SSO remains inactive and is not offered to users until this DNS check proves that your workspace controls <strong>{connection.domain}</strong>.
                           </p>
                         </div>
@@ -635,18 +635,18 @@ export function SsoScreen() {
                       </div>
                     </div>
 
-                    <div className="grid gap-px bg-amber-200 md:grid-cols-2">
+                    <div className="grid gap-px bg-[var(--dls-border)] md:grid-cols-2">
                       {[
                         { label: "Record type", value: "TXT", key: "domain-record-type" },
                         { label: "Host / name", value: connection.domainVerificationHost, key: "domain-record-host" },
                         { label: "Full DNS name", value: connection.domainVerificationDnsName, key: "domain-record-name" },
                         { label: "Value", value: domainVerificationToken, key: "domain-token" },
                       ].map((record) => (
-                        <div key={record.key} className="bg-[#FFFEF7] px-5 py-4">
+                        <div key={record.key} className="bg-[var(--dls-surface)] px-5 py-4">
                           <div className="mb-2 flex items-center justify-between gap-3">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">{record.label}</p>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--dls-text-secondary)]">{record.label}</p>
                             {record.value ? (
-                              <button type="button" className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium text-amber-900 transition hover:bg-amber-100" onClick={() => void copyValue(record.value, record.key)}>
+                              <button type="button" className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium text-[var(--dls-text-primary)] transition hover:bg-[var(--dls-active)]" onClick={() => void copyValue(record.value, record.key)}>
                                 <Copy size={13} aria-hidden="true" /> {copiedValue === record.key ? "Copied" : "Copy"}
                               </button>
                             ) : null}
@@ -656,9 +656,9 @@ export function SsoScreen() {
                       ))}
                     </div>
 
-                    <div className="grid gap-3 px-5 py-4 text-[13px] leading-5 text-amber-900/80 sm:grid-cols-2">
-                      <p><strong className="text-amber-950">DNS providers differ:</strong> use the host value when your provider appends the domain automatically; otherwise use the full DNS name.</p>
-                      <p><strong className="text-amber-950">One-time proof:</strong> tokens expire after seven days. After verification succeeds, you may remove the TXT record. Changing the domain requires verification again.</p>
+                    <div className="grid gap-3 px-5 py-4 text-[13px] leading-5 text-[var(--dls-text-secondary)] sm:grid-cols-2">
+                      <p><strong className="text-[var(--dls-text-primary)]">DNS providers differ:</strong> use the host value when your provider appends the domain automatically; otherwise use the full DNS name.</p>
+                      <p><strong className="text-[var(--dls-text-primary)]">One-time proof:</strong> tokens expire after seven days. After verification succeeds, you may remove the TXT record. Changing the domain requires verification again.</p>
                     </div>
                   </section>
                 ) : (

@@ -1,6 +1,7 @@
 import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CancelledError, hashKey, QueryObserver, queryOptions, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { LoaderCircle } from "lucide-react";
+import { TaskRecovery } from "@/components/chat/task-recovery";
 import type { UIMessage } from "ai";
 import { applyHistorySourceChanges, mergeHistoryWindow, projectHistoryRead, reconcileHistoryRead, type LatestSessionHistory } from "./session-render-state";
 import { snapshotToUIMessages } from "../sync/usechat-adapter";
@@ -553,16 +554,26 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
     const cached = client.getQueryData<OpenworkSessionHistory>(input.snapshotQueryKey);
     if (!input.ignoreCached && cached?.session.id === input.sessionId) return cached.messages;
     if (options.revealLatest && pages.hasNewer) return pages.readLatestForSend({ desktopTransport: "main" });
-    if (!input.readLatest) return (await ensureFullSnapshot()).messages;
-    const controller = new AbortController();
-    entry.readers.add(controller);
-    try {
-      const latest = await input.readLatest(controller.signal, { desktopTransport: "main" });
-      controller.signal.throwIfAborted();
-      if (activeOwner.current !== entry) throw new CancelledError();
-      if (latest.session.id !== input.sessionId) throw new Error("Conversation history belongs to another session.");
-      return latest.messages;
-    } finally { entry.readers.delete(controller); }
+    const readLatest = input.readLatest;
+    if (!readLatest) return (await ensureFullSnapshot()).messages;
+    const read = async (canRetry: boolean): Promise<OpenworkSessionHistory["messages"]> => {
+      const controller = new AbortController();
+      entry.readers.add(controller);
+      try {
+        const latest = await readLatest(controller.signal, { desktopTransport: "main" });
+        controller.signal.throwIfAborted();
+        if (activeOwner.current !== entry) throw new CancelledError();
+        if (latest.session.id !== input.sessionId) throw new Error("Conversation history belongs to another session.");
+        return latest.messages;
+      } catch (error) {
+        // StrictMode's effect cleanup cancels the hero's first-send read even
+        // when the same owner is immediately restored. Retry only that read,
+        // once; a real unmount or credential/session change stays cancelled.
+        if (!canRetry || !controller.signal.aborted || activeOwner.current !== entry) throw error;
+      } finally { entry.readers.delete(controller); }
+      return read(false);
+    };
+    return read(true);
   }, [client, ensureFullSnapshot, entry, input.ignoreCached, input.readLatest, input.sessionId, input.snapshotQueryKey, pages.hasNewer, pages.readLatestForSend]);
   const runWithFullSnapshot = useCallback(async (
     action: (snapshot: OpenworkSessionHistory) => void | Promise<unknown>,
@@ -690,12 +701,12 @@ export function SessionHistoryStatus({ complete, pending, loading, failed, onRet
   // report, and an announcement derived from missing history alone would stay
   // visible with nothing left to clear it.
   if (!loading && !failed && !retrying) return null;
-  return <div data-thread-history-status className="pointer-events-none flex shrink-0 justify-center px-3 pt-2 sm:px-5">
-    <div role={failed && !retrying ? "alert" : "status"} aria-live="polite" className="pointer-events-auto flex items-center gap-2 rounded-md bg-dls-surface/95 px-3 py-1 text-xs text-dls-secondary shadow-sm">
-      <span>{retrying ? pending ? "Loading conversation…" : "Loading earlier messages…" : failed
+  return <div data-thread-history-status className="flex shrink-0 justify-center px-3 pt-2 sm:px-5">
+    <TaskRecovery compact state={failed && !retrying ? "failed" : "retrying"}
+      title={retrying ? pending ? "Loading conversation…" : "Loading earlier messages…" : failed
         ? pending ? "This conversation could not be loaded." : "The rest of this conversation could not be loaded."
-        : "Loading earlier messages…"}</span>
-      {failed || retrying ? <button type="button" disabled={retrying} className="underline disabled:no-underline" onClick={() => {
+        : "Loading earlier messages…"}
+      retryLabel="Reload conversation" retryDisabled={retrying} onRetry={failed || retrying ? () => {
         if (retryPending.current) return;
         retryPending.current = true;
         setRetrying(true);
@@ -703,8 +714,7 @@ export function SessionHistoryStatus({ complete, pending, loading, failed, onRet
           retryPending.current = false;
           setRetrying(false);
         });
-      }}>{retrying ? "Retrying…" : "Retry"}</button> : null}
-    </div>
+      } : undefined} />
   </div>;
 }
 

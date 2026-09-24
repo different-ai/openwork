@@ -156,7 +156,7 @@ export function TeamDetailScreen({ teamId }: { teamId: string }) {
                       return (
                         <div
                           key={`${item.plugin.id}-${item.edge}-${item.grantId ?? item.marketplace?.id ?? "org"}`}
-                          className={`flex flex-col gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-4 md:grid md:grid-cols-[minmax(0,1fr)_210px_100px_230px_110px] md:items-center md:gap-0 md:rounded-none md:border-0 md:px-6 md:py-3.5 ${item.role === "editor" ? "bg-amber-50/40" : ""}`}
+                          className={`flex flex-col gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-4 md:grid md:grid-cols-[minmax(0,1fr)_210px_100px_230px_110px] md:items-center md:gap-0 md:rounded-none md:border-0 md:px-6 md:py-3.5 ${item.role === "editor" ? "bg-[var(--dls-hover)]" : ""}`}
                         >
                           <div className="min-w-0 md:pr-4">
                             <p className="truncate text-[14px] font-semibold text-gray-900">{item.plugin.name}</p>

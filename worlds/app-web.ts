@@ -56,6 +56,22 @@ export async function bootAppWebWorld(
     throw new Error("Remote app-web supports only https://app.openworklabs.com as its Den proxy target.");
   }
   const runtimeName = `${receiptName("app-web", resolveStage(env))}-${randomUUID().slice(0, 8)}`;
+  if (options.place === "freestyle") {
+    if (!options.ref) throw new Error("Freestyle requires a full pushed source SHA.");
+    if (Object.keys(selectedEnv).length) throw new Error("Freestyle snapshots use isolated state and do not accept Den proxy overrides.");
+    const { ensureSnapshot } = await import("../packages/freestyle/src/builder.ts");
+    const { launchPreview, deletePreview } = await import("../packages/freestyle/src/index.ts");
+    await ensureSnapshot(options.ref, undefined, (message) => console.error(message));
+    const preview = await launchPreview({ gitSha: options.ref, lifetimeMinutes });
+    stack.defer(async () => {
+      await deletePreview(preview.id);
+      const path = env[LEDGER_ENV];
+      if (path) await rewriteLedger(path, (await readLedger(path)).filter((entry) => entry.kind !== "freestyle-preview" || entry.id !== preview.id));
+    });
+    await deps.track({ kind: "freestyle-preview", id: preview.id, match: preview.id, label: runtimeName });
+    return { placement: "freestyle", sourceSha: options.ref, sourceKind: "snapshot", snapshotId: preview.snapshotId,
+      sandboxId: preview.id, runtimeName, webUrl: { value: preview.url, secret: true }, previewExpires: preview.expiresAt };
+  }
   if (options.place === "local") {
     const source = await deps.localSource();
     const runtime = await deps.local(runtimeName, REPO_ROOT, { env: selectedEnv });
