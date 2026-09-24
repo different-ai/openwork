@@ -52,9 +52,13 @@ export function CodeModeTool({ part, calls, lifecycle, connectors }: {
     ? getCapabilityCallSentence(current, { connectionName: serviceName(current), includeQuery: false }).present
     : null;
   const waitingOn = running && current && now - lastActivityAt >= 8_000 ? serviceName(current) : null;
+  // The same action can be phrased with an article in the group label but not
+  // in the child sentence ("Creating a note" versus "Creating note").
+  const comparable = (value: string) => value.toLowerCase().replace(/\b(?:a|an|the)\b/g, "").replace(/\s+/g, " ").trim();
+  const distinctCurrent = currentSentence && !comparable(summary).startsWith(comparable(currentSentence));
   const label = statusUnknown ? `${summary} — Status unavailable`
     : waiting ? "Waiting for your action"
-      : !open && currentSentence && !summary.startsWith(currentSentence) ? `${summary} · ${currentSentence}` : summary;
+      : !open && distinctCurrent ? `${summary} · ${currentSentence}` : summary;
 
   return (
     <Collapsible open={open} onOpenChange={setUserOpen} data-code-mode-call={part.toolCallId}>
