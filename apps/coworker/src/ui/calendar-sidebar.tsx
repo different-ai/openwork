@@ -53,7 +53,7 @@ export function CalendarSidebar({
         aria-label="Calendar sources"
       >
         <legend className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-mist">
-          Sources
+          Show on calendar
         </legend>
         <label className="flex items-center gap-2 rounded-lg px-1 py-1.5 text-xs text-snow hover:bg-white/4">
           <input
@@ -87,7 +87,7 @@ export function CalendarSidebar({
           <span className="shrink-0 text-mint">
             <ActivityIcon />
           </span>
-          Responsibilities
+          Scheduled work
         </label>
       </fieldset>
       <fieldset aria-label="Calendar coworkers" className="space-y-1">

@@ -6,7 +6,7 @@ import {
   type EventInput,
   type WorkplaceEvent,
 } from "@/lib/events";
-import { Button, ErrorNote, Field, inputClass } from "@/ui/kit";
+import { Button, ErrorNote, Field, HelpTip, inputClass } from "@/ui/kit";
 import { EventSheet } from "@/ui/event-sheet";
 import { EventParticipants } from "@/ui/event-participants";
 
@@ -369,14 +369,10 @@ export function EventEditor({
           void save();
         }}
       >
-        <p className="text-xs leading-relaxed text-mist">
-          Give the team a goal, choose who joins, and set a time. Sessions run
-          on this computer while Open Coworker is open.{" "}
-          {event
-            ? "Edits apply to future sessions. Earlier sessions keep their instructions and results."
-            : "Choose an owner before scheduling. Saving an active event enables its schedule."}
-        </p>
+        <p className="text-xs text-mist">Set a goal, invite coworkers, and pick a time. Meetings run while this app is open on your Mac.</p>
+        <details className="text-[11px] leading-relaxed text-mist"><summary className="cursor-pointer">Before you schedule</summary><p className="mt-1">{event ? "Changes affect future meetings; past results stay as they were." : "Choose a lead first. Saving an active event turns its schedule on."}</p></details>
         <fieldset disabled={busy} className="space-y-4">
+          <div className="flex items-center gap-2 border-t border-line pt-3"><h3 className="text-sm font-semibold text-snow">What should happen?</h3><HelpTip label="event plan" content="Give this event a name, a result to work toward, and any instructions the team should follow." /></div>
           <Field label="Template">
             <select
               className={inputClass}
@@ -433,10 +429,6 @@ export function EventEditor({
                 }))
               }
             />
-            <p className="mt-1 text-[11px] text-mist">
-              Name the result the team should work toward and how you will know
-              it is done.
-            </p>
           </Field>
           <Field label="Working prompt">
             <textarea
@@ -451,10 +443,8 @@ export function EventEditor({
                 }))
               }
             />
-            <p className="mt-1 text-[11px] text-mist">
-              Optional guidance the team uses each time this event runs.
-            </p>
           </Field>
+          <div className="flex items-center gap-2 border-t border-line pt-3"><h3 className="text-sm font-semibold text-snow">Who should join?</h3><HelpTip label="event team" content="Invite coworkers, then choose one to guide the meeting and wrap up the result." /></div>
           <EventParticipants
             coworkers={coworkers}
             selected={draft.participantSlugs}
@@ -462,7 +452,7 @@ export function EventEditor({
             disabled={busy || !active}
             onToggle={toggleMember}
           />
-          <Field label="Owner">
+          <Field label="Meeting lead">
             <select
               required
               className={inputClass}
@@ -474,7 +464,7 @@ export function EventEditor({
                 }))
               }
             >
-              <option value="">Choose and confirm an owner</option>
+              <option value="">Choose a meeting lead</option>
               {members.map((member) => (
                 <option key={member.slug} value={member.slug}>
                   {member.name}
@@ -482,6 +472,7 @@ export function EventEditor({
               ))}
             </select>
           </Field>
+          <div className="flex items-center gap-2 border-t border-line pt-3"><h3 className="text-sm font-semibold text-snow">When should it happen?</h3><HelpTip label="event schedule" content="Pick a start time and how often to meet. Repeating meetings each keep their own history; missed meetings are not replayed." /></div>
           <div className="grid gap-3 @min-[400px]/panel:grid-cols-2">
             <Field label={cadence === "once" ? "Start" : "Schedule begins"}>
               <input
@@ -502,13 +493,7 @@ export function EventEditor({
               />
             </Field>
           </div>
-          <p className="text-[11px] text-mist">
-            {cadence === "once"
-              ? "The start uses the named time zone."
-              : "Schedule begins is when the series can start; Session time sets the time of each meeting."}{" "}
-            Changing the zone keeps the date and time you entered. Other edits
-            keep the saved timestamps and time zone.
-          </p>
+          <details className="text-[11px] text-mist"><summary className="cursor-pointer">How the time zone works</summary><p className="mt-1">{cadence === "once" ? "The start uses the time zone above." : "Schedule begins starts the series; Meeting time sets when each meeting starts."} Changing the zone keeps the date and time you entered. Other edits keep the saved timestamps and zone.</p></details>
           <div className="grid gap-3 @min-[400px]/panel:grid-cols-2">
             <Field label="Repeat">
               <select
@@ -538,7 +523,7 @@ export function EventEditor({
                 <option value="weekly">Weekly</option>
               </select>
             </Field>
-            <Field label="Duration (minutes)">
+            <Field label="Length (minutes)">
               <input
                 type="number"
                 min={5}
@@ -559,14 +544,9 @@ export function EventEditor({
               />
             </Field>
           </div>
-          {draft.durationMinutes === null ? (
-            <p className="text-[11px] text-mist">
-              Without a fixed duration, each session still stops after at most
-              240 minutes.
-            </p>
-          ) : null}
+          {draft.durationMinutes === null ? <p className="text-[11px] text-mist">Optional · meetings stop after 4 hours at most.</p> : null}
           {cadence !== "once" ? (
-            <Field label={`Session time / ${timezone}`}>
+            <Field label={`Meeting time / ${timezone}`}>
               <input
                 required
                 type="time"
@@ -612,19 +592,11 @@ export function EventEditor({
                 min={start.slice(0, 10)}
                 onChange={(change) => setUntilDate(change.target.value)}
               />
-              <p className="mt-1 text-[11px] leading-relaxed text-mist">
-                Optional last day in {timezone}. Sessions may start through the
-                end of that day. An unchanged date keeps its saved end time.
-              </p>
-              <p className="mt-2 text-[11px] leading-relaxed text-mist">
-                Leave blank to repeat until paused. Each session keeps its own
-                history. Resuming schedules the next future session; missed
-                sessions are not replayed.
-              </p>
+              <p className="mt-1 text-[11px] text-mist">Optional · leave blank to repeat until paused.</p>
             </Field>
           ) : null}
           <div className="grid gap-3 @min-[400px]/panel:grid-cols-2">
-            <Field label="Reply limit">
+            <Field label="Maximum replies">
               <input
                 required
                 type="number"
@@ -641,7 +613,7 @@ export function EventEditor({
                 }
               />
             </Field>
-            <Field label="Future sessions">
+            <Field label="Schedule status">
               <select
                 className={inputClass}
                 value={draft.state}
@@ -659,15 +631,11 @@ export function EventEditor({
               </select>
             </Field>
           </div>
-          <p className="text-[11px] text-mist">
-            Allow at least {Math.max(2, draft.participantSlugs.length + 1)}{" "}
-            replies: one per participant and the owner's conclusion. Pausing
-            does not cancel a run already accepted.
-          </p>
+          <details className="text-[11px] text-mist"><summary className="cursor-pointer">About replies and pausing</summary><p className="mt-1">Allow at least {Math.max(2, draft.participantSlugs.length + 1)} replies: one per coworker and one for the lead to conclude. Pausing stops future meetings, but does not cancel one already started.</p></details>
           <section className="space-y-2 border-t border-line pt-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-xs font-semibold text-mist">
-                Attached document references ({draft.artifacts.length}/30)
+                Documents to bring ({draft.artifacts.length}/30)
               </h3>
               <Button
                 type="button"
@@ -678,10 +646,7 @@ export function EventEditor({
                 {readingReferences ? "Reading..." : "Choose references"}
               </Button>
             </div>
-            <p className="text-[11px] text-mist">
-              Documents stay with their owners. A reference does not copy data
-              or grant access.
-            </p>
+            <p className="text-[11px] text-mist">Coworkers can only open documents they already have access to.</p>
             {draft.artifacts.map((artifact) => (
               <div
                 key={referenceKey(artifact)}

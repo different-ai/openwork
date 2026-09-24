@@ -6,14 +6,14 @@ import { createCoworkerThreads, runtimeWorkspaceReadinessKey, type EngineModelCa
 import { resolveModelPreview, type ModelChoicePreview } from "@/lib/model-choice";
 import { chooseOnboardingModel, onboardingModelReview, type OnboardingDraft } from "@/lib/onboarding-team";
 import { CoworkerMark, InlineLoader } from "@/ui/brand";
-import { Button, ChevronIcon, ErrorNote } from "@/ui/kit";
+import { Button, ChevronIcon, ErrorNote, HelpTip } from "@/ui/kit";
 import { ModelPicker } from "@/ui/model-picker";
 
-const PURPOSES: { id: ModelPurpose; title: string; description: string }[] = [
-  { id: "conversation", title: "Conversation", description: "Quick replies that keep the conversation moving while heavy work is delegated to Workers." },
-  { id: "thinking", title: "Deep thinking", description: "A Worker prepares a short decision brief before action. Stronger reasoning helps with difficult trade-offs." },
-  { id: "delivery", title: "Delivery", description: "A Worker carries out the task, uses tools and returns the result." },
-  { id: "facilitator", title: "Chat turn assignment", description: "A silent facilitator picks who speaks in a group chat. Minimal thinking is normally sufficient; it never replies in the chat." },
+const PURPOSES: { id: ModelPurpose; title: string; description: string; help: string }[] = [
+  { id: "conversation", title: "Conversation model", description: "For everyday messages.", help: "Answers messages directly. Longer work can go to a helper." },
+  { id: "thinking", title: "Deep thinking model", description: "For difficult decisions.", help: "A helper weighs a difficult decision and returns a short brief before work starts." },
+  { id: "delivery", title: "Task model", description: "For longer work.", help: "A helper uses available tools to carry out a task and bring the result back." },
+  { id: "facilitator", title: "Group chat guide", description: "Chooses who answers next.", help: "A quiet guide chooses the next speaker in a group chat. It does not send messages of its own." },
 ];
 
 const EMPTY_CATALOG: EngineModelCatalog = { models: [], connectedProviderIds: [], cloud: null };
@@ -34,14 +34,14 @@ export function ModelDefaultRows({ runtime, session, defaults, catalog, catalogL
   previewLoading?: boolean;
   compact?: boolean;
 }) {
-  return PURPOSES.map(({ id, title, description }) => {
+  return PURPOSES.map(({ id, title, description, help }) => {
     const selection = defaults[id];
     const preview: ModelChoicePreview = previews?.[id] ?? (catalogLoaded ? resolveModelPreview(catalog, id, defaults) : { state: "context", detail: "Model availability is unverified. Refresh the catalog to check this choice." });
     const picker = <ModelPicker runtime={runtime} session={session} catalog={catalog} catalogLoading={catalogLoading} onRefreshCatalog={onRefreshCatalog} defaultPurpose={id} value={selection.model} modelVariant={selection.modelVariant} compact onChange={(value) => onChange(id, value)} previewLoading={previewLoading} automaticPreview={preview} />;
     if (!compact) return (
       <section key={id} className="min-w-0 rounded-2xl border border-line bg-panel/45 p-4" aria-labelledby={`model-default-${id}`} data-testid={`model-default-${id}`}>
-        <h2 id={`model-default-${id}`} className="text-sm font-semibold text-snow">{title}</h2>
-        <p className="mb-3 mt-1 text-xs leading-relaxed text-mist">{description}</p>
+        <div className="flex items-center gap-2"><h2 id={`model-default-${id}`} className="text-sm font-semibold text-snow">{title}</h2><HelpTip label={title.toLowerCase()} content={help} /></div>
+        <p className="mb-3 mt-1 text-xs text-mist">{description}</p>
         {picker}
       </section>
     );
@@ -51,7 +51,7 @@ export function ModelDefaultRows({ runtime, session, defaults, catalog, catalogL
     return (
       <details key={id} className="group/model-row min-w-0 border-b border-line" data-testid={`model-default-${id}`}>
         <summary className="flex min-h-12 cursor-pointer list-none items-center gap-3 rounded-lg py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50 [&::-webkit-details-marker]:hidden">
-          <span className="shrink-0 font-medium text-snow" title={description}>{title}</span>
+          <span className="shrink-0 font-medium text-snow" title={help}>{title}</span>
           <span className="min-w-0 flex-1 text-right text-xs text-mist">
             {previewLoading && !selection.model ? <span className="ml-auto block h-3 w-32 rounded bg-line" aria-label="Reading model choice" /> : <>
               <span className="block break-words text-snow">{label}</span>
@@ -299,7 +299,7 @@ export function AppModelDefaults({ active, runtime, session, catalog, catalogLoa
 
   return (
     <div className="min-w-0 space-y-4" data-testid="app-model-defaults">
-      <p className="text-sm leading-relaxed text-mist">Shared choices for conversations, new Workers and chat turn assignment. Coworker and group overrides take priority.</p>
+      <p className="text-sm text-mist">Starting models for everyone. Personal choices still win.</p>
       {catalogLoading ? <InlineLoader label="Reading connected models" /> : !catalogLoaded || !catalog.models.length ? (
         <div className="rounded-xl border border-line bg-panel/45 p-3 text-xs leading-relaxed text-mist">
           {catalogLoaded ? "No connected models are listed yet." : "The model catalog is not ready. It needs a coworker workspace and the local AI service."} You can configure Automatic now and choose a specific model once the catalog is ready.
@@ -314,7 +314,7 @@ export function AppModelDefaults({ active, runtime, session, catalog, catalogLoa
       <fieldset disabled={!active || !defaults || loading || saving} aria-busy={loading || saving} aria-label="Model defaults" className="min-w-0 space-y-3 disabled:opacity-70">
         <ModelDefaultRows runtime={runtime} session={session} defaults={defaults ?? DEFAULT_MODEL_DEFAULTS} catalog={catalog} catalogLoaded={Boolean(defaults) && catalogLoaded} catalogLoading={catalogLoading} onRefreshCatalog={onRefreshCatalog} onChange={(purpose, selection) => void choose(purpose, selection)} previewLoading={loading} />
       </fieldset>
-      <p className="text-xs leading-relaxed text-mist">Existing Workers keep their model and effort; assignment models are unchanged.</p>
+      <details className="text-xs text-mist"><summary className="cursor-pointer">When do changes apply?</summary><p className="mt-1">New helpers use these choices. Existing helpers and scheduled assignments keep theirs.</p></details>
       <details className="text-xs leading-relaxed text-mist">
         <summary className="cursor-pointer font-medium text-snow">How Automatic chooses</summary>
         <p className="mt-2">Automatic applies role-specific rules to connected catalog facts: capabilities, supported effort and known token prices. It does not choose models or providers at random. Catalog facts are not measured speed or proof of paid access; missing facts stay unknown.</p>

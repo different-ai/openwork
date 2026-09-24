@@ -1,6 +1,7 @@
 import { CoworkerEffortSlider } from "@openwork/ui/coworker-effort";
 import { useEffect, useId, useRef, useState } from "react";
 import { DEFAULT_EFFORT_STOP, EFFORT_STOPS, describeEffortStop, effortLevelFor, effortStopLabel, laneWithPreference, replyKindForLane, type EffortKind, type EffortStop } from "@/lib/effort";
+import { HelpTip } from "@/ui/kit";
 
 /**
  * Dynamic effort sets the coworker's pace. The composer control opens a
@@ -51,8 +52,8 @@ export function EffortDial({
   const dial = (
     <div className={`${compact ? "w-[320px] max-w-[calc(100vw-56px)]" : "w-full min-w-0"} space-y-4`} data-testid="effort-dial-panel" data-stop={stop}>
       <div>
-        <p className="flex items-center gap-2 text-sm font-semibold text-snow"><DynamicEffortIcon />{compact ? "Dynamic effort" : "Default effort"}</p>
-        <p className="mt-1.5 text-xs leading-relaxed text-mist">Adjust how much {coworkerName} thinks before answering. Use less for simple tasks, more for difficult work.</p>
+        <p className="flex items-center gap-2 text-sm font-semibold text-snow"><DynamicEffortIcon />{compact ? "Thinking pace" : "My thinking pace"}{!compact ? <HelpTip label="thinking pace" content={`This sets how much ${coworkerName} thinks for different tasks. It also changes how long helpers can work. A fixed model effort, when chosen, takes priority.`} /> : null}</p>
+        <p className="mt-1.5 text-xs leading-relaxed text-mist">{compact ? `Adjust how much ${coworkerName} thinks before answering.` : "Pick a comfortable pace. It still adapts to each task."}</p>
       </div>
       <div>
         <div className="flex items-center justify-between gap-3">
@@ -69,7 +70,7 @@ export function EffortDial({
             </button>
           ) : null}
         </div>
-        <p className="mt-0.5 min-h-9 text-[11px] leading-relaxed text-mist" data-testid="effort-dial-meaning">{describeEffortStop(stop)}</p>
+        <p className="mt-0.5 min-h-6 text-[11px] leading-relaxed text-mist" data-testid="effort-dial-meaning">{compact ? describeEffortStop(stop) : ({ light: "Quickest for everyday questions.", steady: "A little quicker than Balanced.", balanced: "Adapts to the work you give it.", thorough: "Takes more time for careful work.", "all-in": "Takes the most time for hard work." }[stop])}</p>
       </div>
       <div>
         <CoworkerEffortSlider index={index} stop={stop} label={effortStopLabel(stop)} labelId={labelId} onChange={(nextIndex) => {

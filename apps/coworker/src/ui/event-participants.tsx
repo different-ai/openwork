@@ -90,7 +90,7 @@ export function EventParticipants({ coworkers, selected, leadSlug, disabled, onT
   return (
     <div className="space-y-1.5" data-testid="event-participants">
       <div className="flex items-center justify-between gap-2">
-        <label htmlFor={id} className="text-xs font-medium text-mist">Participants</label>
+        <label htmlFor={id} className="text-xs font-medium text-mist">Coworkers</label>
         {selected.length > 0 ? <span className="text-[10px] tabular-nums text-mist">{selected.length} added</span> : null}
       </div>
       <div ref={root} className={`relative flex min-h-11 flex-wrap items-center gap-1.5 rounded-xl border border-line bg-panel/70 p-2 focus-within:border-spark/50 ${disabled ? "opacity-60" : ""}`} onClick={(event) => { if (event.target === event.currentTarget) input.current?.focus(); }}>
@@ -101,7 +101,7 @@ export function EventParticipants({ coworkers, selected, leadSlug, disabled, onT
             <span key={slug} data-testid="event-participant-chip" data-slug={slug} className={`inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md border py-1 pl-1.5 pr-1 ${coworker ? "border-line/70 bg-white/5 text-snow" : "border-amber/30 bg-amber/5 text-amber"}`}>
               {coworker ? <span className="shrink-0">{avatar(coworker, 18)}</span> : null}
               <span className="min-w-0 truncate text-xs" title={coworker ? name : `${name} is no longer on the team`}>{name}</span>
-              {slug === leadSlug ? <span className="shrink-0 text-[9px] text-mist">Owner</span> : null}
+              {slug === leadSlug ? <span className="shrink-0 text-[9px] text-mist">Lead</span> : null}
               {!coworker ? <span className="shrink-0 text-[9px]">Unavailable</span> : null}
               <button type="button" disabled={disabled} data-participant-remove={slug} aria-label={`Remove ${name} from participants`} className="flex size-5 shrink-0 items-center justify-center rounded text-mist hover:bg-white/8 hover:text-snow focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark disabled:cursor-not-allowed" onClick={() => remove(slug)} onKeyDown={(event) => { if (event.key === "Backspace" || event.key === "Delete") { event.preventDefault(); remove(slug); } }}>
                 <svg className="size-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true"><path d="m5 5 6 6M11 5l-6 6" /></svg>

@@ -557,8 +557,7 @@ export function CalendarView({
               className="shrink-0 truncate border-t border-line px-3 py-1 text-[9px] leading-3 text-mist/70"
               title={`Times shown in ${Intl.DateTimeFormat().resolvedOptions().timeZone}. Dashed entries are scheduled; solid entries are actual runs. Select an empty time to plan.${days.some((day) => plusDays(day, 1).getTime() - day.getTime() !== 86400000) ? " Clocks change in this range; repeated-hour slots choose the first occurrence." : ""}`}
             >
-              {Intl.DateTimeFormat().resolvedOptions().timeZone} / Dashed:
-              scheduled / Solid: actual
+              {Intl.DateTimeFormat().resolvedOptions().timeZone} · Dashed: planned · Solid: started
             </p>
             {preferences.events ? (
               <details className="max-h-44 shrink-0 overflow-y-auto border-t border-line px-3 py-2">
@@ -566,7 +565,7 @@ export function CalendarView({
                   className="cursor-pointer text-[10px] font-medium leading-3 text-mist"
                   title="Includes paused, archived and historical events"
                 >
-                  Event library ({library.length})
+                  All events ({library.length})
                 </summary>
                 <div className="mt-3 space-y-1">
                   {library.map((event) => (

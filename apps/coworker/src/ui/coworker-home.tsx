@@ -1148,9 +1148,9 @@ function CoworkerSettings({
       </section>
 
       <section className="border-t border-line/60 pt-4">
-        <h3 className="text-xs font-semibold text-snow">Coworker folder</h3>
-        <p className="mt-1 text-xs leading-relaxed text-mist">{coworker.name}'s files and saved configuration on this Mac.</p>
-        <p className="my-2 break-all text-[11px] text-mist">{coworker.path}</p>
+        <h3 className="text-sm font-semibold text-snow">My personal folder</h3>
+        <p className="mt-1 text-xs text-mist">Files {coworker.name} keeps on this Mac.</p>
+        <details className="my-2 text-[11px] text-mist"><summary className="cursor-pointer">Folder location</summary><p className="mt-1 break-all">{coworker.path}</p></details>
         <Button variant="ghost" className="text-xs" onClick={() => {
           setError("");
           void coworkerBridge.coworkers.openFolder(coworker.slug).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));

@@ -23,7 +23,7 @@ import { usesAppConversationDefault } from "@/lib/model-defaults";
 import { AppModelDefaults } from "@/ui/app-model-defaults";
 import { CoworkerModelSettings } from "@/ui/coworker-model-settings";
 import { CoworkerMark, InlineLoader } from "@/ui/brand";
-import { Button, ErrorNote, StatusDot } from "@/ui/kit";
+import { Button, ErrorNote, HelpTip, StatusDot } from "@/ui/kit";
 import { LocalProviders } from "@/ui/local-providers";
 import { ModelsMembershipCard } from "@/ui/models-membership";
 import { FreshStartSettings } from "@/ui/fresh-start-settings";
@@ -31,11 +31,11 @@ import { FreshStartSettings } from "@/ui/fresh-start-settings";
 export type SettingsSection = "general" | "model-defaults" | "account" | "models" | "engine" | "fresh-start";
 
 const SECTIONS: Array<{ id: SettingsSection; label: string; detail: string }> = [
-  { id: "general", label: "General", detail: "Coworker models, effort and activity preferences" },
-  { id: "model-defaults", label: "Model defaults", detail: "Shared models for conversation, Workers and chat turn assignment" },
+  { id: "general", label: "My coworkers", detail: "Personal choices for each coworker" },
+  { id: "model-defaults", label: "Shared AI models", detail: "Models used by default across the team" },
   { id: "account", label: "Account", detail: "OpenWork account and organization" },
-  { id: "models", label: "AI models", detail: "What every coworker can use: your OpenWork account, this Mac, and OpenWork's free model" },
-  { id: "engine", label: "AI & local setup", detail: "AI service, responsibilities on this Mac, and storage" },
+  { id: "models", label: "Available models", detail: "AI models your coworkers can choose" },
+  { id: "engine", label: "This Mac", detail: "AI service and files on this Mac" },
   { id: "fresh-start", label: "Fresh start", detail: "A tour, a tune-up, or a new beginning" },
 ];
 
@@ -50,7 +50,7 @@ function sectionDescription(section: SettingsSection): string {
 }
 
 function modelLabel(coworker: CoworkerSummary, models: EngineModelOption[], catalogLoaded: boolean): string {
-  if (usesAppConversationDefault(coworker)) return "App conversation default";
+  if (usesAppConversationDefault(coworker)) return "Shared conversation model";
   if (!coworker.model) return "No model selected yet";
   const match = models.find((model) => model.id === coworker.model);
   if (match) return `${match.label} · ${modelOriginLabel(match)}`;
@@ -58,7 +58,7 @@ function modelLabel(coworker: CoworkerSummary, models: EngineModelOption[], cata
 }
 
 function modelHint(coworker: CoworkerSummary): string {
-  if (usesAppConversationDefault(coworker)) return "Shared model and effort from Settings > Model defaults";
+  if (usesAppConversationDefault(coworker)) return "Uses the team choice";
   const mode = coworker.modelMode === "auto" ? "Automatic model selection" : "Selected model for every message";
   return `${mode} · ${coworker.modelVariant ? `Fixed effort: ${coworker.modelVariant}` : `Adaptive effort: ${effortStopLabel(coworker.effortPreference)}`}`;
 }
@@ -332,10 +332,8 @@ export function OpenWorkSettings({
             {section === "general" ? (
               <>
                 <div>
-                  <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">OpenWork settings</h2>
-                  <p className="mt-1 max-w-2xl text-sm leading-relaxed text-mist">
-                    Connections and model defaults are shared across your team. Keep those defaults or customize a coworker's model and effort here or in its sidebar.
-                  </p>
+                  <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">My coworkers</h2>
+                  <p className="mt-1 max-w-2xl text-sm text-mist">See what your team uses, then make personal choices for each coworker.</p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-2">
                   <button type="button" className="rounded-2xl border border-line bg-panel/45 p-4 text-left transition-colors hover:bg-white/[0.045]" onClick={() => setSection("account")}>
@@ -347,15 +345,15 @@ export function OpenWorkSettings({
                   </button>
                   <button type="button" className="rounded-2xl border border-line bg-panel/45 p-4 text-left transition-colors hover:bg-white/[0.045]" onClick={() => setSection("engine")}>
                     <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-semibold text-snow">AI & local setup</span>
+                      <span className="text-sm font-semibold text-snow">This Mac</span>
                       <StatusDot tone={runtime.engineManaged ? "mint" : "rose"} />
                     </div>
                     <p className="mt-2 text-xs text-mist">{runtime.engineManaged ? "AI is ready" : "AI needs attention"}</p>
                   </button>
                 </div>
                 <button type="button" className="block w-full rounded-2xl border border-line bg-panel/45 p-4 text-left transition-colors hover:bg-white/[0.045]" onClick={() => setSection("model-defaults")}>
-                  <span className="text-sm font-semibold text-snow">Model defaults</span>
-                  <span className="mt-1 block text-xs leading-relaxed text-mist">Conversation, Deep thinking, Delivery and Chat turn assignment. Set shared choices once; individual overrides still win.</span>
+                  <span className="text-sm font-semibold text-snow">Shared AI models</span>
+                  <span className="mt-1 block text-xs text-mist">Set the starting choices for your whole team.</span>
                 </button>
                 <SettingsCard>
                   <SettingsRow label="Coworkers" value={`${coworkers.length} coworker${coworkers.length === 1 ? "" : "s"}`} hint="Each coworker has its own OpenWork workspace." />
@@ -367,8 +365,8 @@ export function OpenWorkSettings({
                 </SettingsCard>
                 {coworkers.length > 0 ? (
                   <section className="space-y-3" data-testid="coworker-defaults">
-                    <h2 className="text-sm font-semibold text-snow">Models and effort by coworker</h2>
-                    <p className="text-xs leading-relaxed text-mist">Use the app conversation default or keep a personal model. Changes below apply only to the coworker you edit; saved personal choices are kept when you switch to app defaults.</p>
+                    <div className="flex items-center gap-2"><h2 className="text-sm font-semibold text-snow">Each coworker's AI</h2><HelpTip label="each coworker's AI" content="Choose a conversation model and thinking pace for one coworker. Shared defaults stay available, and personal choices remain saved when you switch back." /></div>
+                    <p className="text-xs text-mist">Open a coworker to make a personal choice.</p>
                     <SettingsCard>
                       {coworkers.map((coworker) => (
                         <details key={coworker.slug} open={editingCoworker === coworker.slug} onToggle={(event) => {
@@ -381,7 +379,7 @@ export function OpenWorkSettings({
                               <span className="mt-1 block break-words">{modelLabel(coworker, models, catalogLoaded)}</span>
                               <span className="mt-1 block leading-relaxed text-mist">{modelHint(coworker)}</span>
                             </span>
-                            <span className="shrink-0 text-spark">Edit models & effort</span>
+                            <span className="shrink-0 text-spark">Edit AI choices</span>
                           </summary>
                           {editingCoworker === coworker.slug && onCoworkerChanged ? <div className="border-t border-line p-4">
                             <CoworkerModelSettings runtime={runtime} session={session} coworker={coworker} onCoworkerChanged={onCoworkerChanged} onSyncProviders={onSyncProviders} onOpenAccount={() => setSection("account")} onOpenModelDefaults={() => setSection("model-defaults")} catalog={catalog} catalogLoading={refreshing} onRefreshCatalog={refreshConfiguration} />
@@ -400,9 +398,7 @@ export function OpenWorkSettings({
               <>
                 <div>
                   <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">OpenWork account</h2>
-                  <p className="mt-1 text-sm leading-relaxed text-mist">
-                    The same account as OpenWork Desktop. Signing in brings your organization's AI providers to every coworker and lets responsibilities run in OpenWork Cloud.
-                  </p>
+                  <p className="mt-1 text-sm text-mist">Sign in to bring your team's AI models and cloud work here.</p>
                 </div>
                 <SettingsCard testId="account-card">
                   <div className="flex items-center gap-4 p-5">
@@ -462,10 +458,8 @@ export function OpenWorkSettings({
                 />
                 <div className="flex items-start justify-between gap-5">
                   <div>
-                    <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">AI models</h2>
-                    <p className="mt-1 max-w-xl text-sm leading-relaxed text-mist">
-                      Connected models can be used across your team. Choose shared models in Model defaults, or customize one coworker in its settings. Catalog availability does not confirm paid access.
-                    </p>
+                    <div className="flex items-center gap-2"><h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">Available models</h2><HelpTip label="available models" content="These models are connected for your team. Availability here does not confirm a paid account with every provider. Choose a shared model in Shared AI models, or choose one for a coworker." /></div>
+                    <p className="mt-1 max-w-xl text-sm text-mist">See which models your coworkers can choose.</p>
                   </div>
                   {session ? (
                     <Button variant="ghost" disabled={refreshing} onClick={() => void refreshConfiguration({ sync: true })} data-testid="refresh-providers">
@@ -513,8 +507,8 @@ export function OpenWorkSettings({
               <>
                 <div className="flex items-start justify-between gap-5">
                   <div>
-                    <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">AI & local setup</h2>
-                    <p className="mt-1 max-w-xl text-sm leading-relaxed text-mist">The local AI service that runs every coworker on this Mac, plus where their files live.</p>
+                    <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">This Mac</h2>
+                    <p className="mt-1 max-w-xl text-sm text-mist">AI health and files saved here.</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     {!runtime.engineManaged ? (
@@ -526,7 +520,7 @@ export function OpenWorkSettings({
                 <SettingsCard testId="local-setup-card">
                   <SettingsRow label="AI service" value={runtime.engineManaged ? "AI is ready" : "AI is unavailable"} hint={runtime.engineManaged ? "Runs with Open Coworker on this Mac." : "Coworkers cannot work until it is running again."} tone={runtime.engineManaged ? "mint" : "rose"} />
                   <SettingsRow label="Application" value={`${runtime.appName} ${runtime.version}`} />
-                  <SettingsRow label="Coworker files" value={runtime.coworkersDir} hint="Open the folder to browse each coworker's files and saved configuration." action={<Button variant="ghost" className="text-xs" onClick={() => {
+                  <SettingsRow label="Coworker folders" value={runtime.coworkersDir} hint="A folder for each coworker's files and preferences." action={<Button variant="ghost" className="text-xs" onClick={() => {
                     setError("");
                     void coworkerBridge.coworkers.openFolder().catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
                   }}>Open folder</Button>} />

@@ -7,7 +7,7 @@ import { usesAppConversationDefault, type ModelDefaults, type ModelPurpose } fro
 import { normalizeModelSelectionPreferences, type ModelSelectionPreferences } from "@/lib/model-intelligence-index";
 import { createCoworkerThreads, type EngineModelCatalog } from "@/lib/threads";
 import { EffortDial } from "@/ui/effort-dial";
-import { Button, ErrorNote, Field, inputClass } from "@/ui/kit";
+import { Button, ErrorNote, Field, HelpTip, inputClass } from "@/ui/kit";
 import { ModelPicker, type ModelSelection } from "@/ui/model-picker";
 
 function ModelPreferences({ preferences, saving, onSave }: {
@@ -29,7 +29,7 @@ function ModelPreferences({ preferences, saving, onSave }: {
   ];
   return (
     <div className="mt-3 space-y-3">
-      <p className="text-[11px] leading-relaxed text-mist">Used for automatic model choices, including the app's Automatic default. Saving does not change your model, selection mode or effort. Preferences never override provider, price or capability safety checks.</p>
+      <p className="text-[11px] leading-relaxed text-mist">Only affects choices marked Automatic.</p>
       <Field label="Automatic priority">
         <select aria-label="Automatic priority" className={`${inputClass} bg-panel`} value={priority} disabled={saving} onChange={(event) => setPriority(normalizeModelSelectionPreferences({ priority: event.target.value }).priority)}>
           <option value="balanced">Balanced</option>
@@ -37,7 +37,7 @@ function ModelPreferences({ preferences, saving, onSave }: {
           <option value="capability">More documented capacity</option>
         </select>
       </Field>
-      <p className="text-[11px] leading-relaxed text-mist">One exact provider/model ID per line, up to 8 per list. Preferred lists are ordered first to last. Use Inspect model facts in a model picker to browse connected IDs without changing your model.</p>
+      <details className="text-[11px] leading-relaxed text-mist"><summary className="cursor-pointer">How to enter models</summary><p className="mt-1">Use one full provider/model ID per line, up to 8 in each list. Order preferred models from first choice to last. Find IDs in Inspect model facts. These choices never bypass provider, price, or capability checks.</p></details>
       {fields.map(({ key, label }) => (
         <Field key={key} label={label}>
           <textarea aria-label={label} className={`${inputClass} min-h-16 resize-y bg-panel font-mono text-xs`} rows={2} spellCheck={false} value={draft[key]} disabled={saving} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} />
@@ -130,55 +130,51 @@ export function CoworkerModelSettings({ runtime, session, coworker, onCoworkerCh
   return (
     <fieldset disabled={saving} aria-busy={saving} className="min-w-0 space-y-6 disabled:opacity-70">
       <section data-testid="coworker-model-settings">
-        <h3 className="text-xs font-semibold text-snow">Main model</h3>
-        <p className="mb-3 mt-1 text-xs leading-relaxed text-mist" data-testid="coworker-model-note">
-          Choose whether {coworker.name}'s conversations follow the app default or a personal model. Switching to the app default keeps the saved personal model and assignment settings.
-        </p>
+        <div className="flex items-center gap-2"><h3 className="text-sm font-semibold text-snow">My conversation model</h3><HelpTip label="conversation model" content={`The AI model ${coworker.name} uses to reply to you. You can use the shared choice or choose one just for ${coworker.name}. Switching back keeps the personal choice saved.`} /></div>
+        <p className="mb-3 mt-1 text-xs text-mist" data-testid="coworker-model-note">How {coworker.name} answers your messages.</p>
         <div className="mb-3 space-y-2 rounded-xl border border-line bg-panel p-3" role="radiogroup" aria-label="Conversation model source">
           <label className="flex items-start gap-2 text-xs leading-relaxed text-snow">
             <input className="mt-0.5 shrink-0" type="radio" name={inheritanceId} checked={inheritsConversation} onChange={() => void update({ useAppModelDefaults: true })} />
-            <span>Use app conversation default</span>
+            <span>Use the shared model</span>
           </label>
           <label className="flex items-start gap-2 text-xs leading-relaxed text-snow">
             <input className="mt-0.5 shrink-0" type="radio" name={inheritanceId} checked={!inheritsConversation} onChange={() => void update({ useAppModelDefaults: false })} />
-            <span>Customize for this coworker</span>
+            <span>Choose a model for {coworker.name}</span>
           </label>
         </div>
         <p className="mb-3 text-[11px] leading-relaxed text-mist">
-          {onOpenModelDefaults ? <button type="button" className="font-medium text-spark hover:underline" onClick={onOpenModelDefaults}>Change app model defaults</button> : "Change shared choices in Settings > Model defaults."}
+          {onOpenModelDefaults ? <button type="button" className="font-medium text-spark hover:underline" onClick={onOpenModelDefaults}>Change shared models</button> : "Change shared models in Settings."}
         </p>
         {inheritsConversation ? (
           <div className="space-y-1 break-words text-xs leading-relaxed text-mist">
-            <p className="font-semibold text-snow">{defaults && !defaults.conversation.model ? "Automatic" : "App conversation default"}</p>
+            <p className="font-semibold text-snow">{defaults && !defaults.conversation.model ? "Chosen automatically" : "Shared model"}</p>
             <p data-testid="coworker-automatic-current">{previewLoading || catalogLoading ? "Reading current model choice..." : describeModelPreview(preview("conversation"))}</p>
-            <p>Conversations use the app default, including its thinking effort. {coworker.model ? `Saved personal model: ${modelCatalog?.models.find((model) => model.id === coworker.model)?.modelLabel ?? "currently unavailable"}. Choose Customize to use it again.` : "No personal model is saved yet. Choose Customize to pick one."}</p>
+            {coworker.model ? <p>Personal choice saved: {modelCatalog?.models.find((model) => model.id === coworker.model)?.modelLabel ?? "currently unavailable"}</p> : null}
           </div>
         ) : <ModelPicker {...pickerProps} automaticPreview={preview("conversation")} value={coworker.model} modelVariant={coworker.modelVariant} chosenBy={coworker.modelChosenBy} modelMode={coworker.modelMode} onChange={(selection) => void update({ ...selection, modelChosenBy: "person", useAppModelDefaults: false })} />}
         <details className="mt-4 text-xs text-mist" data-testid="model-selection-preferences">
-          <summary className="cursor-pointer font-medium text-snow">Automatic preferences: {preferences.priority === "cost" ? "Lower token cost" : preferences.priority === "capability" ? "More documented capacity" : "Balanced"}</summary>
+          <summary className="cursor-pointer font-medium text-snow">How Automatic chooses · {preferences.priority === "cost" ? "Lower cost" : preferences.priority === "capability" ? "More capable" : "Balanced"}</summary>
           <ModelPreferences key={`${coworker.slug}:${JSON.stringify(preferences)}`} preferences={preferences} saving={saving} onSave={(modelSelectionPreferences) => void update({ modelSelectionPreferences })} />
         </details>
         <div className="mt-5" data-testid="coworker-effort-settings">
-          {inheritsConversation ? <p className="mb-2 text-[11px] leading-relaxed text-mist">When app effort is Automatic, this preference still applies. A fixed app effort takes priority for conversations. Your personal exact effort is kept for assignments.</p> : null}
+          {inheritsConversation ? <details className="mb-2 text-[11px] leading-relaxed text-mist"><summary className="cursor-pointer">How this works with shared settings</summary><p className="mt-1">This preference applies when shared effort is Automatic. A fixed shared effort takes priority for conversations. Your personal exact effort remains saved for assignments.</p></details> : null}
           <EffortDial stop={coworker.effortPreference} onChange={(effortPreference) => void update({ effortPreference })} coworkerName={coworker.name} fixedVariant={coworker.modelVariant} compact={false} />
         </div>
       </section>
       <section className="space-y-5 border-t border-line pt-4" data-testid="coworker-worker-model-settings">
         <div>
-          <h3 className="text-xs font-semibold text-snow">Worker defaults</h3>
-          <p className="mt-1 text-xs leading-relaxed text-mist">Workers do delegated tasks for {coworker.name}. An explicit choice here overrides the app default for that purpose. Leave it empty to use the app default, then role-appropriate Automatic. Existing Workers are unchanged.</p>
+          <div className="flex items-center gap-2"><h3 className="text-sm font-semibold text-snow">My helpers</h3><HelpTip label="helpers" content={`When ${coworker.name} asks another AI to help, these models handle that work. Choices here apply to new helpers; existing helpers keep their models.`} /></div>
+          <p className="mt-1 text-xs text-mist">Choose who helps with difficult decisions and longer tasks.</p>
         </div>
         <div data-testid="thinking-model-settings">
-          <h4 className="text-xs font-medium text-snow">Deep thinking model</h4>
-          <p className="mb-3 mt-1 text-xs leading-relaxed text-mist">Used when {coworker.name} needs help with an unclear decision before doing the work. Choose a stronger reasoning model for difficult trade-offs, or keep the app default.</p>
+          <div className="flex items-center gap-2"><h4 className="text-xs font-medium text-snow">My deep thinking model</h4><HelpTip label="deep thinking model" content={`Helps ${coworker.name} weigh a difficult decision before work begins. It returns a short decision brief.`} /></div>
+          <p className="mb-3 mt-1 text-xs text-mist">For hard choices before work starts.</p>
           <ModelPicker {...pickerProps} automaticPreview={preview("thinking")} value={coworker.thinkingModel ?? ""} modelVariant={coworker.thinkingModelVariant ?? ""} onChange={(selection) => void updateWorker("thinking", selection)} forWorker />
-          <p className="mt-2 text-[11px] leading-relaxed text-mist">Produces a short decision brief. Two turns by default.</p>
         </div>
         <div data-testid="delivery-model-settings">
-          <h4 className="text-xs font-medium text-snow">Delivery model</h4>
-          <p className="mb-3 mt-1 text-xs leading-relaxed text-mist">Used to carry out a delegated task and return the result to {coworker.name}. Customize it for the capabilities and known token costs that task needs.</p>
+          <div className="flex items-center gap-2"><h4 className="text-xs font-medium text-snow">My task model</h4><HelpTip label="task model" content={`Carries out tasks ${coworker.name} delegates, then brings the result back. It gets up to ${workerTurnsFor(coworker.effortPreference)} turns by default at this effort setting.`} /></div>
+          <p className="mb-3 mt-1 text-xs text-mist">For research, making things, and other longer work.</p>
           <ModelPicker {...pickerProps} automaticPreview={preview("delivery")} value={coworker.deliveryModel ?? ""} modelVariant={coworker.deliveryModelVariant ?? ""} onChange={(selection) => void updateWorker("delivery", selection)} forWorker />
-          <p className="mt-2 text-[11px] leading-relaxed text-mist">Up to {workerTurnsFor(coworker.effortPreference)} turns by default, based on the effort setting above.</p>
         </div>
         <details className="text-[11px] leading-relaxed text-mist">
           <summary className="cursor-pointer font-medium">When do changes apply?</summary>

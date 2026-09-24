@@ -319,6 +319,11 @@ export function Tooltip({
   );
 }
 
+/** A focusable explanation beside a short settings heading. */
+export function HelpTip({ label, content }: { label: string; content: string }) {
+  return <Tooltip content={content} side="right"><button type="button" aria-label={`About ${label}`} className="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-line text-[11px] font-medium text-mist hover:border-white/25 hover:text-snow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/60">?</button></Tooltip>;
+}
+
 /**
  * A 32×32 icon-only control. `label` is the accessible name; `tooltip` is what
  * a person sees on hover — the name by default, or a line that says what the
