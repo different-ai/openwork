@@ -17,6 +17,7 @@ function fixture() {
     if (path.endsWith("/workflows/pr-proof.yml")) return { id: 20, path: source.path };
     if (path.endsWith("/pulls/7")) return pr;
     if (path.includes("/workflows/20/runs?")) return { total_count: runs.length, workflow_runs: runs };
+    if (path.includes("/comments?")) return [];
     if (path.includes("/deployments?")) return deployments;
     if (path.includes("/check-runs?")) return { total_count: checks.length, check_runs: checks };
     throw new Error(path);
@@ -37,7 +38,11 @@ test("published evidence creates a SHA-bound check and native deployment with im
   assert.equal(deployment.environment, "Evidence / PR 7");
   const status = f.writes.find(w => w.path.endsWith("/statuses")).body;
   assert.equal(status.environment_url, url); assert.equal(status.auto_inactive, false);
-  assert.ok(f.writes.every(w => !w.path.includes("comments")));
+  assert.ok(f.writes.some(w => w.path.endsWith("/issues/7/comments")));
+  assert.equal(deployment.transient_environment, false);
+  const commitStatus = f.writes.find(w => w.path.includes("/statuses/"));
+  assert.equal(commitStatus.body.context, "OpenWork Evidence");
+  assert.equal(commitStatus.body.target_url, url);
 });
 
 test("failed evidence stays red even though its report deployment is available", async () => {
@@ -52,7 +57,7 @@ test("missing reports fail, no-spec selection is neutral, and cancellation never
     const f = fixture(); f.input.receipt = receipt; f.source.conclusion = producer;
     await presentEvidence(f.input, f.api);
     assert.equal(f.writes[0].body.conclusion, conclusion);
-    assert.equal(f.writes.length, 1);
+    assert.equal(f.writes.length, 3);
   }
 });
 
@@ -71,7 +76,7 @@ test("delayed progress cannot downgrade a finished result; queued and publishing
   f.checks.length = 0; f.source.status = "queued";
   await presentEvidence(f.input, f.api); assert.equal(f.writes[0].body.status, "queued");
   f.source.status = "completed"; await presentEvidence(f.input, f.api);
-  assert.equal(f.writes.at(-1).body.output.title, "Publishing evidence");
+  assert.equal(f.writes.filter(w => w.path.endsWith("/check-runs")).at(-1).body.output.title, "Publishing evidence");
 });
 
 test("a push while publishing can only retire this run's deployment", async () => {

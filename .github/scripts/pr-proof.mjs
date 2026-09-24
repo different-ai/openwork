@@ -28,7 +28,7 @@ export function selectProof(files) {
 }
 
 export function proofLanes(specs, { event, current, repo, actor, triggeringActor }) {
-  const liveSpecs = specs.filter(spec => spec === "evals/specs/live-stream-continuity.e2e.test.ts");
+  const liveSpecs = specs.filter(spec => ["evals/specs/live-stream-continuity.e2e.test.ts", "evals/specs/engine-live-chat.e2e.test.ts"].includes(spec));
   // Packaged specs boot a packaged desktop binary, which only the packaged
   // smoke runner builds; running them against a dev build always fails.
   const packagedSpecs = specs.filter(spec => PACKAGED_SPEC.test(spec));

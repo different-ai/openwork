@@ -1,12 +1,13 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { queryOptions, useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   type ConnectedIntegration,
   integrationQueryKeys,
 } from "./integration-data";
+import { parsePluginAccessGrants, pluginAccessQueryKeys } from "./plugin-access-data";
 
 /**
  * Plugin primitives — mirror OpenCode / Claude Code's plugin surface:
@@ -504,6 +505,7 @@ function filterByConnectedProviders(
 export const pluginQueryKeys = {
   all: ["plugins"] as const,
   list: () => [...pluginQueryKeys.all, "list"] as const,
+  summaries: () => [...pluginQueryKeys.list(), "summaries"] as const,
   detail: (id: string) => [...pluginQueryKeys.all, "detail", id] as const,
 };
 
@@ -615,32 +617,42 @@ function parsePluginHookEvent(value: string | null): PluginHookEvent {
   }
 }
 
+function requestPluginContents(id: string) {
+  return requestJson(`/v1/plugins/${encodeURIComponent(id)}/resolved`, { method: "GET" }, 15000);
+}
+
+function pluginContentsPayload({ response, payload }: Awaited<ReturnType<typeof requestPluginContents>>) {
+  if (!response.ok) {
+    throw new Error(getErrorMessage(payload, `Failed to load plugin contents (${response.status}).`));
+  }
+  return payload;
+}
+
 async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
   const [pluginResult, membershipsResult] = await Promise.all([
     requestJson(`/v1/plugins/${encodeURIComponent(id)}`, { method: "GET" }, 15000),
-    requestJson(`/v1/plugins/${encodeURIComponent(id)}/resolved`, { method: "GET" }, 15000),
+    requestPluginContents(id),
   ]);
 
   if (!pluginResult.response.ok) {
     throw new Error(getErrorMessage(pluginResult.payload, `Failed to load plugin (${pluginResult.response.status}).`));
   }
-  if (!membershipsResult.response.ok) {
-    throw new Error(getErrorMessage(membershipsResult.payload, `Failed to load plugin contents (${membershipsResult.response.status}).`));
-  }
+  const contents = pluginContentsPayload(membershipsResult);
 
   const pluginItem = isRecord(pluginResult.payload) && isRecord(pluginResult.payload.item) ? pluginResult.payload.item : null;
-  if (!pluginItem) {
-    return null;
-  }
+  return pluginItem ? buildDenPlugin(pluginItem, contents) : null;
+}
 
+/** List items and plugin detail share one shape, so either can be combined with `/resolved`. */
+function buildDenPlugin(pluginItem: Record<string, unknown>, contents: unknown): DenPlugin | null {
   const pluginId = asString(pluginItem.id);
   const name = asString(pluginItem.name);
   if (!pluginId || !name) {
     return null;
   }
 
-  const membershipItems = isRecord(membershipsResult.payload) && Array.isArray(membershipsResult.payload.items)
-    ? membershipsResult.payload.items.map(parseMembershipConfigObject).filter((value): value is NonNullable<typeof value> => Boolean(value))
+  const membershipItems = isRecord(contents) && Array.isArray(contents.items)
+    ? contents.items.map(parseMembershipConfigObject).filter((value): value is NonNullable<typeof value> => Boolean(value))
     : [];
 
   const skills = membershipItems
@@ -718,6 +730,11 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
   } satisfies DenPlugin;
 }
 
+function listItems(payload: unknown) {
+  return (isRecord(payload) && Array.isArray(payload.items) ? payload.items : []).filter(isRecord);
+}
+
+/** Every plugin with its contents: one list request plus `/resolved` per plugin. */
 export function usePlugins({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     enabled,
@@ -728,24 +745,126 @@ export function usePlugins({ enabled = true }: { enabled?: boolean } = {}) {
         throw new Error(getErrorMessage(payload, `Failed to load plugins (${response.status}).`));
       }
 
-      const items = isRecord(payload) && Array.isArray(payload.items) ? payload.items : [];
-      const pluginIds = items.flatMap((entry) => {
-        const id = isRecord(entry) ? asString(entry.id) : null;
-        return id ? [id] : [];
-      });
-
-      const plugins = await Promise.all(pluginIds.map((id) => fetchResolvedPlugin(id)));
+      const plugins = await Promise.all(listItems(payload).map(async (item) => {
+        const id = asString(item.id);
+        return id ? buildDenPlugin(item, pluginContentsPayload(await requestPluginContents(id))) : null;
+      }));
       return plugins.filter((plugin): plugin is DenPlugin => Boolean(plugin));
     },
   });
 }
 
-export function usePlugin(id: string) {
-  return useQuery({
+/** What a plugin list row shows, straight from the list response. */
+export type DenPluginSummary = Pick<DenPlugin, "id" | "name" | "slug" | "description" | "status" | "createdByOrgMembershipId"> & {
+  /** False when the server did not include access, so callers load it per plugin. */
+  accessIncluded: boolean;
+  updatedAt?: string;
+};
+
+function parsePluginSummary(item: Record<string, unknown>): DenPluginSummary | null {
+  const id = asString(item.id);
+  const name = asString(item.name);
+  if (!id || !name) return null;
+  return {
+    accessIncluded: Array.isArray(item.access),
+    updatedAt: asString(item.updatedAt) ?? undefined,
+    createdByOrgMembershipId: asString(item.createdByOrgMembershipId),
+    description: asString(item.description) ?? "",
+    id,
+    name,
+    slug: slugifyPluginName(name),
+    status: asString(item.status) === "archived" ? "archived" : "active",
+  };
+}
+
+/**
+ * Plugins without their contents, in one request. Access for plugins the
+ * caller manages is written to each plugin's access query.
+ */
+export function pluginSummariesQueryOptions() {
+  return queryOptions({
+    queryKey: pluginQueryKeys.summaries(),
+    queryFn: async ({ client }): Promise<DenPluginSummary[]> => {
+      const { response, payload } = await requestJson("/v1/plugins?status=active&limit=100&includeAccess=true", { method: "GET" }, 20000);
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, `Failed to load plugins (${response.status}).`));
+      }
+
+      return listItems(payload).flatMap((item) => {
+        const summary = parsePluginSummary(item);
+        if (!summary) return [];
+        if (summary.accessIncluded) {
+          client.setQueryData(pluginAccessQueryKeys.detail(summary.id), parsePluginAccessGrants(item.access));
+        }
+        return [summary];
+      });
+    },
+  });
+}
+
+export function usePluginSummaries({ enabled = true }: { enabled?: boolean } = {}) {
+  return useQuery({ ...pluginSummariesQueryOptions(), enabled });
+}
+
+export function pluginDirectoryParams(filters: { q: string; teamId: string | null; memberId: string | null; ownerId?: string | null }, cursor: string) {
+  const params = new URLSearchParams({ status: "active", limit: "50", includeAccess: "true" });
+  if (!cursor) { params.set("includeTotal", "true"); params.set("includeFacets", "true"); }
+  if (filters.q) params.set("name", filters.q);
+  if (filters.teamId) params.set("teamId", filters.teamId);
+  if (filters.memberId) params.set("memberId", filters.memberId);
+  if (filters.ownerId) params.set("ownerId", filters.ownerId);
+  if (cursor) params.set("cursor", cursor);
+  return params;
+}
+
+export function pluginDirectoryQueryKey(orgId: string | null, viewerId: string | null, filters: { q: string; teamId: string | null; memberId: string | null; ownerId?: string | null }) {
+  return [...pluginQueryKeys.summaries(), "directory", orgId, viewerId, filters.q, filters.teamId, filters.memberId, filters.ownerId ?? null];
+}
+
+function parseDirectoryCounts(value: unknown): Record<string, number> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return Object.fromEntries(value.flatMap((entry) => isRecord(entry) && typeof entry.id === "string" && typeof entry.count === "number" ? [[entry.id, entry.count]] : []));
+}
+
+export function usePluginDirectory(filters: { q: string; teamId: string | null; memberId: string | null; ownerId?: string | null }) {
+  const client = useQueryClient();
+  const { orgId, orgContext } = useOrgDashboard();
+  return useInfiniteQuery({
+    queryKey: pluginDirectoryQueryKey(orgId, orgContext?.currentMember.id ?? null, filters),
+    enabled: Boolean(orgId && orgContext?.organization.id === orgId),
+    initialPageParam: "",
+    queryFn: async ({ pageParam }) => {
+      const params = pluginDirectoryParams(filters, pageParam);
+      const { response, payload } = await requestJson(`/v1/plugins?${params}`, { method: "GET" }, 20000);
+      if (!response.ok) throw new Error(getErrorMessage(payload, `Failed to load plugins (${response.status}).`));
+      const items = listItems(payload).flatMap((item) => {
+        const summary = parsePluginSummary(item);
+        if (!summary) return [];
+        if (summary.accessIncluded) client.setQueryData(pluginAccessQueryKeys.detail(summary.id), parsePluginAccessGrants(item.access));
+        return [summary];
+      });
+      return {
+        items,
+        nextCursor: isRecord(payload) ? asString(payload.nextCursor) : null,
+        total: isRecord(payload) && typeof payload.total === "number" ? payload.total : null,
+        teamCounts: parseDirectoryCounts(isRecord(payload) ? payload.teamCounts : null),
+        ownerCounts: parseDirectoryCounts(isRecord(payload) ? payload.ownerCounts : null),
+      };
+    },
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+  });
+}
+
+export function pluginDetailQueryOptions(id: string) {
+  return queryOptions({
     queryKey: pluginQueryKeys.detail(id),
     queryFn: async () => fetchResolvedPlugin(id),
     enabled: Boolean(id),
   });
+}
+
+export function usePlugin(id: string) {
+  return useQuery(pluginDetailQueryOptions(id));
 }
 
 export function useUpdatePlugin() {

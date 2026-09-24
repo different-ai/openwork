@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DenRequestCanceledError, DenRequestTimeoutError, getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
@@ -235,6 +235,7 @@ export type ExternalMcpPreset = {
   url: string;
   authType: ExternalMcpAuthType;
   requiresOAuthClient?: boolean;
+  defaultOAuthClientId?: string;
   supportedAuthTypes?: ExternalMcpAuthType[];
 };
 
@@ -605,17 +606,20 @@ async function fetchConnections(scope: ExternalMcpConnectionScope, orgId: string
   }));
 }
 
-export function useMcpConnections(scope: ExternalMcpConnectionScope = "manageable") {
-  const { orgId } = useOrgDashboard();
-  return useQuery({
-    enabled: Boolean(orgId),
+export function mcpConnectionsQueryOptions(orgId: string | null, scope: ExternalMcpConnectionScope) {
+  return queryOptions({
     queryKey: mcpConnectionQueryKeys.list(orgId, scope),
     queryFn: () => fetchConnections(scope, requireOrgId(orgId)),
   });
 }
 
-export function useMcpConnectionPresets() {
-  return useQuery({
+export function useMcpConnections(scope: ExternalMcpConnectionScope = "manageable") {
+  const { orgId } = useOrgDashboard();
+  return useQuery({ ...mcpConnectionsQueryOptions(orgId, scope), enabled: Boolean(orgId) });
+}
+
+export function mcpConnectionPresetsQueryOptions() {
+  return queryOptions({
     queryKey: mcpConnectionQueryKeys.presets(),
     queryFn: async (): Promise<ExternalMcpPreset[]> => {
       const { response, payload } = await requestJson("/v1/mcp-connections/presets", {}, 15000);
@@ -625,7 +629,14 @@ export function useMcpConnectionPresets() {
       const record = payload as { presets?: ExternalMcpPreset[] };
       return record.presets ?? [];
     },
+    // The catalog is fixed for a Den deploy, so one load per session is enough.
+    staleTime: Infinity,
+    gcTime: Infinity,
   });
+}
+
+export function useMcpConnectionPresets() {
+  return useQuery(mcpConnectionPresetsQueryOptions());
 }
 
 export type McpConnectionAccessInput = {

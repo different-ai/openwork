@@ -17,6 +17,7 @@
     "test:web-origins": "pnpm run build:mcp-apps && for spec in organization-web-origins organization-web-origins-routes desktop-handoff-public-url handoff-exchange-cors cors-handled-by-edge; do bun test --conditions development test/$spec.test.ts || exit $?; done",
     "test:gateway-deployment": "bun test --conditions development test/gateway-deployment-routes.test.ts && bun test --conditions development test/org-deployment-capabilities.test.ts",
     "test:gateway-dashboard:db": "DATABASE_URL=${DEN_TEST_DATABASE_URL:?Set DEN_TEST_DATABASE_URL to an isolated prepared test database} bun test --conditions development test/admin-organization-capabilities.test.ts",
+    "test:plugin-roles:db": "DATABASE_URL=${DEN_TEST_DATABASE_URL:?Set DEN_TEST_DATABASE_URL to an isolated prepared test database} bun test --conditions development test/plugin-system-plugin-role-batch.test.ts",
     "test:db": "bun test --conditions development test/member-removal-rejoin.test.ts test/scim-provider-rotation.test.ts test/sso-provider-rotation.test.ts",
     "test:scim-diagnostics": "tsx --conditions=development --test test/scim-diagnostics.test.ts",
     "test:http-server": "tsx --test test/http-server.test.ts",
@@ -35,6 +36,7 @@
   },
   "dependencies": {
     "@better-auth/api-key": "1.7.0-beta.10",
+    "@better-auth/cimd": "1.7.0-beta.10",
     "@better-auth/oauth-provider": "1.7.0-beta.10",
     "@better-auth/scim": "1.7.0-beta.10",
     "@better-auth/sso": "1.7.0-beta.10",

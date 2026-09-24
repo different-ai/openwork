@@ -77,14 +77,13 @@ const definitions = {
       { id: 'APP-DRAFT-ROUTING', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } },
     ],
   },
-  // Its Cloud endpoint is an in-process loopback MCP fixture reachable only from the spec process.
+  'engine-live-chat.e2e.test.ts': { name: 'Use real models for conversations, skills and connections', placement: 'local', model: 'live' },
+  // Native workspace skill tests use local watcher and loopback model fixtures.
   'opencode-v2-skill-jit.e2e.test.ts': {
-    name: 'Use Cloud and workspace skills just in time', placement: 'local',
+    name: 'Use workspace skills just in time', placement: 'local',
     cases: [
       { id: 'SKILL-ATTACH', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
       { id: 'SKILL-MISSING', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
-      { id: 'SKILL-CLOUD-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
-      { id: 'SKILL-CLOUD-02', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
       { id: 'SKILL-NATIVE-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
     ],
   },

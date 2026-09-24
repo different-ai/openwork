@@ -108,35 +108,19 @@ describe("popular connector catalog", () => {
 });
 
 describe("connector pages", () => {
-  test("the catalog page shows Configured first, then Popular, then More, and never the configured list", () => {
-    const screen = readDashboardFile("_components/mcp-connections-screen.tsx");
-    const catalog = readDashboardFile("_components/connector-catalog-list.tsx");
-
-    expect(screen).toContain("<ConnectorCatalog");
-    expect(screen).not.toContain("<ConnectorQuickAddGrid");
-    expect(catalog.indexOf("ConfiguredConnectorStrip connections")).toBeLessThan(catalog.indexOf('data-testid="popular-connectors"'));
-    expect(catalog.indexOf('data-testid="popular-connectors"')).toBeLessThan(catalog.indexOf('data-testid="more-connectors"'));
-    expect(catalog).toContain("Manage\n          </button>");
-    expect(catalog).toContain("Uninstall\n              </button>");
+  test("the old editor routes are gone and the list page only renders the new list", () => {
+    const page = readDashboardFile("(admin)/mcp-connections/page.tsx");
+    expect(page).toContain("<AdminConnectorsScreen />");
+    expect(page).not.toContain("McpConnectionsScreen");
+    expect(page).toContain("redirect(getAddConnectorRoute(null, catalogId))");
+    for (const removed of ["(admin)/mcp-connections/all/page.tsx", "(admin)/mcp-connections/configured/page.tsx", "_components/mcp-connections-screen.tsx"]) {
+      expect(() => readDashboardFile(removed)).toThrow();
+    }
   });
 
-  test("the configured page reuses the admin screen in its configured view", () => {
-    const page = readDashboardFile("(admin)/mcp-connections/configured/page.tsx");
-    const screen = readDashboardFile("_components/mcp-connections-screen.tsx");
-
-    expect(page).toContain('<McpConnectionsScreen view="configured" />');
-    expect(screen).toContain('title={configuredView ? "Configured connectors" : "Connectors"}');
-    expect(screen).toContain('data-testid="configured-add-connector"');
-    expect(screen).not.toContain("chat-mcp-connection-");
-    expect(screen).toContain('data-testid="connector-detail-chat"');
-  });
-
-  test("one-click OAuth presets are added for everyone and open the authorization tab in the same gesture", () => {
-    const screen = readDashboardFile("_components/mcp-connections-screen.tsx");
-    const oneClick = screen.slice(screen.indexOf("async function handleOneClickAdd"), screen.indexOf("async function handleUpdate"));
-
-    expect(oneClick).toContain('credentialMode: "per_member"');
-    expect(oneClick).toContain("{ startOAuth: true }");
-    expect(screen).toContain('if (effort === "one_click") {');
+  test("Google Workspace and Microsoft 365 set up on their own page in the new flow", () => {
+    const setupPage = readDashboardFile("(admin)/mcp-connections/new/[catalogId]/page.tsx");
+    expect(setupPage).toContain("isNativeProviderCatalogId(id)");
+    expect(setupPage).toContain("<NativeProviderSetupScreen providerKey={id} />");
   });
 });

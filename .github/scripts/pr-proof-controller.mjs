@@ -29,7 +29,7 @@ const summary = specs.length
   ? `## PR proof selection\n\n${specs.length} added or changed E2E spec(s) will run on this head; their records are the PR's proof.\n\n${specs.map(spec => `- \`${spec}\``).join("\n")}\n`
   : "## PR proof selection\n\nThis PR adds or changes no `evals/specs/**/*.e2e.test.ts`. No proof was executed and no evidence will be published for it.\n";
 const liveSummary = liveSpecs.length
-  ? "\nLive proof requires reviewer approval of the `pr-slow-specs` environment and executes the whole selected file with real OpenAI on local v1 appWeb. Ordinary proof remains unprotected and secret-free.\n"
+  ? "\nLive proof requires reviewer approval of the `pr-slow-specs` environment and executes the whole selected file with real OpenAI. Native parity runs both pinned engines; streaming continuity runs local v1 appWeb. Ordinary proof remains unprotected and secret-free.\n"
   : "";
 if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, summary + liveSummary);
 console.log(summary + liveSummary);

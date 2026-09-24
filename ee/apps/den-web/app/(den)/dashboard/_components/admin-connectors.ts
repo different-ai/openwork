@@ -1,4 +1,4 @@
-import { getAllMcpConnectionRoute, getMcpConnectionRoute } from "../../_lib/den-org";
+import { getMcpConnectionRoute } from "../../_lib/den-org";
 import type { ExternalMcpConnection } from "./mcp-connections-data";
 
 /** An org sign-in nobody has finished, or a server still waiting on admin setup. */
@@ -7,10 +7,9 @@ export function connectorSetupUnfinished(connection: Pick<ExternalMcpConnection,
   return connection.credentialMode === "shared" && connection.authType !== "none" && !connection.connected;
 }
 
-/** Where Finish goes: the connector page to sign in, or the full editor when it needs an OAuth app or a key. */
-export function finishSetupHref(orgSlug: string | null, connection: Pick<ExternalMcpConnection, "id" | "authType" | "oauthClientRequired" | "oauthClientConfigured">): string {
-  const needsEditor = connection.authType !== "oauth" || (connection.oauthClientRequired === true && connection.oauthClientConfigured !== true);
-  return needsEditor ? getAllMcpConnectionRoute(orgSlug, connection.id) : getMcpConnectionRoute(orgSlug, connection.id);
+/** Where Finish goes: the connector page, where an admin signs in or adds the key or OAuth app it still needs. */
+export function finishSetupHref(orgSlug: string | null, connection: Pick<ExternalMcpConnection, "id">): string {
+  return getMcpConnectionRoute(orgSlug, connection.id);
 }
 
 export function signInSentence(connection: Pick<ExternalMcpConnection, "name" | "authType" | "credentialMode">): string {

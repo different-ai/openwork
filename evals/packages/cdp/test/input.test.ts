@@ -475,7 +475,7 @@ test("trusted input reaches an isolated MCP App iframe in Chrome", { skip: proce
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
   const { spawn } = await import("node:child_process");
-  const { attachSurface } = await import("../src/surface.ts");
+  const { attachSurface, evaluateOnSurface } = await import("../src/surface.ts");
   await using cleanup = new AsyncDisposableStack();
   const profile = await mkdtemp(join(tmpdir(), "openwork-frame-input-"));
   cleanup.defer(() => rm(profile, { recursive: true, force: true }));
@@ -487,7 +487,7 @@ test("trusted input reaches an isolated MCP App iframe in Chrome", { skip: proce
     if (request.url === "/frame") {
       const html = `<h1>Connect Notion</h1><button onclick="if(event.isTrusted){document.querySelector('h1').textContent='Notion connected';fetch('http://127.0.0.1:${port}/decision',{mode:'no-cors'});this.remove()}">Authenticate</button>`;
       response.end(`<iframe sandbox="allow-scripts" style="width:500px;height:200px" srcdoc="${html.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}"></iframe>`);
-    } else response.end(`<button>Authenticate</button><div data-mcp-app-resource="ui://connection" style="padding:80px"><iframe sandbox="allow-scripts allow-same-origin" style="width:600px;height:300px" src="http://127.0.0.1:${port}/frame"></iframe></div>`);
+    } else response.end(`<button>Authenticate</button><div style="height:420px"></div><button onclick="document.body.dataset.clicked='yes'">Reachable action</button><div data-mcp-app-resource="ui://connection" style="padding:80px"><iframe sandbox="allow-scripts allow-same-origin" style="width:600px;height:300px" src="http://127.0.0.1:${port}/frame"></iframe></div>`);
   });
   await new Promise<void>(resolve => server.listen(0, "::", resolve));
   cleanup.defer(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
@@ -513,6 +513,11 @@ test("trusted input reaches an isolated MCP App iframe in Chrome", { skip: proce
   });
   const surface = await attachSurface({ name: "isolated-frame-input", kind: "chrome", hostKind: "local", cdpUrl });
   cleanup.use(surface);
+  await surface.client.send("Emulation.setDeviceMetricsOverride", { width: 800, height: 600, deviceScaleFactor: 1, mobile: false });
+  await clickTarget(surface, { role: "button", label: "Reachable action" });
+  assert.equal(await evaluateOnSurface(surface, () => document.body.dataset.clicked), "yes");
+  assert.equal(await evaluateOnSurface(surface, () => scrollY), 0, "clicking an already reachable action must not move its hover target");
+  await surface.client.send("Emulation.setDeviceMetricsOverride", { width: 800, height: 1200, deviceScaleFactor: 1, mobile: false });
   await clickTarget(surface, appAuthenticate, { timeoutMs: 10_000 });
   const outcome = await waitForLocated(surface, { mcpApp: { resourceUri: "ui://connection" }, role: "heading", text: "Notion connected" }, { timeoutMs: 10_000 });
   assert.equal(outcome.visible, true);

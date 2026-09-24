@@ -22,7 +22,7 @@ function mockApi(snapshotCreatedAt = new Date().toISOString(), files: Record<str
     const guestPath = new URL(String(input)).searchParams.get("path") ?? "";
     const file = Object.entries(files).find(([name]) => guestPath.endsWith(`/${name}`));
     if (path.includes("/fs/") && file && (init?.method ?? "GET") === "GET") return new Response(file[1]);
-    if (path.includes("/fs/")) { writes.push(String(init?.body)); return Response.json({}); }
+    if (path.includes("/fs/")) { writes.push(await new Response(init?.body).text()); return Response.json({}); }
     if (path.endsWith("/exec-await")) { commands.push(String(init?.body)); return Response.json({ statusCode: 0, stdout: "" }); }
     if (init?.method === "DELETE") { deleted.push(path); return new Response(null, { status: 204 }); }
     throw new Error(`Unexpected provider request ${init?.method} ${path}`);
@@ -143,6 +143,69 @@ test("provider capacity conflicts do not masquerade as an in-progress snapshot",
   }), /No capacity/);
 });
 
+test("desktop templates use their own runtime and refresh an exact frontend-only revision without world services", async () => {
+  const snapshots = new Map<string, { id: string; slug: string; createdAt: string }>();
+  const writes: { path: string; text: string }[] = [];
+  const creates: { snapshotId: string }[] = [];
+  let count = 0;
+  const api = new Freestyle({ apiKey: "synthetic", fetch: async (input, init) => {
+    const url = new URL(String(input));
+    const path = url.pathname;
+    if (path.startsWith("/v5/snapshots/")) {
+      const saved = snapshots.get(path.split("/").pop() ?? "");
+      return saved ? Response.json(saved) : Response.json({ code: "NOT_FOUND" }, { status: 404 });
+    }
+    if (path === "/v5/vms" && init?.method === "POST") {
+      const body: unknown = JSON.parse(String(init.body));
+      assert.ok(body && typeof body === "object" && "snapshotId" in body && typeof body.snapshotId === "string");
+      creates.push({ snapshotId: body.snapshotId });
+      return Response.json({ id: `builder-${creates.length}` });
+    }
+    if (path.endsWith("/fs/write")) {
+      writes.push({ path: url.searchParams.get("path") ?? "", text: await new Response(init?.body).text() });
+      return Response.json({});
+    }
+    if (path.endsWith("/fs/exists")) return Response.json({ exists: url.searchParams.get("path")?.endsWith(".ready") });
+    if (path.endsWith("/fs/read")) {
+      assert.ok(url.searchParams.get("path")?.endsWith("build-stages.jsonl"));
+      return new Response(JSON.stringify({ stage: "boot-and-verify", durationMs: 1 }));
+    }
+    if (path.endsWith("/exec-await")) return Response.json({ statusCode: 0, stdout: "" });
+    if (path.endsWith("/snapshot")) {
+      const body: unknown = JSON.parse(String(init?.body));
+      assert.ok(body && typeof body === "object" && "slug" in body && typeof body.slug === "string");
+      const snapshot = { id: `snapshot-${++count}`, slug: body.slug, createdAt: new Date().toISOString() };
+      snapshots.set(body.slug, snapshot);
+      return Response.json({ snapshotId: snapshot.id, snapshot });
+    }
+    if (init?.method === "DELETE") return new Response(null, { status: 204 });
+    throw new Error("Unexpected mocked builder operation");
+  } });
+  const source = (revision: string) => async () => Response.json({ truncated: false, tree: [
+    { path: "pnpm-lock.yaml", sha, type: "blob" },
+    { path: "apps/app/src/main.tsx", sha: revision, type: "blob" },
+  ] });
+  const first = await ensureSnapshot(sha, api, undefined, "desktop", { sourceFetch: source(sha) });
+  assert.equal(creates.length, 5);
+  assert.ok([...snapshots.keys()].every((slug) => slug.includes("-desktop-")));
+  const text = (name: string) => writes.find((item) => item.path === `/opt/openwork-preview/${name}`)?.text ?? "";
+  assert.match(text("runtime.mjs"), /bootDesktopOnly/);
+  assert.doesNotMatch(text("runtime.mjs"), /bootAcme|signIn|bootstrap|modelId/);
+  assert.match(text("health.mjs"), /inspectDesktop/);
+  assert.doesNotMatch(text("health.mjs"), /services\.engine|resume\.mjs/);
+  assert.match(text("refresh.mjs"), /refreshDesktop/);
+  assert.doesNotMatch(text("refresh.mjs"), /services\.app|resume\.mjs|signInDesktopAs/);
+  assert.match(text("desktop-state.mjs"), /firstRun/);
+  const secondSha = "b".repeat(40);
+  const second = await ensureSnapshot(secondSha, api, undefined, "desktop", { sourceFetch: source(secondSha) });
+  assert.notEqual(first.id, second.id);
+  assert.equal(creates.length, 6, "frontend-only commits reuse the running desktop template");
+  const refresh = writes.filter((item) => item.path.endsWith("/refresh.sh")).at(-1)?.text ?? "";
+  assert.ok(refresh.includes(`git fetch --depth=1 origin ${secondSha}`));
+  assert.ok(refresh.includes(`node /opt/openwork-preview/refresh.mjs ${secondSha}`));
+  assert.doesNotMatch(refresh, /resume\.mjs|health\.mjs|git clean/);
+});
+
 test("an existing immutable snapshot is reused without creating a builder", async () => {
   const { api, creates } = mockApi();
   assert.equal((await ensureSnapshot(sha, api)).id, "sh-template");
@@ -174,6 +237,61 @@ test("the review page accepts every service link an ACME launch returns, includi
   assert.throws(() => parsePreviewOutputs({ desktopUrl: { value: "https://evil.example/__openwork_launch?token=x", group: "Services" } }), /Invalid private service link/);
 });
 
+const desktopFiles = {
+  "source-sha": sha,
+  "status": "ready-signed-out",
+  "outputs.json": JSON.stringify({ desktopStatus: { value: "ready-signed-out", group: "Desktop" } }),
+};
+const desktopReachable: typeof fetch = async (input) => new URL(String(input)).pathname === "/vnc.html"
+  ? new Response("<title>noVNC</title>") : reachable(input);
+
+test("desktop clones use only their viewer, isolated access and exact source even for old snapshots", async () => {
+  const provider = mockApi("2020-01-01T00:00:00Z", desktopFiles);
+  const [first, second] = await Promise.all([
+    launchPreview({ gitSha: sha, world: "desktop", lifetimeMinutes: 10 }, provider.api, desktopReachable),
+    launchPreview({ gitSha: sha, world: "desktop", lifetimeMinutes: 10 }, provider.api, desktopReachable),
+  ]);
+  assert.notEqual(first.id, second.id);
+  assert.notEqual(first.url, second.url);
+  assert.notEqual(first.outputs.previewCookie.value, second.outputs.previewCookie.value);
+  assert.equal(first.snapshotId, second.snapshotId);
+  assert.equal(first.url, first.outputs.desktopUrl.value);
+  assert.deepEqual(Object.keys(first.outputs).sort(), ["desktopStatus", "desktopUrl", "previewCookie"]);
+  assert.deepEqual(provider.commands, []);
+  for (const [index, session] of [first, second].entries()) {
+    const domain = new URL(session.url).hostname;
+    assert.match(domain, /^desktop-[a-f0-9]{32}\.preview\.openwork\.software$/);
+    assert.equal(provider.creates[index].ttlSeconds, 600);
+    assert.deepEqual(provider.creates[index].tls, { rules: [{ action: "allow", domain, source: { public: true }, destination: { port: 8080 } }] });
+    const access = JSON.parse(provider.writes[index]);
+    assert.deepEqual(access.origins, { desktop: `https://${domain}` });
+    assert.equal(access.templateOrigins, undefined);
+    assert.equal(access.expiresAt, session.expiresAt);
+  }
+  assert.notEqual(snapshotSlug(sha, "desktop"), snapshotSlug(sha, "app-web"));
+  assert.notEqual(snapshotSlug(sha, "desktop"), snapshotSlug(sha, "acme-web"));
+});
+
+for (const files of [
+  { ...desktopFiles, "source-sha": "b".repeat(40) },
+  { ...desktopFiles, "status": "starting" },
+  { ...desktopFiles, "outputs.json": JSON.stringify({ webUrl: { value: "unwanted" } }) },
+]) {
+  test("invalid desktop snapshot fails closed and deletes its clone", async () => {
+    const provider = mockApi(undefined, files);
+    await assert.rejects(launchPreview({ gitSha: sha, world: "desktop" }, provider.api, desktopReachable), /could not be reached/);
+    assert.deepEqual(provider.deleted, ["/v5/vms/vm-1"]);
+    assert.deepEqual(provider.commands, []);
+  });
+}
+
+test("desktop viewer readiness failure cleans up and does not accept web HTML", async () => {
+  const provider = mockApi(undefined, desktopFiles);
+  await assert.rejects(launchPreview({ gitSha: sha, world: "desktop" }, provider.api, async () => new Response(null, { status: 401 })), /could not be reached/);
+  assert.deepEqual(provider.deleted, ["/v5/vms/vm-1"]);
+  await assert.rejects(waitForPublicAccess("https://unused.example", reachable, async () => undefined, "desktop"), /Public sandbox readiness failed/);
+});
+
 test("ACME clones link the desktop viewer only when the snapshot started the desktop", async () => {
   const ready = mockApi(undefined, { "outputs.json": JSON.stringify({ desktopStatus: { value: "starting", group: "Desktop" } }) });
   const session = await launchPreview({ gitSha: sha, world: "acme-web" }, ready.api, reachable);
@@ -192,4 +310,23 @@ test("ACME clones link the desktop viewer only when the snapshot started the des
   assert.ok(web.outputs.webUrl?.value.includes("__openwork_launch"), "the web preview still launches");
   const older = mockApi();
   assert.equal((await launchPreview({ gitSha: sha, world: "acme-web" }, older.api, reachable)).outputs.desktopUrl, undefined, "snapshots from before this change are unaffected");
+});
+
+test("ACME launches return only after every linked service hostname routes to the clone", async () => {
+  const handshakes = (seen: string[]): typeof fetch => async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/__openwork_launch") seen.push(url.hostname.split("-")[0]);
+    return reachable(input, init);
+  };
+  const withDesktop: string[] = [];
+  await launchPreview({ gitSha: sha, world: "acme-web" }, mockApi(undefined, { "outputs.json": JSON.stringify({ desktopStatus: { value: "ready", group: "Desktop" } }) }).api, handshakes(withDesktop));
+  assert.deepEqual(withDesktop.sort(), ["api", "den", "desktop", "engine", "gateway", "ow"]);
+  const withoutDesktop: string[] = [];
+  await launchPreview({ gitSha: sha, world: "acme-web" }, mockApi(undefined, { "outputs.json": JSON.stringify({ desktopStatus: { value: "unavailable", group: "Desktop" } }) }).api, handshakes(withoutDesktop));
+  assert.deepEqual(withoutDesktop.sort(), ["api", "den", "engine", "gateway", "ow"], "an unlinked desktop is not required to route");
+
+  const dead = mockApi();
+  await assert.rejects(launchPreview({ gitSha: sha, world: "acme-web" }, dead.api, async (input, init) =>
+    new URL(String(input)).hostname.startsWith("api-") ? new Response(null, { status: 403 }) : reachable(input, init)), /could not be reached/);
+  assert.deepEqual(dead.deleted, ["/v5/vms/vm-1"], "a clone whose links do not route is deleted, not handed out");
 });

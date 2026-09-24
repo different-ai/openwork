@@ -407,7 +407,7 @@ export async function connectorCatalogManagement(seed: Seed) {
   const web = await seed.web({
     den,
     signedInAs: den.admin,
-    startPath: "/dashboard/mcp-connections/all",
+    startPath: "/dashboard/mcp-connections/new",
     headless: true,
     viewport: { width: 1440, height: 1200 },
   });
@@ -1601,6 +1601,6 @@ export async function connectorCatalogDiscovery(seed: Seed) {
     if (!isRecord(preset) || typeof preset.presetId !== "string") throw new Error("Invalid connector preset.");
     return preset.presetId;
   });
-  const web = await seed.web({ den: world.den, signedInAs: world.den.admin, startPath: "/dashboard/mcp-connections/all", headless: true });
+  const web = await seed.web({ den: world.den, signedInAs: world.den.admin, startPath: "/dashboard/mcp-connections", headless: true });
   return { ...world, web, expectedIds: ["google-workspace", "microsoft-365", ...presetIds] };
 }

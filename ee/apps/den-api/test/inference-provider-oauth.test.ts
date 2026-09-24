@@ -386,7 +386,7 @@ test("browser-start continues the entry with Google PKCE, OIDC and offline conse
   expect(authorize.searchParams.get("scope")).toBe(GOOGLE_SCOPES)
   expect(authorize.searchParams.get("nonce")).toMatch(/^[A-Za-z0-9_-]{43}$/)
   expect(authorize.searchParams.get("access_type")).toBe("offline")
-  expect(authorize.searchParams.get("prompt")).toBe("consent")
+  expect(authorize.searchParams.get("prompt")).toBe("consent select_account")
   expect(authorize.searchParams.get("include_granted_scopes")).toBe("true")
   expect(authorize.searchParams.get("code_challenge_method")).toBe("S256")
   expect(authorize.searchParams.get("code_challenge")).toMatch(/^[A-Za-z0-9_-]{43}$/)

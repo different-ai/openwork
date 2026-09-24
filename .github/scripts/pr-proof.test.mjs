@@ -223,6 +223,8 @@ test("workflow keeps ordinary proof unprotected and gates all live PR code befor
   assert.doesNotMatch(ordinary, /environment:|secrets\.|OPENAI_API_KEY|OPENWORK_EVAL_LIVE_OPENAI/);
   assert.match(ordinary, /if: needs.select.outputs.selected == 'true'/);
   assert.match(ordinary, /xvfb-run -a node evals\/bin\/evals.mjs "\$\{PROOF_SPEC#evals\/\}" --local\n/);
+  assert.match(ordinary, /run-parity-proof.mjs --supports "\$PROOF_SPEC"/);
+  assert.match(ordinary, /xvfb-run -a node evals\/scripts\/run-parity-proof.mjs "\$PROOF_SPEC"/);
   assert.match(ordinary, /liveMatrix: \$\{\{ steps.select.outputs.liveMatrix \}\}/);
   assert.match(ordinary, /liveSelected: \$\{\{ steps.select.outputs.liveSelected \}\}/);
   const gate = live.split("    steps:\n")[0];
@@ -248,18 +250,22 @@ test("workflow keeps ordinary proof unprotected and gates all live PR code befor
     assert.match(job, /include-hidden-files: true/);
     assert.match(job, /if-no-files-found: error/);
   }
-  const [preparation, executionAndUpload] = live.split("      - name: Run the whole selected live spec on local v1 appWeb\n");
+  const [preparation, executionAndUpload] = live.split("      - name: Run the whole selected live spec with real inference\n");
   const [execution, upload] = executionAndUpload.split("      - name: Save selected native testkit and Vitest records\n");
   assert.doesNotMatch(preparation + upload, /secrets\.|OPENAI_API_KEY|OPENWORK_EVAL_LIVE_OPENAI/);
   assert.match(execution, /OPENAI_API_KEY: \$\{\{ secrets.OPENAI_API_KEY \}\}/);
   assert.match(execution, /OPENWORK_EVAL_LIVE_OPENAI: "1"/);
   assert.match(execution, /OPENWORK_EVAL_OPENAI_MODEL: gpt-5\.4/);
-  assert.ok(execution.includes(`if [ "$PROOF_SPEC" != '${liveSpec}' ]; then`));
+  assert.ok(execution.includes(`if [ "$PROOF_SPEC" != '${liveSpec}' ] && [ "$PROOF_SPEC" != 'evals/specs/engine-live-chat.e2e.test.ts' ]; then`));
+  assert.match(execution, /OPENWORK_LIVE_PROVIDER=OpenAI OPENWORK_LIVE_KEY_ENV=OPENAI_API_KEY/);
+  assert.match(execution, /OPENWORK_LIVE_MODELS=gpt-5\.4,gpt-4\.1-mini/);
+  assert.match(execution, /xvfb-run -a node evals\/scripts\/run-parity-proof.mjs "\$PROOF_SPEC"/);
   assert.match(execution, /\$\{OPENAI_API_KEY\/\/\[\[:space:\]\]\/\}/);
   assert.match(execution, /this proof cannot be skipped/);
   assert.match(execution, /xvfb-run -a node evals\/bin\/evals.mjs "\$\{PROOF_SPEC#evals\/\}" --local --engine v1 --surface web\n/);
   assert.doesNotMatch(execution, /--testNamePattern|--grep|--test-name|pnpm .*build|pnpm .*install/);
-  assert.doesNotMatch(live, /--no-sandbox|OPENWORK_EVAL_CONTAINER_ELECTRON/);
+  assert.doesNotMatch(preparation + upload, /OPENWORK_EVAL_CONTAINER_ELECTRON/);
+  assert.match(execution, /OPENWORK_EVAL_CONTAINER_ELECTRON=1/);
 });
 
 test("both proof jobs share verified Chrome setup, with system OAuth handoff only for desktop proof", async () => {
@@ -270,7 +276,7 @@ test("both proof jobs share verified Chrome setup, with system OAuth handoff onl
     assert.doesNotMatch(job, /apt-get|google-chrome|--input-type=module/);
   }
   assert.match(ordinary, /oauth-handoff: "true"/);
-  assert.doesNotMatch(live, /oauth-handoff:/);
+  assert.match(live, /oauth-handoff: "true"/);
   const action = await readFile(new URL("../actions/setup-browser/action.yml", import.meta.url), "utf8");
   assert.match(action, /default: "false"/);
   assert.match(action, /ACTION_PATH: \$\{\{ github.action_path \}\}/);
@@ -337,4 +343,13 @@ test("workflow runs packaged proof through the packaged smoke runner without sec
   assert.match(packaged, /name: pr-proof-\$\{\{ github.run_attempt \}\}-\$\{\{ matrix.key \}\}/);
   assert.match(packaged, /if-no-files-found: error/);
   assert.doesNotMatch(packaged, /environment:|secrets\.|OPENAI_API_KEY/);
+});
+
+test("native real-model parity is protected and cannot leak into ordinary proof", () => {
+  const parity = "evals/specs/engine-live-chat.e2e.test.ts";
+  assert.deepEqual(proofLanes([normalSpec, parity], trustFixture()), { normalSpecs: [normalSpec], liveSpecs: [parity], packagedSpecs: [] });
+  for (const [, mutate] of untrusted) {
+    const trust = trustFixture(); mutate(trust);
+    assert.throws(() => proofLanes([parity], trust), /unsupported/);
+  }
 });

@@ -565,7 +565,10 @@ async function handleAgentCompletion(req, res, entry) {
   const model = typeof body.model === "string" ? body.model : "mock-agent-workload-model";
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const conversationText = messages.map(agentContentText).join("\n");
-  const latestUserIndex = messages.findLastIndex((message) => message?.role === "user");
+  // Native v2 inserts catalog updates as user-role protocol messages. They
+  // must not replace the person's turn or reset its completed tool count.
+  const latestUserIndex = messages.findLastIndex((message) => message?.role === "user"
+    && !/^<system-update>\n[\s\S]*\n<\/system-update>$/.test(agentContentText(message)));
   const latestUserText = latestUserIndex < 0 ? "" : agentContentText(messages[latestUserIndex]);
   const matched = agentWorkloads.filter((workload) =>
     workload.matchAll || (workload.latestUserTurn ? latestUserText : conversationText).includes(workload.promptMarker));

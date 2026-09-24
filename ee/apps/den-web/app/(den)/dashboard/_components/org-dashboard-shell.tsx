@@ -23,7 +23,6 @@ import {
   getBrandAppearanceRoute,
   getBillingRoute,
   getCustomLlmProvidersRoute,
-  getModelConnectionsRoute,
   getDiagnosticsRoute,
   getDesktopPoliciesRoute,
   getManagedDashboardsRoute,
@@ -58,6 +57,7 @@ import {
   DenSearchBar,
   type DenSearchBarHandle,
 } from "./command-palette/den-search-bar";
+import { useDashboardPrefetch } from "./use-dashboard-prefetch";
 import { UserProfileDialog } from "./user-profile-dialog";
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
@@ -250,9 +250,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
     return "Bring your Own Keys";
   }
-  if (pathname.startsWith(getModelConnectionsRoute(orgSlug))) {
-    return "My Model Connections";
-  }
   if (pathname.startsWith(getAiGatewayRoute(orgSlug))) {
     return "AI Gateway";
   }
@@ -320,6 +317,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     mutationBusy,
     switchOrganization,
   } = useOrgDashboard();
+  const prefetch = useDashboardPrefetch();
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -672,6 +670,8 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                         href={item.href}
                         data-testid={item.testId}
                         onClick={() => setSidebarOpen(false)}
+                        onPointerEnter={() => prefetch(item.href)}
+                        onFocus={() => prefetch(item.href)}
                         className={`flex min-w-0 items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-[13px] tracking-[-0.1px] transition-colors ${
                           selected
                             ? "bg-gray-100 text-gray-900"
@@ -684,7 +684,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                         </span>
                         <span className="flex shrink-0 items-center gap-1.5">
                           {item.badge ? (
-                            <span className="rounded-full bg-white px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                            <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
                               {item.badge}
                             </span>
                           ) : null}
@@ -710,7 +710,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                             >
                               <span className="min-w-0 truncate">{child.label}</span>
                               {child.badge ? (
-                                <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                                <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
                                   {child.badge}
                                 </span>
                               ) : null}

@@ -104,6 +104,7 @@ import {
 } from "../../capability-sources/external-mcp-resolve.js"
 import {
   externalMcpOAuthConfigurationDefaults,
+  externalMcpPresetOAuthClient,
   pluginMcpRequiresPreRegisteredOAuthClient,
   requiredPluginMcpAuthType,
   existingPluginMcpAuthTypeCompatible,
@@ -1612,19 +1613,20 @@ async function createExternalConnectionResponse(
     },
   })
 
-  if (body.oauthClient) {
+  const oauthClient = body.authType === "oauth" ? body.oauthClient ?? externalMcpPresetOAuthClient(body.url) : undefined
+  if (oauthClient) {
     const callbackMode = created.oauthConfiguration?.callbackMode ?? "legacy-v1"
     await upsertOrgOAuthClient({
       organizationId: payload.organization.id,
       providerId: created.id,
-      clientId: body.oauthClient.clientId,
-      clientSecret: body.oauthClient.clientSecret ?? null,
+      clientId: oauthClient.clientId,
+      clientSecret: "clientSecret" in oauthClient ? oauthClient.clientSecret ?? null : null,
       extra: {
         enterpriseMcpRegistrationSource: "pre-registered",
         registrationContractVersion: 2,
         registeredRedirectUri: externalMcpCallbackUrl({ connectionId: created.id, callbackMode }),
         authorizationServerIssuer: oauthConfiguration.authorizationServerIssuer ?? undefined,
-        tokenEndpointAuthMethod: body.oauthClient.tokenEndpointAuthMethod,
+        tokenEndpointAuthMethod: oauthClient.tokenEndpointAuthMethod,
       },
       createdByOrgMembershipId: payload.currentMember.id,
     })

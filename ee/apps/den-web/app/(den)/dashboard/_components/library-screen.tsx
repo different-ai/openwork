@@ -3,7 +3,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useRef, useState } from "react";
+import { Suspense, useRef, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import {
@@ -18,7 +18,7 @@ import {
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ownedAccessStatus } from "./access-summary";
 import { draftFromPluginGrants } from "./item-sharing";
-import { FilterInput, ItemMenu, removeEntry, ItemPanel, ItemRow, ItemSection } from "./item-list";
+import { FilterInput, ItemMenu, removeEntry, ItemPanel, ItemRow, ItemSection, ItemSectionSkeleton } from "./item-list";
 import { ItemPage } from "./item-header";
 import { ConnectorLogo, LetterTile } from "./item-logo";
 import { LibraryAddDialog, type LibraryAddChoice, ConnectorLogoStrip } from "./library-add-dialog";
@@ -33,11 +33,15 @@ import {
   receivedStatus,
 } from "./library-view";
 import { type ExternalMcpConnection, useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
+import { usePrefetchConnectorCatalog } from "./connector-catalog-screen";
 import { useMemberSignIn } from "./connector-setup";
+import { matchesModelQuery } from "./library-models";
+import { useLibraryModels, useModelSignIn } from "./library-models-data";
+import { LibraryModelRow } from "./library-models-ui";
 import { usePluginAccess } from "./plugin-access-data";
 import { useDenToast } from "./den-toast";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
-import { pluginQueryKeys } from "./plugin-data";
+import { pluginQueryKeys, usePluginSummaries } from "./plugin-data";
 
 function itemHref(orgSlug: string | null, item: LibraryItem): string {
   if (item.type === "connection") return getLibraryConnectorRoute(orgSlug, item.id);
@@ -58,7 +62,9 @@ function OwnedConnectionStatus({ connection }: { connection: ExternalMcpConnecti
 
 function OwnedPluginStatus({ pluginId }: { pluginId: string }) {
   const { orgContext } = useOrgDashboard();
-  const access = usePluginAccess(pluginId);
+  const summaries = usePluginSummaries();
+  const listed = summaries.data?.some((plugin) => plugin.id === pluginId && plugin.accessIncluded) ?? false;
+  const access = usePluginAccess(pluginId, { enabled: !summaries.isPending && !listed });
   if (!orgContext || !access.data) return null;
   return <>{ownedAccessStatus(draftFromPluginGrants(access.data), orgContext, orgContext.currentMember.id)}</>;
 }
@@ -142,13 +148,29 @@ function LibraryEmpty({ onAdd }: { onAdd: () => void }) {
   );
 }
 
+// The boundary useSearchParams needs for the static build sits inside this module, not the
+// page: a boundary above the module would show its empty fallback while the module loads,
+// and React keeps a fallback up for at least 300ms.
 export function LibraryScreen() {
+  return (
+    <Suspense fallback={null}>
+      <LibraryContent />
+    </Suspense>
+  );
+}
+
+function LibraryContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { orgSlug, orgContext } = useOrgDashboard();
   const library = useLibrary();
+  // Carries who can use each plugin the viewer manages, so rows need no request each.
+  usePluginSummaries();
   const usable = useMcpConnections("usable");
   const signIn = useMemberSignIn();
+  const prefetchCatalog = usePrefetchConnectorCatalog();
+  const models = useLibraryModels();
+  const modelSignIn = useModelSignIn();
   const [addOpen, setAddOpen] = useState(searchParams.get("add") === "1");
   const [query, setQuery] = useState("");
   const filter = parseLibraryFilter(searchParams.get("show"));
@@ -171,19 +193,26 @@ export function LibraryScreen() {
     router.replace(suffix ? `?${suffix}` : "?", { scroll: false });
   }
 
+  function openAdd() {
+    prefetchCatalog();
+    setAddOpen(true);
+  }
+
   function hrefFor(choice: LibraryAddChoice): string {
     if (choice === "connector") return getLibraryAddConnectorRoute(orgSlug);
     return getLibraryNewPluginRoute(orgSlug, choice === "skill" ? "skill" : undefined);
   }
 
-  const empty = !library.isLoading && !library.error && items.length === 0;
+  const showModels = filter === "all" || filter === "models";
+  const modelRows = showModels ? (models.data ?? []).filter((provider) => matchesModelQuery(provider, query)) : [];
+  const hasModels = (models.data ?? []).length > 0;
+  const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels;
 
   return (
     <ItemPage testId="library-screen">
       <DenPageHeader
         title="My Library"
-        description="Connectors, skills and plugins you can use in chat."
-        action={empty ? undefined : <DenButton icon={Plus} onClick={() => setAddOpen(true)}>Add to your Library</DenButton>}
+        action={empty ? undefined : <DenButton icon={Plus} onClick={openAdd}>Add to your Library</DenButton>}
       />
 
       {library.error ? (
@@ -192,7 +221,7 @@ export function LibraryScreen() {
         </p>
       ) : null}
 
-      {empty ? <LibraryEmpty onAdd={() => setAddOpen(true)} /> : null}
+      {empty ? <LibraryEmpty onAdd={openAdd} /> : null}
 
       {!empty && !library.error ? (
         <>
@@ -217,7 +246,7 @@ export function LibraryScreen() {
             <FilterInput value={query} onChange={setQuery} className="w-[240px]" />
           </div>
 
-          {library.isLoading ? <p className="text-[13px] text-gray-500">Loading your Library...</p> : null}
+          {library.isLoading ? <ItemSectionSkeleton label="Loading your Library" /> : null}
 
           {groups.mine.length > 0 ? (
             <ItemSection title="Added by you" testId="library-section-mine">
@@ -229,17 +258,32 @@ export function LibraryScreen() {
             </ItemSection>
           ) : null}
 
-          {groups.received.length > 0 ? (
+          {groups.received.length > 0 || modelRows.length > 0 ? (
             <ItemSection title="From OpenWork" testId="library-section-received">
               <ItemPanel>
                 {groups.received.map((item) => (
                   <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine={false} ownedConnection={undefined} signIn={signIn} />
                 ))}
+                {modelRows.map((provider) => (
+                  <LibraryModelRow key={`model:${provider.id}`} provider={provider} signIn={modelSignIn} />
+                ))}
               </ItemPanel>
             </ItemSection>
           ) : null}
 
-          {!library.isLoading && groups.mine.length === 0 && groups.received.length === 0 ? (
+          {filter === "models" && models.error ? (
+            <p className="rounded-2xl border border-gray-100 bg-white px-5 py-4 text-[13px] text-gray-600">
+              {models.error instanceof Error ? models.error.message : "Your models did not load."}
+            </p>
+          ) : null}
+
+          {filter === "models" && !models.isLoading && !models.error && !hasModels ? (
+            <p className="rounded-2xl border border-gray-100 bg-white px-5 py-6 text-center text-[13px] text-gray-500" data-testid="library-models-empty">
+              Your organization hasn't given you any models yet.
+            </p>
+          ) : null}
+
+          {!library.isLoading && !models.isLoading && groups.mine.length === 0 && groups.received.length === 0 && modelRows.length === 0 && !(filter === "models" && (models.error || !hasModels)) ? (
             <p className="rounded-2xl border border-gray-100 bg-white px-5 py-6 text-center text-[13px] text-gray-500">Nothing matches.</p>
           ) : null}
         </>

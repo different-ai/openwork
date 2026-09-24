@@ -25,7 +25,7 @@ test("packaged runtime exports import in plain Node without a TypeScript loader"
 
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
     import assert from "node:assert/strict";
-    import { CATALOG_FAST_VARIANT, FAST_DEFAULT_VARIANT, catalogFastVariants,
+    import { CATALOG_FAST_VARIANT, FAST_DEFAULT_VARIANT, catalogFastVariants, catalogModelVariants,
       nativeModelVariants, materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast";
     import { gatewayUsagePolicyWriteSchema, gatewayUsageTimeframes,
       gatewayUsdToMicroUsd } from "@openwork/types/den/gateway-usage-limits";
@@ -43,6 +43,20 @@ test("packaged runtime exports import in plain Node without a TypeScript loader"
     assert.deepEqual(nativeModelVariants(variants, "@opencode-ai/ai/providers/openai"), [
       { id: FAST_DEFAULT_VARIANT, settings: { providerOptions: { serviceTier: "priority" } } },
     ]);
+    const anthropic = { reasoning: true, reasoning_options: [{ type: "effort", values: ["low", "medium", "high", "xhigh", "max"] }],
+      variants: { low: { disabled: true }, high: { effort: "high", temperature: 0.5 } } };
+    const efforts = catalogModelVariants(anthropic, "@ai-sdk/anthropic");
+    assert.deepEqual(efforts, { low: { disabled: true }, high: { effort: "high", temperature: 0.5 },
+      medium: { effort: "medium" }, xhigh: { effort: "xhigh" }, max: { effort: "max" } });
+    assert.deepEqual(nativeModelVariants(efforts, "@opencode-ai/ai/providers/anthropic"), [
+      { id: "high", settings: { providerOptions: { effort: "high", temperature: 0.5 } } },
+      ...["medium", "xhigh", "max"].map(effort => ({ id: effort, settings: { providerOptions: { effort } } })),
+    ]);
+    for (const config of [{}, { ...anthropic, reasoning: false }, { ...anthropic, provider: { npm: "@ai-sdk/openai" } },
+      { reasoning_options: [{ type: "effort", values: ["invented"] }] }, { reasoning_options: [{ type: "budget_tokens" }] }]) {
+      assert.equal(catalogModelVariants(config, "@ai-sdk/anthropic"), undefined);
+    }
+    assert.equal(catalogModelVariants(anthropic, "@ai-sdk/openai-compatible"), undefined);
     const legacy = materializeLegacyFastProviders({ synthetic: {
       npm: "@ai-sdk/openai", models: { model: { variants } },
     } });

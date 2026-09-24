@@ -7,9 +7,10 @@ import { describe, expect, test } from "bun:test";
 import { McpCredentialInput } from "../app/(den)/dashboard/_components/mcp-credential-input";
 
 const credentialConsumers = [
-  "../app/(den)/dashboard/_components/mcp-connections-screen.tsx",
   "../app/(den)/dashboard/_components/marketplace-detail-screen.tsx",
-  "../app/(den)/dashboard/_components/microsoft-365-dialog.tsx",
+  "../app/(den)/dashboard/_components/native-provider-setup.tsx",
+  "../app/(den)/dashboard/_components/connector-setup-fields.tsx",
+  "../app/(den)/dashboard/_components/connector-settings.tsx",
 ];
 
 describe("MCP credential autofill protection", () => {

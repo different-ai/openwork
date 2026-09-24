@@ -91,6 +91,9 @@ if (authMetadataUrl) {
   if (metadata.authorization_response_iss_parameter_supported !== false) {
     throw new Error("Expected authorization response issuer support to remain optional")
   }
+  if (metadata.client_id_metadata_document_supported !== true) {
+    throw new Error("Expected the authorization server to advertise client ID metadata document support")
+  }
   for (const key of ["authorization_endpoint", "token_endpoint", "registration_endpoint"]) {
     const endpoint = metadata[key]
     if (typeof endpoint !== "string" || !endpoint.startsWith(\`\${expectedAuthIssuer}/\`)) {

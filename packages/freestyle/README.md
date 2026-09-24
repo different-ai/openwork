@@ -1,8 +1,16 @@
 # Freestyle preview preparation
 
 CI prepares one running snapshot per commit and world. Each reviewer launch still
-clones that snapshot into a separate VM with its own URLs, access token, filesystem,
-MySQL and Redis. Build caches never contain a reviewer's running VM.
+clones that snapshot into a separate VM with its own URLs, access token, and filesystem.
+ACME additionally isolates MySQL and Redis. Build caches never contain a reviewer's running VM.
+
+The `desktop` world is a standalone, signed-out Electron/XFCE desktop, not an ACME
+clone with its web links hidden. It installs no MySQL or Redis and starts no Den,
+AI Gateway, seeded accounts, or separate web preview. Its private viewer is the
+primary URL. The app's blank-slate profile isolates its home, config, engine and
+user-data paths. Desktop health and source refresh verify empty onboarding rather
+than invoking ACME session renewal. A separate CI job verifies two clones, exact
+source, signed-out state and access isolation before deleting them.
 
 Preparation reuses four private, immutable layers:
 
@@ -30,6 +38,16 @@ and verify the running template first. Schema creation, demo data and AI Gateway
 verification run on every new template; CI verifies a fresh gateway reply from the
 final snapshot on every commit. Reviewer isolation is unchanged.
 
+Template origins are placeholders that only the authenticated edge rewrites for
+browsers. ACME VMs refuse them locally (`/etc/hosts` to loopback): Den still advertises
+them to in-VM clients, and the signed-in desktop's OpenWork Cloud MCP otherwise hung
+at the public edge on every sync, starving the VM until desktop setup reached the
+snapshot deadline. Cloud MCP is unavailable in previews either way.
+
+CI's desktop chat check runs inside the clone with its own 240-second deadline, always
+prints one result line (step names and timings only) and exits; the host waits longer,
+so a failure names its step instead of a killed command.
+
 Desktop startup overlaps gateway verification and browser warmup. Go compiler workers
 use an explicit memory limit to release unused build memory; unused Linux filesystem
 caches are released before saving each snapshot. Application memory remains running.
@@ -47,6 +65,15 @@ and startup commands still do.
 
 Changing dependencies or build inputs can still take several minutes. The fastest path
 is a frontend change whose backend and build inputs are already cached.
+
+To measure reliability on a branch before merging, dispatch the prewarm workflow
+against it with a soak: `gh workflow run freestyle-prewarm.yml --ref <branch> -f soak_runs=30`.
+After the normal checks, the ACME job repeats the complete verification that many
+times against the same snapshot (five at a time by default), uploads
+`freestyle-soak-proof.json`, and fails unless every run passes. Thirty clean runs
+bound the failure rate below 10% at 95% confidence; sixty, below 5%. The branch's
+workflow pin decides which controller runs. Locally:
+`node --env-file=.env.freestyle.local scripts/soak-freestyle-preview.ts <sha> 10 5`.
 
 CI uploads `freestyle-build-proof-<world>.json` and writes a stage table to its job
 summary. `totalMs` measures preparation through a fully materialized running snapshot,

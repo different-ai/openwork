@@ -10668,6 +10668,13 @@ export class DenClient extends HeyApiClient {
       limit?: number;
       status?: "active" | "inactive" | "deleted" | "archived";
       q?: string;
+      name?: string;
+      teamId?: string;
+      memberId?: string;
+      includeAccess?: "true" | "false";
+      includeTotal?: "true" | "false";
+      ownerId?: string;
+      includeFacets?: "true" | "false";
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10680,6 +10687,13 @@ export class DenClient extends HeyApiClient {
             { in: "query", key: "limit" },
             { in: "query", key: "status" },
             { in: "query", key: "q" },
+            { in: "query", key: "name" },
+            { in: "query", key: "teamId" },
+            { in: "query", key: "memberId" },
+            { in: "query", key: "includeAccess" },
+            { in: "query", key: "includeTotal" },
+            { in: "query", key: "ownerId" },
+            { in: "query", key: "includeFacets" },
           ],
         },
       ],

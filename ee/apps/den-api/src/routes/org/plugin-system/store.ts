@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { and, asc, count, desc, eq, inArray, isNull, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
   ConfigObjectAccessGrantTable,
@@ -25,12 +25,13 @@ import {
   PluginTable,
   RemoteMcpAppTable,
   TeamTable,
+  TeamMemberTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
 import type { PluginArchActorContext, PluginArchResourceKind, PluginArchRole } from "./access.js"
-import { isPluginArchOrgAdmin, PluginArchAuthorizationError, pluginArchResourceHasExpandedAudience, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchResourceRole } from "./access.js"
-import { CONTENT_EDIT_SESSION_MAX_AGE_MS } from "../shared.js"
+import { isPluginArchOrgAdmin, PluginArchAuthorizationError, pluginArchResourceHasExpandedAudience, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchPluginRoles, resolvePluginArchResourceRole } from "./access.js"
+import { CONTENT_EDIT_SESSION_MAX_AGE_MS, memberHasRole } from "../shared.js"
 import { clampCodePoints, clampUtf8Bytes, PROJECTION_TEXT_MAX_BYTES, PROJECTION_TITLE_MAX_CHARS } from "./projection-text.js"
 import {
   AGENT_PLUGIN_V1_VERSION,
@@ -72,6 +73,7 @@ import {
   type DefaultMarketplacePluginEntry,
 } from "./default-marketplaces.js"
 import { db } from "../../../db.js"
+import { keysetAfter, keysetPage, type KeysetCursor } from "../../../list-pagination.js"
 import { resolveOrganizationMemberAuthority } from "../../../organization-team-roles.js"
 import { env } from "../../../env.js"
 import { appLogger } from "../../../observability/logger.js"
@@ -1794,12 +1796,19 @@ export async function getLatestConfigObjectVersion(input: { context: PluginArchA
   return serializeVersion(rows[0])
 }
 
-export async function createConfigObjectVersion(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; reason?: string; value: ConfigObjectInput }) {
+export async function createConfigObjectVersion(input: {
+  context: PluginArchActorContext
+  configObjectId: ConfigObjectId
+  reason?: string
+  requireFreshSession?: boolean
+  value: ConfigObjectInput
+}) {
   const row = await getConfigObjectRow(input.context.organizationContext.organization.id, input.configObjectId)
   if (!row) {
     throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
   }
-  const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
+  const requireFreshSession = input.requireFreshSession
+    ?? await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
   await requirePluginArchResourceRole({
     context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "config_object", role: "editor",
     sessionMaxAgeMs: row.objectType === "skill" ? CONTENT_EDIT_SESSION_MAX_AGE_MS : undefined,
@@ -2594,41 +2603,136 @@ async function collectPluginMarketplaces(organizationId: PluginRow["organization
   return byPlugin
 }
 
-export async function listPlugins(input: { context: PluginArchActorContext; cursor?: string; limit?: number; q?: string; status?: PluginRow["status"] }) {
-  const rows = await db
-    .select()
-    .from(PluginTable)
-    .where(eq(PluginTable.organizationId, input.context.organizationContext.organization.id))
-    .orderBy(desc(PluginTable.updatedAt), desc(PluginTable.id))
-
-  const memberships = await db
-    .select({ pluginId: PluginConfigObjectTable.pluginId, count: PluginConfigObjectTable.id })
-    .from(PluginConfigObjectTable)
-    .where(isNull(PluginConfigObjectTable.removedAt))
-
-  const counts = memberships.reduce((accumulator, row) => {
-    accumulator.set(row.pluginId, (accumulator.get(row.pluginId) ?? 0) + 1)
-    return accumulator
-  }, new Map<string, number>())
-
-  const marketplaceMembers = await collectPluginMarketplaces(
-    input.context.organizationContext.organization.id,
-    rows.map((row) => row.id),
-  )
-
-  const visible: ReturnType<typeof serializePlugin>[] = []
-  for (const row of rows) {
-    const role = await resolvePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "plugin" })
-    if (!role) continue
-    if (input.status && row.status !== input.status) continue
-    if (input.q) {
-      const haystack = `${row.name}\n${row.description ?? ""}`.toLowerCase()
-      if (!haystack.includes(input.q.toLowerCase())) continue
-    }
-    visible.push(serializePlugin(row, counts.get(row.id) ?? 0, marketplaceMembers.get(row.id) ?? []))
+async function countPluginMemberships(pluginIds: PluginId[]) {
+  const counts = new Map<PluginId, number>()
+  if (pluginIds.length === 0) {
+    return counts
   }
 
-  return pageItems(visible, input.cursor, input.limit)
+  const rows = await db
+    .select({ pluginId: PluginConfigObjectTable.pluginId, count: count() })
+    .from(PluginConfigObjectTable)
+    .where(and(inArray(PluginConfigObjectTable.pluginId, pluginIds), isNull(PluginConfigObjectTable.removedAt)))
+    .groupBy(PluginConfigObjectTable.pluginId)
+  for (const row of rows) counts.set(row.pluginId, row.count)
+  return counts
+}
+
+async function listActivePluginAccessGrants(organizationId: PluginRow["organizationId"], pluginIds: PluginId[]) {
+  const byPlugin = new Map<PluginId, ReturnType<typeof serializeAccessGrant>[]>()
+  if (pluginIds.length === 0) {
+    return byPlugin
+  }
+
+  const rows = await db
+    .select()
+    .from(PluginAccessGrantTable)
+    .where(and(
+      eq(PluginAccessGrantTable.organizationId, organizationId),
+      inArray(PluginAccessGrantTable.pluginId, pluginIds),
+      isNull(PluginAccessGrantTable.removedAt),
+    ))
+    .orderBy(desc(PluginAccessGrantTable.createdAt))
+  for (const row of rows) {
+    const existing = byPlugin.get(row.pluginId) ?? []
+    existing.push(serializeAccessGrant(row))
+    byPlugin.set(row.pluginId, existing)
+  }
+  return byPlugin
+}
+
+function pluginAudienceCondition(organizationId: OrganizationId, memberId?: MemberId, teamId?: TeamId | SQL): SQL {
+  const grantAudience = (orgWide: typeof PluginAccessGrantTable.orgWide | typeof MarketplaceAccessGrantTable.orgWide, grantMember: typeof PluginAccessGrantTable.orgMembershipId | typeof MarketplaceAccessGrantTable.orgMembershipId, grantTeam: typeof PluginAccessGrantTable.teamId | typeof MarketplaceAccessGrantTable.teamId) => {
+    if (memberId) {
+      return sql`(${orgWide} = true OR ${grantMember} = ${memberId} OR ${grantTeam} IN (
+        SELECT ${TeamMemberTable.teamId} FROM ${TeamMemberTable}
+        INNER JOIN ${TeamTable} ON ${TeamTable.id} = ${TeamMemberTable.teamId}
+        WHERE ${TeamMemberTable.orgMembershipId} = ${memberId} AND ${TeamTable.organizationId} = ${organizationId}
+      ))`
+    }
+    return sql`(${orgWide} = true OR ${grantTeam} = ${teamId})`
+  }
+  return sql`(
+    ${memberId ? sql`${PluginTable.createdByOrgMembershipId} = ${memberId} OR` : sql``}
+    EXISTS (SELECT 1 FROM ${PluginAccessGrantTable}
+      WHERE ${PluginAccessGrantTable.pluginId} = ${PluginTable.id}
+        AND ${PluginAccessGrantTable.organizationId} = ${organizationId}
+        AND ${PluginAccessGrantTable.removedAt} IS NULL
+        AND ${grantAudience(PluginAccessGrantTable.orgWide, PluginAccessGrantTable.orgMembershipId, PluginAccessGrantTable.teamId)})
+    OR EXISTS (SELECT 1 FROM ${MarketplacePluginTable}
+      INNER JOIN ${MarketplaceTable} ON ${MarketplaceTable.id} = ${MarketplacePluginTable.marketplaceId}
+      INNER JOIN ${MarketplaceAccessGrantTable} ON ${MarketplaceAccessGrantTable.marketplaceId} = ${MarketplacePluginTable.marketplaceId}
+      WHERE ${MarketplacePluginTable.pluginId} = ${PluginTable.id}
+        AND ${MarketplacePluginTable.organizationId} = ${organizationId}
+        AND ${MarketplacePluginTable.removedAt} IS NULL
+        AND ${MarketplaceTable.organizationId} = ${organizationId}
+        AND ${MarketplaceAccessGrantTable.organizationId} = ${organizationId}
+        AND ${MarketplaceAccessGrantTable.removedAt} IS NULL
+        AND ${grantAudience(MarketplaceAccessGrantTable.orgWide, MarketplaceAccessGrantTable.orgMembershipId, MarketplaceAccessGrantTable.teamId)})
+  )`
+}
+
+export async function listPlugins(input: { context: PluginArchActorContext; cursor?: KeysetCursor; includeAccess?: boolean; includeTotal?: boolean; includeFacets?: boolean; limit?: number; q?: string; name?: string; status?: PluginRow["status"]; teamId?: TeamId; memberId?: MemberId; ownerId?: MemberId }) {
+  const organizationId = input.context.organizationContext.organization.id
+  const limit = input.limit ?? 50
+  const [targetMember] = input.memberId ? await db.select({ role: MemberTable.role, userId: MemberTable.userId }).from(MemberTable).where(and(
+    eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt),
+  )).limit(1) : []
+  const [targetTeam] = input.teamId ? await db.select({ id: TeamTable.id }).from(TeamTable).where(and(
+    eq(TeamTable.id, input.teamId), eq(TeamTable.organizationId, organizationId),
+  )).limit(1) : []
+  if ((input.memberId && !targetMember) || (input.teamId && !targetTeam)) return { items: [], nextCursor: null, ...(input.includeTotal ? { total: 0 } : {}) }
+  const effectiveMember = input.memberId && targetMember?.userId && !roleIncludesOwner(targetMember.role) && !memberHasRole(targetMember.role, "admin")
+    ? await resolveOrganizationMemberAuthority({ organizationId, memberId: input.memberId })
+    : null
+  const adminAudience = targetMember && (roleIncludesOwner(targetMember.role) || memberHasRole(targetMember.role, "admin") || (effectiveMember ? memberHasRole(effectiveMember.role, "admin") : false))
+  const audience = adminAudience ? undefined : input.memberId || input.teamId
+    ? pluginAudienceCondition(organizationId, input.memberId, input.teamId)
+    : undefined
+  const caller = isPluginArchOrgAdmin(input.context)
+    ? undefined
+    : pluginAudienceCondition(organizationId, input.context.organizationContext.currentMember.id)
+  const baseFilters = and(
+    eq(PluginTable.organizationId, organizationId),
+    input.status ? eq(PluginTable.status, input.status) : undefined,
+    input.q ? sql`(INSTR(LOWER(${PluginTable.name}), LOWER(${input.q})) > 0 OR INSTR(LOWER(COALESCE(${PluginTable.description}, '')), LOWER(${input.q})) > 0)` : undefined,
+    input.name ? sql`INSTR(LOWER(${PluginTable.name}), LOWER(${input.name})) > 0` : undefined,
+    caller,
+  )
+  const ownerFilter = input.ownerId ? eq(PluginTable.createdByOrgMembershipId, input.ownerId) : undefined
+  const filters = and(baseFilters, audience, ownerFilter)
+  const [rows, totalRows, teamCounts, ownerCounts] = await Promise.all([
+    db.select().from(PluginTable)
+      .where(and(filters, input.cursor ? keysetAfter({ at: PluginTable.updatedAt, id: PluginTable.id }, input.cursor) : undefined))
+      .orderBy(desc(PluginTable.updatedAt), desc(PluginTable.id))
+      .limit(limit + 1),
+    input.includeTotal ? db.select({ total: count() }).from(PluginTable).where(filters) : Promise.resolve([]),
+    input.includeFacets ? db.select({ id: TeamTable.id, count: count(PluginTable.id) }).from(TeamTable)
+      .leftJoin(PluginTable, and(baseFilters, ownerFilter, pluginAudienceCondition(organizationId, undefined, sql`${TeamTable.id}`)))
+      .where(eq(TeamTable.organizationId, organizationId)).groupBy(TeamTable.id) : Promise.resolve([]),
+    input.includeFacets ? db.select({ id: PluginTable.createdByOrgMembershipId, count: count() }).from(PluginTable)
+      .where(and(baseFilters, audience)).groupBy(PluginTable.createdByOrgMembershipId) : Promise.resolve([]),
+  ])
+  const page = keysetPage(rows, limit, (row) => ({ at: row.updatedAt, id: row.id }))
+  const pageIds = page.items.map((row) => row.id)
+  const roles = await resolvePluginArchPluginRoles(input.context, pageIds)
+  const managedIds = pageIds.filter((pluginId) => roles.get(pluginId) === "manager")
+
+  const [counts, marketplaceMembers, access] = await Promise.all([
+    countPluginMemberships(pageIds),
+    collectPluginMarketplaces(organizationId, pageIds),
+    input.includeAccess ? listActivePluginAccessGrants(organizationId, managedIds) : null,
+  ])
+
+  return {
+    items: page.items.map((row) => {
+      const plugin = serializePlugin(row, counts.get(row.id) ?? 0, marketplaceMembers.get(row.id) ?? [])
+      return access && roles.get(row.id) === "manager" ? { ...plugin, access: access.get(row.id) ?? [] } : plugin
+    }),
+    nextCursor: page.nextCursor,
+    ...(input.includeTotal ? { total: totalRows[0]?.total ?? 0 } : {}),
+    ...(input.includeFacets ? { teamCounts, ownerCounts } : {}),
+  }
 }
 
 export async function getPluginDetail(context: PluginArchActorContext, pluginId: PluginId) {

@@ -63,22 +63,31 @@ export function useLibraryCloud(input: {
     enabled: input.enabled,
     queryFn: () => input.client.getLibraryOrgDirectory(input.organizationId),
   });
+  const accessQuery = useQuery({
+    queryKey: ["library-cloud-access", ...scope],
+    enabled: input.enabled,
+    queryFn: () => input.client.listManagedPluginAccess(input.organizationId),
+  });
   const items = input.enabled ? itemsQuery.data ?? [] : [];
   const plugins = items.filter((item): item is DenLibraryPluginItem => item.type === "plugin");
   const owned = plugins.filter(isOwnedLibraryPlugin);
+  const listedAccess = accessQuery.data;
+  const unlisted = listedAccess ? owned.filter((plugin) => !listedAccess.has(plugin.id)) : accessQuery.isError ? owned : [];
   const grantQueries = useQueries({
-    queries: owned.map((plugin) => ({
+    queries: unlisted.map((plugin) => ({
       queryKey: ["library-cloud-grants", ...scope, plugin.id],
       enabled: input.enabled,
       queryFn: () => input.client.listPluginAccess(input.organizationId, plugin.id),
     })),
   });
-  const grantsById = new Map(owned.map((plugin, index) => [plugin.id, grantQueries[index]?.data ?? []]));
+  const unlistedGrants = new Map(unlisted.map((plugin, index) => [plugin.id, grantQueries[index]?.data ?? []]));
+  const grantsById = new Map(owned.map((plugin) => [plugin.id, listedAccess?.get(plugin.id) ?? unlistedGrants.get(plugin.id) ?? []]));
   const directory = input.enabled ? directoryQuery.data ?? null : null;
 
   const refresh = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["library-cloud-items", ...scope] }),
+      queryClient.invalidateQueries({ queryKey: ["library-cloud-access", ...scope] }),
       queryClient.invalidateQueries({ queryKey: ["library-cloud-grants", ...scope] }),
     ]);
   };
@@ -109,9 +118,11 @@ export function useLibraryCloud(input: {
         if (targets.some((target) => grantMatches(grant, target))) continue;
         await input.client.revokePluginAccess(input.organizationId, pluginId, grant.id);
       }
-      queryClient.setQueryData(
-        ["library-cloud-grants", ...scope, pluginId],
-        await input.client.listPluginAccess(input.organizationId, pluginId),
+      const saved = await input.client.listPluginAccess(input.organizationId, pluginId);
+      queryClient.setQueryData(["library-cloud-grants", ...scope, pluginId], saved);
+      queryClient.setQueryData<Map<string, DenLibraryAccessGrant[]>>(
+        ["library-cloud-access", ...scope],
+        (current) => current && new Map(current).set(pluginId, saved),
       );
       await refresh();
     },

@@ -45,6 +45,33 @@ export function ItemPanel({ children, className = "" }: { children: ReactNode; c
   );
 }
 
+/** Placeholder rows the size of ItemRow, for an ItemPanel whose list is loading. */
+export function ItemRowsSkeleton({ label, rows = 3 }: { label: string; rows?: number }) {
+  return (
+    <div role="status" aria-label={label} data-testid="item-rows-skeleton" className="flex flex-col divide-y divide-gray-100 motion-safe:animate-pulse">
+      {Array.from({ length: rows }, (_, index) => (
+        <div key={index} aria-hidden className="flex items-center gap-3.5 px-5 py-3">
+          <span className="h-8 w-8 shrink-0 rounded-[7px] bg-gray-100" />
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="flex h-5 items-center"><span className="h-3 w-32 rounded bg-gray-100" /></span>
+            <span className="flex h-[18px] items-center"><span className="h-2.5 w-56 max-w-full rounded bg-gray-100" /></span>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** An ItemSection whose title and rows are still loading. */
+export function ItemSectionSkeleton({ label, rows }: { label: string; rows?: number }) {
+  return (
+    <div className="flex flex-col gap-2.5">
+      <span aria-hidden className="flex h-4 items-center"><span className="h-2.5 w-20 rounded bg-gray-100 motion-safe:animate-pulse" /></span>
+      <ItemPanel><ItemRowsSkeleton label={label} rows={rows} /></ItemPanel>
+    </div>
+  );
+}
+
 export function ItemRow({
   logo,
   title,
@@ -226,11 +253,14 @@ export function DetailRows({ rows }: { rows: { label: string; value: ReactNode }
   );
 }
 
-export function FilterInput({ value, onChange, size = "sm", className = "" }: {
+export function FilterInput({ value, onChange, size = "sm", className = "", placeholder = "Filter by name", onEnter }: {
   value: string;
   onChange: (value: string) => void;
   size?: "sm" | "md";
   className?: string;
+  placeholder?: string;
+  /** Enter runs the one action the current value offers. */
+  onEnter?: () => void;
 }) {
   return (
     <label className={`flex ${size === "md" ? "h-9" : "h-8"} items-center gap-2 rounded-lg border border-gray-200 bg-white px-2.5 focus-within:border-gray-400 ${className}`}>
@@ -238,8 +268,13 @@ export function FilterInput({ value, onChange, size = "sm", className = "" }: {
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        placeholder="Filter by name"
-        aria-label="Filter by name"
+        onKeyDown={onEnter ? (event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          onEnter();
+        } : undefined}
+        placeholder={placeholder}
+        aria-label={placeholder}
         className="min-w-0 flex-1 bg-transparent text-[12px] text-gray-900 outline-none placeholder:text-gray-400"
       />
     </label>

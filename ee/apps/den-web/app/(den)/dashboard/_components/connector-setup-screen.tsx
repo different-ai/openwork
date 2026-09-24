@@ -32,7 +32,12 @@ export function useConnectorTarget(catalogId: string): { target: ConnectorTarget
     if (!preset && presets.error) return { target: null, loading: false, missing: false, failed: true };
     if (!preset) return { target: null, loading: presets.isLoading, missing: !presets.isLoading, failed: false };
     return {
-      target: { name: preset.displayName, url: preset.url, description: shortDescription(preset.description) },
+      target: {
+        name: preset.displayName,
+        url: preset.url,
+        description: shortDescription(preset.description),
+        preset: { authType: preset.authType, requiresOAuthClient: preset.requiresOAuthClient, defaultOAuthClientId: preset.defaultOAuthClientId },
+      },
       loading: false,
       missing: false,
       failed: false,
