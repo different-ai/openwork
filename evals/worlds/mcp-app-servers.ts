@@ -4,9 +4,12 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { chrome } from "@openwork/hosts";
+import { chrome, defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 import { connect, debuggerUrlFor, evaluate, listTargets, type Surface } from "@openwork/cdp";
 import type { Place, Seed } from "@openwork/env";
+import type { MockMcpTool } from "@openwork/labs";
+import { reconcileDraftHost } from "../fixtures/cloud-draft-host.ts";
+import { configureProvider } from "./chat.ts";
 
 export const appTitle = "Order calculator";
 export const procedureTitle = "Quantity times unit price";
@@ -73,19 +76,21 @@ export function appSource(revision: string) {
       const toolsAvailable = Boolean(app.getHostCapabilities()?.serverTools);
       React.useEffect(() => {
         if (!toolsAvailable) return;
-        // A live Workflow tool is read-only, so hosts may run it when the App opens.
-        app.callServerTool({ name: ${JSON.stringify(toolNames.live)}, arguments: { timeZone: "UTC" } })
-          .then(reply => { if (reply.isError) throw new Error("Pricing date unavailable"); setToday(payload(reply).value?.today); })
-          .catch(error => setFailure(error.message));
-      }, [app, toolsAvailable]);
-      async function calculate() {
-        setBusy(true); setFailure("");
-        try {
+        // Read-only tools may run when the App opens: the live Workflow, then the Inventory lookup.
+        (async () => {
+          const date = await app.callServerTool({ name: ${JSON.stringify(toolNames.live)}, arguments: { timeZone: "UTC" } });
+          if (date.isError) throw new Error("Pricing date unavailable");
+          setToday(payload(date).value?.today);
           const lookup = await app.callServerTool({ name: ${JSON.stringify(toolNames.connection)}, arguments: { sku: input.sku } });
           if (lookup.isError) throw new Error("Price lookup failed");
-          const unitPrice = payload(lookup).unitPrice;
-          setPrice(unitPrice);
-          const reply = await app.callServerTool({ name: ${JSON.stringify(toolNames.workflow)}, arguments: { quantity: input.quantity, unitPrice } });
+          setPrice(payload(lookup).unitPrice);
+        })().catch(error => setFailure(error.message));
+      }, [app, toolsAvailable]);
+      async function calculate() {
+        // OpenWork lets one click authorize one tool call, so the write is the only call this button makes.
+        setBusy(true); setFailure("");
+        try {
+          const reply = await app.callServerTool({ name: ${JSON.stringify(toolNames.workflow)}, arguments: { quantity: input.quantity, unitPrice: price } });
           const next = payload(reply);
           if (reply.isError) throw new Error(next.message || "The calculation failed");
           setTotal(next.value?.total);
@@ -96,8 +101,8 @@ export function appSource(revision: string) {
         <header><h1>${appTitle}</h1><span>Ready — ${revision}</span></header>
         {!toolsAvailable && <p role="status">Server tools unavailable. Reopen in a host that enables server tools.</p>}
         <p data-testid="pricing-date">{today ? "Prices as of " + today : "Loading pricing date"}</p>
-        <p>{input.quantity ?? 0} × {input.sku ?? "no product"}{price !== null ? " at " + price : ""}</p>
-        <button type="button" disabled={!toolsAvailable || busy} onClick={calculate}>Calculate total</button>
+        <p data-testid="order-line">{input.quantity ?? 0} × {input.sku ?? "no product"}{price !== null ? " at " + price : ""}</p>
+        <button type="button" disabled={!toolsAvailable || busy || price === null} onClick={calculate}>Calculate total</button>
         {busy && <p role="status">Calculating</p>}
         {failure && <p role="alert">{failure}</p>}
         {total !== null && <output data-testid="total" aria-label="Total">{String(total)}</output>}
@@ -200,6 +205,62 @@ type RequestWitness = { persona: Persona; endpoint: Endpoint; via: "setup" | "cl
  * saved Workflow as its one tool. A standard MCP Apps reference host talks
  * only to that App's MCP URL, as the owner, a teammate, and an outsider.
  */
+const inventoryTool: MockMcpTool = {
+  name: toolNames.connection,
+  description: "Look up a product's unit price.",
+  inputSchema: { type: "object", properties: { sku: { type: "string" } }, required: ["sku"], additionalProperties: false },
+  annotations: { readOnlyHint: true, destructiveHint: false },
+  result: { content: [{ type: "text", text: `Unit price ${unitPrice}` }], structuredContent: { sku: launchInput.sku, unitPrice }, isError: false },
+};
+
+/** Save the two Workflows and build the App over them and the Inventory connection, all through Connect. */
+async function composeOrderCalculator(
+  seed: Seed,
+  owner: Parameters<Seed["api"]>[0],
+  connectionId: string,
+  call: (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>,
+) {
+  async function saveTestedWorkflow(name: string, request: Record<string, unknown>, save: Record<string, unknown>) {
+    const tested = await call("execute_capability_script", request);
+    if (tested.isError) throw new Error(`${name} authoring failed: ${JSON.stringify(tested)}`);
+    const metadata = record(payload(tested).metadata);
+    if (record(metadata.retention).canSaveByReceipt !== true) throw new Error("Recent authoring receipt source retention is unavailable");
+    const saved = await seed.api(owner, "/v1/workflows", {
+      method: "POST", body: JSON.stringify({ name, receiptId: field(metadata, "receiptId"), ...save }),
+    });
+    if (saved.response.status !== 201) throw new Error(`Saving ${name} failed: ${saved.response.status} ${saved.text.slice(0, 300)}`);
+    return { pluginId: field(saved.body, "pluginId"), configObjectId: field(saved.body, "configObjectId") };
+  }
+  const inputSchema = { type: "object", properties: { quantity: { type: "number" }, unitPrice: { type: "number" } }, required: ["quantity", "unitPrice"], additionalProperties: false };
+  const outputSchema = { type: "object", properties: { total: { type: "number" } }, required: ["total"], additionalProperties: false };
+  const procedureInput = { quantity: launchInput.quantity, unitPrice };
+  const procedure = await saveTestedWorkflow(procedureTitle, {
+    code: "return { total: input.quantity * input.unitPrice };", input: procedureInput, inputSchema, outputSchema,
+  }, { inputSchema, outputSchema, currentInput: procedureInput });
+  const runtimeKeys = ["now", "today", "timeZone", "dayStart", "dayEnd"];
+  const runtimeSchema = {
+    type: "object", additionalProperties: false, required: ["runtime"], properties: {
+      runtime: { type: "object", additionalProperties: false, required: runtimeKeys, properties: Object.fromEntries(runtimeKeys.map(key => [key, { type: "string" }])) },
+    },
+  };
+  const liveOutputSchema = { type: "object", properties: { today: { type: "string" } }, required: ["today"], additionalProperties: false };
+  const live = await saveTestedWorkflow(liveTitle, {
+    mode: "live", code: "return { today: input.runtime.today };", inputSchema: runtimeSchema, outputSchema: liveOutputSchema,
+  }, { inputSchema: runtimeSchema, outputSchema: liveOutputSchema });
+  const capabilities = {
+    live: `plugin:${live.pluginId}:${live.configObjectId}`,
+    connection: `mcp:${connectionId}:${toolNames.connection}`,
+    workflow: `plugin:${procedure.pluginId}:${procedure.configObjectId}`,
+  };
+  const tools = [
+    { name: toolNames.live, description: "Today's pricing date for the viewer.", capability: capabilities.live, mode: "live" },
+    { name: toolNames.connection, description: "Look up a product's unit price in Inventory.", capability: capabilities.connection },
+    { name: toolNames.workflow, description: "Multiply a quantity by a unit price.", capability: capabilities.workflow },
+  ];
+  const created = appSummary(await call("create_app", { ...appSource("revision one"), tools }));
+  return { procedure, live, capabilities, tools, created };
+}
+
 export async function mcpAppServers(seed: Seed, context: { place: Place }) {
   await using resources = new AsyncDisposableStack();
   const den = await seed.den({
@@ -207,15 +268,7 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
     // Legacy Workflow-bound views are on so the journey can prove they are read-only beside App servers.
     env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_APP_MCP_SERVERS_ENABLED: "true" },
     org: { name: `App servers ${Date.now()}`, members: { member: { name: "App teammate" }, outsider: { name: "Ungranted teammate" } } },
-    mocks: {
-      inventory: seed.mock({ allowUnauthenticatedMcp: true, tools: [{
-        name: toolNames.connection,
-        description: "Look up a product's unit price.",
-        inputSchema: { type: "object", properties: { sku: { type: "string" } }, required: ["sku"], additionalProperties: false },
-        annotations: { readOnlyHint: true, destructiveHint: false },
-        result: { content: [{ type: "text", text: `Unit price ${unitPrice}` }], structuredContent: { sku: launchInput.sku, unitPrice }, isError: false },
-      }] }),
-    },
+    mocks: { inventory: seed.mock({ allowUnauthenticatedMcp: true, tools: [inventoryTool] }) },
   });
   const connection = await seed.orgConnection(den.admin, {
     name: `Inventory ${Date.now()}`, url: den.mocks.inventory.mcpUrl,
@@ -267,44 +320,7 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
     if (result.response.status !== 201) throw new Error(`Viewer grant failed: ${result.response.status}`);
   }
 
-  async function saveTestedWorkflow(name: string, request: Record<string, unknown>, save: Record<string, unknown>) {
-    const tested = await call("owner", "execute_capability_script", request);
-    if (tested.isError) throw new Error(`${name} authoring failed: ${JSON.stringify(tested)}`);
-    const metadata = record(payload(tested).metadata);
-    if (record(metadata.retention).canSaveByReceipt !== true) throw new Error("Recent authoring receipt source retention is unavailable");
-    const saved = await seed.api(den.admin, "/v1/workflows", {
-      method: "POST", body: JSON.stringify({ name, receiptId: field(metadata, "receiptId"), ...save }),
-    });
-    if (saved.response.status !== 201) throw new Error(`Saving ${name} failed: ${saved.response.status} ${saved.text.slice(0, 300)}`);
-    return { pluginId: field(saved.body, "pluginId"), configObjectId: field(saved.body, "configObjectId") };
-  }
-  const inputSchema = { type: "object", properties: { quantity: { type: "number" }, unitPrice: { type: "number" } }, required: ["quantity", "unitPrice"], additionalProperties: false };
-  const outputSchema = { type: "object", properties: { total: { type: "number" } }, required: ["total"], additionalProperties: false };
-  const procedureInput = { quantity: launchInput.quantity, unitPrice };
-  const procedure = await saveTestedWorkflow(procedureTitle, {
-    code: "return { total: input.quantity * input.unitPrice };", input: procedureInput, inputSchema, outputSchema,
-  }, { inputSchema, outputSchema, currentInput: procedureInput });
-  const runtimeKeys = ["now", "today", "timeZone", "dayStart", "dayEnd"];
-  const runtimeSchema = {
-    type: "object", additionalProperties: false, required: ["runtime"], properties: {
-      runtime: { type: "object", additionalProperties: false, required: runtimeKeys, properties: Object.fromEntries(runtimeKeys.map(key => [key, { type: "string" }])) },
-    },
-  };
-  const liveOutputSchema = { type: "object", properties: { today: { type: "string" } }, required: ["today"], additionalProperties: false };
-  const live = await saveTestedWorkflow(liveTitle, {
-    mode: "live", code: "return { today: input.runtime.today };", inputSchema: runtimeSchema, outputSchema: liveOutputSchema,
-  }, { inputSchema: runtimeSchema, outputSchema: liveOutputSchema });
-  const capabilities = {
-    live: `plugin:${live.pluginId}:${live.configObjectId}`,
-    connection: `mcp:${connection.id}:${toolNames.connection}`,
-    workflow: `plugin:${procedure.pluginId}:${procedure.configObjectId}`,
-  };
-  const tools = [
-    { name: toolNames.live, description: "Today's pricing date for the viewer.", capability: capabilities.live, mode: "live" },
-    { name: toolNames.connection, description: "Look up a product's unit price in Inventory.", capability: capabilities.connection },
-    { name: toolNames.workflow, description: "Multiply a quantity by a unit price.", capability: capabilities.workflow },
-  ];
-  const created = appSummary(await call("owner", "create_app", { ...appSource("revision one"), tools }));
+  const { procedure, live, capabilities, tools, created } = await composeOrderCalculator(seed, den.admin, connection.id, (name, args) => call("owner", name, args));
   appServerPath = created.serverPath;
 
   const built = await buildStandardMcpAppHost();
@@ -403,5 +419,96 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
       url: location.href,
     })),
     [Symbol.asyncDispose]: () => retained.disposeAsync(),
+  };
+}
+
+export const chatPrompt = "Open the Order calculator for 6 of WIDGET-7.";
+export const chatReply = "The Order calculator is open in this conversation.";
+
+/**
+ * The same App opened from an OpenWork chat: the model launches it through
+ * Connect with launch input, and the App's own tools run in the conversation.
+ */
+export async function mcpAppServersChat(seed: Seed) {
+  const den = await seed.den({
+    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_APP_MCP_SERVERS_ENABLED: "true" },
+    org: { name: `App servers chat ${Date.now()}` },
+    mocks: { inventory: seed.mock({ allowUnauthenticatedMcp: true, tools: [inventoryTool] }) },
+  });
+  const connection = await seed.orgConnection(den.admin, {
+    name: `Inventory ${Date.now()}`, url: den.mocks.inventory.mcpUrl,
+    authType: "none", credentialMode: "shared", access: { orgWide: true },
+  });
+  const organizationId = field(record((await seed.api(den.admin, "/v1/org")).body).organization, "id");
+  const minted = await seed.api(den.admin, "/v1/mcp/token", {
+    method: "POST", headers: { "x-openwork-org-id": organizationId }, body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }),
+  });
+  if (!minted.response.ok) throw new Error(`MCP token setup failed: ${minted.response.status}`);
+  const token = field(minted.body, "token");
+  let sequence = 0;
+  const call = async (name: string, args: Record<string, unknown>) => {
+    const response = await fetch(`${den.ref.apiUrl}/mcp/agent`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: ++sequence, method: "tools/call", params: { name, arguments: args } }),
+      signal: AbortSignal.timeout(90_000),
+    });
+    if (!response.ok) throw new Error(`Den MCP ${name} returned HTTP ${response.status}`);
+    const raw = await response.text();
+    const data = raw.split("\n").find(line => line.startsWith("data:"));
+    return record(record(JSON.parse(data ? data.slice(5) : raw)).result);
+  };
+  const { created } = await composeOrderCalculator(seed, den.admin, connection.id, call);
+  const configured = await fetch(`${den.mocks.inventory.url}/admin/agent-workloads`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workloads: [{ promptMarker: chatPrompt, finalReply: chatReply, steps: [
+      { tool: "execute_capability", arguments: { name: `plugin:${created.pluginId}:${created.appId}`, body: launchInput } },
+    ] }] }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!configured.ok) throw new Error(`Chat model setup failed: ${configured.status}`);
+  const workspacePath = seed.tmpPath("mcp-app-servers-chat");
+  const denOrigin = new URL(den.ref.apiUrl);
+  const app = await seed.appWeb({ name: "mcp-app-servers-chat", workspacePath, headless: true,
+    ...(denOrigin.protocol === "https:" ? { syntheticPreactivatedDenOrigin: denOrigin.origin } : {}) });
+  const workspace = await seed.workspace(app, workspacePath);
+  await configureProvider(seed, app, workspace.workspaceId, "app-chat-model", "app-chat-model", {
+    provider: { "app-chat-model": {
+      npm: "@ai-sdk/openai-compatible", name: "App chat model fixture",
+      options: { baseURL: `${den.mocks.inventory.url}/v1`, apiKey: "sk-app-chat-fixture" },
+      models: { "app-chat-model": { name: "App chat model fixture", tool_call: true } },
+    } },
+    mcp: { "openwork-cloud": { type: "remote", url: `${den.ref.apiUrl}/mcp/agent`, enabled: true, oauth: false, headers: { Authorization: `Bearer ${token}` } } },
+  });
+  const session = await seed.session(app, { title: appTitle });
+  // The private App host reads the Connect server index, which lists the App as its own server.
+  const hostSetup = {
+    name: app.handle.name, openworkUrl: app.openworkUrl, workspaceRoot: app.workspaceRoot,
+    workspaceId: workspace.workspaceId, cloudUrl: `${den.ref.apiUrl}/mcp/agent`, token, appHostToken: field(minted.body, "appHostToken"),
+  };
+  const reconciled = record(app.handle.sandboxId
+    ? JSON.parse((await execInSandbox(defaultDaytonaExec, app.handle.sandboxId,
+      `node /workspace/evals/fixtures/cloud-draft-host.ts ${Buffer.from(JSON.stringify(hostSetup)).toString("base64url")}`,
+      { context: "Reconcile the App chat host", timeoutMs: 150_000 })).stdout.trim())
+    : await reconcileDraftHost(hostSetup));
+  if (reconciled.status !== 200 || reconciled.phase !== "ready" || reconciled.diagnostic !== "ready") throw new Error(`Cloud reconcile failed: ${JSON.stringify(reconciled)}`);
+  return {
+    app, session, den, created,
+    inventoryCalls: (options: { sinceIso?: string; atLeast?: number } = {}) => den.mocks.inventory.toolCalls({ name: toolNames.connection, atLeast: 0, ...options }),
+    /** The App's isolated frame in the conversation, for trusted input. */
+    async appFrame(): Promise<Surface & AsyncDisposable> {
+      const deadline = Date.now() + 60_000;
+      while (Date.now() < deadline) {
+        for (const target of (await listTargets(app.handle.cdpUrl)).filter(entry => entry.type === "iframe" && entry.url === "about:srcdoc")) {
+          const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
+          if (await evaluate(client, () => document.title).catch(() => "") === appTitle) {
+            return { handle: app.handle, client, [Symbol.asyncDispose]: async () => client.close() };
+          }
+          client.close();
+        }
+        await delay(250);
+      }
+      throw new Error("The App did not open in the conversation");
+    },
   };
 }

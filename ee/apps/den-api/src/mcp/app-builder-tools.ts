@@ -22,7 +22,7 @@ export const APP_AUTHORING_GUIDANCE = [
   "For a new app, dashboard, or interactive view, call create_app directly with complete React/CSS source, a readable textFallback, and the tools the App needs. No Workflow, receipt, output schema, or Automation is required. Older Workflow-bound views from save_artifact_view are read-only: they still open and refresh, but are not created or edited.",
   "Each App becomes its own standard MCP server with exactly: open_app (bound to the App's immutable ui:// revision), the tools you declare, and the App's resources. Declare each tool with a clear snake_case name, a description, and one exact capability name from search_capabilities: a saved Workflow, a connection tool, or an OpenWork action. Use mode live for a saved Workflow that reads input.runtime; it runs read-only. Tools run as whoever uses the App, with their own access and connections.",
   "Provide a default-exported React component receiving { app, input, result, hostContext }. input is the launch input object; result is the launch CallToolResult (read result?.structuredContent) and is undefined until the host delivers it. React is injected: use React.useState and other React APIs without imports. Do not use fetch, browser/host globals, dynamic code, external resources, URL-bearing elements, or native forms (<form> is blocked). Use labeled inputs and explicit type=button controls.",
-  "Call only the App's declared tools, by their declared names: app.callServerTool({ name, arguments }). Workflow and connection tools take the capability's own arguments; OpenWork action tools take { path, query, body } as their schema shows; live Workflow tools take only an optional { timeZone }. Check app.getHostCapabilities()?.serverTools first and show a blocked state when it is absent. Hosts may require a user click before calling a tool that is not read-only; OpenWork does. Load data on open only with read-only tools such as live Workflows; start other calls from an explicit button and show tool_requires_approval or other errors as a readable blocked state.",
+  "Call only the App's declared tools, by their declared names: app.callServerTool({ name, arguments }). Workflow and connection tools take the capability's own arguments; OpenWork action tools take { path, query, body } as their schema shows; live Workflow tools take only an optional { timeZone }. Check app.getHostCapabilities()?.serverTools first and show a blocked state when it is absent. Hosts may require a user click before calling a tool that is not read-only. OpenWork does, and one click authorizes exactly one tool call, even a read-only one. Load data with read-only tools such as live Workflows and read-only connection tools when the App opens or its inputs change, make the one call that is not read-only the only call a button makes, and show tool_requires_approval or other errors as a readable blocked state.",
   "The standard bridge uses autoResize:true. app.sendSizeChanged({ height }) requests a height; the host may clamp it and automatic content-size updates still apply. Follow DESIGN.md: compact neutral layout, one focal action, explicit loading/empty/error/blocked states, no internal scrolling or automatic navigation.",
   "Creation uses a new private Plugin named after the App unless the user names an existing authorized pluginId. Share the App by sharing that Plugin; each person signs in with their own OpenWork account and sharing never shares credentials. The result includes the App's MCP URL for Cursor, Claude, or any MCP client. Read with read_app before update_app, supplying expectedRevisionId and complete replacement source; omit tools to keep the current ones.",
   "In OpenWork, create_app and update_app open the new revision in the conversation. To open an existing App, find it with search_capabilities (kind mcp_app) and execute that exact match. Only create an Automation when the user asks for a schedule.",
@@ -60,19 +60,25 @@ function mcpUrl(publicOrigin: string, serverPath: string) {
  * private Connect catalog with the App server's open_app tool; other hosts
  * receive the text, the structured App, and its MCP URL.
  */
-export function mcpAppLaunchResult(input: { app: McpAppSummary; publicOrigin: string; message: string }) {
+export function mcpAppLaunchResult(input: { app: McpAppSummary; publicOrigin: string; message: string; launchInput?: unknown }) {
+  const launchInput = mcpAppLaunchInput(input.launchInput)
   return {
     content: [{ type: "text" as const, text: `${input.message}\n\n${input.app.textFallback}` }],
-    structuredContent: { app: input.app, input: {}, mcpUrl: mcpUrl(input.publicOrigin, input.app.serverPath) },
+    structuredContent: { app: input.app, input: launchInput, mcpUrl: mcpUrl(input.publicOrigin, input.app.serverPath) },
     _meta: {
       "openwork/mcpApp": {
         connectionId: input.app.appId,
         toolName: MCP_APP_LAUNCH_TOOL_NAME,
         resourceUri: input.app.resourceUri,
-        arguments: { input: {} },
+        arguments: { input: launchInput },
       },
     },
   }
+}
+
+/** An App's launch input is a JSON object; anything else opens it with none. */
+function mcpAppLaunchInput(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? { ...value } : {}
 }
 
 /** App matches for search_capabilities: the exact name executes a launch of the App's own server. */
@@ -84,10 +90,10 @@ export function searchMcpApps(apps: McpAppEntry[], query: string, publicOrigin: 
     method: "MCP",
     path: app.serverPath,
     score: scoreText(tokenize(app.title), tokenize(app.description ?? ""), tokens, ["app", "apps", "dashboard"]),
-    summary: `${app.description || app.title} Execute this exact name to open the App. It is also its own MCP server at ${mcpUrl(publicOrigin, app.serverPath)}.`,
+    summary: `${app.description || app.title} Execute this exact name to open the App; an optional body object becomes its launch input. It is also its own MCP server at ${mcpUrl(publicOrigin, app.serverPath)}.`,
     pathParams: [],
     queryParams: [],
-    hasBody: false,
+    hasBody: true,
     mcpApp: { resourceUri: mcpAppResourceUri(app.appId, app.revisionId) },
   })).filter((match) => match.score > 0)
 }

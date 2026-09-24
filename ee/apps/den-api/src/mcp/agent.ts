@@ -682,7 +682,9 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           schemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("For an external MCP match, copy the exact schemaDigest returned by search_capabilities so schema drift can be reported as advisory guidance without blocking the provider call."),
           path: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Path parameters, only if the match's pathParams is non-empty."),
           query: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Query parameters, only if the match's queryParams is non-empty."),
-          body: z.unknown().optional().describe("For native API capabilities, the JSON body. For external MCP capabilities, the arguments object matching argumentsSchema."),
+          body: z.unknown().optional().describe(appServersEnabled
+            ? "For native API capabilities, the JSON body. For external MCP capabilities, the arguments object matching argumentsSchema. For an App (kind mcp_app), an optional launch input object the App receives."
+            : "For native API capabilities, the JSON body. For external MCP capabilities, the arguments object matching argumentsSchema."),
         }),
       },
       async ({ name, schemaDigest, path, query, body }) => {
@@ -692,7 +694,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         const definition = plugin && await isActiveMcpApp({ organizationId: principal.organizationId, appId: plugin.configObjectId })
           ? await loadMcpAppServerDefinition({ ...appAccess, appId: plugin.configObjectId }).catch(() => null)
           : null
-        if (definition) return mcpAppLaunchResult({ app: definition.app, publicOrigin: redirectUriBase, message: `Opened ${definition.app.title}.` })
+        if (definition) return mcpAppLaunchResult({ app: definition.app, publicOrigin: redirectUriBase, message: `Opened ${definition.app.title}.`, launchInput: body })
         const result = await executeCapabilityWithBudget({
           capability: name,
           invoke: async (): Promise<ExecuteCapabilityToolResult> => (

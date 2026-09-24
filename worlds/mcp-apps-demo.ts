@@ -177,14 +177,21 @@ export default function OrderCalculator({ app, input }) {
       .then(reply => setToday(reply.isError ? null : payload(reply).value?.today))
       .catch(() => setToday(null));
   }, [app, toolsAvailable]);
+  // Read-only tools may run without a click, so the price follows the product.
+  React.useEffect(() => {
+    if (!toolsAvailable || !sku.trim()) return;
+    let current = true;
+    setPrice(null); setTotal(null);
+    app.callServerTool({ name: "lookup_unit_price", arguments: { sku: sku.trim() } })
+      .then(reply => { if (!current) return; if (reply.isError) throw new Error("Price lookup failed"); setPrice(payload(reply).unitPrice); setStatus(""); })
+      .catch(error => { if (current) setStatus(error.message); });
+    return () => { current = false; };
+  }, [app, toolsAvailable, sku]);
+  // OpenWork lets one click authorize one tool call, so the write is the only call this button makes.
   async function calculate() {
     setStatus("Calculating"); setTotal(null);
     try {
-      const lookup = await app.callServerTool({ name: "lookup_unit_price", arguments: { sku } });
-      if (lookup.isError) throw new Error("Price lookup failed");
-      const unitPrice = payload(lookup).unitPrice;
-      setPrice(unitPrice);
-      const reply = await app.callServerTool({ name: "price_total", arguments: { quantity: Number(quantity), unitPrice } });
+      const reply = await app.callServerTool({ name: "price_total", arguments: { quantity: Number(quantity), unitPrice: price } });
       if (reply.isError) throw new Error(payload(reply).message || "The calculation failed");
       setTotal(payload(reply).value?.total);
       setStatus("");
@@ -196,7 +203,7 @@ export default function OrderCalculator({ app, input }) {
     <p>{today ? "Prices as of " + today : "Loading pricing date"}</p>
     <label>Product <input value={sku} onChange={event => setSku(event.target.value)} /></label>
     <label>Quantity <input type="number" min="1" value={quantity} onChange={event => setQuantity(event.target.value)} /></label>
-    <button type="button" disabled={!toolsAvailable} onClick={calculate}>Calculate total</button>
+    <button type="button" disabled={!toolsAvailable || price === null} onClick={calculate}>Calculate total</button>
     {price !== null && <p>Unit price {price}</p>}
     {status && <p role="status">{status}</p>}
     {total !== null && <output aria-label="Total">Total {total}</output>}

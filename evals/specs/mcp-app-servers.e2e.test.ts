@@ -1,10 +1,15 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { appSource, appTitle, launchInput, mcpAppServers, payload, record, rows, toolNames } from "../worlds/mcp-app-servers.ts";
+import { appSource, appTitle, chatPrompt, chatReply, launchInput, mcpAppServers, mcpAppServersChat, payload, record, rows, toolNames } from "../worlds/mcp-app-servers.ts";
 
 const test = spec.world(mcpAppServers, {
   resources: { surfaces: ["web"], services: ["den", "mock"] },
   timeout: 600_000,
+});
+
+const chatTest = spec.world(mcpAppServersChat, {
+  resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
+  needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 600_000,
 });
 
 const composedTools = ["open_app", toolNames.live, toolNames.connection, toolNames.workflow];
@@ -26,6 +31,7 @@ test("an owner composes an App that is its own MCP server, and a teammate uses i
     await appUser.see({ role: "heading", label: appTitle });
     await appUser.see({ text: `Ready — ${revision}` });
     await appUser.see({ testId: "pricing-date" }, { text: /^Prices as of \d{4}-\d{2}-\d{2}$/, timeoutMs: 90_000 });
+    await appUser.see({ testId: "order-line" }, { text: / at 7$/, timeoutMs: 90_000 });
     await appUser.click({ role: "button", label: "Calculate total" });
     await appUser.see({ testId: "total" }, { text: "42", timeoutMs: 90_000 });
   };
@@ -67,7 +73,7 @@ test("an owner composes an App that is its own MCP server, and a teammate uses i
     expect(world.requests.filter(request => request.via === "client").every(request => request.endpoint === "app")).toBe(true);
     expect((await world.hostState()).uri).toBe(world.created.resourceUri);
     await user.screenshot();
-    evidence.recordAssertionEvidence("One App composes three kinds of capability under clear tool names", `The reference host used only ${world.created.serverPath}. Its tools/list is exactly open_app, ${toolNames.live} (live Workflow, read-only), ${toolNames.connection} (Inventory connection tool, read-only per its provider), and ${toolNames.workflow} (Workflow with input, not read-only). The App loaded the pricing date on open, the Inventory MCP recorded one real lookup, and the Workflow returned 42.`, true);
+    evidence.recordAssertionEvidence("One App composes three kinds of capability under clear tool names", `The reference host used only ${world.created.serverPath}. Its tools/list is exactly open_app, ${toolNames.live} (live Workflow, read-only), ${toolNames.connection} (Inventory connection tool, read-only per its provider), and ${toolNames.workflow} (Workflow with input, not read-only). On open the App loaded the pricing date and the unit price with its two read-only tools (the Inventory MCP recorded one real lookup); its button made the one write, and the Workflow returned 42.`, true);
   });
 
   await step("the owner's OpenWork Connect lists the App as its own server, opens it by launch reference, and refuses unusable tools", async () => {
@@ -135,4 +141,24 @@ test("an owner composes an App that is its own MCP server, and a teammate uses i
     await user.screenshot();
     evidence.recordAssertionEvidence("Revisions stay behind the same MCP URL, tools, and access", "update_app without tools published a new revision on the same App server with the same four tools; the original revision stays readable to the owner, and the ungranted teammate is refused for both.", true);
   });
+});
+
+chatTest("in an OpenWork chat, the model opens the App with launch input and the person prices the order inside the conversation", async ({ world, agent, user, evidence }) => {
+  const sinceIso = new Date().toISOString();
+  await agent.send(chatPrompt);
+  await user.see({ text: chatReply }, { timeoutMs: 120_000 });
+  const requests = (await world.den.mocks.inventory.agentRequests({ promptMarker: chatPrompt })).filter(request => request.kind === "tool" || request.kind === "final");
+  expect(requests.some(request => request.advertisedToolNames?.some(name => name.endsWith("execute_capability")))).toBe(true);
+  await using frame = await world.appFrame();
+  const appUser = user.on(frame);
+  await appUser.see({ role: "heading", label: appTitle });
+  await appUser.see({ testId: "pricing-date" }, { text: /^Prices as of \d{4}-\d{2}-\d{2}$/, timeoutMs: 90_000 });
+  await appUser.see({ testId: "order-line" }, { text: `${launchInput.quantity} × ${launchInput.sku} at 7`, timeoutMs: 90_000 });
+  expect((await world.inventoryCalls({ sinceIso, atLeast: 1 })).map(call => call.args)).toEqual([{ sku: launchInput.sku }]);
+  await user.notSee({ text: "Allow App action?" });
+  await appUser.click({ role: "button", label: "Calculate total" });
+  await appUser.see({ testId: "total" }, { text: "42", timeoutMs: 90_000 });
+  await user.notSee({ text: "Allow App action?" });
+  await user.screenshot();
+  evidence.recordAssertionEvidence("The App works inside an OpenWork chat", `The model called execute_capability with the App's exact name and { sku: "${launchInput.sku}", quantity: ${launchInput.quantity} }; the conversation rendered the App from its own server with that launch input. Its read-only tools loaded the pricing date and one real Inventory lookup without a click, and one trusted click ran the Workflow that returned 42, with no extra approval prompt.`, true);
 });

@@ -305,6 +305,14 @@ test("search and execute open a built App through its own server instead of its 
     const opened = await client.callTool({ name: "execute_capability", arguments: { name: `plugin:${pluginId}:${appId}` } })
     expect(opened.structuredContent).toEqual({ app: appSummary, input: {}, mcpUrl: appUrl })
     expect(opened._meta).toEqual(launchMeta(appSummary))
+    // A body object is the App's launch input, as a connection App gets its call arguments.
+    const withInput = await client.callTool({ name: "execute_capability", arguments: { name: `plugin:${pluginId}:${appId}`, body: { project: "Apollo" } } })
+    expect(withInput.structuredContent).toEqual({ app: appSummary, input: { project: "Apollo" }, mcpUrl: appUrl })
+    expect(withInput._meta).toEqual({ "openwork/mcpApp": { ...launchMeta(appSummary)["openwork/mcpApp"], arguments: { input: { project: "Apollo" } } } })
+    for (const body of ["Apollo", ["Apollo"], null]) {
+      const ignored = await client.callTool({ name: "execute_capability", arguments: { name: `plugin:${pluginId}:${appId}`, body } })
+      expect(ignored._meta).toEqual(launchMeta(appSummary))
+    }
     expect(normalExecutions).toEqual([])
     expect(resourceReads).toEqual([])
     const request = { name: `plugin:${pluginId}:${otherAppId}`, body: { custom: true } }
