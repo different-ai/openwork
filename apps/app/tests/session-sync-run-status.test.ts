@@ -586,6 +586,40 @@ describe("session run status ordering", () => {
     expect(notifications).toBe(1);
   });
 
+  test("delta progress respects active-run and message-role guards without changing the activity label", () => {
+    const clock = spyOn(Date, "now").mockReturnValue(1_000);
+    const store = useSessionActivityStore.getState();
+    const record = () => useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId];
+    try {
+      store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+      store.observeTranscript(workspaceId, sessionId, [{ id: "assistant-1", role: "assistant", parts: [{ type: "text", text: "Known baseline" }] }]);
+      store.markMessageRole(workspaceId, sessionId, "user-1", "user");
+      const before = record();
+      clock.mockReturnValue(2_000);
+      store.markAssistantOutput(workspaceId, sessionId, "unknown", { markDeltaProgress: true });
+      store.markAssistantOutput(workspaceId, sessionId, "user-1", { allowUnknownMessageRole: true, markDeltaProgress: true });
+      expect(record()).toBe(before);
+      store.markAssistantOutput(workspaceId, sessionId, "unknown", { allowUnknownMessageRole: true });
+      expect(record()?.lastProgressAt).toBe(before?.lastProgressAt);
+      store.markAssistantOutput(workspaceId, sessionId, "unknown", { allowUnknownMessageRole: true, markDeltaProgress: true });
+      expect(record()?.lastProgressAt).toBe(2_000);
+      expect(record()?.latestActivity).toBe(before?.latestActivity);
+      expect(record()?.progressParts).toBe(before?.progressParts);
+      expect(record()?.runStatusAt).toBe(before?.runStatusAt);
+      expect(record()?.runActive).toBe(true);
+      const current = record();
+      store.markAssistantOutput(workspaceId, sessionId, "unknown", { allowUnknownMessageRole: true, markDeltaProgress: true });
+      expect(record()).toBe(current);
+      store.setError(workspaceId, sessionId, "Stopped");
+      const terminal = record();
+      clock.mockReturnValue(3_000);
+      store.markAssistantOutput(workspaceId, sessionId, "unknown", { allowUnknownMessageRole: true, markDeltaProgress: true });
+      expect(record()).toBe(terminal);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   test("does not publish duplicate activity observations", () => {
     useSessionActivityStore.getState().setRunStatus(workspaceId, sessionId, { type: "busy" });
     useSessionActivityStore.getState().markMessageRole(workspaceId, sessionId, "assistant-1", "assistant");

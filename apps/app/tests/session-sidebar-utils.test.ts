@@ -29,6 +29,18 @@ describe("sidebar session rows", () => {
     ]);
   });
 
+  test("combines task references and metadata transitively without duplicates or cycles", () => {
+    expect(getSessionDescendantIds([
+      ...sessions,
+      { id: "nested", parentID: "missing-from-list", title: "Nested" },
+    ], "session-a", {
+      "session-a": ["missing-from-list", "session-a-child"],
+      "missing-from-list": ["session-a", "nested"],
+      "nested": ["task-only"],
+      "unrelated": ["not-related"],
+    })).toEqual(["session-a-child", "missing-from-list", "nested", "task-only"]);
+  });
+
   test("never emits sub-agent (child) sessions", () => {
     const rows = flattenSessionRows(sessions, Number.MAX_SAFE_INTEGER);
 

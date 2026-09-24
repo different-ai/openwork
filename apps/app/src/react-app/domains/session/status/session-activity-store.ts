@@ -80,7 +80,7 @@ type SessionActivityStore = {
     options?: { snapshotStartedAt?: number },
   ) => void;
   markMessageRole: (workspaceId: string, sessionId: string, messageId: string, role: SessionMessageRole) => void;
-  markAssistantOutput: (workspaceId: string, sessionId: string, messageId?: string, options?: { allowUnknownMessageRole?: boolean }) => void;
+  markAssistantOutput: (workspaceId: string, sessionId: string, messageId?: string, options?: { allowUnknownMessageRole?: boolean; markDeltaProgress?: boolean }) => void;
   setWaitingRequest: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestId: string, waiting: boolean) => void;
   replaceWaitingRequests: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestIds: string[]) => void;
   setError: (workspaceId: string, sessionId: string, message?: string) => void;
@@ -480,7 +480,11 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       if (!record.runActive) return record;
       if (message && record.messageRoles[message] && record.messageRoles[message] !== "assistant") return record;
       if (message && !record.messageRoles[message] && options?.allowUnknownMessageRole !== true) return record;
-      return { ...record, assistantOutput: true };
+      return {
+        ...record,
+        assistantOutput: true,
+        lastProgressAt: options?.markDeltaProgress ? Math.max(record.lastProgressAt, Date.now()) : record.lastProgressAt,
+      };
     }));
   },
   setWaitingRequest: (workspaceId, sessionId, kind, requestId, waiting) => {
