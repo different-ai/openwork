@@ -20,11 +20,11 @@ const trust = { event, repo, actor: process.env.GITHUB_ACTOR, triggeringActor: p
 proofLanes(specs, { ...trust, current });
 const latest = api(`repos/${repo}/pulls/${pr}`);
 if (latest.head.sha !== current.head.sha) throw new Error("PR head changed during selection.");
-const { normalSpecs, liveSpecs, packagedSpecs, daytonaSpecs } = proofLanes(specs, { ...trust, current: latest });
+const { normalSpecs, liveSpecs, packagedSpecs, daytonaSpecs, checkpointSpecs } = proofLanes(specs, { ...trust, current: latest });
 const matrix = selected => JSON.stringify({ include: selected.map(spec => ({ spec, key: proofKey(spec) })) });
 const packagedMatrix = selected => JSON.stringify({ include: selected.map(spec => ({ spec, key: proofKey(spec), journey: packagedJourney(spec) })) });
 if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT,
-  `matrix=${matrix(normalSpecs)}\nselected=${normalSpecs.length > 0}\nliveMatrix=${matrix(liveSpecs)}\nliveSelected=${liveSpecs.length > 0}\npackagedMatrix=${packagedMatrix(packagedSpecs)}\npackagedSelected=${packagedSpecs.length > 0}\ndaytonaMatrix=${matrix(daytonaSpecs)}\ndaytonaSelected=${daytonaSpecs.length > 0}\n`);
+  `matrix=${matrix(normalSpecs)}\nselected=${normalSpecs.length > 0}\nliveMatrix=${matrix(liveSpecs)}\nliveSelected=${liveSpecs.length > 0}\npackagedMatrix=${packagedMatrix(packagedSpecs)}\npackagedSelected=${packagedSpecs.length > 0}\ndaytonaMatrix=${matrix(daytonaSpecs)}\ndaytonaSelected=${daytonaSpecs.length > 0}\ncheckpointMatrix=${matrix(checkpointSpecs)}\ncheckpointSelected=${checkpointSpecs.length > 0}\n`);
 const summary = specs.length
   ? `## PR proof selection\n\n${specs.length} added or changed E2E spec(s) will run on this head; their records are the PR's proof.\n\n${specs.map(spec => `- \`${spec}\``).join("\n")}\n`
   : "## PR proof selection\n\nThis PR adds or changes no `evals/specs/**/*.e2e.test.ts`. No proof was executed and no evidence will be published for it.\n";

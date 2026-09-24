@@ -113,7 +113,7 @@ test("only the exact supported live file is routed; the entire changed selection
   const windows = proofLanes([normalSpec, windowsSpec], trustFixture());
   assert.deepEqual(windows.normalSpecs, [normalSpec]);
   assert.deepEqual(windows.daytonaSpecs, [windowsSpec]);
-  assert.deepEqual(proofLanes(selectProof([file(liveSpec, "removed")]).specs, {}), { normalSpecs: [], liveSpecs: [], packagedSpecs: [], daytonaSpecs: [] });
+  assert.deepEqual(proofLanes(selectProof([file(liveSpec, "removed")]).specs, {}), { normalSpecs: [], liveSpecs: [], packagedSpecs: [], daytonaSpecs: [], checkpointSpecs: [] });
 });
 
 test("untrusted live and Windows selection fail closed, even on maintainer reruns", async t => {
@@ -123,7 +123,7 @@ test("untrusted live and Windows selection fail closed, even on maintainer rerun
     for (const selected of [liveSpec, windowsSpec]) {
       assert.throws(() => proofLanes([normalSpec, selected], trust), /unsupported.*maintainer.*same-repository PR.*approve the pr-slow-specs/);
     }
-    assert.deepEqual(proofLanes([normalSpec], trust), { normalSpecs: [normalSpec], liveSpecs: [], packagedSpecs: [], daytonaSpecs: [] });
+    assert.deepEqual(proofLanes([normalSpec], trust), { normalSpecs: [normalSpec], liveSpecs: [], packagedSpecs: [], daytonaSpecs: [], checkpointSpecs: [] });
   });
 });
 
@@ -229,7 +229,8 @@ test("controller preserves selection bounds and head freshness; rechecks live tr
 test("workflow keeps ordinary proof unprotected and gates all live PR code before checkout", async () => {
   const workflow = await readFile(new URL("../workflows/pr-proof.yml", import.meta.url), "utf8");
   const [ordinary, afterOrdinary] = workflow.split("\n  live-proof:\n");
-  const [live, windows] = afterOrdinary.split("\n  windows-proof:\n");
+  const live = afterOrdinary.split("\n  checkpoint-proof:\n")[0];
+  const windows = afterOrdinary.split("\n  windows-proof:\n")[1];
   assert.ok(live && windows);
   assert.doesNotMatch(workflow, /pull_request_target|continue-on-error/);
   assert.doesNotMatch(ordinary, /environment:|secrets\.|OPENAI_API_KEY|OPENWORK_EVAL_LIVE_OPENAI/);
@@ -381,9 +382,34 @@ test("workflow runs packaged proof through the packaged smoke runner without sec
   assert.doesNotMatch(packaged, /environment:|secrets\.|OPENAI_API_KEY/);
 });
 
+test("checkpoint proof stays on the branch and is gated before credentials or deployment", async () => {
+  const checkpoint = "evals/specs/web-checkpoint-fork.e2e.test.ts";
+  const lanes = proofLanes([normalSpec, checkpoint], trustFixture());
+  assert.deepEqual(lanes.normalSpecs, [normalSpec]);
+  assert.deepEqual(lanes.checkpointSpecs, [checkpoint]);
+  for (const [, mutate] of untrusted) {
+    const trust = trustFixture(); mutate(trust);
+    assert.throws(() => proofLanes([checkpoint], trust), /unsupported/);
+  }
+  const workflow = await readFile(new URL("../workflows/pr-proof.yml", import.meta.url), "utf8");
+  const job = workflow.split("\n  checkpoint-proof:\n")[1].split("\n  windows-proof:\n")[0];
+  const gate = job.split("    steps:\n")[0];
+  assert.match(gate, /environment: pr-slow-specs/);
+  for (const side of ["head", "base"]) {
+    assert.ok(gate.includes(`github.event.pull_request.${side}.repo.id == github.event.repository.id`));
+    assert.ok(gate.includes(`github.event.pull_request.${side}.repo.fork == false`));
+  }
+  assert.match(job, /ref: \$\{\{ github.event.pull_request.head.sha \}\}/);
+  assert.match(job, /web-checkpoint-fork --local --engine v1 --surface web --checkpoints/);
+  assert.match(job, /node scripts\/publish-checkpoint-evidence.ts/);
+  assert.match(job, /pnpm dlx vercel@48 deploy --target preview/);
+  assert.doesNotMatch(job, /alias set|infisical|OPENAI_API_KEY|ANTHROPIC_API_KEY/);
+  assert.match(job, /https:\/\/vercel.com\/sso-api/);
+});
+
 test("native real-model parity is protected and cannot leak into ordinary proof", () => {
   const parity = "evals/specs/engine-live-chat.e2e.test.ts";
-  assert.deepEqual(proofLanes([normalSpec, parity], trustFixture()), { normalSpecs: [normalSpec], liveSpecs: [parity], packagedSpecs: [], daytonaSpecs: [] });
+  assert.deepEqual(proofLanes([normalSpec, parity], trustFixture()), { normalSpecs: [normalSpec], liveSpecs: [parity], packagedSpecs: [], daytonaSpecs: [], checkpointSpecs: [] });
   for (const [, mutate] of untrusted) {
     const trust = trustFixture(); mutate(trust);
     assert.throws(() => proofLanes([parity], trust), /unsupported/);

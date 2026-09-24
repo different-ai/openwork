@@ -105,6 +105,12 @@ export function main(argv = process.argv.slice(2)): Promise<number> {
         await deleteSandboxes([entry.id], { log: () => {} });
         return { status: "reaped" };
       },
+      "freestyle-evidence": async (entry) => {
+        if (entry.match !== entry.id) return { status: "skipped", reason: "identity mismatch" };
+        const { deleteEvidenceVm } = await import("../../../../packages/freestyle/src/checkpoints.ts");
+        await deleteEvidenceVm(entry.id);
+        return { status: "reaped" };
+      },
       "freestyle-preview": async (entry) => {
         if (entry.match !== entry.id) return { status: "skipped", reason: "identity mismatch" };
         const { deletePreview } = await import("../../../../packages/freestyle/src/index.ts");
