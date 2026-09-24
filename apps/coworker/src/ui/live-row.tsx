@@ -52,7 +52,9 @@ export function LiveRow({ coworker, phase = "thinking", step = null, stepCall = 
   const now = useActivityClock(!terminal);
   const long = isLongProgress(observation, now) || Boolean(stillWorking);
   const hidden = !quiet && (streaming || status === "streaming");
-  const typing = !hasWords && !quiet && (status === "preparing" || status === "resuming");
+  // From the moment a message is sent until its first words, one thinking bubble:
+  // sending and preparing are the same wait to the person, so they share a shape.
+  const typing = !hasWords && !quiet && (status === "sending" || status === "preparing" || status === "resuming");
   const tool = observation.tool ? executionMetadata(observation.tool) : null;
   const label = status === "tool" && tool ? `${EXECUTION_KINDS[tool.kind]}: ${EXECUTION_STATES[tool.status]}` : PROGRESS_STATES[status];
   const note = progressNote ?? observation.note;
@@ -62,6 +64,36 @@ export function LiveRow({ coworker, phase = "thinking", step = null, stepCall = 
   useEffect(() => { setOpen(false); }, [observation.executionId, hidden]);
 
   if (hidden) return <div className="h-0 overflow-hidden" aria-hidden="true" data-testid="coworker-working" data-phase="writing" data-outcome="working" data-popover="closed" />;
+
+  const notes = (
+    <>
+      {(long || quiet) && !duplicateUnavailable ? <p className="mt-1 text-[11px] leading-relaxed text-mist [overflow-wrap:anywhere]" data-testid="coworker-still-working">{noteText}</p> : null}
+      {long && !terminal && onStop ? <button type="button" className="mt-1 rounded text-[11px] text-snow/80 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ready/50" data-testid="coworker-turn-choice" data-choice="stop" onClick={onStop}>Stop</button> : null}
+    </>
+  );
+
+  // The thinking bubble has the reply bubble's place, shape and one-line height,
+  // so the first words fill it instead of replacing a different layout.
+  if (typing) return (
+    <div className="relative flex min-w-0 flex-col items-start" data-testid="coworker-working" data-phase={status} data-outcome={long ? "slow" : "working"} data-popover={open ? "open" : "closed"}>
+      <button
+        ref={anchorRef}
+        type="button"
+        className="bubble bubble-coworker flex items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ready/50"
+        title={open ? "Hide activity" : "Inspect observed activity"}
+        aria-label={`${coworker.name}: ${label}. Inspect observed activity`}
+        aria-expanded={open}
+        aria-controls={open ? id : undefined}
+        aria-haspopup="dialog"
+        data-testid="coworker-typing"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="flex h-[1.45em] items-center gap-1" aria-hidden="true">{[0, 1, 2].map((index) => <span key={index} className="typing-dot size-[5px] rounded-full bg-mist/80" style={{ animationDelay: `${index * 160}ms` }} />)}</span>
+      </button>
+      {notes}
+      {open ? <ThinkingPopover coworkerName={coworker.name} observation={observation} note={note} id={id} anchor={anchorRef.current} onClose={() => setOpen(false)} /> : null}
+    </div>
+  );
 
   return (
     <div className="relative min-w-0 px-1 py-1.5 text-xs text-mist" data-testid="coworker-working" data-phase={status} data-outcome={terminal ? status : long ? "slow" : "working"} data-popover={open ? "open" : "closed"}>
@@ -79,14 +111,13 @@ export function LiveRow({ coworker, phase = "thinking", step = null, stepCall = 
             aria-expanded={open}
             aria-controls={open ? id : undefined}
             aria-haspopup="dialog"
-            data-testid={typing ? "coworker-typing" : status === "tool" ? "coworker-tool-chip" : "coworker-activity-chip"}
+            data-testid={status === "tool" ? "coworker-tool-chip" : "coworker-activity-chip"}
             onClick={() => setOpen((value) => !value)}
           >
-            {typing ? <span className="flex shrink-0 items-center gap-[3px]" aria-hidden="true">{[0, 1, 2].map((index) => <span key={index} className="typing-dot size-[4px] rounded-full bg-mist/80" style={{ animationDelay: `${index * 160}ms` }} />)}</span> : status === "tool" ? <ToolIcon className="size-3 shrink-0 motion-safe:animate-pulse" /> : null}
-            {typing ? null : <span className="min-w-0 [overflow-wrap:anywhere]">{label}</span>}
+            {status === "tool" ? <ToolIcon className="size-3 shrink-0 motion-safe:animate-pulse" /> : null}
+            <span className="min-w-0 [overflow-wrap:anywhere]">{label}</span>
           </button>
-          {(long || quiet) && !duplicateUnavailable ? <p className="mt-1 text-[11px] leading-relaxed [overflow-wrap:anywhere]" data-testid="coworker-still-working">{noteText}</p> : null}
-          {long && !terminal && onStop ? <button type="button" className="mt-1 rounded text-[11px] text-snow/80 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ready/50" data-testid="coworker-turn-choice" data-choice="stop" onClick={onStop}>Stop</button> : null}
+          {notes}
         </div>
       </div>
       {open ? <ThinkingPopover coworkerName={coworker.name} observation={observation} note={note} id={id} anchor={anchorRef.current} onClose={() => setOpen(false)} /> : null}
