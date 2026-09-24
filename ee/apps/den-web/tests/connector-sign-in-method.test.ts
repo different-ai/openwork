@@ -40,6 +40,16 @@ describe("step two: how people sign in", () => {
     expect(connectorSignInMethod(discovery({ availableRegistrationMethods: [] }))).toBe("oauth_app");
   });
 
+  test("a pre-registered-only server signs people in once the deployment holds its client", () => {
+    const preRegisteredOnly = discovery({ availableRegistrationMethods: ["pre_registered"], recommendedRegistrationMethod: "pre_registered" });
+    const requirement = (required: boolean) => ({ code: "oauth_client_registration", label: "Register an OAuth client", reason: "", required });
+    expect(connectorSignInMethod({ ...preRegisteredOnly, manualRequirements: [requirement(false)] })).toBe("sign_in");
+    expect(connectorSignInMethod({ ...preRegisteredOnly, manualRequirements: [requirement(false)] }, { authType: "oauth" })).toBe("sign_in");
+    expect(connectorSignInMethod({ ...preRegisteredOnly, manualRequirements: [requirement(true)] }, { authType: "oauth" })).toBe("oauth_app");
+    // A preset that insists on an admin's own OAuth app still asks for it.
+    expect(connectorSignInMethod({ ...preRegisteredOnly, manualRequirements: [requirement(false)] }, { authType: "oauth", requiresOAuthClient: true })).toBe("oauth_app");
+  });
+
   test("a preset that requires an OAuth app asks for it even when the server registers clients itself", () => {
     expect(connectorSignInMethod(discovery({ availableRegistrationMethods: ["dynamic"] }), { authType: "oauth", requiresOAuthClient: true })).toBe("oauth_app");
   });

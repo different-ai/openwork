@@ -10,7 +10,8 @@ import type { ExternalMcpPreset, McpRequirementsDiscovery } from "./mcp-connecti
  */
 export type ConnectorSignInMethod = "sign_in" | "oauth_app" | "api_key" | "none" | "unsupported";
 
-type DiscoveryAuthentication = Pick<McpRequirementsDiscovery, "authentication">;
+type DiscoveryAuthentication = Pick<McpRequirementsDiscovery, "authentication">
+  & Partial<Pick<McpRequirementsDiscovery, "manualRequirements">>;
 type PresetAuth = Pick<ExternalMcpPreset, "authType" | "requiresOAuthClient">;
 
 /** A curated preset's auth type stays authoritative over the live probe, as it did in the full editor. */
@@ -19,12 +20,12 @@ export function connectorSignInMethod(discovery: DiscoveryAuthentication, preset
   if (preset?.authType === "none") return "none";
   if (preset?.authType === "oauth" && preset.requiresOAuthClient === true) return "oauth_app";
   const authentication = discovery.authentication;
-  if (preset?.authType === "oauth") return authentication.kind === "oauth" ? oauthMethod(authentication) : "sign_in";
+  if (preset?.authType === "oauth") return authentication.kind === "oauth" ? oauthMethod(discovery) : "sign_in";
   switch (authentication.kind) {
     case "none":
       return "none";
     case "oauth":
-      return oauthMethod(authentication);
+      return oauthMethod(discovery);
     case "manual_bearer":
       return "api_key";
     default:
@@ -32,9 +33,15 @@ export function connectorSignInMethod(discovery: DiscoveryAuthentication, preset
   }
 }
 
-function oauthMethod(authentication: McpRequirementsDiscovery["authentication"]): ConnectorSignInMethod {
-  const methods = authentication.availableRegistrationMethods ?? [];
-  return methods.includes("dynamic") || methods.includes("client_metadata") ? "sign_in" : "oauth_app";
+function oauthMethod(discovery: DiscoveryAuthentication): ConnectorSignInMethod {
+  const methods = discovery.authentication.availableRegistrationMethods ?? [];
+  if (methods.includes("dynamic") || methods.includes("client_metadata")) return "sign_in";
+  // A deployment that already holds the provider's pre-registered client reports
+  // the registration requirement as informational, so people just sign in.
+  const deploymentHoldsClient = discovery.manualRequirements?.some((requirement) => (
+    requirement.code === "oauth_client_registration" && !requirement.required
+  )) ?? false;
+  return deploymentHoldsClient ? "sign_in" : "oauth_app";
 }
 
 /** A client secret is optional unless every advertised token endpoint rejects public clients. */
