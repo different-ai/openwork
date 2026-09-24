@@ -393,12 +393,14 @@ export function createHeadlessThreadClientV2(options: HeadlessThreadClientV2Opti
           return finish("aborted", snapshot);
         }
         if (!isNativeV2ObservationError(error) && !(deadline.aborted && error instanceof DOMException && error.name === "TimeoutError")) throw error;
-        snapshot = undefined;
         const remaining = timeoutMs - (now() - start);
-        if (remaining <= 0 || deadline.aborted) throw new HeadlessThreadError({
-          code: "observation_unavailable", method: "GET", path: `/session/${threadId}`,
-          message: "Native execution status could not be observed in time. Its admission remains recorded; do not resend it.",
-        });
+        if (remaining <= 0 || deadline.aborted) {
+          if (snapshot) return finish("timeout", snapshot);
+          throw new HeadlessThreadError({
+            code: "observation_unavailable", method: "GET", path: `/session/${threadId}`,
+            message: "The local AI service has not returned a status yet. Your message is kept; checking can resume without sending it again.",
+          });
+        }
         await sleep(Math.min(input.pollIntervalMs ?? options.pollIntervalMs ?? 500, remaining));
         continue;
       }

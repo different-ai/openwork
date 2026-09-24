@@ -100,7 +100,7 @@ export interface EngineV2Preview {
   connection(): { url: string; username: string; password: string } | undefined;
   modelMetadata?(providerID: string, modelID: string): ReturnType<typeof nativeCatalogModelMetadata>;
   ensureWorkspaceReady(directory: string): Promise<void>;
-  syncWorkspaceMcp(workspaceId: string, directory: string, forceNames?: string[]): Promise<void>;
+  syncWorkspaceMcp(workspaceId: string, directory: string, forceNames?: string[], waitForConnect?: boolean): Promise<void>;
   /** Fresh materialization of authorized Cloud skills as native skills. `failure` is set when they failed closed (cleared) for this admission. */
   syncCloudSkills(): Promise<{ root: string; state: CloudNativeSkillState; failure?: CloudNativeSkillSyncCode }>;
   /** One serialized fresh Cloud read + native readiness barrier for discovery/admission. */
@@ -596,7 +596,7 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     return pending.finally(() => { skillAdmissionsPending--; });
   }
 
-  async function syncWorkspaceMcp(workspaceId: string, directory: string, forceNames?: string[]): Promise<void> {
+  async function syncWorkspaceMcp(workspaceId: string, directory: string, forceNames?: string[], waitForConnect = true): Promise<void> {
     mcpWorkspaces.set(directory, workspaceId);
     // Serialize each location, then re-read authoritative state. A queued call
     // must not reuse a snapshot taken before a removal or credential update.
@@ -635,13 +635,17 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
         applied.set(name, fingerprint);
         changed = true;
       }
-      if (changed) {
+      // Ordinary local chat may start while optional Connect is still joining.
+      // Mutations and removals remain ordered before admission; local tools
+      // still cross the readiness barrier before the model can use them.
+      const waitNames = [...desired.keys()].filter((name) => waitForConnect || name !== OPENWORK_CLOUD_MCP_NAME);
+      if (changed && waitNames.length) {
         const deadline = Date.now() + 30_000;
         while (true) {
           const result = await active.fetchJson("/api/mcp", { directory, timeoutMs: 5_000 });
           const entries = isRecord(result.json) ? result.json.data : undefined;
           if (result.status !== 200 || !Array.isArray(entries)) throw new Error("OpenCode v2 MCP status is unavailable");
-          const pending = [...desired.keys()].some((name) => {
+          const pending = waitNames.some((name) => {
             const entry = entries.find((entry) => isRecord(entry) && entry.name === name);
             return !isRecord(entry) || !isRecord(entry.status) || entry.status.status === "pending";
           });

@@ -166,6 +166,30 @@ type TranscriptMessage = {
   toolCalls: TranscriptToolCall[];
 };
 
+// Keep a few recently viewed conversations in memory so returning to one
+// shows its last known messages while the native history read catches up.
+// Native history remains authoritative and replaces this view on refresh.
+const recentTranscripts = new Map<string, { title: string; messages: TranscriptMessage[]; readAt: number }>();
+function recentTranscript(key: string) {
+  const cached = recentTranscripts.get(key);
+  if (!cached || Date.now() - cached.readAt > 10 * 60_000) {
+    recentTranscripts.delete(key);
+    return null;
+  }
+  recentTranscripts.delete(key);
+  recentTranscripts.set(key, cached);
+  return cached;
+}
+function rememberTranscript(key: string, title: string, messages: TranscriptMessage[]) {
+  recentTranscripts.delete(key);
+  recentTranscripts.set(key, { title, messages: messages.slice(-80), readAt: Date.now() });
+  while (recentTranscripts.size > 8) {
+    const oldest = recentTranscripts.keys().next().value;
+    if (oldest === undefined) break;
+    recentTranscripts.delete(oldest);
+  }
+}
+
 export type AssignmentDraft = { id: number; text: string; skill?: SelectedSkill } | null;
 const appliedSkillRequests = new Map<string, number>();
 
@@ -1195,12 +1219,14 @@ function ThreadView({
   summary?: CoworkerSummaryLine | null;
   onOpenSummary?: (kind: SummaryKind) => void;
 }) {
-  const [messages, setMessages] = useState<TranscriptMessage[]>([]);
+  const transcriptCacheKey = `${runtime.serverUrl}:${coworker.workspaceId}:${coworker.slug}:${coworker.createdAt}:${threadId}`;
+  const [cachedTranscript] = useState(() => recentTranscript(transcriptCacheKey));
+  const [messages, setMessages] = useState<TranscriptMessage[]>(cachedTranscript?.messages ?? []);
   const messageReactions = useMessageReactions(kind === "discussion" && browserEligible ? { kind: "private", slug: coworker.slug, threadId } : null, active, coworker.createdAt);
   const [nativeState, setNativeState] = useState<HeadlessThreadSnapshot["native"]>();
   const latestNativeState = useRef(nativeState);
   latestNativeState.current = nativeState;
-  const [transcriptLoaded, setTranscriptLoaded] = useState(false);
+  const [transcriptLoaded, setTranscriptLoaded] = useState(Boolean(cachedTranscript));
   const [confirmationUnknown, setConfirmationUnknown] = useState<string | null>(null);
   const [acceptedMessage, setAcceptedMessage] = useState<string | null>(null);
   const [activeTurn, setActiveTurn] = useState<ActiveTurn | null>(null);
@@ -1226,7 +1252,7 @@ function ThreadView({
   const viewMounted = useRef(true);
   const refreshScope = useMemo(() => ({ active: true, reads: new Map<string, { promise: Promise<void>; again?: () => void }>() }), [threads, threadId, coworker.slug]);
   const refreshReads = refreshScope.reads;
-  const knownMessages = useRef(new Map<string, { role: string; parentId: string | null; ended: boolean }>());
+  const knownMessages = useRef(new Map<string, { role: string; parentId: string | null; ended: boolean }>(cachedTranscript?.messages.map((message) => [message.id, { role: message.role, parentId: message.parentId, ended: message.completedAt !== null || message.error !== null }]) ?? []));
   const retiredReplies = useRef(new Set<string>());
   const observedTurn = useRef("");
   const observedTurnAt = useRef(0);
@@ -1245,10 +1271,10 @@ function ThreadView({
   const defaultDiscussionTitle = discussionTitle(coworker.name);
   // Until the transcript answers, a discussion carries its default title (which reads as "New
   // discussion" while empty); only an assignment falls back to the generic placeholder.
-  const [title, setTitle] = useState(kind === "discussion" ? defaultDiscussionTitle : kind === "worker" ? "Worker" : "Work thread");
+  const [title, setTitle] = useState(cachedTranscript?.title ?? (kind === "discussion" ? defaultDiscussionTitle : kind === "worker" ? "Worker" : "Work thread"));
   /** The first message sent here, kept until the thread carries a title of its own. */
   const firstPromptRef = useRef("");
-  const titleLoadedRef = useRef(false);
+  const titleLoadedRef = useRef(Boolean(cachedTranscript));
   /** What the engine reports for this thread: idle, busy, or retrying (with its next attempt). */
   const [engineStatus, setEngineStatus] = useState<TurnEngineStatus>({ type: "unknown" });
   const [pending, setPending] = useState<PendingInteractions>({ permissions: [], questions: [] });
@@ -1426,8 +1452,9 @@ function ThreadView({
         return next;
       });
       const loadedTitle = transcript.title ?? "Work thread";
+      const displayedTitle = titleDiscussionAfterFirstMessage(loadedTitle) ?? loadedTitle;
       titleLoadedRef.current = true;
-      setTitle(titleDiscussionAfterFirstMessage(loadedTitle) ?? loadedTitle);
+      setTitle(displayedTitle);
       // A read can report a stalled retry, but only the execution owner or an explicit Stop may cancel it.
       const status = transcript.status;
       const retryStatus = status.type === "retry" ? status : null;
@@ -1438,8 +1465,7 @@ function ThreadView({
         if (!activeTurnRef.current) setFailure(stall);
       }
       setEngineStatus(status);
-      setMessages(
-        transcript.messages.filter((message) => message.role === "user" || message.role === "assistant").map((message) => ({
+      const visible = transcript.messages.filter((message) => message.role === "user" || message.role === "assistant").map((message) => ({
           id: message.id,
           role: message.role,
           parentId: message.parentId,
@@ -1461,12 +1487,13 @@ function ThreadView({
             startedAt: call.startedAt,
             completedAt: call.completedAt,
           })),
-        })),
-      );
+        }));
+      setMessages(visible);
+      rememberTranscript(transcriptCacheKey, displayedTitle, visible);
       setTranscriptLoaded(true);
       setTranscriptReadStartedAt(readStartedAt);
     });
-  }, [coworker.slug, refreshReads, refreshScope, stopScope, threads, threadId, titleDiscussionAfterFirstMessage]);
+  }, [coworker.slug, refreshReads, refreshScope, stopScope, threads, threadId, titleDiscussionAfterFirstMessage, transcriptCacheKey]);
 
   useEffect(() => {
     if (kind !== "discussion" || !assignmentDraft) return;

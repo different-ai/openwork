@@ -107,7 +107,7 @@ test("native-2 skill paths become locations after exact workspace readiness", as
 });
 
 test("v2 guidance routes all skills natively without XML or Connect skill prose", () => {
-  for (const connected of [true, false]) {
+  for (const connected of [true, false, "unknown"] as const) {
     const baseline = buildOpenWorkV2Instructions(connected);
     for (const value of [baseline, buildOpenWorkV2Instructions(connected, "preview"), buildOpenWorkV2Instructions(connected, "native")]) {
       const text = JSON.stringify(value);
@@ -122,4 +122,5 @@ test("v2 guidance routes all skills natively without XML or Connect skill prose"
       expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(7 * 1024);
     }
   }
+  expect(buildOpenWorkV2Instructions("unknown", "native").connect).toContain("current tool catalog");
 });

@@ -1201,9 +1201,8 @@ async function collaborationClient(slug, { threadId, kind = "reply", sessionKind
   const binding = threadId ? await sessionBinding(coworker, threadId) : null;
   if ((!observationOnly || prepareOnly) && binding && binding.nativeWorkspaceId !== teamWorkspace().workspaceId) await prepareLegacySession(coworker, binding);
   else if ((!observationOnly || prepareOnly) && slug !== ".coordinator") {
-    const server = await ensureToolsServer();
-    await installNativeCoworkerPlugins(coworker, server);
-    if (!toolsRegistered.has(slug)) await registerCoworkerTools(coworker, 120_000);
+    // Warm-up already installs the current plug-ins and registers the shared
+    // tools endpoint. Doing both here repeated that work before every turn.
     await warmCoworkerWorkspace(coworker);
   }
   signal?.throwIfAborted();
@@ -2395,7 +2394,6 @@ async function runCoworkerWorkspaceWarmup(coworker, signal = AbortSignal.timeout
 
 async function warmCoworkerWorkspace(coworker) {
   if (!coworker?.workspaceId) throw new Error("The native workspace is not registered yet.");
-  await installNativeCoworkerPlugins(coworker, await ensureToolsServer());
   coworker = teamWorkspace();
   const scope = workspaceReadinessScope(coworker);
   if (warmedCoworkerWorkspaces.has(coworker.workspaceId) && warmedCoworkerScopes.get(coworker.workspaceId) === scope) return Promise.resolve();

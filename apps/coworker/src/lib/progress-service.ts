@@ -13,7 +13,7 @@ export const PROGRESS_STATES = {
   completed: "Completed",
   failed: "Failed",
   cancelled: "Cancelled",
-  unknown: "Status unavailable",
+  unknown: "Checking activity",
 };
 export type ProgressStatus = keyof typeof PROGRESS_STATES;
 export type ProgressObservation = {

@@ -253,7 +253,7 @@ export function createNativeV2Client(options: NativeV2ClientOptions) {
         ...(method === "GET" ? {} : { keepalive: false }),
       });
     } catch {
-      throw failure("request_failed", method, path, method === "GET" ? "Native v2 observation failed. Execution status is unavailable." : "Native v2 request failed; a write may have been admitted.");
+      throw failure("request_failed", method, path, method === "GET" ? "The local AI service is not answering. Your work is kept; try again." : "Native v2 request failed; a write may have been admitted.");
     }
     if (!response.ok) {
       let publicCode: string | null = null;

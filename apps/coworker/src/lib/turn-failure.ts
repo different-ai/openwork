@@ -27,7 +27,7 @@ export function describeConversationError(raw: string): { headline: string; deta
     detail: "Check this conversation before sending the message again. Your earlier messages are kept.",
     technical,
   };
-  if (/\b(?:HTTP|status) ?5\d\d\b|native AI service/i.test(technical)) return {
+  if (/\b(?:HTTP|status) ?5\d\d\b|(?:native|local) AI service/i.test(technical)) return {
     headline: "The AI service had a problem",
     detail: "Give it a moment, then try again. Your earlier messages are kept.",
     technical,

@@ -552,7 +552,9 @@ test("native observation failures remain unknown and recover without replay or c
   }
   state.inbox.push({ id: "msg_pending", sessionID: sid, type: "synthetic", delivery: "queue", timeCreated: 5, payload: { text: "Pending" } });
   mode = "idle-then-unavailable";
-  await assert.rejects(observer.waitUntilIdle(sid, { timeoutMs: 40, pollIntervalMs: 5 }), { code: "observation_unavailable" });
+  const interruptedRead = await observer.waitUntilIdle(sid, { timeoutMs: 40, pollIntervalMs: 5 });
+  assert.equal(interruptedRead.outcome, "timeout");
+  assert.deepEqual(interruptedRead.snapshot.native?.pendingInputIds, ["msg_pending"]);
   state.inbox = [];
   mode = "forbidden";
   const before = activeReads;
