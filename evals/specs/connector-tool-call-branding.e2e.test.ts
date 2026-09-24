@@ -68,6 +68,8 @@ test("connector-backed tool calls show first-class branding and human-readable l
   await step("after: the created note is visible and the result survives reload", async () => {
     await user.see({ text: world.mutationProof }, { timeoutMs: 60_000 });
     await user.see("Run task");
+    expect(await world.den.mocks.connector.toolCalls({ name: "create_note", sinceIso, atLeast: 1 }))
+      .toMatchObject([{ name: "create_note", args: { limit: 3 } }]);
     if (world.engine === "v2") {
       await user.see({ role: "button", label: /Created a note in Slack/ });
     } else {

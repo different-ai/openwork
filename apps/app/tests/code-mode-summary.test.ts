@@ -26,6 +26,14 @@ test("a single write outranks reads, regardless of their order", () => {
   expect(summary([before, call("linear_create_issue", "output-available"), after])).toBe("Created an issue in Linear");
 });
 
+test("a saved issue is described as a creation or update from the submitted action", () => {
+  const create = call("openwork-cloud_execute_capability", "input-available", { name: "mcp:connection:save_issue", body: { team: "Engineering", title: "New issue" } });
+  const update = call("openwork-cloud_execute_capability", "output-available", { name: "mcp:connection:save_issue", body: { id: "ENG-1", title: "Revised" } });
+  const identity = (item: DynamicToolUIPart) => item.toolName === "openwork-cloud_execute_capability" ? "Linear" : null;
+  expect(codeModeSummary([create], { running: true, failed: false, serviceName: identity })).toBe("Creating an issue in Linear");
+  expect(codeModeSummary([update], { running: false, failed: false, serviceName: identity })).toBe("Updated an issue in Linear");
+});
+
 test("a failed write does not claim success, and two writes use a generic outcome", () => {
   expect(summary([call("linear_create_issue", "output-error")])).toBe("Tried to change Linear");
   expect(summary([call("linear_create_issue", "output-available"), call("paper_update_page", "output-available")])).toBe("Changed Linear and Paper");
