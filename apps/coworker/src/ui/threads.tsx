@@ -2947,7 +2947,7 @@ const MessageBubble = memo(function MessageBubble({
       return (
         <article className={`flex flex-col items-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-message-id={message.id} data-passed-from={passed.from}>
           <p className="mb-0.5 pr-1 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-mist/80" data-testid="coworker-passed-from">Passed from {passed.from}</p>
-          <div className={`relative max-w-[min(72%,30rem)] ${reactions?.length ? "mt-3" : ""}`}>
+          <div className={`relative max-w-[min(72%,30rem)] ${reactions?.length ? "mt-5" : ""}`}>
             <div className={`bubble bubble-user whitespace-pre-wrap ${tail ? "bubble-tail-right" : ""}`} title={message.createdAt ? new Date(message.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : undefined}>
               {passed.message}
             </div>
@@ -2997,7 +2997,7 @@ const MessageBubble = memo(function MessageBubble({
     }
     return (
       <article className={`flex flex-col items-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-message-id={message.id} data-continued={continued ? "true" : "false"}>
-        <div className={`relative max-w-[min(72%,30rem)] ${reactions?.length ? "mt-3" : ""}`}>
+        <div className={`relative max-w-[min(72%,30rem)] ${reactions?.length ? "mt-5" : ""}`}>
           <div className={`bubble bubble-user whitespace-pre-wrap ${tail ? "bubble-tail-right" : ""}`} title={message.createdAt ? new Date(message.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : undefined}>
             {message.text || "…"}
           </div>
@@ -3030,12 +3030,12 @@ const MessageBubble = memo(function MessageBubble({
         {speed ? <span data-testid="coworker-reply-speed">{" "}{speed}</span> : null}
       </p>
       {live ? (
-        <div className={`relative min-w-0 max-w-[min(76%,38rem)] ${reactions?.length ? "mt-3" : ""}`}>
+        <div className={`relative min-w-0 max-w-[min(76%,38rem)] ${reactions?.length ? "mt-5" : ""}`}>
           <ChatReply text={safeLiveMarkdown(liveWords)} live data-testid="coworker-live-bubble" />
           <MessageReactions messageId={message.id} reactions={reactions} side="right" />
         </div>
       ) : message.text ? (
-        <div className={`relative min-w-0 max-w-[min(76%,38rem)] ${reactions?.length ? "mt-3" : ""}`} title={tooltip || undefined}>
+        <div className={`relative min-w-0 max-w-[min(76%,38rem)] ${reactions?.length ? "mt-5" : ""}`} title={tooltip || undefined}>
           <ReplyText message={message} active={active} turnCalls={documentCalls} tail={tail && (active || teamCards.length === 0)} onLongReply={onLongReply} />
           <MessageReactions messageId={message.id} reactions={reactions} side="right" />
         </div>

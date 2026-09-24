@@ -115,29 +115,38 @@ export const MessageReactions = memo(function MessageReactions({ messageId, reac
   className?: string;
 }) {
   if (!reactions?.length) return null;
+  const ring = "shadow-[0_0_0_2.5px_var(--color-ink)]";
+  // As in Messages, the tail dots trail outward from the small speech bubble,
+  // away from the message, so they rest on the page rather than the bubble.
+  const toward = side;
   return (
-    // A tapback: it sits on the bubble's top corner facing the conversation, ringed
-    // in the page color so it reads as resting on top. The parent is the bubble's positioned wrapper.
-    <div className={`absolute -top-4 z-10 flex -space-x-1.5 ${side === "left" ? "-left-2.5" : "-right-2.5"} ${className}`} role="group" aria-label="Message reactions" data-testid="message-reactions" data-message-id={messageId}>
-      {reactions.map((reaction) => {
-        const label = `${reaction.actor.name} reacted ${reaction.emoji}`;
-        return (
-          <Tooltip key={`${reaction.actor.slug}:${reaction.actor.createdAt}`} content={label}>
-            <span
-              role="img"
-              tabIndex={0}
-              aria-label={label}
-              data-testid="message-reaction"
-              data-actor-slug={reaction.actor.slug}
-              data-actor-created-at={reaction.actor.createdAt}
-              data-emoji={reaction.emoji}
-              className="inline-flex size-7 cursor-default select-none items-center justify-center rounded-full bg-panel-2 text-[15px] leading-none text-snow shadow-[0_0_0_2.5px_var(--color-ink)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50"
-            >
-              {reaction.emoji}
-            </span>
-          </Tooltip>
-        );
-      })}
+    // A tapback: a small speech bubble on the message's top corner facing the
+    // conversation, ringed in the page color so it reads as resting on top.
+    // The parent is the message bubble's positioned wrapper.
+    <div className={`absolute -top-6 z-10 ${side === "left" ? "-left-5" : "-right-5"} ${className}`} role="group" aria-label="Message reactions" data-testid="message-reactions" data-message-id={messageId}>
+      <span aria-hidden="true" className={`absolute -bottom-0.5 size-2.5 rounded-full bg-panel-2 ${ring} ${toward === "right" ? "right-0" : "left-0"}`} />
+      <span aria-hidden="true" className={`absolute -bottom-2 size-1.5 rounded-full bg-panel-2 ${ring} ${toward === "right" ? "-right-1" : "-left-1"}`} />
+      <div className={`relative flex h-8 min-w-8 items-center justify-center gap-0.5 rounded-full bg-panel-2 px-1.5 ${ring}`}>
+        {reactions.map((reaction) => {
+          const label = `${reaction.actor.name} reacted ${reaction.emoji}`;
+          return (
+            <Tooltip key={`${reaction.actor.slug}:${reaction.actor.createdAt}`} content={label}>
+              <span
+                role="img"
+                tabIndex={0}
+                aria-label={label}
+                data-testid="message-reaction"
+                data-actor-slug={reaction.actor.slug}
+                data-actor-created-at={reaction.actor.createdAt}
+                data-emoji={reaction.emoji}
+                className="inline-flex cursor-default select-none items-center justify-center rounded-full text-[16px] leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50"
+              >
+                {reaction.emoji}
+              </span>
+            </Tooltip>
+          );
+        })}
+      </div>
     </div>
   );
 });

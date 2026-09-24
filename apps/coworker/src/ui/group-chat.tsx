@@ -735,7 +735,7 @@ function GroupChatView({
                 <div key={key} data-scroll-anchor={key} data-event-id={persistedEventId} data-client-message-id={event.clientMessageId} data-delivery-state={delivery?.state ?? "recorded"}>
                   {label ? <p className="pb-1 pt-2 text-center text-[11px] font-medium text-mist/80" data-testid="group-time-label">{label}</p> : null}
                   <div className={`flex justify-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-continued={continued ? "true" : "false"}>
-                    <div className={`relative max-w-[min(72%,30rem)] ${persistedEventId && messageReactions.get(persistedEventId)?.length ? "mt-3" : ""}`}>
+                    <div className={`relative max-w-[min(72%,30rem)] ${persistedEventId && messageReactions.get(persistedEventId)?.length ? "mt-5" : ""}`}>
                       <div className={`bubble bubble-user whitespace-pre-wrap ${tail ? "bubble-tail-right" : ""}`} title={timeLabel(event.at)}>
                         {event.text}
                       </div>
@@ -762,7 +762,7 @@ function GroupChatView({
                   </span>
                   <div className="min-w-0 max-w-[min(76%,38rem)]">
                     {!continued ? <p className="mb-0.5 px-2 text-[11px] font-medium text-mist" data-testid="group-speaker-name">{nameFor(event.slug ?? "")}</p> : null}
-                    <div className={`relative ${persistedEventId && messageReactions.get(persistedEventId)?.length ? "mt-3" : ""}`} title={timeLabel(event.at)}>
+                    <div className={`relative ${persistedEventId && messageReactions.get(persistedEventId)?.length ? "mt-5" : ""}`} title={timeLabel(event.at)}>
                       <ChatReply text={event.text} tail={tail} />
                       {persistedEventId ? <MessageReactions messageId={persistedEventId} reactions={messageReactions.get(persistedEventId)} side="right" /> : null}
                     </div>
