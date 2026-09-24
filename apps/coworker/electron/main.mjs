@@ -2363,10 +2363,6 @@ async function runCoworkerWorkspaceWarmup(coworker, signal = AbortSignal.timeout
   coworker = teamWorkspace();
   signal.throwIfAborted();
   if (scope !== workspaceReadinessScope(coworker) || pendingWorkspaceReadinessChanges(coworker).length) throw new Error("The native AI service changed during workspace preparation.");
-  if (coworker.slug) {
-    const contextServer = await ensureToolsServer();
-    await installNativeCoworkerPlugins(coworker, contextServer);
-  }
   const handle = await ensurePlatformServer();
   if (!coworker?.workspaceId) throw new Error("The native workspace is not registered yet.");
   if (!toolsRegistered.has(coworker.workspaceId)) await registerCoworkerTools(coworker, 120_000);
@@ -2394,6 +2390,11 @@ async function runCoworkerWorkspaceWarmup(coworker, signal = AbortSignal.timeout
 
 async function warmCoworkerWorkspace(coworker) {
   if (!coworker?.workspaceId) throw new Error("The native workspace is not registered yet.");
+  // Every coworker's owner agent lives in the one team config. Bring it up to
+  // date first (a no-op when the team is unchanged), so a coworker added after
+  // startup changes the readiness scope instead of reusing an older warmup
+  // that never defined its agent.
+  await installNativeCoworkerPlugins(teamWorkspace(), await ensureToolsServer());
   coworker = teamWorkspace();
   const scope = workspaceReadinessScope(coworker);
   if (warmedCoworkerWorkspaces.has(coworker.workspaceId) && warmedCoworkerScopes.get(coworker.workspaceId) === scope) return Promise.resolve();

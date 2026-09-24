@@ -939,3 +939,30 @@ test(`generated config is strict native ${NATIVE_PLUGIN_VERSION}, migrates once 
   await assert.rejects(updateNativeConfig(root));
   assert.equal(await readFile(path.join(root, "opencode.json"), "utf8"), "{ damaged");
 });
+
+test("a coworker added after startup gets its owner agent before its workspace counts as warm", async () => {
+  // The team record has no slug, so the owner-agent install must not depend on one;
+  // and it must run before the warm cache is consulted, or a new coworker reuses the
+  // coordinator's warmup and its native agent is missing (HTTP 404 on preparation).
+  const main = await readFile(new URL("./main.mjs", import.meta.url), "utf8");
+  const source = main.slice(main.indexOf("async function warmCoworkerWorkspace("), main.indexOf("\n// ----", main.indexOf("async function warmCoworkerWorkspace(")));
+  const team = { path: "/team/.runtime", name: "Coworker team", workspaceId: "ws_team" };
+  let teamRevision = "coordinator";
+  let members = ["coordinator"];
+  const runs = [];
+  const warmedCoworkerWorkspaces = new Set(), warmedCoworkerScopes = new Map();
+  const warm = runInNewContext(`let coworkerWarmupTail = Promise.resolve(); const coworkerWarmups = new Map();\n${source}\nwarmCoworkerWorkspace`, {
+    teamWorkspace: () => team, ensureToolsServer: async () => ({}), AbortSignal, Promise,
+    installNativeCoworkerPlugins: async (owner) => { assert.equal(owner.slug, undefined); teamRevision = members.join(","); },
+    workspaceReadinessScope: () => JSON.stringify([team.workspaceId, teamRevision]),
+    withAbort: (promise) => promise, warmedCoworkerWorkspaces, warmedCoworkerScopes,
+    runCoworkerWorkspaceWarmup: async (_coworker, _signal, scope) => { runs.push(scope); warmedCoworkerWorkspaces.add(team.workspaceId); warmedCoworkerScopes.set(team.workspaceId, scope); },
+  });
+  await warm({ workspaceId: "ws_team" });
+  await warm({ workspaceId: "ws_team" });
+  assert.equal(runs.length, 1, "an unchanged team reuses its warmup");
+  members = ["coordinator", "builder"];
+  await warm({ slug: "builder", workspaceId: "ws_team" });
+  assert.equal(runs.length, 2, "a new teammate is installed and warmed, not served by the older warmup");
+  assert.match(runs[1], /builder/);
+});
