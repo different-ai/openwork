@@ -31,6 +31,11 @@ export async function engineConnectorsParity(seed: Seed, context: { place: Place
   const resources = setup.move();
   return {
     ...base, den, proof,
+    async connectHealth(repair = false) {
+      return repair
+        ? base.request(`/workspace/${workspace}/mcp/openwork-cloud/engine-refresh`, "POST", { provider: "opencode", model: "big-pickle" })
+        : base.request(`/workspace/${workspace}/mcp/openwork-cloud/health?provider=opencode&model=big-pickle`);
+    },
     async prepareReport(prompt: string, failed = false) {
       const search = { query: failed ? "unavailable_violet_status" : "current_amber_report", type: "mcp", limit: 1 };
       const steps: MockAgentToolStep[] = base.engine === "v2" ? [{ tool: "execute", arguments: { code: `

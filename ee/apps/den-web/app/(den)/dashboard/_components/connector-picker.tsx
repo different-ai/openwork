@@ -23,6 +23,7 @@ export type CatalogEntry = {
   url: string;
   /** Where the row goes when this is already set up. */
   openHref?: string;
+  addLabel?: "Add another";
 };
 
 export function catalogEntriesFromPresets(presets: readonly ExternalMcpPreset[]): CatalogEntry[] {
@@ -183,7 +184,7 @@ export function ConnectorPicker({ entries, loading, addHref, customHref, mode, c
             action={entry.openHref ? (
               <LinkButton size="xs" href={entry.openHref} aria-label={`Open ${entry.name}`}>Open</LinkButton>
             ) : (
-              <LinkButton size="xs" href={addHref(entry)} aria-label={`Add ${entry.name}`}>Add</LinkButton>
+              <LinkButton size="xs" href={addHref(entry)} aria-label={`${entry.addLabel ?? "Add"} ${entry.name}`}>{entry.addLabel ?? "Add"}</LinkButton>
             )}
           />
         ))}

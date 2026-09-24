@@ -921,13 +921,41 @@ describe("cloud provider sync gateway", () => {
     stops.push(() => sync.stop());
     await sync.setSession({ baseUrl: "https://den.example.test", token: "synthetic", orgId: "org_test" });
     expect((await sync.run()).status).toBe("applied");
-    expect(sync.status().providers[0]?.modelConfigVersion).toBe(2);
+    expect(sync.status().providers[0]?.modelConfigVersion).toBe(3);
     const written = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).lpr_test;
     const model = expectRecord(expectRecord(written.models, "serialized models").model, "serialized model");
     expect(model.variants).toEqual({ __openwork_catalog_fast_v1: {
       disabled: true, openworkNativeFast: 1, reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
     } });
     expect(JSON.stringify(written)).not.toContain('"experimental"');
+    expect((await sync.run()).status).toBe("noop");
+  });
+
+  test("syncs Anthropic catalog effort levels for opaque gateway model IDs", async () => {
+    const root = await createRoot();
+    const config = serverConfig(root, "https://engine.example.test");
+    config.workspaces = [];
+    const provider = buildProvider([{ id: "gateway-model-1", name: "Claude Opus 5.5", config: {
+      reasoning: true,
+      reasoning_options: [{ type: "effort", values: ["low", "medium", "high", "xhigh", "max"] }],
+      variants: { low: { disabled: true }, high: { effort: "high", custom: "preserved" } },
+    } }]);
+    provider.providerConfig.npm = "@ai-sdk/anthropic";
+    const sync = new CloudProviderSync({
+      config, env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }), reloadEngine: reloadedInPlace,
+      fetchImpl: Object.assign(async (input: URL | RequestInfo) => {
+        const { pathname } = new URL(String(input));
+        if (pathname === "/v1/inference-providers") return Response.json({ inferenceProviders: [] });
+        return Response.json(pathname.endsWith("/connect") ? { llmProvider: provider } : { llmProviders: [provider] });
+      }, { preconnect: () => {} }),
+    });
+    stops.push(() => sync.stop());
+    await sync.setSession({ baseUrl: "https://den.example.test", token: "synthetic", orgId: "org_test" });
+    expect((await sync.run()).status).toBe("applied");
+    const written = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).lpr_test;
+    const model = expectRecord(expectRecord(written.models, "models")["gateway-model-1"], "model");
+    expect(model.variants).toEqual({ low: { disabled: true }, medium: { effort: "medium" },
+      high: { effort: "high", custom: "preserved" }, xhigh: { effort: "xhigh" }, max: { effort: "max" } });
     expect((await sync.run()).status).toBe("noop");
   });
 

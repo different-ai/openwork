@@ -436,6 +436,18 @@ describe("Cloud provider materialization", () => {
     expect(next.status).toBe("noop")
     expect(writeCalls(restarted.calls)).toEqual([])
   })
+  test("materializes Anthropic catalog efforts for gateway aliases without guessing from their IDs", async () => {
+    const provider = makeAnthropicProvider({ apiKey: "synthetic" })
+    provider.models = [{ modelId: "gateway-model-1", name: "Claude Opus 5.5", modelConfig: {
+      reasoning: true, reasoning_options: [{ type: "effort", values: ["low", "medium", "high", "xhigh", "max"] }],
+    } }]
+    const instance = makeInstance()
+    expect((await materialize({ providers: () => [provider], fetchImpl: instance.fetchImpl, force: true })).status).toBe("applied")
+    expect(instance.runtimeProvider(provider.id)).toMatchObject({ models: { "gateway-model-1": { variants: {
+      low: { effort: "low" }, medium: { effort: "medium" }, high: { effort: "high" }, xhigh: { effort: "xhigh" }, max: { effort: "max" },
+    } } } })
+    expect((await materialize({ providers: () => [provider], fetchImpl: instance.fetchImpl, force: true })).status).toBe("noop")
+  })
   test("does not rewrite matching provider state after the den-api cache is lost", async () => {
     const provider = makeAnthropicProvider({ apiKey: "sk-anthropic" })
     const instance = makeInstance({

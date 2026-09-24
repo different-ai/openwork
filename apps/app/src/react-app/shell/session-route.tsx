@@ -3984,6 +3984,7 @@ export function SessionRoute() {
       onTitleChange={setRenameWorkspaceTitle}
     />
     <CommandPalette
+      engineClient={client}
       open={commandPaletteOpen}
       onClose={() => setCommandPaletteOpen(false)}
       developerMode={developerMode}

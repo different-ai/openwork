@@ -239,6 +239,20 @@ test("batched plugin roles and list access match per-plugin resolution", async (
     expect(adminList.items.map((item) => item.id).sort()).toEqual([...organizationPluginIds].sort())
     expect(adminList.items.every((item) => "access" in item && item.access.every((entry) => entry.removedAt === null))).toBe(true)
 
+    const owned = await listPlugins({ context: admin, ownerId: memberId, status: "active", includeTotal: true, includeFacets: true })
+    expect(owned.items.map((item) => item.id)).toEqual([plugins.ownedOnly])
+    expect(owned.total).toBe(1)
+    expect(owned.teamCounts?.every((entry) => entry.count === 0)).toBe(true)
+    const facets = await listPlugins({ context: member, ownerId: creatorId, status: "active", includeFacets: true, limit: 1 })
+    expect(facets.items).toHaveLength(1)
+    expect(facets.ownerCounts?.find((entry) => entry.id === creatorId)?.count).toBe(7)
+    expect(facets.ownerCounts?.find((entry) => entry.id === memberId)?.count).toBe(1)
+    expect(facets.teamCounts?.find((entry) => entry.id === teamId)?.count).toBe(3)
+    const combined = await listPlugins({ context: admin, ownerId: memberId, teamId, status: "active", includeTotal: true })
+    expect(combined.items).toEqual([])
+    expect(combined.total).toBe(0)
+    expect((await listPlugins({ context: admin, ownerId: creatorId, includeTotal: true })).items.some((item) => item.id === otherOrgPluginId)).toBe(false)
+
     const withoutAccess = await listPlugins({ context: admin })
     expect(withoutAccess.items.some((item) => "access" in item)).toBe(false)
 

@@ -70,8 +70,11 @@ export function ConnectorCatalogScreen({ mode }: { mode: ConnectorFlowMode }) {
     return existing ? { ...entry, openHref: openRoute(existing.id) } : entry;
   });
   const nativeEntries = mode === "admin"
-    ? NATIVE_CATALOG_ENTRIES.map((entry) => {
+    ? NATIVE_CATALOG_ENTRIES.map((entry): CatalogEntry => {
       const existing = nativeConnection(known, entry.id);
+      if (existing && entry.id === GOOGLE_WORKSPACE_QUICK_ADD_ID) {
+        return { ...entry, addLabel: "Add another" };
+      }
       return existing ? { ...entry, openHref: openRoute(existing.id) } : entry;
     })
     : [];

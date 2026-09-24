@@ -8,6 +8,8 @@ import {
 } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 
+import type { OpenworkServerClient } from "@/app/lib/openwork-server";
+import { useOpencodeEngineControls } from "./opencode-engine-controls";
 import { t } from "@/i18n";
 import {
   Command,
@@ -86,6 +88,7 @@ export type SessionGroupOption = {
 };
 
 export type CommandPaletteProps = {
+  engineClient?: OpenworkServerClient | null;
   open: boolean;
   onClose: () => void;
   developerMode: boolean;
@@ -139,6 +142,7 @@ export type CommandPaletteProps = {
  */
 export function CommandPalette(props: CommandPaletteProps) {
   const platform = usePlatform();
+  const engine = useOpencodeEngineControls(props.engineClient, props.open);
   const [mode, setMode] = useState<CommandPaletteMode>("root");
   const [query, setQuery] = useState("");
   const [recents, setRecents] = useState(loadPaletteRecents);
@@ -414,9 +418,10 @@ export function CommandPalette(props: CommandPaletteProps) {
       ...rootItems,
       ...coreActionItems,
       ...settingsItems,
+      ...engine.items.map((item) => ({ ...item, action: () => { props.onClose(); item.action(); } })),
       ...(props.extraItems ?? []),
     ],
-    [coreActionItems, props.extraItems, rootItems, settingsItems],
+    [coreActionItems, engine.items, props.extraItems, props.onClose, rootItems, settingsItems],
   );
 
   const rootGroups = useMemo(
@@ -635,6 +640,8 @@ export function CommandPalette(props: CommandPaletteProps) {
   );
 
   return (
+    <>
+    {engine.dialog}
     <CommandDialog open={props.open} onOpenChange={handleOpenChange}>
       <CommandDialogPopup onKeyDownCapture={handleEscape}>
         <CommandDialogTitle>
@@ -717,5 +724,6 @@ export function CommandPalette(props: CommandPaletteProps) {
         </Command>
       </CommandDialogPopup>
     </CommandDialog>
+    </>
   );
 }
