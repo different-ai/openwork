@@ -988,11 +988,29 @@ export async function createOrgSubscriptionCheckoutSession(input: {
     subscriptionType: INFERENCE_SUBSCRIPTION_TYPE,
   })
   if (existingOngoingInference) {
-    // A past-due subscription is still Stripe's to collect. Starting a second
-    // Checkout here would bill the customer twice; the caller sends them to
-    // the billing portal to fix the payment method instead.
-    await upsertOrgSubscriptionFromStripe(existingOngoingInference)
-    throw new Error("stripe_inference_subscription_exists")
+    if (INFERENCE_DISABLING_STATUSES.has(subscriptionStatus(existingOngoingInference.status))) {
+      // `unpaid` / `paused`: dunning already gave up and access is already
+      // revoked, so the customer is here to pay again. Sending them to the
+      // portal would soft-lock them; leaving the old subscription in place
+      // would keep generating uncollectible invoices next to the new one.
+      // Retire it and let Checkout create a clean replacement.
+      await stripe().subscriptions.cancel(existingOngoingInference.id, {
+        prorate: false,
+        invoice_now: false,
+        cancellation_details: { comment: "Superseded by a new OpenWork Models checkout after collection stopped." },
+      })
+      logger.info("canceled a stopped inference subscription ahead of a replacement checkout", {
+        organization_id: input.organizationId,
+        stripe_subscription_id: existingOngoingInference.id,
+        status: existingOngoingInference.status,
+      })
+    } else {
+      // Active, trialing, past due or incomplete: Stripe is still collecting
+      // on it. A second Checkout would bill the customer twice; the caller
+      // sends them to the billing portal to fix the payment method instead.
+      await upsertOrgSubscriptionFromStripe(existingOngoingInference)
+      throw new Error("stripe_inference_subscription_exists")
+    }
   }
 
   const quantity = Math.max(1, await activeMemberCount(input.organizationId))

@@ -7,6 +7,7 @@ const insertedSubscriptions: Array<Record<string, unknown>> = []
 const customerCreates: RecordedCall[] = []
 const checkoutCreates: RecordedCall[] = []
 const subscriptionItemUpdates: RecordedCall[] = []
+const subscriptionCancels: RecordedCall[] = []
 const databaseUpdates: RecordedCall[] = []
 const inferenceEnableCalls: RecordedCall[] = []
 let customerSearchResults: Array<Record<string, unknown>> = []
@@ -56,6 +57,10 @@ class FakeStripe {
   subscriptions = {
     list: () => Promise.resolve({ data: subscriptionResults }),
     retrieve: (subscriptionId: string) => Promise.resolve(retrievedSubscriptions[subscriptionId] ?? retrievedSubscription),
+    cancel: (subscriptionId: string, params: RecordedCall) => {
+      subscriptionCancels.push({ subscriptionId, params })
+      return Promise.resolve({ id: subscriptionId, status: "canceled" })
+    },
   }
 
   invoices = {
@@ -247,6 +252,7 @@ beforeEach(() => {
   customerCreates.length = 0
   checkoutCreates.length = 0
   subscriptionItemUpdates.length = 0
+  subscriptionCancels.length = 0
   databaseUpdates.length = 0
   inferenceEnableCalls.length = 0
   customerSearchResults = []
@@ -1161,6 +1167,20 @@ test("inference checkout refuses to create a second subscription while Stripe is
 
   await expect(createInferenceCheckoutSession(checkoutInput())).rejects.toThrow("stripe_inference_subscription_exists")
   expect(checkoutCreates).toHaveLength(0)
+})
+
+test("inference checkout retires an unpaid subscription instead of bouncing the customer to the portal", async () => {
+  subscriptionResults = [{ ...inferenceSubscription(), status: "unpaid" }]
+  selectResults.push([{ metadata: {} }], [{ stripeCustomerId: "cus_test" }], [{ count: 1 }], [{ metadata: {} }])
+
+  const session = await createInferenceCheckoutSession(checkoutInput())
+
+  expect(subscriptionCancels).toEqual([{
+    subscriptionId: "sub_inference",
+    params: expect.objectContaining({ prorate: false, invoice_now: false }),
+  }])
+  expect(session).toMatchObject({ id: "cs_created" })
+  expect(checkoutCreates).toHaveLength(1)
 })
 
 test("inference checkout proceeds once the previous subscription is terminal", async () => {
