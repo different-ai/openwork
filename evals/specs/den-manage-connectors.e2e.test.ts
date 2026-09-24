@@ -8,7 +8,7 @@ const test = spec.world(denManageAsAdmin, { timeout: 600_000 });
 
 const names = (items: { name: string }[]) => items.map((item) => item.name);
 
-test("an admin adds a listed connector for two teams and an arbitrary MCP by URL", async ({ world, user, probe, step }) => {
+test("an admin adds a listed connector for two teams and an arbitrary MCP by URL", async ({ world, user, probe, step, evidence }) => {
   const reach = world.teamSize("Sales") + world.teamSize("Support");
 
   await step("1. I open Connectors in Manage: nothing is set up yet", async () => {
@@ -20,7 +20,9 @@ test("an admin adds a listed connector for two teams and an arbitrary MCP by URL
     });
     for (const label of ["My Library", "Plugins", "Members"]) expect(links).toContain(label);
     expect(links).toContain("ConnectorsMCPs");
-    expect((await probe.dom('[data-testid="den-org-sidebar"] a[href$="/mcp-connections"] span:last-child > span')).elements.map((badge) => badge.text)).toContain("MCPs");
+    const badges = (await probe.dom('[data-testid="den-org-sidebar"] a[href$="/mcp-connections"] span:last-child > span')).elements.map((badge) => badge.text);
+    expect(badges).toContain("MCPs");
+    evidence.recordAssertionEvidence("the Connectors sidebar item keeps its MCPs badge", `Sidebar links: ${links.join(", ")}; badge text: ${badges.join(", ")}`, true);
     await user.screenshot();
   });
 
@@ -126,6 +128,7 @@ test("an admin adds a listed connector for two teams and an arbitrary MCP by URL
     await user.navigate(`${world.den.ref.webUrl}/dashboard/mcp-connections/new`);
     await user.type({ placeholder: "Search apps or paste MCP URL" }, world.custom.mcpUrl);
     await user.see({ testId: "connector-picker-no-match-add" }, { text: "Add this MCP" });
+    evidence.recordAssertionEvidence("a pasted MCP URL is offered for adding", `Search "${world.custom.mcpUrl}" shows the "Add this MCP" action`, true);
     await user.screenshot();
   });
 
@@ -155,7 +158,9 @@ test("an admin adds a listed connector for two teams and an arbitrary MCP by URL
     await probe.eventually(async () => names(await world.library(world.den.members.kai)).includes(String(custom?.name)), {
       within: 60_000, label: "the custom MCP to become available to Kai",
     });
-    expect(names(await world.library(world.den.members.kai))).not.toContain("Slack");
+    const kaiLibrary = names(await world.library(world.den.members.kai));
+    expect(kaiLibrary).not.toContain("Slack");
+    evidence.recordAssertionEvidence("the custom MCP is saved and reaches members without widening Slack", `Saved "${String(custom?.name)}" at ${world.custom.mcpUrl}; Kai's Library: ${kaiLibrary.join(", ")}`, true);
     await user.screenshot();
   });
 });
