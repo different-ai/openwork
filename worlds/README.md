@@ -16,10 +16,11 @@ pnpm world down preview-desktop --stage example
 
 `--place` selects who runs it (`local`, `daytona`, or `freestyle`); `--os`
 selects the guest OS. Local uses this computer's OS, Freestyle offers Linux,
-and Daytona offers Linux or Windows. **The Windows desktop host is not wired
-into script worlds yet**, so Windows requests fail before provisioning. Only
-the listed `supportedTargets` are advertised; a custom script without a
-declaration can run locally but fails closed for remote providers.
+and Daytona offers Linux or Windows. Daytona Windows supports only
+`preview-desktop` with `--source desktop=release:<x.y.z>/<distribution>
+--seed blank`; source builds and Den-only Windows previews fail before
+provisioning. Only the listed `supportedTargets` are advertised; a custom
+script without a declaration can run locally but fails closed remotely.
 
 `--source` and `--seed` are **opt-in**. Today `preview-den` and
 `preview-desktop` accept component sources (`den`, `desktop`) and a single
@@ -55,9 +56,12 @@ are not script worlds runnable with `pnpm world`.
 - Review-app PR launches still use the Freestyle snapshot/VM API directly;
   `world up app-web --place freestyle` uses the same provider path, but the
   review service does not call the local world CLI.
-- Daytona Windows has a manual sandbox workflow, not an interactive desktop
-  host, release installer, CDP probe, viewer, or world-owned teardown. Do not
-  advertise a Windows preview until those are verified end-to-end.
+- Daytona Windows published desktop previews use an owned, private VM, verify
+  the installer digest, launch in the interactive user session, and check the
+  private viewer and CDP. They do not run source builds or seed Den identity.
+  Use `--lifetime 0-1410` after `--` (0 means until stopped); the VM has an
+  additional 30-minute startup allowance and a provider-side TTL so a crashed
+  driver cannot leave an unbounded VM.
 - Script worlds can compose the named preview scenario seeds; arbitrary seed
   functions, provider-side expiry after driver crashes, and fully independent
   desktop/Den source checkouts are not implemented.

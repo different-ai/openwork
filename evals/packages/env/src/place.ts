@@ -340,8 +340,10 @@ export function resolvePlace(env: NodeJS.ProcessEnv = process.env): Place {
   if (target.provider === "freestyle") {
     throw new Error("Freestyle placement supports app-web and acme-web; this recipe does not support Freestyle.");
   }
-  if (target.provider === "daytona" && target.os === "windows") {
-    throw new Error("Daytona Windows desktop host is not implemented yet; use a Linux world or the manual Windows sandbox.");
+  // Den stays in its own Linux Daytona sandbox even when a release desktop
+  // targets Windows. The preview recipe provisions that Windows VM separately.
+  if (target.provider === "daytona" && target.os === "windows" && env.OPENWORK_WORLD_PREVIEW_DAYTONA !== "1") {
+    throw new Error("Daytona Windows is available only for the published preview-desktop release recipe.");
   }
   if (daytonaPlacement(env)) {
     return new DaytonaPlace(

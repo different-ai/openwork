@@ -21,6 +21,8 @@ jobs:
       selected: ${{ steps.select.outputs.selected }}
       liveMatrix: ${{ steps.select.outputs.liveMatrix }}
       liveSelected: ${{ steps.select.outputs.liveSelected }}
+      daytonaMatrix: ${{ steps.select.outputs.daytonaMatrix }}
+      daytonaSelected: ${{ steps.select.outputs.daytonaSelected }}
       packagedMatrix: ${{ steps.select.outputs.packagedMatrix }}
       packagedSelected: ${{ steps.select.outputs.packagedSelected }}
     steps:
@@ -75,7 +77,9 @@ jobs:
         run: |
           set -euo pipefail
           test "$(id -u)" -ne 0
-          if node evals/scripts/run-parity-proof.mjs --supports "$PROOF_SPEC"; then
+          if [ "$PROOF_SPEC" = 'evals/specs/opencode-v2-session-home.e2e.test.ts' ]; then
+            xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --engine v2 --surface web
+          elif node evals/scripts/run-parity-proof.mjs --supports "$PROOF_SPEC"; then
             xvfb-run -a node evals/scripts/run-parity-proof.mjs "$PROOF_SPEC"
           else
             xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local
@@ -206,6 +210,67 @@ jobs:
           else
             xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --engine v1 --surface web
           fi
+      - name: Save selected native testkit and Vitest records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr-proof-${{ github.run_attempt }}-${{ matrix.key }}
+          path: |
+            evals/results/test-runs/
+            evals/results/.testkit/cli-run-*.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+
+  windows-proof:
+    needs: select
+    if: >-
+      needs.select.outputs.daytonaSelected == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.event.pull_request.head.repo.id == github.event.repository.id &&
+      github.event.pull_request.base.repo.id == github.event.repository.id &&
+      github.event.pull_request.head.repo.fork == false &&
+      github.event.pull_request.base.repo.fork == false &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      github.actor != 'dependabot[bot]' &&
+      github.triggering_actor != 'dependabot[bot]'
+    environment: pr-slow-specs
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.select.outputs.daytonaMatrix) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-tests
+      - name: Install reviewed Daytona CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          DAYTONA_CLI_TAG: v0.216.1
+          DAYTONA_CLI_SHA256: 8ee3a1f8bd5ef307b906cbb48a6888673a3a2221854e11f2cbbf9785e7fc2385
+        run: |
+          set -euo pipefail
+          test -n "${DAYTONA_API_KEY//[[:space:]]/}"
+          gh release download "$DAYTONA_CLI_TAG" --repo daytona/clients --pattern daytona-linux-amd64 --output /tmp/daytona --clobber
+          echo "$DAYTONA_CLI_SHA256  /tmp/daytona" | sha256sum -c -
+          sudo install -m 0755 /tmp/daytona /usr/local/bin/daytona
+          daytona login --api-key "$DAYTONA_API_KEY"
+      - name: Prove the published Windows desktop on the PR head
+        timeout-minutes: 40
+        env:
+          PROOF_SPEC: ${{ matrix.spec }}
+          OPENWORK_EVAL_REF: ${{ github.event.pull_request.head.sha }}
+          OPENWORK_EVAL_MODEL: big-pickle
+        run: |
+          set -euo pipefail
+          test "$PROOF_SPEC" = 'evals/specs/windows-published-preview.e2e.test.ts'
+          pnpm evals:e2e windows-published-preview --daytona --strict-ref
       - name: Save selected native testkit and Vitest records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

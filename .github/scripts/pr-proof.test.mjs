@@ -57,6 +57,7 @@ test("artifact names are stable, bounded hashes of validated spec paths", () => 
 });
 
 const liveSpec = "evals/specs/live-stream-continuity.e2e.test.ts";
+const windowsSpec = "evals/specs/windows-published-preview.e2e.test.ts";
 const normalSpec = "evals/specs/stream-continuity.e2e.test.ts";
 const sha = "a".repeat(40);
 function trustFixture() {
@@ -108,16 +109,21 @@ test("only the exact supported live file is routed; the entire changed selection
   const lanes = proofLanes(specs, trustFixture());
   assert.deepEqual(lanes.liveSpecs, [liveSpec]);
   assert.deepEqual(lanes.normalSpecs, specs.filter(spec => spec !== liveSpec));
-  assert.deepEqual([...lanes.normalSpecs, ...lanes.liveSpecs].sort(), specs);
-  assert.deepEqual(proofLanes(selectProof([file(liveSpec, "removed")]).specs, {}), { normalSpecs: [], liveSpecs: [], packagedSpecs: [] });
+  assert.deepEqual([...lanes.normalSpecs, ...lanes.liveSpecs, ...lanes.daytonaSpecs].sort(), specs);
+  const windows = proofLanes([normalSpec, windowsSpec], trustFixture());
+  assert.deepEqual(windows.normalSpecs, [normalSpec]);
+  assert.deepEqual(windows.daytonaSpecs, [windowsSpec]);
+  assert.deepEqual(proofLanes(selectProof([file(liveSpec, "removed")]).specs, {}), { normalSpecs: [], liveSpecs: [], packagedSpecs: [], daytonaSpecs: [] });
 });
 
-test("untrusted live selection fails closed with an actionable message, even on maintainer reruns", async t => {
+test("untrusted live and Windows selection fail closed, even on maintainer reruns", async t => {
   for (const [name, mutate] of untrusted) await t.test(name, () => {
     const trust = trustFixture();
     mutate(trust);
-    assert.throws(() => proofLanes([normalSpec, liveSpec], trust), /unsupported.*maintainer.*same-repository PR.*approve the pr-slow-specs/);
-    assert.deepEqual(proofLanes([normalSpec], trust), { normalSpecs: [normalSpec], liveSpecs: [], packagedSpecs: [] });
+    for (const selected of [liveSpec, windowsSpec]) {
+      assert.throws(() => proofLanes([normalSpec, selected], trust), /unsupported.*maintainer.*same-repository PR.*approve the pr-slow-specs/);
+    }
+    assert.deepEqual(proofLanes([normalSpec], trust), { normalSpecs: [normalSpec], liveSpecs: [], packagedSpecs: [], daytonaSpecs: [] });
   });
 });
 
@@ -162,7 +168,7 @@ process.stdout.write(JSON.stringify(result));
 }
 
 test("controller emits disjoint complete matrices with publisher-compatible keys and approval summary", async () => {
-  for (const specs of [[], [normalSpec], [liveSpec], [normalSpec, liveSpec]]) {
+  for (const specs of [[], [normalSpec], [liveSpec], [windowsSpec], [normalSpec, liveSpec, windowsSpec]]) {
     const trust = trustFixture();
     trust.current.changed_files = specs.length;
     const result = await runController(trust, specs.map(spec => file(spec)));
@@ -173,15 +179,18 @@ test("controller emits disjoint complete matrices with publisher-compatible keys
     }));
     assert.equal(outputs.selected, String(specs.includes(normalSpec)));
     assert.equal(outputs.liveSelected, String(specs.includes(liveSpec)));
+    assert.equal(outputs.daytonaSelected, String(specs.includes(windowsSpec)));
     const normal = JSON.parse(outputs.matrix).include;
     const live = JSON.parse(outputs.liveMatrix).include;
-    assert.deepEqual(normal.map(row => row.spec), specs.filter(spec => spec !== liveSpec));
+    const daytona = JSON.parse(outputs.daytonaMatrix).include;
+    assert.deepEqual(normal.map(row => row.spec), specs.filter(spec => spec !== liveSpec && spec !== windowsSpec));
     assert.deepEqual(live.map(row => row.spec), specs.filter(spec => spec === liveSpec));
-    for (const row of [...normal, ...live]) {
+    assert.deepEqual(daytona.map(row => row.spec), specs.filter(spec => spec === windowsSpec));
+    for (const row of [...normal, ...live, ...daytona]) {
       assert.equal(`pr-proof-2-${row.key}`, proofArtifact(row.spec, 2));
       assert.ok(result.summary.includes(row.spec));
     }
-    if (live.length) assert.match(result.summary, /reviewer approval.*pr-slow-specs/);
+    if (live.length || daytona.length) assert.match(result.summary, /reviewer approval.*pr-slow-specs/);
   }
 });
 
@@ -189,9 +198,11 @@ test("controller refuses untrusted live selection without emitting runnable outp
   for (const [, mutate] of untrusted) {
     const trust = trustFixture();
     mutate(trust);
-    const result = await runController(trust, [file(normalSpec), file(liveSpec)]);
-    assert.notEqual(result.status, 0);
-    assert.equal(result.output, "");
+    for (const selected of [liveSpec, windowsSpec]) {
+      const result = await runController(trust, [file(normalSpec), file(selected)]);
+      assert.notEqual(result.status, 0);
+      assert.equal(result.output, "");
+    }
   }
 });
 
@@ -217,8 +228,9 @@ test("controller preserves selection bounds and head freshness; rechecks live tr
 
 test("workflow keeps ordinary proof unprotected and gates all live PR code before checkout", async () => {
   const workflow = await readFile(new URL("../workflows/pr-proof.yml", import.meta.url), "utf8");
-  const [ordinary, live] = workflow.split("\n  live-proof:\n");
-  assert.ok(live);
+  const [ordinary, afterOrdinary] = workflow.split("\n  live-proof:\n");
+  const [live, windows] = afterOrdinary.split("\n  windows-proof:\n");
+  assert.ok(live && windows);
   assert.doesNotMatch(workflow, /pull_request_target|continue-on-error/);
   assert.doesNotMatch(ordinary, /environment:|secrets\.|OPENAI_API_KEY|OPENWORK_EVAL_LIVE_OPENAI/);
   assert.match(ordinary, /if: needs.select.outputs.selected == 'true'/);
@@ -241,7 +253,7 @@ test("workflow keeps ordinary proof unprotected and gates all live PR code befor
   assert.match(gate, /environment: pr-slow-specs/);
   assert.match(gate, /runs-on: blacksmith-4vcpu-ubuntu-2404/);
   assert.match(gate, /matrix: \$\{\{ fromJSON\(needs.select.outputs.liveMatrix\) \}\}/);
-  for (const job of [ordinary, live]) {
+  for (const job of [ordinary, live, windows]) {
     assert.match(job, /ref: \$\{\{ github.event.pull_request.head.sha \}\}\n          persist-credentials: false/);
     assert.match(job, /name: pr-proof-\$\{\{ github.run_attempt \}\}-\$\{\{ matrix.key \}\}/);
     assert.match(job, /if: always\(\)/);
@@ -268,9 +280,33 @@ test("workflow keeps ordinary proof unprotected and gates all live PR code befor
   assert.match(execution, /OPENWORK_EVAL_CONTAINER_ELECTRON=1/);
 });
 
-test("both proof jobs share verified Chrome setup, with system OAuth handoff only for desktop proof", async () => {
+test("Windows proof only executes the exact reviewed spec after same-repo approval", async () => {
   const workflow = await readFile(new URL("../workflows/pr-proof.yml", import.meta.url), "utf8");
-  const [ordinary, live] = workflow.split("\n  live-proof:\n");
+  const windows = workflow.split("\n  windows-proof:\n")[1];
+  assert.ok(windows);
+  const gate = windows.split("    steps:\n")[0];
+  assert.match(gate, /needs.select.outputs.daytonaSelected == 'true'/);
+  assert.match(gate, /environment: pr-slow-specs/);
+  for (const side of ["head", "base"]) {
+    assert.ok(gate.includes(`github.event.pull_request.${side}.repo.full_name == github.repository`));
+    assert.ok(gate.includes(`github.event.pull_request.${side}.repo.id == github.event.repository.id`));
+    assert.ok(gate.includes(`github.event.pull_request.${side}.repo.fork == false`));
+  }
+  for (const actor of ["github.event.pull_request.user.login", "github.actor", "github.triggering_actor"]) {
+    assert.ok(gate.includes(`${actor} != 'dependabot[bot]'`));
+  }
+  assert.match(windows, /matrix: \$\{\{ fromJSON\(needs.select.outputs.daytonaMatrix\) \}\}/);
+  assert.match(windows, /DAYTONA_CLI_SHA256: [a-f0-9]{64}/);
+  assert.match(windows, /sha256sum -c -/);
+  assert.match(windows, /test "\$PROOF_SPEC" = 'evals\/specs\/windows-published-preview.e2e.test.ts'/);
+  assert.match(windows, /--daytona --strict-ref/);
+  assert.match(windows, /OPENWORK_EVAL_REF: \$\{\{ github.event.pull_request.head.sha \}\}/);
+});
+
+test("both local proof jobs share verified Chrome setup, with system OAuth handoff only for desktop proof", async () => {
+  const workflow = await readFile(new URL("../workflows/pr-proof.yml", import.meta.url), "utf8");
+  const [ordinary, rest] = workflow.split("\n  live-proof:\n");
+  const live = rest.split("\n  windows-proof:\n")[0];
   for (const job of [ordinary, live]) {
     assert.match(job, /uses: \.\/\.github\/actions\/setup-tests\n      - uses: \.\/\.github\/actions\/setup-browser/);
     assert.doesNotMatch(job, /apt-get|google-chrome|--input-type=module/);
@@ -347,7 +383,7 @@ test("workflow runs packaged proof through the packaged smoke runner without sec
 
 test("native real-model parity is protected and cannot leak into ordinary proof", () => {
   const parity = "evals/specs/engine-live-chat.e2e.test.ts";
-  assert.deepEqual(proofLanes([normalSpec, parity], trustFixture()), { normalSpecs: [normalSpec], liveSpecs: [parity], packagedSpecs: [] });
+  assert.deepEqual(proofLanes([normalSpec, parity], trustFixture()), { normalSpecs: [normalSpec], liveSpecs: [parity], packagedSpecs: [], daytonaSpecs: [] });
   for (const [, mutate] of untrusted) {
     const trust = trustFixture(); mutate(trust);
     assert.throws(() => proofLanes([parity], trust), /unsupported/);

@@ -562,8 +562,11 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       });
       const place = target.provider;
       assertWorldSupport(script.name, await readWorldSupport(script.path), target);
-      if (target.os === "windows" && target.provider === "daytona") {
-        throw new Error(`World ${script.name} cannot run on daytona/windows yet: the Windows desktop host and interactive installer are not wired into worlds. Use a Linux preview or the manual Daytona Windows sandbox.`);
+      if (target.os === "windows" && target.provider === "daytona" && script.name !== "preview-desktop") {
+        throw new Error(`World ${script.name} cannot run on daytona/windows. Only a blank published preview-desktop release is supported.`);
+      }
+      if (target.os === "windows" && script.name === "preview-desktop" && !(command.args.includes("--release") || command.sources?.some((source) => source.component === "desktop" && source.spec.kind === "release"))) {
+        throw new Error("Daytona Windows requires a blank published preview-desktop release; use --source desktop=release:<version>/<distribution> --seed blank.");
       }
       // These are opt-in for now: never silently accept inputs a recipe cannot apply.
       const preview = script.name === "preview-desktop" || script.name === "preview-den";
