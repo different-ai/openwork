@@ -1,5 +1,6 @@
 const path = require("path");
 const { denApiRedirects } = require("./next-config-den-api-redirects.cjs");
+const { legacyConnectorRedirects } = require("./next-config-legacy-connector-redirects.cjs");
 const { withObservabilityNextConfig } = require("./observability/next-config-observability.cjs");
 
 // Baseline OWASP security headers (OWASP WSTG-CLNT-09 clickjacking, secure headers).
@@ -69,7 +70,7 @@ const nextConfig = {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },
   async redirects() {
-    return denApiRedirects(process.env);
+    return [...legacyConnectorRedirects(), ...denApiRedirects(process.env)];
   },
   async rewrites() {
     return [

@@ -1,9 +1,9 @@
 "use client";
 
-import { Loader2, X } from "lucide-react";
+import { Loader2, Lock, X } from "lucide-react";
 import type { ReactNode } from "react";
 
-export type SetupCheckStatus = "waiting" | "running" | "current" | "done" | "failed";
+export type SetupCheckStatus = "waiting" | "running" | "current" | "done" | "failed" | "blocked";
 
 export type SetupCheck = {
   id: string;
@@ -11,6 +11,8 @@ export type SetupCheck = {
   description: string;
   status: SetupCheckStatus;
   action?: ReactNode;
+  /** Inline fields under the check, for the one thing it needs from you. */
+  body?: ReactNode;
 };
 
 function CheckIcon({ status }: { status: SetupCheckStatus }) {
@@ -22,6 +24,7 @@ function CheckIcon({ status }: { status: SetupCheckStatus }) {
       </svg>
     );
   }
+  if (status === "blocked") return <Lock className="h-[18px] w-[18px] shrink-0 text-gray-500" strokeWidth={1.5} aria-hidden />;
   if (status === "running") return <Loader2 className="h-[18px] w-[18px] shrink-0 animate-spin text-gray-400" aria-hidden />;
   if (status === "failed") {
     return (
@@ -49,16 +52,19 @@ export function SetupChecks({ checks }: { checks: SetupCheck[] }) {
           key={check.id}
           data-testid={`setup-check-${check.id}`}
           data-status={check.status}
-          className="flex items-center gap-3.5 px-5 py-4"
+          className="flex flex-col gap-3 px-5 py-4"
         >
-          <CheckIcon status={check.status} />
-          <div className="min-w-0 flex-1">
-            <p className={`text-[14px] font-medium leading-5 ${check.status === "waiting" ? "text-gray-400" : "text-gray-900"}`}>{check.title}</p>
-            <p className={`text-[13px] leading-[18px] ${check.status === "failed" ? "text-red-600" : check.status === "waiting" ? "text-gray-400" : "text-gray-500"}`}>
-              {check.description}
-            </p>
+          <div className="flex items-center gap-3.5">
+            <CheckIcon status={check.status} />
+            <div className="min-w-0 flex-1">
+              <p className={`text-[14px] font-medium leading-5 ${check.status === "waiting" ? "text-gray-400" : "text-gray-900"}`}>{check.title}</p>
+              <p className={`text-[13px] leading-[18px] ${check.status === "failed" ? "text-red-600" : check.status === "waiting" ? "text-gray-400" : "text-gray-500"}`}>
+                {check.description}
+              </p>
+            </div>
+            {check.action ? <div className="shrink-0">{check.action}</div> : null}
           </div>
-          {check.action ? <div className="shrink-0">{check.action}</div> : null}
+          {check.body ? <div className="pl-8">{check.body}</div> : null}
         </li>
       ))}
     </ol>

@@ -743,25 +743,7 @@ export function getMcpConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/mcp-connections`;
 }
 
-/** The full connector editor: API keys, OAuth apps, Google Workspace and Microsoft 365. */
-export function getAllMcpConnectionsRoute(orgSlug?: string | null): string {
-  return `${getMcpConnectionsRoute(orgSlug)}/all`;
-}
-
-export function getAllMcpConnectionRoute(orgSlug: string | null | undefined, connectorId: string): string {
-  return `${getAllMcpConnectionsRoute(orgSlug)}/${encodeURIComponent(connectorId)}`;
-}
-
-export function getConfiguredMcpConnectionsRoute(orgSlug?: string | null, connectionId?: string | null): string {
-  const base = `${getMcpConnectionsRoute(orgSlug)}/configured`;
-  return connectionId ? `${base}?connectionId=${encodeURIComponent(connectionId)}` : base;
-}
-
-/**
- * Detail page for one connector. `connectorId` is a configured connection id
- * or, for connectors nobody has added yet, the catalog id (`gmail`, `notion`,
- * `microsoft-365`) so the page can explain the connector and start setup.
- */
+/** A configured connector's page in Manage, Google Workspace and Microsoft 365 included. */
 export function getMcpConnectionRoute(orgSlug: string | null | undefined, connectorId: string): string {
   return `${getMcpConnectionsRoute(orgSlug)}/${encodeURIComponent(connectorId)}`;
 }

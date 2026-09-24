@@ -2,9 +2,10 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
+import { useState } from "react";
+import { DenButton } from "../../_components/ui/button";
 import {
   getAddConnectorRoute,
-  getAllMcpConnectionsRoute,
   getLibraryAddConnectorRoute,
   getLibraryConnectorRoute,
   getLibraryRoute,
@@ -12,12 +13,17 @@ import {
   getMcpConnectionsRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { connectionForPresetUrl } from "./connector-catalog";
-import { catalogEntriesFromPresets, ConnectorPicker } from "./connector-picker";
+import { connectionForPresetUrl, GOOGLE_WORKSPACE_QUICK_ADD_ID, MICROSOFT_365_QUICK_ADD_ID } from "./connector-catalog";
+import { displayedConnectorConnections } from "./connector-detail";
+import { type CatalogEntry, catalogEntriesFromPresets, ConnectorPicker } from "./connector-picker";
 import { ItemHeader, ItemPage } from "./item-header";
-import { LinkButton } from "./item-list";
 import { preloadConnectorLogo } from "./item-logo";
-import { mcpConnectionPresetsQueryOptions, useMcpConnectionPresets, useMcpConnections } from "./mcp-connections-data";
+import {
+  type ExternalMcpConnection,
+  mcpConnectionPresetsQueryOptions,
+  useMcpConnectionPresets,
+  useMcpConnections,
+} from "./mcp-connections-data";
 
 export type ConnectorFlowMode = "member" | "admin";
 
@@ -36,28 +42,40 @@ export function usePrefetchConnectorCatalog(): () => void {
   };
 }
 
+/** Google Workspace and Microsoft 365 are org OAuth apps, set up by admins only. */
+export const NATIVE_CATALOG_ENTRIES: CatalogEntry[] = [
+  { id: GOOGLE_WORKSPACE_QUICK_ADD_ID, name: "Google Workspace", description: "Gmail, Drive, Calendar, Sheets and Chat", url: "https://workspace.google.com" },
+  { id: MICROSOFT_365_QUICK_ADD_ID, name: "Microsoft 365", description: "Outlook, Calendar, OneDrive and Teams", url: "https://www.microsoft.com/microsoft-365" },
+];
+
+function nativeConnection(connections: readonly ExternalMcpConnection[], providerKey: string): ExternalMcpConnection | undefined {
+  return connections.find((connection) => connection.id === providerKey || connection.nativeProviderKey === providerKey);
+}
+
 /** A1 to A3 and C1 to C2: pick what to connect. */
 export function ConnectorCatalogScreen({ mode }: { mode: ConnectorFlowMode }) {
   const { orgSlug } = useOrgDashboard();
   const presets = useMcpConnectionPresets();
   const connections = useMcpConnections(mode === "admin" ? "manageable" : "usable");
+  const usable = useMcpConnections("usable");
+  const [customName, setCustomName] = useState<string | null>(null);
   const setupRoute = (catalogId?: string) => mode === "admin" ? getAddConnectorRoute(orgSlug, catalogId) : getLibraryAddConnectorRoute(orgSlug, catalogId);
-  const needsAdminSetup = new Set((presets.data ?? [])
-    .filter((preset) => preset.requiresOAuthClient === true || preset.authType === "apikey")
-    .map((preset) => preset.presetId));
-  const smartAddHref = (url = "") => `${getAllMcpConnectionsRoute(orgSlug)}?${new URLSearchParams({ addMcp: "1", ...(url ? { url } : {}) }).toString()}`;
-  const addHref = (catalogId: string) => mode === "admin" && needsAdminSetup.has(catalogId)
-    ? `${getMcpConnectionsRoute(orgSlug)}?${new URLSearchParams({ quickAdd: catalogId }).toString()}`
-    : setupRoute(catalogId);
+  const openRoute = (connectionId: string) => mode === "admin" ? getMcpConnectionRoute(orgSlug, connectionId) : getLibraryConnectorRoute(orgSlug, connectionId);
+  const known = mode === "admin"
+    ? displayedConnectorConnections(connections.data ?? [], usable.data ?? [])
+    : connections.data ?? [];
 
-  const entries = catalogEntriesFromPresets(presets.data ?? []).map((entry) => {
-    const existing = connectionForPresetUrl(connections.data ?? [], entry.url);
-    if (!existing) return entry;
-    return {
-      ...entry,
-      openHref: mode === "admin" ? getMcpConnectionRoute(orgSlug, existing.id) : getLibraryConnectorRoute(orgSlug, existing.id),
-    };
+  const presetEntries = catalogEntriesFromPresets(presets.data ?? []).map((entry) => {
+    const existing = connectionForPresetUrl(known, entry.url);
+    return existing ? { ...entry, openHref: openRoute(existing.id) } : entry;
   });
+  const nativeEntries = mode === "admin"
+    ? NATIVE_CATALOG_ENTRIES.map((entry) => {
+      const existing = nativeConnection(known, entry.id);
+      return existing ? { ...entry, openHref: openRoute(existing.id) } : entry;
+    })
+    : [];
+  const entries = presets.isLoading ? [] : [...nativeEntries, ...presetEntries];
 
   return (
     <ItemPage testId="connector-catalog">
@@ -65,10 +83,9 @@ export function ConnectorCatalogScreen({ mode }: { mode: ConnectorFlowMode }) {
         back={mode === "admin" ? { href: getMcpConnectionsRoute(orgSlug), label: "Connectors" } : { href: getLibraryRoute(orgSlug), label: "My Library" }}
         title="Add a connector"
         actions={mode === "admin" ? (
-          <LinkButton variant="primary" href={smartAddHref()} data-testid="add-any-mcp">
-            <Plus className="h-4 w-4" aria-hidden />
+          <DenButton variant="secondary" size="sm" icon={Plus} className="h-9" onClick={() => setCustomName("")} data-testid="add-any-mcp">
             Add any MCP
-          </LinkButton>
+          </DenButton>
         ) : undefined}
       />
       {presets.error ? (
@@ -77,16 +94,12 @@ export function ConnectorCatalogScreen({ mode }: { mode: ConnectorFlowMode }) {
       <ConnectorPicker
         entries={entries}
         loading={presets.isLoading}
-        adminSmartAdd={mode === "admin"}
-        addHref={(entry) => addHref(entry.id)}
-        customHref={(input) => mode === "admin" ? smartAddHref(input.url) : `${setupRoute("custom")}${customConnectorQuery(input)}`}
+        mode={mode}
+        customName={customName}
+        onCustomNameChange={setCustomName}
+        addHref={(entry) => setupRoute(entry.id)}
+        customHref={(input) => `${setupRoute("custom")}${customConnectorQuery(input)}`}
       />
-      {mode === "admin" ? (
-        <p className="text-center text-[12px] leading-4 text-gray-400">
-          Need an API key, your own OAuth app, Google Workspace or Microsoft 365?{" "}
-          <a href={getAllMcpConnectionsRoute(orgSlug)} className="font-medium text-gray-600 underline-offset-2 hover:text-gray-900 hover:underline">Advanced setup</a>
-        </p>
-      ) : null}
     </ItemPage>
   );
 }

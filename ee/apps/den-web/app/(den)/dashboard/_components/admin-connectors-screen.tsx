@@ -7,14 +7,15 @@ import { getAddConnectorRoute, getMcpConnectionRoute } from "../../_lib/den-org"
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { managedAccessStatus } from "./access-summary";
 import { usePrefetchConnectorCatalog } from "./connector-catalog-screen";
-import { connectorAccountReady } from "./connector-detail";
+import { GOOGLE_WORKSPACE_QUICK_ADD_ID, MICROSOFT_365_QUICK_ADD_ID } from "./connector-catalog";
+import { connectorAccountReady, displayedConnectorConnections } from "./connector-detail";
 import { useDenToast } from "./den-toast";
 import { ItemPage } from "./item-header";
 import { FilterInput, ItemMenu, removeEntry, ItemPanel, ItemRow, ItemRowsSkeleton, LinkButton } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import { ConnectorLogoStrip } from "./library-add-dialog";
 import { connectorSetupUnfinished, finishSetupHref } from "./admin-connectors";
-import { type ExternalMcpConnection, useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
+import { type ExternalMcpConnection, isNativeProviderConnectionId, useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
 
 function ConnectorsEmpty({ orgSlug }: { orgSlug: string | null }) {
   const prefetchCatalog = usePrefetchConnectorCatalog();
@@ -41,11 +42,12 @@ export function AdminConnectorsScreen() {
   const toast = useDenToast();
   const { orgSlug, orgContext } = useOrgDashboard();
   const connections = useMcpConnections("manageable");
+  const usable = useMcpConnections("usable");
   const deleteConnection = useDeleteMcpConnection();
   const prefetchCatalog = usePrefetchConnectorCatalog();
   const [query, setQuery] = useState("");
   const viewerId = orgContext?.currentMember.id ?? null;
-  const all = connections.data ?? [];
+  const all = displayedConnectorConnections(connections.data ?? [], usable.data ?? []);
   const needle = query.trim().toLowerCase();
   const visible = needle ? all.filter((connection) => connection.name.toLowerCase().includes(needle)) : all;
   const empty = !connections.isLoading && !connections.error && all.length === 0;
@@ -89,7 +91,9 @@ export function AdminConnectorsScreen() {
                 const unfinished = connectorSetupUnfinished(connection);
                 const status = unfinished
                   ? "Setup not finished"
-                  : orgContext ? managedAccessStatus(connection.access, orgContext, viewerId) : "";
+                  : !connection.access && isNativeProviderConnectionId(connection.id, connection.nativeProviderKey)
+                    ? "Everyone"
+                    : orgContext ? managedAccessStatus(connection.access, orgContext, viewerId) : "";
                 const signInNote = connection.credentialMode === "per_member" && connection.authType === "oauth"
                   ? "Each person signs in"
                   : connection.authType === "none" ? "No sign-in needed" : connectorAccountReady(connection) ? "One account for everyone" : undefined;
@@ -108,7 +112,9 @@ export function AdminConnectorsScreen() {
                           label={`More for ${connection.name}`}
                           entries={[
                             { label: "Open", href },
-                            removeEntry(connection.name, () => remove(connection)),
+                            ...(connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID || connection.id === MICROSOFT_365_QUICK_ADD_ID
+                              ? []
+                              : [removeEntry(connection.name, () => remove(connection))]),
                           ]}
                         />
                       )}

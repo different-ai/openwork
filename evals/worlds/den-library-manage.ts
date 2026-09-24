@@ -53,7 +53,15 @@ export async function denLibraryManage(seed: Seed, ctx: { place: Place }, option
     },
     env: { DEN_API_PUBLIC_URL: proxy.ref.webUrl },
     webApiBase: proxy.ref.webUrl,
-    mocks: { slack: seed.mock({ tools: slackTools }), hubspot: seed.mock(), custom: seed.mock({ allowUnauthenticatedMcp: true, tools: slackTools }) },
+    mocks: {
+      slack: seed.mock({ tools: slackTools }),
+      hubspot: seed.mock(),
+      custom: seed.mock({ allowUnauthenticatedMcp: true, tools: slackTools }),
+      // Takes any bearer key and records a fingerprint of the one it was sent.
+      keyed: seed.mock({ allowUnauthenticatedMcp: true, tools: slackTools }),
+      // Signs people in through an OAuth app the admin registered with it.
+      wiki: seed.mock({ tools: slackTools }),
+    },
   });
 
   const org = await seed.api(den.admin, "/v1/org");
@@ -76,12 +84,14 @@ export async function denLibraryManage(seed: Seed, ctx: { place: Place }, option
     teamIds[name] = id;
   }
 
-  const { slack, hubspot } = den.mocks;
+  const { slack, hubspot, keyed, wiki } = den.mocks;
   const presets = [
     { presetId: "slack", displayName: "Slack", description: "Messages and channels.", url: slack.mcpUrl, authType: "oauth" },
     { presetId: "hubspot", displayName: "HubSpot", description: "Contacts, deals and notes.", url: hubspot.mcpUrl, authType: "oauth" },
     { presetId: "notion", displayName: "Notion", description: "Pages and databases.", url: "https://notion.connector.test/mcp", authType: "oauth" },
     { presetId: "linear", displayName: "Linear", description: "Issues and projects.", url: "https://linear.connector.test/mcp", authType: "oauth" },
+    { presetId: "keyed-docs", displayName: "Keyed Docs", description: "Docs behind an API key.", url: keyed.mcpUrl, authType: "apikey" },
+    { presetId: "team-wiki", displayName: "Team Wiki", description: "Pages behind your own OAuth app.", url: wiki.mcpUrl, authType: "oauth", requiresOAuthClient: true },
   ];
   await proxy.faults.status("/v1/mcp-connections/presets", 200, { times: 10_000, body: { presets } });
   // What Den reports for a server where each person signs in with their own account; no provider is contacted.
@@ -128,6 +138,8 @@ export async function denLibraryManage(seed: Seed, ctx: { place: Place }, option
     proxy,
     slack,
     custom: den.mocks.custom,
+    keyed,
+    wiki,
     people,
     memberIds,
     teamIds,
@@ -161,6 +173,11 @@ export async function denLibraryManage(seed: Seed, ctx: { place: Place }, option
         if (Date.now() - startedAt >= timeoutMs) return null;
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
+    },
+    /** Closes the sign-in tab Den opened, once the dashboard no longer needs it. */
+    async closeSignInTab(): Promise<void> {
+      const tab = await this.signInTab({ timeoutMs: 1_000 });
+      if (tab?.client.targetId) await web.client.send("Target.closeTarget", { targetId: tab.client.targetId });
     },
     async openAs(person: Person, startPath: string) {
       return seed.web({ den, signedInAs: den.members[person], startPath, headless: true, viewport });

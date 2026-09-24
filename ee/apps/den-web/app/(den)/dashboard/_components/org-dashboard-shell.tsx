@@ -684,7 +684,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                         </span>
                         <span className="flex shrink-0 items-center gap-1.5">
                           {item.badge ? (
-                            <span className="rounded-full bg-white px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                            <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
                               {item.badge}
                             </span>
                           ) : null}
@@ -710,7 +710,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                             >
                               <span className="min-w-0 truncate">{child.label}</span>
                               {child.badge ? (
-                                <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                                <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
                                   {child.badge}
                                 </span>
                               ) : null}

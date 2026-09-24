@@ -43,6 +43,16 @@ describe("Den org sidebar information architecture", () => {
     const plugins = indexOfNeedle('label: "Plugins"');
     const connectors = indexOfNeedle('label: "Connectors"');
     expect(navigation).toContain('label: "Connectors", icon: Plug, badge: "MCPs"');
+    // Badges keep their own casing ("MCPs"), as a small hairline pill.
+    const badges = shell.match(/<span className="[^"]*" data-testid="nav-badge">/g) ?? [];
+    expect(badges.length).toBe(2);
+    for (const badge of badges) {
+      expect(badge).not.toContain("uppercase");
+      expect(badge).not.toContain("tracking-");
+      expect(badge).toContain("text-[10px] font-medium");
+      expect(badge).toContain("border border-gray-200 bg-white");
+      expect(badge).toContain("text-gray-600");
+    }
     const managedDashboards = indexOfNeedle('label: "Dashboards"');
     const aiGateway = indexOfNeedle('label: "AI Gateway"');
     const desktopPolicies = indexOfNeedle('label: "Desktop policies"');

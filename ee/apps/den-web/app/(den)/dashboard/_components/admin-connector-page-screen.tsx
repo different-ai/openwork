@@ -1,17 +1,19 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Lock } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
-import { getConfiguredMcpConnectionsRoute, getMcpConnectionsRoute } from "../../_lib/den-org";
+import { getMcpConnectionsRoute, getToolTesterRoute } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessAddedToast } from "./access-summary";
 import { signInSentence } from "./admin-connectors";
 import { connectorAccountReady } from "./connector-detail";
 import { ChatButton, WhatYourAiCanDo } from "./connector-page-screen";
+import { GOOGLE_WORKSPACE_QUICK_ADD_ID, isNativeProviderCatalogId, MICROSOFT_365_QUICK_ADD_ID } from "./connector-catalog";
 import { useMemberSignIn } from "./connector-setup";
+import { ConnectorSettingsForm } from "./connector-settings";
 import { useDenToast } from "./den-toast";
 import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
 import { DetailRows, ItemMenu, removeEntry, ItemPanel } from "./item-list";
@@ -20,10 +22,13 @@ import { useSaveConnectionAccess } from "./item-sharing";
 import { connectionMcpSetupUrl } from "./mcp-connection-app-setup";
 import {
   type ExternalMcpConnection,
+  isNativeProviderConnectionId,
   useDeleteMcpConnection,
+  useDisconnectMcpConnection,
   useMcpConnectionTools,
   useUpdateMcpConnection,
 } from "./mcp-connections-data";
+import { NativeProviderSettings } from "./native-provider-setup";
 import { WhoCanUseIt } from "./who-can-use-it";
 
 function UseInAnotherApp({ connection }: { connection: ExternalMcpConnection }) {
@@ -96,6 +101,30 @@ function UseInAnotherApp({ connection }: { connection: ExternalMcpConnection }) 
   );
 }
 
+function Disclosure({ label, open, onToggle, children, testId }: { label: string; open: boolean; onToggle: () => void; children: ReactNode; testId?: string }) {
+  return (
+    <section className="flex flex-col border-t border-gray-100">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={onToggle}
+        data-testid={testId}
+        className="flex items-center justify-between gap-4 rounded-2xl px-5 py-3 text-left text-[13px] font-medium text-gray-900 outline-none focus-visible:ring-2 focus-visible:ring-gray-200"
+      >
+        {label}
+        <ChevronDown className={`h-4 w-4 text-gray-500 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
+      </button>
+      {open ? children : null}
+    </section>
+  );
+}
+
+/** Google Workspace or Microsoft 365, by the provider key its connection belongs to. */
+function nativeKeyFor(connection: ExternalMcpConnection) {
+  const key = connection.nativeProviderKey ?? connection.id;
+  return isNativeProviderCatalogId(key) ? key : null;
+}
+
 /** C6: a connector in Manage, with Who can use it inline instead of Share. */
 export function AdminConnectorPageScreen({ connection }: { connection: ExternalMcpConnection }) {
   const router = useRouter();
@@ -103,13 +132,20 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
   const { orgSlug, orgContext } = useOrgDashboard();
   const saveAccess = useSaveConnectionAccess();
   const deleteConnection = useDeleteMcpConnection();
+  const disconnect = useDisconnectMcpConnection();
   const signIn = useMemberSignIn();
   const [saving, setSaving] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(Boolean(connection.setupRequired) || Boolean(connection.issuerReviewRequired)
+    || (connection.oauthClientRequired === true && connection.oauthClientConfigured !== true)
+    || (connection.authType === "apikey" && !connection.connected));
   const [error, setError] = useState<string | null>(null);
   const connectionId = connection.id;
   const name = connection.name;
+  const native = isNativeProviderConnectionId(connection.id, connection.nativeProviderKey);
+  const nativeKey = native ? nativeKeyFor(connection) : null;
+  const aliasOnly = connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID || connection.id === MICROSOFT_365_QUICK_ADD_ID;
   const signedIn = connection.authType === "none" || connectorAccountReady(connection);
-  const tools = useMcpConnectionTools(connectionId, signedIn);
+  const tools = useMcpConnectionTools(connectionId, signedIn && !native);
   const viewerId = orgContext?.currentMember.id ?? null;
   const draft: AccessDraft = connection.access
     ? { orgWide: connection.access.orgWide, memberIds: connection.access.memberIds, teamIds: connection.access.teamIds }
@@ -142,6 +178,7 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
 
   const accountValue = signedIn
     ? connection.authType === "none" ? "Not needed" : connection.externalAccountId ?? "Signed in"
+    : connection.issuerReviewRequired ? <DenButton variant="secondary" size="xs" onClick={() => setSettingsOpen(true)}>Review sign-in server</DenButton>
     : <DenButton variant="secondary" size="xs" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>Sign in</DenButton>;
 
   const details = [
@@ -163,8 +200,17 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
               size="md"
               label={`More for ${name}`}
               entries={[
-                { label: "Edit settings", href: getConfiguredMcpConnectionsRoute(orgSlug, connectionId) },
-                removeEntry(name, remove),
+                { label: "Edit settings", onSelect: () => setSettingsOpen(true) },
+                ...(!native && signedIn ? [{ label: "Test tools", href: `${getToolTesterRoute(orgSlug)}?connectionId=${encodeURIComponent(connectionId)}` }] : []),
+                ...(!native && connection.authType !== "none" && connection.connected ? [{
+                  label: "Sign everyone out",
+                  onSelect: async () => {
+                    await disconnect.mutateAsync(connectionId);
+                    toast({ title: `Everyone is signed out of ${name}`, description: "Its setup and who can use it stay the same." });
+                  },
+                  confirm: { title: `Sign everyone out of ${name}?`, description: "Each person signs in again to use it.", action: "Sign everyone out" },
+                }] : []),
+                ...(aliasOnly ? [] : [removeEntry(name, remove)]),
               ]}
             />
             <ChatButton name={name} />
@@ -172,7 +218,19 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
         )}
       />
 
-      {orgContext ? (
+      {orgContext && !connection.access ? (
+        <section className="flex flex-col gap-2.5">
+          <SectionTitle title="Who can use it" meta={signInSentence(connection)} />
+          <ItemPanel>
+            <div className="flex items-center justify-between gap-4 px-5 py-3 text-[13px]" data-testid="access-locked">
+              <span className="font-medium text-gray-900">Everyone in your organization</span>
+              <span className="flex items-center gap-1.5 text-gray-500"><Lock className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden />Set when it was added</span>
+            </div>
+          </ItemPanel>
+        </section>
+      ) : null}
+
+      {orgContext && connection.access ? (
         <section className="flex flex-col gap-2.5">
           <SectionTitle title="Who can use it" meta={signInSentence(connection)} />
           <WhoCanUseIt
@@ -191,16 +249,39 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
         </section>
       ) : null}
 
-      <WhatYourAiCanDo tools={tools.data?.tools ?? []} loading={tools.isLoading} signedIn={signedIn} error={Boolean(tools.error)} />
+      {native ? null : <WhatYourAiCanDo tools={tools.data?.tools ?? []} loading={tools.isLoading} signedIn={signedIn} error={Boolean(tools.error)} />}
 
       {details.length > 0 ? (
         <section className="flex flex-col gap-2.5">
           <SectionTitle title="Details" />
           <DetailRows rows={details} />
+          {signIn.failure?.id === connectionId ? (
+            <p className="text-[13px] text-red-600" role="alert">{`Could not sign in to ${name}. ${signIn.failure.message}`}</p>
+          ) : null}
         </section>
       ) : null}
 
-      <UseInAnotherApp connection={connection} />
+      <Disclosure label="Settings" open={settingsOpen} onToggle={() => setSettingsOpen((value) => !value)} testId="connector-settings-toggle">
+        {nativeKey ? (
+          <div className="px-5 py-4">
+            <NativeProviderSettings
+              providerKey={nativeKey}
+              clientProviderId={connection.id}
+              create={false}
+              onSaved={() => toast({ title: `${name} is saved`, description: "People who signed in before may be asked to sign in again." })}
+              footer={({ save, saving: savingSettings, disabled, label }) => (
+                <div className="flex justify-end">
+                  <DenButton size="sm" loading={savingSettings} disabled={disabled} onClick={save}>{label}</DenButton>
+                </div>
+              )}
+            />
+          </div>
+        ) : (
+          <ConnectorSettingsForm key={connection.updatedAt ?? connection.id} connection={connection} onSaved={(message) => toast({ title: message })} />
+        )}
+      </Disclosure>
+
+      {native ? null : <UseInAnotherApp connection={connection} />}
     </ItemPage>
   );
 }
