@@ -25,6 +25,7 @@ Run E2E tests:
   --daytona          Require Daytona (fails if the CLI is not authenticated)
   --den <url>        Set OPENWORK_EVAL_DEN_API_URL=<url>
   --strict-ref       Fail when the runner HEAD differs from the ref the Daytona sandbox builds
+  --checkpoints      Opt in to the web checkpoint proof (local controller, Freestyle world)
                      (OPENWORK_EVAL_REF, default dev); OPENWORK_EVAL_STRICT_REF=1 does the same
   --engine <v1|v2>   Select the app chat engine for a named test
   --surface <value>  Validate declared app surface (web|electron); never switches implementation
@@ -108,6 +109,7 @@ export function parseArgs(args) {
     else if (arg === "--local") options.local = true;
     else if (arg === "--daytona") options.daytona = true;
     else if (arg === "--strict-ref") options.strictRef = true;
+    else if (arg === "--checkpoints") options.checkpoints = true;
     else if (arg === "--publish") options.publish = true;
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--force") options.force = true;
@@ -137,6 +139,10 @@ export function parseArgs(args) {
     }
   }
 
+  if (options.checkpoints && (!options.local || options.publish || options.surface === "electron" || options.engine === "v2"
+    || options.testNames.length !== 1 || !["web-checkpoint-fork", "specs/web-checkpoint-fork.e2e.test.ts"].includes(options.testNames[0]))) {
+    throw new Error("--checkpoints currently requires web-checkpoint-fork --local (web, v1). Ordinary runs are unchanged.");
+  }
   if (options.local && (options.daytona || options.den !== undefined)) {
     const conflicts = [];
     if (options.daytona) conflicts.push("--daytona");
@@ -233,6 +239,7 @@ export function daytonaAuthenticated(exec = spawnSync) {
 
 export function resolveRunEnvironment(options, env = process.env, probe = daytonaAuthenticated) {
   const childEnv = { ...env };
+  if (options.checkpoints) childEnv.OPENWORK_EVIDENCE_CHECKPOINTS = "1";
   const worldPlace = env.OPENWORK_WORLD_PLACE?.trim() || undefined;
   if (options.local) {
     for (const name of REMOTE_PLACEMENT_ENV) delete childEnv[name];

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 const SPEC = /^evals\/specs\/.+\.e2e\.test\.ts$/;
 const PACKAGED_SPEC = /^evals\/specs\/packaged-[^/]+\.e2e\.test\.ts$/;
 const DAYTONA_SPEC = "evals/specs/windows-published-preview.e2e.test.ts";
+const CHECKPOINT_SPEC = "evals/specs/web-checkpoint-fork.e2e.test.ts";
 
 /** The packaged smoke journey a packaged spec runs as (its file name without the suffix). */
 export function packagedJourney(spec) {
@@ -36,8 +37,9 @@ export function proofLanes(specs, { event, current, repo, actor, triggeringActor
   // Windows release proof requires a Daytona Windows VM and a real installer.
   // It cannot be rerouted to local Linux to obtain a green but meaningless run.
   const daytonaSpecs = specs.filter(spec => spec === DAYTONA_SPEC);
-  const normalSpecs = specs.filter(spec => !liveSpecs.includes(spec) && !packagedSpecs.includes(spec) && !daytonaSpecs.includes(spec));
-  if (liveSpecs.length || daytonaSpecs.length) {
+  const checkpointSpecs = specs.filter(spec => spec === CHECKPOINT_SPEC);
+  const normalSpecs = specs.filter(spec => !liveSpecs.includes(spec) && !packagedSpecs.includes(spec) && !daytonaSpecs.includes(spec) && !checkpointSpecs.includes(spec));
+  if (liveSpecs.length || daytonaSpecs.length || checkpointSpecs.length) {
     const repository = event?.repository;
     const sameRepo = candidate => Number.isSafeInteger(repository?.id) && repository.id > 0
       && repository.full_name === repo && candidate?.id === repository.id
@@ -48,7 +50,7 @@ export function proofLanes(specs, { event, current, repo, actor, triggeringActor
       throw new Error("Live PR proof is unsupported for forks, untrusted repository metadata, or Dependabot. A maintainer must move the reviewed change to a same-repository PR and approve the pr-slow-specs environment; do not bypass or skip the selected live or Windows spec.");
     }
   }
-  return { normalSpecs, liveSpecs, packagedSpecs, daytonaSpecs };
+  return { normalSpecs, liveSpecs, packagedSpecs, daytonaSpecs, checkpointSpecs };
 }
 
 export async function changedFiles(api, repo, pr, expectedCount) {

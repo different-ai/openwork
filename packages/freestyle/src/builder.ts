@@ -47,7 +47,8 @@ touch ${root}.ready
     if (state === "ready") return;
     if (state === "failed") {
       if (options.diagnostic) {
-        const runtime = stage === "world" ? await execChecked(vm, "journalctl -u openwork-preview-runtime --no-pager -n 100") : "";
+        const runtime = stage === "world" ? await execChecked(vm, "journalctl -u openwork-preview-runtime --no-pager -n 100")
+          : stage === "evidence-world" ? await execChecked(vm, "journalctl -u openwork-evidence --no-pager -n 100") : "";
         await options.diagnostic(stage, await vm.fs.readTextFile(`${root}.log`) + runtime);
       }
       throw new Error(`Snapshot ${stage} failed. Private builder log: ${root}.log`);

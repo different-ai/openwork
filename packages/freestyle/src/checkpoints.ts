@@ -27,7 +27,7 @@ export async function readEvidenceSession(id: string, sourceSha: string, api = c
   if (![EVIDENCE_KIND, FORK_KIND].includes(owner.metadata.kind) || owner.metadata.sourceSha !== sourceSha) throw new Error("Not an owned evidence VM");
   const value: unknown = JSON.parse(await api.vms.ref(id).fs.readTextFile(ACCESS_FILE));
   if (!record(value) || typeof value.token !== "string" || !/^[\w-]{43}$/.test(value.token)
-    || typeof value.expiresAt !== "string" || Date.parse(value.expiresAt) <= Date.now() || !record(value.origins)
+    || typeof value.expiresAt !== "string" || !Number.isFinite(Date.parse(value.expiresAt)) || Date.parse(value.expiresAt) <= Date.now() || !record(value.origins)
     || typeof value.origins.desktop !== "string" || typeof value.origins.cdp !== "string"
     || !/^https:\/\/evidence-[a-f0-9]{32}\.preview\.openwork\.software$/.test(value.origins.desktop)
     || !/^https:\/\/cdp-[a-f0-9]{32}\.preview\.openwork\.software$/.test(value.origins.cdp)) throw new Error("Invalid evidence access configuration");

@@ -23,6 +23,8 @@ jobs:
       liveSelected: ${{ steps.select.outputs.liveSelected }}
       daytonaMatrix: ${{ steps.select.outputs.daytonaMatrix }}
       daytonaSelected: ${{ steps.select.outputs.daytonaSelected }}
+      checkpointMatrix: ${{ steps.select.outputs.checkpointMatrix }}
+      checkpointSelected: ${{ steps.select.outputs.checkpointSelected }}
       packagedMatrix: ${{ steps.select.outputs.packagedMatrix }}
       packagedSelected: ${{ steps.select.outputs.packagedSelected }}
     steps:
@@ -221,6 +223,111 @@ jobs:
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: error
+
+  checkpoint-proof:
+    needs: select
+    if: >-
+      needs.select.outputs.checkpointSelected == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.event.pull_request.head.repo.id == github.event.repository.id &&
+      github.event.pull_request.base.repo.id == github.event.repository.id &&
+      github.event.pull_request.head.repo.fork == false &&
+      github.event.pull_request.base.repo.fork == false &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+    environment: pr-slow-specs
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.select.outputs.checkpointMatrix) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-tests
+      - uses: ./.github/actions/setup-browser
+      - name: Build this branch's review app
+        run: pnpm --filter @openwork/review-app build
+      - name: Prepare this branch's isolated web world
+        timeout-minutes: 35
+        env:
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/prepare-evidence-web.ts
+      - name: Prove screenshot to saved browser on this head
+        id: proof
+        timeout-minutes: 15
+        env:
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
+          PROOF_SPEC: ${{ matrix.spec }}
+        run: |
+          test "$PROOF_SPEC" = 'evals/specs/web-checkpoint-fork.e2e.test.ts'
+          xvfb-run -a pnpm evals:e2e web-checkpoint-fork --local --engine v1 --surface web --checkpoints
+      - name: Save selected native testkit and Vitest records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr-proof-${{ github.run_attempt }}-${{ matrix.key }}
+          path: |
+            evals/results/test-runs/
+            evals/results/.testkit/cli-run-*.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+      - name: Publish the branch-format report
+        if: always() && steps.proof.outcome != 'skipped'
+        id: report
+        env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.OPENWORK_REVIEW_BLOB_TOKEN }}
+          OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/publish-checkpoint-evidence.ts
+      - name: Deploy a separate protected review preview from this head
+        if: always() && steps.report.outcome == 'success'
+        id: preview
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.OPENWORK_REVIEW_VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.OPENWORK_REVIEW_VERCEL_PROJECT_ID }}
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.OPENWORK_REVIEW_BLOB_TOKEN }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$VERCEL_TOKEN" && test -n "$VERCEL_PROJECT_ID" && test -n "$VERCEL_ORG_ID"
+          url="$(pnpm dlx vercel@48 deploy --target preview --yes --scope "$VERCEL_ORG_ID" --token "$VERCEL_TOKEN" --meta githubCommitSha="$SOURCE_SHA" --env FREESTYLE_API_KEY="$FREESTYLE_API_KEY" --env BLOB_READ_WRITE_TOKEN="$BLOB_READ_WRITE_TOKEN")"
+          case "$url" in https://*.vercel.app) ;; *) echo 'Unexpected review deployment URL' >&2; exit 1;; esac
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          # Never move the shared review alias. This PR keeps its own deployment.
+      - name: Verify anonymous access is blocked and link the branch report
+        if: always() && steps.preview.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_URL: ${{ steps.preview.outputs.url }}
+          REPORT_ID: ${{ steps.report.outputs.report_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          for path in "/r/$REPORT_ID" "/r/$REPORT_ID/assets/report.json"; do
+            headers="$(curl -sS -o /dev/null -D - --max-time 30 "$PREVIEW_URL$path")"
+            status="$(printf '%s' "$headers" | head -n1 | awk '{print $2}')"
+            location="$(printf '%s' "$headers" | tr -d '\r' | awk 'tolower($1)=="location:" {print $2}')"
+            if [ "$status" != 401 ]; then
+              test "$status" = 302 && [[ "$location" == https://vercel.com/sso-api* ]]
+            fi
+          done
+          printf '## Interactive checkpoint evidence\n\n[Open this branch’s report](%s/r/%s). This protected preview runs the PR code; nothing needs to merge first. Checkpoints expire after 24 hours.\n' "$PREVIEW_URL" "$REPORT_ID" >> "$GITHUB_STEP_SUMMARY"
+          gh pr comment "$PR_NUMBER" --body "<!-- web-checkpoint-preview -->
+          [Open this branch's interactive checkpoint evidence]($PREVIEW_URL/r/$REPORT_ID). Select a checkpoint image, then **Open from here**. Checkpoints expire after 24 hours. The report records the actual test verdict."
 
   windows-proof:
     needs: select

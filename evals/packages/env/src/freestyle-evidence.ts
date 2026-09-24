@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { request } from "node:https";
 import type { Duplex } from "node:stream";
 import { attachSurface } from "@openwork/cdp";
+import { trackResource } from "@openwork/world";
 import { ensureEvidenceSnapshot } from "@openwork/freestyle/evidence-builder";
 import { client, execChecked } from "@openwork/freestyle";
 import { captureEvidenceCheckpoint, deleteEvidenceVm, launchEvidenceWorld, continueEvidenceStream } from "@openwork/freestyle/checkpoints";
@@ -58,9 +59,10 @@ export async function freestyleEvidenceWeb(sourceSha: string) {
   const snapshot = await ensureEvidenceSnapshot(sourceSha);
   const session = await launchEvidenceWorld(snapshot.id, sourceSha);
   try {
+    await trackResource({ kind: "freestyle-evidence", id: session.id, match: session.id, label: "evidence-web" });
     const app = await attachEvidenceBrowser(session);
     let stopped = false;
-    const stop = async () => { if (stopped) return; stopped = true; try { await app.stop(); } finally { await deleteEvidenceVm(session.id); } };
+    const stop = async () => { if (stopped) return; try { await app.stop(); } finally { await deleteEvidenceVm(session.id); } stopped = true; };
     return { app, session,
       capture: ({ imageHash }: { imageHash: string }) => captureEvidenceCheckpoint({ vmId: session.id, sourceSha, imageHash }),
       continueStream: () => continueEvidenceStream(session.id),
