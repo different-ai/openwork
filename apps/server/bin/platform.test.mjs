@@ -1,109 +1,107 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { SERVER_BINARY_TARGETS, serverBinaryName, serverPlatformPackageName } from "./platform.mjs";
-import { stageNpmPackages } from "../scripts/publish-npm.mjs";
+import { MIN_NODE_VERSION, SERVER_BINARY_TARGETS, nodeVersionSupported, serverBinaryName } from "./platform.mjs";
+import { BUNDLE_EXTERNAL_DEPENDENCIES, stageNpmPackage } from "../scripts/publish-npm.mjs";
 
 const binDir = fileURLToPath(new URL(".", import.meta.url));
+const serverPackage = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
-test("selects a distinct compiled binary for every supported host", () => {
+test("selects a distinct compiled binary for every supported host in a checkout", () => {
   const names = SERVER_BINARY_TARGETS.map(({ platform, arch }) => serverBinaryName(platform, arch));
   assert.equal(new Set(names).size, 6);
   assert.equal(serverBinaryName("darwin", "arm64"), "openwork-server-bun-darwin-arm64");
-  assert.equal(serverBinaryName("linux", "x64"), "openwork-server-bun-linux-x64");
   assert.equal(serverBinaryName("win32", "arm64"), "openwork-server-bun-windows-arm64.exe");
   assert.equal(serverBinaryName("freebsd", "x64"), null);
-  assert.equal(serverBinaryName("darwin", "ia32"), null);
 });
 
-test("names one npm package per supported host", () => {
-  const names = SERVER_BINARY_TARGETS.map(({ platform, arch }) => serverPlatformPackageName(platform, arch));
-  assert.equal(new Set(names).size, 6);
-  assert.equal(serverPlatformPackageName("darwin", "arm64"), "openwork-server-darwin-arm64");
-  assert.equal(serverPlatformPackageName("win32", "x64"), "openwork-server-windows-x64");
-  assert.equal(serverPlatformPackageName("freebsd", "x64"), null);
+test("requires a Node.js with node:sqlite available without a flag", () => {
+  assert.equal(MIN_NODE_VERSION, "22.13.0");
+  for (const ok of ["22.13.0", "v22.14.0", "23.4.0", "24.0.0", "26.1.2"]) assert.ok(nodeVersionSupported(ok), ok);
+  for (const old of ["20.18.0", "22.12.0", "23.3.0", "18.0.0"]) assert.ok(!nodeVersionSupported(old), old);
 });
 
-async function fixture(context, binaryBody = Buffer.alloc(1_000_001)) {
+test("the bundle leaves external exactly the dependencies the package declares", () => {
+  const script = serverPackage.scripts["build:npm-bundle"];
+  const externals = [...script.matchAll(/--external (\S+)/g)].map((match) => match[1]);
+  // Bun-only modules stay external so Node never loads them; the Bun branch never runs there.
+  const nodeExternals = externals.filter((name) => name !== "bun:sqlite" && name !== "drizzle-orm/bun-sqlite");
+  assert.deepEqual(nodeExternals, BUNDLE_EXTERNAL_DEPENDENCIES);
+  for (const name of nodeExternals) assert.ok(serverPackage.dependencies[name], name);
+});
+
+async function fixture(context, bundleSource) {
   const root = await mkdtemp(join(tmpdir(), "openwork-npm-stage-"));
   context.after(() => rm(root, { recursive: true, force: true }));
   const packageRoot = join(root, "server");
-  for (const dir of ["bin", "dist/bin", "dist/opencode-plugins", "../app/dist"]) {
+  for (const dir of ["bin", "dist/npm-bundle", "dist/bin", "dist/opencode-plugins", "../app/dist"]) {
     await mkdir(join(packageRoot, dir), { recursive: true });
   }
   await writeFile(
     join(packageRoot, "package.json"),
-    JSON.stringify({ name: "openwork-server", version: "1.2.3", type: "module", license: "MIT", bin: { "openwork-server": "bin/openwork-server.mjs" } }),
+    JSON.stringify({
+      name: "openwork-server",
+      version: "1.2.3",
+      type: "module",
+      license: "MIT",
+      bin: { "openwork-server": "bin/openwork-server.mjs" },
+      dependencies: { "jsonc-parser": "^3.2.1", zod: "^4.0.0" },
+    }),
   );
   await writeFile(join(packageRoot, "README.md"), "server");
   await cp(join(binDir, "openwork-server.mjs"), join(packageRoot, "bin/openwork-server.mjs"));
   await cp(join(binDir, "platform.mjs"), join(packageRoot, "bin/platform.mjs"));
+  await writeFile(join(packageRoot, "dist/npm-bundle/openwork-server.mjs"), `${bundleSource}\n//${" ".repeat(100_000)}\n`);
   await writeFile(join(packageRoot, "dist/opencode-plugins/openwork-extensions-preview.js"), "plugin");
+  await writeFile(join(packageRoot, "dist/opencode-plugins/openwork-extensions-preview.test.js"), "test");
+  await writeFile(join(packageRoot, "dist/opencode-plugins/pdfium.wasm"), "wasm");
+  await writeFile(join(packageRoot, "dist/bin/openwork-server-bun-linux-x64"), "binary");
   await writeFile(join(packageRoot, "../app/dist/index.html"), "web");
-  for (const { platform, arch } of SERVER_BINARY_TARGETS) {
-    await writeFile(join(packageRoot, "dist/bin", serverBinaryName(platform, arch)), binaryBody);
-  }
   return { root, packageRoot };
 }
 
-test("stages one package per host binary and a main package without binaries", async (context) => {
-  const { packageRoot } = await fixture(context);
-  const staged = await stageNpmPackages(packageRoot);
+test("stages one platform-independent package without compiled binaries", async (context) => {
+  const { packageRoot } = await fixture(context, "export {};");
+  const output = await stageNpmPackage(packageRoot);
 
-  assert.equal(staged.platforms.length, 6);
-  for (const { name, platform, arch, binaryName, dir } of staged.platforms) {
-    const manifest = JSON.parse(await readFile(join(dir, "package.json"), "utf8"));
-    assert.equal(manifest.name, name);
-    assert.equal(manifest.version, "1.2.3");
-    assert.deepEqual(manifest.os, [platform]);
-    assert.deepEqual(manifest.cpu, [arch]);
-    assert.equal(manifest.bin, undefined);
-    const info = await stat(join(dir, "bin", binaryName));
-    assert.equal(info.size, 1_000_001);
-    if (process.platform !== "win32") assert.equal(info.mode & 0o111, 0o111);
-  }
+  const manifest = JSON.parse(await readFile(join(output, "package.json"), "utf8"));
+  assert.equal(manifest.version, "1.2.3");
+  assert.deepEqual(manifest.engines, { node: ">=22.13.0" });
+  assert.deepEqual(manifest.dependencies, { "jsonc-parser": "^3.2.1" });
+  assert.equal(manifest.optionalDependencies, undefined);
+  assert.equal(manifest.os, undefined);
+  assert.equal(manifest.cpu, undefined);
 
-  const main = JSON.parse(await readFile(join(staged.main, "package.json"), "utf8"));
-  assert.deepEqual(
-    main.optionalDependencies,
-    Object.fromEntries(staged.platforms.map(({ name }) => [name, "1.2.3"])),
+  assert.deepEqual((await readdir(join(output, "dist"))).sort(), ["opencode-plugins", "openwork-server.mjs", "pdfium.wasm"]);
+  assert.deepEqual((await readdir(join(output, "dist/opencode-plugins"))).sort(), ["openwork-extensions-preview.js", "pdfium.wasm"]);
+  assert.equal(await readFile(join(output, "web/index.html"), "utf8"), "web");
+});
+
+test("refuses to stage without the Node bundle", async (context) => {
+  const { packageRoot } = await fixture(context, "export {};");
+  await rm(join(packageRoot, "dist/npm-bundle"), { recursive: true });
+  await assert.rejects(stageNpmPackage(packageRoot), /build:npm-bundle/);
+});
+
+test("the installed launcher runs the Node bundle in-process with the package root set", async (context) => {
+  const { root, packageRoot } = await fixture(
+    context,
+    'console.log(JSON.stringify({ args: process.argv.slice(2), root: process.env.OPENWORK_PACKAGE_ROOT }));',
   );
-  assert.deepEqual((await readdir(join(staged.main, "dist"))).sort(), ["opencode-plugins"]);
-  assert.equal(await readFile(join(staged.main, "web/index.html"), "utf8"), "web");
-  assert.equal(await readFile(join(staged.main, "dist/opencode-plugins/openwork-extensions-preview.js"), "utf8"), "plugin");
+  const output = await stageNpmPackage(packageRoot);
+  const installed = join(root, "install/node_modules/openwork-server");
+  await cp(output, installed, { recursive: true });
+
+  const result = spawnSync(process.execPath, [join(installed, "bin/openwork-server.mjs"), "web", "--port", "1"], {
+    encoding: "utf8",
+    env: { ...process.env, OPENWORK_PACKAGE_ROOT: "" },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const seen = JSON.parse(result.stdout.trim());
+  assert.deepEqual(seen.args, ["web", "--port", "1"]);
+  assert.equal(await realpath(seen.root), await realpath(installed));
 });
-
-test("refuses to stage when a host binary is missing", async (context) => {
-  const { packageRoot } = await fixture(context);
-  await rm(join(packageRoot, "dist/bin", serverBinaryName("linux", "arm64")));
-  await assert.rejects(stageNpmPackages(packageRoot), /openwork-server-bun-linux-arm64/);
-});
-
-test(
-  "the installed launcher runs the binary from the matching platform package",
-  { skip: process.platform === "win32" || !serverBinaryName(process.platform, process.arch) },
-  async (context) => {
-    const script = Buffer.concat([Buffer.from('#!/bin/sh\necho "platform-binary $*"\n'), Buffer.alloc(1_000_001, 0x20)]);
-    const { root, packageRoot } = await fixture(context, script);
-    const staged = await stageNpmPackages(packageRoot);
-
-    // The layout npm creates for `npm install openwork-server`.
-    const installed = join(root, "install/node_modules");
-    await cp(staged.main, join(installed, "openwork-server"), { recursive: true });
-    const host = staged.platforms.find((entry) => entry.platform === process.platform && entry.arch === process.arch);
-    await cp(host.dir, join(installed, host.name), { recursive: true });
-
-    const ok = spawnSync(process.execPath, [join(installed, "openwork-server/bin/openwork-server.mjs"), "--version"], { encoding: "utf8" });
-    assert.equal(ok.status, 0, ok.stderr);
-    assert.equal(ok.stdout.trim(), "platform-binary --version");
-
-    await rm(join(installed, host.name), { recursive: true });
-    const missing = spawnSync(process.execPath, [join(installed, "openwork-server/bin/openwork-server.mjs"), "--version"], { encoding: "utf8" });
-    assert.equal(missing.status, 1);
-    assert.match(missing.stderr, new RegExp(`optional package ${host.name} is not installed`));
-  },
-);

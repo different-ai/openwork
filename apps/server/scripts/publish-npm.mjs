@@ -1,121 +1,101 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SERVER_BINARY_TARGETS, serverBinaryName, serverPlatformPackageName } from "../bin/platform.mjs";
+import { MIN_NODE_VERSION } from "../bin/platform.mjs";
 
-export const MAIN_PACKAGE_DIR = "openwork-server";
+// Dependencies the Node bundle leaves external (see build:npm-bundle); npm
+// installs them next to the package.
+export const BUNDLE_EXTERNAL_DEPENDENCIES = ["jsonc-parser"];
 
-// Stages every npm package into its own directory under outputRoot:
-//   <outputRoot>/openwork-server/                launcher, web UI, plugins
-//   <outputRoot>/openwork-server-<os>-<arch>/     one host binary each
-// Platform packages are published before the main package, which pins them
-// as optionalDependencies at the same version.
-export async function stageNpmPackages(packageRoot, outputRoot = resolve(packageRoot, "dist/npm")) {
+// Stages the published openwork-server package:
+//   bin/                      launcher
+//   dist/openwork-server.mjs  the server, bundled for Node (every OS and CPU)
+//   dist/pdfium.wasm          loaded next to the bundle by PDF attachments
+//   dist/opencode-plugins/    plugins handed to the OpenCode engine
+//   web/                      the web UI served by `openwork-server web`
+export async function stageNpmPackage(packageRoot, outputRoot = resolve(packageRoot, "dist/npm")) {
   const sourcePackage = JSON.parse(await readFile(resolve(packageRoot, "package.json"), "utf8"));
-  const shared = {
-    version: sourcePackage.version,
-    repository: sourcePackage.repository,
-    homepage: sourcePackage.homepage,
-    bugs: sourcePackage.bugs,
-    license: sourcePackage.license,
-    publishConfig: sourcePackage.publishConfig,
-  };
 
-  await rm(outputRoot, { recursive: true, force: true });
-
-  const platforms = [];
-  for (const { platform, arch } of SERVER_BINARY_TARGETS) {
-    const name = serverPlatformPackageName(platform, arch);
-    const binaryName = serverBinaryName(platform, arch);
-    const source = resolve(packageRoot, "dist/bin", binaryName);
-    const info = await stat(source).catch(() => null);
-    if (!info || !info.isFile() || info.size < 1_000_000) {
-      throw new Error(`Missing or incomplete OpenWork server binary: ${binaryName}`);
-    }
-    const dir = resolve(outputRoot, name);
-    await mkdir(resolve(dir, "bin"), { recursive: true });
-    await cp(source, resolve(dir, "bin", binaryName));
-    await chmod(resolve(dir, "bin", binaryName), 0o755);
-    await writeFile(
-      resolve(dir, "README.md"),
-      `# ${name}\n\nThe ${platform}/${arch} binary for [openwork-server](https://www.npmjs.com/package/openwork-server). Install \`openwork-server\` instead; npm selects this package automatically.\n`,
-    );
-    await writeFile(
-      resolve(dir, "package.json"),
-      `${JSON.stringify(
-        {
-          name,
-          ...shared,
-          description: `The ${platform}/${arch} binary for openwork-server.`,
-          os: [platform],
-          cpu: [arch],
-          files: ["bin", "README.md"],
-        },
-        null,
-        2,
-      )}\n`,
-    );
-    platforms.push({ name, platform, arch, binaryName, dir });
+  const bundle = resolve(packageRoot, "dist/npm-bundle/openwork-server.mjs");
+  const bundleInfo = await stat(bundle).catch(() => null);
+  if (!bundleInfo || !bundleInfo.isFile() || bundleInfo.size < 100_000) {
+    throw new Error(`Node bundle missing at ${bundle}. Run: pnpm --filter openwork-server build:npm-bundle`);
   }
-
-  const mainDir = resolve(outputRoot, MAIN_PACKAGE_DIR);
-  await mkdir(resolve(mainDir, "bin"), { recursive: true });
-  await cp(resolve(packageRoot, "bin/openwork-server.mjs"), resolve(mainDir, "bin/openwork-server.mjs"));
-  await cp(resolve(packageRoot, "bin/platform.mjs"), resolve(mainDir, "bin/platform.mjs"));
-  // `openwork-server web` serves this bundle and hands these plugins to the engine.
   const webDist = resolve(packageRoot, "..", "app", "dist");
   if (!existsSync(resolve(webDist, "index.html"))) {
     throw new Error(`Web UI bundle missing at ${webDist}. Run: pnpm --filter @openwork/app build:selfhost`);
   }
-  await cp(webDist, resolve(mainDir, "web"), { recursive: true });
   const pluginDist = resolve(packageRoot, "dist/opencode-plugins");
   if (!existsSync(resolve(pluginDist, "openwork-extensions-preview.js"))) {
     throw new Error(`OpenCode plugin bundle missing at ${pluginDist}. Run: pnpm --filter openwork-server build`);
   }
-  await cp(pluginDist, resolve(mainDir, "dist/opencode-plugins"), {
+  const pdfiumWasm = resolve(pluginDist, "pdfium.wasm");
+  if (!existsSync(pdfiumWasm)) {
+    throw new Error(`pdfium.wasm missing at ${pdfiumWasm}. Run: pnpm --filter openwork-server build`);
+  }
+
+  const dependencies = {};
+  for (const name of BUNDLE_EXTERNAL_DEPENDENCIES) {
+    const range = sourcePackage.dependencies?.[name];
+    if (!range) throw new Error(`${name} is external to the bundle but not a dependency of ${sourcePackage.name}`);
+    dependencies[name] = range;
+  }
+
+  await rm(outputRoot, { recursive: true, force: true });
+  await mkdir(resolve(outputRoot, "bin"), { recursive: true });
+  await mkdir(resolve(outputRoot, "dist"), { recursive: true });
+  await cp(resolve(packageRoot, "bin/openwork-server.mjs"), resolve(outputRoot, "bin/openwork-server.mjs"));
+  await cp(resolve(packageRoot, "bin/platform.mjs"), resolve(outputRoot, "bin/platform.mjs"));
+  await cp(bundle, resolve(outputRoot, "dist/openwork-server.mjs"));
+  await cp(pdfiumWasm, resolve(outputRoot, "dist/pdfium.wasm"));
+  await cp(pluginDist, resolve(outputRoot, "dist/opencode-plugins"), {
     recursive: true,
     filter: (source) => !/\.test\.[cm]?js$/.test(source),
   });
-  await cp(resolve(packageRoot, "README.md"), resolve(mainDir, "README.md"));
+  await cp(webDist, resolve(outputRoot, "web"), { recursive: true });
+  await cp(resolve(packageRoot, "README.md"), resolve(outputRoot, "README.md"));
   await writeFile(
-    resolve(mainDir, "package.json"),
+    resolve(outputRoot, "package.json"),
     `${JSON.stringify(
       {
         name: sourcePackage.name,
-        ...shared,
+        version: sourcePackage.version,
         description: sourcePackage.description,
         type: sourcePackage.type,
         bin: sourcePackage.bin,
+        engines: { node: `>=${MIN_NODE_VERSION}` },
+        dependencies,
+        repository: sourcePackage.repository,
+        homepage: sourcePackage.homepage,
+        bugs: sourcePackage.bugs,
         keywords: sourcePackage.keywords,
-        optionalDependencies: Object.fromEntries(platforms.map(({ name }) => [name, sourcePackage.version])),
+        license: sourcePackage.license,
+        publishConfig: sourcePackage.publishConfig,
       },
       null,
       2,
     )}\n`,
   );
-
-  return { main: mainDir, platforms };
+  return outputRoot;
 }
 
 async function main() {
   const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const staged = await stageNpmPackages(packageRoot);
+  const outputRoot = await stageNpmPackage(packageRoot);
   const args = process.argv.slice(2);
   if (args.includes("--prepare-only")) return;
 
   const pnpmCli = process.env.npm_execpath;
   if (!pnpmCli) throw new Error("pnpm executable path is unavailable");
 
-  for (const cwd of [...staged.platforms.map(({ dir }) => dir), staged.main]) {
-    const result = spawnSync(process.execPath, [pnpmCli, "--config.git-checks=false", "publish", ...args], {
-      cwd,
-      stdio: "inherit",
-    });
-    if (result.error) throw result.error;
-    if (result.status !== 0) process.exit(result.status ?? 1);
-  }
+  const result = spawnSync(process.execPath, [pnpmCli, "--config.git-checks=false", "publish", ...args], {
+    cwd: outputRoot,
+    stdio: "inherit",
+  });
+  if (result.error) throw result.error;
+  process.exit(result.status ?? 1);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
