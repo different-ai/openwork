@@ -7,8 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { allocateFreePort, setViewport } from "@openwork/cdp";
 import { chrome, localHost } from "@openwork/hosts";
 import { freestyleEvidenceWeb, attachEvidenceBrowser } from "@openwork/env";
-import { registerScreenshotCheckpoint } from "@openwork/test-evidence";
-import type { ScreenshotArtifact } from "@openwork/test-evidence";
+import type { EvidenceCheckpoint } from "../../packages/freestyle/src/checkpoint-schema.ts";
 import { uploadReview } from "@openwork/review/storage";
 import type { ReviewReport } from "@openwork/review";
 import { client } from "../../packages/freestyle/src/index.ts";
@@ -25,7 +24,6 @@ export async function checkpointWorld() {
   resources.defer(() => rm(temporary, { recursive: true, force: true }));
   try {
     const world = resources.use(await freestyleEvidenceWeb(sourceSha));
-    resources.defer(registerScreenshotCheckpoint(world.app, world.capture));
     const host = resources.use(localHost());
     const reviewer = resources.use(await chrome({ host, name: "checkpoint-reviewer", headless: true }));
     await setViewport(reviewer, { width: 1440, height: 1000, deviceScaleFactor: 1 });
@@ -55,7 +53,7 @@ export async function checkpointWorld() {
     }
     return {
       ...world, reviewer, viewer, reviewUrl, sourceSha,
-      async publish(shot: ScreenshotArtifact, caption: string) {
+      async publish(shot: { png: Buffer; hash: string; at: string; checkpoint?: EvidenceCheckpoint }, caption: string) {
         if (!shot.checkpoint) throw new Error("No checkpoint was captured");
         const image = `${shot.hash}.png`;
         // This temporary report is a live reference, not fabricated passing test

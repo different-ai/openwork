@@ -1,8 +1,12 @@
-import { spec } from "@openwork/testkit";
+import { spec, registerScreenshotCheckpoint } from "@openwork/testkit";
 import { expect } from "vitest";
 import { checkpointWorld } from "../worlds/web-checkpoint.ts";
 
-const test = spec.world(checkpointWorld, {
+const test = spec.world(async () => {
+  const world = await checkpointWorld();
+  const unregister = registerScreenshotCheckpoint(world.app, world.capture);
+  return { ...world, async [Symbol.asyncDispose]() { unregister(); await world[Symbol.asyncDispose](); } };
+}, {
   resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
   needs: { placement: "local", env: ["FREESTYLE_API_KEY"], optIn: ["OPENWORK_EVIDENCE_CHECKPOINTS"] },
   timeout: 1_200_000,

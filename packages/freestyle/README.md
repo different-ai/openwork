@@ -1,5 +1,49 @@
 # Freestyle preview preparation
 
+## Opt-in web evidence checkpoints
+
+The checkpoint proof keeps its controller on Blacksmith and runs the web app,
+Den, databases, Chromium and mocked inference together in one private Freestyle
+VM. It does not move the normal test suite or use real model credentials.
+
+```sh
+pnpm --filter @openwork/review-app build
+pnpm evals:e2e web-checkpoint-fork --local --engine v1 --surface web --checkpoints
+# Or open a standalone world, using the merged world/source API:
+pnpm world up evidence-web --place freestyle --source app-web=sha:<full-pushed-sha>
+```
+
+Supply `FREESTYLE_API_KEY` to the host environment. Do not put it in a guest or
+artifact. No Infisical integration is required or added. CI uses the existing
+protected `pr-slow-specs` environment and repository secret. The key's delivery
+can later change without changing capture or fork APIs.
+
+An opted-in world registers a capture provider with the testkit. Its explicit
+`user.screenshot()` calls also save a checkpoint; `user.screenshot({ checkpoint:
+false })` keeps the ordinary behavior. Capture failure keeps the PNG and fails
+the checkpoint proof, rather than silently claiming an interactive checkpoint.
+There is no whole-VM checkpoint without a registered provider.
+
+Select a checkpoint image in the report, choose **Open from here**, then
+**Enter saved browser**. Each launch creates an independent copy behind the
+private preview gateway. The viewer shows the restored Chromium tab, not a new
+page. The deterministic streaming fixture pauses at a known point and exposes
+**Continue response** in the viewer. Real external-provider connections are not
+promised to survive a fork. Screenshot and snapshot capture are ordered, not
+atomic; the controlled stream hold is what makes the streaming comparison exact.
+
+Limits: ten captures per source VM, 24-hour checkpoint retention, one-hour forks,
+and three concurrent forks per checkpoint. Expiry preserves the screenshot.
+Request retries reuse the same fork instead of spending another slot. Provider
+TTL bounds orphan lifetime; normal teardown deletes source and verification VMs.
+
+The PR proof deploys a separate protected review preview from the same head and
+publishes a branch-format report there. It never updates the shared review alias
+or waits for a merge to `dev`. The plan and acceptance boundaries are in
+[`docs/plans/web-evidence-checkpoints.md`](../../docs/plans/web-evidence-checkpoints.md).
+
+## Existing preview preparation
+
 CI prepares one running snapshot per commit and world. Each reviewer launch still
 clones that snapshot into a separate VM with its own URLs, access token, and filesystem.
 ACME additionally isolates MySQL and Redis. Build caches never contain a reviewer's running VM.
