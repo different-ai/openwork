@@ -12,6 +12,7 @@ const specs = new Set([
   "evals/specs/engine-provider-filters.e2e.test.ts",
   "evals/specs/engine-gateway-parity.e2e.test.ts",
   "evals/specs/engine-connectors-parity.e2e.test.ts",
+  "evals/specs/connector-tool-call-branding.e2e.test.ts",
   "evals/specs/engine-live-chat.e2e.test.ts",
   "evals/specs/engine-live-desktop.e2e.test.ts",
   "evals/specs/engine-live-launch.e2e.test.ts",
