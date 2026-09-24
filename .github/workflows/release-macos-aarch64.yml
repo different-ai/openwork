@@ -1179,7 +1179,15 @@ jobs:
   verify-npm-hosts:
     name: Verify npm server (${{ matrix.target }})
     needs: [resolve-release, prepare-npm]
-    if: needs.prepare-npm.outputs.publish_server == 'true'
+    # always() is required: resolve-benchmark is skipped on every production
+    # release, and a job whose `if` lacks a status function is skipped when
+    # any transitive dependency was skipped. Without it this matrix never
+    # runs and publish-npm silently skips (v0.18.51, v0.18.52).
+    if: |
+      always() &&
+      needs.resolve-release.result == 'success' &&
+      needs.prepare-npm.result == 'success' &&
+      needs.prepare-npm.outputs.publish_server == 'true'
     strategy:
       fail-fast: false
       matrix:
