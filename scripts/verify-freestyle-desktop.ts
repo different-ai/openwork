@@ -30,7 +30,9 @@ for (const name of ["xfwm4", "xfce4-panel"]) execFileSync("pgrep", ["-x", name],
 const state = await inspectDesktop();
 await verifyBrowserHandoff();
 await verifyBrowserHandoff({ launcher: "exo-open", args: ["--launch", "WebBrowser"] });
-await verifyBrowserHandoff({ launcher: "gio", args: ["launch", "/usr/share/applications/google-chrome.desktop"] });
+const chromeLauncher = readFileSync("/usr/share/applications/google-chrome.desktop", "utf8").match(/^Exec=(\\S+) %U$/m);
+assert.ok(chromeLauncher, "Chrome menu entry must contain a URL launcher");
+await verifyBrowserHandoff({ launcher: chromeLauncher[1] });
 const profile = JSON.parse(readFileSync(root + "/desktop/profile.json", "utf8"));
 await verifyBrowserHandoff({ env: desktopProfileEnvironment(profile) });
 const { attachSurface, evaluate, browserScript } = await import("/workspace/evals/packages/cdp/src/index.ts");
