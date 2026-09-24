@@ -107,7 +107,7 @@ export function Report({ report, id, connected }: { report: ReviewReport; id: st
           <span role="status">{visibleSections.length} of {sections.length} sections</span>
         </div>
         <label className="section-picker">Jump to section
-          <select value="" onChange={(event) => { window.location.hash = event.target.value; document.getElementById(event.target.value)?.focus(); }}>
+          <select aria-label="Jump to section" value="" onChange={(event) => { window.location.hash = event.target.value; document.getElementById(event.target.value)?.focus(); }}>
             <option value="" disabled>Choose a section</option>
             {visibleSections.map((section) => <option key={section.id} value={section.id}>{section.title} — {section.verdict}</option>)}
           </select>
