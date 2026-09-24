@@ -24,6 +24,7 @@ import { createHeadlessThreadClientV2 as createHeadlessThreadClient, createNativ
 import { configureNativePluginBundles, verifyNativePluginBundles } from "./native-plugin.mjs";
 import { nativeTurnAgent, coworkerAgent, NATIVE_COORDINATOR_AGENT } from "./native-turns.mjs";
 import { assertTeamCompatibleHomes, teamWorkspaceDirectory, teamWorkspaceId, updateTeamWorkspaceConfig } from "./team-workspace.mjs";
+import { createLinkPreviews } from "./link-preview.mjs";
 import { assertOwnedNativeTool, createTeamSessionRegistry, resolveNativeFilesystemScope } from "./team-sessions.mjs";
 import { awaitNativePluginActivation, prepareNativeTurnRoles } from "./turn-roles-plugin.mjs";
 import { dispatchNativeTurn, nativeTurnReceipt, waitForNativeTurn, verifyNativeTurnSkills } from "./native-recovery.mjs";
@@ -1060,6 +1061,7 @@ const collaboration = createCollaboration({
   }),
 });
 const activityInbox = createActivityInbox({ collaboration, coworkers: () => listCoworkers(coworkersDir), groups: () => listGroups(coworkersDir) });
+const linkPreviews = createLinkPreviews();
 const messageReactions = createMessageReactionRuntime({
   directory: coworkersDir, collaboration,
   coworkerFor: (slug) => getCoworker(coworkersDir, slug),
@@ -3399,6 +3401,8 @@ const commands = {
   // Links supplied by an MCP App are untrusted. The native confirmation keeps
   // the destination visible and requires a fresh user gesture before leaving.
   "shell.openUntrustedExternal": async ({ url }) => confirmAndOpenExternal(url),
+  // Metadata for a link shared in a conversation; public hosts only, fetched here, never by the renderer.
+  "links.preview": async ({ url }) => linkPreviews.read(url),
   /** Signed-in account → embedded server → engine providers. Returns the sync outcome. */
   "den.session.set": async (payload) => {
     const session = parseDenSessionPayload(payload);

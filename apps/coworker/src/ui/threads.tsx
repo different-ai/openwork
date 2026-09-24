@@ -120,6 +120,8 @@ import { InlineLoader } from "@/ui/brand";
 import { Button, ChevronIcon, Empty, ErrorNote, IconButton, PlusIcon, StatusDot, StopIcon, ToolIcon } from "@/ui/kit";
 import { ChatReply } from "@/ui/chat-reply";
 import { MessageReactions, useMessageReactions } from "@/ui/message-reactions";
+import { ReplyReferences } from "@/ui/reply-references";
+import { linkDocumentMentions, type DocumentReference } from "@/lib/message-references";
 import { DocumentCard } from "@/ui/documents";
 import { documentCardsFromCalls, isDocumentTool, shouldFoldReply, splitReplyLead, type DocumentCardData } from "@/lib/documents";
 import { newcomerLine, teamCardsFromCalls } from "@/lib/team";
@@ -196,6 +198,8 @@ const appliedSkillRequests = new Map<string, number>();
 
 /** How the conversation reaches the Documents view: open a document there, or beside the chat when the window allows. */
 export type DocumentHooks = {
+  /** The coworker's documents, so a reply that names one can link to it. */
+  list: readonly DocumentReference[];
   onOpenDocument: (documentId: string) => void;
   onOpenDocumentBeside: (documentId: string) => void;
   canOpenBeside: boolean;
@@ -2571,6 +2575,7 @@ function ThreadView({
                   reactions={messageReactions.get(block.message.id)}
                   coworker={coworker}
                   mcpClient={mcpClient}
+                  documents={documents}
                   active={block.active}
                   continued={block.continued}
                   tail={block.tail}
@@ -2899,8 +2904,11 @@ const MessageBubble = memo(function MessageBubble({
   onLongReply,
   liveStream = null,
   sentAt = null,
+  documents,
 }: {
   message: TranscriptMessage;
+  /** The coworker's documents and how to open one, for the links and cards a reply's mentions become. */
+  documents?: DocumentHooks;
   reactions?: readonly MessageReaction[];
   coworker: CoworkerSummary;
   mcpClient: CoworkerMcpClient;
@@ -3036,8 +3044,9 @@ const MessageBubble = memo(function MessageBubble({
         </div>
       ) : message.text ? (
         <div className={`relative min-w-0 max-w-[min(76%,38rem)] ${reactions?.length ? "mt-5" : ""}`} title={tooltip || undefined}>
-          <ReplyText message={message} active={active} turnCalls={documentCalls} tail={tail && (active || teamCards.length === 0)} onLongReply={onLongReply} />
+          <ReplyText message={message} active={active} turnCalls={documentCalls} tail={tail && (active || teamCards.length === 0)} onLongReply={onLongReply} documents={documents} />
           <MessageReactions messageId={message.id} reactions={reactions} side="right" />
+          {!active ? <ReplyReferences text={message.text} documents={documents?.list ?? []} excludeDocumentIds={documentCardsFromCalls(documentCalls).map((card) => card.id)} onOpenDocument={documents?.onOpenDocument} /> : null}
         </div>
       ) : !active && message.toolCalls.length === 0 && teamCards.length === 0 ? (
         <div className={`bubble bubble-coworker ${tail ? "bubble-tail-left" : ""} text-mist`}>…</div>
@@ -3062,17 +3071,20 @@ const MessageBubble = memo(function MessageBubble({
  * only hidden — and is reported once so the coworker's next turn carries a
  * reminder of how it talks.
  */
-function ReplyText({ message, active, turnCalls, tail, onLongReply }: { message: TranscriptMessage; active: boolean; turnCalls: TranscriptToolCall[]; tail: boolean; onLongReply?: (messageId: string, chars: number) => void }) {
+function ReplyText({ message, active, turnCalls, tail, onLongReply, documents }: { message: TranscriptMessage; active: boolean; turnCalls: TranscriptToolCall[]; tail: boolean; onLongReply?: (messageId: string, chars: number) => void; documents?: DocumentHooks }) {
   const [open, setOpen] = useState(false);
   const long = !active && shouldFoldReply(message.text, turnCalls);
-  const split = useMemo(() => long ? splitReplyLead(message.text) : null, [long, message.text]);
+  // A document the reply names by id or title opens in place from its name.
+  const text = useMemo(() => documents?.list.length ? linkDocumentMentions(message.text, documents.list) : message.text, [documents?.list, message.text]);
+  const onOpenDocument = documents?.onOpenDocument;
+  const split = useMemo(() => long ? splitReplyLead(text) : null, [long, text]);
   useEffect(() => {
     if (long && onLongReply) onLongReply(message.id, message.text.length);
   }, [long, message.id, message.text.length, onLongReply]);
-  if (!split?.rest) return <ChatReply text={message.text} live={active} tail={tail} data-testid="coworker-reply-bubble" />;
+  if (!split?.rest) return <ChatReply text={text} live={active} tail={tail} data-testid="coworker-reply-bubble" onOpenDocument={onOpenDocument} />;
   return (
     <div data-testid="reply-fold" data-open={open ? "true" : "false"}>
-      <div data-testid="reply-fold-lead"><ChatReply text={open ? message.text : split.leadMarkdown} tail={tail} data-testid="coworker-reply-bubble" /></div>
+      <div data-testid="reply-fold-lead"><ChatReply text={open ? text : split.leadMarkdown} tail={tail} data-testid="coworker-reply-bubble" onOpenDocument={onOpenDocument} /></div>
       <button
         type="button"
         className="mt-2 text-[11px] font-medium text-mist underline decoration-mist/40 underline-offset-2 hover:text-snow"

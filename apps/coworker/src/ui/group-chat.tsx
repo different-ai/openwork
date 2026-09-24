@@ -30,6 +30,10 @@ import { safeLiveMarkdown } from "@/lib/live-phase";
 import { LiveRow } from "@/ui/live-row";
 import { ChatReply } from "@/ui/chat-reply";
 import { MessageReactions, useMessageReactions } from "@/ui/message-reactions";
+import { ReplyReferences } from "@/ui/reply-references";
+
+/** Group documents are shared files, not a coworker's own; group replies preview only web links. */
+const NO_DOCUMENT_REFERENCES: never[] = [];
 import { acknowledgeCoworker, CoworkerAvatar, GroupAvatars } from "@/ui/coworker-avatar";
 import { InteractionCard, InteractionCards, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
 import { ActionMenu, Button, CONVERSATION_TOP, ChevronIcon, ErrorNote, IconButton, PlusIcon, StopIcon, Tooltip } from "@/ui/kit";
@@ -764,6 +768,7 @@ function GroupChatView({
                     {!continued ? <p className="mb-0.5 px-2 text-[11px] font-medium text-mist" data-testid="group-speaker-name">{nameFor(event.slug ?? "")}</p> : null}
                     <div className={`relative ${persistedEventId && messageReactions.get(persistedEventId)?.length ? "mt-5" : ""}`} title={timeLabel(event.at)}>
                       <ChatReply text={event.text} tail={tail} />
+                      <ReplyReferences text={event.text} documents={NO_DOCUMENT_REFERENCES} />
                       {persistedEventId ? <MessageReactions messageId={persistedEventId} reactions={messageReactions.get(persistedEventId)} side="right" /> : null}
                     </div>
                   </div>

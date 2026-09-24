@@ -48,6 +48,7 @@ import type { SettingsSection } from "@/ui/openwork-settings";
 const CapabilitiesPanel = lazy(() => import("@/ui/capabilities").then((module) => ({ default: module.CapabilitiesPanel })));
 
 const CONTEXT_PANEL_WIDTH_KEY = "open-coworker.context-panel-width";
+const NO_DOCUMENTS: never[] = [];
 const CONTEXT_PANEL_DEFAULT_WIDTH = 360;
 const MAIN_WORKSPACE_MIN_WIDTH = 520;
 /** The context panel: drag it narrower than it can usefully be and it folds to an icon strip. */
@@ -357,6 +358,7 @@ export function CoworkerHome({
     || (!contextPanel.collapsed && contextView === "settings" ? "Close coworker settings before opening another source. Your settings have been kept." : null)
     || (overlayPanel ? "Close the current sidebar before opening another source. Its contents have been kept." : null));
   const documentHooks: DocumentHooks = {
+    list: documents ?? NO_DOCUMENTS,
     onOpenDocument: (documentId) => {
       if (!allowDocumentNavigation()) return;
       openActivityLevel("documents");

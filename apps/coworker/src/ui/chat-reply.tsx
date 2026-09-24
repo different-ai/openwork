@@ -8,9 +8,11 @@ export type ChatReplyProps = {
   tail?: boolean;
   className?: string;
   "data-testid"?: string;
+  /** Opens a document a doc: link in the reply names. */
+  onOpenDocument?: (documentId: string) => void;
 };
 
-export function ChatReply({ text, live = false, tail = false, className = "", "data-testid": testId = "chat-reply-bubble" }: ChatReplyProps) {
+export function ChatReply({ text, live = false, tail = false, className = "", "data-testid": testId = "chat-reply-bubble", onOpenDocument }: ChatReplyProps) {
   const parts = useMemo(() => splitChatReply(text), [text]);
   return (
     <div className={`flex min-w-0 flex-col items-start gap-1 ${className}`} data-live={live || undefined}>
@@ -21,7 +23,7 @@ export function ChatReply({ text, live = false, tail = false, className = "", "d
           data-testid={testId}
           data-bubble-index={index}
         >
-          <Markdown text={part.markdown} className="overflow-x-auto" />
+          <Markdown text={part.markdown} className="overflow-x-auto" onOpenDocument={onOpenDocument} />
         </div>
       ))}
     </div>

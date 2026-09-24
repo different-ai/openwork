@@ -18,23 +18,26 @@ export function renderMarkdown(text: string): string {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ["style", "img", "svg", "math", "iframe", "form", "input", "button"],
     FORBID_ATTR: ["style", "onerror", "onload"],
+    // doc: links name one of the coworker's documents and open it in place.
+    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|doc:)/i,
   });
 }
 
-function openLink(event: MouseEvent<HTMLDivElement>): void {
+function openLink(event: MouseEvent<HTMLDivElement>, onOpenDocument?: (documentId: string) => void): void {
   const target = event.target instanceof Element ? event.target.closest("a") : null;
   if (!target) return;
   event.preventDefault();
   const href = target.getAttribute("href") ?? "";
-  if (/^https?:\/\//i.test(href)) void coworkerBridge.openUntrustedExternal(href);
+  if (href.startsWith("doc:")) onOpenDocument?.(href.slice(4));
+  else if (/^https?:\/\//i.test(href)) void coworkerBridge.openUntrustedExternal(href);
 }
 
-export function Markdown({ text, className = "" }: { text: string; className?: string }) {
+export function Markdown({ text, className = "", onOpenDocument }: { text: string; className?: string; onOpenDocument?: (documentId: string) => void }) {
   const html = useMemo(() => renderMarkdown(text), [text]);
   return (
     <div
       className={`coworker-markdown text-sm leading-relaxed text-snow ${className}`}
-      onClick={openLink}
+      onClick={(event) => openLink(event, onOpenDocument)}
       // Sanitized above; DOMPurify's default profile keeps only safe HTML.
       dangerouslySetInnerHTML={{ __html: html }}
     />

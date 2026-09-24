@@ -147,6 +147,9 @@ export type GroupTimelineEvent = {
   revision?: number;
 };
 
+/** What a shared link says about itself, read by the main process. `image` is an inline data URL or "". */
+export type LinkPreview = { url: string; title: string; description: string; siteName: string; image: string };
+
 export type CoworkerSummary = {
   slug: string;
   path: string;
@@ -797,6 +800,8 @@ export const coworkerBridge = {
   openExternal: (url: string) => invoke<{ ok: boolean }>("shell.openExternal", { url }),
   openUntrustedExternal: (url: string) =>
     invoke<{ ok: boolean; cancelled?: boolean }>("shell.openUntrustedExternal", { url }),
+  /** A messaging-style preview of a shared link: its own title, description, site and inline image. */
+  linkPreview: (url: string) => invoke<LinkPreview | null>("links.preview", { url }),
   /**
    * The signed-in OpenWork account, handed to the embedded server so the
    * member's authorized providers become engine providers — the desktop's

@@ -1005,3 +1005,14 @@ a {
 .memory-compact .coworker-markdown ol {
   margin: 0.25rem 0;
 }
+
+/* A document named in a reply: a quiet tappable mention that opens it in place. */
+.coworker-markdown a[href^="doc:"] {
+  color: #adc3ff;
+  text-decoration: none;
+  border-bottom: 1px solid rgb(173 195 255 / 0.35);
+  cursor: pointer;
+}
+.coworker-markdown a[href^="doc:"]:hover {
+  border-bottom-color: #adc3ff;
+}
