@@ -13,6 +13,7 @@ const CLIENT_ORIGIN = "https://cimd-client.example.test"
 const CLIENT_ID = `${CLIENT_ORIGIN}/oauth/client-metadata.json`
 const MISMATCHED_CLIENT_ID = `${CLIENT_ORIGIN}/oauth/mismatched-client-metadata.json`
 const FOREIGN_REDIRECT_CLIENT_ID = `${CLIENT_ORIGIN}/oauth/foreign-redirect-client-metadata.json`
+const LOCALHOST_CLIENT_ID = `${CLIENT_ORIGIN}/oauth/localhost-client-metadata.json`
 const LOOPBACK_REDIRECT_URI = "http://127.0.0.1:33418/callback"
 const AGENT_RESOURCE = `${API_ORIGIN}/mcp/agent`
 
@@ -30,6 +31,15 @@ const documents: Record<string, Record<string, unknown>> = {
     client_id: CLIENT_ID,
     client_name: "Impersonating Client",
     redirect_uris: [LOOPBACK_REDIRECT_URI],
+    token_endpoint_auth_method: "none",
+  },
+  [LOCALHOST_CLIENT_ID]: {
+    // The shape Claude Code publishes: loopback redirects without a port.
+    client_id: LOCALHOST_CLIENT_ID,
+    client_name: "Ephemeral Port Client",
+    redirect_uris: ["http://localhost/callback", "http://127.0.0.1/callback"],
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
     token_endpoint_auth_method: "none",
   },
   [FOREIGN_REDIRECT_CLIENT_ID]: {
@@ -298,4 +308,22 @@ test("Den's MCP redirect policy still applies to metadata-document clients", asy
   expect(failure.error).toBe("invalid_redirect_uri")
   // Rejected before any document fetch.
   expect(documentFetches).not.toContain(FOREIGN_REDIRECT_CLIENT_ID)
+})
+
+test("a registered loopback redirect accepts any port, including on localhost", async () => {
+  const response = await authorize({ clientId: LOCALHOST_CLIENT_ID, redirectUri: "http://localhost:41234/callback", verifier: "x".repeat(43), prompt: "consent" })
+  expect(response.status).toBe(302)
+  const location = response.headers.get("location")
+  expect(location).toBeTruthy()
+  expect(new URL(location ?? "").searchParams.get("error")).toBeNull()
+  expect(new URL(location ?? "").searchParams.get("client_id")).toBe(LOCALHOST_CLIENT_ID)
+})
+
+test("the loopback relaxation does not extend to other paths or hosts", async () => {
+  for (const redirectUri of ["http://localhost:41234/other", "http://localhost.attacker.test:41234/callback"]) {
+    const response = await authorize({ clientId: LOCALHOST_CLIENT_ID, redirectUri, verifier: "x".repeat(43) })
+    const failure = await readOAuthError(response)
+    expect(failure.error).toBeTruthy()
+    expect(failure.location?.includes("code=") ?? false).toBe(false)
+  }
 })

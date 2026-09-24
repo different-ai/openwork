@@ -37,6 +37,7 @@ import { cache } from "./cache.js";
 import { SCIM_TOKEN_STORAGE_STRATEGY } from "./scim-token-storage.js";
 import { createScimExistingUserLinkCheck } from "./scim-existing-user-linking.js";
 import { isCimdClientIdUrlAllowed } from "./mcp/cimd-policy.js";
+import { withLoopbackRedirectRelaxation } from "./mcp/cimd-loopback-redirects.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
 import {
@@ -98,8 +99,8 @@ import { readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstra
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
-import { cimd } from "@better-auth/cimd";
-import { oauthProvider } from "@better-auth/oauth-provider";
+import { cimdClientDiscovery } from "@better-auth/cimd";
+import { extendOAuthProvider, oauthProvider } from "@better-auth/oauth-provider";
 import { scim } from "@better-auth/scim";
 import { sso } from "@better-auth/sso";
 import { betterAuth } from "better-auth";
@@ -1397,19 +1398,29 @@ export const auth = betterAuth({
     // and advertises `client_id_metadata_document_supported` in discovery, so
     // spec-following clients no longer need dynamic registration. DCR stays on
     // as the fallback for clients that do not support this yet.
-    cimd({
-      // Redirect URIs are matched exactly at authorize time and Den's MCP
-      // redirect policy still applies; native clients legitimately redirect to
-      // loopback or another origin than the one hosting their document.
-      originBoundFields: ["post_logout_redirect_uris", "client_uri"],
-      allowFetch: (url) => isCimdClientIdUrlAllowed(url),
-      onClientCreated: ({ client }) => {
-        logger.info("Registered MCP client from its client ID metadata document", {
-          clientId: client.clientId,
-          clientName: client.name ?? null,
+    {
+      id: "cimd",
+      init(ctx) {
+        extendOAuthProvider(ctx, {
+          // Same discovery the @better-auth/cimd plugin installs, wrapped so a
+          // registered loopback redirect matches on any port (RFC 8252 §7.3),
+          // which native MCP clients such as Claude Code depend on.
+          clientDiscovery: withLoopbackRedirectRelaxation(cimdClientDiscovery({
+            // Redirect URIs are matched at authorize time and Den's MCP redirect
+            // policy still applies; native clients legitimately redirect to
+            // loopback or another origin than the one hosting their document.
+            originBoundFields: ["post_logout_redirect_uris", "client_uri"],
+            allowFetch: (url) => isCimdClientIdUrlAllowed(url),
+            onClientCreated: ({ client }) => {
+              logger.info("Registered MCP client from its client ID metadata document", {
+                clientId: client.clientId,
+                clientName: client.name ?? null,
+              });
+            },
+          })),
         });
       },
-    }),
+    },
     scim({
       linkExistingUsers: {
         requireExistingOrgMembership: true,
