@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { updatePreviewCard } from "./evidence-preview-card.mjs";
 
 const checkName = "Evidence preview";
 const validId = value => Number.isSafeInteger(value) && value > 0;
@@ -98,12 +99,21 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
   if (!await current()) return { skipped: true };
   if (!check) check = await api(`${root}/check-runs`, "POST", { name: checkName, head_sha: sha, external_id: externalId, status, ...(conclusion ? { conclusion, completed_at: new Date().toISOString() } : {}), details_url: detailsUrl, output });
   else await api(`${root}/check-runs/${check.id}`, "PATCH", { status, ...(conclusion ? { conclusion, completed_at: new Date().toISOString() } : {}), details_url: detailsUrl, output });
+  if (!await current()) return { skipped: true };
+  // Commit statuses render independently of GitHub Actions' dynamic check-suite
+  // grouping, which can put custom checks under an unrelated CodeQL heading.
+  await api(`${root}/statuses/${sha}`, "POST", {
+    context: "OpenWork Evidence",
+    state: status !== "completed" ? "pending" : ["success", "neutral"].includes(conclusion) ? "success" : "failure",
+    description: title.slice(0, 140), target_url: detailsUrl,
+  });
+  await updatePreviewCard({ repo, pr: stub.number, sha, status, conclusion, title, reportUrl, logUrl, reviewUrl }, api, current);
   if (!reportUrl || !await current()) return { checkId: check.id };
   // Each publication is immutable and tied to the tested SHA. Do not let a
   // late deployment automatically deactivate a newer commit's preview.
   const deployment = await api(`${root}/deployments`, "POST", {
     ref: sha, auto_merge: false, required_contexts: [], environment,
-    transient_environment: true, production_environment: false,
+    transient_environment: false, production_environment: false,
     description: `Evidence for ${sha.slice(0, 7)} (run ${source.id}, attempt ${source.run_attempt})`,
     payload: { kind: "openwork-evidence-v1", runId: source.id, runAttempt: source.run_attempt, sha, pr: stub.number },
   });

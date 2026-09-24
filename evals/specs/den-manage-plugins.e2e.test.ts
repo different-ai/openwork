@@ -7,8 +7,9 @@ const test = spec.world(denManagePluginsAsAdmin, { timeout: 600_000 });
 
 const names = (items: { name: string }[]) => items.map((item) => item.name);
 
-test("an admin: I want to give the Sales team a plugin so they all get the same skills", async ({ world, user, probe, step }) => {
+test("an admin: I want to give the Sales team a plugin so they all get the same skills", async ({ world, user, probe, step, evidence }) => {
   const reach = world.teamSize("Sales");
+  let directoryUrl = "";
 
   await step("1. I open Plugins in Manage: there are none yet", async () => {
     await user.see({ testId: "plugins-empty" }, { timeoutMs: 120_000 });
@@ -58,6 +59,7 @@ test("an admin: I want to give the Sales team a plugin so they all get the same 
   });
 
   await step("6. I go back to Plugins and see who has it", async () => {
+    const logStart = (await world.proxy.requestLog()).length;
     await user.click({ role: "link", label: "Plugins" });
     await user.see({ testId: "admin-plugins" }, { timeoutMs: 60_000 });
     await user.see({ testId: "admin-plugins" }, { text: /Sales call prep/ });
@@ -65,6 +67,55 @@ test("an admin: I want to give the Sales team a plugin so they all get the same 
       within: 30_000, label: "who has the plugin", until: (text) => text === "Sales",
     });
     expect(status).toBe("Sales");
+    const listCalls = (await world.proxy.requestLog()).slice(logStart).map((entry) => entry.path)
+      .filter((path) => path.startsWith("/v1/plugins?") || /^\/v1\/plugins\/[^/?]+\/access/.test(path));
+    expect(listCalls, "the directory fetches a bounded page with access").toContain("/v1/plugins?status=active&limit=50&includeAccess=true&includeTotal=true");
+    expect(listCalls.some((path) => /\/access/.test(path))).toBe(false);
+    evidence.recordAssertionEvidence(
+      "Plugins loads a bounded page with access",
+      `The Sales call prep row reads "${status}"; directory requests Den received: ${listCalls.join(", ")}`,
+      true,
+    );
+    await user.screenshot();
+  });
+
+  await step("after: I find the plugin by name and by Sales access", async () => {
+    await user.type({ placeholder: "Search plugins by name" }, "Sales call");
+    await user.see({ testId: "admin-plugins" }, { text: /Sales call prep/ });
+    await user.click({ role: "button", label: "Team" });
+    await user.click({ role: "button", label: "Sales" });
+    await user.see({ role: "button", label: /Team: Sales/ });
+    await user.see({ text: "1 plugin" });
+    await user.see({ testId: "admin-plugins" }, { text: /Sales call prep/ });
+    directoryUrl = new URL(await world.location(), world.den.ref.webUrl).toString();
+    await user.screenshot();
+  });
+
+  await step("the matching plugin still opens its details", async () => {
+    await user.click({ role: "link", label: /Sales call prep/ });
+    await user.see({ testId: "plugin-page" }, { timeoutMs: 60_000 });
+    await user.see({ role: "heading", label: "Sales call prep" });
+    await user.screenshot();
+    await user.navigate(directoryUrl);
+    await user.see({ testId: "admin-plugins" });
+    await user.see({ role: "button", label: /Team: Sales/ });
+    expect(await world.location()).toContain(`name=Sales+call&teamId=${world.teamIds.Sales}`);
+    await user.screenshot();
+  });
+
+  await step("after: Omar has access through Sales, while Kai does not", async () => {
+    await user.click({ role: "button", label: "User" });
+    await user.click({ role: "button", label: "Omar Diaz" });
+    await user.see({ testId: "admin-plugins" }, { text: /Sales call prep/ });
+    await user.screenshot();
+    await user.click({ role: "button", label: /User: Omar Diaz/ });
+    await user.click({ role: "button", label: "Kai Brooks" });
+    await user.see({ text: "No plugins match. Try another name or audience." });
+    const filteredPaths = (await world.proxy.requestLog()).map((entry) => entry.path).filter((path) => path.startsWith("/v1/plugins?"));
+    expect(filteredPaths.some((path) => path.includes(`teamId=${world.teamIds.Sales}`))).toBe(true);
+    expect(filteredPaths.some((path) => path.includes(`memberId=${world.memberIds.omar}`))).toBe(true);
+    expect(filteredPaths.some((path) => path.includes(`memberId=${world.memberIds.kai}`))).toBe(true);
+    evidence.recordAssertionEvidence("the audience filters reach Den", "Team and both member queries reached the plugin list; Kai has no matching plugin", true);
     await user.screenshot();
   });
 

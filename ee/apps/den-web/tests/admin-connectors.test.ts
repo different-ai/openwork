@@ -24,13 +24,9 @@ describe("Manage › Connectors", () => {
     expect(connectorSetupUnfinished({ setupRequired: true, credentialMode: "per_member", authType: "oauth", connected: false })).toBe(true);
   });
 
-  test("Finish signs in on the connector page, and sends OAuth apps and keys to the full editor", () => {
-    expect(finishSetupHref("acme", { id: "emc_1", authType: "oauth", oauthClientRequired: false, oauthClientConfigured: false }))
-      .toBe("/dashboard/mcp-connections/emc_1");
-    expect(finishSetupHref("acme", { id: "emc_1", authType: "oauth", oauthClientRequired: true, oauthClientConfigured: false }))
-      .toBe("/dashboard/mcp-connections/all/emc_1");
-    expect(finishSetupHref("acme", { id: "emc_2", authType: "apikey" }))
-      .toBe("/dashboard/mcp-connections/all/emc_2");
+  test("Finish always opens the connector page, where sign-in, keys and OAuth apps are finished", () => {
+    expect(finishSetupHref("acme", { id: "emc_1" })).toBe("/dashboard/mcp-connections/emc_1");
+    expect(finishSetupHref("acme", { id: "emc_2" })).toBe("/dashboard/mcp-connections/emc_2");
   });
 
   test("the page says how people sign in, in plain words", () => {

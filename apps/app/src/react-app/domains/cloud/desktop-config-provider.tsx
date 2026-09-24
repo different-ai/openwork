@@ -297,7 +297,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
 
   const desktopConfigHandler = useCallback(async (requireFresh = false): Promise<DenDesktopConfig> => {
     if (import.meta.env.DEV && requireFresh && devRefreshDesktopConfigRef.current) {
-      const nextConfig = devRefreshDesktopConfigRef.current;
+      const nextConfig = desktopCapabilityConfig(devRefreshDesktopConfigRef.current);
       applyDesktopConfigActions(nextConfig);
       setDesktopConfigState((current) => ({ ...current, freshConfigStatus: "ready" }));
       void reconcileShellBranding(nextConfig).catch(() => undefined);
@@ -379,7 +379,9 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     [desktopConfigHandler],
   );
   const refreshFresh = useCallback(
-    () => DESKTOP_POLICY_ENFORCEMENT_ENABLED
+    // Eval refreshes still supply branding while policy enforcement is off.
+    // The handler applies the same capability projection as real config.
+    () => DESKTOP_POLICY_ENFORCEMENT_ENABLED || (import.meta.env.DEV && devRefreshDesktopConfigRef.current !== null)
       ? desktopConfigHandler(true)
       : Promise.resolve(currentDesktopConfigRef.current),
     [desktopConfigHandler],

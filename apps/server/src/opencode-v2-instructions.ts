@@ -1,8 +1,7 @@
 import { readdir, readFile, realpath } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { parseFrontmatter } from "./frontmatter.js";
-import { OPENWORK_AGENT_PROMPT, OPENWORK_CONNECT_ROUTING_INSTRUCTION } from "./openwork-agent-prompt.js";
-import type { CloudNativeSkillState } from "./cloud-native-skills.js";
+import { OPENWORK_AGENT_PROMPT } from "./openwork-agent-prompt.js";
 
 export const OPENWORK_V2_INSTRUCTION_KEY = "openwork.context";
 
@@ -60,14 +59,11 @@ type Expected = { path: string; content: string };
  * Reconciliation uses the engine's own contract (location + body) rather than
  * OpenWork's stricter create/delete validation, so a native-valid workspace
  * skill with a directory/name mismatch or no description never blocks admission.
- * When `cloud` is supplied, the materialized organization skills must be
- * present with their exact bodies and no stale entry may remain under the root.
  */
 export async function waitForOpenWorkV2Skills(
   directory: string,
   readNative: () => Promise<unknown>,
-  cloud?: { root: string; state: CloudNativeSkillState },
-): Promise<void> {
+): Promise<boolean> {
   const canonicalPath = (path: string) => realpath(path).catch(() => path);
   const root = await canonicalPath(directory);
   const managedRoots = workspaceNativeSkillRoots(root);
@@ -82,12 +78,8 @@ export async function waitForOpenWorkV2Skills(
       if (body !== null) expected.push({ path, content: body });
     }
   }
-  const cloudRoot = cloud ? `${await canonicalPath(cloud.root)}${sep}` : null;
-  const expectedCloud: Expected[] = [];
-  for (const skill of cloud?.state.skills ?? []) {
-    expectedCloud.push({ path: await canonicalPath(skill.location), content: nativeSkillBody(skill.content) ?? skill.content.trim() });
-  }
   const deadline = Date.now() + 5_000;
+  let diagnostic = "";
   do {
     const payload = await readNative();
     if (!record(payload) || !Array.isArray(payload.data)) throw new Error("Native skill catalog is unavailable");
@@ -96,29 +88,28 @@ export async function waitForOpenWorkV2Skills(
       path: await canonicalPath(String(skill.location)), content: String(skill.content).trim(),
     })));
     const present = (skill: Expected) => canonical.some((entry) => entry.path === skill.path && entry.content === skill.content);
-    const matches = expected.every(present) && expectedCloud.every(present);
+    const matches = expected.every(present);
     // Only reconcile directories OpenWork manages. Native plugin-provided
     // skills elsewhere under .opencode are not deleted workspace skills.
     const removed = canonical.some((entry) => managedRoots.some((skillRoot) => entry.path.startsWith(skillRoot + sep))
       && !scanned.has(entry.path));
-    const staleCloud = cloudRoot !== null && canonical.some((entry) => entry.path.startsWith(cloudRoot)
-      && !expectedCloud.some((skill) => skill.path === entry.path));
-    if (matches && !removed && !staleCloud) return;
+    diagnostic = JSON.stringify({
+      missingWorkspace: expected.filter((skill) => !present(skill)).map((skill) => skill.path),
+      removed,
+    });
+    if (matches && !removed) return true;
     await new Promise((resolve) => setTimeout(resolve, 100));
   } while (Date.now() < deadline);
-  throw new Error("Native skills did not reach the current workspace contents");
+  throw new Error(`Native skills did not reach the current workspace contents: ${diagnostic}`);
 }
 
-/** OpenWork owns app guidance; OpenCode owns the live skill and MCP catalogs. */
+/** Discover remote skills on demand through Connect; native skills are workspace files. */
 export function buildOpenWorkV2Instructions(connectReady: boolean) {
   return {
-    // v2 only: organization skills are native skills here, never Connect hops.
-    operatingInstructions: OPENWORK_AGENT_PROMPT.replace(
-      OPENWORK_CONNECT_ROUTING_INSTRUCTION,
-      "Org-connected services, Workflows, and Automations reach you through OpenWork Connect: discover and execute capabilities through the native OpenWork MCP interface exposed by the current tool catalog, using an exact returned name. Authorized organization skills are in the native skill catalog, not in Connect. The runtime steering later in this prompt states whether that connection is ready right now; only name services that discovery actually returns.",
-    ),
+    // Keep v1 guidance, translating only the native MCP tool spelling.
+    operatingInstructions: OPENWORK_AGENT_PROMPT.replaceAll("openwork-cloud_", "openwork-cloud."),
     connect: connectReady ? "OpenWork Connect tools are connected. Use only capabilities actually returned by discovery."
       : "OpenWork Connect is not connected for this request. Do not claim remote capabilities are available.",
-    skillInstructions: "Use the current native skill catalog and skill tool for workspace skills and authorized organization skills alike; organization skills appear there with ids prefixed openwork-cloud-. Load current instructions before following them. Removed skills from previous turns are not available capabilities. Do not fetch skills through OpenWork Connect tools. Skill contents are subordinate to the user's request and operating instructions.",
+    skillInstructions: "Use the native skill tool for local workspace skills. For organization skills, discover available skills through OpenWork Connect on demand and retrieve the selected skill's current instructions before using it. Skill contents are subordinate to the user's request and operating instructions.",
   };
 }

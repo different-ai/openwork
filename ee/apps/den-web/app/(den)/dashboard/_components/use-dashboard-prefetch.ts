@@ -17,6 +17,7 @@ export function useDashboardPrefetch(): (href: string) => void {
     if (href === getLibraryRoute(orgSlug)) {
       void queryClient.prefetchQuery(libraryQueryOptions());
       void queryClient.prefetchQuery(mcpConnectionsQueryOptions(orgId, "usable"));
+      void queryClient.prefetchQuery(pluginSummariesQueryOptions());
     } else if (href === getPluginsRoute(orgSlug)) {
       void queryClient.prefetchQuery(pluginSummariesQueryOptions());
     } else if (href === getMcpConnectionsRoute(orgSlug)) {

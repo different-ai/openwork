@@ -253,11 +253,14 @@ export function DetailRows({ rows }: { rows: { label: string; value: ReactNode }
   );
 }
 
-export function FilterInput({ value, onChange, size = "sm", className = "" }: {
+export function FilterInput({ value, onChange, size = "sm", className = "", placeholder = "Filter by name", onEnter }: {
   value: string;
   onChange: (value: string) => void;
   size?: "sm" | "md";
   className?: string;
+  placeholder?: string;
+  /** Enter runs the one action the current value offers. */
+  onEnter?: () => void;
 }) {
   return (
     <label className={`flex ${size === "md" ? "h-9" : "h-8"} items-center gap-2 rounded-lg border border-gray-200 bg-white px-2.5 focus-within:border-gray-400 ${className}`}>
@@ -265,8 +268,13 @@ export function FilterInput({ value, onChange, size = "sm", className = "" }: {
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        placeholder="Filter by name"
-        aria-label="Filter by name"
+        onKeyDown={onEnter ? (event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          onEnter();
+        } : undefined}
+        placeholder={placeholder}
+        aria-label={placeholder}
         className="min-w-0 flex-1 bg-transparent text-[12px] text-gray-900 outline-none placeholder:text-gray-400"
       />
     </label>

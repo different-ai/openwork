@@ -34,7 +34,8 @@ async function stop(child) {
   await exited;
 }
 
-test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeout: 10_000 }, async (context) => {
+// Each synthetic answer streams on a timer; allow the expanded scenarios to finish.
+test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeout: 20_000 }, async (context) => {
   const port = await reservePort();
   const origin = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, [serverPath], {
@@ -297,6 +298,18 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
   const initial = { role: "system", content: `You are OpenWork.\n<available_skills>${skillEntry}</available_skills>` };
   const update = content => ({ role: "user", content: `<system-update>\n${content.replaceAll("<", "&lt;").replaceAll(">", "&gt;")}\n</system-update>` });
   const removed = update("The following skill IDs are no longer available and must not be used: release-current.");
+  // A watcher update can arrive after the human's prompt. It must not become
+  // the newest task or erase already completed tool calls in that task.
+  const afterPrompt = await fetch(`${origin}/v1/chat/completions`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "skill-model", messages: [initial,
+      { role: "user", content: "Read current instructions" },
+      { role: "tool", content: "Independent tool result" }, removed],
+      tools: [{ type: "function", function: { name: "skill" } }],
+    }),
+  });
+  assert.equal(afterPrompt.status, 200);
+  assert.match(await afterPrompt.text(), /Independent tool result/);
   for (const [history, available] of [
     [[initial], true], [[initial, removed], false],
     [[initial, removed, update(`New skills are available in addition to those previously listed:\n${skillEntry}`)], true],

@@ -76,9 +76,16 @@ function parsePluginAccessGrant(value: unknown): PluginAccessGrant | null {
   };
 }
 
-export function usePluginAccess(pluginId: string) {
+/** Active grants only; removed ones stay in the API response for history. */
+export function parsePluginAccessGrants(items: unknown): PluginAccessGrant[] {
+  return (Array.isArray(items) ? items : [])
+    .map(parsePluginAccessGrant)
+    .filter((grant): grant is PluginAccessGrant => grant !== null && grant.removedAt === null);
+}
+
+export function usePluginAccess(pluginId: string, { enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
-    enabled: Boolean(pluginId),
+    enabled: enabled && Boolean(pluginId),
     queryKey: pluginAccessQueryKeys.detail(pluginId),
     queryFn: async (): Promise<PluginAccessGrant[]> => {
       const { response, payload } = await requestJson(
@@ -89,10 +96,7 @@ export function usePluginAccess(pluginId: string) {
       if (!response.ok) {
         throw new Error(getErrorMessage(payload, `Failed to load plugin access (${response.status}).`));
       }
-      const items = isRecord(payload) && Array.isArray(payload.items) ? payload.items : [];
-      return items
-        .map(parsePluginAccessGrant)
-        .filter((grant): grant is PluginAccessGrant => grant !== null && grant.removedAt === null);
+      return parsePluginAccessGrants(isRecord(payload) ? payload.items : null);
     },
   });
 }

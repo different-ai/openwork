@@ -4,157 +4,103 @@ import { connectorCatalogManagement, isRecord, records } from "../worlds/library
 
 const test = spec.world(connectorCatalogManagement, { timeout: 600_000 });
 
-test("Den catalog shows its full inventory, preserves service identity, and keeps account readiness personal", async ({ world, user, probe, step }) => {
+test("an admin sees the whole catalog, sets up Microsoft 365 on its own page, and account readiness stays personal", async ({ world, user, probe, step, evidence }) => {
   const admin = user.on(world.web);
   const member = user.on(world.memberWeb);
-  const catalog = probe.on(world.web);
-  const catalogUrl = `${world.den.ref.webUrl}/dashboard/mcp-connections/all`;
+  const page = probe.on(world.web);
+  const base = `${world.den.ref.webUrl}/dashboard/mcp-connections`;
   const presetResponse = await probe.api(world.den.admin, "/v1/mcp-connections/presets");
   expect(presetResponse.response.ok).toBe(true);
   if (!isRecord(presetResponse.body)) throw new Error("Den returned no preset inventory.");
   const presets = records(presetResponse.body.presets);
-  const presetIds = presets.map((entry) => entry.presetId);
-  expect(presetIds).toEqual(expect.arrayContaining(["github", "notion", "slack", "context7", "exa"]));
-  expect(new Set(presetIds).size).toBe(presetIds.length);
-  const popularIds = ["gmail", "github", "google-drive", "google-calendar", "notion", "slack"];
-  const expectedIds = [...popularIds, "microsoft-365", ...presetIds.filter((id) => !popularIds.includes(String(id)))];
+  const presetNames = presets.map((entry) => String(entry.displayName));
+  expect(presets.map((entry) => entry.presetId)).toEqual(expect.arrayContaining(["github", "notion", "slack", "context7", "exa"]));
   const before = await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable");
   expect(before.response.ok).toBe(true);
-  const requestsBefore = (await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token");
+  const authBefore = (await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token");
+  const catalogRows = async () => (await page.dom('[data-testid^="connector-picker-"]')).elements.map((row) => row.text);
 
-  await step("Add connector opens advanced setup and cancel leaves connections unchanged", async () => {
-    await admin.see({ testId: "connector-catalog-count" }, { timeoutMs: 90_000 });
-    await admin.click({ testId: "connectors-add-connector" });
-    await admin.see({ testId: "add-mcp-connection-dialog" });
-    await admin.see({ role: "heading", label: "Add a custom MCP server" });
-    await admin.see({ placeholder: "notion" }, { value: "" });
-    await admin.notSee({ testId: "smart-add-query-input" });
-    await admin.click({ role: "button", label: "Cancel" });
-    await admin.notSee({ testId: "add-mcp-connection-dialog" });
-    expect((await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable")).body).toEqual(before.body);
-    expect((await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token")).toEqual(requestsBefore);
-    expect(await probe.toolCalls(world.connector)).toEqual([]);
-  });
-
-  await step("browse every integration with an accurate total and setup requirements", async () => {
-    await admin.see({ testId: "connector-catalog-count" }, { text: `Showing 6 of ${expectedIds.length} integrations`, timeoutMs: 90_000 });
-    await admin.see({ role: "button", label: "Set up Slack" });
-    await admin.see({ role: "button", label: "Connect Notion" });
-    await admin.click({ testId: "connector-catalog-more" });
-    const facts = await catalog.connectorCatalog();
-    expect(facts.entries.map((entry) => entry.id)).toEqual(expectedIds);
-    expect(facts.summary).toBe(`Showing ${expectedIds.length} of ${expectedIds.length} integrations`);
-    expect(facts.horizontalOverflow).toBe(false);
-    expect(facts.entries.find((entry) => entry.id === "slack")?.status).toBe("OAuth app required");
-    expect(facts.entries.find((entry) => entry.id === "exa")?.status).toBe("API key");
-    expect(facts.entries.find((entry) => entry.id === "context7")?.status).toBe("Instant — no sign-in");
-    expect(facts.chatLinks.map((link) => link.testId)).toEqual(expectedIds.map((id) => `connector-chat-${id}`));
-    for (const entry of facts.entries) {
-      expect(entry.text.trim().length).toBeGreaterThan(entry.id.length);
-      expect(entry.href).toContain(`/mcp-connections/${entry.id}`);
-      expect(entry.status.length).toBeGreaterThan(0);
-    }
+  await step("the add page lists every catalog connector plus Google Workspace and Microsoft 365", async () => {
+    await admin.see({ role: "heading", label: "Add a connector" }, { timeoutMs: 90_000 });
+    await admin.see({ role: "link", label: "Add Microsoft 365" }, { timeoutMs: 90_000 });
+    // Google Workspace already has an older org client, so it opens instead of adding again.
+    await admin.see({ role: "link", label: "Open Google Workspace" }, { timeoutMs: 60_000 });
+    for (const name of presetNames) await admin.see({ role: "link", label: new RegExp(`^(Add|Open) ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) });
+    const rows = await catalogRows();
+    expect(rows).toHaveLength(presetNames.length + 2);
+    evidence.recordAssertionEvidence("the catalog shows every preset and both suites", `${rows.length} rows: Google Workspace, Microsoft 365 and ${presetNames.length} presets (${presetNames.join(", ")})`, true);
     await admin.screenshot();
   });
 
-  await step("an unconfigured connector keeps Chat separate from setup", async () => {
-    const slackChat = (await catalog.connectorCatalog()).chatLinks.find((link) => link.testId === "connector-chat-slack");
-    expect(slackChat).toBeDefined();
-    await admin.click({ testId: "connector-open-slack" });
-    await admin.see({ testId: "connector-detail-chat" });
-    await admin.see({ testId: "connector-detail-setup" }, { text: "Set up" });
-    expect((await catalog.connectorCatalog()).chatLinks).toContainEqual({ testId: "connector-detail-chat", href: slackChat?.href });
-    await admin.reload();
-    await admin.see({ testId: "connector-detail-chat" });
-    await admin.see({ testId: "connector-detail-setup" }, { text: "Set up" });
-    await admin.navigate(catalogUrl);
+  await step("filtering narrows the list, and a name nobody offers leads to Add any MCP", async () => {
+    await admin.type({ placeholder: "Filter by name, or paste an MCP URL" }, "granola");
+    await eventually(async () => (await catalogRows()).length === 1, { within: 10_000, label: "one Granola row" });
+    await admin.see({ role: "link", label: "Add Granola" });
+    await admin.type({ placeholder: "Filter by name, or paste an MCP URL" }, "catalog-no-match", { replace: true });
+    await admin.see({ testId: "connector-picker-no-match" }, { text: /No app called/ });
+    await admin.see({ testId: "connector-picker-no-match-add" }, { text: "Add any MCP" });
+    await admin.type({ placeholder: "Filter by name, or paste an MCP URL" }, "", { replace: true });
+    const unchanged = (await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable")).body;
+    expect(unchanged).toEqual(before.body);
+    evidence.recordAssertionEvidence("filtering never changes connections", `"granola" leaves one row; "catalog-no-match" offers Add any MCP; connections unchanged`, true);
   });
 
-  await step("filter the full inventory and recover from an empty result", async () => {
-    await admin.type({ testId: "connector-smart-bar" }, "Catalog Notes", { replace: true });
-    await admin.see({ testId: "configured-connector-matches" }, { text: /Configured \(1\)/ });
-    expect((await catalog.connectorCatalog()).entries.map((entry) => entry.id)).toEqual([world.connection.id]);
-    await admin.click({ testId: `connector-open-${world.connection.id}` });
-    await admin.see({ testId: "admin-connector-page" });
-    await admin.see({ role: "heading", label: "Catalog Notes" });
-    await admin.see({ role: "button", label: "Sign in" });
-    await admin.navigate(catalogUrl);
-    await admin.type({ testId: "connector-smart-bar" }, "granola", { replace: true });
-    await admin.see({ testId: "connector-catalog-count" }, { text: `1 of ${expectedIds.length} integrations match` });
-    expect((await catalog.connectorCatalog()).entries.map((entry) => entry.id)).toEqual(["granola"]);
-    await admin.type({ testId: "connector-smart-bar" }, "catalog-no-match", { replace: true });
-    await admin.see({ testId: "connector-catalog-count" }, { text: `0 of ${expectedIds.length} integrations match` });
-    expect((await catalog.connectorCatalog()).entries).toEqual([]);
-    await admin.type({ testId: "connector-smart-bar" }, "gmail", { replace: true });
-    await admin.click({ testId: "connector-open-gmail" });
-    await admin.see({ testId: "connector-detail-title" }, { text: /^Gmail\b/ });
-    await admin.see({ testId: "connector-detail-state" }, { text: "Needs your account" });
-    await admin.reload();
-    await admin.see({ testId: "connector-detail-title" }, { text: /^Gmail\b/ });
-    await admin.see({ text: "Google Workspace — one connection covers Gmail, Drive, and Calendar" });
+  await step("Microsoft 365 is set up on its own page, and its connector page survives a reload", async () => {
+    await admin.click({ role: "link", label: "Add Microsoft 365" });
+    await admin.see({ role: "heading", label: "Add Microsoft 365" }, { timeoutMs: 60_000 });
+    await admin.see({ testId: "native-provider-redirect-uri" }, { text: /\/v1\/oauth-providers\/microsoft-365\/connect\/callback/, timeoutMs: 60_000 });
+    await admin.type({ testId: "native-provider-tenant-id" }, "11111111-1111-4111-8111-111111111111");
+    await admin.type({ testId: "native-provider-client-id" }, "22222222-2222-4222-8222-222222222222");
+    await admin.type({ testId: "native-provider-client-secret" }, "catalog-microsoft-test-secret");
     await admin.screenshot();
-    for (const [id, label] of [["google-drive", "Google Drive"], ["google-calendar", "Google Calendar"]]) {
-      await admin.navigate(catalogUrl);
-      await admin.click({ testId: `connector-open-${id}` });
-      await admin.see({ testId: "connector-detail-title" }, { text: new RegExp(`^${label}\\b`) });
-    }
-    const after = await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable");
-    expect(after.body).toEqual(before.body);
-    expect((await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token")).toEqual(requestsBefore);
-    expect(await probe.toolCalls(world.connector)).toEqual([]);
-  });
-
-  await step("native Microsoft setup survives reload alongside Google without claiming account authorization", async () => {
-    await admin.navigate(catalogUrl);
-    await admin.type({ testId: "connector-smart-bar" }, "Microsoft", { replace: true });
-    await admin.click({ testId: "connector-add-microsoft-365" });
-    await admin.see({ testId: "microsoft-365-dialog" });
-    await admin.type({ testId: "microsoft-tenant-id" }, "11111111-1111-4111-8111-111111111111");
-    await admin.type({ placeholder: "00000000-0000-0000-0000-000000000000", nth: 1 }, "22222222-2222-4222-8222-222222222222");
-    await admin.type({ placeholder: "Paste the secret value, not its ID" }, "catalog-microsoft-test-secret");
-    await admin.click({ testId: "save-microsoft-365" });
+    await admin.click({ testId: "native-provider-save" });
     await eventually(async () => {
       const client = await probe.api(world.den.admin, "/v1/oauth-providers/microsoft-365/client");
       return isRecord(client.body) && client.body.configured === true;
     }, { within: 30_000, label: "Microsoft 365 setup to save" });
-    await eventually(async () => {
-      await admin.notSee({ testId: "microsoft-365-dialog" }, { timeoutMs: 500 });
-      return true;
-    }, { within: 10_000, label: "the Microsoft 365 dialog to close" });
+    await admin.see({ testId: "admin-connector-page" }, { timeoutMs: 60_000 });
     await admin.reload();
-    await admin.see({ testId: "connector-catalog-count" }, { timeoutMs: 90_000 });
-    await admin.type({ testId: "connector-smart-bar" }, "", { replace: true });
-    await admin.click({ testId: "connector-catalog-more" });
-    for (const id of ["gmail", "google-drive", "google-calendar", "microsoft-365"]) {
-      await admin.see({ testId: `connector-status-${id}` }, { text: "Needs your account" });
-      await admin.see({ testId: `connector-recover-${id}` }, { text: "Connect" });
-      await admin.notSee({ testId: `connector-add-${id}` });
-    }
-    const manageable = await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable");
-    expect(manageable.body).toEqual(before.body);
+    await admin.see({ role: "heading", label: "Microsoft 365" }, { timeoutMs: 60_000 });
+    await admin.see({ testId: "access-locked" }, { text: /Everyone in your organization/ });
+    await admin.see({ role: "button", label: "Sign in" });
+    await admin.click({ role: "button", label: "Settings" });
+    await admin.see({ text: "22222222-2222-4222-8222-222222222222" });
     const usable = await probe.api(world.den.admin, "/v1/mcp-connections?scope=usable");
-    expect(usable.response.ok).toBe(true);
-    if (!isRecord(usable.body)) throw new Error("Den returned no usable connections.");
-    for (const id of ["google-workspace", "microsoft-365"]) {
-      // Legacy native entries use connected for configured client presence, not account authorization.
-      expect(records(usable.body.connections).filter((entry) => entry.id === id)).toMatchObject([
-        { id, connectedForMe: false, connected: true, credentialMode: "per_member" },
-      ]);
-      await admin.navigate(`${catalogUrl}/${id}`);
-      await admin.see({ testId: "connector-detail-title" }, { timeoutMs: 60_000 });
-      await admin.reload();
-      await admin.see({ testId: "connector-detail-state" }, { text: "Needs your account" });
-      await admin.see({ role: "link", label: "Connect your account" });
-      await admin.notSee({ testId: "connector-detail-setup" });
-      await admin.notSee({ testId: "connector-detail-test-tools" });
-    }
-    await admin.click({ testId: "mcp-connection-more-microsoft-365" });
-    await admin.click({ testId: "edit-mcp-connection-microsoft-365" });
-    await admin.see({ testId: "microsoft-365-dialog" }, { text: /Credentials saved/ });
-    await admin.see({ text: /Saved client ID:.*22222222-2222-4222-8222-222222222222/ });
-    await admin.click({ role: "button", label: "Cancel" });
-    expect((await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token")).toEqual(requestsBefore);
-    expect(await probe.toolCalls(world.connector)).toEqual([]);
+    const microsoft = isRecord(usable.body) ? records(usable.body.connections).find((entry) => entry.id === "microsoft-365") : undefined;
+    expect(microsoft).toMatchObject({ connectedForMe: false, credentialMode: "per_member" });
+    expect((await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token")).toEqual(authBefore);
+    evidence.recordAssertionEvidence("Microsoft 365 saves on a full page and the admin still signs in for themselves", `Client configured; page shows "Everyone in your organization", a Sign in button and the saved client ID; connectedForMe=${String(microsoft?.connectedForMe)}`, true);
+    await admin.screenshot();
+  });
+
+  await step("the older Google Workspace setup opens on its connector page, and its old link still lands there", async () => {
+    await admin.navigate(`${base}/all/google-workspace`);
+    await admin.see({ role: "heading", label: "Google Workspace" }, { timeoutMs: 60_000 });
+    await admin.see({ testId: "admin-connector-page" });
+    await admin.see({ role: "button", label: "Sign in" });
+    evidence.recordAssertionEvidence("the old /all link lands on the Google Workspace connector page", `Opened ${base}/all/google-workspace and saw the Google Workspace connector page with Sign in`, true);
+    await admin.screenshot();
+  });
+
+  await step("a new Google Workspace app saves on its own page with its selected permissions", async () => {
+    await admin.navigate(`${base}/new/google-workspace`);
+    await admin.see({ role: "heading", label: "Add Google Workspace" }, { timeoutMs: 60_000 });
+    await admin.see({ testId: "native-provider-redirect-uri" }, { text: /\/connect\/callback/, timeoutMs: 60_000 });
+    await admin.type({ label: "Name" }, "Workspace Documents", { replace: true });
+    await admin.type({ testId: "native-provider-client-id" }, "workspace-test.apps.googleusercontent.com");
+    await admin.type({ testId: "native-provider-client-secret" }, "catalog-google-test-secret");
+    await admin.screenshot();
+    await admin.click({ testId: "native-provider-save" });
+    await admin.see({ role: "heading", label: "Workspace Documents" }, { timeoutMs: 60_000 });
+    await admin.see({ testId: "admin-connector-page" });
+    await admin.click({ role: "button", label: "Settings" });
+    await admin.see({ text: "workspace-test.apps.googleusercontent.com" }, { timeoutMs: 60_000 });
+    const result = await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable");
+    const saved = isRecord(result.body) ? records(result.body.connections).find((entry) => entry.name === "Workspace Documents") : undefined;
+    expect(saved).toMatchObject({ nativeProviderKey: "google-workspace", connectedForMe: false });
+    expect((await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token")).toEqual(authBefore);
+    evidence.recordAssertionEvidence("Google Workspace saves its own app without signing anyone in", `Connection ${String(saved?.id)} belongs to google-workspace; its settings show the saved client ID; connectedForMe=false`, true);
+    await admin.screenshot();
   });
 
   await step("a member connects without making the admin personally connected", async () => {
@@ -164,64 +110,53 @@ test("Den catalog shows its full inventory, preserves service identity, and keep
     const memberState = await probe.api(world.den.members.member, "/v1/mcp-connections?scope=usable");
     if (!isRecord(memberState.body)) throw new Error("Den returned no member connections.");
     expect(records(memberState.body.connections).find((entry) => entry.id === world.connection.id)).toMatchObject({ connectedForMe: true });
-    await admin.navigate(`${catalogUrl}/${world.connection.id}`);
-    await admin.see({ testId: "connector-detail-state" }, { text: "Needs your account" });
-    const information = await catalog.dom('[data-testid="connector-detail-information"]');
-    expect(JSON.stringify(information)).not.toContain("Added by");
-    await admin.notSee({ testId: "connector-detail-test-tools" });
+    // The old configured link lands on the connector page.
+    await admin.navigate(`${base}/configured?connectionId=${encodeURIComponent(world.connection.id)}`);
+    await admin.see({ testId: "admin-connector-page" }, { timeoutMs: 60_000 });
+    await admin.see({ role: "heading", label: "Catalog Notes" });
+    await admin.see({ role: "button", label: "Sign in" });
     const adminState = await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable");
     if (!isRecord(adminState.body)) throw new Error("Den returned no admin connections.");
     expect(records(adminState.body.connections).find((entry) => entry.id === world.connection.id)).toMatchObject({ connectedForMe: false, connected: true });
-    // Trusted, hit-tested clicks must reach below the detail row, not merely find menu text.
-    await admin.click({ testId: `mcp-connection-more-${world.connection.id}` });
-    await admin.click({ testId: `edit-mcp-connection-${world.connection.id}` });
-    await admin.see({ testId: "edit-mcp-connection-dialog" });
-    await admin.see({ testId: "edit-mcp-name" }, { value: "Catalog Notes" });
-    await admin.click({ role: "button", label: "Cancel" });
-    await admin.notSee({ testId: "edit-mcp-connection-dialog" });
-    expect((await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable")).body).toEqual(adminState.body);
+    evidence.recordAssertionEvidence("the member's sign-in stays theirs", "Member connectedForMe=true; the admin's Catalog Notes page still offers Sign in (connectedForMe=false)", true);
     await admin.screenshot();
   });
 
-  await step("the configured list keeps each row to its name, state and one menu", async () => {
-    await admin.navigate(`${world.den.ref.webUrl}/dashboard/mcp-connections/configured`);
-    await admin.see({ testId: `mcp-connection-row-${world.connection.id}` }, { text: /Catalog Notes/, timeoutMs: 60_000 });
-    await admin.notSee({ text: /^Issuer: / });
-    await admin.notSee({ role: "button", label: "Disconnect Catalog Notes" });
-    await admin.click({ testId: `mcp-connection-more-${world.connection.id}` });
-    await admin.see({ testId: `edit-mcp-connection-${world.connection.id}` });
-    await admin.see({ testId: `test-mcp-tools-${world.connection.id}` });
-    await admin.see({ role: "menuitem", label: "Disconnect Catalog Notes" });
-    await admin.notSee({ role: "menuitem", text: "Chat" });
-    const row = await catalog.dom(`[data-testid="mcp-connection-row-${world.connection.id}"]`);
-    expect(JSON.stringify(row)).not.toContain("Chat with");
+  await step("the connector page edits settings in place", async () => {
+    await admin.click({ role: "button", label: "Settings" });
+    await admin.see({ testId: "connector-settings-name" }, { value: "Catalog Notes" });
+    await admin.type({ testId: "connector-settings-name" }, "Catalog Notes Renamed", { replace: true });
+    await admin.type({ testId: "connector-settings-scopes" }, "records.read records.write", { replace: true });
+    // This connection registered an OAuth client when the member signed in.
+    await admin.type({ label: "OAuth client ID" }, "catalog-settings-client", { replace: true });
+    await admin.click({ role: "button", label: "Save changes" });
+    await admin.see({ role: "heading", label: "Catalog Notes Renamed" }, { timeoutMs: 60_000 });
+    const renamed = await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable");
+    const row = isRecord(renamed.body) ? records(renamed.body.connections).find((entry) => entry.id === world.connection.id) : undefined;
+    expect(row).toMatchObject({ name: "Catalog Notes Renamed", oauthClientId: "catalog-settings-client", requestedScopes: ["records.read", "records.write"] });
+    await admin.click({ role: "button", label: "Review sign-in server" });
+    await admin.see({ role: "button", label: "Save sign-in server" }, { timeoutMs: 60_000 });
+    evidence.recordAssertionEvidence("name, scopes and OAuth app save inline, and sign-in servers can be reviewed", `Den saved ${String(row?.name)}, client ${String(row?.oauthClientId)}, scopes ${JSON.stringify(row?.requestedScopes)}; the review offers Save sign-in server`, true);
     await admin.screenshot();
-    await admin.click({ testId: `mcp-connection-more-${world.connection.id}` });
-    await admin.notSee({ role: "menuitem", label: "Disconnect Catalog Notes" });
   });
 
-  await step("OAuth startup rejection offers recovery without a success notice", async () => {
-    await admin.navigate(`${catalogUrl}/${world.rejectedConnection.id}`);
-    await admin.see({ testId: "connector-detail-state" }, { text: "Needs your account" });
+  await step("a sign-in the provider rejects says so on the page, without a success notice", async () => {
+    await admin.navigate(`${base}/${encodeURIComponent(world.rejectedConnection.id)}`);
+    await admin.see({ role: "heading", label: "Catalog Recovery" }, { timeoutMs: 60_000 });
     const requestsBefore = (await world.rejected.requestLog()).length;
-    const authBefore = (await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token");
-    await admin.click({ role: "button", label: "Connect" });
-    await admin.see({ text: /Could not connect "Catalog Recovery"/ }, { timeoutMs: 60_000 });
-    await admin.see({ role: "link", label: "Review connection" });
-    await admin.notSee({ text: /added for everyone|Finish signing in|Your account is connected/ });
+    const authRequests = (await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token");
+    await admin.click({ role: "button", label: "Sign in" });
+    await admin.see({ text: /Could not sign in to Catalog Recovery/ }, { timeoutMs: 60_000 });
+    await admin.notSee({ testId: "den-toast" });
     const requests = (await world.rejected.requestLog()).slice(requestsBefore);
     expect(requests, "the provider endpoint receives the declared failure before authorization").toEqual(expect.arrayContaining([
       expect.objectContaining({ path: "/mcp", faulted: true, status: 503 }),
     ]));
-    expect((await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token")).toEqual(authBefore);
-    expect(await probe.toolCalls(world.connector)).toEqual([]);
-    await admin.click({ role: "link", label: "Review connection" });
-    await admin.see({ testId: "admin-connector-page" });
-    await admin.see({ role: "heading", label: "Catalog Recovery" });
-    await admin.see({ role: "button", label: "Sign in" });
+    expect((await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token")).toEqual(authRequests);
     const state = await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable");
     if (!isRecord(state.body)) throw new Error("Den returned no connections after the failed sign-in.");
     expect(records(state.body.connections).find((entry) => entry.id === world.rejectedConnection.id)).toMatchObject({ connectedForMe: false, connected: false });
+    evidence.recordAssertionEvidence("the rejection is reported inline and nothing is connected", `Provider answered 503 on /mcp; page reads "Could not sign in to Catalog Recovery"; connectedForMe=false`, true);
     await admin.screenshot();
   });
 });

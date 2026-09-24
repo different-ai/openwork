@@ -60,6 +60,15 @@ test("Den HTTP proxy sends auth, cookies, method, body and query directly withou
   }
 });
 
+test("an explicit local Den API target bypasses the web redirect and preserves the API path", () => {
+  const proxy = devDenProxy({
+    OPENWORK_DEV_HEADLESS_DEN_TARGET: "http://127.0.0.1:8788",
+    OPENWORK_DEV_HEADLESS_DEN_API_TARGET: "http://127.0.0.1:8787",
+  })["/api/den"];
+  assert.equal(proxy.target, "http://127.0.0.1:8787");
+  assert.equal(proxy.rewrite?.("/api/den/v1/org?active=true"), "/v1/org?active=true");
+});
+
 test("OpenWork proxy is development-only and needs only a loopback target", () => {
   const env = { OPENWORK_DEV_MODE: "1", OPENWORK_DEV_OPENWORK_PROXY_TARGET: "http://127.0.0.1:8778" };
   assert.deepEqual(devOpenworkProxy({ ...env, OPENWORK_DEV_MODE: "0" }), {});

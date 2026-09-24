@@ -29,7 +29,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const body: unknown = await request.text().then((text) => text ? JSON.parse(text) : {});
     world = previewWorld(typeof body === "object" && body !== null && "world" in body ? body.world : "app-web");
-  } catch { return Response.json({ error: "Choose OpenWork web or ACME web." }, { status: 400, headers }); }
+  } catch { return Response.json({ error: "Choose OpenWork web, Desktop only, or an ACME full-stack preview." }, { status: 400, headers }); }
   try {
     // The immutable stored report, never request input, chooses the source commit.
     await ensureSnapshot(report.gitSha, undefined, undefined, world);

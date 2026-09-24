@@ -1,13 +1,14 @@
 import { firstName, joinNames } from "./access-summary";
 import type { LibraryAccessEdge, LibraryItem } from "./library-data";
 
-export type LibraryFilter = "all" | "connectors" | "skills" | "plugins";
+export type LibraryFilter = "all" | "connectors" | "skills" | "plugins" | "models";
 
 export const LIBRARY_FILTERS: readonly { value: LibraryFilter; label: string }[] = [
   { value: "all", label: "All" },
   { value: "connectors", label: "Connectors" },
   { value: "skills", label: "Skills" },
   { value: "plugins", label: "Plugins" },
+  { value: "models", label: "Models" },
 ];
 
 export function parseLibraryFilter(value: string | null): LibraryFilter {

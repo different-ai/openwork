@@ -46,43 +46,39 @@ test("a member gets setup links without starting OAuth or creating connections",
     });
   }
 
-    await step("unconfigured catalog and detail Chat links seed a draft without sending or connecting", async () => {
-      const webProbe = probe.on(world.web);
-      const before = await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable");
-      expect(before.response.ok).toBe(true);
-      const modelRequests = await world.den.mocks.connector.agentRequests();
-      const authRequests = (await world.den.mocks.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token");
-      await webUser.navigate(`${world.den.ref.webUrl}/dashboard/mcp-connections/all`);
-      await webUser.see({ testId: "connector-add-slack" }, { timeoutMs: 90_000 });
-      await webUser.see({ testId: "connector-chat-slack" });
-      const catalogLink = (await webProbe.connectorCatalog()).chatLinks.find((link) => link.testId === "connector-chat-slack");
-      if (!catalogLink) throw new Error("Unconfigured Slack has no catalog Chat link.");
-      await webUser.click({ testId: "connector-open-slack" });
-      await webUser.see({ testId: "connector-detail-chat" });
-      await webUser.see({ testId: "connector-detail-setup" }, { text: "Set up" });
-      const detailLink = (await webProbe.connectorCatalog()).chatLinks.find((link) => link.testId === "connector-detail-chat");
-      expect(detailLink?.href).toBe(catalogLink.href);
-      const link = new URL(catalogLink.href);
-      expect(`${link.protocol}//${link.host}`).toBe("openwork://chat");
-      expect(link.searchParams.get("connector")).toBe("Slack");
-      expect([...link.searchParams.keys()].sort()).toEqual(["connector", "prompt"]);
-      const prompt = link.searchParams.get("prompt");
-      if (!prompt) throw new Error("Chat link has no starter prompt.");
-      expect(prompt).not.toContain(world.connection.id);
-      // Bridge only OS delivery. The real desktop listener must parse the rendered link and seed its own composer.
-      await seed.deepLink(world.app, catalogLink.href);
-      await appUser.see("composer", { editable: true, text: new RegExp(prompt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) });
-      const composer = await appProbe.composer();
-      expect(composer.draftText).toContain("Slack");
-      expect(composer.draftText).toContain(prompt);
-      expect(composer.userMessageCount).toBe(0);
-      expect(composer.assistantMessageCount).toBe(0);
-      await appUser.notSee({ testId: "desktop-connection-card" });
-      await appUser.notSee({ testId: "connector-catalog" });
-      expect((await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable")).body).toEqual(before.body);
-      expect(await world.den.mocks.connector.agentRequests()).toEqual(modelRequests);
-      expect((await world.den.mocks.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token")).toEqual(authRequests);
-      expect(await probe.toolCalls(world.den.mocks.connector)).toEqual([]);
-      await appUser.screenshot();
-    });
+  await step("the connector page's Chat link seeds a draft without sending or connecting", async () => {
+    const webProbe = probe.on(world.web);
+    const before = await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable");
+    expect(before.response.ok).toBe(true);
+    const modelRequests = await world.den.mocks.connector.agentRequests();
+    const authRequests = (await world.den.mocks.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token");
+    await webUser.navigate(`${world.den.ref.webUrl}/dashboard/mcp-connections/${encodeURIComponent(world.connection.id)}`);
+    await webUser.see({ testId: "admin-connector-page" }, { timeoutMs: 90_000 });
+    const heading = (await webProbe.dom('[data-testid="admin-connector-page"] h1')).elements[0]?.text ?? "";
+    const chatLink = (await webProbe.connectorCatalog()).chatLinks[0];
+    if (!chatLink) throw new Error("The connector page has no Chat link.");
+    const link = new URL(chatLink.href);
+    expect(`${link.protocol}//${link.host}`).toBe("openwork://chat");
+    expect(link.searchParams.get("connector")).toBe(heading);
+    expect([...link.searchParams.keys()].sort()).toEqual(["connector", "prompt"]);
+    const prompt = link.searchParams.get("prompt");
+    if (!prompt) throw new Error("Chat link has no starter prompt.");
+    expect(prompt).not.toContain(world.connection.id);
+    // Bridge only OS delivery. The real desktop listener must parse the rendered link and seed its own composer.
+    await seed.deepLink(world.app, chatLink.href);
+    await appUser.see("composer", { editable: true, text: new RegExp(prompt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) });
+    const composer = await appProbe.composer();
+    expect(composer.draftText).toContain(heading);
+    expect(composer.draftText).toContain(prompt);
+    expect(composer.userMessageCount).toBe(0);
+    expect(composer.assistantMessageCount).toBe(0);
+    await appUser.notSee({ testId: "desktop-connection-card" });
+    await appUser.notSee({ testId: "connector-catalog" });
+    expect((await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable")).body).toEqual(before.body);
+    expect(await world.den.mocks.connector.agentRequests()).toEqual(modelRequests);
+    expect((await world.den.mocks.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token")).toEqual(authRequests);
+    expect(await probe.toolCalls(world.den.mocks.connector)).toEqual([]);
+    evidence.recordAssertionEvidence("Chat on the connector page seeds a draft only", `The ${heading} page's Chat link reached the desktop composer as a draft; no message sent, no OAuth, no connection change.`, true);
+    await appUser.screenshot();
+  });
 });

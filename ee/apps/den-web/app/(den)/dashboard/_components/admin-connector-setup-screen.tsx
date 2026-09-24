@@ -7,6 +7,7 @@ import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute } f
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessPeopleIds, peopleLabel } from "./access-summary";
 import { useConnectorSetup } from "./connector-setup";
+import { ApiKeyFields, OAuthAppFields } from "./connector-setup-fields";
 import { useConnectorTarget } from "./connector-setup-screen";
 import { useDenToast } from "./den-toast";
 import { ItemHeader, ItemPage, SectionTitle, StepFooter } from "./item-header";
@@ -17,15 +18,16 @@ import { type ExternalMcpCredentialMode, useUpdateMcpConnection } from "./mcp-co
 import { SetupChecks } from "./setup-checks";
 import { WhoCanUseIt } from "./who-can-use-it";
 
-function SignInChoice({ name, value, onChange, disabled }: {
+function SignInChoice({ name, value, onChange, disabled, sharedDescription }: {
   name: string;
   value: ExternalMcpCredentialMode;
   onChange: (value: ExternalMcpCredentialMode) => void;
   disabled: boolean;
+  sharedDescription?: string;
 }) {
   const options: { value: ExternalMcpCredentialMode; title: string; description: string }[] = [
     { value: "per_member", title: "Each person signs in", description: `Everyone uses their own ${name} account.` },
-    { value: "shared", title: "One account for everyone", description: `Everyone uses one ${name} account you sign in with.` },
+    { value: "shared", title: "One account for everyone", description: sharedDescription ?? `Everyone uses one ${name} account you sign in with.` },
   ];
   return (
     <div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="How people sign in">
@@ -72,6 +74,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const [error, setError] = useState<string | null>(null);
   const [confirmSwitch, setConfirmSwitch] = useState(false);
   const setup = useConnectorSetup({
+    mode: "admin",
     target,
     initialConnectionId: searchParams.get("connection"),
     onConnectionCreated: (connectionId) => {
@@ -101,6 +104,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
 
   const connection = setup.connection;
   const signsIn = connection ? connection.authType === "oauth" : true;
+  const usesKey = connection?.authType === "apikey";
   const chosenMode: ExternalMcpCredentialMode = mode ?? connection?.credentialMode ?? "per_member";
   const access: AccessDraft = draft ?? (connection?.access
     ? { orgWide: connection.access.orgWide, memberIds: connection.access.memberIds, teamIds: connection.access.teamIds }
@@ -111,9 +115,20 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const switchingToShared = signsIn && chosenMode === "shared" && connection?.credentialMode === "per_member";
   const ready = setup.allDone && Boolean(connection);
 
-  const checks = setup.checks.map((check) => check.id === "sign-in" && setup.canSignIn
-    ? { ...check, action: <DenButton size="sm" onClick={() => void setup.startSignIn()}>{`Sign in with ${name}`}</DenButton> }
-    : check);
+  const checks = setup.checks.map((check) => {
+    if (check.id === "sign-in" && setup.canSignIn) {
+      return { ...check, action: <DenButton size="sm" onClick={() => void setup.startSignIn()}>{`Sign in with ${name}`}</DenButton> };
+    }
+    if (check.id === "sign-in-method" && setup.needsInput) {
+      return {
+        ...check,
+        body: setup.method === "api_key"
+          ? <ApiKeyFields name={name} saving={setup.saving} error={setup.saveError} onSave={(apiKey) => void setup.saveApiKey(apiKey)} />
+          : <OAuthAppFields secretRequired={setup.secretRequired} saving={setup.saving} error={setup.saveError} onSave={(input) => void setup.saveOAuthApp(input)} />,
+      };
+    }
+    return check;
+  });
 
   async function cancel() {
     setBusy(true);
@@ -162,9 +177,6 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
           back={back}
           logo={<ConnectorLogo name={name} url={target.url} size="md" />}
           title={`Add ${name}`}
-          description={chosenMode === "shared" && connection?.credentialMode === "shared"
-            ? `Sign in with the ${name} account everyone will use.`
-            : `OpenWork checks ${name}, then you sign in to try it.`}
         />
         <SetupChecks checks={checks} />
         <StepFooter note={`Step ${setup.stepNumber} of ${checks.length}`}>
@@ -180,12 +192,16 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
         back={back}
         logo={<ConnectorLogo name={name} url={target.url} size="md" />}
         title={`${name} passed all ${checks.length} checks`}
-        description="Choose how people sign in and who can use it."
       />
       {signsIn ? (
         <section className="flex flex-col gap-2.5">
           <SectionTitle title="How people sign in" />
           <SignInChoice name={name} value={chosenMode} onChange={setMode} disabled={busy} />
+        </section>
+      ) : usesKey ? (
+        <section className="flex flex-col gap-2.5">
+          <SectionTitle title="How people sign in" meta="A key cannot sign people in one by one" />
+          <SignInChoice name={name} value="shared" onChange={setMode} disabled sharedDescription={`Everyone uses the ${name} key you added.`} />
         </section>
       ) : null}
       <section className="flex flex-col gap-2.5">

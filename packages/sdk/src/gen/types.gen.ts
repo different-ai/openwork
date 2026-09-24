@@ -3050,6 +3050,51 @@ export type PluginArchExtensionProjection = {
   manifest: OpenWorkExtensionManifest | null;
 };
 
+export type PluginArchPluginListItem = {
+  /**
+   * Den TypeID with 'plg_' prefix and a 26-character base32 suffix.
+   */
+  id: string;
+  /**
+   * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
+   */
+  organizationId: string;
+  name: string;
+  description: string | null;
+  sourceRepositoryUrl: string | null;
+  sourceFormat:
+    | "agent-plugin"
+    | "openwork-builtin"
+    | "openwork-extension-manifest"
+    | "claude-plugin"
+    | "opencode-plugin"
+    | "mcp-directory"
+    | "manual"
+    | null;
+  sourceSchemaVersion: string | null;
+  status: "active" | "inactive" | "deleted" | "archived";
+  /**
+   * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+   */
+  createdByOrgMembershipId: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  memberCount?: number;
+  marketplaces?: Array<{
+    /**
+     * Den TypeID with 'mkt_' prefix and a 26-character base32 suffix.
+     */
+    id: string;
+    name: string;
+  }>;
+  extension?: PluginArchExtensionProjection | null;
+  /**
+   * Active access grants. Present only when includeAccess is true and the caller manages the plugin.
+   */
+  access?: Array<PluginArchAccessGrant>;
+};
+
 export type PluginArchPlugin = {
   /**
    * Den TypeID with 'plg_' prefix and a 26-character base32 suffix.
@@ -3089,11 +3134,6 @@ export type PluginArchPlugin = {
     name: string;
   }>;
   extension?: PluginArchExtensionProjection | null;
-};
-
-export type PluginArchPluginListResponse = {
-  items: Array<PluginArchPlugin>;
-  nextCursor: string | null;
 };
 
 export type PluginArchPluginMutationResponse = {
@@ -21444,10 +21484,33 @@ export type GetV1PluginsData = {
   body?: never;
   path?: never;
   query?: {
+    /**
+     * Opaque cursor returned as nextCursor by the previous page. Omit for the first page.
+     */
     cursor?: string;
     limit?: number;
     status?: "active" | "inactive" | "deleted" | "archived";
     q?: string;
+    /**
+     * Case-insensitive substring of the plugin name.
+     */
+    name?: string;
+    /**
+     * Plugins effectively accessible to this team, including organization and collection access.
+     */
+    teamId?: string;
+    /**
+     * Plugins effectively accessible to this member, including team, organization and collection access.
+     */
+    memberId?: string;
+    /**
+     * When true, each plugin the caller manages includes its active access grants.
+     */
+    includeAccess?: "true" | "false";
+    /**
+     * When true, returns the total matching plugins before the cursor.
+     */
+    includeTotal?: "true" | "false";
   };
   url: "/v1/plugins";
 };
@@ -21469,7 +21532,11 @@ export type GetV1PluginsResponses = {
   /**
    * Plugins returned successfully.
    */
-  200: PluginArchPluginListResponse;
+  200: {
+    items: Array<PluginArchPluginListItem>;
+    nextCursor: string | null;
+    total?: number;
+  };
 };
 
 export type GetV1PluginsResponse = GetV1PluginsResponses[keyof GetV1PluginsResponses];

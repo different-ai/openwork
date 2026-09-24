@@ -92,7 +92,7 @@ beforeAll(async () => {
   const betterAuthSecret = process.env.BETTER_AUTH_SECRET
   if (!betterAuthSecret) throw new Error("BETTER_AUTH_SECRET is required")
   sessionCookie = await serializeSignedCookie(
-    "better-auth.session_token",
+    "openwork-den.session_token",
     sessionToken,
     betterAuthSecret,
   )
@@ -136,7 +136,7 @@ test("Cursor Desktop registration is accepted on the private-use callback", asyn
       response_types: ["code"],
     }),
   }))
-  expect(registrationResponse.status).toBe(200)
+  expect(registrationResponse.status).toBe(201)
   const registration: unknown = await registrationResponse.json()
   oauthClientId = requiredString(registration, "client_id")
   expect(isRecord(registration) && Array.isArray(registration.redirect_uris) && registration.redirect_uris[0]).toBe(CURSOR_DESKTOP_REDIRECT_URI)

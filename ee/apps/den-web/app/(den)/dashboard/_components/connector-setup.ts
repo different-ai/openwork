@@ -4,11 +4,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { connectorAccountReady } from "./connector-detail";
+import { type ConnectorSignInMethod, connectorSignInMethod, oauthClientSecretRequired, oauthRequestFields } from "./connector-sign-in-method";
 import { libraryQueryKeys } from "./library-data";
 import { resolveMcpAuthorizationPollOutcome } from "./mcp-account-authorization-state";
 import { openMcpAuthorizationTab, safeMcpAuthorizationUrl, showMcpAuthorizationFailure } from "./mcp-authorization-url";
 import {
+  type CreateMcpConnectionInput,
   type ExternalMcpConnection,
+  type ExternalMcpPreset,
   type ExternalMcpTool,
   type McpRequirementsDiscovery,
   McpOAuthStartError,
@@ -26,6 +29,8 @@ export type ConnectorTarget = {
   name: string;
   url: string;
   description: string;
+  /** The catalog preset's own sign-in requirement, when the target came from the catalog. */
+  preset?: Pick<ExternalMcpPreset, "authType" | "requiresOAuthClient"> | null;
 };
 
 const POLL_INTERVAL_MS = 1500;
@@ -58,18 +63,30 @@ type SignInState =
   | { kind: "waiting" }
   | { kind: "failed"; message: string };
 
+export type ConnectorSetupMode = "admin" | "member";
+
+/** The fields step two needs from an admin before anyone can sign in. */
+export type OAuthAppInput = { clientId: string; clientSecret: string };
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
 /**
  * Runs the four setup checks for one connector: OpenWork finds the server,
  * learns how people sign in, signs the viewer in, and reads what the AI can do.
- * The connection is created at sign-in, for the viewer only.
+ * The connection is created for the viewer only: at sign-in, when an admin
+ * saves the key or OAuth app step two asks for, or right away when there is
+ * nothing to sign in to.
  */
-export function useConnectorSetup({ target, initialConnectionId, onConnectionCreated }: {
+export function useConnectorSetup({ target, initialConnectionId, onConnectionCreated, mode = "member" }: {
   target: ConnectorTarget | null;
   initialConnectionId: string | null;
   onConnectionCreated?: (connectionId: string) => void;
+  mode?: ConnectorSetupMode;
 }) {
   const queryClient = useQueryClient();
-  const { orgContext } = useOrgDashboard();
+  const { orgId, orgContext } = useOrgDashboard();
   const discover = useDiscoverMcpConnectionRequirements();
   const createConnection = useCreateMcpConnection();
   const deleteConnection = useDeleteMcpConnection();
@@ -80,24 +97,28 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   const [connectionId, setConnectionId] = useState<string | null>(initialConnectionId);
   const [createdHere, setCreatedHere] = useState(false);
   const [signIn, setSignIn] = useState<SignInState>({ kind: "idle" });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const discoveredUrl = useRef<string | null>(null);
   const autoCreated = useRef(false);
 
   const connection: ExternalMcpConnection | null = usable.data?.find((entry) => entry.id === connectionId) ?? null;
-  const authKind = discovery?.authentication.kind ?? null;
+  const findDone = discovery !== null && discovery.status !== "unreachable" && discovery.status !== "unsupported";
+  const method: ConnectorSignInMethod | null = findDone && discovery ? connectorSignInMethod(discovery, target?.preset) : null;
   const signedIn = Boolean(connection && (connection.authType === "none" || connectorAccountReady(connection)));
   const tools = useMcpConnectionTools(connectionId ?? "", signedIn);
 
   useEffect(() => {
-    if (!target || discoveredUrl.current === target.url) return;
+    // A deep link can resolve the catalog entry before the organization loads.
+    if (!target || !orgId || discoveredUrl.current === target.url) return;
     discoveredUrl.current = target.url;
     setDiscovery(null);
     setDiscoveryError(null);
     discover.mutateAsync(target.url)
       .then((result) => setDiscovery(result))
-      .catch((error: unknown) => setDiscoveryError(error instanceof Error ? error.message : "OpenWork could not reach it."));
-  }, [discover, target]);
+      .catch((error: unknown) => setDiscoveryError(errorMessage(error, "OpenWork could not reach it.")));
+  }, [discover, orgId, target]);
 
   const stopPolling = useCallback(() => {
     if (pollTimer.current) clearInterval(pollTimer.current);
@@ -105,13 +126,16 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   }, []);
   useEffect(() => stopPolling, [stopPolling]);
 
-  const createForMe = useCallback(async (authType: "oauth" | "none") => {
+  const createForMe = useCallback(async (auth: Pick<CreateMcpConnectionInput, "authType" | "apiKey" | "oauthClient">) => {
     if (!target || !orgContext) throw new Error("Your organization is still loading. Try again in a moment.");
     const created = await createConnection.mutateAsync({
       name: target.name,
       url: target.url,
-      authType,
-      credentialMode: authType === "oauth" ? "per_member" : "shared",
+      authType: auth.authType,
+      credentialMode: auth.authType === "oauth" ? "per_member" : "shared",
+      ...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
+      ...(auth.oauthClient ? { oauthClient: auth.oauthClient } : {}),
+      ...(auth.authType === "oauth" ? oauthRequestFields(discovery) : {}),
       access: { orgWide: false, memberIds: [orgContext.currentMember.id], teamIds: [] },
     });
     setConnectionId(created.id);
@@ -122,13 +146,54 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
       queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items }),
     ]);
     return created.id;
-  }, [createConnection, onConnectionCreated, orgContext, queryClient, target, usable]);
+  }, [createConnection, discovery, onConnectionCreated, orgContext, queryClient, target, usable]);
 
   useEffect(() => {
-    if (authKind !== "none" || connectionId || autoCreated.current) return;
+    if (method !== "none" || connectionId || autoCreated.current) return;
     autoCreated.current = true;
-    createForMe("none").catch((error: unknown) => setSignIn({ kind: "failed", message: error instanceof Error ? error.message : "Could not add it." }));
-  }, [authKind, connectionId, createForMe]);
+    createForMe({ authType: "none" }).catch((error: unknown) => setSignIn({ kind: "failed", message: errorMessage(error, "Could not add it.") }));
+  }, [method, connectionId, createForMe]);
+
+  /** Step two for a server that takes a key: the admin's key is shared by everyone who gets it. */
+  const saveApiKey = useCallback(async (apiKey: string) => {
+    const key = apiKey.trim();
+    if (!key) {
+      setSaveError("Paste the key first.");
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await createForMe({ authType: "apikey", apiKey: key });
+    } catch (error) {
+      setSaveError(errorMessage(error, "The key did not save."));
+    } finally {
+      setSaving(false);
+    }
+  }, [createForMe]);
+
+  /** Step two for a server that only accepts a pre-registered OAuth app; sign-in follows. */
+  const saveOAuthApp = useCallback(async (input: OAuthAppInput) => {
+    const clientId = input.clientId.trim();
+    const clientSecret = input.clientSecret.trim();
+    if (!clientId) {
+      setSaveError("Paste the client ID first.");
+      return;
+    }
+    if (!clientSecret && oauthClientSecretRequired(discovery)) {
+      setSaveError(`${target?.name ?? "This server"} needs the client secret too.`);
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await createForMe({ authType: "oauth", oauthClient: { clientId, ...(clientSecret ? { clientSecret } : {}) } });
+    } catch (error) {
+      setSaveError(errorMessage(error, "The OAuth app did not save."));
+    } finally {
+      setSaving(false);
+    }
+  }, [createForMe, discovery, target?.name]);
 
   const startSignIn = useCallback(async () => {
     if (!target) return;
@@ -138,7 +203,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     let id = connectionId;
     try {
       tab = openMcpAuthorizationTab({ connectionId: id ?? "", connectionName: target.name });
-      id = id ?? await createForMe("oauth");
+      id = id ?? await createForMe({ authType: "oauth" });
       const result = await startOAuth.mutateAsync(id);
       if (result.status === "connected") {
         tab.close();
@@ -173,7 +238,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
         }
       }, POLL_INTERVAL_MS);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Sign-in did not start.";
+      const message = errorMessage(error, "Sign-in did not start.");
       showMcpAuthorizationFailure(tab, {
         connectionId: id ?? "",
         connectionName: target.name,
@@ -194,11 +259,43 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   }, [connectionId, createdHere, deleteConnection, queryClient, stopPolling]);
 
   const name = target?.name ?? "it";
-  const findDone = discovery !== null && discovery.status !== "unreachable" && discovery.status !== "unsupported";
   const findFailed = discoveryError !== null || (discovery !== null && !findDone);
-  const authKnown = findDone && (authKind === "oauth" || authKind === "none");
-  const authFailed = findDone && !authKnown;
+  const needsAdminInput = method === "api_key" || method === "oauth_app";
+  const adminInputSaved = needsAdminInput && connection !== null;
+  const blocked = needsAdminInput && mode === "member" && !connection;
+  const methodFailed = method === "unsupported";
+  const methodDone = method === "none" || method === "sign_in" || adminInputSaved;
+  const usesKey = method === "api_key" || connection?.authType === "apikey";
+  const canSignIn = !signedIn && signIn.kind !== "waiting" && (method === "sign_in" || (method === "oauth_app" && connection !== null));
   const toolList = tools.data?.tools ?? [];
+
+  const methodDescription = (() => {
+    if (methodFailed) return `OpenWork could not tell how to sign in to ${name}.`;
+    if (method === "none") return "No sign-in needed.";
+    if (method === "sign_in") return `You sign in with your own ${name} account.`;
+    if (method === "api_key") {
+      if (adminInputSaved) return "Key added. Everyone uses it.";
+      return mode === "member" ? `An admin adds the key for ${name}.` : `${name} needs a key.`;
+    }
+    if (method === "oauth_app") {
+      if (adminInputSaved) return "OAuth app added.";
+      return mode === "member" ? `An admin adds the OAuth app for ${name}.` : `${name} needs your OAuth app.`;
+    }
+    return findDone ? "Checking now." : "Waits for the first check.";
+  })();
+
+  const signInDescription = (() => {
+    if (signedIn) {
+      if (connection?.authType === "none") return "Nothing to sign in to.";
+      if (connection?.authType === "apikey") return "Uses the key you added.";
+      return connection?.externalAccountId ? `As ${connection.externalAccountId}.` : "You are signed in.";
+    }
+    if (signIn.kind === "failed") return signIn.message;
+    if (signIn.kind === "waiting") return `${name} opened in a new tab. Come back here when you are done.`;
+    if (canSignIn) return `${name} opens in a new tab. Come back here when you are done.`;
+    if (usesKey && connection) return "Checking the key.";
+    return "Waits for the checks above.";
+  })();
 
   const checks: SetupCheck[] = [
     {
@@ -210,33 +307,27 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     {
       id: "sign-in-method",
       title: "Knows how you sign in",
-      description: authFailed
-        ? authKind === "manual_bearer" ? `${name} needs a key. Ask an admin to add it.` : `OpenWork could not tell how to sign in to ${name}.`
-        : authKnown
-          ? authKind === "none" ? "No sign-in needed." : `You sign in with your own ${name} account.`
-          : "Waits for the first check.",
-      status: authFailed ? "failed" : authKnown ? "done" : findDone ? "running" : "waiting",
+      description: methodDescription,
+      status: methodFailed ? "failed" : methodDone ? "done" : blocked ? "blocked" : needsAdminInput ? "current" : findDone ? "running" : "waiting",
     },
     {
       id: "sign-in",
-      title: signedIn ? `Signed in to ${name}` : `Sign in to ${name}`,
-      description: signedIn
-        ? authKind === "none" || connection?.authType === "none"
-          ? "Nothing to sign in to."
-          : connection?.externalAccountId ? `As ${connection.externalAccountId}.` : "You are signed in."
-        : signIn.kind === "failed"
-          ? signIn.message
-          : signIn.kind === "waiting"
-            ? `${name} opened in a new tab. Come back here when you are done.`
-            : authKnown ? `${name} opens in a new tab. Come back here when you are done.` : "Waits for the checks above.",
-      status: signedIn ? "done" : signIn.kind === "failed" ? "failed" : signIn.kind === "waiting" ? "running" : authKnown && authKind === "oauth" ? "current" : authKnown ? "running" : "waiting",
+      title: signedIn
+        ? usesKey ? `Connected to ${name}` : `Signed in to ${name}`
+        : usesKey ? `Connect to ${name}` : `Sign in to ${name}`,
+      description: signInDescription,
+      status: signedIn
+        ? "done"
+        : signIn.kind === "failed" ? "failed"
+          : signIn.kind === "waiting" || (usesKey && connection) || (method === "none" && !connection) ? "running"
+            : canSignIn ? "current" : "waiting",
     },
     {
       id: "tools",
       title: "Has things your AI can do",
       description: tools.error
         ? "OpenWork could not read what it can do. Try again later."
-        : tools.data ? toolsSentence(toolList) : signedIn ? "Reading them now." : "They show up after you sign in.",
+        : tools.data ? toolsSentence(toolList) : signedIn ? "Reading them now." : usesKey ? "They show up once the key works." : "They show up after you sign in.",
       status: tools.error ? "failed" : tools.data ? "done" : signedIn ? "running" : "waiting",
     },
   ];
@@ -251,7 +342,15 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     connection,
     connectionId,
     tools: toolList,
-    canSignIn: authKnown && authKind === "oauth" && !signedIn && signIn.kind !== "waiting",
+    method,
+    /** Step two is waiting on a key or OAuth app from this viewer. */
+    needsInput: needsAdminInput && mode === "admin" && !connection,
+    secretRequired: oauthClientSecretRequired(discovery),
+    saving,
+    saveError,
+    saveApiKey,
+    saveOAuthApp,
+    canSignIn,
     signingIn: signIn.kind === "waiting",
     startSignIn,
     discard,
@@ -263,6 +362,7 @@ export function useMemberSignIn() {
   const queryClient = useQueryClient();
   const startOAuth = useStartMcpConnectionOAuth();
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [failure, setFailure] = useState<{ id: string; message: string } | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => () => {
     if (timer.current) clearInterval(timer.current);
@@ -276,6 +376,7 @@ export function useMemberSignIn() {
   async function signIn(item: { id: string; name: string }) {
     if (timer.current) clearInterval(timer.current);
     setPendingId(item.id);
+    setFailure(null);
     let tab: Window | null = null;
     try {
       tab = openMcpAuthorizationTab({ connectionId: item.id, connectionName: item.name });
@@ -296,11 +397,18 @@ export function useMemberSignIn() {
           setPendingId(null);
         }
       }, 1500);
-    } catch {
-      tab?.close();
+    } catch (error) {
+      const message = errorMessage(error, "Sign-in did not start.");
+      showMcpAuthorizationFailure(tab, {
+        connectionId: item.id,
+        connectionName: item.name,
+        message,
+        ...(error instanceof McpOAuthStartError ? { details: error.details } : {}),
+      });
+      setFailure({ id: item.id, message });
       setPendingId(null);
     }
   }
 
-  return { signIn, pendingId };
+  return { signIn, pendingId, failure };
 }

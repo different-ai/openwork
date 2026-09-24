@@ -2,6 +2,19 @@
 title: "Changelog"
 "og:description": "OpenWork release notes: new features, improvements, and bug fixes."
 ---
+<Update label="September 24th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.52](https://github.com/different-ai/openwork/compare/v0.18.50...v0.18.52): Manage your Library from the desktop, find anything from one + menu, and a rebuilt AI Gateway
+
+  - **Your Library works fully on the desktop.** You can now add, share, edit and delete skills, connectors and plugins without leaving the app. A new Connectors tab lists your connectors, adding one starts from a catalog with service logos, and an MCP server's address is checked before it's saved. Each item's page has **Chat**, which starts a task with that item ready to use, and **Share** on items you own. When a skill shapes an answer, chat names the skill. Signed out, the Library shows one clear **Sign in to OpenWork Cloud** button instead of an "Add to library" button that did nothing. Lists also load faster.
+  - **One + menu in the composer finds everything.** The paperclip and tools buttons are now a single **+** menu that opens on a search across your files, skills, connectors, plugins and commands. It still finds what you meant when you make a typo ("hubsopt" finds HubSpot). Attaching a file is the first option, or press ⌘U (Ctrl+U on Windows and Linux).
+  - **Usage limits are clearer.** When you reach your organization's usage limit, the chat says which limit you hit and when it resets, and you can ask for more right there. The account menu shows how much of each limit you have left, and the new Settings › Usage page has the details. The chat no longer also shows a misleading "too many requests" error under the limit.
+  - **AI Gateway is rebuilt and available to every organization.** For admins: AI Gateway is now a regular page in the sidebar. Add a provider from a catalog, then set its key, who can use it and which models in one form. Overview shows who spends what and on which models, with a page for each person. Limits lets you cap spend per day, week or month for everyone, a team or one person, and you can undo a deleted limit. Users & Teams shows everyone's providers, limits and last 31 days of spend. Mistral is now supported. Members can sign in to Gemini and Claude on Google Cloud with their own Google account from the new Models section of My Library, which replaces the old My Model Connections page.
+  - **Connectors and plugins are simpler to manage.** For admins in OpenWork Cloud: add a connector in a few steps, choose whether each person signs in or one account is shared by everyone, and pick which teams get it. **Add any MCP** adds a server that isn't in the catalog, or you can paste its address into the search. Manage › Plugins lists every plugin with who has it. You can create one and give it to teams right there, then search by name or filter by team or person. Removing a connector or plugin now asks first, and switching a connector to one shared account warns you before it signs you out. Owners can also approve their self-hosted OpenWork web address in Org settings so members can sign in there, even if they belong to several organizations.
+  - **Also in this release.** The first time you click a link, OpenWork asks whether to open it in OpenWork or your usual browser and can remember your choice. You can change it later in Settings › Preferences › Browser, or right-click a link to choose once. Session search and notifications sit next to the OpenWork name at the top of the sidebar, and window controls look native on macOS, Windows and Linux. The built-in browser no longer has a Suspend button. After you sign in, Settings › AI providers works right away, even before you create your first workspace. If you use OpenWork from Claude Code, Cursor or Codex, agents can update shared skills. When a long document or email is cut short, they're told the full length and how to read the rest.
+
+</Update>
+
 <Update label="September 22nd" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
 
   ## [v0.18.50](https://github.com/different-ai/openwork/compare/v0.18.49...v0.18.50): Run OpenWork on your own server with one command
@@ -67,7 +80,7 @@ title: "Changelog"
   - The Working indicator now tells the truth: it stops when a run errors or the engine is unreachable, and shows minutes once a run passes the first hour.
   - Sessions reconcile more cleanly — completions are detected while you're working elsewhere, queued messages send even when the session is out of view, and archiving works from any workspace.
   - Cloud providers now connect using the credentials saved on your desktop, and Google Workspace retrieval is more resilient.
-  - OpenWork is SOC 2 Type I — the landing page now shows the badge and live status.
+  - Published the SOC 2 badge and compliance status on the landing page.
   - Hardened security by fixing static-analysis findings and isolating provider sync contexts, alongside internal test and release tooling improvements.
 
 </Update>

@@ -1659,7 +1659,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const force = Boolean(optionsArg?.dispose || optionsArg?.force || state.providerLoadState.error);
     setStateField("providerLoadState", { status: "loading", error: state.providerLoadState.error });
 
-    if (optionsArg?.dispose) {
+    const serverClient = options.openworkServer.getSnapshot().openworkServerClient;
+    const liveCatalog = optionsArg?.dispose && serverClient && options.selectedWorkspaceDisplay().workspaceType !== "remote"
+      ? await serverClient.getEngineV2PreviewStatus().then(status => status.enabled && status.chatRouting).catch(() => false)
+      : false;
+    if (optionsArg?.dispose && !liveCatalog) {
       const now = Date.now();
       const shouldDispose = now - lastGlobalProviderDisposeRefreshAt >= 10_000;
       const shouldUseServerReload = !(

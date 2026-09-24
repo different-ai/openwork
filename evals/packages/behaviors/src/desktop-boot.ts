@@ -58,7 +58,10 @@ export async function signInDesktopAs(app: Surface, den: DenRef, member: DenSess
   });
   // A first-time member lands on organization onboarding; a member whose app
   // already has a workspace can come straight back to it.
-  await waitFor(app, () => (window.location.hash.includes("/onboarding") || /\/(workspace|session)/.test(window.location.hash)), {
+  await waitFor(app, () => {
+    const route = window.location.hash || window.location.pathname;
+    return route.includes("/onboarding") || /\/(workspace|session)/.test(route);
+  }, {
     timeoutMs: 60_000,
     label: "organization onboarding or workspace route",
   });

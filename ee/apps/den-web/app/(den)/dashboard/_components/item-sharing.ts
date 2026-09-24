@@ -6,6 +6,7 @@ import { type AccessDraft, EMPTY_ACCESS } from "./access-summary";
 import { libraryQueryKeys } from "./library-data";
 import { mcpConnectionQueryKeys, useReplaceMcpConnectionAccess } from "./mcp-connections-data";
 import { type GrantPluginAccessBody, type PluginAccessGrant, pluginAccessQueryKeys, useGrantPluginAccess, useRevokePluginAccess } from "./plugin-access-data";
+import { pluginQueryKeys } from "./plugin-data";
 
 export function draftFromPluginGrants(grants: readonly PluginAccessGrant[] | undefined): AccessDraft {
   if (!grants) return EMPTY_ACCESS;
@@ -47,6 +48,7 @@ export function useSavePluginAccess() {
     for (const entry of revokes) await revoke.mutateAsync({ pluginId, grantId: entry.id });
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: pluginAccessQueryKeys.detail(pluginId) }),
+      queryClient.invalidateQueries({ queryKey: pluginQueryKeys.summaries() }),
       queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items }),
     ]);
   }, [grant, queryClient, revoke]);

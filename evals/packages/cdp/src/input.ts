@@ -436,7 +436,18 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
         },
       };
     }
-    element.scrollIntoView({ block: "center", inline: "center" });
+    // Re-centering a reachable hover action can move its parent away from the
+    // pointer and hide the action before the click. Keep reachable controls
+    // still; scroll only when their click point is outside or covered.
+    const initial = element.getBoundingClientRect();
+    const initialX = initial.left + initial.width / 2;
+    const initialY = initial.top + initial.height / 2;
+    const initialHit = initialX >= 0 && initialY >= 0 && initialX <= innerWidth && initialY <= innerHeight
+      ? document.elementFromPoint(initialX, initialY) : null;
+    const isButton = element instanceof HTMLButtonElement || element.getAttribute("role") === "button";
+    if (!isButton || !initialHit || (initialHit !== element && !element.contains(initialHit))) {
+      element.scrollIntoView({ block: "center", inline: "center" });
+    }
     const rect = element.getBoundingClientRect();
     const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     let current: Element | null = element;

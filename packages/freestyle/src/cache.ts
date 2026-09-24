@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { FreestyleApiError, type Freestyle, type Vm } from "freestyle";
-import { execChecked, isMissing } from "./index.ts";
+import { execChecked, isMissing, type PreviewWorld } from "./index.ts";
 
 export interface SourceEntry { path: string; sha: string; type: string; installSha?: string; runtimeSha?: string }
 export interface BuildStage { stage: string; durationMs: number; cacheHit?: boolean }
@@ -28,8 +28,9 @@ export function manifestFingerprints(value: unknown) {
   return { installSha: digest(JSON.stringify(install)), runtimeSha: digest(JSON.stringify(runtime)) };
 }
 
-function worldSource(path: string, world: "app-web" | "acme-web") {
+function worldSource(path: string, world: PreviewWorld) {
   // app-web runs the hosted Den proxy, never the local Den/Gateway or eval runtime.
+  if (world === "desktop") return !/^(ee\/apps\/(den-web|den-api|gateway)\/|worlds\/|packages\/world\/|evals\/(?!packages\/cdp\/))/.test(path);
   return world !== "app-web" || !/^(ee\/apps\/(den-web|den-api|gateway)\/|evals\/|worlds\/acme-web\.)/.test(path);
 }
 
@@ -150,7 +151,7 @@ export async function ensureLayer(input: {
   throw new Error(`${input.stage} cache build timed out`);
 }
 
-export function compiledFingerprint(entries: SourceEntry[], world: "app-web" | "acme-web" = "acme-web"): string {
+export function compiledFingerprint(entries: SourceEntry[], world: PreviewWorld = "acme-web"): string {
   const runtimeSource = /^(apps\/app\/(src|public)\/|ee\/apps\/(den-web\/(src|app|public)|den-api\/src|gateway\/src)\/|packages\/freestyle\/|worlds\/|evals\/|\.github\/|docs\/)/;
   return digest(JSON.stringify(entries.filter((entry) => entry.type === "blob" && worldSource(entry.path, world) && !runtimeSource.test(entry.path))
     .sort((a, b) => a.path.localeCompare(b.path)).map(({ path, sha, runtimeSha }) => [path, runtimeSha ?? sha])));
@@ -176,7 +177,7 @@ export async function startBuildUnit(vm: Vm, stage: string, diagnostic?: (stage:
 
 
 /** These files run in development servers that reload them after checkout. */
-export function runningFingerprint(entries: SourceEntry[], world: "app-web" | "acme-web" = "acme-web"): string {
+export function runningFingerprint(entries: SourceEntry[], world: PreviewWorld = "acme-web"): string {
   const refreshed = /^(apps\/app\/(src|public)\/|ee\/apps\/den-web\/(components|public|styles)\/|\.github\/|docs\/)/;
   return digest(JSON.stringify(entries.filter((entry) => entry.type === "blob" && worldSource(entry.path, world) && !refreshed.test(entry.path))
     .sort((a, b) => a.path.localeCompare(b.path)).map(({ path, sha, runtimeSha }) => [path, runtimeSha ?? sha])));

@@ -1,5 +1,6 @@
-import { GatewayMemberConnectionsScreen } from "../_components/gateway-member-connections-screen";
+import { redirect } from "next/navigation";
 
+// Models moved into My Library. Installed desktop builds still open this address.
 export default function ModelConnectionsPage() {
-  return <GatewayMemberConnectionsScreen />;
+  redirect("/dashboard/library?show=models");
 }
