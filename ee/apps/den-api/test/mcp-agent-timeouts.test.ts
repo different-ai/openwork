@@ -516,7 +516,7 @@ test("structured search output remains compatible with marketplace match kinds a
 })
 
 test("agent steering describes skill and sharing results as plain text without confirmation Apps", () => {
-  expect(agentModule.AGENT_MCP_INSTRUCTIONS).toContain("the user previews the draft and chooses Save")
+  expect(agentModule.AGENT_MCP_INSTRUCTIONS).toContain("Each App becomes its own standard MCP server")
   expect(agentModule.AGENT_MCP_INSTRUCTIONS).not.toContain("Modern OpenWork clients ignore that metadata")
   expect(agentModule.AGENT_MCP_INSTRUCTIONS).toContain("return the ordinary operation response; report the verified outcome in text")
   expect(agentModule.AGENT_MCP_INSTRUCTIONS).not.toContain("confirmation card")

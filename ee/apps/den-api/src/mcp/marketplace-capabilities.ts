@@ -12,6 +12,7 @@ import {
   PluginTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { isAuthoredMcpAppVersion, MCP_APP_LAUNCH_TOOL_NAME, mcpAppServerPath } from "@openwork/types/mcp-app"
 import {
   listExternalMcpConnections,
   listUsableExternalMcpConnections,
@@ -777,6 +778,7 @@ async function exactVersion(configObjectId: ConfigObjectId, organizationId: Orga
     eq(ConfigObjectVersionTable.id, normalizedVersionId),
     eq(ConfigObjectVersionTable.configObjectId, configObjectId),
     eq(ConfigObjectVersionTable.organizationId, organizationId),
+    eq(ConfigObjectVersionTable.isDeletedVersion, false),
   )).limit(1)
   return rows[0] ?? null
 }
@@ -1598,6 +1600,17 @@ export async function executeMarketplaceCapability(input: {
         ...basePayload(row),
         status: "content_not_synced",
         hint: contentNotSyncedHint(row),
+      },
+    }
+  }
+
+  if (isAuthoredMcpAppVersion(version)) {
+    return {
+      ok: true,
+      result: {
+        ...basePayload(row),
+        status: "unsupported",
+        hint: `This App is its own MCP server at ${mcpAppServerPath(row.configObject.id)}; its ${MCP_APP_LAUNCH_TOOL_NAME} tool opens it. Code Mode and generic Plugin execution do not open Apps or return their source. Editors can use read_app to edit it. No App was opened.`,
       },
     }
   }

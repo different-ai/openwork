@@ -229,6 +229,20 @@ The gateway preserves provider `structuredContent` rather than adding fields to 
 
 MCP Apps from third-party providers render in OpenWork through its private App host. For an external MCP Apps-capable client, enable direct exposure and add the connection's own MCP URL from **Your Connections → Use in another app**. That endpoint exposes resources bound to permitted model-visible tools; it does not expose arbitrary resources or app-only helper tools. Initial App loading and interactive callback support are distinct. See [Use a connection in another MCP client](/cloud/share-with-your-team/shared-mcp-connections#use-a-connection-in-another-mcp-client).
 
+### Apps you build are their own MCP servers
+
+Ask the agent for an app, dashboard, or interactive view and it calls `create_app` with React source, a text fallback, and the tools the App needs. No Workflow is required. Each App is saved in a Plugin and served as its own standard MCP server at `/mcp/agent/connections/<appId>` on your OpenWork API, which exposes only:
+
+- `open_app`, bound to the App's current immutable `ui://` revision;
+- the tools the App declared, each a clear name bound to one exact capability from `search_capabilities`: a saved Workflow, a connection tool, or an OpenWork action;
+- the App's revision resources.
+
+Declared tools run as the person using the App, with that person's own access and connections; sharing an App never shares credentials. A tool is marked read-only only when OpenWork can verify it: OpenWork read actions, connection tools that their provider marks read-only, and saved Workflows declared with `mode: "live"`, which run read-only with server-supplied dates. The OpenWork app runs other tools only after a click inside the App.
+
+Share an App by sharing its Plugin. People with access can open it in the OpenWork app, which registers each App they can use as its own MCP server and opens new revisions right after `create_app` or `update_app`. They can also copy the App's MCP URL from its Plugin page into Cursor, Claude, or another MCP client and sign in with OpenWork.
+
+`read_app` returns source to editors, and `update_app` publishes a new revision; omit `tools` to keep the current ones. `save_artifact_view` only edits existing Workflow-bound views. These App tools are available when your organization has member-facing MCP connections turned on, which is the default.
+
 ## Troubleshooting
 
 - **401 missing or invalid token**: run the client's auth/login command again. Confirm the client points to `https://api.openworklabs.com/mcp/agent`.

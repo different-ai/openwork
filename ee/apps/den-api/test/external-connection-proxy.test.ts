@@ -798,6 +798,40 @@ test("ordinary clients only see directly exposed connections in the index while 
   }).servers.map((server) => server.exposeDirectly)).toEqual([false, true])
 })
 
+test("each App the member can use is listed as its own directly exposed server after connections, within the desktop limit", () => {
+  const app = (index: number) => ({
+    appId: `cob_01k28e8q8pf8r9sff9mhyq${String(index).padStart(4, "0")}`,
+    pluginId: "plg_01k28e8q8pf8r9sff9mhyqxved",
+    revisionId: "cov_01k28e8q8pf8r9sff9mhyqxved",
+    title: `App ${String(index).padStart(3, "0")}`,
+    description: index === 0 ? "d".repeat(2_000) : null,
+    serverPath: `/mcp/agent/connections/cob_01k28e8q8pf8r9sff9mhyq${String(index).padStart(4, "0")}`,
+  })
+  const index = buildConnectMcpServerIndex({
+    enabled: true,
+    connections: [directConnection],
+    apps: [app(1), app(0)],
+    publicOrigin: "https://openwork.example",
+  })
+  expect(index.servers.map((server) => server.name)).toEqual(["App 000", "App 001", "Fixture MCP"])
+  expect(index.servers[0]).toEqual({
+    connectionId: app(0).appId,
+    name: "App 000",
+    description: "d".repeat(1_024),
+    url: `https://openwork.example${app(0).serverPath}`,
+    exposeDirectly: true,
+  })
+  const crowded = buildConnectMcpServerIndex({
+    enabled: true,
+    connections: [directConnection],
+    apps: Array.from({ length: 150 }, (_, position) => app(position)),
+    publicOrigin: "https://openwork.example",
+  })
+  expect(crowded.servers).toHaveLength(100)
+  expect(crowded.servers.some((server) => server.name === "Fixture MCP")).toBe(true)
+  expect(buildConnectMcpServerIndex({ enabled: false, connections: [], apps: [app(1)], publicOrigin: "https://openwork.example" }).servers).toEqual([])
+})
+
 test("disconnected and issuer-blocked OAuth connections are not ready for the native server index", async () => {
   const memberId = "mem_01k28e8q8pf8r9sff9mhyqxved" as never
   const base = {

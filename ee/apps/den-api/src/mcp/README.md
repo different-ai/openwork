@@ -78,6 +78,30 @@ Untagged operations are excluded by default. Today these are OAuth/MCP discovery
 
 They are required for OAuth/MCP setup, but should not appear as callable MCP tools.
 
+### Apps as MCP servers
+
+`create_app`, `update_app`, and `read_app` on `/mcp/agent` build Apps; they are
+not App launch surfaces. Each App is a Plugin config object served as its own
+MCP server at `/mcp/agent/connections/<appId>`, beside directly exposed
+connections, so OAuth resource matching and desktop index reconciliation work
+unchanged. That server lists only `open_app` (fixed `ui://` revision binding),
+the App's declared tools, and its revision resources.
+
+A declared tool binds one exact capability. Publishing resolves it as the
+author (Code Mode tool tree, or accessible Workflows) and stores its argument
+shape, input schema, and Den-verified read-only flag in the revision. Calls run
+through the ordinary executor as the caller: `api` tools take `{ path, query,
+body }`, `mcp` and Workflow tools take the capability's own arguments, and
+`live` Workflow tools run read-only with only an optional `timeZone`.
+Plugin access is rechecked on every request; unavailable Apps return a
+JSON-RPC error. The Connect server index lists accessible Apps with
+`exposeDirectly: true`, capped with connections at the desktop limit of 100.
+Search returns each App as `kind: mcp_app`; executing it returns an
+`openwork/mcpApp` launch reference to the App's own server.
+
+New `save_artifact_view` creation returns `deprecated_creation` where
+`create_app` is available. Existing views, edits, and resources are unchanged.
+
 ### Live generated apps
 
 GeneratedArtifactView.dataMode is optional on the wire. An absent value means

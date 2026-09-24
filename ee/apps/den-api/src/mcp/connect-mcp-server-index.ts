@@ -1,10 +1,14 @@
 import type { McpServer } from "@modelcontextprotocol/server"
 import type { ExternalMcpConnectionRow } from "../capability-sources/external-mcp-connections.js"
+import type { McpAppEntry } from "../mcp-apps.js"
 
 export const CONNECT_MCP_SERVER_INDEX_URI = "openwork://connect/mcp-servers/index.json"
 export const CONNECT_MCP_SERVER_INDEX_SCHEMA_VERSION = "openwork.connect/mcp-servers/1"
 export const CONNECT_MCP_APP_HOST_CAPABILITY_HEADER = "x-openwork-mcp-client-capabilities"
 export const CONNECT_MCP_APP_HOST_CAPABILITY = "mcp-app-host-v1"
+/** Released desktops reject a larger index outright, so it is capped here. */
+export const CONNECT_MCP_SERVER_INDEX_MAX_SERVERS = 100
+const INDEX_DESCRIPTION_MAX_CHARS = 1_024
 
 export function supportsConnectMcpAppHost(value: string | undefined): boolean {
   return value
@@ -39,22 +43,41 @@ export function selectConnectMcpServerIndexConnections(input: {
   return input.connections.filter((connection) => connection.exposeDirectly)
 }
 
+const byName = (left: ConnectMcpServerIndexEntry, right: ConnectMcpServerIndexEntry) =>
+  left.name.localeCompare(right.name) || left.connectionId.localeCompare(right.connectionId)
+
+/**
+ * Connections, then the member's authored Apps. Each App is its own directly
+ * exposed MCP server at a connection path, so desktop reconciliation registers
+ * it for the model like any direct connection.
+ */
 export function buildConnectMcpServerIndex(input: {
   enabled: boolean
   connections: ExternalMcpConnectionRow[]
+  apps?: McpAppEntry[]
   publicOrigin: string
 }) {
+  const connections = (input.enabled ? input.connections : [])
+    .map((connection): ConnectMcpServerIndexEntry => ({
+      connectionId: connection.id,
+      name: connection.name,
+      description: null,
+      url: `${input.publicOrigin}/mcp/agent/connections/${encodeURIComponent(connection.id)}`,
+      exposeDirectly: connection.exposeDirectly,
+    }))
+    .sort(byName)
+  const apps = (input.enabled ? input.apps ?? [] : [])
+    .map((app): ConnectMcpServerIndexEntry => ({
+      connectionId: app.appId,
+      name: app.title,
+      description: app.description ? app.description.slice(0, INDEX_DESCRIPTION_MAX_CHARS) : null,
+      url: `${input.publicOrigin}${app.serverPath}`,
+      exposeDirectly: true,
+    }))
+    .sort(byName)
   return {
     schemaVersion: CONNECT_MCP_SERVER_INDEX_SCHEMA_VERSION,
-    servers: (input.enabled ? input.connections : [])
-      .map((connection): ConnectMcpServerIndexEntry => ({
-        connectionId: connection.id,
-        name: connection.name,
-        description: null,
-        url: `${input.publicOrigin}/mcp/agent/connections/${encodeURIComponent(connection.id)}`,
-        exposeDirectly: connection.exposeDirectly,
-      }))
-      .sort((left, right) => left.name.localeCompare(right.name) || left.connectionId.localeCompare(right.connectionId)),
+    servers: [...connections, ...apps].slice(0, CONNECT_MCP_SERVER_INDEX_MAX_SERVERS).sort(byName),
   }
 }
 
@@ -62,11 +85,12 @@ export function registerConnectMcpServerIndex(input: {
   server: McpServer
   enabled: boolean
   connections: ExternalMcpConnectionRow[]
+  apps?: McpAppEntry[]
   publicOrigin: string
 }) {
   input.server.registerResource("openwork-connect-mcp-servers", CONNECT_MCP_SERVER_INDEX_URI, {
     title: "OpenWork Connect MCP servers",
-    description: "Member-authorized MCP servers available through OpenWork Connect.",
+    description: "Member-authorized MCP servers available through OpenWork Connect, including each App the member can use.",
     mimeType: "application/json",
   }, async () => ({
     contents: [{
