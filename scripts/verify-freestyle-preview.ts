@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { client, execChecked, guestCommandOutcome, launchPreview, type PreviewSession } from "../packages/freestyle/src/index.ts";
-import { desktopChatResult, responseErrorCode } from "../packages/freestyle/src/verify-results.ts";
+import { desktopChatResult, responseErrorSource } from "../packages/freestyle/src/verify-results.ts";
 
 // Run only from the reviewed, pinned controller after CI prewarming. Never emit
 // access URLs, credentials, or arbitrary guest output into public CI artifacts.
@@ -19,9 +19,9 @@ async function json(session: PreviewSession, service: string, label: string, pat
     signal: AbortSignal.timeout(30_000),
   });
   if (response.status !== 200) {
-    // Public log: the failing call and a validated error code, never the body.
-    const code = responseErrorCode(await response.json().catch(() => undefined));
-    assert.fail(`Restored ${service} ${label} returned HTTP ${response.status}${code ? ` ${code}` : ""}`);
+    // Public log: the failing call and where the error came from, never the body.
+    const source = responseErrorSource(response.headers, await response.text().catch(() => ""));
+    assert.fail(`Restored ${service} ${label} returned HTTP ${response.status} (${source})`);
   }
   return response.json();
 }

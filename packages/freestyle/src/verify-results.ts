@@ -39,3 +39,24 @@ export function responseErrorCode(body: unknown): string {
   const code = record(body) ? body.code ?? body.name : undefined;
   return typeof code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(code) ? code : "";
 }
+
+// The preview gateway's own error bodies (packages/freestyle/src/gateway.mjs).
+const GATEWAY_ERRORS = new Map([
+  ["Sandbox unavailable. Launch a fresh sandbox from the review.", "preview gateway could not reach the service"],
+  ["This world is not ready. Try launching again from the review.", "preview gateway has no service map yet"],
+]);
+
+/**
+ * Where a failed response came from, safe to print: the service behind the
+ * gateway (which relays with `referrer-policy: no-referrer`), the gateway
+ * itself, or something before it such as the provider edge.
+ */
+export function responseErrorSource(headers: Headers, text: string): string {
+  if (headers.get("referrer-policy") === "no-referrer") {
+    let body: unknown;
+    try { body = JSON.parse(text); } catch { body = undefined; }
+    const code = responseErrorCode(body);
+    return code ? `service error ${code}` : "service error without a code";
+  }
+  return GATEWAY_ERRORS.get(text.trim()) ?? "not from the preview gateway (provider edge or network)";
+}

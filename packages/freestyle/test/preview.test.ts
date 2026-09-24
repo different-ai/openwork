@@ -311,3 +311,22 @@ test("ACME clones link the desktop viewer only when the snapshot started the des
   const older = mockApi();
   assert.equal((await launchPreview({ gitSha: sha, world: "acme-web" }, older.api, reachable)).outputs.desktopUrl, undefined, "snapshots from before this change are unaffected");
 });
+
+test("ACME launches return only after every linked service hostname routes to the clone", async () => {
+  const handshakes = (seen: string[]): typeof fetch => async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/__openwork_launch") seen.push(url.hostname.split("-")[0]);
+    return reachable(input, init);
+  };
+  const withDesktop: string[] = [];
+  await launchPreview({ gitSha: sha, world: "acme-web" }, mockApi(undefined, { "outputs.json": JSON.stringify({ desktopStatus: { value: "ready", group: "Desktop" } }) }).api, handshakes(withDesktop));
+  assert.deepEqual(withDesktop.sort(), ["api", "den", "desktop", "engine", "gateway", "ow"]);
+  const withoutDesktop: string[] = [];
+  await launchPreview({ gitSha: sha, world: "acme-web" }, mockApi(undefined, { "outputs.json": JSON.stringify({ desktopStatus: { value: "unavailable", group: "Desktop" } }) }).api, handshakes(withoutDesktop));
+  assert.deepEqual(withoutDesktop.sort(), ["api", "den", "engine", "gateway", "ow"], "an unlinked desktop is not required to route");
+
+  const dead = mockApi();
+  await assert.rejects(launchPreview({ gitSha: sha, world: "acme-web" }, dead.api, async (input, init) =>
+    new URL(String(input)).hostname.startsWith("api-") ? new Response(null, { status: 403 }) : reachable(input, init)), /could not be reached/);
+  assert.deepEqual(dead.deleted, ["/v5/vms/vm-1"], "a clone whose links do not route is deleted, not handed out");
+});
