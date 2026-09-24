@@ -274,7 +274,7 @@ test("native reaction runtime freezes visible targets and revalidates at the ren
     current.entry.reactionTargets = { messageIds: prepared.messageIds, defaultMessageId: prepared.defaultMessageId };
     return prepared;
   };
-  assert.equal(await quietRuntime.prepare(current.entry, current.snapshot), null, "most turns do not offer a new reaction");
+  assert.ok(await quietRuntime.prepare(current.entry, current.snapshot), "a person's private request can always show what the coworker is doing");
   const privateTargets = await prepare();
   assert.deepEqual(privateTargets.messageIds, [privateEntry.messageId]);
   assert.equal(privateTargets.defaultMessageId, privateEntry.messageId);
