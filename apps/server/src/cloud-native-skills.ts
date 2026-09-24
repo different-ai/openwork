@@ -12,7 +12,7 @@ const SKILL_INDEX_URI = "skill://index.json";
 const MAX_INDEX_BYTES = 1024 * 1024;
 const MAX_SKILLS = 200;
 const MAX_BODY_BYTES = 256 * 1024;
-const BODY_CONCURRENCY = 4;
+const BODY_CONCURRENCY = 32;
 const MAX_STALE_RETRIES = 3;
 
 export type CloudNativeSkillSyncCode =
@@ -69,12 +69,14 @@ const skillIndexSchema = z.object({
     name: z.string().min(1).max(64),
     type: z.string().max(64),
     url: z.string().startsWith("skill://").max(1024),
+    revision: z.string().min(1).max(256).optional(),
   }).passthrough()),
 }).passthrough();
 
 export async function fetchCloudNativeSkills(
   config: Record<string, unknown>,
   fetcher: McpFetch = externalFetch,
+  cache = new Map<string, { revision: string; content: string }>(),
 ): Promise<CloudNativeSkillBody[]> {
   const reader = await openMcpResourceReader({ config, fetcher, clientName: "openwork-server-cloud-skills" }).catch(() => null);
   if (!reader) throw new CloudNativeSkillSyncError("cloud_skill_session_failed", "OpenWork Cloud skill session could not be initialized");
@@ -96,20 +98,27 @@ export async function fetchCloudNativeSkills(
   }
   if (uris.length > MAX_SKILLS) throw new CloudNativeSkillSyncError("cloud_skill_index_too_large", "OpenWork Cloud skill index lists too many skills");
   const bodies: CloudNativeSkillBody[] = [];
+  const revisions = new Map(parsed.data.skills.map((skill) => [skill.url, skill.revision]));
+  const fresh = new Map<string, { revision: string; content: string }>();
   let next = 0;
   const worker = async () => {
     while (next < uris.length) {
       const uri = uris[next++];
       if (uri === undefined) return;
-      const content = await reader.read(uri).catch(() => null);
+      const revision = revisions.get(uri);
+      const cached = revision ? cache.get(uri) : undefined;
+      const content = cached && cached.revision === revision ? cached.content : await reader.read(uri).catch(() => null);
       if (content === null) throw new CloudNativeSkillSyncError("cloud_skill_body_unavailable", "OpenWork Cloud skill body could not be read");
       if (Buffer.byteLength(content, "utf8") > MAX_BODY_BYTES) {
         throw new CloudNativeSkillSyncError("cloud_skill_body_too_large", "OpenWork Cloud skill body exceeds the size limit");
       }
+      if (revision) fresh.set(uri, { revision, content });
       bodies.push({ uri, content });
     }
   };
   await Promise.all(Array.from({ length: Math.min(BODY_CONCURRENCY, uris.length) }, worker));
+  cache.clear();
+  for (const [uri, entry] of fresh) cache.set(uri, entry);
   return bodies.sort((left, right) => left.uri.localeCompare(right.uri));
 }
 
@@ -188,6 +197,7 @@ export function createCloudNativeSkillSync(options: {
   let generation = 0;
   let registered: string | null = null;
   let activeScope: string | null = null;
+  const bodyCache = new Map<string, { revision: string; content: string }>();
   let current: CloudNativeSkillState = EMPTY_CLOUD_NATIVE_SKILL_STATE;
   let queue: Promise<unknown> = Promise.resolve();
   function enqueue<T>(task: () => Promise<T>): Promise<T> {
@@ -201,6 +211,7 @@ export function createCloudNativeSkillSync(options: {
     registered = directory;
   }
   async function clearAll(): Promise<void> {
+    bodyCache.clear();
     current = EMPTY_CLOUD_NATIVE_SKILL_STATE;
     activeScope = null;
     try { await setRegistered(null); }
@@ -216,7 +227,7 @@ export function createCloudNativeSkillSync(options: {
       if (scope !== activeScope) await clearAll();
       activeScope = scope;
       if (!cloud || !scope) { await clearAll(); return current; }
-      const bodies = await fetchCloudNativeSkills(cloud, options.fetcher);
+      const bodies = await fetchCloudNativeSkills(cloud, options.fetcher, bodyCache);
       if (generation !== started) return "stale";
       const state = await materializeCloudNativeSkills(options.root, scope, bodies);
       if (generation !== started) return "stale";
@@ -259,6 +270,7 @@ export function createCloudNativeSkillSync(options: {
         current = EMPTY_CLOUD_NATIVE_SKILL_STATE;
         activeScope = null;
         registered = null;
+        bodyCache.clear();
         await rm(options.root, { recursive: true, force: true });
       });
     },

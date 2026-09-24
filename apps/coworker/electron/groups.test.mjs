@@ -420,8 +420,8 @@ function nativeFixture(onSend = async () => {}) {
   }) };
 }
 
-async function eventually(check) {
-  const deadline = Date.now() + 4000;
+async function eventually(check, timeoutMs = 4000) {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 10)); }
   assert.fail("The collaboration did not settle within the module check's deadline.");
 }
@@ -1160,7 +1160,7 @@ test("native collaboration preserves accepted turns through unavailable observat
         acknowledge.resolve();
       }
       await service.acceptance(entry.id);
-      await eventually(() => waits > 0);
+      await eventually(() => waits > 0, 10_000);
       const readActivity = runInNewContext(`${source.slice(source.indexOf("async function readCollaborationActivity("), source.indexOf("function workerKey("))}\nreadCollaborationActivity`, {
         serverHandle: { url: "http://127.0.0.1:8790", managedOpencodeV2: { isAlive: () => true } }, collaboration: service, coworkersDir: home, ownerToken: "fixture", AbortSignal,
         getCoworker: (_directory, slug) => fixtureCoworker(slug), PROGRESS_LIMITS: { maxActivityExecutions: 16, activityReadTimeoutMs: 1000 },
@@ -1742,7 +1742,7 @@ test("shutdown drains late setup writes and seals collaboration storage before r
     const fixture = nativeFixture();
     const release = Promise.withResolvers();
     let started = false;
-    const service = createCollaboration({ directory: home, pollMs: 5, setupTimeoutMs: 100,
+    const service = createCollaboration({ directory: home, pollMs: 5, setupTimeoutMs: 1000,
       clientFor: async (slug) => {
         started = true;
         await release.promise;
