@@ -30,6 +30,7 @@ for (const name of ["xfwm4", "xfce4-panel"]) execFileSync("pgrep", ["-x", name],
 const state = await inspectDesktop();
 await verifyBrowserHandoff();
 await verifyBrowserHandoff({ launcher: "exo-open", args: ["--launch", "WebBrowser"] });
+await verifyBrowserHandoff({ launcher: "gio", args: ["launch", "/usr/share/applications/google-chrome.desktop"] });
 const profile = JSON.parse(readFileSync(root + "/desktop/profile.json", "utf8"));
 await verifyBrowserHandoff({ env: desktopProfileEnvironment(profile) });
 const { attachSurface, evaluate, browserScript } = await import("/workspace/evals/packages/cdp/src/index.ts");

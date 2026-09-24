@@ -14,6 +14,8 @@ cat > /usr/local/bin/openwork-preview-browser <<'BROWSER'
 exec /usr/bin/google-chrome-stable --no-sandbox --disable-dev-shm-usage --no-first-run --no-default-browser-check --user-data-dir="\${OPENWORK_PREVIEW_BROWSER_PROFILE:-\${XDG_CONFIG_HOME:-$HOME/.config}/openwork-preview-browser}" "$@"
 BROWSER
 chmod 755 /usr/local/bin/openwork-preview-browser
+# Chrome's own Applications-menu entry must use the VM launcher as well.
+sed -i 's|^Exec=/usr/bin/google-chrome-stable|Exec=/usr/local/bin/openwork-preview-browser|' /usr/share/applications/google-chrome.desktop
 cat > /usr/share/applications/openwork-preview-browser.desktop <<'DESKTOP'
 [Desktop Entry]
 Type=Application
