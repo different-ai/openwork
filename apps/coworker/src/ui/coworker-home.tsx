@@ -13,7 +13,7 @@ import { CoworkerModelSettings } from "@/ui/coworker-model-settings";
 import { createCoworkerThreads, recommendModel, type CoworkerActivity, type ThreadListItem } from "@/lib/threads";
 import { acknowledgeCoworker, AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
-import { ActivityIcon, AppsIcon, Button, ErrorNote, IconButton, MemoryIcon, SlidersIcon } from "@/ui/kit";
+import { ActivityIcon, AppsIcon, Button, ChevronIcon, ErrorNote, IconButton, MemoryIcon, SlidersIcon } from "@/ui/kit";
 import { useResizablePanel } from "@/ui/use-resizable-panel";
 import { PanelContent, PanelHeader, PanelLevel, usePanelNavigation } from "@/ui/panel-nav";
 import { isBackShortcut, pushCrumb, routeDepth, type PanelCrumb } from "@/lib/panel-route";
@@ -228,6 +228,7 @@ export function CoworkerHome({
   /** The conversation views place their own title line and actions into the one header. */
   const [headerTitleSlot, setHeaderTitleSlot] = useState<HTMLElement | null>(null);
   const [headerActionsSlot, setHeaderActionsSlot] = useState<HTMLElement | null>(null);
+  const [headerLeadSlot, setHeaderLeadSlot] = useState<HTMLElement | null>(null);
   const [discussionToolsSlot, setDiscussionToolsSlot] = useState<HTMLDivElement | null>(null);
   const contextPanelRoom = useCallback(() => Math.max(CONTEXT_PANEL_BOUNDS.min, window.innerWidth - railWidth - MAIN_WORKSPACE_MIN_WIDTH), [railWidth]);
   const contextPanel = useResizablePanel({
@@ -494,22 +495,29 @@ export function CoworkerHome({
   return (
     <div className="glass-main relative flex h-full min-w-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="glass-header window-drag flex min-h-[78px] items-center gap-3 border-b border-line px-6 py-2" data-testid="conversation-header">
-          <CoworkerAvatar
-            identity={coworker.slug}
-            motion="attentive"
-            color={coworker.avatarColor}
-            glasses={coworker.avatarGlasses}
-            name={coworker.name}
-            size={40}
-          />
-          <div className="min-w-0 flex-1">
-            <h1 className="whitespace-normal text-sm font-semibold text-snow [overflow-wrap:anywhere]">{coworker.name}</h1>
-            <div ref={setHeaderTitleSlot} className="window-no-drag flex min-h-[18px] min-w-0 items-center gap-2 text-xs text-mist" data-testid="conversation-header-title" />
+        {/* One quiet line: a way back on the left, where you are in the middle, this conversation's controls on the right. */}
+        <header className="glass-header window-drag flex h-[78px] shrink-0 items-center gap-2 border-b border-line px-3 pt-2" data-testid="conversation-header">
+          <div className="flex min-w-0 flex-1 basis-0 items-center gap-1">
+            {onExitActivity ? <IconButton className="window-no-drag" label="Go to coworker" tooltip={`Leave Activity and open ${coworker.name}`} tooltipSide="bottom" onClick={onExitActivity}><ChevronIcon direction="left" /></IconButton> : null}
+            <div ref={setHeaderLeadSlot} className="window-no-drag flex items-center empty:hidden" />
           </div>
-          {onExitActivity ? <Button variant="ghost" className="window-no-drag shrink-0 text-xs" onClick={onExitActivity}>Go to coworker</Button> : null}
-          <div ref={setHeaderActionsSlot} className="window-no-drag flex shrink-0 items-center gap-1" data-testid="conversation-header-actions" />
-          <HeaderStatusWord activity={activity} engineManaged={runtime.engineManaged} />
+          <nav aria-label="Where you are" className="window-no-drag flex min-w-0 max-w-[70%] items-center gap-1 rounded-full border border-line bg-white/[0.04] py-1 pl-1 pr-1.5" data-testid="conversation-breadcrumbs">
+            <CoworkerAvatar
+              identity={coworker.slug}
+              motion="attentive"
+              color={coworker.avatarColor}
+              glasses={coworker.avatarGlasses}
+              name={coworker.name}
+              size={26}
+            />
+            <h1 className="min-w-[3rem] max-w-[14rem] shrink-[2] truncate pl-1 text-sm font-semibold text-snow" title={coworker.name}>{coworker.name}</h1>
+            <ChevronIcon direction="right" className="size-3 shrink-0 text-mist/60" />
+            <div ref={setHeaderTitleSlot} className="flex min-w-0 items-center gap-1.5 text-xs text-mist" data-testid="conversation-header-title" />
+          </nav>
+          <div className="flex min-w-fit flex-1 basis-0 items-center justify-end gap-1">
+            <div ref={setHeaderActionsSlot} className="window-no-drag flex shrink-0 items-center gap-0.5" data-testid="conversation-header-actions" />
+            <HeaderStatusWord activity={activity} engineManaged={runtime.engineManaged} />
+          </div>
         </header>
         {documentNotice || (besideDocumentId && !canOpenBeside) ? <p role="status" className="border-b border-line px-6 py-2 text-xs text-mist">{documentNotice || "Your reading pane is kept while space is limited. Close Activity or make room to return to it."}</p> : null}
         {!runtime.engineManaged ? (
@@ -535,7 +543,7 @@ export function CoworkerHome({
             discussionDraft={discussionDraft}
             openThreadRequest={openThreadRequest}
             onAssignmentsChange={onAssignmentsChange}
-            headerSlots={{ title: headerTitleSlot, actions: headerActionsSlot, tools: discussionToolsSlot }}
+            headerSlots={{ lead: headerLeadSlot, title: headerTitleSlot, actions: headerActionsSlot, tools: discussionToolsSlot }}
             onOpenModelSettings={() => openSettingsSection("model", Date.now())}
             onOpenAccount={() => onOpenOpenWork("account")}
             onOpenProviders={() => onOpenOpenWork("models")}

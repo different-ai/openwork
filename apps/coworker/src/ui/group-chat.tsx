@@ -5,7 +5,7 @@ import { assignmentPrompt, assignmentTitle, timeLabelBetween, type DiscussionMes
 import { combineSummaryLines, describeCoworkerSummary, type CoworkerSummaryLine } from "@/lib/coworker-summary";
 import { classifyThreads, discussionIds, loadDiscussionRegistry } from "@/lib/discussions";
 import { humanizeDocumentId } from "@/lib/documents";
-import { DocumentCard, lastDocumentsOpened, useDocumentNavigationGuard, type DocumentNavigationGuard } from "@/ui/documents";
+import { DocumentCard, DocumentsIcon, lastDocumentsOpened, useDocumentNavigationGuard, type DocumentNavigationGuard } from "@/ui/documents";
 import { GroupDocuments, type GroupDocumentsApi } from "@/ui/group-documents";
 import {
   publishGroupRun,
@@ -32,7 +32,8 @@ import { ChatReply } from "@/ui/chat-reply";
 import { MessageReactions, useMessageReactions } from "@/ui/message-reactions";
 import { acknowledgeCoworker, CoworkerAvatar, GroupAvatars } from "@/ui/coworker-avatar";
 import { InteractionCard, InteractionCards, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
-import { ActionMenu, Button, ErrorNote, PlusIcon } from "@/ui/kit";
+import { ActionMenu, Button, ChevronIcon, ErrorNote, IconButton, PlusIcon, StopIcon, Tooltip } from "@/ui/kit";
+import { CalendarIcon } from "@/ui/main-content-switch";
 import { CollaborationReceipts, SendButton, SummaryLine } from "@/ui/threads";
 import { useAutoGrow } from "@/ui/use-auto-grow";
 import { JumpToLatest, useConversationScroll } from "@/ui/use-conversation-scroll";
@@ -390,7 +391,7 @@ function GroupChatView({
         const next = { groupId: group.id, ...reconcileGroupActivity(groupObservations.get(group.id) ?? { timeline: [], executions: [] }, activity, speakerOrder) };
         groupObservations.delete(group.id);
         groupObservations.set(group.id, next);
-        while (groupObservations.size > 4) {
+        while (groupObservations.size > 8) {
           const oldest = groupObservations.keys().next().value;
           if (oldest === undefined) break;
           groupObservations.delete(oldest);
@@ -648,6 +649,7 @@ function GroupChatView({
     reply: spokenReply,
     endedTurn: voiceTurn && (["failed", "stopped"].includes(voiceTurn.status) || (["succeeded", "partial"].includes(voiceTurn.status) && (!voiceTurn.speakers.some((speaker) => speaker.status === "succeeded") || (!spokenReply && groupVoiceReply(voiceTurn, events, nameFor))))) ? voiceTurn.clientMessageId : null,
   });
+  const stopAllLabel = busyActions.includes("stop") ? "Stopping…" : actionAttempts.current.get("stop")?.state === "retryable" ? "Retry stop" : "Stop all";
   function stopGroup() { voice.stop("Audio stopped. Your text conversation is kept."); void runAction("stop", () => stopGroupRun(group.id)); }
   const recoveryBusy = localSends.some((item) => item.turnId && (item.state === "pending" || item.state === "sending" || item.state === "accepted"));
   const recoverable = loaded && !activityError && !live && latestTurn && unfinishedSpeakers(latestTurn).length > 0 ? latestTurn : null;
@@ -770,16 +772,35 @@ function GroupChatView({
   };
   return (
     <div className="glass-main flex h-full min-w-0 flex-1" data-testid="group-chat" data-group-id={group.id} data-live={live ? "true" : "false"}>
-      <div className="flex min-w-0 flex-1 flex-col" data-testid="group-conversation">
-      <header className="glass-header window-drag flex min-h-[78px] shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-4 py-3" data-testid="conversation-header">
-        <GroupAvatars members={members} size={30} motion="navigation" activeSlugs={activeSlugs} gatherKey={active ? group.id : undefined} />
-        <div className="min-w-0 flex-[1_1_10rem]">
+      <div className="@container/group flex min-w-0 flex-1 flex-col" data-testid="group-conversation">
+      {/* One quiet line: a way back on the left, where you are in the middle, this conversation's controls on the right. */}
+      <header className="glass-header window-drag flex h-[78px] shrink-0 items-center gap-2 border-b border-line px-3 pt-2" data-testid="conversation-header">
+        <div className="flex min-w-0 flex-1 basis-0 items-center gap-1">
+          {onExitActivity ? <IconButton className="window-no-drag" label="Go to chat" tooltip="Leave Activity and open this chat" tooltipSide="bottom" onClick={onExitActivity}><ChevronIcon direction="left" /></IconButton> : null}
+        </div>
+        <nav aria-label="Where you are" className="window-no-drag flex min-w-0 max-w-[70%] items-center gap-1 rounded-full border border-line bg-white/[0.04] py-1 pl-1 pr-3" data-testid="conversation-breadcrumbs">
+          {eventId && onOpenEvent ? (
+            <>
+              <Tooltip content="Open this event" side="bottom">
+                <button type="button" aria-label="View event" className="flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-xs text-mist transition-colors hover:bg-white/6 hover:text-snow focus-visible:bg-white/6 focus-visible:text-snow focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60" onClick={() => onOpenEvent(eventId)} data-testid="event-conversation-backlink">
+                  <CalendarIcon />
+                  <span>Event</span>
+                </button>
+              </Tooltip>
+              <ChevronIcon direction="right" className="size-3 shrink-0 text-mist/60" />
+            </>
+          ) : null}
+          <Tooltip content={`With ${members.map((member) => member.name).join(", ")}`} side="bottom">
+            <span tabIndex={0} aria-label={`Members: ${members.map((member) => member.name).join(", ")}`} className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60">
+              <GroupAvatars members={members} size={24} motion="navigation" activeSlugs={activeSlugs} gatherKey={active ? group.id : undefined} />
+            </span>
+          </Tooltip>
           {renaming ? (
             <input
               autoFocus
               aria-label="Group name"
               data-testid="group-name-input"
-              className="window-no-drag h-7 w-full max-w-xs rounded-lg border border-line bg-black/18 px-2 text-sm font-semibold text-snow outline-none focus:border-spark/50"
+              className="h-7 w-56 min-w-0 rounded-full border border-line bg-black/18 px-3 text-sm font-semibold text-snow outline-none focus:border-spark/50"
               value={nameDraft}
               onChange={(event) => setNameDraft(event.target.value)}
               onBlur={() => void rename()}
@@ -789,28 +810,37 @@ function GroupChatView({
               }}
             />
           ) : (
-            <h1 className="whitespace-normal text-sm font-semibold text-snow [overflow-wrap:anywhere]" data-testid="group-name">{event?.title ?? group.name}</h1>
+            <h1 className="min-w-0 truncate pl-1 text-sm font-semibold text-snow" title={event?.title ?? group.name} data-testid="group-name">{event?.title ?? group.name}</h1>
           )}
-          <p className="whitespace-normal text-xs text-mist [overflow-wrap:anywhere]" data-testid="conversation-header-title">{members.map((member) => member.name).join(", ")}</p>
+          <span className="sr-only" data-testid="conversation-header-title">{members.map((member) => member.name).join(", ")}</span>
+        </nav>
+        <div className="flex min-w-fit flex-1 basis-0 items-center justify-end gap-0.5">
+          <div className="window-no-drag flex shrink-0 items-center gap-0.5" data-testid="conversation-header-actions">
+            {live ? (
+              <IconButton label={stopAllLabel} tooltip="Stop every reply in this chat" tooltipSide="bottom" className="border border-line" disabled={busyActions.includes("stop")} onClick={stopGroup}>
+                <StopIcon className="size-3.5" />
+                <span className="sr-only">{stopAllLabel}</span>
+              </IconButton>
+            ) : null}
+            {documentsApi ? (
+              <IconButton label="Shared documents" tooltipSide="bottom" onClick={() => sharedDocumentSuspended && sharedDocument ? setSharedDocumentSuspended(false) : openSharedDocument("")} data-testid="group-shared-documents">
+                <DocumentsIcon />
+              </IconButton>
+            ) : null}
+            {!event && !group.eventId ? <ActionMenu
+              label="Group chat options"
+              items={[
+                { label: "Rename", onSelect: () => { setNameDraft(group.name); setRenaming(true); } },
+                ...(onOpenDetails ? [{ label: "Group details", onSelect: onOpenDetails }] : []),
+                { label: "Archive", tone: "danger", disabled: live || sending || busyActions.includes("archive"), onSelect: () => void runAction("archive", () => coworkerBridge.groups.archive(group.id), (archived) => { if (mounted.current) onGroupArchived(archived); }) },
+              ]}
+            /> : null}
+          </div>
+          {/* One plain line, no dot: who is replying, or Ready. */}
+          <span data-testid="coworker-top-status" data-tone={statusLine === "Ready" ? "ready" : "mist"} title={statusLine} className={`hidden min-w-0 max-w-[12rem] truncate pl-1 text-xs @min-[640px]/group:inline ${statusLine === "Ready" ? "text-ready" : "text-mist"}`}>
+            {statusLine}
+          </span>
         </div>
-        <div className="window-no-drag flex shrink-0 items-center gap-1" data-testid="conversation-header-actions">
-          {onExitActivity ? <Button variant="ghost" onClick={onExitActivity}>Go to chat</Button> : null}
-          {eventId && onOpenEvent ? <Button variant="ghost" onClick={() => onOpenEvent(eventId)} data-testid="event-conversation-backlink">View event</Button> : null}
-          {documentsApi ? <Button variant="ghost" onClick={() => sharedDocumentSuspended && sharedDocument ? setSharedDocumentSuspended(false) : openSharedDocument("")} data-testid="group-shared-documents">Shared documents</Button> : null}
-          {live ? <Button variant="ghost" disabled={busyActions.includes("stop")} onClick={stopGroup}>{busyActions.includes("stop") ? "Stopping…" : actionAttempts.current.get("stop")?.state === "retryable" ? "Retry stop" : "Stop all"}</Button> : null}
-          {!event && !group.eventId ? <ActionMenu
-            label="Group chat options"
-            items={[
-              { label: "Rename", onSelect: () => { setNameDraft(group.name); setRenaming(true); } },
-              ...(onOpenDetails ? [{ label: "Group details", onSelect: onOpenDetails }] : []),
-              { label: "Archive", tone: "danger", disabled: live || sending || busyActions.includes("archive"), onSelect: () => void runAction("archive", () => coworkerBridge.groups.archive(group.id), (archived) => { if (mounted.current) onGroupArchived(archived); }) },
-            ]}
-          /> : null}
-        </div>
-        {/* One plain line, no dot: who is replying, or Ready. */}
-        <span data-testid="coworker-top-status" data-tone={statusLine === "Ready" ? "ready" : "mist"} className={`min-w-0 max-w-full whitespace-normal text-xs [overflow-wrap:anywhere] ${statusLine === "Ready" ? "text-ready" : "text-mist"}`}>
-          {statusLine}
-        </span>
       </header>
       {event || group.eventId ? <p className="border-b border-line/60 px-5 py-2 text-[11px] text-mist">Event conversation. Change participants and future sessions in the event editor. {group.archivedAt ? "This conversation is archived; its history is kept." : ""}</p> : null}
       {documentNotice ? <p role="alert" className="border-b border-line px-5 py-2 text-xs text-mist">{documentNotice}<button type="button" className="ml-2 underline" onClick={() => setDocumentNotice("")}>Dismiss</button></p> : null}

@@ -117,7 +117,7 @@ import { ConversationWindow, useConversationWindow } from "@/ui/conversation-win
 import { InteractionCard, InteractionCards, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
 import { acknowledgeCoworker, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { InlineLoader } from "@/ui/brand";
-import { Button, Empty, ErrorNote, PlusIcon, StatusDot, ToolIcon } from "@/ui/kit";
+import { Button, ChevronIcon, Empty, ErrorNote, IconButton, PlusIcon, StatusDot, StopIcon, ToolIcon } from "@/ui/kit";
 import { ChatReply } from "@/ui/chat-reply";
 import { MessageReactions, useMessageReactions } from "@/ui/message-reactions";
 import { DocumentCard } from "@/ui/documents";
@@ -184,7 +184,7 @@ function recentTranscript(key: string) {
 function rememberTranscript(key: string, title: string, messages: TranscriptMessage[]) {
   recentTranscripts.delete(key);
   recentTranscripts.set(key, { title, messages: messages.slice(-300), readAt: Date.now() });
-  while (recentTranscripts.size > 4) {
+  while (recentTranscripts.size > 8) {
     const oldest = recentTranscripts.keys().next().value;
     if (oldest === undefined) break;
     recentTranscripts.delete(oldest);
@@ -331,11 +331,12 @@ configureTurnStore({
 });
 
 /** Conversation-owned content in the header and the discussion-tools sidebar. */
-export type HeaderSlots = { title: HTMLElement | null; actions: HTMLElement | null; tools: HTMLElement | null };
+export type HeaderSlots = { lead: HTMLElement | null; title: HTMLElement | null; actions: HTMLElement | null; tools: HTMLElement | null };
 
-function HeaderContent({ slots, title, actions }: { slots: HeaderSlots; title: ReactNode; actions?: ReactNode }) {
+function HeaderContent({ slots, lead, title, actions }: { slots: HeaderSlots; lead?: ReactNode; title: ReactNode; actions?: ReactNode }) {
   return (
     <>
+      {slots.lead && lead ? createPortal(lead, slots.lead) : null}
       {slots.title ? createPortal(title, slots.title) : null}
       {slots.actions && actions ? createPortal(actions, slots.actions) : null}
     </>
@@ -417,6 +418,8 @@ export function ThreadsPanel({
   /** A part of that line was chosen: open the matching level of Activity. */
   onOpenSummary?: (kind: SummaryKind) => void;
 }) {
+  // The saved selection only seeds this view. Every later choice is made here and
+  // saved behind it, so a coworker record read before that choice cannot move it.
   const [discussionThreadId, setDiscussionThreadId] = useState(coworker.conversationThreadId);
   const discussionSelection = useRef(0);
   /** Thread ids registered as discussions in `discussions.json`; the open one is added even when unregistered. */
@@ -497,10 +500,6 @@ export function ThreadsPanel({
     : error && runtime.engineManaged && !warmingUp
       ? { message: `${coworker.name}'s workspace is not answering right now.`, technical: error }
       : null;
-
-  useEffect(() => {
-    setDiscussionThreadId(coworker.conversationThreadId);
-  }, [coworker.conversationThreadId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -636,15 +635,16 @@ export function ThreadsPanel({
       setOpenThreadId("");
       return;
     }
+    // Switch at once from what is already known; the saved selection follows,
+    // and only the newest choice may apply its result.
     const selection = ++discussionSelection.current;
+    setDiscussionThreadId(threadId);
+    setOpenThreadId("");
     try {
       const updated = await coworkerBridge.coworkers.update(coworker.slug, { conversationThreadId: threadId });
-      if (selection !== discussionSelection.current) return;
-      setDiscussionThreadId(threadId);
-      onCoworkerChanged(updated);
-      setOpenThreadId("");
+      if (selection === discussionSelection.current) onCoworkerChanged(updated);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (selection === discussionSelection.current) setError(`The discussion is open, but its sidebar selection could not be kept: ${cause instanceof Error ? cause.message : String(cause)}`);
     }
   }, [coworker.slug, discussionThreadId, onCoworkerChanged]);
 
@@ -956,8 +956,8 @@ function DiscussionWelcome({
     <section className="flex h-full min-h-0 flex-col bg-ink" data-testid="coworker-discussion-view">
       <HeaderContent
         slots={headerSlots}
-        title={<span className="whitespace-normal">New discussion</span>}
-        actions={<Button variant="ghost" disabled={!startingMessage} title={startingMessage ? "Cancel starting this message" : "No active work to stop"} data-testid="coworker-stop" onClick={() => { startCancelled.current = true; startController.current?.abort(new Error("Starting cancelled. Your draft is kept.")); setStartingMessage(null); setComposerError("Starting cancelled. Your draft is kept."); }}>Stop</Button>}
+        title={<span className="truncate">New discussion</span>}
+        actions={startingMessage ? <IconButton label="Stop" tooltip="Cancel starting this message" tooltipSide="bottom" data-testid="coworker-stop" className="border border-line" onClick={() => { startCancelled.current = true; startController.current?.abort(new Error("Starting cancelled. Your draft is kept.")); setStartingMessage(null); setComposerError("Starting cancelled. Your draft is kept."); }}><StopIcon className="size-3.5" /></IconButton> : null}
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
         {problem ? <WorkspaceProblemNote problem={problem} onRetry={onRetry} /> : null}
@@ -1038,7 +1038,7 @@ function DiscussionSwitcher({
   const label = discussionLabel(current.title, defaultTitle, currentUsed);
 
   return (
-    <div ref={rootRef} className="relative -ml-2 min-w-0" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
+    <div ref={rootRef} className="relative min-w-0" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
       <button
         ref={triggerRef}
         type="button"
@@ -1046,8 +1046,8 @@ function DiscussionSwitcher({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        title="Switch discussion"
-        className="flex max-w-full items-center gap-1 rounded-md px-2 py-0.5 text-left transition-colors hover:bg-panel hover:text-snow"
+        title={`${label} · Switch discussion`}
+        className="flex min-w-0 max-w-full items-center gap-1 rounded-full px-2 py-0.5 text-left transition-colors hover:bg-white/6 hover:text-snow focus-visible:bg-white/6 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60"
         onClick={() => { edge.current = "first"; setOpen((value) => !value); }}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || (event.key !== "ArrowDown" && event.key !== "ArrowUp")) return;
@@ -1056,7 +1056,7 @@ function DiscussionSwitcher({
           setOpen(true);
         }}
       >
-        <span className="min-w-0 whitespace-normal text-xs text-mist [overflow-wrap:anywhere]">{label}</span>
+        <span className="min-w-0 truncate text-xs text-snow/90">{label}</span>
         <svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true" className="shrink-0 text-mist">
           <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -1069,7 +1069,7 @@ function DiscussionSwitcher({
           role="menu"
           aria-label="Discussions"
           data-testid="coworker-discussion-menu"
-          className="absolute left-2 top-full z-20 mt-1 w-80 max-w-[70vw] rounded-xl border border-line bg-ink/95 p-1.5 shadow-2xl backdrop-blur"
+          className="absolute left-1/2 top-full z-20 mt-2 w-80 max-w-[70vw] -translate-x-1/2 rounded-xl border border-line bg-ink/95 p-1.5 shadow-2xl backdrop-blur"
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing) return;
             if (event.key === "Escape" || event.key === "Tab") {
@@ -1125,7 +1125,7 @@ function DiscussionSwitcher({
                     }}
                   >
                     <StatusDot tone={threadTone(item.status)} />
-                    <span className={`min-w-0 flex-1 truncate text-sm ${active ? "font-semibold text-snow" : "text-snow"}`}>
+                    <span className={`min-w-0 flex-1 truncate text-sm ${active ? "font-semibold text-snow" : "text-snow"}`} title={discussionLabel(item.title, defaultTitle, active ? currentUsed : discussionLooksUsed(item))}>
                       {discussionLabel(item.title, defaultTitle, active ? currentUsed : discussionLooksUsed(item))}
                     </span>
                     <span className={`shrink-0 text-xs ${item.status === "busy" || item.status === "retry" ? "text-spark" : "text-mist"}`}>{meta}</span>
@@ -2480,6 +2480,7 @@ function ThreadView({
   const freshDiscussion = transcriptLoaded && turnsLoaded && kind === "discussion" && visibleMessages.length === 0 && !working && !needsYou && !error && !outcome;
   const composerWorking = Boolean(stopAttempt) || turnRunning || admissionInFlight || acceptedObservationUnavailable || activeTurn !== null || (engineRunning && !needsYou);
   const statusState = stopAttempt ? stopPending ? "stopping" : "stop-unconfirmed" : needsYou ? "needs-you" : working ? "working" : unconfirmedAdmission || refusedAdmission || acceptedObservationUnavailable ? "unknown" : workspacePreparation.state === "error" ? "unavailable" : workspacePreparation.state === "starting" ? "preparing" : "idle";
+  const stoppable = Boolean(working || needsYou || stopAttempt || unconfirmedAdmission || refusedAdmission || acceptedObservationUnavailable);
   const [controlStatusSlot, setControlStatusSlot] = useState<HTMLDivElement | null>(null);
   const [floatingSlot, setFloatingSlot] = useState<HTMLDivElement | null>(null);
   const [computerOpenRequest, setComputerOpenRequest] = useState(0);
@@ -2501,18 +2502,21 @@ function ThreadView({
           />
         ) : (
           <>
-             <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{kind === "worker" ? workerNameFromTitle(title) : title}</span>
+            <span className="min-w-0 truncate text-snow/90" title={kind === "worker" ? workerNameFromTitle(title) : title}>{kind === "worker" ? workerNameFromTitle(title) : title}</span>
             <span className="shrink-0 rounded-full border border-spark/20 bg-spark/8 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em] text-spark">{kind === "worker" ? "Worker" : "Assignment"}</span>
           </>
         )}
-        actions={(
-          <>
-            {kind !== "discussion" ? <Button variant="ghost" onClick={onBack}>Back</Button> : null}
-            {kind !== "worker" ? (
-              <Button variant="ghost" disabled={!active || stopPending || (!working && !needsYou && !stopAttempt && !unconfirmedAdmission && !refusedAdmission && !acceptedObservationUnavailable)} title={working || needsYou || stopAttempt || unconfirmedAdmission || refusedAdmission || acceptedObservationUnavailable ? "Stop work in this conversation" : "No active work to stop"} data-testid="coworker-stop" onClick={() => void stop()}>{stopLabel}</Button>
-            ) : null}
-          </>
-        )}
+        lead={kind !== "discussion" ? (
+          <IconButton label="Back" tooltip="Back to the discussion" tooltipSide="bottom" onClick={onBack}>
+            <ChevronIcon direction="left" />
+            <span className="sr-only">Back</span>
+          </IconButton>
+        ) : null}
+        actions={kind !== "worker" && stoppable ? (
+          <IconButton label={stopLabel} tooltip={stopPending ? "Stopping this conversation's work" : "Stop work in this conversation"} tooltipSide="bottom" disabled={!active || stopPending} data-testid="coworker-stop" className="border border-line" onClick={() => void stop()}>
+            <StopIcon className="size-3.5" />
+          </IconButton>
+        ) : null}
       />
       {active && kind === "discussion" && browserEligible && headerSlots.tools ? createPortal(<Suspense fallback={null}><ComputerControl key={`${coworker.slug}:${threadId}`} slug={coworker.slug} threadId={threadId} statusSlot={controlStatusSlot} floatingSlot={floatingSlot} openRequest={computerOpenRequest} onOpenRequestHandled={() => setComputerOpenRequest(0)} onBackToConversation={() => voice.fieldRef.current?.focus()} /></Suspense>, headerSlots.tools) : null}
       {/* Progress and problems show inline in the conversation; this keeps the turn state readable to assistive tech and tests. */}

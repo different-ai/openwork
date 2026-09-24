@@ -204,6 +204,15 @@ export function PlusIcon({ className = "size-4" }: { className?: string }) {
   );
 }
 
+/** A rounded square for stopping work in progress. */
+export function StopIcon({ className = "size-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="4" y="4" width="8" height="8" rx="1.75" fill="currentColor" />
+    </svg>
+  );
+}
+
 type TriggerProps = {
   onMouseEnter?: (event: ReactMouseEvent<HTMLElement>) => void;
   onMouseLeave?: (event: ReactMouseEvent<HTMLElement>) => void;
