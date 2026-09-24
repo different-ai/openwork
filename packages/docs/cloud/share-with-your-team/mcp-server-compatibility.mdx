@@ -174,6 +174,35 @@ by hand, bound to the redirect URL above:
   values. The dialog shows the exact redirect URL to register. See
   [Sharing MCP connections with your team](/cloud/share-with-your-team/shared-mcp-connections#oauth-redirect-url).
 
+#### Deployment-wide pre-registered clients
+
+When a provider issues a client to the OpenWork deployment itself rather than
+to one organization, the Den operator can supply it once so every organization
+connecting to that server gets it automatically and no admin pastes a client
+ID. Set `DEN_EXTERNAL_MCP_PREREGISTERED_OAUTH_CLIENTS` on `den-api` to a JSON
+object keyed by MCP server URL:
+
+```json
+{ "https://mcp.example.com/mcp": { "clientId": "openwork" } }
+```
+
+Each entry accepts `clientId`, an optional `clientSecret`, and an optional
+`tokenEndpointAuthMethod` (`client_secret_basic` or `client_secret_post`) for
+confidential clients. With a client configured for a server:
+
+- Its quick-add preset no longer asks for an OAuth app, and requirements
+  discovery no longer reports "Register an OAuth client" as a blocker.
+- New OAuth connections to that URL (and existing ones an admin saves without
+  their own OAuth app) store the deployment client as a pre-registered client,
+  so sign-in, readiness, and diagnostics behave exactly as if the admin had
+  entered it.
+- An OAuth app the admin enters explicitly still takes precedence.
+
+The client is only valid for the redirect URL it was registered with, so a
+self-hosted instance must obtain its own client from the provider rather than
+reuse the hosted OpenWork Cloud value. Malformed JSON, non-HTTPS keys, and
+duplicate URLs fail `den-api` startup with a descriptive error.
+
 <Warning>
 A "Sign in with your product" OAuth app whose tokens are only valid for your
 REST API does not help if your MCP server rejects them. The client you issue
