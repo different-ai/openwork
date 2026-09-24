@@ -11,6 +11,7 @@ import type { ResizablePanel } from "@/ui/use-resizable-panel";
 import { CalendarIcon, MainContentSwitch, type MainContent } from "@/ui/main-content-switch";
 import { CalendarSidebar } from "@/ui/calendar-sidebar";
 import type { CalendarData } from "@/ui/calendar-data";
+import { calendarItems } from "@/lib/calendar";
 import type { CalendarPreferences, CalendarPreferencesChange } from "@/ui/calendar-preferences";
 
 export type CoworkerMainContent = MainContent;
@@ -226,7 +227,7 @@ export function CoworkerRail({
   const activityBell = <IconButton label={activityLabel} tooltipSide="right" aria-pressed={mainContent === "activity"} data-testid="coworker-activity-button"
     className={`window-no-drag relative shrink-0 ${collapsed ? "size-6" : "size-7"} ${mainContent === "activity" ? "bg-white/8 text-snow" : ""}`} onClick={() => onMainContentChange("activity")}>
     <svg className="size-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7.5 16.5a2.5 2.5 0 0 0 5 0M5 8a5 5 0 0 1 10 0c0 4 1.75 4.5 1.75 6H3.25C3.25 12.5 5 12 5 8ZM10 1.5V3" /></svg>
-    {unreadActivity > 0 ? <span aria-hidden="true" className={`absolute -right-1 -top-1 flex min-w-4 items-center justify-center rounded-md px-1 text-[10px] font-semibold leading-4 tabular-nums ${unreadMentions ? "bg-spark/20 text-spark" : "bg-white/10 text-snow"}`}>{unreadActivity > 99 ? "99+" : unreadActivity}</span> : activityError ? <span aria-hidden="true" className="absolute right-0 -top-1 text-[10px] text-amber">!</span> : null}
+    {unreadActivity > 0 ? <span aria-hidden="true" data-testid="activity-badge" className={`pointer-events-none absolute right-0 top-0 flex h-3.5 min-w-3.5 translate-x-1/4 -translate-y-1/4 items-center justify-center rounded-full px-[3px] text-[9px] font-semibold leading-none tabular-nums ring-2 ring-[var(--color-ink)] ${unreadMentions ? "bg-spark text-white" : "bg-white/20 text-snow"}`}>{unreadActivity > 9 ? "9+" : unreadActivity}</span> : activityError ? <span aria-hidden="true" className="absolute right-0 -top-1 text-[10px] text-amber">!</span> : null}
   </IconButton>;
   const filterControl = <IconButton label="Filter group chats and events" tooltipSide="right" aria-haspopup="menu" aria-expanded={showGroupFilters} aria-controls={showGroupFilters ? filterMenuId : undefined} data-testid="group-filter-trigger" className={!groupTypes.groups || !groupTypes.events ? "text-spark" : ""} onClick={(event) => showGroupFilters ? closeGroupFilters(true) : openGroupFilters(event.currentTarget)} onKeyDown={(event) => { if (event.key === "ArrowDown") { event.preventDefault(); openGroupFilters(event.currentTarget); } }}>
     <svg className="size-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" aria-hidden="true"><path d="M2 3h12L9.5 8v4.25l-3 1V8L2 3Z" /></svg>
@@ -259,7 +260,7 @@ export function CoworkerRail({
       <div className={calendarMode || activityMode ? "hidden" : "flex min-h-0 flex-1 flex-col"} data-testid="chat-rail-content">
       {panel.collapsed ? (
         <>
-          <nav aria-label="Coworkers" className="flex flex-1 flex-col items-center gap-1 overflow-y-auto px-1 pb-4 pt-3">
+          <nav aria-label="Coworkers" className="flex flex-1 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden px-1 pb-4 pt-3">
             {coworkers.map((coworker) => {
               const activity = activityBySlug[coworker.slug];
               const active = coworker.slug === selectedSlug;
@@ -469,10 +470,7 @@ export function CoworkerRail({
       )}
       </div>
       <div className={calendarMode ? "flex min-h-0 flex-1 flex-col" : "hidden"} data-testid="calendar-rail-content">
-        {panel.collapsed ? <div className="flex flex-1 flex-col items-center gap-2 px-1 pt-3">
-          <IconButton label="Expand calendars" tooltipSide="right" onClick={() => { setFocusSearchOnExpand(true); panel.expand(); }} data-testid="calendar-rail-expand"><CalendarIcon /></IconButton>
-          <p className="text-center text-[10px] leading-snug text-mist">Your team's calendar</p>
-        </div> : <CalendarSidebar coworkers={coworkers} data={calendarData} preferences={calendarPreferences} onPreferencesChange={onCalendarPreferencesChange} query={calendarQuery} />}
+        {panel.collapsed ? <FoldedCalendar data={calendarData} onExpand={() => { setFocusSearchOnExpand(true); panel.expand(); }} /> : <CalendarSidebar coworkers={coworkers} data={calendarData} preferences={calendarPreferences} onPreferencesChange={onCalendarPreferencesChange} query={calendarQuery} />}
       </div>
       <div className={activityMode ? "flex min-h-0 flex-1 flex-col" : "hidden"} data-testid="activity-rail-content">{activityContent}</div>
       <div className="window-no-drag shrink-0 border-t border-line/60 p-2">
@@ -529,5 +527,41 @@ export function CoworkerRail({
         </button>
       </div>, document.body) : null}
     </aside>
+  );
+}
+
+/**
+ * The calendar while the rail is folded: today's date as a small calendar tile
+ * and the next few things on it, each a time and a title initial. Any of it
+ * unfolds the rail to the full calendar list.
+ */
+function FoldedCalendar({ data, onExpand }: { data: CalendarData; onExpand: () => void }) {
+  const now = new Date();
+  const upcoming = calendarItems({ events: data.events, eventRuns: data.eventRuns, responsibilities: data.responsibilities, start: now.getTime(), end: now.getTime() + 7 * 86_400_000, now: now.getTime() })
+    .filter((item) => item.planned).slice(0, 3);
+  return (
+    <div className="flex flex-1 flex-col items-center gap-2 px-1.5 pt-3" data-testid="calendar-rail-folded">
+      <Tooltip content="Show the calendar list" side="right">
+        <button type="button" onClick={onExpand} aria-label={`Expand calendars. Today is ${now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}`} data-testid="calendar-rail-expand"
+          className="window-no-drag flex w-12 flex-col items-center overflow-hidden rounded-xl border border-line bg-panel/70 transition-colors hover:border-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/60">
+          <span className="w-full bg-rose/80 py-0.5 text-center text-[9px] font-semibold uppercase tracking-wider text-white">{now.toLocaleDateString(undefined, { weekday: "short" })}</span>
+          <span className="py-1 text-lg font-semibold leading-none text-snow tabular-nums">{now.getDate()}</span>
+        </button>
+      </Tooltip>
+      {upcoming.map((item) => {
+        const when = new Date(item.startsAt);
+        const sameDay = when.toDateString() === now.toDateString();
+        const label = sameDay ? when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }).replace(/\s?[AP]M$/i, "") : when.toLocaleDateString(undefined, { weekday: "short" });
+        return (
+          <Tooltip key={item.id} content={`${item.title} · ${when.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`} side="right">
+            <button type="button" onClick={onExpand} aria-label={`${item.title}, ${when.toLocaleString()}`} data-testid="calendar-rail-upcoming"
+              className="window-no-drag flex w-12 flex-col items-center rounded-lg px-1 py-1 text-center transition-colors hover:bg-white/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/60">
+              <span className="text-[10px] font-medium tabular-nums text-snow">{label}</span>
+              <span className="mt-0.5 h-1 w-6 rounded-full bg-spark/70" aria-hidden="true" />
+            </button>
+          </Tooltip>
+        );
+      })}
+    </div>
   );
 }
