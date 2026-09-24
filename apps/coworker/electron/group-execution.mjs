@@ -10,7 +10,7 @@ import { NATIVE_COORDINATOR_AGENT } from "./native-turns.mjs";
 
 /** The window only submits requests and reads projections. All group execution
  * and cancellation remain alive when that window navigates or reloads. */
-export function createGroupExecution({ directory, collaboration, coworkerFor, coordinator, catalogFor, clientFor, settings = async () => ({ modelDefaults: DEFAULT_MODEL_DEFAULTS }), onPublished = async () => {}, eventContext = async () => { throw new Error("Event execution is unavailable."); }, conversationContext = async () => { throw new Error("Managed conversation context is unavailable."); }, setupTimeoutMs = 30_000, replyTimeoutMs = 180_000, pollMs = 750 }) {
+export function createGroupExecution({ directory, collaboration, coworkerFor, coordinator, catalogFor, clientFor, settings = async () => ({ modelDefaults: DEFAULT_MODEL_DEFAULTS }), onPublished = async () => {}, eventContext = async () => { throw new Error("Event execution is unavailable."); }, conversationContext = async () => { throw new Error("Managed conversation context is unavailable."); }, setupTimeoutMs = 130_000, replyTimeoutMs = 180_000, pollMs = 750 }) {
   const active = new Map();
   let timer;
   let closed = false;
@@ -47,9 +47,11 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
       const coworker = await withAbort(coworkerFor(slug), signal);
       if (coworkerCreatedAt && coworker.createdAt !== coworkerCreatedAt) throw new Error("The original coworker is no longer in this group request.");
       let threadId = group.participantThreadIds[slug];
+      // A group invitation is a real start request. Prepare the coworker's native
+      // tools and workspace before admitting its turn, including on an old thread.
+      const client = await withAbort(track(clientFor(slug, { threadId, sessionKind: "group", prepareOnly: true, signal })), signal);
+      if (coworkerCreatedAt && client.coworkerCreatedAt !== coworkerCreatedAt) throw new Error("The original coworker is no longer available.");
       if (!threadId) {
-        const client = await withAbort(track(clientFor(slug, { sessionKind: "group", observationOnly: true, signal })), signal);
-        if (coworkerCreatedAt && client.coworkerCreatedAt !== coworkerCreatedAt) throw new Error("The original coworker is no longer available.");
         signal.throwIfAborted();
         const thread = await withAbort(track(client.createThread({ title: `Group chat: ${group.name}`, signal })), signal);
         threadId = thread.id;
@@ -356,7 +358,7 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
       // A consultation has its own native history; only the explicitly shared brief crosses over.
       let owner = await collaboration.read((state) => state.tasks[task.id].answerOwner ?? null);
       if (!owner) {
-        const client = await withAbort(track(clientFor(to.slug, { sessionKind: "consultation", observationOnly: true, signal })), signal);
+        const client = await withAbort(track(clientFor(to.slug, { sessionKind: "consultation", prepareOnly: true, signal })), signal);
         if (task.coworkerCreatedAt && client.coworkerCreatedAt !== task.coworkerCreatedAt) throw new Error("The original coworker is no longer available for this consultation.");
         await assertLive();
         const thread = await withAbort(track(client.createThread({ title: `Question from ${from.name}`, signal })), signal);

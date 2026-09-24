@@ -169,7 +169,7 @@ test("prepared workspaces survive navigation, isolate coworker changes and dispo
     assert.equal(replacement.signal.aborted, true, "an account change invalidates the earlier runtime cache");
     assert.equal(cache.peek(firstScope), undefined);
     const idle = { state: "idle", label: "Idle", detail: "", updatedAt: 0 } satisfies Parameters<typeof projectWorkspaceReadiness>[0];
-    assert.equal(projectWorkspaceReadiness(idle).label, "Idle");
+    assert.equal(projectWorkspaceReadiness(idle).label, "Available");
     assert.equal(projectWorkspaceReadiness(idle, { state: "ready", error: "" }).label, "Ready");
     assert.equal(projectWorkspaceReadiness({ ...idle, state: "starting", label: "Starting AI" }).state, "idle");
     for (const state of ["working", "attention", "retrying"] satisfies CoworkerActivity["state"][]) {

@@ -737,11 +737,13 @@ export function createWorkspaceReadinessCache(limit = 32) {
 export const workspaceReadinessCache = createWorkspaceReadinessCache();
 
 export function projectWorkspaceReadiness(activity: CoworkerActivity | null, preparation?: WorkspaceReadiness): CoworkerActivity {
-  if (activity && (["working", "retrying", "attention", "offline"].includes(activity.state) || (activity.state === "recent" && activity.label !== "Ready" && activity.label !== "Idle"))) return activity;
+  if (activity && (["working", "retrying", "attention", "offline"].includes(activity.state) || (activity.state === "recent" && !["Ready", "Idle", "Available"].includes(activity.label)))) return activity;
   if (preparation?.state === "starting" || preparation?.state === "error") return {
     ...activity, state: preparation.state === "starting" ? "starting" : "offline", label: preparation.state === "starting" ? "Starting AI" : "AI unavailable", detail: preparation.error, updatedAt: 0,
   };
-  return { detail: "", updatedAt: 0, ...activity, state: activity?.state === "recent" ? "recent" : preparation?.state === "ready" ? "ready" : "idle", label: preparation?.state === "ready" ? "Ready" : "Idle" };
+  // No preparation yet means the coworker can be started on demand. Reserve
+  // "Ready" for a verified warm workspace; avoid presenting "Idle" as disabled.
+  return { detail: "", updatedAt: 0, ...activity, state: activity?.state === "recent" ? "recent" : preparation?.state === "ready" ? "ready" : "idle", label: preparation?.state === "ready" ? "Ready" : "Available" };
 }
 
 export function createCoworkerThreads(options: {

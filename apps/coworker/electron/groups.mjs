@@ -265,6 +265,25 @@ export async function updateGroup(coworkersDir, id, patch = {}, { now = Date.now
   });
 }
 
+/** Apply a human-requested roster change against the latest group, not a stale
+ * snapshot another coworker may have changed while this native turn ran. */
+export async function changeGroupMembers(coworkersDir, id, action, slugs, { now = Date.now(), actorSlug } = {}) {
+  if (!["add", "remove"].includes(action)) throw new Error("Choose add or remove.");
+  const requested = normalizeParticipantSlugs(slugs, 1);
+  return mutateGroup(coworkersDir, id, (group) => {
+    if (group.archivedAt) throw new Error("This group chat is archived.");
+    if (group.eventId) throw new Error("Change Event participants through the Event editor or Event update.");
+    if (actorSlug && !group.participantSlugs.includes(actorSlug)) throw new Error("The originating coworker is no longer in this group chat.");
+    const current = group.participantSlugs;
+    const nextSlugs = action === "add" ? [...new Set([...current, ...requested])] : current.filter((slug) => !requested.includes(slug));
+    const participantSlugs = normalizeParticipantSlugs(nextSlugs);
+    if (participantSlugs.length > 20) throw new Error("A group chat can have at most 20 coworkers.");
+    if (participantSlugs.length === current.length && participantSlugs.every((slug, index) => slug === current[index])) return { next: group, result: group };
+    const next = { ...group, participantSlugs, updatedAt: now };
+    return { next, result: next };
+  });
+}
+
 export async function archiveGroup(coworkersDir, id, { now = Date.now() } = {}) {
   return mutateGroup(coworkersDir, id, (group) => {
     if (group.eventId) throw new Error("Archive this event through Events; its group history is retained.");

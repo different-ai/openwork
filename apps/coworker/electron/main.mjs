@@ -36,6 +36,7 @@ import { createMessageReactionRuntime } from "./message-reactions-context.mjs";
 import { readExecutionActivity } from "../src/lib/progress-activity.ts";
 import { PROGRESS_LIMITS } from "../src/lib/progress-config.ts";
 import { createGroupExecution, repairGroupSelection } from "./group-execution.mjs";
+import { assertGroupActionToolContext, createGroupActions } from "./group-actions.mjs";
 import { installCollaborationPlugin } from "./collaboration-plugin.mjs";
 import { createAbilitiesRuntime, readAbilitiesCatalog } from "./abilities.mjs";
 import { installAbilitiesPlugin } from "./abilities-plugin.mjs";
@@ -1172,20 +1173,34 @@ const events = createEvents({
   assignments: async () => (await Promise.all((await listCoworkers(coworkersDir)).map(async (coworker) =>
     (await listLocalResponsibilities(coworkersDir, coworker.slug)).map((item) => ({ id: item.id, slug: coworker.slug, title: item.name, state: item.state, schedule: item.schedule, nextDueAt: item.nextDueAt }))))).flat().slice(0, 200),
 });
+const groupActions = createGroupActions({
+  coworkersDir,
+  coworkers: () => listCoworkers(coworkersDir),
+  resolveContext: (slug, context, expected) => collaboration.context(slug, context, expected, assertGroupActionToolContext),
+});
 
 async function ordinaryGroup(id) {
   if ((await getGroup(coworkersDir, id)).eventId) throw new Error("This group is managed through Events.");
 }
 
-async function collaborationClient(slug, { threadId, kind = "reply", sessionKind = "private", requestText, model, agent, observationOnly = false, signal } = {}) {
+async function collaborationClient(slug, { threadId, kind = "reply", sessionKind = "private", requestText, model, agent, observationOnly = false, prepareOnly = false, signal } = {}) {
   maintenanceAdmission.assertOpen();
   const stored = slug === ".coordinator" ? observationOnly ? await readCoordinator(coworkersDir) : await ensureCoordinatorWorkspace() : await getCoworker(coworkersDir, slug);
-  const coworker = slug === ".coordinator" && stored ? { ...stored, slug, createdAt: "coordinator" } : stored;
+  let coworker = slug === ".coordinator" && stored ? { ...stored, slug, createdAt: "coordinator" } : stored;
   const handle = await ensurePlatformServer();
+  if (!coworker?.workspaceId && !observationOnly && slug !== ".coordinator") {
+    signal?.throwIfAborted();
+    const legacy = handle.config.workspaces.find((workspace) => workspace.workspaceType === "local" && path.resolve(workspace.path) === path.resolve(coworker.path));
+    const workspaceId = legacy?.id ?? await registerCoworkerWorkspace(coworker, handle);
+    signal?.throwIfAborted();
+    const current = await getCoworker(coworkersDir, slug);
+    if (current.createdAt !== coworker.createdAt || current.path !== coworker.path) throw new Error("The coworker changed while its AI workspace was starting.");
+    coworker = current.workspaceId ? current : await updateCoworker(coworkersDir, slug, { workspaceId });
+  }
   if (!coworker?.workspaceId) throw new Error("The AI service is not ready. Your work has been kept.");
   const binding = threadId ? await sessionBinding(coworker, threadId) : null;
-  if (!observationOnly && binding && binding.nativeWorkspaceId !== teamWorkspace().workspaceId) await prepareLegacySession(coworker, binding);
-  else if (!observationOnly && slug !== ".coordinator") {
+  if ((!observationOnly || prepareOnly) && binding && binding.nativeWorkspaceId !== teamWorkspace().workspaceId) await prepareLegacySession(coworker, binding);
+  else if ((!observationOnly || prepareOnly) && slug !== ".coordinator") {
     const server = await ensureToolsServer();
     await installNativeCoworkerPlugins(coworker, server);
     if (!toolsRegistered.has(slug)) await registerCoworkerTools(coworker, 120_000);
@@ -1194,7 +1209,7 @@ async function collaborationClient(slug, { threadId, kind = "reply", sessionKind
   signal?.throwIfAborted();
   // Legacy admissions have no model pin. Observe their native work without
   // consulting today's catalog or turning a missing selection into a failure.
-  const resolvedModel = model ?? (observationOnly ? undefined : await localRunModel(coworker, kind, requestText));
+  const resolvedModel = model ?? (observationOnly || prepareOnly ? undefined : await localRunModel(coworker, kind, requestText));
   const options = { baseUrl: handle.url, workspaceId: coworker.workspaceId, nativeWorkspaceId: binding?.nativeWorkspaceId ?? teamWorkspace().workspaceId, token: ownerToken, defaultModel: resolvedModel, defaultAgent: agent ?? (slug === ".coordinator" ? NATIVE_COORDINATOR_AGENT : binding && binding.nativeWorkspaceId !== teamWorkspace().workspaceId ? "build" : coworkerAgent(slug)), captureSkillOrigin: slug !== ".coordinator" };
   const client = ownedSessionClient(coworker, options, slug === ".coordinator" ? "coordinator" : sessionKind);
   client.resolvedModel = resolvedModel;
@@ -2480,6 +2495,7 @@ async function ensureToolsServer() {
       if (Object.hasOwn(COMPUTER_TOOLS, name)) return computerControl.execute(slug, { name, args, context, cancel });
       if (Object.hasOwn(BROWSER_TOOLS, name)) return browserControl.execute(slug, { name, args, context, cancel });
       if (groupDocumentTools.has(name)) return groupDocuments.executeNative(slug, { name, args, context });
+      if (name === "group_manage") return groupActions.executeNative(slug, { args, context }, transportSignal);
       if (Object.hasOwn(eventNativeSchemas, name)) return events.executeNative(slug, { name, args, context }, transportSignal);
       if (admitted && Object.hasOwn(ordinaryHandlers, name) && name !== "worker_spawn" && !WORKER_MANAGEMENT.includes(name)) {
         const handle = await ensurePlatformServer();

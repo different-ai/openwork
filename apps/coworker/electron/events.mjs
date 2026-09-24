@@ -97,7 +97,7 @@ const toolDescriptions = {
   event_details: "Read your Event's goal, working prompt, continuity and recent status; runId selects an accepted session. Scope checked.",
   event_document_read: "Read an exact recorded artifact revision. Private documents stay private; missing revisions are not substituted.",
   event_conclude: "Lead conclusion only: record truthful outcomes, then finish the reply. Delivery is confirmed separately.",
-  event_create: "Create an Event for a direct human request; include yourself. Ask a question if intent or schedule is unclear. Inspect uncertain results, never loop retries.",
+  event_create: "Create an Event for a direct human request in a private or group chat; include yourself. Fill title, objective (Goal), and description (Working prompt) with useful specifics. Ask in this chat if timing or cadence is unclear. Inspect uncertain results, never loop retries.",
   event_update: "Replace an Event you already participate in for a direct human request. Supply full input and current revision; do not blindly retry conflicts.",
   event_manage: "Direct human request only. Pause/resume/archive require expectedRevision; cancel_run requires runId. Run now is idempotent within this request.",
 };

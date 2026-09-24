@@ -2062,7 +2062,13 @@ function ThreadView({
     const submission = composerDraftStore.beginSubmission(snapshot, newMessageId());
     if (!submission) return;
     checkingDraft.current = true;
-    try { sendText(text, submission); }
+    try {
+      // The submission owns these words by message ID now. Clear the composer
+      // before workspace preparation or native acceptance, while the pending
+      // turn renders the same words in the conversation.
+      composerDraftStore.releaseSubmission(submission);
+      sendText(text, submission);
+    }
     catch (cause) { composerDraftStore.finishSubmission(submission, false); setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { checkingDraft.current = false; }
   }

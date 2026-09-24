@@ -85,7 +85,7 @@ function activityForScope(entry: ScopedCoworkerActivity | undefined, scope: Work
   const activity = entry.activity;
   if (entry.scope.configurationKey !== scope.configurationKey
     && (["idle", "ready", "starting"].includes(activity.state) || (activity.state === "offline" && activity.label === "AI unavailable"))) {
-    return { ...activity, state: "idle", label: "Idle", detail: "", updatedAt: 0 };
+    return { ...activity, state: "idle", label: "Available", detail: "", updatedAt: 0 };
   }
   return activity;
 }
@@ -121,7 +121,7 @@ function visibleCoworkerActivity(scope: WorkspacePreparationScope, polled: Cowor
   const candidates = [attention, live, cloud, polled];
   const activity = candidates.find((entry) => entry?.state === "attention")
     ?? candidates.find((entry) => entry?.state === "working" || entry?.state === "retrying")
-    ?? candidates.find((entry) => entry?.state === "offline" || (entry?.state === "recent" && entry.label !== "Ready" && entry.label !== "Idle"))
+    ?? candidates.find((entry) => entry?.state === "offline" || (entry?.state === "recent" && !["Ready", "Idle", "Available"].includes(entry.label)))
     ?? live ?? cloud ?? polled ?? null;
   const projected = projectWorkspaceReadiness(activity, workspaceReadinessCache.peek(scope));
   return { ...projected, ...(projected.last ?? polled?.last ? { last: projected.last ?? polled?.last } : {}), ...(polled?.recent ? { recent: polled.recent } : {}) };

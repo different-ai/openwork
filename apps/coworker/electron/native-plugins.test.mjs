@@ -208,6 +208,7 @@ test("published native tools preserve trusted identity, broker payloads, file im
     [COMPUTER_PLUGIN, "coworker_computer_observe", { include_image: true }, "coworker_computer_observe"],
     [COLLABORATION_PLUGIN, "coworker_worker_pause", { id: "worker-one" }, "worker_pause"],
     [COLLABORATION_PLUGIN, "coworker_react", { emoji: null }, "react"],
+    [COLLABORATION_PLUGIN, "coworker_group_manage", { action: "start_parallel", participantSlugs: ["scout", "editor"], title: "Planning" }, "group_manage"],
     [GROUP_DOCUMENT_PLUGIN, "coworker_group_document_read", { groupId: "grp_12345678", id: "plan" }, "group_document_read"],
     [EVENT_PLUGIN, "coworker_event_details", { id: "event-fixture" }, "event_details"],
   ]) {
@@ -260,6 +261,11 @@ test("published native tools preserve trusted identity, broker payloads, file im
       }
       await Effect.runPromise(tool.execute({ emoji: "\u2764\ufe0f", messageId: "message_target" }, context));
       assert.deepEqual(requests.at(-1).body.args, { emoji: "\u2764\ufe0f", messageId: "message_target" });
+    }
+    if (name === "coworker_group_manage") {
+      for (const input of [{ action: "start_parallel", participantSlugs: [] }, { action: "add", participantSlugs: ["../other"] }, { action: "remove", participantSlugs: ["editor"], actor: "other" }]) {
+        await assert.rejects(Effect.runPromise(tool.execute(input, context)), /Invalid native tool arguments/);
+      }
     }
     if (source === EVENT_PLUGIN) {
       const create = f.tools.get("coworker_event_create");

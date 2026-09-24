@@ -4008,7 +4008,7 @@ test("Events share Conversation and Facilitator defaults while recovery, recall 
       memoryContext: async (owner) => owner.kind === "group" ? "GROUP-ONLY-RECALL" : "",
       onPublished: async (entry) => { published.push({ slug: entry.owner.slug, model: entry.model }); },
       resolveModel: (slug, request) => {
-        if (request.observationOnly) { observations.push({ slug, model: request.model }); return request.model ?? undefined; }
+        if (request.observationOnly || request.prepareOnly) { if (request.observationOnly) observations.push({ slug, model: request.model }); return request.model ?? undefined; }
         if (request.model) return request.model;
         assert.equal(typeof request.requestText, "string", "preparation and reads must not invoke model ranking");
         const choice = resolveDiscussionModel(catalog, members[slug], request.requestText, settings.modelDefaults);

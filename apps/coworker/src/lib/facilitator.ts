@@ -92,6 +92,8 @@ export function facilitatorPrompt(input: {
     '- A previous speaker does not satisfy a collective invitation on behalf of the others. Give each invited coworker their own part; do not stop after the first reply or assign one coworker to speak for everyone.',
     "- brief: one sentence on what that coworker should cover, not what the others cover.",
     '- mode: you decide. Use "parallel" for independent replies, including a collective personal check-in such as "How are you all doing". Use "sequential" for a chain where later participants should read, build on, critique, or synthesize earlier replies. Honor an explicit requested order. A later follow-up or wrap-up does not make an independent first round sequential.',
+    '- When the person asks the group to plan or schedule a meeting/Event, use sequential replies. Ask early speakers for their agenda and timing input; assign exactly one final speaker to create or update the Event after reading those replies. Their brief should name the Event Title, Goal, and Working prompt and ask for missing timing details when necessary.',
+    '- When the person asks for a group membership change or a parallel group chat, assign one final speaker to perform that action. Others may provide input, but should not make a second group change.',
     '- dependsOn: pairs ["later slug","earlier slug"] when a later speaker should build on an earlier reply; the earlier one must speak first.',
     "- followUp: at most one {\"slug\",\"brief\"} when one coworker should respond to another after the first round; otherwise null.",
     "- synthesizer: one slug only when a two-sentence wrap-up of several replies would help the person; otherwise null.",
