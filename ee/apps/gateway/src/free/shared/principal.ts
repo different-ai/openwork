@@ -3,7 +3,7 @@ import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { InferenceKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
 import { assertManagedModelsAllowed } from "@openwork/types/den/managed-models-policy"
 import { freeInferenceOrganizationAllowed, inferenceSubscribed } from "@openwork/types/den/inference"
-import { db } from "./db.js"
+import { db } from "../../db.js"
 
 type InferenceKeyRow = typeof InferenceKeyTable.$inferSelect
 /** Signed-out desktop: the id is the keyed hash of the machine identifier. */

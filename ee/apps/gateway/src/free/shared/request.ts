@@ -1,7 +1,8 @@
 import { z } from "zod"
 import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
-import { desktopFreeHash } from "./desktop-free-proof.js"
-import type { AutoConfig } from "./free-config.js"
+import { sha256Hex } from "@openwork/free-auto/node"
+import type { AutoConfig } from "./config.js"
+import { FreeRequestError } from "./errors.js"
 
 const name = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/)
 const schema = z.strictObject({
@@ -31,9 +32,6 @@ function boundedSchema(value: unknown, depth = 0): boolean {
   if (Array.isArray(value)) return value.every((entry) => boundedSchema(entry, depth + 1))
   if (value && typeof value === "object") return !Object.hasOwn(value, "$ref") && Object.values(value).every((entry) => boundedSchema(entry, depth + 1))
   return true
-}
-export class FreeRequestError extends Error {
-  constructor(readonly status: 400 | 413, readonly code: string, message: string) { super(message) }
 }
 export function prepareFreeRequest(value: unknown, config: AutoConfig) {
   const parsed = schema.safeParse(value)
@@ -78,7 +76,7 @@ export async function readFreeRequest(request: Request, maxBytes: number, signal
     let value: unknown
     try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) }
     catch { throw new FreeRequestError(400, "invalid_json", "The Auto request must contain valid UTF-8 JSON.") }
-    return { value, bodyHash: desktopFreeHash(Uint8Array.from(bytes)) }
+    return { value, bodyHash: sha256Hex(Uint8Array.from(bytes)) }
   } catch (error) { void reader.cancel().catch(() => undefined); throw error }
   finally { signal.removeEventListener("abort", abort); reader.releaseLock() }
 }

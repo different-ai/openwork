@@ -1,33 +1,26 @@
-import { createHash } from "node:crypto"
 import type { Context, Hono } from "hono"
 import { z } from "zod"
 import {
   DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH,
-  DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_SESSION_POW_PATTERN, desktopFreeSessionPowMessage, leadingZeroBits,
+  DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_SESSION_POW_PATTERN, type DesktopRelease,
   type DesktopFreeAccessStatus, type DesktopFreeVersionError,
-} from "@openwork/types/desktop-free-access"
+} from "@openwork/free-auto"
 import { managedModelCatalog } from "@openwork/types/den/inference"
 import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
-import { anonymousIpHash, createAnonymousIdentities, issueAnonymousToken, resolveAnonymousClientAddress, verifyAnonymousToken } from "./anonymous-identity.js"
-import { createFreeAllowanceStore, type FreeAllowanceStore } from "./free-allowance.js"
-import { type AutoConfig } from "./free-config.js"
-import type { GuestPrincipal } from "./free-principal.js"
-import { checkDesktopFreeRequest, desktopFreeGateError, type DesktopFreeGateDependencies } from "./desktop-free-access.js"
-import { desktopFreeHash } from "./desktop-free-proof.js"
-import { createDesktopFreeReleaseSource, type DesktopRelease } from "./desktop-free-version.js"
-import { dispatchFreeCompletion } from "./free-dispatch.js"
-import { prepareFreeRequest, readFreeRequest, FreeRequestError } from "./free-request.js"
-import { env } from "./env.js"
+import { anonymousIpHash, createAnonymousIdentities, issueAnonymousToken, resolveAnonymousClientAddress, verifyAnonymousToken } from "./identity.js"
+import { createFreeAllowanceStore, type FreeAllowanceStore } from "../shared/allowance.js"
+import { type AutoConfig } from "../shared/config.js"
+import type { GuestPrincipal } from "../shared/principal.js"
+import { checkDesktopFreeRequest, desktopFreeGateError, type DesktopFreeGateDependencies } from "./gate.js"
+import { sha256Hex, verifySessionPow } from "@openwork/free-auto/node"
+import { createDesktopFreeReleaseSource } from "./releases-source.js"
+import { dispatchFreeCompletion } from "../shared/dispatch.js"
+import { FreeRequestError } from "../shared/errors.js"
+import { prepareFreeRequest, readFreeRequest } from "../shared/request.js"
+import { env } from "../../env.js"
 
 // The signed proof carries the machine id; the body carries the proof-of-work for this proof's nonce.
 const sessionSchema = z.strictObject({ pow: z.string().regex(DESKTOP_FREE_SESSION_POW_PATTERN).optional() })
-function powSatisfied(proof: { machineId: string; nonce: string }, pow: string | undefined, bits: number, rounds: number) {
-  if (bits === 0) return true
-  const solutions = pow?.split(".") ?? []
-  if (solutions.length !== rounds) return false
-  return solutions.every((solution, round) => leadingZeroBits(Uint8Array.from(createHash("sha256")
-    .update(desktopFreeSessionPowMessage({ ...proof, round, pow: solution })).digest())) >= bits)
-}
 export type FreeRouteDependencies = {
   config: AutoConfig;
   store: FreeAllowanceStore;
@@ -73,7 +66,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     if (gate.error) return gate.error
     if (gate.versionError) return versionResponse(gate.versionError)
     // Minting costs a little CPU, bound to this proof's single-use nonce so the work cannot be replayed.
-    if (!powSatisfied(gate.proof, session.data.pow, config.sessionPowBits, config.sessionPowRounds)) {
+    if (!verifySessionPow({ machineId: gate.proof.machineId, nonce: gate.proof.nonce, pow: session.data.pow, bits: config.sessionPowBits, rounds: config.sessionPowRounds })) {
       return Response.json({ error: { code: "session_pow_required", bits: config.sessionPowBits, rounds: config.sessionPowRounds, message: "A proof of work is required to start a guest session." } }, { status: 400, headers: { "cache-control": "no-store" } })
     }
     const identities = createAnonymousIdentities(gate.proof, address, config)
@@ -99,7 +92,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
 
   app.get(DESKTOP_FREE_STATUS_PATH, route(async (c) => {
     if (new URL(c.req.url).search) return desktopFreeGateError(400, "invalid_request")
-    const auth = await authenticate(c, desktopFreeHash(""))
+    const auth = await authenticate(c, sha256Hex(""))
     if (auth.error) return auth.error
     const status: DesktopFreeAccessStatus = { state: "unavailable", code: "anonymous_unavailable", currentVersion: auth.proof.appVersion,
       minimumVersion: auth.minimumVersion, providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID,
@@ -112,7 +105,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
   }))
   app.get(DESKTOP_FREE_MODELS_PATH, route(async (c) => {
     if (new URL(c.req.url).search) return desktopFreeGateError(400, "invalid_request")
-    const auth = await authenticate(c, desktopFreeHash(""))
+    const auth = await authenticate(c, sha256Hex(""))
     if (auth.error) return auth.error
     if (auth.versionError) return versionResponse(auth.versionError)
     return c.json({ object: "list", data: [{ id: DESKTOP_FREE_MODEL_ID, object: "model", created: 0, owned_by: "openwork" }] }, 200, { "cache-control": "no-store" })

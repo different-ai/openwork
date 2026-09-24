@@ -13,9 +13,10 @@ import {
 import { and, eq, sql } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { freeInferenceWindow, INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
-import { readAutoConfig, freeRequestReservation, rampedDeviceAmount } from "../src/free-config.js"
-import type { FreePrincipal, GuestPrincipal } from "../src/free-principal.js"
-import type { FreeUsageReceipt } from "../src/free-allowance.js"
+import { readAutoConfig } from "../src/free/shared/config.js"
+import { freeRequestReservation, rampedDeviceAmount } from "@openwork/free-auto/accounting"
+import type { FreePrincipal, GuestPrincipal } from "../src/free/shared/principal.js"
+import type { FreeUsageReceipt } from "../src/free/shared/allowance.js"
 
 const adminUrl = process.env.FREE_AUTO_MYSQL_TEST_URL
 if (adminUrl) {
@@ -130,8 +131,8 @@ test("free Auto SQL and 0111 upgrade in an owned random database", { skip: !admi
     assert.deepEqual(await rows("SELECT JSON_UNQUOTE(JSON_EXTRACT(model_ids,'$[0]')) AS model FROM gateway_providers WHERE id='old-provider'"), [{ model: "kept-model" }])
     t.diagnostic(`Applied ${statements.length} generated 0111 statements; verified twelve new tables, every column/index, guest tables free of account references, and pin defaults`)
   })
-  const { createFreeAllowanceStore } = await import("../src/free-allowance.js")
-  const { findMemberFreePrincipal, freePrincipalHash, memberFreePrincipalAllowed } = await import("../src/free-principal.js")
+  const { createFreeAllowanceStore } = await import("../src/free/shared/allowance.js")
+  const { findMemberFreePrincipal, freePrincipalHash, memberFreePrincipalAllowed } = await import("../src/free/shared/principal.js")
   const gatewayDb = await import("../src/db.js")
   if ("end" in gatewayDb.client) { const client = gatewayDb.client; close.push(() => client.end()) }
   const { ensureMemberFreeInferenceCredential, getMemberInferenceAccess } = await import("../../den-api/src/inference.js")
@@ -378,7 +379,7 @@ test("free Auto SQL and 0111 upgrade in an owned random database", { skip: !admi
   })
 
   await t.test("proof nonce uniqueness survives committed transactions and competing SQL pools", async () => {
-    const proof = { keyThumbprint: "b".repeat(64), machineId: "c".repeat(64), nonce: id(), timestamp: Date.now(), appVersion: "1.2.3", platform: "darwin", arch: "arm64" } satisfies import("../src/desktop-free-proof.js").DesktopFreeBinding & { nonce: string; timestamp: number }
+    const proof = { keyThumbprint: "b".repeat(64), machineId: "c".repeat(64), nonce: id(), timestamp: Date.now(), appVersion: "1.2.3", platform: "darwin", arch: "arm64" } satisfies import("../src/free/guest/proof.js").DesktopFreeBinding & { nonce: string; timestamp: number }
     assert.deepEqual((await Promise.all([guests.consumeNonce(proof, ip), otherGuests.consumeNonce(proof, ip)])).sort(), ["accepted", "replay"])
     assert.equal(await otherGuests.consumeNonce(proof, ip), "replay")
     assert.equal(await store.consumeNonce(proof, ip), "unavailable")

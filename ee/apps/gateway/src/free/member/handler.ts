@@ -1,16 +1,17 @@
 import type { Context } from "hono"
 import { DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_STATUS_PATH,
-  type DesktopFreeAccessStatus } from "@openwork/types/desktop-free-access"
+  type DesktopFreeAccessStatus } from "@openwork/free-auto"
 import { managedModelCatalog } from "@openwork/types/den/inference"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
-import { createFreeAllowanceStore, type FreeAllowanceStore } from "./free-allowance.js"
-import type { AutoConfig } from "./free-config.js"
-import { dispatchFreeCompletion, freeError } from "./free-dispatch.js"
-import { findMemberFreePrincipal } from "./free-principal.js"
-import { FreeRequestError, prepareFreeRequest, readFreeRequest } from "./free-request.js"
-import type { InferenceKeyRow } from "./middleware/inference-auth.js"
-import { env } from "./env.js"
+import { createFreeAllowanceStore, type FreeAllowanceStore } from "../shared/allowance.js"
+import type { AutoConfig } from "../shared/config.js"
+import { dispatchFreeCompletion } from "../shared/dispatch.js"
+import { freeError, FreeRequestError } from "../shared/errors.js"
+import { findMemberFreePrincipal } from "../shared/principal.js"
+import { prepareFreeRequest, readFreeRequest } from "../shared/request.js"
+import type { InferenceKeyRow } from "../../middleware/inference-auth.js"
+import { env } from "../../env.js"
 
 export type FreeMemberDependencies = {
   config: AutoConfig;

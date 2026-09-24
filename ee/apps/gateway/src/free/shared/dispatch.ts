@@ -1,12 +1,9 @@
 import { randomBytes } from "node:crypto"
-import type { FreeAllowanceStore } from "./free-allowance.js"
-import { FREE_OPENAI_CHAT_URL, type AutoConfig } from "./free-config.js"
-import type { FreePrincipal } from "./free-principal.js"
-import { meterFreeResponse } from "./free-response.js"
-
-export function freeError(status: number, code: string, message = "Auto is unavailable. No request was sent.") {
-  return Response.json({ error: { code, message } }, { status, headers: { "cache-control": "no-store" } })
-}
+import type { FreeAllowanceStore } from "./allowance.js"
+import { FREE_OPENAI_CHAT_URL, type AutoConfig } from "./config.js"
+import type { FreePrincipal } from "./principal.js"
+import { meterFreeResponse } from "./meter.js"
+import { freeError } from "./errors.js"
 
 // OpenAI does not bill a request it refuses before generating.
 const NOT_BILLED = new Set([401, 403, 429])

@@ -1,9 +1,16 @@
-import type { ManagedModelRecommendation } from "./den/inference.js";
+import type { ManagedModelRecommendation } from "@openwork/types/den/inference";
 
+/**
+ * The wire contract for free Auto. The desktop main process signs requests,
+ * the desktop relay forwards them, and the Gateway verifies them: every
+ * constant and message layout here must be identical on all three sides.
+ */
 export const DESKTOP_FREE_PROOF_HEADER = "x-openwork-desktop-proof";
 export const DESKTOP_FREE_TOKEN_HEADER = "x-openwork-desktop-token";
 export const DESKTOP_FREE_PROVIDER_ID = "openwork-free";
 export const DESKTOP_FREE_MODEL_ID = "openai/gpt-5.6-luna";
+
+// Signed-out desktop routes.
 export const DESKTOP_FREE_SESSION_PATH = "/api/anonymous/session";
 export const DESKTOP_FREE_STATUS_PATH = "/api/anonymous/status";
 export const DESKTOP_FREE_MODELS_PATH = "/api/anonymous/v1/models";
@@ -12,42 +19,37 @@ export const DESKTOP_FREE_CHAT_PATH = "/api/anonymous/v1/chat/completions";
 export const MEMBER_FREE_STATUS_PATH = "/api/v1/auto/status";
 export const MEMBER_FREE_MODELS_PATH = "/api/v1/models";
 export const MEMBER_FREE_CHAT_PATH = "/api/v1/chat/completions";
-export const DESKTOP_FREE_PROOF_MAX_BYTES = 2048;
-/** Minting a guest session costs a small proof-of-work bound to the request's single-use nonce. */
-/**
- * Several small puzzles rather than one large one: the total time clusters
- * around 1–3 s on a laptop instead of occasionally taking many times longer.
- * The desktop solves it in the background while the app loads.
- */
-export const DESKTOP_FREE_SESSION_POW_BITS = 19;
-export const DESKTOP_FREE_SESSION_POW_MAX_BITS = 24;
-export const DESKTOP_FREE_SESSION_POW_ROUNDS = 8;
-export const DESKTOP_FREE_SESSION_POW_MAX_ROUNDS = 16;
-/** Round solutions joined by "."; each solution is short base36. */
-export const DESKTOP_FREE_SESSION_POW_PATTERN = /^[A-Za-z0-9_-]{1,32}(?:\.[A-Za-z0-9_-]{1,32}){0,15}$/;
-export function desktopFreeSessionPowMessage(input: { machineId: string; nonce: string; round: number; pow: string }): string {
-  return `${input.machineId}:${input.nonce.toLowerCase()}:${input.round}:${input.pow}`;
-}
-export function leadingZeroBits(digest: Uint8Array): number {
-  let bits = 0;
-  for (const byte of digest) {
-    if (byte === 0) { bits += 8; continue; }
-    bits += Math.clz32(byte) - 24;
-    break;
-  }
-  return bits;
-}
-export const DESKTOP_FREE_PROOF_CLOCK_SKEW_MS = 60_000;
+/** Den route that issues a signed-in member's free Auto credential. */
+export const MEMBER_FREE_CREDENTIAL_PATH = "/v1/inference/free/credential";
 
+/** The only method/path pairs a desktop proof may be signed for. */
+export const DESKTOP_FREE_SIGNABLE_ROUTES: Readonly<Record<"GET" | "POST", readonly string[]>> = Object.freeze({
+  POST: Object.freeze([DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_CHAT_PATH]),
+  GET: Object.freeze([DESKTOP_FREE_STATUS_PATH, DESKTOP_FREE_MODELS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_STATUS_PATH]),
+});
+export function isDesktopFreeSignableRoute(method: string, path: string): boolean {
+  const routes = method === "GET" || method === "POST" ? DESKTOP_FREE_SIGNABLE_ROUTES[method] : [];
+  return routes.includes(path);
+}
+
+export const DESKTOP_FREE_PROOF_MAX_BYTES = 2048;
+export const DESKTOP_FREE_PROOF_CLOCK_SKEW_MS = 60_000;
+export const DESKTOP_FREE_PLATFORMS = ["darwin", "win32", "linux"] as const;
+export const DESKTOP_FREE_ARCHES = ["arm64", "x64"] as const;
+/** Proof nonces are RFC 4122 UUIDs. */
+export const DESKTOP_FREE_NONCE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 /** SHA-256 hex of the OS machine identifier, salted per product; stable across reinstalls. */
 export const DESKTOP_FREE_MACHINE_ID_PATTERN = /^[a-f0-9]{64}$/;
+export const DESKTOP_FREE_RELEASE_TAG_PATTERN = /^[a-f0-9]{64}$/;
 
+export type DesktopFreePlatform = (typeof DESKTOP_FREE_PLATFORMS)[number];
+export type DesktopFreeArch = (typeof DESKTOP_FREE_ARCHES)[number];
 type DesktopFreeProofBase = {
   publicKey: string;
   machineId: string;
   appVersion: string;
-  platform: "darwin" | "win32" | "linux";
-  arch: "arm64" | "x64";
+  platform: DesktopFreePlatform;
+  arch: DesktopFreeArch;
   timestamp: number;
   nonce: string;
 };
@@ -58,9 +60,8 @@ type DesktopFreeProofBase = {
  */
 export type DesktopFreeProofClaims = (DesktopFreeProofBase & { version: 2 }) | (DesktopFreeProofBase & { version: 3; releaseTag: string });
 export type DesktopFreeProof = DesktopFreeProofClaims & { signature: string };
-export const DESKTOP_FREE_RELEASE_TAG_PATTERN = /^[a-f0-9]{64}$/;
+export type DesktopFreeProofRequest = { method: string; path: string; bodyHash: string; authorizationHash: string };
 
-type DesktopFreeProofRequest = { method: string; path: string; bodyHash: string; authorizationHash: string };
 function desktopFreeProofFields(input: DesktopFreeProofBase & DesktopFreeProofRequest): unknown[] {
   return [
     input.method.toUpperCase(), input.path, input.bodyHash,
@@ -90,6 +91,7 @@ export type DesktopFreeAccessStatus = {
     limitUsd: number; usedUsd: number; reservedUsd: number; remainingUsd: number; resetsAt: string;
   } | null;
   catalog?: ManagedModelRecommendation[];
+  defaultPinned?: boolean;
 };
 export type DesktopFreeVersionError = {
   code: "desktop_update_required" | "desktop_version_unavailable";

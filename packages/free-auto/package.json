@@ -1,0 +1,40 @@
+{
+  "name": "@openwork/free-auto",
+  "private": true,
+  "type": "module",
+  "description": "Free Auto: the contract between the OpenWork desktop app, its local relay, the Gateway and Den. Pure protocol, proof-of-work, release window and accounting rules shared by every runtime.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./accounting": {
+      "types": "./src/accounting.ts",
+      "development": "./src/accounting.ts",
+      "default": "./dist/accounting.js"
+    },
+    "./node": {
+      "types": "./src/node.ts",
+      "development": "./src/node.ts",
+      "default": "./dist/node.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@openwork/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.3"
+  }
+}

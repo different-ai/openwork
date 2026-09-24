@@ -1,6 +1,7 @@
 import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
-import type { FreeUsageReceipt } from "./free-allowance.js"
-import { freeUsageAmount, type AutoConfig } from "./free-config.js"
+import type { FreeUsageReceipt } from "./allowance.js"
+import { freeUsageAmount } from "@openwork/free-auto/accounting"
+import type { AutoConfig } from "./config.js"
 
 export type FreeMeterConfig = Pick<AutoConfig, "upstreamModel" | "inputPrice" | "outputPrice">
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value) }
