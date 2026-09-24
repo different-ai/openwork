@@ -3151,6 +3151,13 @@ function createRoutes(
     return jsonResponse(engineV2Preview.status());
   });
 
+  addRoute(routes, "POST", "/experimental/engine-v2-preview/migrate", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    if (!isRecord(body) || body.confirm !== true) throw new ApiError(400, "invalid_payload", "Confirm history migration first");
+    return jsonResponse(engineV2Preview.migrateHistory());
+  });
+
   addRoute(routes, "PUT", "/experimental/engine-v2-preview", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
@@ -3165,8 +3172,10 @@ function createRoutes(
       throw new ApiError(400, "invalid_payload", "chatRouting must be a boolean");
     }
     let status = engineV2Preview.status();
+    // Stop routing before stopping the v2 process; enable the process before routing to it.
+    if (body.chatRouting === false) status = await engineV2Preview.setChatRouting(false);
     if (typeof body.enabled === "boolean") status = await engineV2Preview.setEnabled(body.enabled);
-    if (typeof body.chatRouting === "boolean") status = await engineV2Preview.setChatRouting(body.chatRouting);
+    if (body.chatRouting === true) status = await engineV2Preview.setChatRouting(true);
     return jsonResponse(status);
   });
 

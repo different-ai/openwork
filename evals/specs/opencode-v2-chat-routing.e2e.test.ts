@@ -1,10 +1,10 @@
-import { browserScript } from "@openwork/testkit";
+import { browserScript, screenshot } from "@openwork/testkit";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { clickButton, control, createAndSelectWorkspace, evalIn, go, renameSessionAndWait, waitFor } from "@openwork/behaviors";
+import { clickButton, clickText, fill, control, revealText, createAndSelectWorkspace, evalIn, go, renameSessionAndWait, waitFor } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
 import { desktop } from "@openwork/hosts";
 import { needs, resolveEvalEngine, test } from "@openwork/testkit";
@@ -163,25 +163,6 @@ const engineSelectedExpression = (engine: "v1" | "v2", options: { ready?: boolea
   return control?.getAttribute("aria-pressed") === "true" || control?.getAttribute("data-state") === "on";
 }, [options.ready === true, engine]);
 
-async function clickEngineOption(app: Surface, engine: "v1" | "v2"): Promise<void> {
-  const point = await evalIn(app, browserScript((engine) => {
-    const control = [...document.querySelectorAll<HTMLElement>(`[aria-label="Chat engine"] [data-engine="${engine}"]`)]
-      .find((candidate) => {
-        const rect = candidate.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      });
-    if (!(control instanceof HTMLElement)) return null;
-    control.scrollIntoView({ block: "center", behavior: "instant" });
-    const rect = control.getBoundingClientRect();
-    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-  }, [engine]));
-  if (!isRecord(point) || typeof point.x !== "number" || typeof point.y !== "number") {
-    throw new Error(`Could not resolve the ${engine} chat engine option: ${JSON.stringify(point)}`);
-  }
-  await app.client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
-  await app.client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
-  await app.client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
-}
 
 async function closeModelPicker(app: Surface): Promise<void> {
   await app.client.send("Input.dispatchKeyEvent", {
@@ -282,27 +263,12 @@ async function typeIntoComposer(app: Surface, text: string): Promise<void> {
   });
 }
 
-async function createNewSessionThroughSidebar(app: Surface): Promise<string> {
-  const previousValue = await evalIn(app, () => (document.querySelector<HTMLElement>('[data-session-surface-id]')?.getAttribute('data-session-surface-id') ?? ""));
-  const previous = typeof previousValue === "string" ? previousValue : "";
-  await waitFor(app, () => {
-    const button = document.querySelector<HTMLElement>('[data-sidebar-new-chat]');
-    return button instanceof HTMLButtonElement && !button.disabled;
-  }, { timeoutMs: 30_000, label: "enabled sidebar New task control" });
-  const clicked = await evalIn(app, () => {
-    const button = document.querySelector<HTMLElement>('[data-sidebar-new-chat]');
-    if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
-    button.click();
-    return true;
-  });
-  expect(clicked).toBe(true);
-  await waitFor(app, browserScript((previous) => {
-    const id = document.querySelector<HTMLElement>('[data-session-surface-id]')?.getAttribute('data-session-surface-id') ?? "";
-    return id.startsWith("ses_") && id !== previous
-      && window.location.hash.includes("/session/" + id);
-  }, [previous]), { timeoutMs: 60_000, label: "new session created by the active engine client" });
-  const value = await evalIn(app, () => (document.querySelector<HTMLElement>('[data-session-surface-id]')?.getAttribute('data-session-surface-id') ?? ""));
+async function createNewSessionThroughControl(app: Surface): Promise<string> {
+  // The sidebar now opens a draft; this existing control creates an engine
+  // session so the empty-title and pre-prompt rename assertions stay meaningful.
+  const value = await control(app, "session.create_task", {});
   if (typeof value !== "string" || !value.startsWith("ses_")) throw new Error(`New session id was unavailable: ${String(value)}`);
+  await waitFor(app, browserScript((id) => document.querySelector<HTMLElement>('[data-session-surface-id]')?.getAttribute('data-session-surface-id') === id, [value]), { label: "created session surface" });
   return value;
 }
 
@@ -565,7 +531,40 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
 
       await go(app, `/workspace/${workspaceId}/settings/advanced`);
       await waitFor(app, engineSelectedExpression("v1", { ready: true }), { timeoutMs: 60_000, label: "ready chat engine control on v1" });
-      await clickEngineOption(app, "v2");
+      await revealText(app, "Chat engine");
+      await screenshot(app, { caption: "Advanced settings offers separate engine selection and history migration" });
+      await clickButton(app, "Migrate chats to OpenCode v2");
+      await waitFor(app, () => Boolean(document.querySelector('[role="alertdialog"]')), { label: "migration warning" });
+      await waitFor(app, () => { const dialog = document.querySelector('[role="alertdialog"]'); return Boolean(dialog && getComputedStyle(dialog).opacity === "1"); }, { label: "migration warning settled" });
+      await screenshot(app, { caption: "Migration consent names the copied data and compatibility risks" });
+      await clickButton(app, "Cancel");
+      expect((await readStatus(app)).enabled).toBe(false);
+      await go(app, `/workspace/${workspaceId}/session`);
+      await waitFor(app, () => Boolean(document.querySelector('[aria-label="Change model"]')), { label: "session route ready for palette" });
+      await control(app, "command_palette.open", {});
+      await fill(app, 'input[data-command-palette-input]', "opencode");
+      await waitFor(app, () => document.body.innerText.includes("Switch to OpenCode v2"), { label: "engine commands" });
+      await screenshot(app, { caption: "Command palette offers Switch to v1, Switch to v2, and Migrate chats separately" });
+      await clickText(app, "Migrate chats to OpenCode v2", { selector: "[data-slot=command-item]" });
+      await waitFor(app, () => Boolean(document.querySelector('[role="alertdialog"]')), { label: "palette migration warning" });
+      await clickButton(app, "Cancel");
+      expect((await readStatus(app)).enabled).toBe(false);
+      await waitFor(app, () => Boolean(document.querySelector('[aria-label="Change model"]')), { label: "session route ready for palette" });
+      await control(app, "command_palette.open", {});
+      await fill(app, 'input[data-command-palette-input]', "Migrate chats to OpenCode v2");
+      await clickText(app, "Migrate chats to OpenCode v2", { selector: "[data-slot=command-item]" });
+      await clickButton(app, "Migrate chats");
+      await waitFor(app, () => document.body.innerText.includes("Migrated "), { timeoutMs: 120_000, label: "history migration completes through the desktop server" });
+      expect((await readStatus(app)).chatRouting).toBe(false);
+      await go(app, `/workspace/${workspaceId}/settings/advanced`);
+      await waitFor(app, () => document.body.innerText.includes("already in v2"), { label: "migration result in Advanced settings" });
+      await revealText(app, "V1 chat history");
+      await screenshot(app, { caption: "Migration completes while OpenCode v1 remains selected" });
+      await go(app, `/workspace/${workspaceId}/session`);
+      await waitFor(app, () => Boolean(document.querySelector('[aria-label="Change model"]')), { label: "session route ready after migration" });
+      await control(app, "command_palette.open", {});
+      await fill(app, 'input[data-command-palette-input]', "Switch to OpenCode v2");
+      await clickText(app, "Switch to OpenCode v2", { selector: "[data-slot=command-item]" });
       runningStatus = await untilStatus(
         app,
         (status) => status.enabled && status.running && typeof status.pid === "number",
@@ -620,7 +619,7 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
 
     // New task uses the selected workspace's currently swapped client. This
     // avoids sending a v2 prompt to the pre-toggle v1 session id.
-    const v2SessionId = await createNewSessionThroughSidebar(app);
+    const v2SessionId = await createNewSessionThroughControl(app);
     await waitFor(app, browserScript((value) => ((document.querySelector<HTMLElement>(value)?.textContent ?? "").trim() === "New session"), [`[data-sidebar-session-id="${v2SessionId}"] [data-session-title-text]`]), {
       timeoutMs: 15_000,
       label: "an unnamed v2 session is displayed as a new session, not a finished title",
@@ -667,7 +666,7 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
       true,
     );
 
-    const namedSessionId = await createNewSessionThroughSidebar(app);
+    const namedSessionId = await createNewSessionThroughControl(app);
     const renameApp = app;
     await renameSessionAndWait((action, args) => control(renameApp, action, args), namedSessionId, manualTitle);
     await selectModel(app, modelNameV2);
@@ -701,13 +700,17 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
       timeoutMs: 30_000,
       label: "chat engine control on v2 before reversal",
     });
-    await clickEngineOption(app, "v1");
+    await go(app, `/workspace/${workspaceId}/session`);
+    await waitFor(app, () => Boolean(document.querySelector('[aria-label="Change model"]')), { label: "session route ready for palette" });
+    await control(app, "command_palette.open", {});
+    await fill(app, 'input[data-command-palette-input]', "Switch to OpenCode v1");
+    await clickText(app, "Switch to OpenCode v1", { selector: "[data-slot=command-item]" });
     await untilStatus(app, (status) => !status.chatRouting, 30_000, "chat routing to be disabled");
     const routedOffAt = Date.now();
     await go(app, `/workspace/${workspaceId}/session`);
     await waitForModelInPicker(app, modelNameV1, 45_000);
     await closeModelPicker(app);
-    await createNewSessionThroughSidebar(app);
+    await createNewSessionThroughControl(app);
     await selectModel(app, modelNameV1);
     const r4 = await sendAndWaitForNonce(
       app,
@@ -717,7 +720,7 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
       modelIdV1,
       routedOffAt,
       "R4 v1",
-    );
+    ).catch(async (error) => { await screenshot(app!, { caption: "V1 reversal failure" }); throw error; });
     // Choosing OpenCode v1 turns routing off AND stops the sidecar, so the v2
     // proxy must be unavailable again (-1), exactly as before the preview.
     const stoppedStatus = await untilStatus(app, (status) => !status.enabled && !status.running, 60_000, "the OpenCode v2 sidecar to stop");

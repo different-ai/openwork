@@ -1240,9 +1240,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const engineV2ChatRouting = selectedEngineRouting === true;
   useEffect(() => {
     window.addEventListener("openwork-server-settings-changed", engineRoutingPoller.refresh);
+    window.addEventListener("openwork-engine-changed", engineRoutingPoller.refresh);
     return () => {
       engineRoutingPoller.dispose();
       window.removeEventListener("openwork-server-settings-changed", engineRoutingPoller.refresh);
+      window.removeEventListener("openwork-engine-changed", engineRoutingPoller.refresh);
     };
   }, [engineRoutingPoller]);
   useEffect(() => {
