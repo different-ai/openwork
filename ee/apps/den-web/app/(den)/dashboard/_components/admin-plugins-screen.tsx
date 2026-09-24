@@ -5,7 +5,7 @@ import { Popover } from "@base-ui/react/popover";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Plus, Search, X } from "lucide-react";
+import { ArrowDownWideNarrow, Check, ChevronDown, Plus, Search, X } from "lucide-react";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { getNewPluginRoute, getPluginRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -137,7 +137,7 @@ function DirectoryResults({ plugins, filtered }: { plugins: ReturnType<typeof us
   const { orgSlug } = useOrgDashboard();
   const [scrollTop, setScrollTop] = useState(0);
   const rows = plugins.data?.pages.flatMap((page) => page.items) ?? [];
-  const rowHeight = 68;
+  const rowHeight = 56;
   const viewportHeight = 544;
   const { start, end } = pluginDirectoryRange(scrollTop, viewportHeight, rowHeight, rows.length);
   const total = plugins.data?.pages[0]?.total ?? rows.length;
@@ -214,17 +214,18 @@ export function AdminPluginsScreen() {
   }, [search, q, teamId, memberId, ownerId, router, searchParams]);
 
   return (
-    <ItemPage testId="admin-plugins">
+    <ItemPage testId="admin-plugins" wide>
       <DenPageHeader title={<>Plugins{firstPage?.total != null ? <span className="ml-2 text-[14px] font-normal tracking-normal text-gray-500" data-testid="plugin-directory-total">{firstPage.total.toLocaleString()}</span> : null}</>} action={<LinkButton variant="primary" href={getNewPluginRoute(orgSlug)}><Plus className="h-4 w-4" aria-hidden />Create a plugin</LinkButton>} />
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2" data-testid="plugin-directory-toolbar">
         <label className="flex h-9 min-w-[220px] flex-1 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 focus-within:ring-2 focus-within:ring-gray-300">
           <Search className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />
           <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search plugins by name" aria-label="Search plugins by name" className="min-w-0 flex-1 bg-transparent text-[13px] outline-none" />
         </label>
         <DirectoryFilter label="Team" title="Plugins available to a team" counts={firstPage?.teamCounts} value={teamId} options={orgContext?.teams ?? []} onChange={(id) => setFilters({ name: search.trim(), teamId: id, memberId: null, ownerId })} />
         <DirectoryFilter label="Owner" title="Plugins created by" counts={firstPage?.ownerCounts} value={ownerId} options={(orgContext?.members ?? []).map((member) => ({ id: member.id, name: member.user.name || member.user.email }))} onChange={(id) => setFilters({ name: search.trim(), teamId, memberId: null, ownerId: id })} />
-        {search || teamId || memberId || ownerId ? <button type="button" onClick={() => { setSearch(""); setFilters({ name: "", teamId: null, memberId: null, ownerId: null }); }} className="inline-flex h-9 items-center gap-1 text-[12px] text-gray-600 hover:text-gray-900"><X className="h-3.5 w-3.5" aria-hidden />Clear filters</button> : null}
+        <span className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-[13px] text-gray-700" title="Sorted by most recently updated"><ArrowDownWideNarrow className="h-3.5 w-3.5 text-gray-500" aria-hidden />Recently updated</span>
       </div>
+      {search || teamId || memberId || ownerId ? <button type="button" onClick={() => { setSearch(""); setFilters({ name: "", teamId: null, memberId: null, ownerId: null }); }} className="-mt-2 inline-flex w-fit items-center gap-1 text-[12px] text-gray-600 hover:text-gray-900"><X className="h-3.5 w-3.5" aria-hidden />Clear filters</button> : null}
       {legacyMember ? <p className="text-[13px] text-gray-600">Available to {legacyMember.user.name || legacyMember.user.email}</p> : null}
       <DirectoryResults key={`${orgId}:${q}:${teamId}:${memberId}:${ownerId}`} plugins={plugins} filtered={Boolean(q || teamId || memberId || ownerId)} />
     </ItemPage>
