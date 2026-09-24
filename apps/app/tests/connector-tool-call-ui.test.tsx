@@ -95,7 +95,7 @@ test("code-mode mutations summarize the outcome, not the last lookup, and fold w
     { type: "dynamic-tool", toolName: "linear_list_teams", toolCallId: "read", state: "output-available", input: {}, output: undefined },
   ];
   const html = renderToStaticMarkup(<CodeModeTool part={part} calls={calls} lifecycle={null} connectors={[]} />);
-  expect(html).toContain("Created note · Linear");
+  expect(html).toContain("Created a note in Linear");
   expect(html).toContain("Show steps");
   expect(html).not.toContain("List teams. Show");
   expect(html).not.toContain("Tool activity");

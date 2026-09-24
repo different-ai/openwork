@@ -22,8 +22,8 @@ test("a single write outranks reads, regardless of their order", () => {
   const before = call("linear_list_teams", "output-available");
   const write = call("linear_create_issue", "input-available");
   const after = call("paper_get_basic_info", "output-available");
-  expect(summary([before, write, after], true)).toBe("Creating issue · Linear");
-  expect(summary([before, call("linear_create_issue", "output-available"), after])).toBe("Created issue · Linear");
+  expect(summary([before, write, after], true)).toBe("Creating an issue in Linear");
+  expect(summary([before, call("linear_create_issue", "output-available"), after])).toBe("Created an issue in Linear");
 });
 
 test("a failed write does not claim success, and two writes use a generic outcome", () => {

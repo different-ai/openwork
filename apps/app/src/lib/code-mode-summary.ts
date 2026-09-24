@@ -28,6 +28,21 @@ export function codeModeSummary(
     // success for a write the engine says failed.
     if (call.state !== "output-error") {
       const service = options.serviceName(call);
+      const input = typeof call.input === "object" && call.input !== null ? call.input : null;
+      const raw = input && "name" in input && typeof input.name === "string" ? input.name : call.toolName;
+      const action = raw.split(/[.:/]/).at(-1) ?? "";
+      const creating = options.running && (call.state === "input-available" || call.state === "input-streaming");
+      const body = input && "body" in input && typeof input.body === "object" && input.body !== null ? input.body : null;
+      if (/(?:^|_)save_issue$/.test(action)) {
+        const updating = body && "id" in body && typeof body.id === "string" && body.id.length > 0;
+        const verb = updating ? (creating ? "Updating" : "Updated") : (creating ? "Creating" : "Created");
+        return `${verb} an issue${service ? ` in ${service}` : ""}`;
+      }
+      if (/(?:^|_)create_(issue|note|task|document)$/.test(action)) {
+        const subject = action.split("_").at(-1);
+        const article = subject === "issue" ? "an" : "a";
+        return `${creating ? "Creating" : "Created"} ${article} ${subject}${service ? ` in ${service}` : ""}`;
+      }
       return service && !label.includes(service) ? `${label} in ${service}` : label;
     }
   }

@@ -57,7 +57,7 @@ test("connector-backed tool calls show first-class branding and human-readable l
     await user.type("composer", world.mutationPrompt);
     await user.click("Run task");
     if (world.engine === "v2") {
-      await user.see({ role: "button", label: /Creating note.*Slack/ }, { timeoutMs: 60_000 });
+      await user.see({ role: "button", label: /Creating a note in Slack/ }, { timeoutMs: 60_000 });
       await user.notSee({ text: /Tool activity|Task step|Completed with errors/ });
     } else {
       await user.see({ text: /Creating note/ }, { timeoutMs: 60_000 });
@@ -69,7 +69,7 @@ test("connector-backed tool calls show first-class branding and human-readable l
     await user.see({ text: world.mutationProof }, { timeoutMs: 60_000 });
     await user.see("Run task");
     if (world.engine === "v2") {
-      await user.see({ role: "button", label: /Created note.*Slack/ });
+      await user.see({ role: "button", label: /Created a note in Slack/ });
     } else {
       await user.see({ text: /Created note/ });
     }
