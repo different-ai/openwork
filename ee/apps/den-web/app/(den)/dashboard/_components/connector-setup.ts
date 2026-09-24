@@ -30,7 +30,7 @@ export type ConnectorTarget = {
   url: string;
   description: string;
   /** The catalog preset's own sign-in requirement, when the target came from the catalog. */
-  preset?: Pick<ExternalMcpPreset, "authType" | "requiresOAuthClient"> | null;
+  preset?: Pick<ExternalMcpPreset, "authType" | "requiresOAuthClient" | "defaultOAuthClientId"> | null;
 };
 
 const POLL_INTERVAL_MS = 1500;

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { GatewayAuthorizationRequest, GatewayDesktopOauthStartResponse, GatewayUsableModel } from "@openwork/types/den/gateway";
-import { catalogFastVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
+import { catalogModelVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 
 import { enginePoolForConfig, rolloverOutcomeApplied, type RolloverOutcome } from "./engine-pool.js";
 import type { EnvService } from "./env-file.js";
@@ -672,7 +672,7 @@ function buildModelConfig(model: DenProviderModel, providerNpm: unknown): JsonRe
     const value = model.config[key];
     if (value !== undefined) next[key] = value;
   }
-  const variants = catalogFastVariants(model.config, providerNpm);
+  const variants = catalogModelVariants(model.config, providerNpm);
   if (variants) next.variants = variants;
   return next;
 }

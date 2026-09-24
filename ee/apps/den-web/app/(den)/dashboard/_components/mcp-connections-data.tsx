@@ -235,6 +235,7 @@ export type ExternalMcpPreset = {
   url: string;
   authType: ExternalMcpAuthType;
   requiresOAuthClient?: boolean;
+  defaultOAuthClientId?: string;
   supportedAuthTypes?: ExternalMcpAuthType[];
 };
 

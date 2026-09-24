@@ -794,6 +794,7 @@ export function usePlugins({ enabled = true }: { enabled?: boolean } = {}) {
 export type DenPluginSummary = Pick<DenPlugin, "id" | "name" | "slug" | "description" | "status" | "createdByOrgMembershipId"> & {
   /** False when the server did not include access, so callers load it per plugin. */
   accessIncluded: boolean;
+  updatedAt?: string;
 };
 
 function parsePluginSummary(item: Record<string, unknown>): DenPluginSummary | null {
@@ -802,6 +803,7 @@ function parsePluginSummary(item: Record<string, unknown>): DenPluginSummary | n
   if (!id || !name) return null;
   return {
     accessIncluded: Array.isArray(item.access),
+    updatedAt: asString(item.updatedAt) ?? undefined,
     createdByOrgMembershipId: asString(item.createdByOrgMembershipId),
     description: asString(item.description) ?? "",
     id,
@@ -840,21 +842,27 @@ export function usePluginSummaries({ enabled = true }: { enabled?: boolean } = {
   return useQuery({ ...pluginSummariesQueryOptions(), enabled });
 }
 
-export function pluginDirectoryParams(filters: { q: string; teamId: string | null; memberId: string | null }, cursor: string) {
+export function pluginDirectoryParams(filters: { q: string; teamId: string | null; memberId: string | null; ownerId?: string | null }, cursor: string) {
   const params = new URLSearchParams({ status: "active", limit: "50", includeAccess: "true" });
-  if (!cursor) params.set("includeTotal", "true");
+  if (!cursor) { params.set("includeTotal", "true"); params.set("includeFacets", "true"); }
   if (filters.q) params.set("name", filters.q);
   if (filters.teamId) params.set("teamId", filters.teamId);
   if (filters.memberId) params.set("memberId", filters.memberId);
+  if (filters.ownerId) params.set("ownerId", filters.ownerId);
   if (cursor) params.set("cursor", cursor);
   return params;
 }
 
-export function pluginDirectoryQueryKey(orgId: string | null, viewerId: string | null, filters: { q: string; teamId: string | null; memberId: string | null }) {
-  return [...pluginQueryKeys.summaries(), "directory", orgId, viewerId, filters.q, filters.teamId, filters.memberId];
+export function pluginDirectoryQueryKey(orgId: string | null, viewerId: string | null, filters: { q: string; teamId: string | null; memberId: string | null; ownerId?: string | null }) {
+  return [...pluginQueryKeys.summaries(), "directory", orgId, viewerId, filters.q, filters.teamId, filters.memberId, filters.ownerId ?? null];
 }
 
-export function usePluginDirectory(filters: { q: string; teamId: string | null; memberId: string | null }) {
+function parseDirectoryCounts(value: unknown): Record<string, number> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return Object.fromEntries(value.flatMap((entry) => isRecord(entry) && typeof entry.id === "string" && typeof entry.count === "number" ? [[entry.id, entry.count]] : []));
+}
+
+export function usePluginDirectory(filters: { q: string; teamId: string | null; memberId: string | null; ownerId?: string | null }) {
   const client = useQueryClient();
   const { orgId, orgContext } = useOrgDashboard();
   return useInfiniteQuery({
@@ -875,6 +883,8 @@ export function usePluginDirectory(filters: { q: string; teamId: string | null; 
         items,
         nextCursor: isRecord(payload) ? asString(payload.nextCursor) : null,
         total: isRecord(payload) && typeof payload.total === "number" ? payload.total : null,
+        teamCounts: parseDirectoryCounts(isRecord(payload) ? payload.teamCounts : null),
+        ownerCounts: parseDirectoryCounts(isRecord(payload) ? payload.ownerCounts : null),
       };
     },
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
