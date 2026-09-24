@@ -153,6 +153,35 @@ async function fixture(t: TestContext, apiContract: "beta19271" | "native-2" = "
   return { state, emit, options, client: createHeadlessThreadClientV2(options), native: createNativeV2Client(options) };
 }
 
+test("ordinary native send overlaps catalog reads and skips a redundant session read", async (t) => {
+  const { options, state } = await fixture(t, "native-2");
+  let agentStarted!: () => void;
+  let providerStarted!: () => void;
+  const agentRequest = new Promise<void>((resolve) => { agentStarted = resolve; });
+  const providerRequest = new Promise<void>((resolve) => { providerStarted = resolve; });
+  const client = createHeadlessThreadClientV2({ ...options, fetch: async (input, init) => {
+    const pathname = new URL(input).pathname;
+    if (pathname.endsWith("/agent/build")) {
+      agentStarted();
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([providerRequest, new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("Catalog read waited for agent")), 2_000);
+        })]);
+      } finally { if (timeout) clearTimeout(timeout); }
+    }
+    if (pathname.endsWith("/provider")) {
+      await agentRequest;
+      providerStarted();
+    }
+    return fetch(input, init);
+  } });
+  const accepted = await client.sendTurn(sid, { messageId: "msg_fast", prompt: "Hello" });
+  assert.equal(accepted.alreadyPresent, false);
+  assert.equal(state.seen.filter((item) => item.method === "GET" && item.path === `${mount}/session/${sid}`).length, 2);
+  assert.equal(state.seen.filter((item) => item.method === "POST" && item.path.endsWith("/prompt")).length, 1);
+});
+
 test("native-2 idle markers require matching host bindings and a consistent observation", async (t) => {
   const { state, options } = await fixture(t);
   state.session.time.idle = 4; state.session.outcome = "succeeded";

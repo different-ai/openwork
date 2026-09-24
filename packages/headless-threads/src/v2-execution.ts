@@ -237,11 +237,10 @@ export function createHeadlessThreadClientV2(options: HeadlessThreadClientV2Opti
   }
 
   async function selection(value: HeadlessThreadModel | undefined, agentId: string, signal?: AbortSignal) {
-    const agent = await native.getAgent(agentId, signal);
+    const [agent, catalog] = await Promise.all([native.getAgent(agentId, signal), native.readCatalog(signal)]);
     if (agent.id !== agentId) fail("binding_unconfirmed", "", "Native agent identity did not match.");
     const model = value ? nativeModel(value) : agent.model ?? await native.defaultModel(signal);
     if (!model) return fail("model_unavailable", "", "No native model is available. Choose a connected model.");
-    const catalog = await native.readCatalog(signal);
     if (!catalog.connectedProviderIds.includes(model.providerID) || !catalog.models.some((item) => item.providerID === model.providerID && item.id === model.id && item.enabled && (!model.variant || model.variant === "default" || item.variants.some((variant) => variant.id === model.variant)))) fail("model_unavailable", "", "The selected native model or variant is not connected and available.");
     return { model: { providerID: model.providerID, id: model.id, ...(model.variant ? { variant: model.variant } : {}) }, agent: agent.id };
   }
@@ -307,9 +306,11 @@ export function createHeadlessThreadClientV2(options: HeadlessThreadClientV2Opti
       if (lastUser && !snapshot.native?.turnOutcomes[lastUser.id]) fail("boundary_unconfirmed", threadId, "The previous native turn has no unambiguous terminal boundary.", messageId);
       let session = await native.getSession(threadId, input.signal);
       const chosen = await selection(input.model ?? options.defaultModel ?? (session.model ? { providerId: session.model.providerID, modelId: session.model.id, variant: session.model.variant } : undefined), input.agent ?? options.defaultAgent ?? session.agent ?? "build", input.signal);
-      if (!sameModel(session.model, chosen.model)) await native.switchModel(threadId, chosen.model, input.signal);
-      if (session.agent !== chosen.agent) await native.switchAgent(threadId, chosen.agent, input.signal);
-      session = await native.getSession(threadId, input.signal);
+      const switchModel = !sameModel(session.model, chosen.model);
+      const switchAgent = session.agent !== chosen.agent;
+      if (switchModel) await native.switchModel(threadId, chosen.model, input.signal);
+      if (switchAgent) await native.switchAgent(threadId, chosen.agent, input.signal);
+      if (switchModel || switchAgent) session = await native.getSession(threadId, input.signal);
       if (!sameModel(session.model, chosen.model) || session.agent !== chosen.agent) fail("binding_unconfirmed", threadId, "Native model/agent binding was not applied.", messageId);
       // Switches are native history entries, so capture the tail after binding.
       const before = await native.readHistory(threadId, input.signal);
