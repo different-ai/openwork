@@ -17,6 +17,10 @@ export function LibraryPage(props: {
   crumbs?: Array<{ label: string; onClick?: () => void }>;
   icon?: ReactNode;
   subtitle?: string;
+  /** A subtitle with its own markup, e.g. a state dot. */
+  subtitleNode?: ReactNode;
+  /** One action at the top right, next to the title. */
+  headerAction?: ReactNode;
   footerNote?: string;
   actions?: ReactNode;
   backDisabled?: boolean;
@@ -72,12 +76,14 @@ export function LibraryPage(props: {
             {props.icon}
           </div>
         ) : null}
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h1 id="library-page-title" className="text-xl font-semibold tracking-[-0.01em] text-dls-text">
             {props.title}
           </h1>
           {props.subtitle ? <p className="mt-0.5 text-[13px] text-dls-secondary">{props.subtitle}</p> : null}
+          {props.subtitleNode ? <p className="mt-0.5 text-[13px] text-dls-secondary">{props.subtitleNode}</p> : null}
         </div>
+        {props.headerAction ? <div className="flex shrink-0 items-center gap-2">{props.headerAction}</div> : null}
       </div>
       <div className="mt-6 flex flex-col gap-5">{props.children}</div>
       {props.actions ? (

@@ -52,6 +52,7 @@ import type {
   CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
+import { ModelSignInNotice } from "./model-sign-in-notice";
 import { sessionComposerDiagnosticReasons } from "./composer/composer-diagnostics";
 import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
 import { useSessionModelSelection } from "./session-model-store";
@@ -612,6 +613,8 @@ export type SessionSurfaceProps = {
   selectedModel: ModelRef;
   /** providerID → modelID → provider model, for per-session variant options. */
   providerCatalog?: ProviderCatalog;
+  /** Models that work now, company-provided first, offered when this conversation's model needs a sign-in. */
+  signInFallbackModels?: { ref: ModelRef; label: string }[];
   gatewayProviderIds?: ReadonlySet<string>;
   gatewayUsageProviderScope?: number | null;
   /** Den/import includes OpenWork Models for this org member (not just local sync). */
@@ -1133,6 +1136,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     props.onModelChange(nextModel, variant);
     setModelPickerOpen(false);
   }, [props.onModelChange, sessionModel]);
+  // A model that works now, offered when the conversation's model needs a sign-in.
+  const fallbackModel = useMemo(() => {
+    const current = sessionModel.selectedModel;
+    const pick = (props.signInFallbackModels ?? []).find((entry) => entry.ref.providerID !== current.providerID);
+    if (!pick) return null;
+    return { label: pick.label, use: () => handleModelChange(pick.ref, null) };
+  }, [handleModelChange, props.signInFallbackModels, sessionModel.selectedModel]);
   const handleModelVariantChange = useCallback((value: string | null) => {
     sessionModel.setVariant(value);
     props.onModelVariantChange(value);
@@ -3435,6 +3445,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onMcpReopenAuthorization={handleMcpReopenAuthorization}
                       getConnectionDecision={getConnectionDecision}
                       connectionQuestionToolCallId={nativeConnectionRequest?.questionToolCallId ?? null}
+                      modelLabel={sessionModel.modelLabel}
+                      fallbackModel={fallbackModel}
                     >
                       <MessageList
                         messageIdReplacements={pendingReconciliation.messageIdReplacements}
@@ -3478,6 +3490,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       </div>
 
       <div ref={composerShellRef} className="shrink-0 px-0 pb-2 pt-2 max-lg:pb-0">
+        <ModelSignInNotice />
         <GatewayUsageApprovalNotice />
         {gatewayNotice && gatewayUsage.data ? <GatewayUsageNotice key={`${gatewayUsage.scopeKey}:${sessionOwner}`} state={gatewayNotice} status={gatewayUsage.data} stale={gatewayUsage.query.isError} /> : null}
         {(props.providerConnectedCount ?? 0) === 0 ? (

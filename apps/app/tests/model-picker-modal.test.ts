@@ -283,7 +283,7 @@ test("Automation preserves same-model settings, recovers Default and saves only 
     expect(saved).toEqual([]);
   };
   const selectModel = async (name: string) => {
-    const control = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent === `${name}${name}`);
+    const control = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent === name);
     if (!control) throw new Error(`Missing model ${name}`);
     await act(async () => control.click());
   };
@@ -353,17 +353,20 @@ test("long picker labels retain full hover text and select the complete model ID
   };
   try {
     await act(async () => root.render(createElement(PlatformProvider, { value: createDefaultPlatform(), children: createElement(Picker) })));
-    for (const text of [providerName, organization, "via OpenWork Gateway", title, modelID]) {
+    for (const text of [providerName, organization, title]) {
       expect(label(text)?.textContent).toBe(text);
     }
+    // No model ids and no gateway badge: where a model comes from is the Library's job.
+    expect(label(modelID)).toBeUndefined();
+    expect(document.body.textContent).not.toContain("via OpenWork Gateway");
     const header = label(providerName)?.closest("button");
     expect(header?.textContent).toMatch(/1 model\b/);
-    expect(header?.querySelectorAll('[data-slot="badge"]')).toHaveLength(4);
+    expect(header?.querySelectorAll('[data-slot="badge"]')).toHaveLength(3);
     await toggle("Enabled");
-    expect(label(modelID)).toBeUndefined();
+    expect(label(title)).toBeUndefined();
     expect(selected).toEqual([]);
     await toggle("Enable");
-    const modelButton = label(modelID)?.closest("button");
+    const modelButton = label(title)?.closest("button");
     if (!modelButton) throw new Error("The gateway model did not return after enabling its provider");
     await act(async () => modelButton.click());
     expect(selected).toEqual([current]);
@@ -390,7 +393,7 @@ describe("model picker provider badges", () => {
     expect(isCloudManagedProviderKey("anthropic")).toBe(false);
   });
 
-  test("badges only providers whose sync status source is the OpenWork gateway", () => {
+  test("gateway providers carry no extra badge; the Library says where a model comes from", () => {
     const gatewayProviderIds = resolveGatewayProviderIds(importedCloudProviders);
     expect([...gatewayProviderIds]).toEqual(["ipr_gateway"]);
 
@@ -400,7 +403,7 @@ describe("model picker provider badges", () => {
       isGateway: gatewayProviderIds.has("ipr_gateway"),
       hasCurrent: false,
     });
-    expect(gateway).toEqual(["Acme", "via OpenWork Gateway"]);
+    expect(gateway).toEqual(["Acme"]);
 
     const organization = labels({
       isNew: false,

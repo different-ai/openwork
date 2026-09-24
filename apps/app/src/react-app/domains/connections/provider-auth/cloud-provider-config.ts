@@ -116,13 +116,7 @@ export const isCloudManagedProviderKey = (providerId: string) =>
   /^(lpr|ipr)_/i.test(providerId) || providerId.trim() === "openwork";
 
 export const OPENWORK_GATEWAY_PROVIDER_SOURCE = "openwork_gateway";
-/** Badge copy for providers routed through the OpenWork inference gateway. */
-export const OPENWORK_GATEWAY_BADGE_LABEL = "via OpenWork Gateway";
 
-/**
- * Runtime provider ids whose sync status reports the OpenWork inference
- * gateway as source — the UI badges these "via OpenWork Gateway".
- */
 /**
  * A gateway provider the server sync skipped because this member has not yet
  * authorized their own account (`member_auth_required`). Rendered as a
@@ -154,6 +148,15 @@ export const GATEWAY_MEMBER_AUTH_REQUIRED_REASON = "member_auth_required";
 /** Copy shown under a gateway provider that still needs the member's sign-in. */
 export const gatewayConnectCopy = (name: string) => `Sign in to ${name} to use it`;
 
+/**
+ * The account people sign in with for a gateway provider. Member sign-in
+ * through the Gateway is Google today, so say the brand they recognise.
+ */
+export function gatewaySignInBrand(provider: Pick<GatewayConnectProvider, "name">): string {
+  const name = provider.name.toLowerCase();
+  return name.includes("google") || name.includes("vertex") || name.includes("gemini") ? "Google" : provider.name;
+}
+
 /** Skipped sync entries that need the member's own sign-in, in server order. */
 export const resolveGatewayConnectProviders = (
   skippedProviders:
@@ -177,7 +180,7 @@ export function pendingGatewayModelOptions(providers: readonly GatewayConnectPro
     if (!provider.credentialSetId || model.credentialSetId !== provider.credentialSetId) return [];
     return [{
       providerID: provider.providerId, modelID: model.id, title: model.name,
-      description: provider.name, footer: "Sign-in required", source: "cloud",
+      description: provider.name, footer: "Sign in to use", source: "cloud",
       behaviorTitle: "Reasoning", behaviorLabel: "Default", behaviorDescription: "",
       behaviorValue: null, isFree: false,
       gatewayAuthorization: { cloudProviderId: provider.cloudProviderId, credentialSetId: provider.credentialSetId },
@@ -199,7 +202,7 @@ export function isGatewayModelReady(
 
 export const GATEWAY_CONNECT_POLL_INTERVAL_MS = 10_000;
 export const GATEWAY_CONNECT_POLL_ATTEMPTS = 60;
-export const GATEWAY_CONNECT_TIMEOUT_MESSAGE = "Sign-in has not been confirmed. Check the browser, then refresh AI Providers. If consent expired or was canceled, retry sign-in.";
+export const GATEWAY_CONNECT_TIMEOUT_MESSAGE = "Sign-in didn't finish. Try again when you're ready.";
 
 export async function connectGatewayProvider(input: {
   provider: GatewayConnectProvider;

@@ -165,12 +165,20 @@ import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types
 import {
   connectGatewayProvider,
   GATEWAY_CONNECT_TIMEOUT_MESSAGE,
+  gatewayConnectProviderKey,
   isGatewaySetConnected,
   type GatewayConnectProvider,
   isCloudManagedProviderKey,
+  pendingGatewayModelOptions,
   resolveGatewayConnectProviders,
   resolveGatewayProviderIds,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import {
+  decideFirstChatModel,
+  modelSignInNoticeDismissKey,
+  readDismissedModelSignInNotices,
+  useModelSignInNoticeStore,
+} from "@/react-app/domains/connections/provider-auth/model-sign-in-notice";
 import { assignedModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
 import {
   filterEntitledModelOptions,
@@ -179,7 +187,6 @@ import {
 } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import {
   isOrganizationModelsEmpty,
-  shouldAutoOpenUnavailableModelPicker,
 } from "@/react-app/domains/connections/provider-auth/managed-models-recovery";
 import { useSessionProviderAuth } from "@/react-app/domains/connections/provider-auth/use-session-provider-auth";
 import {
@@ -1057,7 +1064,7 @@ export function SessionRoute() {
       window.removeEventListener(denSettingsChangedEvent, cancel);
     };
   }, []);
-  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider, request?: { signal: AbortSignal; model: ModelRef }) {
+  const handleConnectGatewayProvider = useCallback(async function connect(provider: GatewayConnectProvider, request?: { signal: AbortSignal; model?: ModelRef }) {
     gatewayConnectAbort.current?.abort();
     const controller = new AbortController();
     gatewayConnectAbort.current = controller;
@@ -1074,7 +1081,7 @@ export function SessionRoute() {
           await refreshCloudProviderSync("manual");
           synced = sessionProviderAuthStore.getSnapshot().gatewayUsageProviderScope != null;
         },
-        isConnected: () => synced && (request
+        isConnected: () => synced && (request?.model
           ? sessionProviderAuthStore.isGatewayModelAvailable(provider, request.model)
           : isGatewaySetConnected(provider, sessionProviderAuthStore.getSnapshot().importedCloudProviders)),
       });
@@ -1085,7 +1092,9 @@ export function SessionRoute() {
       }
       return connected && !signal.aborted;
     } catch (error) {
-      if (!signal.aborted && !request) toast.error(describeRouteError(error));
+      // In place (the picker), the caller shows why; elsewhere a toast does.
+      if (request && !signal.aborted) throw error;
+      if (!signal.aborted) toast.error(describeRouteError(error));
       return false;
     }
   }, [platform, refreshCloudProviderSync, sessionProviderAuthStore]);
@@ -1187,9 +1196,30 @@ export function SessionRoute() {
     restrictToCloudProviders,
     selectedWorkspaceId,
   ]);
+  // A default waiting on this person's own sign-in is not "gone": the
+  // first-chat notice below offers the sign-in instead of replacing it.
+  const defaultNeedsSignIn = useMemo(() => {
+    const current = local.prefs.defaultModel;
+    return Boolean(current) && pendingGatewayModelOptions(gatewayConnectProviders)
+      .some((option) => option.providerID === current?.providerID && option.modelID === current?.modelID);
+  }, [gatewayConnectProviders, local.prefs.defaultModel]);
+  // Models that work now, company-provided first, offered when a conversation's
+  // model needs a sign-in ("Use Claude Sonnet 4.5").
+  const signInFallbackModels = useMemo(() => {
+    const pending = pendingGatewayModelOptions(gatewayConnectProviders);
+    const ready = entitledModelOptions.filter((option) => !pending.some((entry) => entry.providerID === option.providerID && entry.modelID === option.modelID));
+    const rank = (providerID: string) => providerID === "openwork" ? 0 : isCloudManagedProviderKey(providerID) ? 1 : 2;
+    return [...ready].sort((left, right) => rank(left.providerID) - rank(right.providerID)).map((option) => ({
+      ref: { providerID: option.providerID, modelID: option.modelID },
+      label: providerCatalog?.[option.providerID]?.[option.modelID]?.name ?? option.modelID,
+    }));
+  }, [entitledModelOptions, gatewayConnectProviders, providerCatalog]);
   useEffect(() => {
+    // Until cloud sync settles, a default can look missing only because its
+    // sign-in state is not known yet; don't replace it on that guess.
+    if (defaultNeedsSignIn || (denAuth.isSignedIn && !cloudProviderSyncReady)) return;
     if (entitledOrgDefaultModel && !hasPendingGatewayModelSelection()) writeStoredDefaultModel(entitledOrgDefaultModel);
-  }, [entitledOrgDefaultModel]);
+  }, [cloudProviderSyncReady, defaultNeedsSignIn, denAuth.isSignedIn, entitledOrgDefaultModel]);
   // Availability is resolved per effective model identity: the New Task
   // composer validates the global default while each conversation validates
   // its OWN remembered provider/model against the current workspace's
@@ -1254,44 +1284,70 @@ export function SessionRoute() {
   const selectedModelUnavailableKey = activeComposerAvailability.status === "unavailable" && activeComposerModel
     ? `${activeComposerTargetsSession ? selectedSessionId : "default"}:${activeComposerModel.providerID}:${activeComposerModel.modelID}`
     : null;
-  const autoOpenedUnavailableModelRef = useRef<string | null>(null);
-
+  // A default the organization picked that needs this person's own sign-in
+  // never opens the picker by itself: the composer starts on a model that
+  // works, and a notice above it offers the sign-in (first chat).
   useEffect(() => {
-    if (hasPendingGatewayModelSelection()) return;
-    if (!selectedModelUnavailableKey) {
-      // The active composer's model is fine (or pending). If the picker was
-      // auto-opened for a previously broken composer — e.g. the New Task
-      // default — do not let that recovery modal follow the user into a
-      // conversation whose own model is valid.
-      if (autoOpenedUnavailableModelRef.current) {
-        modelPicker.setOpen(false);
-      }
-      autoOpenedUnavailableModelRef.current = null;
-      return;
-    }
-    if (!shouldAutoOpenUnavailableModelPicker({
-      selectedModelUnavailableKey,
-      signedIn: denAuth.isSignedIn,
-      cloudProviderSyncReady,
-      // Silent default repair only applies when the broken selection IS the
-      // default; a conversation's own unavailable model must surface the
-      // picker for that conversation instead.
-      entitledOrgDefaultModel: activeComposerTargetsSession ? false : Boolean(entitledOrgDefaultModel),
-      organizationModelsEmpty,
-      autoOpenedUnavailableModelKey: autoOpenedUnavailableModelRef.current,
-    })) return;
-    if (!activeComposerTargetsSession && entitledOrgDefaultModel) {
-      writeStoredDefaultModel(entitledOrgDefaultModel);
-      return;
-    }
+    if (hasPendingGatewayModelSelection() || defaultNeedsSignIn) return;
+    if (!selectedModelUnavailableKey || activeComposerTargetsSession) return;
+    if (denAuth.isSignedIn && !cloudProviderSyncReady) return;
+    if (entitledOrgDefaultModel) writeStoredDefaultModel(entitledOrgDefaultModel);
+  }, [activeComposerTargetsSession, cloudProviderSyncReady, defaultNeedsSignIn, denAuth.isSignedIn, entitledOrgDefaultModel, selectedModelUnavailableKey]);
 
-    autoOpenedUnavailableModelRef.current = selectedModelUnavailableKey;
-    setModelPickerSessionId(activeComposerTargetsSession ? selectedSessionId : null);
-    modelPicker.setQuery("");
-    modelPicker.setRecentProviderIds(new Set());
-    modelPicker.setCompactOpen(false);
-    modelPicker.setOpen(true);
-  }, [activeComposerTargetsSession, cloudProviderSyncReady, denAuth.isSignedIn, entitledOrgDefaultModel, modelPicker.setCompactOpen, modelPicker.setOpen, modelPicker.setQuery, modelPicker.setRecentProviderIds, organizationModelsEmpty, selectedModelUnavailableKey, selectedSessionId]);
+  const signInNoticeOrgId = readDenSettings().activeOrgId?.trim() ?? "";
+  const signInNoticeWantedKey = signInNoticeOrgId ? `openwork.modelSignInNotice.wanted:${signInNoticeOrgId}` : null;
+  const setModelSignInNotice = useModelSignInNoticeStore((state) => state.setNotice);
+  useEffect(() => {
+    if (!denAuth.isSignedIn || !cloudProviderSyncReady || !signInNoticeWantedKey || activeComposerTargetsSession) {
+      setModelSignInNotice(null);
+      return;
+    }
+    const wanted = readWantedModel(signInNoticeWantedKey);
+    const pendingOptions = pendingGatewayModelOptions(gatewayConnectProviders);
+    const decision = decideFirstChatModel({
+      currentDefault: local.prefs.defaultModel ?? null,
+      wanted,
+      pendingOptions,
+      providers: gatewayConnectProviders,
+      readyOptions: entitledModelOptions,
+    });
+    if (decision.kind === "restore") {
+      writeStoredDefaultModel(decision.wanted);
+      writeWantedModel(signInNoticeWantedKey, null);
+      setModelSignInNotice(null);
+      return;
+    }
+    if (decision.kind === "fallback") {
+      writeWantedModel(signInNoticeWantedKey, decision.wanted);
+      writeStoredDefaultModel(decision.fallback);
+      const dismissKey = modelSignInNoticeDismissKey(signInNoticeOrgId, decision.wanted);
+      setModelSignInNotice(readDismissedModelSignInNotices().has(dismissKey) ? null : {
+        wanted: decision.wanted, modelName: decision.modelName, provider: decision.provider,
+        organizationName: readDenSettings().activeOrgName?.trim() || null, dismissKey,
+      });
+      return;
+    }
+    if (!wanted) {
+      setModelSignInNotice(null);
+      return;
+    }
+    const pendingOption = pendingOptions.find((option) => option.providerID === wanted.providerID && option.modelID === wanted.modelID);
+    const authorization = pendingOption?.gatewayAuthorization;
+    const provider = authorization
+      ? gatewayConnectProviders.find((entry) => gatewayConnectProviderKey(entry) === gatewayConnectProviderKey(authorization))
+      : undefined;
+    if (!pendingOption || !provider) {
+      // The organization stopped offering that model; nothing to wait for.
+      writeWantedModel(signInNoticeWantedKey, null);
+      setModelSignInNotice(null);
+      return;
+    }
+    const dismissKey = modelSignInNoticeDismissKey(signInNoticeOrgId, wanted);
+    setModelSignInNotice(readDismissedModelSignInNotices().has(dismissKey) ? null : {
+      wanted, modelName: pendingOption.title, provider,
+      organizationName: readDenSettings().activeOrgName?.trim() || null, dismissKey,
+    });
+  }, [activeComposerTargetsSession, cloudProviderSyncReady, denAuth.isSignedIn, entitledModelOptions, gatewayConnectProviders, local.prefs.defaultModel, setModelSignInNotice, signInNoticeOrgId, signInNoticeWantedKey]);
 
   // Optimistic model selection: a remembered model is treated as valid until
   // the availability gate CONFIRMS it absent (selectedModelUnavailable).
@@ -1498,6 +1554,7 @@ export function SessionRoute() {
         modelPicker.setOpen(true);
       },
       providerCatalog,
+      signInFallbackModels,
       gatewayProviderIds,
       gatewayUsageProviderScope: sessionProviderAuthSnapshot.gatewayUsageProviderScope ?? null,
       modelPickerOpen: modelPicker.compactOpen,
@@ -1810,6 +1867,7 @@ export function SessionRoute() {
     modelVariantValue,
     navigate,
     providerCatalog,
+    signInFallbackModels,
     gatewayProviderIds,
     sessionProviderAuthSnapshot.gatewayUsageProviderScope,
     openWorkModelsEntitled,
@@ -4082,7 +4140,10 @@ export function SessionRoute() {
       disabledProviders={disabledProviderIds}
       gatewayProviderIds={gatewayProviderIds}
       gatewayConnectProviders={gatewayConnectProviders}
-      onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
+      onManageModels={() => {
+        modelPicker.setOpen(false);
+        handleOpenExtensions("models");
+      }}
       onBehaviorChange={(model, value) => {
         if (modelPickerSessionId) {
           const store = useSessionModelStore.getState();
@@ -4131,4 +4192,25 @@ export function SessionRoute() {
     </GatewayModelAccessProvider>
     </WorkspaceProvider>
   );
+}
+
+function readWantedModel(key: string): ModelRef | null {
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const providerID = "providerID" in parsed ? parsed.providerID : null;
+    const modelID = "modelID" in parsed ? parsed.modelID : null;
+    return typeof providerID === "string" && typeof modelID === "string" ? { providerID, modelID } : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeWantedModel(key: string, model: ModelRef | null) {
+  try {
+    if (model) window.localStorage.setItem(key, JSON.stringify(model));
+    else window.localStorage.removeItem(key);
+  } catch {
+    // Best effort: without storage the notice only lasts this session.
+  }
 }

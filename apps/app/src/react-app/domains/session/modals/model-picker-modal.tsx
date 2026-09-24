@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Check, ChevronDown, ChevronRight, RefreshCw, Search, Star } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Loader2, RefreshCw, Search, Star } from "lucide-react";
 
 import {
   Dialog,
@@ -23,12 +23,12 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
 import { t } from "@/i18n";
 import { readDenSettings } from "@/app/lib/den";
+import type { GatewaySignInState } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
 import { FAST_PRICING_WARNING, getModelBehaviorControls, getModelBehaviorSelection } from "@/app/lib/model-behavior";
 import {
-  gatewayConnectCopy,
   gatewayConnectProviderKey,
   type GatewayConnectProvider,
-  OPENWORK_GATEWAY_BADGE_LABEL,
+  gatewaySignInBrand,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { modelEquals, resolveProviderDisplayName } from "../../../../app/utils";
 import type { ModelOption, ModelRef } from "../../../../app/types";
@@ -75,7 +75,10 @@ export type ModelPickerModalProps = {
   gatewayProviderIds?: ReadonlySet<string>;
   /** Gateway providers waiting on this member's sign-in; shown as a compact "Connect" hint. */
   gatewayConnectProviders?: GatewayConnectProvider[];
+  /** Legacy: sign-in now runs through the gateway model access context. */
   onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
+  /** Open Library, Models. */
+  onManageModels?: () => void;
 };
 
 type ProviderGroup = {
@@ -88,6 +91,8 @@ type ProviderGroup = {
   hasCurrent: boolean;
   recommended: ModelOption[];
   other: ModelOption[];
+  /** The credential set this person signs in to before these models work. */
+  pending: GatewayConnectProvider | null;
 };
 
 export type ModelPickerEmptyState = {
@@ -107,9 +112,6 @@ export function resolveProviderGroupBadges(
   const badges: ProviderGroupBadge[] = [];
   if (group.isNew) badges.push({ label: "New", className: "bg-blue-3 text-blue-11" });
   if (group.isCloud) badges.push({ label: organizationProviderLabel, className: "bg-blue-3/50 text-blue-11/70" });
-  if (group.isGateway) {
-    badges.push({ label: OPENWORK_GATEWAY_BADGE_LABEL, className: "border-dls-border text-dls-secondary" });
-  }
   if (group.hasCurrent) badges.push({ label: "Current", className: "bg-green-3 text-green-11" });
   return badges;
 }
@@ -206,9 +208,16 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           hasCurrent: false,
           recommended: [],
           other: [],
+          pending: null,
         };
         map.set(opt.providerID, group);
       }
+      if (opt.gatewayAuthorization && !group.pending) {
+        const key = gatewayConnectProviderKey(opt.gatewayAuthorization);
+        group.pending = props.gatewayConnectProviders?.find((provider) => gatewayConnectProviderKey(provider) === key) ?? null;
+      }
+      // Sync names a pending set "<provider> / <credential set>"; people know the provider.
+      if (group.pending) group.name = group.name.split(" / ")[0]?.trim() || group.name;
       if (isRecommendedModel(opt.modelID)) {
         group.recommended.push(opt);
       } else {
@@ -216,6 +225,16 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
       }
       if (modelEquals(props.current, { providerID: opt.providerID, modelID: opt.modelID })) {
         group.hasCurrent = true;
+      }
+    }
+    // A provider waiting on sign-in with no models listed yet still gets a group to sign in from.
+    if (!props.query.trim()) {
+      for (const provider of props.gatewayConnectProviders ?? []) {
+        if (provider.models?.length || map.has(provider.providerId)) continue;
+        map.set(provider.providerId, {
+          id: provider.providerId, name: provider.name, isNew: false, isCloud: true, isGateway: true,
+          isDisabled: disabledSet.has(provider.providerId), hasCurrent: false, recommended: [], other: [], pending: provider,
+        });
       }
     }
     const groups = [...map.values()];
@@ -229,7 +248,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
       if (a.hasCurrent !== b.hasCurrent) return a.hasCurrent ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
-  }, [filteredOptions, props.current, props.gatewayProviderIds, disabledSet]);
+  }, [filteredOptions, props.current, props.gatewayProviderIds, props.gatewayConnectProviders, props.query, disabledSet]);
 
   // Auto-expand on search
   useEffect(() => {
@@ -302,19 +321,19 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
 
   // Escape
   useEffect(() => {
-    if (!props.open || gatewaySelection.loginOpen) return;
+    if (!props.open) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); props.onClose(); }
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [props.open, gatewaySelection.loginOpen]);
+  }, [props.open]);
 
   return (
     <Dialog
       open={props.open}
       onOpenChange={(open) => {
-        if (!open && !gatewaySelection.loginOpen) props.onClose();
+        if (!open) props.onClose();
       }}
     >
       <DialogContent initialFocus={() => isMobile ? titleRef.current : searchInputRef.current} className="flex max-h-[calc(100dvh-2rem)] min-h-0 flex-col overflow-hidden lg:max-w-3xl">
@@ -354,35 +373,6 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               </div>
             </div>
           ) : null}
-
-          <div className="max-h-40 shrink-0 overflow-x-hidden overflow-y-auto">
-          {props.gatewayConnectProviders?.filter((provider) => !provider.models?.length).map((provider) => (
-            <div
-              key={gatewayConnectProviderKey(provider)}
-              className="mb-3 flex shrink-0 items-center gap-3 rounded-2xl border border-dashed border-dls-border px-3 py-2.5"
-            >
-              <ProviderIcon providerId={provider.providerId} providerName={provider.name} size={18} className="shrink-0 text-dls-secondary" />
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 flex-col items-start gap-1 text-[13px] font-medium text-dls-text">
-                  <span className="max-w-full truncate" title={provider.name}>{provider.name}</span>
-                  <Badge variant="outline" title={OPENWORK_GATEWAY_BADGE_LABEL} className="h-auto min-w-0 max-w-full rounded-md px-1.5 py-0.5 text-[10px] text-dls-secondary">
-                    <span className="truncate">{OPENWORK_GATEWAY_BADGE_LABEL}</span>
-                  </Badge>
-                </div>
-                <div className="truncate text-[11px] text-dls-secondary" title={gatewayConnectCopy(provider.name)}>{gatewayConnectCopy(provider.name)}</div>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!props.onConnectGatewayProvider || disabledSet.has(provider.providerId)}
-                onClick={() => void props.onConnectGatewayProvider?.(provider)}
-              >
-                Login
-              </Button>
-            </div>
-          ))}
-
-          </div>
 
           {/* Content */}
           <div className="min-h-0 flex-1 space-y-1 overflow-x-hidden overflow-y-auto pr-1 -mr-1">
@@ -446,6 +436,9 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                   onToggleProvider={props.onToggleProvider}
                   onSelect={handleSelect}
                   organizationProviderLabel={organizationProviderLabel}
+                  signIn={group.pending && gatewaySelection.signIn?.providerKey === gatewayConnectProviderKey(group.pending) ? gatewaySelection.signIn : null}
+                  onSignIn={group.pending ? () => { if (group.pending) gatewaySelection.signInProvider(group.pending); } : undefined}
+                  onCancelSignIn={gatewaySelection.cancel}
                 />
               ))
             )}
@@ -454,7 +447,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
 
         {/* Footer */}
         <DialogFooter className="shrink-0">
-          {denAuth.isSignedIn ? <Button variant="outline" onClick={() => platform.openLink(new URL("/dashboard/model-connections", readDenSettings().baseUrl).toString())}>My Model Connections</Button> : null}
+          {props.onManageModels ? <Button variant="outline" onClick={props.onManageModels}>{t("models.manage_models")}</Button> : null}
           <DialogClose render={<Button variant="outline" />}>
             {t("models.done")}
           </DialogClose>
@@ -477,6 +470,9 @@ function ProviderAccordion({
   onToggleProvider,
   onSelect,
   organizationProviderLabel,
+  signIn,
+  onSignIn,
+  onCancelSignIn,
 }: {
   group: ProviderGroup;
   expanded: boolean;
@@ -486,6 +482,9 @@ function ProviderAccordion({
   onToggleProvider?: (providerId: string, enabled: boolean) => void;
   onSelect: (opt: ModelOption) => void;
   organizationProviderLabel: string;
+  signIn: GatewaySignInState | null;
+  onSignIn?: () => void;
+  onCancelSignIn: () => void;
 }) {
   const totalModels = group.recommended.length + group.other.length;
   const Chevron = expanded ? ChevronDown : ChevronRight;
@@ -524,6 +523,24 @@ function ProviderAccordion({
             </div>
           </div>
         </button>
+        {group.pending && !group.isDisabled ? (
+          <div className="mr-2 flex shrink-0 items-center gap-2" data-testid="model-picker-group-sign-in">
+            {signIn?.kind === "waiting" ? (
+              <>
+                <Loader2 size={13} className="animate-spin text-dls-secondary" />
+                <span className="text-xs text-dls-secondary">Finish signing in in your browser</span>
+                <Button size="sm" variant="ghost" onClick={onCancelSignIn}>Cancel</Button>
+              </>
+            ) : signIn?.kind === "failed" ? (
+              <>
+                <span className="text-xs text-dls-secondary">{signIn.message}</span>
+                <Button size="sm" variant="outline" onClick={onSignIn}>Try again</Button>
+              </>
+            ) : (
+              <Button size="sm" variant="outline" onClick={onSignIn}>{`Sign in with ${gatewaySignInBrand(group.pending)}`}</Button>
+            )}
+          </div>
+        ) : null}
         {canToggleProvider ? (
           <button
             type="button"
@@ -546,7 +563,7 @@ function ProviderAccordion({
         <div className="ml-9 space-y-0.5 pb-2 pt-0.5">
           {group.recommended.length > 0 ? (
             <>
-              <div className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-dls-secondary">
+              <div className="px-2 pb-1 pt-2 text-[12px] text-dls-secondary">
                 Recommended
               </div>
               {group.recommended.map((opt) => (
@@ -557,7 +574,7 @@ function ProviderAccordion({
           {group.other.length > 0 ? (
             <>
               {group.recommended.length > 0 ? (
-                <div className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-dls-secondary">
+                <div className="px-2 pb-1 pt-2 text-[12px] text-dls-secondary">
                   All models
                 </div>
               ) : null}
@@ -587,7 +604,7 @@ function DefaultModelRow({
     <button
       type="button"
       className={[
-        "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
+        "group/row flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
         active ? "bg-green-3/50" : "hover:bg-dls-hover",
       ].join(" ")}
       onClick={() => onSelect(opt)}
@@ -595,9 +612,8 @@ function DefaultModelRow({
       {recommended ? <Star size={12} className="shrink-0 text-amber-9" /> : <div className="w-3 shrink-0" />}
       <div className="min-w-0 flex-1">
         <span className={["block truncate text-[12px]", active ? "font-medium text-dls-text" : "text-dls-text"].join(" ")} title={opt.title}>{opt.title}</span>
-        <span className="block truncate font-mono text-[10px] text-dls-secondary/60" title={opt.modelID}>{opt.modelID}</span>
       </div>
-      {opt.gatewayAuthorization ? <span className="shrink-0 text-xs text-muted-foreground">Sign-in required</span> : active ? <Check size={14} className="shrink-0 text-green-11" /> : null}
+      {opt.gatewayAuthorization ? <span className="hidden shrink-0 text-xs text-muted-foreground group-hover/row:inline group-focus-visible/row:inline">Sign in to use</span> : active ? <Check size={14} className="shrink-0 text-green-11" /> : null}
     </button>
   );
 }

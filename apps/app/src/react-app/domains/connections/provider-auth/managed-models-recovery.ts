@@ -34,25 +34,6 @@ export function isManagedModelAvailabilityPending(
   );
 }
 
-export type UnavailableModelPickerAutoOpenInput = {
-  selectedModelUnavailableKey: string | null;
-  signedIn: boolean;
-  cloudProviderSyncReady: boolean;
-  entitledOrgDefaultModel: boolean;
-  organizationModelsEmpty: boolean;
-  autoOpenedUnavailableModelKey: string | null;
-};
-
-export function shouldAutoOpenUnavailableModelPicker(
-  input: UnavailableModelPickerAutoOpenInput,
-) {
-  if (!input.selectedModelUnavailableKey) return false;
-  if (input.signedIn && !input.cloudProviderSyncReady) return false;
-  if (input.entitledOrgDefaultModel) return false;
-  if (input.organizationModelsEmpty) return false;
-  return input.autoOpenedUnavailableModelKey !== input.selectedModelUnavailableKey;
-}
-
 export type CloudProviderSyncReadyInput = {
   signedIn: boolean;
   clientConnected: boolean;

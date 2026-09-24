@@ -30,6 +30,7 @@ import { Button } from "@/components/ui/button";
 import { ChevronLeftIcon } from "lucide-react";
 import type { ModelOption, ModelRef } from "@/app/types";
 import { useGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
+import { openModelPickerForSignIn } from "@/react-app/shell/new-providers-listener";
 import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { usePlatform } from "../kernel/platform";
 import {
@@ -510,13 +511,19 @@ export function CommandPalette(props: CommandPaletteProps) {
       id: item.id,
       title: item.title,
       detail: item.detail,
-      meta: item.option.gatewayAuthorization ? "Sign-in required" : item.meta,
+      meta: item.option.gatewayAuthorization ? "Sign in to use" : item.meta,
       searchText: item.searchText,
       disabled: item.option.disabled,
       action: () => {
         if (!item.option.gatewayAuthorization && (item.option.behaviorOptions?.length ?? 0) > 0) {
           setBehaviorModel(item.option);
           setMode("model-behavior");
+          return;
+        }
+        if (item.option.gatewayAuthorization) {
+          // Sign-in needs room to show its progress; the picker has it.
+          props.onClose();
+          openModelPickerForSignIn();
           return;
         }
         gatewaySelection.select(item.option, () => {
@@ -558,7 +565,6 @@ export function CommandPalette(props: CommandPaletteProps) {
   };
 
   const handleEscape = (event: ReactKeyboardEvent<HTMLElement>) => {
-    if (gatewaySelection.loginOpen) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
