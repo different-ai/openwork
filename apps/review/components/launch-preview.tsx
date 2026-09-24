@@ -1,17 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { CopyButton } from "./copy-button";
 import { parsePreviewOutputs, type PreviewOutputs } from "@openwork/freestyle/outputs";
 
-interface Session { url: string; expiresAt: string; outputs: PreviewOutputs; desktop: boolean }
+interface Session { url: string; expiresAt: string; outputs: PreviewOutputs; desktop: boolean; world: string }
 
 export function LaunchPreview({ id, connected }: { id: string; connected: boolean }) {
   const [world, setWorld] = useState("app-web");
-  const [reveal, setReveal] = useState(true);
-  const [copied, setCopied] = useState(false);
+  const [reveal, setReveal] = useState(false);
+  const [expired, setExpired] = useState(false);
   const [busy, setBusy] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!session) return;
+    const update = () => setExpired(Date.now() >= Date.parse(session.expiresAt));
+    update();
+    const timer = setTimeout(update, Math.min(2_147_483_647, Math.max(0, Date.parse(session.expiresAt) - Date.now())));
+    document.addEventListener("visibilitychange", update);
+    return () => { clearTimeout(timer); document.removeEventListener("visibilitychange", update); };
+  }, [session]);
 
   async function launch() {
     if (busy) return;
@@ -25,14 +35,16 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
       const data: unknown = await response.json();
       if (typeof data !== "object" || data === null || !("url" in data) || typeof data.url !== "string"
         || !("expiresAt" in data) || typeof data.expiresAt !== "string"
+        || !Number.isFinite(Date.parse(data.expiresAt))
+        || Date.parse(data.expiresAt) <= Date.now()
         || !("world" in data) || data.world !== requestedWorld) throw new Error("The launch could not be verified. Try again.");
       const url = new URL(data.url);
       const host = world === "desktop" ? /^desktop-[a-f0-9]{32}\.(?:style\.dev|preview\.openwork\.software)$/ : /^ow-[a-f0-9]{32}\.(?:style\.dev|preview\.openwork\.software)$/;
       if (url.protocol !== "https:" || !host.test(url.hostname)) throw new Error("The launch could not be verified. Try again.");
       const outputs = parsePreviewOutputs("outputs" in data ? data.outputs : {});
       if (desktop && !outputs.desktopUrl) throw new Error("The desktop could not launch. Try again.");
-      setSession({ url: desktop ? outputs.desktopUrl.value : data.url, expiresAt: data.expiresAt, outputs, desktop });
-      setReveal(true); setCopied(false);
+      setSession({ url: desktop ? outputs.desktopUrl.value : data.url, expiresAt: data.expiresAt, outputs, desktop, world });
+      setReveal(false); setExpired(false);
     } catch (failure) {
       setError(failure instanceof TypeError
         ? "The reviewer could not be reached. Reload this page and try again."
@@ -43,13 +55,9 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
   const services: [string, { value: string }][] = session ? Object.entries(session.outputs).filter(([, entry]) => entry.group === "Services") : [];
   if (session && !services.length) services.push(["webUrl", { value: session.url }]);
   const serviceNames: Record<string, string> = { webUrl: "OpenWork", denWeb: "Den dashboard", denApi: "Den API", openworkUrl: "OpenWork engine", gatewayUrl: "AI Gateway", desktopUrl: "Desktop app" };
-  async function copy(value: string) {
-    try { await navigator.clipboard.writeText(value); setCopied(true); }
-    catch { setError("Could not copy. Select the visible value to copy it manually."); }
-  }
   function field(key: string, label: string, value: string, secret = false) {
     return <div className="connection-field" key={key}>
-      <div className="preview-launch-row"><strong>{label}</strong><button type="button" aria-label={`Copy ${label}`} onClick={() => copy(value)}>Copy</button></div>
+      <div className="preview-launch-row"><strong>{label}</strong><CopyButton label={`Copy ${label}`} value={value} /></div>
       <code>{secret && !reveal ? "••••••••" : value}</code>
     </div>;
   }
@@ -57,28 +65,27 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
   return (
     <div className="preview-launch">
       <h2>Your sandbox</h2>
-      <p className="preview-state">Your own URLs, workspace, and data. Teammates get separate sandboxes.</p>
-      <label>World <select aria-label="Preview world" value={world} disabled={busy} onChange={(event) => { setWorld(event.target.value); setSession(null); setError(null); setCopied(false); }}>
+
+      <label>World <select aria-label="Preview world" value={world} disabled={busy} onChange={(event) => { setWorld(event.target.value); setError(null); }}>
         <option value="app-web">OpenWork web</option>
         <option value="desktop">Desktop only (signed out)</option>
         <option value="acme-web">ACME web (full stack)</option>
         <option value="acme-desktop">ACME desktop (full stack)</option>
       </select></label>
       <div className="preview-launch-actions">
-        {session && <a className="preview-open" href={session.url} target="_blank" rel="noreferrer">{session.desktop ? "Open desktop" : "Open sandbox"}</a>}
-        <button type="button" onClick={launch} disabled={!connected || busy} aria-busy={busy} aria-describedby="preview-state">Launch in Freestyle</button>
+        {session && !expired && <a className="preview-open" href={session.url} target="_blank" rel="noreferrer">{session.desktop ? "Open desktop" : "Open sandbox"}</a>}
+        <button type="button" className={session && !expired ? "quiet" : "primary"} onClick={launch} disabled={!connected || busy} aria-busy={busy} aria-describedby="preview-state">{expired ? "Launch again" : session ? "Launch another" : "Launch in Freestyle"}</button>
       </div>
       <p id="preview-state" className={error ? "preview-error" : "preview-state"} role={error ? "alert" : "status"}>
         {!connected ? "Freestyle is not connected. The review app owner can connect it."
           : error ?? (busy ? "Your new sandbox is starting. This can take a few minutes."
-            : session ? `Private sandbox · Expires ${new Date(session.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Fresh sandbox per launch · 2-hour lifetime")}
+            : expired ? "Expired. Launch again to create a fresh sandbox." : session ? `${session.world} · Expires ${new Date(session.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Fresh sandbox per launch · 2-hour lifetime")}
       </p>
-      {session && <section aria-label="Your connection details">
+      {session && !expired && <section aria-label="Your connection details">
         <div className="preview-launch-row">
-          <button type="button" onClick={() => copy(JSON.stringify({ sandboxUrl: session.url, ...Object.fromEntries(Object.entries(session.outputs).map(([key, entry]) => [key, entry.value])) }, null, 2))}>Copy all connection details</button>
-          <button type="button" onClick={() => setReveal(!reveal)}>{reveal ? "Hide credentials" : "Show credentials"}</button>
+          <CopyButton label="Copy all connection details" value={JSON.stringify({ sandboxUrl: session.url, ...Object.fromEntries(Object.entries(session.outputs).map(([key, entry]) => [key, entry.value])) }, null, 2)} />
+          <button type="button" className="quiet" onClick={() => setReveal(!reveal)}>{reveal ? "Hide credentials" : "Show credentials"}</button>
         </div>
-        {copied && <p role="status">Copied to clipboard</p>}
         {session.outputs.alexEmail && <section className="connection-group" aria-label="Sign in">
           <h3>Sign in</h3>
           {field("email", "Email", session.outputs.alexEmail.value)}
@@ -89,7 +96,7 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
           {services.map(([key, entry]) => {
             const name = serviceNames[key] ?? key;
             return <div className="connection-field" key={key}>
-              <div className="preview-launch-row"><a href={entry.value} target="_blank" rel="noreferrer">Open {name} ↗</a><button type="button" aria-label={`Copy ${name} URL`} onClick={() => copy(entry.value)}>Copy URL</button></div>
+              <div className="preview-launch-row"><a href={entry.value} target="_blank" rel="noreferrer">Open {name}</a><CopyButton label={`Copy ${name} URL`} value={entry.value} /></div>
               <code>{reveal ? entry.value : new URL(entry.value).origin}</code>
             </div>;
           })}

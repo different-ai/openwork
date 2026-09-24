@@ -232,3 +232,39 @@ and declared gaps are Incomplete. An image-only document is Reference. Human
 approval and discussion stay in GitHub.
 
 Freestyle previews use the verified `preview.openwork.software` wildcard: `*.preview` CNAME to `beta-web.freestyle.sh`, `_acme-challenge.preview` NS to `beta-dns.freestyle.sh`, and Freestyle ownership verification. Keep its wildcard certificate active. This avoids the permanent free `style.dev` hostname claim limit; TLS routes still expire with each VM.
+
+## Developer review workspace
+
+Evidence is the default surface. The compact header keeps the selected-evidence
+verdict and commit visible; All, Failed, and Incomplete filter sections without
+changing the report verdict or hiding declared coverage gaps. Next failure returns
+to all sections and focuses the next failed section. Narrow screens retain a
+native section selector.
+
+Screenshot links open a native modal with fit/100% zoom, previous/next arrow-key
+navigation, source assertions, and visual judgments. Image hashes are shareable;
+Escape closes the viewer. Original records and traces remain directly linked.
+
+Show sandbox opens an optional panel without moving the report header. The panel
+preserves a launched session when hidden or when another environment is selected;
+the session's label and links always describe the environment that actually
+launched. Credentials start masked. Expiration removes access links and connection
+details and offers Launch again. Copy feedback identifies the copied field.
+
+The changed UI follows DESIGN.md P1, P3, P6, P7, P11, S1, S6, C1, C5, C6,
+V1 and V2. Native buttons/selects/details and a native modal provide keyboard and
+focus behavior (P5); colors reuse the desktop Radix palette. Browser proofs emit
+real-size screenshots for P10:
+
+```sh
+pnpm --filter @openwork/review-app build
+pnpm evals:e2e specs/review-workspace.e2e.test.ts --local
+pnpm evals:e2e specs/review-sandbox.e2e.test.ts --local
+pnpm evals:e2e specs/freestyle-review.e2e.test.ts --local
+```
+
+The sandbox UI proof uses a local HTTP response fixture that intercepts every
+mutation. It verifies state transitions without a provider credential or VM;
+it is not evidence that a live Freestyle launch succeeds. The ordinary review
+fixture remains disconnected and continues testing the real launch route's
+missing-connection and cross-origin behavior.

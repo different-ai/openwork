@@ -25,6 +25,7 @@ test("a reviewer can choose a signed-out desktop without mistaking it for an ACM
     expect(page.status).toBe(200);
     expect(await page.text()).not.toContain("__openwork_launch?token=");
     await user.navigate(`${world.baseUrl}/r/${world.passed}`);
+    await user.click({ role: "button", text: "Show sandbox" });
     await user.see(picker, { value: "app-web", editable: true });
     await user.see({ text: disconnectedMessage });
     await user.see({ role: "button", text: "Launch in Freestyle" });
