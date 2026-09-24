@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { appSource, appTitle, chatPrompt, chatReply, launchInput, mcpAppServers, mcpAppServersChat, payload, record, rows, toolNames } from "../worlds/mcp-app-servers.ts";
+import { appSource, appTitle, buildPrompt, buildReply, chatPrompt, chatReply, launchInput, mcpAppServers, mcpAppServersChat, payload, pricerTitle, record, rows, toolNames } from "../worlds/mcp-app-servers.ts";
 
 const test = spec.world(mcpAppServers, {
   resources: { surfaces: ["web"], services: ["den", "mock"] },
@@ -143,37 +143,76 @@ test("an owner composes an App that is its own MCP server, and a teammate uses i
   });
 });
 
-chatTest("an owner opens the App from OpenWork's chat and prices an order inside the conversation", async ({ world, agent, user, step, evidence }) => {
-  const sinceIso = new Date().toISOString();
-  await step("the owner asks the chat for the Order calculator in plain words", async () => {
-    for (const id of [world.created.appId, world.created.pluginId]) expect(chatPrompt).not.toContain(id);
-    await agent.send(chatPrompt);
-    await user.see({ text: chatReply }, { timeoutMs: 120_000 });
-    const requests = (await world.den.mocks.inventory.agentRequests({ promptMarker: chatPrompt })).filter(request => request.kind === "tool" || request.kind === "final");
-    expect(requests.some(request => request.advertisedToolNames?.some(name => name.endsWith("execute_capability")))).toBe(true);
+chatTest("an owner prompts OpenWork's chat to build an App and to open one, and both work inside the conversation", async ({ world, agent, user, step, evidence }) => {
+  const modelTool = async (marker: string) => (await world.den.mocks.inventory.agentRequests({ promptMarker: marker })).find(request => request.kind === "tool");
+  const lookups = async (sinceIso: string) => (await world.inventoryCalls({ sinceIso, atLeast: 1 })).map(call => call.args);
+  const orderLine = `${launchInput.quantity} × ${launchInput.sku} at 7`;
+  let builtAt = "";
+  let openedAt = "";
+
+  await step("the owner asks the chat to build an App in plain words", async () => {
+    builtAt = new Date().toISOString();
+    await agent.send(buildPrompt);
+    await user.see({ text: buildReply }, { timeoutMs: 120_000 });
+    expect((await modelTool(buildPrompt))?.toolName).toMatch(/create_app$/);
     await user.screenshot();
-    evidence.recordAssertionEvidence("The request names an order, not an App or connection", `"${chatPrompt}" carries no App, Plugin, or connection id. The model opened the App with execute_capability and the launch input { sku: "${launchInput.sku}", quantity: ${launchInput.quantity} }.`, true);
+    evidence.recordAssertionEvidence("The chat builds the App", `For "${buildPrompt}", the model called create_app with ${pricerTitle}'s source and three declared tools: ${toolNames.live}, ${toolNames.connection}, and ${toolNames.workflow}.`, true);
   });
 
-  await step("the App opens in the conversation with that order and loads its data without a click", async () => {
-    await using frame = await world.appFrame();
+  await step("the new App opens in the conversation and loads its data without a click", async () => {
+    await using frame = await world.appFrame(pricerTitle);
+    const appUser = user.on(frame);
+    await appUser.see({ role: "heading", label: pricerTitle });
+    await appUser.see({ testId: "pricing-date" }, { text: /^Prices as of \d{4}-\d{2}-\d{2}$/, timeoutMs: 90_000 });
+    await appUser.see({ testId: "order-line" }, { text: orderLine, timeoutMs: 90_000 });
+    await appUser.notSee({ testId: "total" });
+    const calls = await lookups(builtAt);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every(args => args.sku === launchInput.sku)).toBe(true);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("A freshly built App runs its read-only tools", `Right after create_app, ${pricerTitle} opened in the conversation, loaded today's date from its live Workflow, and looked up ${launchInput.sku} in the Inventory MCP without a click. It shows "${orderLine}" and no total yet.`, true);
+  });
+
+  await step("one click in the new App prices its order", async () => {
+    await using frame = await world.appFrame(pricerTitle);
+    const appUser = user.on(frame);
+    await appUser.click({ role: "button", label: "Calculate total" });
+    await appUser.see({ testId: "total" }, { text: "42", timeoutMs: 90_000 });
+    await user.screenshot();
+    evidence.recordAssertionEvidence("The new App's write runs from its button", `Clicking Calculate total in ${pricerTitle} ran its ${toolNames.workflow} Workflow and shows 42.`, true);
+  });
+
+  await step("the owner asks the chat to open the Order calculator for an order, naming no App or connection", async () => {
+    for (const id of [world.created.appId, world.created.pluginId]) expect(chatPrompt).not.toContain(id);
+    openedAt = new Date().toISOString();
+    await agent.send(chatPrompt);
+    await user.see({ text: chatReply }, { timeoutMs: 120_000 });
+    expect((await modelTool(chatPrompt))?.toolName).toMatch(/execute_capability$/);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("The chat opens an existing App with the order", `"${chatPrompt}" carries no App, Plugin, or connection id. The model opened ${appTitle} with execute_capability and the launch input { sku: "${launchInput.sku}", quantity: ${launchInput.quantity} }.`, true);
+  });
+
+  await step("the Order calculator opens with that order and loads its data without a click", async () => {
+    await using frame = await world.appFrame(appTitle);
     const appUser = user.on(frame);
     await appUser.see({ role: "heading", label: appTitle });
     await appUser.see({ testId: "pricing-date" }, { text: /^Prices as of \d{4}-\d{2}-\d{2}$/, timeoutMs: 90_000 });
-    await appUser.see({ testId: "order-line" }, { text: `${launchInput.quantity} × ${launchInput.sku} at 7`, timeoutMs: 90_000 });
+    await appUser.see({ testId: "order-line" }, { text: orderLine, timeoutMs: 90_000 });
     await appUser.notSee({ testId: "total" });
-    expect((await world.inventoryCalls({ sinceIso, atLeast: 1 })).map(call => call.args)).toEqual([{ sku: launchInput.sku }]);
+    const calls = await lookups(openedAt);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every(args => args.sku === launchInput.sku)).toBe(true);
     await user.screenshot();
-    evidence.recordAssertionEvidence("Read-only tools run as soon as the App opens", `The App shows "${launchInput.quantity} × ${launchInput.sku} at 7": the live Workflow loaded today's date and the Inventory MCP recorded one real lookup for ${launchInput.sku}, with no click. No total is shown yet, so nothing was written.`, true);
+    evidence.recordAssertionEvidence("Launch input from the chat reaches the App", `${appTitle} has no sample order of its own, yet it shows "${orderLine}": the order came from the chat. Its read-only tools loaded today's date and the Inventory price without a click.`, true);
   });
 
   await step("after: one click in the App prices the order, with no approval prompt", async () => {
-    await using frame = await world.appFrame();
+    await using frame = await world.appFrame(appTitle);
     const appUser = user.on(frame);
     await appUser.click({ role: "button", label: "Calculate total" });
     await appUser.see({ testId: "total" }, { text: "42", timeoutMs: 90_000 });
     await user.notSee({ text: "Allow App action?" });
     await user.screenshot();
-    evidence.recordAssertionEvidence("One trusted click runs the one write", `Clicking Calculate total ran the ${toolNames.workflow} Workflow from the conversation and the App shows 42, with no extra approval prompt.`, true);
+    evidence.recordAssertionEvidence("One trusted click runs the one write", `Clicking Calculate total ran the ${toolNames.workflow} Workflow from the conversation and ${appTitle} shows 42, with no extra approval prompt.`, true);
   });
 });

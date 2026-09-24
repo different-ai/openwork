@@ -57,17 +57,26 @@ function appSummary(result: Record<string, unknown>) {
   };
 }
 
-export function appSource(revision: string) {
+/**
+ * The App's source. An App opened right after create_app has no launch input,
+ * so a freshly built one can start from the sample order instead.
+ */
+export function appSource(revision: string, options: { title?: string; sampleOrder?: boolean } = {}) {
+  const title = options.title ?? appTitle;
+  const order = options.sampleOrder
+    ? `{ sku: launch.sku ?? ${JSON.stringify(launchInput.sku)}, quantity: launch.quantity ?? ${launchInput.quantity} }`
+    : "launch";
   return {
-    title: appTitle,
-    textFallback: `${appTitle} is ready. Open the App to price an order.`,
+    title,
+    textFallback: `${title} is ready. Open the App to price an order.`,
     reactSource: `function payload(reply) {
       if (reply.structuredContent) return reply.structuredContent;
       const text = reply.content.find(part => part.type === "text");
       if (!text) throw new Error("Tool returned no JSON result");
       return JSON.parse(text.text);
     }
-    export default function Calculator({ app, input }) {
+    export default function Calculator({ app, input: launch }) {
+      const input = ${order};
       const [today, setToday] = React.useState(null);
       const [price, setPrice] = React.useState(null);
       const [total, setTotal] = React.useState(null);
@@ -98,7 +107,7 @@ export function appSource(revision: string) {
         finally { setBusy(false); }
       }
       return <main>
-        <header><h1>${appTitle}</h1><span>Ready — ${revision}</span></header>
+        <header><h1>${title}</h1><span>Ready — ${revision}</span></header>
         {!toolsAvailable && <p role="status">Server tools unavailable. Reopen in a host that enables server tools.</p>}
         <p data-testid="pricing-date">{today ? "Prices as of " + today : "Loading pricing date"}</p>
         <p data-testid="order-line">{input.quantity ?? 0} × {input.sku ?? "no product"}{price !== null ? " at " + price : ""}</p>
@@ -424,10 +433,14 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
 
 export const chatPrompt = "Open the Order calculator for 6 of WIDGET-7.";
 export const chatReply = "The Order calculator is open in this conversation.";
+export const pricerTitle = "Quick order pricer";
+export const buildPrompt = "Build me an App that looks up a product's unit price in Inventory and multiplies it by the quantity.";
+export const buildReply = "The Quick order pricer is ready in this conversation.";
 
 /**
- * The same App opened from an OpenWork chat: the model launches it through
- * Connect with launch input, and the App's own tools run in the conversation.
+ * Apps prompted from an OpenWork chat: the model builds a new App with
+ * create_app and opens an existing one with launch input, both through
+ * Connect, and each App's own tools run in the conversation.
  */
 export async function mcpAppServersChat(seed: Seed) {
   const den = await seed.den({
@@ -458,12 +471,18 @@ export async function mcpAppServersChat(seed: Seed) {
     const data = raw.split("\n").find(line => line.startsWith("data:"));
     return record(record(JSON.parse(data ? data.slice(5) : raw)).result);
   };
-  const { created } = await composeOrderCalculator(seed, den.admin, connection.id, call);
+  const { created, tools } = await composeOrderCalculator(seed, den.admin, connection.id, call);
+  // Each prompt is matched on its own turn, since both share one conversation.
   const configured = await fetch(`${den.mocks.inventory.url}/admin/agent-workloads`, {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ workloads: [{ promptMarker: chatPrompt, finalReply: chatReply, steps: [
-      { tool: "execute_capability", arguments: { name: `plugin:${created.pluginId}:${created.appId}`, body: launchInput } },
-    ] }] }),
+    body: JSON.stringify({ workloads: [
+      { promptMarker: buildPrompt, finalReply: buildReply, latestUserTurn: true, steps: [
+        { tool: "create_app", arguments: { ...appSource("revision one", { title: pricerTitle, sampleOrder: true }), tools } },
+      ] },
+      { promptMarker: chatPrompt, finalReply: chatReply, latestUserTurn: true, steps: [
+        { tool: "execute_capability", arguments: { name: `plugin:${created.pluginId}:${created.appId}`, body: launchInput } },
+      ] },
+    ] }),
     signal: AbortSignal.timeout(15_000),
   });
   if (!configured.ok) throw new Error(`Chat model setup failed: ${configured.status}`);
@@ -495,20 +514,20 @@ export async function mcpAppServersChat(seed: Seed) {
   return {
     app, session, den, created,
     inventoryCalls: (options: { sinceIso?: string; atLeast?: number } = {}) => den.mocks.inventory.toolCalls({ name: toolNames.connection, atLeast: 0, ...options }),
-    /** The App's isolated frame in the conversation, for trusted input. */
-    async appFrame(): Promise<Surface & AsyncDisposable> {
+    /** An App's isolated frame in the conversation, by its title, for trusted input. */
+    async appFrame(title: string): Promise<Surface & AsyncDisposable> {
       const deadline = Date.now() + 60_000;
       while (Date.now() < deadline) {
         for (const target of (await listTargets(app.handle.cdpUrl)).filter(entry => entry.type === "iframe" && entry.url === "about:srcdoc")) {
           const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
-          if (await evaluate(client, () => document.title).catch(() => "") === appTitle) {
+          if (await evaluate(client, () => document.title).catch(() => "") === title) {
             return { handle: app.handle, client, [Symbol.asyncDispose]: async () => client.close() };
           }
           client.close();
         }
         await delay(250);
       }
-      throw new Error("The App did not open in the conversation");
+      throw new Error(`${title} did not open in the conversation`);
     },
   };
 }
