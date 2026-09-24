@@ -54,7 +54,6 @@ function list(messages: UIMessage[], status: ThreadStatus, syncHealth?: RunSyncH
       onOpenSubagentSession={inspectChild}
       onMcpReconnect={() => Promise.reject(new Error("unused"))}
       onMcpReopenAuthorization={() => Promise.resolve()}
-      onMcpRetry={() => {}}
     >
       <MessageList messages={messages} status={status} activityStatus={activityStatus} syncHealth={syncHealth} />
     </MessageListProvider>

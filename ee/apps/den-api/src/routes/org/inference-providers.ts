@@ -3,6 +3,7 @@ import { and, desc, eq, gt, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, LlmProviderAccessTable, LlmProviderMemberCredentialTable, LlmProviderModelTable, LlmProviderTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, GATEWAY_PROVIDER_CREDENTIAL_MODES, GATEWAY_PROVIDER_CREDENTIAL_STATUSES, GATEWAY_PROVIDER_STATUSES, type GatewayAccessGrantWrite, type GatewayProviderConnectResponse, type GatewayProviderSummary } from "@openwork/types/den/gateway"
+import { gatewayMemberConnectionsResponseSchema } from "@openwork/types/den/inference"
 import type { Hono, MiddlewareHandler } from "hono"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
@@ -12,9 +13,10 @@ import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { gatewayManagementUnavailable, gatewayManagementUnavailableSchema } from "../../gateway-deployment.js"
 import { ensureMemberGatewayKey } from "../../gateway-keys.js"
-import { GatewayWriteError, gatewayCatalog, gatewayGrantSummary, gatewaySummary, refreshGatewayCatalog, resolveGatewayCatalog, validateGatewaySettings, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "../../llm/gateway-matrix.js"
+import { gatewayMemberConnections } from "../../llm/gateway-member-connections.js"
+import { GatewayWriteError, enableGatewayGroupModels, gatewayCatalog, gatewayGrantSummary, gatewaySummary, refreshGatewayCatalog, resolveGatewayCatalog, validateGatewaySettings, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "../../llm/gateway-matrix.js"
 import { gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm } from "../../llm/inference-provider-config.js"
-import { buildGoogleAuthorizeUrl, exchangeGoogleAuthorizationCode, GOOGLE_CLOUD_PLATFORM_SCOPE, revokeGoogleToken } from "../../llm/inference-provider-google-oauth.js"
+import { buildGoogleAuthorizeUrl, exchangeGoogleAuthorizationCode, googleOAuthClientBinding, googleOAuthNonce, readGoogleOAuthAttempt, revokeGoogleToken, verifyGoogleIdentity } from "../../llm/inference-provider-google-oauth.js"
 import { effectiveGatewayGrants, lockMemberOAuthAuthorization, memberGatewayTeams, revokeGoogleCredentials } from "../../llm/inference-provider-lifecycle.js"
 import { isMigrationSourceLockConflict } from "../../llm/inference-provider-migration.js"
 import { getModelsDevProvider } from "../../llm/models-dev.js"
@@ -34,6 +36,9 @@ const grantParams = paramsSchema.extend(idParamSchema("grantId", "inferenceProvi
 const nameSchema = z.string().trim().min(1).max(255)
 const modelIdsSchema = z.array(nameSchema).max(500)
 const pinnedModelIdsSchema = modelIdsSchema.refine((ids) => new Set(ids).size === ids.length, "Pinned models must be unique.")
+const enableModelsSchema = z.object({ modelGroupId: denTypeIdSchema("gatewayModelGroup"), modelIds: modelIdsSchema.min(1) }).strict()
+const modelManagementGroupSchema = z.object({ id: denTypeIdSchema("gatewayModelGroup"), name: z.string(), status: z.enum(GATEWAY_PROVIDER_STATUSES), modelIds: modelIdsSchema })
+const modelManagementProviderSchema = z.object({ id: denTypeIdSchema("inferenceProvider"), name: z.string(), providerId: z.string(), status: z.enum(GATEWAY_PROVIDER_STATUSES), modelIds: modelIdsSchema, modelGroups: z.array(modelManagementGroupSchema) })
 const credentialSchema = z.object({ kind: z.enum(GATEWAY_PROVIDER_CREDENTIAL_KINDS), secret: z.string().trim().min(1).max(65535) }).strict()
 const apiKeysSchema = z.record(nameSchema, z.string().trim().max(65535))
 const oauthFields = { oauthClientId: z.string().trim().max(255).optional(), oauthClientSecret: z.string().trim().max(4096).optional() }
@@ -64,11 +69,12 @@ const groupSchema = groupWrite.extend({ id: denTypeIdSchema("gatewayModelGroup")
 const credentialStatus = z.enum(["ready", "member_auth_required", "org_credential_missing"])
 const setSchema = z.object({ id: denTypeIdSchema("gatewayCredentialSet"), name: z.string(), createdAt: z.string().datetime().optional(), createdBy: z.object({ id: denTypeIdSchema("member"), name: z.string().nullable(), email: z.string().nullable() }).nullable().optional(), credentialMode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES), status: z.enum(GATEWAY_PROVIDER_STATUSES), configured: z.boolean(), credentialStatus, oauthClientId: z.string().nullable().optional(), hasOauthClientSecret: z.boolean().optional() })
 const grantSchema = grantWrite.extend({ id: denTypeIdSchema("inferenceProviderAccess") })
+const modelSchema = z.object({ id: z.string(), name: z.string(), config: z.object({ id: z.string() }).catchall(z.unknown()), upstreamModelId: z.string(), modelGroupId: denTypeIdSchema("gatewayModelGroup"), modelGroupName: z.string(), credentialSetId: denTypeIdSchema("gatewayCredentialSet"), credentialSetName: z.string() })
 const summarySchema = z.object({
   modelIds: universeSchema, pinnedModelIds: z.array(z.string()).describe("Ordered catalog model IDs in management responses; only caller-usable gwm aliases in public list/connect responses. Pins never grant access."), catalogWarning: z.string().optional(),
   id: denTypeIdSchema("inferenceProvider"), providerId: z.string(), name: z.string(), source: z.literal("openwork_gateway"), credentialMode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES), credentialStatus, authUrl: z.string().nullable(), status: z.enum(GATEWAY_PROVIDER_STATUSES), updatedAt: z.string().datetime(), providerConfig: z.record(z.string(), z.unknown()),
-  models: z.array(z.object({ id: z.string(), name: z.string(), config: z.object({ id: z.string() }).catchall(z.unknown()), upstreamModelId: z.string(), modelGroupId: denTypeIdSchema("gatewayModelGroup"), modelGroupName: z.string(), credentialSetId: denTypeIdSchema("gatewayCredentialSet"), credentialSetName: z.string() })),
-  authorizationRequests: z.array(z.object({ credentialSetId: denTypeIdSchema("gatewayCredentialSet"), name: z.string(), authUrl: z.string() })),
+  models: z.array(modelSchema),
+  authorizationRequests: z.array(z.object({ credentialSetId: denTypeIdSchema("gatewayCredentialSet"), name: z.string(), authUrl: z.string(), models: z.array(modelSchema).optional() })),
   migration: z.object({ llmProviderId: denTypeIdSchema("llmProvider"), runtimeEnvNames: z.array(z.string()) }).optional(),
 }).meta({ ref: "GatewayProviderSummary" })
 const detailsSchema = summarySchema.extend({ settings: z.record(z.string(), z.unknown()), modelGroups: z.array(groupSchema), credentialSets: z.array(setSchema), accessGrants: z.array(grantSchema), oauthCallbackUrl: z.string().optional(), credentials: z.array(z.object({ id: denTypeIdSchema("inferenceProviderCredential"), credentialSetId: denTypeIdSchema("gatewayCredentialSet"), subject: z.string(), orgMembershipId: denTypeIdSchema("member").nullable(), memberName: z.string().nullable(), memberEmail: z.string().nullable(), kind: z.enum(GATEWAY_PROVIDER_CREDENTIAL_KINDS), status: z.enum(GATEWAY_PROVIDER_CREDENTIAL_STATUSES), expiresAt: z.string().datetime().nullable() })).optional() }).meta({ ref: "GatewayProviderDetails" })
@@ -76,8 +82,8 @@ const detailsResponse = z.object({ inferenceProvider: detailsSchema })
 const connectResponse = z.object({ inferenceProvider: summarySchema.extend({ apiKey: z.string(), apiKeys: z.record(z.string(), z.string()) }) })
 const gatewayErrorSchema = z.object({ error: z.string(), message: z.string().optional() })
 
-function route(summary: string, description: string, schema?: z.ZodType, status: 200 | 201 | 204 = 200, secret = false, metadata: Pick<DescribeRouteOptions, "security" | "responses"> = {}) {
-  const options: DescribeRouteOptions & { "x-mcp"?: false } = {
+function route(summary: string, description: string, schema?: z.ZodType, status: 200 | 201 | 204 = 200, secret = false, metadata: Pick<DescribeRouteOptions, "security" | "responses"> & { "x-mcp"?: boolean; "x-mcp-search-aliases"?: string[] } = {}) {
+  const options: DescribeRouteOptions & { "x-mcp"?: boolean; "x-mcp-search-aliases"?: string[] } = {
     ...metadata,
     tags: ["Inference Providers"], summary, description,
     responses: { [status]: schema ? jsonResponse(summary, schema) : emptyResponse(summary), 400: jsonResponse("Invalid request or provider configuration.", z.union([invalidRequestSchema, gatewayErrorSchema])), 401: jsonResponse("Sign-in required.", unauthorizedSchema), 403: jsonResponse("Access denied or Gateway management disabled.", z.union([forbiddenSchema, gatewayManagementUnavailableSchema])), 404: jsonResponse("Resource not found.", notFoundSchema), 409: jsonResponse("Selection or resource conflict.", gatewayErrorSchema), ...metadata.responses },
@@ -181,6 +187,59 @@ async function selectOAuthSet(provider: GatewayProvider, memberId: GatewayMember
 export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   registerOrgGatewayUsageRoutes(app)
   registerOrgGatewayUsageLimitRoutes(app)
+  // Agent-facing management reads never refresh or change the catalog. The existing provider summaries do.
+  app.get("/v1/inference-providers/model-management", route("List inference gateway providers and model groups for model enablement", "Read-only organization Gateway provider and group selection. Returns saved upstream model IDs, not picker aliases or credentials. An empty provider modelIds policy means all supported catalog models. Requires owner/admin and Gateway management.", z.object({ inferenceProviders: z.array(modelManagementProviderSchema) }), 200, false, { "x-mcp": true, "x-mcp-search-aliases": ["find OpenAI provider model groups", "manage provider models", "choose model group to add models"] }), orgMemberRoute(), managementRead, async (c) => {
+    try {
+      const actor = c.get("organizationContext")
+      await liveMember(db, actor, false, true)
+      const providers = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, actor.organization.id))
+      const inferenceProviders = []
+      for (const provider of providers) {
+        const groups = await db.select().from(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.gateway_provider_id, provider.id))
+        const models = await db.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
+        const links = groups.length ? await db.select().from(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id))) : []
+        inferenceProviders.push({ id: provider.id, name: provider.name, providerId: provider.provider_id, status: provider.status, modelIds: provider.model_ids,
+          modelGroups: groups.map((group) => ({ id: group.id, name: group.name, status: group.status,
+            modelIds: links.filter((link) => link.model_group_id === group.id).flatMap((link) => models.find((model) => model.id === link.gateway_provider_model_id)?.model_id ?? []) })) })
+      }
+      return c.json({ inferenceProviders })
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.get("/v1/inference-providers/:inferenceProviderId/available-models", route("List available upstream models for inference gateway provider", "Read-only trusted models.dev catalog for this provider, including models outside its current policy. Does not enable models or modify saved configuration; unsupported Gateway SDK models are excluded. Requires owner/admin and Gateway management.", z.object({ models: z.array(z.object({ id: z.string(), name: z.string() })) }), 200, false, { "x-mcp": true, "x-mcp-search-aliases": ["find new OpenAI models", "available models to add to provider"] }), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
+    try {
+      const provider = await getProvider(db, c.get("organizationContext"), c.req.valid("param").inferenceProviderId, true)
+      const catalog = await getModelsDevProvider(provider.provider_id)
+      if (!catalog || catalog.id !== provider.provider_id || catalog.npm !== readProviderConfigNpm(provider.provider_config)) throw new GatewayWriteError(409, "provider_catalog_changed")
+      return c.json({ models: resolveGatewayCatalog(catalog, [], provider.provider_config).models.map((model) => ({ id: model.id, name: model.name })) })
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.post("/v1/inference-providers/:inferenceProviderId/enable-models", route("Add models to inference gateway provider group", "Add upstream catalog model IDs to one explicitly selected existing model group without removing other models or changing access grants. Empty provider modelIds policy stays unrestricted; nonempty policy widens. Repeated calls are idempotent. Requires owner/admin and Gateway management; session callers must recently reauthenticate.", z.object({ inferenceProviderId: denTypeIdSchema("inferenceProvider"), modelGroupId: denTypeIdSchema("gatewayModelGroup"), modelIds: modelIdsSchema, groupModelIds: modelIdsSchema, addedModelIds: modelIdsSchema }), 200, false, { "x-mcp": true, "x-mcp-search-aliases": ["add model to OpenAI provider", "enable models in provider", "add Luna and Sol to model group"] }), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(enableModelsSchema), async (c) => {
+    try {
+      const actor = c.get("organizationContext")
+      const params = c.req.valid("param")
+      const input = c.req.valid("json")
+      const before = await getProvider(db, actor, params.inferenceProviderId, true)
+      const catalog = await getModelsDevProvider(before.provider_id)
+      if (!catalog) throw new GatewayWriteError(409, "provider_catalog_unavailable")
+      const result = await db.transaction(async (tx) => {
+        const provider = await getProvider(tx, actor, params.inferenceProviderId, true, true)
+        return enableGatewayGroupModels(tx, provider, catalog, normalizeDenTypeId("gatewayModelGroup", input.modelGroupId), input.modelIds)
+      })
+      return c.json(result)
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.get("/v1/inference-providers/member-connections", route("List the caller's member Google connections", "Requires a signed-in user session and current organization membership, without an administrator gate. Returns independently selectable Google member credential sets with current effective access, credential readiness, verified account email and an opaque completed-authorization revision. Includes retained nonrevoked caller-owned credentials after grant loss or provider disablement for disconnection. Never returns another member's credentials, Google subject, OAuth client details or tokens. Readiness is not a Vertex IAM probe.", gatewayMemberConnectionsResponseSchema), userSessionRoute(), orgMemberRoute(), async (c) => {
+    try {
+      const actor = c.get("organizationContext")
+      const userId = c.get("user")?.id
+      if (!userId) throw new GatewayWriteError(403, "forbidden")
+      c.header("Cache-Control", "no-store")
+      return c.json(await gatewayMemberConnections({ organizationId: actor.organization.id, memberId: actor.currentMember.id, userId }))
+    } catch (error) { return respond(c, error) }
+  })
   app.get("/v1/inference-providers", route("List organization inference gateway providers", "Defaults to scope=usable: returns active providers granted to the caller through active model groups and credential sets, with usable model aliases and any member authorization requests. A granted provider can remain discoverable with no usable models. scope=manageable requires owner/admin permission and enabled Gateway management, and returns provider details including disabled providers; credential secrets are never returned.", z.object({ inferenceProviders: z.array(z.union([detailsSchema, summarySchema])) })), orgMemberRoute(), queryValidator(z.object({ scope: z.enum(["usable", "manageable"]).default("usable") })), async (c) => {
     try {
     const actor = c.get("organizationContext")
@@ -519,7 +578,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.get("/v1/inference-providers/:inferenceProviderId/oauth/start", route("Begin Google sign-in for a member inference credential", "Requires a signed-in user session, not an API key, and an active provider with an effective grant to a member credential set. Specify credentialSetId when multiple sets are available. Creates a ten-minute, single-use PKCE state and returns { authUrl } for Accept: application/json, otherwise redirects to Google. An optional redirectTo must use an allowed web origin or the openwork scheme. The callback browser must independently be signed in to Den as the same user.", z.object({ authUrl: z.string() }), 200, false, { security: [{ bearerAuth: [] }], responses: { 302: emptyResponse("Redirect to Google authorization when JSON is not requested.") } }), userSessionRoute(), orgMemberRoute(), paramValidator(paramsSchema), queryValidator(oauthQuery), async (c) => {
+  app.get("/v1/inference-providers/:inferenceProviderId/oauth/start", route("Begin Google sign-in for a member inference credential", "Requires a user session and granted member credential set. Returns { authUrl } for Accept: application/json, otherwise redirects to the Den web /gateway/connect bridge. The ten-minute entry handle binds the initiating user, organization, provider, set, client configuration and allowlisted redirectTo. It is not authentication and cannot be used at the Google callback. The bridge must establish a matching signed-in browser session before browser-start creates Google state and PKCE.", z.object({ authUrl: z.string() }), 200, false, { security: [{ bearerAuth: [] }], responses: { 302: emptyResponse("Redirect to the Den browser connection page.") } }), userSessionRoute(), orgMemberRoute(), paramValidator(paramsSchema), queryValidator(oauthQuery), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
@@ -528,14 +587,82 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const set = await selectOAuthSet(provider, actor.currentMember.id, query.credentialSetId)
       if (!set.oauth_client_id || !set.oauth_client_secret) throw new GatewayWriteError(400, "oauth_client_required", "An administrator must configure this credential set's Google OAuth client.")
       const redirectTo = oauthRedirect(query.redirectTo)
-      const { verifier, challenge } = createPkcePair()
-      const state = randomBytes(32).toString("base64url")
+      const verifier = randomBytes(32).toString("base64url")
+      const state = `entry.${randomBytes(32).toString("base64url")}`
+      const member = await liveMember(db, actor, false)
+      const userId = c.get("user")?.id
+      if (!userId || member.userId !== userId) throw new GatewayWriteError(403, "forbidden")
+      const attempt = { verifier, userId, clientBinding: googleOAuthClientBinding(verifier, set.oauth_client_id, set.oauth_client_secret) }
       await db.transaction(async (tx) => {
-        if (!await lockMemberOAuthAuthorization(tx, provider, set, actor.currentMember.id)) throw new GatewayWriteError(403, "forbidden")
-        await tx.insert(GatewayProviderOauthStateTable).values({ id: createDenTypeId("inferenceProviderOauthState"), gateway_provider_id: provider.id, credential_set_id: set.id, org_membership_id: actor.currentMember.id, state, code_verifier: verifier, redirect_to: redirectTo, expires_at: new Date(Date.now() + 600_000) })
+        if (!await lockMemberOAuthAuthorization(tx, provider, set, actor.currentMember.id, userId)) throw new GatewayWriteError(403, "forbidden")
+        await tx.insert(GatewayProviderOauthStateTable).values({ id: createDenTypeId("inferenceProviderOauthState"), gateway_provider_id: provider.id, credential_set_id: set.id, org_membership_id: actor.currentMember.id, state, code_verifier: JSON.stringify(attempt), redirect_to: redirectTo, expires_at: new Date(Date.now() + 600_000) })
       })
-      const domains = actor.organization.allowedEmailDomains ?? []
-      const authUrl = buildGoogleAuthorizeUrl({ clientId: set.oauth_client_id, redirectUri: `${publicBase(c.req.raw)}/v1/inference-providers/oauth/callback`, state, codeChallenge: challenge, ...(domains.length === 1 && domains[0] ? { hostedDomain: domains[0] } : {}) })
+      c.header("Cache-Control", "no-store")
+      c.header("Referrer-Policy", "no-referrer")
+      const entryUrl = new URL("/gateway/connect", env.webUrl)
+      entryUrl.searchParams.set("attempt", state)
+      const authUrl = entryUrl.toString()
+      if (c.req.header("accept")?.includes("application/json")) return c.json({ authUrl })
+      return c.redirect(authUrl, 302)
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.get("/v1/inference-providers/oauth/browser-status", route("Check browser readiness for member Google sign-in", "Read-only check of a ten-minute entry handle and the live signed OpenWork browser cookie, never a bearer substitute. Returns sign_in_required without a live cookie, account_mismatch for another signed-in user without revealing identities, or ready only after validating the original member, provider, credential set, OAuth client configuration and current grants. Does not consume or rotate the entry, create Google state, exchange tokens or revoke credentials. Browser-start and callback independently repeat authorization checks.", z.object({ status: z.enum(["sign_in_required", "account_mismatch", "ready"]) }), 200, true, { security: [], responses: { 403: jsonResponse("Provider access or OAuth configuration changed.", gatewayErrorSchema) } }), publicRoute, async (c, next) => {
+    c.header("Cache-Control", "no-store")
+    c.header("Referrer-Policy", "no-referrer")
+    await next()
+  }, queryValidator(z.object({ attempt: z.string().regex(/^entry\.[A-Za-z0-9_-]{43}$/) }).strict()), async (c) => {
+    try {
+      const [entry] = await db.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, c.req.valid("query").attempt)).limit(1)
+      const attempt = entry ? readGoogleOAuthAttempt(entry.code_verifier) : null
+      if (!entry || !attempt || entry.used_at || entry.expires_at.getTime() <= Date.now()) throw new GatewayWriteError(400, "oauth_entry_expired", "This connection attempt expired or was already used. Start Connect again.")
+      const cookieToken = await readSignedSessionCookieToken(c)
+      const [session] = cookieToken ? await db.select().from(AuthSessionTable).where(and(eq(AuthSessionTable.token, cookieToken), gt(AuthSessionTable.expiresAt, new Date()))).limit(1) : []
+      if (!session) return c.json({ status: "sign_in_required" })
+      if (attempt.userId !== session.userId) return c.json({ status: "account_mismatch" })
+      const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, entry.gateway_provider_id))
+      const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
+      if (!provider || !set?.oauth_client_id || !set.oauth_client_secret || attempt.clientBinding !== googleOAuthClientBinding(attempt.verifier, set.oauth_client_id, set.oauth_client_secret)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
+      oauthRedirect(entry.redirect_to ?? undefined)
+      const status = await db.transaction(async (tx) => {
+        if (!await lockMemberOAuthAuthorization(tx, provider, set, entry.org_membership_id, attempt.userId)) throw new GatewayWriteError(403, "forbidden")
+        const [liveSession] = await tx.select().from(AuthSessionTable).where(and(eq(AuthSessionTable.id, session.id), eq(AuthSessionTable.token, session.token), eq(AuthSessionTable.userId, session.userId), gt(AuthSessionTable.expiresAt, new Date()))).for("update")
+        if (!liveSession) return "sign_in_required"
+        const [current] = await tx.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.id, entry.id)).for("update")
+        if (!current || current.state !== entry.state || current.used_at || current.expires_at.getTime() <= Date.now() || current.code_verifier !== entry.code_verifier || current.gateway_provider_id !== provider.id || current.credential_set_id !== set.id || current.org_membership_id !== entry.org_membership_id || current.redirect_to !== entry.redirect_to) throw new GatewayWriteError(400, "oauth_entry_expired", "This connection attempt expired or was already used. Start Connect again.")
+        return "ready"
+      })
+      return c.json({ status })
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.get("/v1/inference-providers/oauth/browser-start", route("Continue member Google sign-in in a signed-in browser", "Consumes a ten-minute entry handle only with a live signed Den cookie for the initiating user. Rechecks the original member, provider, credential set and OAuth client configuration, independent of the browser's active organization. Returns { authUrl } for JSON clients or redirects to Google. Bearer authentication alone is not accepted.", z.object({ authUrl: z.string() }), 200, true, { security: [], responses: { 302: emptyResponse("Continue to Google.") } }), publicRoute, queryValidator(z.object({ attempt: z.string().regex(/^entry\.[A-Za-z0-9_-]{43}$/) }).strict()), async (c) => {
+    c.header("Cache-Control", "no-store")
+    c.header("Referrer-Policy", "no-referrer")
+    try {
+      const cookieToken = await readSignedSessionCookieToken(c)
+      const [session] = cookieToken ? await db.select().from(AuthSessionTable).where(and(eq(AuthSessionTable.token, cookieToken), gt(AuthSessionTable.expiresAt, new Date()))).limit(1) : []
+      if (!session) return c.json({ error: "browser_signin_required", message: "Sign in to OpenWork in this browser, then continue here." }, 401)
+      const [entry] = await db.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, c.req.valid("query").attempt)).limit(1)
+      const attempt = entry ? readGoogleOAuthAttempt(entry.code_verifier) : null
+      if (!entry || !attempt || entry.used_at || entry.expires_at.getTime() <= Date.now()) throw new GatewayWriteError(400, "oauth_entry_expired", "This connection attempt expired or was already used. Start Connect again.")
+      if (attempt.userId !== session.userId) throw new GatewayWriteError(403, "browser_account_mismatch", "Use the same OpenWork account that started Connect. Sign out in this browser and sign in with that account.")
+      const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, entry.gateway_provider_id))
+      const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
+      if (!provider || !set?.oauth_client_id || !set.oauth_client_secret || attempt.clientBinding !== googleOAuthClientBinding(attempt.verifier, set.oauth_client_id, set.oauth_client_secret)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
+      oauthRedirect(entry.redirect_to ?? undefined)
+      const { verifier, challenge } = createPkcePair()
+      const state = `google.${randomBytes(32).toString("base64url")}`
+      const nextAttempt = { verifier, userId: attempt.userId, clientBinding: googleOAuthClientBinding(verifier, set.oauth_client_id, set.oauth_client_secret) }
+      await db.transaction(async (tx) => {
+        if (!await lockMemberOAuthAuthorization(tx, provider, set, entry.org_membership_id, attempt.userId)) throw new GatewayWriteError(403, "forbidden")
+        const [liveSession] = await tx.select().from(AuthSessionTable).where(and(eq(AuthSessionTable.id, session.id), eq(AuthSessionTable.token, session.token), eq(AuthSessionTable.userId, session.userId), gt(AuthSessionTable.expiresAt, new Date()))).for("update")
+        if (!liveSession) throw new GatewayWriteError(403, "browser_signin_required")
+        const [current] = await tx.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.id, entry.id)).for("update")
+        if (!current || current.state !== entry.state || current.used_at || current.expires_at.getTime() <= Date.now() || current.code_verifier !== entry.code_verifier || current.gateway_provider_id !== provider.id || current.credential_set_id !== set.id || current.org_membership_id !== entry.org_membership_id || current.redirect_to !== entry.redirect_to) throw new GatewayWriteError(400, "oauth_entry_expired")
+        await tx.update(GatewayProviderOauthStateTable).set({ state, code_verifier: JSON.stringify(nextAttempt), expires_at: new Date(Date.now() + 600_000) }).where(eq(GatewayProviderOauthStateTable.id, entry.id))
+      })
+      const authUrl = buildGoogleAuthorizeUrl({ clientId: set.oauth_client_id, redirectUri: `${publicBase(c.req.raw)}/v1/inference-providers/oauth/callback`, state, codeChallenge: challenge, nonce: googleOAuthNonce(verifier, state) })
       if (c.req.header("accept")?.includes("application/json")) return c.json({ authUrl })
       return c.redirect(authUrl, 302)
     } catch (error) { return respond(c, error) }
@@ -551,78 +678,100 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       400: { description: "Sign-in failed (HTML) or invalid callback query (JSON).", content: { ...htmlResponse("Sign-in failed.").content, ...jsonResponse("Invalid callback query.", invalidRequestSchema).content } },
     },
   }), publicRoute, queryValidator(z.object({ code: z.string().trim().min(1).max(4096).optional(), state: z.string().trim().min(1).max(255).optional(), error: z.string().trim().max(255).optional() })), async (c) => {
+    c.header("Cache-Control", "no-store")
+    c.header("Referrer-Policy", "no-referrer")
     const query = c.req.valid("query")
     const requestId = c.get("requestId")
-    const fail = (message: string, redirectTo: string | null = null) => {
-      if (redirectTo) { const url = new URL(redirectTo); url.searchParams.set("error", message); return c.redirect(url.toString(), 302) }
+    const fail = (message: string, redirectTo: string | null = null, code?: string) => {
+      if (redirectTo) { const url = new URL(redirectTo); url.searchParams.set("error", message); if (code) url.searchParams.set("errorCode", code); return c.redirect(url.toString(), 302) }
       return c.html(connectCallbackPage({ ok: false, name: "Google", message, referenceId: requestId }), 400)
     }
     // State is transferable, not browser authentication. Desktop may start with a
     // bearer session, but the browser must independently sign in as the same user.
     // Read the live session row so a revoked/expired cookie cannot use cached auth.
     const cookieToken = await readSignedSessionCookieToken(c)
-    const [browserSession] = cookieToken ? await db.select({ userId: AuthSessionTable.userId }).from(AuthSessionTable)
+    const [browserSession] = cookieToken ? await db.select({ id: AuthSessionTable.id, token: AuthSessionTable.token, userId: AuthSessionTable.userId }).from(AuthSessionTable)
       .where(and(eq(AuthSessionTable.token, cookieToken), gt(AuthSessionTable.expiresAt, new Date()))).limit(1) : []
     const signInMessage = "Sign in to Den in this browser with the same OpenWork account that started Connect, then start Connect again."
     if (!browserSession) return fail(signInMessage)
     if (!query.state) return fail("Missing state.")
+    if (!/^google\.[A-Za-z0-9_-]{43}$/.test(query.state)) return fail("This sign-in link has expired or was already used. Start Connect again.")
     const [state] = await db.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, query.state)).limit(1)
     if (!state) return fail("This sign-in link has expired or was already used. Start Connect again.")
     const [initiator] = await db.select({ userId: MemberTable.userId }).from(MemberTable).where(eq(MemberTable.id, state.org_membership_id)).limit(1)
-    if (!initiator?.userId || initiator.userId !== browserSession.userId) return fail(signInMessage)
+    const attempt = readGoogleOAuthAttempt(state.code_verifier)
+    if (!attempt || !initiator?.userId || initiator.userId !== attempt.userId || attempt.userId !== browserSession.userId) return fail(signInMessage)
     if (state.used_at || state.expires_at.getTime() <= Date.now()) return fail("This sign-in link has expired or was already used. Start Connect again.")
     const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, state.gateway_provider_id))
     const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, state.credential_set_id))
-    if (!provider || !set?.oauth_client_id || !set.oauth_client_secret) return fail("This credential set is no longer available.")
+    if (!provider || !set?.oauth_client_id || !set.oauth_client_secret || attempt.clientBinding !== googleOAuthClientBinding(attempt.verifier, set.oauth_client_id, set.oauth_client_secret)) return fail("This credential set is no longer available.")
     let redirectTo: string | null = null
     try { redirectTo = oauthRedirect(state.redirect_to ?? undefined) } catch { return fail("The sign-in redirect is no longer allowed.") }
     const claimed = await db.transaction(async (tx) => {
-      if (!await lockMemberOAuthAuthorization(tx, provider, set, state.org_membership_id)) return false
+      if (!await lockMemberOAuthAuthorization(tx, provider, set, state.org_membership_id, attempt.userId)) return false
+      const [liveSession] = await tx.select().from(AuthSessionTable).where(and(eq(AuthSessionTable.id, browserSession.id), eq(AuthSessionTable.token, browserSession.token), eq(AuthSessionTable.userId, browserSession.userId), gt(AuthSessionTable.expiresAt, new Date()))).for("update")
+      if (!liveSession) return false
       const [current] = await tx.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.id, state.id)).for("update")
-      if (!current || current.used_at || current.expires_at.getTime() <= Date.now() || current.credential_set_id !== set.id) return false
+      if (!current || current.used_at || current.expires_at.getTime() <= Date.now() || current.credential_set_id !== set.id || current.state !== state.state || current.code_verifier !== state.code_verifier || current.org_membership_id !== state.org_membership_id || current.gateway_provider_id !== provider.id || current.redirect_to !== state.redirect_to) return false
       return affectedRows(await tx.update(GatewayProviderOauthStateTable).set({ used_at: new Date() }).where(and(eq(GatewayProviderOauthStateTable.id, state.id), isNull(GatewayProviderOauthStateTable.used_at)))) === 1
     })
     if (!claimed) return fail("Provider access changed or the sign-in link was already used. Start Connect again.")
     if (query.error || !query.code) return fail(query.error === "access_denied" ? "Google access was denied." : "Google did not return an authorization code.", redirectTo)
+    const cleanupWarning = "Cleanup revocation may affect existing Google connections using the same OAuth client, including your previous connection. You may need to reconnect those connections."
     let issuedToken: string | null = null
     try {
-      const tokens = await exchangeGoogleAuthorizationCode({ clientId: set.oauth_client_id, clientSecret: set.oauth_client_secret, code: query.code, codeVerifier: state.code_verifier, redirectUri: `${publicBase(c.req.raw)}/v1/inference-providers/oauth/callback` })
-      issuedToken = tokens.refresh_token ?? tokens.access_token
+      const exchangeStartedAt = Date.now()
+      const tokens = await exchangeGoogleAuthorizationCode({ clientId: set.oauth_client_id, clientSecret: set.oauth_client_secret, code: query.code, codeVerifier: attempt.verifier, redirectUri: `${publicBase(c.req.raw)}/v1/inference-providers/oauth/callback` })
+      issuedToken = tokens.refresh_token
+      const googleIdentity = await verifyGoogleIdentity({ idToken: tokens.id_token, clientId: set.oauth_client_id, nonce: googleOAuthNonce(attempt.verifier, state.state) })
+      const expiresAt = new Date(exchangeStartedAt + tokens.expires_in * 1000)
       const stored = await db.transaction(async (tx) => {
-        if (!await lockMemberOAuthAuthorization(tx, provider, set, state.org_membership_id)) return false
+        if (!await lockMemberOAuthAuthorization(tx, provider, set, state.org_membership_id, attempt.userId)) return false
+        const [liveSession] = await tx.select().from(AuthSessionTable).where(and(eq(AuthSessionTable.id, browserSession.id), eq(AuthSessionTable.token, browserSession.token), eq(AuthSessionTable.userId, browserSession.userId), gt(AuthSessionTable.expiresAt, new Date()))).for("update")
+        if (!liveSession) return false
         const [current] = await tx.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.id, state.id)).for("update")
-        if (!current || !current.used_at || current.expires_at.getTime() <= Date.now() || current.credential_set_id !== set.id) return false
+        if (!current || !current.used_at || current.expires_at.getTime() <= Date.now() || current.credential_set_id !== set.id || current.state !== state.state || current.code_verifier !== state.code_verifier || current.org_membership_id !== state.org_membership_id || current.gateway_provider_id !== provider.id || current.redirect_to !== state.redirect_to) return false
         const [existing] = await tx.select().from(GatewayProviderCredentialTable).where(and(eq(GatewayProviderCredentialTable.credential_set_id, set.id), eq(GatewayProviderCredentialTable.subject, state.org_membership_id))).for("update")
         const now = new Date()
-        const values = { kind: "oauth_google" as const, secret: JSON.stringify({ accessToken: tokens.access_token, ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}), ...(tokens.token_type ? { tokenType: tokens.token_type } : {}) }), expires_at: tokens.expires_in ? new Date(now.getTime() + tokens.expires_in * 1000) : null, scopes: tokens.scope ?? GOOGLE_CLOUD_PLATFORM_SCOPE, last_refreshed_at: now, refreshing_until: null, last_error: null, status: "active" as const, updated_at: now }
+        if (expiresAt.getTime() <= now.getTime()) return false
+        const values = { kind: "oauth_google" as const, secret: JSON.stringify({ accessToken: tokens.access_token, refreshToken: tokens.refresh_token, tokenType: tokens.token_type, googleIdentity: { ...googleIdentity, authorizationRevision: randomBytes(32).toString("base64url") } }), expires_at: expiresAt, scopes: tokens.scope, last_refreshed_at: now, refreshing_until: null, last_error: null, status: "active" as const, updated_at: now }
         if (existing) {
           if (existing.gateway_provider_id !== provider.id || existing.organization_id !== provider.organization_id || existing.org_membership_id !== state.org_membership_id) return false
           await tx.update(GatewayProviderCredentialTable).set(values).where(eq(GatewayProviderCredentialTable.id, existing.id))
         } else await tx.insert(GatewayProviderCredentialTable).values({ id: createDenTypeId("inferenceProviderCredential"), gateway_provider_id: provider.id, credential_set_id: set.id, organization_id: provider.organization_id, subject: state.org_membership_id, org_membership_id: state.org_membership_id, ...values })
         return true
       })
-      if (!stored) { await revokeGoogleToken({ token: issuedToken }); issuedToken = null; return fail("Provider access changed during sign-in. Start Connect again.", redirectTo) }
+      if (!stored) { await revokeGoogleToken({ token: issuedToken }); issuedToken = null; return fail(`Provider access changed during sign-in. Start Connect again. ${cleanupWarning}`, redirectTo) }
       issuedToken = null
     } catch (error) {
       if (issuedToken) await revokeGoogleToken({ token: issuedToken })
       console.error("gateway_oauth_callback_failed", { requestId, providerId: provider.id, credentialSetId: set.id, code: error instanceof OAuthTokenExchangeError ? error.code : "oauth_callback_failed" })
-      return fail("OpenWork could not finish Google sign-in. Try Connect again.", redirectTo)
+      const message = error instanceof OAuthTokenExchangeError ? error.message : "OpenWork could not finish Google sign-in. Try Connect again."
+      return fail(issuedToken ? `${message} ${cleanupWarning}` : message, redirectTo, error instanceof OAuthTokenExchangeError ? error.code : "oauth_callback_failed")
     }
     return redirectTo ? c.redirect(redirectTo, 302) : c.html(connectCallbackPage({ ok: true, name: set.name }))
   })
 
-  app.delete("/v1/inference-providers/:inferenceProviderId/oauth", route("Disconnect the caller's Google credential for an inference provider", "Revokes only the caller's Google credential and cancels their pending sign-ins for a granted member credential set, returning an empty 204. Other members and grants are unchanged. Requires an active provider and current access; specify credentialSetId when multiple member sets are available.", undefined, 204), orgMemberRoute(), paramValidator(paramsSchema), queryValidator(z.object({ credentialSetId: denTypeIdSchema("gatewayCredentialSet").optional() }).strict()), async (c) => {
+  app.delete("/v1/inference-providers/:inferenceProviderId/oauth", route("Disconnect the caller's Google credential for an inference provider", "Immediately revokes and erases the caller's local credential and cancels pending sign-ins, even after inference grant loss or provider disablement. Requires current organization membership, not inference access. Specify credentialSetId when multiple sets exist. Google revocation is best effort with sanitized outcome telemetry and no retained retry tokens; revoking a Google grant can affect other connections using that grant. Returns an empty 204.", undefined, 204), orgMemberRoute(), paramValidator(paramsSchema), queryValidator(z.object({ credentialSetId: denTypeIdSchema("gatewayCredentialSet").optional() }).strict()), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
-      if (provider.status !== "active") throw new GatewayWriteError(404, "inference_provider_not_found")
-      const set = await selectOAuthSet(provider, actor.currentMember.id, c.req.valid("query").credentialSetId)
+      const selected = c.req.valid("query").credentialSetId
+      const sets = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))
+      const candidates = selected ? sets.filter((set) => set.id === selected) : sets.filter((set) => set.credential_mode === "member")
+      if (!candidates.length) throw new GatewayWriteError(404, "credential_set_not_found")
+      if (candidates.length !== 1) throw new GatewayWriteError(409, "credential_set_required")
+      const set = candidates[0]
       const credentials = await db.transaction(async (tx) => {
-        if (!await lockMemberOAuthAuthorization(tx, provider, set, actor.currentMember.id)) throw new GatewayWriteError(403, "forbidden")
+        const member = await liveMember(tx, actor, true)
+        if (member.userId !== c.get("user")?.id) throw new GatewayWriteError(403, "forbidden")
+        await getProvider(tx, actor, provider.id, false, true)
+        const [currentSet] = await tx.select().from(GatewayCredentialSetTable).where(and(eq(GatewayCredentialSetTable.id, set.id), eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))).for("update")
+        if (!currentSet) throw new GatewayWriteError(404, "credential_set_not_found")
         await tx.delete(GatewayProviderOauthStateTable).where(and(eq(GatewayProviderOauthStateTable.credential_set_id, set.id), eq(GatewayProviderOauthStateTable.org_membership_id, actor.currentMember.id)))
         const where = and(eq(GatewayProviderCredentialTable.credential_set_id, set.id), eq(GatewayProviderCredentialTable.gateway_provider_id, provider.id), eq(GatewayProviderCredentialTable.organization_id, actor.organization.id), eq(GatewayProviderCredentialTable.subject, actor.currentMember.id), eq(GatewayProviderCredentialTable.org_membership_id, actor.currentMember.id))
         const rows = await tx.select().from(GatewayProviderCredentialTable).where(where).for("update")
-        await tx.update(GatewayProviderCredentialTable).set({ status: "revoked", refreshing_until: null, updated_at: new Date() }).where(where)
+        await tx.update(GatewayProviderCredentialTable).set({ status: "revoked", secret: "{}", expires_at: null, scopes: null, refreshing_until: null, last_error: null, updated_at: new Date() }).where(where)
         return rows.filter((row) => row.status !== "revoked")
       })
       await revokeGoogleCredentials(credentials)

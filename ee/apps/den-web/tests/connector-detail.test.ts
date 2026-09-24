@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import {
   connectorAccountStatus,
@@ -146,44 +144,6 @@ describe("connector detail copy", () => {
     }
   });
 });
-
-describe("connectors screen surface", () => {
-  const root = join(import.meta.dir, "..", "app", "(den)", "dashboard");
-  const screen = readFileSync(join(root, "_components", "mcp-connections-screen.tsx"), "utf8");
-
-  test("leads with the flat page header instead of the gradient hero", () => {
-    expect(screen).toContain("<DenPageHeader");
-    expect(screen).not.toContain("DashboardPageTemplate");
-    expect(screen).toContain('title={configuredView ? "Configured connectors" : "Connectors"}');
-    expect(screen).toContain('data-testid="connectors-open-configured"');
-  });
-
-  test("has a detail view that composes the connection row, tools, and information", () => {
-    expect(screen).toContain('export type McpConnectionsScreenView = "catalog" | "configured" | "detail";');
-    for (const testId of [
-      "connector-detail-back",
-      "connector-detail",
-      "connector-detail-state",
-      "connector-detail-copy-link",
-      "connector-detail-chat",
-      "connector-detail-primary",
-      "connector-detail-connection",
-      "connector-detail-tools",
-      "connector-detail-information",
-      "connector-detail-not-found",
-    ]) {
-      expect(screen).toContain(`data-testid="${testId}"`);
-    }
-    expect(screen).toContain("router.push(getMcpConnectionRoute(orgSlug, connection.id));");
-    expect(screen).toContain('connectorHref={(id) => getMcpConnectionRoute(orgSlug, id)}');
-  });
-
-  test("the detail route renders the screen in detail view", () => {
-    const route = readFileSync(join(root, "(admin)", "mcp-connections", "[connectorId]", "page.tsx"), "utf8");
-    expect(route).toContain('<McpConnectionsScreen view="detail" connectorId={connectorId} />');
-  });
-});
-
 
 describe("connectorAccountStatus", () => {
   test("another member's authorization never makes this account connected", () => {

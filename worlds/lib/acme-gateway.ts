@@ -3,9 +3,14 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { readFile } from "node:fs/promises";
 import { allocateFreePort } from "../../evals/packages/cdp/src/index.ts";
 import { denFetch } from "../../evals/packages/behaviors/src/den.ts";
 import type { DenSession } from "../../evals/packages/behaviors/src/den.ts";
+import { server } from "../../evals/packages/env/src/den.ts";
+import type { Den } from "../../evals/packages/env/src/den.ts";
+import type { Place } from "../../evals/packages/env/src/place.ts";
+import { defaultDaytonaExec, execInSandbox, startScriptOnSandbox } from "../../evals/packages/hosts/src/index.ts";
 import { trackResource } from "../../packages/world/src/ledger.ts";
 
 export const ACME_MODEL = "claude-haiku-4-5-20251001";
@@ -113,7 +118,82 @@ export async function startAcmeGateway(stack: AsyncDisposableStack, databaseUrl:
   throw new Error(`Acme Gateway readiness timed out: ${logs}`);
 }
 
-export async function seedAcmeGateway(admin: DenSession, upstream: Awaited<ReturnType<typeof startAcmeUpstream>>) {
+const DAYTONA_GATEWAY_PORT = 8791;
+const DAYTONA_UPSTREAM_PORT = 3990;
+
+export interface AcmeGatewayStack {
+  den: Den;
+  /** Origin the runner (and desktops) use to reach the gateway. */
+  gatewayUrl: string;
+  upstream: { key: string; baseUrl: string; requests(): Promise<{ model: string; authenticated: boolean }[]> };
+  model: Awaited<ReturnType<typeof seedAcmeGateway>>;
+}
+
+/**
+ * Den + real AI Gateway + deterministic Anthropic upstream on Daytona. The
+ * provisioner starts the gateway next to Den (GATEWAY_ENABLED in Den env) and
+ * the upstream witness is uploaded into that sandbox so both talk over its
+ * loopback. The seeded owner (alex@acme.test) administers the provider.
+ */
+export async function bootAcmeGatewayOnDaytona(stack: AsyncDisposableStack, place: Place, options: { denEnv?: Record<string, string> } = {}): Promise<AcmeGatewayStack> {
+  if (place.kind !== "daytona") throw new Error("bootAcmeGatewayOnDaytona requires --place daytona; bootAcmeWeb covers local placement.");
+  const key = randomUUID();
+  const upstreamBaseUrl = `http://127.0.0.1:${DAYTONA_UPSTREAM_PORT}`;
+  const den = stack.use(await server({
+    place, web: true, seedProfile: "demo-org",
+    env: {
+      GATEWAY_ENABLED: "true", GATEWAY_PORT: String(DAYTONA_GATEWAY_PORT),
+      GATEWAY_EGRESS_ALLOWED_ORIGINS: upstreamBaseUrl, DEN_DB_ENCRYPTION_KEY: ACME_ENCRYPTION_KEY,
+      RESEND_API_KEY: "", SMTP_HOST: "", ...options.denEnv,
+    },
+  }));
+  const sandbox = den.placement?.kind === "daytona" ? den.placement.sandboxId : null;
+  if (!sandbox || !den.gateway) throw new Error("Daytona Den did not report its sandbox and co-located AI Gateway.");
+  const witness = await startScriptOnSandbox({
+    sandbox, label: "acme-upstream", port: DAYTONA_UPSTREAM_PORT,
+    scriptSource: await readFile(fileURLToPath(new URL("../../evals/packages/labs/src/acme-upstream.mjs", import.meta.url)), "utf8"),
+    env: { ACME_UPSTREAM_KEY: key, ACME_MODEL, ACME_REPLY },
+    log: (line) => console.error(`[acme-gateway] ${line}`),
+  });
+  // The Den disposer may already have deleted the sandbox; a witness stop then has nothing to stop.
+  stack.defer(() => witness.stop().catch(() => undefined));
+  const model = await seedAcmeGateway(den.admin, { key, baseUrl: upstreamBaseUrl });
+  return {
+    den, gatewayUrl: den.gateway.publicUrl, model,
+    upstream: {
+      key, baseUrl: upstreamBaseUrl,
+      async requests() {
+        const result = await execInSandbox(defaultDaytonaExec, sandbox, `curl -s ${upstreamBaseUrl}/requests`, { timeoutMs: 30_000, context: "acme upstream witness read" });
+        const parsed: unknown = JSON.parse(result.stdout.trim() || "[]");
+        return Array.isArray(parsed) ? parsed.filter(record).map((entry) => ({ model: String(entry.model ?? ""), authenticated: entry.authenticated === true })) : [];
+      },
+    },
+  };
+}
+
+/** One real message through the gateway with the member's issued key; proves routing, auth translation, and the fixed reply. */
+export async function probeAcmeGatewayDirect(admin: DenSession, world: AcmeGatewayStack) {
+  const orgHeaders = { authorization: `Bearer ${admin.token}`, "x-openwork-org-id": world.model.orgId };
+  const connected = await denFetch(admin, `/v1/inference-providers/${world.model.providerId}/connect`, { headers: orgHeaders });
+  const provider = record(connected.body) && record(connected.body.inferenceProvider) ? connected.body.inferenceProvider : undefined;
+  const apiKey = typeof provider?.apiKey === "string" ? provider.apiKey : "";
+  if (!connected.response.ok || !apiKey) throw new Error(`Acme gateway connect failed: HTTP ${connected.response.status}`);
+  const before = (await world.upstream.requests()).length;
+  const response = await fetch(`${world.gatewayUrl}/api/v1/providers/${world.model.providerId}/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: world.model.modelId, max_tokens: 32, messages: [{ role: "user", content: "Verify the Acme AI Gateway." }] }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  const text = await response.text();
+  if (!response.ok || !text.includes(ACME_REPLY)) throw new Error(`Acme gateway probe: HTTP ${response.status} ${text.slice(0, 200)}`);
+  if (text.includes(world.upstream.key)) throw new Error("Upstream credential leaked through the gateway response.");
+  const requests = (await world.upstream.requests()).slice(before);
+  if (!requests.some((entry) => entry.authenticated && entry.model === ACME_MODEL)) throw new Error("Gateway did not translate the model alias and authenticate upstream.");
+  return { reply: ACME_REPLY, upstreamRequests: requests.length };
+}
+
+export async function seedAcmeGateway(admin: DenSession, upstream: { key: string; baseUrl: string }) {
   const headers = { authorization: `Bearer ${admin.token}` };
   const orgs = await denFetch(admin, "/v1/me/orgs", { headers });
   const org = record(orgs.body) && Array.isArray(orgs.body.orgs) ? orgs.body.orgs.find(record) : undefined;

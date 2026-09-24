@@ -82,6 +82,14 @@ export function main(argv = process.argv.slice(2)): Promise<number> {
     cwd: REPO_ROOT,
     worldsDirectory: WORLDS_DIRECTORY,
     preflight: [dockerCheck, mysqlCheck, redisCheck],
-    reapers: { "mysql-db": dropEphemeralDatabase },
+    reapers: {
+      "mysql-db": dropEphemeralDatabase,
+      "freestyle-preview": async (entry) => {
+        if (entry.match !== entry.id) return { status: "skipped", reason: "identity mismatch" };
+        const { deletePreview } = await import("../../../../packages/freestyle/src/index.ts");
+        await deletePreview(entry.id);
+        return { status: "reaped" };
+      },
+    },
   });
 }

@@ -18,7 +18,6 @@ export function mentionPromptParts(part: InstructionMention): [TextPartInput, Te
     // Preserve selection identity through every send path. v1 still receives
     // the instruction; the v2 adapter replaces it with a native attachment.
     ...(part.type === "skill" ? { metadata: { openworkSelectedSkill: { name: part.name } } } : {}),
-    ...(part.type === "connect-skill" ? { metadata: { openworkSelectedSkill: { id: part.capability } } } : {}),
   }];
 }
 

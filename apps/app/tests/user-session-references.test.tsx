@@ -63,7 +63,6 @@ function list(text: string, options: RenderOptions) {
           onEditUserMessage={() => {}}
           onMcpReconnect={() => Promise.reject(new Error("unused"))}
           onMcpReopenAuthorization={() => Promise.resolve()}
-          onMcpRetry={() => {}}
         >
           <MessageList messages={[message]} status="ready" />
         </MessageListProvider>

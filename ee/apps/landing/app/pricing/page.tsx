@@ -3,7 +3,7 @@ import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
 import { StructuredData } from "../../components/structured-data";
 import { getGithubData } from "../../lib/github";
-import { baseOpenGraph } from "../../lib/seo";
+import { baseOpenGraph, withSocialMetadata } from "../../lib/seo";
 
 const pricingSchema = {
   "@context": "https://schema.org",
@@ -37,7 +37,7 @@ const pricingSchema = {
         unitText: "seat per month"
       },
       description:
-        "$10 per seat per month, up to 100 users. Usage analytics, Extension Marketplace, distributed keys, standard support included."
+        "$10 per seat per month, unlimited users. Extension Marketplace, distributed keys, cloud automations, basic analytics, standard support included."
     },
     {
       "@type": "Offer",
@@ -53,15 +53,15 @@ const pricingSchema = {
         unitText: "user per month"
       },
       description:
-        "$40 per user per month, cloud or self-hosted. SSO/SAML and SCIM, desktop policies, OpenWork Web, spend observability, standard SLA support. Volume pricing above 100 users."
+        "$40 per user per month billed annually, cloud or self-hosted. SSO/SAML and SCIM, desktop policies, audit log, spend observability, standard SLA support. Volume pricing above 250 users."
     }
   ]
 };
 
-export const metadata = {
+export const metadata = withSocialMetadata({
   title: "OpenWork Pricing — Free up to 5 users, $10 Team, $40 Enterprise",
   description:
-    "OpenWork is free for up to 5 users. Team is $10 per seat per month up to 100 users. Enterprise is $40 per user per month with SSO, desktop policies, and spend observability — same price cloud or self-hosted, volume pricing above 100 users.",
+    "OpenWork is free for up to 5 users. Team is $10 per seat per month. Enterprise is $40 per user per month, billed annually, with SSO, desktop policies, and spend observability — same price cloud or self-hosted, volume pricing above 250 users. Add-ons: OpenWork Cloud Computer and OpenWork models.",
   alternates: {
     canonical: "/pricing"
   },
@@ -69,7 +69,7 @@ export const metadata = {
     ...baseOpenGraph,
     url: "https://openworklabs.com/pricing"
   }
-};
+});
 
 export default async function PricingPage() {
   const github = await getGithubData();

@@ -368,6 +368,32 @@ for (const v2 of [false, true]) {
   }
 }
 
+for (const v2 of [false, true]) {
+  const engine = v2 ? "v2" : "v1";
+  test(`${engine} cold deep link keeps an indexed session listed after selecting another one when its direct read lands first`, async () => {
+    workspaces = [defaultWorkspaces[0]];
+    await mount("ws_1", "other");
+    await publishRouting(v2);
+    const inventory = requests.find((request) => request.workspaceId === "ws_1");
+    if (!inventory) throw new Error("Expected an in-flight session inventory");
+    expect(hydrationRequests.map((request) => request.sessionId)).toEqual(["other"]);
+    // The direct session read settles a beat before the inventory that already contains it.
+    await act(async () => {
+      hydrationRequests[0].response.resolve(session("ws_1", "other"));
+      inventory.response.resolve([session("ws_1", "long"), session("ws_1", "other")]);
+    });
+    expect(route().sessionsByWorkspaceId.ws_1.map((item) => item.id).sort()).toEqual(["long", "other"]);
+    expect(route().isSessionReferenceCurrent({ workspaceId: "ws_1", sessionId: "other" })).toBe(true);
+    await navigate("/workspace/ws_1/session/long");
+    expect(route().selectedSessionId).toBe("long");
+    expect(route().sessionsByWorkspaceId.ws_1.map((item) => item.id).sort()).toEqual(["long", "other"]);
+    await navigate("/workspace/ws_1/session/other");
+    expect(route().selectedSessionId).toBe("other");
+    expect(hydrationRequests).toHaveLength(1);
+    expect(route().sessionsByWorkspaceId.ws_1.map((item) => item.id).sort()).toEqual(["long", "other"]);
+  });
+}
+
 test("routing readiness starts the fifth selected local workspace before slow background lists finish", async () => {
   workspaces = Array.from({ length: 5 }, (_, index): RouteWorkspace => ({
     id: `ws_${index + 1}`, name: `Workspace ${index + 1}`, displayNameResolved: `Workspace ${index + 1}`,

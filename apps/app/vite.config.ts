@@ -119,6 +119,7 @@ export default defineConfig(({ command, isPreview }) => {
   }
   return {
     base: isElectronPackagedBuild ? "./" : "/",
+    ...(process.env.OPENWORK_VITE_CACHE_DIR ? { cacheDir: process.env.OPENWORK_VITE_CACHE_DIR } : {}),
     define: {
       ...Object.fromEntries(
         Object.entries(migrationReleaseEnv).map(([k, v]) => [

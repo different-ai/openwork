@@ -2,9 +2,9 @@ import Link from "next/link";
 import { AppFeedbackForm, type AppFeedbackPrefill } from "../../components/app-feedback-form";
 import { OpenWorkMark } from "../../components/openwork-mark";
 import { SiteFooter } from "../../components/site-footer";
-import { baseOpenGraph } from "../../lib/seo";
+import { baseOpenGraph, withSocialMetadata } from "../../lib/seo";
 
-export const metadata = {
+export const metadata = withSocialMetadata({
   title: "OpenWork — Contact",
   description: "Contact the OpenWork team for product, support, security, and sales questions.",
   alternates: {
@@ -14,7 +14,7 @@ export const metadata = {
     ...baseOpenGraph,
     url: "https://openworklabs.com/contact",
   },
-};
+});
 
 const prefill: AppFeedbackPrefill = {
   source: "openwork-contact-page",

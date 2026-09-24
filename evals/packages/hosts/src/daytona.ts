@@ -643,13 +643,21 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
     };
 
     try {
-      await checkedExec(exec, ["exec", sandbox, "--", "mkdir", "-p", shellQuote(userDataDir)], `mkdir Daytona Electron profile ${userDataDir}`, { timeoutMs: 30_000 });
+      // `daytona exec` runs no shell of its own: quotes, `|` and `>` in bare
+      // arguments reach the program literally. Anything shell-shaped goes
+      // through one `bash -lc` argument, as the other remote commands here do.
+      await checkedExec(
+        exec,
+        ["exec", sandbox, "--", `bash -lc ${shellQuote(`mkdir -p ${shellQuote(userDataDir)} && test -d ${shellQuote(userDataDir)}`)}`],
+        `mkdir Daytona Electron profile ${userDataDir}`,
+        { timeoutMs: 30_000 },
+      );
       if (opts.bootstrap) {
         const bootstrapJson = `${JSON.stringify(opts.bootstrap, null, 2)}\n`;
         const encoded = Buffer.from(bootstrapJson, "utf8").toString("base64");
         await checkedExec(
           exec,
-          ["exec", sandbox, "--", "echo", encoded, "|", "base64", "-d", ">", shellQuote(bootstrapPath)],
+          ["exec", sandbox, "--", `bash -lc ${shellQuote(`mkdir -p ${shellQuote(profileRoot)} && printf %s ${shellQuote(encoded)} | base64 -d > ${shellQuote(bootstrapPath)} && test -s ${shellQuote(bootstrapPath)}`)}`],
           `write Daytona Electron bootstrap ${bootstrapPath}`,
           { timeoutMs: 30_000 },
         );

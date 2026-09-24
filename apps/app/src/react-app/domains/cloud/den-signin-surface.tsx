@@ -10,6 +10,7 @@ import { t } from "../../../i18n";
 import { resolveExtensionIconSrc } from "../../design-system/extension-icon-src";
 import { DEFAULT_DEN_BASE_URL } from "../../../app/lib/den";
 import { DitherBackdrop } from "@/components/dither-backdrop";
+import { PageTitlebarRegion } from "@/components/page";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "../../design-system/text-input";
 import { OrganizationServerAffordance } from "../settings/cloud/organization-server-affordance";
@@ -225,7 +226,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
         </div>
 
         {/* Titlebar drag region */}
-        <div className="absolute inset-x-0 top-0 z-20 h-10 mac:titlebar-drag" />
+        <PageTitlebarRegion />
 
         <div className="relative z-10 flex min-h-dvh items-center justify-center px-6 py-16">
           <div className="w-full max-w-[720px] rounded-3xl border border-border bg-background px-8 pb-12 pt-10 sm:px-16 sm:pb-16 sm:pt-14">

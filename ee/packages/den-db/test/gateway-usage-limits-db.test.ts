@@ -41,6 +41,7 @@ import {
   TeamTable,
   TeamMemberTable,
   GatewayRequestLogTable as Log,
+  GatewayUsageAssignmentTable as A,
   GatewayUsageBucketTable as B,
   GatewayUsageEventTable as E,
   GatewayUsageChargeTable as C,
@@ -59,7 +60,7 @@ const url = process.env.DEN_USAGE_TEST_DATABASE_URL
 if (
   url &&
   (!["127.0.0.1", "localhost"].includes(new URL(url).hostname) ||
-    new URL(url).pathname !== "/usage_limits_test")
+    !/^\/usage_limits_test(?:_[a-z0-9_]+)?$/.test(new URL(url).pathname))
 )
   throw new Error("Use the owned disposable loopback usage_limits_test database only.")
 const plan = loadMigrationPlan(fileURLToPath(new URL("../drizzle", import.meta.url)))
@@ -254,6 +255,125 @@ async function whileLocked(
     await holder
   }
 }
+
+dbTest("organization grants are unique, dynamic, tenant-scoped and retain all winning sources", async () => {
+  const f = await fixture()
+  const other = await fixture()
+  const policy = await f.service.savePolicy(f.admin, f.body)
+  await Promise.all([
+    f.service.assign(f.admin, policy.id, { organization: true }),
+    f.service.assign(f.admin, policy.id, { organization: true }),
+  ])
+  const assigned = (await f.service.listPolicies(f.admin)).policies.find((row) => row.id === policy.id)
+  assert.ok(assigned)
+  assert.equal(assigned.assignments.length, 1)
+  const assignment = assigned.assignments[0]
+  assert.ok(assignment)
+  assert.deepEqual(assignment, { id: assignment.id, organization: true, memberId: null, teamId: null })
+  const future = await f.addMember()
+  for (const member of [f.admin, f.member, future]) {
+    const status = gatewayUsageStatusSchema.parse(await f.service.getStatus(member))
+    assert.equal(status.buckets.length, 3)
+    assert.deepEqual(status.buckets[0]?.provenance, [{ kind: "organization", assignmentId: assignment.id, memberId: null, teamId: null }])
+  }
+  assert.equal((await other.service.getStatus(other.member)).state, "unlimited")
+  const teamId = createDenTypeId("team")
+  await f.db.insert(TeamTable).values({ id: teamId, organizationId: f.admin.organizationId, name: "Usage team" })
+  await f.db.insert(TeamMemberTable).values({ id: createDenTypeId("teamMember"), teamId, orgMembershipId: f.member.memberId })
+  await f.service.assign(f.admin, policy.id, { memberId: f.member.memberId })
+  await f.service.assign(f.admin, policy.id, { teamId })
+  assert.deepEqual((await f.service.getStatus(f.member)).buckets[0]?.provenance?.map((row) => row.kind).sort(), ["direct", "organization", "team"])
+  const larger = await f.assigned({ ...f.body, limits: [{ timeframe: "day", costUsd: "2" }] })
+  assert.equal((await f.service.getStatus(f.member)).buckets[0]?.policyId, larger.id)
+  assert.equal((await f.service.getStatus(future)).buckets[0]?.policyId, policy.id)
+  await f.service.unassign(f.admin, policy.id, assignment.id)
+  assert.equal((await f.service.getStatus(future)).state, "unlimited")
+  assert.equal((await f.service.getStatus(f.member)).buckets.length, 3)
+})
+
+dbTest("organization assignment CHECK and unique index reject ambiguous and duplicate targets", async () => {
+  const f = await fixture()
+  const policy = await f.service.savePolicy(f.admin, f.body)
+  const base = { policyId: policy.id, organizationId: f.admin.organizationId, createdAt: new Date() }
+  for (const target of [
+    { memberId: null, teamId: null, organization: null },
+    { memberId: null, teamId: null, organization: false },
+    { memberId: f.member.memberId, teamId: null, organization: true },
+    { memberId: null, teamId: createDenTypeId("team"), organization: true },
+    { memberId: f.member.memberId, teamId: createDenTypeId("team"), organization: null },
+  ]) await assert.rejects(f.db.insert(A).values({ ...base, ...target, id: randomUUID() }))
+  await f.db.insert(A).values({ ...base, id: randomUUID(), organization: true })
+  await assert.rejects(f.db.insert(A).values({ ...base, id: randomUUID(), organization: true }))
+  for (const memberId of [f.admin.memberId, f.member.memberId])
+    await f.db.insert(A).values({ ...base, id: randomUUID(), memberId })
+  assert.equal((await f.db.select().from(A).where(eq(A.policyId, policy.id))).length, 3)
+})
+
+dbTest("organization transitions revoke stale extensions and pending resets without clearing spend", async () => {
+  const f = await fixture()
+  const second = await f.addMember()
+  const policy = await f.assigned()
+  await f.service.assign(f.admin, policy.id, { memberId: second.memberId })
+  await f.spend(1_000_000)
+  await f.spend(1_000_000, second)
+  const firstBucket = (await f.service.getStatus(f.member)).buckets[0]
+  const secondBucket = (await f.service.getStatus(second)).buckets[0]
+  assert.ok(firstBucket && secondBucket)
+  const approved = await f.service.submitReset(f.member, firstBucket.id, "Extension")
+  await f.service.reviewReset(f.admin, approved.id, "approved")
+  const pending = await f.service.submitReset(second, secondBucket.id, "Extension")
+  const assignment = (await f.service.assign(f.admin, policy.id, { organization: true })).assignments.find((row) => row.organization)
+  assert.ok(assignment)
+  assert.equal((await f.service.getStatus(f.member)).buckets[0]?.extensionMicroUsd, 0)
+  assert.equal((await f.service.getStatus(f.member)).buckets[0]?.usedMicroUsd, 1_000_000)
+  assert.equal((await f.service.reviewReset(f.admin, pending.id, "approved")).status, "expired")
+  const next = await f.service.submitReset(second, secondBucket.id, "Current sources")
+  assert.equal((await f.service.listResets(f.admin, false)).requests.find((row) => row.id === next.id)?.status, "pending")
+  await f.service.assign(f.admin, policy.id, { organization: true })
+  assert.equal((await f.service.listResets(f.admin, false)).requests.find((row) => row.id === next.id)?.status, "pending")
+  await f.service.unassign(f.admin, policy.id, assignment.id)
+  assert.equal((await f.service.reviewReset(f.admin, next.id, "approved")).status, "expired")
+})
+
+dbTest("organization policy edits, member removal, archive and deletion preserve usage lifecycle", async () => {
+  const f = await fixture()
+  const policy = await f.service.savePolicy(f.admin, f.body)
+  await f.service.assign(f.admin, policy.id, { organization: true })
+  const future = await f.addMember()
+  await f.spend(1_000_000, future)
+  const bucket = (await f.service.getStatus(future)).buckets[0]
+  assert.ok(bucket)
+  const first = await f.service.submitReset(future, bucket.id, "Before policy edit")
+  assert.equal((await f.service.listResets(f.admin, false)).requests.find((row) => row.id === first.id)?.status, "pending")
+  const updated = await f.service.savePolicy(f.admin, { ...f.body, name: "Revised" }, policy.id, policy.revision)
+  assert.equal((await f.service.reviewReset(f.admin, first.id, "approved")).status, "expired")
+  const second = await f.service.submitReset(future, bucket.id, "Before removal")
+  await f.db.transaction((tx) => withGatewayUsageEntitlementMutation(tx, future.organizationId, async () => {
+    await tx.update(MemberTable).set({ removedAt: new Date() }).where(eq(MemberTable.id, future.memberId))
+  }, [future.memberId]))
+  assert.equal((await f.service.reviewReset(f.admin, second.id, "approved")).status, "expired")
+  await assert.rejects(f.service.getStatus(future), (error: unknown) => error instanceof GatewayUsageError && error.code === "member_not_found")
+  await f.service.archivePolicy(f.admin, policy.id, updated.revision)
+  assert.equal((await f.service.getStatus(f.member)).state, "unlimited")
+  assert.equal((await f.db.select().from(B).where(eq(B.memberId, future.memberId)))[0]?.usedMicroUsd, 1_000_000)
+  await f.db.transaction((tx) => deleteGatewayUsageForOrganization(tx, future.organizationId))
+  assert.equal((await f.db.select().from(A).where(eq(A.organizationId, future.organizationId))).length, 0)
+})
+
+dbTest("restoring an archived policy brings back its assignments and limits", async () => {
+  const f = await fixture()
+  const policy = await f.service.savePolicy(f.admin, f.body)
+  const assigned = await f.service.assign(f.admin, policy.id, { organization: true })
+  assert.notEqual((await f.service.getStatus(f.member)).state, "unlimited")
+  const archived = await f.service.archivePolicy(f.admin, policy.id, assigned.revision)
+  assert.equal((await f.service.getStatus(f.member)).state, "unlimited")
+  await assert.rejects(f.service.restorePolicy(f.admin, policy.id, assigned.revision), (error: unknown) => error instanceof GatewayUsageError && error.code === "policy_revision_conflict")
+  const restored = await f.service.restorePolicy(f.admin, policy.id, archived.revision)
+  assert.equal(restored.archivedAt, null)
+  assert.equal(restored.revision, archived.revision + 1)
+  assert.deepEqual(restored.assignments.map((row) => row.organization), [true])
+  assert.notEqual((await f.service.getStatus(f.member)).state, "unlimited")
+})
 
 dbTest(
   "fresh and 0104-applied databases migrate; old E/C/S/R and spend survive unchanged",

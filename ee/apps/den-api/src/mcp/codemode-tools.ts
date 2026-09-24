@@ -160,6 +160,9 @@ function textParts(value: unknown): string[] {
 }
 
 function toolResultValue(value: unknown): unknown {
+  // Den routes attach their untruncated payload for scripts; the model-visible
+  // `content` is capped per string and would silently cut long files.
+  if (isRecord(value) && "payload" in value) return value.payload
   if (isRecord(value) && value.structuredContent !== undefined) return value.structuredContent
   const text = textParts(value)
   if (text.length === 0) return null
@@ -200,6 +203,7 @@ export function buildDenCatalogToolTree(input: {
       env: input.env,
       operation,
       principal: input.principal,
+      includePayload: true,
       toolInput: {
         path: normalizeToolRecord(isRecord(toolInput) ? toolInput.path : undefined),
         query: normalizeToolRecord(isRecord(toolInput) ? toolInput.query : undefined),
@@ -274,6 +278,7 @@ export async function buildNativeProviderToolTree(input: {
         member: memberIdentity,
         catalog: input.catalog,
         principal: input.principal,
+        includePayload: true,
         path: normalizeToolRecord(isRecord(toolInput) ? toolInput.path : undefined),
         query: normalizeToolRecord(isRecord(toolInput) ? toolInput.query : undefined),
         body: normalizeToolBody(isRecord(toolInput) ? toolInput.body : undefined),

@@ -987,6 +987,12 @@ describe("cloud provider sync gateway", () => {
     const modelSuffix = "00000000000000000000000003";
     const modelId = `gwm_${groupSuffix}_${setSuffix}_${modelSuffix}`;
     const pendingSetId = "gcs_00000000000000000000000004";
+    const pendingModelId = `gwm_${groupSuffix}_${pendingSetId.slice(4)}_${modelSuffix}`;
+    const pendingModels = [{
+      id: pendingModelId, name: "Assigned pending model", config: { id: pendingModelId },
+      upstreamModelId: "assigned-upstream", modelGroupId: `gmg_${groupSuffix}`, modelGroupName: "Assigned models",
+      credentialSetId: pendingSetId, credentialSetName: "Personal Google",
+    }];
     const pendingAuthUrl = `https://den.example.test/v1/inference-providers/ipr_pending/oauth/start?credentialSetId=${pendingSetId}`;
     const gatewayBaseUrl = "https://inference.example.test/api/v1/providers/ipr_ready";
     const llmProvider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
@@ -1000,8 +1006,8 @@ describe("cloud provider sync gateway", () => {
       credentialStatus: "ready",
       status: "active",
       authUrl: null,
-      authorizationRequests: [],
-      modelIds: ["claude-sonnet"],
+      authorizationRequests: [{ credentialSetId: pendingSetId, name: "Personal Google", authUrl: pendingAuthUrl, models: pendingModels }],
+      modelIds: ["claude-sonnet", "unassigned-upstream"],
       updatedAt: "2026-08-20T00:00:00.000Z",
       providerConfig: {
         env: ["IPR_READY_ANTHROPIC_API_KEY"],
@@ -1024,7 +1030,7 @@ describe("cloud provider sync gateway", () => {
       credentialMode: "member",
       credentialStatus: "member_auth_required",
       authUrl: pendingAuthUrl,
-      authorizationRequests: [{ credentialSetId: pendingSetId, name: "Personal Google", authUrl: pendingAuthUrl }],
+      authorizationRequests: [{ credentialSetId: pendingSetId, name: "Personal Google", authUrl: pendingAuthUrl, models: pendingModels }],
       models: [],
       modelIds: [],
       providerConfig: { env: ["IPR_PENDING_GOOGLE_GENERATIVE_AI_API_KEY"], npm: "@ai-sdk/google" },
@@ -1120,11 +1126,19 @@ describe("cloud provider sync gateway", () => {
     });
     expect(status.providers[1]?.source).toBe("custom");
     expect(status.skippedProviders).toEqual([{
+      cloudProviderId: "ipr_ready",
+      providerId: "ipr_ready",
+      credentialSetId: pendingSetId,
+      name: "Team Anthropic / Personal Google",
+      reason: "member_auth_required",
+      models: pendingModels,
+    }, {
       cloudProviderId: "ipr_pending",
       providerId: "ipr_pending",
       credentialSetId: pendingSetId,
       name: "Member Google / Personal Google",
       reason: "member_auth_required",
+      models: pendingModels,
     }]);
 
     const runtimeProviders = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
@@ -1143,6 +1157,9 @@ describe("cloud provider sync gateway", () => {
     expect(storedEnv.some((entry) => entry.key === "GOOGLE_GENERATIVE_AI_API_KEY")).toBe(false);
 
     expect(engineRequests).toContain("PUT /auth/ipr_ready");
+    expect(engineRequests).not.toContain("PUT /auth/ipr_pending");
+    expect(JSON.stringify(runtimeProviders)).not.toContain(pendingModelId);
+    expect(JSON.stringify(sync.status())).not.toContain("unassigned-upstream");
     const readState = async () => ({
       runtime: await readGlobalRuntimeOpencodeConfig(config),
       runtimeFile: await readFile(openworkRuntimeConfigFilePath(config), "utf8"),
@@ -1185,6 +1202,14 @@ describe("cloud provider sync gateway", () => {
         const malformedGateway = { ...readyGateway, models: [{ ...readyGateway.models[0], credentialSetId: undefined }] };
         cases.push({
           respond: () => Response.json({ inferenceProviders: [malformedGateway], inferenceProvider: malformedGateway }),
+          message: endpoint.invalid,
+        });
+        const malformedPending = { ...readyGateway, authorizationRequests: [{
+          credentialSetId: pendingSetId, name: "Personal Google", authUrl: pendingAuthUrl,
+          models: [{ ...pendingModels[0], credentialSetId: `gcs_${setSuffix}` }],
+        }] };
+        cases.push({
+          respond: () => Response.json({ inferenceProviders: [malformedPending], inferenceProvider: malformedPending }),
           message: endpoint.invalid,
         });
         if (!endpoint.list) cases.push({

@@ -510,6 +510,7 @@ export class SeedChannel implements Seed {
           as: options.as ?? "admin",
           model: options.model,
           env: options.env,
+          workspace: options.workspace,
           workspacePath: options.workspacePath,
           profileDir: options.profileDir,
           enterpriseActivated: options.enterpriseActivated,

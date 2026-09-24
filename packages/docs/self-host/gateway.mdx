@@ -1,6 +1,6 @@
 ---
 title: "Enable OpenWork Gateway"
-description: "Opt in to Gateway with matching images, explicit destinations, shared secrets, and a platform-admin dashboard grant."
+description: "Configure Gateway with matching images, explicit destinations, and shared secrets for admins in every organization."
 ---
 
 OpenWork Gateway routes model requests to configured providers with server-held credentials, model groups, credential sets, and access grants. It runs from `ee/apps/gateway`, normally on port `8791`.
@@ -11,16 +11,17 @@ It is **not** `den-gateway`, the separate OpenWork Web proxy, and it is not the 
   This guide requires the Gateway-capable chart implementation introduced in chart `0.2.0` and matching Den API, Den Web, and Gateway images from this release. Chart version alone is not evidence that an image supports deployment capability version `1`. The checkout's `Chart.appVersion: "0.1.0"` is a packaging placeholder, not a compatible image recommendation. Older stable images do not gain support by using new values. For an existing database, complete [Upgrade Gateway safely](/self-host/gateway-upgrade) before starting the new images.
 </Warning>
 
-## Two independent controls
+## Deployment configuration and admin access
+
+Gateway is generally available to admins and above in every organization when the deployment is configured. New organizations require no opt-in or platform-admin grant; there is no organization flag or API toggle.
 
 | Control | Who changes it | Meaning |
 | --- | --- | --- |
 | `GATEWAY_ENABLED=true` | Deployment operator | Validated deployment intent; advertises `deploymentCapabilities: { version: 1, aiGateway: true }` and admits Gateway management requests. Helm sets it through `gateway.enabled: true`. |
-| `capabilities.gatewayDashboard: true` | Allowlisted platform administrator | Exposes the Gateway dashboard to organization admins and above. This existing organization flag defaults to false. |
 
-Neither organization mode, a running legacy inference service, nor the presence of billing/provider credentials opts a deployment in. With `GATEWAY_ENABLED` absent, the new capability is false and existing OpenWork Models behavior is preserved. Hosted operators explicitly set `GATEWAY_ENABLED=true` through their existing hosting environment mechanism on Den API and Gateway; hosted deployments are not assumed to use Helm.
+Neither organization mode, a running legacy inference service, nor the presence of billing/provider credentials opts a deployment in. With `GATEWAY_ENABLED` absent, the deployment capability is false and existing OpenWork Models behavior is preserved. Hosted operators explicitly set `GATEWAY_ENABLED=true` through their existing hosting environment mechanism on Den API and Gateway; hosted deployments are not assumed to use Helm. These remain installation configuration checks, not organization rollout controls.
 
-The organization flag is dashboard exposure, not runtime authorization. Do not create another flag, put deployment capabilities in organization metadata, or use ordinary organization metadata updates to grant dashboard access. Management APIs still enforce organization-admin permissions and fresh authentication for privileged writes independently of dashboard exposure.
+Do not create a replacement flag, put deployment capabilities in organization metadata, or use ordinary organization metadata updates to grant dashboard access. Management APIs still enforce organization-admin permissions and fresh authentication for privileged writes. Regular members do not gain shared credential administration.
 
 ## Prepare the deployment
 
@@ -28,7 +29,7 @@ The organization flag is dashboard exposure, not runtime authorization. Do not c
 2. Initialize or migrate the database with a reviewed procedure, and verify the release schema before starting application traffic. A new empty database can use this release's current-schema bootstrap; an existing database requires the [upgrade procedure](/self-host/gateway-upgrade).
 3. Precreate the database/authentication Secret in the release namespace using your secret manager. Den API and Gateway must use the same database and the same existing `DEN_DB_ENCRYPTION_KEY`; do not generate a new encryption key during an upgrade.
 4. Configure the internal Gateway origin and a separate desktop-reachable Gateway origin, DNS, trusted certificates, and network access.
-5. Render and inspect the values, deploy the matching images, verify the authenticated contract, then request the organization dashboard grant.
+5. Render and inspect the values, deploy the matching images, verify the authenticated deployment contract, then verify Gateway access as an organization admin without an organization opt-in.
 
 ### Helm values
 
@@ -79,7 +80,7 @@ Use `secret.create: false` for these examples. Chart-created Secrets use `secret
 
 - `GATEWAY_PROXY_BASE_URL` is the internal/service-to-service destination. Set it on Den API and Gateway. Internal HTTP is permitted across a trusted private boundary.
 - `GATEWAY_PUBLIC_BASE_URL` is the desktop-reachable destination, not the internal Service address. Den API uses it in member Gateway provider configurations. Configure it on both services for shared startup validation.
-- Models clients retain an explicit, valid desktop origin from `INFERENCE_PROXY_BASE_URL`; otherwise they use a valid `GATEWAY_PUBLIC_BASE_URL`. This selection is independent of `GATEWAY_ENABLED`: changing only management enablement does not replace a known public destination with the internal proxy. Preserve your existing Models HTTPS hostname, including for organizations without Gateway dashboard opt-in. No subscription, key, or upstream-routing changes are required.
+- Models clients retain an explicit, valid desktop origin from `INFERENCE_PROXY_BASE_URL`; otherwise they use a valid `GATEWAY_PUBLIC_BASE_URL`. This selection is independent of `GATEWAY_ENABLED`: changing only management enablement does not replace a known public destination with the internal proxy. Preserve your existing Models HTTPS hostname even when Gateway management is disabled on the deployment. No subscription, key, or upstream-routing changes are required.
 - Both must be explicit origins without credentials, non-root paths, queries, or fragments. A trailing `/` is allowed. Do not append `/api/v1` to either value.
 - Production public origins require HTTPS and a non-local qualified hostname or valid non-loopback IP address. Private DNS is possible, but member devices must resolve it, route to it, and trust its certificate. Internal `.svc` or `.internal` names are not valid production public origins.
 - Helm validates production-style origins statically; startup validation does not check DNS, TLS, network reachability, or schema readiness. Local development exceptions require `OPENWORK_DEV_MODE=1` and a non-production `NODE_ENV`, not a production workaround.
@@ -167,19 +168,73 @@ An empty component image tag clears an inherited tag and falls back to shared `i
 
 Clearing **saved canonical maps** is different. Helm can refill an empty map before templates run: after saving `gateway.env.SAVED`, `--reuse-values --set-json 'gateway.env={}'` retains that entry. Earlier values files can refill nested maps too. To clear previously canonical entries, use `--reset-values` with a complete, reviewed values file that omits the old entries and explicitly includes the desired empty maps. Preserve all other deployment settings and Secret references. A final empty override file or `--reset-then-reuse-values` does not reliably discard saved maps. Inspect the resulting render; `null` is Helm's deletion operator, not a supported chart clear value.
 
-## Grant dashboard access
+## Open Gateway and retire old opt-in procedures
 
-After deployment verification, an **allowlisted platform administrator** opens Den `/admin`, selects the organization, and enables **Gateway dashboard**. The existing platform API is `PUT /v1/admin/organizations/:organizationId/capabilities` with this partial body:
+After deployment verification, sign in as an organization admin or above and open **AI Gateway → AI Providers**. This applies to every organization, including a newly created one with no capability metadata. No backoffice grant is needed; platform-admin routes keep their existing allowlist authorization but no longer offer a Gateway dashboard toggle.
 
-```json
-{
-  "capabilities": {
-    "gatewayDashboard": true
-  }
-}
-```
+For older clients, `capabilities.gatewayDashboard` in organization and admin capability responses is constant `true`. It is deprecated wire compatibility, **not a real feature flag**, not a deployment-readiness signal, and not an authorization decision. The admin capabilities API retains `gatewayDashboard` boolean/null input as a deprecated no-op; sending `true`, `false`, or `null` cannot change Gateway access. Other capabilities retain their existing controls.
 
-An ordinary organization owner/admin cannot grant this reserved capability. Ask the instance/platform administrator to enable the existing flag for the intended organization; do not request a competing feature flag or try a metadata-write workaround. Once granted, reload the dashboard and use **Models > Gateway** as an organization admin or above. Regular members do not gain shared credential administration.
+Stored `organization.metadata.capabilities.gatewayDashboard` values, including explicit `false`, are ignored. No database migration or backfill is required for this retirement. The release's required schema migrations still apply. Do not add a replacement organization flag or use metadata-write workarounds.
+
+## Google Vertex AI: each member signs in
+
+Google now calls this product **Gemini Enterprise Agent Platform (formerly Vertex AI)**. For the complete project, billing, IAM, model access, OAuth client, and in-app setup walkthrough, follow [Google Agent Platform (Vertex AI)](/ai-gateway/google-agent-platform). The operational reference below retains the catalog names used by OpenWork.
+
+Use this mode for `google-vertex` (Gemini) or `google-vertex-anthropic` (Claude on Vertex). Each member delegates their own Google account to Gateway. Google access/refresh tokens and the OAuth client secret stay encrypted on the server; Desktop and hosted workers receive only an OpenWork Gateway credential. Members do **not** need gcloud, local Application Default Credentials (ADC), `GOOGLE_APPLICATION_CREDENTIALS`, or a service-account key for this mode. It is separate from Google Workspace connections and from shared service-account authentication.
+
+### Prepare Google Cloud and the OAuth app
+
+1. In the inference project, enable the Vertex AI API and billing, arrange model quota, and confirm the selected model is available in the configured location. For Claude, enable the required partner-model access and accept its terms. A `global` endpoint is not a promise that every model supports it; verify each model/location combination.
+2. Grant each member's **Google principal** the required inference-project IAM permissions. `roles/aiplatform.user` is the documented broad role; a reviewed narrower role must include the prediction permissions needed by the model, such as `aiplatform.endpoints.predict`. OpenWork membership, model grants, Google consent, and Google IAM are separate checks. The Google email need not match the member's OpenWork email; this mode does not enforce a Workspace-domain restriction by default.
+3. Configure your organization's Google OAuth consent screen and create an OAuth client with application type **Web application**, not Desktop app. Use an Internal audience when eligible; otherwise configure the appropriate External audience/test users and complete Google's production/verification requirements. Your organization must satisfy Google's authorized-domain policies for the callback deployment, including when using a hosted callback it does not own.
+4. In Den **AI Gateway > AI Providers > Add provider**, choose the appropriate Vertex provider. In **Key**, select **Each member signs in**, enter the intended project and location, and supply the Web OAuth client ID and client secret. Review **Models** and **Who can use it** before saving; the form creates the upstream credential set and selected access rules together. Open the saved provider's row to view its callback or edit **Key**. The secret is write-only; leave it blank for ordinary edits. Project/location are fixed on the provider: create a separate provider to change its destination.
+5. Copy the **exact callback URL displayed by Den** into Google's **Authorized redirect URIs**. The value is generated for this deployment and ends in `/v1/inference-providers/oauth/callback`; provider details expose it as `oauthCallbackUrl`. Do not substitute the Gateway inference origin, `/gateway/connect`, a desktop loopback URL, or another deployment's hostname. Ensure Den's canonical public API URL (`DEN_API_PUBLIC_URL` when explicitly configured), HTTPS reverse proxy, and browser session cookies agree with the displayed URL. Compare the complete URI, including any deployment path prefix, and do not add a trailing slash.
+6. Confirm **Who can use it** includes only the intended members, teams, or organization. The form defaults to **Everyone in the organization**; turn it off and use **Add person** or **Add team** to restrict access. Saving links the chosen models and credential set through access rules. Creating a set through the API alone, being its creator, or being an administrator does not automatically grant inference access. Each granted member must still connect their own Google account.
+
+The authorization request uses exactly these scopes:
+
+- `openid`
+- `email`
+- `https://www.googleapis.com/auth/cloud-platform`
+
+It requests offline access with consent and PKCE. Cloud-platform consent does not grant IAM permissions by itself. The OAuth-client project and inference project can differ; neither is automatically a separately configured quota project.
+
+<Warning>
+  There is currently no administrator-configurable quota-project setting or Gateway injection of `x-goog-user-project`. Caller-supplied quota-project headers and Vertex quota query parameters are stripped. If your Google setup requires an explicit quota project, this is an unsupported gap, not something to fix by adding a client header or local ADC. A future supported implementation must select the project from administrator-controlled configuration and verify `serviceusage.services.use` on that project.
+</Warning>
+
+See Google's [Web server OAuth guide](https://developers.google.com/identity/protocols/oauth2/web-server), [OAuth policies](https://developers.google.com/identity/protocols/oauth2/policies), and [Vertex access-control guidance](https://cloud.google.com/vertex-ai/generative-ai/docs/access-control).
+
+### Member connection and browser account
+
+Open the assigned OAuth provider's **Login** action in Desktop's AI provider settings, or use Den's **My Model Connections** page at `/dashboard/model-connections`. Choose the intended credential set if more than one is assigned. The browser first opens an OpenWork connection entry page, then continues to Google:
+
+1. Sign in to Den in that browser with the **same OpenWork account that started Connect**. A Desktop login does not automatically sign the external browser in. If the browser is using another OpenWork account, sign out there and use the initiating account; an entry link or OAuth state is not a substitute for that session.
+2. Choose a Google account with IAM access to the configured inference project and approve the requested scopes. Google sign-in does not change the OpenWork member who owns the connection.
+3. Return to OpenWork and refresh connection/model status as needed. Check the connected account and selected set before testing a model. Closing the browser or stopping the wait does not revoke a connection; use **Disconnect** to cancel pending sign-ins and remove the credential. If the attempt expires, start Connect again.
+
+**Configured** means the administrator supplied the OAuth app. **Connected/ready** describes the stored member authorization, not a live Vertex permission or quota test. Missing offline authorization, malformed token responses, or legacy credentials without a valid expiry require sign-in again rather than being treated as indefinite credentials. A failed replacement authorization does not replace the existing stored database credential; this is not proof that its Google grant remains valid. If Google issues a validated token response but OIDC verification fails, OpenWork stores no replacement and best-effort revokes the newly issued refresh token. This fail-closed cleanup policy also applies when verification cannot complete because signing-key retrieval times out or encounters a network failure. Recognizable key-fetch timeout/network errors report temporary verification unavailability rather than invalid identity; other verification failures remain generic. Cleanup revocation may affect the previous connection and other Google connections sharing the same grant/OAuth client, so those connections may require reconnecting even while their local rows still appear ready. Failed token-response validation does not grant cleanup ownership of arbitrary unvalidated token material.
+
+### Session policy, rotation, and disconnect
+
+- Google Cloud session-control policy can require interactive reauthentication (`invalid_grant`, including `invalid_rapt`). Revocation and token expiry can do the same. Use **Reconnect** when required; member OAuth does not guarantee indefinitely unattended operation or bypass organization policy. Use a separately approved workload-authentication mode for workloads that cannot pause for user sign-in; Gateway does not silently fall back to it.
+- External OAuth apps in **Testing** generally issue refresh tokens that expire after **seven days** for this scope set. The identity-only exception does not apply because cloud-platform is requested. Complete the appropriate Google production process rather than weakening session policy. See Google's [token-expiration guidance](https://developers.google.com/identity/protocols/oauth2) and [production-readiness guide](https://developers.google.com/identity/protocols/oauth2/production-readiness/overview).
+- Rotating the OAuth client ID or client secret in a credential set cancels its pending sign-ins and revokes/erases its affected local Google credentials. Coordinate the Google-side change and Den update, then have affected members reconnect. Omitting the secret in an API edit preserves it; renaming alone does not revoke credentials. Changing credential mode or disabling the **credential set** also revokes its credentials. Re-enabling it does not restore erased tokens.
+- Disabling the **provider** blocks inference and cancels pending sign-ins, but retains stored credentials; removing an access grant blocks that access without being a Google disconnect. These actions are not equivalent to revoking a Google grant. A current organization member can disconnect their retained credential even after grant loss or provider disablement; membership-offboarding cleanup handles removed members.
+- **Disconnect** immediately marks the selected local member credential revoked, erases its token material, and cancels pending sign-ins. Remote Google revocation is best effort; a successful local disconnect does not prove Google completed revocation, and tokens are not retained for a later retry. If needed, remove the app's access in the Google account directly. Refresh models in open Desktop/Web sessions; live Gateway authorization still prevents new requests from using the revoked credential.
+- Google may revoke other connections sharing the same Google authorization grant, including another local set or the other Vertex provider using the same OAuth client. Do not assume separate local rows are independent Google grants. Disconnect does not delete your Google OAuth application. Gateway client keys and `DEN_DB_ENCRYPTION_KEY` are different credentials: rotating them is not a substitute for Google disconnect, and replacing the database encryption key is not an OAuth rotation procedure.
+
+### Verify before rollout
+
+<Warning>
+  The automated fixtures and configuration checks are not real-Google acceptance evidence. They do not establish that an organization-owned OAuth client can use your hosted/self-hosted callback, that Google has verified the app, or that a member has Vertex IAM, partner-model entitlement, quota, or policy-compatible refresh. Validate these with an explicitly authorized test project and accounts before rollout.
+</Warning>
+
+Use approved non-sensitive prompts to test both Gemini and Claude, streaming and non-streaming, from Desktop and hosted Web with no local Google credentials. Verify the displayed account, model/set selection, token reuse and refresh, reconnect after rotation/revocation, denial for a Google account without IAM, and session-control behavior where applicable. Check Google principal attribution in Cloud Audit Logs where enabled. Record only sanitized outcomes and release identifiers, never tokens, client secrets, cookies, callback query strings, or raw token endpoint responses.
+
+The client-facing SDKs are the ordinary Google and Anthropic static-key SDKs; Gateway adapts their requests to the Google or Anthropic Vertex publisher respectively. Matching model-level Vertex SDK overrides are mapped too, while model aliases and supported metadata remain intact. Mixed-SDK partner models remain outside this support: Google sign-in does not enable unrelated adapters. Existing HTTP fixtures cover Vertex routing and relay behavior, but actual SDK-to-Vertex-adapter decoding through the materialized path still requires verification for both providers and both response modes.
+
+For `redirect_uri_mismatch`, compare the exact displayed callback with Google's registration. For `invalid_client`, ask the credential-set administrator to repair the OAuth client rather than repeatedly asking members for consent. For Vertex permission/model-access failures, review IAM, project, region, and partner access; do not assume every upstream `401`/`403` is an expired refresh token. Transient token-endpoint failures and quota errors need separate diagnosis. Do not replay an ambiguous or partly delivered inference stream automatically.
 
 ## Verify and troubleshoot
 
@@ -192,13 +247,15 @@ Sign in to Den as an organization admin, select the intended organization, and i
 }
 ```
 
-Do not export cookies, authorization headers, or the full organization response into tickets. Record only the capability fields and release image identifiers. A missing/malformed capability object, unsupported version, or value other than literal boolean `true` is unsupported and fails closed in the UI. Verify all API replicas serve the matching release; one response is not proof of a consistent rollout.
+The `capabilities.gatewayDashboard` value above is only the deprecated constant-true compatibility response; do not use it to verify enablement. Check `deploymentCapabilities.version` and `deploymentCapabilities.aiGateway` instead.
+
+Do not export cookies, authorization headers, or the full organization response into tickets. Record only the capability fields and release image identifiers. A missing/malformed `deploymentCapabilities` object, unsupported version, or `aiGateway` value other than literal boolean `true` is unsupported and fails closed in the UI. Verify all API replicas serve the matching release; one response is not proof of a consistent rollout.
 
 | State | Expected result / action |
 | --- | --- |
 | Organization access is loading or switching | `Checking workspace access...`; management UI and requests wait. This is not a deployment-unavailable verdict. |
-| Organization admin with dashboard grant, but unsupported/disabled deployment | Exact notice below, with no provider editor or management fetch. Check images, the top-level contract, and operator configuration. |
-| No dashboard grant or insufficient organization role | Redirect to the dashboard; ask the platform admin for the grant or review membership. |
+| Organization admin, but unsupported/disabled deployment | Exact notice below, with no provider editor or management fetch. Check images, the top-level contract, and operator configuration. |
+| Insufficient organization role | Redirect to the dashboard; review membership. There is no Gateway-specific organization grant. |
 | Organization-context request fails | An error notice, not a fabricated disabled capability. Resolve session/API failure. |
 | Enabled deployment with an upstream/provider outage | Diagnose credentials, DNS, TLS, egress, catalog warnings, and upstream errors. Availability is configuration intent, not an upstream health probe; do not relabel the deployment as unsupported. |
 
@@ -210,8 +267,8 @@ An authenticated, authorized management API request on a disabled deployment ret
 
 > Gateway management is not enabled on this deployment. Ask your administrator to configure GATEWAY_ENABLED=true.
 
-Authentication, role, and fresh-session failures remain distinct. Member usable/connect/sign-in/revoke paths and OAuth callbacks are not governed by the dashboard flag or management gate.
+Authentication, role, and fresh-session failures remain distinct. Member usable/connect/sign-in/revoke paths and OAuth callbacks are not governed by the deployment management gate; retiring the organization flag does not change their authorization.
 
 `/health` proves process liveness. Gateway `/ready` executes `select 1` to check database connectivity; it does **not** prove the Gateway schema or migrations exist. The capability response also does not prove schema health. Verify migration receipts and actual schema separately, then test an authorized provider path with approved non-sensitive data before reopening traffic.
 
-For eligible hosted organization admins, **OpenWork Models and Gateway coexist** in navigation and the command palette when both deployment support and the organization dashboard grant are effective. The OpenWork Models page remains available directly without redirecting to Gateway. Gateway retains its deployment, organization-grant, and admin guards; loading temporarily defers access decisions. Existing single-org behavior still routes Models to custom providers. This coexistence does not change subscriptions, billing, Models keys, or provider data. See [disable and recovery choices](/self-host/gateway-upgrade#disable-without-a-schema-downgrade) before turning anything off.
+For organization admins, **AI Gateway** is the navigation entry, with **AI Providers** and **OpenWork Models** as tabs. Provider creation and editing stay inside the **AI Providers** tab. Gateway provider management retains its deployment and admin guards; loading temporarily defers access decisions. No organization-grant guard remains. The OpenWork Models tab retains its own availability rules. This navigation does not change subscriptions, billing, Models keys, or provider data. See [disable and recovery choices](/self-host/gateway-upgrade#disable-without-a-schema-downgrade) before turning anything off.

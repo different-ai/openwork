@@ -17,17 +17,18 @@ function builtInEntry(id: string): McpDirectoryInfo {
 }
 
 describe("extension taxonomy", () => {
-  test("only MCPs, Skills, and Plugins are primary, with MCPs as the default", () => {
-    expect(extensionInventoryFilters).toEqual(["mcp", "skill", "plugin"]);
-    expect(primaryLibraryFilter()).toBe("mcp");
-    expect(primaryLibraryFilter("all")).toBe("mcp");
-    expect(primaryLibraryFilter("connection")).toBe("mcp");
+  test("All, Connectors, Skills, and Plugins are primary, with All as the default", () => {
+    expect(extensionInventoryFilters).toEqual(["all", "connection", "skill", "plugin"]);
+    expect(primaryLibraryFilter()).toBe("all");
+    expect(primaryLibraryFilter("all")).toBe("all");
+    expect(primaryLibraryFilter("connection")).toBe("connection");
     expect(primaryLibraryFilter("skill")).toBe("skill");
     expect(primaryLibraryFilter("plugin")).toBe("plugin");
     // Old command and agent routes land on Skills; the items themselves stay in the composer.
     expect(primaryLibraryFilter("command")).toBe("skill");
     expect(primaryLibraryFilter("agent")).toBe("skill");
-    expect(primaryLibraryFilter("app")).toBe("mcp");
+    expect(primaryLibraryFilter("app")).toBe("all");
+    expect(primaryLibraryFilter("mcp")).toBe("connection");
   });
 
   test("the MCPs category lists third-party servers, not OpenWork's own runtimes or plumbing", () => {
@@ -58,7 +59,7 @@ describe("extension taxonomy", () => {
   test("the all filter keeps every taxonomy and non-MCP filters match exactly", () => {
     expect(matchesExtensionFilter("all", "plugin")).toBe(true);
     expect(matchesExtensionFilter("connection", "connection")).toBe(true);
-    expect(matchesExtensionFilter("connection", "mcp")).toBe(false);
+    expect(matchesExtensionFilter("connection", "mcp")).toBe(true);
     expect(matchesExtensionFilter("skill", "app")).toBe(false);
     expect(matchesExtensionFilter("skill", "connection", "mcp")).toBe(false);
     expect(matchesExtensionFilter("command", "command")).toBe(true);

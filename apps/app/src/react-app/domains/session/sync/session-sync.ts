@@ -1250,6 +1250,32 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     return;
   }
 
+  if (event.type === "session.history.truncated") {
+    const props = event.properties;
+    if (!props || typeof props !== "object" || !("sessionID" in props) || !("messageID" in props)
+      || typeof props.sessionID !== "string" || typeof props.messageID !== "string") return;
+    const { sessionID, messageID } = props;
+    if (!isTrackedSession(entry, sessionID)) return;
+    const fullKey = snapshotKey(workspaceId, sessionID);
+    const latestKey = ["react-session-latest", ...fullKey];
+    void queryClient.cancelQueries({ queryKey: latestKey });
+    void queryClient.cancelQueries({ queryKey: fullKey, exact: true });
+    // Native revert commit permanently deletes this suffix. Ordinary snapshot
+    // merges deliberately preserve cached messages, so clear every history
+    // cache before removing the temporary revert cursor.
+    queryClient.setQueriesData<LatestSessionHistory>({ queryKey: latestKey }, current => current ? {
+      messages: applyRevertCursor(current.messages, messageID),
+      source: applyRevertCursor(current.source, messageID),
+    } : current);
+    queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionID), (current = []) => applyRevertCursor(current, messageID));
+    queryClient.setQueryData<OpenworkSessionHistory>(fullKey, current => {
+      if (!current) return current;
+      const boundary = current.messages.findIndex(message => message.info.id === messageID);
+      return boundary < 0 ? current : { ...current, messages: current.messages.slice(0, boundary) };
+    });
+    return;
+  }
+
   if (event.type === "message.removed") {
     // Revert cleanup (and explicit message deletion) removes messages
     // server-side; drop them from both the live transcript cache and the

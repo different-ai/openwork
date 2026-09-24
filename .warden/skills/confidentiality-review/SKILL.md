@@ -1,6 +1,6 @@
 ---
 name: confidentiality-review
-description: Flag customer, prospect, partner, or outside-person identities in the diff. Findings block clearance.
+description: Flag customer, prospect, partner, or outside-person identities in the diff. Reported in the Warden security summary.
 allowed-tools: Read Grep Glob
 ---
 

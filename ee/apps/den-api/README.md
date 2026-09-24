@@ -36,6 +36,10 @@ The request access log records request id, method, normalized route, status, and
 
 Builds generate source maps. Sentry source maps are uploaded only when `DEN_OBSERVABILITY_BACKEND=sentry` and `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`, and `SENTRY_RELEASE` are present; `SENTRY_DIST` is passed through when set. The auth token must stay in secret storage and is never written to env examples or logs.
 
+## Approved web origins
+
+Organization owners and super-admins approve self-hosted OpenWork Web instances in the Den dashboard under **Org settings → Approved web origins** (`/v1/org/web-origins`). Each entry is an **exact HTTPS origin** — scheme, host, and optional port, with no path, query, fragment, credentials, or wildcard — and an organization can approve up to 20. An approved origin can receive web sign-in handoffs back to `/signin` only while that organization is active, and is allowed for credentialed browser requests to Den API. Handoff approval is checked on every request; CORS approval is cached per process and takes effect within about 30 seconds on every Den API replica. If `DEN_CORS_HANDLED_BY_EDGE=true`, the edge must also allow the same exact origin and the `Authorization` preflight.
+
 ## Current routes
 
 - `GET /` -> `302 https://openworklabs.com`

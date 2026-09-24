@@ -54,12 +54,9 @@
     "./connection-action-app": {
       "types": "./src/connection-action-app.ts",
       "development": "./src/connection-action-app.ts",
-      "default": "./src/connection-action-app.ts"
-    },
-    "./plugin-flow-app": {
-      "types": "./src/plugin-flow-app.ts",
-      "development": "./src/plugin-flow-app.ts",
-      "default": "./src/plugin-flow-app.ts"
+      "bun": "./src/connection-action-app.ts",
+      "browser": "./src/connection-action-app.ts",
+      "default": "./dist/connection-action-app.js"
     },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",
@@ -117,6 +114,11 @@
       "development": "./src/den/microsoft-365.ts",
       "default": "./src/den/microsoft-365.ts"
     },
+    "./den/organization-web-origins": {
+      "types": "./src/den/organization-web-origins.ts",
+      "development": "./src/den/organization-web-origins.ts",
+      "default": "./src/den/organization-web-origins.ts"
+    },
     "./den/mcp-connection-action": {
       "types": "./src/den/mcp-connection-action.ts",
       "development": "./src/den/mcp-connection-action.ts",
@@ -146,11 +148,6 @@
       "types": "./src/url.ts",
       "development": "./src/url.ts",
       "default": "./src/url.ts"
-    },
-    "./visualization": {
-      "types": "./src/visualization.ts",
-      "development": "./src/visualization.ts",
-      "default": "./src/visualization.ts"
     },
     "./den/desktop-policies-runtime": {
       "types": "./src/den/desktop-policies.ts",

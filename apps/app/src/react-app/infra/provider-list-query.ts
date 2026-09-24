@@ -1,8 +1,9 @@
-import { useQuery, type QueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 
 import type { Client, ModelRef, ProviderListItem } from "../../app/types";
 import { unwrap } from "../../app/lib/opencode";
-import { dispatchNewProviders } from "../../app/lib/provider-events";
+import { dispatchNewProviders, subscribeProviderCatalogChanges } from "../../app/lib/provider-events";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 export const PROVIDER_LIST_CACHE_MS = 5 * 60 * 1000;
@@ -215,6 +216,11 @@ export function useProviderListQuery(input: {
   directory?: string | null;
   enabled?: boolean;
 }) {
+  const queryClient = useQueryClient();
+  useEffect(() => subscribeProviderCatalogChanges((scope) => {
+    if (scope.baseUrl !== input.baseUrl || (scope.directory ?? "") !== (input.directory ?? "")) return;
+    void queryClient.invalidateQueries({ queryKey: providerListQueryKey(scope) });
+  }), [input.baseUrl, input.directory, queryClient]);
   return useQuery({
     queryKey: providerListQueryKey(input),
     enabled: Boolean(input.client) && (input.enabled ?? true),

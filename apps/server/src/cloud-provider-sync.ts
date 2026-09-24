@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import type { GatewayAuthorizationRequest, GatewayDesktopOauthStartResponse, GatewayUsableModel } from "@openwork/types/den/gateway";
 import { catalogFastVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 
-import { rolloverOutcomeApplied, type RolloverOutcome } from "./engine-pool.js";
+import { enginePoolForConfig, rolloverOutcomeApplied, type RolloverOutcome } from "./engine-pool.js";
 import type { EnvService } from "./env-file.js";
 import { ApiError } from "./errors.js";
 import { selectPrimaryCredentialEnvName, syncManagedProviderAuth } from "./managed-provider-auth.js";
@@ -26,6 +26,26 @@ import { openworkConfigPath } from "./workspace-files.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
 
 type JsonRecord = Record<string, unknown>;
+
+export function gatewayAuthorizationUrl(raw: unknown, session: CloudProviderDenSession): string {
+  if (typeof raw !== "string" || !raw.trim()) throw new ApiError(502, "invalid_authorization_url", "Den returned an invalid authorization URL");
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new ApiError(502, "invalid_authorization_url", "Den returned an invalid authorization URL");
+  }
+  const api = new URL(session.baseUrl);
+  const loopbackHosts = ["localhost", "127.0.0.1", "[::1]"];
+  const localBridge = url.protocol === "http:" && api.protocol === "http:" && loopbackHosts.includes(url.hostname) && loopbackHosts.includes(api.hostname);
+  const bridge = url.pathname === "/gateway/connect" && (url.protocol === "https:" || localBridge);
+  const google = url.origin === "https://accounts.google.com" && url.pathname === "/o/oauth2/v2/auth";
+  if ((!bridge && !google) || url.username || url.password || url.hash || raw.includes(session.token)
+    || [...url.searchParams.values()].some((value) => value.includes(session.token))) {
+    throw new ApiError(502, "invalid_authorization_url", "Den returned an invalid authorization URL");
+  }
+  return raw;
+}
 
 export type CloudProviderDenSession = {
   /** Resolved Den API base URL, including any required `/api/den` prefix. */
@@ -68,6 +88,7 @@ export type CloudProviderSyncSkippedProvider = {
    */
   reason: "missing_credentials" | "needs_key" | "member_auth_required" | "org_credential_missing" | "no_accessible_models";
   credentialSetId?: string;
+  models?: GatewayUsableModel[];
   /**
    * Legacy Den OAuth URL, kept for older readers. Current clients must start
    * OAuth using the host-authenticated provider-ID action, not this URL.
@@ -396,7 +417,24 @@ function parseInferenceProvider(value: unknown): DenInferenceProviderSummary | n
       const name = readRequiredString(request.name);
       const authUrl = readRequiredString(request.authUrl);
       if (!credentialSetId || !/^gcs_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(credentialSetId) || !name || !authUrl) return null;
-      authorizationRequests.push({ credentialSetId, name, authUrl });
+      const models: GatewayUsableModel[] = [];
+      if (request.models !== undefined) {
+        if (!Array.isArray(request.models)) return null;
+        for (const value of request.models) {
+          const model = parseModel(value);
+          if (!model || !/^gwm_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(model.id)
+            || model.config.id !== model.id || !model.upstreamModelId || !model.modelGroupId || !model.modelGroupName
+            || model.credentialSetId !== credentialSetId || !model.credentialSetName
+            || model.id.split("_")[2] !== credentialSetId.slice(4)
+            || model.id.split("_")[1] !== model.modelGroupId.slice(4)) return null;
+          models.push({
+            id: model.id, name: model.name, config: { ...model.config, id: model.id },
+            upstreamModelId: model.upstreamModelId, modelGroupId: model.modelGroupId, modelGroupName: model.modelGroupName,
+            credentialSetId, credentialSetName: model.credentialSetName,
+          });
+        }
+      }
+      authorizationRequests.push({ credentialSetId, name, authUrl, ...(request.models === undefined ? {} : { models }) });
     }
   }
   // Tolerant: older Den servers omit authUrl; a non-string is treated as absent.
@@ -676,6 +714,7 @@ function prepareMaterialization(
         cloudProviderId: provider.id, providerId: runtimeProviderId(provider),
         credentialSetId: request.credentialSetId, name: `${provider.name} / ${request.name}`,
         reason: "member_auth_required",
+        ...(request.models === undefined ? {} : { models: request.models }),
       });
     }
     if (provider.memberCredentialState && provider.memberCredentialState !== "active") {
@@ -999,21 +1038,7 @@ export class CloudProviderSync {
     if (generation !== this.contextGeneration || this.session !== session) {
       throw new ApiError(409, "session_changed", "The active account changed; try again");
     }
-    const rawUrl = isRecord(payload) ? readRequiredString(payload.authUrl) : null;
-    let url: URL;
-    try {
-      url = new URL(rawUrl ?? "");
-    } catch {
-      throw new ApiError(502, "invalid_authorization_url", "Den returned an invalid authorization URL");
-    }
-    // Vertex is the only supported member OAuth provider. Never open a Den
-    // session URL, arbitrary upstream URL, or a URL carrying our bearer.
-    if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth"
-      || url.username || url.password || url.hash || url.href.includes(session.token)
-      || [...url.searchParams.values()].some((value) => value.includes(session.token))) {
-      throw new ApiError(502, "invalid_authorization_url", "Den returned an invalid authorization URL");
-    }
-    return { authorizationUrl: url.href };
+    return { authorizationUrl: gatewayAuthorizationUrl(isRecord(payload) ? payload.authUrl : null, session) };
   }
 
   stop(): void {
@@ -1034,6 +1059,16 @@ export class CloudProviderSync {
       () => undefined,
     );
     return run;
+  }
+
+  /**
+   * Whether there is an engine to write provider state into and reload: a
+   * managed engine (which runs before the first workspace exists) or a
+   * workspace attached to one.
+   */
+  private engineAvailable(): boolean {
+    return enginePoolForConfig(this.config) !== null
+      || Boolean(findManagedEngineWorkspace(this.config.workspaces) ?? this.config.workspaces[0]);
   }
 
   private sessionContextKey(session: CloudProviderDenSession): string {
@@ -1289,8 +1324,8 @@ export class CloudProviderSync {
     }
 
     const workspaceCleanup = await this.cleanupWorkspaceTakeovers();
-    const engineWorkspace = findManagedEngineWorkspace(this.config.workspaces) ?? this.config.workspaces[0];
-    const runtimeFileChanged = engineWorkspace
+    const engineAvailable = this.engineAvailable();
+    const runtimeFileChanged = engineAvailable
       ? (await writeOpenworkRuntimeConfigFile(this.config)).changed
       : false;
     // Deliver credentials before disposing the current provider instances.
@@ -1326,7 +1361,7 @@ export class CloudProviderSync {
       || authChanged;
     let reloadError: unknown;
     let reloadDeferred = false;
-    if (engineWorkspace && this.reloadPending) {
+    if (engineAvailable && this.reloadPending) {
       if (await this.reloadDeferredByActivity()) {
         reloadDeferred = true;
         this.scheduleReloadRetry();
@@ -1453,8 +1488,7 @@ export class CloudProviderSync {
     }
     await this.cleanupWorkspaceTakeovers();
 
-    const engineWorkspace = findManagedEngineWorkspace(this.config.workspaces) ?? this.config.workspaces[0];
-    if (engineWorkspace) {
+    if (this.engineAvailable()) {
       const fileResult = await writeOpenworkRuntimeConfigFile(this.config);
       this.reloadPending = this.reloadPending || providerChanged || fileResult.changed;
     }

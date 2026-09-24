@@ -323,7 +323,7 @@ export function AuthPanel({
     title: isSingleOrgMode ? "Create your account." : "Get started.",
     copy: isSingleOrgMode
       ? `Join ${singleOrgName}. The organization is managed by this deployment.`
-      : "Free to try. Team plans from $50/mo.",
+      : "Free to try. Team plans from $10 per seat.",
     submitLabel: "Create account",
     ...signUpContent,
   };
