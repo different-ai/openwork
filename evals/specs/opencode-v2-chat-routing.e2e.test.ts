@@ -705,9 +705,16 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
     await control(app, "command_palette.open", {});
     await fill(app, 'input[data-command-palette-input]', "Switch to OpenCode v1");
     await clickText(app, "Switch to OpenCode v1", { selector: "[data-slot=command-item]" });
-    await untilStatus(app, (status) => !status.chatRouting, 30_000, "chat routing to be disabled");
+    await untilStatus(app, (status) => !status.chatRouting && !status.enabled && !status.running, 60_000, "the switch to v1 to finish");
     const routedOffAt = Date.now();
     await go(app, `/workspace/${workspaceId}/session`);
+    // Both engines can list the v1 model. Wait for the renderer's engine
+    // inventory refresh as well as the server switch before creating a task.
+    await waitFor(app, browserScript((workspaceId, namedSessionId) => {
+      const group = document.querySelector(`[data-sidebar-workspace-id="${workspaceId}"]`);
+      return group !== null && !group.querySelector('[data-session-loading-indicator]')
+        && !group.querySelector(`[data-sidebar-session-id="${namedSessionId}"]`);
+    }, [workspaceId, namedSessionId]), { timeoutMs: 30_000, label: "sidebar has finished switching to v1 history" });
     await waitForModelInPicker(app, modelNameV1, 45_000);
     await closeModelPicker(app);
     await createNewSessionThroughControl(app);
