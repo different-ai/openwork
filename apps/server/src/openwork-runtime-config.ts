@@ -81,7 +81,6 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openwork: {
         description: "OpenWork default agent",
         mode: "primary",
-        temperature: 0.2,
         prompt: OPENWORK_AGENT_PROMPT,
         permission: {
           ...permissions,
