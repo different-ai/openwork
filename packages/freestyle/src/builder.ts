@@ -25,7 +25,7 @@ export interface BuildOptions {
   diagnostic?: (stage: string, log: string) => Promise<void>;
 }
 
-async function runScript(vm: Vm, stage: string, script: string, options: BuildOptions) {
+export async function runScript(vm: Vm, stage: string, script: string, options: BuildOptions) {
   const root = `/opt/openwork-preview/${stage}`;
   await execChecked(vm, "mkdir -p /opt/openwork-preview");
   await vm.fs.writeTextFile(`${root}.sh`, `#!/bin/bash

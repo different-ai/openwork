@@ -22,7 +22,9 @@ export interface EvidenceSession {
   expiresAt: string;
 }
 
-async function session(id: string, sourceSha: string, api: ReturnType<typeof client>): Promise<EvidenceSession> {
+export async function readEvidenceSession(id: string, sourceSha: string, api = client()): Promise<EvidenceSession> {
+  const owner = await api.vms.get(id);
+  if (![EVIDENCE_KIND, FORK_KIND].includes(owner.metadata.kind) || owner.metadata.sourceSha !== sourceSha) throw new Error("Not an owned evidence VM");
   const value: unknown = JSON.parse(await api.vms.ref(id).fs.readTextFile(ACCESS_FILE));
   if (!record(value) || typeof value.token !== "string" || !/^[\w-]{43}$/.test(value.token)
     || typeof value.expiresAt !== "string" || Date.parse(value.expiresAt) <= Date.now() || !record(value.origins)
@@ -33,7 +35,7 @@ async function session(id: string, sourceSha: string, api: ReturnType<typeof cli
     cdpOrigin: value.origins.cdp, cookie: `__Host-openwork-preview=${value.token}`, expiresAt: value.expiresAt };
 }
 
-async function allocate(input: { snapshotId: string; slug: string; kind: string; sourceSha: string; metadata?: Record<string, string> }, api: ReturnType<typeof client>) {
+async function allocate(input: { snapshotId: string; slug: string; kind: string; sourceSha: string; metadata?: Record<string, string> }, api: ReturnType<typeof client>, probe: typeof fetch = fetch) {
   const nonce = randomUUID().replaceAll("-", "");
   const origins = { desktop: `https://evidence-${nonce}.preview.openwork.software`, cdp: `https://cdp-${nonce}.preview.openwork.software` };
   const created = await api.vms.create({
@@ -48,15 +50,15 @@ async function allocate(input: { snapshotId: string; slug: string; kind: string;
       || (await created.vm.fs.readTextFile(`${root}/evidence-ready`)).trim() !== "web-v1") throw new Error("Evidence world source mismatch");
     const expiresAt = new Date(Date.parse(created.data.createdAt) + 3600_000).toISOString();
     await created.vm.fs.writeTextFile(ACCESS_FILE, JSON.stringify({ token: randomBytes(32).toString("base64url"), expiresAt, origins }), { mode: 0o600 });
-    const result = await session(created.vmId, input.sourceSha, api);
-    await waitForPublicAccess(result.url, fetch, undefined, "desktop");
+    const result = await readEvidenceSession(created.vmId, input.sourceSha, api);
+    await waitForPublicAccess(result.url, probe, undefined, "desktop");
     return result;
   } catch (error) { await created.vm.delete().catch(() => undefined); throw error; }
 }
 
-export async function launchEvidenceWorld(snapshotId: string, sourceSha: string, api = client()) {
+export async function launchEvidenceWorld(snapshotId: string, sourceSha: string, api = client(), probe: typeof fetch = fetch) {
   if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error("Full source SHA required");
-  return allocate({ snapshotId, sourceSha, slug: `ow-evidence-source-${randomUUID().replaceAll("-", "")}`, kind: EVIDENCE_KIND }, api);
+  return allocate({ snapshotId, sourceSha, slug: `ow-evidence-source-${randomUUID().replaceAll("-", "")}`, kind: EVIDENCE_KIND }, api, probe);
 }
 
 export async function captureEvidenceCheckpoint(input: { vmId: string; sourceSha: string; imageHash: string }, api = client()): Promise<EvidenceCheckpoint> {
@@ -77,7 +79,7 @@ export async function captureEvidenceCheckpoint(input: { vmId: string; sourceSha
 }
 
 /** Caller resolves checkpoint from the authenticated immutable report, never the request body. */
-export async function forkEvidenceCheckpoint(value: unknown, reportId: string, requestId: string, api = client()): Promise<EvidenceSession> {
+export async function forkEvidenceCheckpoint(value: unknown, reportId: string, requestId: string, api = client(), probe: typeof fetch = fetch): Promise<EvidenceSession> {
   const checkpoint = parseEvidenceCheckpoint(value);
   if (!/^[a-f0-9]{32}$/.test(reportId) || !/^[a-f0-9-]{36}$/.test(requestId)) throw new Error("Invalid fork request");
   if (Date.parse(checkpoint.expiresAt) <= Date.now()) throw new CheckpointUnavailable("This checkpoint has expired");
@@ -91,7 +93,7 @@ export async function forkEvidenceCheckpoint(value: unknown, reportId: string, r
     const slug = `ow-evidence-fork-${key}-${slot}`;
     try {
       const result = await allocate({ snapshotId: snapshot.id, slug, kind: FORK_KIND, sourceSha: checkpoint.sourceSha,
-        metadata: { reportId, requestId, checkpoint: checkpoint.id } }, api);
+        metadata: { reportId, requestId, checkpoint: checkpoint.id } }, api, probe);
       try {
         const restored = parseEvidenceCheckpoint(JSON.parse(await api.vms.ref(result.id).fs.readTextFile(manifest)));
         if (JSON.stringify(restored) !== JSON.stringify(checkpoint)) throw new CheckpointUnavailable("Checkpoint does not match its screenshot");
@@ -102,7 +104,7 @@ export async function forkEvidenceCheckpoint(value: unknown, reportId: string, r
       const existing = await api.vms.get(slug).catch((cause: unknown) => { if (isMissing(cause)) return null; throw cause; });
       if (!existing) throw error; // Account quota, not an occupied slot.
       if (existing.metadata.kind === FORK_KIND && existing.metadata.reportId === reportId && existing.metadata.requestId === requestId) {
-        return session(existing.id, checkpoint.sourceSha, api);
+        return readEvidenceSession(existing.id, checkpoint.sourceSha, api);
       }
     }
   }

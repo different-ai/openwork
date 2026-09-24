@@ -5,7 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createServer, request } from "node:http";
 import { bootAcmeWeb } from "/workspace/worlds/acme-web.ts";
 import { chrome, localHost } from "/workspace/evals/packages/hosts/src/index.ts";
-import { signInDesktopAs, selectModel, waitUntilInteractive, evalIn } from "/workspace/evals/packages/behaviors/src/index.ts";
+import { signInDesktopAs, createAndSelectWorkspace, selectModel, waitUntilInteractive, evalIn } from "/workspace/evals/packages/behaviors/src/index.ts";
 import { browserScript } from "/workspace/evals/packages/cdp/src/index.ts";
 
 const root = "/opt/openwork-preview";
@@ -15,6 +15,7 @@ process.env.pnpm_config_verify_deps_before_run = "false";
 process.env.OPENWORK_EVAL_MYSQL_URL = "mysql://root:password@127.0.0.1:3306";
 process.env.DATABASE_REDIS_URL = "redis://127.0.0.1:6379";
 process.env.DISPLAY = ":99";
+process.env.CHROME_BIN = "/opt/openwork-preview/evidence-chrome";
 process.env.GOMEMLIMIT = "512MiB";
 const stack = new AsyncDisposableStack();
 function service(command, args, name) {
@@ -47,6 +48,8 @@ try {
   const browser = stack.use(await chrome({ host: localHost({ repoRoot: "/workspace", log: () => {} }), name: "evidence-web", startUrl: world.web.manifest.webUrl, headless: false }));
   await waitUntilInteractive(browser);
   await signInDesktopAs(browser, world.den.ref, world.den.admin);
+  await mkdir("/root/evidence-workspace", { recursive: true });
+  await createAndSelectWorkspace(browser, { path: "/root/evidence-workspace" });
   await evalIn(browser, browserScript((value) => { localStorage.setItem("openwork.defaultModel", value); window.dispatchEvent(new Event("openwork.defaultModelChanged")); }, [`${world.model.providerId}/${world.model.modelId}`]));
   await selectModel(browser, world.model.modelName, { provider: "Acme AI Gateway" });
   // The viewer keeps the saved Chromium tab. A direct app link would open a new
