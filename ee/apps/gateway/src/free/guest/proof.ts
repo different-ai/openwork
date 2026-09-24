@@ -1,13 +1,14 @@
-import { createHash, createPublicKey, verify } from "node:crypto"
+import { createPublicKey, verify } from "node:crypto"
 import { z } from "zod"
-import { DESKTOP_FREE_MACHINE_ID_PATTERN, DESKTOP_FREE_PROOF_CLOCK_SKEW_MS, DESKTOP_FREE_PROOF_MAX_BYTES, DESKTOP_FREE_RELEASE_TAG_PATTERN,
-  desktopFreeProofMessage, type DesktopFreeProofClaims } from "@openwork/types/desktop-free-access"
-import { matchReleaseTag, type ReleaseSecretCandidate } from "./free-release.js"
+import { DESKTOP_FREE_ARCHES, DESKTOP_FREE_MACHINE_ID_PATTERN, DESKTOP_FREE_PLATFORMS, DESKTOP_FREE_PROOF_CLOCK_SKEW_MS, DESKTOP_FREE_PROOF_MAX_BYTES,
+  DESKTOP_FREE_RELEASE_TAG_PATTERN, desktopFreeProofMessage, type DesktopFreeProofClaims } from "@openwork/free-auto"
+import { matchReleaseTag, sha256Hex } from "@openwork/free-auto/node"
+import type { ReleaseSecretCandidate } from "./release-secrets.js"
 
 const claims = {
   publicKey: z.string().length(60).regex(/^[A-Za-z0-9+/]+=$/),
   machineId: z.string().regex(DESKTOP_FREE_MACHINE_ID_PATTERN),
-  appVersion: z.string().min(1).max(128), platform: z.enum(["darwin", "win32", "linux"]), arch: z.enum(["arm64", "x64"]),
+  appVersion: z.string().min(1).max(128), platform: z.enum(DESKTOP_FREE_PLATFORMS), arch: z.enum(DESKTOP_FREE_ARCHES),
   timestamp: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), nonce: z.string().uuid(),
   signature: z.string().length(86).regex(/^[A-Za-z0-9_-]+$/),
 }
@@ -21,7 +22,6 @@ export type VerifiedDesktopFreeProof = DesktopFreeProofClaims & DesktopFreeBindi
   /** Which secret tagged a v3 proof; null for a v2 proof from a release that predates release tags. */
   releaseSource: ReleaseSecretCandidate["source"] | null
 }
-export function desktopFreeHash(value: string | Uint8Array) { return createHash("sha256").update(value).digest("hex") }
 
 export function verifyDesktopFreeProof(input: {
   header: string | null; method: string; path: string; bodyHash: string; authorization: string;
@@ -41,12 +41,12 @@ export function verifyDesktopFreeProof(input: {
     if (der.toString("base64") !== proof.publicKey) return null
     const key = createPublicKey({ key: der, format: "der", type: "spki" })
     if (key.asymmetricKeyType !== "ed25519" || key.export({ format: "der", type: "spki" }).toString("base64") !== proof.publicKey) return null
-    const keyThumbprint = desktopFreeHash(Uint8Array.from(der))
+    const keyThumbprint = sha256Hex(Uint8Array.from(der))
     if (input.binding && (input.binding.keyThumbprint !== keyThumbprint || input.binding.machineId !== proof.machineId || input.binding.appVersion !== proof.appVersion
       || input.binding.platform !== proof.platform || input.binding.arch !== proof.arch)) return null
     const signatureBytes = Buffer.from(signature, "base64url")
     if (signatureBytes.toString("base64url") !== signature) return null
-    const request = { method: input.method, path: input.path, bodyHash: input.bodyHash, authorizationHash: desktopFreeHash(input.authorization) }
+    const request = { method: input.method, path: input.path, bodyHash: input.bodyHash, authorizationHash: sha256Hex(input.authorization) }
     let releaseSource: VerifiedDesktopFreeProof["releaseSource"] = null
     if (proof.version === 3 && input.releaseSecrets) {
       // The tag is checked before the signature so a wrong-release secret is never mistaken for a bad signature.

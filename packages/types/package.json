@@ -129,11 +129,6 @@
       "development": "./src/workspace.ts",
       "default": "./src/workspace.ts"
     },
-    "./desktop-free-access": {
-      "types": "./src/desktop-free-access.ts",
-      "development": "./src/desktop-free-access.ts",
-      "default": "./src/desktop-free-access.ts"
-    },
     "./desktop-ipc": {
       "types": "./src/desktop-ipc.ts",
       "development": "./src/desktop-ipc.ts",

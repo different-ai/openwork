@@ -37,7 +37,7 @@ import { assertOrganizationManagedModelsAllowed, updateOrganizationMetadata } fr
 import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js"
 import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
-import { MEMBER_FREE_STATUS_PATH } from "@openwork/types/desktop-free-access"
+import { MEMBER_FREE_STATUS_PATH } from "@openwork/free-auto"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id

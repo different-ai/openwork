@@ -2,7 +2,7 @@ import "./load-env.js";
 import type { DenDbMode, PlanetScaleCredentials } from "@openwork-ee/den-db";
 import { gatewayInteger, gatewayOrigin, parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env";
 import { z } from "zod";
-import { readAutoConfig } from "./free-config.js";
+import { readAutoConfig } from "./free/shared/config.js";
 
 const EnvSchema = z
   .object({

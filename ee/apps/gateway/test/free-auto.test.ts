@@ -5,25 +5,26 @@ import { Hono } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR, freeInferenceWindow, managedModelCatalog, readFreeInferenceConfig } from "@openwork/types/den/inference"
 import { DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH,
-  MEMBER_FREE_STATUS_PATH, desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeSessionPowMessage, leadingZeroBits, type DesktopFreeProofClaims } from "@openwork/types/desktop-free-access"
-import { readAutoConfig, freeRequestReservation, freeUsageAmount, rampedDeviceAmount, FREE_OPENAI_CHAT_URL } from "../src/free-config.js"
-import { desktopFreeHash, verifyDesktopFreeProof } from "../src/desktop-free-proof.js"
-import { createDesktopFreeReleaseSource, desktopFreeVersionError, supportedDesktopReleases, type DesktopRelease } from "../src/desktop-free-version.js"
-import { deriveReleaseSecret, releaseTag } from "../src/free-release.js"
-import { releaseTagRequired } from "../src/desktop-free-access.js"
-import { createAnonymousIdentities, issueAnonymousToken, verifyAnonymousToken, canonicalizeAnonymousAddress } from "../src/anonymous-identity.js"
-import { prepareFreeRequest, readFreeRequest } from "../src/free-request.js"
-import { FreeResponseReceipt, meterFreeResponse } from "../src/free-response.js"
-import type { FreePrincipal, MemberPrincipal } from "../src/free-principal.js"
-import type { FreeAllowanceStore, FreeUsageReceipt } from "../src/free-allowance.js"
+  MEMBER_FREE_STATUS_PATH, desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeSessionPowMessage, leadingZeroBits, type DesktopFreeProofClaims } from "@openwork/free-auto"
+import { readAutoConfig, FREE_OPENAI_CHAT_URL } from "../src/free/shared/config.js"
+import { freeRequestReservation, freeUsageAmount, rampedDeviceAmount } from "@openwork/free-auto/accounting"
+import { verifyDesktopFreeProof } from "../src/free/guest/proof.js"
+import { createDesktopFreeReleaseSource } from "../src/free/guest/releases-source.js"
+import { desktopFreeVersionError, releaseTagRequired, supportedDesktopReleases, type DesktopRelease } from "@openwork/free-auto"
+import { deriveReleaseSecret, releaseTag, sha256Hex as desktopFreeHash } from "@openwork/free-auto/node"
+import { createAnonymousIdentities, issueAnonymousToken, verifyAnonymousToken, canonicalizeAnonymousAddress } from "../src/free/guest/identity.js"
+import { prepareFreeRequest, readFreeRequest } from "../src/free/shared/request.js"
+import { FreeResponseReceipt, meterFreeResponse } from "../src/free/shared/meter.js"
+import type { FreePrincipal, MemberPrincipal } from "../src/free/shared/principal.js"
+import type { FreeAllowanceStore, FreeUsageReceipt } from "../src/free/shared/allowance.js"
 
 process.env.OPENWORK_DEV_MODE = "1"
 process.env.DEN_DB_ENCRYPTION_KEY = "test-only-free-auto-encryption-key-000000000000"
 process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/free_auto_test_unused"
-const { registerAnonymousInferenceRoutes } = await import("../src/anonymous.js")
-const { createFreeMemberHandler } = await import("../src/free-member.js")
+const { registerAnonymousInferenceRoutes } = await import("../src/free/guest/routes.js")
+const { createFreeMemberHandler } = await import("../src/free/member/handler.js")
 const { registerProxyRoutes } = await import("../src/proxy.js")
-const { freeSettlementDecision } = await import("../src/free-allowance.js")
+const { freeSettlementDecision } = await import("../src/free/shared/allowance.js")
 
 const releaseKey = "test-only-release-master-key-2222222222222222222"
 const previousReleaseKey = "test-only-previous-master-key-33333333333333333"
@@ -38,7 +39,7 @@ const machineId = "c".repeat(64)
 function signer(machine = machineId) {
   const keys = generateKeyPairSync("ed25519")
   const der = keys.publicKey.export({ format: "der", type: "spki" })
-  const binding = { keyThumbprint: desktopFreeHash(Uint8Array.from(der)), machineId: machine, appVersion: "1.2.3", platform: "darwin", arch: "arm64" } satisfies import("../src/desktop-free-proof.js").DesktopFreeBinding
+  const binding = { keyThumbprint: desktopFreeHash(Uint8Array.from(der)), machineId: machine, appVersion: "1.2.3", platform: "darwin", arch: "arm64" } satisfies import("../src/free/guest/proof.js").DesktopFreeBinding
   return { keys, publicKey: der.toString("base64"), binding }
 }
 const device = signer()
@@ -100,7 +101,7 @@ function fakeStore(principals: FreePrincipal[], receipts: Array<FreeUsageReceipt
     async settle(_id, receipt) { receipts.push(receipt); return true },
   }
 }
-function fixture(overrides: Partial<import("../src/anonymous.js").FreeRouteDependencies> = {}, upstream: (request: Upstream) => Response = () => Response.json(openAiResponse())) {
+function fixture(overrides: Partial<import("../src/free/guest/routes.js").FreeRouteDependencies> = {}, upstream: (request: Upstream) => Response = () => Response.json(openAiResponse())) {
   const principals: FreePrincipal[] = []
   const receipts: Array<FreeUsageReceipt | null> = []
   const requests: Upstream[] = []

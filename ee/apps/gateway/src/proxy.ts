@@ -30,7 +30,7 @@ import { isJsonContentType, readBoundedBody, RequestBodyLimitError } from "./rel
 import { createRequestLogRecorder, insertRequestLogIntoDb } from "./request-log.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
 import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usage/openai-chat.js"
-import type { FreeMemberHandler } from "./free-member.js"
+import type { FreeMemberHandler } from "./free/member/handler.js"
 import type { ParsedUsage } from "./usage/shared.js"
 
 type JsonObject = Record<string, unknown>
@@ -87,7 +87,7 @@ const defaultProxyDependencies: ProxyDependencies = {
   loadOrganization: loadOrganizationFromDb,
   insertRequestLog: insertRequestLogIntoDb,
   async freeMember(c, key) {
-    const { createFreeMemberHandler } = await import("./free-member.js")
+    const { createFreeMemberHandler } = await import("./free/member/handler.js")
     freeMemberHandler ??= createFreeMemberHandler()
     return freeMemberHandler(c, key)
   },

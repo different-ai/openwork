@@ -3,8 +3,8 @@ import { isIP } from "node:net"
 import { getConnInfo } from "@hono/node-server/conninfo"
 import type { Context } from "hono"
 import { z } from "zod"
-import type { AutoConfig } from "./free-config.js"
-import type { DesktopFreeBinding } from "./desktop-free-proof.js"
+import type { AutoConfig } from "../shared/config.js"
+import type { DesktopFreeBinding } from "./proof.js"
 
 export type AnonymousIdentities = { installationHash: string; ipHash: string; globalHash: string }
 const hash = z.string().regex(/^[a-f0-9]{64}$/)

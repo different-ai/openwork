@@ -7,11 +7,11 @@ import {
   InferenceFreeReservationChargeTable, InferenceFreeRateBucketTable,
 } from "@openwork-ee/den-db"
 import { freeInferenceWindow, INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
-import { DESKTOP_FREE_PROOF_CLOCK_SKEW_MS, type DesktopFreeAccessStatus } from "@openwork/types/desktop-free-access"
-import type { DesktopFreeBinding } from "./desktop-free-proof.js"
-import { freeIdentityHash, freePrincipalHash, memberFreePrincipalAllowed, type FreePrincipal } from "./free-principal.js"
-import { freeRequestReservation, rampedDeviceAmount, type AutoConfig } from "./free-config.js"
-import { db } from "./db.js"
+import { DESKTOP_FREE_PROOF_CLOCK_SKEW_MS, type DesktopFreeAccessStatus } from "@openwork/free-auto"
+import { freeIdentityHash, freePrincipalHash, memberFreePrincipalAllowed, type FreePrincipal } from "./principal.js"
+import { freeRequestReservation, rampedDeviceAmount } from "@openwork/free-auto/accounting"
+import type { AutoConfig } from "./config.js"
+import { db } from "../../db.js"
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 // Guests and members keep separate tables with the same accounting columns. The
@@ -134,7 +134,7 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
 
   return {
     family,
-    async consumeNonce(proof: DesktopFreeBinding & { nonce: string; timestamp: number }, ipHash: string): Promise<"accepted" | "replay" | "unavailable"> {
+    async consumeNonce(proof: { keyThumbprint: string; nonce: string; timestamp: number }, ipHash: string): Promise<"accepted" | "replay" | "unavailable"> {
       if (family !== "anonymous") return "unavailable"
       return database.transaction(async (tx) => {
         const { now } = await lock(tx)

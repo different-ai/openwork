@@ -1,10 +1,10 @@
-import { DESKTOP_FREE_PROOF_HEADER } from "@openwork/types/desktop-free-access"
-import { verifyDesktopFreeProof, type DesktopFreeBinding, type VerifiedDesktopFreeProof } from "./desktop-free-proof.js"
-import { compareDesktopVersions, desktopFreeVersionError, lowestDesktopVersion, supportedDesktopReleases, type DesktopRelease } from "./desktop-free-version.js"
-import type { FreeAllowanceStore } from "./free-allowance.js"
-import type { AutoConfig } from "./free-config.js"
-import { freeError } from "./free-dispatch.js"
-import { releaseSecretCandidates } from "./free-release.js"
+import { DESKTOP_FREE_PROOF_HEADER, desktopFreeVersionError, lowestDesktopVersion, releaseTagRequired, supportedDesktopReleases,
+  type DesktopRelease } from "@openwork/free-auto"
+import { verifyDesktopFreeProof, type DesktopFreeBinding, type VerifiedDesktopFreeProof } from "./proof.js"
+import type { FreeAllowanceStore } from "../shared/allowance.js"
+import type { AutoConfig } from "../shared/config.js"
+import { freeError } from "../shared/errors.js"
+import { releaseSecretCandidates } from "./release-secrets.js"
 
 export type DesktopFreeGateDependencies = {
   releases: () => Promise<DesktopRelease[] | null>;
@@ -14,11 +14,6 @@ export type DesktopFreeGateDependencies = {
 }
 export const desktopFreeGateError = freeError
 
-/** v2 proofs (no release tag) are accepted only while a release that predates tags is still supported. */
-export function releaseTagRequired(supported: readonly string[], firstReleaseTagVersion: string | null) {
-  if (!firstReleaseTagVersion) return false
-  return supported.every((version) => (compareDesktopVersions(version, firstReleaseTagVersion) ?? -1) >= 0)
-}
 
 type GateResult = { error: Response; proof?: undefined }
   | { error?: undefined; proof: VerifiedDesktopFreeProof; minimumVersion: string | null; versionError: ReturnType<typeof desktopFreeVersionError> }
