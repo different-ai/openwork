@@ -495,13 +495,13 @@ export function CoworkerHome({
   return (
     <div className="glass-main relative flex h-full min-w-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* One quiet line: a way back on the left, where you are in the middle, this conversation's controls on the right. */}
-        <header className="glass-header window-drag flex h-[78px] shrink-0 items-center gap-2 border-b border-line px-3 pt-2" data-testid="conversation-header">
+        {/* No header bar: a way back on the left, a floating pill for where you are, this conversation's controls on the right. Top and side room clear the window's rounded corners. */}
+        <header className="window-drag flex shrink-0 items-center gap-2 px-4 pb-2 pt-3" data-testid="conversation-header">
           <div className="flex min-w-0 flex-1 basis-0 items-center gap-1">
             {onExitActivity ? <IconButton className="window-no-drag" label="Go to coworker" tooltip={`Leave Activity and open ${coworker.name}`} tooltipSide="bottom" onClick={onExitActivity}><ChevronIcon direction="left" /></IconButton> : null}
             <div ref={setHeaderLeadSlot} className="window-no-drag flex items-center empty:hidden" />
           </div>
-          <nav aria-label="Where you are" className="window-no-drag flex min-w-0 max-w-[70%] items-center gap-1 rounded-full border border-line bg-white/[0.04] py-1 pl-1 pr-1.5" data-testid="conversation-breadcrumbs">
+          <nav aria-label="Where you are" className="window-no-drag flex min-w-0 max-w-[70%] items-center gap-1 rounded-full border border-line bg-panel/90 py-1 pl-1 shadow-[0_8px_24px_rgb(0_0_0/0.35)] backdrop-blur pr-1.5" data-testid="conversation-breadcrumbs">
             <CoworkerAvatar
               identity={coworker.slug}
               motion="attentive"
