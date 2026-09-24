@@ -1505,6 +1505,9 @@ importers:
 
   packages/review:
     dependencies:
+      '@openwork/freestyle':
+        specifier: workspace:*
+        version: link:../freestyle
       '@vercel/blob':
         specifier: ^2.3.0
         version: 2.8.0
