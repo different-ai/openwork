@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { appendFile, mkdtemp, readdir, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -131,7 +131,7 @@ export async function publishCompletedEvidence({ repo, runId, runAttempt }, depe
       if ((await api(`repos/${repo}/pulls/${identity.pr}`)).head.sha !== identity.sha)
         return skip("PR identity changed before proof publication");
       const result = await publish({ pr: identity.pr, testRunDirs, gaps: [], automatic: true, replaceAutomatic: true,
-        title: `PR #${identity.pr} change proof` });
+        presentation: "native", title: `PR #${identity.pr} change proof` });
       log(result.posted ? result.urls.report : "PR proof review unchanged.");
       return result;
     } finally {
@@ -208,6 +208,7 @@ export async function publishCompletedEvidence({ repo, runId, runAttempt }, depe
 // Never put provider errors, downloaded evidence, or credentials in this summary.
 export async function publicationJob(env, dependencies = {}) {
   const publish = dependencies.publish ?? publishCompletedEvidence;
+  const receipt = async value => { if (env.EVIDENCE_RECEIPT_PATH) await writeFile(env.EVIDENCE_RECEIPT_PATH, JSON.stringify(value), { mode: 0o600 }); };
   const summary = dependencies.summary ?? (text => env.GITHUB_STEP_SUMMARY
     ? appendFile(env.GITHUB_STEP_SUMMARY, text) : Promise.resolve());
   try {
@@ -218,10 +219,12 @@ export async function publicationJob(env, dependencies = {}) {
     const result = await publish({ repo: env.GITHUB_REPOSITORY, runId: env.REVIEW_RUN_ID, runAttempt: env.REVIEW_RUN_ATTEMPT });
     if (result.skipped) {
       await summary(`## Evidence publication: skipped\n\n${result.skipped}. No new report was published; any existing report is unchanged.\n`);
+      await receipt({ state: "skipped", noEvidence: result.skipped === "PR adds or changes no E2E spec; no proof evidence to publish" });
       return { state: "skipped", exitCode: 0 };
     }
     if (!result.posted) {
       await summary("## Evidence publication: unchanged\n\nAn existing selected report was preserved. No new report was published.\n");
+      await receipt({ state: "unchanged" });
       return { state: "unchanged", exitCode: 0 };
     }
     // Only link to this deployment's report route, never an artifact-supplied URL.
@@ -230,6 +233,7 @@ export async function publicationJob(env, dependencies = {}) {
         !/^\/r\/[a-f0-9]{32}$/.test(reportUrl.pathname) || reportUrl.search || reportUrl.hash || reportUrl.username || reportUrl.password)
       throw new Error("Invalid published report URL");
     await summary(`## Evidence publication: published\n\n[Open private review report](${reportUrl.href})\n\nPublication succeeded; this is not a test verdict or human approval. The report shows the selected evidence and its limitations.\n`);
+    await receipt({ state: "published", reportUrl: reportUrl.href, evidence: result.evidence });
     return { state: "published", exitCode: 0 };
   } catch {
     await summary("## Evidence publication: failed\n\nNo new report link was confirmed. Existing evidence is not replaced by raw logs or public attachments. Check publisher configuration and the source run, then replay publication. No test pass is inferred.\n");

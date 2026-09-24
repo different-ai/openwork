@@ -20,7 +20,7 @@ const { createSessionDraftStore, rejectedTurnOwner, sessionDraftScopeKey, saveSe
 const { mergeRejectedTurns, retainRejectedTurn } = await import("../src/react-app/domains/session/sync/rejected-turn");
 const { claimQueuedSend, getQueuedDrainState, resetQueuedDrainForTests } = await import("../src/react-app/domains/session/surface/queued-drain-machine");
 const { createOpenworkServerClient } = await import("../src/app/lib/openwork-server");
-const { AUTO_MODEL_ID, AUTO_PROVIDER_ID } = await import("../src/react-app/domains/session/models/model-catalog");
+const { AUTO_MODEL_ID, AUTO_PROVIDER_ID } = await import("../src/react-app/domains/models/model-catalog");
 const { unavailableDesktopFreeStatus } = await import("../src/app/lib/inference-access");
 const { AutoAccessNotice, AutoRejectedTurnRecoveryBridge } = await import("../src/react-app/domains/cloud/auto-access-ui");
 const auth = await import("../src/react-app/domains/cloud/den-auth-provider");

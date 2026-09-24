@@ -53,7 +53,6 @@ function render(part: TaskToolPart): string {
       onEditUserMessage={noop}
       onMcpReconnect={async () => "connected"}
       onMcpReopenAuthorization={async () => {}}
-      onMcpRetry={noop}
     >
       <SubagentRunLine part={part} />
     </MessageListProvider>,

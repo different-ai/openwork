@@ -59,11 +59,13 @@ test("an activated enterprise install boots past the activation gate without a r
   expect(rootText).toContain(SESSION_HEADING);
   await user.see({ text: SESSION_HEADING });
   await user.notSee({ text: ACTIVATION_GATE_HEADING });
+  expect(await world.bootError(), "startup failed after the session surface mounted").toBeNull();
   await user.notSee({ text: RECOVERY_HEADING });
   await user.screenshot();
 
   await sleep(REJECTION_SETTLE_MS);
   const final = await world.health();
+  expect(await world.bootError(), "startup failed during settle").toBeNull();
   expect(final.rootText, "startup recovery appeared during settle").not.toMatch(RECOVERY_HEADING);
   expect(final.rootText, "the activated session surface disappeared during settle").toContain(SESSION_HEADING);
   expect(final.rootText, "an activated install returned to the activation gate").not.toContain(ACTIVATION_GATE_HEADING);

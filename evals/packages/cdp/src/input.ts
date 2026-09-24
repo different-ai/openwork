@@ -1,7 +1,8 @@
 import { callFunctionOnSurface, evaluateOnSurface } from "./surface.ts";
 import type { Surface } from "./surface.ts";
+import type { CdpClient } from "./cdp.ts";
 
-export type TargetRole = "button" | "link" | "textbox" | "checkbox" | "switch" | "menuitem" | "tab" | "option" | "separator" | "combobox" | "listbox" | "alert" | "heading" | "progressbar";
+export type TargetRole = "button" | "link" | "textbox" | "checkbox" | "switch" | "menuitem" | "tab" | "option" | "separator" | "combobox" | "listbox" | "alert" | "heading" | "progressbar" | "radio";
 export type TargetMatcher = string | RegExp;
 
 export type Target = string | {
@@ -11,6 +12,7 @@ export type Target = string | {
   placeholder?: string;
   testId?: string;
   nth?: number;
+  mcpApp?: { resourceUri: string; index?: number };
 };
 
 export interface Point {
@@ -189,7 +191,135 @@ function describeMiss(value: Record<string, unknown>): string {
   return parts.length > 0 ? ` ${parts.join(" ")}` : "";
 }
 
+function domNodes(value: unknown): Record<string, unknown>[] {
+  if (!isRecord(value)) return [];
+  return [value, ...[
+    ...(Array.isArray(value.children) ? value.children : []),
+    ...(Array.isArray(value.shadowRoots) ? value.shadowRoots : []),
+    value.contentDocument,
+  ].flatMap(domNodes)];
+}
+
+function domAttribute(node: Record<string, unknown>, name: string): string | undefined {
+  if (!Array.isArray(node.attributes)) return undefined;
+  const index = node.attributes.indexOf(name);
+  const value = index >= 0 ? node.attributes[index + 1] : undefined;
+  return typeof value === "string" ? value : undefined;
+}
+
+async function nodeRect(client: CdpClient, nodeId: unknown): Promise<Located["rect"]> {
+  if (typeof nodeId !== "number") throw new Error("MCP App control has no DOM node identity.");
+  const box = await client.send("DOM.getBoxModel", { nodeId });
+  const quad = isRecord(box) && isRecord(box.model) ? box.model.content : null;
+  if (!Array.isArray(quad) || quad.length !== 8 || !quad.every(value => typeof value === "number" && Number.isFinite(value))) {
+    throw new Error("MCP App control returned invalid geometry.");
+  }
+  const numbers = quad.filter((value): value is number => typeof value === "number");
+  if (numbers[1] !== numbers[3] || numbers[2] !== numbers[4] || numbers[5] !== numbers[7] || numbers[6] !== numbers[0]) {
+    throw new Error("Rotated MCP App controls are not supported.");
+  }
+  return { x: numbers[0], y: numbers[1], width: numbers[2] - numbers[0], height: numbers[5] - numbers[1] };
+}
+
+type FrameBoundary = { client: CdpClient; node: Record<string, unknown> };
+
+async function locateMcpApp(surface: Surface, target: Exclude<Target, string>): Promise<Located> {
+  if (!target.mcpApp || !["button", "heading"].includes(target.role ?? "")) {
+    throw new Error("MCP App targets require an explicit button or heading role.");
+  }
+  await surface.client.send("DOM.enable");
+  const document = await surface.client.send("DOM.getDocument", { depth: -1, pierce: true });
+  if (!isRecord(document) || !isRecord(document.root) || document.root.nodeName !== "#document") throw new Error("MCP App DOM document was not readable.");
+  const roots = domNodes(document.root)
+    .filter(node => domAttribute(node, "data-mcp-app-resource") === target.mcpApp?.resourceUri);
+  const root = roots.at(target.mcpApp.index ?? 0);
+  if (!root) throw new TargetNotFoundError(`MCP App ${target.mcpApp.resourceUri} is not mounted.`);
+  const text = (node: Record<string, unknown>) => domNodes(node)
+    .filter(child => child.nodeName === "#text").map(child => child.nodeValue).join("").trim();
+  const matches = (matcher: TargetMatcher | undefined, value: string) => matcher === undefined
+    || (typeof matcher === "string" ? matcher.trim() === value : new RegExp(matcher.source, matcher.flags).test(value));
+  const attachments: string[] = [];
+  let frameDocuments = 0;
+  const candidates: { node: Record<string, unknown>; client: CdpClient; boundaries: FrameBoundary[]; ancestors: FrameBoundary[] }[] = [];
+  const visit = async (value: unknown, client: CdpClient, boundaries: FrameBoundary[], insideFrame: boolean, ancestors: FrameBoundary[] = []): Promise<void> => {
+    if (!isRecord(value)) return;
+    const role = domAttribute(value, "role") ?? (value.nodeName === "BUTTON" ? "button" : /^H[1-6]$/.test(String(value.nodeName)) ? "heading" : "");
+    if (insideFrame && role === target.role && matches(target.label, domAttribute(value, "aria-label") ?? text(value)) && matches(target.text, text(value))) {
+      candidates.push({ node: value, client, boundaries, ancestors });
+    }
+    const parents = String(value.nodeName).startsWith("#") ? ancestors : [...ancestors, { client, node: value }];
+    if (value.nodeName === "IFRAME") {
+      if (isRecord(value.contentDocument)) {
+        frameDocuments += 1;
+        await visit(value.contentDocument, client, boundaries, true, parents);
+      }
+      else if (typeof value.frameId === "string") {
+        const attached = await surface.client.send("Target.attachToTarget", { targetId: value.frameId, flatten: true }).catch(async cause => {
+          const result = await surface.client.send("Target.getTargets");
+          const targets = isRecord(result) && Array.isArray(result.targetInfos) ? result.targetInfos.filter(isRecord).map(info => ({ id: info.targetId, type: info.type })) : [];
+          throw new Error(`Cannot attach frame ${value.frameId}; targets ${JSON.stringify(targets)}`, { cause });
+        });
+        if (!isRecord(attached) || typeof attached.sessionId !== "string") throw new Error("MCP App frame attachment failed.");
+        const sessionId = attached.sessionId;
+        attachments.push(sessionId);
+        const child: CdpClient = { send: (method, params, options) => surface.client.send(method, params, { ...options, sessionId }), close() {} };
+        await child.send("DOM.enable");
+        const document = await child.send("DOM.getDocument", { depth: -1, pierce: true });
+        if (!isRecord(document) || !isRecord(document.root) || document.root.nodeName !== "#document") throw new Error("MCP App child document was not readable.");
+        frameDocuments += 1;
+        await visit(document.root, child, [...boundaries, { client, node: value }], true, parents);
+      }
+      return;
+    }
+    for (const child of [...(Array.isArray(value.children) ? value.children : []), ...(Array.isArray(value.shadowRoots) ? value.shadowRoots : [])]) {
+      await visit(child, client, boundaries, insideFrame, parents);
+    }
+  };
+  try {
+    await visit(root, surface.client, [], false);
+    if (frameDocuments === 0) throw new Error("MCP App frame documents unavailable; absence cannot be established.");
+    const candidate = candidates[target.nth ?? 0];
+    if (!candidate) throw new TargetNotFoundError(`MCP App control not found: ${JSON.stringify(target)}. No matching control in its frame documents.`);
+    const { node, client, boundaries } = candidate;
+    const nodeId = node.nodeId;
+    if (typeof nodeId !== "number") throw new Error("MCP App control has no DOM node identity.");
+    for (const boundary of boundaries) await boundary.client.send("DOM.scrollIntoViewIfNeeded", { nodeId: boundary.node.nodeId });
+    await client.send("DOM.scrollIntoViewIfNeeded", { nodeId });
+    const rect = await nodeRect(client, nodeId);
+    const center = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    const hit = await client.send("DOM.getNodeForLocation", { x: Math.round(center.x), y: Math.round(center.y) });
+    let hitTestOk = isRecord(hit) && domNodes(node).some(child => child.backendNodeId === hit.backendNodeId);
+    for (const boundary of [...boundaries].reverse()) {
+      const frame = await nodeRect(boundary.client, boundary.node.nodeId);
+      rect.x += frame.x;
+      rect.y += frame.y;
+      center.x += frame.x;
+      center.y += frame.y;
+      const hit = await boundary.client.send("DOM.getNodeForLocation", { x: Math.round(center.x), y: Math.round(center.y) });
+      hitTestOk = hitTestOk && isRecord(hit) && (hit.backendNodeId === boundary.node.backendNodeId || hit.frameId === boundary.node.frameId);
+    }
+    let hidden = false;
+    for (const ancestor of [...candidate.ancestors, { client, node }]) {
+      await ancestor.client.send("CSS.enable");
+      const computed = await ancestor.client.send("CSS.getComputedStyleForNode", { nodeId: ancestor.node.nodeId });
+      if (!isRecord(computed) || !Array.isArray(computed.computedStyle)) throw new Error("MCP App control styles were not readable.");
+      hidden ||= computed.computedStyle.filter(isRecord).some(style => (style.name === "visibility" && style.value !== "visible")
+        || (style.name === "display" && style.value === "none") || (style.name === "opacity" && Number(style.value) === 0));
+    }
+    return {
+      center, rect, tag: String(node.nodeName).toLowerCase(),
+      name: domAttribute(node, "aria-label") ?? text(node), text: text(node), value: "", editable: false,
+      visible: !hidden && rect.width > 0 && rect.height > 0 && hitTestOk, hitTestOk,
+      disabled: domAttribute(node, "disabled") !== undefined ? "disabled" : domAttribute(node, "aria-disabled") === "true" ? "aria-disabled" : null,
+      covering: hitTestOk ? null : { tag: "unknown", text: "MCP App control is covered or outside the viewport", role: "" },
+    };
+  } finally {
+    for (const sessionId of attachments.reverse()) await surface.client.send("Target.detachFromTarget", { sessionId });
+  }
+}
+
 export async function locate(surface: Surface, target: Target): Promise<Located> {
+  if (typeof target !== "string" && target.mcpApp) return locateMcpApp(surface, target);
   const parsed = JSON.stringify(parseTarget(target));
   const value = await callFunctionOnSurface(surface, (serialized) => {
     const target: ParsedTarget = JSON.parse(serialized);
@@ -215,7 +345,8 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       if (tag === "input") {
         const type = (element.getAttribute("type") ?? "text").toLowerCase();
         if (type === "checkbox") return "checkbox";
-        if (!["button", "submit", "reset", "hidden", "radio"].includes(type)) return "textbox";
+        if (type === "radio") return "radio";
+        if (!["button", "submit", "reset", "hidden"].includes(type)) return "textbox";
       }
       return "";
     };
@@ -251,7 +382,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
         ? 'h1, h2, h3, h4, h5, h6, [role="heading"]'
         : target.text && !target.role && !target.label && !target.placeholder && !target.testId
           ? 'body *'
-          : 'button, a[href], input, textarea, select, [role="combobox"], [role="listbox"], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="switch"], [role="menuitem"], [role="tab"], [role="option"], [role="separator"], [role="alert"], [role="progressbar"], [data-testid]';
+          : 'button, a[href], input, textarea, select, [role="combobox"], [role="listbox"], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="switch"], [role="menuitem"], [role="tab"], [role="option"], [role="separator"], [role="alert"], [role="progressbar"], [role="radio"], [data-testid]';
     const candidates = [...document.querySelectorAll<HTMLElement>(selector)].filter((element: Element) => {
       if (target.role && implicitRole(element) !== target.role) return false;
       if (target.placeholder !== undefined && (element.getAttribute("placeholder") ?? element.getAttribute("aria-placeholder")) !== target.placeholder) return false;
@@ -305,7 +436,18 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
         },
       };
     }
-    element.scrollIntoView({ block: "center", inline: "center" });
+    // Re-centering a reachable hover action can move its parent away from the
+    // pointer and hide the action before the click. Keep reachable controls
+    // still; scroll only when their click point is outside or covered.
+    const initial = element.getBoundingClientRect();
+    const initialX = initial.left + initial.width / 2;
+    const initialY = initial.top + initial.height / 2;
+    const initialHit = initialX >= 0 && initialY >= 0 && initialX <= innerWidth && initialY <= innerHeight
+      ? document.elementFromPoint(initialX, initialY) : null;
+    const isButton = element instanceof HTMLButtonElement || element.getAttribute("role") === "button";
+    if (!isButton || !initialHit || (initialHit !== element && !element.contains(initialHit))) {
+      element.scrollIntoView({ block: "center", inline: "center" });
+    }
     const rect = element.getBoundingClientRect();
     const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     let current: Element | null = element;

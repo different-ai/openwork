@@ -5,17 +5,18 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSetWorkspaceDefaultModel } from "@/react-app/kernel/use-workspace-model-default";
-import { ModelPickerList } from "@/components/model-picker-list";
+import { ModelPickerList } from "@/react-app/domains/models/model-picker-list";
+import { buildModelCatalog, resolveRetainedSelection, withoutBlockedSelection } from "@/react-app/domains/models/catalog";
+import { useModelChoice } from "@/react-app/domains/models/use-model-catalog";
 import { getModelBehaviorControls, getModelBehaviorSelection } from "@/app/lib/model-behavior";
-import { gatewayConnectCopy, gatewayConnectProviderKey, isCloudManagedProviderKey, type GatewayConnectProvider } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
-import { filterCloudManagedModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
-import { filterEntitledModelOptions, isProviderAllowedByDesktopPolicy, hideBuiltInZenFallback } from "@/react-app/domains/connections/provider-auth/provider-policy";
+import { readDenSettings } from "@/app/lib/den";
+import { usePlatform } from "@/react-app/kernel/platform";
+import { gatewayConnectCopy, gatewayConnectProviderKey, type GatewayConnectProvider } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import type { ModelOption, ModelRef } from "@/app/types";
 import { AutoAccessFooter, openAutoProviderSettings } from "../../cloud/auto-access-ui";
-import { isAutoModel, type ModelPickerCatalogState, type RetainedModelSelection } from "../models/model-catalog";
-import { modelRefKey, useModelCollectionsStore } from "../models/model-collections-store";
+import { isAutoModel, type ModelCatalogOption, type ModelPickerCatalogState, type RetainedModelSelection } from "@/react-app/domains/models/model-catalog";
 
 export const MODEL_PICKER_DEFAULT_SUBTITLE = "Select a model for this session.";
 export const MODEL_PICKER_UNAVAILABLE_SUBTITLE = "The model you were using is no longer available, please select a different model for this session.";
@@ -23,7 +24,10 @@ export function resolveModelPickerSubtitle(subtitle: string | undefined) { retur
 
 export type ModelPickerModalProps = {
   open: boolean;
-  options: ModelOption[];
+  /** What to list: the shared catalog's options for this surface. */
+  options: readonly ModelCatalogOption[];
+  /** Everything the person could have chosen, disabled rows included; names a saved choice that is not listed. */
+  knownOptions?: readonly ModelCatalogOption[];
   disabledProviders?: string[];
   organizationModelsEmpty?: boolean;
   organizationModelsSettingsUrl?: string;
@@ -69,38 +73,32 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   const titleRef = useRef<HTMLHeadingElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [advanced, setAdvanced] = useState(false);
+  const platform = usePlatform();
+  const choice = useModelChoice(JSON.stringify([props.open, props.current, props.currentBehaviorValue]));
   const restrictToCloud = props.restrictToCloud || checkRestriction({ restriction: "allowCustomProviders" });
-  const rawOptions = props.options.map((option): ModelOption => ({ ...option,
-    disabled: option.disabled || props.disabledProviders?.includes(option.providerID),
-    source: props.gatewayProviderIds?.has(option.providerID) ? "gateway" : option.source,
-  }));
-  const saved = props.retainedSelection && modelRefKey(props.retainedSelection.model) === modelRefKey(props.current) ? props.retainedSelection : undefined;
-  const explicitBlock = saved && ["policy", "disabled"].includes(saved.reason);
-  const options = hideBuiltInZenFallback(filterEntitledModelOptions(filterCloudManagedModelOptions(rawOptions, auth.isSignedIn), { restrictToCloud, checkRestriction }))
-    .filter((option) => !explicitBlock || modelRefKey(option) !== modelRefKey(props.current));
-  const selected = options.find((option) => modelRefKey(option) === modelRefKey(props.current));
-  const known = rawOptions.find((option) => modelRefKey(option) === modelRefKey(props.current));
-  const policyBlocked = Boolean(props.current.providerID) && !isProviderAllowedByDesktopPolicy({ providerId: props.current.providerID, restrictToCloud, checkRestriction });
-  const signedOutModel = !auth.isSignedIn && isCloudManagedProviderKey(props.current.providerID);
-  const implicitStarter = !known && !saved && props.current.providerID === "opencode" && props.current.modelID === "big-pickle";
-  const retained: RetainedModelSelection | undefined = !selected && !implicitStarter && props.current.providerID && props.current.modelID
-    ? { model: props.current, title: signedOutModel ? undefined : known?.title ?? saved?.title,
-      description: signedOutModel ? undefined : known?.description ?? saved?.description,
-      reason: policyBlocked ? "policy" : signedOutModel ? "signed-out" : saved?.reason ?? (known?.disabled || props.disabledProviders?.includes(props.current.providerID) ? "disabled" : "unavailable") } : undefined;
+  const catalogState = props.catalogState ?? { state: "ready", onRetry: props.onRefreshOrganizationModels } satisfies ModelPickerCatalogState;
+  // Callers pass the shared catalog; applying the same pipeline here keeps the dialog correct for any caller
+  // (it is idempotent) and applies this dialog's own policy, disabled-provider and gateway inputs.
+  const catalog = buildModelCatalog({ runtime: [...(props.knownOptions ?? props.options)], signedIn: auth.isSignedIn, restrictToCloud, checkRestriction,
+    disabledProviders: props.disabledProviders, gatewayProviderIds: props.gatewayProviderIds });
+  const retained = resolveRetainedSelection({ current: props.current, catalog, saved: props.retainedSelection, signedIn: auth.isSignedIn,
+    restrictToCloud, checkRestriction, catalogState: catalogState.state, sessionScoped: props.target === "session" });
+  const options = withoutBlockedSelection(catalog.options, retained);
+  const selected = options.find((option) => option.providerID === props.current.providerID && option.modelID === props.current.modelID && !option.disabled);
   const behavior = getModelBehaviorSelection(selected?.behaviorOptions ?? [], props.currentBehaviorValue !== undefined ? props.currentBehaviorValue : selected?.behaviorValue ?? null);
   const controls = getModelBehaviorControls(behavior.options, behavior.value);
-  const catalogState = props.catalogState ?? { state: "ready", onRetry: props.onRefreshOrganizationModels } satisfies ModelPickerCatalogState;
-  const autoVisible = !policyBlocked && !explicitBlock && !props.disabledProviders?.includes(props.current.providerID) && (options.some(isAutoModel) || isAutoModel(props.current));
+  const autoVisible = retained?.reason !== "policy" && retained?.reason !== "disabled" && (options.some(isAutoModel) || isAutoModel(props.current));
   useEffect(() => { if (props.open) { props.setQuery(""); setAdvanced(false); } }, [props.open]);
   const openSettings = () => { props.onClose({ restorePromptFocus: false }); (props.onOpenProviderSettings ?? openAutoProviderSettings)(); };
-  return <Dialog open={props.open} onOpenChange={(open) => { if (!open) props.onClose(); }}>
+  // A provider sign-in opened from this dialog stays in front until it finishes or is cancelled.
+  return <Dialog open={props.open} onOpenChange={(open) => { if (!open && !choice.loginOpen) props.onClose(); }}>
     <DialogContent initialFocus={() => isMobile ? titleRef.current : searchInputRef.current} aria-describedby={undefined} className="flex max-h-[calc(100dvh-2rem)] min-h-0 flex-col overflow-hidden rounded-2xl sm:max-w-90" data-testid="all-models-picker">
       <DialogHeader><DialogTitle ref={titleRef} tabIndex={-1}>Models</DialogTitle></DialogHeader>
       <ModelPickerList searchInputRef={searchInputRef} autoFocusSearch={false} options={options} current={props.current} query={props.query} onQueryChange={props.setQuery}
         catalogState={catalogState} retainedSelection={retained} onSetWorkspaceDefault={props.onSetWorkspaceDefault ?? setWorkspaceDefault} currentBehaviorValue={behavior.value}
         onConnectProvider={!restrictToCloud ? props.onOpenSettings : undefined} onOpenProviderSettings={!checkRestriction({ restriction: "allowControlSettings" }) ? openSettings : undefined}
         openWorkModelsSyncing={autoVisible && props.openWorkModelsSyncing} onReloadWorkspace={props.onReloadWorkspace} onRetryAuto={catalogState.onRetry}
-        onSelect={(option) => { if (!options.some((item) => modelRefKey(item) === modelRefKey(option) && !item.disabled)) return; useModelCollectionsStore.getState().recordRecent(option); props.onSelect({ providerID: option.providerID, modelID: option.modelID }); }} />
+        onSelect={(option) => choice.choose(option, () => props.onSelect({ providerID: option.providerID, modelID: option.modelID }))} />
       <details open={advanced} className="group/advanced border-t border-border" data-testid="current-model-settings">
         <summary onClick={(event) => { event.preventDefault(); setAdvanced((value) => !value); }} className="flex h-11 cursor-pointer list-none items-center gap-2 text-sm"><ChevronRight className="size-4 transition-transform group-open/advanced:rotate-90" />Advanced options</summary>
         {advanced ? <div className="pb-2 pl-6">
@@ -112,13 +110,16 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           </> : <p className="text-sm text-muted-foreground">{isAutoModel(props.current) ? "Auto manages its model settings." : "Choose an available model to change its settings."}</p>}
         </div> : null}
       </details>
-      {props.gatewayConnectProviders?.map((provider) => <div key={gatewayConnectProviderKey(provider)} className="flex items-center gap-2 text-sm">
+      {props.gatewayConnectProviders?.filter((provider) => !provider.models?.length).map((provider) => <div key={gatewayConnectProviderKey(provider)} className="flex items-center gap-2 text-sm">
         <Cloud className="size-4" strokeWidth={1.5} /><span className="min-w-0 flex-1 truncate">{gatewayConnectCopy(provider.name)}</span>
-        <Button size="sm" variant="ghost" disabled={!props.onConnectGatewayProvider} onClick={() => void props.onConnectGatewayProvider?.(provider)}>Connect</Button>
+        <Button size="sm" variant="ghost" disabled={!props.onConnectGatewayProvider || props.disabledProviders?.includes(provider.providerId)} onClick={() => void props.onConnectGatewayProvider?.(provider)}>Login</Button>
       </div>)}
       {!restrictToCloud ? <Button variant="ghost" size="sm" className="self-start" onClick={props.onOpenSettings}>Connect more providers</Button> : null}
       <AutoAccessFooter available={autoVisible} syncing={autoVisible && props.openWorkModelsSyncing} />
-      <Button variant="ghost" size="sm" className="self-end" onClick={() => props.onClose()}>Done</Button>
+      <div className="flex items-center justify-end gap-2">
+        {auth.isSignedIn ? <Button variant="ghost" size="sm" onClick={() => platform.openLink(new URL("/dashboard/model-connections", readDenSettings().baseUrl).toString())}>My Model Connections</Button> : null}
+        <Button variant="ghost" size="sm" onClick={() => props.onClose()}>Done</Button>
+      </div>
     </DialogContent>
   </Dialog>;
 }

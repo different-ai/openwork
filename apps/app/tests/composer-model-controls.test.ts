@@ -21,7 +21,7 @@ const providerAuthModalPath = fileURLToPath(
 describe("composer model controls", () => {
   test("picker inputs keep mobile text readable without timer-driven keyboard reopening", () => {
     const source = readFileSync(new URL("../src/components/model-select.tsx", import.meta.url), "utf8");
-    const list = readFileSync(new URL("../src/components/model-picker-list.tsx", import.meta.url), "utf8");
+    const list = readFileSync(new URL("../src/react-app/domains/models/model-picker-list.tsx", import.meta.url), "utf8");
     expect(source).toContain("autoFocusSearch={false}");
     expect(list).toContain('placeholder="Search models…" className="h-8 text-base sm:text-base md:text-base lg:text-sm"');
     expect(source).toContain("?.focus({ preventScroll: true })");

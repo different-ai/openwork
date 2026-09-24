@@ -112,6 +112,17 @@ describe("connect providers gateway visibility", () => {
     expect(dialog().textContent).toContain("Available to add");
   });
 
+  test("labels OAuth providers Login while API-key providers keep Connect", async () => {
+    const props = createProps();
+    props.connectedProviderIds = [];
+    props.authMethods.openai = [{ type: "oauth", label: "Account sign-in", methodIndex: 0 }];
+    await act(async () => root.render(<ProviderAuthModal {...props} />));
+    expect(providerButton("openai")?.textContent).toContain("Login");
+    expect(providerButton("google")?.textContent).toContain("Connect");
+    expect(providerButton("google")?.textContent).not.toContain("Login");
+    expect(props.onSelect).not.toHaveBeenCalled();
+  });
+
   test.each(["gateway-openai", "Managed OpenAI", "Managed credential"])("search cannot surface gateway providers by %s", async (query) => {
     const props = createProps();
     await act(async () => root.render(<ProviderAuthModal {...props} />));

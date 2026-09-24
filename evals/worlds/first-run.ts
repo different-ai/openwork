@@ -189,7 +189,11 @@ export async function sessionWorld(seed: Seed) {
  * sessionless New task route and the first Run task must create the session
  * and deliver the prompt through whichever engine (v1 or v2) is selected.
  */
-export async function sessionlessFirstSendWorld(seed: Seed, options: { engine?: EvalEngine; mobileLayout?: boolean } = {}) {
+export async function sessionlessFirstSendWorld(seed: Seed, options: { engine?: EvalEngine } = {}) {
+  return sessionlessFirstSend(seed, { ...options, mobileLayout: false });
+}
+
+async function sessionlessFirstSend(seed: Seed, options: { engine?: EvalEngine; mobileLayout: boolean }) {
   const engine = options.engine ?? resolveEvalEngine();
   const providerId = "first-send-mock";
   const modelId = "first-send-model";
@@ -269,7 +273,7 @@ export async function sessionlessFirstSendWorld(seed: Seed, options: { engine?: 
 }
 
 export async function mobileChatInteractionWorld(seed: Seed, options: { engine?: EvalEngine } = {}) {
-  return sessionlessFirstSendWorld(seed, { ...options, mobileLayout: true });
+  return sessionlessFirstSend(seed, { ...options, mobileLayout: true });
 }
 
 export async function parentChildPermissionWorld(seed: Seed) {
@@ -1152,7 +1156,7 @@ export async function toolTesterWorld(seed: Seed) {
   const web = await seed.web({
     den,
     signedInAs: "admin",
-    startPath: "/dashboard/mcp-connections/configured",
+    startPath: `/dashboard/mcp-connections/${encodeURIComponent(connection.id)}`,
     headless: true,
     viewport: { width: 1440, height: 1000 },
   });
@@ -1186,10 +1190,21 @@ export async function toolTesterWorld(seed: Seed) {
     execute: (schemaDigest: string, text: string) => callTool("execute_capability", {
       name: `mcp:${connection.id}:mock_echo`, schemaDigest, body: { text },
     }),
+    /** Return to the connector page after the mock OAuth flow finishes. */
+    async closeSignInTab(): Promise<void> {
+      const targets = await listTargets(web.handle.cdpUrl);
+      for (const target of targets) {
+        if (target.type === "page" && target.id !== web.client.targetId
+          && target.url.startsWith(`${den.ref.webUrl}/connect/oauth`)) {
+          await web.client.send("Target.closeTarget", { targetId: target.id });
+        }
+      }
+      await web.client.send("Page.bringToFront");
+    },
     /** The Tool Tester link destination for this connection. */
     // TODO(primitive): read a visible link destination by test id.
     async testToolsHref(): Promise<string> {
-      const value = await seed.evalIn(web, browserScript((connectionId) => document.querySelector<HTMLElement>('[data-testid="test-mcp-tools-' + connectionId + '"]')?.getAttribute("href") ?? "", [connection.id]));
+      const value = await seed.evalIn(web, browserScript((connectionId) => document.querySelector<HTMLElement>('a[href*="/tool-tester?connectionId=' + encodeURIComponent(connectionId) + '"]')?.getAttribute("href") ?? "", [connection.id]));
       return typeof value === "string" ? value : "";
     },
     /** Whether Tool Tester appears in Manage rather than Settings. */
@@ -1492,9 +1507,9 @@ export async function backgroundUpdateWorld(seed: Seed) {
   };
 }
 
-/** A desktop signed in to a real Den whose organization pins allowed desktop
- * versions. The updater feed is faked; the version policy is Den's own. */
-export async function revokedUpdateWorld(seed: Seed) {
+/** A desktop signed in to a real Den with a saved version policy. Desktop
+ * enforcement is suspended; the fake feed must not change the saved policy. */
+export async function savedUpdatePolicyWorld(seed: Seed) {
   const den = await seed.den({
     org: { name: `Update policy ${Date.now()}`, admin: { name: "Update Policy Admin" } },
   });
@@ -1540,7 +1555,9 @@ export async function revokedUpdateWorld(seed: Seed) {
     allowVersions,
     snapshot: () => evalIn(app, () => {
       const { downloads, installs } = window.__backgroundUpdateWitness;
-      return { downloads, installs };
+      const installButton = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent?.trim() === "Install & restart");
+      return { downloads, installs, installEnabled: installButton != null && !installButton.disabled };
     }),
     openSettings: () => go(app, `/workspace/${workspace.workspaceId}/settings/updates`),
     openWorkspace: () => go(app, `/workspace/${workspace.workspaceId}/session`),

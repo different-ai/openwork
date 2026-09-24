@@ -154,7 +154,8 @@ async function observe(workspaceId: string, event: { type: string; properties?: 
     const task = messages.get(`${workspaceId}:${part.messageID}`);
     if (!task || task.sessionId !== part.sessionID) return;
     const name = part.state.input.name;
-    const cloudSkill = part.tool === "openwork-cloud_execute_capability" && name?.startsWith("plugin:");
+    const cloudSkill = part.tool === "openwork-cloud_get_skill"
+      || (part.tool === "openwork-cloud_execute_capability" && name?.startsWith("plugin:"));
     const skill = part.state.status === "completed" && (part.tool === "skill" || cloudSkill) ? name : undefined;
     enqueue({ id: part.id, callId: part.callID, type: skill ? "skill.loaded" : "tool.executed",
       timestamp: new Date(part.state.time.end).toISOString(), sessionId: task.sessionId, taskId: task.taskId,

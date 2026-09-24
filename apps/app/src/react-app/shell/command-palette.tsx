@@ -29,12 +29,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { ChevronLeftIcon } from "lucide-react";
 import type { ModelOption, ModelRef } from "@/app/types";
+import { useModelChoice } from "@/react-app/domains/models/use-model-catalog";
 import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { usePlatform } from "../kernel/platform";
-import { ModelSourceIcon } from "@/components/model-picker-list";
+import { ModelSourceIcon } from "@/react-app/domains/models/model-picker-list";
 import { ProviderIcon } from "../design-system/provider-icon";
 import { resolveExtensionIconSrc } from "../design-system/extension-icon-src";
-import { isAutoModel, modelTitle, publicModelTitle } from "../domains/session/models/model-catalog";
+import { isAutoModel, modelTitle, publicModelTitle } from "@/react-app/domains/models/model-catalog";
 import { useModelCollectionsStore } from "../domains/session/models/model-collections-store";
 import {
   buildCommandPaletteBehaviorItems,
@@ -204,10 +205,10 @@ export function CommandPalette(props: CommandPaletteProps) {
   const hasNestedModelPicker = props.modelOptions !== undefined && props.onSelectModel !== undefined;
   const favorites = useModelCollectionsStore((state) => state.favorites);
   const recentModels = useModelCollectionsStore((state) => state.recent);
+  const choice = useModelChoice(JSON.stringify([props.selectedModel, props.selectedModelBehavior]));
   const modelControls = createCommandPaletteModelControls({ options: props.modelOptions ?? [], current: props.selectedModel,
-    behavior: props.selectedModelBehavior, favorites, onSelect: (model, behavior) => {
-      useModelCollectionsStore.getState().recordRecent(model);
-      props.onSelectModel?.(model, behavior);
+    behavior: props.selectedModelBehavior, favorites, onSelect: (model, behavior, option) => {
+      choice.choose(option, () => props.onSelectModel?.(model, behavior));
     } });
   const currentModelOption = props.modelOptions?.find((option) => option.providerID === props.selectedModel?.providerID && option.modelID === props.selectedModel.modelID);
   const currentModelTitle = currentModelOption ? publicModelTitle(currentModelOption) : undefined;
@@ -533,16 +534,17 @@ export function CommandPalette(props: CommandPaletteProps) {
       id: item.id,
       title: item.title,
       detail: item.detail,
-      meta: item.meta,
+      meta: item.option.gatewayAuthorization ? "Sign-in required" : item.meta,
       searchText: item.searchText,
       disabled: item.option.disabled,
       action: () => {
-        useModelCollectionsStore.getState().recordRecent(item.option);
-        props.onSelectModel?.({ providerID: item.option.providerID, modelID: item.option.modelID });
-        props.onClose();
+        choice.choose(item.option, () => {
+          props.onSelectModel?.({ providerID: item.option.providerID, modelID: item.option.modelID });
+          props.onClose();
+        });
       },
     }))
-  ), [props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel, favorites, recentModels]);
+  ), [choice.choose, props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel, favorites, recentModels]);
 
   const behaviorItems = useMemo<PaletteItem[]>(() => {
     if (!behaviorModel) return [];
@@ -557,14 +559,15 @@ export function CommandPalette(props: CommandPaletteProps) {
       meta: item.meta,
       searchText: item.searchText,
       action: () => {
-        props.onSelectModel?.(
-          { providerID: behaviorModel.providerID, modelID: behaviorModel.modelID },
-          item.option.value,
-        );
-        props.onClose();
+        const currentOption = props.modelOptions?.find((option) => option.providerID === behaviorModel.providerID && option.modelID === behaviorModel.modelID);
+        if (!currentOption) return;
+        choice.choose(currentOption, () => {
+          props.onSelectModel?.({ providerID: behaviorModel.providerID, modelID: behaviorModel.modelID }, item.option.value);
+          props.onClose();
+        });
       },
     }));
-  }, [behaviorModel, props.onClose, props.onSelectModel, props.selectedModel, props.selectedModelBehavior]);
+  }, [behaviorModel, choice.choose, props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel, props.selectedModelBehavior]);
 
   const navigateBack = () => {
     const nextMode = commandPaletteBackMode(mode);
@@ -574,6 +577,7 @@ export function CommandPalette(props: CommandPaletteProps) {
   };
 
   const handleEscape = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (choice.loginOpen) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();

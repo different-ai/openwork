@@ -741,7 +741,7 @@ test.each([
     expect(refetch).toHaveBeenCalledTimes(1);
     interruption = Promise.withResolvers<void>();
     // Opening a menu gives Escape to that menu, not the stop confirmation.
-    const tools = container.querySelector<HTMLButtonElement>('button[title="Agents, commands, skills, plugins, and connections"]');
+    const tools = container.querySelector<HTMLButtonElement>('button[aria-label="Add files, skills, connectors, and more"]');
     if (!tools) throw new Error("Expected the tools menu trigger");
     await act(async () => tools.click());
     await act(async () => { escape(); });

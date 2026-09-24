@@ -57,6 +57,12 @@ export interface ServerOptions {
   reuse?: { apiUrl: string; webUrl?: string };
   reuseMembers?: Record<string, PersonShape>;
   ports?: { api: number; web: number };
+  /**
+   * Where den-web's server-side /api/den proxy sends API calls; defaults to
+   * den-api itself. A fault proxy fixed in front of den-api before boot puts
+   * its origin here so browser traffic can be shaped.
+   */
+  webApiBase?: string;
   seedProfile?: "demo-org";
   /** Daytona idle shutdown in minutes. Preview worlds pass 0 so their lifetime owns teardown. */
   daytonaAutoStopMinutes?: number;
@@ -67,6 +73,8 @@ export interface ServerOptions {
    * trusted, so a test that stands one up has to name it here.
    */
   trustedOrigins?: readonly string[];
+  /** Exact externally routed origins for a private co-located preview. */
+  publicOrigins?: { web: string; api: string };
 }
 
 export interface Den extends AsyncDisposable {
@@ -77,6 +85,8 @@ export interface Den extends AsyncDisposable {
   mocks: Record<string, MockHandle>;
   database?: DbHandle;
   ports?: { api: number; web: number };
+  /** Co-located AI Gateway, when the Den was booted with GATEWAY_ENABLED=true. */
+  gateway?: { publicUrl: string };
   /**
    * Raw den-api HTTP log text (JSON lines carrying http_route/timestamp).
    * Daytona lane: reads /tmp/den-api.log inside the server sandbox; local
@@ -211,14 +221,15 @@ function spawnService(
 ): SpawnedService {
   const logFd = openSync(logPath, "a");
   const prepared = process.env.OPENWORK_EVAL_DEN_RUNTIME_PREPARED === "1";
-  const args = prepared
+  const preparedApi = prepared || process.env.OPENWORK_EVAL_DEN_API_PREPARED === "1";
+  const args = (label === "den-api" ? preparedApi : prepared)
     ? label === "den-api"
       ? ["--filter", "@openwork-ee/den-api", "exec", "tsx", "src/main.ts"]
       : ["--filter", "@openwork-ee/den-web", "exec", "next", "start", "--hostname", "127.0.0.1", "--port", String(port)]
     : [script];
   const child = spawn("pnpm", args, {
     cwd: REPO_ROOT,
-    env: prepared && label === "den-api" ? { ...env, PORT: String(port) } : env,
+    env: preparedApi && label === "den-api" ? { ...env, PORT: String(port), NODE_OPTIONS: `${env.NODE_OPTIONS ?? ""} --conditions=development` } : env,
     detached: true,
     stdio: ["ignore", logFd, logFd],
   });
@@ -279,7 +290,7 @@ async function runDbPush(databaseUrl: string, schema: "push" | "migrate" = "push
   try {
     const commands = schema === "migrate"
       ? [["--filter", "@openwork-ee/den-db", "db:migrate:local"]]
-      : process.env.OPENWORK_EVAL_DEN_RUNTIME_PREPARED === "1"
+      : (process.env.OPENWORK_EVAL_DEN_RUNTIME_PREPARED === "1" || process.env.OPENWORK_EVAL_DEN_API_PREPARED === "1")
       ? [
           ["--filter", "@openwork-ee/den-db", "exec", "node", "--import", "tsx", "./node_modules/drizzle-kit/bin.cjs", "push", "--config", "drizzle.config.ts"],
           ["--filter", "@openwork-ee/den-db", "exec", "node", "--import", "tsx", "scripts/ensure-schema-repairs.ts"],
@@ -301,7 +312,7 @@ async function runDbPush(databaseUrl: string, schema: "push" | "migrate" = "push
     const stderr = typeof error === "object" && error !== null && typeof Reflect.get(error, "stderr") === "string"
       ? Reflect.get(error, "stderr")
       : "";
-    throw new Error(`Ephemeral Den database ${schema} failed: ${messageText(error)}${stderr ? `\n${stderr}` : ""}`);
+    throw new Error(`Ephemeral Den database ${schema} failed: ${messageText(error)}${stderr ? `\n${stderr}` : ""}\n${childOutput(error, "stdout")}`);
   }
 }
 
@@ -321,7 +332,9 @@ async function runDemoOrgSeed(databaseUrl: string, webPort: number, logPath: str
   try {
     const result = await execFileAsync(
       "pnpm",
-      ["--filter", "@openwork-ee/den-api", "seed:demo-org", "--", "--reset"],
+      process.env.OPENWORK_EVAL_DEN_API_PREPARED === "1" || process.env.OPENWORK_EVAL_DEN_RUNTIME_PREPARED === "1"
+        ? ["--filter", "@openwork-ee/den-api", "exec", "tsx", "scripts/seed-demo-org.ts", "--reset"]
+        : ["--filter", "@openwork-ee/den-api", "seed:demo-org", "--", "--reset"],
       {
         cwd: REPO_ROOT,
         env: {
@@ -664,8 +677,10 @@ export async function server(options: ServerOptions): Promise<Den> {
   }
 
   if (options.place.kind === "daytona") {
-    if (options.seedProfile) {
-      throw new Error('Den seedProfile "demo-org" is local-only and cannot seed a Daytona Den.');
+    // The Daytona provisioning script always seeds the demo org, so the
+    // profile only decides who the platform admin is: the seeded owner.
+    if (options.seedProfile && options.org) {
+      throw new Error('Den seedProfile "demo-org" signs in as the seeded owner; it cannot be combined with org.');
     }
     if (!daytonaAvailable()) {
       throw new SkipError("Daytona CLI is unavailable; install and authenticate daytona, then set OPENWORK_EVAL_DAYTONA=1");
@@ -690,7 +705,7 @@ export async function server(options: ServerOptions): Promise<Den> {
     const reuseUrls = preparedSandbox && preparedWebUrl && preparedApiUrl ? { webUrl: preparedWebUrl, apiUrl: preparedApiUrl } : undefined;
     const orgShape = options.org ?? {};
     const isolatePreparedTest = Boolean(preparedSandbox && options.provision !== false);
-    const bootstrapAdmin = personDefaults("admin", orgShape.admin, runId);
+    const bootstrapAdmin = options.seedProfile === "demo-org" ? defaultReuseAdmin() : personDefaults("admin", orgShape.admin, runId);
     const provisioned = await provisionDenSandbox({
       ref: base.ref,
       reuse: preparedSandbox,
@@ -733,6 +748,7 @@ export async function server(options: ServerOptions): Promise<Den> {
         admin: organization.admin,
         members: organization.members,
         mocks: bootedMocks.handles,
+        ...(provisioned.gatewayUrl ? { gateway: { publicUrl: cleanUrl(provisioned.gatewayUrl) } } : {}),
         async apiLog(): Promise<string> {
           // den-api on the server sandbox logs to /tmp/den-api.log
           // (.devcontainer/start-daytona-server.sh:158; the provisioning
@@ -834,9 +850,9 @@ export async function server(options: ServerOptions): Promise<Den> {
       DATABASE_URL: database.url,
       DEN_DB_ENCRYPTION_KEY: DATABASE_ENCRYPTION_KEY,
       BETTER_AUTH_SECRET,
-      BETTER_AUTH_URL: ref.webUrl,
-      DEN_BASE_URL: ref.webUrl,
-      DEN_API_PUBLIC_URL: ref.apiUrl,
+      BETTER_AUTH_URL: options.publicOrigins?.web ?? ref.webUrl,
+      DEN_BASE_URL: options.publicOrigins?.web ?? ref.webUrl,
+      DEN_API_PUBLIC_URL: options.publicOrigins?.api ?? ref.apiUrl,
       DEN_API_PORT: String(apiPort),
       DEN_WEB_PORT: String(webPort),
       DEN_BETTER_AUTH_TRUSTED_ORIGINS: origins,
@@ -867,9 +883,9 @@ export async function server(options: ServerOptions): Promise<Den> {
       : spawnService("den-web", "dev:den:web", webPort, {
           DEN_WEB_HOST: "127.0.0.1",
           ...commonEnv,
-          DEN_API_BASE: `http://127.0.0.1:${apiPort}`,
-          DEN_BASE_URL: ref.webUrl,
-          DEN_AUTH_ORIGIN: ref.webUrl,
+          DEN_API_BASE: options.webApiBase ?? `http://127.0.0.1:${apiPort}`,
+          DEN_BASE_URL: options.publicOrigins?.web ?? ref.webUrl,
+          DEN_AUTH_ORIGIN: options.publicOrigins?.web ?? ref.webUrl,
           DEN_AUTH_FALLBACK_BASE: `http://127.0.0.1:${apiPort}`,
         }, join(logsDir, "web.log"));
     const webStep = web ? steps.step("den-web", "den-web", { log: web.logPath }) : null;

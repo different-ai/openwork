@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
 import { AutoFirstUseStatus, openAutoSignIn } from "../../cloud/auto-access-ui";
-import { isAutoModel } from "../models/model-catalog";
+import { isAutoModel } from "@/react-app/domains/models/model-catalog";
 import type { ComposerAttachment } from "@/app/types";
 import { resolveOrganizationPromptCardContent } from "@/components/chat/task-suggestions";
 import { useCheckDesktopRestriction, useOrgRestrictions } from "@/react-app/domains/cloud/desktop-config-provider";

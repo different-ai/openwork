@@ -13,9 +13,10 @@ import {
 import { and, eq, sql } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { freeInferenceWindow, INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
-import { readAutoConfig, freeRequestReservation, rampedDeviceAmount } from "../src/free-config.js"
-import type { FreePrincipal, GuestPrincipal } from "../src/free-principal.js"
-import type { FreeUsageReceipt } from "../src/free-allowance.js"
+import { readAutoConfig } from "../src/free/shared/config.js"
+import { freeRequestReservation, rampedDeviceAmount } from "@openwork/free-auto/accounting"
+import type { FreePrincipal, GuestPrincipal } from "../src/free/shared/principal.js"
+import type { FreeUsageReceipt } from "../src/free/shared/allowance.js"
 
 const adminUrl = process.env.FREE_AUTO_MYSQL_TEST_URL
 if (adminUrl) {
@@ -54,7 +55,7 @@ function records(value: unknown): Record<string, unknown>[] {
   })
 }
 
-test("free Auto SQL and 0108 upgrade in an owned random database", { skip: !adminUrl, timeout: 60000 }, async (t) => {
+test("free Auto SQL and 0111 upgrade in an owned random database", { skip: !adminUrl, timeout: 60000 }, async (t) => {
   assert.ok(adminUrl)
   const databaseName = `free_auto_test_${randomBytes(12).toString("hex")}`
   assert.match(databaseName, /^free_auto_test_[a-f0-9]{24}$/)
@@ -96,13 +97,13 @@ test("free Auto SQL and 0108 upgrade in an owned random database", { skip: !admi
   close.push(() => connection.end(), () => otherConnection.end())
   const db = application.db
   const rows = async (statement: string, values: unknown[] = []) => records((await connection.query(statement, values))[0])
-  const before = snapshotSchema.parse(JSON.parse(await readFile(new URL("../../../packages/den-db/drizzle/meta/0107_snapshot.json", import.meta.url), "utf8")))
-  const after = snapshotSchema.parse(JSON.parse(await readFile(new URL("../../../packages/den-db/drizzle/meta/0108_snapshot.json", import.meta.url), "utf8")))
+  const before = snapshotSchema.parse(JSON.parse(await readFile(new URL("../../../packages/den-db/drizzle/meta/0110_snapshot.json", import.meta.url), "utf8")))
+  const after = snapshotSchema.parse(JSON.parse(await readFile(new URL("../../../packages/den-db/drizzle/meta/0111_snapshot.json", import.meta.url), "utf8")))
   const baseline = ["user", "organization", "member", "gateway_providers", "inference_keys", "inference_org_limit_policies", "inference_org_usage_buckets", "inference_usage_ledger_entries", "inference_usage_ledger_bucket_charges"]
   for (const name of baseline) await connection.query(baselineSql(before.tables[name]))
   await connection.query("INSERT INTO gateway_providers (id,organization_id,created_by_org_membership_id,provider_id,name,model_ids,provider_config,settings) VALUES ('old-provider','org-fixture','member-fixture','fixture','Existing provider',JSON_ARRAY('kept-model'),JSON_OBJECT(),JSON_OBJECT())")
-  await t.test("0108 executes over 0107 table shapes and preserves old rows with empty default pins", async () => {
-    const migration = await readFile(new URL("../../../packages/den-db/drizzle/0108_free_auto_and_provider_pins.sql", import.meta.url), "utf8")
+  await t.test("0111 executes over 0110 table shapes and preserves old rows with empty default pins", async () => {
+    const migration = await readFile(new URL("../../../packages/den-db/drizzle/0111_free_auto_and_provider_pins.sql", import.meta.url), "utf8")
     const statements = migration.split("--> statement-breakpoint").map((value) => value.trim()).filter(Boolean)
     assert.equal(statements.length, 21)
     for (const statement of statements) await connection.query(statement)
@@ -119,7 +120,7 @@ test("free Auto SQL and 0108 upgrade in an owned random database", { skip: !admi
         ...Object.values(after.tables[name].uniqueConstraints).flatMap((key) => key.columns.map((col) => ({ name: key.name, col, nonUnique: 0 }))),
         ...Object.values(after.tables[name].indexes).flatMap((key) => key.columns.map((col) => ({ name: key.name, col, nonUnique: key.isUnique ? 0 : 1 }))),
       ].sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
-      assert.deepEqual(indexes, expected, `${name} indexes match generated 0108 snapshot`)
+      assert.deepEqual(indexes, expected, `${name} indexes match generated 0111 snapshot`)
     }
     // Guests have no account: nothing in their tables can point at an organization, member, user or key.
     const guestColumns = await rows("SELECT TABLE_NAME AS tableName, COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND (TABLE_NAME LIKE 'anonymous_inference_%' OR TABLE_NAME='desktop_free_proof_nonces')")
@@ -128,10 +129,10 @@ test("free Auto SQL and 0108 upgrade in an owned random database", { skip: !admi
     await connection.query("INSERT INTO gateway_providers (id,organization_id,created_by_org_membership_id,provider_id,name,provider_config,settings) VALUES ('new-provider','org-fixture','member-fixture','fixture','New provider',JSON_OBJECT(),JSON_OBJECT())")
     assert.deepEqual(await rows("SELECT id, JSON_LENGTH(pinned_model_ids) AS pins FROM gateway_providers ORDER BY id"), [{ id: "new-provider", pins: 0 }, { id: "old-provider", pins: 0 }])
     assert.deepEqual(await rows("SELECT JSON_UNQUOTE(JSON_EXTRACT(model_ids,'$[0]')) AS model FROM gateway_providers WHERE id='old-provider'"), [{ model: "kept-model" }])
-    t.diagnostic(`Applied ${statements.length} generated 0108 statements; verified twelve new tables, every column/index, guest tables free of account references, and pin defaults`)
+    t.diagnostic(`Applied ${statements.length} generated 0111 statements; verified twelve new tables, every column/index, guest tables free of account references, and pin defaults`)
   })
-  const { createFreeAllowanceStore } = await import("../src/free-allowance.js")
-  const { findMemberFreePrincipal, freePrincipalHash, memberFreePrincipalAllowed } = await import("../src/free-principal.js")
+  const { createFreeAllowanceStore } = await import("../src/free/shared/allowance.js")
+  const { findMemberFreePrincipal, freePrincipalHash, memberFreePrincipalAllowed } = await import("../src/free/shared/principal.js")
   const gatewayDb = await import("../src/db.js")
   if ("end" in gatewayDb.client) { const client = gatewayDb.client; close.push(() => client.end()) }
   const { ensureMemberFreeInferenceCredential, getMemberInferenceAccess } = await import("../../den-api/src/inference.js")
@@ -378,7 +379,7 @@ test("free Auto SQL and 0108 upgrade in an owned random database", { skip: !admi
   })
 
   await t.test("proof nonce uniqueness survives committed transactions and competing SQL pools", async () => {
-    const proof = { keyThumbprint: "b".repeat(64), machineId: "c".repeat(64), nonce: id(), timestamp: Date.now(), appVersion: "1.2.3", platform: "darwin", arch: "arm64" } satisfies import("../src/desktop-free-proof.js").DesktopFreeBinding & { nonce: string; timestamp: number }
+    const proof = { keyThumbprint: "b".repeat(64), machineId: "c".repeat(64), nonce: id(), timestamp: Date.now(), appVersion: "1.2.3", platform: "darwin", arch: "arm64" } satisfies import("../src/free/guest/proof.js").DesktopFreeBinding & { nonce: string; timestamp: number }
     assert.deepEqual((await Promise.all([guests.consumeNonce(proof, ip), otherGuests.consumeNonce(proof, ip)])).sort(), ["accepted", "replay"])
     assert.equal(await otherGuests.consumeNonce(proof, ip), "replay")
     assert.equal(await store.consumeNonce(proof, ip), "unavailable")

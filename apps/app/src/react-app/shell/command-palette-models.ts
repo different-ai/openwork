@@ -1,5 +1,5 @@
 import type { ModelBehaviorOption, ModelOption, ModelRef } from "@/app/types";
-import { isAutoModel, modelGroups, modelSource, modelTitle, modelSubtitle, nextModelSource, nextPinnedModel, orderedModelPins, MODEL_SOURCE_LABELS } from "../domains/session/models/model-catalog";
+import { isAutoModel, modelGroups, modelSource, modelTitle, modelSubtitle, nextModelSource, nextPinnedModel, orderedModelPins, MODEL_SOURCE_LABELS } from "@/react-app/domains/models/model-catalog";
 
 export function commandPaletteModelTarget(workbench: { focusedPane: string; secondary: { sessionId: string } | null }, primarySessionId: string | null) {
   return workbench.focusedPane === "secondary" && workbench.secondary ? workbench.secondary.sessionId : primarySessionId;
@@ -16,7 +16,7 @@ export type CommandPaletteModelControlsInput = {
   current: ModelRef | undefined;
   behavior?: string | null;
   favorites: readonly ModelRef[];
-  onSelect: (model: ModelRef, behavior?: string | null) => void;
+  onSelect: (model: ModelRef, behavior: string | null | undefined, option: ModelOption) => void;
 };
 
 export function createCommandPaletteModelControls(input: CommandPaletteModelControlsInput) {
@@ -27,7 +27,7 @@ export function createCommandPaletteModelControls(input: CommandPaletteModelCont
   const cycle = (option: ModelOption | undefined | null) => {
     if (!option || option.disabled) return null;
     const behavior = option.behaviorOptions?.some((choice) => choice.value === input.behavior) ? input.behavior : null;
-    input.onSelect({ providerID: option.providerID, modelID: option.modelID }, behavior);
+    input.onSelect({ providerID: option.providerID, modelID: option.modelID }, behavior, option);
     return modelTitle(option);
   };
   return {

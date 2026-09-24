@@ -28,6 +28,11 @@ export type DenComboboxProps = {
   value: string;
   options: DenComboboxOption[];
   onChange: (value: string) => void;
+  onSearchChange?: (query: string) => void;
+  serverFiltered?: boolean;
+  optionsDisabled?: boolean;
+  maxSearchLength?: number;
+  searchFeedback?: ReactNode;
   placeholder?: string;
   searchPlaceholder?: string;
   emptyLabel?: string;
@@ -50,6 +55,11 @@ export function DenCombobox({
   value,
   options,
   onChange,
+  onSearchChange,
+  serverFiltered = false,
+  optionsDisabled = false,
+  maxSearchLength,
+  searchFeedback,
   placeholder = "Select an option...",
   searchPlaceholder = "Search...",
   emptyLabel = "No options match",
@@ -66,18 +76,26 @@ export function DenCombobox({
   const optionRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const listboxId = useId();
 
-  const selectedOption = useMemo(() => options.find((option) => option.value === value) ?? null, [options, value]);
+  const [retainedSelection, setRetainedSelection] = useState<DenComboboxOption | null>(null);
+  const currentSelection = useMemo(() => options.find((option) => option.value === value) ?? null, [options, value]);
+  const selectedOption = currentSelection ?? (serverFiltered && retainedSelection?.value === value ? retainedSelection : null);
   const selectedLabel = selectedOption?.label ?? "";
+
+  useEffect(() => {
+    if (serverFiltered && currentSelection) {
+      setRetainedSelection(currentSelection);
+    }
+  }, [serverFiltered, currentSelection]);
   const normalizedQuery = hasTypedSinceOpen ? normalizeQuery(query) : "";
   const filteredOptions = useMemo(() => {
-    if (!normalizedQuery) {
+    if (serverFiltered || !normalizedQuery) {
       return options;
     }
 
     return options.filter((option) => getOptionSearchText(option).includes(normalizedQuery));
-  }, [normalizedQuery, options]);
+  }, [normalizedQuery, options, serverFiltered]);
 
-  const activeIndex = activeValue ? filteredOptions.findIndex((option) => option.value === activeValue) : -1;
+  const activeIndex = !optionsDisabled && activeValue ? filteredOptions.findIndex((option) => option.value === activeValue) : -1;
   const activeDescendant = activeIndex >= 0 ? `${listboxId}-option-${activeIndex}` : undefined;
   const inputValue = open ? (hasTypedSinceOpen ? query : selectedLabel) : selectedLabel;
 
@@ -91,13 +109,14 @@ export function DenCombobox({
   }
 
   function openCombobox({ selectText = false }: { selectText?: boolean } = {}) {
-    if (disabled) {
+    if (disabled || open) {
       return;
     }
 
     setOpen(true);
     setHasTypedSinceOpen(false);
     setQuery(selectedLabel);
+    onSearchChange?.("");
     if (selectText) {
       focusInput(true);
     }
@@ -114,7 +133,16 @@ export function DenCombobox({
   }
 
   function selectOption(nextValue: string) {
-    const nextOption = options.find((option) => option.value === nextValue) ?? null;
+    if (disabled || optionsDisabled) {
+      return;
+    }
+    const nextOption = filteredOptions.find((option) => option.value === nextValue);
+    if (!nextOption) {
+      return;
+    }
+    if (serverFiltered) {
+      setRetainedSelection(nextOption);
+    }
     onChange(nextValue);
     setOpen(false);
     setActiveValue(null);
@@ -124,7 +152,7 @@ export function DenCombobox({
   }
 
   function moveActive(step: 1 | -1) {
-    if (!filteredOptions.length) {
+    if (optionsDisabled || !filteredOptions.length) {
       return;
     }
 
@@ -157,8 +185,10 @@ export function DenCombobox({
     if (!open) {
       setOpen(true);
     }
+    const nextQuery = event.target.value.slice(0, maxSearchLength);
     setHasTypedSinceOpen(true);
-    setQuery(event.target.value);
+    setQuery(nextQuery);
+    onSearchChange?.(nextQuery);
   }
 
   function handleInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -169,8 +199,10 @@ export function DenCombobox({
     if (!open && event.key.length === 1 && !event.altKey && !event.ctrlKey && !event.metaKey) {
       event.preventDefault();
       openCombobox();
+      const nextQuery = event.key.slice(0, maxSearchLength);
       setHasTypedSinceOpen(true);
-      setQuery(event.key);
+      setQuery(nextQuery);
+      onSearchChange?.(nextQuery);
       setActiveValue(null);
       return;
     }
@@ -179,7 +211,7 @@ export function DenCombobox({
       event.preventDefault();
       openCombobox();
       setActiveValue(
-        event.key === "ArrowUp"
+        optionsDisabled ? null : event.key === "ArrowUp"
           ? options[options.length - 1]?.value ?? null
           : selectedOption?.value ?? options[0]?.value ?? null,
       );
@@ -201,7 +233,7 @@ export function DenCombobox({
     if (event.key === "Home") {
       if (open) {
         event.preventDefault();
-        setActiveValue(filteredOptions[0]?.value ?? null);
+        setActiveValue(optionsDisabled ? null : filteredOptions[0]?.value ?? null);
       }
       return;
     }
@@ -209,15 +241,15 @@ export function DenCombobox({
     if (event.key === "End") {
       if (open) {
         event.preventDefault();
-        setActiveValue(filteredOptions[filteredOptions.length - 1]?.value ?? null);
+        setActiveValue(optionsDisabled ? null : filteredOptions[filteredOptions.length - 1]?.value ?? null);
       }
       return;
     }
 
     if (event.key === "Enter") {
-      if (open && activeValue) {
+      if (open && (activeValue || optionsDisabled)) {
         event.preventDefault();
-        selectOption(activeValue);
+        if (activeValue) selectOption(activeValue);
       }
       return;
     }
@@ -263,6 +295,7 @@ export function DenCombobox({
     }
 
     setActiveValue((current) => {
+      if (optionsDisabled) return null;
       if (current && filteredOptions.some((option) => option.value === current)) {
         return current;
       }
@@ -271,7 +304,7 @@ export function DenCombobox({
       }
       return filteredOptions[0]?.value ?? null;
     });
-  }, [filteredOptions, open, selectedOption]);
+  }, [filteredOptions, open, optionsDisabled, selectedOption]);
 
   useEffect(() => {
     if (!open || !activeValue) {
@@ -314,6 +347,7 @@ export function DenCombobox({
           ref={inputRef}
           type="search"
           value={inputValue}
+          maxLength={maxSearchLength}
           disabled={disabled}
           readOnly={!open}
           name={`${listboxId}-search`}
@@ -358,11 +392,12 @@ export function DenCombobox({
 
       {open ? (
         <div className={denDropdownMenuBaseClass}>
+          {searchFeedback ? <div className="px-3 py-2">{searchFeedback}</div> : null}
           <div id={listboxId} role="listbox" className={denDropdownListClass}>
             {filteredOptions.length ? (
               filteredOptions.map((option, index) => {
                 const selected = option.value === value;
-                const active = option.value === activeValue;
+                const active = !optionsDisabled && option.value === activeValue;
 
                 return (
                   <button
@@ -375,7 +410,8 @@ export function DenCombobox({
                     role="option"
                     tabIndex={-1}
                     aria-selected={selected}
-                    onMouseEnter={() => setActiveValue(option.value)}
+                    disabled={optionsDisabled}
+                    onMouseEnter={() => { if (!optionsDisabled) setActiveValue(option.value); }}
                     onMouseDown={(event) => {
                       event.preventDefault();
                       selectOption(option.value);
@@ -383,6 +419,7 @@ export function DenCombobox({
                     className={[
                       denDropdownRowBaseClass,
                       "items-start",
+                      optionsDisabled ? "cursor-not-allowed opacity-60" : "",
                       selected ? denDropdownRowSelectedClass : active ? denDropdownRowActiveClass : denDropdownRowIdleClass,
                     ]
                       .filter(Boolean)
@@ -405,7 +442,7 @@ export function DenCombobox({
                   </button>
                 );
               })
-            ) : (
+            ) : optionsDisabled ? null : (
               <div className="px-3 py-4 text-[13px] text-gray-500">
                 {query ? `${emptyLabel} "${query}"` : emptyLabel}
               </div>

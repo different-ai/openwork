@@ -77,11 +77,11 @@ test("mobile hero docks the shared composer and desktop retains editor dimension
 
 test("empty prompt suggestions keep a visible responsive affordance", () => {
   const hero = source("react-app/domains/session/chat/session-empty-hero.tsx");
-  expect(hero).toContain('className={hideIntroduction ? "hidden" : "grid gap-2 sm:grid-cols-2"}');
-  expect(hero).toContain("<DescriptiveButton");
-  expect(hero).toContain("min-h-10 items-center rounded-xl bg-background");
-  expect(hero).toContain("hover:border-foreground/20 hover:bg-muted/60");
-  expect(hero).toContain("max-lg:min-h-11");
-  const suggestion = hero.slice(hero.indexOf("<DescriptiveButton\n"), hero.indexOf("</DescriptiveButton>"));
+  // Suggestions are outlined pills that wrap on narrow screens and meet the 44px touch target on phones.
+  expect(hero).toContain('data-empty-suggestions hidden={hideIntroduction} className="flex flex-wrap justify-center gap-2"');
+  const suggestion = hero.slice(hero.indexOf("{suggestions.map("), hero.indexOf("</Button>)}", hero.indexOf("{suggestions.map(")));
+  expect(suggestion).toContain('variant="outline"');
+  expect(suggestion).toContain("rounded-full");
+  expect(suggestion).toContain("max-lg:min-h-11");
   expect(suggestion).not.toContain('variant="ghost"');
 });

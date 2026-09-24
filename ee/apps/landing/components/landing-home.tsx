@@ -45,7 +45,7 @@ export function LandingHome(props: Props) {
     [activeDemoId]
   );
   const primaryHref = props.isMobileVisitor ? CLOUD_SIGNUP_URL : "/download";
-  const callExternal = /^https?:\/\//.test(props.callHref);
+  const primaryLabel = props.isMobileVisitor ? "Open in browser" : "Download OpenWork";
 
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-[var(--lp-page)] text-[var(--lp-ink)]">
@@ -56,7 +56,7 @@ export function LandingHome(props: Props) {
           stars={props.stars}
           callUrl={props.callHref}
           mobilePrimaryHref={CLOUD_SIGNUP_URL}
-          mobilePrimaryLabel="Get started for free"
+          mobilePrimaryLabel="Open in browser"
           active="home"
         />
 
@@ -77,7 +77,7 @@ export function LandingHome(props: Props) {
         <main className="mx-auto w-full max-w-[1176px] px-6 pb-8">
           <section
             aria-labelledby="sovereign-hero-heading"
-            className="grid items-start gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.08fr)] lg:gap-12"
+            className="grid items-start gap-10 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)] lg:gap-12"
           >
             <div className="relative min-w-0 lg:pt-2">
               <div className="relative">
@@ -88,15 +88,12 @@ export function LandingHome(props: Props) {
                 id="sovereign-hero-heading"
                 className="text-[clamp(2.5rem,4.4vw,3.25rem)] font-medium leading-[1.08] tracking-[-0.045em]"
               >
-                Your AI workspace.
-                <br />
-                Without
-                <br />
-                <span className="whitespace-nowrap">vendor lock-in.</span>
+                <span className="block">Your AI workspace.</span>{" "}
+                <span className="block">Without vendor lock-in.</span>
               </h1>
               <p className="mt-6 max-w-xl text-[17px] leading-[1.6] text-[var(--lp-body)] lg:text-lg">
-                An open-source alternative to Claude Cowork, built for knowledge
-                workers who want the freedom to choose their AI.
+                The open-source alternative to Claude Cowork and Codex. Run any
+                model on any infrastructure.
               </p>
 
               <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -107,7 +104,7 @@ export function LandingHome(props: Props) {
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Get Started for Free <ArrowRight size={18} />
+                    Open in browser <ArrowRight size={18} aria-hidden="true" />
                   </a>
                 ) : (
                   <HeroDownloadButton />
@@ -336,7 +333,7 @@ export function LandingHome(props: Props) {
                     The free desktop app. Your files, your keys, fully local-first.
                   </p>
                   <div className="mt-4">
-                    <LpArrowLink href={primaryHref}>Download free</LpArrowLink>
+                    <LpArrowLink href="/download">Download OpenWork</LpArrowLink>
                   </div>
                 </div>
               </LpTonalCard>
@@ -364,7 +361,7 @@ export function LandingHome(props: Props) {
                     self-hosted.
                   </p>
                   <div className="mt-4">
-                    <LpArrowLink href="/enterprise">See Enterprise</LpArrowLink>
+                    <LpArrowLink href="/enterprise">Explore enterprise</LpArrowLink>
                   </div>
                 </div>
               </LpTonalCard>
@@ -392,7 +389,7 @@ export function LandingHome(props: Props) {
                   onSelectFlow={setActiveDemoId}
                 />
               </div>
-              <div className="flex flex-wrap gap-1 border-t border-[var(--lp-border)] px-3 py-3" aria-label="Example tasks">
+              <div className="flex flex-wrap gap-1 border-t border-[var(--lp-border)] px-3 py-3" role="group" aria-label="Example tasks">
                 {landingDemoFlows.map((flow) => {
                   const isActive = flow.id === activeDemo.id;
                   return (
@@ -429,7 +426,7 @@ export function LandingHome(props: Props) {
             <LpCta
               heading="Give your whole team an agent."
               sub="Free on desktop. Central management in Cloud. Private instances for enterprise."
-              primary={{ label: "Download for free →", href: primaryHref }}
+              primary={{ label: primaryLabel, href: primaryHref }}
               secondary={{ label: "Talk to sales", href: props.callHref }}
               trust="Free & open source · No account required to start"
             />

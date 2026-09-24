@@ -1,4 +1,6 @@
-import { beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+
+const WEB_ORIGIN = "https://web.selfhost.example.test"
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
@@ -12,11 +14,22 @@ function seedRequiredEnv() {
 
 let app: typeof import("../src/app.js")["default"]
 let corsOrigins: string[]
+let webOrigins: typeof import("../src/organization-web-origins.js")
+const lookedUpOrigins: string[] = []
 
 beforeAll(async () => {
   seedRequiredEnv()
   app = (await import("../src/app.js")).default
   corsOrigins = (await import("../src/env.js")).env.corsOrigins
+  webOrigins = await import("../src/organization-web-origins.js")
+  webOrigins.setWebOriginApprovalLookupForTest(async ({ origin }) => {
+    lookedUpOrigins.push(origin)
+    return origin === WEB_ORIGIN
+  })
+})
+
+afterAll(() => {
+  webOrigins.setWebOriginApprovalLookupForTest(null)
 })
 
 // Behind an edge that answers CORS itself (the Daytona preview proxy reflects
@@ -30,6 +43,21 @@ describe("DEN_CORS_HANDLED_BY_EDGE", () => {
     const res = await app.request("/health", { headers: { Origin: allowlisted } })
     expect(res.headers.get("access-control-allow-origin")).toBeNull()
     expect(res.headers.get("access-control-allow-credentials")).toBeNull()
+  })
+
+  test.each(["/v1/me", "/v1/me/orgs"])("den-api leaves approved web origin preflights on %s to the edge", async (path) => {
+    const res = await app.request(path, {
+      method: "OPTIONS",
+      headers: {
+        Origin: WEB_ORIGIN,
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "authorization",
+      },
+    })
+    expect(res.headers.get("access-control-allow-origin")).toBeNull()
+    expect(res.headers.get("access-control-allow-credentials")).toBeNull()
+    expect(res.headers.get("access-control-allow-headers")).toBeNull()
+    expect(lookedUpOrigins).toEqual([])
   })
 
   test("the handoff exchange route stops reflecting origins too", async () => {

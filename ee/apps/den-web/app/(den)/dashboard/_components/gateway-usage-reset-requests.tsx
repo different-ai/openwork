@@ -10,7 +10,7 @@ import { DenTable, type DenTableColumn } from "../../_components/ui/table";
 import type { DenOrgMember } from "../../_lib/den-org";
 import { formatLimitMoney, useGatewayLimitsMutation, useGatewayPolicies, useGatewayResetHistoryAvailable, useGatewayResetRequests } from "./gateway-usage-limits-data";
 import { GatewayLimitsQueryFeedback, GatewayLimitTimestamp } from "./gateway-usage-limits-section";
-import { timeframeLabels } from "./gateway-usage-policy-editor";
+import { timeframeLabels } from "./gateway-usage-limits-data";
 
 function extensionPreview(request: GatewayUsageResetRequest) {
   const extension = Number((BigInt(request.baseAllowanceMicroUsd) + 3n) / 4n);
@@ -89,7 +89,7 @@ function GatewayResetQueue({ orgId, members }: { orgId: string; members: DenOrgM
   ];
   const disabled = mutation.isPending || requests.isFetching || requests.isError;
   return <section aria-labelledby="gateway-reset-requests-heading" className="mb-10 flex flex-col gap-4">
-    <div className="flex flex-wrap items-center justify-between gap-3"><h2 id="gateway-reset-requests-heading" className="text-lg font-semibold">Usage Limit Increase Requests</h2><DenButton variant="secondary" disabled={refreshing} onClick={() => void refreshRequests()}>Refresh requests</DenButton></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><h2 id="gateway-reset-requests-heading" className="text-lg font-semibold">Limit increase requests</h2><DenButton variant="secondary" disabled={refreshing} onClick={() => void refreshRequests()}>Refresh requests</DenButton></div>
     {mutation.error ? <DenNotice tone="error" message={mutation.error.message} /> : null}
     {mutation.isSuccess && mutation.data && "status" in mutation.data ? <DenNotice tone={mutation.data.status === "expired" ? "warning" : "info"} message={mutation.data.status === "expired" ? "This request expired or its policy changed. No extension was granted by this decision; review the current bucket." : `Request ${mutation.data.status}. Check the queue and history for the latest state.`} /> : null}
     <ResetRequestPages query={requests} view="pending" onRefresh={refreshRequests} refreshing={refreshing} columns={[...requestColumns,

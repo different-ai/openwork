@@ -12,6 +12,12 @@ mkdirSync(output, { recursive: true });
 const report = { commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(), phases: [], passed: false };
 const started = performance.now();
 
+// `--journey <name>` (repeatable) runs only the checks for those journeys
+// against the same packaged artifacts. PR proof uses it for packaged specs,
+// which need a packaged binary and cannot run against a dev build.
+const journeys = new Set(process.argv.flatMap((arg, index, all) => arg === "--journey" && all[index + 1] ? [all[index + 1]] : []));
+const selected = (journey) => journeys.size === 0 || journeys.has(journey);
+
 function run(name, command, args, timeout, extraEnv = {}, cwd = repo) {
   const phaseStarted = performance.now();
   const result = spawnSync(command, args, {
@@ -83,7 +89,10 @@ try {
     `const server = await import(${JSON.stringify(embedded)}); if (typeof server.startEmbeddedServer !== "function") throw new Error("Missing embedded server export");`],
   15_000, { ELECTRON_RUN_AS_NODE: "1", NODE_PATH: "", NODE_OPTIONS: "" }, output);
   const checks = [];
+  const matched = new Set();
   const check = (name, journey, executable, timeout) => {
+    if (!selected(journey)) return;
+    matched.add(journey);
     // Distinct starting displays avoid xvfb-run's concurrent auto-number race.
     const display = 100 + checks.length * 10;
     checks.push(() => bootPackagedDesktop(name, journey, executable, timeout, display));
@@ -102,13 +111,16 @@ try {
   }
   // The same enterprise artifact, booted as an already-activated install (the update path for existing customers).
   check("desktop-boot-enterprise-activated", "packaged-activated-launch", join(flavorOutput("enterprise"), "linux-unpacked", "openwork-enterprise"), 150_000);
+  if (selected("desktop-quit-path")) matched.add("desktop-quit-path");
+  const unknown = [...journeys].filter((journey) => !matched.has(journey));
+  if (unknown.length) throw new Error(`No packaged smoke check runs journey ${unknown.join(", ")}.`);
   await runConcurrent(checks);
   // Browser.close is intentionally isolated from the other packaged Electron
   // instances. Running the quit contract beside the long egress observation can
   // make an unrelated attached surface disappear before its quiet window ends.
   // Linux has no crash reports to read, so the journey names that half skipped
   // and the exit signal is the witness.
-  await bootPackagedDesktop(
+  if (selected("desktop-quit-path")) await bootPackagedDesktop(
     "desktop-quit-enterprise",
     "desktop-quit-path",
     join(flavorOutput("enterprise"), "linux-unpacked", "openwork-enterprise"),

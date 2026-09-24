@@ -32,6 +32,34 @@ const granolaConnection: DenExternalMcpConnection = {
 };
 
 describe("connector tool identity", () => {
+  test("uses only trusted inventory for probe identity even with a valid payload", () => {
+    const part: DynamicToolUIPart = {
+      ...completedPart("openwork-cloud_execute_capability", { name: "mcp:emc_granola:*" }),
+      state: "output-available",
+      output: { connectionStatus: {
+        schemaVersion: "1",
+        connectionId: "emc_granola",
+        connectionName: "Notion",
+        state: "connected",
+        actor: null,
+        message: "Connected",
+        action: null,
+      } },
+    };
+    const inventory = buildConnectorToolIdentities({ mcpServers: [], orgConnections: [granolaConnection] });
+    expect(resolveConnectorToolIdentity(part, inventory)?.name).toBe("Meeting notes");
+    expect(resolveConnectorToolIdentity(part, [])).toBeNull();
+    expect(resolveConnectorToolIdentity(part, buildConnectorToolIdentities({ mcpServers: [], orgConnections: [] }))).toBeNull();
+    const notionInventory = buildConnectorToolIdentities({
+      mcpServers: [],
+      orgConnections: [{ ...granolaConnection, name: "Notion", url: "https://mcp.notion.com/mcp" }],
+    });
+    expect(resolveConnectorToolIdentity(part, notionInventory)?.name).toBe("Notion");
+    expect(resolveConnectorToolIdentity(part, notionInventory)?.iconUrl).toEndWith("/ext-notion.svg");
+    expect(resolveConnectorToolIdentity({ ...part, input: { name: "mcp:emc_other:*" } }, [])).toBeNull();
+    expect(resolveConnectorToolIdentity({ ...part, output: { connectionName: "Notion" } }, [])).toBeNull();
+    expect(resolveConnectorToolIdentity({ ...part, toolName: "third-party_execute_capability" }, [])).toBeNull();
+  });
   test("recognizes native connector capabilities with a first-class local brand icon", () => {
     const identities = buildConnectorToolIdentities({ mcpServers: [], orgConnections: [] });
     const identity = resolveConnectorToolIdentity(

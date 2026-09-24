@@ -51,6 +51,8 @@ run(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", 
 run(nodeCmd, [resolve(__dirname, "prepare-runtime-node-modules.mjs"), "--outdir", packagedRuntimeRoot], desktopRoot);
 writeSentryBuildConfig();
 // Each stable release carries its own free Auto release tag; see the script for what it can and cannot prove.
+// The script derives the tag secret with @openwork/free-auto, which plain node loads from its dist build.
+run(pnpmCmd, ["--filter", "@openwork/free-auto", "build"], repoRoot);
 run(nodeCmd, [resolve(__dirname, "prepare-desktop-free-release.mjs")], desktopRoot);
 // Build the server TS → JS so Electron can import it in-process
 // CI already compiles this exact checkout in the required build job.

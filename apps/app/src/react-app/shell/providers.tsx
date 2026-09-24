@@ -23,6 +23,7 @@ import { DesktopRuntimeBoot } from "./desktop-runtime-boot";
 import { startDebugLogger, stopDebugLogger } from "./debug-logger";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { ReloadCoordinatorProvider } from "./reload-coordinator";
+import { LinkOpenDialog } from "./link-open-dialog";
 
 export function resolveDefaultServerUrl(): string {
   if (isDesktopRuntime()) return "http://127.0.0.1:4096";
@@ -72,6 +73,7 @@ export function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
                 <GlobalQueueDrainerBridge />
                 <AutoRejectedTurnRecoveryBridge />
                 <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
+                <LinkOpenDialog />
                 <Toaster />
               </LocalProvider>
             </RestrictionNoticeProvider>

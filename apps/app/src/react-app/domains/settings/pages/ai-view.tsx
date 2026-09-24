@@ -6,7 +6,7 @@ import type { DesktopFreePreferences } from "@/app/lib/openwork-server";
 import { t } from "@/i18n";
 import { gatewayConnectCopy, gatewayConnectProviderKey, type GatewayConnectProvider, isCloudManagedProviderKey, OPENWORK_GATEWAY_BADGE_LABEL } from "../../connections/provider-auth/cloud-provider-config";
 import type { ProviderLoadState } from "../../connections/provider-auth/store";
-import { AUTO_PROVIDER_ID } from "../../session/models/model-catalog";
+import { AUTO_PROVIDER_ID } from "@/react-app/domains/models/model-catalog";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { SettingsNotice } from "../settings-section";
 import { LayoutSection, LayoutSectionHeader, LayoutSectionTitle, LayoutStack } from "../settings-layout";
@@ -40,6 +40,8 @@ export type AiSettingsViewProps = {
   gatewayConnectProviders?: GatewayConnectProvider[];
   connectingGatewayProviderId?: string | null;
   onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
+  onCancelGatewayConnect?: () => void;
+  onOpenModelConnections?: () => void;
   showOpenWorkModelsConnect?: boolean;
   showOpenWorkModelsSyncing?: boolean;
   onDismissOpenWorkModels?: () => void | Promise<void>;
@@ -52,17 +54,21 @@ export type AiSettingsViewProps = {
   onOpenDen?: () => void;
 };
 
-export function GatewayConnectRow({ provider, busy, onConnect }: {
+export function GatewayConnectRow({ provider, busy, onConnect, onCancel }: {
   provider: GatewayConnectProvider;
   busy: boolean;
   onConnect?: (provider: GatewayConnectProvider) => void | Promise<void>;
+  onCancel?: () => void;
 }) {
   return <div className="flex min-h-12 items-center justify-between gap-3 border-b border-border px-4 py-3 last:border-0">
     <div className="flex min-w-0 items-center gap-3">
       <ProviderIcon providerId={provider.providerId} providerName={provider.name} size={20} />
       <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium">{provider.name}</span><Badge variant="outline">Needs your sign-in</Badge></div><div className="text-xs text-muted-foreground">{gatewayConnectCopy(provider.name)} · {OPENWORK_GATEWAY_BADGE_LABEL}</div></div>
     </div>
-    <Button variant="outline" disabled={busy || !onConnect} onClick={() => void onConnect?.(provider)}>{busy ? "Waiting for sign-in…" : `Sign in to ${provider.name}`}</Button>
+    <div className="flex shrink-0 items-center gap-2">
+      <Button variant="outline" disabled={busy || !onConnect} onClick={() => void onConnect?.(provider)}>{busy ? "Waiting for sign-in…" : "Login"}</Button>
+      {busy && onCancel ? <Button variant="outline" onClick={onCancel}>Stop waiting</Button> : null}
+    </div>
   </div>;
 }
 
@@ -79,6 +85,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
   const locked = !props.canAddProviders;
 
   return <LayoutStack>
+    {props.onOpenModelConnections ? <Button variant="outline" className="self-start" onClick={props.onOpenModelConnections}>My Model Connections</Button> : null}
     <LayoutSection>
       <LayoutSectionHeader><div className="flex items-center justify-between gap-3">
         <LayoutSectionTitle>AI Providers</LayoutSectionTitle>
@@ -107,6 +114,6 @@ export function AiSettingsView(props: AiSettingsViewProps) {
       {props.providerDisconnectStatus ? <SettingsNotice>{props.providerDisconnectStatus}</SettingsNotice> : null}
       {props.providerDisconnectError ? <SettingsNotice tone="error">{props.providerDisconnectError}</SettingsNotice> : null}
     </LayoutSection>
-    {props.cloudProvidersView ?? <LayoutSection><LayoutSectionHeader><LayoutSectionTitle>From {props.organizationName || "your organization"}</LayoutSectionTitle>{props.onOpenDen ? <Button variant="ghost" onClick={props.onOpenDen}>Open in Den</Button> : null}</LayoutSectionHeader>{organization.map((provider) => <div key={provider.id} className="flex items-center gap-3 border-b border-border py-3"><ProviderIcon providerId={provider.id} providerName={provider.name} size={20} /><span className="text-sm font-medium">{provider.name}</span><span className="text-xs text-muted-foreground">Managed in Den</span></div>)}{props.gatewayConnectProviders?.map((provider) => <GatewayConnectRow key={gatewayConnectProviderKey(provider)} provider={provider} busy={props.connectingGatewayProviderId === gatewayConnectProviderKey(provider)} onConnect={props.onConnectGatewayProvider} />)}</LayoutSection>}
+    {props.cloudProvidersView ?? <LayoutSection><LayoutSectionHeader><LayoutSectionTitle>From {props.organizationName || "your organization"}</LayoutSectionTitle>{props.onOpenDen ? <Button variant="ghost" onClick={props.onOpenDen}>Open in Den</Button> : null}</LayoutSectionHeader>{organization.map((provider) => <div key={provider.id} className="flex items-center gap-3 border-b border-border py-3"><ProviderIcon providerId={provider.id} providerName={provider.name} size={20} /><span className="text-sm font-medium">{provider.name}</span><span className="text-xs text-muted-foreground">Managed in Den</span></div>)}{props.gatewayConnectProviders?.map((provider) => <GatewayConnectRow key={gatewayConnectProviderKey(provider)} provider={provider} busy={props.connectingGatewayProviderId === gatewayConnectProviderKey(provider)} onConnect={props.onConnectGatewayProvider} onCancel={props.onCancelGatewayConnect} />)}</LayoutSection>}
   </LayoutStack>;
 }

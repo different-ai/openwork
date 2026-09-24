@@ -2,87 +2,63 @@ import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { API_KEY_PRESET_ID, connectorQuickAddPresetAuth } from "../worlds/connector-quick-add.ts";
 
-// An admin who picks an API-key quick add must be asked for that key even when
-// the hosted server also advertises OAuth metadata; the live probe still
-// decides the auth type for a custom server URL.
+// An admin who picks an API-key catalog entry must be asked for that key even
+// when the hosted server also advertises OAuth metadata; the live probe still
+// decides how people sign in to a custom server address.
 const test = spec.world(connectorQuickAddPresetAuth, { timeout: 600_000 });
 
-test("an API-key quick add keeps its key field while a custom OAuth-only server still switches to OAuth", async ({ world, user, probe, evidence }) => {
-  // The connections page behind the dialog also mentions API keys, so every
-  // field claim reads the dialog itself rather than the whole page.
-  const DIALOG = '[data-testid="add-mcp-connection-dialog"]';
-  const dialog = async () => {
-    const [root, keyField, clientIdField, alert, enabledButtons] = await Promise.all([
-      probe.dom(DIALOG),
-      probe.dom(`${DIALOG} input[name="mcp-api-key"]`),
-      probe.dom(`${DIALOG} input[name="mcp-oauth-client-id"]`),
-      probe.dom(`${DIALOG} [role="alert"]`),
-      probe.dom(`${DIALOG} button:not([disabled])`),
+test("an admin adding an API-key connector is asked for the key, while a custom OAuth-only server asks people to sign in", async ({ world, user, probe, step, evidence }) => {
+  const methodCheck = '[data-testid="setup-check-sign-in-method"]';
+  const setupState = async () => {
+    const [check, keyField, clientIdField] = await Promise.all([
+      probe.dom(methodCheck),
+      probe.dom(`${methodCheck} input[name="connector-api-key"]`),
+      probe.dom(`${methodCheck} input[name="connector-oauth-client-id"]`),
     ]);
-    const text = root.elements[0]?.text;
-    if (text === undefined) return null;
     return {
-      text,
-      alert: alert.elements.length > 0,
+      text: check.elements[0]?.text ?? "",
       keyField: keyField.elements.length > 0,
       clientIdField: clientIdField.elements.length > 0,
-      credentialMode: text.includes("Whose account does the AI use?"),
-      addEnabled: enabledButtons.elements.some(button => button.text === "Add connection"),
     };
   };
 
-  // Den's own discovery disagreed with the preset before the dialog opened;
-  // without that conflict the key field surviving would prove nothing.
-  expect(world.discovered.kind).toBe("oauth");
-  await user.navigate(`${world.den.ref.webUrl}/dashboard/mcp-connections?quickAdd=${API_KEY_PRESET_ID}`);
-  await user.see({ testId: "add-mcp-connection-dialog" }, { timeoutMs: 90_000 });
-  await user.see({ text: `Add ${world.presetName}` });
-  await user.type({ placeholder: "sk-..." }, "synthetic-org-api-key");
-  // Discovery must finish (the submit button only enables on a ready probe)
-  // before the claim means anything: an unfinished probe never flips the form.
-  const quickAdd = await probe.eventually(dialog, {
-    within: 60_000,
-    label: "requirements discovery finished for the quick add",
-    until: state => state?.addEnabled === true,
+  await step("given Den's own discovery says the API-key server wants OAuth", async () => {
+    expect(world.discovered.kind).toBe("oauth");
+    await user.see({ role: "heading", label: "Add a connector" }, { timeoutMs: 90_000 });
+    evidence.recordAssertionEvidence("the preset and the live probe disagree", `Den discovery for ${world.presetUrl}: kind=${world.discovered.kind}, registration=${world.discovered.registration}; preset ${API_KEY_PRESET_ID} is an API-key preset`, true);
   });
-  if (!quickAdd) throw new Error("The quick-add dialog disappeared.");
-  const quickAddOk = !quickAdd.alert && quickAdd.keyField && !quickAdd.clientIdField
-    && !quickAdd.text.includes("OAuth app") && !quickAdd.credentialMode;
-  expect(quickAddOk, JSON.stringify({ alert: quickAdd.alert, keyField: quickAdd.keyField, clientIdField: quickAdd.clientIdField, credentialMode: quickAdd.credentialMode })).toBe(true);
-  await user.screenshot();
-  evidence.recordAssertionEvidence(
-    "The API-key quick add still asks for the org key although Den's discovery classified the server as OAuth",
-    `Den discovery for ${world.presetUrl}: kind=${world.discovered.kind}, registration=${world.discovered.registration}. quickAdd=${API_KEY_PRESET_ID}: Add connection enabled once a key was typed; key field present, no OAuth app, client ID, or credential-mode fields`,
-    quickAddOk,
-  );
-  await user.click({ role: "button", label: "Cancel" });
-  await user.notSee({ testId: "add-mcp-connection-dialog" });
 
-  // Negative half: without a curated preset the probe still drives the form.
-  // The admin first chooses API key by hand; discovering an OAuth server
-  // must override that choice, and the server's own log witnesses the probe.
-  await user.click({ role: "button", label: "Advanced setup" });
-  await user.see({ testId: "add-mcp-connection-dialog" });
-  await user.see({ text: "Add a custom MCP server" });
-  await user.click({ role: "button", label: "API key" });
-  const customBefore = await dialog();
-  if (!customBefore) throw new Error("The custom server dialog disappeared.");
-  expect(customBefore.keyField, "API key chosen by hand before discovery").toBe(true);
-  await user.type({ placeholder: "https://mcp.example.com/mcp" }, world.oauthOnlyServerUrl);
-  const custom = await probe.eventually(dialog, {
-    within: 60_000,
-    label: "requirements discovery switched the custom server to OAuth",
-    until: state => state?.keyField === false && state?.credentialMode === true,
+  await step("when the admin opens its old quick-add link, the setup page asks for the key", async () => {
+    await user.navigate(`${world.den.ref.webUrl}/dashboard/mcp-connections?quickAdd=${API_KEY_PRESET_ID}`);
+    await user.see({ role: "heading", label: `Add ${world.presetName}` }, { timeoutMs: 90_000 });
+    const state = await probe.eventually(setupState, {
+      within: 60_000, label: "step two asked for the key", until: (current) => current.keyField,
+    });
+    await user.notSee({ role: "button", label: `Sign in with ${world.presetName}` });
+    const ok = state.keyField && !state.clientIdField;
+    expect(ok, JSON.stringify(state)).toBe(true);
+    evidence.recordAssertionEvidence(
+      "the API-key connector still asks for the org key although discovery said OAuth",
+      `quickAdd=${API_KEY_PRESET_ID} landed on the setup page; step two reads "${state.text}" with a key field, no client ID field, no sign-in button`,
+      ok,
+    );
+    await user.screenshot();
   });
-  if (!custom) throw new Error("The custom server dialog disappeared.");
-  const probedPaths = (await world.connector.requests()).map(request => request.path).filter(path => path.startsWith("/mcp") || path.includes("/.well-known/"));
-  const customOk = !custom.alert && probedPaths.length > 0;
-  expect(customOk, JSON.stringify({ alert: custom.alert, probedPaths })).toBe(true);
-  await user.screenshot();
-  evidence.recordAssertionEvidence(
-    "A custom OAuth server overrides a hand-picked API key auth type after Den probes it",
-    `Den probed the synthetic server at ${JSON.stringify([...new Set(probedPaths)])}; the dialog dropped the API-key field and asked whose account the AI uses`,
-    customOk,
-  );
-  await user.click({ role: "button", label: "Cancel" });
+
+  await step("after: a custom OAuth-only server asks each person to sign in, and Den really probed it", async () => {
+    const query = new URLSearchParams({ name: "Synthetic OAuth", url: world.oauthOnlyServerUrl });
+    await user.navigate(`${world.den.ref.webUrl}/dashboard/mcp-connections/new/custom?${query.toString()}`);
+    await user.see({ role: "heading", label: "Add Synthetic OAuth" }, { timeoutMs: 90_000 });
+    await user.see({ role: "button", label: "Sign in with Synthetic OAuth" }, { timeoutMs: 60_000 });
+    const state = await setupState();
+    const probedPaths = (await world.connector.requests()).map((request) => request.path).filter((path) => path.startsWith("/mcp") || path.includes("/.well-known/"));
+    const ok = !state.keyField && !state.clientIdField && probedPaths.length > 0;
+    expect(ok, JSON.stringify({ state, probedPaths })).toBe(true);
+    evidence.recordAssertionEvidence(
+      "a custom OAuth server gets a sign-in step, not a key field",
+      `Den probed ${JSON.stringify([...new Set(probedPaths)])}; step two reads "${state.text}"; no key or client ID field`,
+      ok,
+    );
+    await user.screenshot();
+  });
 });

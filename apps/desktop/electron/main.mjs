@@ -2598,8 +2598,14 @@ async function createMainWindow() {
     Object.assign(windowAppearanceOptions, {
       backgroundColor: "#00000001",
       titleBarStyle: "hiddenInset",
+      trafficLightPosition: { x: 20, y: 18 },
       vibrancy: macosVibrancyForCurrentTheme(),
       visualEffectState: "active",
+    });
+  } else {
+    Object.assign(windowAppearanceOptions, {
+      titleBarStyle: "hidden",
+      titleBarOverlay: { height: 40 },
     });
   }
 
@@ -2647,6 +2653,15 @@ async function createMainWindow() {
   }
   applicationMenu.applyVisibility(mainWindow);
   browserPanel.registerWindowShortcuts(mainWindow);
+
+  // Native fullscreen is independent of the DOM Fullscreen API. The preload
+  // also reads the initial value, so reloading in fullscreen keeps its layout.
+  const publishFullscreen = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send("openwork:window-fullscreen", mainWindow.isFullScreen());
+  };
+  mainWindow.on("enter-full-screen", publishFullscreen);
+  mainWindow.on("leave-full-screen", publishFullscreen);
 
   mainWindow.webContents.on("context-menu", (_event, params) => {
     void nativeContextMenus.showEditing(params).catch((error) => {
@@ -2751,6 +2766,9 @@ ipcMain.on("openwork:desktop-bootstrap-sync", (event) => {
 });
 ipcMain.on("openwork:desktop-distribution-sync", (event) => {
   event.returnValue = DESKTOP_DISTRIBUTION;
+});
+ipcMain.on("openwork:window-fullscreen-sync", (event) => {
+  event.returnValue = BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false;
 });
 ipcMain.handle("openwork:desktop", handleDesktopInvoke);
 ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {

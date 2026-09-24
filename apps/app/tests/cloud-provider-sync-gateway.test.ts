@@ -507,18 +507,44 @@ describe("cloud provider sync in gateway mode", () => {
     }
   });
 
-  test("returns a server-handled outcome without network calls or error state behind the gateway", async () => {
+  test.each(["settings_cloud_opened", "manual"] as const)("rereads hosted runtime providers without client-side materialization on %s", async (reason) => {
     const storage = installWindow({ origin: "https://web.openworklabs.com", gateway: true });
     installCloudSession(storage);
     const requests: RecordedRequest[] = [];
     installProviderSyncFetch(requests);
     const { store } = createProviderAuthTestStore();
 
-    const outcome = await store.runCloudProviderSync("settings_cloud_opened");
+    const outcome = await store.runCloudProviderSync(reason);
 
     expect(outcome).toEqual({ outcome: "handled_server_side" });
-    expect(requests).toEqual([]);
+    expect(requests.some((request) => new URL(request.url).pathname === "/provider")).toBe(true);
+    expect(requests.every((request) => request.method === "GET")).toBe(true);
+    expect(requests.some((request) => request.url.includes("/cloud-provider-sync/run"))).toBe(false);
     expect(store.getSnapshot().providerAuthError).toBeNull();
+  });
+
+  test.each(["session delivery", "OAuth response"])("does not use an OAuth result after an organization switch during %s", async (phase) => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installProviderSyncFetch(requests);
+    const fixtureFetch = globalThis.fetch;
+    const starts: string[] = [];
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = getRequestUrl(input);
+      if (url.endsWith("/den-session") && phase === "session delivery") {
+        storage.setItem("openwork.den.activeOrgId", "org_other");
+      }
+      if (url.endsWith("/oauth/start")) {
+        starts.push(url);
+        if (phase === "OAuth response") storage.setItem("openwork.den.activeOrgId", "org_other");
+        return jsonResponse({ authorizationUrl: "https://den.example/gateway/connect?attempt=fixture" });
+      }
+      return fixtureFetch(input, init);
+    } });
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+    await expect(store.startGatewayProviderOAuth("ipr_fixture", "gcs_fixture", new AbortController().signal)).rejects.toThrow("changed");
+    expect(starts).toHaveLength(phase === "session delivery" ? 0 : 1);
   });
 
   test("keeps the client materialization path active outside gateway mode", async () => {
@@ -809,6 +835,38 @@ describe("cloud provider sync in server-capability mode", () => {
         },
       },
     });
+  });
+
+  test("keeps pending assigned aliases in status only and removes them on an authoritative context refresh", async () => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    const credentialSetId = "gcs_00000000000000000000000002";
+    const id = "gwm_00000000000000000000000001_00000000000000000000000002_00000000000000000000000003";
+    const model = { id, name: "Assigned model", config: { id }, upstreamModelId: "upstream",
+      modelGroupId: "gmg_00000000000000000000000001", modelGroupName: "Assigned group",
+      credentialSetId, credentialSetName: "Personal" };
+    let release: () => void = () => undefined;
+    let hold = Promise.resolve();
+    const options = { onRun: async () => { await hold; }, statusSkipped: [{ cloudProviderId: "ipr_pending", providerId: "ipr_pending", credentialSetId,
+      name: "Member provider", reason: "member_auth_required", models: [model, { ...model, credentialSetId: "gcs_wrong" }] }] };
+    installProviderSyncFetch(requests, options);
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+    try {
+      await store.runCloudProviderSync("manual");
+      expect(store.getSnapshot().cloudProviderServerSync?.skippedProviders[`ipr_pending:${credentialSetId}`]?.models).toEqual([model]);
+      expect(store.getSnapshot().importedCloudProviders).toEqual({});
+      expect(store.isGatewayModelAvailable({ cloudProviderId: "ipr_pending", providerId: "ipr_pending", credentialSetId, name: "Member", authUrl: null }, { providerID: "ipr_pending", modelID: id })).toBe(false);
+      expect(requests.filter((request) => request.method !== "GET").every((request) => ["/den-session", "/cloud-provider-sync/run"].includes(new URL(request.url).pathname))).toBe(true);
+      storage.setItem("openwork.den.activeOrgId", "org_replacement");
+      options.statusSkipped = [];
+      hold = new Promise<void>((resolve) => { release = resolve; });
+      const refresh = store.runCloudProviderSync("manual");
+      expect(store.getSnapshot().cloudProviderServerSync).toBeNull();
+      release();
+      await refresh;
+      expect(store.getSnapshot().cloudProviderServerSync?.skippedProviders).toEqual({});
+    } finally { store.dispose(); }
   });
 
   test("maps imported provider status and ordered authorized pins by cloud provider id", async () => {

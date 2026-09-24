@@ -29,6 +29,7 @@ import {
   freeInferenceAccess, freeInferenceWindow, freeInferenceOrganizationAllowed, freeInferenceDefaultPinned, inferenceSubscribed, managedModelCatalog,
   INFERENCE_USAGE_CONVERSION_FACTOR,
   type InferenceAccess, type FreeInferenceProviderSummary,
+  INFERENCE_WINDOW_TYPES,
 } from "@openwork/types/den/inference"
 import type { InferenceOrganizationMetadata, InferenceTier, InferenceWindowType } from "@openwork/types/den/inference"
 import { assertManagedModelsAllowed, ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
@@ -38,7 +39,7 @@ import { assertOrganizationManagedModelsAllowed, updateOrganizationMetadata } fr
 import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js"
 import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
-import { MEMBER_FREE_STATUS_PATH } from "@openwork/types/desktop-free-access"
+import { MEMBER_FREE_STATUS_PATH } from "@openwork/free-auto"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -795,6 +796,8 @@ async function getActiveUsageBuckets(organizationId: OrgId) {
     )
     .where(eq(InferenceOrgUsageBucketTable.organization_id, organizationId))
 
+  // Row order is unspecified without ORDER BY; keep status responses stable.
+  rows.sort((left, right) => INFERENCE_WINDOW_TYPES.indexOf(left.windowType) - INFERENCE_WINDOW_TYPES.indexOf(right.windowType))
   return rows.map((row) => ({
     windowType: row.windowType,
     windowStartAt: row.windowStartAt.toISOString(),

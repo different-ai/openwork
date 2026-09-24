@@ -7,6 +7,7 @@ import { StructuredData } from "../components/structured-data";
 import { POSTHOG_PROJECT_KEY } from "../lib/posthog-client";
 import { getGithubData } from "../lib/github";
 import { DownloadProvider } from "../components/download-link";
+import { baseOpenGraph, baseTwitter } from "../lib/seo";
 
 // Local pnpm dev, local prod builds, and Vercel previews load no PostHog at all (no autocapture/pageviews), so only real production traffic reaches analytics.
 // VERCEL_ENV is baked at build time for static pages, which is correct on Vercel production builds.
@@ -46,16 +47,8 @@ export const metadata = {
     index: true,
     follow: true
   },
-  openGraph: {
-    type: "website",
-    siteName: "OpenWork",
-    locale: "en_US",
-    images: ["/og-image-clean.png"]
-  },
-  twitter: {
-    card: "summary_large_image",
-    images: ["/og-image-clean.png"]
-  }
+  openGraph: baseOpenGraph,
+  twitter: baseTwitter
 };
 
 const protectedRoutes = [

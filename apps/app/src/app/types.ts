@@ -190,6 +190,7 @@ export const SETTINGS_TAB_VALUES = [
   "preferences",
   "permissions",
   "cloud-account",
+  "usage",
   "connect",
   "cloud-marketplaces",
   "cloud-providers",
@@ -438,6 +439,7 @@ export type ModelOption = {
   /** "cloud" for org-managed providers (lpr_*), undefined for local. */
   source?: "cloud" | "gateway" | "local";
   organizationPinOrder?: number;
+  gatewayAuthorization?: { cloudProviderId: string; credentialSetId: string };
 };
 
 export type SelectedSessionSnapshot = {

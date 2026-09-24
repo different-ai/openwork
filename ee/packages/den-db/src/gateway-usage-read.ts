@@ -111,7 +111,12 @@ export async function usagePolicies(
         .map(({ timeframe, costLimitMicroUsd }) => ({ timeframe, costLimitMicroUsd })),
       assignments: assignments
         .filter((entry) => entry.policyId === row.id)
-        .map(({ id, memberId, teamId }) => ({ id, memberId, teamId })),
+        .map(({ id, memberId, teamId, organization }) => ({
+          id,
+          memberId,
+          teamId,
+          organization: organization === true,
+        })),
     }),
   )
 }
@@ -146,6 +151,7 @@ export async function effectiveUsagePolicies(
       and(
         eq(A.organizationId, scope.organizationId),
         or(
+          eq(A.organization, true),
           eq(A.memberId, scope.memberId),
           teams.length
             ? inArray(
@@ -174,6 +180,7 @@ export async function effectiveUsagePolicies(
         id: assignment.id,
         memberId: assignment.memberId,
         teamId: assignment.teamId,
+        organization: assignment.organization === true,
       })
   }
   return gatewayWinningPolicies([...candidates.values()]).map((winner) => ({
@@ -181,20 +188,27 @@ export async function effectiveUsagePolicies(
     provenance: winner.policy.assignments
       .map(
         (assignment): GatewayUsageProvenance =>
-          assignment.teamId === null
+          assignment.organization
             ? {
-                kind: "direct",
-                assignmentId: assignment.id,
-                memberId: scope.memberId,
-                teamId: null,
-              }
-            : {
-                kind: "team",
+                kind: "organization",
                 assignmentId: assignment.id,
                 memberId: null,
-                teamId: assignment.teamId,
-                teamName: names.get(assignment.teamId) ?? "",
-              },
+                teamId: null,
+              }
+            : assignment.teamId === null
+              ? {
+                  kind: "direct",
+                  assignmentId: assignment.id,
+                  memberId: scope.memberId,
+                  teamId: null,
+                }
+              : {
+                  kind: "team",
+                  assignmentId: assignment.id,
+                  memberId: null,
+                  teamId: assignment.teamId,
+                  teamName: names.get(assignment.teamId) ?? "",
+                },
       )
       .sort((a, b) => a.assignmentId.localeCompare(b.assignmentId)),
   }))

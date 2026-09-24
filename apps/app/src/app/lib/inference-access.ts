@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ModelRef } from "../types";
-import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, isAutoModel } from "@/react-app/domains/session/models/model-catalog";
+import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, isAutoModel } from "@/react-app/domains/models/model-catalog";
 
 export const desktopFreeAccessStatusSchema = z.object({
   state: z.enum(["ready", "update_required", "unavailable", "exhausted"]),

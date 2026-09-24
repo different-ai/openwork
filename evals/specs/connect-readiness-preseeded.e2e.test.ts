@@ -132,6 +132,23 @@ test("bundled engine recovers from a startup outage and uses preseeded organizat
     const executed = toolJson(execution);
     expect(rpcResult(execution).isError).not.toBe(true);
     expect(executed).toMatchObject({ kind: "skill", content: world.rawSourceText });
+
+    // The direct tools reach the same skill without keywords or a search hop.
+    const listed = await seed.api(world.mcpSession, "/mcp/agent", {
+      method: "POST",
+      headers: { accept: "application/json, text/event-stream", "content-type": "application/json" },
+      body: mcpCallBody(5, "list_skills", {}),
+    });
+    const catalog = isRecord(rpcResult(listed).structuredContent) ? rpcResult(listed).structuredContent : null;
+    const skills = isRecord(catalog) ? records(catalog.skills) : [];
+    expect(skills.find((entry) => entry.capability === match.name)).toMatchObject({ capability: match.name, pluginName: world.skillName });
+    const read = await seed.api(world.mcpSession, "/mcp/agent", {
+      method: "POST",
+      headers: { accept: "application/json, text/event-stream", "content-type": "application/json" },
+      body: mcpCallBody(6, "get_skill", { name: match.name }),
+    });
+    expect(rpcResult(read).isError).not.toBe(true);
+    expect(rpcResult(read).structuredContent).toMatchObject({ capability: match.name, content: expect.stringContaining(world.proofPhrase) });
   });
 
   const nonsense = await seed.api(world.mcpSession, "/mcp/agent", {
@@ -165,10 +182,12 @@ test("bundled engine recovers from a startup outage and uses preseeded organizat
     JSON.stringify(connectionStatus), true);
 
   await user.click("Library");
-  await user.click({ role: "button", label: "MCPs" });
-  await user.notSee({ text: world.connectionName });
-  await user.click({ role: "tab", label: /^Needs your sign-in\b/ });
   await user.see({ text: world.connectionName }, { timeoutMs: 60_000 });
+  const signInChip = await probe.eventually(
+    async () => (await probe.dom(`[data-library-row="${world.connectionName}"] [data-library-status]`)).elements.map((element) => element.text),
+    { within: 60_000, label: "the connection row asks the member to sign in", until: (chips) => chips.length > 0 },
+  );
+  expect(signInChip).toEqual(["Sign in"]);
   await user.screenshot();
 
   await step("the signed-in desktop agent discovers and reads the skill", async () => {
@@ -181,6 +200,7 @@ test("bundled engine recovers from a startup outage and uses preseeded organizat
     });
     await selectModel(world.app, world.modelId, { provider: world.providerName });
     await using transcript = await observeTranscript(probe, [{ role: "assistant", text: world.proofPhrase }]);
+    await user.screenshot();
     await agent.send(world.prompt);
     await user.see({ text: new RegExp(world.proofPhrase) }, { timeoutMs: 120_000 });
     await user.see("Run task", { timeoutMs: 60_000 });
@@ -188,12 +208,14 @@ test("bundled engine recovers from a startup outage and uses preseeded organizat
     const calls = await world.den.mocks.connector.agentRequests({ promptMarker: world.prompt });
     const tools = calls.filter(call => call.kind === "tool");
     expect(tools).toHaveLength(2);
-    expect(tools[0]?.toolName).toMatch(/search_capabilities$/);
-    expect(tools[1]?.toolName).toMatch(/execute_capability$/);
+    // The desktop projects the gateway's direct skill tools; the agent lists
+    // the catalog without a keyword search and reads the skill by capability.
+    expect(tools[0]?.toolName).toMatch(/list_skills$/);
+    expect(tools[1]?.toolName).toMatch(/get_skill$/);
     expect(tools[1]?.arguments.name).toMatch(new RegExp(`^plugin:${world.pluginId}:`));
     expect(calls.some(call => call.kind === "final" && call.completedTools === 2)).toBe(true);
     evidence.recordAssertionEvidence("The desktop agent uses the assigned organization skill",
-      "The model was offered search and execute, resolved the capability from its search result, and displayed the unique phrase returned by skill execution.", true);
+      "The model was offered list_skills and get_skill, listed the assigned skill without a keyword search, read it by the returned capability, and displayed the unique phrase from the skill.", true);
     await user.screenshot();
   });
 });

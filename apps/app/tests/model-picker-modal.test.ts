@@ -476,8 +476,8 @@ describe("model picker source provenance", () => {
 
 test("Auto remains checked while recovery focuses an alternative pin, and immutable pins have no toggle", async () => {
   const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
-  const { ModelPickerList } = await import("../src/components/model-picker-list");
-  const { AUTO_MODEL_ID, AUTO_PROVIDER_ID } = await import("../src/react-app/domains/session/models/model-catalog");
+  const { ModelPickerList } = await import("../src/react-app/domains/models/model-picker-list");
+  const { AUTO_MODEL_ID, AUTO_PROVIDER_ID } = await import("../src/react-app/domains/models/model-catalog");
   const { useModelCollectionsStore } = await import("../src/react-app/domains/session/models/model-collections-store");
   const { autoAccessStatusQueryKey } = await import("../src/react-app/domains/cloud/auto-access-ui");
   const { unavailableDesktopFreeStatus } = await import("../src/app/lib/inference-access");

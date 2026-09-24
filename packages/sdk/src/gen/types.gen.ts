@@ -69,6 +69,17 @@ export type AdminUsersPageResponse = {
 
 export type AdminOrganizationsPageResponse = {
   organizations: Array<{
+    capabilities: {
+      installLinks: boolean;
+      mcpConnections: boolean;
+      modelsAnalytics: boolean;
+      /**
+       * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+       *
+       * @deprecated
+       */
+      gatewayDashboard: true;
+    };
     [key: string]: unknown;
   }>;
   page: AdminPageInfo;
@@ -130,6 +141,17 @@ export type AdminOverviewResponse = {
     [key: string]: unknown;
   }>;
   organizations: Array<{
+    capabilities: {
+      installLinks: boolean;
+      mcpConnections: boolean;
+      modelsAnalytics: boolean;
+      /**
+       * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+       *
+       * @deprecated
+       */
+      gatewayDashboard: true;
+    };
     [key: string]: unknown;
   }>;
   userPage: AdminPageInfo;
@@ -662,7 +684,12 @@ export type OrganizationContextResponse = {
     [key: string]: unknown;
   }>;
   capabilities: {
-    gatewayDashboard: boolean;
+    /**
+     * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+     *
+     * @deprecated
+     */
+    gatewayDashboard: true;
     [key: string]: unknown;
   };
   deploymentCapabilities: {
@@ -1246,7 +1273,7 @@ export type CreateInstallLinkResponse = {
 
 export type CapabilityDisabledError = {
   error: "capability_disabled";
-  capability: "installLinks" | "mcpConnections" | "modelsAnalytics" | "gatewayDashboard";
+  capability: "installLinks" | "mcpConnections" | "modelsAnalytics";
 };
 
 export type CreateInstallLinkRequest = {
@@ -1465,6 +1492,25 @@ export type GatewayProviderDetails = {
     credentialSetId: string;
     name: string;
     authUrl: string;
+    models?: Array<{
+      id: string;
+      name: string;
+      config: {
+        id: string;
+        [key: string]: unknown;
+      };
+      upstreamModelId: string;
+      /**
+       * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+       */
+      modelGroupId: string;
+      modelGroupName: string;
+      /**
+       * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+       */
+      credentialSetId: string;
+      credentialSetName: string;
+    }>;
   }>;
   migration?: {
     /**
@@ -1476,42 +1522,6 @@ export type GatewayProviderDetails = {
   settings: {
     [key: string]: unknown;
   };
-  /**
-   * Management-only active grant scopes with organization-scoped audience labels. Member credential sets remain conditional on each member signing in.
-   */
-  modelScopes?: Array<{
-    modelId: string;
-    /**
-     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
-     */
-    modelGroupId: string;
-    modelGroupName: string;
-    /**
-     * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
-     */
-    credentialSetId: string;
-    credentialSetName: string;
-    audience:
-      | {
-          type: "organization";
-        }
-      | {
-          type: "team";
-          /**
-           * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
-           */
-          teamId: string;
-        }
-      | {
-          type: "member";
-          /**
-           * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
-           */
-          memberId: string;
-        };
-    audienceName: string;
-    requiresMemberSignIn: boolean;
-  }>;
   modelGroups: Array<{
     name: string;
     description: string | null;
@@ -1647,6 +1657,25 @@ export type GatewayProviderSummary = {
     credentialSetId: string;
     name: string;
     authUrl: string;
+    models?: Array<{
+      id: string;
+      name: string;
+      config: {
+        id: string;
+        [key: string]: unknown;
+      };
+      upstreamModelId: string;
+      /**
+       * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+       */
+      modelGroupId: string;
+      modelGroupName: string;
+      /**
+       * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+       */
+      credentialSetId: string;
+      credentialSetName: string;
+    }>;
   }>;
   migration?: {
     /**
@@ -3064,6 +3093,51 @@ export type PluginArchExtensionProjection = {
   manifest: OpenWorkExtensionManifest | null;
 };
 
+export type PluginArchPluginListItem = {
+  /**
+   * Den TypeID with 'plg_' prefix and a 26-character base32 suffix.
+   */
+  id: string;
+  /**
+   * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
+   */
+  organizationId: string;
+  name: string;
+  description: string | null;
+  sourceRepositoryUrl: string | null;
+  sourceFormat:
+    | "agent-plugin"
+    | "openwork-builtin"
+    | "openwork-extension-manifest"
+    | "claude-plugin"
+    | "opencode-plugin"
+    | "mcp-directory"
+    | "manual"
+    | null;
+  sourceSchemaVersion: string | null;
+  status: "active" | "inactive" | "deleted" | "archived";
+  /**
+   * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+   */
+  createdByOrgMembershipId: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  memberCount?: number;
+  marketplaces?: Array<{
+    /**
+     * Den TypeID with 'mkt_' prefix and a 26-character base32 suffix.
+     */
+    id: string;
+    name: string;
+  }>;
+  extension?: PluginArchExtensionProjection | null;
+  /**
+   * Active access grants. Present only when includeAccess is true and the caller manages the plugin.
+   */
+  access?: Array<PluginArchAccessGrant>;
+};
+
 export type PluginArchPlugin = {
   /**
    * Den TypeID with 'plg_' prefix and a 26-character base32 suffix.
@@ -3103,11 +3177,6 @@ export type PluginArchPlugin = {
     name: string;
   }>;
   extension?: PluginArchExtensionProjection | null;
-};
-
-export type PluginArchPluginListResponse = {
-  items: Array<PluginArchPlugin>;
-  nextCursor: string | null;
 };
 
 export type PluginArchPluginMutationResponse = {
@@ -4210,6 +4279,52 @@ export type TeamResponse = {
   };
 };
 
+export type OrganizationWebOrigin = {
+  id: string;
+  origin: string;
+  createdAt: string;
+  createdByName: string | null;
+};
+
+export type OrganizationWebOriginList = {
+  origins: Array<OrganizationWebOrigin>;
+  limit: number;
+};
+
+export type WebOriginOrganizationNotFoundError = {
+  error: "organization_not_found";
+};
+
+export type InvalidWebOriginError = {
+  error: "invalid_web_origin";
+  message: string;
+};
+
+export type ApproveWebOriginBadRequest = InvalidRequestError | InvalidWebOriginError;
+
+export type WebOriginAlreadyApprovedError = {
+  error: "web_origin_already_approved";
+  message: string;
+};
+
+export type WebOriginLimitReachedError = {
+  error: "web_origin_limit_reached";
+  message: string;
+};
+
+export type ApproveWebOriginConflict = WebOriginAlreadyApprovedError | WebOriginLimitReachedError;
+
+export type OrganizationWebOriginApproveBody = {
+  origin: string;
+};
+
+export type WebOriginNotFoundError = {
+  error: "web_origin_not_found";
+  message: string;
+};
+
+export type RemoveWebOriginNotFound = WebOriginNotFoundError | WebOriginOrganizationNotFoundError;
+
 export type DenAppVersionResponse = {
   minAppVersion: string;
   latestAppVersion: string;
@@ -5023,7 +5138,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
    */
   200: {
     capabilities: {
-      [key: string]: unknown;
+      installLinks: boolean;
+      mcpConnections: boolean;
+      modelsAnalytics: boolean;
+      /**
+       * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+       *
+       * @deprecated
+       */
+      gatewayDashboard: true;
     };
   };
 };
@@ -5075,7 +5198,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       id: string;
     };
     capabilities: {
-      [key: string]: unknown;
+      installLinks: boolean;
+      mcpConnections: boolean;
+      modelsAnalytics: boolean;
+      /**
+       * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+       *
+       * @deprecated
+       */
+      gatewayDashboard: true;
     };
   };
 };
@@ -12497,6 +12628,7 @@ export type GetV1InferenceProvidersUsageData = {
     groupBy?: "model" | "team" | "person";
     days?: string;
     filterIds?: string;
+    memberId?: string;
   };
   url: "/v1/inference-providers/usage";
 };
@@ -12655,6 +12787,7 @@ export type GetV1GatewayUsageLimitPoliciesResponses = {
         id: string;
         memberId: string | null;
         teamId: string | null;
+        organization?: boolean;
       }>;
       archivedAt?: string | null;
     }>;
@@ -12745,6 +12878,7 @@ export type PostV1GatewayUsageLimitPoliciesResponses = {
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization?: boolean;
     }>;
     archivedAt?: string | null;
   };
@@ -12837,6 +12971,7 @@ export type PatchV1GatewayUsageLimitPoliciesByPolicyIdResponses = {
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization?: boolean;
     }>;
     archivedAt?: string | null;
   };
@@ -12922,6 +13057,7 @@ export type PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponses = {
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization?: boolean;
     }>;
     archivedAt?: string | null;
   };
@@ -12929,6 +13065,92 @@ export type PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponses = {
 
 export type PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponse =
   PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponses[keyof PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponses];
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreData = {
+  body: {
+    revision: number;
+  };
+  path: {
+    policyId: string;
+  };
+  query?: never;
+  url: "/v1/gateway/usage-limit-policies/{policyId}/restore";
+};
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreError =
+  PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreErrors[keyof PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreErrors];
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreResponses = {
+  /**
+   * Restore archived usage limit policy
+   */
+  200: {
+    id: string;
+    name: string;
+    hardLimit: boolean;
+    allowRequestReset: boolean;
+    revision: number;
+    limits: Array<{
+      timeframe: "day" | "week" | "month";
+      costLimitMicroUsd: number;
+    }>;
+    assignments: Array<{
+      id: string;
+      memberId: string | null;
+      teamId: string | null;
+      organization?: boolean;
+    }>;
+    archivedAt?: string | null;
+  };
+};
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreResponse =
+  PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreResponses[keyof PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreResponses];
 
 export type GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsData = {
   body?: never;
@@ -12996,6 +13218,7 @@ export type GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses = {
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization: boolean;
     }>;
   };
 };
@@ -13005,6 +13228,9 @@ export type GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponse =
 
 export type PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsData = {
   body:
+    | {
+        organization: true;
+      }
     | {
         memberId: string;
       }
@@ -13084,6 +13310,7 @@ export type PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses = {
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization?: boolean;
     }>;
     archivedAt?: string | null;
   };
@@ -13168,6 +13395,7 @@ export type DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentId
       id: string;
       memberId: string | null;
       teamId: string | null;
+      organization?: boolean;
     }>;
     archivedAt?: string | null;
   };
@@ -13335,6 +13563,12 @@ export type GetV1GatewayUsageLimitsMeResponses = {
       policyRevision?: number;
       provenance?: Array<
         | {
+            kind: "organization";
+            assignmentId: string;
+            memberId: null;
+            teamId: null;
+          }
+        | {
             kind: "direct";
             assignmentId: string;
             memberId: string;
@@ -13453,6 +13687,12 @@ export type GetV1GatewayUsageLimitsMembersByMemberIdResponses = {
       policyName: string;
       policyRevision?: number;
       provenance?: Array<
+        | {
+            kind: "organization";
+            assignmentId: string;
+            memberId: null;
+            teamId: null;
+          }
         | {
             kind: "direct";
             assignmentId: string;
@@ -13927,153 +14167,295 @@ export type PostV1GatewayUsageLimitResetRequestsByIdDenyResponses = {
 export type PostV1GatewayUsageLimitResetRequestsByIdDenyResponse =
   PostV1GatewayUsageLimitResetRequestsByIdDenyResponses[keyof PostV1GatewayUsageLimitResetRequestsByIdDenyResponses];
 
-export type GetV1InferenceProvidersShareLocalKeyEligibilityData = {
+export type GetV1InferenceProvidersModelManagementData = {
   body?: never;
   path?: never;
-  query: {
-    providerId: string;
-  };
-  url: "/v1/inference-providers/share-local-key/eligibility";
-};
-
-export type GetV1InferenceProvidersShareLocalKeyEligibilityErrors = {
-  /**
-   * Invalid sharing request.
-   */
-  400: {
-    error: string;
-    message: string;
-  };
-  /**
-   * Sign in required.
-   */
-  401: UnauthorizedError;
-  /**
-   * Fresh session and current owner/admin membership required.
-   */
-  403: ForbiddenError;
-  /**
-   * Transfer conflicts with an earlier request or provider configuration.
-   */
-  409: {
-    error: string;
-    message: string;
-  };
-  /**
-   * Sharing unavailable or outcome unconfirmed.
-   */
-  503: {
-    error: string;
-    message: string;
-  };
-};
-
-export type GetV1InferenceProvidersShareLocalKeyEligibilityError =
-  GetV1InferenceProvidersShareLocalKeyEligibilityErrors[keyof GetV1InferenceProvidersShareLocalKeyEligibilityErrors];
-
-export type GetV1InferenceProvidersShareLocalKeyEligibilityResponses = {
-  /**
-   * Check device API-key sharing eligibility
-   */
-  200: {
-    /**
-     * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
-     */
-    organizationId: string;
-    /**
-     * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
-     */
-    memberId: string;
-    organizationName: string;
-    teams: Array<{
-      /**
-       * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
-       */
-      id: string;
-      name: string;
-    }>;
-    eligible: boolean;
-    reason: string | null;
-  };
-};
-
-export type GetV1InferenceProvidersShareLocalKeyEligibilityResponse =
-  GetV1InferenceProvidersShareLocalKeyEligibilityResponses[keyof GetV1InferenceProvidersShareLocalKeyEligibilityResponses];
-
-export type PostV1InferenceProvidersShareLocalKeyData = {
-  body: {
-    requestId: string;
-    providerId: string;
-    name: string;
-    credential: {
-      kind: "api_key";
-      secret: string;
-    };
-    allMembers: boolean;
-    teamIds: Array<string>;
-  };
-  path?: never;
   query?: never;
-  url: "/v1/inference-providers/share-local-key";
+  url: "/v1/inference-providers/model-management";
 };
 
-export type PostV1InferenceProvidersShareLocalKeyErrors = {
+export type GetV1InferenceProvidersModelManagementErrors = {
   /**
-   * Invalid sharing request.
+   * Invalid request or provider configuration.
    */
-  400: {
-    error: string;
-    message: string;
-  };
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
   /**
-   * Sign in required.
+   * Sign-in required.
    */
   401: UnauthorizedError;
   /**
-   * Fresh session and current owner/admin membership required.
+   * Access denied or Gateway management disabled.
    */
-  403: ForbiddenError;
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
   /**
-   * Transfer conflicts with an earlier request or provider configuration.
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
    */
   409: {
     error: string;
-    message: string;
-  };
-  /**
-   * Sharing unavailable or outcome unconfirmed.
-   */
-  503: {
-    error: string;
-    message: string;
+    message?: string;
   };
 };
 
-export type PostV1InferenceProvidersShareLocalKeyError =
-  PostV1InferenceProvidersShareLocalKeyErrors[keyof PostV1InferenceProvidersShareLocalKeyErrors];
+export type GetV1InferenceProvidersModelManagementError =
+  GetV1InferenceProvidersModelManagementErrors[keyof GetV1InferenceProvidersModelManagementErrors];
 
-export type PostV1InferenceProvidersShareLocalKeyResponses = {
+export type GetV1InferenceProvidersModelManagementResponses = {
   /**
-   * Share a device API key with an organization
+   * List inference gateway providers and model groups for model enablement
    */
   200: {
-    share: {
-      requestId: string;
-      /**
-       * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
-       */
-      organizationId: string;
-      providerId: string;
+    inferenceProviders: Array<{
       /**
        * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
        */
-      inferenceProviderId: string;
-    };
+      id: string;
+      name: string;
+      providerId: string;
+      status: "active" | "disabled";
+      modelIds: Array<string>;
+      modelGroups: Array<{
+        /**
+         * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+         */
+        id: string;
+        name: string;
+        status: "active" | "disabled";
+        modelIds: Array<string>;
+      }>;
+    }>;
   };
 };
 
-export type PostV1InferenceProvidersShareLocalKeyResponse =
-  PostV1InferenceProvidersShareLocalKeyResponses[keyof PostV1InferenceProvidersShareLocalKeyResponses];
+export type GetV1InferenceProvidersModelManagementResponse =
+  GetV1InferenceProvidersModelManagementResponses[keyof GetV1InferenceProvidersModelManagementResponses];
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/available-models";
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsError =
+  GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors[keyof GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors];
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponses = {
+  /**
+   * List available upstream models for inference gateway provider
+   */
+  200: {
+    models: Array<{
+      id: string;
+      name: string;
+    }>;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponse =
+  GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponses[keyof GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponses];
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsData = {
+  body: {
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    modelGroupId: string;
+    modelIds: Array<string>;
+  };
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/enable-models";
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsError =
+  PostV1InferenceProvidersByInferenceProviderIdEnableModelsErrors[keyof PostV1InferenceProvidersByInferenceProviderIdEnableModelsErrors];
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses = {
+  /**
+   * Add models to inference gateway provider group
+   */
+  200: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    modelGroupId: string;
+    modelIds: Array<string>;
+    groupModelIds: Array<string>;
+    addedModelIds: Array<string>;
+  };
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponse =
+  PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses[keyof PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses];
+
+export type GetV1InferenceProvidersMemberConnectionsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers/member-connections";
+};
+
+export type GetV1InferenceProvidersMemberConnectionsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersMemberConnectionsError =
+  GetV1InferenceProvidersMemberConnectionsErrors[keyof GetV1InferenceProvidersMemberConnectionsErrors];
+
+export type GetV1InferenceProvidersMemberConnectionsResponses = {
+  /**
+   * List the caller's member Google connections
+   */
+  200: {
+    connections: Array<{
+      providerId: string;
+      credentialSetId: string;
+      providerName: string;
+      name: string;
+      ready: boolean;
+      hasAccess: boolean;
+      hasCredential: boolean;
+      configurationRequired?: boolean;
+      authorizationRevision: string | null;
+      accountEmail: string | null;
+    }>;
+  };
+};
+
+export type GetV1InferenceProvidersMemberConnectionsResponse =
+  GetV1InferenceProvidersMemberConnectionsResponses[keyof GetV1InferenceProvidersMemberConnectionsResponses];
 
 export type GetV1InferenceProvidersData = {
   body?: never;
@@ -14543,6 +14925,25 @@ export type GetV1InferenceProvidersByInferenceProviderIdConnectResponses = {
         credentialSetId: string;
         name: string;
         authUrl: string;
+        models?: Array<{
+          id: string;
+          name: string;
+          config: {
+            id: string;
+            [key: string]: unknown;
+          };
+          upstreamModelId: string;
+          /**
+           * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+           */
+          modelGroupId: string;
+          modelGroupName: string;
+          /**
+           * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+           */
+          credentialSetId: string;
+          credentialSetName: string;
+        }>;
       }>;
       migration?: {
         /**
@@ -15816,6 +16217,124 @@ export type GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses = {
 
 export type GetV1InferenceProvidersByInferenceProviderIdOauthStartResponse =
   GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses[keyof GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses];
+
+export type GetV1InferenceProvidersOauthBrowserStatusData = {
+  body?: never;
+  path?: never;
+  query: {
+    attempt: string;
+  };
+  url: "/v1/inference-providers/oauth/browser-status";
+};
+
+export type GetV1InferenceProvidersOauthBrowserStatusErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Provider access or OAuth configuration changed.
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersOauthBrowserStatusError =
+  GetV1InferenceProvidersOauthBrowserStatusErrors[keyof GetV1InferenceProvidersOauthBrowserStatusErrors];
+
+export type GetV1InferenceProvidersOauthBrowserStatusResponses = {
+  /**
+   * Check browser readiness for member Google sign-in
+   */
+  200: {
+    status: "sign_in_required" | "account_mismatch" | "ready";
+  };
+};
+
+export type GetV1InferenceProvidersOauthBrowserStatusResponse =
+  GetV1InferenceProvidersOauthBrowserStatusResponses[keyof GetV1InferenceProvidersOauthBrowserStatusResponses];
+
+export type GetV1InferenceProvidersOauthBrowserStartData = {
+  body?: never;
+  path?: never;
+  query: {
+    attempt: string;
+  };
+  url: "/v1/inference-providers/oauth/browser-start";
+};
+
+export type GetV1InferenceProvidersOauthBrowserStartErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersOauthBrowserStartError =
+  GetV1InferenceProvidersOauthBrowserStartErrors[keyof GetV1InferenceProvidersOauthBrowserStartErrors];
+
+export type GetV1InferenceProvidersOauthBrowserStartResponses = {
+  /**
+   * Continue member Google sign-in in a signed-in browser
+   */
+  200: {
+    authUrl: string;
+  };
+};
+
+export type GetV1InferenceProvidersOauthBrowserStartResponse =
+  GetV1InferenceProvidersOauthBrowserStartResponses[keyof GetV1InferenceProvidersOauthBrowserStartResponses];
 
 export type GetV1InferenceProvidersOauthCallbackData = {
   body?: never;
@@ -19438,10 +19957,6 @@ export type PostV1McpConnectionsDiscoverErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can discover MCP requirements.
-   */
-  403: ForbiddenError;
-  /**
    * Requirements discovery failed.
    */
   502: ExternalMcpRequirementsDiscoveryFailedError;
@@ -19652,7 +20167,7 @@ export type PostV1McpConnectionsErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can add MCP connections.
+   * The caller cannot add this kind of connection.
    */
   403: ForbiddenError;
   /**
@@ -20174,7 +20689,7 @@ export type PutV1McpConnectionsByConnectionIdAccessErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can change connection access.
+   * Only workspace owners, admins, or the member who added the connection can change its access, and only admins can grant org-wide access.
    */
   403: ForbiddenError;
   /**
@@ -20710,6 +21225,46 @@ export type PostV1ConfigObjectsByConfigObjectIdVersionsResponses = {
 export type PostV1ConfigObjectsByConfigObjectIdVersionsResponse =
   PostV1ConfigObjectsByConfigObjectIdVersionsResponses[keyof PostV1ConfigObjectsByConfigObjectIdVersionsResponses];
 
+export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'cob_' prefix and a 26-character base32 suffix.
+     */
+    configObjectId: string;
+  };
+  query?: never;
+  url: "/v1/config-objects/{configObjectId}/versions/latest";
+};
+
+export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors = {
+  /**
+   * The latest-version path parameters were invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in to view config object versions.
+   */
+  401: UnauthorizedError;
+  /**
+   * The config object version could not be found.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestError =
+  GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors[keyof GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors];
+
+export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses = {
+  /**
+   * Latest config object version returned successfully.
+   */
+  200: PluginArchConfigObjectVersionDetailResponse;
+};
+
+export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponse =
+  GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses[keyof GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses];
+
 export type GetV1ConfigObjectsByConfigObjectIdVersionsByVersionIdData = {
   body?: never;
   path: {
@@ -20753,46 +21308,6 @@ export type GetV1ConfigObjectsByConfigObjectIdVersionsByVersionIdResponses = {
 
 export type GetV1ConfigObjectsByConfigObjectIdVersionsByVersionIdResponse =
   GetV1ConfigObjectsByConfigObjectIdVersionsByVersionIdResponses[keyof GetV1ConfigObjectsByConfigObjectIdVersionsByVersionIdResponses];
-
-export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestData = {
-  body?: never;
-  path: {
-    /**
-     * Den TypeID with 'cob_' prefix and a 26-character base32 suffix.
-     */
-    configObjectId: string;
-  };
-  query?: never;
-  url: "/v1/config-objects/{configObjectId}/versions/latest";
-};
-
-export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors = {
-  /**
-   * The latest-version path parameters were invalid.
-   */
-  400: InvalidRequestError;
-  /**
-   * The caller must be signed in to view config object versions.
-   */
-  401: UnauthorizedError;
-  /**
-   * The config object version could not be found.
-   */
-  404: NotFoundError;
-};
-
-export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestError =
-  GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors[keyof GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors];
-
-export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses = {
-  /**
-   * Latest config object version returned successfully.
-   */
-  200: PluginArchConfigObjectVersionDetailResponse;
-};
-
-export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponse =
-  GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses[keyof GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses];
 
 export type PostV1ConfigObjectsByConfigObjectIdArchiveData = {
   body?: never;
@@ -21215,10 +21730,33 @@ export type GetV1PluginsData = {
   body?: never;
   path?: never;
   query?: {
+    /**
+     * Opaque cursor returned as nextCursor by the previous page. Omit for the first page.
+     */
     cursor?: string;
     limit?: number;
     status?: "active" | "inactive" | "deleted" | "archived";
     q?: string;
+    /**
+     * Case-insensitive substring of the plugin name.
+     */
+    name?: string;
+    /**
+     * Plugins effectively accessible to this team, including organization and collection access.
+     */
+    teamId?: string;
+    /**
+     * Plugins effectively accessible to this member, including team, organization and collection access.
+     */
+    memberId?: string;
+    /**
+     * When true, each plugin the caller manages includes its active access grants.
+     */
+    includeAccess?: "true" | "false";
+    /**
+     * When true, returns the total matching plugins before the cursor.
+     */
+    includeTotal?: "true" | "false";
   };
   url: "/v1/plugins";
 };
@@ -21240,7 +21778,11 @@ export type GetV1PluginsResponses = {
   /**
    * Plugins returned successfully.
    */
-  200: PluginArchPluginListResponse;
+  200: {
+    items: Array<PluginArchPluginListItem>;
+    nextCursor: string | null;
+    total?: number;
+  };
 };
 
 export type GetV1PluginsResponse = GetV1PluginsResponses[keyof GetV1PluginsResponses];
@@ -24956,6 +25498,124 @@ export type PostV1TeamsResponses = {
 
 export type PostV1TeamsResponse = PostV1TeamsResponses[keyof PostV1TeamsResponses];
 
+export type GetV1OrgWebOriginsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/org/web-origins";
+};
+
+export type GetV1OrgWebOriginsErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and admins can view approved web origins.
+   */
+  403: ForbiddenError;
+  /**
+   * The organization was not found.
+   */
+  404: WebOriginOrganizationNotFoundError;
+};
+
+export type GetV1OrgWebOriginsError = GetV1OrgWebOriginsErrors[keyof GetV1OrgWebOriginsErrors];
+
+export type GetV1OrgWebOriginsResponses = {
+  /**
+   * Approved web origins returned successfully.
+   */
+  200: OrganizationWebOriginList;
+};
+
+export type GetV1OrgWebOriginsResponse = GetV1OrgWebOriginsResponses[keyof GetV1OrgWebOriginsResponses];
+
+export type PostV1OrgWebOriginsData = {
+  body: OrganizationWebOriginApproveBody;
+  path?: never;
+  query?: never;
+  url: "/v1/org/web-origins";
+};
+
+export type PostV1OrgWebOriginsErrors = {
+  /**
+   * The origin was not an exact HTTPS origin.
+   */
+  400: ApproveWebOriginBadRequest;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and super-admins with a recent sign-in can approve web origins.
+   */
+  403: ForbiddenError;
+  /**
+   * The organization was not found.
+   */
+  404: WebOriginOrganizationNotFoundError;
+  /**
+   * The origin is already approved or the organization reached its approved origin limit.
+   */
+  409: ApproveWebOriginConflict;
+};
+
+export type PostV1OrgWebOriginsError = PostV1OrgWebOriginsErrors[keyof PostV1OrgWebOriginsErrors];
+
+export type PostV1OrgWebOriginsResponses = {
+  /**
+   * The web origin was approved.
+   */
+  201: OrganizationWebOrigin;
+};
+
+export type PostV1OrgWebOriginsResponse = PostV1OrgWebOriginsResponses[keyof PostV1OrgWebOriginsResponses];
+
+export type DeleteV1OrgWebOriginsByWebOriginIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'owo_' prefix and a 26-character base32 suffix.
+     */
+    webOriginId: string;
+  };
+  query?: never;
+  url: "/v1/org/web-origins/{webOriginId}";
+};
+
+export type DeleteV1OrgWebOriginsByWebOriginIdErrors = {
+  /**
+   * The web origin id was invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and super-admins with a recent sign-in can remove approved web origins.
+   */
+  403: ForbiddenError;
+  /**
+   * The approved web origin or organization was not found.
+   */
+  404: RemoveWebOriginNotFound;
+};
+
+export type DeleteV1OrgWebOriginsByWebOriginIdError =
+  DeleteV1OrgWebOriginsByWebOriginIdErrors[keyof DeleteV1OrgWebOriginsByWebOriginIdErrors];
+
+export type DeleteV1OrgWebOriginsByWebOriginIdResponses = {
+  /**
+   * The approved web origin was removed.
+   */
+  204: void;
+};
+
+export type DeleteV1OrgWebOriginsByWebOriginIdResponse =
+  DeleteV1OrgWebOriginsByWebOriginIdResponses[keyof DeleteV1OrgWebOriginsByWebOriginIdResponses];
+
 export type GetV1AppVersionData = {
   body?: never;
   path?: never;
@@ -25161,6 +25821,10 @@ export type DeleteV1WorkersByIdErrors = {
    */
   401: UnauthorizedError;
   /**
+   * Only the worker owner can delete this cloud worker.
+   */
+  403: ForbiddenError;
+  /**
    * The worker could not be found.
    */
   404: NotFoundError;
@@ -25281,9 +25945,9 @@ export type PostV1WorkersByIdTokensErrors = {
    */
   401: UnauthorizedError;
   /**
-   * OpenWork Web access is required to use cloud worker tokens.
+   * Cloud worker tokens require the worker owner and OpenWork Web access.
    */
-  403: WorkerOpenWorkWebAccessRequiredError;
+  403: ForbiddenError | WorkerOpenWorkWebAccessRequiredError;
   /**
    * The worker could not be found.
    */
@@ -25327,9 +25991,9 @@ export type GetV1WorkersByIdRuntimeErrors = {
    */
   401: UnauthorizedError;
   /**
-   * OpenWork Web access is required to use a cloud worker runtime.
+   * Cloud runtime access requires the worker owner and OpenWork Web access.
    */
-  403: WorkerRuntimeOpenWorkWebAccessRequiredError;
+  403: ForbiddenError | WorkerRuntimeOpenWorkWebAccessRequiredError;
   /**
    * The worker could not be found.
    */
@@ -25371,9 +26035,9 @@ export type PostV1WorkersByIdRuntimeUpgradeErrors = {
    */
   401: UnauthorizedError;
   /**
-   * OpenWork Web access is required to upgrade a cloud worker runtime.
+   * Cloud runtime upgrades require the worker owner and OpenWork Web access.
    */
-  403: WorkerRuntimeOpenWorkWebAccessRequiredError;
+  403: ForbiddenError | WorkerRuntimeOpenWorkWebAccessRequiredError;
   /**
    * The worker could not be found.
    */

@@ -1,5 +1,5 @@
 import type { UIMessage } from "ai";
-import { AUTO_MODEL_ID } from "../models/model-catalog";
+import { AUTO_MODEL_ID } from "@/react-app/domains/models/model-catalog";
 
 function field(value: unknown, key: string): unknown {
   return value && typeof value === "object" ? Reflect.get(value, key) : undefined;

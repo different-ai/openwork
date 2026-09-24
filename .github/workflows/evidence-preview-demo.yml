@@ -1,0 +1,64 @@
+name: Native evidence preview demo
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-evidence-preview-demo-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    # One-PR rollout demonstration. Never execute PR code with these permissions.
+    if: >-
+      github.repository == 'different-ai/openwork' &&
+      github.event.pull_request.number == 5297 &&
+      github.event.pull_request.head.ref == 'codex/evidence-preview-card' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.repo.id == github.event.repository.id &&
+      github.event.pull_request.base.repo.id == github.event.repository.id &&
+      github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      statuses: write
+      checks: write
+      deployments: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PREVIEW_SHA: ${{ github.event.pull_request.head.sha }}
+      OPENWORK_REVIEW_URL: ${{ vars.OPENWORK_REVIEW_URL }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          # Reviewed controller and dependencies, including the bounded waiter.
+          ref: 135b3aa0d6b2e59df091ded8fc0c4edd817f3bca
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - name: Show native progress and await this commit's actual proof
+        run: node .github/scripts/evidence-preview-demo.mjs
+      - uses: pnpm/action-setup@v4
+      - name: Install pinned publisher dependencies
+        run: |
+          pnpm --filter @openwork/review... install --frozen-lockfile --ignore-scripts
+          pnpm --dir evals --filter @openwork/test-artifacts install --frozen-lockfile --ignore-scripts
+      - name: Publish this PR's recorded proof
+        env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.OPENWORK_REVIEW_BLOB_TOKEN }}
+          EVIDENCE_RECEIPT_PATH: ${{ runner.temp }}/evidence-publication.json
+        run: node evals/scripts/publish-review.mjs
+      - name: Publish native check and deployment
+        if: always() && env.REVIEW_RUN_ID != ''
+        env:
+          EVIDENCE_RECEIPT_PATH: ${{ runner.temp }}/evidence-publication.json
+        run: node .github/scripts/evidence-presentation.mjs complete

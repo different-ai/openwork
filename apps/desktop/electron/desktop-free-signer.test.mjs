@@ -8,7 +8,7 @@ import {
   desktopFreeProofMessage, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH,
   DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH,
   MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH, desktopFreeReleaseTagMessage,
-} from "@openwork/types/desktop-free-access";
+} from "@openwork/free-auto";
 import { createDesktopFreeSigner, desktopFreeBootstrapEligible } from "./desktop-free-signer.mjs";
 import { readDesktopMachineId } from "./desktop-machine-id.mjs";
 

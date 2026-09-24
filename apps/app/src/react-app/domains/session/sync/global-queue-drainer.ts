@@ -7,7 +7,7 @@ import { composeNativeSessionSnapshot, getNativeSession } from "@/app/lib/openco
 import { hasTerminalSessionReply, sendSessionCommand, sessionHasPendingSubmission, sessionWorkHeld, submitAfterInterruption } from "@/app/lib/opencode-interruption";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import type { ComposerDraft, ModelRef } from "@/app/types";
-import { isAutoModel } from "../models/model-catalog";
+import { isAutoModel } from "@/react-app/domains/models/model-catalog";
 import { AutoAccessRejected, autoAccessWallFromError, preflightAutoSubmission } from "@/app/lib/inference-access";
 import { rejectedTurnOwnerKey } from "./draft-store";
 import { retainRejectedTurn } from "./rejected-turn";

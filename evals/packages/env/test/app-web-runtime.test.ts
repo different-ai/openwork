@@ -14,6 +14,7 @@ test("seed app-web runtime remains isolated and Cloud-off", () => {
   assert.equal(env.OPENWORK_REMOTE_ACCESS, "0");
   assert.equal(env.VITE_HOST, "127.0.0.1");
   assert.equal(env.HOME, "/tmp/owned-fixture/home");
+  assert.equal(env.OPENWORK_VITE_CACHE_DIR, "/tmp/owned-fixture/cache/vite");
   assert.equal(env.OPENWORK_TOKEN, undefined);
   assert.equal(env.OPENWORK_HOST_TOKEN, undefined);
 });

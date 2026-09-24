@@ -244,6 +244,9 @@ declare global {
         use?: (id: string) => Promise<RecoveryActionResult>;
       };
       browser?: {
+        openLink?: (url: string, sessionId: string | null) => void;
+        chooseLinkDestination?: (id: string, destination: "openwork" | "external" | null) => Promise<boolean>;
+        onLinkOpenRequest?: (callback: (request: { id: string; url: string } | null) => void) => () => void;
         show?: (bounds: { x: number; y: number; width: number; height: number }, sessionId?: string | null) => Promise<boolean | void>;
         hide?: (options?: { preserveShortcutFocus?: boolean }) => Promise<void>;
         openUrl?: (

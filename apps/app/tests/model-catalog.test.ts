@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ModelOption } from "../src/app/types";
 import { readWorkspaceCloudImports } from "../src/app/cloud/import-state";
 import { mergeModelOptions } from "../src/react-app/domains/connections/provider-auth/assigned-model-options";
-import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, immutableModelPin, publicModelTitle, isCycleModelSourceShortcut, isPinModelShortcut, modelGroups, modelSource, modelTitle, modelSubtitle, nextModelSource, nextPinnedModel, orderedModelPins, shouldSelectInitialAuto, withImportedModelMetadata } from "../src/react-app/domains/session/models/model-catalog";
+import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, immutableModelPin, publicModelTitle, isCycleModelSourceShortcut, isPinModelShortcut, modelGroups, modelSource, modelTitle, modelSubtitle, nextModelSource, nextPinnedModel, orderedModelPins, shouldSelectInitialAuto, withImportedModelMetadata } from "../src/react-app/domains/models/model-catalog";
 import { autoAccessWallFromError, autoWallCopy, preflightAutoSubmission, unavailableDesktopFreeStatus } from "../src/app/lib/inference-access";
 import { mergeReplyMetadata, replyModelFromInfo, replyModelLabel } from "../src/react-app/domains/session/sync/reply-model";
 

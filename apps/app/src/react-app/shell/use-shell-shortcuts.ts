@@ -22,7 +22,7 @@ import {
   type ThinkingModeShortcutDirection,
 } from "./thinking-mode-shortcut";
 import { isFavoriteModelShortcut } from "./favorite-model-shortcut";
-import { isCycleModelSourceShortcut } from "../domains/session/models/model-catalog";
+import { isCycleModelSourceShortcut } from "@/react-app/domains/models/model-catalog";
 
 export type UseShellShortcutsInput = {
   canCreateTask: boolean;

@@ -1,24 +1,12 @@
-// Model picker modal state: lazy option loading (with "Recently added"
-// provider flagging), open-event/localStorage triggers from the new-providers
-// toast, and org-restriction filtering. Extracted verbatim from
-// session-route.tsx; settings-route carries a sibling copy that should adopt
-// this hook next.
+// "All models" dialog state for the session and settings routes: open and
+// search state, the new-providers toast triggers, and "Recently added"
+// flagging. The options come from the shared model catalog, so the dialog
+// lists exactly what the composer picker and the palette list.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Client, ModelOption } from "@/app/types";
 import type { CloudImportedProvider } from "@/app/cloud/import-state";
-import { withImportedModelMetadata, type ModelPickerCatalogState } from "../models/model-catalog";
-import { getModelBehaviorSummary } from "@/app/lib/model-behavior";
-import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
-import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
-import { filterEntitledModelOptions, hideBuiltInZenFallback } from "@/react-app/domains/connections/provider-auth/provider-policy";
-import {
-  filterCloudManagedModelOptions,
-  mergeModelOptions,
-} from "@/react-app/domains/connections/provider-auth/assigned-model-options";
-import {
-  getConnectedProviderItems,
-  useProviderListQuery,
-} from "@/react-app/infra/provider-list-query";
+import { pendingGatewayModelOptions, type GatewayConnectProvider } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import { useModelCatalog } from "@/react-app/domains/models/use-model-catalog";
 import {
   openModelPickerEvent,
   pendingModelPickerProviderIdsKey,
@@ -37,38 +25,32 @@ export type UseModelPickerInput = {
   /** Account-scoped providers are hidden immediately after cloud sign-out. */
   cloudProvidersEnabled?: boolean;
   importedProviders?: Record<string, CloudImportedProvider>;
+  /** Gateway providers whose models wait on the member's own sign-in. */
+  pendingProviders?: readonly GatewayConnectProvider[];
+  disabledProviders?: readonly string[];
+  gatewayProviderIds?: ReadonlySet<string>;
 };
 
-export function useModelPicker(input: UseModelPickerInput) {
-  const {
-    client,
-    baseUrl,
-    workspaceRoot,
-    onOpen,
-    onLoadError,
-    fallbackOptions = [],
-    cloudProvidersEnabled = true,
-  } = input;
-  const checkDesktopRestriction = useCheckDesktopRestriction();
+function readSeenProviderIds(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem("openwork.seenProviderIds");
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
 
+export function useModelPicker(input: UseModelPickerInput) {
+  const { onOpen, onLoadError } = input;
   const [open, setOpenState] = useState(false);
   const [compactOpen, setCompactOpen] = useState(false);
   const [query, setQuery] = useState("");
-  // Provider IDs that were just added — used to highlight them as
-  // "Recently added" in the model picker even after they've been
-  // marked as seen in localStorage.
+  // Provider IDs that were just added — shown as "Recently added" even after
+  // they've been marked as seen in localStorage.
   const [recentProviderIds, setRecentProviderIds] = useState<Set<string>>(new Set());
-  const providerListQuery = useProviderListQuery({
-    client,
-    baseUrl,
-    directory: workspaceRoot || undefined,
-    enabled: open,
-  });
   const setOpen = useCallback((nextOpen: boolean) => {
     setOpenState(nextOpen);
-    if (nextOpen) {
-      onOpen?.();
-    }
+    if (nextOpen) onOpen?.();
   }, [onOpen]);
 
   // Open model picker when the global toast's "Pick a new default?" is clicked
@@ -77,11 +59,8 @@ export function useModelPicker(input: UseModelPickerInput) {
       try {
         window.localStorage.removeItem(pendingModelPickerProviderIdsKey);
       } catch {}
-      const detail = (event as CustomEvent<{ newProviderIds?: string[]; initialTab?: "default" | "available" }>).detail;
-      const ids = detail?.newProviderIds;
-      if (ids && ids.length > 0) {
-        setRecentProviderIds(new Set(ids));
-      }
+      const ids = (event as CustomEvent<{ newProviderIds?: string[] }>).detail?.newProviderIds;
+      if (ids && ids.length > 0) setRecentProviderIds(new Set(ids));
       setOpen(true);
     };
     window.addEventListener(openModelPickerEvent, handler);
@@ -95,89 +74,30 @@ export function useModelPicker(input: UseModelPickerInput) {
       window.localStorage.removeItem(pendingModelPickerProviderIdsKey);
       const parsed = JSON.parse(raw);
       const ids = Array.isArray(parsed) ? parsed : parsed?.newProviderIds;
-      if (Array.isArray(ids) && ids.every((id) => typeof id === "string")) {
-        setRecentProviderIds(new Set(ids));
-      }
+      if (Array.isArray(ids) && ids.every((id) => typeof id === "string")) setRecentProviderIds(new Set(ids));
       setOpen(true);
     } catch {
       // Ignore malformed pending-picker state.
     }
   }, []);
 
-  // Surface option-load failures when requested. The provider query remains
-  // subscribed while the picker is open, so a startup cloud import updates an
-  // already-open picker instead of leaving it on the pre-import snapshot.
+  // Two sources of "new": providers not yet in the seen-set, and providers named by the toast.
+  const isNewProvider = useMemo(() => {
+    const seen = readSeenProviderIds();
+    return (providerId: string) => !seen.has(providerId) || recentProviderIds.has(providerId);
+  }, [recentProviderIds]);
+  const pendingOptions = useMemo(() => pendingGatewayModelOptions(input.pendingProviders ?? []), [input.pendingProviders]);
+  // The provider query stays subscribed while the picker is open, so a startup
+  // cloud import updates an already-open picker instead of a stale snapshot.
+  const catalog = useModelCatalog({
+    client: input.client, baseUrl: input.baseUrl, directory: input.workspaceRoot, enabled: open,
+    fallbackOptions: input.fallbackOptions, cloudProvidersEnabled: input.cloudProvidersEnabled, importedProviders: input.importedProviders, pendingOptions,
+    disabledProviders: input.disabledProviders, gatewayProviderIds: input.gatewayProviderIds, isNewProvider,
+  });
+  const { catalogState } = catalog;
   useEffect(() => {
-    if (providerListQuery.error) {
-      onLoadError?.(providerListQuery.error);
-    }
-  }, [onLoadError, providerListQuery.error]);
-
-  const modelOptions = useMemo(() => {
-    const data = providerListQuery.data;
-    const imports = input.importedProviders ?? {};
-
-    // Flag models from recently-added providers so they appear in the
-    // "Recently added" section at the top of the picker.
-    // Two sources: (1) providers not yet in the localStorage seen-set,
-    // (2) providers passed via the openModelPickerEvent from the toast.
-    let seenIds: Set<string>;
-    try {
-      const raw = window.localStorage.getItem("openwork.seenProviderIds");
-      seenIds = new Set(raw ? JSON.parse(raw) : []);
-    } catch {
-      seenIds = new Set();
-    }
-
-    const next: ModelOption[] = [];
-    for (const provider of getConnectedProviderItems(data)) {
-      const modelIds = Object.keys(provider.models);
-      const isNew = !seenIds.has(provider.id) || recentProviderIds.has(provider.id);
-      for (const id of modelIds) {
-        const model = provider.models[id];
-        const summary = getModelBehaviorSummary(provider.id, model, null, provider.name);
-        next.push({
-          providerID: provider.id,
-          modelID: id,
-          title: model.name || id,
-          description: provider.name,
-          behaviorTitle: summary.title,
-          behaviorLabel: summary.label,
-          behaviorDescription: summary.description,
-          behaviorValue: summary.value,
-          behaviorOptions: summary.options,
-          isFree: false,
-          isRecommended: isNew,
-          source: isCloudManagedProviderKey(provider.id) ? "cloud" : undefined,
-        });
-      }
-    }
-    return filterCloudManagedModelOptions(
-      withImportedModelMetadata(mergeModelOptions(next, fallbackOptions), imports),
-      cloudProvidersEnabled,
-    );
-  }, [cloudProvidersEnabled, fallbackOptions, input.importedProviders, providerListQuery.data, recentProviderIds]);
-
-  // Apply org-level restrictions (dev #1505) on top of the raw model list
-  // so the picker never surfaces blocked options:
-  //   - `allowZenModel` hides the built-in OpenCode provider entries when false
-  //   - `allowCustomProviders` keeps org-managed providers, plus Zen when allowed.
-  const options = useMemo(() => {
-    const restrictToCloud = checkDesktopRestriction({
-      restriction: "allowCustomProviders",
-    });
-    return hideBuiltInZenFallback(filterEntitledModelOptions(modelOptions, {
-      restrictToCloud,
-      checkRestriction: checkDesktopRestriction,
-    }));
-  }, [checkDesktopRestriction, modelOptions]);
-
-  const catalogState: ModelPickerCatalogState = {
-    state: providerListQuery.isError ? "error" : client && providerListQuery.isPending ? "loading" : "ready",
-    lastVerifiedAt: providerListQuery.dataUpdatedAt || undefined,
-    refreshing: providerListQuery.isFetching,
-    onRetry: () => providerListQuery.refetch(),
-  };
+    if (catalog.error) onLoadError?.(catalog.error);
+  }, [onLoadError, catalog.error]);
 
   return {
     catalogState,
@@ -187,7 +107,12 @@ export function useModelPicker(input: UseModelPickerInput) {
     setCompactOpen,
     query,
     setQuery,
-    options,
+    /** Selectable models: the shared catalog. */
+    options: catalog.options,
+    /** Everything the person could have chosen, disabled rows included. */
+    knownOptions: catalog.knownOptions,
+    /** The palette and shortcuts use these: Auto is disabled while it cannot run. */
+    actionOptions: catalog.actionOptions,
     setRecentProviderIds,
   };
 }

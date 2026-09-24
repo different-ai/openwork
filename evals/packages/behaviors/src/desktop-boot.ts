@@ -44,7 +44,7 @@ export async function signInDesktopAs(app: Surface, den: DenRef, member: DenSess
   });
   const grant = await createDesktopHandoffGrant(member);
   try {
-    await control(app, "auth.exchange-grant", { grant, baseUrl: den.webUrl });
+    await control(app, "auth.exchange-grant", { grant, baseUrl: den.webUrl, apiBaseUrl: den.apiUrl });
   } catch (error) {
     if (!messageText(error).includes("Already acting: auth.exchange-grant")) throw error;
   }
@@ -59,7 +59,7 @@ export async function signInDesktopAs(app: Surface, den: DenRef, member: DenSess
   // A first-time member lands on organization onboarding; a member whose app
   // already has a workspace can come straight back to it.
   await waitFor(app, () => {
-    const route = window.location.hash.replace(/^#/, "") || window.location.pathname;
+    const route = window.location.hash || window.location.pathname;
     return route.includes("/onboarding") || /\/(workspace|session)/.test(route);
   }, {
     timeoutMs: 60_000,

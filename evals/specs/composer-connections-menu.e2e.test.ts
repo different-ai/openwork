@@ -1,96 +1,65 @@
-import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { connectionsMenu } from "../worlds/chat.ts";
 
 const test = spec.world(connectionsMenu);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const plusButton = { role: "button", label: "Add files, skills, connectors, and more" } as const;
+const menuSearch = { placeholder: "Search files, skills, connectors" } as const;
 
-test("the composer connections menu scrolls through Den inventory and signs in on the row", async ({ world, user, seed, probe, step }) => {
-  const target = world.connections.at(-1);
-  if (!target) throw new Error("The connection inventory was empty.");
+test("a member: I want to use a connector in this message", async ({ world, user, probe, step, evidence }) => {
+  const slack = world.connections.find((connection) => connection.name === "Slack");
+  if (!slack) throw new Error("The world has no Slack connection.");
+  const menuOpen = async () => (await probe.dom("[data-composer-plus-menu]")).elements.length > 0;
 
-  await user.click({ role: "button", label: "Connections (MCPs)" });
-  for (const connection of world.connections) await user.see({ text: connection.name });
-
-  await step("the connection inventory has an independently scrolling list", async () => {
-    // TODO(primitive): inspect overflow geometry for a visible connection list.
-    const before = await probe.eval(browserScript((targetName) => {
-      const title = [...document.querySelectorAll("div")]
-        .find((entry) => (entry.textContent ?? "").trim() === targetName && entry.children.length === 0);
-      const row = title?.parentElement?.parentElement?.parentElement;
-      const list = row?.parentElement?.parentElement;
-      const navigation = [...document.querySelectorAll("button")]
-        .find((entry) => (entry.textContent ?? "").trim() === "Connections (MCPs)")?.parentElement;
-      const panel = navigation?.parentElement?.parentElement;
-      if (!(row instanceof HTMLElement) || !(list instanceof HTMLElement) || !(navigation instanceof HTMLElement) || !(panel instanceof HTMLElement)) return null;
-      list.scrollTop = 0;
-      return {
-        panelHeight: panel.clientHeight,
-        navigationOverflow: getComputedStyle(navigation).overflowY,
-        listOverflow: getComputedStyle(list).overflowY,
-        listClientHeight: list.clientHeight,
-        listScrollHeight: list.scrollHeight,
-        targetInitiallyBelow: row.getBoundingClientRect().bottom > list.getBoundingClientRect().bottom,
-      };
-    }, [target.name]));
-    expect(before).toMatchObject({ navigationOverflow: "auto", listOverflow: "auto", targetInitiallyBelow: true });
-    if (!isRecord(before)
-      || typeof before.panelHeight !== "number"
-      || typeof before.listClientHeight !== "number"
-      || typeof before.listScrollHeight !== "number") throw new Error("Connection-list geometry was unavailable.");
-    expect(before.panelHeight).toBeGreaterThan(180);
-    expect(before.listScrollHeight).toBeGreaterThan(before.listClientHeight);
-
-    // TODO(primitive): scroll a named connection row into view.
-    const scrolled = await seed.evalIn(world.app, browserScript((targetName) => {
-      const title = [...document.querySelectorAll("div")]
-        .find((entry) => (entry.textContent ?? "").trim() === targetName && entry.children.length === 0);
-      const row = title?.parentElement?.parentElement?.parentElement;
-      const list = row?.parentElement?.parentElement;
-      if (!(row instanceof HTMLElement) || !(list instanceof HTMLElement)) return false;
-      list.scrollTop = list.scrollHeight;
-      return list.scrollTop > 0;
-    }, [target.name]));
-    expect(scrolled).toBe(true);
-    await user.see({ text: target.name });
-    await user.see({ role: "button", label: "Connect your account", nth: 13 });
+  await step("1. before: the Connectors section lists each organization connector with its logo, and Slack asks me to sign in", async () => {
+    await user.click(plusButton);
+    await user.click({ role: "option", label: /^Connectors/ });
+    await user.see({ placeholder: "Search connectors" });
+    for (const connection of world.connections) await user.see({ role: "option", label: new RegExp(`^${connection.name}`) });
+    await user.see({ role: "button", label: "Connect Slack" });
+    await user.screenshot();
   });
 
-  const connectStartedAt = new Date().toISOString();
-  await user.click({ role: "button", label: "Connect your account", nth: 13 });
-  // TODO(primitive): read an OAuth authorization request from a mock connector.
-  const authorization = await world.den.mocks.connector.authorizeRequestSince(connectStartedAt);
-  expect(authorization.params.get("state")).toBeTruthy();
-  const connected = await probe.eventually(async () => {
-    const response = await probe.api(world.den.admin, "/v1/mcp-connections?scope=usable");
-    const serialized = JSON.stringify(response.body);
-    return serialized.includes(target.id) && serialized.includes('"connectedForMe":true');
-  }, {
-    within: 90_000,
-    intervalMs: 1_000,
-    label: "Den connection becomes ready after composer-row OAuth",
-    until: (value) => value,
+  await step("2. Connect on the Slack row signs me in without leaving the menu", async () => {
+    const connectStartedAt = new Date().toISOString();
+    await user.click({ role: "button", label: "Connect Slack" });
+    // TODO(primitive): read an OAuth authorization request from a mock connector.
+    const authorization = await world.den.mocks.connector.authorizeRequestSince(connectStartedAt);
+    expect(authorization.params.get("state")).toBeTruthy();
+    const connected = await probe.eventually(async () => {
+      const response = await probe.api(world.den.admin, "/v1/mcp-connections?scope=usable");
+      const serialized = JSON.stringify(response.body);
+      return serialized.includes(slack.id) && serialized.includes('"connectedForMe":true');
+    }, { within: 90_000, intervalMs: 1_000, label: "Den reports Slack connected for me", until: (value) => value });
+    expect(connected).toBe(true);
+    if (!(await menuOpen())) {
+      await user.click(plusButton);
+      await user.click({ role: "option", label: /^Connectors/ });
+    }
+    await probe.eventually(async () => (await probe.dom('[aria-label="Connect Slack"]')).elements.length, {
+      within: 90_000, intervalMs: 500, label: "the Slack row drops its Connect button", until: (count) => count === 0,
+    });
+    await user.notSee({ role: "button", label: "Connect Slack" });
+    evidence.recordAssertionEvidence("Signing in from the row connects Slack for me", `OAuth state issued; Den connectedForMe=${connected}; the row no longer offers Connect`, connected);
+    await user.screenshot();
   });
-  expect(connected).toBe(true);
-  // TODO(primitive): read one named connection row's status and actions.
-  const readyRow = await probe.eventually(() => probe.eval(browserScript((targetName) => {
-    const title = [...document.querySelectorAll("div")]
-      .find((entry) => (entry.textContent ?? "").trim() === targetName && entry.children.length === 0);
-    const row = title?.parentElement?.parentElement?.parentElement;
-    return {
-      ready: (row?.textContent ?? "").includes("Ready"),
-      hasSignIn: [...(row?.querySelectorAll("button") ?? [])]
-        .some((button) => (button.textContent ?? "").trim() === "Connect your account"),
-    };
-  }, [target.name])), {
-    within: 90_000,
-    intervalMs: 500,
-    label: "target composer connection row becomes ready",
-    until: (value) => isRecord(value) && value.ready === true && value.hasSignIn === false,
+
+  await step("3. choosing Slack puts it in my message as a token", async () => {
+    await user.click({ role: "option", label: /^Slack/ });
+    await probe.eventually(menuOpen, { within: 5_000, intervalMs: 20, label: "the + menu closes", until: (open) => !open });
+    await user.notSee(menuSearch);
+    const tokens = await probe.dom("[data-composer-connector]");
+    expect(tokens.elements.map((element) => element.text)).toEqual(["Slack"]);
+    await user.screenshot();
   });
-  expect(readyRow).toEqual({ ready: true, hasSignIn: false });
+
+  await step("after: HubSpot still asks for its own sign-in; connecting Slack did not connect it", async () => {
+    await user.click(plusButton);
+    await user.type(menuSearch, "hbspt");
+    await user.see({ role: "option", label: /^HubSpot/ });
+    await user.see({ role: "button", label: "Connect HubSpot" });
+    evidence.recordAssertionEvidence("Other connectors keep their own sign-in", "HubSpot still shows Connect after Slack was connected", true);
+    await user.screenshot();
+  });
 });

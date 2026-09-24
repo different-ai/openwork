@@ -1,4 +1,4 @@
-import { addInitScript, allocateFreePorts, browserScript, reattachSurface, type Surface } from "@openwork/cdp";
+import { addInitScript, allocateFreePorts, browserScript, reattachSurface, reload, type Surface } from "@openwork/cdp";
 import { CATALOG_FAST_VARIANT, FAST_DEFAULT_VARIANT, fastVariantId } from "@openwork/types/cloud-model-fast";
 import { spawn } from "node:child_process";
 import { mkdtempSync, realpathSync } from "node:fs";
@@ -150,7 +150,19 @@ export async function configureProvider(
         headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
       });
       const text = await response.text();
-      if (!response.ok && !(path.endsWith("/engine/reload") && response.status === 504)) {
+      let reloadPending = response.status === 504;
+      if (path.endsWith("/engine/reload") && response.status === 503) {
+        try {
+          const error: unknown = JSON.parse(text);
+          reloadPending = typeof error === "object" && error !== null && "code" in error
+            && error.code === "opencode_engine_unreachable";
+        } catch {
+          reloadPending = false;
+        }
+      }
+      // Initial engine startup can race config reload. The readiness check
+      // below must still observe the configured model in the live composer.
+      if (!response.ok && !(path.endsWith("/engine/reload") && reloadPending)) {
         return path + " failed: " + response.status + " " + text.slice(0, 500);
       }
       return "ok";
@@ -177,7 +189,9 @@ export async function configureProvider(
     return "ok";
   }, [workspaceId, providerId, modelId, `${providerId}/${modelId}`, JSON.stringify(opencode)]), { awaitPromise: true, timeoutMs: 120_000 });
   if (result !== "ok") throw new Error(`Provider configuration failed: ${String(result)}`);
-  await seed.evalIn(app, () => { location.reload(); return true; });
+  // Wait for navigation before starting the model-readiness evaluation;
+  // scheduling location.reload() can run that evaluation in the old document.
+  await reload(app);
   // The display name the app gives the configured model once its provider list
   // contains it; a fixture provider declares it in opencode.json, a live one is
   // read from the engine catalog.
@@ -779,9 +793,9 @@ export async function connectionsMenu(seed: Seed) {
   const connector = seed.mock();
   const den = await seed.den({ mocks: { connector } });
   const connections: { id: string; name: string }[] = [];
-  for (let index = 1; index <= 14; index += 1) {
+  for (const name of ["HubSpot", "GitHub", "Slack"]) {
     connections.push(await seed.orgConnection(den.admin, {
-      name: `Composer connection ${String(index).padStart(2, "0")}`,
+      name,
       url: den.mocks.connector.mcpUrl,
       authType: "oauth",
       credentialMode: "per_member",
@@ -790,14 +804,6 @@ export async function connectionsMenu(seed: Seed) {
   }
   const app = await seed.desktop({ den, as: "admin" });
   const session = await seedSessionRetry(seed, app);
-  // TODO(primitive): click a button by its title when it has no accessible name.
-  const opened = await seed.evalIn(app, () => {
-    const trigger = document.querySelector<HTMLButtonElement>('button[title="Agents, commands, skills, plugins, and connections"]');
-    if (!(trigger instanceof HTMLButtonElement)) return false;
-    trigger.click();
-    return true;
-  });
-  if (opened !== true) throw new Error("Composer capability menu did not open.");
   return { app, den, session, connections };
 }
 
@@ -2666,54 +2672,6 @@ export async function computerMentions(seed: Seed) {
   };
 }
 
-/** A deterministic model calls the real built-in visualization tool. */
-export async function visualization(seed: Seed) {
-  const providerId = "visualization-mock";
-  const modelId = "visualization-model";
-  const design = {
-    id: "project-overview", title: "Project overview", revision: 1,
-    navigation: ["Overview", "Projects", "Settings"],
-    sections: [{ title: "Your workspace", columns: "two", blocks: [
-      { kind: "metric", label: "Active projects", value: "12" },
-      { kind: "field", label: "Project name", value: "Website refresh" },
-      { kind: "button", label: "Create project" },
-      { kind: "list", label: "Recent activity", items: ["Draft reviewed", "Mockup updated"] },
-      { kind: "image", label: "Cover image" },
-      { kind: "text", label: "Design note", value: "<script>window.mockupExecuted = true</script>" },
-    ] }],
-  };
-  const mock = seed.mock({ agentWorkloads: [
-    { latestUserTurn: true, promptMarker: "Sketch a project overview", finalReply: "Your first sketch is ready.", steps: [{ tool: "openwork_visualization", arguments: design }] },
-    { latestUserTurn: true, promptMarker: "Create version 2", finalReply: "Your revised sketch is ready.", steps: [{ tool: "openwork_visualization", arguments: { ...design, revision: 2, description: "A calmer overview" } }] },
-  ] });
-  const den = await seed.den({ mocks: { agent: mock } });
-  const app = await seed.desktop({ name: "visualization", model: `${providerId}/${modelId}` });
-  const workspace = await seed.workspace(app, seed.tmpPath("visualization"));
-  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
-    permission: { openwork_visualization: "allow" },
-    provider: { [providerId]: {
-      npm: "@ai-sdk/openai-compatible", name: "Visualization mock",
-      options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-visualization" },
-      models: { [modelId]: { name: "Visualization model", tool_call: true } },
-    } },
-  });
-  const session = await seedSessionRetry(seed, app);
-  return {
-    den, app, workspace, session,
-    preview: async () => {
-      const result = await evalIn(app, () => {
-      const preview = document.querySelector<HTMLElement>('[data-testid="visualization-preview"]');
-      return { viewport: preview?.getAttribute('data-viewport'), width: preview?.getBoundingClientRect().width,
-        scripts: preview?.querySelectorAll('script').length, executed: window.mockupExecuted === true,
-        cards: document.querySelectorAll<HTMLElement>('[data-testid="visualization-card"]').length };
-    });
-      if (!isRecord(result) || typeof result.width !== "number") throw new Error("Visualization preview missing");
-      return { ...result, width: result.width };
-    },
-  };
-}
-
-
 /** One profile across engine switches; the journey, not the seed, creates its history. */
 export async function workspaceEngineUpgrade(seed: Seed) {
   if (resolveEvalEngine() !== "v1") throw new SkipError("upgrade baseline requires OPENWORK_EVAL_ENGINE=v1");
@@ -2865,6 +2823,9 @@ export async function skillLifecycle(seed: Seed) {
       } } } : {}),
     }, "v2");
     const session = await seedSessionRetry(seed, app, { title: "Release report" });
+    // OAuth leaves the native app behind the browser on macOS. CDP keyboard
+    // input needs renderer focus even when this isolated test window is hidden.
+    await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: true });
     const skillName = "release-briefing";
     return {
       app, den, workspace, session, skillName, live, modelId,
@@ -2884,6 +2845,17 @@ export async function skillLifecycle(seed: Seed) {
        * provider and model, never from an organization model that replaced it.
        * Only a live provider reports token usage; the fixture model streams none.
        */
+      async conversationState() {
+        const result = await request(`/workspace/${workspace.workspaceId}/opencode2/api/session/${session.sessionId}/message`);
+        const messages = isRecord(result.json) && Array.isArray(result.json.data) ? result.json.data.filter(isRecord) : [];
+        return {
+          users: messages.filter(message => message.type === "user").map(message => {
+            if (typeof message.text !== "string") throw new Error("Native user message is missing its text");
+            return message.text;
+          }),
+          completed: messages.filter(message => message.type === "assistant" && message.finish === "stop").map(message => message.id),
+        };
+      },
       async usedConfiguredModel() {
         const result = await request(`/workspace/${workspace.workspaceId}/opencode2/api/session/${session.sessionId}/message`);
         const messages = isRecord(result.json) && Array.isArray(result.json.data) ? result.json.data.filter(isRecord) : [];

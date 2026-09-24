@@ -62,6 +62,11 @@ export function assignedModelOptions(
   });
 }
 
+export function markDisabledModelOptions(options: readonly ModelOption[], disabledProviderIds: readonly string[]): ModelOption[] {
+  const disabled = new Set(disabledProviderIds);
+  return options.map((option) => disabled.has(option.providerID) ? { ...option, disabled: true } : option);
+}
+
 export function mergeModelOptions(
   primary: readonly ModelOption[],
   fallback: readonly ModelOption[],

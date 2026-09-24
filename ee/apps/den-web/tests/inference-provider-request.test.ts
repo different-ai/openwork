@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { SUPPORTED_GATEWAY_NPM_PACKAGES as serverSupportedPackages } from "../../den-api/src/llm/inference-provider-config";
 
 import {
   asInferenceProvider,
@@ -7,8 +8,10 @@ import {
   getCredentialStatusLabel,
   getCredentialKindLabel,
   getOauthCallbackPath,
+  getNewInferenceProviderSettings,
   getRequiredSettingKeys,
   isSupportedGatewayNpm,
+  SUPPORTED_GATEWAY_NPM_PACKAGES,
   readInferenceProvidersFromPayload,
   supportsMemberCredentialMode,
   validateInferenceProviderForm,
@@ -156,9 +159,52 @@ describe("buildMigrateFromLlmProviderBody", () => {
   });
 });
 
+describe("new gateway provider settings", () => {
+  test.each([
+    ["google-vertex", "@ai-sdk/google-vertex"],
+    ["google-vertex-anthropic", "@ai-sdk/google-vertex/anthropic"],
+  ])("%s starts with an actual global region in the create request", (providerId, npm) => {
+    const settings = getNewInferenceProviderSettings(npm);
+    expect(settings).toEqual({ location: "global" });
+    const body = buildInferenceProviderRequestBody({ ...baseInput, providerId, settings: { ...settings, project: "fixture" } });
+    expect(body.settings).toEqual({ project: "fixture", location: "global" });
+  });
+
+  test.each([
+    ["google-vertex", "@ai-sdk/google-vertex"],
+    ["google-vertex-anthropic", "@ai-sdk/google-vertex/anthropic"],
+  ])("%s keeps a user-entered region instead of reapplying the default", (providerId, npm) => {
+    const settings = getNewInferenceProviderSettings(npm);
+    settings.location = "europe-west1";
+    expect(buildInferenceProviderRequestBody({ ...baseInput, providerId, settings }).settings).toEqual({ location: "europe-west1" });
+    settings.location = "";
+    expect(buildInferenceProviderRequestBody({ ...baseInput, providerId, settings }).settings).toEqual({});
+    expect(getNewInferenceProviderSettings(npm)).toEqual({ location: "global" });
+  });
+
+  test.each(["google-vertex", "google-vertex-anthropic"])("%s preserves saved settings on edit without inserting defaults", (providerId) => {
+    const savedSettings: Record<string, string>[] = [{ project: "fixture", location: "us-central1" }, { project: "fixture", location: "global" }, { project: "fixture", location: "" }, { project: "fixture" }];
+    for (const settings of savedSettings) {
+      const provider = asInferenceProvider({ id: "ipr_fixture", providerId, name: "Vertex", credentialMode: "org", status: "active", settings });
+      if (!provider) throw new Error("Expected a saved provider");
+      expect(provider.settings).toEqual(settings);
+      const body = buildInferenceProviderRequestBody({ ...baseInput, providerId, settings: provider.settings, previousSettings: settings });
+      expect(body).not.toHaveProperty("settings");
+      expect(settings).toEqual(provider.settings);
+    }
+  });
+
+  test.each([null, "@ai-sdk/google", "@ai-sdk/azure", "@ai-sdk/anthropic"])("%s does not receive a Vertex region default", (npm) => {
+    expect(getNewInferenceProviderSettings(npm)).toEqual({});
+  });
+});
+
 describe("gateway provider support + settings", () => {
   test("matches den-api's supported SDK list", () => {
+    expect(SUPPORTED_GATEWAY_NPM_PACKAGES).toEqual(serverSupportedPackages);
     expect(isSupportedGatewayNpm("@ai-sdk/anthropic")).toBe(true);
+    expect(isSupportedGatewayNpm("@ai-sdk/mistral")).toBe(true);
+    expect(isSupportedGatewayNpm("@ai-sdk/cohere")).toBe(false);
     expect(isSupportedGatewayNpm("@ai-sdk/google-vertex/anthropic")).toBe(true);
     expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock")).toBe(false);
     expect(isSupportedGatewayNpm(null)).toBe(false);
@@ -184,6 +230,8 @@ describe("gateway provider support + settings", () => {
       hasOauthClientSecret: false,
     };
     expect(validateInferenceProviderForm(valid)).toBeNull();
+    expect(validateInferenceProviderForm({ ...valid, npm: "@ai-sdk/mistral", providerId: "mistral", settings: {} })).toBeNull();
+    expect(validateInferenceProviderForm({ ...valid, npm: "@ai-sdk/mistral", providerId: "mistral", credentialMode: "member" })).toContain("only available for Google Vertex");
     expect(validateInferenceProviderForm({ ...valid, settings: { project: "p" } })).toContain("Region is required");
     expect(validateInferenceProviderForm({ ...valid, npm: "@ai-sdk/amazon-bedrock" })).toContain("cannot be routed");
     expect(validateInferenceProviderForm({ ...valid, serviceAccountJson: "{" })).toContain("could not be parsed");

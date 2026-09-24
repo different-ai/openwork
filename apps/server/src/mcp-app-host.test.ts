@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import type { ConnectionActionIntent } from "@openwork/types/connection-action-app";
 import { createCipheriv, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -36,6 +37,7 @@ import {
   resolveSameServerMcpAppResource,
   releaseMcpAppLaunch,
   toolUiResourceUri,
+  supportsHostConnectionActions,
 } from "./mcp-app-host.js";
 import type { ServerConfig } from "./types.js";
 import { localManagedMcpAppIdentity } from "./local-managed-mcp.js";
@@ -72,9 +74,27 @@ function serverConfig(root: string): ServerConfig {
   };
 }
 
+const CONNECTION_RESOURCE = "ui://openwork/connection-action/v2/view.html";
+const connectionIntent: ConnectionActionIntent = {
+  schemaVersion: "1", kind: "connection_action_intent", action: "authenticate",
+  connection: {
+    schemaVersion: "1", connectionId: "conn_fixture", connectionName: "Fixture",
+    state: "needs_connection", actor: "member", message: "Sign in",
+    action: { type: "connect", label: "Connect", surface: "openwork_your_connections" },
+  },
+};
+type ConnectionFixtureOptions = {
+  endpoint?: string;
+  redirect?: string;
+  result?: Record<string, unknown>;
+  fail?: boolean;
+  afterCall?: () => void;
+};
+
 async function startFixtureMcp(
   resourceContent: { text?: string; blob?: string } = { text: RESOURCE_HTML },
   connectionId?: string,
+  connectionOptions?: ConnectionFixtureOptions,
 ) {
   let activeResourceUri = RESOURCE_URI;
   let catalogReads = 0;
@@ -103,6 +123,18 @@ async function startFixtureMcp(
   );
   mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
+      ...(connectionOptions ? [
+        {
+          name: "connection_action", inputSchema: { type: "object", properties: {} },
+          annotations: { readOnlyHint: true },
+          _meta: { ui: { resourceUri: CONNECTION_RESOURCE, visibility: ["app"] } },
+        },
+        {
+          name: "connection_action_intent", inputSchema: { type: "object", properties: {} },
+          annotations: { readOnlyHint: true },
+          _meta: { ui: { visibility: ["app"] }, hostConnectionActions: true },
+        },
+      ] : []),
       {
         name: "render_fixture",
         description: "Render the fixture",
@@ -168,7 +200,8 @@ async function startFixtureMcp(
   }));
   mcp.setRequestHandler(ReadResourceRequestSchema, async ({ params }) => {
     resourceReads += 1;
-    if (params.uri !== RESOURCE_URI && params.uri !== UPDATED_RESOURCE_URI) throw new Error("not found");
+    if (params.uri !== RESOURCE_URI && params.uri !== UPDATED_RESOURCE_URI
+      && !(connectionOptions && params.uri === CONNECTION_RESOURCE)) throw new Error("not found");
     const content = params.uri === UPDATED_RESOURCE_URI ? { text: UPDATED_RESOURCE_HTML } : resourceContent;
     return {
       contents: [{
@@ -181,6 +214,16 @@ async function startFixtureMcp(
   });
   mcp.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
     calls.push(params);
+    if (connectionOptions) {
+      connectionOptions.afterCall?.();
+      if (connectionOptions.fail) throw new McpError(ErrorCode.InternalError, "Fixture failure");
+      return {
+        content: [{ type: "text", text: "Connection intent" }],
+        structuredContent: connectionIntent, hostAction: connectionIntent,
+        _meta: { hostAction: connectionIntent, hostConnectionActions: true },
+        ...connectionOptions.result,
+      };
+    }
     if (params.name === "render_report" && typeof params.arguments?.id !== "string") {
       // A control character and an oversized tail model a hostile provider;
       // the host must relay neither verbatim.
@@ -201,6 +244,9 @@ async function startFixtureMcp(
     hostname: "127.0.0.1",
     port: 0,
     fetch: async (request): Promise<Response> => {
+      if (connectionOptions?.redirect && new URL(request.url).pathname === "/mcp/agent") {
+        return new Response(null, { status: 307, headers: { location: connectionOptions.redirect } });
+      }
       if (new URL(request.url).pathname !== "/catalog" || !connectionId) {
         if (request.method === "POST") {
           const body = await request.clone().json();
@@ -262,7 +308,7 @@ async function startFixtureMcp(
     http.stop(true);
   });
   return {
-    url: `${serverOrigin}/provider`,
+    url: `${serverOrigin}${connectionOptions?.endpoint ?? "/provider"}`,
     catalogUrl: `${serverOrigin}/catalog`,
     catalogReads: () => catalogReads,
     resourceReads: () => resourceReads,
@@ -287,6 +333,7 @@ async function configuredFixture(
   resourceContent?: { text?: string; blob?: string },
   mcpName = "fixture",
   connectionId?: string,
+  connectionOptions?: ConnectionFixtureOptions,
 ): Promise<{
   config: ServerConfig;
   root: string;
@@ -318,7 +365,7 @@ async function configuredFixture(
   });
   await mkdir(join(root, ".git"), { recursive: true });
   const config = serverConfig(root);
-  const fixture = await startFixtureMcp(resourceContent, connectionId);
+  const fixture = await startFixtureMcp(resourceContent, connectionId, connectionOptions);
   const mcpConfig = {
     type: "remote",
     url: fixture.url,
@@ -347,6 +394,10 @@ async function configuredFixture(
       "Bearer app-host-token",
       fixture.catalogUrl,
     );
+  } else if (connectionOptions) {
+    await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, (current) => ({
+      ...current, mcp: { ...runtimeMcpMap(current), [mcpName]: mcpConfig },
+    }));
   } else {
     await addMcp(config, WORKSPACE_ID, mcpName, mcpConfig);
   }
@@ -389,6 +440,126 @@ async function fixtureDashboardLaunch(config: ServerConfig, root: string) {
     },
   };
 }
+
+async function connectionFixture(options: ConnectionFixtureOptions = {}, serverName = "openwork-cloud", readOnly = false) {
+  const fixture = await configuredFixture("mcp-connection-action-", undefined, serverName, undefined, { endpoint: "/mcp/agent", ...options });
+  const app = await resolveSameServerMcpAppResource({
+    serverConfig: fixture.config, workspaceId: WORKSPACE_ID, workspaceRoot: fixture.root,
+    context: { sessionId: null, readOnly },
+    projectedToolName: projectedMcpToolName(serverName, "save_artifact_view"),
+    launch: { toolName: "connection_action", resourceUri: CONNECTION_RESOURCE, arguments: { connectionId: "conn_fixture" } },
+  });
+  return { ...fixture, app, request: {
+    serverConfig: fixture.config, workspaceId: WORKSPACE_ID, workspaceRoot: fixture.root,
+    launchId: app.launchId, sessionId: null, serverName, resourceUri: app.resourceUri,
+    name: "connection_action_intent", arguments: { connectionId: "conn_fixture", action: "authenticate" }, approved: true,
+  } };
+}
+
+describe("connection action host authorization", () => {
+  test("canonical origin, configured identity and exact binding are mandatory", async () => {
+    for (const serverName of ["openwork-cloud", "openwork"]) {
+      expect(await supportsHostConnectionActions(serverName, { url: "https://api.openworklabs.com/mcp/agent" }, "connection_action", CONNECTION_RESOURCE)).toBe(true);
+    }
+    for (const url of ["https://foreign.invalid/mcp/agent", "https://api.openworklabs.com/mcp/agent/connections/conn_fixture", "https://api.openworklabs.com/api/den/mcp/agent", "https://api.openworklabs.com/mcp/agent?forged=true"]) {
+      expect(await supportsHostConnectionActions("openwork-cloud", { url, hostConnectionActions: true }, "connection_action", CONNECTION_RESOURCE)).toBe(false);
+    }
+    expect(await supportsHostConnectionActions("foreign", { url: "https://api.openworklabs.com/mcp/agent" }, "connection_action", CONNECTION_RESOURCE)).toBe(false);
+    expect(await supportsHostConnectionActions("openwork-cloud", { url: "https://api.openworklabs.com/mcp/agent" }, "other", CONNECTION_RESOURCE)).toBe(false);
+  });
+
+  test("approved authenticate and skip call the real helper before promoting validated content", async () => {
+    const actions: ConnectionActionIntent["action"][] = ["authenticate", "skip"];
+    for (const action of actions) {
+      const intent = { ...connectionIntent, action };
+      const fixture = await connectionFixture({ result: { structuredContent: intent } });
+      expect(fixture.app.hostConnectionActions).toBe(true);
+      const args = { connectionId: "conn_fixture", action };
+      const result = await callMcpAppTool({ ...fixture.request, arguments: args });
+      expect(result.hostAction).toEqual(intent);
+      expect(result._meta).not.toHaveProperty("hostAction");
+      expect(fixture.calls).toEqual([{ name: "connection_action_intent", arguments: args }]);
+    }
+  });
+
+  test("approval is mandatory even when the helper declares read-only", async () => {
+    const fixture = await connectionFixture();
+    for (const approved of [false, undefined]) {
+      await expect(callMcpAppTool({ ...fixture.request, approved })).rejects.toMatchObject({ code: "tool_requires_approval" });
+    }
+    expect(fixture.calls).toHaveLength(0);
+  });
+
+  test("foreign same-URI and proxy apps cannot forge host support or host actions", async () => {
+    for (const entry of [{ name: "foreign", endpoint: "/mcp/agent" }, { name: "openwork-cloud", endpoint: "/mcp/agent/connections/conn_fixture" }]) {
+      const fixture = await connectionFixture({ endpoint: entry.endpoint }, entry.name);
+      expect(fixture.app.hostConnectionActions).toBeUndefined();
+      const result = await callMcpAppTool(fixture.request);
+      expect(result).not.toHaveProperty("hostAction");
+      expect(result._meta).not.toHaveProperty("hostAction");
+      expect(fixture.calls).toHaveLength(1);
+    }
+  });
+
+  test("other helpers cannot smuggle host actions in root, structured content or metadata", async () => {
+    const fixture = await connectionFixture({ result: { structuredContent: { hostAction: connectionIntent } } });
+    expect(JSON.stringify(await callMcpAppTool({ ...fixture.request, name: "read_detail" }))).not.toContain("hostAction");
+    expect(fixture.calls).toHaveLength(1);
+  });
+
+  test("invalid, failed, wrong-action and wrong-connection results cannot promote", async () => {
+    for (const result of [
+      { structuredContent: {} }, { isError: true },
+      { structuredContent: { ...connectionIntent, action: "skip" } },
+      { structuredContent: { ...connectionIntent, connection: { ...connectionIntent.connection, connectionId: "other" } } },
+    ]) {
+      const fixture = await connectionFixture({ result });
+      expect(await callMcpAppTool(fixture.request)).not.toHaveProperty("hostAction");
+      expect(fixture.calls).toHaveLength(1);
+    }
+  });
+
+  test("a matching helper result cannot change the stored launch connection", async () => {
+    const fixture = await connectionFixture({ result: { structuredContent: {
+      ...connectionIntent, connection: { ...connectionIntent.connection, connectionId: "other" },
+    } } });
+    expect(await callMcpAppTool({ ...fixture.request, arguments: { connectionId: "other", action: "authenticate" } })).not.toHaveProperty("hostAction");
+    expect(fixture.calls).toHaveLength(1);
+  });
+
+  test("read-only, released, and mismatched session or engine leases deny execution", async () => {
+    const readOnly = await connectionFixture({}, "openwork-cloud", true);
+    await expect(callMcpAppTool(readOnly.request)).rejects.toMatchObject({ code: "missing_launch_context" });
+    expect(readOnly.calls).toHaveLength(0);
+    const fixture = await connectionFixture();
+    await expect(callMcpAppTool({ ...fixture.request, sessionId: "other" })).rejects.toMatchObject({ code: "stale_launch_context" });
+    await expect(callMcpAppTool({ ...fixture.request, engine: "v2" })).rejects.toMatchObject({ code: "stale_launch_context" });
+    if (!fixture.app.launchId) throw new Error("Missing launch");
+    releaseMcpAppLaunch(fixture.config, WORKSPACE_ID, fixture.app.launchId);
+    await expect(callMcpAppTool(fixture.request)).rejects.toMatchObject({ code: "stale_launch_context" });
+    expect(fixture.calls).toHaveLength(0);
+  });
+
+  test("lease loss during a successful call blocks promotion without retry", async () => {
+    let revoke = () => {};
+    const fixture = await connectionFixture({ afterCall: () => revoke() });
+    const launchId = fixture.app.launchId;
+    if (!launchId) throw new Error("Missing launch");
+    revoke = () => { releaseMcpAppLaunch(fixture.config, WORKSPACE_ID, launchId); };
+    await expect(callMcpAppTool(fixture.request)).rejects.toMatchObject({ code: "stale_launch_context" });
+    expect(fixture.calls).toHaveLength(1);
+  });
+
+  test("canonical redirects cannot substitute a connection proxy", async () => {
+    await expect(connectionFixture({ redirect: "/mcp/agent/connections/conn_fixture" })).rejects.toMatchObject({ code: "mcp_unreachable" });
+  });
+
+  test("helper failures are not retried", async () => {
+    const fixture = await connectionFixture({ fail: true });
+    await expect(callMcpAppTool(fixture.request)).rejects.toMatchObject({ code: "tool_call_failed" });
+    expect(fixture.calls).toHaveLength(1);
+  });
+});
 
 describe("MCP Apps host transport", () => {
   test("uses OpenCode's exact projected MCP tool naming", () => {

@@ -24,6 +24,7 @@ export interface AppWebRuntimeOptions {
   engine?: EvalEngine;
   den?: { apiUrl: string; webUrl: string };
   webPort?: number;
+  emptyWorkspace?: boolean;
   syntheticPreactivatedDenOrigin?: string;
   env?: Record<string, string>;
   browserHostSuffix?: string;
@@ -46,6 +47,9 @@ export function isolatedRuntimeEnvironment(root: string, engine: EvalEngine = re
     HOME: home,
     USERPROFILE: home,
     XDG_CACHE_HOME: join(root, "cache"),
+    // Fresh app instances must not rewrite another Vite server's dependency
+    // cache while its browser is importing modules.
+    OPENWORK_VITE_CACHE_DIR: join(root, "cache", "vite"),
     XDG_CONFIG_HOME: config,
     XDG_DATA_HOME: data,
     XDG_STATE_HOME: join(root, "state"),
@@ -95,6 +99,7 @@ export async function startLocalRuntime(worldName: string, workspaceRoot: string
       name: worldName,
       state: "isolated",
       workspace: workspaceRoot,
+      emptyWorkspace: options.emptyWorkspace,
       browserHostSuffix: options.browserHostSuffix,
       env: { ...executableEnvironment(process.env), ...isolatedRuntimeEnvironment(fixtureRoot, options.engine), ...options.env, ...(options.webPort ? { OPENWORK_WEB_PORT: String(options.webPort) } : {}), ...appWebDenEnvironment(options.den), ...bootstrapEnv },
     });
@@ -160,7 +165,7 @@ for (const tool of ["bun", "opencode"]) {
 executable.PATH = [toolBin, executable.PATH].filter(Boolean).join(":");
 const bootstrapEnv = await seedSyntheticPreactivatedDen(input.fixtureRoot, input.syntheticPreactivatedDenOrigin);
 const handle = await launchHeadlessWeb({
-  repoRoot: input.repoRoot, name: input.name, state: "isolated", workspace: input.workspace,
+  repoRoot: input.repoRoot, name: input.name, state: "isolated", workspace: input.workspace, emptyWorkspace: input.emptyWorkspace,
   browserHostSuffix: input.browserHostSuffix, env: { ...executable, ...input.env, ...bootstrapEnv },
 });
 await handle.detach();
@@ -185,6 +190,7 @@ export async function startRemoteRuntime(sandbox: string, worldName: string, wor
   const stopModulePath = `/tmp/${worldName}-stop.mjs`;
   const output = await runRemoteModule(sandbox, launchModulePath, REMOTE_LAUNCH_SOURCE, {
     syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin,
+    emptyWorkspace: options.emptyWorkspace,
     directories: [workspaceRoot, ...runtimeDirectories(fixtureRoot)],
     env: { ...isolatedRuntimeEnvironment(fixtureRoot, options.engine), ...options.env, ...(options.webPort ? { OPENWORK_WEB_PORT: String(options.webPort) } : {}), ...appWebDenEnvironment(options.den) },
     executableEnvKeys: EXECUTABLE_ENV_KEYS,

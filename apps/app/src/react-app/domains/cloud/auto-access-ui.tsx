@@ -100,7 +100,12 @@ export function AutoAccessFooter(props: { available: boolean; syncing?: boolean 
   return props.available || props.syncing ? <AutoAccessFooterContent {...props} /> : null;
 }
 
-function useAutoAccessQuery(available: boolean) {
+/**
+ * The one owner of the Auto status query for this workspace and identity.
+ * Pickers, the footer and the first-use caption all call it; react-query
+ * dedupes them. Read-only views use `useObservedAutoAccessSnapshot`.
+ */
+export function useAutoAccess(available: boolean) {
   const workspace = useWorkspaceMaybe();
   const auth = useDenAuth();
   const client = workspace?.openworkServerClient;
@@ -121,7 +126,7 @@ function useAutoAccessQuery(available: boolean) {
 }
 
 export function AutoFirstUseStatus({ onConnect }: { onConnect?: () => void }) {
-  const { query } = useAutoAccessQuery(true);
+  const { query } = useAutoAccess(true);
   const ready = query.isSuccess && query.data.state === "ready";
   return <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xs text-muted-foreground" data-testid="auto-first-use">
     {ready ? <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-green-9" /> : null}
@@ -131,7 +136,7 @@ export function AutoFirstUseStatus({ onConnect }: { onConnect?: () => void }) {
 }
 
 function AutoAccessFooterContent({ available, syncing = false }: { available: boolean; syncing?: boolean }) {
-  const { query, auth } = useAutoAccessQuery(available);
+  const { query, auth } = useAutoAccess(available);
   if (!available && !syncing) return null;
   const status = syncing || query.isFetching ? "Syncing Auto…"
     : query.isError || query.data?.state === "unavailable" ? "Auto status unavailable"
