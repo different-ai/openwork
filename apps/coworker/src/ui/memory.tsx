@@ -173,7 +173,7 @@ function AutomaticMemoryPanel({ coworker }: { coworker: CoworkerSummary }) {
     <p className="text-xs text-mist">Kept from past replies. Summaries are context, not verified facts.</p>
     <label className="flex items-center gap-2 text-xs text-mist">
       <span className="shrink-0">Scope</span>
-      <select aria-label="Automatic memory scope" className={`${inputClass} py-1.5`} value={groupId} onChange={(event) => setGroupId(event.target.value)}>
+      <select aria-label="Automatic memory scope" className={`${inputClass} w-auto min-w-0 flex-1 py-1.5`} value={groupId} onChange={(event) => setGroupId(event.target.value)}>
         <option value="">Private discussions</option>
         {groupId && !group ? <option value={groupId} disabled>Selected group unavailable</option> : null}
         {groups.map((item) => <option key={item.id} value={item.id}>{item.name} (shared)</option>)}
@@ -245,7 +245,7 @@ function AutomaticMemoryScope({ coworker, groupId, label }: { coworker: Coworker
     {cleared ? <p role="status" className="text-xs text-mist">Selected scope cleared. Future replies may create new automatic memory.</p> : null}
     {readError ? <ErrorNote>Automatic memory could not be refreshed: {readError}</ErrorNote> : null}
     {actionError ? <ErrorNote>{actionError}</ErrorNote> : null}
-    {memory === undefined ? <p className="text-xs text-mist">{readError ? "Automatic memory is unavailable." : "Reading automatic memory..."}</p> : memory === null ? <p className="text-xs text-mist" data-testid="automatic-memory-disabled">Automatic memory is disabled or unavailable for this scope. Check Automatic conversation memory in General settings.</p> : <div className="max-h-80 space-y-4 overflow-y-auto overscroll-contain pr-1" role="region" aria-label="Automatic memory contents" tabIndex={0}>
+    {memory === undefined ? <p className="text-xs text-mist">{readError ? "Automatic memory is unavailable." : "Reading automatic memory..."}</p> : memory === null ? <p className="text-xs text-mist" data-testid="automatic-memory-disabled">Automatic memory is disabled or unavailable for this scope. Check Automatic conversation memory in General settings.</p> : <div className="space-y-4" role="region" aria-label="Automatic memory contents" tabIndex={0}>
       <div>
         <h4 className="text-xs font-semibold text-snow">Recent excerpts</h4>
         {!memory.recent.length ? <p className="mt-1 text-xs text-mist">None yet.</p> : <ul className="divide-y divide-line" data-testid="automatic-memory-recent">
