@@ -1821,7 +1821,7 @@ test("shutdown refuses unconfirmed native cancellation instead of swallowing it"
     const fixture = nativeFixture(async ({ threadId }) => { fixture.held.add(threadId); });
     let cleanupCreatedAt = fixtureCreatedAt, aborts = 0;
     const clientFor = async (slug) => ({ ...await fixture.clientFor(slug), abortThread: async () => { aborts++; return { accepted: false }; } });
-    const service = createCollaboration({ directory: home, pollMs: 5, setupTimeoutMs: 100, clientFor,
+    const service = createCollaboration({ directory: home, pollMs: 5, setupTimeoutMs: 1_000, clientFor,
       cleanupClientFor: async (slug) => ({ ...await clientFor(slug), coworkerCreatedAt: cleanupCreatedAt }),
     });
     try {

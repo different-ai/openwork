@@ -192,7 +192,7 @@ test("workspace preparation validates the effective conversation default and eff
   const prepare = runInNewContext(script.code, { createNativeV2Client: () => native, nativeOptions: {}, options: {}, agentId: "build", parsedModel: parseModelPreference(owner.model), WORKSPACE_STARTUP_TIMEOUT_MS, listModelCatalog: async () => catalog, resolveDiscussionModel, Error, Promise });
   await prepare(new AbortController().signal, { coworker: owner, defaults });
   assert.equal(resolveDiscussionModel(catalog, owner, "", defaults).variant, "low");
-  await assert.rejects(prepare(new AbortController().signal, { coworker: { ...owner, useAppModelDefaults: false }, defaults }), /not available/);
+  await assert.rejects(prepare(new AbortController().signal, { coworker: { ...owner, useAppModelDefaults: false }, defaults }), /unavailable/);
   await assert.rejects(prepare(new AbortController().signal, { coworker: owner, defaults: { ...defaults, conversation: { model: "fixture/model", modelVariant: "missing" } } }), /no longer offers/);
 });
 

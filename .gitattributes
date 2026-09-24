@@ -1,3 +1,5 @@
 packages/sdk/src/gen/** linguist-generated=true
 # 0097 has a reviewed byte-level compatibility pin in the local migration runner.
 /ee/packages/den-db/drizzle/0097_gateway_access_matrix.sql text eol=lf
+# The pinned native source build verifies this patch byte for byte on every runner.
+/patches/opencode-invocation-filesystem-scope.patch text eol=lf
