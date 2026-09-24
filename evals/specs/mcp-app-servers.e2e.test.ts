@@ -143,22 +143,37 @@ test("an owner composes an App that is its own MCP server, and a teammate uses i
   });
 });
 
-chatTest("in an OpenWork chat, the model opens the App with launch input and the person prices the order inside the conversation", async ({ world, agent, user, evidence }) => {
+chatTest("an owner opens the App from OpenWork's chat and prices an order inside the conversation", async ({ world, agent, user, step, evidence }) => {
   const sinceIso = new Date().toISOString();
-  await agent.send(chatPrompt);
-  await user.see({ text: chatReply }, { timeoutMs: 120_000 });
-  const requests = (await world.den.mocks.inventory.agentRequests({ promptMarker: chatPrompt })).filter(request => request.kind === "tool" || request.kind === "final");
-  expect(requests.some(request => request.advertisedToolNames?.some(name => name.endsWith("execute_capability")))).toBe(true);
-  await using frame = await world.appFrame();
-  const appUser = user.on(frame);
-  await appUser.see({ role: "heading", label: appTitle });
-  await appUser.see({ testId: "pricing-date" }, { text: /^Prices as of \d{4}-\d{2}-\d{2}$/, timeoutMs: 90_000 });
-  await appUser.see({ testId: "order-line" }, { text: `${launchInput.quantity} × ${launchInput.sku} at 7`, timeoutMs: 90_000 });
-  expect((await world.inventoryCalls({ sinceIso, atLeast: 1 })).map(call => call.args)).toEqual([{ sku: launchInput.sku }]);
-  await user.notSee({ text: "Allow App action?" });
-  await appUser.click({ role: "button", label: "Calculate total" });
-  await appUser.see({ testId: "total" }, { text: "42", timeoutMs: 90_000 });
-  await user.notSee({ text: "Allow App action?" });
-  await user.screenshot();
-  evidence.recordAssertionEvidence("The App works inside an OpenWork chat", `The model called execute_capability with the App's exact name and { sku: "${launchInput.sku}", quantity: ${launchInput.quantity} }; the conversation rendered the App from its own server with that launch input. Its read-only tools loaded the pricing date and one real Inventory lookup without a click, and one trusted click ran the Workflow that returned 42, with no extra approval prompt.`, true);
+  await step("the owner asks the chat for the Order calculator in plain words", async () => {
+    for (const id of [world.created.appId, world.created.pluginId]) expect(chatPrompt).not.toContain(id);
+    await agent.send(chatPrompt);
+    await user.see({ text: chatReply }, { timeoutMs: 120_000 });
+    const requests = (await world.den.mocks.inventory.agentRequests({ promptMarker: chatPrompt })).filter(request => request.kind === "tool" || request.kind === "final");
+    expect(requests.some(request => request.advertisedToolNames?.some(name => name.endsWith("execute_capability")))).toBe(true);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("The request names an order, not an App or connection", `"${chatPrompt}" carries no App, Plugin, or connection id. The model opened the App with execute_capability and the launch input { sku: "${launchInput.sku}", quantity: ${launchInput.quantity} }.`, true);
+  });
+
+  await step("the App opens in the conversation with that order and loads its data without a click", async () => {
+    await using frame = await world.appFrame();
+    const appUser = user.on(frame);
+    await appUser.see({ role: "heading", label: appTitle });
+    await appUser.see({ testId: "pricing-date" }, { text: /^Prices as of \d{4}-\d{2}-\d{2}$/, timeoutMs: 90_000 });
+    await appUser.see({ testId: "order-line" }, { text: `${launchInput.quantity} × ${launchInput.sku} at 7`, timeoutMs: 90_000 });
+    await appUser.notSee({ testId: "total" });
+    expect((await world.inventoryCalls({ sinceIso, atLeast: 1 })).map(call => call.args)).toEqual([{ sku: launchInput.sku }]);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("Read-only tools run as soon as the App opens", `The App shows "${launchInput.quantity} × ${launchInput.sku} at 7": the live Workflow loaded today's date and the Inventory MCP recorded one real lookup for ${launchInput.sku}, with no click. No total is shown yet, so nothing was written.`, true);
+  });
+
+  await step("after: one click in the App prices the order, with no approval prompt", async () => {
+    await using frame = await world.appFrame();
+    const appUser = user.on(frame);
+    await appUser.click({ role: "button", label: "Calculate total" });
+    await appUser.see({ testId: "total" }, { text: "42", timeoutMs: 90_000 });
+    await user.notSee({ text: "Allow App action?" });
+    await user.screenshot();
+    evidence.recordAssertionEvidence("One trusted click runs the one write", `Clicking Calculate total ran the ${toolNames.workflow} Workflow from the conversation and the App shows 42, with no extra approval prompt.`, true);
+  });
 });
