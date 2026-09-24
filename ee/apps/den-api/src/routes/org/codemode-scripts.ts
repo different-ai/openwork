@@ -161,6 +161,7 @@ function routeFailure(error: unknown) {
   }
   const message = error instanceof Error ? error.message : "Workflow request failed."
   if (message === "app_changed_since_preview") return { status: 409, body: { error: message, message: "This app was saved elsewhere. Reopen it before saving your changes." } } as const
+  if (message === "legacy_view_read_only") return { status: 409, body: { error: message, message: "This app was made before Apps became their own MCP servers, so it is read-only. It still opens and refreshes; ask OpenWork to build a new App to change it." } } as const
   if (message.includes("not_found")) return { status: 404, body: { error: "workflow_not_found", message } } as const
   if (message === "workflow_matching_test_receipt_required") {
     return {

@@ -609,6 +609,11 @@ describe.skipIf(!process.env.DEN_TEST_DATABASE_URL)("authored MCP Apps with isol
     await expect(apps.readMcpApp({ context: stale, appId: app.appId })).resolves.toBeDefined()
     await expect(apps.updateMcpApp({ resolveTools, context: stale, ...source, appId: app.appId, expectedRevisionId: updated.revisionId })).rejects.toMatchObject({ error: "reauth" })
     await expect(apps.createMcpApp({ resolveTools, context: stale, ...source, pluginId: app.pluginId })).rejects.toMatchObject({ error: "reauth" })
+    // Connect has no browser session to step up; editor access still gates it, as update_skill does.
+    const viaConnect = await apps.updateMcpApp({ resolveTools, context: stale, requireFreshSession: false, ...source, appId: app.appId, expectedRevisionId: updated.revisionId })
+    expect(viaConnect.revisionId).not.toBe(updated.revisionId)
+    await expect(apps.updateMcpApp({ resolveTools, context: viewer, requireFreshSession: false, ...source, appId: app.appId, expectedRevisionId: viaConnect.revisionId })).rejects.toThrow("Missing editor access")
+    await expect(apps.createMcpApp({ resolveTools, context: stale, requireFreshSession: false, ...source, title: "Second shared App", pluginId: app.pluginId })).resolves.toMatchObject({ pluginId: app.pluginId })
   })
 
   test("encoded payload size is bounded even when the HTML byte limit passes", async () => {

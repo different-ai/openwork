@@ -8,11 +8,14 @@ import { chrome } from "@openwork/hosts";
 import { connect, debuggerUrlFor, evaluate, listTargets, type Surface } from "@openwork/cdp";
 import type { Place, Seed } from "@openwork/env";
 
-export const appTitle = "Reference calculator";
-export const toolName = "price_total";
+export const appTitle = "Order calculator";
 export const procedureTitle = "Quantity times unit price";
-export const launchInput = { quantity: 6, unitPrice: 7 };
+export const liveTitle = "Today's pricing date";
+export const launchInput = { sku: "WIDGET-7", quantity: 6 };
 export const indexUri = "openwork://connect/mcp-servers/index.json";
+/** The App composes three kinds of capability, each under its own clear tool name. */
+export const toolNames = { live: "todays_date", connection: "lookup_unit_price", workflow: "price_total" } as const;
+const unitPrice = 7;
 const fixturePaths = ["/owner/", "/member/", "/outsider/", "/host.js", "/owner/rpc", "/member/rpc", "/outsider/rpc"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -54,7 +57,7 @@ function appSummary(result: Record<string, unknown>) {
 export function appSource(revision: string) {
   return {
     title: appTitle,
-    textFallback: `${appTitle} is ready. Open the App to calculate a total.`,
+    textFallback: `${appTitle} is ready. Open the App to price an order.`,
     reactSource: `function payload(reply) {
       if (reply.structuredContent) return reply.structuredContent;
       const text = reply.content.find(part => part.type === "text");
@@ -62,14 +65,27 @@ export function appSource(revision: string) {
       return JSON.parse(text.text);
     }
     export default function Calculator({ app, input }) {
+      const [today, setToday] = React.useState(null);
+      const [price, setPrice] = React.useState(null);
       const [total, setTotal] = React.useState(null);
       const [failure, setFailure] = React.useState("");
       const [busy, setBusy] = React.useState(false);
       const toolsAvailable = Boolean(app.getHostCapabilities()?.serverTools);
+      React.useEffect(() => {
+        if (!toolsAvailable) return;
+        // A live Workflow tool is read-only, so hosts may run it when the App opens.
+        app.callServerTool({ name: ${JSON.stringify(toolNames.live)}, arguments: { timeZone: "UTC" } })
+          .then(reply => { if (reply.isError) throw new Error("Pricing date unavailable"); setToday(payload(reply).value?.today); })
+          .catch(error => setFailure(error.message));
+      }, [app, toolsAvailable]);
       async function calculate() {
         setBusy(true); setFailure("");
         try {
-          const reply = await app.callServerTool({ name: ${JSON.stringify(toolName)}, arguments: { quantity: input.quantity, unitPrice: input.unitPrice } });
+          const lookup = await app.callServerTool({ name: ${JSON.stringify(toolNames.connection)}, arguments: { sku: input.sku } });
+          if (lookup.isError) throw new Error("Price lookup failed");
+          const unitPrice = payload(lookup).unitPrice;
+          setPrice(unitPrice);
+          const reply = await app.callServerTool({ name: ${JSON.stringify(toolNames.workflow)}, arguments: { quantity: input.quantity, unitPrice } });
           const next = payload(reply);
           if (reply.isError) throw new Error(next.message || "The calculation failed");
           setTotal(next.value?.total);
@@ -79,7 +95,8 @@ export function appSource(revision: string) {
       return <main>
         <header><h1>${appTitle}</h1><span>Ready — ${revision}</span></header>
         {!toolsAvailable && <p role="status">Server tools unavailable. Reopen in a host that enables server tools.</p>}
-        <p>{input.quantity ?? 0} × {input.unitPrice ?? 0}</p>
+        <p data-testid="pricing-date">{today ? "Prices as of " + today : "Loading pricing date"}</p>
+        <p>{input.quantity ?? 0} × {input.sku ?? "no product"}{price !== null ? " at " + price : ""}</p>
         <button type="button" disabled={!toolsAvailable || busy} onClick={calculate}>Calculate total</button>
         {busy && <p role="status">Calculating</p>}
         {failure && <p role="alert">{failure}</p>}
@@ -187,7 +204,22 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
   await using resources = new AsyncDisposableStack();
   const den = await seed.den({
     web: true,
+    // Legacy Workflow-bound views are on so the journey can prove they are read-only beside App servers.
+    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_APP_MCP_SERVERS_ENABLED: "true" },
     org: { name: `App servers ${Date.now()}`, members: { member: { name: "App teammate" }, outsider: { name: "Ungranted teammate" } } },
+    mocks: {
+      inventory: seed.mock({ allowUnauthenticatedMcp: true, tools: [{
+        name: toolNames.connection,
+        description: "Look up a product's unit price.",
+        inputSchema: { type: "object", properties: { sku: { type: "string" } }, required: ["sku"], additionalProperties: false },
+        annotations: { readOnlyHint: true, destructiveHint: false },
+        result: { content: [{ type: "text", text: `Unit price ${unitPrice}` }], structuredContent: { sku: launchInput.sku, unitPrice }, isError: false },
+      }] }),
+    },
+  });
+  const connection = await seed.orgConnection(den.admin, {
+    name: `Inventory ${Date.now()}`, url: den.mocks.inventory.mcpUrl,
+    authType: "none", credentialMode: "shared", access: { orgWide: true },
   });
   const org = record((await seed.api(den.admin, "/v1/org")).body);
   const organizationId = field(org.organization, "id");
@@ -235,21 +267,43 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
     if (result.response.status !== 201) throw new Error(`Viewer grant failed: ${result.response.status}`);
   }
 
+  async function saveTestedWorkflow(name: string, request: Record<string, unknown>, save: Record<string, unknown>) {
+    const tested = await call("owner", "execute_capability_script", request);
+    if (tested.isError) throw new Error(`${name} authoring failed: ${JSON.stringify(tested)}`);
+    const metadata = record(payload(tested).metadata);
+    if (record(metadata.retention).canSaveByReceipt !== true) throw new Error("Recent authoring receipt source retention is unavailable");
+    const saved = await seed.api(den.admin, "/v1/workflows", {
+      method: "POST", body: JSON.stringify({ name, receiptId: field(metadata, "receiptId"), ...save }),
+    });
+    if (saved.response.status !== 201) throw new Error(`Saving ${name} failed: ${saved.response.status} ${saved.text.slice(0, 300)}`);
+    return { pluginId: field(saved.body, "pluginId"), configObjectId: field(saved.body, "configObjectId") };
+  }
   const inputSchema = { type: "object", properties: { quantity: { type: "number" }, unitPrice: { type: "number" } }, required: ["quantity", "unitPrice"], additionalProperties: false };
   const outputSchema = { type: "object", properties: { total: { type: "number" } }, required: ["total"], additionalProperties: false };
-  const tested = await call("owner", "execute_capability_script", {
-    code: "return { total: input.quantity * input.unitPrice };", input: launchInput, inputSchema, outputSchema,
-  });
-  if (tested.isError) throw new Error(`Procedure authoring failed: ${JSON.stringify(tested)}`);
-  const metadata = record(payload(tested).metadata);
-  if (record(metadata.retention).canSaveByReceipt !== true) throw new Error("Recent authoring receipt source retention is unavailable");
-  const saved = await seed.api(den.admin, "/v1/workflows", {
-    method: "POST", body: JSON.stringify({ name: procedureTitle, receiptId: field(metadata, "receiptId"), inputSchema, outputSchema, currentInput: launchInput }),
-  });
-  if (saved.response.status !== 201) throw new Error(`Saving the tested procedure failed: ${saved.response.status}`);
-  const workflow = { pluginId: field(saved.body, "pluginId"), configObjectId: field(saved.body, "configObjectId") };
-  const capability = `plugin:${workflow.pluginId}:${workflow.configObjectId}`;
-  const tools = [{ name: toolName, description: "Multiply a quantity by a unit price.", capability }];
+  const procedureInput = { quantity: launchInput.quantity, unitPrice };
+  const procedure = await saveTestedWorkflow(procedureTitle, {
+    code: "return { total: input.quantity * input.unitPrice };", input: procedureInput, inputSchema, outputSchema,
+  }, { inputSchema, outputSchema, currentInput: procedureInput });
+  const runtimeKeys = ["now", "today", "timeZone", "dayStart", "dayEnd"];
+  const runtimeSchema = {
+    type: "object", additionalProperties: false, required: ["runtime"], properties: {
+      runtime: { type: "object", additionalProperties: false, required: runtimeKeys, properties: Object.fromEntries(runtimeKeys.map(key => [key, { type: "string" }])) },
+    },
+  };
+  const liveOutputSchema = { type: "object", properties: { today: { type: "string" } }, required: ["today"], additionalProperties: false };
+  const live = await saveTestedWorkflow(liveTitle, {
+    mode: "live", code: "return { today: input.runtime.today };", inputSchema: runtimeSchema, outputSchema: liveOutputSchema,
+  }, { inputSchema: runtimeSchema, outputSchema: liveOutputSchema });
+  const capabilities = {
+    live: `plugin:${live.pluginId}:${live.configObjectId}`,
+    connection: `mcp:${connection.id}:${toolNames.connection}`,
+    workflow: `plugin:${procedure.pluginId}:${procedure.configObjectId}`,
+  };
+  const tools = [
+    { name: toolNames.live, description: "Today's pricing date for the viewer.", capability: capabilities.live, mode: "live" },
+    { name: toolNames.connection, description: "Look up a product's unit price in Inventory.", capability: capabilities.connection },
+    { name: toolNames.workflow, description: "Multiply a quantity by a unit price.", capability: capabilities.workflow },
+  ];
   const created = appSummary(await call("owner", "create_app", { ...appSource("revision one"), tools }));
   appServerPath = created.serverPath;
 
@@ -300,10 +354,24 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
   const url = (persona: Persona) => `${origin}/${persona}/?tool=${encodeURIComponent(created.toolName)}`;
   const retained = resources.move();
   return {
-    app, pluginWeb, den, created, workflow, capability, url, requests, rpc, call,
+    app, pluginWeb, den, created, capabilities, tools, url, requests, rpc, call,
+    inventoryCalls: (options: { sinceIso?: string; atLeast?: number } = {}) => den.mocks.inventory.toolCalls({ name: toolNames.connection, atLeast: 0, ...options }),
     async share() {
       await grant(`/v1/plugins/${created.pluginId}/access`);
-      await grant(`/v1/config-objects/${workflow.configObjectId}/access`);
+      for (const workflow of [procedure, live]) await grant(`/v1/config-objects/${workflow.configObjectId}/access`);
+    },
+    /** Every write path a Workflow-bound view had, tried against the running Den. */
+    async legacyWrites() {
+      const reactSource = "export default function View() { return <p>legacy</p> }";
+      const results = await Promise.all([
+        call("owner", "save_artifact_view", { configObjectId: procedure.configObjectId, title: "New legacy view", reactSource }),
+        call("owner", "save_artifact_view", { artifactViewId: "existing-legacy-view", configObjectId: procedure.configObjectId, title: "Edited legacy view", reactSource }),
+        call("owner", "activate_artifact_view_revision", { artifactViewId: "existing-legacy-view", revisionId: "existing-legacy-revision" }),
+      ]);
+      const saved = await seed.api(den.admin, "/v1/apps/existing-legacy-view/save", {
+        method: "POST", body: JSON.stringify({ revisionId: "existing-legacy-revision", title: "Saved legacy view", useInWorkflow: false, expectedActiveRevisionId: null }),
+      });
+      return { tools: results.map(result => ({ isError: result.isError === true, body: payload(result) })), save: { status: saved.response.status, body: record(saved.body) } };
     },
     async update() {
       const current = payload(await call("owner", "read_app", { appId: created.appId }));

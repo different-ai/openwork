@@ -178,6 +178,7 @@ beforeAll(async () => {
   spyOn(apps, "updateMcpApp").mockImplementation(async ({ resolveTools, ...request }) => {
     if (mutationError) throw mutationError
     expect(request.context).toEqual(context)
+    expect(request.requireFreshSession).toBe(false)
     expect(await resolveTools(request.tools ?? [])).toEqual(bindings)
     current = nextSummary
     return current
@@ -254,7 +255,7 @@ test("create_app builds an App that opens in OpenWork and names its own MCP serv
     expect(createdResult.structuredContent).toEqual({ app: appSummary, input: {}, mcpUrl: appUrl })
     expect(createdResult._meta).toEqual(launchMeta(appSummary))
     expect(JSON.stringify(createdResult.content)).toContain(appUrl)
-    expect(created).toEqual([{ ...source, context, resolved: bindings }])
+    expect(created).toEqual([{ ...source, context, requireFreshSession: false, resolved: bindings }])
     expect(resolverCalls).toEqual([{ scopes: ["mcp:read", "mcp:write"], member, tools: declarations }])
     expect(workflowCreations).toBe(0)
     expect(normalExecutions).toEqual([])
@@ -432,4 +433,26 @@ test("Code Mode and generic Plugin execution cannot return App source or HTML", 
   version = { schemaVersion: null, normalizedPayloadJson: { kind: "legacy_app" }, rawSourceText: "legacy-definition" }
   const legacy = await marketplace.executeMarketplaceCapability({ organizationId, pluginId, configObjectId: appId, member })
   expect(legacy).toMatchObject({ ok: true, result: { status: "unsupported", definition: "legacy-definition" } })
+})
+
+test("with App servers off, Connect keeps its previous surface and App URLs refuse every request", async () => {
+  current = appSummary
+  const { env } = await import("../src/env.js")
+  Object.assign(env, { appMcpServersEnabled: false })
+  try {
+    await withClient("/mcp/agent", async (client) => {
+      const names = (await client.listTools()).tools.map((tool) => tool.name)
+      for (const builder of ["create_app", "update_app", "read_app"]) expect(names).not.toContain(builder)
+      expect(client.getInstructions()).toContain("save_artifact_view and follow its prerequisites")
+      expect(client.getInstructions()).not.toContain("create_app")
+      const index = await client.readResource({ uri: "openwork://connect/mcp-servers/index.json" })
+      const text = index.contents[0] && "text" in index.contents[0] ? index.contents[0].text : "{}"
+      expect(JSON.parse(text).servers).toEqual([])
+      const search = await client.callTool({ name: "search_capabilities", arguments: { query: "project" } })
+      expect(JSON.stringify(search.structuredContent)).not.toContain('"kind":"mcp_app"')
+    })
+    await expect(withClient(appSummary.serverPath, async () => undefined)).rejects.toThrow()
+  } finally {
+    Object.assign(env, { appMcpServersEnabled: true })
+  }
 })

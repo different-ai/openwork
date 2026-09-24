@@ -231,17 +231,25 @@ MCP Apps from third-party providers render in OpenWork through its private App h
 
 ### Apps you build are their own MCP servers
 
-Ask the agent for an app, dashboard, or interactive view and it calls `create_app` with React source, a text fallback, and the tools the App needs. No Workflow is required. Each App is saved in a Plugin and served as its own standard MCP server at `/mcp/agent/connections/<appId>` on your OpenWork API, which exposes only:
+Ask the agent for an app, dashboard, or interactive view and it calls `create_app` with React source, a text fallback, and the tools the App needs. No Workflow is required. Each App is saved in a Plugin and served as its own standard MCP server at `/mcp/agent/connections/<appId>` on your OpenWork API. That server exposes only:
 
 - `open_app`, bound to the App's current immutable `ui://` revision;
-- the tools the App declared, each a clear name bound to one exact capability from `search_capabilities`: a saved Workflow, a connection tool, or an OpenWork action;
+- the tools the App declared;
 - the App's revision resources.
 
-Declared tools run as the person using the App, with that person's own access and connections; sharing an App never shares credentials. A tool is marked read-only only when OpenWork can verify it: OpenWork read actions, connection tools that their provider marks read-only, and saved Workflows declared with `mode: "live"`, which run read-only with server-supplied dates. The OpenWork app runs other tools only after a click inside the App.
+Each declared tool has a clear name and runs one exact capability from `search_capabilities`. For example, an order calculator can declare:
+
+| Tool | Runs | Read-only |
+| --- | --- | --- |
+| `todays_date` | a saved Workflow with `mode: "live"`, which gets today's date from OpenWork | Yes, so the App can load it on open |
+| `lookup_unit_price` | a tool on a connected MCP server | Yes, because its provider marks it read-only |
+| `price_total` | a saved Workflow with inputs | No, so the OpenWork app runs it after a click in the App |
+
+The App calls them by those names with `app.callServerTool`. They run as the person using the App, with that person's own access and connections, so sharing an App never shares credentials. OpenWork marks a tool read-only only when it can verify it: OpenWork read actions, connection tools their provider marks read-only, and live Workflows, which run read-only. `create_app` refuses a tool whose capability you can't use, and publishes nothing.
 
 Share an App by sharing its Plugin. People with access can open it in the OpenWork app, which registers each App they can use as its own MCP server and opens new revisions right after `create_app` or `update_app`. They can also copy the App's MCP URL from its Plugin page into Cursor, Claude, or another MCP client and sign in with OpenWork.
 
-`read_app` returns source to editors, and `update_app` publishes a new revision; omit `tools` to keep the current ones. `save_artifact_view` only edits existing Workflow-bound views. These App tools are available when your organization has member-facing MCP connections turned on, which is the default.
+`read_app` returns source to editors, and `update_app` publishes a new revision at the same MCP URL; omit `tools` to keep the current ones. Apps made earlier from a Workflow with `save_artifact_view` are read-only: they still open and refresh, but they can't be created, edited, or re-activated. These App tools are available when your organization has member-facing MCP connections turned on, which is the default. Self-hosted deployments can set `DEN_APP_MCP_SERVERS_ENABLED=false` to go back to Workflow-bound apps.
 
 ## Troubleshooting
 

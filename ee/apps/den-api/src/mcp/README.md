@@ -99,8 +99,17 @@ JSON-RPC error. The Connect server index lists accessible Apps with
 Search returns each App as `kind: mcp_app`; executing it returns an
 `openwork/mcpApp` launch reference to the App's own server.
 
-New `save_artifact_view` creation returns `deprecated_creation` where
-`create_app` is available. Existing views, edits, and resources are unchanged.
+Where `create_app` is available, Workflow-bound views are read-only:
+`save_artifact_view` (create or edit), `activate_artifact_view_revision`, and
+the REST save and activate routes return `legacy_view_read_only`. Existing views
+keep their render, preview, run, and resource paths, and can still be retired.
+
+`DEN_APP_MCP_SERVERS_ENABLED` (default `true`) gates all of this per
+deployment, together with each organization's member-facing MCP connections
+setting. `false` restores the previous surface: no builder tools or App
+servers, the original `save_artifact_view` guidance, and writable
+Workflow-bound views. Eval Dens that enable generated artifact views default it
+to `false` so older Workflow-bound journeys keep testing that mode.
 
 ### Live generated apps
 

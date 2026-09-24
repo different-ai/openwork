@@ -197,6 +197,7 @@ export async function handleMcpAppServerRequest(input: {
 }) {
   const { context, principal } = input
   if (context.req.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } })
+  if (!env.appMcpServersEnabled) return appUnavailableResponse(context.req.raw)
   const organizationId = normalizeDenTypeId("organization", principal.organizationId)
   const member = await resolveMcpMemberIdentity({ userId: principal.userId, organizationId })
   if (!member) return appUnavailableResponse(context.req.raw)

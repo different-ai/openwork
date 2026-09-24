@@ -110,28 +110,34 @@ async function latestRevision(organizationId: DenTypeId<"organization">, id: Den
   return row ?? null
 }
 
-async function requireEditor(context: PluginArchActorContext, id: DenTypeId<"configObject">, write: boolean) {
+/**
+ * Shared writes normally step up to a fresh browser session. MCP calls carry
+ * none, so the Connect builder passes requireFreshSession: false, as
+ * update_skill does; its MCP write scope and editor access still gate writes.
+ */
+async function requireEditor(context: PluginArchActorContext, id: DenTypeId<"configObject">, write: boolean, requireFreshSession?: boolean) {
   await requirePluginArchResourceRole({
     context,
     resourceId: id,
     resourceKind: "config_object",
     role: "editor",
-    requireFreshSession: write && await pluginArchResourceHasExpandedAudience({ context, resourceId: id, resourceKind: "config_object" }),
+    requireFreshSession: write && (requireFreshSession
+      ?? await pluginArchResourceHasExpandedAudience({ context, resourceId: id, resourceKind: "config_object" })),
   })
 }
 
-async function editableApp(context: PluginArchActorContext, id: DenTypeId<"configObject">, write: boolean) {
+async function editableApp(context: PluginArchActorContext, id: DenTypeId<"configObject">, write: boolean, requireFreshSession?: boolean) {
   const organizationId = context.organizationContext.organization.id
   const row = await activeApp(organizationId, id)
   if (!row) return notFound()
-  await requireEditor(context, row.id, write)
+  await requireEditor(context, row.id, write, requireFreshSession)
   const version = await latestRevision(organizationId, row.id)
   const payload = version && compiledRevision(version)
   if (!version || !payload) return notFound()
   return { row, version, payload }
 }
 
-async function editablePlugin(context: PluginArchActorContext, id: string) {
+async function editablePlugin(context: PluginArchActorContext, id: string, requireFreshSession?: boolean) {
   let pluginId: DenTypeId<"plugin">
   try {
     pluginId = normalizeDenTypeId("plugin", id)
@@ -150,7 +156,7 @@ async function editablePlugin(context: PluginArchActorContext, id: string) {
     resourceId: pluginId,
     resourceKind: "plugin",
     role: "editor",
-    requireFreshSession: await pluginArchResourceHasExpandedAudience({ context, resourceId: pluginId, resourceKind: "plugin" }),
+    requireFreshSession: requireFreshSession ?? await pluginArchResourceHasExpandedAudience({ context, resourceId: pluginId, resourceKind: "plugin" }),
   })
   return pluginId
 }
@@ -208,19 +214,20 @@ async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpApp
   return { payload, rawSourceText }
 }
 
-export async function createMcpApp({ context, resolveTools, ...source }: CreateMcpAppInput & {
+export async function createMcpApp({ context, resolveTools, requireFreshSession, ...source }: CreateMcpAppInput & {
   context: PluginArchActorContext
   resolveTools: ResolveMcpAppTools
+  requireFreshSession?: boolean
 }): Promise<McpAppSummary> {
   const parsed = createMcpAppInputSchema.safeParse(source)
   if (!parsed.success) throw new McpAppError(400, "invalid_mcp_app_input", "Provide a title, complete React/CSS source, a non-empty text fallback, and uniquely named tools within the App limits.")
   const input = parsed.data
-  let pluginId = input.pluginId ? await editablePlugin(context, input.pluginId) : null
+  let pluginId = input.pluginId ? await editablePlugin(context, input.pluginId, requireFreshSession) : null
   const tools = await resolveTools(input.tools ?? [])
   const compiled = await compile(input, pluginId ?? createDenTypeId("plugin"), tools)
   let createdPluginId: DenTypeId<"plugin"> | null = null
   if (pluginId) {
-    await editablePlugin(context, pluginId)
+    await editablePlugin(context, pluginId, requireFreshSession)
   } else {
     try {
       const plugin = await createPlugin({ context, name: input.title, description: input.description })
@@ -238,6 +245,7 @@ export async function createMcpApp({ context, resolveTools, ...source }: CreateM
     objectType: "app",
     pluginIds: [pluginId],
     sourceMode: "cloud",
+    ...(requireFreshSession === undefined ? {} : { requireFreshSession }),
     value: {
       metadata: { title: payload.title, description: payload.description },
       normalizedPayloadJson: payload,
@@ -254,16 +262,17 @@ export async function createMcpApp({ context, resolveTools, ...source }: CreateM
   return summarizeMcpAppRevision({ appId: saved.id, revisionId: saved.latestVersion.id, payload })
 }
 
-export async function updateMcpApp({ context, resolveTools, ...source }: UpdateMcpAppInput & {
+export async function updateMcpApp({ context, resolveTools, requireFreshSession, ...source }: UpdateMcpAppInput & {
   context: PluginArchActorContext
   resolveTools: ResolveMcpAppTools
+  requireFreshSession?: boolean
 }): Promise<McpAppSummary> {
   const parsed = updateMcpAppInputSchema.safeParse(source)
   if (!parsed.success) throw new McpAppError(400, "invalid_mcp_app_input", "Provide appId, expectedRevisionId, and complete replacement App source, title, text fallback, and uniquely named tools.")
   const input = parsed.data
   const id = appId(input.appId)
   const expectedId = revisionId(input.expectedRevisionId)
-  const current = await editableApp(context, id, true)
+  const current = await editableApp(context, id, true, requireFreshSession)
   if (current.version.id !== expectedId) throw new McpAppError(409, "mcp_app_revision_conflict", "This MCP App has changed. Read it again before updating.")
   // Omitted tools keep the App's current tools, re-resolved for the editor.
   const tools = await resolveTools(input.tools ?? toolDeclarations(current.payload))
@@ -275,7 +284,7 @@ export async function updateMcpApp({ context, resolveTools, ...source }: UpdateM
       eq(ConfigObjectTable.id, id),
     )).limit(1).for("update")
     if (!locked || locked.objectType !== "app" || locked.status !== "active" || locked.deletedAt) return notFound()
-    await requireEditor(context, id, true)
+    await requireEditor(context, id, true, requireFreshSession)
     const latest = await latestRevision(organizationId, id, tx)
     if (!latest || latest.id !== expectedId || !compiledRevision(latest)) {
       throw new McpAppError(409, "mcp_app_revision_conflict", "This MCP App has changed. Read it again before updating.")

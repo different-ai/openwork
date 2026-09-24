@@ -61,6 +61,7 @@ config:
     automationsRuntimeEnabled: "true"
     # Enable only after compatible Desktop MCP Apps hosts are deployed.
     generatedArtifactViewsEnabled: "false"
+    appMcpServersEnabled: "true"
     connectLinkMode: exchange
     connectLinkKeyId: ""
     openworkAppConnectUrl: ""

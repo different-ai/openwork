@@ -79,7 +79,7 @@ async function withClient<T>(
     save: () => Promise<GeneratedArtifactView>
     activate: (request: { artifactViewId: string; revisionId: string }) => Promise<GeneratedArtifactView>
     retire: () => Promise<GeneratedArtifactView>
-    allowLegacyCreation: boolean
+    legacyViewsWritable: boolean
   }> = {},
 ): Promise<T> {
   const server = new McpServer(
@@ -99,7 +99,7 @@ async function withClient<T>(
       server.sendToolListChanged()
       server.sendResourceListChanged()
     },
-    allowLegacyCreation: overrides.allowLegacyCreation,
+    legacyViewsWritable: overrides.legacyViewsWritable ?? true,
   })
   const client = new Client({ name: "host", version: "1.0.0" }, { capabilities: {} })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -540,22 +540,35 @@ test.each([undefined, { state: "needs_connection", message: "Connect your accoun
   })
 })
 
-test("new legacy creation is blocked before saving or loading data", async () => {
-  let saves = 0
+test("where create_app is available, legacy views are read-only: they render, read, and retire but are never saved or re-activated", async () => {
+  const writes: string[] = []
   let loads = 0
   await withClient(async (client) => {
-    const result = await client.callTool({
-      name: "save_artifact_view",
-      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
-    })
-    expect(result.isError).toBe(true)
-    expect(JSON.stringify(result.content)).toContain("deprecated_creation")
-    expect(JSON.stringify(result.content)).toContain("create_app")
-    expect(result._meta).toBeUndefined()
-    expect(saves).toBe(0)
+    const reactSource = "export default function View() { return <div /> }"
+    for (const request of [
+      { name: "save_artifact_view", arguments: { configObjectId, title: view.title, reactSource } },
+      { name: "save_artifact_view", arguments: { artifactViewId: view.id, configObjectId, title: view.title, reactSource } },
+      { name: "activate_artifact_view_revision", arguments: { artifactViewId: view.id, revisionId: view.revisions[0]!.id } },
+    ]) {
+      const result = await client.callTool(request)
+      expect(result.isError).toBe(true)
+      expect(JSON.stringify(result.content)).toContain("legacy_view_read_only")
+      expect(JSON.stringify(result.content)).toContain("create_app")
+      expect(result._meta).toBeUndefined()
+    }
+    expect(writes).toEqual([])
     expect(loads).toBe(0)
+    const rendered = await client.callTool({ name: `render_artifact_${view.id}`, arguments: {} })
+    expect(rendered.isError).not.toBe(true)
+    expect(loads).toBe(1)
+    expect((await client.readResource({ uri: view.revisions[0]!.resourceUri })).contents[0]).toMatchObject({ uri: view.revisions[0]!.resourceUri })
+    expect((await client.callTool({ name: "retire_artifact_view", arguments: { artifactViewId: view.id } })).isError).not.toBe(true)
+    expect(writes).toEqual(["retire"])
   }, {
-    save: async () => { saves += 1; return view },
+    legacyViewsWritable: false,
+    save: async () => { writes.push("save"); return view },
+    activate: async () => { writes.push("activate"); return view },
+    retire: async () => { writes.push("retire"); return { ...view, status: "retired", activeRevisionId: null } },
     loadData: async () => { loads += 1; return { ok: true, payload, markdown: "# Snapshot" } },
   })
 })
@@ -583,10 +596,10 @@ test("legacy creation keeps working where create_app is unavailable", async () =
       name: "save_artifact_view",
       arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
     })
-    expect(JSON.stringify(result.content)).not.toContain("deprecated_creation")
+    expect(JSON.stringify(result.content)).not.toContain("legacy_view_read_only")
     expect(saves).toBe(1)
   }, {
     save: async () => { saves += 1; return view },
-    allowLegacyCreation: true,
+    legacyViewsWritable: true,
   })
 })

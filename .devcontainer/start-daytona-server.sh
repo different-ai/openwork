@@ -43,6 +43,11 @@ export DEN_ORG_MODE="${DEN_ORG_MODE:-multi_org}"
 # Eval sign-ups must not depend on the HIBP API.
 export DEN_PASSWORD_BREACH_SCREENING_ENABLED="${DEN_PASSWORD_BREACH_SCREENING_ENABLED:-false}"
 export DEN_GENERATED_ARTIFACT_VIEWS_ENABLED="${DEN_GENERATED_ARTIFACT_VIEWS_ENABLED:-false}"
+# Workflow-bound views are writable only with App servers off, so a Den that
+# enables them runs that way unless App servers are requested explicitly.
+if [ "$DEN_GENERATED_ARTIFACT_VIEWS_ENABLED" = "true" ]; then
+  export DEN_APP_MCP_SERVERS_ENABLED="${DEN_APP_MCP_SERVERS_ENABLED:-false}"
+fi
 export DATABASE_URL="${DATABASE_URL:-mysql://root:password@127.0.0.1:3306/openwork_den}"
 export DEN_DB_ENCRYPTION_KEY="${DEN_DB_ENCRYPTION_KEY:-daytona-den-db-encryption-key-please-change-1234567890}"
 export BETTER_AUTH_SECRET="${BETTER_AUTH_SECRET:-daytona-den-auth-secret-please-change-1234567890}"

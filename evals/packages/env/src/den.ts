@@ -867,6 +867,12 @@ export async function server(options: ServerOptions): Promise<Den> {
       DEN_DASHBOARDS_ENABLED: "false",
       DEN_GENERATED_ARTIFACT_VIEWS_ENABLED:
         process.env.OPENWORK_EVAL_GENERATED_ARTIFACT_VIEWS_E2E_TEST === "1" ? "true" : "false",
+      // Workflow-bound views are writable only with App servers off, so a Den
+      // that enables them runs that way unless its world opts in explicitly.
+      DEN_APP_MCP_SERVERS_ENABLED:
+        (options.env?.DEN_GENERATED_ARTIFACT_VIEWS_ENABLED ?? (process.env.OPENWORK_EVAL_GENERATED_ARTIFACT_VIEWS_E2E_TEST === "1" ? "true" : "false")) === "true"
+          ? "false"
+          : "true",
       OPENWORK_DEV_MODE: "1",
       PROVISIONER_MODE: "stub",
         // The locally booted Den seeds this admin into the platform-admin
