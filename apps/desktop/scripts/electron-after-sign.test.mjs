@@ -1,39 +1,41 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 
 const require = createRequire(import.meta.url);
-const { verifyAppCanLaunch } = require("./electron-after-sign.cjs");
+const { verifySignedApp } = require("./electron-after-sign.cjs");
 
-function timeoutError() {
-  const error = new Error("spawnSync ETIMEDOUT");
-  error.code = "ETIMEDOUT";
-  return error;
+function recorder() {
+  const calls = [];
+  return { calls, runCommand: (command, args) => calls.push([command, ...args]) };
 }
 
-test("an app still running at the deadline counts as launched, even if it exits 0 on SIGTERM", () => {
-  const spawn = () => ({ error: timeoutError(), status: 0, signal: null });
-  assert.doesNotThrow(() => verifyAppCanLaunch("/tmp/OpenWork.app", { spawn }));
+for (const appPath of [
+  "/tmp/dist/mac-arm64/OpenWork.app",
+  "/tmp/dist/mac-arm64/OpenWork Cloud.app",
+  "/tmp/dist/mac-x64/OpenWork Enterprise.app",
+]) {
+  test(`verifies the bundle itself for ${appPath}`, () => {
+    const { calls, runCommand } = recorder();
+    verifySignedApp(appPath, { runCommand });
+    assert.deepEqual(calls, [
+      ["codesign", "--verify", "--deep", "--strict", "--verbose=2", appPath],
+      ["spctl", "--assess", "--type", "execute", "--verbose=2", appPath],
+      ["xcrun", "stapler", "validate", appPath],
+    ]);
+    assert.ok(calls.every((call) => !call.some((arg) => arg.includes("Contents/MacOS"))));
+  });
+}
+
+test("a failing check fails the build", () => {
+  const runCommand = (command) => {
+    if (command === "spctl") throw new Error("spctl --assess failed with status 3");
+  };
+  assert.throws(() => verifySignedApp("/tmp/OpenWork Cloud.app", { runCommand }), /spctl/);
 });
 
-test("an app killed at the deadline counts as launched", () => {
-  const spawn = () => ({ error: timeoutError(), status: null, signal: "SIGTERM" });
-  assert.doesNotThrow(() => verifyAppCanLaunch("/tmp/OpenWork.app", { spawn }));
-});
-
-test("a crash before the deadline fails the build", () => {
-  const spawn = () => ({ status: null, signal: "SIGKILL" });
-  assert.throws(() => verifyAppCanLaunch("/tmp/OpenWork.app", { spawn }), /failed to launch/);
-});
-
-test("a non-zero exit before the deadline fails the build", () => {
-  const spawn = () => ({ status: 1, signal: null });
-  assert.throws(() => verifyAppCanLaunch("/tmp/OpenWork.app", { spawn }), /status 1/);
-});
-
-test("a missing executable fails the build", () => {
-  const error = new Error("spawnSync ENOENT");
-  error.code = "ENOENT";
-  const spawn = () => ({ error, status: null, signal: null });
-  assert.throws(() => verifyAppCanLaunch("/tmp/OpenWork.app", { spawn }), /ENOENT/);
+test("the build step never launches the packaged app", () => {
+  const source = readFileSync(new URL("./electron-after-sign.cjs", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /"Contents",\s*"MacOS"/);
 });
