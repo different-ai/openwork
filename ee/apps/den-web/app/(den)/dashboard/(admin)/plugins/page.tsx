@@ -11,5 +11,5 @@ export default async function PluginsPage({ searchParams }: { searchParams: Prom
       </Suspense>
     );
   }
-  return <AdminPluginsScreen />;
+  return <Suspense fallback={null}><AdminPluginsScreen /></Suspense>;
 }
