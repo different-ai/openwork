@@ -198,6 +198,7 @@ async function waitForChildren(children, timeoutMs) {
 let uiChild = null;
 let electronChild = null;
 let stopping = false;
+const keepDevServerAfterElectronExit = process.env.OPENWORK_ELECTRON_KEEP_DEV_SERVER_AFTER_EXIT === "1";
 
 async function stopAll(exitCode = 0) {
   if (stopping) return;
@@ -297,5 +298,12 @@ if (cdpPort) {
 
 electronChild.on("exit", (code) => {
   if (stopping) return;
+  // Eval restart journeys relaunch Electron itself with the same Vite URL.
+  // Keep this wrapper (and its Vite child) alive until the owning process
+  // group is disposed; otherwise the relaunched renderer has no page to load.
+  if (keepDevServerAfterElectronExit) {
+    electronChild = null;
+    return;
+  }
   void stopAll(code ?? 0);
 });

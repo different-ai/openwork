@@ -192,6 +192,16 @@ export const t = (
 };
 
 /**
+ * The restart notice currently falls back to English. Select its English
+ * cardinal form before locale fallback so locale-specific plural categories
+ * (for example Russian 21 or Japanese 1) cannot select the wrong English copy.
+ */
+export const restartWaitingMessagesText = (count: number, loc: Language = currentLocale()): string => {
+  const key = `settings.update_restart_waiting_messages_${count === 1 ? "one" : "other"}`;
+  return t(key, { count, lng: loc });
+};
+
+/**
  * Initialize locale from localStorage
  * Call this during app initialization
  */

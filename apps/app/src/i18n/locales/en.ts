@@ -2080,6 +2080,8 @@ export default {
   "updates.candidate_available": "v{version} available (v{stagedVersion} downloaded)",
   "settings.update_restart_active_tasks": "You have active tasks. Installing the update restarts OpenWork and will interrupt them.",
   "settings.update_restart_confirm_title": "Restart with active tasks?",
+  "settings.update_restart_waiting_messages_one": "{count} message waiting to be sent will be kept as a draft and won't be sent on its own after the restart.",
+  "settings.update_restart_waiting_messages_other": "{count} messages waiting to be sent will be kept as drafts and won't be sent on their own after the restart.",
   "settings.update_restart_confirm_message": "Installing the update restarts OpenWork now and interrupts your active tasks. You may need to resume them after the update.",
   "settings.update_uptodate": "You're up to date",
   "settings.updates": "Updates",

@@ -169,7 +169,13 @@ test("updates download outside Settings and offer a persistent, optional restart
   expect(await world.snapshot()).toMatchObject({ installAttempts: 3, installs: 1 });
 });
 
-const recoveryTest = spec.world(restartUpdateTaskWorld, { timeout: 600_000 });
+const recoveryTest = spec.world(restartUpdateTaskWorld, {
+  resources: {
+    surfaces: ["desktop"], services: ["mock"],
+    nativeReason: "Update recovery requires a real Electron main-process relaunch on its selected host.",
+  },
+  timeout: 600_000,
+});
 
 recoveryTest("a confirmed update relaunch resumes only the unfinished task on its original engine", async ({ world, user, agent, probe, step }) => {
   user = user.on(world.app);

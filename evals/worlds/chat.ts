@@ -7,7 +7,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
-import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
+import { mcpMock, resolveEvalEngine, SkipError, type MockHandle, type Place, type Seed } from "@openwork/env";
 import type { MockAgentWorkload, MockMcpHandle } from "@openwork/labs";
 import { chatContinuity } from "./chat-continuity.ts";
 
@@ -474,13 +474,16 @@ export async function permissionStopRecovery(seed: Seed) {
 }
 
 /** Synthetic release/model responses, but real Electron quit, engine teardown, and relaunch. */
-export async function restartUpdateTaskWorld(seed: Seed) {
+export async function restartUpdateTaskWorld(seed: Seed, context: { place: Place }) {
   const engine = resolveEvalEngine();
+  const providerId = "restart-update-task-mock";
+  const modelId = "restart-update-task-model";
   const active = { prompt: "Prepare the restart continuity report", title: "Continue after update" };
   const stopped = { prompt: "Prepare the cancelled continuity report", title: "Keep stopped after update" };
   const completed = { prompt: "Prepare the completed continuity report", title: "Keep completed after update", reply: "The completed report is ready." };
   const recovery = { marker: "Continue the interrupted task", reply: "The interrupted report continued after restart." };
-  const base = await splitPaneQuestions(seed, "restart-update-task", [
+  const installRequestsKey = "openwork.eval.restart-update.install-requests";
+  const mock: MockHandle = (await mcpMock({ agentWorkloads: [
     ...[active, stopped].map((task): MockAgentWorkload => ({
       promptMarker: task.prompt, latestUserTurn: true, finalReply: "The original turn finished without restarting.",
       steps: [{ tool: engine === "v2" ? "shell" : "bash", arguments: {
@@ -489,13 +492,33 @@ export async function restartUpdateTaskWorld(seed: Seed) {
     })),
     { promptMarker: completed.prompt, latestUserTurn: true, finalReply: completed.reply, steps: [] },
     { promptMarker: recovery.marker, latestUserTurn: true, finalReply: recovery.reply, steps: [] },
-  ], { permission: { bash: "allow" } });
-  const activeSession = await seedSessionRetry(seed, base.app, { title: active.title });
-  const stoppedSession = await seedSessionRetry(seed, base.app, { title: stopped.title });
-  const completedSession = await seedSessionRetry(seed, base.app, { title: completed.title });
-  const originalTimeOrigin = await evalIn(base.app, () => performance.timeOrigin);
-  await seed.evalIn(base.app, () => {
+  ] }).boot(context.place)).handle;
+  const app = await seed.desktop({
+    name: "restart-update-task",
+    profileDir: seed.tmpPath("restart-update-task-profile"),
+    env: { OPENWORK_ELECTRON_KEEP_DEV_SERVER_AFTER_EXIT: "1" },
+  });
+  const workspace = await seed.workspace(app, seed.tmpPath("restart-update-task"), { create: true });
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    permission: { bash: "allow" },
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Restart update task mock",
+        options: { baseURL: `${mock.url}/v1`, apiKey: "sk-openwork-eval" },
+        models: { [modelId]: { name: "Restart update task model" } },
+      },
+    },
+  });
+  const activeSession = await seedSessionRetry(seed, app, { title: active.title });
+  const stoppedSession = await seedSessionRetry(seed, app, { title: stopped.title });
+  const completedSession = await seedSessionRetry(seed, app, { title: completed.title });
+  const originalTimeOrigin = await evalIn(app, () => performance.timeOrigin);
+  await seed.evalIn(app, browserScript((requestsKey) => {
     const currentVersion = "0.18.0";
+    localStorage.setItem(requestsKey, "0");
+    window.__openworkApplyDesktopConfig({ allowAlphaUpdates: true });
+    window.__openworkSetDesktopConfigRefreshResult({ allowAlphaUpdates: true });
     window.__openworkReadDesktopVersionMetadataEval = () => ({
       minAppVersion: "0.1.0", latestAppVersion: "9.9.9", publishedDesktopVersions: ["9.9.9"],
     });
@@ -504,26 +527,61 @@ export async function restartUpdateTaskWorld(seed: Seed) {
       setChannel: async (channel) => ({ channel, currentVersion }),
       check: async () => ({ available: true, channel: "stable", currentVersion, latestVersion: "9.9.9" }),
       download: async () => ({ ok: true }),
-      // Do not replace a binary in a journey. Unlike the download-only fixture,
-      // confirmation goes through real main-process app.relaunch()/app.quit().
       installAndRestart: async () => {
-        await window.__OPENWORK_ELECTRON__.shell.relaunch();
+        const previous = Number.parseInt(localStorage.getItem(requestsKey) ?? "0", 10);
+        localStorage.setItem(requestsKey, String(previous + 1));
+        await window.__OPENWORK_ELECTRON__.invokeDesktop("__evalRelaunch");
         return { ok: true };
       },
       onDownloadProgress: () => () => {},
     };
-  });
+  }, [installRequestsKey]));
   return {
-    ...base, engine, recovery,
+    app, workspace, mock, engine, recovery,
     active: { ...active, ...activeSession }, stopped: { ...stopped, ...stoppedSession }, completed: { ...completed, ...completedSession },
+    async mirrorActiveStatusForSettingsRoute() {
+      // Settings remounts and reads a fresh v1 session list, whose native rows
+      // omit transient run status. Mirror the separately asserted live engine
+      // status onto that list so this journey stays scoped to restart-dialog
+      // copy/relaunch behavior; it does not prove normal Settings status discovery.
+      await seed.evalIn(app, browserScript((sessionId) => {
+        const originalFetch = window.fetch;
+        window.fetch = async (...args) => {
+          const response = await originalFetch.apply(window, args);
+          const [input, init] = args;
+          const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+          const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+          if (method !== "GET" || !url.pathname.endsWith("/session") || !response.ok) return response;
+          const body: unknown = await response.clone().json();
+          if (!Array.isArray(body)) return response;
+          const sessions = body.map((item) => {
+            if (typeof item !== "object" || item === null || Array.isArray(item)) return item;
+            const session = Object.fromEntries(Object.entries(item));
+            return session.id === sessionId ? { ...session, status: "running" } : item;
+          });
+          const headers = new Headers(response.headers);
+          headers.delete("content-length");
+          return new Response(JSON.stringify(sessions), {
+            status: response.status,
+            statusText: response.statusText,
+            headers,
+          });
+        };
+      }, [activeSession.sessionId]));
+    },
     async reconnectAfterRestart() {
       const deadline = Date.now() + 90_000;
       while (Date.now() < deadline) {
+        let origin: number | null = null;
         try {
-          await reattachSurface(base.app, { timeoutMs: 3_000 });
-          const origin = await evalIn(base.app, () => performance.timeOrigin, { timeoutMs: 3_000 });
-          if (origin !== originalTimeOrigin) return { originalTimeOrigin, timeOrigin: origin };
+          await reattachSurface(app, { timeoutMs: 3_000 });
+          origin = await evalIn(app, () => performance.timeOrigin, { timeoutMs: 3_000 });
         } catch { /* The old renderer and CDP socket disappear during quit. */ }
+        if (origin !== null && origin !== originalTimeOrigin) {
+          const installRequests = await evalIn(app, browserScript((requestsKey) => Number.parseInt(localStorage.getItem(requestsKey) ?? "0", 10), [installRequestsKey]));
+          if (installRequests !== 1) throw new Error(`Settings confirmation made ${installRequests} updater install requests instead of one`);
+          return { originalTimeOrigin, timeOrigin: origin };
+        }
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
       throw new Error("Update confirmation did not relaunch the Electron renderer");
@@ -531,14 +589,18 @@ export async function restartUpdateTaskWorld(seed: Seed) {
     async [Symbol.asyncDispose]() {
       // The original seed owns the profile and processes; close the relaunched
       // browser before its normal fixture cleanup removes that profile.
-      await base.app.client.send("Browser.close").catch(() => undefined);
+      await app.client.send("Browser.close").catch(() => undefined);
       const deadline = Date.now() + 30_000;
       while (Date.now() < deadline) {
-        const alive = await fetch(`${base.app.handle.cdpUrl}/json/version`, { signal: AbortSignal.timeout(1_000) })
+        const alive = await fetch(`${app.handle.cdpUrl}/json/version`, { signal: AbortSignal.timeout(1_000) })
           .then((response) => response.ok, () => false);
-        if (!alive) return;
+        if (!alive) {
+          await mock.stop().catch(() => undefined);
+          return;
+        }
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
+      await mock.stop().catch(() => undefined);
       throw new Error("Relaunched Electron did not close before profile cleanup");
     },
   };
