@@ -101,7 +101,7 @@ export function buildDashboardNavSections({
   const manageItems: DashboardNavItem[] = access.isAdmin && orgSlug
     ? [
         { href: getPluginsRoute(orgSlug), label: "Plugins", icon: Box },
-        { href: getMcpConnectionsRoute(orgSlug), label: "Connectors", icon: Plug },
+        { href: getMcpConnectionsRoute(orgSlug), label: "Connectors", icon: Plug, badge: "MCPs" },
         ...(capabilities.orgManagedDashboards
           ? [{ href: getManagedDashboardsRoute(orgSlug), label: "Dashboards", icon: LayoutDashboard }]
           : []),

@@ -11,7 +11,7 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenSelect } from "../../_components/ui/select";
 import { DenChip } from "../../_components/ui/chip";
 import { DenPageHeader } from "../../_components/ui/page-header";
-import { getConfiguredMcpConnectionsRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getPluginRoute, getToolTesterRoute, getYourConnectionsRoute } from "../../_lib/den-org";
+import { getAllMcpConnectionsRoute, getConfiguredMcpConnectionsRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getPluginRoute, getToolTesterRoute, getYourConnectionsRoute } from "../../_lib/den-org";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { ConnectorCatalog, connectorChatHref } from "./connector-catalog-list";
 import type { PopularConnector } from "./connector-catalog";
@@ -327,6 +327,7 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
   const [detailLinkCopied, setDetailLinkCopied] = useState(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const handledQuickAddId = useRef<string | null>(null);
+  const handledSmartAdd = useRef(false);
   const smartBarRequestId = useRef(0);
   const focusedRowRef = useRef<HTMLDivElement | null>(null);
 
@@ -453,6 +454,20 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
     : null;
 
   useEffect(() => {
+    if (searchParams.get("addMcp") !== "1") {
+      handledSmartAdd.current = false;
+      return;
+    }
+    if (handledSmartAdd.current) return;
+    handledSmartAdd.current = true;
+    createConnection.reset();
+    setFormPreset(null);
+    setFormInitialView("smart");
+    setFormInitialUrl(searchParams.get("url") ?? "");
+    setFormOpen(true);
+  }, [searchParams]);
+
+  useEffect(() => {
     const quickAddId = searchParams.get("quickAdd");
     if (!quickAddId || handledQuickAddId.current === quickAddId) return;
     const isKnownTarget = quickAddId === GOOGLE_WORKSPACE_QUICK_ADD_ID
@@ -548,6 +563,10 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
     }
   }
 
+  function clearSmartAddQuery() {
+    if (searchParams.get("addMcp") === "1") router.replace(getAllMcpConnectionsRoute(orgSlug), { scroll: false });
+  }
+
   async function handleCreate(
     input: CreateMcpConnectionInput,
     options: { startOAuth: boolean },
@@ -559,6 +578,7 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
       const created = await createConnection.mutateAsync(input);
       setFormOpen(false);
       setFormPreset(null);
+      clearSmartAddQuery();
       // Only flows that explicitly request sign-in start authorization here.
       if (options.startOAuth) {
         return await handleConnectOAuth(created.id, input.name, authorizationTab);
@@ -1267,6 +1287,7 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
           setFormInitialView(undefined);
           setFormInitialUrl("");
           setFormInitialName("");
+          clearSmartAddQuery();
         }}
         onSubmit={handleCreate}
       />
@@ -2802,7 +2823,7 @@ function AddConnectionDialog({
   useEffect(() => {
     if (!open) return;
     setView(initialView ?? (preset ? "advanced" : "smart"));
-    setSmartQuery("");
+    setSmartQuery(initialView === "smart" ? initialUrl ?? "" : "");
     setSmartState("idle");
     setSmartError(null);
     setResolution(null);
