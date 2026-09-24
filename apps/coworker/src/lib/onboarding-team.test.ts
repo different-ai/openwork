@@ -647,10 +647,10 @@ test("root runtime events and five-second polling preserve unrelated activity an
     assert.equal(publications, 1);
     assert.equal(state.polled.second, unchangedPolled.second);
     assert.equal(state.live.second, unchangedLive.second);
-    assert.equal(state.polled.first?.activity.label, "Idle");
+    assert.equal(state.polled.first?.activity.label, "Available");
     assert.equal(state.live.first?.activity, working, "real work is not cleared by next-turn configuration changes");
     const currentFirst = workspacePreparationScope(changed, first, null);
-    assert.equal(helpers.visibleCoworkerActivity(currentFirst, ready, null, null, null).label, "Idle", "old Ready text is not current proof");
+    assert.equal(helpers.visibleCoworkerActivity(currentFirst, ready, null, null, null).label, "Available", "old Ready text is not current proof");
     assert.equal(helpers.visibleCoworkerActivity(secondScope, ready, null, null, null).label, "Ready");
     const waiting: CoworkerActivity = { ...working, state: "attention", label: "Needs you" };
     const starting: CoworkerActivity = { ...ready, state: "starting", label: "Starting AI" };
@@ -664,7 +664,7 @@ test("root runtime events and five-second polling preserve unrelated activity an
     await pendingPoll;
     assert.equal(runtimeRef.current, next);
     assert.equal(publications, 2);
-    assert.equal(state.polled.second?.activity.label, "Idle");
+    assert.equal(state.polled.second?.activity.label, "Available");
     response = deferred();
     const stalePoll = pollRef.current();
     const newest = { ...next, workspaceReadinessRevisions: { ws_first: 2, ws_second: 1 } };
