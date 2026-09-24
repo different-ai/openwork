@@ -99,6 +99,7 @@ try {
   const desktopReadyMs = Math.round(performance.now() - desktopStart);
   // A full desktop session, not a bare app window.
   await execChecked(firstVm, "pgrep -x xfwm4 >/dev/null && pgrep -x xfce4-panel >/dev/null");
+  await execChecked(firstVm, `node --input-type=module -e 'import { verifyBrowserHandoff } from "/opt/openwork-preview/browser-health.mjs"; await verifyBrowserHandoff(); await verifyBrowserHandoff({ launcher: "exo-open", args: ["--launch", "WebBrowser"] });'`, 90_000);
   // Like the web preview: a new desktop conversation, with no model picked, chats
   // through the world's AI Gateway instead of timing out on a public default.
   await firstVm.fs.writeTextFile("/tmp/verify-desktop-chat.mjs", await readFile(new URL("../packages/freestyle/src/desktop-chat-check.mjs", import.meta.url), "utf8"));

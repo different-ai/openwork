@@ -14,6 +14,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { inspectDesktop } from "/opt/openwork-preview/desktop-state.mjs";
+import { desktopProfileEnvironment } from "/opt/openwork-preview/desktop.mjs";
+import { verifyBrowserHandoff } from "/opt/openwork-preview/browser-health.mjs";
 const root = "/opt/openwork-preview";
 const services = JSON.parse(readFileSync(root + "/services.json", "utf8"));
 assert.deepEqual(services, { desktop: "http://127.0.0.1:6080" });
@@ -26,7 +28,16 @@ for (const name of ["mysqld", "redis-server"]) {
 }
 for (const name of ["xfwm4", "xfce4-panel"]) execFileSync("pgrep", ["-x", name], { stdio: "ignore" });
 const state = await inspectDesktop();
-console.log(JSON.stringify({ ...state, desktopOnlyServices: true, xfce: true }));
+await verifyBrowserHandoff();
+await verifyBrowserHandoff({ launcher: "exo-open", args: ["--launch", "WebBrowser"] });
+const profile = JSON.parse(readFileSync(root + "/desktop/profile.json", "utf8"));
+await verifyBrowserHandoff({ env: desktopProfileEnvironment(profile) });
+const { attachSurface, evaluate, browserScript } = await import("/workspace/evals/packages/cdp/src/index.ts");
+const surface = await attachSurface({ name: "browser-handoff", kind: "electron", hostKind: "local", cdpUrl: "http://127.0.0.1:9825" });
+try {
+  await verifyBrowserHandoff({ launcher: "Electron shell.openExternal", openUrl: (url) => evaluate(surface, browserScript((href) => window.__OPENWORK_ELECTRON__.shell.openExternal(href), [url])) });
+} finally { await surface.stop(); }
+console.log(JSON.stringify({ ...state, desktopOnlyServices: true, browserHandoff: true, electronBrowserHandoff: true, xfce: true }));
 `;
 
 async function verify() {
@@ -53,9 +64,9 @@ async function verify() {
       assert.equal((await execChecked(vm, "git -C /workspace rev-parse HEAD")).trim(), sha);
       assert.equal((await vm.fs.readTextFile("/opt/openwork-preview/desktop/status")).trim(), "ready-signed-out");
       await vm.fs.writeTextFile("/tmp/verify-freestyle-desktop.mjs", inspect, { mode: 0o600 });
-      const state: unknown = JSON.parse((await execChecked(vm, "node /tmp/verify-freestyle-desktop.mjs", 120_000)).trim());
+      const state: unknown = JSON.parse((await execChecked(vm, "node /tmp/verify-freestyle-desktop.mjs", 180_000)).trim());
       assert.ok(record(state));
-      for (const key of ["ready", "signedOut", "firstRun", "emptyLocalWorkspace", "noConversations", "noDemoAccount", "noProvisionedModel", "ordinaryDefaultModel", "noNativeCloudSession", "noNativeProviderCredentials", "isolatedProfile", "noBootstrap", "desktopOnlyServices", "xfce"]) assert.equal(state[key], true);
+      for (const key of ["ready", "signedOut", "firstRun", "emptyLocalWorkspace", "noConversations", "noDemoAccount", "noProvisionedModel", "ordinaryDefaultModel", "noNativeCloudSession", "noNativeProviderCredentials", "isolatedProfile", "noBootstrap", "desktopOnlyServices", "browserHandoff", "electronBrowserHandoff", "xfce"]) assert.equal(state[key], true);
     }
     const [first, second] = sessions;
     assert.notEqual(first.id, second.id);
@@ -84,7 +95,7 @@ async function verify() {
     exactSource: true, signedOut: true, firstRun: true, emptyLocalWorkspace: true, noConversations: true,
     noDemoAccount: true, noProvisionedModel: true, ordinaryDefaultModel: true, noNativeCloudSession: true, noNativeProviderCredentials: true,
     initialState: "Stock automatic local workspace and ordinary product default model retained; no cloud account, provisioned providers, or conversations.",
-    noBootstrap: true, desktopOnlyServices: true, xfce: true, independentProfilesAndAccess: true,
+    noBootstrap: true, desktopOnlyServices: true, browserHandoff: true, electronBrowserHandoff: true, xfce: true, independentProfilesAndAccess: true,
     viewerAuthorized200: true, viewerUnauthorized401: true, crossCloneDenied401: true, clonesDeleted: true,
   };
   await writeFile("freestyle-desktop-launch-proof.json", JSON.stringify(proof, null, 2));
