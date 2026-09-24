@@ -89,6 +89,14 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
     authType: "oauth",
   },
   {
+    presetId: "glasser",
+    displayName: "Glasser",
+    description: "People and company enrichment, SEO, web and news search, and social data from 1,000+ paid endpoints. Each member signs in to Glasser, or paste an org API key from app.glasser.ai/keys; calls are billed per use.",
+    url: "https://api.glasser.ai/mcp",
+    authType: "oauth",
+    supportedAuthTypes: ["oauth", "apikey"],
+  },
+  {
     presetId: "slack",
     displayName: "Slack",
     description: "Channels, DMs, and search. Requires an eligible internal or Slack Marketplace-published app; not every Slack app can use MCP. An admin configures its OAuth client once, then each person connects their own account. Automatic app registration is not supported.",
