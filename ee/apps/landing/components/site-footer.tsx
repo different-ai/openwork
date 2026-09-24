@@ -66,7 +66,7 @@ export function SiteFooter() {
             aria-label="SOC 2 Type II. View Trust Center"
             className="inline-flex shrink-0 items-center text-gray-600 transition-opacity hover:opacity-80"
           >
-            <SocTypeIIBadge className="h-16 w-16" />
+            <SocTypeIIBadge className="h-14 w-14" />
             <span className="sr-only">SOC 2 Type II</span>
           </Link>
         </div>

@@ -128,7 +128,7 @@ export function LandingHome(props: Props) {
                 <a href={props.linuxDownloadHref} className="underline-offset-4 hover:underline">Linux</a>
               </div>
 
-              <div className="mt-7 flex flex-wrap items-center gap-x-6 gap-y-4">
+              <div className="mt-7 flex flex-wrap items-center gap-x-4 gap-y-4">
                 <div className="flex items-center gap-2 text-xs text-[var(--lp-muted)]">
                 <span>Backed by</span>
                 <span className="flex h-[18px] w-[18px] items-center justify-center rounded-[4px] bg-[#ff6600] text-[11px] text-white">Y</span>
@@ -137,9 +137,9 @@ export function LandingHome(props: Props) {
                 <a
                   href="/trust"
                   aria-label="SOC 2 Type II. View Trust Center"
-                  className="shrink-0 border-l border-[var(--lp-border)] pl-6 transition-opacity hover:opacity-80"
+                  className="shrink-0 border-l border-[var(--lp-border)] pl-4 transition-opacity hover:opacity-80"
                 >
-                  <SocTypeIIBadge className="h-20 w-20" />
+                  <SocTypeIIBadge className="h-14 w-14" />
                 </a>
               </div>
               </div>

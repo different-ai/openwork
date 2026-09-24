@@ -3,9 +3,9 @@
   <circle cx="64" cy="64" r="61" fill="white" stroke="#011627" stroke-width="1.5"/>
   <circle cx="64" cy="64" r="56" fill="none" stroke="#011627" stroke-opacity=".3" stroke-width=".75"/>
   <g fill="#011627" font-family="Arial, Helvetica, sans-serif" text-anchor="middle">
-    <text x="64" y="39" font-size="10" letter-spacing="1.1">OPENWORK</text>
-    <text x="63.5" y="69" font-size="29" font-weight="700" letter-spacing="-1">SOC 2</text>
-    <path d="M41 79h46" stroke="#011627" stroke-opacity=".3" stroke-width=".75"/>
-    <text x="65" y="97" font-size="14" font-weight="600" letter-spacing="1.6">TYPE II</text>
+    <text x="64" y="47" font-size="22" font-family="Georgia, serif">AICPA</text>
+    <path d="M29 55h70" stroke="#011627" stroke-opacity=".5" stroke-width="1"/>
+    <text x="64" y="80" font-size="29" font-weight="500" letter-spacing="-.6">SOC 2</text>
+    <text x="64" y="101" font-size="16" font-weight="500" letter-spacing="1">TYPE II</text>
   </g>
 </svg>
