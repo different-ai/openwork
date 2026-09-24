@@ -1422,11 +1422,7 @@ export default function App() {
               />
             ) : null}
             <div className="flex min-h-0 min-w-0 flex-1 flex-col" onPointerDownCapture={() => { navigationGeneration.current += 1; }} onKeyDownCapture={() => { navigationGeneration.current += 1; }}>
-            {navigationNotice ? <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-4 py-2 text-xs text-mist">
-              <p className="min-w-0 flex-1">{navigationNotice}</p>
-              <Button variant="ghost" className="text-xs" onClick={() => navigate("chat", true)}>Return to chat</Button>
-              <Button variant="ghost" className="text-xs" onClick={() => setNavigationNotice("")}>Dismiss</Button>
-            </div> : null}
+            {navigationNotice ? <NavigationNoticeDialog message={navigationNotice} onReturn={() => navigate("chat", true)} onDismiss={() => setNavigationNotice("")} /> : null}
             <div className={!calendarVisible ? "flex min-h-0 min-w-0 flex-1" : "hidden"} data-testid="chat-main-content" data-active={chatActive}>
             {selectedGroup ? (
               <GroupChat
@@ -1553,5 +1549,24 @@ export default function App() {
       </DeferredView> : null}
     </div>
     </VoiceContext.Provider>
+  );
+}
+
+/**
+ * Why a move to another place did not happen (unsaved settings, a document in
+ * the middle of an edit): a small centered dialog, so it is seen wherever the
+ * person is looking, with the way back and a dismiss.
+ */
+function NavigationNoticeDialog({ message, onReturn, onDismiss }: { message: string; onReturn: () => void; onDismiss: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 px-4 backdrop-blur-[2px]" onMouseDown={(event) => { if (event.target === event.currentTarget) onDismiss(); }} onKeyDown={(event) => { if (event.key === "Escape") onDismiss(); }}>
+      <div role="alertdialog" aria-modal="true" aria-labelledby="navigation-notice-text" className="w-full max-w-sm rounded-2xl border border-line bg-panel p-4 shadow-[0_24px_64px_rgb(0_0_0/0.5)]" data-testid="navigation-notice">
+        <p id="navigation-notice-text" className="text-sm leading-relaxed text-snow">{message}</p>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" className="text-xs" onClick={onDismiss}>Dismiss</Button>
+          <Button autoFocus variant="primary" className="text-xs" onClick={onReturn}>Return to chat</Button>
+        </div>
+      </div>
+    </div>
   );
 }
