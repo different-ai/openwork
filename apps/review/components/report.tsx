@@ -251,7 +251,7 @@ export function Report({ report, id, connected }: { report: ReviewReport; id: st
           })}
         </div>
       </div>
-      <EvidenceViewer report={report} id={id} />
+      <EvidenceViewer report={report} id={id} connected={connected} />
       <footer>
         Recorded evidence · Human discussion and approval remain on the pull
         request.
