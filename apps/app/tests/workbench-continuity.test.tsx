@@ -1,7 +1,8 @@
 /** @jsxImportSource react */
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { act, useEffect, type ReactNode } from "react";
+import { act, useEffect, useLayoutEffect, type ReactNode } from "react";
+import type { SyncWorkbenchInput } from "../src/react-app/domains/session/chat/workbench-store";
 import { createRoot } from "react-dom/client";
 import type { DynamicToolUIPart } from "ai";
 
@@ -55,6 +56,7 @@ Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
   value(this: HTMLElement) { return new DOMRect(this.offsetLeft, 0, this.offsetWidth, this.offsetHeight); },
 });
 
+const { useRouteWorkbench, useWorkbenchStore } = await import("../src/react-app/domains/session/chat/workbench-store");
 const { WorkbenchPanelGroup, PRIMARY_PANEL_ID, SECONDARY_PANEL_ID } = await import("../src/react-app/domains/session/chat/workbench-panel-group");
 const { ResizablePanel, ResizableHandle } = await import("../src/components/ui/resizable");
 const { MessageListProvider } = await import("../src/components/chat/message-list-provider");
@@ -148,6 +150,75 @@ test("the mounted primary survives split toggles with its draft, focus, selectio
   expect(element("[data-primary-scroll]")).toBe(primary);
 });
 
+test("route commits retain the destination side chat without an intermediate empty layout", async () => {
+  const tab = (sessionId: string, workspaceId = "workspace") => ({ workspaceId, sessionId, title: sessionId });
+  const tabs = [tab("a"), tab("a-side"), tab("b"), tab("b-side")];
+  useWorkbenchStore.setState({ revision: 0, primary: null, tabs: [], secondary: null, focusedPane: "primary", sideChats: {} });
+  const store = useWorkbenchStore.getState();
+  for (const item of tabs) store.openTab(item);
+  store.setSideChat(tabs[0], tabs[1]);
+  store.setSideChat(tabs[2], tabs[3]);
+  const commits: Array<{ primary: string | null; secondary: string | null; tabs: string[]; focus: string }> = [];
+  let mounts = 0;
+  let unmounts = 0;
+  function Secondary({ sessionId }: { sessionId: string }) {
+    useEffect(() => { mounts++; return () => { unmounts++; }; }, []);
+    return <div data-retained-secondary>{sessionId}</div>;
+  }
+  function RouteWorkbench({ input }: { input: SyncWorkbenchInput }) {
+    const snapshot = useRouteWorkbench(input);
+    useLayoutEffect(() => {
+      commits.push({
+        primary: snapshot.primary?.sessionId ?? null,
+        secondary: snapshot.secondary?.sessionId ?? null,
+        tabs: snapshot.tabs.map((item) => `${item.workspaceId}/${item.sessionId}`),
+        focus: snapshot.focusedPane,
+      });
+    });
+    return <WorkbenchPanelGroup owner="owner" primaryVisible secondaryVisible={Boolean(snapshot.secondary)}>
+      <ResizablePanel id={PRIMARY_PANEL_ID}><div>Primary</div></ResizablePanel>
+      {snapshot.secondary ? <>
+        <ResizableHandle />
+        <ResizablePanel id={SECONDARY_PANEL_ID}><Secondary sessionId={snapshot.secondary.sessionId} /></ResizablePanel>
+      </> : null}
+    </WorkbenchPanelGroup>;
+  }
+  const render = async (primarySessionId: string | null, workspaceId = "workspace", archivedSessionIds: string[] = []) => {
+    commits.length = 0;
+    await act(async () => root.render(<RouteWorkbench input={{
+      workspaceId, primarySessionId, sessions: workspaceId === "workspace" ? tabs : [],
+      sessionsKnown: true, archivedSessionIds,
+    }} />));
+  };
+  try {
+    await render("a");
+    const secondary = element("[data-retained-secondary]");
+    for (const primary of ["b", "a", "b"]) {
+      await render(primary);
+      expect(commits.length).toBeGreaterThan(0);
+      expect(commits.every((commit) => commit.primary === primary && commit.secondary === `${primary}-side`)).toBe(true);
+      expect(commits.every((commit) => commit.tabs.length === 4 && commit.focus === "primary")).toBe(true);
+      expect(element("[data-retained-secondary]")).toBe(secondary);
+      expect(secondary.textContent).toBe(`${primary}-side`);
+    }
+    expect(mounts).toBe(1);
+    expect(unmounts).toBe(0);
+    await render("created");
+    expect(commits.every((commit) => commit.primary === "created" && commit.secondary === null
+      && commit.tabs.includes("workspace/created") && commit.tabs.includes("workspace/a"))).toBe(true);
+    expect(unmounts).toBe(1);
+    await render("a", "foreign-workspace");
+    expect(commits.every((commit) => commit.secondary === null && commit.tabs.includes("foreign-workspace/a"))).toBe(true);
+    await render("a", "workspace", ["a-side"]);
+    expect(commits.every((commit) => commit.secondary === null && !commit.tabs.includes("workspace/a-side"))).toBe(true);
+    await render(null);
+    expect(commits.every((commit) => commit.primary === null && commit.secondary === null)).toBe(true);
+  } finally {
+    await act(async () => root.render(null));
+    useWorkbenchStore.setState({ revision: 0, primary: null, tabs: [], secondary: null, focusedPane: "primary", sideChats: {} });
+  }
+});
+
 test("pointer divider resize returns incidental focus without stealing keyboard divider focus", async () => {
   await act(async () => root.render(panels("owner", true, <textarea defaultValue="draft" />)));
   const input = container.querySelector("textarea")!;
@@ -212,7 +283,7 @@ function Provider({ owner, children }: { owner: string | null; children: ReactNo
     showThinking developerMode={false} displaySuggestions={false} providerConnectedCount={1}
     dispatchAction={() => {}} setPrompt={() => {}} onRevertToUserMessage={() => {}} onForkAtMessage={() => {}}
     onEditUserMessage={() => {}} onMcpReconnect={async () => { throw new Error("unused"); }}
-    onMcpReopenAuthorization={async () => {}} onMcpRetry={() => {}}>{children}</MessageListProvider></PlatformProvider>;
+    onMcpReopenAuthorization={async () => {}}>{children}</MessageListProvider></PlatformProvider>;
 }
 const command: DynamicToolUIPart = {
   type: "dynamic-tool", toolName: "bash", toolCallId: "call", state: "output-error",

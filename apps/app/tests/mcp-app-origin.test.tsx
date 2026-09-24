@@ -1,14 +1,14 @@
 /** @jsxImportSource react */
 import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { act, useLayoutEffect } from "react";
+import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { createOpenworkServerClient, OpenworkServerError, type OpenworkMcpAppResource, type OpenworkServerClient } from "../src/app/lib/openwork-server";
 import { createMcpAppActions } from "../src/components/chat/mcp-app-origin";
+import { createMcpAppDiscoveryScheduler } from "../src/app/lib/mcp-app-discovery-scheduler";
 
 GlobalRegistrator.register({ url: "http://localhost/" });
 afterAll(() => GlobalRegistrator.unregister());
-const { useMcpAppApproval } = await import("../src/components/chat/use-mcp-app-approval");
 const { McpAppFrame } = await import("../src/components/chat/mcp-app-frame");
 const { MessageListProvider } = await import("../src/components/chat/message-list-provider");
 const { WorkspaceProvider } = await import("../src/react-app/shell/workspace-provider");
@@ -21,47 +21,65 @@ const result = { content: [{ type: "text", text: "ok" }] };
 const needsApproval = () => new OpenworkServerError(422, "tool_requires_approval", "Approval required");
 
 describe("App conversation ownership", () => {
-  test.each(["abort", "unmount", "replace"])("one host dialog owns a cancellable decision across views: %s", async mode => {
+  test("cancelling a scheduled discovery retry clears its timer and frees admission", async () => {
+    const schedule = createMcpAppDiscoveryScheduler();
+    let calls = 0;
+    let retryTimer: number | undefined;
+    const setTimer = window.setTimeout.bind(window);
+    const timerSpy = spyOn(window, "setTimeout").mockImplementation((callback, delay, ...args) => {
+      if (delay === 1_000) {
+        retryTimer = setTimer(() => {}, 60_000);
+        return retryTimer;
+      }
+      return setTimer(callback, delay, ...args);
+    });
+    const clearSpy = spyOn(window, "clearTimeout");
+    const client = { ...createOpenworkServerClient({ baseUrl: "http://fixture.invalid" }),
+      resolveMcpApp: async () => { calls++; throw new OpenworkServerError(503, "mcp_unreachable", "Starting"); } };
+    try {
+      const cancel = schedule({ client, workspaceId: "w", sessionId: "s", readOnly: false }, "render", null, false, () => {}, () => {});
+      await Promise.resolve();
+      expect(retryTimer).toBeDefined();
+      cancel();
+      expect(clearSpy).toHaveBeenCalledWith(retryTimer);
+      await Promise.resolve();
+      expect(calls).toBe(1);
+    } finally {
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      timerSpy.mockRestore(); clearSpy.mockRestore();
+    }
+  });
+
+  test("many frames share auth failure, equivalent rerenders do not discover, changed launch scope does", async () => {
     const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
     Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
-    const confirmSpy = spyOn(window, "confirm").mockReturnValue(true);
-    const container = document.body.appendChild(document.createElement("div"));
+    let calls = 0;
+    const client = { ...createOpenworkServerClient({ baseUrl: "http://fixture.invalid" }),
+      resolveMcpApp: async () => { calls++; throw new OpenworkServerError(403, "mcp_auth_required", "Sign in required"); } };
+    const container = document.createElement("div");
     const root = createRoot(container);
-    const callbacks: Array<ReturnType<typeof useMcpAppApproval>["requestApproval"]> = [];
-    function Host({ index }: { index: number }) {
-      const { requestApproval, approvalDialog } = useMcpAppApproval();
-      useLayoutEffect(() => { callbacks[index] = requestApproval; }, [index, requestApproval]);
-      return approvalDialog;
-    }
-    const request = { serverName: "fixture", toolName: "write_detail", arguments: { value: "<img src=x onerror=alert(1)>" } };
-    const controller = new AbortController();
-    let first: Promise<boolean> | undefined;
+    const render = (id: number, reverse = false) => <MessageListProvider client={client} workspaceId="workspace" sessionId="session" readOnly={false}
+      showThinking={false} developerMode={false} displaySuggestions={false} providerConnectedCount={0}
+      dispatchAction={() => {}} setPrompt={() => {}} onRevertToUserMessage={() => {}} onForkAtMessage={() => {}}
+      onEditUserMessage={() => {}} onMcpReconnect={async () => { throw new Error("unused"); }}
+      onMcpReopenAuthorization={async () => {}}>
+      {Array.from({ length: 40 }, (_, index) => <McpAppFrame key={index} part={{ type: "dynamic-tool", toolName: "fixture_render", toolCallId: `call-${index}`, state: "output-available", input: {}, output: {},
+        callProviderMetadata: { openwork: { mcpResult: { content: [], _meta: { "openwork/mcpApp": {
+          toolName: "render", resourceUri: "ui://fixture/view", arguments: reverse ? { other: true, id } : { id, other: true },
+        } } } } } }} />)}
+    </MessageListProvider>;
     try {
-      await act(async () => root.render(<><Host index={0} /><Host index={1} /></>));
-      const stable = callbacks[0];
-      if (!stable || !callbacks[1]) throw new Error("Missing host");
-      await act(async () => { first = stable(request, controller.signal); });
-      expect(callbacks[0]).toBe(stable);
-      expect(await callbacks[1](request, new AbortController().signal)).toBe(false);
-      expect(await stable(request, controller.signal)).toBe(false);
-      expect(document.querySelectorAll('[role="alertdialog"]')).toHaveLength(1);
-      expect(document.querySelector('[role="alertdialog"] pre')?.textContent).toContain(request.arguments.value);
-      expect(document.querySelector('[role="alertdialog"] img')).toBeNull();
-      if (mode === "abort") await act(async () => controller.abort());
-      else await act(async () => root.render(<>{mode === "unmount" ? null : <Host index={0} key={mode} />}<Host index={1} /></>));
-      expect(await first).toBe(false);
-      expect(document.querySelector('[role="alertdialog"]')).toBeNull();
-      let next: Promise<boolean> | undefined;
-      await act(async () => { next = callbacks[1]?.(request, new AbortController().signal); });
-      const allow = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')).find(button => button.textContent === "Allow once");
-      if (!allow) throw new Error("Missing Allow once");
-      await act(async () => allow.click());
-      expect(await next).toBe(true);
-      expect(confirmSpy).not.toHaveBeenCalled();
+      await act(async () => { root.render(render(1)); });
+      expect(calls).toBe(1);
+      expect(container.querySelectorAll("button").length).toBe(80);
+      await act(async () => { root.render(render(1, true)); });
+      expect(calls).toBe(1);
+      await act(async () => { root.render(render(2)); });
+      expect(calls).toBe(2);
+      await act(async () => { container.querySelector<HTMLButtonElement>("button")?.click(); });
+      expect(calls).toBe(3);
     } finally {
-      await act(async () => root.unmount());
-      confirmSpy.mockRestore();
-      container.remove();
+      await act(async () => { root.unmount(); });
       Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct);
     }
   });
@@ -100,7 +118,7 @@ describe("App conversation ownership", () => {
         showThinking={false} developerMode={false} displaySuggestions={false} providerConnectedCount={0}
         dispatchAction={() => {}} setPrompt={() => {}} onRevertToUserMessage={() => {}} onForkAtMessage={() => {}}
         onEditUserMessage={() => {}} onMcpReconnect={async () => { throw new Error("unused"); }}
-        onMcpReopenAuthorization={async () => {}} onMcpRetry={() => {}}>
+        onMcpReopenAuthorization={async () => {}}>
         <McpAppFrame part={{ type: "dynamic-tool", toolName: "fixture_render", toolCallId: "call-b", state: "output-available", input: {}, output: {},
           callProviderMetadata: { openwork: { mcpResult: { content: [] } } } }} />
       </MessageListProvider>
@@ -135,42 +153,50 @@ describe("App conversation ownership", () => {
     }
   });
 
-  test.each([false, true])("follow-up calls retain the exact launch and only retry approval challenges (challenge: %j)", async (challenge) => {
+  test.each(["read_detail", "write_detail"])("App calls dispatch once with the exact launch and no host confirmation: %s", async (name) => {
     const requests: unknown[] = [];
     const client: OpenworkServerClient = { ...createOpenworkServerClient({ baseUrl: "http://secondary.invalid" }),
       callMcpAppTool: async (workspaceId, payload) => {
         requests.push({ workspaceId, payload });
-        if (challenge && !payload.approved) throw needsApproval();
+        if (!payload.approved) throw needsApproval();
         return result;
       } };
-    const actions = createMcpAppActions({ client, workspaceId: "workspace-b", sessionId: "session-b", readOnly: false }, app, async () => true);
-    expect(await actions.callTool("write_detail", { id: "b" })).toEqual(result);
-    expect(requests).toEqual((challenge ? [false, true] : [false]).map(approved => ({ workspaceId: "workspace-b", payload: {
-      launchId: "launch-a", sessionId: "session-b", serverName: "fixture", resourceUri: app.resourceUri,
-      name: "write_detail", arguments: { id: "b" }, ...(approved ? { approved: true } : {}),
-    } })));
+    const actions = createMcpAppActions({ client, workspaceId: "workspace-b", sessionId: "session-b", engine: "v2", readOnly: false }, app);
+    const confirmSpy = spyOn(window, "confirm").mockReturnValue(false);
+    try {
+      expect(await actions.callTool(name, { id: "b" }, true)).toEqual(result);
+      expect(requests).toEqual([{ workspaceId: "workspace-b", payload: {
+        launchId: "launch-a", sessionId: "session-b", engine: "v2", serverName: "fixture", resourceUri: app.resourceUri,
+        name, arguments: { id: "b" }, approved: true,
+      } }]);
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    } finally {
+      confirmSpy.mockRestore();
+      actions.dispose();
+    }
   });
 
   test.each([
     new OpenworkServerError(403, "tool_denied", "Forbidden"),
     new Error("tool_requires_approval"),
     needsApproval(),
-  ])("does not retry other errors or repeat a challenged retry: %s", async (failure) => {
+    new OpenworkServerError(403, "forbidden", "Collaborator scope required"),
+  ])("does not retry denied, challenged, or uncertain actions: %s", async (failure) => {
     const approvals: Array<boolean | undefined> = [];
     const client: OpenworkServerClient = { ...createOpenworkServerClient({ baseUrl: "http://fixture.invalid" }),
       callMcpAppTool: async (_workspace, payload) => { approvals.push(payload.approved); throw failure; } };
-    const actions = createMcpAppActions({ client, workspaceId: "b", sessionId: "b", readOnly: false }, app, async () => true);
-    await expect(actions.callTool("write_detail")).rejects.toBe(failure);
-    expect(approvals).toEqual(failure instanceof OpenworkServerError && failure.code === "tool_requires_approval"
-      ? [undefined, true] : [undefined]);
+    const actions = createMcpAppActions({ client, workspaceId: "b", sessionId: "b", readOnly: false }, app);
+    await expect(actions.callTool("write_detail", undefined, true)).rejects.toBe(failure);
+    expect(approvals).toEqual([true]);
   });
 
-  test("unmount before an approval challenge prevents retry and subsequent dispatch", async () => {
+  test("unmount before a failed response prevents retry and subsequent dispatch", async () => {
     let reject: (error: Error) => void = () => { throw new Error("Missing pending call"); };
     let calls = 0;
     const client: OpenworkServerClient = { ...createOpenworkServerClient({ baseUrl: "http://fixture.invalid" }),
       callMcpAppTool: async () => { calls++; return new Promise((_, fail) => { reject = fail; }); } };
-    const actions = createMcpAppActions({ client, workspaceId: "b", sessionId: "b", readOnly: false }, app, async () => true);
+    const actions = createMcpAppActions({ client, workspaceId: "b", sessionId: "b", readOnly: false }, app);
     const pending = actions.callTool("write_detail");
     actions.dispose();
     reject(needsApproval());
@@ -179,67 +205,61 @@ describe("App conversation ownership", () => {
     expect(calls).toBe(1);
   });
 
-  test.each([false, true])("a result completing after disposal is discarded (retry: %j)", async (retry) => {
+  test("a result completing after disposal is discarded", async () => {
     let complete: (value: typeof result) => void = () => { throw new Error("Missing pending call"); };
     let calls = 0;
     let started: () => void = () => {};
     const waiting = new Promise<void>(resolve => { started = resolve; });
     const client: OpenworkServerClient = { ...createOpenworkServerClient({ baseUrl: "http://fixture.invalid" }),
-      callMcpAppTool: async (_workspace, payload) => {
+      callMcpAppTool: async () => {
         calls++;
-        if (retry && !payload.approved) throw needsApproval();
         return new Promise(resolve => { complete = resolve; started(); });
       } };
-    const actions = createMcpAppActions({ client, workspaceId: "b", sessionId: "b", readOnly: false }, app, async () => true);
+    const actions = createMcpAppActions({ client, workspaceId: "b", sessionId: "b", readOnly: false }, app);
     const pending = actions.callTool("write_detail");
     await waiting;
     actions.dispose();
     complete(result);
     await expect(pending).rejects.toThrow("closed or changed");
-    expect(calls).toBe(retry ? 2 : 1);
+    expect(calls).toBe(1);
   });
 
-  test.each(["allow", "cancel", "dispose", "default"])("approval is per-call and bound to an immutable active request: %s", async mode => {
+  test("App calls snapshot their arguments without sharing a pending decision", async () => {
     const calls: Array<{ approved?: boolean; arguments?: Record<string, unknown> }> = [];
-    let decide: (allowed: boolean) => void = () => { throw new Error("Missing decision"); };
-    let signal: AbortSignal | undefined;
-    let shown: unknown;
-    let requested: () => void = () => {};
-    const waiting = new Promise<void>(resolve => { requested = resolve; });
+    const completions: Array<() => void> = [];
     const client: OpenworkServerClient = { ...createOpenworkServerClient({ baseUrl: "http://fixture.invalid" }),
       callMcpAppTool: async (_workspace, payload) => {
         calls.push(payload);
-        if (!payload.approved) throw needsApproval();
+        return new Promise(resolve => completions.push(() => resolve(result)));
+      } };
+    const actions = createMcpAppActions({ client, workspaceId: "b", sessionId: "b", readOnly: false }, app);
+    const args = { nested: { value: "original" } };
+    const first = actions.callTool("write_detail", args, true);
+    args.nested.value = "changed";
+    const second = actions.callTool("another_write", undefined, true);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({ approved: true, arguments: { nested: { value: "original" } } });
+    expect(Object.isFrozen(calls[0]?.arguments?.nested)).toBe(true);
+    expect(calls[1]).toMatchObject({ approved: true });
+    completions.forEach(complete => complete());
+    expect(await Promise.all([first, second])).toEqual([result, result]);
+    actions.dispose();
+  });
+
+  test("background reads run without approval, but writes never escalate or retry", async () => {
+    const calls: Array<{ name: string; approved?: boolean }> = [];
+    const client: OpenworkServerClient = { ...createOpenworkServerClient({ baseUrl: "http://fixture.invalid" }),
+      callMcpAppTool: async (_workspace, payload) => {
+        calls.push(payload);
+        if (payload.name === "write_detail" && !payload.approved) throw needsApproval();
         return result;
       } };
-    const origin = { client, workspaceId: "b", sessionId: "b", readOnly: false };
-    const actions = mode === "default" ? createMcpAppActions(origin, app) : createMcpAppActions(origin, app, (request, abortSignal) => {
-      shown = request;
-      signal = abortSignal;
-      requested();
-      return new Promise(resolve => { decide = resolve; });
-    });
-    const args = { nested: { value: "original" } };
-    const pending = actions.callTool("write_detail", args);
-    const outcome = pending.then(value => value, error => error);
-    args.nested.value = "changed";
-    if (mode !== "default") {
-      await waiting;
-      expect(calls).toHaveLength(1);
-      expect(shown).toEqual({ serverName: "fixture", toolName: "write_detail", arguments: { nested: { value: "original" } } });
-      expect(Object.isFrozen(calls[0]?.arguments?.nested)).toBe(true);
-      await expect(actions.callTool("another_write")).rejects.toThrow("awaiting approval");
-      expect(calls.every(call => !call.approved)).toBe(true);
-      if (mode === "dispose") { actions.dispose(); expect(signal?.aborted).toBe(true); }
-      decide(mode !== "cancel");
-    }
-    if (mode === "allow") {
-      expect(await outcome).toEqual(result);
-      expect(calls.at(-1)).toMatchObject({ approved: true, arguments: { nested: { value: "original" } } });
-    } else {
-      expect(await outcome).toBeInstanceOf(Error);
-      expect(calls.every(call => !call.approved)).toBe(true);
-    }
+    const actions = createMcpAppActions({ client, workspaceId: "b", sessionId: "b", readOnly: false }, app);
+    expect(await actions.callTool("read_detail")).toEqual(result);
+    await expect(actions.callTool("write_detail")).rejects.toMatchObject({ code: "tool_requires_approval" });
+    expect(calls.map(({ name, approved }) => ({ name, approved }))).toEqual([
+      { name: "read_detail", approved: undefined }, { name: "write_detail", approved: undefined },
+    ]);
     actions.dispose();
   });
 
@@ -250,7 +270,7 @@ describe("App conversation ownership", () => {
     for (const readOnly of [true, false]) {
       const actions = createMcpAppActions({ client, workspaceId: "b", sessionId: "b", readOnly }, { ...app, launchId: readOnly ? app.launchId : undefined });
       expect(() => actions.assertActive()).toThrow(readOnly ? "read-only" : "no live launch context");
-      await expect(actions.callTool("read_detail")).rejects.toThrow(readOnly ? "read-only" : "no live launch context");
+      await expect(actions.callTool("read_detail", undefined, true)).rejects.toThrow(readOnly ? "read-only" : "no live launch context");
     }
     expect(calls).toBe(0);
   });

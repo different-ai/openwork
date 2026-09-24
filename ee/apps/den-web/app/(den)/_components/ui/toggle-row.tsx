@@ -35,7 +35,7 @@ export function DenToggleRow({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={`flex w-full items-center gap-4 rounded-[16px] border px-5 py-4 text-left transition ${
-        checked ? "border-gray-900 bg-gray-50" : "border-gray-200 bg-white hover:border-gray-300"
+        checked ? "border-[var(--dls-border)] bg-[var(--dls-active)]" : "border-[var(--dls-border)] bg-[var(--dls-surface)] hover:bg-[var(--dls-hover)]"
       } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
     >
       {Icon ? (

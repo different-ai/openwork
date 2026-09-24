@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { managedPolicyPluginPath } from "./managed-policy-plugin.js";
+import { managedDesktopPolicy } from "./managed-desktop-policy.js";
+import { OPENWORK_AGENT_PROMPT } from "./openwork-agent-prompt.js";
 import { catalogFastVariants, fastVariantId } from "@openwork/types/cloud-model-fast";
 
 import {
@@ -13,7 +15,7 @@ import {
   openworkRuntimeConfigFilePath,
   writeOpenworkRuntimeConfigFile,
 } from "./openwork-runtime-config.js";
-import { writeGlobalRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import { readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, writeGlobalRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 
 const roots: string[] = [];
@@ -59,15 +61,53 @@ async function readConfigFile(config: ServerConfig): Promise<Record<string, unkn
 }
 
 describe("openwork runtime config file", () => {
-  test("restricted runtime enables materialized org gateway rows, not ordinary custom providers", () => {
+  test("v1 receives the shared host-gated native connection question prompt", () => {
+    expect(buildOpenworkRuntimeConfigObjectFromSnapshot({})).toMatchObject({
+      agent: { openwork: { prompt: OPENWORK_AGENT_PROMPT } },
+    });
+    expect(OPENWORK_AGENT_PROMPT).toContain("context.features.connectionQuestions === true");
+  });
+
+  test("signed-in and signed-out runtime ignores cached org restrictions and preserves local models", async () => {
+    const { config } = await setup();
+    const provider = { ollama: { models: { "local-model": { name: "Local model" } } } };
+    await writeGlobalRuntimeOpencodeConfig(config, (current) => ({ ...current, provider }));
+    await writeManagedDesktopPolicy(config, {
+      allowCustomProviders: false, allowZenModel: false,
+      execution: { commands: "deny", blockedCommands: [], blockBrowserUploads: false },
+    });
+    const snapshot = await readGlobalRuntimeOpencodeConfig(config);
+    expect(buildOpenworkRuntimeConfigObjectFromSnapshot(snapshot).enabled_providers).toBeUndefined();
+    await writeOpenworkRuntimeConfigFile(config);
+    const rendered = await readConfigFile(config);
+    expect(rendered.enabled_providers).toBeUndefined();
+    expect(rendered.provider).toEqual(provider);
+    expect(rendered.permission).toEqual({});
+    expect((await readGlobalRuntimeOpencodeConfig(config)).managedPolicy).toEqual(snapshot.managedPolicy);
+
+    const den = Bun.serve({ port: 0, fetch: () => Response.json(snapshot.managedPolicy) });
+    cleanups.push(() => den.stop(true));
+    const policy = managedDesktopPolicy(config);
+    await policy.setSession({ baseUrl: `http://127.0.0.1:${den.port}`, token: "test-token", orgId: "test-org" });
+    await expect(policy.assert("provider", { providerID: "ollama" })).resolves.toBeUndefined();
+    await writeOpenworkRuntimeConfigFile(config);
+    expect(await readConfigFile(config)).toEqual(rendered);
+    await policy.clearSession();
+    await expect(policy.assert("provider", { providerID: "ollama" })).resolves.toBeUndefined();
+    await expect(policy.assert("model", { providerID: "ollama", modelID: "local-model" })).resolves.toBeUndefined();
+    await writeOpenworkRuntimeConfigFile(config);
+    expect(await readConfigFile(config)).toEqual(rendered);
+  });
+
+  test("restrictive policy does not filter materialized or local providers", () => {
     const provider = { lpr_legacy: {}, ipr_gateway: {}, openwork: {}, personal: {}, opencode: {} };
     const restricted = buildOpenworkRuntimeConfigObjectFromSnapshot({
       managedPolicy: { allowCustomProviders: false, allowZenModel: false }, provider,
     });
-    expect(restricted.enabled_providers).toEqual(["lpr_legacy", "ipr_gateway", "openwork"]);
+    expect(restricted.enabled_providers).toBeUndefined();
     expect(buildOpenworkRuntimeConfigObjectFromSnapshot({
       managedPolicy: { allowCustomProviders: false }, provider,
-    }).enabled_providers).toEqual(["lpr_legacy", "ipr_gateway", "openwork", "opencode"]);
+    }).enabled_providers).toBeUndefined();
     expect(buildOpenworkRuntimeConfigObjectFromSnapshot({ provider }).enabled_providers).toBeUndefined();
   });
 
@@ -88,8 +128,9 @@ describe("openwork runtime config file", () => {
     expect(JSON.stringify(snapshot)).toBe(before);
     expect(JSON.stringify(rendered.provider)).not.toContain("openworkNativeFast");
   });
-  test("managed browser restrictions use scalar actions in global and agent permissions", () => {
+  test("managed execution restrictions are omitted while user permissions and plugins survive", () => {
     const parsed = buildOpenworkRuntimeConfigObjectFromSnapshot({
+      permission: { external_directory: { "*": "ask" } },
       plugin: [managedPolicyPluginPath(), pathToFileURL(managedPolicyPluginPath(true)).href,
         "ordinary-plugin", "/user/plugins/managed-policy.ts"],
       managedPolicy: {
@@ -99,9 +140,8 @@ describe("openwork runtime config file", () => {
         },
       },
     });
-    const permission = { bash: { "*": "deny", "curl *": "deny" }, webfetch: "deny", websearch: "deny" };
-    expect(parsed.permission).toEqual(permission);
-    expect(parsed.agent).toMatchObject({ openwork: { permission } });
+    expect(parsed.permission).toEqual({ external_directory: { "*": "ask" } });
+    expect(parsed.agent).toMatchObject({ openwork: { permission: { skill: { "customize-opencode": "deny" } } } });
     expect(parsed.managedPolicy).toBeUndefined();
     expect(parsed.plugin).not.toContain(managedPolicyPluginPath());
     expect(parsed.plugin).not.toContain(pathToFileURL(managedPolicyPluginPath(true)).href);

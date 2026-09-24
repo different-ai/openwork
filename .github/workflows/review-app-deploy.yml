@@ -18,6 +18,7 @@ on:
     paths:
       - apps/review/**
       - packages/review/**
+      - packages/freestyle/**
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
       - .github/workflows/review-app-deploy.yml

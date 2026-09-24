@@ -10,6 +10,7 @@ import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSelect } from "../../_components/ui/select";
 import { DenSwitch } from "../../_components/ui/switch";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../_components/ui/tooltip";
 import { getManagedDashboardsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useMcpConnections } from "./mcp-connections-data";
@@ -65,7 +66,7 @@ export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string 
 
   function moveElement(index: number, direction: -1 | 1) {
     const target = index + direction;
-    if (target < 0 || target >= elements.length) return;
+    if (busy || target < 0 || target >= elements.length) return;
     const next = [...elements];
     const [moved] = next.splice(index, 1);
     next.splice(target, 0, moved);
@@ -186,24 +187,34 @@ export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string 
                   />
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
-                  <button
-                    type="button"
-                    aria-label={`Move ${element.title} up`}
-                    disabled={busy || index === 0}
-                    onClick={() => moveElement(index, -1)}
-                    className="rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <ArrowUp className="h-4 w-4" aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Move ${element.title} down`}
-                    disabled={busy || index === elements.length - 1}
-                    onClick={() => moveElement(index, 1)}
-                    className="rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <ArrowDown className="h-4 w-4" aria-hidden />
-                  </button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger
+                        type="button"
+                        aria-label={`Move ${element.title} up`}
+                        title={`Move ${element.title} up`}
+                        render={<button disabled={busy || index === 0} />}
+                        onClick={() => moveElement(index, -1)}
+                        className="rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <ArrowUp className="h-4 w-4" aria-hidden />
+                      </TooltipTrigger>
+                      <TooltipContent>Move {element.title} up</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger
+                        type="button"
+                        aria-label={`Move ${element.title} down`}
+                        title={`Move ${element.title} down`}
+                        render={<button disabled={busy || index === elements.length - 1} />}
+                        onClick={() => moveElement(index, 1)}
+                        className="rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <ArrowDown className="h-4 w-4" aria-hidden />
+                      </TooltipTrigger>
+                      <TooltipContent>Move {element.title} down</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                   <button
                     type="button"
                     aria-label={`Remove ${element.title}`}
@@ -423,10 +434,10 @@ function ConnectionAppRow({
           Each launch input adds its own tile, so the same app can appear more than once with different input.
         </p>
       ) : null}
-      <div className="mt-3 flex items-start justify-between gap-4 rounded-xl bg-amber-50 px-3 py-2.5">
+      <div className="mt-3 flex items-start justify-between gap-4 rounded-xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-3 py-2.5">
         <div>
-          <p className="text-[12px] font-medium text-amber-950">Run automatically</p>
-          <p className="mt-0.5 text-[11.5px] leading-4 text-amber-800">
+          <p className="text-[12px] font-medium text-[var(--dls-text-primary)]">Run automatically</p>
+          <p className="mt-0.5 text-[11.5px] leading-4 text-[var(--dls-text-secondary)]">
             Run on dashboard load and refresh, even if this app modifies data.
           </p>
         </div>

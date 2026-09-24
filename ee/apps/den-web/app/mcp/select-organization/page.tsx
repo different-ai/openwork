@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { TemporaryAuthNotice } from "../../(den)/_components/temporary-auth-notice";
-import { denApiCredentials, denApiEndpoint } from "../../(den)/_lib/den-api-origin";
+import { denApiCredentials, denBrowserEndpoint } from "../../(den)/_lib/den-api-origin";
+import { getRuntimeConfig } from "../../(den)/_lib/runtime-config";
 import { useOrgListWindow } from "../../(den)/_lib/use-org-list-window";
 import { McpConsentPermissions } from "../consent-permissions";
 
@@ -43,7 +44,8 @@ function getErrorMessage(payload: unknown, fallback: string) {
 }
 
 async function requestJson(path: string, init?: RequestInit) {
-  const endpoint = denApiEndpoint(path);
+  await getRuntimeConfig();
+  const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
     credentials: denApiCredentials(endpoint),
     headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
@@ -336,7 +338,7 @@ export default function McpSelectOrganizationPage() {
                         <label
                           className={`flex cursor-pointer items-center gap-3 rounded-2xl border bg-white px-4 py-3 transition-colors ${
                             isSelected
-                              ? "border-[var(--dls-accent)] shadow-[0_0_0_4px_rgba(15,23,42,0.06)]"
+                              ? "border-[var(--dls-border)] bg-[var(--dls-active)]"
                               : "border-[var(--dls-border)] hover:bg-[var(--dls-hover)]"
                           } ${isBusy ? "pointer-events-none opacity-70" : ""}`}
                         >

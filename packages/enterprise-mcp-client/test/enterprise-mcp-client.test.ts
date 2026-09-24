@@ -2126,12 +2126,62 @@ describe("enterprise MCP OAuth persistence contract", () => {
     assert.equal(persistence.invalidationCount, 1)
   })
 
+  for (const preload of [true, false]) {
+    it(`preserves omitted refresh scope without expanding grants (preloaded: ${preload})`, async () => {
+      const persistence = new MemoryOAuthPersistence()
+      const scope = Array.from({ length: 128 }, (_, index) => `https://scope.example.test/resource/${index}/Read`).join(" ")
+      persistence.seedCredential({ access_token: "old-access", refresh_token: "old-refresh", token_type: "Bearer", scope })
+      const provider = oauthProvider({ persistence, flow: { kind: "runtime" } })
+      if (preload) await provider.tokens()
+      await provider.saveTokens({ access_token: "new-access", token_type: "Bearer" })
+      assert.equal((await provider.tokens())?.scope, scope)
+      assert.equal(persistence.credential?.tokens.refresh_token, "old-refresh")
+
+      await provider.saveTokens({ access_token: "narrow-access", token_type: "Bearer", scope: "Records.Read" })
+      assert.equal((await provider.tokens())?.scope, "Records.Read")
+      await provider.saveTokens({ access_token: "empty-access", token_type: "Bearer", scope: "" })
+      assert.equal((await provider.tokens())?.scope, "")
+      await provider.saveTokens({ access_token: "empty-refreshed", token_type: "Bearer" })
+      assert.equal((await provider.tokens())?.scope, "")
+    })
+  }
+
+  it("does not turn requested scopes or a previous grant into a new authorization's granted scope", async () => {
+    const persistence = new MemoryOAuthPersistence()
+    persistence.seedCredential({ access_token: "previous-access", token_type: "Bearer", scope: "previous.write" })
+    const started = oauthProvider({ persistence, flow: { kind: "connect", authorizationId: "scope-state" } })
+    await started.saveCodeVerifier("s".repeat(43))
+    const provider = new EnterpriseMcpOAuthProvider({
+      redirectUri: "https://den.example.test/callback",
+      connectionId: "connection-1",
+      persistence,
+      flow: { kind: "callback", authorizationId: "scope-state" },
+      clientName: "OpenWork",
+      clock: { now: Date.now },
+      lifecycle: { expiresAt: Date.now() + 30_000, signal: new AbortController().signal },
+      authorizationTransactionTtlMs: 600_000,
+      expirationSkewMs: 0,
+      fetch: async () => { throw new Error("No network expected") },
+      oauthConfiguration: { applicationType: "web", requestedScopes: ["requested.read", "requested.write"] },
+    })
+    await provider.codeVerifier()
+    await provider.saveTokens({ access_token: "new-access", token_type: "Bearer" })
+    assert.equal((await provider.tokens())?.scope, undefined)
+    await provider.commitPendingAuthorizationCodeCredential()
+    assert.equal((await provider.tokens())?.scope, undefined)
+    const runtime = oauthProvider({ persistence, flow: { kind: "runtime" } })
+    await runtime.saveTokens({ access_token: "refreshed-access", token_type: "Bearer" })
+    assert.equal((await runtime.tokens())?.scope, undefined)
+    assert.equal(provider.clientMetadata.scope, "requested.read requested.write")
+  })
+
   it("rejects a stale concurrent refresh response instead of overwriting newer credentials", async () => {
     const persistence = new MemoryOAuthPersistence()
     persistence.seedCredential({
       access_token: "original-access-token",
       refresh_token: "original-refresh-token",
       token_type: "Bearer",
+      scope: "records.read records.write",
     }, Date.now() + 60_000)
     const first = oauthProvider({ persistence, flow: { kind: "runtime" } })
     const second = oauthProvider({ persistence, flow: { kind: "runtime" } })
@@ -2142,6 +2192,7 @@ describe("enterprise MCP OAuth persistence contract", () => {
       access_token: "first-refreshed-access-token",
       refresh_token: "first-rotated-refresh-token",
       token_type: "Bearer",
+      scope: "records.read",
     })
     await assert.rejects(second.saveTokens({
       access_token: "stale-refreshed-access-token",
@@ -2151,6 +2202,7 @@ describe("enterprise MCP OAuth persistence contract", () => {
       && error.code === "MCP_OAUTH_CREDENTIAL_CHANGED")
     assert.equal(persistence.credential?.tokens.access_token, "first-refreshed-access-token")
     assert.equal(persistence.credential?.tokens.refresh_token, "first-rotated-refresh-token")
+    assert.equal(persistence.credential?.tokens.scope, "records.read")
   })
 
   for (const method of ["server/discover", "tools/list"]) {

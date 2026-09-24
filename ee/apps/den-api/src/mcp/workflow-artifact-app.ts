@@ -25,7 +25,7 @@ const idSchema = z.string().trim().min(1).max(160)
 
 export type WorkflowArtifactLoadResult =
   | { ok: true; payload: WorkflowArtifactPayload; markdown: string }
-  | { ok: false; error: string; message: string }
+  | { ok: false; error: string; message: string; connectionStatus?: unknown; connectionCard?: Record<string, unknown> }
 
 export const workflowArtifactAppServerCapabilities = {
   extensions: {

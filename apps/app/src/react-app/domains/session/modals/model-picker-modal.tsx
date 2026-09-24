@@ -19,6 +19,8 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
 import { t } from "@/i18n";
 import { readDenSettings } from "@/app/lib/den";
 import { FAST_PRICING_WARNING, getModelBehaviorControls, getModelBehaviorSelection } from "@/app/lib/model-behavior";
@@ -146,6 +148,8 @@ export function resolveModelPickerEmptyState(input: {
 
 export function ModelPickerModal(props: ModelPickerModalProps) {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const isMobile = useIsMobile();
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
   const [refreshingOrganizationModels, setRefreshingOrganizationModels] = useState(false);
   const denAuth = useDenAuth();
@@ -160,7 +164,8 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     () => new Set(props.disabledProviders ?? []),
     [props.disabledProviders],
   );
-  const currentOption = props.options.find((option) => modelEquals(option, props.current));
+  const gatewaySelection = useGatewayModelSelection(JSON.stringify([props.open, props.current, props.currentBehaviorValue]));
+  const currentOption = props.options.find((option) => !option.gatewayAuthorization && modelEquals(option, props.current));
   const currentBehavior = getModelBehaviorSelection(currentOption?.behaviorOptions ?? [],
     props.currentBehaviorValue !== undefined ? props.currentBehaviorValue : currentOption?.behaviorValue ?? null);
   const behaviorControls = getModelBehaviorControls(currentBehavior.options, currentBehavior.value);
@@ -170,13 +175,6 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     if (props.open) {
       props.setQuery("");
     }
-  }, [props.open]);
-
-  // Focus search
-  useEffect(() => {
-    if (!props.open) return;
-    const frame = requestAnimationFrame(() => searchInputRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
   }, [props.open]);
 
   // Filter by search
@@ -203,8 +201,8 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           name: opt.description ?? resolveProviderDisplayName(opt.providerID),
           isNew: !!opt.isRecommended,
           isCloud: opt.source === "cloud",
-          isGateway: props.gatewayProviderIds?.has(opt.providerID) === true,
-          isDisabled: disabledSet.has(opt.providerID),
+          isGateway: props.gatewayProviderIds?.has(opt.providerID) === true || Boolean(opt.gatewayAuthorization),
+          isDisabled: opt.disabled === true || disabledSet.has(opt.providerID),
           hasCurrent: false,
           recommended: [],
           other: [],
@@ -277,8 +275,11 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   }, []);
 
   const handleSelect = useCallback(
-    (opt: ModelOption) => props.onSelect({ providerID: opt.providerID, modelID: opt.modelID }),
-    [props.onSelect],
+    (opt: ModelOption) => {
+      if (opt.disabled || disabledSet.has(opt.providerID)) return;
+      gatewaySelection.select(opt, () => props.onSelect({ providerID: opt.providerID, modelID: opt.modelID }));
+    },
+    [disabledSet, gatewaySelection.select, props.onSelect],
   );
 
   const handleRefreshOrganizationModels = useCallback(async () => {
@@ -301,24 +302,24 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
 
   // Escape
   useEffect(() => {
-    if (!props.open) return;
+    if (!props.open || gatewaySelection.loginOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); props.onClose(); }
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [props.open]);
+  }, [props.open, gatewaySelection.loginOpen]);
 
   return (
     <Dialog
       open={props.open}
       onOpenChange={(open) => {
-        if (!open) props.onClose();
+        if (!open && !gatewaySelection.loginOpen) props.onClose();
       }}
     >
-      <DialogContent className="flex max-h-[calc(100dvh-2rem)] min-h-0 flex-col overflow-hidden lg:max-w-3xl">
+      <DialogContent initialFocus={() => isMobile ? titleRef.current : searchInputRef.current} className="flex max-h-[calc(100dvh-2rem)] min-h-0 flex-col overflow-hidden lg:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>{t("models.title")}</DialogTitle>
+          <DialogTitle ref={titleRef} tabIndex={-1}>{t("models.title")}</DialogTitle>
           <DialogDescription>
             {resolveModelPickerSubtitle(props.subtitle)}
           </DialogDescription>
@@ -331,7 +332,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             <input
               ref={searchInputRef}
               type="text"
-              className="h-10 w-full rounded-xl border border-dls-border bg-dls-surface pl-9 pr-3 text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
+              className="h-10 w-full rounded-xl border border-dls-border bg-dls-surface pl-9 pr-3 text-base lg:text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
               placeholder={t("models.search_placeholder")}
               value={props.query}
               onChange={(e) => props.setQuery(e.target.value)}
@@ -339,7 +340,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           </div>
 
           {props.openWorkModelsSyncing ? (
-            <div className="mb-3 flex shrink-0 items-center overflow-hidden rounded-2xl border border-amber-6/60 bg-amber-2/40">
+            <div className="mb-3 flex shrink-0 items-center overflow-hidden rounded-2xl border border-dls-border bg-dls-hover">
               <div className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5">
                 <ProviderIcon providerId={OPENWORK_MODELS_PROVIDER_ID} providerName={OPENWORK_MODELS_PROVIDER_NAME} size={18} className="shrink-0 text-amber-11" />
                 <div className="min-w-0 flex-1">
@@ -355,7 +356,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           ) : null}
 
           <div className="max-h-40 shrink-0 overflow-x-hidden overflow-y-auto">
-          {props.gatewayConnectProviders?.map((provider) => (
+          {props.gatewayConnectProviders?.filter((provider) => !provider.models?.length).map((provider) => (
             <div
               key={gatewayConnectProviderKey(provider)}
               className="mb-3 flex shrink-0 items-center gap-3 rounded-2xl border border-dashed border-dls-border px-3 py-2.5"
@@ -373,10 +374,10 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               <Button
                 size="sm"
                 variant="outline"
-                disabled={!props.onConnectGatewayProvider}
+                disabled={!props.onConnectGatewayProvider || disabledSet.has(provider.providerId)}
                 onClick={() => void props.onConnectGatewayProvider?.(provider)}
               >
-                Connect
+                Login
               </Button>
             </div>
           ))}
@@ -453,6 +454,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
 
         {/* Footer */}
         <DialogFooter className="shrink-0">
+          {denAuth.isSignedIn ? <Button variant="outline" onClick={() => platform.openLink(new URL("/dashboard/model-connections", readDenSettings().baseUrl).toString())}>My Model Connections</Button> : null}
           <DialogClose render={<Button variant="outline" />}>
             {t("models.done")}
           </DialogClose>
@@ -595,7 +597,7 @@ function DefaultModelRow({
         <span className={["block truncate text-[12px]", active ? "font-medium text-dls-text" : "text-dls-text"].join(" ")} title={opt.title}>{opt.title}</span>
         <span className="block truncate font-mono text-[10px] text-dls-secondary/60" title={opt.modelID}>{opt.modelID}</span>
       </div>
-      {active ? <Check size={14} className="shrink-0 text-green-11" /> : null}
+      {opt.gatewayAuthorization ? <span className="shrink-0 text-xs text-muted-foreground">Sign-in required</span> : active ? <Check size={14} className="shrink-0 text-green-11" /> : null}
     </button>
   );
 }

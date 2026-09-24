@@ -15,7 +15,7 @@ import {
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { DEFAULT_AUTH_NAME } from "../../_lib/den-flow";
 import {
-  formatRoleLabel,
+  getAiGatewayRoute,
   getAnalyticsRoute,
   getAutomationsRoute,
   getBackgroundAgentsRoute,
@@ -23,13 +23,11 @@ import {
   getBrandAppearanceRoute,
   getBillingRoute,
   getCustomLlmProvidersRoute,
-  getGatewayProvidersRoute,
   getDiagnosticsRoute,
   getDesktopPoliciesRoute,
   getManagedDashboardsRoute,
   getOrgAccessFlags,
   getIntegrationsRoute,
-  getInferenceRoute,
   getLibraryRoute,
   getMcpConnectionsRoute,
   getManagedBrandIconUrl,
@@ -59,11 +57,15 @@ import {
   DenSearchBar,
   type DenSearchBarHandle,
 } from "./command-palette/den-search-bar";
+import { useDashboardPrefetch } from "./use-dashboard-prefetch";
 import { UserProfileDialog } from "./user-profile-dialog";
-import { useGatewayDashboardAccess } from "./gateway-dashboard-capability-guard";
-import { DashboardHeaderActionsProvider, DashboardHeaderActionsSlot } from "./dashboard-header-actions";
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
+
+/** The sidebar only tells people whether they can manage the organization. */
+function sidebarRoleLabel(role: string): string {
+  return getOrgAccessFlags(role, false).isAdmin ? "Admin" : "Member";
+}
 
 function OrgMark({ name }: { name: string }) {
   const initials = useMemo(() => {
@@ -248,21 +250,20 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
     return "Bring your Own Keys";
   }
-  if (pathname.startsWith(getGatewayProvidersRoute(orgSlug))) {
-    return "Gateway";
+  if (pathname.startsWith(getAiGatewayRoute(orgSlug))) {
+    return "AI Gateway";
+  }
+  if (pathname.startsWith(getDesktopPoliciesRoute(orgSlug))) {
+    return "Desktop policies";
   }
   if (
-    pathname.startsWith(getDesktopPoliciesRoute(orgSlug))
-    || pathname.startsWith(getMarketplacesRoute(orgSlug))
+    pathname.startsWith(getMarketplacesRoute(orgSlug))
     || pathname.startsWith(getBrandAppearanceRoute(orgSlug))
   ) {
     return "Advanced";
   }
   if (pathname.startsWith(getDiagnosticsRoute(orgSlug))) {
     return "Diagnostics";
-  }
-  if (pathname.startsWith(getInferenceRoute(orgSlug))) {
-    return "OpenWork Models";
   }
   if (pathname.startsWith(getWebRoute(orgSlug))) {
     return "OpenWork Web";
@@ -271,10 +272,10 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     return "My Library";
   }
   if (pathname.startsWith(getPluginsRoute(orgSlug))) {
-    return "Plugin Directory";
+    return "Plugins";
   }
   if (pathname.startsWith(getIntegrationsRoute(orgSlug))) {
-    return "Plugin Directory";
+    return "Plugins";
   }
   if (pathname.startsWith(getMcpConnectionsRoute(orgSlug))) {
     return "Connectors";
@@ -302,11 +303,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
 }
 
 export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
-  const gatewayAccess = useGatewayDashboardAccess();
   const pathname = usePathname();
   const onboardingRoute = getMarketplaceOnboardingRoute();
   const isOnboarding = pathname === onboardingRoute || pathname.startsWith(`${onboardingRoute}/`);
-  const isLibraryRoot = pathname === getLibraryRoute();
   const { user, signOut, updateUserProfile, runtimeConfig, runtimeConfigLoaded, setupPending, setupOrganizationId } = useDenFlow();
   const {
     activeOrg,
@@ -318,6 +317,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     mutationBusy,
     switchOrganization,
   } = useOrgDashboard();
+  const prefetch = useDashboardPrefetch();
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -436,18 +436,14 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const navSections = buildDashboardNavSections({
     orgSlug: activeOrg?.slug ?? null,
     access,
-    capabilities: {
-      ...(orgContext?.capabilities ?? {
-        cloud: false,
-        installLinks: false,
-        mcpConnections: false,
-        openworkWeb: false,
-        orgManagedDashboards: false,
-        workflows: false,
-      }),
-      gatewayDashboard: orgContext?.capabilities.gatewayDashboard === true,
+    capabilities: orgContext?.capabilities ?? {
+      cloud: false,
+      installLinks: false,
+      mcpConnections: false,
+      openworkWeb: false,
+      orgManagedDashboards: false,
+      workflows: false,
     },
-    gatewayAccess,
     orgMode: runtimeConfig.orgMode,
     runtimeConfigLoaded,
   });
@@ -461,7 +457,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
             {activeOrg?.name ?? runtimeConfig.singleOrgName}
           </p>
           <p className="truncate text-[12px] text-gray-500">
-            {activeOrg ? formatRoleLabel(activeOrg.role) : "Preparing workspace"}
+            {activeOrg ? sidebarRoleLabel(activeOrg.role) : "Preparing workspace"}
           </p>
         </div>
       </div>
@@ -492,7 +488,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
               {activeOrg?.name ?? "Loading..."}
             </p>
             <p className="truncate text-[12px] text-gray-500">
-              {activeOrg ? formatRoleLabel(activeOrg.role) : "Preparing workspace"}
+              {activeOrg ? sidebarRoleLabel(activeOrg.role) : "Preparing workspace"}
             </p>
           </div>
         </div>
@@ -646,7 +642,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                     Boolean(activeOrg && item.href === getLibraryRoute(activeOrg.slug));
                   const childActive = (child: DashboardNavChild) =>
                     pathname === child.href || pathname.startsWith(`${child.href}/`);
-                  const groupActive = (item.children ?? []).some(childActive);
+                  const groupActive = (item.href !== "#" && (
+                    pathname === item.href || (!isDashboardRoot && pathname.startsWith(`${item.href}/`))
+                  )) || (item.children ?? []).some(childActive);
                   const selected =
                     item.href !== "#" &&
                     (item.children
@@ -672,6 +670,8 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                         href={item.href}
                         data-testid={item.testId}
                         onClick={() => setSidebarOpen(false)}
+                        onPointerEnter={() => prefetch(item.href)}
+                        onFocus={() => prefetch(item.href)}
                         className={`flex min-w-0 items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-[13px] tracking-[-0.1px] transition-colors ${
                           selected
                             ? "bg-gray-100 text-gray-900"
@@ -684,7 +684,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                         </span>
                         <span className="flex shrink-0 items-center gap-1.5">
                           {item.badge ? (
-                            <span className="rounded-full bg-white px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                            <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
                               {item.badge}
                             </span>
                           ) : null}
@@ -710,7 +710,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                             >
                               <span className="min-w-0 truncate">{child.label}</span>
                               {child.badge ? (
-                                <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                                <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
                                   {child.badge}
                                 </span>
                               ) : null}
@@ -758,9 +758,8 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         </div>
       ) : null}
 
-      <DashboardHeaderActionsProvider>
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className={`flex shrink-0 items-center justify-between border-b border-gray-100 bg-white ${isLibraryRoot ? "h-[52px] px-6" : "h-14 px-4 md:px-6"}`}>
+        <header className="flex h-[52px] shrink-0 items-center justify-between border-b border-gray-100 bg-white px-4 md:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
@@ -770,15 +769,10 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
             >
               <Menu className="h-5 w-5" />
             </button>
-            {isLibraryRoot ? (
-              <h1 className="text-[16px] font-medium leading-6 text-gray-900">My Library</h1>
-            ) : (
-              <span className="text-[14px] tracking-[-0.1px] text-gray-900">{pageTitle}</span>
-            )}
+            <span className="text-[14px] tracking-[-0.1px] text-gray-900">{pageTitle}</span>
           </div>
 
-          {isLibraryRoot ? <DashboardHeaderActionsSlot /> : (
-            <>
+          <>
               <div className="flex flex-1 justify-center px-4">
                 <DenSearchBar
                   ref={searchBarRef}
@@ -808,8 +802,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                   <span className="hidden sm:inline">Docs</span>
                 </a>
               </div>
-            </>
-          )}
+          </>
         </header>
 
         <main className="flex-1 overflow-y-auto bg-[#fafafa]">
@@ -821,7 +814,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
-      </DashboardHeaderActionsProvider>
 
       <DenCommandPalette
         open={commandPaletteOpen}

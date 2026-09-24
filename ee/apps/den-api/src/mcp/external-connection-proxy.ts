@@ -141,7 +141,6 @@ function appOnlyProxyTool(tool: ExternalMcpProxyTool): ExternalMcpProxyTool | nu
   const meta = isRecord(tool._meta) ? tool._meta : {}
   const ui = isRecord(meta.ui) ? meta.ui : {}
   if (!toolVisibleToApp(tool)) return null
-  if (!resourceUri && !(Array.isArray(ui.visibility) && ui.visibility.includes("app"))) return null
   return {
     ...tool,
     _meta: {
@@ -212,7 +211,8 @@ export function createExternalConnectionProxyServer(input: {
     return appTool ? [appTool] : []
   })
   const appResourceUris = async () => new Set(
-    (await listAppTools()).map((tool) => externalMcpAppResourceUri(tool)).filter((uri) => uri !== null),
+    (await (input.appHostClient ? listAppTools() : listDirectTools()))
+      .map((tool) => externalMcpAppResourceUri(tool)).filter((uri) => uri !== null),
   )
   const server = new McpServer(input.descriptor.serverInfo ?? {
     name: connection.name,
@@ -224,9 +224,9 @@ export function createExternalConnectionProxyServer(input: {
       ...(downstreamUi ? { extensions: { [EXTENSION_ID]: downstreamUi } } : {}),
     },
     instructions: input.appHostClient
-      ? `This member-authorized OpenWork Connect endpoint exposes only app-visible MCP App tools and their bound resources for ${connection.name}. Ordinary provider capabilities remain available exclusively through search_capabilities and execute_capability.`
+      ? "This member-authorized OpenWork Connect endpoint privately exposes app-visible tools and their bound MCP App resources for this connection. Omitted UI visibility defaults to model and app; tools are projected here as app-only. Ordinary clients retain their configured direct or search_capabilities/execute_capability surface."
       : directClient
-        ? `This member-authorized OpenWork Connect endpoint exposes the tools of ${connection.name} directly, subject to your organization's access grants and tool policy. Resources are not exposed.`
+        ? `This member-authorized OpenWork Connect endpoint exposes the tools of ${connection.name} directly, subject to your organization's access grants and tool policy. Only MCP App resources bound to available model-visible tools are exposed.`
         : `This compatibility endpoint exposes only bounded search_capabilities and execute_capability for ${connection.name}. Direct provider tools, MCP App launch tools, and resources are not exposed.`,
   })
 
@@ -303,14 +303,14 @@ export function createExternalConnectionProxyServer(input: {
 
   if (input.descriptor.capabilities.resources) {
     server.server.setRequestHandler(ListResourcesRequestSchema, async () => {
-      if (!input.appHostClient) return { resources: [] }
+      if (!input.appHostClient && !directClient) return { resources: [] }
       const allowedUris = await appResourceUris()
       return { resources: (await runtime.listResources(input.operation)).filter((resource) => allowedUris.has(resource.uri)) }
     })
     server.server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }))
     server.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-      if (!input.appHostClient) {
-        throw new McpError(ErrorCode.InvalidRequest, "Provider MCP App resources are available only through the OpenWork App host.")
+      if (!input.appHostClient && !directClient) {
+        throw new McpError(ErrorCode.InvalidRequest, "Provider MCP App resources require direct exposure or the OpenWork App host.")
       }
       if (!(await appResourceUris()).has(request.params.uri)) {
         throw new McpError(ErrorCode.InvalidRequest, "The resource is not bound to an available MCP App tool.")

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { Buffer } from "node:buffer"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { env } from "../env.js"
+import { parseGrantedOAuthScopes } from "./oauth-credentials.js"
 import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
 import {
   type OAuthClientProvider,
@@ -326,7 +327,9 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
           // Most providers omit refresh_token on refresh responses; keep the existing one.
           refreshToken: tokens.refresh_token ?? existing?.refreshToken ?? null,
           tokenType: tokens.token_type ?? null,
-          scopes: tokens.scope ? tokens.scope.split(" ") : null,
+          ...(tokens.scope === undefined && !this.tokenExchangeCodeVerifier
+            ? {}
+            : { scopes: parseGrantedOAuthScopes(tokens.scope) }),
           expiresAt,
           pendingCodeVerifier: null,
         },
@@ -342,7 +345,9 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token ?? this.connection.refreshToken ?? null,
       tokenType: tokens.token_type ?? null,
-      scope: tokens.scope ?? null,
+      ...(tokens.scope === undefined && !this.tokenExchangeCodeVerifier
+        ? {}
+        : { scope: tokens.scope ?? null }),
       expiresAt,
       ...(this.tokenExchangeCodeVerifier ? { expectedPendingCodeVerifier: this.tokenExchangeCodeVerifier } : {}),
     })

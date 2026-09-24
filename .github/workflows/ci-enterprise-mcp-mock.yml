@@ -1,14 +1,6 @@
 name: Enterprise MCP Mock
 
 on:
-  pull_request:
-    paths:
-      - "packages/enterprise-mcp-mock-server/**"
-      - "ee/apps/enterprise-mock-lab/**"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - ".github/workflows/ci-enterprise-mcp-mock.yml"
   push:
     branches: [dev]
     paths:

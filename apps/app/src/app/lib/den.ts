@@ -6,6 +6,8 @@ import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
   AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER,
 } from "@openwork/types/automations";
+import type { GatewayProviderSummary } from "@openwork/types/den/gateway";
+import { parseDenMcpDiscovery, type DenMcpDiscovery } from "./den-mcp-discovery";
 import type {
   AutomationDetail,
   AutomationDesktopRunnerPresence,
@@ -19,6 +21,7 @@ import type {
   UpdateAutomation,
 } from "@openwork/types/automations";
 import { generatedArtifactViewSchema, savedAppDetailSchema, savedAppSummarySchema, type SaveApp, type WorkflowDetail } from "@openwork/types/workflows";
+import { gatewayUsageStatusSchema, gatewayUsageResetRequestSchema } from "@openwork/types/den/gateway-usage-limits";
 
 // Re-export the shared schema under the local alias so React consumers
 // (e.g. the cloud domain's desktop-config provider) can import it alongside
@@ -42,6 +45,7 @@ import {
   type DesktopBootstrapConfig as ShellDesktopBootstrapConfig,
 } from "./desktop";
 import { enterpriseActivationRequired } from "./enterprise-activation";
+import { observeDenRequest } from "./den-request-diagnostics";
 import { getOpenworkGatewayOrigin } from "./gateway-runtime";
 import { clearDesktopSignInIntent, clearOrgSelectionPending } from "./den-sign-in-intent";
 import { clearDashboardTileCacheStorage } from "./dashboard-cache-storage";
@@ -146,6 +150,20 @@ import type {
   DenSettings,
   DenUser,
 } from "./den-types";
+import {
+  parseDenLibraryAccessGrant,
+  parseDenLibraryAccessGrants,
+  parseDenLibraryConfigObjectVersion,
+  parseDenLibraryItems,
+  parseDenLibraryOrgDirectory,
+  parseDenLibraryPluginFiles,
+  parseDenPluginListAccess,
+  type DenLibraryAccessGrant,
+  type DenLibraryConfigObjectVersion,
+  type DenLibraryItem,
+  type DenLibraryOrgDirectory,
+  type DenLibraryPluginFile,
+} from "./den-library";
 
 type DenBaseUrls = {
   baseUrl: string;
@@ -296,9 +314,11 @@ export type DenCloudStartupFailure = {
   occurredAt: string;
 };
 
+export type DenCloudInstanceUpdateDeferral = "busy" | "activity_unknown";
+
 export type DenCloudInstanceUpdateResult =
   | { ok: true; status: "update_requested" }
-  | { ok: false; error: "already_current" | "flush_failed" };
+  | { ok: false; error: "already_current" | "flush_failed" | DenCloudInstanceUpdateDeferral };
 
 export type DenMcpToken = {
   token: string;
@@ -309,6 +329,8 @@ export type DenMcpToken = {
   scopes: string[];
   resource: string;
 };
+
+export type DenOrgGatewayProvider = Pick<GatewayProviderSummary, "id" | "providerId" | "name" | "source">;
 
 export type DenOrgLlmProviderModel = {
   id: string;
@@ -370,6 +392,8 @@ export type DenExternalMcpPreset = {
   description: string;
   url: string;
   authType: "oauth" | "apikey" | "none";
+  /** The provider needs its own OAuth app (two codes from its settings) before anyone can sign in. */
+  requiresOAuthClient?: boolean;
 };
 
 export type DenMcpConnectionConnectStart = {
@@ -848,8 +872,8 @@ export function resolveDenBaseUrls(input: { baseUrl?: string | null; apiBaseUrl?
   const seedUrl = stripDenApiBasePath(normalizedBaseUrl ?? normalizedApiBaseUrl) ?? DEFAULT_DEN_BASE_URL;
   const baseUrl = stripDenApiBasePath(seedUrl) ?? DEFAULT_DEN_BASE_URL;
 
-  // Build-time API pin (headless/dev web): route API calls through the
-  // configured proxy regardless of which web base the caller resolved.
+  // Build-time API pin (headless/dev web): use the configured API base exactly,
+  // whether it names a direct API origin or a same-origin /api/den proxy.
   const buildDenApiBaseUrl = normalizedApiBaseUrl ? null : normalizeDenBaseUrl(readBuildDenApiBaseUrl());
   const deterministicApiBaseUrl = denApiOriginForDenBaseUrl(baseUrl);
 
@@ -858,7 +882,7 @@ export function resolveDenBaseUrls(input: { baseUrl?: string | null; apiBaseUrl?
     apiBaseUrl: normalizedApiBaseUrl
       ? normalizedApiBaseUrl
       : buildDenApiBaseUrl
-        ? ensureDenApiBasePath(buildDenApiBaseUrl) ?? buildDenApiBaseUrl
+        ? buildDenApiBaseUrl
         : deterministicApiBaseUrl ?? ensureDenApiBasePath(baseUrl) ?? baseUrl,
   };
 }
@@ -2020,7 +2044,13 @@ function parseCloudInstanceUpdateResult(payload: unknown): DenCloudInstanceUpdat
     return { ok: true, status: "update_requested" };
   }
 
-  if (payload.ok === false && (payload.error === "already_current" || payload.error === "flush_failed")) {
+  if (
+    payload.ok === false
+    && (payload.error === "already_current"
+      || payload.error === "flush_failed"
+      || payload.error === "busy"
+      || payload.error === "activity_unknown")
+  ) {
     return { ok: false, error: payload.error };
   }
 
@@ -2119,6 +2149,35 @@ function getDenOrgLlmProviders(payload: unknown): DenOrgLlmProvider[] {
   });
 }
 
+function getDenOrgGatewayProviders(payload: unknown): DenOrgGatewayProvider[] {
+  const invalidPayload = () => new DenApiError(
+    500,
+    "invalid_gateway_providers_payload",
+    "AI Gateway provider response was invalid.",
+  );
+  if (!isRecord(payload) || !Array.isArray(payload.inferenceProviders)) {
+    throw invalidPayload();
+  }
+
+  return payload.inferenceProviders.map((provider: unknown) => {
+    if (
+      !isRecord(provider) ||
+      typeof provider.id !== "string" || !provider.id.trim() ||
+      typeof provider.providerId !== "string" || !provider.providerId.trim() ||
+      typeof provider.name !== "string" || !provider.name.trim() ||
+      provider.source !== "openwork_gateway"
+    ) {
+      throw invalidPayload();
+    }
+    return {
+      id: provider.id,
+      providerId: provider.providerId,
+      name: provider.name,
+      source: provider.source,
+    };
+  });
+}
+
 function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection | null {
   if (
     !isRecord(value) ||
@@ -2183,6 +2242,7 @@ function parseDenExternalMcpPreset(value: unknown): DenExternalMcpPreset | null 
     description: value.description,
     url: value.url,
     authType: value.authType,
+    ...(value.requiresOAuthClient === true ? { requiresOAuthClient: true } : {}),
   };
 }
 
@@ -2843,7 +2903,7 @@ type DenRequestOptions = {
   automationModelAttentionCapable?: boolean;
 };
 
-async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: RequestInit, timeoutMs: number) {
+async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: RequestInit, timeoutMs: number, onTimeout?: () => void) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return fetchImpl(url, init);
   }
@@ -2855,6 +2915,7 @@ async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: Request
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
+      onTimeout?.();
       try {
         controller?.abort();
       } catch {
@@ -2895,26 +2956,29 @@ async function requestJsonRaw<T>(
     headers["Content-Type"] = "application/json";
   }
 
-  const response = await fetchWithTimeout(
-    resolveFetch(url),
-    url,
-    {
-      method: options.method ?? "GET",
-      headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      credentials: "include",
-    },
-    options.timeoutMs ?? DEFAULT_DEN_TIMEOUT_MS,
-  );
+  return observeDenRequest(async (onTimeout) => {
+    const response = await fetchWithTimeout(
+      resolveFetch(url),
+      url,
+      {
+        method: options.method ?? "GET",
+        headers,
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        credentials: "include",
+      },
+      options.timeoutMs ?? DEFAULT_DEN_TIMEOUT_MS,
+      onTimeout,
+    );
 
-  const text = await response.text();
-  let json: T | null = null;
-  try {
-    json = text ? (JSON.parse(text) as T) : null;
-  } catch {
-    json = null;
-  }
-  return { ok: response.ok, status: response.status, json };
+    const text = await response.text();
+    let json: T | null = null;
+    try {
+      json = text ? (JSON.parse(text) as T) : null;
+    } catch {
+      json = null;
+    }
+    return { ok: response.ok, status: response.status, json };
+  });
 }
 
 async function requestJson<T>(
@@ -3076,6 +3140,24 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       };
     },
 
+    async getGatewayUsageStatus(orgId: string) {
+      if (!token || !orgId.trim()) throw new Error("Sign in and select an organization to view usage limits.");
+      const status = gatewayUsageStatusSchema.parse(await requestJson<unknown>(baseUrls, "/v1/gateway/usage-limits/me", {
+        method: "GET", token, organizationId: orgId,
+      }));
+      if (status.organizationId !== orgId) throw new Error("Usage response belongs to a different organization.");
+      return status;
+    },
+    async requestGatewayUsageReset(orgId: string, input: { bucketId: string; reason: string }) {
+      if (!token || !orgId.trim()) throw new Error("Sign in and select an organization to request an increase.");
+      const reason = input.reason.trim();
+      if (!reason || reason.length > 2000 || !input.bucketId || input.bucketId.length > 64) {
+        throw new Error("Choose a usage bucket and enter a reason (1–2000 characters).");
+      }
+      return gatewayUsageResetRequestSchema.parse(await requestJson<unknown>(baseUrls, "/v1/gateway/usage-limit-reset-requests", {
+        method: "POST", token, organizationId: orgId, body: { bucketId: input.bucketId, reason },
+      }));
+    },
     async listSavedApps(orgId: string) {
       const payload = await requestJson<unknown>(baseUrls, "/v1/apps", {
         method: "GET", token, organizationId: orgId,
@@ -3085,10 +3167,11 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       }
       return { enabled: payload.enabled, sharingEnabled: payload.sharingEnabled === true, items: payload.items.map((item) => savedAppSummarySchema.parse(item)) };
     },
-    async getSavedApp(orgId: string, appId: string, options: { revisionId?: string; receiptId?: string } = {}) {
+    async getSavedApp(orgId: string, appId: string, options: { revisionId?: string; receiptId?: string; timeZone?: string } = {}) {
       const params = new URLSearchParams();
       if (options.revisionId) params.set("revisionId", options.revisionId);
       if (options.receiptId) params.set("receiptId", options.receiptId);
+      if (options.timeZone) params.set("timeZone", options.timeZone);
       return savedAppDetailSchema.parse(await requestJson<unknown>(baseUrls, `/v1/apps/${encodeURIComponent(appId)}?${params}`, {
         method: "GET", token, organizationId: orgId,
       }));
@@ -3248,7 +3331,9 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         method: "POST",
         token,
         organizationId: orgId,
-        body: {},
+        // Tell Den this shell understands a deferred update; shells that do not
+        // opt in keep receiving the older already_current / flush_failed answers.
+        body: { acceptsDeferral: true },
       });
       const result = parseCloudInstanceUpdateResult(payload);
       if (!result) {
@@ -3264,6 +3349,20 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         organizationId: orgId,
       });
       return getDenOrgLlmProviders(payload);
+    },
+
+    async listOrgGatewayProviders(orgId: string): Promise<DenOrgGatewayProvider[]> {
+      try {
+        const payload = await requestJson<unknown>(baseUrls, "/v1/inference-providers?scope=usable", {
+          method: "GET",
+          token,
+          organizationId: orgId,
+        });
+        return getDenOrgGatewayProviders(payload);
+      } catch (error) {
+        if (error instanceof DenApiError && [404, 405, 501].includes(error.status)) return [];
+        throw error;
+      }
     },
 
     async listAutomations(
@@ -3462,6 +3561,19 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       return getDenExternalMcpPresets(payload);
     },
 
+    async discoverMcpConnectionRequirements(orgId: string, url: string): Promise<DenMcpDiscovery> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        "/v1/mcp-connections/discover",
+        { method: "POST", token, organizationId: orgId, body: { url } },
+      );
+      const discovery = parseDenMcpDiscovery(payload);
+      if (!discovery) {
+        throw new DenApiError(500, "invalid_mcp_discovery_payload", "MCP discovery response was invalid.");
+      }
+      return discovery;
+    },
+
     async startMcpConnectionConnect(orgId: string, connectionId: string): Promise<DenMcpConnectionConnectStart> {
       const payload = await requestJson<unknown>(
         baseUrls,
@@ -3587,6 +3699,102 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         throw new DenApiError(500, "invalid_plugin_payload", "Plugin was created but no id was returned.");
       }
       return pluginId;
+    },
+
+    async listMeLibraryItems(orgId: string): Promise<DenLibraryItem[]> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/me/library", { method: "GET", token, organizationId: orgId });
+      return parseDenLibraryItems(payload);
+    },
+
+    async getLibraryOrgDirectory(orgId: string): Promise<DenLibraryOrgDirectory> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/org", { method: "GET", token, organizationId: orgId });
+      return parseDenLibraryOrgDirectory(payload);
+    },
+
+    async listPluginAccess(orgId: string, pluginId: string): Promise<DenLibraryAccessGrant[]> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins/${encodeURIComponent(pluginId)}/access?limit=100`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      return parseDenLibraryAccessGrants(payload);
+    },
+
+    /** Access for every active plugin the caller manages, in one request. */
+    async listManagedPluginAccess(orgId: string): Promise<Map<string, DenLibraryAccessGrant[]>> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        "/v1/plugins?status=active&limit=100&includeAccess=true",
+        { method: "GET", token, organizationId: orgId },
+      );
+      return parseDenPluginListAccess(payload);
+    },
+
+    async grantPluginAccess(
+      orgId: string,
+      pluginId: string,
+      target: { teamId: string } | { orgMembershipId: string } | { orgWide: true },
+    ): Promise<DenLibraryAccessGrant | null> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins/${encodeURIComponent(pluginId)}/access`,
+        { method: "POST", token, organizationId: orgId, body: { ...target, role: "viewer" } },
+      );
+      return parseDenLibraryAccessGrant(payload);
+    },
+
+    async revokePluginAccess(orgId: string, pluginId: string, grantId: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins/${encodeURIComponent(pluginId)}/access/${encodeURIComponent(grantId)}`,
+        { method: "DELETE", token, organizationId: orgId },
+      );
+    },
+
+    async archivePlugin(orgId: string, pluginId: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins/${encodeURIComponent(pluginId)}/archive`,
+        { method: "POST", token, organizationId: orgId, body: {} },
+      );
+    },
+
+    async restorePlugin(orgId: string, pluginId: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins/${encodeURIComponent(pluginId)}/restore`,
+        { method: "POST", token, organizationId: orgId, body: {} },
+      );
+    },
+
+    async listPluginFiles(orgId: string, pluginId: string): Promise<DenLibraryPluginFile[]> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/plugins/${encodeURIComponent(pluginId)}/config-objects`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      return parseDenLibraryPluginFiles(payload);
+    },
+
+    async getLatestConfigObjectVersion(orgId: string, configObjectId: string): Promise<DenLibraryConfigObjectVersion | null> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/config-objects/${encodeURIComponent(configObjectId)}/versions/latest`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      return parseDenLibraryConfigObjectVersion(payload);
+    },
+
+    async createConfigObjectVersion(
+      orgId: string,
+      configObjectId: string,
+      input: { rawSourceText: string; metadata: { name: string; description?: string } },
+    ): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/config-objects/${encodeURIComponent(configObjectId)}/versions`,
+        { method: "POST", token, organizationId: orgId, body: { input } },
+      );
     },
 
     async getBillingStatus(options: { includePortal?: boolean; includeInvoices?: boolean } = {}): Promise<DenBillingSummary> {

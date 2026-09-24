@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { createServer } from "node:http";
 import { mkdtemp, mkdir, readFile, readdir, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +8,7 @@ import test from "node:test";
 
 import {
   DESKTOP_TRANSFER_MAX_BYTES,
+  createDesktopTransferRegistry,
   downloadBinaryToPath,
   uploadMultipartFromBytes,
 } from "./binary-transfer.mjs";
@@ -32,6 +35,75 @@ function matchesError(error, code, messagePattern) {
   return error instanceof Error
     && Reflect.get(error, "code") === code
     && (!messagePattern || messagePattern.test(error.message));
+}
+
+function deferred() {
+  let resolve = () => {};
+  const promise = new Promise((done) => { resolve = () => done(undefined); });
+  return { promise, resolve };
+}
+
+test("desktop cancellation stays sender-scoped and releases registry entries on every settlement", async () => {
+  const registry = createDesktopTransferRegistry();
+  const owner = { sender: Object.assign(new EventEmitter(), { id: 1 }) };
+  const other = { sender: Object.assign(new EventEmitter(), { id: 2 }) };
+  const hold = (signal) => new Promise((_resolve, reject) => {
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+  });
+  const pending = registry.run(owner, "read-1", hold);
+  const rejected = assert.rejects(pending, { name: "AbortError" });
+  assert.equal(registry.cancel(other, "read-1"), false);
+  await assert.rejects(registry.run(owner, "read-1", hold), /already active/);
+  assert.equal(registry.cancel(owner, "read-1"), true);
+  await rejected;
+  assert.equal(registry.cancel(owner, "read-1"), false);
+  assert.equal(owner.sender.listenerCount("destroyed"), 0);
+  assert.equal(await registry.run(owner, "read-1", async () => "complete"), "complete");
+  await assert.rejects(registry.run(owner, "read-1", async () => { throw new Error("failed"); }), /failed/);
+  const destroyed = assert.rejects(registry.run(owner, "read-1", hold), { name: "AbortError" });
+  owner.sender.emit("destroyed");
+  await destroyed;
+  assert.equal(owner.sender.listenerCount("destroyed"), 0);
+  assert.equal(registry.cancel(owner, "read-1"), false);
+});
+
+for (const phase of ["headers", "body"]) {
+  test(`desktop registry cancellation closes the upstream GET during ${phase}`, { timeout: 5_000 }, async (t) => {
+    const registry = createDesktopTransferRegistry();
+    const owner = { sender: Object.assign(new EventEmitter(), { id: 1 }) };
+    const arrived = deferred();
+    const closed = deferred();
+    const server = createServer((_request, response) => {
+      response.once("close", closed.resolve);
+      if (phase === "body") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.write("[");
+      }
+      arrived.resolve();
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(undefined)));
+    t.after(async () => {
+      registry.cancel(owner, "history");
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    });
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const reading = deferred();
+    const pending = registry.run(owner, "history", async (signal) => {
+      const response = await fetch(`http://127.0.0.1:${address.port}/session/ses_1/message`, { signal });
+      reading.resolve();
+      return response.text();
+    });
+    const rejected = assert.rejects(pending, { name: "AbortError" });
+    await arrived.promise;
+    if (phase === "body") await reading.promise;
+    assert.equal(registry.cancel(owner, "history"), true);
+    await rejected;
+    await closed.promise;
+    assert.equal(registry.cancel(owner, "history"), false);
+    assert.equal(owner.sender.listenerCount("destroyed"), 0);
+  });
 }
 
 test("uploads exact original multipart bytes with spaces and Unicode in the filename", async () => {

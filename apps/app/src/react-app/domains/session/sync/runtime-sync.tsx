@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import type { Session, SessionStatus } from "@opencode-ai/sdk/v2/client";
 
 import { ensureWorkspaceSessionSync, trackWorkspaceSessionsSync } from "./session-sync";
@@ -17,24 +17,12 @@ type ReactSessionRuntimeProps = {
 };
 
 export function ReactSessionRuntime(props: ReactSessionRuntimeProps) {
-  const callbacksRef = useRef({
-    onSessionCreated: props.onSessionCreated,
-    onSessionUpdated: props.onSessionUpdated,
-    onSessionDeleted: props.onSessionDeleted,
-    onSessionStatus: props.onSessionStatus,
-  });
-  callbacksRef.current = {
-    onSessionCreated: props.onSessionCreated,
-    onSessionUpdated: props.onSessionUpdated,
-    onSessionDeleted: props.onSessionDeleted,
-    onSessionStatus: props.onSessionStatus,
-  };
   const stableCallbacks = useMemo(() => ({
-    onSessionCreated: (session: Session) => callbacksRef.current.onSessionCreated?.(session),
-    onSessionUpdated: (update: { sessionId: string; info: Record<string, unknown> }) => callbacksRef.current.onSessionUpdated?.(update),
-    onSessionDeleted: (sessionId: string) => callbacksRef.current.onSessionDeleted?.(sessionId),
-    onSessionStatus: (update: { sessionId: string; status: SessionStatus }) => callbacksRef.current.onSessionStatus?.(update),
-  }), []);
+    onSessionCreated: props.onSessionCreated,
+    onSessionUpdated: props.onSessionUpdated,
+    onSessionDeleted: props.onSessionDeleted,
+    onSessionStatus: props.onSessionStatus,
+  }), [props.onSessionCreated, props.onSessionUpdated, props.onSessionDeleted, props.onSessionStatus]);
   const activeSessionIdsKey = (props.activeSessionIds ?? []).join(",");
 
   useEffect(() => {

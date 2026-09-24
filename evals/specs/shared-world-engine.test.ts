@@ -11,7 +11,9 @@ const WORLDS_DIRECTORY = join(REPO_ROOT, "worlds");
 
 const worldImports: Record<string, () => Promise<unknown>> = {
   "acme-demo.ts": () => import("../../worlds/acme-demo.ts"),
+  "acme-web.ts": () => import("../../worlds/acme-web.ts"),
   "acme-docs.ts": () => import("../../worlds/acme-docs.ts"),
+  "app-web.ts": () => import("../../worlds/app-web.ts"),
   "azure-byok.ts": () => import("../../worlds/azure-byok.ts"),
   "cloud-model-infra-worker.ts": () => import("../../worlds/cloud-model-infra-worker.ts"),
   "cloud-model-infra.ts": () => import("../../worlds/cloud-model-infra.ts"),
@@ -19,8 +21,12 @@ const worldImports: Record<string, () => Promise<unknown>> = {
   "den-split-origin-kind.ts": () => import("../../worlds/den-split-origin-kind.ts"),
   "desktop-prod-live.ts": () => import("../../worlds/desktop-prod-live.ts"),
   "dev-headless.ts": () => import("../../worlds/dev-headless.ts"),
+  "gateway-local.ts": () => import("../../worlds/gateway-local.ts"),
   "headless-prod-live.ts": () => import("../../worlds/headless-prod-live.ts"),
   "litellm-per-member.ts": () => import("../../worlds/litellm-per-member.ts"),
+  "mysql-0097-native.ts": () => import("../../worlds/mysql-0097-native.ts"),
+  "preview-den.ts": () => import("../../worlds/preview-den.ts"),
+  "preview-desktop.ts": () => import("../../worlds/preview-desktop.ts"),
   "remote-session.ts": () => import("../../worlds/remote-session.ts"),
   "solo.ts": () => import("../../worlds/solo.ts"),
 };

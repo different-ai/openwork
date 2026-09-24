@@ -368,6 +368,17 @@ test("Den member sign-in recovers an isolated connection whose pre-registered cl
   expect(html).toContain("connected");
   expect(await tokenRequests()).toBe(before + 1);
   expect(await detail()).toMatchObject({ connected: true, oauthCallbackMode: "shared-v1" });
+  const grants = await queryDenDatabase(den.database.url,
+    "SELECT CAST(scopes AS CHAR) AS scopes FROM connected_account WHERE provider_id = ?", [id]);
+  expect(grants).toHaveLength(1);
+  const [grant] = grants;
+  if (!isRecord(grant) || typeof grant.scopes !== "string") throw new Error("Expected the member's granted scopes");
+  const grantedScopes: unknown = JSON.parse(grant.scopes);
+  expect(grantedScopes).toEqual(authorize.searchParams.get("scope")?.split(" ").filter(Boolean));
+  const sharedGrant = await queryDenDatabase(den.database.url,
+    "SELECT scope FROM external_mcp_connection WHERE id = ?", [id]);
+  expect(sharedGrant).toEqual([{ scope: null }]);
+  evidence.recordAssertionEvidence("Member scopes round-trip without creating another identity's grant", "The mock's issued scopes were stored only on one member account; the shared connection still has no grant.", true);
   const tools = await denFetch(den.members.teammate, `/v1/mcp-connections/${id}/tools`, { headers: memberHeaders });
   expect(tools.response.status, tools.text).toBe(200);
   expect(tools.text).toContain("\"tools\"");

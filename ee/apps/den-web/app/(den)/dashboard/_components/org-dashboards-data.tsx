@@ -266,10 +266,10 @@ export function useUpdateDashboard() {
       });
       return input.dashboardId;
     },
-    onSuccess: (dashboardId) => {
-      queryClient.invalidateQueries({ queryKey: orgDashboardsQueryKeys.list(organizationId) });
-      queryClient.invalidateQueries({ queryKey: orgDashboardsQueryKeys.detail(organizationId, dashboardId) });
-    },
+    onSuccess: (dashboardId) => Promise.all([
+      queryClient.invalidateQueries({ queryKey: orgDashboardsQueryKeys.list(organizationId) }),
+      queryClient.invalidateQueries({ queryKey: orgDashboardsQueryKeys.detail(organizationId, dashboardId) }),
+    ]),
   });
 }
 

@@ -1,6 +1,7 @@
 import type { McpStatusMap } from "../types";
+import type { ConnectionActionIntent } from "@openwork/types/connection-action-app";
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
-import type { GatewayDesktopOauthStartRequest, GatewayDesktopOauthStartResponse } from "@openwork/types/den/gateway";
+import type { GatewayDesktopOauthStartRequest, GatewayDesktopOauthStartResponse, GatewayUsableModel } from "@openwork/types/den/gateway";
 import {
   agentContextDiagnosticsReportSchema,
   agentContextDiagnosticsRequestSchema,
@@ -12,7 +13,7 @@ import {
   AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
   requestAgentContextDiagnosticsPayload,
 } from "./agent-context-diagnostics-transport";
-import { desktopFetch, desktopFetchAgentContextDiagnostics, desktopUploadMultipart, electronLocalPathForFile } from "./desktop";
+import { desktopFetch, desktopFetchViaMain, desktopFetchAgentContextDiagnostics, desktopUploadMultipart, electronLocalPathForFile } from "./desktop";
 import { isOpenworkGatewayRuntime } from "./gateway-runtime";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
@@ -53,6 +54,7 @@ export type OpenworkCloudProviderSyncRun = {
 export type OpenworkCloudProviderSyncSkippedProvider = {
   cloudProviderId: string;
   credentialSetId?: string;
+  models?: GatewayUsableModel[];
   providerId: string;
   name: string;
   /** Machine-readable skip reason, e.g. "missing_credentials". */
@@ -71,6 +73,25 @@ export type OpenworkCloudProviderSyncStatus = {
   skippedProviders: OpenworkCloudProviderSyncSkippedProvider[];
 };
 
+export interface EngineV2MigrationStatus {
+  state: "idle" | "running" | "completed" | "error";
+  imported: number;
+  skipped: number;
+  total: number;
+  error?: string;
+}
+
+function parseEngineV2Migration(value: unknown): EngineV2MigrationStatus | undefined {
+  if (!value || typeof value !== "object" || !("state" in value)
+    || !["idle", "running", "completed", "error"].includes(String(value.state))) return undefined;
+  if (value.state !== "idle" && value.state !== "running" && value.state !== "completed" && value.state !== "error") return undefined;
+  if (!("imported" in value) || typeof value.imported !== "number"
+    || !("skipped" in value) || typeof value.skipped !== "number"
+    || !("total" in value) || typeof value.total !== "number") return undefined;
+  return { state: value.state, imported: value.imported, skipped: value.skipped, total: value.total,
+    error: "error" in value && typeof value.error === "string" ? value.error : undefined };
+}
+
 export interface EngineV2PreviewStatus {
   enabled: boolean;
   running: boolean;
@@ -78,6 +99,7 @@ export interface EngineV2PreviewStatus {
   version?: string;
   pid?: number;
   binSource?: string;
+  migration?: EngineV2MigrationStatus;
   mirroredProviderIds: string[];
   skippedProviderIds: string[];
   catalogModelIds: string[];
@@ -97,6 +119,7 @@ function parseEngineV2PreviewStatus(value: unknown): EngineV2PreviewStatus {
     throw new Error("Invalid OpenCode v2 engine preview status response.");
   }
   return {
+    migration: parseEngineV2Migration("migration" in value ? value.migration : undefined),
     enabled: value.enabled,
     running: value.running,
     chatRouting: "chatRouting" in value && typeof value.chatRouting === "boolean" ? value.chatRouting : false,
@@ -144,6 +167,27 @@ function parseCloudImportedProvider(value: unknown): CloudImportedProvider | nul
   };
 }
 
+function parsePendingGatewayModel(value: unknown, credentialSetId: unknown): GatewayUsableModel | null {
+  if (!value || typeof value !== "object"
+    || !("id" in value) || typeof value.id !== "string"
+    || !/^gwm_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(value.id)
+    || !("name" in value) || typeof value.name !== "string"
+    || !("config" in value) || !value.config || typeof value.config !== "object" || Array.isArray(value.config)
+    || !("id" in value.config) || value.config.id !== value.id
+    || !("upstreamModelId" in value) || typeof value.upstreamModelId !== "string"
+    || !("modelGroupId" in value) || typeof value.modelGroupId !== "string"
+    || !("modelGroupName" in value) || typeof value.modelGroupName !== "string"
+    || !("credentialSetId" in value) || typeof value.credentialSetId !== "string" || value.credentialSetId !== credentialSetId
+    || value.id.split("_")[2] !== value.credentialSetId.slice(4)
+    || value.id.split("_")[1] !== value.modelGroupId.slice(4)
+    || !("credentialSetName" in value) || typeof value.credentialSetName !== "string") return null;
+  return {
+    id: value.id, name: value.name, config: { ...value.config, id: value.id },
+    upstreamModelId: value.upstreamModelId, modelGroupId: value.modelGroupId, modelGroupName: value.modelGroupName,
+    credentialSetId: value.credentialSetId, credentialSetName: value.credentialSetName,
+  };
+}
+
 function parseCloudProviderSyncStatus(value: unknown): OpenworkCloudProviderSyncStatus {
   if (!value || typeof value !== "object" || !("hasSession" in value) || typeof value.hasSession !== "boolean" || !("providers" in value) || !Array.isArray(value.providers)) {
     throw new Error("Invalid cloud provider sync status response.");
@@ -182,6 +226,11 @@ function parseCloudProviderSyncStatus(value: unknown): OpenworkCloudProviderSync
         reason: raw.reason,
         ...("credentialSetId" in raw && typeof raw.credentialSetId === "string" ? { credentialSetId: raw.credentialSetId } : {}),
         ...("authUrl" in raw && typeof raw.authUrl === "string" ? { authUrl: raw.authUrl } : {}),
+        ...(raw.reason === "member_auth_required" && "credentialSetId" in raw && "models" in raw && Array.isArray(raw.models)
+          ? { models: raw.models.flatMap((value: unknown) => {
+            const model = parsePendingGatewayModel(value, raw.credentialSetId);
+            return model ? [model] : [];
+          }) } : {}),
       });
     }
   }
@@ -260,6 +309,7 @@ export type OpenworkSessionMessage = {
 export type OpenworkSessionSnapshot = {
   session: Session;
   messages: OpenworkSessionMessage[];
+  pagination?: { before?: string; nextCursor: string | null; limit: number };
   todos: Todo[];
   status:
     | { type: "idle" }
@@ -269,7 +319,7 @@ export type OpenworkSessionSnapshot = {
 
 // Stored history is independently readable. Missing activity fields are not an
 // observed idle state or an empty todo list; live hydration owns those values.
-export type OpenworkSessionHistory = Pick<OpenworkSessionSnapshot, "session" | "messages">
+export type OpenworkSessionHistory = Pick<OpenworkSessionSnapshot, "session" | "messages" | "pagination">
   & Partial<Pick<OpenworkSessionSnapshot, "status" | "todos">>;
 
 export type OpenworkPluginItem = {
@@ -470,8 +520,10 @@ export type OpenworkMcpItem = {
 };
 
 export type OpenworkMcpAppResource = {
+  hostConnectionActions?: true;
   /** Opaque, short-lived host context. Absent on generated previews and older servers. */
   launchId?: string;
+  refresh?: { resourceDigest: string; expiresAt: number };
   serverName: string;
   toolName: string;
   resourceUri: string;
@@ -518,6 +570,7 @@ export type OpenworkMcpAppCatalogServer = {
 };
 
 export type OpenworkMcpAppToolResult = {
+  hostAction?: ConnectionActionIntent;
   content: Array<Record<string, unknown>>;
   structuredContent?: Record<string, unknown>;
   isError?: boolean;
@@ -752,6 +805,8 @@ export type OpenworkCloudMcpHealth = {
   connectCatalogEnabled: boolean;
   /** Local private credential readiness, not provider health. Older servers omit it. */
   appHostAuthorizationReady?: boolean | null;
+  connectCatalogDiagnostic?: "ready" | "empty" | "missing_app_host_auth" | "untrusted_origin"
+    | "invalid_catalog" | "invalid_proxy_descriptor" | "discovery_unavailable";
   workspace: {
     id: string;
     type: string;
@@ -1434,10 +1489,10 @@ async function fetchWithTimeout(
 async function requestJson<T>(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number; signal?: AbortSignal } = {},
+  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number; signal?: AbortSignal; desktopTransport?: "main" } = {},
 ): Promise<T> {
   const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch(url);
+  const fetchImpl = options.desktopTransport === "main" && isDesktopRuntime() ? desktopFetchViaMain : resolveFetch(url);
   const response = await fetchWithTimeout(
     fetchImpl,
     url,
@@ -1623,9 +1678,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     deleteDenSession: async () => {
       await requestJson<unknown>(baseUrl, "/den-session", { hostToken, method: "DELETE", timeoutMs: timeouts.config });
     },
-    startGatewayProviderOAuth: (providerId: string, orgId: string, credentialSetId?: string) =>
+    startGatewayProviderOAuth: (providerId: string, orgId: string, credentialSetId?: string, signal?: AbortSignal) =>
       requestJson<GatewayDesktopOauthStartResponse>(baseUrl, `/cloud-provider-sync/providers/${encodeURIComponent(providerId)}/oauth/start`, {
-        hostToken, method: "POST", body: { orgId, ...(credentialSetId !== undefined ? { credentialSetId } : {}) } satisfies GatewayDesktopOauthStartRequest, timeoutMs: timeouts.config,
+        hostToken, signal, method: "POST", body: { orgId, ...(credentialSetId !== undefined ? { credentialSetId } : {}) } satisfies GatewayDesktopOauthStartRequest, timeoutMs: timeouts.config,
       }),
     runCloudProviderSyncNow: async (reason?: string, signal?: AbortSignal) =>
       parseCloudProviderSyncRun(await requestJson<unknown>(baseUrl, "/cloud-provider-sync/run", {
@@ -1644,6 +1699,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview/status", {
         token,
         timeoutMs: timeouts.config,
+      })),
+    switchOpencodeEngine: async (engine: "v1" | "v2"): Promise<EngineV2PreviewStatus> =>
+      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {
+        token, method: "PUT", body: { enabled: engine === "v2", chatRouting: engine === "v2" }, timeoutMs: timeouts.config,
+      })),
+    migrateOpencodeHistory: async (): Promise<EngineV2PreviewStatus> =>
+      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview/migrate", {
+        token, hostToken, method: "POST", body: { confirm: true }, timeoutMs: timeouts.config,
       })),
     setEngineV2PreviewEnabled: async (enabled: boolean): Promise<EngineV2PreviewStatus> =>
       parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {
@@ -2053,6 +2116,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         serverName: string;
         name: string;
         resourceUri: string;
+        expectedResourceDigest?: string;
         arguments?: Record<string, unknown>;
         approved?: boolean;
       },
@@ -2102,6 +2166,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           body: payload,
           timeoutMs: timeouts.cloudMcpReconcile,
         },
+      ),
+    refreshOpenworkCloudMcpCatalog: (workspaceId: string, providerModel?: OpenworkCloudMcpProviderModelContext) =>
+      requestJson<OpenworkCloudMcpHealth>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/reconcile`,
+        { token, hostToken, method: "POST", body: { mode: "refresh_catalog", ...providerModel }, timeoutMs: timeouts.cloudMcpReconcile },
       ),
     refreshOpenworkCloudMcpEngine: (
       workspaceId: string,
@@ -2466,11 +2536,11 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
     // User-level env vars (host-auth only — desktop shell is the sole caller).
     // See apps/server/src/env-file.ts and apps/app/pr/environment-variables.md.
-    listUserEnvKeys: () =>
+    listUserEnvKeys: (options?: { desktopTransport?: "main" }) =>
       requestJson<{ keys: string[] }>(
         baseUrl,
         "/env/keys",
-        { token, hostToken, timeoutMs: timeouts.config },
+        { token, hostToken, timeoutMs: timeouts.config, desktopTransport: options?.desktopTransport },
       ),
 
     getUserEnvStatus: (runtimeKey?: string | null) => {

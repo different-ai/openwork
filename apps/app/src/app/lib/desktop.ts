@@ -218,9 +218,11 @@ declare global {
           feedUrl: string;
           currentVersion: string;
         }>;
-        check?: (channel?: "stable" | "alpha", targetVersion?: string) => Promise<{
+        check?: (channel?: "stable" | "alpha", targetVersion?: string, options?: { preserveStaged?: boolean }) => Promise<{
           available: boolean;
           currentVersion?: string;
+          totalBytes?: number | null;
+          stagedVersion?: string | null;
           latestVersion?: string | null;
           releaseDate?: string | null;
           releaseNotes?: unknown;
@@ -242,6 +244,9 @@ declare global {
         use?: (id: string) => Promise<RecoveryActionResult>;
       };
       browser?: {
+        openLink?: (url: string, sessionId: string | null) => void;
+        chooseLinkDestination?: (id: string, destination: "openwork" | "external" | null) => Promise<boolean>;
+        onLinkOpenRequest?: (callback: (request: { id: string; url: string } | null) => void) => () => void;
         show?: (bounds: { x: number; y: number; width: number; height: number }, sessionId?: string | null) => Promise<boolean | void>;
         hide?: (options?: { preserveShortcutFocus?: boolean }) => Promise<void>;
         openUrl?: (
@@ -401,6 +406,17 @@ function isLoopbackUrl(input: RequestInfo | URL): boolean {
   }
 }
 
+export function isPermissionReplyRequest(input: RequestInfo | URL, init?: RequestInit): boolean {
+  const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+  if (method.toUpperCase() !== "POST") return false;
+  const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  try {
+    return /\/permission\/[A-Za-z0-9_-]+\/reply$/.test(new URL(raw).pathname);
+  } catch {
+    return false;
+  }
+}
+
 function desktopTransferId(): string {
   return crypto.randomUUID();
 }
@@ -412,7 +428,7 @@ async function runCancellableDesktopTransfer<T>(
 ): Promise<T> {
   if (signal?.aborted) throw signal.reason;
   const cancel = () => {
-    void invokeElectronHelper("__cancelTransfer", transferId);
+    void invokeElectronHelper("__cancelTransfer", transferId).catch(() => undefined);
   };
   signal?.addEventListener("abort", cancel, { once: true });
   try {
@@ -506,7 +522,18 @@ async function desktopFetchThroughMain(
   }
 
   const diagnosticsDeadlineAtMs = options.agentContextDiagnosticsDeadlineAtMs;
-  const result = await invokeElectronHelper("__fetch", url, {
+  const requestMethod = (method ?? "GET").toUpperCase();
+  // Stop must retain its transport deadline when archive uses IPC. Prompt and
+  // command POSTs keep their distinct admission/unknown-outcome contract.
+  const cancellable = ["GET", "PATCH"].includes(requestMethod)
+    || (requestMethod === "POST" && /\/session\/[^/]+\/abort$/.test(new URL(url).pathname))
+    || isPermissionReplyRequest(url, { method: requestMethod });
+  const signal = cancellable && diagnosticsDeadlineAtMs === undefined
+    ? init?.signal === undefined ? (input instanceof Request ? input.signal : undefined) : init.signal
+    : undefined;
+  const transferId = signal ? desktopTransferId() : undefined;
+  const fetchResponse = () => invokeElectronHelper("__fetch", url, {
+    transferId,
     method,
     headers,
     body,
@@ -515,6 +542,16 @@ async function desktopFetchThroughMain(
       ? undefined
       : { deadlineAtMs: diagnosticsDeadlineAtMs },
   });
+  let result: DesktopFetchResult;
+  try {
+    result = transferId && signal
+      ? await runCancellableDesktopTransfer(transferId, signal, fetchResponse)
+      : await fetchResponse();
+    signal?.throwIfAborted();
+  } catch (error) {
+    signal?.throwIfAborted();
+    throw error;
+  }
 
   // Response constructor rejects bodies for null-body status codes, so we
   // must pass null instead of an empty string for those.
@@ -591,6 +628,20 @@ export async function openDesktopPath(target: string): Promise<void> {
   }
 }
 
+/**
+ * Open a chat-referenced workspace file with its default application. The desktop resolves
+ * the path on disk and launches only a real file inside the real workspace; a path that
+ * resolves outside (for example through a symlink) is revealed in its folder instead.
+ */
+export async function openDesktopWorkspaceFile(workspaceRoot: string, target: string): Promise<"opened" | "revealed"> {
+  const result = await invokeElectronHelper("__openWorkspaceFile", workspaceRoot, target);
+  if (!result || typeof result !== "object" || !("ok" in result)) {
+    throw new Error("Could not open this file.");
+  }
+  if (!result.ok) throw new Error(result.error || "Could not open this file.");
+  return result.action;
+}
+
 export async function revealDesktopItemInDir(target: string): Promise<void> {
   const result = await invokeElectronHelper("__revealItemInDir", target);
   if (typeof result === "string" && result.trim()) {
@@ -636,8 +687,8 @@ export async function getDesktopApplicationsForFile(target: string): Promise<Des
   return invokeElectronHelper("__getApplicationsForFile", target);
 }
 
-export async function openDesktopWithApp(target: string, appPath: string): Promise<void> {
-  const result = await invokeElectronHelper("__openWithApp", target, appPath);
+export async function openDesktopWithApp(target: string, appPath: string, workspaceRoot: string): Promise<void> {
+  const result = await invokeElectronHelper("__openWithApp", target, appPath, workspaceRoot);
   if (typeof result === "string" && result.trim()) {
     throw new Error(result);
   }

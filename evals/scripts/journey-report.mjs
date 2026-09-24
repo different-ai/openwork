@@ -38,7 +38,9 @@ async function main() {
       }
     } catch { /* setup never reached the test command */ }
     const status = classify(summary, process.env.EXECUTION, process.env.VISION, process.env.SPEC_SLUG);
-    await writeFile('journey-result.json', JSON.stringify({ spec: process.env.SPEC_SLUG, status, summary }, null, 2));
+    await writeFile('journey-result.json', JSON.stringify({ spec: process.env.SPEC_SLUG, status, summary,
+      vision: process.env.VISION, sha: process.env.EXPECTED_SHA,
+      runId: Number(process.env.GITHUB_RUN_ID), attempt: Number(process.env.GITHUB_RUN_ATTEMPT) }, null, 2));
     await appendFile(process.env.GITHUB_STEP_SUMMARY, `\nJourney result: **${status}**\n`);
   } else {
     const plan = JSON.parse(await readFile('journey-plan/plan.json', 'utf8'));

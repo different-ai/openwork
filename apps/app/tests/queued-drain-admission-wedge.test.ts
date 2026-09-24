@@ -208,10 +208,37 @@ test("send now shares the current claim with the idle drain and every split pane
   expect(claimQueuedSend(sessionId, "item-3", true)).toBe(false);
   dispatchQueuedDrain(sessionId, { type: "send_error", itemId: "item-2" });
   expect(claimQueuedSend(sessionId, "item-2")).toBe(false);
-  expect(claimQueuedSend(sessionId, "item-3", true)).toBe(false);
-  // Explicit Send now can retry a definite rejection, never an unknown POST.
-  expect(claimQueuedSend(sessionId, "item-2", true)).toBe(true);
+  expect(claimQueuedSend(sessionId, "item-3", true)).toBe(true);
+  expect(claimQueuedSend(sessionId, "item-2", true)).toBe(false);
   resetQueuedDrainForTests();
+});
+
+test("promotion after definite failure claims atomically without exposing a ready slot", () => {
+  resetQueuedDrainForTests();
+  const sessionId = "ses_atomic_promotion";
+  expect(claimQueuedSend(sessionId, "failed")).toBe(true);
+  dispatchQueuedDrain(sessionId, { type: "send_error", itemId: "failed" });
+  const phases: string[] = [];
+  const unsubscribe = subscribeQueuedDrain(sessionId, () => {
+    phases.push(getQueuedDrainState(sessionId).phase.kind);
+    expect(claimQueuedSend(sessionId, "automatic-follower")).toBe(false);
+    expect(claimQueuedSend(sessionId, "rival-promotion", true)).toBe(false);
+  });
+  try {
+    expect(claimQueuedSend(sessionId, "selected", true)).toBe(true);
+    expect(phases).toEqual(["sending"]);
+    expect(getQueuedDrainState(sessionId).phase).toEqual({ kind: "sending", itemId: "selected", busySeen: false });
+  } finally {
+    unsubscribe();
+    resetQueuedDrainForTests();
+  }
+});
+
+test("a different promotion does not bypass a needs-input halt", () => {
+  const sending = reduceQueuedDrain(INITIAL_QUEUED_DRAIN_STATE, { type: "send_started", itemId: "blocked" });
+  const blocked = reduceQueuedDrain(sending, { type: "send_result", itemId: "blocked", outcome: "blocked", at: t0 });
+  expect(reduceQueuedDrain(blocked, { type: "send_started", itemId: "other", steer: true })).toBe(blocked);
+  expect(reduceQueuedDrain(blocked, { type: "send_started", itemId: "blocked", steer: true }).phase.kind).toBe("sending");
 });
 
 test("Stop invalidates preflight and late requeue without erasing a possibly admitted POST", () => {

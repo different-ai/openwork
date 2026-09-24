@@ -8,6 +8,8 @@ import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { getOrgAccessFlags, getToolTesterRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { useDenFlow } from "../../_providers/den-flow-provider";
+import { McpConnectionAppSetup } from "./mcp-connection-app-setup";
 import { IntegrationIcon } from "./integration-icon";
 import {
   PluginMcpSetupDialog,
@@ -30,7 +32,7 @@ import { useMcpAccountAuthorization } from "./use-mcp-account-authorization";
 
 /**
  * The member-facing half of MCP Connections. An admin publishes a
- * connection (mcp-connections-screen.tsx, admin-only); every granted member
+ * connection (its connector page, admin-only); every granted member
  * sees it here. For "per_member" connections this is where each person
  * connects their own account — after which their agent's
  * search_capabilities/execute_capability calls run as them.
@@ -175,6 +177,8 @@ function YourConnectionRow({
   onDisconnect: () => void;
   toolTesterRoute: string;
 }) {
+  const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
+  const { orgContext } = useOrgDashboard();
   const isPerMember = connection.credentialMode === "per_member";
   const needsAdminRecovery = !needsAdminSetup
     && connection.needsReconnect === true
@@ -308,6 +312,12 @@ function YourConnectionRow({
           ) : null}
         </div>
       </div>
+      <McpConnectionAppSetup
+        connection={connection}
+        publicApiUrl={runtimeConfigLoaded ? runtimeConfig.denApiUrl : ""}
+        enabled={orgContext?.capabilities.mcpConnections === true}
+        className="mx-6 mb-4"
+      />
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { OPENWORK_CLOUD_EXPECTED_TOOLS, OPENWORK_CLOUD_PLUGIN_CANARIES, clearOpe
 import {
   CONNECT_MCP_SERVER_INDEX_SCHEMA_VERSION,
   CONNECT_MCP_SERVER_INDEX_URI,
+  connectDirectMcpRuntimeName,
   readOpenWorkConnectMcpAppHostCatalog,
   type OpenWorkConnectMcpServerIndexInput,
 } from "./connect-mcp-server-catalog.js";
@@ -37,6 +38,8 @@ type MockOpencodeOptions = {
   cloudFailedError?: string;
   connectServers?: OpenWorkConnectMcpServerIndexInput["servers"];
   appHostAuthorization?: string;
+  trackRegistrations?: boolean;
+  beforeRegistration?: (name: string) => Promise<Response | undefined>;
 };
 
 type CloudConfig = {
@@ -96,6 +99,7 @@ function startMockOpencode(options: MockOpencodeOptions = {}) {
   const requests: EngineRequest[] = [];
   let registerCount = 0;
   let statusReads = 0;
+  const registeredServers: Record<string, { status: "connected" }> = {};
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -111,14 +115,23 @@ function startMockOpencode(options: MockOpencodeOptions = {}) {
       if (url.pathname === "/instance/dispose") return Response.json({ disposed: true });
       if (url.pathname === "/session/status") return Response.json({});
       if (url.pathname === "/mcp" && request.method === "POST") {
+        if (isRecord(body) && typeof body.name === "string") {
+          const response = await options.beforeRegistration?.(body.name);
+          if (response) return response;
+        }
         if (options.postFailure) return Response.json(options.postFailure.body, { status: options.postFailure.status });
         registerCount += 1;
+        if (options.trackRegistrations && isRecord(body) && typeof body.name === "string") {
+          registeredServers[body.name] = { status: "connected" };
+          return Response.json(registeredServers);
+        }
         return Response.json({});
       }
       if (url.pathname.startsWith("/mcp/") && url.pathname.endsWith("/disconnect") && request.method === "POST") {
         // OpenCode closes the client and keeps the config; status is no longer
         // connected until a later POST /mcp re-registers it.
         if (url.pathname === "/mcp/openwork-cloud/disconnect") registerCount = 0;
+        if (options.trackRegistrations) delete registeredServers[decodeURIComponent(url.pathname.split("/")[2] ?? "")];
         return Response.json(true);
       }
       if (url.pathname === "/mcp" && request.method === "GET") {
@@ -130,6 +143,7 @@ function startMockOpencode(options: MockOpencodeOptions = {}) {
         if (options.connectAfterStatusReads && statusReads < options.connectAfterStatusReads) {
           return Response.json({ "openwork-cloud": { status: "failed", error: "slow connect" } });
         }
+        if (options.trackRegistrations) return Response.json(registeredServers);
         return Response.json(registerCount > 0 || options.initialConnected ? { "openwork-cloud": { status: "connected" } } : {});
       }
       if (url.pathname === "/experimental/tool/ids") {
@@ -404,6 +418,118 @@ describe("openwork-cloud MCP strict reconcile", () => {
     const registrations = mock.requests.filter((request) => request.method === "POST" && request.pathname === "/mcp");
     expect(registrations.map((request) => requireRecord(request.body, "registration").name)).toEqual(["openwork-cloud"]);
     expect(mock.requests.some((request) => request.pathname === "/mcp/openwork-connect-stale/disconnect")).toBe(true);
+  });
+
+  test("catalog refresh applies direct exposure toggles with persisted credentials and no healthy client churn", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    const root = await createRoot();
+    const mockOptions: MockOpencodeOptions = { appHostAuthorization: APP_HOST_AUTHORIZATION, trackRegistrations: true };
+    const mock = startMockOpencode(mockOptions);
+    const baseUrl = `http://127.0.0.1:${mock.server.port}`;
+    const direct = { connectionId: "emc_catalogtoggle", name: "Catalog fixture", description: null,
+      url: `${baseUrl}/mcp/agent/connections/emc_catalogtoggle`, exposeDirectly: false };
+    mockOptions.connectServers = [direct];
+    const openwork = await startOpenwork([workspace("ws_1", root, baseUrl)]);
+    registerTrustedOpencodeProcess(openwork.config, { baseUrl, identity: "catalog-toggle", isAlive: () => true });
+    const local = { type: "remote", url: "https://user.example/mcp" };
+    await writeRuntimeOpencodeConfig(openwork.config, "ws_1", () => ({ mcp: { "user-server": local } }));
+    expect((await responseRecord(await reconcile(openwork.base, "ws_1", {
+      appHostAuthorization: APP_HOST_AUTHORIZATION,
+    }))).usable).toBe(true);
+    const globalBefore = await readGlobalRuntimeOpencodeConfig(openwork.config);
+    mock.requests.length = 0;
+    const refresh = () => fetch(`${openwork.base}/workspace/ws_1/mcp/openwork-cloud/reconcile`, {
+      method: "POST", headers: headers(), body: JSON.stringify({ mode: "refresh_catalog" }),
+    });
+    const name = connectDirectMcpRuntimeName(direct);
+    direct.exposeDirectly = true;
+    expect((await responseRecord(await refresh())).connectCatalogDiagnostic).toBe("ready");
+    expect((await readRuntimeOpencodeConfig(openwork.config, "ws_1")).mcp?.[name]?.headers).toEqual(CLOUD_CONFIG.headers);
+    expect((await responseRecord(await refresh())).usable).toBe(true);
+    direct.exposeDirectly = false;
+    expect((await responseRecord(await refresh())).usable).toBe(true);
+    const runtime = await readRuntimeOpencodeConfig(openwork.config, "ws_1");
+    expect(runtime.mcp?.[name]).toBeUndefined();
+    expect(runtime.mcp?.["user-server"]).toEqual(local);
+    expect(await readGlobalRuntimeOpencodeConfig(openwork.config)).toEqual(globalBefore);
+    expect(mock.requests.filter((request) => request.pathname === "/mcp" && request.method === "POST")
+      .map((request) => requireRecord(request.body, "registration").name)).toEqual([name]);
+    expect(mock.requests.filter((request) => request.pathname.endsWith("/disconnect"))
+      .map((request) => request.pathname)).toEqual([`/mcp/${name}/disconnect`]);
+    expect(mock.requests.filter((request) => isRecord(request.body) && request.body.method === "resources/read")).toHaveLength(3);
+    expect(JSON.stringify(runtime)).not.toContain(APP_HOST_AUTHORIZATION);
+    const rejected = await fetch(`${openwork.base}/workspace/ws_1/mcp/openwork-cloud/reconcile`, {
+      method: "POST", headers: headers(), body: JSON.stringify({ mode: "refresh_catalog", config: CLOUD_CONFIG }),
+    });
+    expect(rejected.status).toBe(400);
+  });
+
+  test("central reconcile waits for root but not direct registration", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    const root = await createRoot();
+    const rootGate = Promise.withResolvers<void>();
+    const directGate = Promise.withResolvers<void>();
+    const rootObserved = Promise.withResolvers<void>();
+    const directObserved = Promise.withResolvers<void>();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown) => { unhandled.push(error); };
+    process.on("unhandledRejection", onUnhandled);
+    const mockOptions: MockOpencodeOptions = {
+      appHostAuthorization: APP_HOST_AUTHORIZATION,
+      trackRegistrations: true,
+      beforeRegistration: async (name) => {
+        if (name === "openwork-cloud") {
+          rootObserved.resolve();
+          await rootGate.promise;
+          return undefined;
+        }
+        directObserved.resolve();
+        await directGate.promise;
+        return Response.json({ error: "direct registration rejected" }, { status: 400 });
+      },
+    };
+    const mock = startMockOpencode(mockOptions);
+    const baseUrl = `http://127.0.0.1:${mock.server.port}`;
+    const direct = { connectionId: "emc_heldregistration", name: "Held fixture", description: null,
+      url: `${baseUrl}/mcp/agent/connections/emc_heldregistration`, exposeDirectly: true };
+    mockOptions.connectServers = [direct];
+    const openwork = await startOpenwork([workspace("ws_1", root, baseUrl)]);
+    registerTrustedOpencodeProcess(openwork.config, { baseUrl, identity: "held-registration", isAlive: () => true });
+    const name = connectDirectMcpRuntimeName(direct);
+    let completed = false;
+    const pending = reconcile(openwork.base, "ws_1", { appHostAuthorization: APP_HOST_AUTHORIZATION })
+      .then(async (response) => {
+        const body = await responseRecord(response);
+        completed = true;
+        return body;
+      });
+    try {
+      await rootObserved.promise;
+      await Bun.sleep(50);
+      expect(completed).toBe(false);
+      expect(mock.requests.some((request) => isRecord(request.body) && request.body.name === name)).toBe(false);
+      rootGate.resolve();
+      await directObserved.promise;
+      const body = await Promise.race([pending, Bun.sleep(1000).then(() => null)]);
+      expect(body).toMatchObject({ usable: true, phase: "ready" });
+      expect(mock.requests.some((request) => request.pathname === "/mcp" && request.method === "POST"
+        && isRecord(request.body) && request.body.name === name)).toBe(true);
+      const directConfig = (await readRuntimeOpencodeConfig(openwork.config, "ws_1")).mcp?.[name];
+      if (!directConfig) throw new Error("Direct runtime config missing");
+      const status = () => inspectEngineMcpRegistration(openwork.config, openwork.config.workspaces[0]!, name, directConfig);
+      expect(status()).not.toBe("connected");
+      directGate.resolve();
+      const deadline = Date.now() + 1000;
+      while (status() !== "failed" && Date.now() < deadline) await Bun.sleep(10);
+      expect(status()).toBe("failed");
+      await Bun.sleep(0);
+      expect(unhandled).toEqual([]);
+    } finally {
+      rootGate.resolve();
+      directGate.resolve();
+      await pending;
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 
   test("live status read heals a failed registration record after reconcile returns early", async () => {

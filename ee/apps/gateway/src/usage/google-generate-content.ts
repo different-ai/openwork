@@ -29,7 +29,7 @@ export function parseGoogleGenerateContentJsonUsage(body: unknown): ParsedUsage 
 }
 
 export function createGoogleGenerateContentSseUsageParser(options: { maxBufferLength?: number } = {}): UsageParser {
-  return createSseUsageParser(applyChunk, options)
+  return createSseUsageParser(applyChunk, { ...options, isTerminal: (event) => isRecord(event) && Array.isArray(event.candidates) && event.candidates.length > 0 && event.candidates.every((candidate) => isRecord(candidate) && typeof candidate.finishReason === "string") })
 }
 
 export function createGoogleGenerateContentJsonStreamUsageParser(options: { maxBufferLength?: number } = {}): UsageParser {

@@ -1,4 +1,5 @@
 import { legacyExecutionPermissions } from "./managed-policy-rules.js";
+import { DESKTOP_POLICY_ENFORCEMENT_ENABLED } from "@openwork/types/den/desktop-policies-runtime";
 import { materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast";
 import { isManagedPolicyPlugin } from "./managed-policy-plugin.js";
 /**
@@ -24,6 +25,7 @@ import {
   openworkAnthropicAdaptiveThinkingPluginPath,
   openworkAnthropicToolSchemaPluginPath,
   openworkTitleRecoveryPluginPath,
+  openworkGatewayQuotaPluginPath,
   openworkOfficeAttachmentsPluginPath,
   openworkSpreadsheetsPluginPath,
   openworkChromeDevtoolsPluginPath,
@@ -59,6 +61,10 @@ export async function buildOpenworkRuntimeConfigObject(
 export function buildOpenworkRuntimeConfigObjectFromSnapshot(
   runtimeConfig: RuntimeOpencodeConfig,
 ): Record<string, unknown> {
+  if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) {
+    const { managedPolicy: _cachedPolicy, ...localConfig } = runtimeConfig;
+    runtimeConfig = localConfig;
+  }
   const disabledProviders = runtimeDisabledProviderList(runtimeConfig);
   const permissions = legacyExecutionPermissions(runtimeConfig.managedPolicy?.execution);
   const { managedPolicy: _managedPolicy, ...engineConfig } = runtimeConfig;
@@ -105,6 +111,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openworkAnthropicAdaptiveThinkingPluginPath(),
       openworkAnthropicToolSchemaPluginPath(),
       openworkTitleRecoveryPluginPath(),
+      openworkGatewayQuotaPluginPath(),
       ...runtimePluginList(runtimeConfig).filter((plugin) => !isManagedPolicyPlugin(plugin)),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),

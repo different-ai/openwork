@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { buildAuthenticatedInstallDownloadHref, buildInstallDownloadHref, cloudInstallerFileName, detectedInstallPlatform, downloadCtaLabel, installerApiUrlFromConfig, installerFileName, installTokenFromPageUrl } from "../app/(den)/_lib/install-download";
+import { buildAuthenticatedInstallDownloadHref, buildBrowserInstallDownloadHref, buildInstallDownloadHref, cloudInstallerFileName, detectedInstallPlatform, downloadCtaLabel, installerApiUrlFromConfig, installerFileName, installTokenFromPageUrl } from "../app/(den)/_lib/install-download";
 
 test("organization installer downloads preserve a prefixed public API path", () => {
   expect(buildInstallDownloadHref(
@@ -34,6 +34,20 @@ test("authenticated installer downloads preserve a prefixed API path without a t
     "https://on-prem.example.test/api/den/",
     "linux-arm64",
   )).toBe("https://on-prem.example.test/api/den/v1/me/install/linux-arm64");
+});
+
+test("browser downloads keep the web session while tokenized links retain the public API", () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { origin: "https://portal.example.test" } } });
+  try {
+    expect(buildBrowserInstallDownloadHref("https://api-portal.example.test", "win-x64", null))
+      .toBe("/api/browser/v1/me/install/win-x64");
+    expect(buildBrowserInstallDownloadHref("https://api-portal.example.test", "win-x64", "install-token"))
+      .toBe("https://api-portal.example.test/v1/install/win-x64?token=install-token");
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
 });
 
 test("Cloud installer filenames match release artifacts without a hardcoded version", () => {

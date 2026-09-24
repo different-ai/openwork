@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { publishPr, publishReviewPr } from "../src/publish-pr.ts";
-import { assembleReview } from "../src/review.ts";
+import { assembleReview, renderReviewComment } from "../src/review.ts";
 import { reviewSchema, summarizeReview } from "@openwork/review";
 import { uploadReview } from "@openwork/review/storage";
 import { readFile, readdir } from "node:fs/promises";
@@ -89,6 +89,72 @@ test("publishPr dry-run makes no gh calls", async () => {
     assert.match(output, /Dry run: screenshots were not attached/);
   } finally {
     await rm(testRunDir, { recursive: true, force: true });
+  }
+});
+
+test("automatic reviews accumulate records but preserve manual, legacy and unavailable records", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openwork-auto-review-"));
+  try {
+    const directories = [join(root, "first"), join(root, "second")];
+    for (const directory of directories) {
+      await mkdir(directory);
+      const record = testRunRecord(directory);
+      record.name = directory.endsWith("first") ? "First producer" : "Second producer";
+      record.artifacts[0].fileName = "";
+      await writeFile(join(directory, "test-run.json"), JSON.stringify(record));
+    }
+    const options = { pr: 7, testRunDirs: directories.slice(0, 1), reviewUrl: "https://review.example.com", automatic: true };
+    const calls: RecordedCommand[] = [];
+    const counts: number[] = [];
+    const upload: typeof uploadReview = async (report) => { counts.push(report.sources.length); return "a".repeat(32); };
+    const first = await publishReviewPr(options, { exec: recordingExec(calls), upload });
+    assert.match(first.markdown, /selection:auto-v1:/);
+    const cumulative = await publishReviewPr({ ...options, testRunDirs: directories }, {
+      exec: recordingExec(calls, [{ databaseId: 77, body: first.markdown }]), upload,
+    });
+    assert.equal(cumulative.posted, true);
+    assert.deepEqual(counts, [1, 2]);
+    const replacement = await publishReviewPr({ ...options, replaceAutomatic: true }, {
+      exec: recordingExec(calls, [{ databaseId: 77, body: cumulative.markdown }]), upload,
+    });
+    assert.equal(replacement.posted, true);
+    assert.deepEqual(counts, [1, 2, 1]);
+    const manual = await publishReviewPr({ ...options, automatic: false }, { exec: recordingExec(calls), upload });
+    assert.match(manual.markdown, /selection:manual-v1/);
+    for (const body of [cumulative.markdown, manual.markdown, first.markdown.replace(/\n<!-- test-evidence-selection:.* -->/, "")]) {
+      calls.length = 0;
+      const before = counts.length;
+      const result = await publishReviewPr(options, { exec: recordingExec(calls, [{ databaseId: 77, body }]), upload });
+      assert.equal(result.posted, false);
+      assert.equal(counts.length, before);
+      assert.equal(calls.some((call) => call.args.includes("PATCH")), false);
+    }
+    const preserveManualReplacement = await publishReviewPr({ ...options, replaceAutomatic: true }, {
+      exec: recordingExec(calls, [{ databaseId: 77, body: manual.markdown }]), upload,
+    });
+    assert.equal(preserveManualReplacement.posted, false);
+    // A human selection made during upload is protected by the final comment read.
+    let reads = 0;
+    const initial = recordingExec(calls);
+    const selected = recordingExec(calls, [{ databaseId: 77, body: manual.markdown }]);
+    const concurrent = await publishReviewPr(options, {
+      exec: (command, args, opts) => args.includes("comments") && ++reads > 1 ? selected(command, args, opts) : initial(command, args, opts), upload,
+    });
+    assert.equal(concurrent.posted, false);
+    // The same source ID with changed receipt bytes is not a cumulative superset.
+    const changed = testRunRecord(directories[0]);
+    changed.name = "First producer";
+    changed.artifacts[0].fileName = "";
+    changed.branch = "changed-receipt";
+    await writeFile(join(directories[0], "test-run.json"), JSON.stringify(changed));
+    const before = counts.length;
+    const partial = await publishReviewPr(options, {
+      exec: recordingExec(calls, [{ databaseId: 77, body: first.markdown }]), upload,
+    });
+    assert.equal(partial.posted, false);
+    assert.equal(counts.length, before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -232,6 +298,14 @@ test("review composition preserves sources, deduplicates images, and validates e
       1,
     );
     assert.equal(summarizeReview(report).verdict, "Passed");
+    assert.match(renderReviewComment(report), /Selected evidence: \*\*Passed\*\*/);
+    const waiting = await assembleReview({
+      testRunDirs: [first, second],
+      gaps: ["Required verification: waiting. Missing session-history-status-paged.e2e.test.ts."],
+    });
+    assert.equal(summarizeReview(waiting.report).verdict, "Incomplete");
+    assert.match(renderReviewComment(waiting.report), /Required verification: waiting/);
+    assert.equal(waiting.report.sources.length, 2);
     const document = await assembleReview({
       testRunDirs: [],
       docShots: [shot],
@@ -380,4 +454,18 @@ test("review publication validates before uploading and preserves the comment wh
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("native publication uploads immutable evidence without posting or editing a comment", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "native-evidence-"));
+  try {
+    const recordDir = await reviewFixture(dir, "Native publication");
+    const calls: RecordedCommand[] = [];
+    const result = await publishReviewPr({ pr: 7, testRunDirs: [recordDir], reviewUrl: "https://review.example.test", automatic: true, presentation: "native" },
+      { exec: recordingExec(calls), upload: async () => "b".repeat(32) });
+    assert.equal(result.posted, true);
+    assert.equal(result.evidence?.gitSha, TEST_RUN_SHA);
+    assert.equal(result.evidence?.verdict, "Passed");
+    assert.ok(!calls.some(call => call.args.includes("PATCH") || call.args.includes("DELETE") || call.args.includes("comment")));
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });

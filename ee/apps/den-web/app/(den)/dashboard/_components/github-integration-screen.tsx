@@ -942,8 +942,8 @@ function RepositoryCard({
 
   const baseClass = `group block w-full overflow-hidden rounded-2xl border text-left transition ${
     selected
-      ? "border-[#0f172a] bg-white shadow-[0_8px_24px_-12px_rgba(15,23,42,0.2)]"
-      : "border-gray-100 bg-white hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]"
+      ? "border-[var(--dls-border)] bg-[var(--dls-active)]"
+      : "border-gray-100 bg-white hover:border-gray-200 hover:bg-[var(--dls-hover)]"
   }`;
 
   if (isConfigured && configuredHref) {
@@ -1043,12 +1043,12 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
       ) : discoveryQuery.data ? (
         <div className="space-y-5">
           {discoveryQuery.data.warnings.length > 0 ? (
-            <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-[12.5px] text-amber-800">
+            <div className="rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-[12.5px] text-[var(--dls-text-primary)]">
               {discoveryQuery.data.warnings[0]}
             </div>
           ) : null}
           {discoveryQuery.data.treeSummary.truncated ? (
-            <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-[12.5px] text-amber-800">
+            <div className="rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-[12.5px] text-[var(--dls-text-primary)]">
               GitHub truncated the tree response. Discovery is based on the paths GitHub returned so far.
             </div>
           ) : null}
@@ -1155,7 +1155,7 @@ function DiscoveredPluginCard({
   const baseClass = `group block w-full overflow-hidden rounded-2xl border text-left transition ${
     !plugin.supported
       ? "cursor-not-allowed border-gray-100 bg-white opacity-70"
-      : "border-gray-100 bg-white hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]"
+      : "border-gray-100 bg-white hover:border-gray-200 hover:bg-[var(--dls-hover)]"
   }`;
 
   return (

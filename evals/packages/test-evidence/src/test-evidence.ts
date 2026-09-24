@@ -84,6 +84,8 @@ export type StepRecordInput = Omit<StepRecord, "seq">;
 
 export interface TestRunRecord {
   name: string;
+  /** Repository-relative spec that produced this record. */
+  specFile?: string;
   dir: string;
   createdAt: string;
   closedAt: string;
@@ -113,7 +115,12 @@ interface StoredJsonArtifact extends JsonArtifact {
 
 export interface TestEvidenceRecorder {
   readonly dir: string;
-  recordScreenshot(screenshotArtifact: ScreenshotArtifact): string;
+  /**
+   * Record a screenshot. `caption` is what a reviewer reads under the image in
+   * the review app; the spec runtime passes the active `step()` name. Without
+   * it the caption falls back to "<test name> artifact N".
+   */
+  recordScreenshot(screenshotArtifact: ScreenshotArtifact, options?: { caption?: string }): string;
   recordVisualValidation(screenshotHash: string, visualEvidence: VisualEvidenceResult): string;
   recordAssertionEvidence(assertion: string, evidence: string, passed: boolean): void;
   recordJsonArtifact(label: string, value: unknown): void;
@@ -434,6 +441,7 @@ function parseTestRun(value: unknown): TestRunRecord | null {
     if (!parsed) return null;
     artifacts.push(parsed);
   }
+  const specFile = typeof value.specFile === "string" ? value.specFile : undefined;
   const gitSha = typeof value.gitSha === "string" ? value.gitSha : undefined;
   const sandboxRef = typeof value.sandboxRef === "string" ? value.sandboxRef : undefined;
   const engine: EvalEngine | null = value.engine === undefined || value.engine === "v1"
@@ -470,6 +478,7 @@ function parseTestRun(value: unknown): TestRunRecord | null {
   if (parsedArtifacts.length === 0 && outcome === "passed") summary.ok = true;
   return {
     name: value.name,
+    specFile,
     dir: value.dir,
     createdAt: value.createdAt,
     closedAt: value.closedAt,
@@ -567,10 +576,10 @@ export async function judgeTestRun(testRunDir: string, opts: JudgeTestRunOptions
   };
 }
 
-export function createTestEvidence(meta: { name: string; outDir?: string }): TestEvidenceRecorder {
-  const { name } = meta;
+export function createTestEvidence(meta: { name: string; specFile?: string; outDir?: string }): TestEvidenceRecorder {
+  const { name, specFile } = meta;
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const dir = meta.outDir ?? join(REPO_ROOT, "evals", "results", "test-runs", `${stamp}-${slug(name)}`);
+  const dir = meta.outDir ?? join(REPO_ROOT, "evals", "results", "test-runs", `${stamp}-${process.pid}-${slug(name)}`);
   const artifacts: StoredTestArtifact[] = [];
   const jsonArtifacts: StoredJsonArtifact[] = [];
   const trace: TraceEntry[] = [];
@@ -609,6 +618,7 @@ export function createTestEvidence(meta: { name: string; outDir?: string }): Tes
       if (orderedArtifacts.length === 0 && outcome === "passed") summary.ok = true;
       const record: TestRunRecord = {
         name,
+        specFile,
         dir,
         createdAt,
         closedAt: new Date().toISOString(),
@@ -635,11 +645,11 @@ export function createTestEvidence(meta: { name: string; outDir?: string }): Tes
 
   return {
     dir,
-    recordScreenshot(screenshotArtifact) {
+    recordScreenshot(screenshotArtifact, options) {
       assertOpen();
       const sequence = nextSequence;
       nextSequence += 1;
-      const caption = artifactCaption(name, sequence);
+      const caption = options?.caption?.trim() || artifactCaption(name, sequence);
       const screenshotFileName = fileName(sequence, caption);
       artifacts.push({
         caption,

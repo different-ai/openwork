@@ -78,7 +78,7 @@ export function InspectionBody({ body }: { body: ExternalMcpInspectionBody }) {
         </span>
       </div>
       {body.unavailable ? (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">The transport body could not be captured.</div>
+        <div className="rounded-lg border border-[var(--dls-border)] bg-[var(--dls-hover)] px-3 py-2 text-[11px] text-[var(--dls-text-primary)]">The transport body could not be captured.</div>
       ) : (
         <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-3 text-[10px] leading-4 text-gray-100">{body.text || "(empty body)"}</pre>
       )}
@@ -138,7 +138,7 @@ function TracePill({ label, state }: { label: string; state: HopState }) {
 
 function DetailsUnavailable() {
   return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] leading-5 text-amber-800" role="status">
+    <div className="rounded-xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-[12px] leading-5 text-[var(--dls-text-primary)]" role="status">
       Request and response details were unavailable. Refresh after the dashboard and its server are running the same version.
     </div>
   );
@@ -146,7 +146,7 @@ function DetailsUnavailable() {
 
 function RedactionNotice() {
   return (
-    <div className="rounded-lg border border-amber-100 bg-amber-50/70 px-3 py-2 text-[10px] leading-4 text-amber-800">
+    <div className="rounded-lg border border-[var(--dls-border)] bg-[var(--dls-hover)] px-3 py-2 text-[10px] leading-4 text-[var(--dls-text-primary)]">
       Credential and session headers are redacted. Bodies may contain sensitive provider data; this inspection is returned only for this run and is not stored in OpenWork logs.
     </div>
   );

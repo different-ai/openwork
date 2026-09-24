@@ -22,7 +22,7 @@ type Handle = {
   scopeKey: string;
 };
 
-async function mountNewTaskDraft(scope: string | null, workspaceId: string | null) {
+async function mountNewTaskDraft(scope: string | null, workspaceId: string | null, slot?: string) {
   const {
     NEW_TASK_DRAFT_SESSION_ID,
     SESSION_DRAFT_STORAGE_KEY,
@@ -31,7 +31,7 @@ async function mountNewTaskDraft(scope: string | null, workspaceId: string | nul
   } = await import("../src/react-app/domains/session/sync/draft-store");
   const handle: { current: Handle | null } = { current: null };
   function Probe() {
-    const state = useNewTaskDraftState(scope, workspaceId);
+    const state = useNewTaskDraftState(scope, workspaceId, slot);
     handle.current = {
       save: (text) => state.save({ text, mode: "prompt" }),
       snapshot: state.snapshot,
@@ -45,7 +45,7 @@ async function mountNewTaskDraft(scope: string | null, workspaceId: string | nul
   await act(async () => root.render(<Probe />));
   return {
     handle,
-    expectedKey: sessionDraftScopeKey(scope, workspaceId ?? "", NEW_TASK_DRAFT_SESSION_ID),
+    expectedKey: sessionDraftScopeKey(scope, workspaceId ?? "", slot ?? NEW_TASK_DRAFT_SESSION_ID),
     storageKey: SESSION_DRAFT_STORAGE_KEY,
     unmount: async () => {
       await act(async () => root.unmount());
@@ -104,4 +104,27 @@ test("without a workspace the new-task draft is not persisted anywhere", async (
   expect(chatFirst.handle.current?.snapshot).toBeNull();
   expect(window.localStorage.getItem(chatFirst.storageKey)).toBeNull();
   await chatFirst.unmount();
+});
+
+test("group and side-parent drafts restore only in their captured destination", async () => {
+  const { newSessionDraftSlot } = await import("../src/react-app/domains/session/chat/new-session-destination");
+  const workspaceId = "ws_groups";
+  const group = { workspaceId, groupId: "group-a" };
+  const side = { ...group, parent: { workspaceId, sessionId: "ses_parent" } };
+  const grouped = await mountNewTaskDraft("local", workspaceId, newSessionDraftSlot(group));
+  await act(async () => { grouped.handle.current?.save("Group draft"); });
+  await grouped.unmount();
+  const sideDraft = await mountNewTaskDraft("local", workspaceId, newSessionDraftSlot(side));
+  expect(sideDraft.handle.current?.snapshot).toBeNull();
+  await act(async () => { sideDraft.handle.current?.save("Side draft"); });
+  await sideDraft.unmount();
+  const ungrouped = await mountNewTaskDraft("local", workspaceId);
+  expect(ungrouped.handle.current?.snapshot).toBeNull();
+  await ungrouped.unmount();
+  const resumed = await mountNewTaskDraft("local", workspaceId, newSessionDraftSlot(group));
+  expect(resumed.handle.current?.snapshot?.text).toBe("Group draft");
+  await resumed.unmount();
+  const resumedSide = await mountNewTaskDraft("local", workspaceId, newSessionDraftSlot(side));
+  expect(resumedSide.handle.current?.snapshot?.text).toBe("Side draft");
+  await resumedSide.unmount();
 });

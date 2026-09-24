@@ -39,6 +39,7 @@ async function startOpenworkServer(workspaceRoot: string) {
     port: 0,
     token: "owt_test_token",
     hostToken: "owt_host_token",
+    configPath: join(workspaceRoot, "server.json"),
     approval: { mode: "auto", timeoutMs: 1000 },
     corsOrigins: ["*"],
     workspaces: [{ id: "ws_1", name: "Workspace", path: workspaceRoot, preset: "starter", workspaceType: "local" }],

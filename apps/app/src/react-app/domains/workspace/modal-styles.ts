@@ -7,7 +7,7 @@ export const softCardClass =
   "rounded-[20px] border border-dls-border bg-dls-hover p-4";
 
 export const interactiveCardClass =
-  "rounded-[20px] border border-dls-border bg-dls-surface p-5 text-left transition-all duration-150 hover:border-dls-border hover:shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.16)]";
+  "rounded-[20px] border border-dls-border bg-dls-surface p-5 text-left transition-all duration-150 hover:bg-dls-hover focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.16)]";
 
 export const iconTileClass =
   "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover text-dls-secondary";
@@ -43,7 +43,7 @@ export const infoBannerClass =
   "rounded-[20px] border border-dls-border bg-dls-hover px-4 py-3 text-[13px] text-dls-secondary";
 
 export const warningBannerClass =
-  "rounded-[20px] border border-amber-7/20 bg-amber-3/30 px-4 py-3 text-[13px] text-amber-11";
+  "rounded-[20px] border border-dls-border bg-dls-hover px-4 py-3 text-[13px] text-dls-text";
 
 export const errorBannerClass =
   "rounded-[20px] border border-red-7/20 bg-red-1/40 px-4 py-3 text-[13px] text-red-11";

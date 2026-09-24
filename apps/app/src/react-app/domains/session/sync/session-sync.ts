@@ -3,6 +3,9 @@ import { create } from "zustand";
 import type { FilePart, Part, PermissionRequest, PermissionV2Request, QuestionRequest, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { getReactQueryClient } from "../../../infra/query-client";
+import { readGatewayUsageScope } from "@/app/lib/gateway-usage-scope";
+import { refreshGatewayUsageAfterCompletion } from "../../cloud/gateway-usage-refresh";
+import { gatewayUsageQueryPrefix } from "../../cloud/gateway-usage-state";
 import { closeSessionBrowserTabs } from "@/app/lib/desktop";
 import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
@@ -106,6 +109,7 @@ type SyncEntry = {
   statusReconcileAbort: AbortController | null;
   runActiveObservedAt: Map<string, number>;
   assistantMessageCompletedAt: Map<string, number>;
+  gatewayUsageRuns: Map<string, { scope: number; key: string; providerId: string | null; completed: boolean }>;
   nativeSequenceBySession: Map<string, { sequence: number; revision: number }>;
   nativeSequenceRevision: number;
   nativeTerminalSessions: Set<string>;
@@ -117,6 +121,18 @@ type DeltaFlushScheduler = (
   lane: DeltaFlushLane,
   run: () => void,
 ) => () => void;
+
+let gatewayUsageRunSequence = 0;
+function newGatewayUsageRun(key: string): { scope: number; key: string; providerId: string | null; completed: boolean } {
+  return { scope: readGatewayUsageScope().generation, key, providerId: null, completed: false };
+}
+
+function gatewayUsageProviderId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  if ("providerID" in value && typeof value.providerID === "string") return value.providerID;
+  if ("model" in value && value.model && typeof value.model === "object" && "providerID" in value.model && typeof value.model.providerID === "string") return value.model.providerID;
+  return null;
+}
 
 const idleStatus: SessionStatus = { type: "idle" };
 const syncs = new Map<string, SyncEntry>();
@@ -243,6 +259,23 @@ let deltaFlushScheduler = defaultDeltaFlushScheduler;
 export function markSessionSnapshotFetchStart(snapshot: OpenworkSessionHistory, startedAt: number) {
   sessionSnapshotFetchStarts.set(snapshot, startedAt);
 }
+
+const historyCredentials = new Map<string | null, number>();
+let nextHistoryCredential = 0;
+
+export function sessionHistoryCredential(token?: string | null) {
+  const key = token ?? null;
+  let credential = historyCredentials.get(key);
+  if (credential === undefined) {
+    credential = ++nextHistoryCredential;
+    historyCredentials.set(key, credential);
+    if (historyCredentials.size > 32) historyCredentials.delete(historyCredentials.keys().next().value ?? null);
+  }
+  return credential;
+}
+
+export const sessionMetadataKey = (input: Pick<SyncOptions, "workspaceId" | "baseUrl" | "openworkToken">, sessionId: string) =>
+  ["react-session-metadata", input.workspaceId, input.baseUrl, sessionHistoryCredential(input.openworkToken), sessionId] as const;
 
 export const snapshotKey = (workspaceId: string, sessionId: string) =>
   ["react-session-snapshot", workspaceId, sessionId] as const;
@@ -491,6 +524,7 @@ function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: st
   entry.retainedSessionTimers.delete(sessionId);
   entry.runActiveObservedAt.delete(sessionId);
   entry.assistantMessageCompletedAt.delete(sessionId);
+  entry.gatewayUsageRuns.delete(sessionId);
   for (const [key, pending] of entry.pendingDeltas) {
     if (pending.sessionId === sessionId) entry.pendingDeltas.delete(key);
   }
@@ -502,14 +536,22 @@ function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: st
     entry.deltaFlushLane = null;
     entry.cancelDeltaFlush = null;
   }
-  // Keep sequence and settlement watermarks: delayed events/reads must not
-  // resurrect a terminal run or a replied interaction after cache release.
-  queryClient.removeQueries({ queryKey: permissionKey(input.workspaceId, sessionId), exact: true });
-  queryClient.removeQueries({ queryKey: questionKey(input.workspaceId, sessionId), exact: true });
-  // Status entries are exempt from TanStack GC (see query-client.ts), so the
-  // tracked-session lifecycle owns their cleanup.
-  queryClient.removeQueries({ queryKey: statusKey(input.workspaceId, sessionId), exact: true });
-  queryClient.removeQueries({ queryKey: todoKey(input.workspaceId, sessionId), exact: true });
+  // A runtime restart can replace the endpoint while retaining the same
+  // workspace/session cache keys. Releasing the old sync must not erase the
+  // replacement sync's mounted or retained conversation.
+  const hasOtherOwner = [...syncs.values()].some((other) =>
+    other !== entry && other.input.workspaceId === input.workspaceId && isTrackedSession(other, sessionId));
+  if (!hasOtherOwner) {
+    // Keep sequence and settlement watermarks: delayed events/reads must not
+    // resurrect a terminal run or a replied interaction after cache release.
+    queryClient.removeQueries({ queryKey: permissionKey(input.workspaceId, sessionId), exact: true });
+    queryClient.removeQueries({ queryKey: questionKey(input.workspaceId, sessionId), exact: true });
+    // These caches are GC-exempt (see query-client.ts). In particular, live
+    // transcripts must retain their part declarations so deltas can land.
+    queryClient.removeQueries({ queryKey: transcriptKey(input.workspaceId, sessionId), exact: true });
+    queryClient.removeQueries({ queryKey: statusKey(input.workspaceId, sessionId), exact: true });
+    queryClient.removeQueries({ queryKey: todoKey(input.workspaceId, sessionId), exact: true });
+  }
   if (entry.refs <= 0 && entry.retainedSessionTimers.size === 0) {
     disposeWorkspaceSync(syncKey(input), entry);
   }
@@ -549,6 +591,7 @@ function disposeWorkspaceSync(key: string, entry: SyncEntry) {
   entry.liveSessionIds.clear();
   entry.runActiveObservedAt.clear();
   entry.assistantMessageCompletedAt.clear();
+  entry.gatewayUsageRuns.clear();
   entry.titleRecovery?.dispose();
   entry.dispose();
   if (syncs.get(key) === entry) syncs.delete(key);
@@ -911,6 +954,8 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (event.type === "session.execution.started") {
       entry.nativeTerminalSessions.delete(sessionId);
       applySessionRunStatus(entry, workspaceId, sessionId, { type: "busy" });
+      const usageRun = entry.gatewayUsageRuns.get(sessionId);
+      if (usageRun) usageRun.providerId = gatewayUsageProviderId(event.properties);
     } else if (event.type === "session.execution.progress") {
       clearSessionRetry(entry, workspaceId, sessionId);
     } else if (event.type === "session.execution.failed") {
@@ -953,6 +998,8 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const title = typeof update.info.title === "string" ? update.info.title : "";
     if (title && !isGeneratedSessionTitle(title)) entry.titleRecovery?.resolve(update.sessionId);
     if (!isTrackedSession(entry, update.sessionId)) return;
+    const revert = (update.info as { revert?: OpenworkSessionSnapshot["session"]["revert"] }).revert;
+    queryClient.setQueryData(sessionMetadataKey(input, update.sessionId), { revert });
     // Keep the cached snapshot's revert cursor in sync with the server. The
     // renderer derives the visible transcript from this cursor, so a revert
     // (or its cleanup on the next prompt) must reach the snapshot cache or
@@ -961,7 +1008,6 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       snapshotKey(workspaceId, update.sessionId),
       (current) => {
         if (!current) return current;
-        const revert = (update.info as { revert?: OpenworkSessionSnapshot["session"]["revert"] }).revert;
         return { ...current, session: { ...current.session, revert } };
       },
     );
@@ -1006,6 +1052,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (sessionId) {
       const sessionError = sessionErrorFromProperties(event.properties);
       const errorPresentation = presentOpencodeSessionError(sessionError);
+      if (errorPresentation.gatewayUsage) void queryClient.invalidateQueries({ queryKey: gatewayUsageQueryPrefix });
       const errorText = describeOpencodeSessionError(sessionError);
       const runStartedAt = takeTaskRunStart(sessionId);
       if (runStartedAt !== null) {
@@ -1164,12 +1211,14 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 
   if (event.type === "message.updated") {
     const props = (event.properties ?? {}) as {
-      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; time?: { created?: number; completed?: number } };
+      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; parentID?: string; time?: { created?: number; completed?: number } };
     };
     const info = props.info;
     if (!info?.id || !info.sessionID || (info.role !== "user" && info.role !== "assistant" && info.role !== "system")) {
       return;
     }
+    const usageRun = entry.gatewayUsageRuns.get(info.sessionID);
+    if (usageRun && info.role === "assistant") usageRun.providerId = gatewayUsageProviderId(info) ?? usageRun.providerId;
     useSessionActivityStore.getState().markMessageRole(workspaceId, info.sessionID, info.id, info.role);
     if (info.role === "assistant" && typeof info.time?.completed === "number") {
       const observedAt = perfNow();
@@ -1188,8 +1237,8 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const next = {
       id: info.id,
       role: info.role,
-      ...(typeof created === "number"
-        ? { metadata: { opencode: { created, ...(typeof completed === "number" ? { completed } : {}) } } }
+      ...(typeof created === "number" || typeof info.parentID === "string"
+        ? { metadata: { opencode: { ...(typeof created === "number" ? { created } : {}), ...(typeof completed === "number" ? { completed } : {}), ...(typeof info.parentID === "string" ? { parentID: info.parentID } : {}) } } }
         : {}),
       parts: [],
     } satisfies UIMessage;
@@ -1198,6 +1247,32 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     );
     useSessionActivityStore.getState().observeTranscript(workspaceId, info.sessionID,
       queryClient.getQueryData<UIMessage[]>(transcriptKey(workspaceId, info.sessionID)) ?? []);
+    return;
+  }
+
+  if (event.type === "session.history.truncated") {
+    const props = event.properties;
+    if (!props || typeof props !== "object" || !("sessionID" in props) || !("messageID" in props)
+      || typeof props.sessionID !== "string" || typeof props.messageID !== "string") return;
+    const { sessionID, messageID } = props;
+    if (!isTrackedSession(entry, sessionID)) return;
+    const fullKey = snapshotKey(workspaceId, sessionID);
+    const latestKey = ["react-session-latest", ...fullKey];
+    void queryClient.cancelQueries({ queryKey: latestKey });
+    void queryClient.cancelQueries({ queryKey: fullKey, exact: true });
+    // Native revert commit permanently deletes this suffix. Ordinary snapshot
+    // merges deliberately preserve cached messages, so clear every history
+    // cache before removing the temporary revert cursor.
+    queryClient.setQueriesData<LatestSessionHistory>({ queryKey: latestKey }, current => current ? {
+      messages: applyRevertCursor(current.messages, messageID),
+      source: applyRevertCursor(current.source, messageID),
+    } : current);
+    queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionID), (current = []) => applyRevertCursor(current, messageID));
+    queryClient.setQueryData<OpenworkSessionHistory>(fullKey, current => {
+      if (!current) return current;
+      const boundary = current.messages.findIndex(message => message.info.id === messageID);
+      return boundary < 0 ? current : { ...current, messages: current.messages.slice(0, boundary) };
+    });
     return;
   }
 
@@ -1490,6 +1565,9 @@ function applySessionRunStatus(
   }
 
   const live = isLiveStatus(status);
+  if (live && (!wasLive || !entry.gatewayUsageRuns.has(sessionId))) {
+    entry.gatewayUsageRuns.set(sessionId, newGatewayUsageRun(`${workspaceId}:${sessionId}:run:${++gatewayUsageRunSequence}`));
+  }
   if (v2 && !live) {
     store.replaceWaitingRequests(workspaceId, sessionId, "permission",
       (getReactQueryClient().getQueryData<PendingPermission[]>(permissionKey(workspaceId, sessionId)) ?? []).map((permission) => permission.id));
@@ -1519,6 +1597,16 @@ function applySessionRunStatus(
     }
     const shouldRecordTerminal = wasLive || runStartedAt !== null;
     const shouldConvergeTerminal = shouldRecordTerminal || options.terminalEvent === true;
+    if (shouldConvergeTerminal && (options.completed ?? !v2)) {
+      const usageRun = entry.gatewayUsageRuns.get(sessionId) ?? newGatewayUsageRun(`${workspaceId}:${sessionId}:terminal:${entry.nativeSequenceBySession.get(sessionId)?.sequence ?? "unknown"}`);
+      entry.gatewayUsageRuns.set(sessionId, usageRun);
+      if (!usageRun.completed) {
+        usageRun.completed = true;
+        if (usageRun.providerId === null || usageRun.providerId.startsWith("ipr_")) {
+          refreshGatewayUsageAfterCompletion(usageRun.scope, usageRun.key);
+        }
+      }
+    }
     if (shouldConvergeTerminal) void reconcileSessionPermissions(entry, sessionId);
     if (tracked && shouldConvergeTerminal) void refreshSessionTodos(workspaceId, sessionId);
     if (tracked && shouldConvergeTerminal) {
@@ -1782,6 +1870,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
     statusReconcileAbort: null,
     runActiveObservedAt: new Map(),
     assistantMessageCompletedAt: new Map(),
+    gatewayUsageRuns: new Map(),
     nativeSequenceBySession: new Map(),
     nativeSequenceRevision: 0,
     nativeTerminalSessions: new Set(),
@@ -1877,6 +1966,15 @@ export function seedSessionStatus(
     undefined,
     { snapshotStartedAt },
   );
+  if (!isLiveStatus(status)) {
+    // Run status is not an interaction snapshot. An idle read must not hide
+    // cached approvals/questions when their independent refresh fails or waits.
+    const activity = useSessionActivityStore.getState();
+    const permissions = queryClient.getQueryData<PendingPermission[]>(permissionKey(workspaceId, sessionId));
+    const questions = queryClient.getQueryData<PendingQuestion[]>(questionKey(workspaceId, sessionId));
+    if (permissions) activity.replaceWaitingRequests(workspaceId, sessionId, "permission", permissions.map((item) => item.id));
+    if (questions) activity.replaceWaitingRequests(workspaceId, sessionId, "question", questions.map((item) => item.id));
+  }
   queryClient.setQueryData(statusKey(workspaceId, sessionId), status);
   if (isLiveStatus(status)) {
     for (const entry of syncs.values()) {
@@ -2118,6 +2216,7 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
     statusReconcileAbort: null,
     runActiveObservedAt: new Map(),
     assistantMessageCompletedAt: new Map(),
+    gatewayUsageRuns: new Map(),
     nativeSequenceBySession: new Map(),
     nativeSequenceRevision: 0,
     nativeTerminalSessions: new Set(),

@@ -277,6 +277,53 @@ describe("session MCP maintenance", () => {
     expect(writeCount).toBe(0);
   });
 
+  test("healthy maintenance refreshes the direct catalog without minting or replacing Cloud config", async () => {
+    const refreshes: string[] = [];
+    let mints = 0;
+    let writes = 0;
+    const ready: OpenworkCloudMcpHealth = { ...cloudHealth(true), appHostAuthorizationReady: true, connectCatalogDiagnostic: "ready" };
+    const client = {
+      baseUrl: "https://worker.openwork.test",
+      listMcp: async () => ({ items: [{ name: "openwork-cloud", config: { type: "remote", enabled: true } }] }),
+      getOpenworkCloudMcpHealth: async () => ready,
+      reconcileOpenworkCloudMcp: async () => { writes += 1; return ready; },
+      refreshOpenworkCloudMcpCatalog: async (workspaceId: string) => { refreshes.push(workspaceId); return ready; },
+    };
+    for (let tick = 0; tick < 2; tick += 1) {
+      expect(await syncCloudControlMcpInBackground({
+        client, workspaceId: WORKSPACE_ID, settings: SETTINGS, now: NOW + tick * 300_000,
+        mintToken: async () => { mints += 1; return MINTED; },
+      })).toMatchObject({ outcome: "ready", status: "synced" });
+    }
+    expect(refreshes).toEqual([WORKSPACE_ID, WORKSPACE_ID]);
+    ready.connectCatalogDiagnostic = "discovery_unavailable";
+    expect(await syncCloudControlMcpInBackground({
+      client, workspaceId: WORKSPACE_ID, settings: SETTINGS,
+      mintToken: async () => { mints += 1; return MINTED; },
+    })).toMatchObject({ outcome: "ready", status: "unchanged", health: { connectCatalogDiagnostic: "discovery_unavailable" } });
+    expect(refreshes).toHaveLength(3);
+    expect(mints).toBe(0);
+    expect(writes).toBe(0);
+  });
+
+  test("a stale healthy maintenance target cannot refresh the direct catalog", async () => {
+    let current = true;
+    let refreshes = 0;
+    const ready: OpenworkCloudMcpHealth = { ...cloudHealth(true), appHostAuthorizationReady: true, connectCatalogDiagnostic: "ready" };
+    const client = {
+      baseUrl: "https://worker.openwork.test",
+      listMcp: async () => ({ items: [{ name: "openwork-cloud", config: { type: "remote", enabled: true } }] }),
+      getOpenworkCloudMcpHealth: async () => { current = false; return ready; },
+      reconcileOpenworkCloudMcp: async () => { throw new Error("Unexpected credential write"); },
+      refreshOpenworkCloudMcpCatalog: async () => { refreshes += 1; return ready; },
+    };
+    await expect(syncCloudControlMcpInBackground({
+      client, workspaceId: WORKSPACE_ID, settings: SETTINGS, isCurrent: () => current,
+      mintToken: async () => { throw new Error("Unexpected token mint"); },
+    })).rejects.toMatchObject({ name: "AbortError" });
+    expect(refreshes).toBe(0);
+  });
+
   test("startup recovers after the original retry burst without a navigation or online event", async () => {
     let elapsed = 0;
     let checks = 0;

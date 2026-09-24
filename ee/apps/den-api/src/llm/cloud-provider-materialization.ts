@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { catalogFastVariants, materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast"
+import { catalogModelVariants, materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast"
 import type { GatewayProviderSummary } from "@openwork/types/den/gateway"
 import { and, asc, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
@@ -408,7 +408,7 @@ function buildModelConfig(model: CloudProviderMaterializationProvider["models"][
     }
   }
 
-  const variants = catalogFastVariants(model.modelConfig, providerNpm)
+  const variants = catalogModelVariants(model.modelConfig, providerNpm)
   if (variants) next.variants = variants
   return next
 }

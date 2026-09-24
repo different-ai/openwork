@@ -87,17 +87,137 @@ the comment's identity. Include all claimed runs in that selection.
 publication remains available when the review app is not configured.
 Visual judging is explicit: `pnpm --dir evals evidence:judge -- --test-run <run>`.
 
-For automatic publication, configure repository variable `OPENWORK_REVIEW_URL`
-and secret `OPENWORK_REVIEW_BLOB_TOKEN`. The separate **Evidence review** workflow
-consumes existing uploaded artifacts after checks finish. It runs trusted
-default-branch code, ignores stale runs, and only publishes when GitHub supplies
-an associated PR and matching source commit. It never runs downloaded code.
-An existing review of that commit takes precedence, preserving the author's
-selected evidence. Explicit publication can update that selection.
-**Do not require Evidence review in branch protection.** Failures remain visible
-in its optional workflow; existing test checks retain their verdicts.
+## PR change proofs
 
-## Contract
+Every `evals/specs/**/*.e2e.test.ts` a PR adds or changes is treated as that
+PR's proof of work. Nothing is required and nothing is blocked: a PR that
+touches no E2E spec produces no proof evidence, and the run says so.
+
+The non-required **PR change proof** workflow selects those specs from the live
+PR file list and runs each one in its own bounded job on the exact PR head, with
+a virtual display so Electron-driving specs can run. Each job uploads one hashed
+artifact. Failed, skipped, unsupported, and cancelled proofs stay visible as
+non-passing executions; they never fall back to packaged smoke or another
+regression.
+
+The credentialed **Evidence review** workflow runs trusted default-branch code.
+It re-reads the current PR file list, derives the same selection, and accepts
+exactly one artifact per selected spec and run attempt. Every test record must
+name that spec and the current PR SHA. Records from all selected specs are
+combined into one report with one section per test. Downloaded PR artifacts are
+data and are never imported or executed. Unrelated evidence, unexpected proof
+artifacts, stale heads or attempts, and missing or duplicate records are refused.
+
+Candidate publisher and review-app checks live in the PR-only
+`Evidence review candidate checks` workflow. It has no publishing secret or
+write permission.
+
+For automatic publication, keep repository variable `OPENWORK_REVIEW_URL`, secret
+`OPENWORK_REVIEW_BLOB_TOKEN`, and the existing Vercel Preview/private Blob
+configuration. No new environment variable is required. Do not require Evidence
+review or PR change proof in branch protection; only the proof-supplied contract
+is part of the existing required aggregate. Human approval remains in GitHub.
+
+To replay publication without rerunning a proof (default branch only):
+
+```sh
+gh workflow run evidence-review.yml --ref dev -f run_id=<pr-change-proof-run-id>
+```
+
+The publish job summary says **published**, **skipped**, **unavailable**, or
+**failed**. Only **published** confirms delivery. A compact sticky PR comment
+links to the private report; no raw trace or public screenshots are used as a
+fallback. Signed-in project members should verify the report commit and sources.
+Anonymous report, JSON, and image requests must redirect to Vercel Authentication.
+
+## Interactive Freestyle previews
+
+The **Freestyle preview prewarm** workflow prepares `app-web`, `acme-web`, and
+`desktop` snapshots for each same-repository PR head targeting `dev`. Configure the repository
+secret `FREESTYLE_API_KEY` as well as the Vercel secret below. Fork and Dependabot
+PRs do not receive this credential. A manual workflow run prepares its selected ref.
+The CI runner checks out the reviewed controller pinned to an immutable commit, never
+the PR source. Only the guest VM fetches and executes PR code, without the provider
+credential. Update the controller pin after reviewing its code and dependencies.
+Each world/commit is serialized in CI; the provider snapshot cache and builder lock
+also deduplicate reruns and concurrent reviewer launches. Existing snapshots are
+reused until their seven-day expiry. Prewarming does not create a shared reviewer VM:
+each click still clones separately. ACME is fully seeded, its service chain verified, and browser entry points compiled
+before its memory snapshot is captured. Clones resume those processes; launch only
+assigns public access, renews expired demo sessions if needed, and checks readiness.
+
+After prewarming, CI measures two real ACME launches and verifies restored processes,
+independent databases/access, sign-in, and a fresh AI Gateway reply. The prewarm job
+summary and `freestyle-launch-proof` artifact contain sanitized measurements. These
+measure controller launch through first app HTML readiness, **not** reviewer HTTP overhead
+or browser rendering. The ACME selected-proof report verifies the world recipe;
+it does not benchmark Freestyle. Do not quote a direct launch timing as click-to-usable.
+The OpenWork web prewarm job also verifies a fresh clone's app HTML and engine,
+with separate ready-link and repeat-page timings in `freestyle-app-launch-proof`.
+Fresh clones write their private access file and wait for the first authorized
+app HTML response before returning a link, so an early gateway response cannot
+hide a still-starting app. ACME snapshots older than five days renew their demo session
+before use so a new sandbox does not outlive the session it inherited.
+
+Set `FREESTYLE_API_KEY` in the protected Vercel Preview environment. Every report
+offers **Launch in Freestyle**. The server reads the commit from the stored report;
+the browser cannot select another revision. On the first launch it checks out that
+exact public commit in an isolated builder, installs OpenWork, starts the web app
+and local engine, and saves a private running snapshot. Later launches clone it.
+Each click gets a new VM, a new hostname, and a new access token, including repeat
+clicks from the same reviewer. **Open sandbox** opens the resulting app.
+
+The snapshot contains an empty local workspace and no API keys, production login,
+or connected accounts. Models can be connected inside each disposable sandbox.
+The first build may take several minutes. Failed builds and launches clean up
+their VMs; provider-enforced TTLs also bound interrupted operations. Preview VMs
+expire after two hours, and unused snapshots expire after seven days. Snapshot
+slugs and VM metadata are durable state in Freestyle, shared across app instances;
+a unique builder slug coordinates concurrent first launches. Public routes only
+expose the access-controlled gateway; the app and engine listen on loopback.
+
+Prewarm a commit before reviewers arrive:
+
+```sh
+node --env-file=.env.freestyle.local scripts/prepare-freestyle-preview.ts <full-pushed-sha>
+```
+
+The same provider is available in the world CLI (export `FREESTYLE_API_KEY` in
+the invoking shell, or use Node's `--env-file` option):
+
+```sh
+pnpm world up app-web --place freestyle --detach --timeout 800000 -- --ref <full-pushed-sha>
+pnpm world outputs app-web --reveal
+pnpm world down app-web
+```
+
+World teardown deletes its owned VM, with a resource ledger for interrupted
+teardown. The access URL is a secret world output. The existing world CLI supports
+`app-web` and the co-located `acme-web` demo; other desktop recipes retain their
+existing placements.
+
+In the review page, **Desktop only (signed out)** selects the distinct `desktop`
+Freestyle snapshot: Electron, its local engine and internal renderer, XFCE, and
+noVNC. It starts on a fresh profile without Den, MySQL, Redis, AI Gateway, demo
+accounts, or a separate web preview. OpenWork's normal empty local workspace and
+free starter model are retained, with no conversations or provisioned providers.
+Only the private desktop viewer is published; no demo sign-in details are returned. Its dedicated
+CI job verifies two signed-out clones, viewer access and cross-clone isolation,
+then deletes the test clones (`freestyle-desktop-launch-proof`).
+
+**ACME desktop (full stack)** retains the signed-in demo alongside ACME web.
+**Open desktop** streams the actual Electron app, never silently falls back to the
+web preview, and remains bound to the world that was launched. Switching choices
+clears the previous world's displayed links, not its VM. All choices keep the
+same two-hour expiry and access checks.
+
+Validate with `pnpm --filter @openwork/freestyle test`, the world package tests,
+and the reviewer production build. UI follows DESIGN.md P3, P4, P10, P11, S1,
+C1, C2, and C6: the launch stays in place, failures are actionable, and snapshot
+details are collapsed. Review has no shared button component, so it uses a native
+keyboard-accessible button (P5).
+
+## Report data contract
 
 `packages/review/src/schema.ts` is the runtime schema and TypeScript source of
 truth. Sections refer to evidence by stable IDs, allowing the same evidence to
@@ -110,3 +230,41 @@ Status describes selected evidence: a failed assertion or visual judgment is
 Failed; skipped/unknown tests, missing assertion evidence, pending judgments,
 and declared gaps are Incomplete. An image-only document is Reference. Human
 approval and discussion stay in GitHub.
+
+Freestyle previews use the verified `preview.openwork.software` wildcard: `*.preview` CNAME to `beta-web.freestyle.sh`, `_acme-challenge.preview` NS to `beta-dns.freestyle.sh`, and Freestyle ownership verification. Keep its wildcard certificate active. This avoids the permanent free `style.dev` hostname claim limit; TLS routes still expire with each VM.
+
+## Developer review workspace
+
+Evidence is the default surface. The compact header keeps the selected-evidence
+verdict and commit visible; All, Failed, and Incomplete filter sections without
+changing the report verdict or hiding declared coverage gaps. Next failure returns
+to all sections and focuses the next failed section. Narrow screens retain a
+native section selector.
+
+Screenshot links open a native modal with fit/100% zoom, previous/next arrow-key
+navigation, source assertions, and visual judgments. Image hashes are shareable;
+Escape closes the viewer. Original records and traces remain directly linked.
+
+Show sandbox opens an optional panel without moving the report header. The panel
+preserves a launched session when hidden or when another environment is selected;
+the session's label and links always describe the environment that actually
+launched. Credentials start masked. Expiration removes access links and connection
+details and offers Launch again. Copy feedback identifies the copied field.
+
+The changed UI follows DESIGN.md P1, P3, P6, P7, P11, S1, S6, C1, C5, C6,
+V1 and V2. Native buttons/selects/details and a native modal provide keyboard and
+focus behavior (P5); colors reuse the desktop Radix palette. Browser proofs emit
+real-size screenshots for P10:
+
+```sh
+pnpm --filter @openwork/review-app build
+pnpm evals:e2e specs/review-workspace.e2e.test.ts --local
+pnpm evals:e2e specs/review-sandbox.e2e.test.ts --local
+pnpm evals:e2e specs/freestyle-review.e2e.test.ts --local
+```
+
+The sandbox UI proof uses a local HTTP response fixture that intercepts every
+mutation. It verifies state transitions without a provider credential or VM;
+it is not evidence that a live Freestyle launch succeeds. The ordinary review
+fixture remains disconnected and continues testing the real launch route's
+missing-connection and cross-origin behavior.

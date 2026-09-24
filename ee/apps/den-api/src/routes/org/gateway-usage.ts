@@ -21,7 +21,14 @@ const querySchema = z.object({
   days: z.string().max(3).regex(/^[1-9]\d*$/).default("31").transform(Number).pipe(z.number().int().min(1).max(366)),
   filterIds: z.string().max(6500).default("").transform((value) => value === "" ? [] : value.split(",").map((id) => id.trim()))
     .pipe(z.array(z.string().min(1).max(64)).max(100)),
+  memberId: z.string().min(1).max(64).optional(),
 }).strict().superRefine((query, ctx) => {
+  if (query.memberId !== undefined && !isDenTypeId("member", query.memberId)) {
+    ctx.addIssue({ code: "custom", path: ["memberId"], message: "memberId must be an organization member ID." })
+  }
+  if (query.memberId !== undefined && query.groupBy === "team") {
+    ctx.addIssue({ code: "custom", path: ["memberId"], message: "memberId cannot be combined with team grouping." })
+  }
   for (const id of query.filterIds) {
     const valid = query.groupBy === "model" ? isDenTypeId("inferenceProvider", id)
       : query.groupBy === "person" ? isDenTypeId("member", id)
@@ -195,6 +202,7 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
   }).from(raw).where(and(
     eq(raw.organization_id, organizationId), eq(raw.route, "org_provider"), isNotNull(raw.completed_at),
     sql`${raw.started_at} >= from_unixtime(${fromSeconds}) and ${raw.started_at} < from_unixtime(${endSeconds})`,
+    query.memberId === undefined ? undefined : sql`${raw.org_membership_id} = ${query.memberId}`,
   )).groupBy(rawDimensions.date, rawDimensions.seriesId, rawDimensions.filterId).unionAll(db.select({
     ...rollupDimensions,
     requestCount: sql<string>`sum(${rollup.request_count})`.as("request_count"),
@@ -210,6 +218,7 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
   }).from(rollup).where(and(
     eq(rollup.organization_id, organizationId), eq(rollup.route, "org_provider"), inArray(rollup.granularity, ["hour", "day"]),
     sql`${rollup.bucket_start} >= from_unixtime(${fromSeconds}) and ${rollup.bucket_start} < from_unixtime(${endSeconds})`,
+    query.memberId === undefined ? undefined : sql`${rollup.org_membership_id} = ${query.memberId}`,
   )).groupBy(rollupDimensions.date, rollupDimensions.seriesId, rollupDimensions.filterId)).as("usage_sources")
 
   const groupedUsage = db.select({

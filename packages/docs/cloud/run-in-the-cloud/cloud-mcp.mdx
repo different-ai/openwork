@@ -171,7 +171,8 @@ OpenWork Connect is a remote Streamable HTTP MCP server with OAuth:
 - Clients discover OAuth metadata with RFC9728 protected-resource discovery.
 - The authorization server and browser sign-in origin is `https://app.openworklabs.com/api/auth`.
 - OAuth authorize and token requests must include exactly one `resource` value: `https://api.openworklabs.com/mcp/agent`.
-- Clients that need registration use dynamic client registration as a fallback during discovery.
+- The authorization server advertises `client_id_metadata_document_supported: true`. A client can identify itself with the HTTPS URL of a Client ID Metadata Document it hosts (MCP authorization spec); the document must include `client_id` equal to that URL, `client_name`, and `redirect_uris`, and use `token_endpoint_auth_method: "none"`. Nothing needs to be registered ahead of time. A loopback redirect listed in the document (`http://localhost/callback` or `http://127.0.0.1/callback`) is accepted on any port, as RFC 8252 allows for native clients.
+- Clients that do not support Client ID Metadata Documents fall back to dynamic client registration during discovery.
 - PKCE is required for public/dynamic clients, and only the `S256` code challenge method is supported.
 - Redirect URIs must be HTTPS callbacks or HTTP loopback callbacks such as `http://127.0.0.1:<port>/callback`. Private-use callback schemes are not accepted for public OAuth clients, except exact allowlisted callbacks for known native clients — currently Cursor Desktop's `cursor://anysphere.cursor-mcp/oauth/callback` — with PKCE S256 enforced.
 
@@ -218,7 +219,7 @@ does not bypass connection grants or organization tool policy.
 
 ## MCP Apps
 
-Some gateway results come back as MCP Apps: interactive UI rendered from a tool result instead of plain text, such as a created-skill confirmation card or a workflow result view. These use the standard [MCP Apps extension](https://modelcontextprotocol.io/docs/extensions/apps) (`ui://` resources declared on tools). Rendering requires a compatible host and its advertised capabilities; clients without App support receive readable fallback content.
+Some gateway results come back as MCP Apps: interactive UI rendered from a tool result instead of plain text, such as a connection sign-in request or a workflow result view. Skill creation and sharing return text and structured results without a confirmation App. These use the standard [MCP Apps extension](https://modelcontextprotocol.io/docs/extensions/apps) (`ui://` resources declared on tools). Rendering requires a compatible host and its advertised capabilities; clients without App support receive readable fallback content.
 
 To put an MCP App on a team dashboard, see [Dashboards](/cloud/share-with-your-team/dashboards).
 
@@ -226,11 +227,7 @@ OpenWork's renderer supports a [documented subset of the stable 2026-01-26 host 
 
 The gateway preserves provider `structuredContent` rather than adding fields to it. OpenWork launch and helper information lives in namespaced `_meta` keys (`openwork/mcpApp`, `openwork/serverTools`). Advisory schema warnings use `openwork/schemaGuidance` in `_meta` and a separate model-visible text block; private provider `_meta` is not copied into that text. See [Provider data and gateway additions](/cloud/share-with-your-team/dashboards#provider-data-and-gateway-additions).
 
-<Frame>
-  ![The skill-created MCP App rendering in the OpenWork desktop app after a create-skill request](/images/skill-created-mcp-app-card.png)
-</Frame>
-
-MCP Apps from third-party providers — apps shipped by an MCP server your organization added as a connector — currently render in the OpenWork desktop app, where connectors are enabled as a native MCP Apps preview per organization. Rendering third-party apps in external clients requires exposing that connector as a full MCP server, an option that is planned but not available yet.
+MCP Apps from third-party providers render in OpenWork through its private App host. For an external MCP Apps-capable client, enable direct exposure and add the connection's own MCP URL from **Your Connections → Use in another app**. That endpoint exposes resources bound to permitted model-visible tools; it does not expose arbitrary resources or app-only helper tools. Initial App loading and interactive callback support are distinct. See [Use a connection in another MCP client](/cloud/share-with-your-team/shared-mcp-connections#use-a-connection-in-another-mcp-client).
 
 ## Troubleshooting
 

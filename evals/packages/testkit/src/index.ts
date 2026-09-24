@@ -27,3 +27,5 @@ export * from "./state.ts";
 
 export { observeTranscript, readTranscriptMessages } from "./transcript-observer.ts";
 export { readSidebarOverflow } from "@openwork/behaviors";
+export * from "./verification.ts";
+export * from "./verification-jev.ts";

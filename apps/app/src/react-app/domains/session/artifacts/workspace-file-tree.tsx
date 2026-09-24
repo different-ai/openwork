@@ -169,7 +169,7 @@ export function WorkspaceFileTree({ client, workspaceId, workspaceName, selected
         </Button>
       </div>
       {query.isError ? (
-        <p className="p-3 text-xs text-destructive">Could not load workspace files.</p>
+        <p role="alert" className="p-3 text-xs text-dls-secondary">Could not load workspace files. Use Refresh to try again.</p>
       ) : (
         <FileTree
           model={model}

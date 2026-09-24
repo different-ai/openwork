@@ -415,9 +415,12 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     const existing = source === "refresh"
       ? (this.loadedCredential ?? await this.persistence.credentials.load(this.context()))
       : undefined
-    const merged = source === "refresh" && !validated.refresh_token && existing?.tokens.refresh_token
-      ? { ...validated, refresh_token: existing.tokens.refresh_token }
+    const scoped = source === "refresh" && validated.scope === undefined && existing?.tokens.scope !== undefined
+      ? { ...validated, scope: existing.tokens.scope }
       : validated
+    const merged = source === "refresh" && !scoped.refresh_token && existing?.tokens.refresh_token
+      ? { ...scoped, refresh_token: existing.tokens.refresh_token }
+      : scoped
     const expiresAt = tokenExpiration(merged, this.clock.now())
     if (authorization) {
       this.pendingAuthorizationCodeCredential = {

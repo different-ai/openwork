@@ -89,7 +89,20 @@ const test = spec.world(async (seed) => {
       requests: () => requests.slice(),
       catalog: () => request(`${path}/list`),
       resolve: () => request(`${path}/resolve`, { projectedToolName: "fixture_show" }),
-      call: () => request(`${path}/call`, { serverName: "fixture", name: "show", resourceUri: "ui://fixture/app" }),
+      async call() {
+        const resolved = await request(`${path}/resolve`, {
+          projectedToolName: "fixture_show", context: { sessionId: null, readOnly: false },
+        });
+        expect(resolved.status).toBe(200);
+        if (!isRecord(resolved.body) || !isRecord(resolved.body.app)
+          || typeof resolved.body.app.launchId !== "string" || !resolved.body.app.launchId) {
+          throw new Error("Fixture App launch missing");
+        }
+        // Count only the action's transport attempts, not launch setup.
+        requests.length = 0;
+        return request(`${path}/call`, { serverName: "fixture", name: "show", resourceUri: "ui://fixture/app",
+          launchId: resolved.body.app.launchId, sessionId: null });
+      },
       [Symbol.asyncDispose]: dispose,
     };
   } catch (error) { await dispose(); throw error; }
@@ -111,7 +124,22 @@ test("MCP App transport negotiates legacy only on initialize HTTP 400/404/405 an
     expect(world.requests()).toEqual([{ http: "POST", rpc: "initialize" }, { http: "GET" }]);
   }
   evidence.recordAssertionEvidence("Legacy negotiation and safe dual diagnostics", "Initialize HTTP 400/404/405 each resolved a real App through SSE; failed GET retained both statuses without echoed credentials or provider bodies.", true);
-  for (const status of [401, 403, 408, 429, 500, 502, 503]) {
+  for (const { status, code, message } of [
+    { status: 401, code: "mcp_auth_required", message: "This App's connection needs authentication. Check its sign-in in connection settings before reopening the App." },
+    { status: 403, code: "mcp_access_denied", message: "Access to this App's connection was denied. Ask your connection administrator to review your access before reopening the App." },
+  ]) {
+    world.set(status);
+    const catalog = await world.catalog();
+    expect(catalog).toMatchObject({ status: 200, body: { servers: [{ reachable: false, apps: [], error: message }] } });
+    expect(JSON.stringify(catalog)).not.toContain("fixture-private-credential");
+    expect(JSON.stringify(catalog)).not.toContain("untrusted-provider-body");
+    expect(world.requests()).toEqual([{ http: "POST", rpc: "initialize" }]);
+    world.set(status);
+    const resolved = await world.resolve();
+    expect(resolved).toEqual({ status, body: { code, message } });
+    expect(world.requests()).toEqual([{ http: "POST", rpc: "initialize" }]);
+  }
+  for (const status of [408, 429, 500, 502, 503]) {
     world.set(status);
     expect(await world.catalog()).toMatchObject({ status: 200, body: { servers: [{ reachable: false, apps: [], error: `Streamable HTTP POST: HTTP ${status}` }] } });
     expect(world.requests()).toEqual([{ http: "POST", rpc: "initialize" }]);

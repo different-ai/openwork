@@ -55,7 +55,7 @@ tool hooks, so their entry point must also be guarded.
 
 ## Verification
 
-Extend `evals/specs/desktop-policy-restricted-mode.e2e.test.ts`: one Den admin,
+Cover this with a desktop policy e2e spec built on `evals/worlds/desktop-policies.ts`: one Den admin,
 one team member, and a second member outside that team, each in an isolated real
 desktop. The admin saves in Den. The test checks persisted and effective policy,
 UI restrictions, direct API bypass attempts, browser requests and uploads, and

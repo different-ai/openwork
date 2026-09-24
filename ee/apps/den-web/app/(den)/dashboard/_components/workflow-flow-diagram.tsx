@@ -181,7 +181,7 @@ function runStates(rows: FlowRow[], run: WorkflowDiagramRun | null | undefined):
 }
 
 function cardStyle(kind: WorkflowGraphNode["kind"]): string {
-  if (kind === "branch") return "border-amber-200 bg-amber-50/40";
+  if (kind === "branch") return "border-[var(--dls-border)] bg-[var(--dls-hover)]";
   if (kind === "return") return "border-emerald-200 bg-emerald-50/40";
   if (kind === "input") return "border-blue-200 bg-blue-50/40";
   return "border-gray-200 bg-white";
@@ -375,7 +375,7 @@ export function WorkflowFlowDiagram({
   return (
     <div className="mt-4" data-testid="den-workflow-flow-diagram">
       {run ? <p className="mb-3 text-[11px] text-gray-500">Last run: {runDate(run.finishedAt)} · {run.status === "succeeded" ? "Succeeded" : "Failed"}</p> : null}
-      {graph.parseError ? <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-[12px] text-amber-700">We couldn&apos;t map every step of this version. The code still runs; only the picture is incomplete.{technical ? <p className="mt-1 font-mono text-[10px]">{graph.parseError}</p> : null}</div> : null}
+      {graph.parseError ? <div className="mb-3 rounded-xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-3 py-2 text-[12px] text-[var(--dls-text-primary)]">We couldn&apos;t map every step of this version. The code still runs; only the picture is incomplete.{technical ? <p className="mt-1 font-mono text-[10px]">{graph.parseError}</p> : null}</div> : null}
       {rows.length === 0 && !graph.parseError ? <p className="text-[12px] text-gray-400">No steps are available to show yet.</p> : null}
       <div className="flex flex-col items-center">
         {rows.map((row, index) => {

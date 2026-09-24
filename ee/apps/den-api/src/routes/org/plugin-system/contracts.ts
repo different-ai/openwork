@@ -243,7 +243,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
   },
   createConfigObject: {
     audience: "member",
-    description: "Create a cloud or imported config object and optionally attach it to plugins.",
+    description: "Create a cloud or imported skill, agent, or other config object; optionally add the new component to existing plugins using pluginIds.",
     method: "POST",
     path: pluginArchRoutePaths.configObjects,
     request: { body: configObjectCreateSchema },

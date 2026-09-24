@@ -1,12 +1,13 @@
-# web.openworklabs.com engine channel:
-# Per-push snapshot builds from dev HEAD stay; the production pin moves only on
-# the nightly backstop, manual dispatch, or releases after the 2026-08-15
-# merge-burst update treadmill recycled every running cloud workspace 3 times.
-# DAYTONA_PIN_CHANNEL resolves pin ping-pong: release pinning defers to the dev channel.
-# Set DAYTONA_PIN_CHANNEL=release to stop this pipeline; the next release re-pins.
-# Sandboxes roll forward via the existing stopped+stale recycle.
+# web.openworklabs.com runtime channel:
+# Every push builds a snapshot from dev HEAD. The snapshot is not production until
+# the scheduled/manual promotion updates the production pin and redeploys Den API.
+# This promotion is intentionally separate because rapid merges previously recycled
+# every running cloud workspace repeatedly.
+# DAYTONA_PIN_CHANNEL resolves pin ping-pong: release pinning defers to this channel.
+# Set DAYTONA_PIN_CHANNEL=release to stop this channel; the next release re-pins.
+# Existing sandboxes roll forward via the stopped+stale recycle.
 
-name: Dev Daytona Snapshot
+name: "Web Runtime: Build and Promote"
 
 on:
   push:
@@ -31,7 +32,7 @@ concurrency:
 
 jobs:
   publish-daytona-snapshot:
-    name: Build and Push Dev Daytona Snapshot
+    name: Build Web Runtime Snapshot
     if: github.repository == 'different-ai/openwork'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
@@ -168,7 +169,7 @@ jobs:
           sparse-checkout: scripts/update-daytona-snapshot-pin.mjs
           sparse-checkout-cone-mode: false
 
-      - name: Update production snapshot pin
+      - name: Promote snapshot to web production pin
         id: pin
         if: steps.channel.outputs.enabled == 'true' && github.event_name != 'push'
         shell: bash
@@ -208,11 +209,11 @@ jobs:
           esac
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
 
-      - name: Redeploy den-api so the new pin takes effect
+      - name: Redeploy Den API to apply production pin
         # Render does not redeploy services when an env group value changes, so
-        # den-api keeps serving the previous DAYTONA_SNAPSHOT until it redeploys.
-        # Without this the pin moves but `latestVersion` stays stale and no
-        # sandbox ever recycles - observed for real on v0.18.11.
+        # Den API keeps serving the previous DAYTONA_SNAPSHOT until it redeploys.
+        # Without this the production pin moves but `latestVersion` stays stale
+        # and no sandbox ever recycles.
         # Gated on the pin actually moving, so unchanged re-runs and the
         # nightly backstop no longer redeploy production for a no-op.
         if: steps.channel.outputs.enabled == 'true' && github.event_name != 'push' && steps.pin.outcome == 'success' && steps.pin.outputs.changed == 'true'

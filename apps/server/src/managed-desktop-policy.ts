@@ -1,6 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { desktopConfigSchema, type DesktopConfig } from "@openwork/types/den/desktop-policies-runtime";
+import { DESKTOP_POLICY_ENFORCEMENT_ENABLED, desktopConfigSchema, type DesktopConfig } from "@openwork/types/den/desktop-policies-runtime";
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
 import type { ServerConfig } from "./types.js";
 import { isRecord } from "./workspace-kv-store.js";
@@ -64,6 +64,7 @@ class ManagedDesktopPolicy {
   readonly evaluationToken = randomBytes(32).toString("base64url");
   private session: CloudProviderDenSession | null = null;
   private generation = 0;
+  private installed: { generation: number; policy: DesktopConfig | null } | undefined;
   private fetching: { generation: number; promise: Promise<DesktopConfig | null> } | undefined;
   onChange: (() => void) | undefined;
   constructor(private readonly config: ServerConfig) {}
@@ -80,6 +81,7 @@ class ManagedDesktopPolicy {
     const current = this.session;
     if (!current || current.baseUrl !== session.baseUrl || current.token !== session.token || current.orgId !== session.orgId) {
       this.generation++;
+      this.installed = undefined;
     }
     this.session = session;
     await this.current();
@@ -87,9 +89,10 @@ class ManagedDesktopPolicy {
   async clearSession(): Promise<void> {
     this.session = null;
     this.generation++;
-    // Keep the last managed restrictions until a fresh identity is verified.
+    this.installed = undefined;
   }
   current(): Promise<DesktopConfig | null> {
+    if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) return Promise.resolve(null);
     if (this.fetching?.generation === this.generation) return this.fetching.promise;
     const generation = this.generation;
     const promise = this.fetchCurrent();
@@ -151,12 +154,14 @@ class ManagedDesktopPolicy {
   }
   private async fetchCurrent(): Promise<DesktopConfig | null> {
     const session = this.session;
+    const generation = this.generation;
     if (!session) {
-      const persisted = await readGlobalRuntimeOpencodeConfig(this.config);
-      if (persisted.managedPolicy) throw new ApiError(403, "policy_unavailable", "Sign in to verify your organization's policy before continuing.");
+      await readGlobalRuntimeOpencodeConfig(this.config);
+      // A local-only read cannot grant access after a managed identity arrives.
+      this.identityChanged(generation);
+      // A cached policy is not device enrollment: enforcement follows the session.
       return null;
     }
-    const generation = this.generation;
     let policy: DesktopConfig;
     try {
       policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation));
@@ -167,18 +172,31 @@ class ManagedDesktopPolicy {
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
     const result = await writeManagedDesktopPolicy(this.config, policy);
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
+    this.installed = { generation, policy };
     if (result.changed) this.onChange?.();
     return policy;
   }
   async assertRequest(request: Request, path: string, engine = false): Promise<void> {
+    if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) return;
+    const generation = this.generation;
+    try { await this.assertInstalledRequest(request, path, engine, generation); }
+    finally { this.identityChanged(generation); }
+  }
+  private async assertInstalledRequest(request: Request, path: string, engine: boolean, generation: number): Promise<void> {
+    const assert = async (action: ManagedPolicyAction, input: Record<string, unknown> = {}) => {
+      this.identityChanged(generation);
+      try { await this.assert(action, input); }
+      finally { this.identityChanged(generation); }
+    };
     const decoded = decodeURIComponent(path);
     const terminal = engine && /\/(?:shell|pty|persistent-pty|terminal)(?:\/|$)/.test(decoded);
     if (["GET", "HEAD", "OPTIONS"].includes(request.method) && !terminal) return;
     if (!engine) {
-      for (const action of policyRequestActions(request.method, decoded)) await this.assert(action);
+      for (const action of policyRequestActions(request.method, decoded)) await assert(action);
       if (/\/files\/(?:raw|content|sessions\/[^/]+\/ops)$/.test(decoded)) {
         const body: unknown = await request.clone().json();
-        if (typeof body === "object" && body !== null) await this.assert("file_write", Object.fromEntries(Object.entries(body)));
+        this.identityChanged(generation);
+        if (typeof body === "object" && body !== null) await assert("file_write", Object.fromEntries(Object.entries(body)));
       }
       return;
     }
@@ -188,6 +206,7 @@ class ManagedDesktopPolicy {
       // The HTTP adapter exposes a stream even for a bodyless POST (session
       // creation and instance disposal both use one in the legacy engine).
       const text = await request.clone().text();
+      this.identityChanged(generation);
       if (text.trim()) {
         let value: unknown;
         try { value = JSON.parse(text); }
@@ -195,33 +214,36 @@ class ManagedDesktopPolicy {
         if (typeof value === "object" && value !== null && !Array.isArray(value)) input = Object.fromEntries(Object.entries(value));
       }
     }
-    await this.assert("sync");
-    if (terminal) await this.assert(/\/shell(?:\/|$)/.test(decoded) ? "shell" : "terminal", input);
+    await assert("sync");
+    if (terminal) await assert(/\/shell(?:\/|$)/.test(decoded) ? "shell" : "terminal", input);
     // Command templates can run shell substitutions before tool hooks fire.
-    if (/\/session\/[^/]+\/command(?:\/|$)/.test(enginePath)) await this.assert("saved_command");
-    if (/^\/(?:config|global\/config)(?:\/|$)/.test(enginePath)) await this.assert("engine_config");
-    if (/^\/(?:mcp|plugins?|skills?|agents?)(?:\/|$)/.test(enginePath)) await this.assert("extensions");
+    if (/\/session\/[^/]+\/command(?:\/|$)/.test(enginePath)) await assert("saved_command");
+    if (/^\/(?:config|global\/config)(?:\/|$)/.test(enginePath)) await assert("engine_config");
+    if (/^\/(?:mcp|plugins?|skills?|agents?)(?:\/|$)/.test(enginePath)) await assert("extensions");
     if (/^\/(?:auth|providers?)(?:\/|$)/.test(enginePath)) {
       const providerID = enginePath.match(/^\/auth\/([^/]+)(?:\/|$)/)?.[1]
         ?? enginePath.match(/^\/provider\/([^/]+)\/oauth\/(?:authorize|callback)$/)?.[1];
-      await this.assert("provider", providerID ? { providerID } : {});
+      await assert("provider", providerID ? { providerID } : {});
     }
     const model = typeof input.model === "object" && input.model !== null ? Object.fromEntries(Object.entries(input.model)) : input;
-    if ("providerID" in model) await this.assert("model", model);
+    if ("providerID" in model) await assert("model", model);
   }
   async assert(action: ManagedPolicyAction, input: Record<string, unknown> = {}): Promise<void> {
-    const policy = await this.current();
+    if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) return;
+    const generation = this.generation;
+    const policy = await this.installedPolicy(generation);
+    this.identityChanged(generation);
     if (!policy) return;
     const denial = policyDenial(policy, action, input);
     if (denial) throw new ApiError(403, "organization_policy_denied", denial);
     if (action === "model" && policy.allowCustomProviders === false && input.providerID !== "opencode") {
       const runtime = await readGlobalRuntimeOpencodeConfig(this.config);
+      this.identityChanged(generation);
       const providerID = typeof input.providerID === "string" ? input.providerID : "";
       const modelID = typeof input.id === "string" ? input.id : typeof input.modelID === "string" ? input.modelID : "";
       const provider = runtimeProviderMap(runtime)[providerID];
       const models = provider?.models;
       const session = this.session;
-      const generation = this.generation;
       if (!session) throw new ApiError(403, "policy_unavailable", "Sign in to verify assigned models.");
       let assigned = false;
       try {
@@ -251,5 +273,13 @@ class ManagedDesktopPolicy {
         throw new ApiError(403, "organization_model_denied", "Choose an AI model assigned by your organization.");
       }
     }
+  }
+  private async installedPolicy(generation: number): Promise<DesktopConfig | null> {
+    if (this.installed?.generation === generation) return this.installed.policy;
+    if (this.session) throw new ApiError(403, "policy_unavailable", "Your organization's policy could not be verified. Try again when connected.");
+    const persisted = await readGlobalRuntimeOpencodeConfig(this.config);
+    this.identityChanged(generation);
+    if (persisted.managedPolicy) throw new ApiError(403, "policy_unavailable", "Sign in to verify your organization's policy before continuing.");
+    return null;
   }
 }

@@ -380,8 +380,9 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     jsonValidator(configObjectCreateSchema),
     describeRoute({
       tags: ["Config Objects"],
-      summary: "Create config object",
-      description: "Creates a new private config object and initial immutable version.",
+      summary: "Create a skill, agent, or other config object; optionally add it to an existing plugin",
+      description: "Creates a config object and initial immutable version. Pass pluginIds to add the new component to existing plugins without creating a duplicate plugin; omit pluginIds for a private standalone object. Skills require complete SKILL.md in input.rawSourceText.",
+      ...{ "x-mcp-search-aliases": ["add skill to existing plugin", "create skill in plugin", "add component to plugin"] },
       responses: {
         201: jsonResponse("Config object created successfully.", configObjectMutationResponseSchema),
         400: jsonResponse("The config object creation request was invalid.", invalidRequestSchema),
@@ -479,28 +480,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       }
     })
 
-  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.configObjectVersion,
-    paramValidator(configObjectVersionParamsSchema),
-    describeRoute({
-      tags: ["Config Objects"],
-      summary: "Get config object version",
-      description: "Returns one immutable config object version.",
-      responses: {
-        200: jsonResponse("Config object version returned successfully.", configObjectVersionDetailResponseSchema),
-        400: jsonResponse("The version path parameters were invalid.", invalidRequestSchema),
-        401: jsonResponse("The caller must be signed in to view config object versions.", unauthorizedSchema),
-        404: jsonResponse("The config object version could not be found.", notFoundSchema),
-      },
-    }),
-    async (c: OrgContext) => {
-      try {
-        const params = validParam<any>(c)
-        return c.json({ item: await getConfigObjectVersion({ configObjectId: params.configObjectId, context: actorContext(c), versionId: params.versionId }) })
-      } catch (error) {
-        return routeErrorResponse(c, error)
-      }
-    })
-
+  // Registered before :versionId so "latest" is not validated as a version id.
   withPluginArchOrgContext(app, "get", pluginArchRoutePaths.configObjectLatestVersion,
     paramValidator(configObjectParamsSchema),
     describeRoute({
@@ -518,6 +498,28 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       try {
         const params = validParam<any>(c)
         return c.json({ item: await getLatestConfigObjectVersion({ configObjectId: params.configObjectId, context: actorContext(c) }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.configObjectVersion,
+    paramValidator(configObjectVersionParamsSchema),
+    describeRoute({
+      tags: ["Config Objects"],
+      summary: "Get config object version",
+      description: "Returns one immutable config object version.",
+      responses: {
+        200: jsonResponse("Config object version returned successfully.", configObjectVersionDetailResponseSchema),
+        400: jsonResponse("The version path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to view config object versions.", unauthorizedSchema),
+        404: jsonResponse("The config object version could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        return c.json({ item: await getConfigObjectVersion({ configObjectId: params.configObjectId, context: actorContext(c), versionId: params.versionId }) })
       } catch (error) {
         return routeErrorResponse(c, error)
       }
@@ -705,7 +707,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     }),
     async (c: OrgContext) => {
       const query = validQuery<any>(c)
-      return c.json(await listPlugins({ context: actorContext(c), cursor: query.cursor, limit: query.limit, q: query.q, status: query.status }))
+      return c.json(await listPlugins({ context: actorContext(c), cursor: query.cursor, includeAccess: query.includeAccess, includeTotal: query.includeTotal, includeFacets: query.includeFacets, limit: query.limit, q: query.q, name: query.name, status: query.status, teamId: query.teamId, memberId: query.memberId, ownerId: query.ownerId }))
     })
 
   withPluginArchOrgContext(app, "post", pluginArchRoutePaths.plugins,
@@ -713,7 +715,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     describeRoute({
       tags: ["Plugins"],
       summary: "Create plugin",
-      description: "Creates a plugin and can also create components, share org-wide, and publish to a marketplace in one request. An mcp component may carry the same connection setup as the Connections page (authentication, credential mode, API key, OAuth app), or instead reference an existing organization connection by connectionId, so its server is configured immediately; owners and admins only.",
+      description: "Creates a plugin and can also create components, share org-wide, and publish to a marketplace in one request. An mcp component may carry the same connection setup as the Connections page (authentication, credential mode, API key, OAuth app), or instead reference an existing organization connection by connectionId, so its server is configured immediately. Connection setup is for owners and admins; other members may reference only a connection they added themselves.",
       responses: {
         201: jsonResponse("Plugin created successfully.", pluginMutationResponseSchema),
         400: jsonResponse("The plugin creation request was invalid.", invalidRequestSchema),

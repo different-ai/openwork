@@ -694,6 +694,83 @@
       "when": 1789411682313,
       "tag": "0099_cloud_runtime_instance",
       "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "5",
+      "when": 1789424530207,
+      "tag": "0100_external_mcp_scope_text",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "5",
+      "when": 1789424530208,
+      "tag": "0101_artifact_view_data_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "5",
+      "when": 1789492944536,
+      "tag": "0102_gateway_usage_limits",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "5",
+      "when": 1789498281031,
+      "tag": "0103_gateway_usage_replay_quarantine",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "5",
+      "when": 1789558703519,
+      "tag": "0104_gateway_usage_reset_pagination",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "5",
+      "when": 1789674563045,
+      "tag": "0105_gateway_incremental_usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "5",
+      "when": 1789679533234,
+      "tag": "0106_gateway_usage_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "5",
+      "when": 1789686477369,
+      "tag": "0107_gateway_usage_durable_capture",
+      "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "5",
+      "when": 1789739648235,
+      "tag": "0108_gateway_usage_organization_assignments",
+      "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "5",
+      "when": 1790127413187,
+      "tag": "0109_organization_web_origins",
+      "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "5",
+      "when": 1790207299296,
+      "tag": "0110_early_hiroim",
+      "breakpoints": true
     }
   ]
 }

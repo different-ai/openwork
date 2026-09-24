@@ -1,6 +1,6 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
-import { desktopFetch } from "./desktop";
+import { desktopFetch, desktopFetchViaMain, isPermissionReplyRequest } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
 
 export type FieldsResult<T> =
@@ -47,6 +47,10 @@ const MCP_AUTH_OPENCODE_REQUEST_TIMEOUT_MS = 90_000;
 // Bound the acceptance handshake, not the task. A timeout leaves admission
 // unknown, so the transport must never automatically resend the prompt.
 const PROMPT_ASYNC_REQUEST_TIMEOUT_MS = 30_000;
+// The first native v2 write also opens its location and reconciles the org's
+// providers, connections and skills. This can exceed the ordinary read budget.
+const V2_SESSION_WRITE_TIMEOUT_MS = 60_000;
+const V2_SESSION_WRITE_URL_RE = /\/opencode2\/api\/session(?:\/[^/?#]+\/prompt)?\/?(?:[?#]|$)/;
 const SESSION_LONG_RUNNING_URL_RE = /\/session\/[^/?#]+\/(?:command|summarize)(?:[?#]|$)/;
 const SESSION_PROMPT_ASYNC_URL_RE = /\/session\/[^/?#]+\/prompt_async(?:[?#]|$)/;
 
@@ -100,8 +104,11 @@ function getRequestUrl(input: RequestInfo | URL): string {
   return String(input);
 }
 
-function resolveRequestTimeoutMs(input: RequestInfo | URL, fallbackMs: number): number {
+function resolveRequestTimeoutMs(input: RequestInfo | URL, fallbackMs: number, method: string): number {
   const url = getRequestUrl(input);
+  if (method.toUpperCase() === "POST" && V2_SESSION_WRITE_URL_RE.test(url)) {
+    return Math.max(fallbackMs, V2_SESSION_WRITE_TIMEOUT_MS);
+  }
   if (SESSION_LONG_RUNNING_URL_RE.test(url)) {
     return 0;
   }
@@ -196,21 +203,30 @@ async function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
   timeoutMs: number,
+  cancelPermissionReply = false,
 ) {
-  const effectiveTimeoutMs = resolveRequestTimeoutMs(input, timeoutMs);
+  const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+  const effectiveTimeoutMs = cancelPermissionReply ? timeoutMs : resolveRequestTimeoutMs(input, timeoutMs, method);
   if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs <= 0) {
     return fetchImpl(input, init);
   }
 
+  const cancellable = cancelPermissionReply || ["GET", "PATCH"].includes((init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase());
+  const callerSignal = cancellable
+    ? init?.signal === undefined ? (input instanceof Request ? input.signal : undefined) : init.signal
+    : undefined;
+  callerSignal?.throwIfAborted();
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const signal = controller?.signal;
-  const initWithSignal = signal && !init?.signal ? { ...(init ?? {}), signal } : init;
+  const signal = cancellable && callerSignal && controller
+    ? AbortSignal.any([callerSignal, controller.signal])
+    : controller?.signal;
+  const initWithSignal = signal && (cancellable || !init?.signal) ? { ...(init ?? {}), signal } : init;
 
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
       try {
-        controller?.abort();
+        controller?.abort(cancellable ? new Error("Request timed out.") : undefined);
       } catch {
         // ignore
       }
@@ -227,11 +243,14 @@ async function fetchWithTimeout(
     }
     return response;
   } catch (error) {
+    if (cancellable) {
+      signal?.throwIfAborted();
+      throw error;
+    }
     if (SESSION_PROMPT_ASYNC_URL_RE.test(getRequestUrl(input))) {
       throw isPromptAdmissionUnknown(error) ? error : new PromptAdmissionUnknownError({ cause: error });
     }
-    const name = (error && typeof error === "object" && "name" in error ? (error as any).name : "") as string;
-    if (name === "AbortError") {
+    if (error && typeof error === "object" && "name" in error && error.name === "AbortError") {
       throw new Error("Request timed out.");
     }
     throw error;
@@ -271,10 +290,7 @@ const STREAM_URL_RE = /\/(event|stream)(\b|\/|$|\?)/;
 function requestIsStreaming(input: RequestInfo | URL, init?: RequestInit): boolean {
   const url = getRequestUrl(input);
   if (STREAM_URL_RE.test(url)) return true;
-  const accept =
-    input instanceof Request
-      ? input.headers.get("accept") ?? input.headers.get("Accept")
-      : new Headers(init?.headers).get("accept") ?? new Headers(init?.headers).get("Accept");
+  const accept = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)).get("accept");
   return typeof accept === "string" && accept.toLowerCase().includes("text/event-stream");
 }
 
@@ -283,7 +299,7 @@ function nativeFetchRef(): typeof globalThis.fetch {
   return globalThis.fetch as typeof globalThis.fetch;
 }
 
-export const createDesktopFetch = (auth?: OpencodeAuth) => {
+export const createDesktopFetch = (auth?: OpencodeAuth, finiteFetch: typeof globalThis.fetch = desktopFetch) => {
   const authHeader = resolveAuthHeader(auth);
   const addAuth = (headers: Headers) => {
     if (!authHeader || headers.has("Authorization")) return;
@@ -294,18 +310,23 @@ export const createDesktopFetch = (auth?: OpencodeAuth) => {
     // Streams must go through the webview's native fetch to avoid the
     // Tauri HTTP plugin's `fetch_read_body` hang on never-closing bodies.
     const shouldStream = requestIsStreaming(input, init);
+    const permissionReply = isPermissionReplyRequest(input, init);
     const underlyingFetch = shouldStream
       ? nativeFetchRef()
-      : desktopFetch;
+      : permissionReply && finiteFetch === desktopFetch ? desktopFetchViaMain : finiteFetch;
     // Streams should never be timed out at the transport layer; the caller
     // aborts via AbortSignal when the subscription unmounts.
     const timeoutMs = shouldStream ? 0 : DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS;
 
+    if (permissionReply && !(input instanceof Request)) input = new Request(input, init);
     if (input instanceof Request) {
-      const headers = new Headers(input.headers);
+      const requestInit = permissionReply || isPermissionReplyRequest(input) || ["GET", "PATCH"].includes((init?.method ?? input.method).toUpperCase()) ? init : undefined;
+      const headers = new Headers(requestInit?.headers ?? input.headers);
       addAuth(headers);
-      const request = new Request(input, { headers });
-      return fetchWithTimeout(underlyingFetch, request, undefined, timeoutMs);
+      const request = new Request(input, { ...requestInit, headers });
+      // Keep an explicit null override even in runtimes whose Request clone
+      // retains the original signal when constructed with signal: null.
+      return fetchWithTimeout(underlyingFetch, request, { signal: requestInit?.signal }, timeoutMs, permissionReply);
     }
 
     const headers = new Headers(init?.headers);
@@ -318,6 +339,7 @@ export const createDesktopFetch = (auth?: OpencodeAuth) => {
         headers,
       },
       timeoutMs,
+      permissionReply,
     );
   };
 };
@@ -336,7 +358,7 @@ export function unwrap<T>(result: FieldsResult<T>): NonNullable<T> {
   throw new Error(message || "Unknown error");
 }
 
-export function createClient(baseUrl: string, directory?: string, auth?: OpencodeAuth) {
+export function createClient(baseUrl: string, directory?: string, auth?: OpencodeAuth, options?: { desktopTransport: "main" }) {
   const headers: Record<string, string> = {};
   if (!isDesktopRuntime()) {
     const authHeader = resolveAuthHeader(auth);
@@ -346,7 +368,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
   }
 
   const fetchImpl = isDesktopRuntime()
-    ? createDesktopFetch(auth)
+    ? createDesktopFetch(auth, options?.desktopTransport === "main" ? desktopFetchViaMain : desktopFetch)
     : (input: RequestInfo | URL, init?: RequestInit) => {
         const timeoutMs = requestIsStreaming(input, init) ? 0 : DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS;
         return fetchWithTimeout(globalThis.fetch, input, init, timeoutMs);

@@ -72,4 +72,30 @@ describe("Cloud workspace retry client", () => {
       { method: "GET", path: "/api/den/v1/cloud/instance" },
     ]);
   });
+
+  test("declares deferral support when asking for an update so Den can answer busy", async () => {
+    const requests: Array<{ method: string; path: string; body: unknown }> = [];
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        requests.push({
+          method: init?.method ?? "GET",
+          path: new URL(String(input)).pathname,
+          body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
+        });
+        return new Response(JSON.stringify({ ok: false, error: "busy" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }) satisfies typeof fetch,
+    });
+
+    const result = await createDenClient({ baseUrl: "https://den.test", token: "tok_test" })
+      .updateCloudInstance("org_test");
+
+    expect(result).toEqual({ ok: false, error: "busy" });
+    expect(requests).toEqual([
+      { method: "POST", path: "/api/den/v1/cloud/instance/update", body: { acceptsDeferral: true } },
+    ]);
+  });
 });

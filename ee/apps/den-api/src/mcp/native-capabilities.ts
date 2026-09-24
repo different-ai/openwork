@@ -87,11 +87,12 @@ function capabilityMatch(
     hasBody: hasJsonRequestBody(operation.operation),
     ...(bodySchema === undefined ? {} : { bodySchema }),
     ...(querySchema === undefined ? {} : { querySchema }),
+    ...(operation.outputSchema === undefined ? {} : { outputSchema: operation.outputSchema }),
     ...(scriptNamespace ? { scriptPath: codemodeScriptPath(scriptNamespace, operation.name) } : {}),
   }
 }
 
-function connectionStatusMatch(
+export function connectionStatusMatch(
   connection: NativeProviderConnectionEntry,
   score: number,
 ): NativeCapabilityMatch {
@@ -181,6 +182,8 @@ async function resolveNativeCapability(input: {
 type NativeCapabilityToolResult = {
   isError?: boolean
   content: AgentToolContentPart[]
+  /** Untruncated route payload; set only when the caller passes includePayload (Code Mode). */
+  payload?: unknown
 }
 
 export async function executeNativeCapability(input: {
@@ -194,6 +197,7 @@ export async function executeNativeCapability(input: {
   path?: unknown
   query?: unknown
   body?: unknown
+  includePayload?: boolean
 }): Promise<NativeCapabilityToolResult | null> {
   const parsed = parseNativeCapabilityName(input.name)
   if (!parsed) return null
@@ -226,6 +230,7 @@ export async function executeNativeCapability(input: {
     operation: resolved.operation,
     principal: input.principal,
     nativeConnectionId: resolved.connection.id,
+    includePayload: input.includePayload,
     toolInput: {
       path: normalizeToolRecord(input.path),
       query: normalizeToolRecord(input.query),

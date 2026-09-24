@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { lstat, realpath } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { renderPrMarkdown } from "./render.ts";
@@ -39,6 +40,7 @@ export interface PublishPrResult {
   posted: boolean;
   updated: boolean;
   urls: Record<string, string>;
+  evidence?: { gitSha: string; verdict: string; tests: number; passedTests: number; assertions: number; passedAssertions: number };
 }
 
 function commandRunner(command: string, args: string[], opts: CommandOptions = {}): CommandResult {
@@ -239,12 +241,28 @@ export async function publishReviewPr(
     reviewUrl?: string;
     dryRun?: boolean;
     preserveCurrentReport?: boolean;
+    automatic?: boolean;
+    /** Replace older automatic evidence selections, while still preserving a human-selected report. */
+    replaceAutomatic?: boolean;
+    /** Trusted Actions publishes checks and deployments instead of a comment. */
+    presentation?: "native";
   },
   dependencies: PublishDependencies = {},
 ): Promise<PublishPrResult> {
   // Testkit imports this package too. Load the report stack only when publishing.
   const { assembleReview, renderReviewComment } = await import("./review.ts");
   const { report, assets } = await assembleReview(options);
+  // Hash complete source records, not just IDs: a partial reread must never erase
+  // evidence. Legacy/unknown provenance is conservatively treated as manual.
+  const fingerprints = report.sources.map((source) => createHash("sha256").update(JSON.stringify({
+    source,
+    receipt: createHash("sha256").update(assets.find((asset) => asset.name === source.asset)?.body ?? "").digest("hex"),
+    sections: report.sections.filter((section) => section.sourceId === source.id),
+    evidence: report.evidence.filter((item) => item.sourceId === source.id),
+  })).digest("hex")).sort();
+  const selectionMarker = options.automatic
+    ? `<!-- test-evidence-selection:auto-v1:${fingerprints.join(",")} -->`
+    : "<!-- test-evidence-selection:manual-v1 -->";
   if (options.dryRun) {
     const markdown = renderReviewComment(report);
     (dependencies.stdout ?? ((body) => process.stdout.write(`${body}\n`)))(
@@ -276,27 +294,39 @@ export async function publishReviewPr(
       );
   };
   requireCurrentHead();
-  if (options.preserveCurrentReport) {
-    const current = exec("gh", ["pr", "view", pr, "--json", "comments"]);
-    requireSuccess(current, "Reading current evidence");
-    const payload: unknown = JSON.parse(current.stdout);
+  const protectedReport = (raw: string): string | undefined => {
+    if (!options.preserveCurrentReport && !options.automatic) return;
+    const payload: unknown = JSON.parse(raw);
     if (isRecord(payload) && Array.isArray(payload.comments)) {
-      const existing = payload.comments.find((comment) => isRecord(comment)
-        && typeof comment.body === "string" && comment.body.includes(MARKER)
-        && comment.body.includes(`Commit \`${report.gitSha}\``) && comment.body.includes("[Open review report]("));
-      if (isRecord(existing) && typeof existing.body === "string") {
-        return { markdown: existing.body, posted: false, updated: false, urls: {} };
+      for (const existing of payload.comments) {
+        if (!isRecord(existing) || typeof existing.body !== "string" || !existing.body.includes(MARKER)
+          || !existing.body.includes(`Commit \`${report.gitSha}\``) || !existing.body.includes("[Open review report](")) continue;
+         const automatic = /<!-- test-evidence-selection:auto-v1:([a-f0-9]{64}(?:,[a-f0-9]{64})*) -->/.exec(existing.body);
+         if (!options.automatic || !automatic || existing.body.includes("<!-- test-evidence-selection:manual-v1 -->")) return existing.body;
+         if (!options.replaceAutomatic && automatic[1].split(",").some((fingerprint) => !fingerprints.includes(fingerprint))) return existing.body;
       }
     }
-  }
+  };
+  const current = exec("gh", ["pr", "view", pr, "--json", "comments"]);
+  requireSuccess(current, "Reading current evidence");
+  const preserved = protectedReport(current.stdout);
+  if (preserved) return { markdown: preserved, posted: false, updated: false, urls: {} };
   const upload = dependencies.upload ?? (await import("@openwork/review/storage")).uploadReview;
   const id = await upload(report, assets);
   const reportUrl = new URL(`/r/${id}`, url).href;
   // A push while media was uploading must not replace current evidence with an older report.
   requireCurrentHead();
-  const markdown = renderReviewComment(report, reportUrl);
+  const markdown = `${renderReviewComment(report, reportUrl)}\n${selectionMarker}`;
   const viewed = exec("gh", ["pr", "view", pr, "--json", "comments"]);
   requireSuccess(viewed, "Reading PR comments");
+  const concurrentSelection = protectedReport(viewed.stdout);
+  if (concurrentSelection) return { markdown: concurrentSelection, posted: false, updated: false, urls: {} };
+  requireCurrentHead();
+  if (options.presentation === "native") {
+    const { summarizeReview } = await import("@openwork/review");
+    return { markdown, posted: true, updated: false, urls: { report: reportUrl },
+      evidence: { gitSha: report.gitSha, ...summarizeReview(report) } };
+  }
   const commentId = stickyCommentId(viewed.stdout);
   const posted = commentId
     ? exec(

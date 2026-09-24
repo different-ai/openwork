@@ -1,6 +1,7 @@
 import { allocateFreePort, browserScript, clickAt, evaluate, hoverAt, reload, type Point, type Surface, typeText, waitForLocated } from "@openwork/cdp";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, realpath, rm, symlink } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { engineSessionProbe, observeSidebarExpansion, readAvailableModels, selectModel, waitFor } from "@openwork/behaviors";
 import { resolveEvalEngine, SkipError } from "@openwork/env";
 import type { Place, Seed } from "@openwork/env";
@@ -1477,13 +1478,36 @@ export async function commandPaletteSearch(seed: Seed) {
   };
 }
 
-type ArchiveFault = "none" | "false" | "error" | "timeout" | "unconfirmed" | "hold" | "retry" | "permission" | "question" | "prompt_error" | "hold_prompt" | "accepted_command" | "accepted_prompt" | "hold_archive";
+type ArchiveFault = "none" | "false" | "error" | "timeout" | "unconfirmed" | "hold" | "retry" | "permission" | "question" | "prompt_error" | "hold_prompt" | "accepted_command" | "accepted_prompt" | "hold_archive" | "hold_messages";
 type ArchiveRequest = {
   path: string; sessionId: string; action: string; messageID: string | null; result: string | number | null;
+  at: number; sequence: number; transport: "renderer" | "main";
   command?: { name: string; arguments: string; model: string | null; agent: string | null };
   responseBody?: string;
   dispatchError?: string;
+  cancelled?: boolean;
 };
+type ArchiveControl = { action: "state" | "release" }
+  | { action: "configure"; origin: string; workspaceIds: string[] }
+  | { action: "fault"; mode: ArchiveFault; sessionId: string; workspaceId: string };
+type ArchiveMainState = {
+  witness: string; mode: ArchiveFault; sessionId: string; workspaceId: string;
+  requests: ArchiveRequest[]; held: boolean; origin: string; workspaceIds: string[];
+};
+
+async function archiveMainControl(command: ArchiveControl): Promise<ArchiveMainState> {
+  const response = await window.__OPENWORK_ELECTRON__.invokeDesktop("__fetch",
+    "http://127.0.0.1/__openwork_archive_test_control", {
+      method: "POST", body: JSON.stringify(command), timeoutMs: 25_000,
+    });
+  if (response.status !== 200) throw new Error("Archive main-fetch bootstrap is unavailable");
+  const state: ArchiveMainState = JSON.parse(response.body);
+  if (state.witness !== "archive-main-fetch-v1" || !Array.isArray(state.requests)
+    || typeof state.held !== "boolean" || typeof state.origin !== "string" || !Array.isArray(state.workspaceIds)) {
+    throw new Error("Archive main-fetch bootstrap returned malformed state");
+  }
+  return state;
+}
 
 declare global {
   interface Window {
@@ -1504,7 +1528,17 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
   await using resources = new AsyncDisposableStack();
   const providerId = "session-archive-mock";
   const modelId = "mock-agent-workload-model";
-  const app = await seed.desktop({ name: "session-archive-button", model: `${providerId}/${modelId}` });
+  const remoteRoot = place.kind === "daytona" ? place.host()?.workspaceRoot : undefined;
+  if (place.kind === "daytona" && !remoteRoot?.startsWith("/")) throw new Error("Archive main-fetch bootstrap requires the remote source checkout path");
+  const preload = remoteRoot ? `${remoteRoot.replace(/\/+$/, "")}/evals/fixtures/archive-main-fetch.cjs`
+    : fileURLToPath(new URL("../fixtures/archive-main-fetch.cjs", import.meta.url));
+  const app = await seed.desktop({ name: "session-archive-button", model: `${providerId}/${modelId}`,
+    env: { NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require ${JSON.stringify(preload)}`].filter(Boolean).join(" ") },
+  });
+  const mainControl = (command: ArchiveControl) => seed.evalIn(app, browserScript(archiveMainControl, [command]), { timeoutMs: 30_000 });
+  await mainControl({ action: "state" }).catch((error: unknown) => {
+    throw new Error(`Archive main-fetch bootstrap was not installed from ${preload}`, { cause: error });
+  });
   const definition = seed.mock({ agentWorkloads: [{ promptMarker: "session-archive", matchAll: true, finalReply: "Archive fixture reply.", steps: [] }] });
   const sandbox = app.handle.sandboxId;
   const booted = app.handle.hostKind === "daytona"
@@ -1643,20 +1677,31 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
     if (!ready) throw new Error(`Archive workspace ${phase.workspaceId} route and sidebar did not become ready: ${JSON.stringify(lastState)}`);
   }
 
-  // Faults live at the HTTP boundary, not in product stores or archive code.
-  // The local desktop's loopback OpenCode requests use the renderer fetch.
-  await seed.evalIn(app, () => {
+  const upstreamOrigin = await seed.evalIn(app, async () => {
+    const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    if (!info.running || !info.baseUrl) throw new Error("Archive engine is unavailable");
+    return new URL(info.baseUrl).origin;
+  });
+  await mainControl({ action: "configure", origin: upstreamOrigin, workspaceIds: [workspaceA.workspaceId, workspaceB.workspaceId] });
+  await seed.evalIn(app, browserScript((origin, workspaceIds) => {
     const original = window.fetch.bind(window);
     const state: Window["__archiveNetwork"] = { mode: "none", sessionId: "", workspaceId: "", requests: [], release: null, original };
     window.__archiveNetwork = state;
+    let sequence = 0;
     window.fetch = async (input, init) => {
       const request = new Request(input, init);
       const url = new URL(request.url);
+      const mount = url.pathname.match(/^\/(?:workspace|w)\/([^/]+)\/opencode\//);
+      if (url.origin !== origin || !mount || !workspaceIds.includes(decodeURIComponent(mount[1]))) return original(request);
+      const stamp: Pick<ArchiveRequest, "at" | "sequence" | "transport"> = { at: Date.now(), sequence: sequence++, transport: "renderer" };
       const match = url.pathname.match(/\/session\/([^/]+)\/(abort|prompt_async|command|shell)$/);
       const metadata = request.method === "PATCH" ? url.pathname.match(/\/session\/([^/]+)$/) : null;
+      const messages = request.method === "GET" && state.mode === "hold_messages"
+        ? url.pathname.match(/\/session\/([^/]+)\/message$/) : null;
       const record: ArchiveRequest | null = match && request.method === "POST"
-        ? { path: url.pathname, sessionId: match[1], action: match[2], messageID: null, result: null }
-        : metadata ? { path: url.pathname, sessionId: metadata[1], action: "metadata", messageID: null, result: null } : null;
+        ? { ...stamp, path: url.pathname, sessionId: match[1], action: match[2], messageID: null, result: null }
+        : metadata ? { ...stamp, path: url.pathname, sessionId: metadata[1], action: "metadata", messageID: null, result: null }
+        : messages ? { ...stamp, path: url.pathname, sessionId: messages[1], action: "messages", messageID: null, result: null } : null;
       if (record && ["prompt_async", "command"].includes(record.action)) {
         const body: unknown = await request.clone().json();
         if (body && typeof body === "object" && "messageID" in body && typeof body.messageID === "string") record.messageID = body.messageID;
@@ -1668,7 +1713,7 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
         }
       }
       if (record) state.requests.push(record);
-      const owner = url.pathname.startsWith("/workspace/" + encodeURIComponent(state.workspaceId) + "/opencode/");
+      const owner = decodeURIComponent(mount[1]) === state.workspaceId;
       const target = owner && record?.sessionId === state.sessionId;
       if (record?.action === "metadata" && target && state.mode === "hold_archive") {
         await new Promise<void>(resolve => { state.release = resolve; });
@@ -1726,10 +1771,30 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
       }
       const response = await original(request);
       if (record) record.result = response.status;
+      if (record?.action === "messages" && target && state.mode === "hold_messages" && response.ok) {
+        const body = new Uint8Array(await response.arrayBuffer());
+        const previousRelease = state.release;
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            record.result = "held";
+            const finish = (expired: boolean) => {
+              if (record.result !== "held") return;
+              clearTimeout(timer);
+              record.result = expired ? "expired" : "released";
+              state.release = null;
+              controller.enqueue(body);
+              controller.close();
+            };
+            const timer = setTimeout(() => finish(true), 20_000);
+            state.release = async () => { await previousRelease?.(); finish(false); };
+          },
+        });
+        return new Response(stream, { status: response.status, headers: response.headers });
+      }
       // Merge only the owning endpoint's target. All unrelated statuses and
       // approvals remain authoritative, including concurrently running sessions.
       const { mode, sessionId, workspaceId } = state;
-      const owningResponse = url.pathname.startsWith("/workspace/" + encodeURIComponent(workspaceId) + "/opencode/");
+      const owningResponse = decodeURIComponent(mount[1]) === workspaceId;
       const stillArmed = () => state.mode === mode && state.sessionId === sessionId && state.workspaceId === workspaceId;
       if (owningResponse && response.ok && mode === "retry" && url.pathname.endsWith("/session/status")) {
         const statuses: Record<string, unknown> = await response.clone().json();
@@ -1747,11 +1812,12 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
       return response;
     };
     return true;
-  });
+  }, [upstreamOrigin, [workspaceA.workspaceId, workspaceB.workspaceId]]));
 
   async function networkFault(mode: ArchiveFault, sessionId: string) {
     const target = [a1, a2, b1, child, faultCandidate].find(session => session.sessionId === sessionId);
     if (!target) throw new Error("Archive fault target has no known workspace owner");
+    if ((await mainControl({ action: "state" })).held) throw new Error("Release the previous main archive fault before replacing it");
     await seed.evalIn(app, browserScript((mode, sessionId, workspaceId) => {
       if (window.__archiveNetwork.release) throw new Error("Release the previous archive fault before replacing it");
       window.__archiveNetwork.mode = mode;
@@ -1759,6 +1825,40 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
       window.__archiveNetwork.workspaceId = workspaceId;
       return true;
     }, [mode, sessionId, target.workspaceId]));
+    await mainControl({ action: "fault", mode, sessionId, workspaceId: target.workspaceId });
+  }
+
+  const requestLedger = new Map<string, ArchiveRequest>();
+  function mergeRequests(renderer: unknown[], main: ArchiveRequest[]) {
+    const entries = [...renderer, ...main].map((entry) => {
+      if (!isRecord(entry) || typeof entry.path !== "string" || typeof entry.sessionId !== "string"
+        || typeof entry.action !== "string" || typeof entry.at !== "number" || typeof entry.sequence !== "number"
+        || (entry.transport !== "renderer" && entry.transport !== "main")
+        || !(entry.messageID === null || typeof entry.messageID === "string")
+        || !(entry.result === null || typeof entry.result === "string" || typeof entry.result === "number")) {
+        throw new Error("Malformed archive request ledger");
+      }
+      let command: ArchiveRequest["command"];
+      if (entry.command !== undefined) {
+        const value = entry.command;
+        if (!isRecord(value) || typeof value.name !== "string" || typeof value.arguments !== "string"
+          || !(value.model === null || typeof value.model === "string") || !(value.agent === null || typeof value.agent === "string")) {
+          throw new Error("Malformed archive command request");
+        }
+        command = { name: value.name, arguments: value.arguments, model: value.model, agent: value.agent };
+      }
+      const record: ArchiveRequest = {
+        path: entry.path, sessionId: entry.sessionId, action: entry.action, result: entry.result, messageID: entry.messageID,
+        at: entry.at, sequence: entry.sequence, transport: entry.transport,
+        ...(command === undefined ? {} : { command: { name: command.name, arguments: command.arguments, model: command.model, agent: command.agent } }),
+        ...(typeof entry.responseBody === "string" ? { responseBody: entry.responseBody } : {}),
+        ...(typeof entry.dispatchError === "string" ? { dispatchError: entry.dispatchError } : {}),
+        ...(typeof entry.cancelled === "boolean" ? { cancelled: entry.cancelled } : {}),
+      };
+      return record;
+    }).sort((left, right) => left.at - right.at || left.transport.localeCompare(right.transport) || left.sequence - right.sequence);
+    for (const entry of entries) requestLedger.set(`${entry.transport}:${entry.sequence}`, entry);
+    return [...requestLedger.values()];
   }
 
   async function facts() {
@@ -1796,12 +1896,7 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
         || typeof entry.archived !== "boolean" || typeof entry.status !== "string") throw new Error("Malformed archive session");
       return { workspaceId: entry.workspaceId, sessionId: entry.sessionId, archived: entry.archived, status: entry.status };
     });
-    const requests = result.requests.map((entry) => {
-      if (!isRecord(entry) || typeof entry.path !== "string" || typeof entry.sessionId !== "string"
-        || typeof entry.action !== "string") throw new Error("Malformed archive request");
-      return { path: entry.path, sessionId: entry.sessionId, action: entry.action, result: entry.result, messageID: entry.messageID,
-        command: entry.command, responseBody: entry.responseBody, dispatchError: entry.dispatchError };
-    });
+    const requests = mergeRequests(result.requests, (await mainControl({ action: "state" })).requests);
     return { sessions, requests, surfaces: result.surfaces, activeRows: result.activeRows, tabs: result.tabs, memory: result.memory };
   }
 
@@ -1820,6 +1915,7 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
     commandSetup,
     paletteShortcut,
     facts,
+    mainRequests: async () => (await mainControl({ action: "state" })).requests,
     archiveAccessibleDescription: async () => {
       const tree = await app.client.send("Accessibility.getFullAXTree");
       if (!isRecord(tree) || !Array.isArray(tree.nodes)) throw new Error("Archive accessibility tree is unavailable");
@@ -1859,27 +1955,38 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
         for (const endpoint of ["session/status", "permission", "question"]) {
           const url = `${root}/workspace/${workspaceId}/opencode/${endpoint}`;
           const options = { headers: { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken) }, signal: AbortSignal.timeout(10000) };
-          const [actual, observed] = await Promise.all([window.__archiveNetwork.original(url, options), fetch(url, options)]);
-          if (!actual.ok || !observed.ok) throw new Error(`Fault observation failed for ${endpoint}`);
-          results.push({ workspaceId, endpoint, actual: await actual.json(), observed: await observed.json() });
+          const [actual, observed, main] = await Promise.all([
+            window.__archiveNetwork.original(url, options), fetch(url, options),
+            window.__OPENWORK_ELECTRON__.invokeDesktop("__fetch", url, { method: "GET", headers: options.headers, timeoutMs: 10000 }),
+          ]);
+          if (!actual.ok || !observed.ok || main.status < 200 || main.status >= 300) throw new Error(`Fault observation failed for ${endpoint}`);
+          const actualBody = await actual.json();
+          results.push({ workspaceId, endpoint, transport: "renderer", actual: actualBody, observed: await observed.json() });
+          results.push({ workspaceId, endpoint, transport: "main", actual: actualBody, observed: JSON.parse(main.body) });
         }
       }
       return results;
     }, [[workspaceA.workspaceId, workspaceB.workspaceId]]), { timeoutMs: 30_000 }),
-    diagnostics: () => seed.evalIn(app, () => ({
-      hash: location.hash,
-      fault: { mode: window.__archiveNetwork.mode, sessionId: window.__archiveNetwork.sessionId, workspaceId: window.__archiveNetwork.workspaceId, held: window.__archiveNetwork.release !== null },
-      composer: window.__openwork?.slice("composer"),
-      events: window.__openwork?.events(80),
-      drafts: localStorage.getItem("openwork.session-drafts.v2"),
-      surfaces: [...document.querySelectorAll<HTMLElement>("[data-session-surface-id]")].map(surface => ({
-        sessionId: surface.dataset.sessionSurfaceId,
-        text: surface.innerText.slice(-6000),
-        draft: surface.querySelector<HTMLElement>('[data-lexical-editor="true"]')?.innerText,
-      })),
-      actions: window.__openworkControl.listActions().filter(action => action.id.startsWith("composer.")).map(action => ({ id: action.id, disabled: action.disabled })),
-      requests: window.__archiveNetwork.requests,
-    })),
+    diagnostics: async () => {
+      const renderer = await seed.evalIn(app, () => ({
+        hash: location.hash,
+        fault: { mode: window.__archiveNetwork.mode, sessionId: window.__archiveNetwork.sessionId, workspaceId: window.__archiveNetwork.workspaceId, held: window.__archiveNetwork.release !== null },
+        composer: window.__openwork?.slice("composer"),
+        events: window.__openwork?.events(80),
+        drafts: localStorage.getItem("openwork.session-drafts.v2"),
+        surfaces: [...document.querySelectorAll<HTMLElement>("[data-session-surface-id]")].map(surface => ({
+          sessionId: surface.dataset.sessionSurfaceId,
+          text: surface.innerText.slice(-6000),
+          draft: surface.querySelector<HTMLElement>('[data-lexical-editor="true"]')?.innerText,
+        })),
+        actions: window.__openworkControl.listActions().filter(action => action.id.startsWith("composer.")).map(action => ({ id: action.id, disabled: action.disabled })),
+        requests: window.__archiveNetwork.requests,
+      }));
+      const main = await mainControl({ action: "state" });
+      return { ...renderer, fault: { ...renderer.fault, held: renderer.fault.held || main.held },
+        mainFault: { mode: main.mode, sessionId: main.sessionId, workspaceId: main.workspaceId, held: main.held },
+        requests: mergeRequests(renderer.requests, main.requests) };
+    },
     surfaceReady: (sessionId: string) => seed.evalIn(app, browserScript((sessionId) => {
       const surface = document.querySelector<HTMLElement>(`[data-session-surface-id="${sessionId}"]`);
       const snapshot = window.__openwork?.slice("composer")?.snapshotQuery;
@@ -1902,11 +2009,19 @@ export async function archiveActiveSessions(seed: Seed, { place }: { place: Plac
       if (!response.ok) throw new Error("Independent prompt rejected: " + response.status);
       return true;
     }, [session, providerId, modelId]), { timeoutMs: 20_000 }),
-    releaseAbort: () => seed.evalIn(app, async () => {
-      if (!window.__archiveNetwork.release) throw new Error("No pending archive request to release");
-      await window.__archiveNetwork.release();
+    releaseAbort: async () => {
+      const main = await mainControl({ action: "state" });
+      const rendererHeld = await seed.evalIn(app, () => window.__archiveNetwork.release !== null);
+      if (!main.held && !rendererHeld) throw new Error("No pending archive request to release");
+      if (main.held) await mainControl({ action: "release" });
+      if (rendererHeld) await seed.evalIn(app, async () => {
+        if (!window.__archiveNetwork.release) throw new Error("Renderer archive request was cancelled before release");
+        await window.__archiveNetwork.release();
+        return true;
+      }, { timeoutMs: 30_000 });
+      if (main.mode === "hold") await networkFault("none", main.sessionId);
       return true;
-    }, { timeoutMs: 30_000 }),
+    },
     requests: async () => (await mock.agentRequests()).filter(request => request.kind !== "utility"),
     releaseRun: () => setHeld(false),
     holdRun: () => setHeld(true),
@@ -2121,11 +2236,9 @@ async function archiveWorld(seed: Seed, app: Surface, workspacePath: string, tit
         })),
       };
     }),
-    hoverArchiveButton: async () => {
-      // Disabled buttons reject pointer hits; hover their visible bounds without clicking.
-      const button = await waitForLocated(app, { testId: `session-archive-${candidate.sessionId}` }, { timeoutMs: 10_000 });
-      await hoverAt(app, button.center);
-    },
+    // Native desktop menus are OS widgets, observed through the development bridge.
+    nativeMenu: () => seed.evalIn(app, () => window.__OPENWORK_ELECTRON__.contextMenu.inspect(), { awaitPromise: true }),
+    dismissMenu: () => seed.evalIn(app, () => window.__OPENWORK_ELECTRON__.contextMenu.dismiss(), { awaitPromise: true }),
     mutationRequests: () => seed.evalIn(app, () => window.__archiveAvailabilityRequests),
   };
 }
@@ -2548,7 +2661,18 @@ export async function settingsRuntime(seed: Seed) {
 
 export async function macSidebar(seed: Seed) {
   const world = await oneWorkspace(seed, "mac-sidebar-toggle-clearance", ["Mac sidebar clearance"]);
-  return world;
+  return {
+    ...world,
+    clearViewport: () => world.app.client.send("Emulation.clearDeviceMetricsOverride"),
+    // TODO(primitive): user.setWindowFullscreen. Called immediately after trusted
+    // user input, a Chromium fullscreen request enters the real Electron window
+    // and exercises its native events, rather than changing CSS markers.
+    async fullscreen(enabled: boolean) {
+      await evaluate(world.app.client, enabled
+        ? () => document.documentElement.requestFullscreen()
+        : () => document.exitFullscreen());
+    },
+  };
 }
 
 export async function rendererCrash(seed: Seed) {

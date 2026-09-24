@@ -36,7 +36,7 @@ import {
   type ExternalMcpConnectionRow,
 } from "./external-mcp-connections.js"
 import { externalMcpCompatibleCallbackUrl } from "./external-mcp-oauth-contract.js"
-import { normalizeConnectedAccountScopes, normalizeOAuthClientExtra } from "./oauth-credentials.js"
+import { normalizeConnectedAccountScopes, normalizeOAuthClientExtra, parseGrantedOAuthScopes } from "./oauth-credentials.js"
 import {
   externalMcpDiagnosticForLog,
   safeExternalMcpEndpointForLog,
@@ -765,7 +765,9 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
                 accessToken: input.tokens.access_token,
                 refreshToken: input.tokens.refresh_token ?? account.refreshToken ?? null,
                 tokenType: input.tokens.token_type ?? null,
-                scopes: input.tokens.scope ? input.tokens.scope.split(" ") : null,
+                ...(input.source === "refresh" && input.tokens.scope === undefined
+                  ? {}
+                  : { scopes: parseGrantedOAuthScopes(input.tokens.scope) }),
                 expiresAt,
                 pendingCodeVerifier,
                 credentialHealth: credentialHealth("ready", null),
@@ -782,7 +784,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
               accessToken: input.tokens.access_token,
               refreshToken: input.tokens.refresh_token ?? null,
               tokenType: input.tokens.token_type ?? null,
-              scopes: input.tokens.scope ? input.tokens.scope.split(" ") : null,
+              scopes: parseGrantedOAuthScopes(input.tokens.scope),
               expiresAt,
               pendingCodeVerifier,
               credentialHealth: credentialHealth("ready", null),
@@ -795,7 +797,9 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
               accessToken: input.tokens.access_token,
               refreshToken: input.tokens.refresh_token ?? connection.refreshToken ?? null,
               tokenType: input.tokens.token_type ?? null,
-              scope: input.tokens.scope ?? null,
+              ...(input.source === "refresh" && input.tokens.scope === undefined
+                ? {}
+                : { scope: input.tokens.scope ?? null }),
               expiresAt,
               pendingCodeVerifier,
               credentialHealth: credentialHealth("ready", null),

@@ -13,8 +13,97 @@ import { codeModeToolCalls } from "../src/lib/code-mode-tools";
 import { getModelBehaviorControls, getModelBehaviorOptions } from "../src/app/lib/model-behavior";
 import { catalogFastVariants, fastVariantId, nativeModelVariants } from "@openwork/types/cloud-model-fast";
 import { mentionPromptParts } from "../src/react-app/domains/session/sync/mention-parts";
+import { subscribeProviderCatalogChanges } from "../src/app/lib/provider-events";
+
+describe("native conversation mutations", () => {
+  test("fork excludes the selected boundary and preserves a root conversation", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init); requests.push(request);
+      return jsonResponse({ data: { id: "ses_branch", fork: { sessionID: "ses_original" } } });
+    };
+    try {
+      const client = createClientV2("http://localhost/opencode2", "/workspace", {});
+      const result = await client.session.fork({ sessionID: "ses_original", messageID: "msg_next" });
+      expect(result.data).toMatchObject({ id: "ses_branch" });
+      expect(result.data?.parentID).toBeUndefined();
+      expect(new URL(requests[0]!.url).pathname).toBe("/opencode2/api/session/ses_original/fork");
+      expect(await requests[0]!.json()).toEqual({ boundary: { type: "before", messageID: "msg_next" } });
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("revert stages file changes, reads authoritative cursor, and restores it through clear", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: { path: string; body: unknown }[] = [];
+    let reverted = false;
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const path = new URL(request.url).pathname;
+      calls.push({ path, body: request.method === "POST" && path.endsWith("stage") ? await request.json() : null });
+      if (path.endsWith("stage")) { reverted = true; return jsonResponse({ data: { messageID: "msg_last" } }); }
+      if (path.endsWith("clear")) { reverted = false; return new Response(null, { status: 204 }); }
+      return jsonResponse({ data: { id: "ses_original", ...(reverted ? { revert: { messageID: "msg_last", snapshot: "snapshot" } } : {}) } });
+    };
+    try {
+      const client = createClientV2("http://localhost/opencode2", "/workspace", {});
+      expect((await client.session.revert({ sessionID: "ses_original", messageID: "msg_last" })).data?.revert).toEqual({ messageID: "msg_last" });
+      expect((await client.session.unrevert({ sessionID: "ses_original" })).data?.revert).toBeUndefined();
+      expect(calls.map(call => call.path)).toEqual(["/opencode2/api/session/ses_original/revert/stage", "/opencode2/api/session/ses_original", "/opencode2/api/session/ses_original/revert/clear", "/opencode2/api/session/ses_original"]);
+      expect(calls[0]?.body).toEqual({ messageID: "msg_last", files: true });
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("failed mutations remain failures and do not fetch a success-shaped session", async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => { calls++; return new Response(JSON.stringify({ message: "Session busy" }), { status: 409 }); };
+    try {
+      const client = createClientV2("http://localhost/opencode2", "/workspace", {});
+      for (const result of [await client.session.revert({ sessionID: "ses_busy", messageID: "msg_last" }), await client.session.unrevert({ sessionID: "ses_busy" }), await client.session.fork({ sessionID: "ses_busy" })]) {
+        expect(result.response.status).toBe(409); expect(result.data).toBeUndefined();
+      }
+      expect(calls).toBe(3);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("native staged, cleared and committed events keep the visible cursor synchronized", () => {
+    const state = createV2EventTranslationState();
+    expect(translateV2Event({ type: "session.revert.staged", data: { sessionID: "ses_one", revert: { messageID: "msg_last" } } }, state)).toEqual([
+      { type: "session.updated", properties: { info: { id: "ses_one", revert: { messageID: "msg_last" } } } },
+    ]);
+    expect(translateV2Event({ type: "session.revert.cleared", data: { sessionID: "ses_one" } }, state)).toEqual([
+      { type: "session.updated", properties: { info: { id: "ses_one", revert: undefined } } },
+    ]);
+    expect(translateV2Event({ type: "session.revert.committed", data: { sessionID: "ses_one", to: "msg_last" } }, state)).toEqual([
+      { type: "session.history.truncated", properties: { sessionID: "ses_one", messageID: "msg_last" } },
+      { type: "session.updated", properties: { info: { id: "ses_one", revert: undefined } } },
+    ]);
+  });
+});
 
 describe("explicit native skill attachments", () => {
+  test.each([false, true])("keeps Cloud selections on the v1 Connect path (legacy metadata: %s)", async legacy => {
+    const originalFetch = globalThis.fetch;
+    const requests: { path: string; body: unknown }[] = [];
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      requests.push({ path: new URL(request.url).pathname, body: request.method === "POST" ? await request.json() : null });
+      return jsonResponse({ data: {} });
+    };
+    try {
+      const capability = "plugin:plg_cobalt:cob_release";
+      const parts = mentionPromptParts({ type: "connect-skill", slug: "cobalt", name: "Cobalt", marketplace: "Releases", capability })
+        .map(part => legacy && part.synthetic ? { ...part, metadata: { openworkSelectedSkill: { id: capability } } } : part);
+      const result = await createClientV2("http://localhost:4096/opencode2", "/workspace", {}).session.promptAsync({ sessionID: "ses_cloud", model: { providerID: "witness", modelID: "model" }, parts });
+      expect(result.error).toBeUndefined();
+      expect(requests.map(request => request.path)).toEqual(["/opencode2/api/session/ses_cloud/model", "/opencode2/api/session/ses_cloud/prompt"]);
+      expect(requests.at(-1)?.body).toEqual({ text: v2PromptText(parts) });
+      expect(v2PromptText(parts)).toContain(capability);
+      expect(v2PromptText(parts)).toContain("openwork-cloud_");
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
   test("preserves v1 instructions but attaches live native IDs on v2, deduplicated", async () => {
     const originalFetch = globalThis.fetch;
     const requests: { path: string; body: unknown }[] = [];
@@ -1017,6 +1106,135 @@ describe("OpenCode v2 event translation", () => {
   });
 });
 
+describe("OpenCode v2 message pagination", () => {
+  test("transmits the opaque older cursor, caps native pages at 200, and does not infer exhaustion from filtered content", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    const cursor = "opaque+/=?%25&older";
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      const url = new URL(request.url);
+      expect(url.pathname).toBe("/workspace/ws/opencode2/api/session/ses_pages/message");
+      expect(request.headers.get("Authorization")).toBe("Bearer page-token");
+      expect(url.searchParams.get("limit")).toBe("200");
+      expect(url.searchParams.has("before")).toBe(false);
+      expect(url.searchParams.has("order")).toBe(false);
+      if (requests.length === 1) {
+        expect(url.searchParams.has("cursor")).toBe(false);
+        return jsonResponse({ data: [{ id: "msg_system", type: "system", text: "Internal context" }], cursor: { next: cursor } });
+      }
+      expect(url.searchParams.get("cursor")).toBe(cursor);
+      return jsonResponse({ data: [], cursor: { previous: null, next: null } });
+    };
+    try {
+      const client = createClientV2("https://worker.example/workspace/ws/opencode2", undefined, { token: "page-token" });
+      const newest = await client.listMessagesPage({ sessionID: "ses_pages", limit: 300 });
+      expect(newest.data).toEqual([]);
+      expect(newest.pagination).toEqual({ nextCursor: cursor, limit: 200 });
+      const older = await client.listMessagesPage({ sessionID: "ses_pages", limit: 300, before: newest.pagination?.nextCursor ?? undefined });
+      expect(older.data).toEqual([]);
+      expect(older.pagination).toEqual({ before: cursor, nextCursor: null, limit: 200 });
+      expect(requests).toHaveLength(2);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("unbounded compatibility reads normalize descending pages chronologically while preserving native ties and skipping filtered content", async () => {
+    const originalFetch = globalThis.fetch;
+    const cursors: Array<string | null> = [];
+    const records = (ids: string[]) => ids.map((id) => ({ id, type: "user", text: id, time: { created: 7 } }));
+    globalThis.fetch = async (input, init) => {
+      const url = new URL(new Request(input, init).url);
+      expect(url.searchParams.has("limit")).toBe(false);
+      const cursor = url.searchParams.get("cursor");
+      cursors.push(cursor);
+      if (cursor === null) return jsonResponse({ data: records(["b-last", "m-next"]), cursor: { next: "middle" } });
+      if (cursor === "middle") return jsonResponse({ data: [{ id: "hidden", type: "synthetic", text: "hidden" }], cursor: { next: "oldest" } });
+      if (cursor === "oldest") return jsonResponse({ data: records(["a-answer", "z-first"]), cursor: { next: "empty" } });
+      return jsonResponse({ data: [], cursor: {} });
+    };
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", undefined, {});
+      const result = await client.listMessagesPage({ sessionID: "ses_pages" });
+      expect(result.data?.map(({ info }) => info.id)).toEqual(["z-first", "a-answer", "m-next", "b-last"]);
+      expect(result.pagination).toBeUndefined();
+      expect(cursors).toEqual([null, "middle", "oldest", "empty"]);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("unbounded reads reject cycling cursors instead of publishing a partial history", async () => {
+    const originalFetch = globalThis.fetch;
+    let reads = 0;
+    globalThis.fetch = async () => {
+      reads += 1;
+      return jsonResponse({ data: [{ id: `msg_${reads}`, type: "user", text: "page" }], cursor: { next: reads === 2 ? "b" : "a" } });
+    };
+    try {
+      const result = await createClientV2("http://opencode.test/opencode2", undefined, {}).listMessagesPage({ sessionID: "ses_pages" });
+      expect(result.data).toBeUndefined();
+      expect(result.error).toMatchObject({ message: expect.stringContaining("cursor did not advance") });
+      expect(reads).toBe(3);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("legacy responses retain their existing order without trustworthy pagination", async () => {
+    const originalFetch = globalThis.fetch;
+    let reads = 0;
+    globalThis.fetch = async () => { reads += 1; return jsonResponse({ data: [
+      { id: "msg_2", type: "user", text: "newer", time: { created: 2 } },
+      { id: "msg_1", type: "user", text: "older", time: { created: 1 } },
+    ] }); };
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", undefined, {});
+      for (const limit of [undefined, 24]) {
+        const result = await client.listMessagesPage({ sessionID: "ses_pages", limit });
+        expect(result.data?.map(({ info }) => info.id)).toEqual(["msg_2", "msg_1"]);
+        expect(result.pagination).toBeUndefined();
+      }
+      const older = await client.listMessagesPage({ sessionID: "ses_pages", limit: 24, before: "older" });
+      expect(older.data).toBeUndefined();
+      expect(older.error).toMatchObject({ name: "InvalidV2MessagePageResponse" });
+      expect(reads).toBe(3);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test.each([
+    { data: [], cursor: { next: 12 } },
+    { data: [], cursor: { next: "unexpected" } },
+    { data: [{ id: "msg_1", type: "user" }], cursor: {} },
+    { data: [], cursor: null },
+    { data: "invalid", cursor: {} },
+  ])("malformed native pages cannot imply exhaustion (%j)", async (payload) => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => jsonResponse(payload);
+    try {
+      const result = await createClientV2("http://opencode.test/opencode2", undefined, {}).listMessagesPage({ sessionID: "ses_pages", limit: 24 });
+      expect(result.data).toBeUndefined();
+      expect(result.pagination).toBeUndefined();
+      expect(result.error).toMatchObject({ name: "InvalidV2MessagePageResponse" });
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("cancellation after a page prevents another native read or partial publication", async () => {
+    const originalFetch = globalThis.fetch;
+    const controller = new AbortController();
+    const aborted = new Error("page read cancelled");
+    let reads = 0;
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      reads += 1;
+      controller.abort(aborted);
+      expect(request.signal.aborted).toBe(true);
+      return jsonResponse({ data: [{ id: "msg_1", type: "user" }], cursor: { next: "older" } });
+    };
+    try {
+      await expect(createClientV2("http://opencode.test/opencode2", undefined, {}).session.messages({ sessionID: "ses_pages" }, { signal: controller.signal }))
+        .rejects.toBe(aborted);
+      expect(reads).toBe(1);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+});
+
 describe("OpenCode v2 client compatibility", () => {
   test.each([0, 1_788_548_737_221])("rejects archived=%i without reading, renaming, or deleting the session", async (archived) => {
     const originalFetch = globalThis.fetch;
@@ -1683,6 +1901,30 @@ describe("OpenCode v2 client compatibility", () => {
     }
   });
 
+  test("native catalog updates notify only the matching workspace without inventing a reload event", async () => {
+    const originalFetch = globalThis.fetch;
+    const updates: Array<{ baseUrl: string; directory?: string }> = [];
+    const unsubscribe = subscribeProviderCatalogChanges((scope) => updates.push(scope));
+    globalThis.fetch = async () => new Response([
+      { type: "catalog.updated", data: {} },
+      { type: "catalog.updated", location: { directory: "/other" }, data: {} },
+      { type: "catalog.updated", location: { directory: "/workspace" }, data: {} },
+    ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""));
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const { stream } = await client.event.subscribe();
+      expect((await stream.next()).done).toBe(true);
+      expect(updates).toEqual([{ baseUrl: "http://opencode.test/opencode2", directory: "/workspace" }]);
+      updates.length = 0;
+      // The session sync client is scoped by its mounted URL, not a directory
+      // constructor argument. Preserve the native event's directory for it.
+      const mounted = createClientV2("http://opencode.test/opencode2", undefined, {});
+      const subscription = await mounted.event.subscribe();
+      expect((await subscription.stream.next()).done).toBe(true);
+      expect(updates.at(-1)).toEqual({ baseUrl: "http://opencode.test/opencode2", directory: "/workspace" });
+    } finally { unsubscribe(); globalThis.fetch = originalFetch; }
+  });
+
   test("a reconnected subscription rebuilds the same completed parts without retaining old payloads or tombstones", async () => {
     const originalFetch = globalThis.fetch;
     const identity = { sessionID: "s", assistantMessageID: "m", ordinal: 0 };
@@ -1756,8 +1998,9 @@ describe("OpenCode v2 client compatibility", () => {
         ["GET", "/workspace/owned/opencode2/api/event"], ["GET", "/workspace/owned/opencode2/api/session/ses_fork"],
       ]);
       expect(requests.every((request) => request.headers.get("Authorization") === "Bearer fixture-token")).toBe(true);
-      expect((await client.session.fork({ sessionID: "ses_source" })).response.status).toBe(501);
-      expect(requests).toHaveLength(2);
+      expect((await client.session.fork({ sessionID: "ses_source" })).data?.id).toBe("ses_fork");
+      expect(requests).toHaveLength(3);
+      expect(await requests[2]?.json()).toEqual({ boundary: { type: "through" } });
     } finally { globalThis.fetch = originalFetch; }
   });
 
@@ -2164,9 +2407,9 @@ test("v2 provider catalog retains display names and advertised effort without ex
     const models = result.data?.all[0]?.models;
     expect(models?.coding?.variants).toEqual({ low: { reasoningEffort: "low" }, high: { reasoningEffort: "high" }, CustomExact: { thinking: { budgetTokens: 4096 } } });
     if (!models?.coding || !models.standard || !models.builtin) throw new Error("Missing mapped models");
-    expect(getModelBehaviorOptions("lpr_fixture", models.coding).map((option) => option.value)).toEqual(["low", "high", "CustomExact"]);
-    expect(getModelBehaviorOptions("lpr_fixture", models.standard)).toEqual([]);
-    expect(getModelBehaviorOptions("lpr_fixture", models.builtin)).toEqual([]);
+    expect(getModelBehaviorOptions("lpr_fixture", models.coding).map((option) => option.value)).toEqual([null, "low", "high", "CustomExact"]);
+    expect(getModelBehaviorOptions("lpr_fixture", models.standard).map((option) => option.value)).toEqual([null]);
+    expect(getModelBehaviorOptions("lpr_fixture", models.builtin).map((option) => option.value)).toEqual([null]);
     expect(JSON.stringify(result.data)).not.toContain("fixture-private");
   } finally {
     globalThis.fetch = originalFetch;

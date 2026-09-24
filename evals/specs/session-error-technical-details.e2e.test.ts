@@ -1,15 +1,16 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { sessionErrorCard, sessionSubmitErrorIsolation } from "../worlds/chat.ts";
+import { sessionErrorCard, sessionProviderErrorRecovery, sessionSubmitErrorIsolation } from "../worlds/chat.ts";
 
 const test = spec.world(sessionErrorCard);
 const submitTest = spec.world(sessionSubmitErrorIsolation, { timeout: 600_000 });
+const providerTest = spec.world(sessionProviderErrorRecovery, { timeout: 600_000 });
 const STORAGE_TITLE = "Storage error reported";
 const STORAGE_DESCRIPTION = "A storage limit was reported by the task runtime or a connected service. This does not necessarily mean your computer is full. Check the affected service or workspace before freeing local disk space.";
 
 // Values from the seeded payload (eval.session_error.seed): an Anthropic 429
 // with a JSON response body. None of these appear in the plain card text.
-const CARD_TEXT = "Rate limit reached for claude-sonnet-4-5";
+const CARD_TEXT = "This model is receiving too many requests";
 const DIAGNOSTIC_LINES = ["Error type: APIError", "Status: 429", "Provider: anthropic", "Code: rate_limit_error", "Retries: 3"];
 const REQUEST_ID = "req_01JZK4W9N7X2Q8M3V5T6B1C0DE";
 // Rendered with CSS uppercase, so compare case-insensitively.
@@ -100,6 +101,7 @@ test("session error cards expose provider diagnostics only in Developer mode", a
       await user.see({ text: title });
       await user.notSee({ text: /at runLoop/ });
       await toggleDeveloperMode("on");
+      await user.click(detailsToggle);
       await user.see({ text: /effect\/sql\/SqlError/ });
       await user.see({ text: /at runLoop/ });
       await toggleDeveloperMode("off");
@@ -108,6 +110,36 @@ test("session error cards expose provider diagnostics only in Developer mode", a
     });
   }
 
+});
+
+providerTest("a model server failure retries clearly and leaves one completed answer", async ({ user, probe, step, world, evidence }) => {
+  await step("a real provider 500 is explained without exposing the raw error", async () => {
+    await user.type("composer", world.prompt);
+    await user.click("Run task");
+    await user.see({ testId: "session-retrying" }, { timeoutMs: 45_000 });
+    await user.see({ text: "The model couldn’t respond. Retrying…" });
+    await user.notSee({ text: "Internal server error" });
+    await user.notSee({ testId: "admission-outcome-unknown" });
+    await user.click(detailsToggle);
+    await user.see({ text: /attempt [12]/ });
+  });
+  await step("automatic recovery clears retry and unresolved-outcome notices", async () => {
+    await user.see({ text: world.reply }, { timeoutMs: 60_000 });
+    await user.notSee({ testId: "session-retrying" });
+    await user.notSee({ testId: "admission-outcome-unknown" });
+    const calls = await world.mock.agentRequests({ promptMarker: world.prompt });
+    expect(calls.filter(call => call.kind === "error")).toHaveLength(2);
+    expect(calls.filter(call => call.kind === "final")).toHaveLength(1);
+    expect(calls.filter(call => call.kind === "tool")).toHaveLength(0);
+    const visible = await probe.dom('[data-session-surface-id]');
+    expect(visible.elements.length).toBeGreaterThan(0);
+    evidence.recordJsonArtifact("Provider retry requests", calls);
+    evidence.recordAssertionEvidence("One reply after two server failures", "The real model endpoint returned two errors then one answer. Retry and unknown-outcome notices cleared; no tools were executed.", true);
+    await user.reload();
+    await user.see({ text: world.reply });
+    await user.notSee({ testId: "session-retrying" });
+    await user.notSee({ testId: "admission-outcome-unknown" });
+  });
 });
 
 submitTest("a delayed submit error stays with its owner while another retained task remains sendable", async ({ user, probe, step, world }) => {

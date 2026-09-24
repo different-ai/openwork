@@ -1,0 +1,219 @@
+name: PR change proof
+
+on:
+  pull_request:
+    branches: [dev]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-change-proof-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      selected: ${{ steps.select.outputs.selected }}
+      liveMatrix: ${{ steps.select.outputs.liveMatrix }}
+      liveSelected: ${{ steps.select.outputs.liveSelected }}
+      packagedMatrix: ${{ steps.select.outputs.packagedMatrix }}
+      packagedSelected: ${{ steps.select.outputs.packagedSelected }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/pr-proof-controller.mjs
+
+  proof:
+    needs: select
+    if: needs.select.outputs.selected == 'true'
+    # Same runner as the nightly local journey lane; hosted ubuntu-latest lacks
+    # the setup Electron needs and every desktop proof died before CDP.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-tests
+      - uses: ./.github/actions/setup-browser
+        with:
+          oauth-handoff: "true"
+      - name: Build local Den dependencies and the review app
+        shell: bash
+        run: |
+          pnpm --filter @openwork/types build
+          pnpm --filter @openwork-ee/den-db build
+          pnpm --filter @openwork/email build
+          pnpm --filter @openwork/review-app build
+          pnpm dev:den:mysql
+      - name: Run the selected changed spec on the PR head
+        timeout-minutes: 20
+        env:
+          PROOF_SPEC: ${{ matrix.spec }}
+          # CI runners cannot use Chromium's SUID sandbox (the pnpm-store helper
+          # is not root-owned). The testkit's container mode launches Electron
+          # with --no-sandbox, as it already does on Daytona.
+          OPENWORK_EVAL_CONTAINER_ELECTRON: "1"
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          if node evals/scripts/run-parity-proof.mjs --supports "$PROOF_SPEC"; then
+            xvfb-run -a node evals/scripts/run-parity-proof.mjs "$PROOF_SPEC"
+          else
+            xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local
+          fi
+      - name: Save selected native testkit and Vitest records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr-proof-${{ github.run_attempt }}-${{ matrix.key }}
+          path: |
+            evals/results/test-runs/
+            evals/results/.testkit/cli-run-*.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+
+  # Packaged specs need a packaged desktop binary. Build the same Linux
+  # artifacts as the packaged smoke gate and run only the changed journey.
+  packaged-proof:
+    needs: select
+    if: needs.select.outputs.packagedSelected == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.select.outputs.packagedMatrix) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Cache Electron and pinned sidecars
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            apps/desktop/resources/sidecars
+          key: ${{ runner.os }}-${{ runner.arch }}-desktop-smoke-${{ hashFiles('constants.json', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-sidecar.mjs') }}
+      - uses: ./.github/actions/setup-tests
+      - name: Bundle the server plugins the way packaged builds do
+        run: |
+          rm -rf packages/types/dist
+          pnpm --filter openwork-server build
+      - name: Run the selected packaged spec against the packaged desktop
+        timeout-minutes: 20
+        env:
+          PROOF_JOURNEY: ${{ matrix.journey }}
+          OPENWORK_PACKAGED_SMOKE_DIR: ${{ runner.temp }}/openwork-packaged-smoke
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # Same Chromium SUID-sandbox constraint as the proof job above.
+          OPENWORK_EVAL_CONTAINER_ELECTRON: "1"
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          node apps/desktop/scripts/packaged-smoke.mjs --server-built --journey "$PROOF_JOURNEY"
+      - name: Save selected native testkit and Vitest records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr-proof-${{ github.run_attempt }}-${{ matrix.key }}
+          path: |
+            evals/results/test-runs/
+            evals/results/.testkit/cli-run-*.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+
+  live-proof:
+    needs: select
+    if: >-
+      needs.select.outputs.liveSelected == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.event.pull_request.head.repo.id == github.event.repository.id &&
+      github.event.pull_request.base.repo.id == github.event.repository.id &&
+      github.event.pull_request.head.repo.fork == false &&
+      github.event.pull_request.base.repo.fork == false &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      github.actor != 'dependabot[bot]' &&
+      github.triggering_actor != 'dependabot[bot]'
+    environment: pr-slow-specs
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.select.outputs.liveMatrix) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-tests
+      - uses: ./.github/actions/setup-browser
+        with:
+          oauth-handoff: "true"
+      - name: Build local app dependencies without live credentials
+        run: |
+          pnpm --filter @openwork/types build
+          pnpm --filter @openwork-ee/den-db build
+          pnpm --filter @openwork/email build
+          pnpm --filter @openwork/review-app build
+          pnpm dev:den:mysql
+      - name: Run the whole selected live spec with real inference
+        timeout-minutes: 45
+        env:
+          PROOF_SPEC: ${{ matrix.spec }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENWORK_EVAL_LIVE_OPENAI: "1"
+          OPENWORK_EVAL_OPENAI_MODEL: gpt-5.4
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          if [ "$PROOF_SPEC" != 'evals/specs/live-stream-continuity.e2e.test.ts' ] && [ "$PROOF_SPEC" != 'evals/specs/engine-live-chat.e2e.test.ts' ]; then
+            printf '%s\n' '::error::Unsupported live proof selection. Add an explicit reviewed live-spec policy before running another file.' >&2
+            exit 1
+          fi
+          if [[ -z "${OPENAI_API_KEY//[[:space:]]/}" ]]; then
+            printf '%s\n' '::error::OPENAI_API_KEY is required for selected live proof. Configure repository/environment access and approve pr-slow-specs; this proof cannot be skipped.' >&2
+            exit 1
+          fi
+          if [ "$PROOF_SPEC" = 'evals/specs/engine-live-chat.e2e.test.ts' ]; then
+            OPENWORK_LIVE_PROVIDER=OpenAI OPENWORK_LIVE_KEY_ENV=OPENAI_API_KEY \
+              OPENWORK_LIVE_MODELS=gpt-5.4,gpt-4.1-mini OPENWORK_EVAL_CONTAINER_ELECTRON=1 \
+              xvfb-run -a node evals/scripts/run-parity-proof.mjs "$PROOF_SPEC"
+          else
+            xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --engine v1 --surface web
+          fi
+      - name: Save selected native testkit and Vitest records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr-proof-${{ github.run_attempt }}-${{ matrix.key }}
+          path: |
+            evals/results/test-runs/
+            evals/results/.testkit/cli-run-*.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error

@@ -5,24 +5,6 @@ name: API Contract
 # warning baseline are documented in docs/api-style.md.
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/api-contract.yml"
-      - ".spectral.yaml"
-      - ".spectral-baseline.json"
-      - "scripts/api-lint.mjs"
-      - "packages/docs/openapi.json"
-      - "ee/apps/den-api/**"
-      - "ee/packages/**"
-      - "packages/automations/**"
-      - "packages/codemode/**"
-      - "packages/connect-link/**"
-      - "packages/email/**"
-      - "packages/enterprise-mcp-client/**"
-      - "packages/headless-threads/**"
-      - "packages/install-config/**"
-      - "packages/mcp-apps/**"
-      - "packages/types/**"
   push:
     branches:
       - dev

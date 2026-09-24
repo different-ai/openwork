@@ -1,7 +1,13 @@
+"use client";
+
+import { useState } from "react";
+import { CopyButton } from "./copy-button";
+import { EvidenceViewer } from "./evidence-viewer";
 import { summarizeReview } from "@openwork/review";
 import type { ReviewEvidence, ReviewReport } from "@openwork/review";
+import { LaunchPreview } from "./launch-preview";
 
-function Judgments({ items }: { items: ReviewEvidence["judgments"] }) {
+export function Judgments({ items }: { items: ReviewEvidence["judgments"] }) {
   return (
     <ul className="assertions">
       {items.map((item, index) => (
@@ -18,20 +24,41 @@ function Judgments({ items }: { items: ReviewEvidence["judgments"] }) {
   );
 }
 
-export function Report({ report, id }: { report: ReviewReport; id: string }) {
+export function Report({ report, id, connected }: { report: ReviewReport; id: string; connected: boolean }) {
+  const [filter, setFilter] = useState("All");
+  const [sandboxOpen, setSandboxOpen] = useState(false);
   const summary = summarizeReview(report);
   const assetUrl = (name: string) => `/r/${id}/assets/${name}`;
   const evidenceById = new Map(report.evidence.map((item) => [item.id, item]));
+  const sections = report.sections.flatMap((section) => {
+    const source = report.sources.find((item) => item.id === section.sourceId);
+    if (!source) return [];
+    const items = section.evidenceIds.flatMap((key) => evidenceById.get(key) ?? []);
+    return [{ ...section, verdict: summarizeReview({ sources: [source], evidence: items, gaps: [] }).verdict }];
+  });
+  const visibleSections = sections.filter((section) => filter === "All" || section.verdict === filter);
+  const failures = sections.filter((section) => section.verdict === "Failed");
+  function nextFailure() {
+    setFilter("All");
+    const current = failures.findIndex((section) => `#${section.id}` === window.location.hash);
+    const next = failures[(current + 1) % failures.length];
+    if (next) requestAnimationFrame(() => {
+      window.location.hash = next.id;
+      document.getElementById(next.id)?.focus();
+    });
+  }
   return (
-    <main className="report">
+    <main className={`report${sandboxOpen ? " sandbox-open" : ""}`}>
       <div className="intro">
-        <p className="eyebrow">
-          Change verification <span> / {report.gitSha.slice(0, 7)}</span>
-        </p>
+        <div className="report-toolbar">
+          <code title={report.gitSha}>{report.gitSha.slice(0, 7)}</code>
+          <CopyButton label="Copy commit" value={report.gitSha} />
+          <button type="button" aria-expanded={sandboxOpen} aria-controls="sandbox-panel" onClick={() => setSandboxOpen(!sandboxOpen)}>{sandboxOpen ? "Hide sandbox" : "Show sandbox"}</button>
+        </div>
         <h1>{report.title}</h1>
         <div className="summary">
           <span className={`badge ${summary.verdict.toLowerCase()}`}>
-            {summary.verdict}
+            Selected evidence: {summary.verdict}
           </span>
           {summary.tests > 0 && (
             <span>
@@ -47,7 +74,6 @@ export function Report({ report, id }: { report: ReviewReport; id: string }) {
           <span>{summary.images} images</span>
         </div>
         <p className="scope">
-          Results cover the selected evidence below.{" "}
           <time dateTime={report.createdAt}>
             {new Date(report.createdAt).toLocaleString("en-US", {
               dateStyle: "medium",
@@ -71,21 +97,36 @@ export function Report({ report, id }: { report: ReviewReport; id: string }) {
           </aside>
         )}
       </div>
+      <aside id="sandbox-panel" className="sandbox-sidebar" aria-label="Your sandbox" hidden={!sandboxOpen}>
+        <LaunchPreview id={id} connected={connected} />
+      </aside>
       <div className="report-body">
+        <div className="filter-bar" aria-label="Filter evidence">
+          {['All', 'Failed', 'Incomplete'].map((value) => <button type="button" key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>{value} ({value === 'All' ? sections.length : sections.filter((section) => section.verdict === value).length})</button>)}
+          <button type="button" className="quiet" disabled={!failures.length} onClick={nextFailure}>Next failure</button>
+          <span role="status">{visibleSections.length} of {sections.length} sections</span>
+        </div>
+        <label className="section-picker">Jump to section
+          <select aria-label="Jump to section" value="" onChange={(event) => { window.location.hash = event.target.value; document.getElementById(event.target.value)?.focus(); }}>
+            <option value="" disabled>Choose a section</option>
+            {visibleSections.map((section) => <option key={section.id} value={section.id}>{section.title} — {section.verdict}</option>)}
+          </select>
+        </label>
         <nav className="contents" aria-label="Report sections">
           <p className="eyebrow">In this review</p>
-          {report.sections.map((section, index) => (
+          {visibleSections.map((section, index) => (
             <a key={section.id} href={`#${section.id}`}>
               <span>{String(index + 1).padStart(2, "0")}</span>
-              {section.title}
+              <span className="nav-title">{section.title}<small className={`result ${section.verdict.toLowerCase()}`}>{section.verdict}</small></span>
             </a>
           ))}
           <a className="download" href={assetUrl("report.json")}>
-            Download report ↗
+            Download report
           </a>
         </nav>
         <div className="sections">
-          {report.sections.map((section, index) => {
+          {visibleSections.length === 0 && <p className="empty">No {filter.toLowerCase()} sections. <button type="button" onClick={() => setFilter("All")}>Show all evidence</button></p>}
+          {visibleSections.map((section, index) => {
             const source = report.sources.find(
               (item) => item.id === section.sourceId,
             );
@@ -103,7 +144,7 @@ export function Report({ report, id }: { report: ReviewReport; id: string }) {
               gaps: [],
             }).verdict;
             return (
-              <section className="section" id={section.id} key={section.id}>
+              <section className="section" id={section.id} key={section.id} tabIndex={-1}>
                 <div className="section-heading">
                   <span className="number">
                     {String(index + 1).padStart(2, "0")}
@@ -119,6 +160,12 @@ export function Report({ report, id }: { report: ReviewReport; id: string }) {
                   <span className={`result ${verdict.toLowerCase()}`}>
                     {verdict}
                   </span>
+                </div>
+                <div className="source-row">
+                  {source.name !== section.title && <span>{source.name}</span>}
+                  <code title={source.gitSha}>{source.gitSha.slice(0, 7)}</code>
+                  <CopyButton label="Copy section link" value={`#${section.id}`} link />
+                  <a href={assetUrl(source.asset)} target="_blank" rel="noreferrer">{source.kind === "test-run" ? "View record and trace" : "View receipt"}</a>
                 </div>
                 {source.kind === "test-run" && source.outcome !== "passed" && (
                   <p className="empty">
@@ -150,9 +197,8 @@ export function Report({ report, id }: { report: ReviewReport; id: string }) {
                     <figure key={item.id}>
                       <a
                         className="image-link"
-                        href={assetUrl(item.asset)}
-                        target="_blank"
-                        rel="noreferrer"
+                        href={`#evidence-${item.id}`}
+                        aria-label={`Inspect ${item.caption}`}
                       >
                         <img
                           src={assetUrl(item.asset)}
@@ -162,6 +208,7 @@ export function Report({ report, id }: { report: ReviewReport; id: string }) {
                       </a>
                       <figcaption>
                         <strong>{item.caption}</strong>
+                        <CopyButton label="Copy image link" value={`#evidence-${item.id}`} link />
                         {item.description && <p>{item.description}</p>}
                       </figcaption>
                       {item.judgments.length > 0 && (
@@ -196,7 +243,7 @@ export function Report({ report, id }: { report: ReviewReport; id: string }) {
                     {source.kind === "test-run"
                       ? "test record, steps, and trace"
                       : "DocShot receipt"}{" "}
-                    ↗
+
                   </a>
                 </details>
               </section>
@@ -204,6 +251,7 @@ export function Report({ report, id }: { report: ReviewReport; id: string }) {
           })}
         </div>
       </div>
+      <EvidenceViewer report={report} id={id} />
       <footer>
         Recorded evidence · Human discussion and approval remain on the pull
         request.

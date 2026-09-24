@@ -66,6 +66,7 @@ export interface StepRecord {
 
 export interface TestRunRecord {
   name: string;
+  specFile?: string;
   dir: string;
   createdAt: string;
   closedAt: string;
@@ -298,6 +299,7 @@ function parseRecord(value: unknown, legacy: boolean): TestRunRecord | null {
   }
   const summary = legacy ? parseLegacySummary(value.summary, artifacts) : parseCurrentSummary(value.summary, artifacts);
   if (!summary) return null;
+  const specFile = typeof value.specFile === "string" ? value.specFile : undefined;
   const gitSha = typeof value.gitSha === "string" ? value.gitSha : undefined;
   const sandboxRef = typeof value.sandboxRef === "string" ? value.sandboxRef : undefined;
   const engine: EvalEngine | null = value.engine === undefined || value.engine === "v1"
@@ -331,6 +333,7 @@ function parseRecord(value: unknown, legacy: boolean): TestRunRecord | null {
   const failure = typeof value.failure === "string" ? value.failure : undefined;
   return {
     name: value.name,
+    specFile,
     dir: value.dir,
     createdAt: value.createdAt,
     closedAt: value.closedAt,

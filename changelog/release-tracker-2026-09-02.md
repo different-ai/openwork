@@ -14,20 +14,20 @@ Internal preparation file for release summaries. This is not yet published to th
 Session status gets honest and cloud providers connect with saved credentials
 
 #### One-line summary
-Makes Working indicators and session reconciliation truthful, connects Den providers from locally saved Desktop credentials, and publishes SOC 2 Type I status.
+Makes Working indicators and session reconciliation truthful, connects Den providers from locally saved Desktop credentials, and publishes SOC 2 status.
 
 #### Main changes
 - Working indicators now stop when a run errors or the engine is unreachable, and show minutes past the first hour.
 - Sessions reconcile more cleanly: completions are detected while you are elsewhere, queued composer messages send when a session is out of view, and archiving works from any workspace.
 - Den cloud providers now connect using credentials saved locally on the Desktop, and Google Workspace retrieval is more resilient.
-- The landing page shows OpenWork's SOC 2 Type I badge and status, and web boot failures and Stripe webhook errors now reach Sentry.
+- The landing page shows OpenWork's SOC 2 badge and status, and web boot failures and Stripe webhook errors now reach Sentry.
 - Remediated static-analysis security findings, isolated provider sync contexts, and improved internal test and release tooling.
 
 #### Lines of code changed since previous release
 25270 lines changed since `v0.18.40` (18863 insertions, 6407 deletions).
 
 #### Release importance
-Minor release: reliability fixes to session status and reconciliation, plus saved-credential provider connections and SOC 2 Type I disclosure.
+Minor release: reliability fixes to session status and reconciliation, plus saved-credential provider connections and SOC 2 disclosure.
 
 #### Major improvements
 True
@@ -37,7 +37,7 @@ True
 
 #### Major improvement details
 - Connected Den cloud providers from locally saved Desktop credentials.
-- Published the SOC 2 Type I badge and status on the landing page.
+- Published the SOC 2 badge and status on the landing page.
 - Reported web boot failures and Stripe webhook errors to Sentry.
 
 #### Major bugs resolved

@@ -27,6 +27,7 @@ async function startManualApprovalServer() {
     port: 0,
     token: "owt_test_token",
     hostToken: "owt_host_token",
+    configPath: join(root, "server.json"),
     // The web/gateway posture: nobody answers approval prompts, so anything
     // that parks on the approval queue hangs for timeoutMs and then fails.
     approval: { mode: "manual", timeoutMs: APPROVAL_TIMEOUT_MS },

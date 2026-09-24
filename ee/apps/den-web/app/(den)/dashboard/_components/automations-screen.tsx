@@ -156,7 +156,7 @@ export function AutomationsScreen() {
         <ManageLink item={detail} openworkWebUrl={runtimeConfig.openworkWebUrl} />
       </div>
 
-      {detail.automation.needsAttentionReason ? <div className="mt-5 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-[13px] text-amber-700">{detail.automation.needsAttentionReason.message}</div> : null}
+      {detail.automation.needsAttentionReason ? <div className="mt-5 rounded-xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-[13px] text-[var(--dls-text-primary)]">{detail.automation.needsAttentionReason.message}</div> : null}
       <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(20rem,0.9fr)]">
         <div className="space-y-5">
           <section className="rounded-2xl border border-gray-100 bg-white p-5">

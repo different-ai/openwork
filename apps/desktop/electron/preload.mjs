@@ -10,6 +10,7 @@ const AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT = "openwork:automation-runner:
 const BROWSER_BOUNDS_INVALIDATED_EVENT = "openwork:browser:bounds-invalidated";
 
 let lastBrowserGeometry = null;
+let windowFullscreen = ipcRenderer.sendSync("openwork:window-fullscreen-sync") === true;
 
 async function sendBrowserGeometry(channel, bounds, ...args) {
   // Capture zoom in the same renderer turn as the CSS measurement, not after IPC.
@@ -41,6 +42,7 @@ function applyShellDocumentMarkers() {
     if (!root) return false;
 
     root.dataset.openworkShell = "electron";
+    root.dataset.windowFullscreen = String(windowFullscreen);
     root.classList.add("openwork-electron");
     if (process.platform === "darwin") {
       root.classList.add("openwork-platform-mac");
@@ -71,10 +73,38 @@ function installMenuOverlayDismissListeners() {
   }
 }
 
+function linkOpenPreferences() {
+  // Read at activation so Settings changes and reloads use the same saved
+  // preference as the renderer, without a second main-process preference store.
+  try {
+    const prefs = JSON.parse(window.localStorage.getItem("openwork.preferences"));
+    return { external: prefs?.linkOpenDestination === "external", ask: prefs?.askBeforeOpeningLinks !== false };
+  } catch {
+    return { external: false, ask: true };
+  }
+}
+
+function openLink(url, sessionId) {
+  ipcRenderer.send("openwork:browser:linkClick", { url, sessionId, ...linkOpenPreferences() });
+}
+
 if (process.isMainFrame) {
   installBrowserShortcutFocusTracking(window, (tabId) => {
     ipcRenderer.send("openwork:browser:shortcut-focus", tabId);
   });
+  window.addEventListener("click", (event) => {
+    if (!event.isTrusted || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const anchor = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
+    if (!anchor || anchor.isContentEditable || anchor.hasAttribute("download")) return;
+    if (!/^(https?:)?\/\//i.test(anchor.getAttribute("href") ?? "")) return;
+    let url;
+    try { url = new URL(anchor.href); } catch { return; }
+    if (!["http:", "https:"].includes(url.protocol)) return;
+    if (url.origin === location.origin && url.pathname === location.pathname && url.search === location.search) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    openLink(url.href, anchor.closest("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? null);
+  }, { capture: true });
 }
 
 // Selected text and ordinary editors use Chromium's native context-menu event.
@@ -92,6 +122,12 @@ window.addEventListener("contextmenu", (event) => {
     return;
   }
   if (composedEditor) return;
+  // Preserve Chromium's image hit-test and pixel clipboard operation, including
+  // linked images. Do not let surrounding message/link menus swallow it.
+  if (eventPath.some((node) => node instanceof HTMLImageElement)) {
+    event.stopImmediatePropagation();
+    return;
+  }
   const anchor = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
   if (!anchor || anchor.isContentEditable || anchor.hasAttribute("download")) return;
   const href = anchor.getAttribute("href") ?? "";
@@ -190,8 +226,8 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     setChannel(channel) {
       return ipcRenderer.invoke("openwork:updater:setChannel", channel);
     },
-    check(channel, targetVersion) {
-      return ipcRenderer.invoke("openwork:updater:check", channel, targetVersion);
+    check(channel, targetVersion, options) {
+      return ipcRenderer.invoke("openwork:updater:check", channel, targetVersion, options);
     },
     download() {
       return ipcRenderer.invoke("openwork:updater:download");
@@ -223,6 +259,13 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     },
   },
   browser: {
+    openLink,
+    chooseLinkDestination(id, destination) { return ipcRenderer.invoke("openwork:browser:chooseLinkDestination", id, destination); },
+    onLinkOpenRequest(callback) {
+      const handler = (_event, request) => callback(request);
+      ipcRenderer.on("openwork:browser:link-open-request", handler);
+      return () => ipcRenderer.removeListener("openwork:browser:link-open-request", handler);
+    },
     show(bounds, sessionId) { return sendBrowserGeometry("openwork:browser:show", bounds, sessionId); },
     hide(options) {
       lastBrowserGeometry = null;
@@ -369,6 +412,11 @@ ipcRenderer.on(NATIVE_MENU_ZOOM_EVENT, (_event, action) => {
 ipcRenderer.on(BROWSER_BOUNDS_INVALIDATED_EVENT, () => {
   lastBrowserGeometry = null;
   window.dispatchEvent(new Event(BROWSER_BOUNDS_INVALIDATED_EVENT));
+});
+
+ipcRenderer.on("openwork:window-fullscreen", (_event, fullscreen) => {
+  windowFullscreen = fullscreen === true;
+  applyShellDocumentMarkers();
 });
 
 if (!applyShellDocumentMarkers() && typeof document !== "undefined") {

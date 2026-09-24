@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import type { ConnectionActionIntent } from "@openwork/types/connection-action-app";
 import { createCipheriv, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SseError } from "@modelcontextprotocol/sdk/client/sse.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
   CallToolRequestSchema,
@@ -11,6 +16,7 @@ import {
   ListToolsRequestSchema,
   McpError,
   ReadResourceRequestSchema,
+  type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { addMcp, listMcp } from "./mcp.js";
 import {
@@ -31,9 +37,11 @@ import {
   resolveSameServerMcpAppResource,
   releaseMcpAppLaunch,
   toolUiResourceUri,
+  supportsHostConnectionActions,
 } from "./mcp-app-host.js";
 import type { ServerConfig } from "./types.js";
 import { localManagedMcpAppIdentity } from "./local-managed-mcp.js";
+import { opencodeConfigPath } from "./workspace-files.js";
 
 const WORKSPACE_ID = "ws_mcp_apps_host";
 const RESOURCE_URI = "ui://fixture/v1/view.html";
@@ -66,15 +74,41 @@ function serverConfig(root: string): ServerConfig {
   };
 }
 
+const CONNECTION_RESOURCE = "ui://openwork/connection-action/v2/view.html";
+const connectionIntent: ConnectionActionIntent = {
+  schemaVersion: "1", kind: "connection_action_intent", action: "authenticate",
+  connection: {
+    schemaVersion: "1", connectionId: "conn_fixture", connectionName: "Fixture",
+    state: "needs_connection", actor: "member", message: "Sign in",
+    action: { type: "connect", label: "Connect", surface: "openwork_your_connections" },
+  },
+};
+type ConnectionFixtureOptions = {
+  endpoint?: string;
+  redirect?: string;
+  result?: Record<string, unknown>;
+  fail?: boolean;
+  afterCall?: () => void;
+};
+
 async function startFixtureMcp(
   resourceContent: { text?: string; blob?: string } = { text: RESOURCE_HTML },
   connectionId?: string,
+  connectionOptions?: ConnectionFixtureOptions,
 ) {
   let activeResourceUri = RESOURCE_URI;
   let catalogReads = 0;
+  let resourceReads = 0;
+  let resourceMeta: Record<string, unknown> = {
+    ui: {
+      csp: { connectDomains: [], resourceDomains: [], frameDomains: [], baseUriDomains: [] },
+      prefersBorder: true,
+    },
+  };
   const calls: Array<{ name: string; arguments?: Record<string, unknown> }> = [];
   let launchVisible = true;
   let launchPresent = true;
+  let launchAnnotations: Tool["annotations"] = { readOnlyHint: true, destructiveHint: false };
   const mcp = new Server(
     { name: "mcp-app-fixture", version: "1.0.0" },
     {
@@ -89,11 +123,23 @@ async function startFixtureMcp(
   );
   mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
+      ...(connectionOptions ? [
+        {
+          name: "connection_action", inputSchema: { type: "object", properties: {} },
+          annotations: { readOnlyHint: true },
+          _meta: { ui: { resourceUri: CONNECTION_RESOURCE, visibility: ["app"] } },
+        },
+        {
+          name: "connection_action_intent", inputSchema: { type: "object", properties: {} },
+          annotations: { readOnlyHint: true },
+          _meta: { ui: { visibility: ["app"] }, hostConnectionActions: true },
+        },
+      ] : []),
       {
         name: "render_fixture",
         description: "Render the fixture",
         inputSchema: { type: "object", properties: {} },
-        annotations: { readOnlyHint: true, destructiveHint: false },
+        annotations: launchAnnotations,
         _meta: { ui: { resourceUri: activeResourceUri, visibility: launchVisible ? ["model", "app"] : ["model"] } },
       },
       {
@@ -153,24 +199,31 @@ async function startFixtureMcp(
     ].filter(tool => launchPresent || tool.name !== "render_fixture"),
   }));
   mcp.setRequestHandler(ReadResourceRequestSchema, async ({ params }) => {
-    if (params.uri !== RESOURCE_URI && params.uri !== UPDATED_RESOURCE_URI) throw new Error("not found");
+    resourceReads += 1;
+    if (params.uri !== RESOURCE_URI && params.uri !== UPDATED_RESOURCE_URI
+      && !(connectionOptions && params.uri === CONNECTION_RESOURCE)) throw new Error("not found");
     const content = params.uri === UPDATED_RESOURCE_URI ? { text: UPDATED_RESOURCE_HTML } : resourceContent;
     return {
       contents: [{
         uri: params.uri,
         mimeType: "text/html;profile=mcp-app",
         ...content,
-        _meta: {
-          ui: {
-            csp: { connectDomains: [], resourceDomains: [], frameDomains: [], baseUriDomains: [] },
-            prefersBorder: true,
-          },
-        },
+        _meta: resourceMeta,
       }],
     };
   });
   mcp.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
     calls.push(params);
+    if (connectionOptions) {
+      connectionOptions.afterCall?.();
+      if (connectionOptions.fail) throw new McpError(ErrorCode.InternalError, "Fixture failure");
+      return {
+        content: [{ type: "text", text: "Connection intent" }],
+        structuredContent: connectionIntent, hostAction: connectionIntent,
+        _meta: { hostAction: connectionIntent, hostConnectionActions: true },
+        ...connectionOptions.result,
+      };
+    }
     if (params.name === "render_report" && typeof params.arguments?.id !== "string") {
       // A control character and an oversized tail model a hostile provider;
       // the host must relay neither verbatim.
@@ -191,6 +244,9 @@ async function startFixtureMcp(
     hostname: "127.0.0.1",
     port: 0,
     fetch: async (request): Promise<Response> => {
+      if (connectionOptions?.redirect && new URL(request.url).pathname === "/mcp/agent") {
+        return new Response(null, { status: 307, headers: { location: connectionOptions.redirect } });
+      }
       if (new URL(request.url).pathname !== "/catalog" || !connectionId) {
         if (request.method === "POST") {
           const body = await request.clone().json();
@@ -252,9 +308,13 @@ async function startFixtureMcp(
     http.stop(true);
   });
   return {
-    url: `${serverOrigin}/provider`,
+    url: `${serverOrigin}${connectionOptions?.endpoint ?? "/provider"}`,
     catalogUrl: `${serverOrigin}/catalog`,
     catalogReads: () => catalogReads,
+    resourceReads: () => resourceReads,
+    setResourceContent: (content: { text?: string; blob?: string }) => { resourceContent = content; },
+    setResourceMeta: (meta: Record<string, unknown>) => { resourceMeta = meta; },
+    setLaunchAnnotations: (annotations: Tool["annotations"]) => { launchAnnotations = annotations; },
     calls,
     hideLaunch: () => { launchVisible = false; },
     removeLaunch: () => { launchPresent = false; },
@@ -273,11 +333,16 @@ async function configuredFixture(
   resourceContent?: { text?: string; blob?: string },
   mcpName = "fixture",
   connectionId?: string,
+  connectionOptions?: ConnectionFixtureOptions,
 ): Promise<{
   config: ServerConfig;
   root: string;
   activateUpdatedResource: () => Promise<void>;
   catalogReads: () => number;
+  resourceReads: () => number;
+  setResourceContent: (content: { text?: string; blob?: string }) => void;
+  setResourceMeta: (meta: Record<string, unknown>) => void;
+  setLaunchAnnotations: (annotations: Tool["annotations"]) => void;
   calls: Array<{ name: string; arguments?: Record<string, unknown> }>;
   hideLaunch: () => void;
   removeLaunch: () => void;
@@ -300,7 +365,7 @@ async function configuredFixture(
   });
   await mkdir(join(root, ".git"), { recursive: true });
   const config = serverConfig(root);
-  const fixture = await startFixtureMcp(resourceContent, connectionId);
+  const fixture = await startFixtureMcp(resourceContent, connectionId, connectionOptions);
   const mcpConfig = {
     type: "remote",
     url: fixture.url,
@@ -329,6 +394,10 @@ async function configuredFixture(
       "Bearer app-host-token",
       fixture.catalogUrl,
     );
+  } else if (connectionOptions) {
+    await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, (current) => ({
+      ...current, mcp: { ...runtimeMcpMap(current), [mcpName]: mcpConfig },
+    }));
   } else {
     await addMcp(config, WORKSPACE_ID, mcpName, mcpConfig);
   }
@@ -337,6 +406,10 @@ async function configuredFixture(
     root,
     activateUpdatedResource: fixture.activateUpdatedResource,
     catalogReads: fixture.catalogReads,
+    resourceReads: fixture.resourceReads,
+    setResourceContent: fixture.setResourceContent,
+    setResourceMeta: fixture.setResourceMeta,
+    setLaunchAnnotations: fixture.setLaunchAnnotations,
     calls: fixture.calls,
     hideLaunch: fixture.hideLaunch,
     removeLaunch: fixture.removeLaunch,
@@ -351,6 +424,142 @@ async function fixtureLaunch(config: ServerConfig, root: string) {
   if (!app?.launchId) throw new Error("Fixture launch missing");
   return { launchId: app.launchId, sessionId: "session-a", resourceUri: app.resourceUri, assertSessionActive: async () => {} };
 }
+
+async function fixtureDashboardLaunch(config: ServerConfig, root: string) {
+  const app = await resolveMcpAppResource({
+    serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+    projectedToolName: "fixture_render_fixture", context: { sessionId: null, readOnly: false },
+  });
+  if (!app?.launchId || !app.refresh) throw new Error("Fixture refresh guard missing");
+  return {
+    refresh: app.refresh,
+    request: {
+      serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+      serverName: app.serverName, name: app.toolName, resourceUri: app.resourceUri,
+      launchId: app.launchId, sessionId: null, expectedResourceDigest: app.refresh.resourceDigest,
+    },
+  };
+}
+
+async function connectionFixture(options: ConnectionFixtureOptions = {}, serverName = "openwork-cloud", readOnly = false) {
+  const fixture = await configuredFixture("mcp-connection-action-", undefined, serverName, undefined, { endpoint: "/mcp/agent", ...options });
+  const app = await resolveSameServerMcpAppResource({
+    serverConfig: fixture.config, workspaceId: WORKSPACE_ID, workspaceRoot: fixture.root,
+    context: { sessionId: null, readOnly },
+    projectedToolName: projectedMcpToolName(serverName, "save_artifact_view"),
+    launch: { toolName: "connection_action", resourceUri: CONNECTION_RESOURCE, arguments: { connectionId: "conn_fixture" } },
+  });
+  return { ...fixture, app, request: {
+    serverConfig: fixture.config, workspaceId: WORKSPACE_ID, workspaceRoot: fixture.root,
+    launchId: app.launchId, sessionId: null, serverName, resourceUri: app.resourceUri,
+    name: "connection_action_intent", arguments: { connectionId: "conn_fixture", action: "authenticate" }, approved: true,
+  } };
+}
+
+describe("connection action host authorization", () => {
+  test("canonical origin, configured identity and exact binding are mandatory", async () => {
+    for (const serverName of ["openwork-cloud", "openwork"]) {
+      expect(await supportsHostConnectionActions(serverName, { url: "https://api.openworklabs.com/mcp/agent" }, "connection_action", CONNECTION_RESOURCE)).toBe(true);
+    }
+    for (const url of ["https://foreign.invalid/mcp/agent", "https://api.openworklabs.com/mcp/agent/connections/conn_fixture", "https://api.openworklabs.com/api/den/mcp/agent", "https://api.openworklabs.com/mcp/agent?forged=true"]) {
+      expect(await supportsHostConnectionActions("openwork-cloud", { url, hostConnectionActions: true }, "connection_action", CONNECTION_RESOURCE)).toBe(false);
+    }
+    expect(await supportsHostConnectionActions("foreign", { url: "https://api.openworklabs.com/mcp/agent" }, "connection_action", CONNECTION_RESOURCE)).toBe(false);
+    expect(await supportsHostConnectionActions("openwork-cloud", { url: "https://api.openworklabs.com/mcp/agent" }, "other", CONNECTION_RESOURCE)).toBe(false);
+  });
+
+  test("approved authenticate and skip call the real helper before promoting validated content", async () => {
+    const actions: ConnectionActionIntent["action"][] = ["authenticate", "skip"];
+    for (const action of actions) {
+      const intent = { ...connectionIntent, action };
+      const fixture = await connectionFixture({ result: { structuredContent: intent } });
+      expect(fixture.app.hostConnectionActions).toBe(true);
+      const args = { connectionId: "conn_fixture", action };
+      const result = await callMcpAppTool({ ...fixture.request, arguments: args });
+      expect(result.hostAction).toEqual(intent);
+      expect(result._meta).not.toHaveProperty("hostAction");
+      expect(fixture.calls).toEqual([{ name: "connection_action_intent", arguments: args }]);
+    }
+  });
+
+  test("approval is mandatory even when the helper declares read-only", async () => {
+    const fixture = await connectionFixture();
+    for (const approved of [false, undefined]) {
+      await expect(callMcpAppTool({ ...fixture.request, approved })).rejects.toMatchObject({ code: "tool_requires_approval" });
+    }
+    expect(fixture.calls).toHaveLength(0);
+  });
+
+  test("foreign same-URI and proxy apps cannot forge host support or host actions", async () => {
+    for (const entry of [{ name: "foreign", endpoint: "/mcp/agent" }, { name: "openwork-cloud", endpoint: "/mcp/agent/connections/conn_fixture" }]) {
+      const fixture = await connectionFixture({ endpoint: entry.endpoint }, entry.name);
+      expect(fixture.app.hostConnectionActions).toBeUndefined();
+      const result = await callMcpAppTool(fixture.request);
+      expect(result).not.toHaveProperty("hostAction");
+      expect(result._meta).not.toHaveProperty("hostAction");
+      expect(fixture.calls).toHaveLength(1);
+    }
+  });
+
+  test("other helpers cannot smuggle host actions in root, structured content or metadata", async () => {
+    const fixture = await connectionFixture({ result: { structuredContent: { hostAction: connectionIntent } } });
+    expect(JSON.stringify(await callMcpAppTool({ ...fixture.request, name: "read_detail" }))).not.toContain("hostAction");
+    expect(fixture.calls).toHaveLength(1);
+  });
+
+  test("invalid, failed, wrong-action and wrong-connection results cannot promote", async () => {
+    for (const result of [
+      { structuredContent: {} }, { isError: true },
+      { structuredContent: { ...connectionIntent, action: "skip" } },
+      { structuredContent: { ...connectionIntent, connection: { ...connectionIntent.connection, connectionId: "other" } } },
+    ]) {
+      const fixture = await connectionFixture({ result });
+      expect(await callMcpAppTool(fixture.request)).not.toHaveProperty("hostAction");
+      expect(fixture.calls).toHaveLength(1);
+    }
+  });
+
+  test("a matching helper result cannot change the stored launch connection", async () => {
+    const fixture = await connectionFixture({ result: { structuredContent: {
+      ...connectionIntent, connection: { ...connectionIntent.connection, connectionId: "other" },
+    } } });
+    expect(await callMcpAppTool({ ...fixture.request, arguments: { connectionId: "other", action: "authenticate" } })).not.toHaveProperty("hostAction");
+    expect(fixture.calls).toHaveLength(1);
+  });
+
+  test("read-only, released, and mismatched session or engine leases deny execution", async () => {
+    const readOnly = await connectionFixture({}, "openwork-cloud", true);
+    await expect(callMcpAppTool(readOnly.request)).rejects.toMatchObject({ code: "missing_launch_context" });
+    expect(readOnly.calls).toHaveLength(0);
+    const fixture = await connectionFixture();
+    await expect(callMcpAppTool({ ...fixture.request, sessionId: "other" })).rejects.toMatchObject({ code: "stale_launch_context" });
+    await expect(callMcpAppTool({ ...fixture.request, engine: "v2" })).rejects.toMatchObject({ code: "stale_launch_context" });
+    if (!fixture.app.launchId) throw new Error("Missing launch");
+    releaseMcpAppLaunch(fixture.config, WORKSPACE_ID, fixture.app.launchId);
+    await expect(callMcpAppTool(fixture.request)).rejects.toMatchObject({ code: "stale_launch_context" });
+    expect(fixture.calls).toHaveLength(0);
+  });
+
+  test("lease loss during a successful call blocks promotion without retry", async () => {
+    let revoke = () => {};
+    const fixture = await connectionFixture({ afterCall: () => revoke() });
+    const launchId = fixture.app.launchId;
+    if (!launchId) throw new Error("Missing launch");
+    revoke = () => { releaseMcpAppLaunch(fixture.config, WORKSPACE_ID, launchId); };
+    await expect(callMcpAppTool(fixture.request)).rejects.toMatchObject({ code: "stale_launch_context" });
+    expect(fixture.calls).toHaveLength(1);
+  });
+
+  test("canonical redirects cannot substitute a connection proxy", async () => {
+    await expect(connectionFixture({ redirect: "/mcp/agent/connections/conn_fixture" })).rejects.toMatchObject({ code: "mcp_unreachable" });
+  });
+
+  test("helper failures are not retried", async () => {
+    const fixture = await connectionFixture({ fail: true });
+    await expect(callMcpAppTool(fixture.request)).rejects.toMatchObject({ code: "tool_call_failed" });
+    expect(fixture.calls).toHaveLength(1);
+  });
+});
 
 describe("MCP Apps host transport", () => {
   test("uses OpenCode's exact projected MCP tool naming", () => {
@@ -706,6 +915,77 @@ describe("MCP Apps host transport", () => {
     })).rejects.toMatchObject({ code: "mcp_unreachable" });
   });
 
+  test.each([
+    { error: new StreamableHTTPError(401, "https://private.invalid Authorization: Bearer secret body"), code: "mcp_auth_required" },
+    { error: new StreamableHTTPError(403, "https://private.invalid Authorization: Bearer secret body"), code: "mcp_access_denied" },
+    { error: new UnauthorizedError("https://private.invalid Authorization: Bearer secret body"), code: "mcp_auth_required" },
+    { error: new SseError(401, "https://private.invalid Authorization: Bearer secret body", new Event("error")), code: "mcp_auth_required" },
+    { error: new SseError(403, "https://private.invalid Authorization: Bearer secret body", new Event("error")), code: "mcp_access_denied" },
+  ])("classifies $code without retry, fallback, or provider disclosure ($error.name)", async ({ error, code }) => {
+    const { config, root } = await configuredFixture("openwork-mcp-app-auth-");
+    const connect = spyOn(Client.prototype, "connect").mockRejectedValue(error);
+    stops.push(() => { connect.mockRestore(); });
+    const failure = await resolveMcpAppResource({
+      serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+      projectedToolName: "fixture_render_fixture",
+    }).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(McpAppHostError);
+    if (!(failure instanceof McpAppHostError)) throw new Error("Expected host error");
+    expect(failure.code).toBe(code);
+    expect(failure.message).toContain("before reopening the App");
+    for (const sensitive of ["https://", "private.invalid", "Authorization", "Bearer", "secret", "body"]) {
+      expect(failure.message).not.toContain(sensitive);
+    }
+    expect(connect).toHaveBeenCalledTimes(1);
+  });
+
+  test.each([400, 404, 405])("preserves legacy initialize fallback for HTTP %i but stops on SSE auth denial", async (status) => {
+    const { config, root } = await configuredFixture("openwork-mcp-app-legacy-auth-");
+    const connect = spyOn(Client.prototype, "connect")
+      .mockRejectedValueOnce(new StreamableHTTPError(status, "legacy"))
+      .mockRejectedValueOnce(new SseError(403, "private provider body", new Event("error")));
+    stops.push(() => { connect.mockRestore(); });
+    await expect(resolveMcpAppResource({
+      serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+      projectedToolName: "fixture_render_fixture",
+    })).rejects.toMatchObject({ code: "mcp_access_denied" });
+    expect(connect).toHaveBeenCalledTimes(2);
+  });
+
+  test.each([500, 502, 503])("keeps HTTP %i transient without SSE fallback", async (status) => {
+    const { config, root } = await configuredFixture("openwork-mcp-app-transient-");
+    const connect = spyOn(Client.prototype, "connect").mockRejectedValue(new StreamableHTTPError(status, "private body"));
+    stops.push(() => { connect.mockRestore(); });
+    await expect(resolveMcpAppResource({
+      serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+      projectedToolName: "fixture_render_fixture",
+    })).rejects.toMatchObject({ code: "mcp_unreachable", message: `Streamable HTTP POST: HTTP ${status}` });
+    expect(connect).toHaveBeenCalledTimes(1);
+  });
+
+  test("HTTP auth status contract preserves 401 and 403 instead of 502", async () => {
+    const { config } = await configuredFixture("openwork-mcp-app-auth-route-");
+    const { startServer } = await import("./server.js");
+    const server = await startServer(config);
+    stops.push(() => server.stop());
+    const connect = spyOn(Client.prototype, "connect");
+    stops.push(() => { connect.mockRestore(); });
+    for (const { status, code } of [
+      { status: 401, code: "mcp_auth_required" },
+      { status: 403, code: "mcp_access_denied" },
+    ]) {
+      connect.mockRejectedValue(new StreamableHTTPError(status, "private provider body"));
+      const response = await fetch(`http://127.0.0.1:${server.port}/workspace/${WORKSPACE_ID}/mcp-apps/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.token}` },
+        body: JSON.stringify({ projectedToolName: "fixture_render_fixture" }),
+      });
+      expect(response.status).toBe(status);
+      expect(await response.json()).toMatchObject({ code, message: expect.stringContaining("before reopening the App") });
+    }
+    expect(connect).toHaveBeenCalledTimes(2);
+  });
+
   test("mediates explicitly read-only same-server tool calls", async () => {
     const { config, root } = await configuredFixture("openwork-mcp-app-call-");
 
@@ -983,5 +1263,247 @@ describe("MCP Apps host transport", () => {
     expect(identities[1]).not.toEqual(identities[2]);
     expect(JSON.stringify(identities)).not.toContain("synthetic-private-credential");
     expect(await localManagedMcpAppIdentity(config, WORKSPACE_ID, "fixture", "https://ordinary.invalid/mcp")).toBeNull();
+  });
+});
+
+describe("MCP App guarded dashboard refresh", () => {
+  test.each(["direct", "same-server", "connect"])("advertises a guard only for the original read-only launch tool: %s", async (route) => {
+    const connectionId = route === "connect" ? "emc_fixture_refresh" : undefined;
+    const serverName = connectionId ? connectMcpAppHostName(connectionId) : "fixture";
+    const { config, root, calls, resourceReads } = await configuredFixture("openwork-app-refresh-advertise-", undefined, serverName, connectionId);
+    for (const toolName of ["render_fixture", "render_editor"]) {
+      const input = { serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, context: { sessionId: null, readOnly: false } };
+      const startedAt = Date.now();
+      const app = connectionId
+        ? await resolveConnectMcpAppResource({ ...input, launch: { connectionId, toolName, resourceUri: RESOURCE_URI } })
+        : route === "same-server"
+          ? await resolveSameServerMcpAppResource({ ...input, projectedToolName: "fixture_save_artifact_view", launch: { toolName, resourceUri: RESOURCE_URI } })
+          : await resolveMcpAppResource({ ...input, projectedToolName: `fixture_${toolName}` });
+      if (!app?.launchId) throw new Error("Fixture lease missing");
+      if (toolName === "render_editor") {
+        expect(app.refresh).toBeUndefined();
+      } else {
+        if (!app.refresh) throw new Error("Fixture refresh guard missing");
+        expect(Object.keys(app.refresh).sort()).toEqual(["expiresAt", "resourceDigest"]);
+        expect(app.refresh.resourceDigest).toMatch(/^[a-f0-9]{64}$/);
+        expect(app.refresh.expiresAt).toBeGreaterThanOrEqual(startedAt + 30 * 60_000);
+        expect(app.refresh.expiresAt).toBeLessThanOrEqual(Date.now() + 30 * 60_000);
+      }
+    }
+    expect(resourceReads()).toBe(2);
+    expect(calls).toEqual([]);
+  });
+
+  test("does not advertise refresh for previews, chat origins, hidden or approval-required tools", async () => {
+    const { config, root, calls, hideLaunch, setLaunchAnnotations } = await configuredFixture("openwork-app-refresh-ineligible-");
+    const input = { serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, projectedToolName: "fixture_render_fixture" };
+    for (const context of [undefined, { sessionId: null, readOnly: true }, { sessionId: "session-a", readOnly: false }, { sessionId: "archived", readOnly: true }]) {
+      const app = await resolveMcpAppResource({ ...input, context });
+      expect(app?.html).toBe(RESOURCE_HTML);
+      expect(app?.refresh).toBeUndefined();
+    }
+    for (const annotations of [undefined, {}, { readOnlyHint: false }, { readOnlyHint: true, destructiveHint: true }]) {
+      setLaunchAnnotations(annotations);
+      const app = await resolveMcpAppResource({ ...input, context: { sessionId: null, readOnly: false } });
+      expect(app?.launchId).toBeDefined();
+      expect(app?.refresh).toBeUndefined();
+    }
+    setLaunchAnnotations({ readOnlyHint: true });
+    hideLaunch();
+    const hidden = await resolveMcpAppResource({ ...input, context: { sessionId: null, readOnly: false } });
+    expect(hidden?.refresh).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+
+  test("dispatches the same-resource guarded launch once with only the existing revalidation read", async () => {
+    const { config, root, calls, resourceReads } = await configuredFixture("openwork-app-refresh-call-");
+    const { refresh, request } = await fixtureDashboardLaunch(config, root);
+    expect(resourceReads()).toBe(1);
+    expect(await callMcpAppTool({ ...request, expectedResourceDigest: refresh.resourceDigest.toUpperCase(), arguments: { id: "current" } })).toMatchObject({
+      structuredContent: { id: "current" },
+    });
+    expect(resourceReads()).toBe(2);
+    expect(calls).toEqual([{ name: "render_fixture", arguments: { id: "current" } }]);
+  });
+
+  test("digests decoded HTML and normalized effective presentation, not wire encoding or CSP ordering", async () => {
+    const { config, root, calls, resourceReads, setResourceContent, setResourceMeta } = await configuredFixture("openwork-app-refresh-normalized-");
+    setResourceMeta({ ui: { csp: { connectDomains: ["https://B.example:443", "https://a.example/", "https://b.example"] }, prefersBorder: true } });
+    const { request } = await fixtureDashboardLaunch(config, root);
+    setResourceContent({ blob: Buffer.from(RESOURCE_HTML, "utf8").toString("base64") });
+    setResourceMeta({ ui: { csp: { connectDomains: ["https://a.example", "https://b.example"], resourceDomains: [], frameDomains: [], baseUriDomains: [] } } });
+    await callMcpAppTool(request);
+    expect(resourceReads()).toBe(2);
+    expect(calls).toEqual([{ name: "render_fixture", arguments: {} }]);
+  });
+
+  test.each(["html", "connectDomains", "resourceDomains", "frameDomains", "baseUriDomains", "prefersBorder"])("retires document drift before dispatch: %s", async (change) => {
+    const { config, root, calls, resourceReads, setResourceContent, setResourceMeta } = await configuredFixture("openwork-app-refresh-drift-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    if (change === "html") setResourceContent({ text: UPDATED_RESOURCE_HTML });
+    else if (change === "prefersBorder") setResourceMeta({ ui: { prefersBorder: false } });
+    else setResourceMeta({ ui: { csp: { [change]: ["https://changed.example"] } } });
+    await expect(callMcpAppTool(request)).rejects.toMatchObject({
+      code: "mcp_app_resource_changed", message: expect.stringContaining("before calling the tool"),
+    });
+    expect(calls).toEqual([]);
+    expect(resourceReads()).toBe(2);
+    expect(releaseMcpAppLaunch(config, WORKSPACE_ID, request.launchId)).toBe(false);
+    setResourceContent({ text: RESOURCE_HTML });
+    setResourceMeta({});
+    await expect(callMcpAppTool(request)).rejects.toMatchObject({ code: "stale_launch_context" });
+    expect(resourceReads()).toBe(2);
+  });
+
+  test.each(["permissions", "domain", "csp", "html"])("retires leases on resolve-time resource validation failures before guarded dispatch: %s", async (change) => {
+    const { config, root, calls, resourceReads, setResourceContent, setResourceMeta } = await configuredFixture("openwork-app-refresh-validation-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    if (change === "html") setResourceContent({ blob: Buffer.from([0xff]).toString("base64") });
+    else setResourceMeta(change === "permissions" ? { ui: { permissions: { camera: {} } } }
+      : change === "domain" ? { ui: { domain: "https://sandbox.example" } }
+        : { ui: { csp: { connectDomains: ["https://api.example/path"] } } });
+    await expect(callMcpAppTool(request)).rejects.toMatchObject({
+      code: change === "html" ? "invalid_resource" : change === "csp" ? "invalid_resource_csp" : "unsupported_resource_permissions",
+    });
+    setResourceContent({ text: RESOURCE_HTML });
+    setResourceMeta({});
+    for (const name of ["read_detail", "write_detail"]) {
+      await expect(callMcpAppTool({ ...request, name, expectedResourceDigest: undefined, approved: true })).rejects.toMatchObject({ code: "stale_launch_context" });
+    }
+    expect(resourceReads()).toBe(2);
+    expect(calls).toEqual([]);
+  });
+
+  test("rejects malformed and incorrect expected digests without dispatch", async () => {
+    const { config, root, calls, resourceReads } = await configuredFixture("openwork-app-refresh-digest-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    for (const digest of ["", "sha256:" + "a".repeat(64), "g".repeat(64), "a".repeat(63), "a".repeat(65), "a".repeat(64) + "\n"]) {
+      await expect(callMcpAppTool({ ...request, expectedResourceDigest: digest })).rejects.toMatchObject({ code: "invalid_resource_digest" });
+    }
+    expect(resourceReads()).toBe(1);
+    const wrongDigest = (request.expectedResourceDigest.startsWith("0") ? "1" : "0") + request.expectedResourceDigest.slice(1);
+    await expect(callMcpAppTool({ ...request, expectedResourceDigest: wrongDigest })).rejects.toMatchObject({ code: "mcp_app_resource_changed" });
+    expect(calls).toEqual([]);
+  });
+
+  test("cannot substitute a current resource digest for the original leased document", async () => {
+    const { config, root, calls, setResourceContent } = await configuredFixture("openwork-app-refresh-original-");
+    const original = await fixtureDashboardLaunch(config, root);
+    setResourceContent({ text: UPDATED_RESOURCE_HTML });
+    const current = await fixtureDashboardLaunch(config, root);
+    expect(current.refresh.resourceDigest).not.toBe(original.refresh.resourceDigest);
+    await expect(callMcpAppTool({ ...original.request, expectedResourceDigest: current.refresh.resourceDigest })).rejects.toMatchObject({ code: "mcp_app_resource_changed" });
+    expect(calls).toEqual([]);
+  });
+
+  test("rejects helper grants, approval overrides, chat origins and session mismatches", async () => {
+    const { config, root, calls } = await configuredFixture("openwork-app-refresh-scope-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    for (const override of [{ name: "read_detail" }, { name: "read_bound_detail" }, { name: "render_report" }, { name: "write_detail", approved: true }, { approved: true }]) {
+      await expect(callMcpAppTool({ ...request, ...override })).rejects.toMatchObject({ code: "mcp_app_refresh_denied" });
+    }
+    for (const sessionId of [undefined, "session-a"]) {
+      await expect(callMcpAppTool({ ...request, sessionId })).rejects.toMatchObject({ code: "stale_launch_context" });
+    }
+    const chat = await fixtureLaunch(config, root);
+    await expect(callMcpAppTool({ ...request, ...chat })).rejects.toMatchObject({ code: "mcp_app_refresh_denied" });
+    await expect(callMcpAppTool({ ...request, ...chat, sessionId: null })).rejects.toMatchObject({ code: "stale_launch_context" });
+    expect(calls).toEqual([]);
+  });
+
+  test("rechecks current launch annotations and never permits a manual approval override", async () => {
+    const { config, root, calls, setLaunchAnnotations } = await configuredFixture("openwork-app-refresh-approval-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    for (const annotations of [undefined, { readOnlyHint: false }, { readOnlyHint: true, destructiveHint: true }]) {
+      setLaunchAnnotations(annotations);
+      for (const approved of [false, true]) {
+        await expect(callMcpAppTool({ ...request, approved })).rejects.toMatchObject({ code: "mcp_app_refresh_denied" });
+      }
+    }
+    expect(calls).toEqual([]);
+  });
+
+  test("does not promote an originally manual lease when the tool later becomes read-only", async () => {
+    const { config, root, calls, setLaunchAnnotations } = await configuredFixture("openwork-app-refresh-manual-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    setLaunchAnnotations({ readOnlyHint: false });
+    const manual = await resolveMcpAppResource({
+      serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+      projectedToolName: "fixture_render_fixture", context: { sessionId: null, readOnly: false },
+    });
+    if (!manual?.launchId) throw new Error("Fixture manual lease missing");
+    expect(manual.refresh).toBeUndefined();
+    setLaunchAnnotations({ readOnlyHint: true });
+    await expect(callMcpAppTool({ ...request, launchId: manual.launchId })).rejects.toMatchObject({ code: "mcp_app_refresh_denied" });
+    expect(calls).toEqual([]);
+  });
+
+  test("preserves workspace tool policy checks during guarded refresh", async () => {
+    const { config, root, calls } = await configuredFixture("openwork-app-refresh-policy-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    await Bun.write(opencodeConfigPath(root), JSON.stringify({ tools: { fixture_render_fixture: false } }));
+    await expect(callMcpAppTool(request)).rejects.toMatchObject({ code: "tool_denied" });
+    expect(calls).toEqual([]);
+  });
+
+  test.each(["release", "config"])("retains the final live lease and config checks before guarded dispatch: %s", async (change) => {
+    const { config, root, calls } = await configuredFixture("openwork-app-refresh-final-gate-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    await expect(callMcpAppTool({ ...request, assertSessionActive: async () => {
+      if (change === "release") releaseMcpAppLaunch(config, WORKSPACE_ID, request.launchId);
+      else await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, current => ({ ...current, mcp: {} }));
+    } })).rejects.toMatchObject({ code: change === "release" ? "stale_launch_context" : "server_unavailable" });
+    expect(calls).toEqual([]);
+  });
+
+  test("a successful guarded refresh does not extend the fixed 30-minute lease", async () => {
+    const { config, root, calls } = await configuredFixture("openwork-app-refresh-expiry-");
+    const { refresh, request } = await fixtureDashboardLaunch(config, root);
+    const clock = spyOn(Date, "now").mockReturnValue(refresh.expiresAt - 1);
+    try {
+      await callMcpAppTool(request);
+      clock.mockReturnValue(refresh.expiresAt);
+      await expect(callMcpAppTool(request)).rejects.toMatchObject({ code: "stale_launch_context" });
+      expect(calls).toEqual([{ name: "render_fixture", arguments: {} }]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("unguarded calls retain existing helper and approved-write behavior after HTML drift", async () => {
+    const { config, root, calls, setResourceContent } = await configuredFixture("openwork-app-refresh-legacy-");
+    const { request } = await fixtureDashboardLaunch(config, root);
+    setResourceContent({ text: UPDATED_RESOURCE_HTML });
+    await callMcpAppTool({ ...request, expectedResourceDigest: undefined, name: "read_detail" });
+    await callMcpAppTool({ ...request, expectedResourceDigest: undefined, name: "write_detail", approved: true });
+    expect(calls).toEqual([{ name: "read_detail", arguments: {} }, { name: "write_detail", arguments: {} }]);
+  });
+
+  test("the HTTP call contract rejects invalid guards and returns 422 for pre-dispatch resource changes", async () => {
+    const { config, root, calls, setResourceContent } = await configuredFixture("openwork-app-refresh-route-");
+    const { startServer } = await import("./server.js");
+    const server = await startServer(config);
+    stops.push(() => server.stop());
+    const { request } = await fixtureDashboardLaunch(config, root);
+    const payload = {
+      launchId: request.launchId, sessionId: null, serverName: request.serverName,
+      name: request.name, resourceUri: request.resourceUri, expectedResourceDigest: request.expectedResourceDigest,
+    };
+    const post = (body: Record<string, unknown>) => fetch(`http://127.0.0.1:${server.port}/workspace/${WORKSPACE_ID}/mcp-apps/call`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.token}` }, body: JSON.stringify(body),
+    });
+    for (const digest of [null, 42, false, {}, [], "", "f".repeat(63), "g".repeat(64), "f".repeat(64) + "\n"]) {
+      const response = await post({ ...payload, expectedResourceDigest: digest });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: "invalid_resource_digest" });
+    }
+    const approved = await post({ ...payload, approved: true });
+    expect(approved.status).toBe(422);
+    expect(await approved.json()).toMatchObject({ code: "mcp_app_refresh_denied" });
+    setResourceContent({ text: UPDATED_RESOURCE_HTML });
+    const changed = await post(payload);
+    expect(changed.status).toBe(422);
+    expect(await changed.json()).toMatchObject({ code: "mcp_app_resource_changed", message: expect.stringContaining("before calling the tool") });
+    expect(calls).toEqual([]);
   });
 });

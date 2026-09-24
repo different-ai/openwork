@@ -17,8 +17,10 @@ const { db, client } = createDenDb({ mode: "planetscale", planetscale: {
 if (!("connection" in client)) throw new Error("Expected the fixture PlanetScale driver")
 let replies: unknown[][][] = []
 const queries: string[] = []
-const execute = spyOn(client, "execute").mockImplementation(async (statement) => {
+const parameters: unknown[] = []
+const execute = spyOn(client, "execute").mockImplementation(async (statement, args) => {
   queries.push(statement)
+  parameters.push(args)
   const rows = replies.shift()
   if (!rows) throw new Error("Unexpected database query")
   return { headers: [], types: {}, rows, fields: [], size: rows.length, statement, insertId: "0", rowsAffected: 0, time: 0 }
@@ -39,7 +41,7 @@ function bucket(requestCount: string, missing: string, successfulMissing: string
     unreportedRequests: missing, totalCostMicroUsd: "1000", unpricedRequests: missing }
 }
 
-beforeEach(() => { replies = []; queries.length = 0 })
+beforeEach(() => { replies = []; queries.length = 0; parameters.length = 0 })
 afterAll(() => { execute.mockRestore(); mock.restore() })
 
 test("sums request counts and keeps unsuccessful gaps separate from successful gaps", async () => {
@@ -137,3 +139,18 @@ test("raw missing-usage categories include only their own outcome and exclude re
     }
   } finally { sqlite.close(); }
 });
+
+test("a member filter narrows model usage to that person's requests and rollups", async () => {
+  replies = [[], [], [], []]
+  await readGatewayUsage(org, { groupBy: "model", days: 31, filterIds: [], memberId: member }, now)
+  expect(queries[0]).toContain("`gateway_request_logs`.`org_membership_id` = ?")
+  expect(queries[0]).toContain("`gateway_usage_rollups`.`org_membership_id` = ?")
+  expect(JSON.stringify(parameters[0])).toContain(member)
+  expect(JSON.stringify(parameters[0])).not.toContain(other)
+})
+
+test("usage without a member filter does not constrain the membership", async () => {
+  replies = [[], [], [], []]
+  await readGatewayUsage(org, { groupBy: "model", days: 31, filterIds: [] }, now)
+  expect(queries[0]).not.toContain("`org_membership_id` = ")
+})

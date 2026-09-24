@@ -1,4 +1,5 @@
 import * as React from "react"
+import { defaultRangeExtractor, observeElementOffset, observeElementRect, useVirtualizer, type Range, type Rect, type Virtualizer } from "@tanstack/react-virtual"
 
 export interface MessageListViewport {
   sessionKey: string
@@ -12,7 +13,6 @@ export interface MessageListViewport {
   historyComplete: boolean
   revealAll?: boolean
   stickyBottom: () => boolean
-  /** Called after initial/structural commits, not after ordinary content reflow. */
   onReady?: () => void
 }
 
@@ -21,6 +21,7 @@ interface ProgressiveMessageListProps<T> {
   getGroupKey: (group: T) => string
   getMessageIds: (group: T) => readonly string[]
   groupKeyReplacements?: ReadonlyMap<string, string>
+  priorityMessageId?: string
   renderGroup: (group: T, index: number) => React.ReactNode
   viewport?: MessageListViewport
   className?: string
@@ -28,403 +29,417 @@ interface ProgressiveMessageListProps<T> {
   children?: React.ReactNode
 }
 
-const BATCH_SIZE = 8
 const GROUP_GAP = 8
 const ESTIMATED_HEIGHT = 240
 const MAX_CACHED_VIEWPORTS = 12
 const MAX_CACHED_GROUPS = 2048
-// Only IDs and geometry, scoped by session and width. Nothing is persisted.
 const heightCache = new Map<string, Map<string, number>>()
-
-type MountState = {
-  mounted: ReadonlySet<string>
-  initialized: boolean
-  anchorPending: boolean
-  width: number
-}
-
-type Segment = { key: string; start: number; end: number; height: number; placeholder: boolean }
-type Plan = { keys: string[]; heights: number[]; segments: Segment[]; complete: boolean }
-type HeightPlan = { keys: string[]; scrollHeight: number | undefined; heights: number[]; totalHeight: number }
-type ReadingPosition = {
-  reservedTop?: number
-  element: HTMLElement | null
-  messageId?: string
-  key: string | undefined
-  offset: number
-  fraction: number
-  sticky: boolean
-}
-
-function addNearby(keys: readonly string[], mounted: ReadonlySet<string>, center: number) {
-  const next = new Set(mounted)
-  let added = 0
-  for (let distance = 0; distance < keys.length && added < BATCH_SIZE; distance++) {
-    for (const index of distance === 0 ? [center] : [center - distance, center + distance]) {
-      const key = keys[index]
-      if (key !== undefined && !next.has(key)) {
-        next.add(key)
-        if (++added === BATCH_SIZE) break
-      }
-    }
-  }
-  return next
-}
-
-function sameStructure(a: Plan, b: Plan) {
-  return a.segments.length === b.segments.length
-    && a.segments.every((segment, index) => {
-      const other = b.segments[index]
-      return segment.key === other.key && (!segment.placeholder || segment.height === other.height)
-    })
-}
+// Existing reading-anchor and session controllers own scroll writes. TanStack
+// observes their actual offset; its initial connection must not restore it again.
+const observeOnlyScroll = () => {}
+type ThreadVirtualizer = Virtualizer<HTMLDivElement, HTMLDivElement>
+type Segment = { key: string; index: number; height: number; placeholder: boolean }
+type ReadingPosition = { element: HTMLElement | null; messageId?: string; offset: number; top: number; sticky: boolean }
 
 function sameKeys(a: readonly string[], b: readonly string[]) {
-  return a === b || (a.length === b.length && a.every((key, index) => key === b[index]))
+  return a.length === b.length && a.every((key, index) => key === b[index])
 }
 
-/** Whole groups mount once, then stay mounted. The key cancels work on a session switch. */
+function sameStructure(a: readonly Segment[], b: readonly Segment[]) {
+  return a.length === b.length && a.every((segment, index) => {
+    const other = b[index]
+    return segment.key === other.key && (!segment.placeholder || segment.height === other.height)
+  })
+}
+
 export function ProgressiveMessageList<T>(props: ProgressiveMessageListProps<T>) {
-  const { groups, getGroupKey, getMessageIds } = props
-  const keys = React.useMemo(() => groups.map(getGroupKey), [groups, getGroupKey])
-  const anchorMessageId = props.viewport?.anchorMessageId
-  const anchorIndex = React.useMemo(() => anchorMessageId
-    ? groups.findIndex((group) => getMessageIds(group).includes(anchorMessageId))
-    : -1, [groups, getMessageIds, anchorMessageId])
-  return <ProgressiveGroups key={props.viewport?.sessionKey ?? "eager"} {...props} keys={keys} anchorIndex={anchorIndex} />
+  return <VirtualGroups key={props.viewport?.sessionKey ?? "eager"} {...props} />
 }
 
-type PreparedGroupsProps<T> = ProgressiveMessageListProps<T> & { keys: string[]; anchorIndex: number }
+function VirtualGroups<T>(props: ProgressiveMessageListProps<T>) {
+  const { groups, getGroupKey, getMessageIds, viewport } = props
+  const nextKeys = React.useMemo(() => groups.map(getGroupKey), [groups, getGroupKey])
+  const [keys, setKeys] = React.useState(nextKeys)
+  if (!sameKeys(keys, nextKeys)) setKeys(nextKeys)
+  const currentKeys = sameKeys(keys, nextKeys) ? keys : nextKeys
+  const identities = React.useRef(new Map<string, string>())
+  for (const [key, previous] of props.groupKeyReplacements ?? []) {
+    if (!identities.current.has(key)) identities.current.set(key, identities.current.get(previous) ?? previous)
+  }
+  const identityKeys = React.useMemo(() => currentKeys.map((key) => identities.current.get(key) ?? key), [currentKeys])
+  const getItemKey = React.useCallback((index: number) => identityKeys[index], [identityKeys])
+  const anchorIndex = React.useMemo(() => viewport?.anchorMessageId
+    ? groups.findIndex((group) => getMessageIds(group).includes(viewport.anchorMessageId!)) : -1,
+  [groups, getMessageIds, viewport?.anchorMessageId])
+  const priorityIndex = React.useMemo(() => props.priorityMessageId
+    ? groups.findIndex((group) => getMessageIds(group).includes(props.priorityMessageId!)) : -1,
+  [groups, getMessageIds, props.priorityMessageId])
+  const bridge = React.useRef<MeasuredGroups<T>>(null)
+  const [revision, refresh] = React.useReducer((value: number) => value + 1, 0)
+  const [width, setWidth] = React.useState(viewport?.viewportWidth ?? 0)
+  const [scrollMargin, setScrollMargin] = React.useState(0)
+  const syncOffset = React.useRef<(() => void) | null>(null)
+  const observeOffset = React.useCallback((instance: ThreadVirtualizer, callback: (offset: number, isScrolling: boolean) => void) => {
+    const element = instance.scrollElement
+    let active = true
+    const sync = () => {
+      if (active && element && element.clientHeight > 0 && element.clientWidth > 0 && element.scrollTop !== instance.scrollOffset) callback(element.scrollTop, false)
+    }
+    syncOffset.current = sync
+    sync()
+    const unsubscribe = observeElementOffset(instance, (offset, isScrolling) => {
+      if (active && element && element.clientHeight > 0 && element.clientWidth > 0) callback(element.scrollTop ?? offset, isScrolling)
+    })
+    return () => {
+      active = false
+      unsubscribe?.()
+      if (syncOffset.current === sync) syncOffset.current = null
+    }
+  }, [])
+  const observeViewport = React.useCallback((instance: ThreadVirtualizer, callback: (rect: Rect) => void) => {
+    let previous: Rect | undefined
+    return observeElementRect(instance, (rect) => {
+      const width = instance.scrollElement?.clientWidth ?? rect.width
+      const changed = previous?.width !== width || previous?.height !== rect.height
+      previous = { width, height: rect.height }
+      // A transient zero-size layout is not an empty transcript. Keep the last
+      // window and refresh its origin/offset on reveal, even at the same width.
+      if (width <= 0 || rect.height <= 0) return
+      setWidth(width)
+      callback(rect)
+      if (changed) refresh()
+    })
+  }, [])
+  const cacheKey = JSON.stringify([viewport?.sessionKey, width])
+  const estimates = React.useMemo(() => {
+    const cached = heightCache.get(cacheKey)
+    const known = currentKeys.reduce((sum, key) => sum + (cached?.get(key) ?? 0), 0)
+    const unknown = currentKeys.filter((key) => !cached?.has(key)).length
+    const estimate = viewport?.historyComplete && viewport.scrollHeight && unknown
+      ? Math.max(32, (viewport.scrollHeight - known - GROUP_GAP * Math.max(0, currentKeys.length - 1)) / unknown)
+      : ESTIMATED_HEIGHT
+    return { cached: new Map(cached), estimate }
+  }, [cacheKey, viewport?.historyComplete])
+  const estimateSize = React.useCallback((index: number) => estimates.cached.get(currentKeys[index]) ?? estimates.estimate,
+    [estimates, currentKeys])
+  const estimatedTotal = React.useMemo(() => currentKeys.reduce((sum, _, index) => sum + estimateSize(index) + GROUP_GAP, 0), [currentKeys, estimateSize])
+  const [measuredExtent, setMeasuredExtent] = React.useState<{ keys: readonly string[]; estimates: typeof estimates; size: number } | null>(null)
+  const onChange = React.useCallback((instance: ThreadVirtualizer) => {
+    if (!viewport || viewport.historyComplete || viewport.leadingHeight !== undefined) return
+    const size = instance.getTotalSize() - instance.options.paddingStart - instance.options.paddingEnd + (currentKeys.length ? GROUP_GAP : 0)
+    setMeasuredExtent((previous) => previous?.keys === currentKeys && previous.estimates === estimates && previous.size === size
+      ? previous : { keys: currentKeys, estimates, size })
+  }, [currentKeys, estimates, viewport?.historyComplete, viewport?.leadingHeight, Boolean(viewport)])
+  const contentExtent = measuredExtent?.keys === currentKeys && measuredExtent.estimates === estimates ? measuredExtent.size : estimatedTotal
+  const initialOffset = () => viewport?.scrollTop ?? (leading + currentKeys.slice(0, Math.max(0, anchorIndex >= 0 ? anchorIndex : currentKeys.length - 4))
+    .reduce((sum, _, index) => sum + estimateSize(index) + GROUP_GAP, 0))
+  const leading = viewport && !viewport.historyComplete
+    ? viewport.leadingHeight ?? Math.max(0, (viewport.scrollHeight ?? 0) - contentExtent) : 0
+  const trailing = viewport && !viewport.historyComplete ? viewport.trailingHeight ?? 0 : 0
+  const getScrollElement = React.useCallback(() => viewport?.scrollRef.current ?? null, [viewport?.scrollRef])
+  const rangeExtractor = React.useCallback((range: Range) => {
+    if (!viewport || viewport.revealAll) return Array.from({ length: range.count }, (_, index) => index)
+    const indexes = new Set(defaultRangeExtractor(range))
+    const retained = bridge.current && bridge.current.props.keys !== currentKeys
+      ? bridge.current.mountedKeys() : bridge.current?.retainedKeys() ?? []
+    for (const key of retained) {
+      const index = identityKeys.indexOf(key)
+      if (index >= 0) indexes.add(index)
+    }
+    if (range.count) indexes.add(range.count - 1)
+    if (priorityIndex >= 0) indexes.add(priorityIndex)
+    if (anchorIndex >= 0 && (!bridge.current || bridge.current.waitingForAnchor)) indexes.add(anchorIndex)
+    return [...indexes].sort((a, b) => a - b)
+  }, [identityKeys, priorityIndex, anchorIndex, viewport?.revealAll, Boolean(viewport), revision])
+  const measureElement = React.useCallback((node: HTMLDivElement, entry: ResizeObserverEntry | undefined, instance: ThreadVirtualizer) => {
+    const index = instance.indexFromElement(node)
+    if (!viewport?.scrollRef.current?.clientHeight || !viewport.scrollRef.current.clientWidth) {
+      return instance.measurementsCache[index]?.size ?? estimateSize(index)
+    }
+    const height = entry?.borderBoxSize[0]?.blockSize ?? node.getBoundingClientRect().height
+    const key = node.dataset.threadGroup
+    const measuredWidth = viewport?.scrollRef.current?.clientWidth ?? 0
+    if (key && height > 0 && viewport && measuredWidth > 0) {
+      const measuredCacheKey = JSON.stringify([viewport.sessionKey, measuredWidth])
+      const cache = heightCache.get(measuredCacheKey) ?? new Map<string, number>()
+      heightCache.delete(measuredCacheKey)
+      heightCache.set(measuredCacheKey, cache)
+      cache.delete(key)
+      cache.set(key, height)
+      if (cache.size > MAX_CACHED_GROUPS) cache.delete(cache.keys().next().value!)
+      if (heightCache.size > MAX_CACHED_VIEWPORTS) heightCache.delete(heightCache.keys().next().value!)
+    }
+    return height
+  }, [viewport?.sessionKey, viewport?.scrollRef, estimateSize])
+  const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
+    count: currentKeys.length,
+    getScrollElement,
+    observeElementRect: observeViewport,
+    observeElementOffset: observeOffset,
+    scrollToFn: observeOnlyScroll,
+    getItemKey,
+    estimateSize,
+    measureElement,
+    rangeExtractor,
+    onChange,
+    overscan: 2,
+    gap: GROUP_GAP,
+    scrollMargin,
+    paddingStart: leading > 0 ? leading + GROUP_GAP : 0,
+    paddingEnd: trailing > 0 ? trailing + GROUP_GAP : 0,
+    initialRect: { width, height: viewport?.scrollRef.current?.clientHeight || 600 },
+    initialOffset,
+    useFlushSync: false,
+  })
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false
+  React.useLayoutEffect(() => {
+    const offset = bridge.current?.contentOffset()
+    if (offset !== undefined && offset !== scrollMargin) setScrollMargin(offset)
+  })
+  React.useLayoutEffect(() => {
+    virtualizer.measure()
+    bridge.current?.measureMounted()
+  }, [virtualizer, estimates])
+  React.useLayoutEffect(() => { syncOffset.current?.() })
+  const items = virtualizer.getVirtualItems()
+  const segments: Segment[] = []
+  if (leading > 0) segments.push({ key: "history-prefix", index: -1, height: leading, placeholder: true })
+  let end = scrollMargin + (leading > 0 ? leading + GROUP_GAP : 0)
+  for (const item of items) {
+    if (item.start > end) segments.push({ key: `placeholder:${currentKeys[item.index - 1]}`, index: -1,
+      height: Math.max(0, item.start - end - GROUP_GAP), placeholder: true })
+    segments.push({ key: `group:${item.key}`, index: item.index, height: item.size, placeholder: false })
+    end = item.end + GROUP_GAP
+  }
+  if (trailing > 0) segments.push({ key: "history-suffix", index: -1, height: trailing, placeholder: true })
+  if (!viewport) {
+    segments.length = 0
+    currentKeys.forEach((key, index) => segments.push({ key: `group:${key}`, index, height: 0, placeholder: false }))
+  }
+  return <MeasuredGroups ref={bridge} {...props} keys={currentKeys} segments={segments}
+    virtualizer={virtualizer} refresh={refresh} anchorIndex={anchorIndex} />
+}
 
-// Internal mount batches reuse settled output. Parent callback changes must
-// invalidate it too: the callback captures streaming, last-step and other props.
 class RenderedGroup<T> extends React.PureComponent<{
   group: T
   index: number
   renderGroup: ProgressiveMessageListProps<T>["renderGroup"]
 }> {
   render() {
-    return this.props.renderGroup(this.props.group, this.props.index)
+    const content = this.props.renderGroup(this.props.group, this.props.index)
+    return React.isValidElement(content) ? React.cloneElement(content, { key: "content" }) : content
   }
 }
 
-// getSnapshotBeforeUpdate reads the actual pre-mutation DOM, including any scroll
-// since a batch was queued. An effect's previous-commit anchor would snap readers back.
-class ProgressiveGroups<T> extends React.Component<PreparedGroupsProps<T>, MountState> {
-  state: MountState = {
-    mounted: new Set(),
-    initialized: false,
-    anchorPending: Boolean(this.props.viewport?.anchorMessageId),
-    width: this.props.viewport?.viewportWidth ?? 0,
-  }
+type MeasuredGroupsProps<T> = ProgressiveMessageListProps<T> & {
+  keys: readonly string[]
+  segments: Segment[]
+  virtualizer: ThreadVirtualizer
+  refresh: () => void
+  anchorIndex: number
+}
 
-  static getDerivedStateFromProps<T>(props: PreparedGroupsProps<T>, state: MountState): MountState | null {
-    const { keys, anchorIndex } = props
-    if (!keys.length) return null
-    const replacements = [...(props.groupKeyReplacements ?? [])]
-      .filter(([key, previous]) => state.mounted.has(previous) && !state.mounted.has(key) && keys.includes(key))
-      .map(([key]) => key)
-    let mounted = replacements.length ? new Set([...state.mounted, ...replacements]) : state.mounted
-    const last = keys[keys.length - 1]
-    if (!props.viewport || props.viewport.revealAll) {
-      if (keys.every((key) => state.mounted.has(key))) return null
-      mounted = new Set(keys)
-    } else if (!state.initialized || (anchorIndex >= 0 && (state.anchorPending || !mounted.has(keys[anchorIndex])))) {
-      // Include the live tail without allowing the first mount to exceed eight groups.
-      const estimatedIndex = props.viewport.scrollTop !== undefined && props.viewport.scrollHeight
-        ? Math.min(keys.length - 1, Math.floor(keys.length * props.viewport.scrollTop / props.viewport.scrollHeight)) : keys.length - 1
-      const nearby = addNearby(keys, mounted, anchorIndex >= 0 ? anchorIndex : estimatedIndex)
-      if (!nearby.has(last)) {
-        const furthest = [...nearby].at(-1)
-        if (furthest && !mounted.has(furthest)) nearby.delete(furthest)
-        nearby.add(last)
-      }
-      mounted = nearby
-    } else if (!mounted.has(last)) {
-      mounted = new Set([...mounted, last])
-    } else if (mounted === state.mounted) return null
-    return { ...state, mounted, initialized: true, anchorPending: state.anchorPending && anchorIndex < 0 && !props.viewport?.historyComplete }
-  }
-
-  private nodes = new Map<string, HTMLDivElement>()
-  private plan: Plan = { keys: [], heights: [], segments: [], complete: false }
-  private committed = this.plan
+class MeasuredGroups<T> extends React.Component<MeasuredGroupsProps<T>> {
   private container: HTMLDivElement | null = null
-  private observer: ResizeObserver | null = null
+  private list = React.createRef<HTMLDivElement>()
+
+  contentOffset() {
+    const list = this.list.current
+    if (!list || !this.container?.clientHeight || !this.container.clientWidth) return undefined
+    const style = window.getComputedStyle(list)
+    let top = list.getBoundingClientRect().top + (Number.parseFloat(style.borderTopWidth) || 0) + (Number.parseFloat(style.paddingTop) || 0)
+    if (this.props.header) {
+      const gap = Number.parseFloat(style.rowGap) || GROUP_GAP
+      for (const child of list.children) {
+        if (child.hasAttribute("data-thread-placeholder") || child.hasAttribute("data-thread-group")) break
+        if (window.getComputedStyle(child).display !== "none") top = Math.max(top, child.getBoundingClientRect().bottom + gap)
+      }
+    }
+    return top - this.container.getBoundingClientRect().top + this.container.scrollTop
+  }
+  private nodes = new Map<string, HTMLDivElement>()
+  private nodeRefs = new Map<string, React.RefCallback<HTMLDivElement>>()
+  private interacted = new WeakMap<HTMLElement, Map<Element, string>>()
+  private interactions: MutationObserver | null = null
   private frame: number | null = null
+  private committed: Segment[] = []
+  private pendingInteraction = new Set<HTMLElement>()
   private active = false
-  private estimates = new Map<string, number>()
-  private estimateScope = ""
-  private heightPlan: HeightPlan | null = null
+  waitingForAnchor = Boolean(this.props.viewport?.anchorMessageId)
 
-  private cacheKey(width = this.state.width) {
-    return JSON.stringify([this.props.viewport?.sessionKey, width])
+  private groupRef(key: string) {
+    let ref = this.nodeRefs.get(key)
+    if (!ref) {
+      ref = (node) => {
+        if (!node) return
+        this.nodes.set(key, node)
+        if (node.hasAttribute("data-thread-group")) this.props.virtualizer.measureElement(node)
+        return () => {
+          this.nodes.delete(key)
+          this.nodeRefs.delete(key)
+          this.props.virtualizer.measureElement(null)
+        }
+      }
+      this.nodeRefs.set(key, ref)
+    }
+    return ref
   }
 
-  private measure = (node: HTMLElement) => {
-    const key = node.getAttribute("data-thread-group")
-    const height = node.getBoundingClientRect().height
-    const width = this.container?.clientWidth || this.state.width
-    if (key === null || height <= 0 || !this.props.viewport || width <= 0) return
-    const cacheKey = this.cacheKey(width)
-    const cache = heightCache.get(cacheKey) ?? new Map<string, number>()
-    heightCache.delete(cacheKey)
-    heightCache.set(cacheKey, cache)
-    cache.delete(key)
-    cache.set(key, height)
-    if (cache.size > MAX_CACHED_GROUPS) {
-      const oldest = cache.keys().next().value
-      if (oldest !== undefined) cache.delete(oldest)
-    }
-    if (heightCache.size > MAX_CACHED_VIEWPORTS) {
-      const oldest = heightCache.keys().next().value
-      if (oldest !== undefined) heightCache.delete(oldest)
+  measureMounted() {
+    for (const node of this.nodes.values()) {
+      if (node.hasAttribute("data-thread-group")) this.props.virtualizer.measureElement(node)
     }
   }
 
-  private trackNode = (node: HTMLDivElement | null) => {
-    if (!node) return
-    const group = node.getAttribute("data-thread-group")
-    const key = group === null ? node.getAttribute("data-thread-placeholder") : `group:${group}`
-    if (key === null) return
-    this.nodes.set(key, node)
-    if (group !== null && this.observer) {
-      this.observer.observe(node)
-      this.measure(node)
+  private disclosureState(node: Element) {
+    return node.getAttribute("aria-expanded") ?? node.getAttribute("data-state") ?? String(node.hasAttribute("open"))
+  }
+
+  mountedKeys() {
+    return [...this.nodes].filter(([, node]) => node.hasAttribute("data-thread-group")).map(([key]) => key.slice("group:".length))
+  }
+
+  retainedKeys() {
+    const retained: string[] = []
+    const focused = document.activeElement
+    const selection = document.getSelection()
+    for (const [key, node] of this.nodes) {
+      if (!node.hasAttribute("data-thread-group")) continue
+      const rect = node.getBoundingClientRect()
+      const bounds = this.container?.getBoundingClientRect()
+      let keep = this.pendingInteraction.has(node) || Boolean(focused && node.contains(focused))
+        || Boolean(bounds && rect.height > 0 && rect.bottom > bounds.top && rect.top < bounds.bottom)
+      const initial = this.interacted.get(node)
+      if (initial) {
+        for (const control of node.querySelectorAll('[aria-expanded], [data-state="open"], [data-state="closed"], details, dialog')) {
+          const state = this.disclosureState(control)
+          if (initial.has(control) ? initial.get(control) !== state : state === "true" || state === "open") keep = true
+        }
+      }
+      if (focused && [...node.querySelectorAll("[aria-controls]")].some((trigger) =>
+        trigger.getAttribute("aria-controls")?.split(/\s+/).some((id) => document.getElementById(id)?.contains(focused)))) keep = true
+      if (selection && !selection.isCollapsed) {
+        for (let index = 0; index < selection.rangeCount; index++) {
+          if (selection.getRangeAt(index).intersectsNode(node)) keep = true
+        }
+      }
+      if (keep) retained.push(key.slice("group:".length))
     }
-    return () => {
-      this.observer?.unobserve(node)
-      this.nodes.delete(key)
+    return retained
+  }
+
+  private handleInteraction = (event: Event) => {
+    const group = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-thread-group]") : null
+    if (group) this.pendingInteraction.add(group)
+    if (group && !this.interacted.has(group)) {
+      this.interacted.set(group, new Map([...group.querySelectorAll('[aria-expanded], [data-state="open"], [data-state="closed"], details, dialog')]
+        .map((control) => [control, this.disclosureState(control)])))
     }
+    this.schedule()
+  }
+
+  private schedule = () => {
+    if (this.frame !== null || !this.active || !this.props.viewport) return
+    this.frame = window.requestAnimationFrame(() => {
+      this.frame = null
+      if (!this.active) return
+      this.connectViewport()
+      if (this.container && (!this.container.clientHeight || !this.container.clientWidth)) return
+      this.pendingInteraction.clear()
+      if (this.props.anchorIndex >= 0 || this.props.viewport?.historyComplete) this.waitingForAnchor = false
+      this.props.refresh()
+    })
   }
 
   private connectViewport() {
-    const container = this.props.viewport?.scrollRef.current
-    if (!container || this.container === container) return
-    this.container?.removeEventListener("scroll", this.handleScroll)
-    this.observer?.disconnect()
+    const container = this.props.viewport?.scrollRef.current ?? null
+    if (container === this.container) return
+    this.container?.removeEventListener("click", this.handleInteraction, true)
+    this.container?.removeEventListener("keydown", this.handleInteraction, true)
+    this.interactions?.disconnect()
     this.container = container
-    container.addEventListener("scroll", this.handleScroll, { passive: true })
-    this.observer = new ResizeObserver((entries) => {
-      if (!this.active) return
-      const width = container.clientWidth
-      if (width > 0 && width !== this.state.width) {
-        this.setState({ width })
-        return
-      }
-      // Native browser anchoring owns image/markdown reflow. Only remember sizes.
-      for (const entry of entries) if (entry.target instanceof HTMLElement) this.measure(entry.target)
-    })
-    this.observer.observe(container)
-    for (const node of this.nodes.values()) {
-      if (node.hasAttribute("data-thread-group")) this.observer.observe(node)
-    }
-    if (container.clientWidth > 0 && container.clientWidth !== this.state.width) this.setState({ width: container.clientWidth })
-  }
-
-  private position(plan: Plan, index: number) {
-    const segment = plan.segments.find((part) => part.start <= index && part.end > index)
-    if (!segment) return null
-    const node = this.nodes.get(segment.key)
-    if (!node) return null
-    let top = node.getBoundingClientRect().top
-    if (segment.placeholder) {
-      for (let i = segment.start; i < index; i++) top += plan.heights[i] + GROUP_GAP
-    }
-    return { top, height: segment.placeholder ? plan.heights[index] : node.getBoundingClientRect().height }
-  }
-
-  private visibleIndex(plan: Plan) {
-    const top = this.container?.getBoundingClientRect().top ?? 0
-    for (const segment of plan.segments) {
-      const node = this.nodes.get(segment.key)
-      if (!node || segment.end <= segment.start) continue
-      const rect = node.getBoundingClientRect()
-      if (rect.bottom <= top) continue
-      let offset = rect.top
-      for (let i = segment.start; i < segment.end; i++) {
-        if (!segment.placeholder || offset + plan.heights[i] + GROUP_GAP > top) return i
-        offset += plan.heights[i] + GROUP_GAP
-      }
-    }
-    return Math.max(0, plan.keys.length - 1)
-  }
-
-  private handleScroll = () => {
-    if (!this.active || this.committed.complete) return
-    const index = this.visibleIndex(this.committed)
-    // Jumping into a spacer should not wait behind the history queue.
-    const nearby = this.committed.keys.slice(Math.max(0, index - 1), index + BATCH_SIZE - 1)
-    if (nearby.some((key) => !this.state.mounted.has(key))) {
-      this.setState((state) => ({ mounted: new Set([...state.mounted, ...nearby]) }))
-    }
-  }
-
-  private schedule() {
-    const pending = this.committed.keys.some((key) => !this.state.mounted.has(key))
-    if (!pending && this.frame !== null) {
-      window.cancelAnimationFrame(this.frame)
-      this.frame = null
-    }
-    if (!this.active || this.frame !== null || !this.props.viewport) return
-    if (!pending && this.container) return
-    // Two frames guarantee a paint opportunity between expensive group batches.
-    this.frame = window.requestAnimationFrame(() => {
-      this.frame = window.requestAnimationFrame(() => {
-        this.frame = null
-        if (!this.active) return
-        this.connectViewport()
-        const { keys } = this.committed
-        const index = this.visibleIndex(this.committed)
-        this.setState((state) => {
-          const next = addNearby(keys, state.mounted, index)
-          return next.size !== state.mounted.size ? { mounted: next } : null
-        })
-      })
+    container?.addEventListener("click", this.handleInteraction, true)
+    container?.addEventListener("keydown", this.handleInteraction, true)
+    this.interactions = new MutationObserver(this.schedule)
+    if (container) this.interactions.observe(container, {
+      subtree: true, attributes: true, attributeFilter: ["aria-expanded", "aria-controls", "data-state", "open"],
     })
   }
 
   componentDidMount() {
     this.active = true
-    this.committed = this.plan
+    this.committed = this.props.segments
     this.connectViewport()
-    for (const node of this.nodes.values()) this.measure(node)
+    document.addEventListener("selectionchange", this.schedule)
+    document.addEventListener("focusin", this.schedule)
+    document.addEventListener("focusout", this.schedule)
+    this.measureMounted()
     this.props.viewport?.onReady?.()
-    this.schedule()
+    if (!this.container) this.schedule()
   }
 
   getSnapshotBeforeUpdate(): ReadingPosition | null {
     const container = this.container
-    if (!container || sameStructure(this.committed, this.plan)) return null
-    const viewport = container.getBoundingClientRect()
-    const sticky = Boolean(this.props.viewport?.stickyBottom())
-      && container.scrollHeight - container.scrollTop - container.clientHeight <= 1
-    // A reserved region has no message anchor yet. Do not anchor to an offscreen
-    // preview row: full history moving that row would undo Home/top navigation.
-    const reserved = this.committed.segments.some((segment) => {
-      if (segment.end !== segment.start) return false
-      const rect = this.nodes.get(segment.key)?.getBoundingClientRect()
-      return rect && rect.top <= viewport.top && rect.bottom > viewport.top
-    })
-    if (container.scrollTop === 0 || reserved) {
-      return { reservedTop: container.scrollTop, element: null, key: undefined, offset: 0, fraction: 0, sticky }
-    }
-    for (const node of this.nodes.values()) {
-      if (!node.hasAttribute("data-thread-group")) continue
+    if (!container || sameStructure(this.committed, this.props.segments)) return null
+    const bounds = container.getBoundingClientRect()
+    const sticky = Boolean(this.props.viewport?.stickyBottom()) && container.scrollHeight - container.scrollTop - container.clientHeight <= 1
+    const reserved = [...this.nodes.values()].some((node) => {
+      if (!['history-prefix', 'history-suffix'].includes(node.dataset.threadPlaceholder ?? "")) return false
       const rect = node.getBoundingClientRect()
-      if (rect.height <= 0 || rect.bottom <= viewport.top || rect.top >= viewport.bottom) continue
-      const element = [...node.querySelectorAll<HTMLElement>("[data-message-id]")].find((message) => {
-        const bounds = message.getBoundingClientRect()
-        return bounds.height > 0 && bounds.bottom > viewport.top && bounds.top < viewport.bottom
-      }) ?? node
-      return { element, messageId: element.getAttribute("data-message-id") ?? undefined, key: node.getAttribute("data-thread-group") ?? undefined,
-        offset: element.getBoundingClientRect().top - viewport.top, fraction: 0, sticky }
+      return rect.top <= bounds.top && rect.bottom > bounds.top
+    })
+    const top = container.scrollTop
+    if (top === 0 || reserved) return { element: null, offset: 0, top, sticky }
+    for (const node of container.querySelectorAll<HTMLElement>("[data-message-id]")) {
+      const rect = node.getBoundingClientRect()
+      if (rect.height > 0 && rect.bottom > bounds.top && rect.top < bounds.bottom) {
+        return { element: node, messageId: node.dataset.messageId, offset: rect.top - bounds.top, top, sticky }
+      }
     }
-    const index = this.visibleIndex(this.committed)
-    const position = this.position(this.committed, index)
-    return { element: null, key: this.committed.keys[index], offset: (position?.top ?? viewport.top) - viewport.top,
-      fraction: position && position.height > 0 ? Math.max(0, (viewport.top - position.top) / position.height) : 0, sticky }
+    return { element: null, offset: 0, top, sticky }
   }
 
-  componentDidUpdate(_props: ProgressiveMessageListProps<T>, _state: MountState, snapshot: ReadingPosition | null) {
-    const changed = !sameStructure(this.committed, this.plan) || this.committed.complete !== this.plan.complete
-    this.committed = this.plan
+  componentDidUpdate(previous: MeasuredGroupsProps<T>, _state: unknown, snapshot: ReadingPosition | null) {
     this.connectViewport()
+    const changed = !sameStructure(this.committed, this.props.segments) || previous.viewport?.historyComplete !== this.props.viewport?.historyComplete
+    this.committed = this.props.segments
+    if (previous.keys !== this.props.keys || this.waitingForAnchor && (this.props.anchorIndex >= 0 || this.props.viewport?.historyComplete)) this.schedule()
     const container = this.container
     if (container && snapshot) {
       const element = snapshot.element?.isConnected ? snapshot.element
-        : snapshot.messageId ? [...container.querySelectorAll<HTMLElement>("[data-message-id]")]
-          .find((message) => message.getAttribute("data-message-id") === snapshot.messageId) : null
-      if (snapshot.sticky && this.props.viewport?.stickyBottom()) {
-        container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
-      } else if (snapshot.reservedTop !== undefined) {
-        container.scrollTop = snapshot.reservedTop
-        // The destination's groups only became available in this commit.
-        this.handleScroll()
-      } else if (element) {
-        const delta = element.getBoundingClientRect().top - container.getBoundingClientRect().top - snapshot.offset
-        if (Math.abs(delta) > 0.5) container.scrollTop += delta
-      } else if (snapshot.key) {
-        const position = this.position(this.plan, this.plan.keys.indexOf(snapshot.key))
-        if (position) {
-          const offset = snapshot.fraction > 0 ? -snapshot.fraction * position.height : snapshot.offset
-          const delta = position.top - container.getBoundingClientRect().top - offset
-          if (Math.abs(delta) > 0.5) container.scrollTop += delta
-        }
-      }
+        : [...container.querySelectorAll<HTMLElement>("[data-message-id]")].find((node) => node.dataset.messageId === snapshot.messageId)
+      const top = snapshot.sticky && this.props.viewport?.stickyBottom()
+        ? Math.max(0, container.scrollHeight - container.clientHeight)
+        : element ? container.scrollTop + element.getBoundingClientRect().top - container.getBoundingClientRect().top - snapshot.offset
+        : snapshot.top
+      if (Math.abs(container.scrollTop - top) > 0.5) container.scrollTop = top
     }
+    this.measureMounted()
     if (changed) this.props.viewport?.onReady?.()
-    this.schedule()
   }
 
   componentWillUnmount() {
     this.active = false
     if (this.frame !== null) window.cancelAnimationFrame(this.frame)
     this.frame = null
-    this.container?.removeEventListener("scroll", this.handleScroll)
+    this.container?.removeEventListener("click", this.handleInteraction, true)
+    this.container?.removeEventListener("keydown", this.handleInteraction, true)
+    document.removeEventListener("selectionchange", this.schedule)
+    document.removeEventListener("focusin", this.schedule)
+    document.removeEventListener("focusout", this.schedule)
     this.container = null
-    this.observer?.disconnect()
-    this.observer = null
+    this.interactions?.disconnect()
   }
 
   render() {
-    const { groups, keys, renderGroup, viewport, header, children, className } = this.props
-    const estimateScope = JSON.stringify([this.state.width, viewport?.historyComplete])
-    if (estimateScope !== this.estimateScope) {
-      this.estimateScope = estimateScope
-      this.estimates = new Map()
-      this.heightPlan = null
-    }
-    let heightPlan = this.heightPlan
-    // Mount batches keep the same keys. Content-only parent updates may supply
-    // a new array with the same order, including after every group is mounted.
-    if (!heightPlan || heightPlan.scrollHeight !== viewport?.scrollHeight || !sameKeys(heightPlan.keys, keys)) {
-      const cache = heightCache.get(this.cacheKey())
-      const known = keys.reduce((sum, key) => sum + (this.estimates.get(key) ?? cache?.get(key) ?? 0), 0)
-      const unknown = keys.filter((key) => !this.estimates.has(key) && !cache?.has(key)).length
-      const estimate = viewport?.historyComplete && viewport.scrollHeight && unknown > 0
-        ? Math.max(32, (viewport.scrollHeight - known - GROUP_GAP * Math.max(0, keys.length - 1)) / unknown)
-        : ESTIMATED_HEIGHT
-      // Freeze skipped geometry for this data/width scope. Learning a mounted
-      // group's size must not redistribute every other spacer during live reflow.
-      let totalHeight = 0
-      const heights = keys.map((key) => {
-        const height = this.estimates.get(key) ?? cache?.get(key) ?? estimate
-        this.estimates.set(key, height)
-        totalHeight = totalHeight + height + GROUP_GAP
-        return height
-      })
-      heightPlan = { keys, scrollHeight: viewport?.scrollHeight, heights, totalHeight }
-      this.heightPlan = heightPlan
-    } else heightPlan.keys = keys
-    const { heights, totalHeight } = heightPlan
-    const segments: Segment[] = []
-    const reserved = viewport && !viewport.historyComplete
-      ? Math.max(0, (viewport.scrollHeight ?? 0) - totalHeight) : 0
-    const leading = !viewport?.historyComplete ? viewport?.leadingHeight ?? reserved : 0
-    const trailing = !viewport?.historyComplete ? viewport?.trailingHeight ?? 0 : 0
-    if (leading > 0) segments.push({ key: "history-prefix", start: 0, end: 0, height: leading, placeholder: true })
-    for (let index = 0; index < keys.length; index++) {
-      const key = keys[index]
-      if (this.state.mounted.has(key)) {
-        segments.push({ key: `group:${key}`, start: index, end: index + 1, height: heights[index], placeholder: false })
-      } else {
-        const previous = segments.at(-1)
-        if (previous?.placeholder && previous.end > previous.start) {
-          previous.end = index + 1
-          previous.height += heights[index] + GROUP_GAP
-        } else segments.push({ key: `placeholder:${key}`, start: index, end: index + 1, height: heights[index], placeholder: true })
-      }
-    }
-    if (trailing > 0) segments.push({ key: "history-suffix", start: keys.length, end: keys.length, height: trailing, placeholder: true })
-    this.plan = { keys, heights, segments, complete: (viewport?.historyComplete ?? true) && segments.every((segment) => !segment.placeholder) }
-    return <div className={`flex flex-col gap-2 ${className ?? ""}`} data-thread-history-complete={this.plan.complete}>
+    const { groups, keys, segments, renderGroup, viewport, header, children, className } = this.props
+    return <div ref={this.list} className={`flex flex-col gap-2 ${className ?? ""}`} data-thread-history-complete={viewport?.historyComplete ?? true} data-thread-virtualized={Boolean(viewport)}>
       {header}
       {segments.map((segment) => segment.placeholder
-        ? <div key={segment.key} ref={this.trackNode} data-thread-placeholder={segment.key} aria-hidden="true"
+        ? <div key={segment.key} ref={this.groupRef(segment.key)} data-thread-placeholder={segment.key} aria-hidden="true"
             style={{ height: segment.height, flexShrink: 0, overflowAnchor: "none" }} />
-        : <div key={segment.key} ref={this.trackNode} data-thread-group={keys[segment.start]} className="min-w-0 shrink-0 empty:hidden">
-            <RenderedGroup group={groups[segment.start]} index={segment.start} renderGroup={renderGroup} />
+        : <div key={segment.key} ref={this.groupRef(segment.key)} data-index={segment.index} data-thread-group={keys[segment.index]} className="min-w-0 shrink-0 empty:hidden">
+            <RenderedGroup group={groups[segment.index]} index={segment.index} renderGroup={renderGroup} />
           </div>)}
       {children}
     </div>

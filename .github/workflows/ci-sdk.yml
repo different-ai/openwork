@@ -1,15 +1,6 @@
 name: Generated Den SDK
 
 on:
-  pull_request:
-    paths:
-      - "packages/**"
-      - "ee/apps/den-api/**"
-      - "ee/packages/**"
-      - "package.json"
-      - "pnpm-workspace.yaml"
-      - "pnpm-lock.yaml"
-      - ".github/workflows/ci-sdk.yml"
   push:
     branches: [dev]
     paths:

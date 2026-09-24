@@ -9,8 +9,21 @@
   },
   "colors": {
     "primary": "#011627",
-    "light": "#3b82f6",
+    "light": "#cbd5e1",
     "dark": "#011627"
+  },
+  "background": {
+    "color": {
+      "light": "#ffffff",
+      "dark": "#011627"
+    }
+  },
+  "seo": {
+    "metatags": {
+      "og:image": "https://openworklabs.com/docs/images/openwork-social.png",
+      "og:image:alt": "OpenWork — Your AI workspace. Without vendor lock-in.",
+      "twitter:image:alt": "OpenWork — Your AI workspace. Without vendor lock-in."
+    }
   },
   "api": {
     "openapi": "openapi.json"
@@ -175,6 +188,7 @@
       {
         "tab": "AI Gateway",
         "pages": [
+          "ai-gateway/google-agent-platform",
           "ai-gateway/counting-usage",
           "ai-gateway/token-costs"
         ]

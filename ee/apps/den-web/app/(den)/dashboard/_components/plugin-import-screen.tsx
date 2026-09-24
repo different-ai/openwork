@@ -253,7 +253,7 @@ export function PluginImportScreen() {
           ) : null}
 
           {preview.warnings.length > 0 ? (
-            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
+            <div className="mt-4 rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-[13px] text-[var(--dls-text-primary)]">
               {preview.warnings.join(" ")}
             </div>
           ) : null}

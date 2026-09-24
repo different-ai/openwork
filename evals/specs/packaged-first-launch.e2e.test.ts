@@ -11,15 +11,8 @@ import type { PackagedFlavor } from "../worlds/packaged-first-launch.ts";
 
 const test = spec.world(packagedFirstLaunchWorld, { timeout: 180_000 });
 
-/**
- * What a brand-new machine sees on first launch. The cloud and enterprise
- * flavors render a gate above the routes, before any provider that needs a
- * signed-in or activated desktop exists. 0.18.43 and 0.18.44 shipped with the
- * enterprise gate throwing during render, which left customers a blank window.
- * The public flavor has no gate and is covered by app-smoke.
- */
 const FIRST_LAUNCH_HEADING: Partial<Record<PackagedFlavor, string>> = {
-  cloud: "Welcome to OpenWork",
+  cloud: "What do you need done?",
   enterprise: "Link this app to your organization",
 };
 
@@ -29,7 +22,7 @@ const RECOVERY_HEADING = /OpenWork hit an unexpected error|OpenWork couldn't sta
 /** Bounded observation window, not a guarantee against faults after it ends. */
 const REJECTION_SETTLE_MS = 3_000;
 
-test("a packaged flavor renders its first-launch gate without a render crash", async ({ world, user, probe, evidence }) => {
+test("a packaged flavor renders its first-launch surface without a render crash", async ({ world, user, probe, evidence }) => {
   const flavor = await probe.eventually(() => world.flavor(), {
     within: 30_000,
     label: "packaged distribution flavor",
@@ -37,7 +30,7 @@ test("a packaged flavor renders its first-launch gate without a render crash", a
   });
   if (flavor === null) throw new Error("The packaged desktop did not report its distribution flavor");
   const heading = FIRST_LAUNCH_HEADING[flavor];
-  if (!heading) throw new Error(`The ${flavor} flavor has no first-launch gate; point OPENWORK_EVAL_ELECTRON_BINARY at a cloud or enterprise build`);
+  if (!heading) throw new Error(`The ${flavor} flavor is not covered by this spec; point OPENWORK_EVAL_ELECTRON_BINARY at a cloud or enterprise build`);
 
   // A render throw either unmounts the whole tree (empty #root plus an uncaught
   // exception) or, with the root error boundary, mounts the recovery screen.
@@ -45,7 +38,7 @@ test("a packaged flavor renders its first-launch gate without a render crash", a
   // timing out on a blank window.
   const rootText = await probe.eventually(() => world.rootText(), {
     within: 60_000,
-    label: `${flavor} first-launch gate mounted in #root`,
+    label: `${flavor} first-launch surface mounted in #root`,
     until: (text) => text.includes(heading) || RECOVERY_HEADING.test(text) || world.exceptions().some(isRenderCrash),
   });
   const mounted = world.exceptions();
@@ -67,20 +60,19 @@ test("a packaged flavor renders its first-launch gate without a render crash", a
   // surface and usable controls after the last wait, not the pre-screenshot DOM.
   const final = await world.health();
   expect(final.rootText, "startup recovery appeared during settle").not.toMatch(RECOVERY_HEADING);
-  expect(final.rootText, "the first-launch gate disappeared during settle").toContain(heading);
+  expect(final.rootText, "the first-launch surface disappeared during settle").toContain(heading);
   const usable = final.controls.filter((control) => control.visible && control.enabled);
   if (flavor === "enterprise") {
     expect(usable.some((control) => control.tag === "input" && control.testId === "organization-server-input"), "Workspace address must remain visible and enabled").toBe(true);
     expect(usable.some((control) => control.tag === "button" && control.testId === "organization-server-continue"), "Continue must remain visible and enabled").toBe(true);
   } else {
-    expect(usable.some((control) => control.tag === "button" && control.text === "Sign in to OpenWork"), "Sign in must remain visible and enabled").toBe(true);
-    expect(usable.some((control) => control.tag === "button" && control.text === "Paste sign-in code"), "Sign-in code disclosure must remain visible and enabled").toBe(true);
+    expect(usable.some((control) => control.editable), "Signed-out task composer must remain visible and editable").toBe(true);
   }
   const exceptions = world.exceptions();
   const knownRejections = exceptions.filter(isKnownRejection);
   const unexpected = exceptions.filter((exception) => !isRenderCrash(exception) && !isKnownRejection(exception));
   expect(unexpected.map(describeException), `an unhandled promise rejection outside KNOWN_LAUNCH_REJECTIONS (${KNOWN_LAUNCH_REJECTIONS.length} allowed) during ${flavor} first launch`).toEqual([]);
-  expect(exceptions.filter(isRenderCrash).map(describeException), "the renderer threw after the first-launch gate mounted").toEqual([]);
+  expect(exceptions.filter(isRenderCrash).map(describeException), "the renderer threw after the first-launch surface mounted").toEqual([]);
 
   evidence.recordAssertionEvidence(
     `The ${flavor} desktop mounts "${heading}" on first launch without a render crash or an unexpected unhandled rejection`,

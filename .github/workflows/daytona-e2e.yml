@@ -16,9 +16,6 @@ on:
         required: false
         default: ""
         type: string
-  workflow_run:
-    workflows: [Warden]
-    types: [completed]
 
 permissions:
   actions: read
@@ -26,16 +23,51 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: product-journeys-${{ github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  group: product-journeys-${{ github.event.workflow_run.id || github.run_id }}
   cancel-in-progress: true
 
 jobs:
+  authorize:
+    name: Required verification authorization
+    if: github.event_name == 'workflow_run' && github.repository == 'different-ai/openwork'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      checks: write
+    outputs:
+      authorized: ${{ steps.authorize.outputs.authorized }}
+      pr: ${{ steps.authorize.outputs.pr }}
+      sha: ${{ steps.authorize.outputs.sha }}
+      base: ${{ steps.authorize.outputs.base }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Bind required plan to the current PR head
+        id: authorize
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/required-verification-controller.mjs authorize
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: required-verification-${{ github.run_attempt }}
+          path: required-verification.json
+          retention-days: 30
+          if-no-files-found: error
   plan:
+    needs: authorize
     if: >-
+      always() &&
       github.repository == 'different-ai/openwork' &&
       (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' ||
-      (github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_repository.full_name == github.repository))
+      (needs.authorize.result == 'success' && needs.authorize.outputs.authorized == 'true'))
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
@@ -46,59 +78,20 @@ jobs:
       has_local: ${{ steps.matrix.outputs.has_local }}
       suite: ${{ steps.matrix.outputs.suite }}
     steps:
-      - name: Authorize Warden-cleared pull request
-        id: authorize
-        if: github.event_name == 'workflow_run'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          PR: ${{ github.event.workflow_run.pull_requests[0].number }}
-        run: |
-          set -euo pipefail
-
-          mkdir -p /tmp/warden-summary
-          gh run download "$RUN_ID" --repo "$REPO" --name warden-summary --dir /tmp/warden-summary
-          summary_sha="$(jq -r '.head_sha' /tmp/warden-summary/warden-summary.json)"
-          blocking="$(jq -r '.blocking_count // .findings_count' /tmp/warden-summary/warden-summary.json)"
-          current_head="$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')"
-
-          if [ "$summary_sha" != "$HEAD_SHA" ] || [ "$current_head" != "$HEAD_SHA" ]; then
-            echo "::error::Warden summary or pull request head does not match $HEAD_SHA."
-            exit 1
-          fi
-          if [ "$blocking" != "0" ]; then
-            echo "::notice::E2E regression withheld: Warden reported $blocking blocking finding(s)."
-            echo "authorized=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          guarded="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' \
-            | grep -E '^(evals/scripts/|\.github/|warden\.toml$|\.warden/|\.agents/skills/|\.claude/skills/)' || true)"
-          if [ -n "$guarded" ]; then
-            echo "::notice::E2E regression withheld: PR changes trusted review machinery."
-            echo "authorized=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "authorized=true" >> "$GITHUB_OUTPUT"
-
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        if: github.event_name != 'workflow_run' || steps.authorize.outputs.authorized == 'true'
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ needs.authorize.outputs.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Select user journeys
         id: matrix
-        if: github.event_name != 'workflow_run' || steps.authorize.outputs.authorized == 'true'
         env:
           ONLY_FILTER: ${{ inputs.only }}
           SUITE: ${{ inputs.suite }}
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          BASE_SHA: ${{ needs.authorize.outputs.base }}
+          HEAD_SHA: ${{ needs.authorize.outputs.sha }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "workflow_run" ]; then
@@ -115,8 +108,9 @@ jobs:
           retention-days: 14
 
   e2e:
-    needs: plan
-    if: needs.plan.outputs.has_daytona == 'true'
+    needs: [authorize, plan]
+    # The authorization job is intentionally skipped for schedules/manual runs.
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.has_daytona == 'true'
     name: Journey — ${{ matrix.journey.name }}
     environment: ${{ github.event_name == 'workflow_run' && 'pr-slow-specs' || 'scheduled-e2e-regression' }}
     strategy:
@@ -129,7 +123,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ needs.authorize.outputs.sha || github.sha }}
           persist-credentials: false
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -174,7 +168,7 @@ jobs:
           NIGHTLY_MODEL: ${{ vars.OPENWORK_EVAL_NIGHTLY_MODEL }}
           SPEC_SLUG: ${{ matrix.journey.spec }}
           MODEL_KIND: ${{ matrix.journey.model }}
-          OPENWORK_EVAL_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          OPENWORK_EVAL_REF: ${{ needs.authorize.outputs.sha || github.sha }}
         run: |
           set -euo pipefail
 
@@ -190,7 +184,7 @@ jobs:
         if: success() || failure()
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          EXPECTED_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          EXPECTED_SHA: ${{ needs.authorize.outputs.sha || github.sha }}
         run: |
           set -euo pipefail
           node evals/scripts/judge-journeys.mjs
@@ -202,6 +196,7 @@ jobs:
           JOURNEY_LOG: /tmp/daytona-e2e.log
           EXECUTION: ${{ steps.run.outcome }}
           VISION: ${{ steps.vision.outputs.result }}
+          EXPECTED_SHA: ${{ needs.authorize.outputs.sha || github.sha }}
         run: node evals/scripts/journey-report.mjs record
       - name: Upload journey evidence
         if: always()
@@ -217,14 +212,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: journey-result-${{ matrix.journey.spec }}
+          name: journey-result-${{ github.run_attempt }}-${{ matrix.journey.spec }}
           path: journey-result.json
           retention-days: 14
           if-no-files-found: warn
 
   local-journey:
-    needs: plan
-    if: needs.plan.outputs.has_local == 'true'
+    needs: [authorize, plan]
+    if: always() && needs.plan.result == 'success' && needs.plan.outputs.has_local == 'true'
     name: Journey — ${{ matrix.journey.name }}
     environment: ${{ github.event_name == 'workflow_run' && 'pr-slow-specs' || 'scheduled-e2e-regression' }}
     strategy:
@@ -237,7 +232,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ needs.authorize.outputs.sha || github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup-tests
       - name: Prepare local Den and Electron
@@ -263,7 +258,7 @@ jobs:
         if: success() || failure()
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          EXPECTED_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          EXPECTED_SHA: ${{ needs.authorize.outputs.sha || github.sha }}
         run: node evals/scripts/judge-journeys.mjs
       - name: Record journey outcome
         if: always()
@@ -272,6 +267,7 @@ jobs:
           JOURNEY_LOG: /tmp/local-handoff-e2e.log
           EXECUTION: ${{ steps.run.outcome }}
           VISION: ${{ steps.vision.outputs.result }}
+          EXPECTED_SHA: ${{ needs.authorize.outputs.sha || github.sha }}
         run: node evals/scripts/journey-report.mjs record
       - name: Upload journey evidence
         if: always()
@@ -287,7 +283,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: journey-result-${{ matrix.journey.spec }}
+          name: journey-result-${{ github.run_attempt }}-${{ matrix.journey.spec }}
           path: journey-result.json
           retention-days: 14
           if-no-files-found: warn
@@ -316,7 +312,7 @@ jobs:
       - name: Download outcomes
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: journey-result-*
+          pattern: journey-result-${{ github.run_attempt }}-*
           path: journey-results
       - name: Report verified coverage
         run: |

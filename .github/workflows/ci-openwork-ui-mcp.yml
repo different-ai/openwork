@@ -8,11 +8,6 @@ on:
       - ".github/workflows/ci-openwork-ui-mcp.yml"
     tags:
       - "openwork-ui-mcp-v*"
-  pull_request:
-    branches: [dev]
-    paths:
-      - "packages/openwork-ui-mcp/**"
-      - ".github/workflows/ci-openwork-ui-mcp.yml"
 
 permissions:
   contents: read

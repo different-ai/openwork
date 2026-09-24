@@ -168,7 +168,7 @@ function isLoopbackHostname(hostname: string): boolean {
   return Boolean(match && Number(match[1]) === 127 && match.slice(1).every((part) => Number(part) <= 255));
 }
 
-async function trustedAppHostCloudEndpoint(cloudMcp: Record<string, unknown>): Promise<boolean> {
+export async function trustedAppHostCloudEndpoint(cloudMcp: Record<string, unknown>): Promise<boolean> {
   if (typeof cloudMcp.url !== "string") return false;
   let endpoint: URL;
   try {

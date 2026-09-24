@@ -27,6 +27,7 @@ describe("Den upstream proxy", () => {
           contentType: request.headers.get("content-type"),
           cookie: request.headers.get("cookie"),
           authorization: request.headers.get("authorization"),
+          organization: request.headers.get("x-openwork-org-id"),
           custom: request.headers.get("x-custom-proxy-test"),
           forwarded: request.headers.get("forwarded"),
           forwardedHost: request.headers.get("x-forwarded-host"),
@@ -35,6 +36,14 @@ describe("Den upstream proxy", () => {
           traceparent: request.headers.get("traceparent"),
           tracestate: request.headers.get("tracestate"),
         };
+
+        if (url.pathname === "/v1/browser-session-witness") {
+          const member = request.headers.get("cookie")?.match(/openwork-den\.session_token=(member-[12])/)?.[1];
+          return Response.json(member ? { user: { id: member } } : { error: "unauthorized" }, {
+            status: member ? 200 : 401,
+            headers: { "cache-control": "public, max-age=300", "access-control-allow-origin": "https://api-portal.example.test" },
+          });
+        }
 
         if (url.pathname === "/v1/compressed") {
           return new Response(Bun.gzipSync(JSON.stringify({ ok: true, source: "gzip" })), {
@@ -128,6 +137,73 @@ describe("Den upstream proxy", () => {
     } else {
       process.env.DEN_BASE_URL = previousDenBaseUrl;
     }
+  });
+
+  test("the browser route forwards web-only session cookies without sharing identities or caching responses", async () => {
+    const { GET, POST, maxDuration } = await import("../browser/v1/[...path]/route.ts");
+    process.env.DEN_BASE_URL = "https://portal.example.test";
+    const path = "http://den-web:3005/api/browser/v1/browser-session-witness?include=org";
+    for (const member of ["member-1", "member-2", null]) {
+      const response = await GET(new NextRequest(path, {
+        headers: {
+          cookie: member ? `analytics=private; openwork-den.session_token=${member}` : "analytics=private",
+          "sec-fetch-site": "same-origin",
+        },
+      }));
+      expect(response.status).toBe(member ? 200 : 401);
+      expect(await response.json()).toEqual(member ? { user: { id: member } } : { error: "unauthorized" });
+      expect(observed.cookie).toBe(member ? `openwork-den.session_token=${member}` : null);
+      expect(observed.authorization).toBeNull();
+      expect(observed.path).toBe("/v1/browser-session-witness?include=org");
+      expect(observed.forwardedHost).toBe("portal.example.test");
+      expect(response.headers.get("location")).toBeNull();
+      expect(response.headers.get("set-cookie")).toBeNull();
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      expect(response.headers.get("access-control-allow-origin")).toBeNull();
+    }
+    const response = await POST(new NextRequest(path, {
+      method: "POST",
+      headers: {
+        origin: "https://portal.example.test", "content-type": "application/json",
+        cookie: "openwork-den.session_token=member-1", authorization: "Bearer existing-password-token",
+        "x-openwork-org-id": "org-1",
+      },
+      body: JSON.stringify({ organizationId: "org-1" }),
+    }));
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(observed.method).toBe("POST");
+    expect(observed.body).toBe(JSON.stringify({ organizationId: "org-1" }));
+    expect(observed.authorization).toBe("Bearer existing-password-token");
+    expect(observed.organization).toBe("org-1");
+    expect(maxDuration).toBeGreaterThanOrEqual(180);
+  });
+
+  test.each([
+    { method: "POST", headers: { origin: "https://sibling.example.test" } },
+    { method: "POST", headers: { origin: "null" } },
+    { method: "POST", headers: {} },
+    { method: "GET", headers: { origin: "https://sibling.example.test" } },
+    { method: "GET", headers: { "sec-fetch-site": "same-site" } },
+    { method: "GET", headers: { "sec-fetch-site": "cross-site" } },
+    { method: "OPTIONS", headers: { origin: "https://instance.daytonaproxy01.net" } },
+  ])("the browser route rejects foreign or unverified $method requests before forwarding cookies", async ({ method, headers }) => {
+    const { GET } = await import("../browser/v1/[...path]/route.ts");
+    process.env.DEN_BASE_URL = "https://portal.example.test";
+    const response = await GET(new NextRequest("http://den-web:3005/api/browser/v1/browser-session-witness", {
+      method, headers: { ...headers, cookie: "openwork-den.session_token=member-1" },
+    }));
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "forbidden_origin" });
+    expect(upstreamRequestCount).toBe(0);
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  test.each(["%2e%2e/api/auth", "%2e%2e%2fapi/auth", "me%5c..%5capi", "me%00", "%"])("the browser proxy rejects an escaping or malformed API path: %s", async (path) => {
+    const { GET } = await import("../browser/v1/[...path]/route.ts");
+    const response = await GET(new NextRequest(`https://portal.example.test/api/browser/v1/${path}`));
+    expect(response.status).toBe(400);
+    expect(upstreamRequestCount).toBe(0);
   });
 
   const INSTANCE_ORIGIN = "https://8787-2bnptanfwxs5j8vu.daytonaproxy01.net";
@@ -480,6 +556,7 @@ describe("Den upstream proxy", () => {
       contentType: "application/json",
       cookie: "ow_session=sess_test",
       authorization: "Bearer tok_test",
+      organization: null,
       custom: "kept",
       forwarded: null,
       forwardedHost: "app.example.com",

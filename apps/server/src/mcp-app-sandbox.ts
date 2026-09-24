@@ -76,21 +76,97 @@ export const MCP_APP_SANDBOX_PROXY_SCRIPT = String.raw`
   // OpenWork delivery diagnostics are deliberately outside JSON-RPC so the
   // stable MCP Apps transport never mistakes them for protocol messages.
   const notifyHost = (method, params = {}) => window.parent.postMessage({ method, params }, hostTargetOrigin);
-  const inner = document.createElement("iframe");
-  inner.title = "MCP App view";
-  inner.style.cssText = "display:block;width:100%;height:100%;border:0;background:transparent";
-  // Provider documents must not share this proxy's origin or another App's DOM.
-  // Resource payloads cannot relax this policy.
-  inner.setAttribute("sandbox", "allow-scripts");
+  function interactionBootstrap() {
+    const call = Function.prototype.call.bind(Function.prototype.call);
+    const listen = EventTarget.prototype.addEventListener;
+    const readData = Object.getOwnPropertyDescriptor(MessageEvent.prototype, "data").get;
+    const post = MessagePort.prototype.postMessage;
+    const start = MessagePort.prototype.start;
+    const now = performance.now.bind(performance);
+    const timeOrigin = performance.timeOrigin;
+    const focused = document.hasFocus.bind(document);
+    const sendReady = window.parent.postMessage.bind(window.parent);
+    const channel = new MessageChannel();
+    const port = channel.port1;
+    let lastClickAt = -Infinity;
+    let active = true;
+    call(listen, window, "click", (event) => {
+      if (event.isTrusted && active) lastClickAt = timeOrigin + now();
+    }, true);
+    call(listen, window, "pagehide", (event) => {
+      if (!event.isTrusted) return;
+      active = false;
+      lastClickAt = -Infinity;
+    }, true);
+    call(listen, port, "message", (event) => {
+      if (!event.isTrusted) return;
+      const data = call(readData, event);
+      const elapsed = timeOrigin + now() - lastClickAt;
+      const requestedElapsed = data.requestedAt - lastClickAt;
+      const approved = active && focused() && elapsed >= 0 && elapsed <= 1500
+        && requestedElapsed >= 0 && requestedElapsed <= 1500;
+      lastClickAt = -Infinity;
+      call(post, port, { id: data.id, approved });
+    });
+    call(start, port);
+    sendReady({ method: "openwork/interaction-ready" }, "*", [channel.port2]);
+  }
+  const bootstrap = "<script>(" + interactionBootstrap.toString() + ")();<\/script>";
   let resourceAssigned = false;
-  inner.addEventListener("load", () => {
-    if (!resourceAssigned) return;
-    // An opaque document can report a load without exposing its DOM to the proxy.
-    notifyHost("ui/notifications/sandbox-resource-loaded", { readyState: null, hasHtmlRoot: null, scriptCount: null });
-  });
-  inner.addEventListener("error", () => {
-    if (resourceAssigned) notifyHost("ui/notifications/sandbox-diagnostic", { code: "MCP_APP_SANDBOX_DOCUMENT_ERROR", message: "The sandbox iframe reported a document load error." });
-  });
+  let generation = 0;
+  let proofPort = null;
+  let handshakeReceived = false;
+  let nextProofId = 0;
+  const pending = new Map();
+  const resetProof = () => {
+    generation++;
+    if (proofPort) proofPort.close();
+    proofPort = null;
+    handshakeReceived = false;
+    for (const cancel of pending.values()) cancel(false, false);
+    pending.clear();
+  };
+  const createInner = () => {
+    const frame = document.createElement("iframe");
+    frame.title = "MCP App view";
+    frame.style.cssText = "display:block;width:100%;height:100%;border:0;background:transparent";
+    frame.setAttribute("sandbox", "allow-scripts");
+    frame.addEventListener("load", () => {
+      if (!resourceAssigned || frame !== inner) return;
+      notifyHost("ui/notifications/sandbox-resource-loaded", { readyState: null, hasHtmlRoot: null, scriptCount: null });
+    });
+    frame.addEventListener("error", () => {
+      if (resourceAssigned && frame === inner) notifyHost("ui/notifications/sandbox-diagnostic", { code: "MCP_APP_SANDBOX_DOCUMENT_ERROR", message: "The sandbox iframe reported a document load error." });
+    });
+    return frame;
+  };
+  let inner = createInner();
+  const forwardToolCall = (data) => {
+    const requestedAt = performance.timeOrigin + performance.now();
+    const assignedGeneration = generation;
+    const params = data.params && typeof data.params === "object" ? data.params : {};
+    const meta = params._meta && typeof params._meta === "object" ? params._meta : {};
+    const request = { ...data, params: { ...params, _meta: { ...meta, "openwork/userInteraction": false } } };
+    const id = ++nextProofId;
+    const finish = (approved, forward = true) => {
+      if (!pending.delete(id)) return;
+      clearTimeout(timer);
+      if (!forward || assignedGeneration !== generation) return;
+      request.params._meta["openwork/userInteraction"] = approved === true;
+      window.parent.postMessage(request, hostTargetOrigin);
+    };
+    const timer = setTimeout(() => finish(false), 1000);
+    pending.set(id, finish);
+    if (!proofPort) {
+      finish(false);
+      return;
+    }
+    try {
+      proofPort.postMessage({ id, requestedAt });
+    } catch {
+      finish(false);
+    }
+  };
   document.body.appendChild(inner);
   window.addEventListener("message", (event) => {
     if (event.source === window.parent) {
@@ -102,7 +178,13 @@ export const MCP_APP_SANDBOX_PROXY_SCRIPT = String.raw`
           return;
         }
         try {
-          inner.srcdoc = html;
+          resourceAssigned = false;
+          resetProof();
+          const previous = inner;
+          inner = createInner();
+          const doctype = html.match(/^\s*<!doctype\s+html\s*>/i)?.[0] || "";
+          inner.srcdoc = doctype + bootstrap + html.slice(doctype.length);
+          document.body.replaceChild(inner, previous);
           resourceAssigned = true;
           notifyHost("ui/notifications/sandbox-resource-accepted");
         } catch {
@@ -113,7 +195,24 @@ export const MCP_APP_SANDBOX_PROXY_SCRIPT = String.raw`
       inner.contentWindow?.postMessage(event.data, "*");
       return;
     }
-    if (resourceAssigned && event.source === inner.contentWindow && event.origin === "null") {
+    if (resourceAssigned && event.isTrusted && event.source === inner.contentWindow && event.origin === "null") {
+      if (event.data?.method === "openwork/interaction-ready") {
+        if (handshakeReceived) return;
+        handshakeReceived = true;
+        if (event.ports.length !== 1) return;
+        proofPort = event.ports[0];
+        const assignedGeneration = generation;
+        proofPort.addEventListener("message", (reply) => {
+          if (!reply.isTrusted || assignedGeneration !== generation) return;
+          pending.get(reply.data?.id)?.(reply.data?.approved === true);
+        });
+        proofPort.start();
+        return;
+      }
+      if (event.data?.method === "tools/call") {
+        forwardToolCall(event.data);
+        return;
+      }
       window.parent.postMessage(event.data, hostTargetOrigin);
     }
   });
@@ -121,5 +220,8 @@ export const MCP_APP_SANDBOX_PROXY_SCRIPT = String.raw`
 })();
 `;
 
-export const MCP_APP_SANDBOX_PROXY_HTML = "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><link rel=\"stylesheet\" href=\"/mcp-apps/sandbox.css\"><title>MCP App sandbox</title></head><body><script src=\"/mcp-apps/sandbox.js\"></script></body></html>";
 export const MCP_APP_SANDBOX_PROXY_CSS = "html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent}";
+// Readiness must not wait on extra network requests. In particular, a stylesheet
+// before a classic script blocks its execution even when the script is downloaded.
+// These are trusted host constants; provider HTML is delivered separately.
+export const MCP_APP_SANDBOX_PROXY_HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${MCP_APP_SANDBOX_PROXY_CSS}</style><title>MCP App sandbox</title></head><body><script>${MCP_APP_SANDBOX_PROXY_SCRIPT}</script></body></html>`;

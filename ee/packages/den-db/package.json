@@ -66,6 +66,11 @@
       "development": "./src/schema/telemetry.ts",
       "default": "./dist/schema/telemetry.js"
     },
+    "./gateway-usage-limits": {
+      "types": "./src/gateway-usage-limits.ts",
+      "development": "./src/gateway-usage-limits.ts",
+      "default": "./dist/gateway-usage-limits.js"
+    },
     "./drizzle": {
       "types": "./src/drizzle.ts",
       "development": "./src/drizzle.ts",
@@ -82,6 +87,9 @@
     "db:migrate": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs migrate --config drizzle.config.ts && node --conditions=development --import tsx scripts/ensure-schema-repairs.ts",
     "db:push": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts && node --conditions=development --import tsx scripts/ensure-schema-repairs.ts",
     "test": "NODE_OPTIONS=--conditions=development tsx --test test/*.test.ts",
+    "test:usage-limits": "NODE_OPTIONS=--conditions=development tsx --test --test-concurrency=1 test/gateway-usage-limits.test.ts test/gateway-usage-migration.test.ts",
+    "test:usage-limits:db": "DEN_USAGE_TEST_DATABASE_URL=${DEN_USAGE_TEST_DATABASE_URL:?Set an isolated loopback usage_limits_test database URL} NODE_OPTIONS=--conditions=development tsx --test --test-concurrency=1 test/gateway-usage-limits-db.test.ts",
+    "typecheck:usage-limits": "tsc -p tsconfig.usage-limits-test.json --pretty false",
     "db:verify-memory": "pnpm run build && node --import tsx scripts/verify-memory-schema.ts",
     "benchmark:admin-scale:mysql": "node --import tsx scripts/admin-scale-benchmark.ts"
   },

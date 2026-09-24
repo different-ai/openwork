@@ -1,21 +1,15 @@
 name: Warden
 
-# Trigger types must stay aligned with the warden.toml trigger actions:
-# an event that runs this workflow but matches no warden trigger would
-# produce findings_count=0 without analysis and wrongly grant clearance.
-# Analyze drafts as they evolve, then refresh the review when they become ready.
+# Keep these actions aligned with warden.toml. The workflow remains disabled
+# in GitHub until a maintainer explicitly enables it after rollout.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    branches: [dev]
 
+# Analysis and run summaries need no review, approval, or check-write token.
 permissions:
-  # contents:write is required by GitHub to resolve review threads via
-  # GraphQL; Warden auto-resolves its own findings once fixed, which the
-  # ruleset's required_review_thread_resolution depends on.
-  contents: write
-  pull-requests: write
-  checks: write
+  contents: read
+  pull-requests: read
 
 concurrency:
   group: warden-${{ github.event.pull_request.number }}
@@ -23,129 +17,70 @@ concurrency:
 
 jobs:
   warden:
-    # Fork PRs have no secrets, so analysis cannot run there (and clearance
-    # is fork-blocked in warden-clearance.yml anyway). Drafts are reviewed too.
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      WARDEN_MODEL: ${{ secrets.WARDEN_MODEL }}
-      WARDEN_OPENAI_API_KEY: ${{ secrets.WARDEN_OPENAI_API_KEY }}
+    timeout-minutes: 20
     steps:
-      - name: Checkout
+      - name: Start timing
+        id: timing
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout source for analysis
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Analyze
+
+      # Only the immutable base supplies executable reporting code and policy.
+      # The PR's source is inspected by Warden; no PR scripts or installs run.
+      - name: Checkout trusted policy and reporter
+        id: policy
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .warden-policy
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            .warden
+
+      - name: Start analysis timing
+        id: analysis-timing
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Analyze security
         id: analyze
-        uses: getsentry/warden@8759014a14130cd2b82e59d3fb450a7385721221 # v0
+        uses: getsentry/warden@8759014a14130cd2b82e59d3fb450a7385721221 # v0 (CLI 0.43.0)
+        env:
+          WARDEN_MODEL: ${{ secrets.WARDEN_MODEL }}
+          WARDEN_OPENAI_API_KEY: ${{ secrets.WARDEN_OPENAI_API_KEY }}
         with:
           mode: analyze
+          base-config-path: .warden-policy/warden.toml
+          base-skill-root: .warden-policy
+          # Deliberately absent: load only the trusted base policy, with no
+          # PR-controlled additional skills, tools, or model overrides.
+          config-path: .warden-policy/.no-repo-config.toml
+          report-on: "off"
 
-      # Never execute the pull request's copy of this helper: the job has
-      # write-capable permissions and the analyzer needs the model secret.
-      - name: Fetch trusted review helper
-        id: trusted-helper
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          GH_TOKEN: ${{ github.token }}
-          WARDEN_MODEL: ""
-          WARDEN_OPENAI_API_KEY: ""
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::Pull request base SHA is invalid"
-            exit 1
-          fi
-
-          endpoint="repos/$GITHUB_REPOSITORY/contents/.github/scripts/warden-review.mjs?ref=$BASE_SHA"
-          headers="$RUNNER_TEMP/warden-review-base.headers"
-          metadata="$RUNNER_TEMP/warden-review-base.json"
-          partial="$RUNNER_TEMP/warden-review-base.mjs.partial"
-          helper="$RUNNER_TEMP/warden-review-base.mjs"
-
-          set +e
-          gh api --include --silent "$endpoint" > "$headers"
-          api_exit=$?
-          set -e
-          http_status="$(awk 'NR == 1 { print $2 }' "$headers")"
-          if [ "$http_status" = "404" ]; then
-            echo "::warning::The immutable PR base does not contain the review helper. Native Warden reporting will continue, but this bootstrap run cannot emit a clearance receipt and requires independent review."
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ "$api_exit" -ne 0 ] || [ "$http_status" != "200" ]; then
-            echo "::error::Could not verify the trusted review helper (HTTP ${http_status:-unknown}, gh exit $api_exit)"
-            exit 1
-          fi
-
-          gh api "$endpoint" > "$metadata"
-          if ! jq -e --arg path ".github/scripts/warden-review.mjs" \
-            '.type == "file" and .path == $path and (.sha | strings | test("^[0-9a-f]{40}$"))' \
-            "$metadata" > /dev/null; then
-            echo "::error::Trusted review helper metadata is invalid"
-            exit 1
-          fi
-          expected_blob="$(jq -r '.sha' "$metadata")"
-          gh api -H "Accept: application/vnd.github.raw+json" "$endpoint" > "$partial"
-          if [ ! -s "$partial" ] || [ -L "$partial" ]; then
-            echo "::error::Trusted review helper download is not a regular non-empty file"
-            exit 1
-          fi
-          actual_blob="$(git hash-object --no-filters "$partial")"
-          if [ "$actual_blob" != "$expected_blob" ]; then
-            echo "::error::Trusted review helper failed blob integrity verification"
-            exit 1
-          fi
-          mv "$partial" "$helper"
-          chmod 0444 "$helper"
-          echo "path=$helper" >> "$GITHUB_OUTPUT"
-          echo "available=true" >> "$GITHUB_OUTPUT"
-
-      # Report mode overwrites the analyzer output and omits partial-analysis
-      # metadata, so prepare the fail-closed, redacted receipt first.
-      - name: Prepare review receipt
-        id: prepare
-        if: steps.trusted-helper.outputs.available == 'true'
+      - name: Security summary and timing
+        if: always() && steps.policy.outcome == 'success'
         env:
           FINDINGS_FILE: ${{ steps.analyze.outputs.findings-file }}
+          ANALYSIS_OUTCOME: ${{ steps.analyze.outcome }}
+          REVIEW_STARTED: ${{ steps.timing.outputs.started }}
+          ANALYSIS_STARTED: ${{ steps.analysis-timing.outputs.started }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          TRUSTED_HELPER: ${{ steps.trusted-helper.outputs.path }}
-          WARDEN_OPENAI_API_KEY: ""
-        shell: bash
-        run: |
-          set -euo pipefail
-          receipt="$GITHUB_WORKSPACE/warden-summary.json"
-          rm -f "$receipt"
-          node "$TRUSTED_HELPER" prepare \
-            --findings "$FINDINGS_FILE" \
-            --repository "$GITHUB_REPOSITORY" \
-            --pr "$PR_NUMBER" \
-            --head "$HEAD_SHA" \
-            --base "$BASE_SHA" \
-            --run-id "$GITHUB_RUN_ID" \
-            --attempt "$GITHUB_RUN_ATTEMPT" \
-            --output "$receipt"
-          if [ ! -s "$receipt" ] || [ -L "$receipt" ]; then
-            echo "::error::Trusted review helper did not create a regular non-empty receipt"
-            exit 1
-          fi
-          echo "completed=true" >> "$GITHUB_OUTPUT"
+          REPORT_PATH: ${{ runner.temp }}/warden-summary.json
+        run: node .warden-policy/.github/scripts/warden-report.mjs
 
-      - name: Report
-        uses: getsentry/warden@8759014a14130cd2b82e59d3fb450a7385721221 # v0
-        with:
-          mode: report
-          findings-file: ${{ steps.analyze.outputs.findings-file }}
-
-      - name: Upload sanitized review receipt
-        if: steps.prepare.outputs.completed == 'true'
+      - name: Save review measurement
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: warden-summary
-          path: warden-summary.json
+          path: ${{ runner.temp }}/warden-summary.json
           retention-days: 90
+          if-no-files-found: warn

@@ -250,8 +250,6 @@ export type DenOrgEntitlements = {
 
 /** Server-advertised and per-org capabilities; optional fields default to off. */
 export type DenOrgCapabilities = {
-  /** Platform-admin opt-in for the Gateway dashboard only; never a runtime inference gate. */
-  gatewayDashboard: boolean;
   orgManagedDashboards: boolean;
   installLinks: boolean;
   mcpConnections: boolean;
@@ -569,7 +567,7 @@ export function getCustomLlmProvidersRoute(orgSlug?: string | null): string {
 }
 
 export function getInferenceRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/inference`;
+  return `${getAiGatewayRoute(orgSlug)}?tab=openwork-models`;
 }
 
 export function getWebRoute(orgSlug?: string | null): string {
@@ -612,20 +610,52 @@ export function getNewLlmProviderRoute(orgSlug?: string | null): string {
   return `${getLlmProvidersRoute(orgSlug)}/new`;
 }
 
-export function getGatewayProvidersRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/gateway-providers`;
+export function getAiGatewayRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/ai-gateway`;
 }
 
-export function getGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
-  return `${getGatewayProvidersRoute(orgSlug)}/${encodeURIComponent(inferenceProviderId)}`;
+export function getAiGatewayProvidersRoute(orgSlug?: string | null): string {
+  return `${getAiGatewayRoute(orgSlug)}?tab=ai-providers`;
 }
 
-export function getEditGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
-  return `${getGatewayProviderRoute(orgSlug, inferenceProviderId)}/edit`;
+export function getNewAiGatewayProviderRoute(orgSlug?: string | null, providerId?: string): string {
+  const base = `${getAiGatewayRoute(orgSlug)}/providers/new`;
+  return providerId ? `${base}?provider=${encodeURIComponent(providerId)}` : base;
 }
 
-export function getNewGatewayProviderRoute(orgSlug?: string | null): string {
-  return `${getGatewayProvidersRoute(orgSlug)}/new`;
+export function getAiGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
+  return `${getAiGatewayRoute(orgSlug)}/providers/${encodeURIComponent(inferenceProviderId)}`;
+}
+
+export function getEditAiGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
+  return `${getAiGatewayProviderRoute(orgSlug, inferenceProviderId)}/edit`;
+}
+
+export function getAiGatewayLimitsRoute(orgSlug?: string | null, deletedPolicyId?: string): string {
+  const base = `${getAiGatewayRoute(orgSlug)}?tab=limits`;
+  return deletedPolicyId ? `${base}&deleted=${encodeURIComponent(deletedPolicyId)}` : base;
+}
+
+export function getNewAiGatewayLimitRoute(orgSlug?: string | null, target?: { memberId: string } | { teamId: string }): string {
+  const base = `${getAiGatewayRoute(orgSlug)}/limits/new`;
+  if (!target) return base;
+  return "memberId" in target
+    ? `${base}?memberId=${encodeURIComponent(target.memberId)}`
+    : `${base}?teamId=${encodeURIComponent(target.teamId)}`;
+}
+
+export function getAiGatewayLimitRoute(orgSlug: string | null | undefined, policyId: string): string {
+  return `${getAiGatewayRoute(orgSlug)}/limits/${encodeURIComponent(policyId)}`;
+}
+
+export function getAiGatewayUsersTeamsRoute(orgSlug?: string | null, filter?: { view: "teams" } | { teamId: string }): string {
+  const base = `${getAiGatewayRoute(orgSlug)}?tab=users-and-teams`;
+  if (!filter) return base;
+  return "teamId" in filter ? `${base}&team=${encodeURIComponent(filter.teamId)}` : `${base}&view=teams`;
+}
+
+export function getAiGatewayPersonRoute(orgSlug: string | null | undefined, memberId: string): string {
+  return `${getAiGatewayRoute(orgSlug)}/people/${encodeURIComponent(memberId)}`;
 }
 
 export function getBillingRoute(orgSlug?: string | null): string {
@@ -676,6 +706,11 @@ export function getEditPluginSkillRoute(orgSlug: string | null | undefined, plug
   return `${getPluginSkillRoute(orgSlug, pluginId, skillId)}/edit`;
 }
 
+/** The full plugin editor: hooks, agents, marketplaces and skill files. */
+export function getPluginDetailsRoute(orgSlug: string | null | undefined, pluginId: string): string {
+  return `${getPluginRoute(orgSlug, pluginId)}/details`;
+}
+
 export function getNewPluginRoute(orgSlug?: string | null): string {
   return `${getPluginsRoute(orgSlug)}/new`;
 }
@@ -708,16 +743,7 @@ export function getMcpConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/mcp-connections`;
 }
 
-export function getConfiguredMcpConnectionsRoute(orgSlug?: string | null, connectionId?: string | null): string {
-  const base = `${getMcpConnectionsRoute(orgSlug)}/configured`;
-  return connectionId ? `${base}?connectionId=${encodeURIComponent(connectionId)}` : base;
-}
-
-/**
- * Detail page for one connector. `connectorId` is a configured connection id
- * or, for connectors nobody has added yet, the catalog id (`gmail`, `notion`,
- * `microsoft-365`) so the page can explain the connector and start setup.
- */
+/** A configured connector's page in Manage, Google Workspace and Microsoft 365 included. */
 export function getMcpConnectionRoute(orgSlug: string | null | undefined, connectorId: string): string {
   return `${getMcpConnectionsRoute(orgSlug)}/${encodeURIComponent(connectorId)}`;
 }
@@ -736,6 +762,39 @@ export function getLibraryRoute(orgSlug?: string | null): string {
 
 export function getLibraryPluginRoute(orgSlug: string | null | undefined, pluginId: string): string {
   return `${getLibraryRoute(orgSlug)}/plugins/${encodeURIComponent(pluginId)}`;
+}
+
+export function getLibraryPluginShareRoute(orgSlug: string | null | undefined, pluginId: string): string {
+  return `${getLibraryPluginRoute(orgSlug, pluginId)}/share`;
+}
+
+export function getLibraryNewPluginRoute(orgSlug?: string | null, start?: "skill"): string {
+  return `${getLibraryRoute(orgSlug)}/plugins/new${start ? `?start=${start}` : ""}`;
+}
+
+export function getLibraryModelsRoute(orgSlug?: string | null): string {
+  return `${getLibraryRoute(orgSlug)}?show=models`;
+}
+
+export function getLibraryModelRoute(orgSlug: string | null | undefined, providerId: string): string {
+  return `${getLibraryRoute(orgSlug)}/models/${encodeURIComponent(providerId)}`;
+}
+
+export function getLibraryConnectorRoute(orgSlug: string | null | undefined, connectionId: string): string {
+  return `${getLibraryRoute(orgSlug)}/connectors/${encodeURIComponent(connectionId)}`;
+}
+
+export function getLibraryConnectorShareRoute(orgSlug: string | null | undefined, connectionId: string): string {
+  return `${getLibraryConnectorRoute(orgSlug, connectionId)}/share`;
+}
+
+/** The connector catalog, or one entry's setup checks when a catalog id is given. */
+export function getLibraryAddConnectorRoute(orgSlug?: string | null, catalogId?: string): string {
+  return `${getLibraryRoute(orgSlug)}/connectors/new${catalogId ? `/${encodeURIComponent(catalogId)}` : ""}`;
+}
+
+export function getAddConnectorRoute(orgSlug?: string | null, catalogId?: string): string {
+  return `${getMcpConnectionsRoute(orgSlug)}/new${catalogId ? `/${encodeURIComponent(catalogId)}` : ""}`;
 }
 
 export function getGithubIntegrationSetupRoute(orgSlug: string | null | undefined, connectorInstanceId: string): string {
@@ -1012,12 +1071,11 @@ function parseOrgAuthMethods(value: unknown): DenOrgAuthMethods {
 
 function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
   if (!isRecord(value)) {
-    return { gatewayDashboard: false, orgManagedDashboards: false, installLinks: false, mcpConnections: false, workflows: true, openworkWeb: false, cloud: false };
+    return { orgManagedDashboards: false, installLinks: false, mcpConnections: false, workflows: true, openworkWeb: false, cloud: false };
   }
 
   return {
     orgManagedDashboards: value.orgManagedDashboards === true,
-    gatewayDashboard: value.gatewayDashboard === true,
     installLinks: value.installLinks === true,
     mcpConnections: value.mcpConnections === true,
     // Workflows are enabled everywhere on current servers; only an explicit

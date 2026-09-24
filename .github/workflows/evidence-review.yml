@@ -1,96 +1,128 @@
 name: Evidence review
 
-# Publication runs after existing checks, on its own workflow. Never require
-# this check in branch protection: storage and presentation do not gate shipping.
 on:
-  pull_request:
-    paths:
-      - apps/review/**
-      - packages/review/**
-      - evals/packages/test-artifacts/**
-      - evals/packages/test-evidence/src/vitest.ts
-      - evals/bin/evals.mjs
-      - evals/docs-shots/run.ts
-      - evals/specs/evidence-review.test.ts
-      - evals/worlds/evidence-review.ts
-      - .github/workflows/evidence-review.yml
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Completed PR change proof run (nonproof runs are skipped)"
+        required: true
+        type: string
   workflow_run:
-    workflows: [Build and core checks, Product journeys]
-    types: [completed]
+    workflows: [PR change proof, Product journeys]
+    types: [requested, in_progress, completed]
 
 permissions:
   contents: read
   actions: read
+  checks: read
   pull-requests: read
 
 concurrency:
-  group: evidence-review-${{ github.event.workflow_run.pull_requests[0].number || github.run_id }}
-  cancel-in-progress: true
+  group: evidence-review-${{ github.event.workflow_run.id || inputs.run_id || github.run_id }}
+  cancel-in-progress: false
 
 jobs:
-  check-app:
-    if: github.event_name == 'pull_request'
+  progress:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.action != 'completed' &&
+      github.event.workflow_run.name == 'PR change proof' &&
+      github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      statuses: write
+      checks: write
+      deployments: write
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
-      - uses: pnpm/action-setup@v4
-      - name: Install review and testkit dependencies
-        run: |
-          pnpm --filter @openwork/review-app... --filter @openwork/world... --filter @openwork/types... install --frozen-lockfile --ignore-scripts
-          pnpm --dir evals install --frozen-lockfile --ignore-scripts
-      - name: Build and verify the review app
+      - name: Update the commit-bound evidence check
         env:
-          OPENWORK_EVAL_REVIEW: "1"
-        run: |
-          pnpm --filter @openwork/review-app build
-          node --test evals/packages/test-artifacts/test/*.test.ts evals/bin/evals.test.mjs
-          pnpm evals:pr specs/evidence-review.test.ts
-      - name: Save review journey evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: review-app-evidence
-          path: evals/results/test-runs/
-          retention-days: 7
+          GH_TOKEN: ${{ github.token }}
+          REVIEW_RUN_ID: ${{ github.event.workflow_run.id }}
+          REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: node .github/scripts/evidence-presentation.mjs progress
+
   publish:
+    needs: required-verification
+    concurrency:
+      group: evidence-review-publish-${{ github.repository }}-${{ github.event.workflow_run.pull_requests[0].number || inputs.run_id || github.run_id }}
+      cancel-in-progress: false
     if: >-
-      vars.OPENWORK_REVIEW_URL != '' &&
-      github.event.workflow_run.head_repository.full_name == github.repository &&
-      github.event.workflow_run.pull_requests[0].number != null &&
-      (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure')
+      always() &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
+      (github.event_name == 'workflow_run' && github.event.action == 'completed' && github.event.workflow_run.name == 'PR change proof' && github.event.workflow_run.event == 'pull_request'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       actions: read
       pull-requests: write
+      statuses: write
+      checks: write
+      deployments: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REVIEW_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+      REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      OPENWORK_REVIEW_URL: ${{ vars.OPENWORK_REVIEW_URL }}
     steps:
-      # Only trusted default-branch code runs with the publishing credentials.
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
+      - name: Mark evidence as publishing
+        run: node .github/scripts/evidence-presentation.mjs progress
       - uses: pnpm/action-setup@v4
-      - name: Install publisher dependencies
+      - name: Install trusted publisher dependencies
         run: |
           pnpm --filter @openwork/review... install --frozen-lockfile --ignore-scripts
           pnpm --dir evals --filter @openwork/test-artifacts install --frozen-lockfile --ignore-scripts
-      - name: Read completed evidence and publish
+      - name: Publish only live PR proof evidence
         env:
           GH_TOKEN: ${{ github.token }}
+          EVIDENCE_RECEIPT_PATH: ${{ runner.temp }}/evidence-publication.json
           BLOB_READ_WRITE_TOKEN: ${{ secrets.OPENWORK_REVIEW_BLOB_TOKEN }}
           OPENWORK_REVIEW_URL: ${{ vars.OPENWORK_REVIEW_URL }}
-          REVIEW_RUN_ID: ${{ github.event.workflow_run.id }}
-          REVIEW_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
-          REVIEW_SHA: ${{ github.event.workflow_run.pull_requests[0].head.sha }}
+          REVIEW_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+          REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: node evals/scripts/publish-review.mjs
+      - name: Publish native check and deployment result
+        if: always()
+        env:
+          EVIDENCE_RECEIPT_PATH: ${{ runner.temp }}/evidence-publication.json
+        run: node .github/scripts/evidence-presentation.mjs complete
+
+  required-verification:
+    if: github.event_name == 'workflow_run' && github.event.action == 'completed' && github.event.workflow_run.name == 'Product journeys' && github.event.workflow_run.event == 'workflow_run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      checks: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - name: Reconcile the authenticated current-head plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/required-verification-controller.mjs complete

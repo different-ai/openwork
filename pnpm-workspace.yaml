@@ -115,6 +115,8 @@ allowBuilds:
   "@sentry/cli": true
   "@whiskeysockets/baileys": true
   better-sqlite3: true
+  # posthog-js -> core-js: skip the optional funding-message postinstall.
+  core-js: false
   electron: true
   electron-winstaller: true
   esbuild: true

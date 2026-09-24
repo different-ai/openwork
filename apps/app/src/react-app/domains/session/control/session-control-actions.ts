@@ -1,11 +1,16 @@
 /** @jsxImportSource react */
 import { useCallback, useMemo } from "react";
 
-import type { createClient } from "../../../../app/lib/opencode";
+import { createClient, unwrap } from "../../../../app/lib/opencode";
+import { openworkCatalogModels, openworkModelsListArgsSchema, type OpenworkCatalogModel } from "@openwork/types/openwork-affordance";
 import type { OpenworkServerClient, OpenworkWorkspaceInfo } from "../../../../app/lib/openwork-server";
 import { deleteRouteSession } from "../../../shell/route-workspaces";
 import type { ResolvedWorkspaceEndpoint } from "../../../../app/lib/workspace-endpoint";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
+import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider";
+import { useDenAuth } from "../../cloud/den-auth-provider";
+import { filterEntitledModelOptions } from "../../connections/provider-auth/provider-policy";
+import { filterCloudManagedModelOptions } from "../../connections/provider-auth/assigned-model-options";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../sidebar/use-session-archive";
 import { useSessionActivityStore } from "../status/session-activity-store";
@@ -82,6 +87,8 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     archiveSession,
   } = input;
   const pinnedIds = useSessionManagementStore((s) => s.pinnedIds);
+  const checkDesktopRestriction = useCheckDesktopRestriction();
+  const { isSignedIn } = useDenAuth();
 
   const createTaskControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.create_task",
@@ -99,10 +106,38 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   }), [canCreateTask, createTaskInWorkspace, selectedWorkspaceId]);
   useControlAction(createTaskControlAction);
 
+  const workspaceModels = useCallback(async (workspace: SessionControlWorkspace) => {
+    const endpoint = endpointForWorkspace(workspace);
+    if (!endpoint) throw new Error("Workspace runtime is not connected");
+    const client = createClient(endpoint.opencodeBaseUrl, workspace.path, { mode: "openwork", token: endpoint.token });
+    return openworkCatalogModels(unwrap(await client.provider.list({ directory: workspace.path })));
+  }, [endpointForWorkspace]);
+  useControlAction(useMemo<OpenworkControlAction>(() => ({
+    id: "models.list",
+    label: "List workspace models",
+    description: "Effective available connected picker models with providerId/modelId, displayName, providerName and available:true. Requires an existing renderer host; reads any workspace without focus or navigation. Assigned models not yet engine-connected are omitted.",
+    kind: "query",
+    effects: { data: "read", ui: "none", external: false },
+    sideEffect: "none",
+    args: [{ name: "workspaceId", type: "string", required: true, description: "Workspace id or display name." }],
+    execute: async (rawArgs) => {
+      const { workspaceId } = openworkModelsListArgsSchema.parse(rawArgs);
+      const matches = workspaces.filter((workspace) => workspace.id === workspaceId || workspaceLabel(workspace).toLowerCase() === workspaceId.toLowerCase());
+      const workspace = matches[0];
+      if (matches.length !== 1 || !workspace) throw new Error("Workspace is missing or ambiguous; pass its exact id.");
+      const options = (await workspaceModels(workspace)).map((model) => ({ ...model, providerID: model.providerId }));
+      const models = filterEntitledModelOptions(filterCloudManagedModelOptions(options, isSignedIn), {
+        restrictToCloud: checkDesktopRestriction({ restriction: "allowCustomProviders" }),
+        checkRestriction: checkDesktopRestriction,
+      }).map(({ providerID, ...model }) => ({ ...model, available: true }));
+      return { ok: true, workspaceId: workspace.id, models };
+    },
+  }), [checkDesktopRestriction, isSignedIn, workspaceModels, workspaces]));
+
   const listSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.list_sessions",
     label: "List available sessions",
-    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`, `status` (idle, thinking, responding, waiting, compacting, error), `working` (own work or known busy/waiting descendants), `descendantActivity` ({ busy, waiting, unknown } counts), `inventoryComplete` (false when referenced descendant activity is unreadable; unknown alone does not imply working) and `model` ({ providerId, modelId, variant }: the model and reasoning effort the session is bound to, null before any model is bound). Check `working` before session.archive. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
+    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`, `status` (idle, thinking, responding, waiting, compacting, error), `working` (own work or known busy/waiting descendants), `descendantActivity` ({ busy, waiting, unknown } counts), `inventoryComplete` (false when referenced descendant activity is unreadable; unknown alone does not imply working) and `model` ({ providerId, modelId, variant, displayName?, providerName? }: the model and reasoning effort the session is bound to, null before any model is bound). Check `working` before session.archive. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
     kind: "query",
     effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
@@ -110,13 +145,20 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       { name: "limit", type: "number", required: false, description: "Maximum sessions to return. Omit to return all loaded sessions." },
       { name: "workspaceId", type: "string", required: false, description: "Workspace ID or display name. Omit to include every workspace." },
     ],
-    execute: (args) => {
+    execute: async (args) => {
+      const query = stringArg(args, "workspaceId").toLowerCase();
+      const targets = workspaces.filter((workspace) => !query || workspace.id.toLowerCase() === query || workspaceLabel(workspace).toLowerCase() === query);
+      const modelCatalogByWorkspaceId: Record<string, OpenworkCatalogModel[]> = {};
+      await Promise.all(targets.map(async (workspace) => {
+        modelCatalogByWorkspaceId[workspace.id] = await workspaceModels(workspace).catch(() => []);
+      }));
       const activity = useSessionActivityStore.getState();
       const attentionByWorkspaceId = new Map<string, ReturnType<typeof selectSessionAttention>>();
       return listControlSessions(args, {
         workspaces,
         sessionsByWorkspaceId,
         pinnedIds,
+        modelCatalogByWorkspaceId,
         statusFor: activity.getStatus,
         attentionFor: (workspaceId, sessionId) => {
           let attention = attentionByWorkspaceId.get(workspaceId);
@@ -135,7 +177,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
         },
       });
     },
-  }), [endpointForWorkspace, pinnedIds, sessionsByWorkspaceId, workspaces]);
+  }), [endpointForWorkspace, pinnedIds, sessionsByWorkspaceId, workspaceModels, workspaces]);
   useControlAction(listSessionsControlAction);
 
   const openSessionControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -311,6 +353,9 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
         refuseWorking: helpers.bridged,
       });
       if (outcome.kind === "done") return { ok: true, sessionId, archived };
+      if (outcome.kind === "verification_failed" || outcome.kind === "archive_outcome_unknown") {
+        return { ok: false, code: outcome.kind, sessionId, error: outcome.message };
+      }
       if (outcome.kind === "target_working") {
         return { ok: false, code: outcome.kind, sessionId, title: outcome.title, error: `"${outcome.title}" is still working; it was not archived.`, hint: ARCHIVE_TARGET_WORKING_HINT };
       }

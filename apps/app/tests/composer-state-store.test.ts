@@ -145,6 +145,45 @@ describe("composer state store", () => {
     })).toBe(true);
   });
 
+  test("inside one scope a moved snapshot only fills an empty composer", () => {
+    const scope = "alice-org-a|workspace|session";
+
+    // Text being typed here is newer than whatever moved the snapshot.
+    expect(composerDraftNeedsHydration({
+      claimedScopeKey: scope,
+      nextScopeKey: scope,
+      currentText: "still typing here",
+      storedText: "older text from another writer",
+    })).toBe(false);
+    expect(composerDraftNeedsHydration({
+      claimedScopeKey: scope,
+      nextScopeKey: scope,
+      currentText: "still typing here",
+      storedText: "",
+    })).toBe(false);
+    // Attachments without text are live content too.
+    expect(composerDraftNeedsHydration({
+      claimedScopeKey: scope,
+      nextScopeKey: scope,
+      currentText: "[attachment att-1]",
+      storedText: "restored",
+      currentHasAttachments: true,
+    })).toBe(false);
+    // An empty composer still takes the persisted draft (first mount, reload).
+    expect(composerDraftNeedsHydration({
+      claimedScopeKey: scope,
+      nextScopeKey: scope,
+      currentText: "",
+      storedText: "restored",
+    })).toBe(true);
+    expect(composerDraftNeedsHydration({
+      claimedScopeKey: null,
+      nextScopeKey: scope,
+      currentText: "",
+      storedText: "restored",
+    })).toBe(true);
+  });
+
   test("keeps auto-send payloads immutable and scoped while preserving legacy marks", () => {
     const file = new File(["image"], "submitted.png", { type: "image/png" });
     const attachment: ComposerAttachment = {

@@ -31,9 +31,7 @@
 name: Revert Fast Lane
 
 on:
-  pull_request_target:
-    types: [opened, reopened, synchronize, edited, ready_for_review]
-    branches: [dev]
+  workflow_dispatch:
 
 permissions:
   contents: read

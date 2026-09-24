@@ -18,33 +18,6 @@ on:
       - "dev"
     tags:
       - "v*"
-  pull_request:
-    paths:
-      - ".github/workflows/publish-ee-images.yml"
-      - "packaging/docker/Dockerfile.den"
-      - "packaging/docker/Dockerfile.den-gateway"
-      - "packaging/docker/Dockerfile.den-web"
-      - "packaging/docker/Dockerfile.gateway"
-      - "packaging/helm/openwork-ee/**"
-      - "ee/apps/den-api/**"
-      - "ee/apps/den-gateway/**"
-      - "ee/apps/den-web/**"
-      - "ee/apps/gateway/**"
-      - "!ee/apps/gateway/src/models/base.json"
-      - "ee/packages/**"
-      - "packages/automations/**"
-      - "packages/codemode/**"
-      - "packages/connect-link/**"
-      - "packages/email/**"
-      - "packages/enterprise-mcp-client/**"
-      - "packages/headless-threads/**"
-      - "packages/install-config/**"
-      - "packages/mcp-apps/**"
-      - "packages/types/**"
-      - "packages/ui/**"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "package.json"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

@@ -13,33 +13,18 @@ declare global {
   interface Window { __selectedSkillPrompts?: unknown[] }
 }
 
-/** Explicit selection, not model-initiated discovery. No Den or Electron. */
-export async function selectedSkillsWeb(seed: Seed) {
-  const engine = resolveEvalEngine();
-  const skillName = "selected-briefing";
-  const skillBody = "When preparing a briefing, include the exact phrase AMBER_BODY_ONLY_7391. Keep the briefing concise.";
-  const prompt = "Prepare a short briefing.";
-  const reply = "The briefing is ready.";
-  const workspacePath = seed.tmpPath("selected-skills");
-  const skillDirectory = join(workspacePath, ".opencode", "skills", skillName);
-  await mkdir(skillDirectory, { recursive: true });
-  await writeFile(join(skillDirectory, "SKILL.md"), `---\nname: ${skillName}\ndescription: Prepare a concise briefing.\n---\n${skillBody}\n`);
-  const mock = seed.mock({ isolatedProcessEnv: true, agentWorkloads: [{
-    promptMarker: prompt, latestUserTurn: true, finalReply: reply,
-    steps: engine === "v1" ? [{ tool: "skill", arguments: { name: skillName } }] : [],
-  }] });
-  const app = await seed.appWeb({ name: "selected-skills", workspacePath, mocks: { agent: mock } });
-  const witness = app.mocks.agent;
-  if (!witness) throw new Error("Missing selected-skills provider witness");
-  // A transparent provider-boundary witness: records exactly what the native
-  // engine sends, then forwards it unchanged to the standard model mock.
+/**
+ * A transparent provider-boundary witness: records exactly what the native
+ * engine sends, then forwards it unchanged to the standard model mock.
+ */
+export async function startProviderWitnessProxy(upstreamUrl: string) {
   const providerRequests: unknown[] = [];
   const proxy = createServer(async (request, response) => {
     try {
       let body = "";
       for await (const chunk of request) body += chunk;
       if (body) providerRequests.push(JSON.parse(body));
-      const upstream = await fetch(`${witness.url}${request.url}`, {
+      const upstream = await fetch(`${upstreamUrl}${request.url}`, {
         method: request.method, headers: { "content-type": "application/json" },
         ...(body ? { body } : {}),
       });
@@ -64,6 +49,28 @@ export async function selectedSkillsWeb(seed: Seed) {
     proxy.closeAllConnections();
     await new Promise<void>((resolve, reject) => proxy.close((error) => error ? reject(error) : resolve()));
   };
+  return { port: address.port, providerRequests, dispose };
+}
+
+/** Explicit selection, not model-initiated discovery. No Den or Electron. */
+export async function selectedSkillsWeb(seed: Seed) {
+  const engine = resolveEvalEngine();
+  const skillName = "selected-briefing";
+  const skillBody = "When preparing a briefing, include the exact phrase AMBER_BODY_ONLY_7391. Keep the briefing concise.";
+  const prompt = "Prepare a short briefing.";
+  const reply = "The briefing is ready.";
+  const workspacePath = seed.tmpPath("selected-skills");
+  const skillDirectory = join(workspacePath, ".opencode", "skills", skillName);
+  await mkdir(skillDirectory, { recursive: true });
+  await writeFile(join(skillDirectory, "SKILL.md"), `---\nname: ${skillName}\ndescription: Prepare a concise briefing.\n---\n${skillBody}\n`);
+  const mock = seed.mock({ isolatedProcessEnv: true, agentWorkloads: [{
+    promptMarker: prompt, latestUserTurn: true, finalReply: reply,
+    steps: engine === "v1" ? [{ tool: "skill", arguments: { name: skillName } }] : [],
+  }] });
+  const app = await seed.appWeb({ name: "selected-skills", workspacePath, mocks: { agent: mock } });
+  const witness = app.mocks.agent;
+  if (!witness) throw new Error("Missing selected-skills provider witness");
+  const { port, providerRequests, dispose } = await startProviderWitnessProxy(witness.url);
   try {
     await addInitScript(app.client, () => {
       window.__selectedSkillPrompts = [];
@@ -84,7 +91,7 @@ export async function selectedSkillsWeb(seed: Seed) {
       permission: { skill: "allow" },
       provider: { [providerId]: {
         npm: "@ai-sdk/openai-compatible", name: "Selected skill witness",
-        options: { baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: "synthetic-skill-key" },
+        options: { baseURL: `http://127.0.0.1:${port}/v1`, apiKey: "synthetic-skill-key" },
         models: { [modelId]: { name: "Briefing witness", tool_call: true } },
       } },
     }, engine);

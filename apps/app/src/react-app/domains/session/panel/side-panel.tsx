@@ -15,7 +15,7 @@ import { useDragControls } from "motion/react";
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { PanelTab, PanelTabClose, PanelTabItem, PanelTabList } from "@/components/panel-tabs";
 import { Button } from "@/components/ui/button";
-import { toast } from "@/components/ui/sonner";
+import { TaskRecovery } from "@/components/chat/task-recovery";
 import {
   InputGroup,
   InputGroupAddon,
@@ -180,6 +180,11 @@ function BrowserPanelContent({
   const urlFocusedRef = React.useRef(false);
   const contentRef = React.useRef<HTMLDivElement>(null);
   const urlInputRef = React.useRef<HTMLInputElement>(null);
+  const [failure, setFailure] = React.useState<{ owner: string; title: string; details: string } | null>(null);
+  const failureOwner = JSON.stringify([sessionId, tab.id]);
+  const reportFailure = React.useCallback((title: string, error: unknown) => {
+    setFailure({ owner: failureOwner, title, details: error instanceof Error ? error.message : String(error) });
+  }, [failureOwner]);
 
   React.useEffect(() => {
     if (!urlFocusedRef.current) {
@@ -189,34 +194,28 @@ function BrowserPanelContent({
 
   const navigate = React.useCallback(() => {
     void getElectronBrowser()?.navigate?.(urlInput).catch((error: unknown) => {
-      toast.error(error instanceof Error ? error.message : String(error));
+      reportFailure("Could not open this page. Check the address and try again.", error);
     });
-  }, [urlInput]);
+  }, [urlInput, reportFailure]);
 
   const back = React.useCallback(() => {
     void getElectronBrowser()?.back?.().catch((error: unknown) => {
-      toast.error(error instanceof Error ? error.message : String(error));
+      reportFailure("Could not go back. Try again.", error);
     });
-  }, []);
+  }, [reportFailure]);
 
   const forward = React.useCallback(() => {
     void getElectronBrowser()?.forward?.().catch((error: unknown) => {
-      toast.error(error instanceof Error ? error.message : String(error));
+      reportFailure("Could not go forward. Try again.", error);
     });
-  }, []);
+  }, [reportFailure]);
 
   const reload = React.useCallback(() => {
     const browser = getElectronBrowser();
     void (suspended ? browser?.selectTab?.(tab.id) : browser?.reload?.())?.catch((error: unknown) => {
-      toast.error(error instanceof Error ? error.message : String(error));
+      reportFailure("Could not reload this page. Try again.", error);
     });
-  }, [suspended, tab.id]);
-
-  const suspend = React.useCallback(() => {
-    void getElectronBrowser()?.suspendTab?.(tab.id).catch((error: unknown) => {
-      toast.error(error instanceof Error ? error.message : String(error));
-    });
-  }, [tab.id]);
+  }, [suspended, tab.id, reportFailure]);
 
   const handleUrlKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
@@ -239,7 +238,7 @@ function BrowserPanelContent({
     let ready = false;
     let boundsFrame: number | null = null;
     const boundsSync = createBrowserBoundsSync(browser, sessionId, (error) => {
-      toast.error(error instanceof Error ? error.message : String(error));
+      reportFailure("Could not show the browser. Try reopening this tab.", error);
     });
 
     const scheduleBounds = () => {
@@ -297,11 +296,13 @@ function BrowserPanelContent({
 
       boundsSync.dispose();
     };
-  }, [isAvailable, sessionId]);
+  }, [isAvailable, sessionId, reportFailure]);
 
   return (
     <>
-      {isAvailable ? (
+      {failure?.owner === failureOwner ? <div className="shrink-0 px-3 py-2"><TaskRecovery compact title={failure.title} technicalDetails={failure.details}
+        actions={<Button variant="ghost" size="xs" onClick={() => setFailure(null)}>Dismiss</Button>} /></div> : null}
+      {isAvailable && tab.browserTask ? (
         <div data-browser-shortcut-tab={tab.id} className="flex min-h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-xs">
           <span className="shrink-0 font-medium">Built-in browser</span>
           <span role="status" className="min-w-0 flex-1 truncate text-muted-foreground">
@@ -388,15 +389,6 @@ function BrowserPanelContent({
                 <Globe />
               </InputGroupAddon>
             </InputGroup>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={suspend}
-              disabled={tab.status !== "ready" || tab.automationProtected}
-              title={tab.automationProtected ? "Protected until browser work is released" : "Suspend this tab to free memory"}
-            >
-              Suspend
-            </Button>
             {tab.siteToolCount > 0 ? (
               <Popover>
                 <PopoverTrigger
@@ -502,7 +494,7 @@ function BrowserPanelContent({
 const browserOperationLabels: Record<string, string> = {
   observe: "Reading this page", site_tools: "Finding website tools", site_tool: "Using a website tool",
   navigate: "Opening a page", click: "Clicking a control", fill: "Entering text", key: "Using the keyboard", scroll: "Scrolling",
-  "Website access": "Review website access", website_blocked: "This website is blocked", browser_disabled: "Browser control is disabled",
+  "Browser control": "Allow control for this thread", website_blocked: "This website is blocked", browser_disabled: "Browser control is disabled",
   stale_observation: "A fresh page view is needed", stale_tool: "Website tools have changed", user_denied: "The action was declined",
   needs_attention: "Review this page", sign_in_required: "Sign in directly in this browser", timeout: "Check the page before continuing",
   result_withheld: "Website result was kept private",

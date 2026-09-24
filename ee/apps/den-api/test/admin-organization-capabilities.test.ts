@@ -357,58 +357,52 @@ test("platform admins grant and revoke audited complimentary Web access", async 
   expect(await readOrganizationMetadata()).not.toHaveProperty("complimentaryAccess.openworkWeb")
 })
 
-test("gateway dashboard defaults off and merges true, false, omitted, and null overrides per organization", async () => {
+test("gateway compatibility is always true and legacy admin inputs are validated no-ops", async () => {
   if (!shouldRunRouteDbCoverage()) return
   if (routeTestUnavailable) throw new Error(`Gateway capability route coverage unavailable: ${routeTestUnavailable}`)
 
   const url = `http://den.local/v1/admin/organizations/${organizationId}/capabilities`
-  for (const gatewayDashboard of [undefined, null, "true", 1]) {
-    await replaceOrganizationMetadata({ capabilities: { gatewayDashboard } })
-    const response = await routeApp().request(url)
-    expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toMatchObject({ capabilities: { gatewayDashboard: false } })
-    const clearMalformed = await putCapabilities({ gatewayDashboard: null })
-    expect(clearMalformed.status).toBe(200)
-    expect(readCapabilityMetadata(await readOrganizationMetadata())).not.toHaveProperty("gatewayDashboard")
-  }
-
   const metadata = {
     brandAppName: "Capability Merge",
     inference: { enabled: true, tier: "tier1" },
     capabilities: { installLinks: false, modelsAnalytics: true, otherCapability: "preserved" },
   }
-  await replaceOrganizationMetadata(metadata)
-  const enable = await putCapabilities({ gatewayDashboard: true })
-  expect(enable.status).toBe(200)
-  await expect(enable.json()).resolves.toMatchObject({ capabilities: { gatewayDashboard: true, installLinks: false, modelsAnalytics: true } })
-  expect(await readOrganizationMetadata()).toEqual({ ...metadata, capabilities: { ...metadata.capabilities, gatewayDashboard: true } })
+  for (const gatewayDashboard of [undefined, null, false, true, "true", "false", 1, {}, []]) {
+    await replaceOrganizationMetadata({ ...metadata, capabilities: { ...metadata.capabilities, gatewayDashboard } })
+    const before = await readOrganizationMetadata()
+    const response = await routeApp().request(url)
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ capabilities: { gatewayDashboard: true, installLinks: false, modelsAnalytics: true } })
+    const listed = await routeApp().request(`http://den.local/v1/admin/organizations?search=${organizationId}`)
+    expect(listed.status).toBe(200)
+    await expect(listed.json()).resolves.toMatchObject({ organizations: [{ id: organizationId, capabilities: { gatewayDashboard: true } }] })
+    expect(await readOrganizationMetadata()).toEqual(before)
 
-  const listed = await routeApp().request(`http://den.local/v1/admin/organizations?search=${organizationId}`)
-  expect(listed.status).toBe(200)
-  await expect(listed.json()).resolves.toMatchObject({ organizations: [{ id: organizationId, capabilities: { gatewayDashboard: true } }] })
+    const partial = await putCapabilities({ mcpConnections: false })
+    expect(partial.status).toBe(200)
+    await expect(partial.json()).resolves.toMatchObject({ capabilities: { gatewayDashboard: true } })
+    expect(await readOrganizationMetadata()).toEqual({ ...metadata, capabilities: { ...metadata.capabilities, mcpConnections: false } })
+  }
 
-  const partial = await putCapabilities({ mcpConnections: false })
-  expect(partial.status).toBe(200)
-  await expect(partial.json()).resolves.toMatchObject({ capabilities: { gatewayDashboard: true } })
-  const disable = await putCapabilities({ gatewayDashboard: false })
-  expect(disable.status).toBe(200)
-  await expect(disable.json()).resolves.toMatchObject({ capabilities: { gatewayDashboard: false } })
-  expect(readCapabilityMetadata(await readOrganizationMetadata())).toHaveProperty("gatewayDashboard", false)
+  for (const gatewayDashboard of [true, false, null, undefined]) {
+    await replaceOrganizationMetadata({ ...metadata, capabilities: { ...metadata.capabilities, gatewayDashboard: false } })
+    const response = await putCapabilities({ gatewayDashboard })
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ capabilities: { gatewayDashboard: true, installLinks: false, modelsAnalytics: true } })
+    expect(await readOrganizationMetadata()).toEqual(metadata)
+    const readBack = await routeApp().request(url)
+    await expect(readBack.json()).resolves.toMatchObject({ capabilities: { gatewayDashboard: true } })
+  }
 
-  const clear = await putCapabilities({ gatewayDashboard: null })
-  expect(clear.status).toBe(200)
-  await expect(clear.json()).resolves.toMatchObject({ capabilities: { gatewayDashboard: false } })
-  expect(await readOrganizationMetadata()).toEqual({ ...metadata, capabilities: { ...metadata.capabilities, mcpConnections: false } })
-  const readBack = await routeApp().request(url)
-  await expect(readBack.json()).resolves.toMatchObject({ capabilities: { gatewayDashboard: false } })
-
-  const invalid = await routeApp().request(url, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ capabilities: { gatewayDashboard: "true" } }),
-  })
-  expect(invalid.status).toBe(400)
-  expect(readCapabilityMetadata(await readOrganizationMetadata())).not.toHaveProperty("gatewayDashboard")
+  for (const gatewayDashboard of ["true", "false", 1, {}, []]) {
+    const invalid = await routeApp().request(url, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ capabilities: { gatewayDashboard } }),
+    })
+    expect(invalid.status).toBe(400)
+    expect(await readOrganizationMetadata()).toEqual(metadata)
+  }
 })
 
 test("gateway capability administration requires the platform allowlist, not organization ownership", async () => {

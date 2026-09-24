@@ -91,8 +91,15 @@ test.each([
   { name: "new thread keeps the prompt before early assistant output through late native acknowledgement and settlement", orderingRegression: "empty" },
   { name: "follow-up keeps history before the prompt and early assistant output through settlement", orderingRegression: "history" },
   { name: "multiple identical pending prompts keep submission order as native siblings settle", orderingRegression: "siblings" },
-])("$name", async ({ queueRegression, modeRegression, orderingRegression }) => {
-  const sessionId = `session-focus-continuity${orderingRegression ? `-${orderingRegression}` : ""}`;
+  { name: "created conversation owns first-send assignment and admission failures without recreating or resending", firstSendRegression: true },
+  { name: "mobile web accepted send closes the keyboard", mobileOutcome: "accepted" },
+  { name: "mobile web sent message closes the keyboard", mobileOutcome: "sent" },
+  { name: "mobile web blocked send keeps the keyboard", mobileOutcome: "blocked" },
+  { name: "mobile web cancelled send keeps the keyboard", mobileOutcome: "cancelled" },
+  { name: "mobile web rejected send keeps the keyboard", mobileOutcome: "rejected" },
+  { name: "mobile web uncertain send keeps the keyboard", mobileOutcome: "unknown" },
+])("$name", async ({ queueRegression, modeRegression, orderingRegression, firstSendRegression, mobileOutcome }) => {
+  const sessionId = `session-focus-continuity${orderingRegression ? `-${orderingRegression}` : firstSendRegression ? "-first-send" : ""}`;
   window.localStorage.clear();
   const require = createRequire(import.meta.url);
   // Bun's isolated test loader cycles Lexical's ESM entries; use their real CJS entries before the app imports the editor.
@@ -177,6 +184,12 @@ test.each([
   Object.defineProperty(window, "fetch", { configurable: true, value: fetchStub });
   window.localStorage.setItem("openwork.shell-config", JSON.stringify({ starterCards: false }));
   let fetchedSnapshot = createSnapshot({ type: "busy" }, 1);
+  if (mobileOutcome) {
+    fetchedSnapshot = createSnapshot({ type: "idle" }, 1);
+    const media = window.matchMedia("(max-width: 1023px)");
+    Object.defineProperty(media, "matches", { value: true });
+    spyOn(window, "matchMedia").mockReturnValue(media);
+  }
   let snapshotRead: Promise<OpenworkSessionSnapshot> | null = null;
   let historyOnly = false;
   const otherSessionId = `${sessionId}-other`;
@@ -204,7 +217,7 @@ test.each([
   const { claimQueuedSend, dispatchQueuedDrain, getQueuedDrainState, resetQueuedDrainForTests, subscribeQueuedDrain } = await import("../src/react-app/domains/session/surface/queued-drain-machine");
   const queryClient = getReactQueryClient();
   queryClient.clear();
-  queryClient.setQueryData(snapshotKey(workspaceId, sessionId), createSnapshot({ type: "busy" }, 1));
+  queryClient.setQueryData(snapshotKey(workspaceId, sessionId), fetchedSnapshot);
   queryClient.setQueryData(transcriptKey(workspaceId, sessionId), [{
     id: "existing-user-message",
     role: "user",
@@ -227,6 +240,8 @@ test.each([
   const root = createRoot(container);
   const draft = "Keep this draft while the task finishes";
   let submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+  let failFirstAssignment = true;
+  let firstSendAdmissions = 0;
   const sentDrafts: ComposerDraft[] = [];
   let prepareSubmission: ((text?: string) => void) | undefined;
   const revokePreview = spyOn(URL, "revokeObjectURL");
@@ -324,6 +339,17 @@ test.each([
                 onSendDraft={(value, _sessionId, onPrepared) => {
                   sentDrafts.push(value);
                   prepareSubmission = onPrepared;
+                  if (firstSendRegression) {
+                    return import("../src/react-app/domains/session/chat/pending-conversation-store").then(({ ensurePendingConversationGroup }) => ensurePendingConversationGroup("local", routeWorkspaceId, _sessionId, async (_workspaceId, nativeId, groupId) => {
+                      expect(_workspaceId).toBe(routeWorkspaceId);
+                      expect(nativeId).toBe(sessionId);
+                      expect(groupId).toBe("research");
+                      if (failFirstAssignment) throw new Error("Group assignment failed");
+                    })).then(() => {
+                      firstSendAdmissions++;
+                      return submission.promise;
+                    });
+                  }
                   return submission.promise;
                 }}
                 cloudMcpSubmissionState={IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE}
@@ -358,6 +384,52 @@ test.each([
   );
   const renderSession = (activeSessionId = sessionId) => renderSurface(undefined, activeSessionId);
   try {
+    if (firstSendRegression) {
+      const { beginPendingConversation, createPendingConversation, pendingConversationAutoSendPayload, retryPendingConversation } = await import("../src/react-app/domains/session/chat/pending-conversation-store");
+      const { markComposerAutoSend, composerAutoSendScopeKey, hasComposerAutoSend } = await import("../src/react-app/domains/session/surface/composer-auto-send");
+      const { seedCreatedSessionSnapshot } = await import("../src/react-app/domains/session/sync/session-sync");
+      fetchedSnapshot = createSnapshot({ type: "idle" }, 2, sessionId);
+      fetchedSnapshot.messages = [];
+      const file = new File(["report"], "report.txt", { type: "text/plain" });
+      const entry = beginPendingConversation({ scope: "local", destination: { workspaceId: routeWorkspaceId, groupId: "research" }, submitted: {
+        draft: "First message[attachment report]", attachments: [{ id: "report", name: file.name, kind: "file", file, mimeType: file.type, size: file.size }],
+        mentions: {}, pasteParts: [], revertMessageId: null,
+      } });
+      let creates = 0;
+      const scopeKey = composerAutoSendScopeKey({ draftScope: "local", opencodeBaseUrl: "http://127.0.0.1:1/opencode", workspaceId, sessionId });
+      await act(async () => {
+        queryClient.setQueryData(transcriptKey(workspaceId, sessionId), []);
+        await createPendingConversation(entry.id, async () => { creates++; return { session: fetchedSnapshot.session }; }, ({ session }) => {
+          seedCreatedSessionSnapshot(workspaceId, session);
+          markComposerAutoSend(session.id, pendingConversationAutoSendPayload(entry, { workspaceId, opencodeBaseUrl: "http://127.0.0.1:1/opencode" }, session.id));
+        });
+        renderSession();
+      });
+      await waitFor(() => container.querySelector('[data-testid="session-error-card"]') !== null, "normal session assignment recovery");
+      expect(container.querySelector('[data-testid="session-error-card"]')?.textContent).toContain("Couldn’t assign this conversation to its group");
+      expect(container.querySelector("[data-pending-conversation]")).toBeNull();
+      expect(container.textContent).not.toContain("What do you need done?");
+      expect(sentDrafts).toHaveLength(1);
+      expect(firstSendAdmissions).toBe(0);
+      expect(useComposerStateStore.getState().sessions[sessionId]?.attachments[0]?.file).toBe(file);
+      expect(hasComposerAutoSend(sessionId, scopeKey)).toBe(false);
+      failFirstAssignment = false;
+      await act(async () => {
+        const send = container.querySelector<HTMLButtonElement>('[data-composer-actions] button');
+        expect(send?.disabled).toBe(false);
+        send?.click();
+      });
+      await waitFor(() => firstSendAdmissions === 1, "first admission after group retry");
+      await act(async () => submission.reject(new Error("Message admission failed")));
+      expect(container.querySelector('[data-testid="session-error-card"]')).not.toBeNull();
+      expect(useComposerStateStore.getState().sessions[sessionId]?.attachments[0]?.file).toBe(file);
+      expect(useComposerStateStore.getState().sessions[sessionId]?.draft).toBe(entry.submitted.draft);
+      await retryPendingConversation(entry.id);
+      expect(creates).toBe(1);
+      expect(sentDrafts).toHaveLength(2);
+      expect(firstSendAdmissions).toBe(1);
+      return;
+    }
     if (orderingRegression) {
       const { __applySessionSyncEventForTest, __createWorkspaceSessionSyncForTest, trackWorkspaceSessionSync } = await import("../src/react-app/domains/session/sync/session-sync");
       const { createV2EventTranslationState, translateV2Event } = await import("../src/app/lib/opencode-v2-adapter");
@@ -468,6 +540,30 @@ test.each([
     if (!editor) throw new Error("Expected the Lexical editor");
     editor.focus();
     expect(document.activeElement).toBe(editor);
+
+    if (mobileOutcome) {
+      await act(async () => useComposerStateStore.getState().setDraft(sessionId, ""));
+      await act(async () => {
+        editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      });
+      expect(sentDrafts).toHaveLength(0);
+      expect(document.activeElement).toBe(editor);
+      await act(async () => useComposerStateStore.getState().setDraft(sessionId, draft));
+      await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Run task"]')?.click());
+      await waitFor(() => sentDrafts.length === 1, "mobile submission");
+      expect(document.activeElement).toBe(editor);
+      await act(async () => {
+        if (mobileOutcome === "accepted") submission.resolve({ outcome: "accepted" });
+        else if (mobileOutcome === "sent") submission.resolve({ outcome: "sent" });
+        else if (mobileOutcome === "blocked") submission.resolve({ outcome: "blocked" });
+        else if (mobileOutcome === "cancelled") submission.resolve({ outcome: "cancelled" });
+        else if (mobileOutcome === "rejected") submission.reject(new Error("Submission rejected"));
+        else submission.resolve({ outcome: "unknown" });
+      });
+      if (mobileOutcome === "accepted" || mobileOutcome === "sent") expect(document.activeElement).not.toBe(editor);
+      else expect(document.activeElement).toBe(editor);
+      return;
+    }
 
     if (queueRegression) {
       const { getSessionDraft } = await import("../src/react-app/domains/session/sync/draft-store");
@@ -609,7 +705,7 @@ test.each([
     expect(refetch).toHaveBeenCalledTimes(1);
     interruption = Promise.withResolvers<void>();
     // Opening a menu gives Escape to that menu, not the stop confirmation.
-    const tools = container.querySelector<HTMLButtonElement>('button[title="Agents, commands, skills, plugins, and connections"]');
+    const tools = container.querySelector<HTMLButtonElement>('button[aria-label="Add files, skills, connectors, and more"]');
     if (!tools) throw new Error("Expected the tools menu trigger");
     await act(async () => tools.click());
     await act(async () => { escape(); });
@@ -1086,7 +1182,7 @@ test.each([
     await waitFor(() => container.textContent?.split("Uncertain send").length === 3, "the unrelated same-text turn beside the pending bubble");
     expect(Object.values(useComposerStateStore.getState().pendingMessages).flat()).toHaveLength(1);
     const checkAcceptance = () => {
-      const button = [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "Check acceptance");
+      const button = [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "Check status");
       if (!button) throw new Error("Expected the read-only acceptance check");
       button.click();
     };
@@ -1662,6 +1758,11 @@ test("new-task composer keeps stable presentation and preserves submission owner
     await act(async () => creation.reject(new Error("Session creation failed")));
     expectSettled();
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Newer hero draft");
+    expect(container.textContent).toContain("Couldn’t send your message");
+    expect(container.textContent).not.toContain("Session creation failed");
+    const details = container.querySelector<HTMLButtonElement>('button[aria-label="Technical details"]');
+    if (!details) throw new Error("Expected first-send diagnostics");
+    await act(async () => details.click());
     expect(container.textContent).toContain("Session creation failed");
     await act(async () => updateHeroDraft(""));
     await act(async () => {

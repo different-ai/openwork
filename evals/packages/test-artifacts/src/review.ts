@@ -148,7 +148,7 @@ export async function assembleReview(options: {
   if (!first) throw new Error("Select at least one test run or DocShot.");
   const report = reviewSchema.parse({
     schemaVersion: 1,
-    title: options.title ?? "Change verification",
+    title: options.title ?? "Selected evidence",
     gitSha: first.gitSha,
     createdAt: new Date().toISOString(),
     gaps: options.gaps ?? [],
@@ -166,9 +166,10 @@ export function renderReviewComment(
   const summary = summarizeReview(report);
   const lines = [
     "<!-- test-evidence -->",
-    `**${summary.verdict}** · ${summary.passedTests}/${summary.tests} tests · ${summary.passedAssertions}/${summary.assertions} assertions · ${summary.images} images`,
+    `Selected evidence: **${summary.verdict}** · ${summary.passedTests}/${summary.tests} tests · ${summary.passedAssertions}/${summary.assertions} assertions · ${summary.images} images`,
     "",
     `Commit \`${report.gitSha}\` · selected evidence`,
+    "Required verification is reported separately by the current-head Required verification check.",
   ];
   if (url) lines.push("", `[Open review report](${url})`);
   if (report.gaps.length > 0)

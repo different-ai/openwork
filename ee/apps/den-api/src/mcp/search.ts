@@ -36,6 +36,7 @@ export type CapabilityMatch = {
   bodySchema?: unknown
   /** Exact OpenAPI JSON schema for the query string parameters, present only when the operation documents any. */
   querySchema?: unknown
+  outputSchema?: Record<string, unknown>
   /** Exact MCP arguments schema returned by a live MCP tool list. */
   argumentsSchema?: unknown
   /** Tells generic execute callers where MCP arguments must be supplied. */
@@ -97,11 +98,11 @@ export function scoreText(
 }
 
 /**
- * Splits a camelCase / PascalCase tool name into lowercase word tokens so a
- * query like "organization" matches a tool named `getOrganizations`.
+ * Apply the same camelCase / PascalCase splitting to API tool names and queries.
+ * A query like `createConfigObject` must match like "create config object".
  */
-function tokenizeToolName(name: string): string[] {
-  const spaced = name.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+function tokenizeIdentifier(value: string): string[] {
+  const spaced = value.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
   return tokenize(spaced)
 }
 
@@ -109,15 +110,24 @@ function summaryFor(operation: McpToolOperation): string {
   return operation.operation.summary ?? operation.operation.description ?? `${operation.method} ${operation.path}`
 }
 
-function scoreOperation(operation: McpToolOperation, queryTokens: string[]): number {
+function scoreOperation(operation: McpToolOperation, queryTokens: string[], exactName: string): number {
   if (queryTokens.length === 0) {
     return 0
   }
 
-  const nameTokens = tokenizeToolName(operation.name)
+  // Curated operation aliases describe user intent without indexing arbitrary
+  // request schemas (which would make generic fields match unrelated tools).
+  const aliases = operation.operation["x-mcp-search-aliases"]
+  const aliasTokens = Array.isArray(aliases)
+    ? aliases.filter((alias): alias is string => typeof alias === "string").flatMap(tokenizeIdentifier)
+    : []
+  const nameTokens = [...tokenizeIdentifier(operation.name), ...aliasTokens]
   const summaryTokens = tokenize(summaryFor(operation))
   const pathTokens = tokenize(operation.path)
-  return scoreText(nameTokens, summaryTokens, queryTokens, pathTokens)
+  const score = scoreText(nameTokens, summaryTokens, queryTokens, pathTokens)
+  // Ordinary matches earn at most 5 + 2 + 1 per token. Promote an exact callable
+  // name before source-local truncation, retaining priority in the aggregate sort.
+  return score + (operation.name.toLowerCase() === exactName ? queryTokens.length * (5 + 2 + 1) + 1 : 0)
 }
 
 export function searchCapabilities(
@@ -125,7 +135,8 @@ export function searchCapabilities(
   query: string,
   limit = 5,
 ): CapabilityMatch[] {
-  const queryTokens = tokenize(query)
+  const queryTokens = tokenizeIdentifier(query)
+  const exactName = query.trim().toLowerCase()
   const boundedLimit = Math.max(1, Math.min(20, Math.trunc(limit) || 5))
 
   return catalog
@@ -136,13 +147,14 @@ export function searchCapabilities(
         name: operation.name,
         method: operation.method,
         path: operation.path,
-        score: scoreOperation(operation, queryTokens),
+        score: scoreOperation(operation, queryTokens, exactName),
         summary: summaryFor(operation),
         pathParams: pathParameterNamesFromTemplate(operation.path),
         queryParams: getParameters(operation.operation, "query").map((parameter) => parameter.name as string),
         hasBody: hasJsonRequestBody(operation.operation),
         ...(bodySchema === undefined ? {} : { bodySchema }),
         ...(querySchema === undefined ? {} : { querySchema }),
+        ...(operation.outputSchema === undefined ? {} : { outputSchema: operation.outputSchema }),
       }
     })
     .filter((match) => match.score > 0)

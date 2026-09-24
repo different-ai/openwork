@@ -10,6 +10,8 @@ import { Client as LegacyClient } from "@modelcontextprotocol/sdk/client/index.j
 import { StreamableHTTPClientTransport as LegacyStreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { expect, test } from "bun:test"
 import { z } from "zod"
+import { needsGeneratedArtifactCatalog } from "../src/mcp/generated-artifact-catalog-request.js"
+import { registerAgentWorkflowArtifactApp, WORKFLOW_ARTIFACT_APP_RESOURCE_URI } from "../src/mcp/workflow-artifact-app.js"
 import {
   createAgentMcpHttpHandler,
   createScopedAgentMcpHttpHandlers,
@@ -19,6 +21,66 @@ type ObservedExchange = {
   body: Record<string, unknown>
   requestHeaders: Headers
   responseHeaders: Headers
+}
+
+for (const era of ["modern", "legacy"]) {
+  test(`${era} handshake retains capabilities without loading the generated catalog`, async () => {
+    const handlers = createScopedAgentMcpHttpHandlers()
+    const catalogLoads: string[] = []
+    const handshakes: Record<string, unknown>[] = []
+    const name = `render_artifact_arv_${"0".repeat(26)}`
+    const resourceUri = "ui://openwork/test-generated/view.html"
+    const requestSchema = z.object({ method: z.string(), params: z.unknown().optional() })
+    const resultSchema = z.object({ result: z.record(z.string(), z.unknown()) })
+    const fetchRequest: typeof fetch = Object.assign(async (url: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(url, init)
+      const body = requestSchema.parse(await request.clone().json())
+      const server = new McpServer({ name: "catalog-handshake-test", version: "1.0.0" })
+      // This actual static app registration is unconditional in agent.ts.
+      registerAgentWorkflowArtifactApp({ server, load: async () => { throw new Error("Handshake must not load data") } })
+      if (needsGeneratedArtifactCatalog(body.method, body.params)) {
+        catalogLoads.push(body.method)
+        server.registerTool(name, { inputSchema: z.object({}) }, async () => ({ content: [] }))
+        server.registerResource("test-generated", resourceUri, {}, async () => ({ contents: [] }))
+      }
+      const response = await handlers.fetch("synthetic-member", request, server)
+      if (body.method === "server/discover" || body.method === "initialize") {
+        const text = await response.clone().text()
+        const json = response.headers.get("content-type")?.includes("text/event-stream")
+          ? text.split("\n").find((line) => line.startsWith("data: "))?.slice(6)
+          : text
+        if (!json) throw new Error("Missing handshake response")
+        handshakes.push(resultSchema.parse(JSON.parse(json)).result)
+      }
+      return response
+    }, { preconnect: fetch.preconnect })
+    const url = new URL("https://openwork.example.test/mcp/agent")
+    const client = era === "modern"
+      ? new Client({ name: "catalog-test", version: "1" }, { capabilities: {}, versionNegotiation: { mode: "auto" } })
+      : new LegacyClient({ name: "catalog-test", version: "1" }, { capabilities: {} })
+    try {
+      if (client instanceof Client) {
+        await client.connect(new StreamableHTTPClientTransport(url, { fetch: fetchRequest }))
+      } else {
+        await client.connect(new LegacyStreamableHTTPClientTransport(url, { fetch: fetchRequest }))
+      }
+      expect(handshakes).toHaveLength(1)
+      expect(catalogLoads).toEqual([])
+      expect(client.getServerCapabilities()).toMatchObject({ tools: { listChanged: true }, resources: { listChanged: true } })
+      expect(handshakes[0]).not.toHaveProperty("tools")
+      expect(handshakes[0]).not.toHaveProperty("resources")
+      if (era === "modern") expect(handshakes[0]).toHaveProperty("supportedVersions")
+      else expect(handshakes[0]).toHaveProperty("protocolVersion")
+      expect((await client.listTools()).tools.some((tool) => tool.name === name)).toBe(true)
+      const resources = (await client.listResources()).resources.map((resource) => resource.uri)
+      expect(resources).toContain(resourceUri)
+      expect(resources).toContain(WORKFLOW_ARTIFACT_APP_RESOURCE_URI)
+      expect(catalogLoads).toEqual(["tools/list", "resources/list"])
+    } finally {
+      await client.close()
+      await handlers.close()
+    }
+  })
 }
 
 function textFromToolResult(result: Awaited<ReturnType<Client["callTool"]>>): string {

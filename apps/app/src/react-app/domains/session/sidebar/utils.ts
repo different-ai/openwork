@@ -2,11 +2,16 @@ import type { WorkspaceInfo } from "../../../../app/lib/desktop";
 import type { WorkspaceSessionGroup } from "../../../../app/types";
 import { isSandboxWorkspace } from "../../../../app/utils";
 import { t } from "../../../../i18n";
+import { getSessionOrder } from "./session-order";
 
 export const MAX_SESSIONS_PREVIEW = 6;
 
 export type SessionListItem = WorkspaceSessionGroup["sessions"][number];
 export type FlattenedSessionRow = { session: SessionListItem };
+export type GlobalPinnedSessionEntry = {
+  group: WorkspaceSessionGroup;
+  session: SessionListItem;
+};
 type ArchivedSession = SessionListItem & { time: { archived: number } };
 export type GlobalArchivedSessionEntry = {
   group: WorkspaceSessionGroup;
@@ -101,6 +106,44 @@ export const partitionArchivedSessions = (sessions: WorkspaceSessionGroup["sessi
   return { active, archived };
 };
 
+export function buildGlobalPinnedSessions(groups: WorkspaceSessionGroup[], pinnedIds: readonly string[]): GlobalPinnedSessionEntry[] {
+  const sessionsById = new Map<string, GlobalPinnedSessionEntry>();
+  for (const group of groups) {
+    const seen = new Set<string>();
+    for (const session of getRootSessions(partitionArchivedSessions(group.sessions).active)) {
+      if (seen.has(session.id)) continue;
+      seen.add(session.id);
+      sessionsById.set(session.id, { group, session });
+    }
+  }
+  return pinnedIds.flatMap((id) => {
+    const entry = sessionsById.get(id);
+    return entry ? [entry] : [];
+  });
+}
+
+export function groupSessionRows(
+  sessionRows: FlattenedSessionRow[],
+  groups: readonly { id: string }[],
+  assignments: Readonly<Record<string, string>>,
+) {
+  const groupIds = groups.map((group) => group.id);
+  const knownGroupIds = new Set(groupIds);
+  const rootRowsByGroup = new Map<string, FlattenedSessionRow[]>();
+  const ungroupedRows: FlattenedSessionRow[] = [];
+  for (const row of sessionRows) {
+    const groupId = assignments[row.session.id];
+    if (groupId && knownGroupIds.has(groupId)) {
+      const bucket = rootRowsByGroup.get(groupId) ?? [];
+      bucket.push(row);
+      rootRowsByGroup.set(groupId, bucket);
+    } else {
+      ungroupedRows.push(row);
+    }
+  }
+  return { groupIds, rootRowsByGroup, ungroupedRows };
+}
+
 export function buildGlobalArchivedSessions(groups: WorkspaceSessionGroup[]): GlobalArchivedSessionEntry[] {
   const entries: GlobalArchivedSessionEntry[] = [];
   for (const group of groups) {
@@ -120,27 +163,21 @@ export function buildGlobalArchivedSessions(groups: WorkspaceSessionGroup[]): Gl
 }
 
 /**
- * Order root sessions: pinned first, then manual order, then server recency.
+ * Order root sessions by saved position and creation, never server recency.
  */
 export const orderRootSessions = (
   roots: SessionListItem[],
   pinnedIds: Set<string>,
   orderIds: string[],
 ): SessionListItem[] => {
-  const byId = new Map(roots.map((root) => [root.id, root]));
-  const ordered: SessionListItem[] = [];
-  const used = new Set<string>();
-
-  for (const id of orderIds) {
-    const root = byId.get(id);
-    if (!root || used.has(id)) continue;
-    ordered.push(root);
-    used.add(id);
-  }
+  const byId = new Map<string, SessionListItem>();
   for (const root of roots) {
-    if (used.has(root.id)) continue;
-    ordered.push(root);
-    used.add(root.id);
+    if (!byId.has(root.id)) byId.set(root.id, root);
+  }
+  const ordered: SessionListItem[] = [];
+  for (const id of getSessionOrder(roots, orderIds)) {
+    const root = byId.get(id);
+    if (root) ordered.push(root);
   }
 
   // Stable partition: pinned roots float to the top, preserving relative order.

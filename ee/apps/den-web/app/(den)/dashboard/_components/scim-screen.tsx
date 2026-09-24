@@ -341,13 +341,13 @@ export function ScimScreen() {
       colors={["#ECFEFF", "#155E75", "#06B6D4", "#A5F3FC"]}
     >
       {!access.canViewSettings ? (
-        <div className="rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">
+        <div className="rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-6 py-5 text-[14px] text-[var(--dls-text-primary)]">
           Only workspace admins can view SCIM.
         </div>
       ) : (
         <>
           {!access.canManageScim ? (
-            <div className="mb-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] text-amber-800">
+            <div className="mb-6 rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-4 text-[14px] text-[var(--dls-text-primary)]">
               Read-only: owners and super-admins can create tokens, reconcile, change mappings, or delete SCIM connections.
             </div>
           ) : null}
@@ -365,7 +365,7 @@ export function ScimScreen() {
           ) : null}
 
           {!ssoReady ? (
-            <div className="mb-6 rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">
+            <div className="mb-6 rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-6 py-5 text-[14px] text-[var(--dls-text-primary)]">
               <p className="font-semibold">Configure SAML/SSO before enabling SCIM</p>
               <p className="mt-1 leading-6">
                 Add an enabled SSO connection for this workspace before creating or rotating its SCIM connector token.
@@ -374,7 +374,7 @@ export function ScimScreen() {
           ) : null}
 
           {health.unresolvedFailureCount > 0 ? (
-            <div className="mb-6 rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">
+            <div className="mb-6 rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-6 py-5 text-[14px] text-[var(--dls-text-primary)]">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <p className="font-semibold">SCIM needs attention</p>

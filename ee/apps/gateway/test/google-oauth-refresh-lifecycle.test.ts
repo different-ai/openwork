@@ -15,7 +15,7 @@ const serviceAccount = {
   private_key: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
   token_uri: "https://oauth2.googleapis.com/token",
 }
-const tokenResponse = () => Response.json({ access_token: "winner", refresh_token: "rotated", expires_in: 3600 })
+const tokenResponse = () => Response.json({ access_token: "winner", refresh_token: "rotated", token_type: "Bearer", expires_in: 3600 })
 
 test("two concurrent callers share the winner and a delayed stale caller never refreshes the obsolete token", async () => {
   const { store, state } = memoryStore()
@@ -38,13 +38,275 @@ test("two concurrent callers share the winner and a delayed stale caller never r
   const delayed = await refresh(refreshInput())
   assert.ok(delayed.kind === "refreshed")
   assert.equal(delayed.credential.secret, state.row?.secret)
-  assert.deepEqual(JSON.parse(state.row!.secret), { accessToken: "winner", refreshToken: "rotated" })
+  assert.deepEqual(JSON.parse(state.row!.secret), { accessToken: "winner", refreshToken: "rotated", tokenType: "Bearer" })
   assert.equal(calls, 1)
   assert.equal(state.saves, 1)
   assert.equal(state.failures, 0)
 })
 
-for (const result of ["success", "invalid_grant", "transient"]) {
+for (const lifetime of [30, 60]) test(`${lifetime}s refresh winners serve concurrent and future callers without a refresh loop`, async () => {
+  const { store, state } = memoryStore()
+  const entered = deferred<void>()
+  const contending = deferred<void>()
+  const release = deferred<void>()
+  const saved = deferred<void>()
+  let currentTime = now
+  let calls = 0
+  const acquire = store.tryAcquireRefreshLock
+  store.tryAcquireRefreshLock = async (input) => {
+    const lock = await acquire(input)
+    if (!lock) contending.resolve()
+    return lock
+  }
+  const save = store.saveRefreshedToken
+  store.saveRefreshedToken = async (input) => {
+    const result = await save(input)
+    saved.resolve()
+    return result
+  }
+  const refresh = createGoogleOauthRefresher({ store, pollMs: 1, waitMs: 2, sleep: async () => saved.promise,
+    tokenFetch: async (_url, init) => {
+      calls++
+      assert.ok(init?.body instanceof URLSearchParams)
+      assert.equal(init.body.get("refresh_token"), calls === 1 ? "rt-1" : "rotated-1")
+      entered.resolve()
+      await release.promise
+      currentTime = new Date(currentTime.getTime() + 5_000)
+      return Response.json({ access_token: `winner-${calls}`, refresh_token: `rotated-${calls}`, token_type: "Bearer", expires_in: lifetime })
+    },
+  })
+  const input = { ...refreshInput(), clock: () => currentTime }
+  const owner = refresh(input)
+  await entered.promise
+  const contender = refresh(input)
+  await contending.promise
+  release.resolve()
+  const outcomes = await Promise.all([owner, contender])
+  for (const outcome of outcomes) {
+    assert.ok(outcome.kind === "refreshed")
+    assert.equal(JSON.parse(outcome.credential.secret).accessToken, "winner-1")
+    assert.equal(outcome.credential.expires_at?.getTime(), now.getTime() + lifetime * 1000)
+  }
+  assert.equal(state.row?.last_refreshed_at?.getTime(), now.getTime() + 5_000)
+  assert.equal(state.row?.refreshing_until, null)
+  assert.equal((await refresh(input)).kind, "refreshed")
+  const resolve = () => resolveUpstreamCredential({ provider, ...authorization(), envNames: [], now, clock: () => currentTime,
+    loadProviderCredential: async () => state.row ? structuredClone(state.row) : null, refreshGoogleOauthToken: refresh,
+  })
+  const usableUntil = now.getTime() + 5_000 + (lifetime * 1000 - 5_000) / 2
+  for (const at of [currentTime.getTime(), usableUntil - 1]) {
+    currentTime = new Date(at)
+    const result = await resolve()
+    assert.ok(result.kind === "secret")
+    assert.equal(result.secret, "winner-1")
+    assert.equal(await result.isCurrent(), true)
+  }
+  assert.equal(calls, 1)
+  assert.equal(state.saves, 1)
+  currentTime = new Date(usableUntil)
+  const next = await resolve()
+  assert.ok(next.kind === "secret")
+  assert.equal(next.secret, "winner-2")
+  assert.equal(calls, 2)
+  assert.equal(state.saves, 2)
+  assert.equal(state.failures, 0)
+  assert.equal(state.row?.expires_at?.getTime(), usableUntil + lifetime * 1000)
+  currentTime = new Date(usableUntil + lifetime * 1000)
+  assert.equal(await next.isCurrent(), false)
+})
+
+for (const remaining of [1, 0, -1]) test(`a committed short-lived winner has ${remaining}ms left when the caller reloads it`, async () => {
+  let currentTime = now
+  const { store, state } = memoryStore()
+  const save = store.saveRefreshedToken
+  store.saveRefreshedToken = async (input) => {
+    const result = await save(input)
+    currentTime = new Date(input.expiresAt.getTime() - remaining)
+    return result
+  }
+  const refresh = createGoogleOauthRefresher({ store, tokenFetch: async () => Response.json({ access_token: "short-winner", token_type: "Bearer", expires_in: 30 }) })
+  const result = await refresh({ ...refreshInput(), clock: () => currentTime })
+  assert.equal(result.kind, remaining > 0 ? "refreshed" : "retry")
+  assert.equal(state.saves, 1)
+  assert.equal(state.row?.expires_at?.getTime(), now.getTime() + 30_000)
+})
+
+for (const lifetime of [30, 60]) test(`${lifetime}s token expired on arrival cannot overwrite the grant even after its lease expires`, async () => {
+  let currentTime = now
+  const { store, state } = memoryStore()
+  const original = state.row?.secret
+  let calls = 0
+  const refresh = createGoogleOauthRefresher({ store, tokenFetch: async () => {
+    calls++
+    currentTime = new Date(now.getTime() + lifetime * 1000)
+    return Response.json({ access_token: "expired-on-arrival", token_type: "Bearer", expires_in: lifetime })
+  } })
+  assert.deepEqual(await refresh({ ...refreshInput(), clock: () => currentTime }), { kind: "retry", reason: "refresh_unavailable" })
+  assert.equal(calls, 1)
+  assert.equal(state.saves, 0)
+  assert.equal(state.row?.secret, original)
+  assert.equal(state.row?.status, "active")
+})
+
+for (const lifetime of [30, 60]) {
+  for (const staleResult of ["success", "invalid_grant"]) test(`${lifetime}s winner survives ${staleResult} from an expired and replaced lease`, async () => {
+    let currentTime = now
+    const { store, state } = memoryStore()
+    const entered = deferred<void>()
+    const release = deferred<void>()
+    let calls = 0
+    const refresh = createGoogleOauthRefresher({ store, tokenFetch: async () => {
+      const call = ++calls
+      if (call === 1) {
+        entered.resolve()
+        await release.promise
+        if (staleResult === "invalid_grant") return Response.json({ error: "invalid_grant" }, { status: 400 })
+      }
+      return Response.json({ access_token: call === 1 ? "stale-owner" : "lease-winner", refresh_token: "lease-refresh", token_type: "Bearer", expires_in: lifetime })
+    } })
+    const input = { ...refreshInput(), clock: () => currentTime }
+    const stale = refresh(input)
+    await entered.promise
+    currentTime = new Date(now.getTime() + 30_001)
+    const winner = await refresh(input)
+    assert.ok(winner.kind === "refreshed")
+    const snapshot = structuredClone(state.row)
+    release.resolve()
+    const previous = await stale
+    assert.ok(previous.kind === "refreshed")
+    assert.equal(JSON.parse(previous.credential.secret).accessToken, "lease-winner")
+    assert.deepEqual(state.row, snapshot)
+    assert.equal(state.saves, 1)
+    assert.equal(state.failures, 0)
+    assert.equal(calls, 2)
+    assert.equal((await refresh(input)).kind, "refreshed")
+    assert.equal(calls, 2)
+  })
+}
+
+test("an expired lease cannot save even a still-unexpired 60s response", async () => {
+  let currentTime = now
+  const { store, state } = memoryStore()
+  const original = state.row?.secret
+  const refresh = createGoogleOauthRefresher({ store, tokenFetch: async () => {
+    currentTime = new Date(now.getTime() + 30_001)
+    return Response.json({ access_token: "expired-lease-token", token_type: "Bearer", expires_in: 60 })
+  } })
+  assert.deepEqual(await refresh({ ...refreshInput(), clock: () => currentTime }), { kind: "retry", reason: "credential_changed" })
+  assert.equal(state.saves, 0)
+  assert.equal(state.row?.secret, original)
+})
+
+test("persisted invalid_client blocks repeated resolution and refresh without discarding tokens", async () => {
+  const { store, state } = memoryStore()
+  const originalSecret = state.row?.secret
+  let calls = 0
+  let refreshCalls = 0
+  const refresh = createGoogleOauthRefresher({ store, tokenFetch: async () => {
+    calls++
+    return Response.json({ error: "invalid_client", error_description: "SECRET_MARKER" }, { status: 401 })
+  } })
+  const input = { provider, ...authorization(), envNames: [], now,
+    loadProviderCredential: async () => state.row ? structuredClone(state.row) : null,
+    refreshGoogleOauthToken: async (request: Parameters<typeof refresh>[0]) => { refreshCalls++; return refresh(request) },
+  }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    assert.deepEqual(await resolveUpstreamCredential(input), { kind: "configuration_required", credentialId: row().id })
+  }
+  assert.deepEqual(await refresh(refreshInput()), { kind: "configuration_required" })
+  assert.equal(calls, 1)
+  assert.equal(refreshCalls, 1)
+  assert.equal(state.row?.last_error, "invalid_client")
+  assert.equal(state.row?.status, "active")
+  assert.equal(state.row?.secret, originalSecret)
+  assert.equal(state.failures, 1)
+  assert.equal(state.saves, 0)
+
+  state.row = row({ secret: JSON.stringify({ accessToken: "reauthorized", refreshToken: "new-grant" }), last_error: null,
+    secret_revision: "reauthorized-revision", expires_at: new Date(now.getTime() + 3600_000) })
+  const reauthorized = await resolveUpstreamCredential(input)
+  assert.ok(reauthorized.kind === "secret")
+  assert.equal(reauthorized.secret, "reauthorized")
+  assert.equal(await reauthorized.isCurrent(), true)
+  assert.equal(calls, 1)
+})
+
+for (const expires_at of [null, new Date(now.getTime() + 3600_000)]) test(`known invalid_client takes precedence over ${expires_at ? "unexpired" : "missing expiry"} credentials`, async () => {
+  const original = row({ expires_at, last_error: "invalid_client" })
+  const { store, state } = memoryStore(original)
+  let calls = 0
+  const refresh = createGoogleOauthRefresher({ store, tokenFetch: async () => { calls++; return tokenResponse() } })
+  assert.deepEqual(await resolveUpstreamCredential({ provider, ...authorization(), envNames: [], now,
+    loadProviderCredential: async () => state.row, refreshGoogleOauthToken: refresh,
+  }), { kind: "configuration_required", credentialId: original.id })
+  assert.deepEqual(await refresh(refreshInput(original)), { kind: "configuration_required" })
+  assert.equal(calls, 0)
+  assert.equal(state.failures, 0)
+  assert.equal(state.saves, 0)
+})
+
+test("a contending refresh observes the owner's invalid_client as administrator repair", async () => {
+  const { store, state } = memoryStore()
+  const entered = deferred<void>()
+  const contending = deferred<void>()
+  const release = deferred<void>()
+  const acquire = store.tryAcquireRefreshLock
+  store.tryAcquireRefreshLock = async (input) => {
+    const lock = await acquire(input)
+    if (!lock) contending.resolve()
+    return lock
+  }
+  let calls = 0
+  const refresh = createGoogleOauthRefresher({ store, pollMs: 1, waitMs: 1000, tokenFetch: async () => {
+    calls++
+    entered.resolve()
+    await release.promise
+    return Response.json({ error: "invalid_client" }, { status: 400 })
+  } })
+  const owner = refresh(refreshInput())
+  await entered.promise
+  const contender = refresh(refreshInput())
+  await contending.promise
+  release.resolve()
+  assert.deepEqual(await Promise.all([owner, contender]), [{ kind: "configuration_required" }, { kind: "configuration_required" }])
+  assert.equal(calls, 1)
+  assert.equal(state.row?.status, "active")
+  assert.equal(state.row?.last_error, "invalid_client")
+  assert.equal(state.row?.secret, row().secret)
+})
+
+test("last_error alone fences a previously usable credential before dispatch", async () => {
+  const credential = row({ expires_at: new Date(now.getTime() + 3600_000) })
+  const result = await resolveUpstreamCredential({ provider, ...authorization(), envNames: [], now,
+    loadProviderCredential: async () => structuredClone(credential),
+  })
+  assert.ok(result.kind === "secret")
+  const original = structuredClone(credential)
+  credential.last_error = "invalid_client"
+  assert.equal(sameOauthVersion(original, credential), false)
+  assert.equal(await result.isCurrent(), false)
+})
+
+test("invalid_client appearing after lease acquisition fences the refresh without clearing the marker", async () => {
+  const { store, state } = memoryStore()
+  const acquire = store.tryAcquireRefreshLock
+  store.tryAcquireRefreshLock = async (input) => {
+    const lock = await acquire(input)
+    assert.ok(state.row)
+    state.row.last_error = "invalid_client"
+    return lock
+  }
+  let calls = 0
+  const refresh = createGoogleOauthRefresher({ store, tokenFetch: async () => { calls++; return tokenResponse() } })
+  assert.deepEqual(await refresh(refreshInput()), { kind: "configuration_required" })
+  assert.equal(calls, 0)
+  assert.equal(state.failures, 0)
+  assert.equal(state.saves, 0)
+  assert.equal(state.row?.last_error, "invalid_client")
+  assert.equal(state.row?.secret, row().secret)
+})
+
+for (const result of ["success", "invalid_grant", "invalid_client", "invalid_rapt", "transient"]) {
   for (const change of ["revoke", "client_rotation", "replacement", "delete"]) {
     test(`${result} arriving after ${change} never resurrects or overwrites the credential`, async () => {
       const { store, state } = memoryStore()
@@ -54,7 +316,7 @@ for (const result of ["success", "invalid_grant", "transient"]) {
         entered.resolve()
         await release.promise
         if (result === "transient") throw new Error("SECRET_MARKER")
-        return result === "success" ? tokenResponse() : Response.json({ error: "invalid_grant", error_description: "SECRET_MARKER" }, { status: 400 })
+        return result === "success" ? tokenResponse() : Response.json({ error: result === "invalid_rapt" ? "invalid_grant" : result, error_subtype: result === "invalid_rapt" ? "invalid_rapt" : undefined, error_description: "SECRET_MARKER" }, { status: 400 })
       } })
       const pending = refresh(refreshInput())
       await entered.promise
@@ -168,6 +430,36 @@ test("expired tokens on contention and transient outages yield retry, never cred
     assert.equal(state.row?.status, "active")
     assert.ok(!(JSON.stringify(result) + state.lastError).includes("SECRET_MARKER"))
   }
+})
+
+test("credential lookup and pre-dispatch checks read the current clock after awaits", async () => {
+  let currentTime = now
+  const credential = row({ secret: JSON.stringify({ accessToken: "old" }), expires_at: new Date(now.getTime() + 10_000) })
+  const input = { provider, ...authorization(), envNames: [], clock: () => currentTime, now }
+  const expired = await resolveUpstreamCredential({ ...input, loadProviderCredential: async () => {
+    currentTime = new Date(now.getTime() + 20_000)
+    return credential
+  } })
+  assert.deepEqual(expired, { kind: "auth_required", credentialId: credential.id, reason: "expired" })
+
+  currentTime = now
+  const valid = await resolveUpstreamCredential({ ...input, loadProviderCredential: async () => credential })
+  assert.ok(valid.kind === "secret")
+  currentTime = new Date(now.getTime() + 20_000)
+  assert.equal(await valid.isCurrent(), false)
+})
+
+test("a token expiring during refresh is checked against the current clock before materialization", async () => {
+  let currentTime = now
+  const credential = row()
+  const result = await resolveUpstreamCredential({ provider, ...authorization(), envNames: [], now, clock: () => currentTime,
+    loadProviderCredential: async () => credential,
+    refreshGoogleOauthToken: async () => {
+      currentTime = new Date(now.getTime() + 120_000)
+      return { kind: "refreshed", credential: row({ expires_at: new Date(now.getTime() + 90_000) }) }
+    },
+  })
+  assert.deepEqual(result, { kind: "auth_required", credentialId: credential.id, reason: "expired" })
 })
 
 test("service-account assertions are refused for private and public attacker token endpoints", async () => {

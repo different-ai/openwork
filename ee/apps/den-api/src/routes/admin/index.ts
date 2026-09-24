@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { expireUsageRequestsForMembers } from "@openwork-ee/den-db/gateway-usage-limits"
 import { revokeGoogleCredentials, revokeInferenceCredentialsForMembers } from "../../llm/inference-provider-lifecycle.js"
 import type { SQL } from "@openwork-ee/den-db/drizzle"
 import {
@@ -106,7 +107,20 @@ const updateOrganizationCapabilitiesSchema = z.object({
     installLinks: z.boolean().nullable().optional(),
     mcpConnections: z.boolean().nullable().optional(),
     modelsAnalytics: z.boolean().nullable().optional(),
-    gatewayDashboard: z.boolean().nullable().optional(),
+    gatewayDashboard: z.boolean().nullable().optional().meta({
+      deprecated: true,
+      description: "Accepted for compatibility only and ignored; AI Gateway no longer has an organization rollout override.",
+    }),
+  }),
+})
+
+const adminOrganizationCapabilitiesSchema = z.object({
+  installLinks: z.boolean(),
+  mcpConnections: z.boolean(),
+  modelsAnalytics: z.boolean(),
+  gatewayDashboard: z.literal(true).meta({
+    deprecated: true,
+    description: "Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.",
   }),
 })
 
@@ -178,7 +192,7 @@ const adminOverviewResponseSchema = z.object({
   admins: z.array(z.object({}).passthrough()),
   summary: adminSummarySchema,
   users: z.array(z.object({}).passthrough()),
-  organizations: z.array(z.object({}).passthrough()),
+  organizations: z.array(z.object({ capabilities: adminOrganizationCapabilitiesSchema }).passthrough()),
   userPage: adminPageInfoSchema,
   organizationPage: adminPageInfoSchema,
   generatedAt: z.string().datetime(),
@@ -192,7 +206,7 @@ const adminUsersPageResponseSchema = z.object({
 }).meta({ ref: "AdminUsersPageResponse" })
 
 const adminOrganizationsPageResponseSchema = z.object({
-  organizations: z.array(z.object({}).passthrough()),
+  organizations: z.array(z.object({ capabilities: adminOrganizationCapabilitiesSchema }).passthrough()),
   page: adminPageInfoSchema,
   generatedAt: z.string().datetime(),
 }).meta({ ref: "AdminOrganizationsPageResponse" })
@@ -274,12 +288,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
 }
 
-function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unknown> | string | null | undefined): ReturnType<typeof normalizeOrganizationCapabilities> {
+function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unknown> | string | null | undefined): z.infer<typeof adminOrganizationCapabilitiesSchema> {
   return {
     installLinks: organizationInstallLinksEnabled(metadata, { gatingEnabled: false }),
     mcpConnections: memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: false }),
     modelsAnalytics: normalizeOrganizationCapabilities(metadata).modelsAnalytics,
-    gatewayDashboard: normalizeOrganizationCapabilities(metadata).gatewayDashboard,
+    gatewayDashboard: true,
   }
 }
 
@@ -441,7 +455,7 @@ type AdminOrganizationRow = {
   freeSeatCount: number
   seatsFreeAdditional: number
   billableSeatCount: number
-  capabilities: ReturnType<typeof normalizeOrganizationCapabilities>
+  capabilities: ReturnType<typeof readAdminVisibleOrganizationCapabilities>
   openworkWebAccess: AdminOpenWorkWebAccess
 }
 
@@ -1602,6 +1616,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       const { oauthConsentRows, gatewayCredentials } = await db.transaction(async (tx) => {
         const members = await tx.select({ id: MemberTable.id }).from(MemberTable)
           .where(eq(MemberTable.userId, userId)).orderBy(MemberTable.id).for("update")
+        await expireUsageRequestsForMembers(tx, members.map((member) => member.id))
         const credentials = await revokeInferenceCredentialsForMembers(tx, members.map((member) => member.id))
         const removedAt = new Date()
         const consentRows = await tx
@@ -1955,9 +1970,9 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     describeRoute({
       tags: ["Admin"],
       summary: "Get an organization's capability overrides",
-      description: "Returns the admin-visible capability flags (install links, MCP connections) for the organization.",
+      description: "Returns admin-visible capabilities. The deprecated gatewayDashboard compatibility field is always true, not a mutable organization flag; deployment configuration and authorization still apply.",
       responses: {
-        200: jsonResponse("Capability overrides returned.", z.object({ capabilities: z.object({}).passthrough() })),
+        200: jsonResponse("Capability overrides returned.", z.object({ capabilities: adminOrganizationCapabilitiesSchema })),
         400: jsonResponse("The organization id was invalid.", adminRequestErrorSchema),
         ...adminRouteErrors,
         404: jsonResponse("The organization does not exist.", notFoundSchema),
@@ -1990,9 +2005,9 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     describeRoute({
       tags: ["Admin"],
       summary: "Set an organization's capability overrides",
-      description: "Enables, disables or clears (null) the install-links and MCP-connections capability overrides for the organization. Body: { capabilities: { installLinks?: boolean | null, mcpConnections?: boolean | null } }.",
+      description: "Enables, disables or clears (null) the install-links, MCP-connections and Models analytics overrides. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true. Stale retired overrides are removed on capability writes.",
       responses: {
-        200: jsonResponse("Capability overrides were updated.", z.object({ ok: z.literal(true), organization: z.object({ id: z.string() }), capabilities: z.object({}).passthrough() })),
+        200: jsonResponse("Capability overrides were updated.", z.object({ ok: z.literal(true), organization: z.object({ id: z.string() }), capabilities: adminOrganizationCapabilitiesSchema })),
         400: jsonResponse("The request body or organization id was invalid.", adminRequestErrorSchema),
         ...adminRouteErrors,
         404: jsonResponse("The organization does not exist.", notFoundSchema),
@@ -2043,10 +2058,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         const modelsAnalytics = body.data.capabilities.modelsAnalytics
         if (modelsAnalytics === null) delete capabilities.modelsAnalytics
         else if (modelsAnalytics !== undefined) capabilities.modelsAnalytics = modelsAnalytics
-
-        const gatewayDashboard = body.data.capabilities.gatewayDashboard
-        if (gatewayDashboard === null) delete capabilities.gatewayDashboard
-        else if (gatewayDashboard !== undefined) capabilities.gatewayDashboard = gatewayDashboard
 
         return {
           ...current,
