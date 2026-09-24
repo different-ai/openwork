@@ -39,7 +39,7 @@ jobs:
           # Trusted, reviewed controller only. PR source is fetched inside the
           # credential-free guest VM; never checked out on this runner.
           # Update this pin only after reviewing controller/dependency changes.
-          ref: b657b383e4af654f88480ef86676477aae499b43
+          ref: 3e58aa7eb13de579a78f021b815a712dde024f83
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
