@@ -980,7 +980,8 @@ test("foreground submission wakes dispatch without waiting for the periodic tick
     const setupTimeoutMs = Number(source.match(/const collaboration = createCollaboration\(\{[\s\S]*?setupTimeoutMs: ([\d_]+)/)?.[1].replaceAll("_", ""));
     assert.equal(setupTimeoutMs, 120_000);
     const coldClient = source.slice(source.indexOf("async function collaborationClient("), source.indexOf("async function collaborationCleanupClient("));
-    assert.match(coldClient, /registerCoworkerTools\(coworker, 120_000\)/);
+    assert.match(coldClient, /await warmCoworkerWorkspace\(coworker\)/);
+    assert.doesNotMatch(coldClient, /registerCoworkerTools\(coworker, 120_000\)/);
     const entered = Promise.withResolvers();
     const prepared = Promise.withResolvers();
     let setupSignal;
