@@ -159,7 +159,7 @@ const GroupExecutionRow = memo(function GroupExecutionRow({ activity, coworker, 
     <p className="mb-1 px-2 text-[11px] font-medium text-mist [overflow-wrap:anywhere]" data-testid="group-speaker-name">{coworker.name}</p>
     {text ? <div className="flex min-w-0 items-end gap-2" data-message-role="assistant" data-live="true">
       <span className="shrink-0"><CoworkerAvatar identity={coworker.slug} animated={false} motion="quiet" gaze={false} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={24} /></span>
-      <div className="min-w-0 max-w-[76%]" data-testid="group-live-reply"><ChatReply text={safeLiveMarkdown(text)} live tail /></div>
+      <div className="min-w-0 max-w-[min(76%,38rem)]" data-testid="group-live-reply"><ChatReply text={safeLiveMarkdown(text)} live tail /></div>
     </div> : null}
     <LiveRow coworker={coworker} progress={progress} phase={progress.status === "streaming" ? "writing" : "thinking"} wordsArrived={Boolean(text)} />
   </div>;
@@ -735,11 +735,13 @@ function GroupChatView({
                 <div key={key} data-scroll-anchor={key} data-event-id={persistedEventId} data-client-message-id={event.clientMessageId} data-delivery-state={delivery?.state ?? "recorded"}>
                   {label ? <p className="pb-1 pt-2 text-center text-[11px] font-medium text-mist/80" data-testid="group-time-label">{label}</p> : null}
                   <div className={`flex justify-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-continued={continued ? "true" : "false"}>
-                    <div className={`bubble bubble-user max-w-[72%] whitespace-pre-wrap ${tail ? "bubble-tail-right" : ""}`} title={timeLabel(event.at)}>
-                      {event.text}
+                    <div className={`relative max-w-[min(72%,30rem)] ${persistedEventId && messageReactions.get(persistedEventId)?.length ? "mt-3" : ""}`}>
+                      <div className={`bubble bubble-user whitespace-pre-wrap ${tail ? "bubble-tail-right" : ""}`} title={timeLabel(event.at)}>
+                        {event.text}
+                      </div>
+                      {persistedEventId ? <MessageReactions messageId={persistedEventId} reactions={messageReactions.get(persistedEventId)} side="left" /> : null}
                     </div>
                   </div>
-                  {persistedEventId ? <MessageReactions messageId={persistedEventId} reactions={messageReactions.get(persistedEventId)} className="ml-auto mt-1 max-w-[72%] justify-end" /> : null}
                   {delivery ? <div className="mt-1 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 px-2 text-[11px] text-mist" role="status" data-testid={queued ? "group-queued" : delivery.state === "failed" || delivery.state === "uncertain" ? "group-turn-failed" : "group-send-receipt"}>
                     <span>{eventPhase ? "Managed event phase; its run record owns the status" : queued ? "Next" : delivery.state === "pending" ? "Waiting to send" : delivery.state === "sending" ? "Sending…" : delivery.state === "accepted" ? "Accepted" : delivery.state === "cancelled" ? "Removed from queue" : delivery.state === "uncertain" ? "Confirmation delayed. Checking records." : "Could not send"}</span>
                     {delivery.error ? <span className="max-w-prose [overflow-wrap:anywhere]">{delivery.error}</span> : null}
@@ -758,14 +760,14 @@ function GroupChatView({
                   <span className="w-6 shrink-0">
                     {tail && speaker ? <CoworkerAvatar identity={speaker.slug} animated={false} motion="quiet" gaze={false} color={speaker.avatarColor} glasses={speaker.avatarGlasses} name={speaker.name} size={24} /> : null}
                   </span>
-                  <div className="min-w-0 max-w-[76%]">
+                  <div className="min-w-0 max-w-[min(76%,38rem)]">
                     {!continued ? <p className="mb-0.5 px-2 text-[11px] font-medium text-mist" data-testid="group-speaker-name">{nameFor(event.slug ?? "")}</p> : null}
-                    <div title={timeLabel(event.at)}>
+                    <div className={`relative ${persistedEventId && messageReactions.get(persistedEventId)?.length ? "mt-3" : ""}`} title={timeLabel(event.at)}>
                       <ChatReply text={event.text} tail={tail} />
+                      {persistedEventId ? <MessageReactions messageId={persistedEventId} reactions={messageReactions.get(persistedEventId)} side="right" /> : null}
                     </div>
                   </div>
                 </div>
-                {persistedEventId ? <MessageReactions messageId={persistedEventId} reactions={messageReactions.get(persistedEventId)} className="ml-8 mt-1 max-w-[76%]" /> : null}
               </div>
             );
 

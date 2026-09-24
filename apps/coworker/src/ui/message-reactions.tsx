@@ -107,14 +107,18 @@ export function useMessageReactions(scope: MessageReactionScope | null, active: 
   }, [key, observed]);
 }
 
-export const MessageReactions = memo(function MessageReactions({ messageId, reactions, className = "" }: {
+export const MessageReactions = memo(function MessageReactions({ messageId, reactions, side, className = "" }: {
   messageId: string;
   reactions?: readonly MessageReaction[];
+  /** The corner toward the middle of the conversation: left on the person's bubbles, right on replies. */
+  side: "left" | "right";
   className?: string;
 }) {
   if (!reactions?.length) return null;
   return (
-    <div className={`flex flex-wrap gap-1 ${className}`} role="group" aria-label="Message reactions" data-testid="message-reactions" data-message-id={messageId}>
+    // A tapback: it sits on the bubble's top corner facing the conversation, ringed
+    // in the page color so it reads as resting on top. The parent is the bubble's positioned wrapper.
+    <div className={`absolute -top-4 z-10 flex -space-x-1.5 ${side === "left" ? "-left-2.5" : "-right-2.5"} ${className}`} role="group" aria-label="Message reactions" data-testid="message-reactions" data-message-id={messageId}>
       {reactions.map((reaction) => {
         const label = `${reaction.actor.name} reacted ${reaction.emoji}`;
         return (
@@ -127,7 +131,7 @@ export const MessageReactions = memo(function MessageReactions({ messageId, reac
               data-actor-slug={reaction.actor.slug}
               data-actor-created-at={reaction.actor.createdAt}
               data-emoji={reaction.emoji}
-              className="inline-flex min-h-6 min-w-7 cursor-default select-none items-center justify-center rounded-full border border-line bg-panel/80 px-1.5 py-0.5 text-[13px] leading-none text-snow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50"
+              className="inline-flex size-7 cursor-default select-none items-center justify-center rounded-full bg-panel-2 text-[15px] leading-none text-snow shadow-[0_0_0_2.5px_var(--color-ink)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50"
             >
               {reaction.emoji}
             </span>

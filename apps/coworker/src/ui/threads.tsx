@@ -962,7 +962,7 @@ function DiscussionWelcome({
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
         {problem ? <WorkspaceProblemNote problem={problem} onRetry={onRetry} /> : null}
         {startingMessage ? <div className="space-y-3">
-          <article className="flex flex-col items-end" data-message-role="user"><div className="bubble bubble-user max-w-[72%] whitespace-pre-wrap bubble-tail-right">{startingMessage.value.text}</div></article>
+          <article className="flex flex-col items-end" data-message-role="user"><div className="bubble bubble-user max-w-[min(72%,30rem)] whitespace-pre-wrap bubble-tail-right">{startingMessage.value.text}</div></article>
           <LiveRow coworker={coworker} phase="sending" />
         </div> : !problem ? <QuietEmptyConversation coworker={coworker} warmingUp={warmingUp} proposerName={proposerName} /> : null}
       </div>
@@ -2544,7 +2544,7 @@ function ThreadView({
             }
             if (block.kind === "documents") {
               return (
-                <div key={block.id} className="flex min-w-0 max-w-[76%] flex-wrap gap-2" data-testid="coworker-document-attachments" data-parent-id={block.parentId}>
+                <div key={block.id} className="flex min-w-0 max-w-[min(76%,38rem)] flex-wrap gap-2" data-testid="coworker-document-attachments" data-parent-id={block.parentId}>
                   {block.cards.map((card) => (
                     <DocumentCard
                       key={`${card.id}:${card.revision ?? "unknown"}`}
@@ -2615,7 +2615,7 @@ function ThreadView({
               // The words are arriving: the bubble is the live view. It renders in the transcript
               // once the engine has the reply; until then the words stand in here, in the same shape.
               <article className="flex flex-col items-start" data-message-role="assistant" data-live="true">
-                 <ChatReply text={safeLiveMarkdown(writingText(correlatedStream, null))} live className="max-w-[76%]" data-testid="coworker-live-bubble" />
+                 <ChatReply text={safeLiveMarkdown(writingText(correlatedStream, null))} live className="max-w-[min(76%,38rem)]" data-testid="coworker-live-bubble" />
               </article>
             ) : null}
              <LiveRow
@@ -2947,10 +2947,12 @@ const MessageBubble = memo(function MessageBubble({
       return (
         <article className={`flex flex-col items-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-message-id={message.id} data-passed-from={passed.from}>
           <p className="mb-0.5 pr-1 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-mist/80" data-testid="coworker-passed-from">Passed from {passed.from}</p>
-          <div className={`bubble bubble-user max-w-[72%] whitespace-pre-wrap ${tail ? "bubble-tail-right" : ""}`} title={message.createdAt ? new Date(message.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : undefined}>
-            {passed.message}
+          <div className={`relative max-w-[min(72%,30rem)] ${reactions?.length ? "mt-3" : ""}`}>
+            <div className={`bubble bubble-user whitespace-pre-wrap ${tail ? "bubble-tail-right" : ""}`} title={message.createdAt ? new Date(message.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : undefined}>
+              {passed.message}
+            </div>
+            <MessageReactions messageId={message.id} reactions={reactions} side="left" />
           </div>
-          <MessageReactions messageId={message.id} reactions={reactions} className="mt-1 max-w-[72%] justify-end" />
         </article>
       );
     }
@@ -2970,7 +2972,7 @@ const MessageBubble = memo(function MessageBubble({
     if (brief) {
       return (
         <article className={`flex justify-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-assignment-brief="true">
-          <div className={`bubble bubble-user max-w-[76%] ${tail ? "bubble-tail-right" : ""}`}>
+          <div className={`bubble bubble-user max-w-[min(76%,30rem)] ${tail ? "bubble-tail-right" : ""}`}>
             <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/70">Assignment for {coworker.name}</p>
             <p className="mt-1 whitespace-pre-wrap" data-testid="coworker-assignment-outcome">{brief.outcome}</p>
             {brief.context.length > 0 ? (
@@ -2995,10 +2997,12 @@ const MessageBubble = memo(function MessageBubble({
     }
     return (
       <article className={`flex flex-col items-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-message-id={message.id} data-continued={continued ? "true" : "false"}>
-        <div className={`bubble bubble-user max-w-[72%] whitespace-pre-wrap ${tail ? "bubble-tail-right" : ""}`} title={message.createdAt ? new Date(message.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : undefined}>
-          {message.text || "…"}
+        <div className={`relative max-w-[min(72%,30rem)] ${reactions?.length ? "mt-3" : ""}`}>
+          <div className={`bubble bubble-user whitespace-pre-wrap ${tail ? "bubble-tail-right" : ""}`} title={message.createdAt ? new Date(message.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : undefined}>
+            {message.text || "…"}
+          </div>
+          <MessageReactions messageId={message.id} reactions={reactions} side="left" />
         </div>
-        <MessageReactions messageId={message.id} reactions={reactions} className="mt-1 max-w-[72%] justify-end" />
       </article>
     );
   }
@@ -3026,15 +3030,18 @@ const MessageBubble = memo(function MessageBubble({
         {speed ? <span data-testid="coworker-reply-speed">{" "}{speed}</span> : null}
       </p>
       {live ? (
-        <ChatReply text={safeLiveMarkdown(liveWords)} live className="max-w-[76%]" data-testid="coworker-live-bubble" />
+        <div className={`relative min-w-0 max-w-[min(76%,38rem)] ${reactions?.length ? "mt-3" : ""}`}>
+          <ChatReply text={safeLiveMarkdown(liveWords)} live data-testid="coworker-live-bubble" />
+          <MessageReactions messageId={message.id} reactions={reactions} side="right" />
+        </div>
       ) : message.text ? (
-        <div className="min-w-0 max-w-[76%]" title={tooltip || undefined}>
+        <div className={`relative min-w-0 max-w-[min(76%,38rem)] ${reactions?.length ? "mt-3" : ""}`} title={tooltip || undefined}>
           <ReplyText message={message} active={active} turnCalls={documentCalls} tail={tail && (active || teamCards.length === 0)} onLongReply={onLongReply} />
+          <MessageReactions messageId={message.id} reactions={reactions} side="right" />
         </div>
       ) : !active && message.toolCalls.length === 0 && teamCards.length === 0 ? (
         <div className={`bubble bubble-coworker ${tail ? "bubble-tail-left" : ""} text-mist`}>…</div>
       ) : null}
-      {message.role === "assistant" && liveWords ? <MessageReactions messageId={message.id} reactions={reactions} className="-mt-1 max-w-[76%]" /> : null}
       {team && teamCards.length > 0 && !active ? (
         <TeamCardsForTurn
           cards={teamCards}
@@ -3288,23 +3295,31 @@ function WorkReceipt({ calls, client }: { calls: TranscriptToolCall[]; client: C
   );
 }
 
+/** Chips that fit one row beside a "+N more" control in the conversation column. */
+const ATTACHMENTS_IN_ONE_ROW = 3;
+
 /** Documents and Apps produced by the work, once, beneath the receipt. */
 function ToolAttachments({ calls, client }: { calls: TranscriptToolCall[]; client: CoworkerMcpClient }) {
+  const [expanded, setExpanded] = useState(false);
   const seen = new Set<string>();
+  // One chip per thing the person would recognize (a site, a document), not per URL visited.
   const artifacts = calls
     .filter((call) => call.status === "completed" || call.status === "success")
     .flatMap((call) => artifactsForToolCall(call))
     .filter((artifact) => {
-      const identity = `${artifact.kind}:${artifact.value}`;
+      const identity = `${artifact.kind}:${artifact.label}`;
       if (seen.has(identity)) return false;
       seen.add(identity);
       return true;
     });
+  // One quiet row; the rest open on request.
+  const shown = expanded ? artifacts : artifacts.slice(0, ATTACHMENTS_IN_ONE_ROW);
+  const hidden = artifacts.length - shown.length;
   return (
     <>
       {artifacts.length > 0 ? (
-        <div className="mt-1.5 flex flex-wrap gap-1.5" data-testid="coworker-artifacts">
-          {artifacts.map((artifact) => {
+        <div className={`mt-1.5 flex gap-1.5 ${expanded ? "flex-wrap" : "flex-nowrap overflow-hidden"}`} data-testid="coworker-artifacts">
+          {shown.map((artifact) => {
             const chip = (
               <>
                 <span className="flex size-4 shrink-0 items-center justify-center text-mist"><ArtifactIcon kind={artifact.kind} /></span>
@@ -3328,6 +3343,11 @@ function ToolAttachments({ calls, client }: { calls: TranscriptToolCall[]; clien
               </span>
             );
           })}
+          {hidden > 0 || (expanded && artifacts.length > ATTACHMENTS_IN_ONE_ROW) ? (
+            <button type="button" className="shrink-0 rounded-lg px-2 py-1 text-[11px] text-mist transition-colors hover:bg-white/6 hover:text-snow focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60" aria-expanded={expanded} data-testid="coworker-artifacts-more" onClick={() => setExpanded((value) => !value)}>
+              {expanded ? "Show less" : `+${hidden} more`}
+            </button>
+          ) : null}
         </div>
       ) : null}
       {/* The coworker's own tools — documents, assignments, memory — answer in the bubble or the panel, never as an App. */}
