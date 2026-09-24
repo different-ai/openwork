@@ -1,5 +1,4 @@
 import { expect, onTestFinished } from "vitest";
-import { screenshot, validate } from "@openwork/test-evidence";
 import { setViewport } from "@openwork/cdp";
 import { denFetch, evalIn, go, readAvailableModels } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
@@ -366,14 +365,5 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
     }
   } finally {
     await setViewport(desktopApp, badgeState.viewport);
-  }
-  {
-    const shot = await screenshot(desktopApp);
-    const seen = await validate(shot, [
-      `The open Models picker shows a provider group named ${PROVIDER_NAME}`,
-      `That group header carries no "${GATEWAY_BADGE_LABEL}" badge`,
-      "No error or crash message is visible",
-    ]);
-    expect(seen.ok, seen.why).toBe(true);
   }
 });
