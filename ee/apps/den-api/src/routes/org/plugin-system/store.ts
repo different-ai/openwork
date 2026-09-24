@@ -2641,7 +2641,7 @@ async function listActivePluginAccessGrants(organizationId: PluginRow["organizat
   return byPlugin
 }
 
-function pluginAudienceCondition(organizationId: OrganizationId, memberId?: MemberId, teamId?: TeamId): SQL {
+function pluginAudienceCondition(organizationId: OrganizationId, memberId?: MemberId, teamId?: TeamId | SQL): SQL {
   const grantAudience = (orgWide: typeof PluginAccessGrantTable.orgWide | typeof MarketplaceAccessGrantTable.orgWide, grantMember: typeof PluginAccessGrantTable.orgMembershipId | typeof MarketplaceAccessGrantTable.orgMembershipId, grantTeam: typeof PluginAccessGrantTable.teamId | typeof MarketplaceAccessGrantTable.teamId) => {
     if (memberId) {
       return sql`(${orgWide} = true OR ${grantMember} = ${memberId} OR ${grantTeam} IN (
@@ -2672,7 +2672,7 @@ function pluginAudienceCondition(organizationId: OrganizationId, memberId?: Memb
   )`
 }
 
-export async function listPlugins(input: { context: PluginArchActorContext; cursor?: KeysetCursor; includeAccess?: boolean; includeTotal?: boolean; limit?: number; q?: string; name?: string; status?: PluginRow["status"]; teamId?: TeamId; memberId?: MemberId }) {
+export async function listPlugins(input: { context: PluginArchActorContext; cursor?: KeysetCursor; includeAccess?: boolean; includeTotal?: boolean; includeFacets?: boolean; limit?: number; q?: string; name?: string; status?: PluginRow["status"]; teamId?: TeamId; memberId?: MemberId; ownerId?: MemberId }) {
   const organizationId = input.context.organizationContext.organization.id
   const limit = input.limit ?? 50
   const [targetMember] = input.memberId ? await db.select({ role: MemberTable.role, userId: MemberTable.userId }).from(MemberTable).where(and(
@@ -2692,20 +2692,26 @@ export async function listPlugins(input: { context: PluginArchActorContext; curs
   const caller = isPluginArchOrgAdmin(input.context)
     ? undefined
     : pluginAudienceCondition(organizationId, input.context.organizationContext.currentMember.id)
-  const filters = and(
+  const baseFilters = and(
     eq(PluginTable.organizationId, organizationId),
     input.status ? eq(PluginTable.status, input.status) : undefined,
     input.q ? sql`(INSTR(LOWER(${PluginTable.name}), LOWER(${input.q})) > 0 OR INSTR(LOWER(COALESCE(${PluginTable.description}, '')), LOWER(${input.q})) > 0)` : undefined,
     input.name ? sql`INSTR(LOWER(${PluginTable.name}), LOWER(${input.name})) > 0` : undefined,
-    audience,
     caller,
   )
-  const [rows, totalRows] = await Promise.all([
+  const ownerFilter = input.ownerId ? eq(PluginTable.createdByOrgMembershipId, input.ownerId) : undefined
+  const filters = and(baseFilters, audience, ownerFilter)
+  const [rows, totalRows, teamCounts, ownerCounts] = await Promise.all([
     db.select().from(PluginTable)
       .where(and(filters, input.cursor ? keysetAfter({ at: PluginTable.updatedAt, id: PluginTable.id }, input.cursor) : undefined))
       .orderBy(desc(PluginTable.updatedAt), desc(PluginTable.id))
       .limit(limit + 1),
     input.includeTotal ? db.select({ total: count() }).from(PluginTable).where(filters) : Promise.resolve([]),
+    input.includeFacets ? db.select({ id: TeamTable.id, count: count(PluginTable.id) }).from(TeamTable)
+      .leftJoin(PluginTable, and(baseFilters, ownerFilter, pluginAudienceCondition(organizationId, undefined, sql`${TeamTable.id}`)))
+      .where(eq(TeamTable.organizationId, organizationId)).groupBy(TeamTable.id) : Promise.resolve([]),
+    input.includeFacets ? db.select({ id: PluginTable.createdByOrgMembershipId, count: count() }).from(PluginTable)
+      .where(and(baseFilters, audience)).groupBy(PluginTable.createdByOrgMembershipId) : Promise.resolve([]),
   ])
   const page = keysetPage(rows, limit, (row) => ({ at: row.updatedAt, id: row.id }))
   const pageIds = page.items.map((row) => row.id)
@@ -2725,6 +2731,7 @@ export async function listPlugins(input: { context: PluginArchActorContext; curs
     }),
     nextCursor: page.nextCursor,
     ...(input.includeTotal ? { total: totalRows[0]?.total ?? 0 } : {}),
+    ...(input.includeFacets ? { teamCounts, ownerCounts } : {}),
   }
 }
 

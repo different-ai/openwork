@@ -10705,6 +10705,8 @@ export class DenClient extends HeyApiClient {
       memberId?: string;
       includeAccess?: "true" | "false";
       includeTotal?: "true" | "false";
+      ownerId?: string;
+      includeFacets?: "true" | "false";
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -10722,6 +10724,8 @@ export class DenClient extends HeyApiClient {
             { in: "query", key: "memberId" },
             { in: "query", key: "includeAccess" },
             { in: "query", key: "includeTotal" },
+            { in: "query", key: "ownerId" },
+            { in: "query", key: "includeFacets" },
           ],
         },
       ],

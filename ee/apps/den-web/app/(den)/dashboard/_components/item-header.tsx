@@ -5,9 +5,9 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 /** Page column shared by every Library and Manage screen. */
-export function ItemPage({ children, testId }: { children: ReactNode; testId?: string }) {
+export function ItemPage({ children, testId, wide = false }: { children: ReactNode; testId?: string; wide?: boolean }) {
   return (
-    <div className="mx-auto flex w-full max-w-[896px] flex-col gap-7 px-6 py-10 md:px-12" data-testid={testId}>
+    <div className={`mx-auto flex w-full flex-col px-6 py-10 md:px-12 ${wide ? "max-w-[1048px] gap-5 md:py-12" : "max-w-[896px] gap-7"}`} data-testid={testId}>
       {children}
     </div>
   );

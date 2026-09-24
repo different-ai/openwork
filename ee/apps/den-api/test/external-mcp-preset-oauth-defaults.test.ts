@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import {
   externalMcpOAuthConfigurationDefaults,
+  externalMcpPresetOAuthClient,
+  pluginMcpAuthTypeCompatible,
+  requiredPluginMcpAuthType,
   matchExternalMcpPresetForUrl,
 } from "../src/capability-sources/external-mcp-auth-policy.js"
 import {
@@ -81,4 +84,16 @@ describe("External MCP preset OAuth defaults", () => {
     expect(result.presets.find((preset) => preset.presetId === "context7")?.description).toContain("rate-limited anonymous access")
     expect(result.presets.find((preset) => preset.presetId === "exa")?.description).toContain("provider usage limits and billing apply")
   })
+})
+
+
+test("Render supplies OpenWork's public OAuth app and preserves API-key compatibility", () => {
+  const render = externalMcpPresetListResponseSchema.parse({ presets: EXTERNAL_MCP_PRESETS }).presets.find((preset) => preset.presetId === "render")
+  expect(render).toMatchObject({ authType: "oauth", defaultOAuthClientId: "openwork", supportedAuthTypes: ["oauth", "apikey"], authorizationServerIssuer: "https://api.render.com" })
+  expect(externalMcpPresetOAuthClient("https://mcp.render.com/mcp")).toEqual({ clientId: "openwork", tokenEndpointAuthMethod: "none" })
+  for (const url of ["http://mcp.render.com/mcp", "https://mcp.render.com:8443/mcp", "https://mcp.render.com/other", "https://render.example/mcp"]) {
+    expect(externalMcpPresetOAuthClient(url)).toBeUndefined()
+  }
+  expect(requiredPluginMcpAuthType({ declaredAuthType: null, url: render?.url ?? "" })).toBeNull()
+  expect(pluginMcpAuthTypeCompatible({ authType: "apikey", requiredAuthType: null, url: render?.url ?? "" })).toBe(true)
 })
