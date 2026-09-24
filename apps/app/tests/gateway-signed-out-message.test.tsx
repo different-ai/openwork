@@ -17,12 +17,13 @@ const { createDefaultPlatform, PlatformProvider } = await import("../src/react-a
 const body = '{"error":{"code":"openwork_auth_required","message":"Connect your google-vertex account","provider_id":"ipr_google","credential_set_id":"gcs_member"}}'
 const question: UIMessage = { id: "user-1", role: "user", parts: [{ type: "text", text: "Summarize the launch plan" }] }
 
-async function render(input: { login: () => Promise<boolean>; fallback?: () => void }) {
+async function render(input: { login: () => Promise<boolean>; failure?: { status: number; body: string }; gatewayProvider?: { providerId: string; providerName: string } }) {
   const resent: string[] = []
   const host = document.createElement("div")
   document.body.append(host)
   const root = createRoot(host)
-  const failed = createSessionErrorUIMessage("assistant-turn", presentOpencodeSessionError({ name: "APIError", data: { message: body, statusCode: 401 } }))
+  const failure = input.failure ?? { status: 401, body }
+  const failed = createSessionErrorUIMessage("assistant-turn", presentOpencodeSessionError({ name: "APIError", data: { message: failure.body, statusCode: failure.status } }))
   await act(async () => root.render(
     <PlatformProvider value={createDefaultPlatform()}>
     <GatewayModelAccessProvider providers={[]} scopeKey="org/session" login={input.login}>
@@ -33,7 +34,7 @@ async function render(input: { login: () => Promise<boolean>; fallback?: () => v
         onResumeInterrupted={(text) => { resent.push(text) }}
         onMcpReconnect={async () => "connected"} onMcpReopenAuthorization={async () => undefined}
         modelLabel="Gemini 2.5 Pro"
-        fallbackModel={input.fallback ? { label: "Claude Sonnet 4.5", use: input.fallback } : null}
+        gatewayProvider={input.gatewayProvider ?? null}
       >
         <MessageList messages={[question, failed]} status="ready" />
       </MessageListProvider>
@@ -49,11 +50,13 @@ async function render(input: { login: () => Promise<boolean>; fallback?: () => v
 }
 
 test("the failed message names who signed the person out and which model couldn't answer", async () => {
-  const view = await render({ login: async () => true, fallback: () => undefined })
+  const view = await render({ login: async () => true })
   try {
     expect(view.host.textContent).toContain("Google signed you out, so Gemini 2.5 Pro couldn't answer.")
+    expect(view.host.textContent).toContain("Your message is kept. It sends again once you're signed in.")
     expect(view.host.textContent).toContain("Sign in again")
-    expect(view.host.textContent).toContain("Use Claude Sonnet 4.5")
+    expect(view.host.textContent).toContain("Switch model")
+    expect(view.host.textContent).not.toContain("Use Claude")
     expect(view.host.textContent).not.toContain("Choose group and credential set")
     expect(view.host.textContent).not.toContain("Connect")
   } finally { await view.unmount() }
@@ -88,13 +91,31 @@ test("a sign-in that doesn't finish sends nothing and offers Try again; Cancel s
   } finally { await cancelled.unmount() }
 })
 
-test("Use Claude Sonnet 4.5 switches the model and asks again", async () => {
-  let switched = 0
-  const view = await render({ login: async () => true, fallback: () => { switched++ } })
+test("Switch model opens the picker for this conversation and picks nothing itself", async () => {
+  const opened: unknown[] = []
+  const listener = (event: Event) => { opened.push((event as CustomEvent).detail) }
+  window.addEventListener("openwork-open-model-picker", listener)
+  const view = await render({ login: async () => true })
   try {
-    await view.click("Use Claude Sonnet 4.5")
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)) })
-    expect(switched).toBe(1)
-    expect(view.resent).toEqual(["Summarize the launch plan"])
+    await view.click("Switch model")
+    expect(opened).toEqual([{ sessionId: "session-1" }])
+    expect(view.resent).toEqual([])
+  } finally {
+    window.removeEventListener("openwork-open-model-picker", listener)
+    await view.unmount()
+  }
+})
+
+test("a Gateway model the person's own account can't use says so, with only Switch model", async () => {
+  const view = await render({
+    login: async () => true,
+    failure: { status: 403, body: "Permission denied on resource project acme-studio" },
+    gatewayProvider: { providerId: "ipr_google", providerName: "Google Cloud" },
+  })
+  try {
+    expect(view.host.textContent).toContain("Your Google account can't use Gemini 2.5 Pro")
+    expect(view.host.textContent).toContain("Ask your admin for access, or switch model.")
+    expect(view.host.textContent).toContain("Switch model")
+    expect(view.host.textContent).not.toContain("Sign in")
   } finally { await view.unmount() }
 })

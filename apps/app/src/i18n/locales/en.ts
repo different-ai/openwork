@@ -846,7 +846,7 @@ export default {
   "extensions.model_state_ready": "Ready to use.",
   "extensions.model_sign_in_with": "Sign in with {name}",
   "extensions.model_sign_in": "Sign in",
-  "extensions.model_your_api_key": "Your API key",
+  "extensions.model_ready": "Ready",
   "extensions.model_technical_details": "Technical details",
   "extensions.model_technical_provider": "Provider",
   "extensions.model_technical_runtime_id": "Runtime id",

@@ -291,6 +291,9 @@ export function ModelSelect({
     if (target === searchInputRef.current) searchInputRef.current?.select();
   }, [isMobile, open, pane]);
 
+  // A model waiting on the person's own sign-in says so on the button, and the
+  // button opens the full picker at that provider, where sign-in has room.
+  const waitingProvider = gatewaySelection.providerFor(value);
   const selectedOption = modelOptions?.find((option) =>
     isSameModel(value, {
       providerID: option.providerID,
@@ -350,7 +353,7 @@ export function ModelSelect({
     if (currentOption.gatewayAuthorization) {
       // Sign-in needs room to show its progress; the full picker has it.
       onOpenChange(false);
-      openModelPickerForSignIn();
+      openModelPickerForSignIn({ sessionId, providerId: currentOption.providerID });
       return;
     }
     gatewaySelection.select(currentOption, () => {
@@ -416,6 +419,11 @@ export function ModelSelect({
     <Popover
       open={open}
       onOpenChange={(nextOpen) => {
+        if (nextOpen && waitingProvider) {
+          onOpenChange(false);
+          openModelPickerForSignIn({ sessionId, providerId: waitingProvider.providerId });
+          return;
+        }
         onOpenChange(nextOpen);
 
         if (nextOpen) {
@@ -446,7 +454,9 @@ export function ModelSelect({
                 ? "Select model"
                 : (selectedOption?.title || "Select model")}
             </span>
-            {showBehavior ? (
+            {waitingProvider && !hideValue ? (
+              <span data-testid="model-select-sign-in" className="shrink-0 font-medium text-warning">Sign in</span>
+            ) : showBehavior ? (
               <span className="shrink-0 text-gray-9">· {triggerBehaviorLabel}</span>
             ) : null}
           </span>

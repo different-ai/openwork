@@ -8,7 +8,6 @@ import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelOption, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { t } from "@/i18n";
 import { TaskRecovery } from "@/components/chat/task-recovery";
-import { ModelSignInNotice } from "../surface/model-sign-in-notice";
 import { presentOpencodeSessionError, type OpencodeSessionErrorPresentation } from "../sync/session-error";
 import type { ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import { ReactSessionComposer } from "@/react-app/domains/session/surface/composer/composer";
@@ -487,7 +486,6 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
 
   return (
     <div>
-    <ModelSignInNotice />
     {destinationError ? <div role="alert" className="mb-2 text-sm text-red-11">{destinationError}</div> : null}
     {submissionError ? <TaskRecovery title={submissionError.kind === "generic" ? "Couldn’t send your message" : submissionError.title}
       description={failedSubmission ? "Your unsent message is saved below." : "Your draft is still here. Try sending it again."}

@@ -56,6 +56,8 @@ export function useModelPicker(input: UseModelPickerInput) {
   const [open, setOpenState] = useState(false);
   const [compactOpen, setCompactOpen] = useState(false);
   const [query, setQuery] = useState("");
+  // Set when the picker is opened to sign in at one provider.
+  const [focusProviderId, setFocusProviderId] = useState<string | null>(null);
   // Provider IDs that were just added — used to highlight them as
   // "Recently added" in the model picker even after they've been
   // marked as seen in localStorage.
@@ -79,7 +81,8 @@ export function useModelPicker(input: UseModelPickerInput) {
       try {
         window.localStorage.removeItem(pendingModelPickerProviderIdsKey);
       } catch {}
-      const detail = (event as CustomEvent<{ newProviderIds?: string[]; initialTab?: "default" | "available" }>).detail;
+      const detail = (event as CustomEvent<{ newProviderIds?: string[]; initialTab?: "default" | "available"; focusProviderId?: string }>).detail;
+      setFocusProviderId(typeof detail?.focusProviderId === "string" ? detail.focusProviderId : null);
       const ids = detail?.newProviderIds;
       if (ids && ids.length > 0) {
         setRecentProviderIds(new Set(ids));
@@ -177,6 +180,7 @@ export function useModelPicker(input: UseModelPickerInput) {
   return {
     open,
     setOpen,
+    focusProviderId,
     compactOpen,
     setCompactOpen,
     query,

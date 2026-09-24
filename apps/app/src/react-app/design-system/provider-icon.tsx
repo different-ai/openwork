@@ -32,9 +32,11 @@ export function ProviderIcon(props: ProviderIconProps) {
 
   // Remote logos are walked in order and each failure advances one step, so a
   // provider only falls back to its monogram once every source is exhausted.
+  // Organization providers have opaque ids ("ipr_…"); their name says who makes them.
+  const logoProviderId = isOpaqueProviderId(normalizedId) ? providerFamilyFromName(normalizedName) ?? props.providerId : props.providerId;
   const candidates = hasInlineMark
     ? []
-    : providerLogoCandidates({ providerId: props.providerId, baseUrl: props.baseUrl });
+    : providerLogoCandidates({ providerId: logoProviderId, baseUrl: props.baseUrl });
   const [candidateIndex, setCandidateIndex] = useState(0);
 
   useEffect(() => {
@@ -44,6 +46,9 @@ export function ProviderIcon(props: ProviderIconProps) {
   const logoUrl = candidates[candidateIndex];
 
   const fallbackLetters = (() => {
+    if (isOpaqueProviderId(normalizedId) && normalizedName) {
+      return normalizedName.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join("").toUpperCase();
+    }
     if (normalizedId === "openrouter") return "OR";
     if (normalizedId === "deepseek") return "DS";
     if (normalizedId === "google") return "GO";
@@ -118,4 +123,20 @@ export function ProviderIcon(props: ProviderIconProps) {
       )}
     </div>
   );
+}
+
+const OPAQUE_PROVIDER_ID = /^(ipr|lpr|gwp)_/;
+const isOpaqueProviderId = (id: string) => OPAQUE_PROVIDER_ID.test(id);
+
+/** Makers we have logos for, matched against a provider's display name. */
+const PROVIDER_FAMILIES: readonly [string, string][] = [
+  ["google", "google-vertex"], ["vertex", "google-vertex"], ["gemini", "google"], ["mistral", "mistral"],
+  ["azure", "azure"], ["bedrock", "amazon-bedrock"], ["amazon", "amazon-bedrock"], ["groq", "groq"],
+  ["cohere", "cohere"], ["deepseek", "deepseek"], ["openrouter", "openrouter"], ["perplexity", "perplexity"],
+  ["together", "together"], ["fireworks", "fireworks"], ["xai", "xai"], ["meta", "meta"], ["llama", "llama"],
+];
+
+function providerFamilyFromName(name: string): string | null {
+  if (!name) return null;
+  return PROVIDER_FAMILIES.find(([needle]) => name.includes(needle))?.[1] ?? null;
 }

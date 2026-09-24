@@ -154,7 +154,6 @@ import {
   libraryModelDetailId,
   libraryModelSignInKey,
   type LibraryModelProvider,
-  modelCountLabel,
   modelNamesSummary,
   parseLibraryModelDetailId,
 } from "../library-models";
@@ -1895,8 +1894,9 @@ export function McpView(props: McpViewProps) {
           taxonomy="model"
           connected={provider.state !== "needs_signin"}
           connecting={waiting}
-          meta={provider.state === "api_key" ? t("extensions.model_your_api_key") : modelCountLabel(provider.models.length)}
+          meta={provider.state === "needs_signin" ? null : t("extensions.model_ready")}
           nextActionLabel={provider.state === "needs_signin" && props.onModelSignIn ? t("extensions.model_sign_in") : undefined}
+          alwaysChevron
           onNextAction={pending && props.onModelSignIn ? () => props.onModelSignIn?.(pending) : undefined}
           onClick={() => openModelProvider(provider)}
         />

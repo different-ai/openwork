@@ -17,7 +17,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
@@ -79,6 +78,8 @@ export type ModelPickerModalProps = {
   onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
   /** Open Library, Models. */
   onManageModels?: () => void;
+  /** Expand and scroll to this provider's group when the picker opens (e.g. to sign in there). */
+  focusProviderId?: string | null;
 };
 
 type ProviderGroup = {
@@ -101,20 +102,6 @@ export type ModelPickerEmptyState = {
   showRefreshOrganizationModels: boolean;
   showOrganizationModelsSettings: boolean;
 };
-
-export type ProviderGroupBadge = { label: string; className: string };
-
-/** Header badges for one provider group, in display order. */
-export function resolveProviderGroupBadges(
-  group: Pick<ProviderGroup, "isNew" | "isCloud" | "isGateway" | "hasCurrent">,
-  organizationProviderLabel: string,
-): ProviderGroupBadge[] {
-  const badges: ProviderGroupBadge[] = [];
-  if (group.isNew) badges.push({ label: "New", className: "bg-blue-3 text-blue-11" });
-  if (group.isCloud) badges.push({ label: organizationProviderLabel, className: "bg-blue-3/50 text-blue-11/70" });
-  if (group.hasCurrent) badges.push({ label: "Current", className: "bg-green-3 text-green-11" });
-  return badges;
-}
 
 export function resolveModelPickerEmptyState(input: {
   providerGroupCount: number;
@@ -157,10 +144,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   const denAuth = useDenAuth();
   const platform = usePlatform();
   const organizationModelsSettingsUrl = props.organizationModelsSettingsUrl;
-  const organizationProviderLabel = useMemo(
-    () => readDenSettings().activeOrgName?.trim() || t("settings.provider_source_organization"),
-    [denAuth.status],
-  );
+  const organizationName = useMemo(() => readDenSettings().activeOrgName?.trim() || null, [denAuth.status]);
 
   const disabledSet = useMemo(
     () => new Set(props.disabledProviders ?? []),
@@ -285,6 +269,30 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     });
   }, [props.open, providerGroups]);
 
+  // Opened to sign in somewhere: show that provider's group, expanded.
+  const groupsRef = useRef<HTMLDivElement | null>(null);
+  const focusedProviderRef = useRef<string | null>(null);
+  const [scrollToProvider, setScrollToProvider] = useState<string | null>(null);
+  useEffect(() => {
+    if (!props.open) {
+      focusedProviderRef.current = null;
+      return;
+    }
+    const focusId = props.focusProviderId;
+    if (!focusId || focusedProviderRef.current === focusId || !providerGroups.some((group) => group.id === focusId)) return;
+    focusedProviderRef.current = focusId;
+    setExpandedProviders((prev) => new Set(prev).add(focusId));
+    setScrollToProvider(focusId);
+  }, [props.focusProviderId, props.open, providerGroups]);
+  // Runs after the expanded group has rendered.
+  useEffect(() => {
+    if (!scrollToProvider) return;
+    const target = [...(groupsRef.current?.querySelectorAll<HTMLElement>("[data-provider-group]") ?? [])]
+      .find((element) => element.dataset.providerGroup === scrollToProvider);
+    target?.scrollIntoView({ block: "start" });
+    setScrollToProvider(null);
+  }, [expandedProviders, scrollToProvider]);
+
   const toggleProvider = useCallback((id: string) => {
     setExpandedProviders((prev) => {
       const next = new Set(prev);
@@ -375,7 +383,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           ) : null}
 
           {/* Content */}
-          <div className="min-h-0 flex-1 space-y-1 overflow-x-hidden overflow-y-auto pr-1 -mr-1">
+          <div ref={groupsRef} className="min-h-0 flex-1 space-y-1 overflow-x-hidden overflow-y-auto">
             {currentOption && !disabledSet.has(currentOption.providerID) ? (
               <section aria-label={`Settings for ${currentOption.title}`} className="mb-3 rounded-xl border border-dls-border p-3" data-testid="current-model-settings">
                 <div className="truncate text-xs font-medium" title={`${currentOption.title} · ${currentBehavior.label}`}>{currentOption.title} · {currentBehavior.label}</div>
@@ -405,7 +413,9 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             {emptyState ? (
               <div className="space-y-3 rounded-2xl border border-dls-border bg-dls-hover/30 px-4 py-6 text-center">
                 <div className="text-sm text-dls-secondary">
-                  {t(emptyState.messageKey)}
+                  {emptyState.messageKey === "models.organization_models_empty" && organizationName
+                    ? `${organizationName} hasn't added any models for you yet.`
+                    : t(emptyState.messageKey)}
                 </div>
                 {emptyState.showRefreshOrganizationModels ? (
                   <Button variant="outline" onClick={() => void handleRefreshOrganizationModels()} disabled={refreshingOrganizationModels}>
@@ -435,7 +445,6 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                   onToggleExpand={() => toggleProvider(group.id)}
                   onToggleProvider={props.onToggleProvider}
                   onSelect={handleSelect}
-                  organizationProviderLabel={organizationProviderLabel}
                   signIn={group.pending && gatewaySelection.signIn?.providerKey === gatewayConnectProviderKey(group.pending) ? gatewaySelection.signIn : null}
                   onSignIn={group.pending ? () => { if (group.pending) gatewaySelection.signInProvider(group.pending); } : undefined}
                   onCancelSignIn={gatewaySelection.cancel}
@@ -469,7 +478,6 @@ function ProviderAccordion({
   onToggleExpand,
   onToggleProvider,
   onSelect,
-  organizationProviderLabel,
   signIn,
   onSignIn,
   onCancelSignIn,
@@ -481,7 +489,6 @@ function ProviderAccordion({
   onToggleExpand: () => void;
   onToggleProvider?: (providerId: string, enabled: boolean) => void;
   onSelect: (opt: ModelOption) => void;
-  organizationProviderLabel: string;
   signIn: GatewaySignInState | null;
   onSignIn?: () => void;
   onCancelSignIn: () => void;
@@ -490,7 +497,7 @@ function ProviderAccordion({
   const Chevron = expanded ? ChevronDown : ChevronRight;
 
   return (
-    <div className={group.isDisabled ? "opacity-50" : ""}>
+    <div data-provider-group={group.id} className={group.isDisabled ? "opacity-50" : ""}>
       {/* Provider header */}
       <div className="flex items-center gap-1">
         <button
@@ -499,28 +506,10 @@ function ProviderAccordion({
           onClick={onToggleExpand}
         >
           <Chevron size={14} className="shrink-0 text-dls-secondary" />
-          <ProviderIcon providerId={group.id} size={18} className="shrink-0 text-dls-text" />
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-baseline gap-2">
-              <span className="truncate text-[13px] font-medium text-dls-text" title={group.name}>{group.name}</span>
-              {" "}
-              <span className="shrink-0 whitespace-nowrap text-[11px] text-dls-secondary">
-                {totalModels} model{totalModels === 1 ? "" : "s"}
-              </span>
-            </div>
-            {" "}
-            <div className="flex flex-wrap items-center gap-1.5 empty:hidden">
-              {resolveProviderGroupBadges(group, organizationProviderLabel).map((badge) => (
-                <Badge
-                  key={badge.label}
-                  variant="outline"
-                  title={badge.label}
-                  className={`h-auto min-w-0 max-w-full rounded-md border-transparent px-1.5 py-0.5 text-[10px] ${badge.className}`}
-                >
-                  <span className="truncate">{badge.label}</span>
-                </Badge>
-              ))}
-            </div>
+          <ProviderIcon providerId={group.id} providerName={group.name} size={18} className="shrink-0 text-dls-text" />
+          <div className="flex min-w-0 flex-1 items-baseline gap-2">
+            <span className="truncate text-[13px] font-medium text-dls-text" title={group.name}>{group.name}</span>
+            <span className="shrink-0 text-[11px] text-dls-secondary" aria-label={`${totalModels} model${totalModels === 1 ? "" : "s"}`}>{totalModels}</span>
           </div>
         </button>
         {group.pending && !group.isDisabled ? (
@@ -614,7 +603,12 @@ function DefaultModelRow({
       <div className="min-w-0 flex-1">
         <span className={["block truncate text-[12px]", active ? "font-medium text-dls-text" : "text-dls-text"].join(" ")} title={opt.title}>{opt.title}</span>
       </div>
-      {opt.gatewayAuthorization ? <span className="hidden shrink-0 text-xs text-muted-foreground group-hover/row:inline group-focus-visible/row:inline">Sign in to use</span> : active ? <Check size={14} className="shrink-0 text-green-11" /> : null}
+      {/* One fixed slot so status words line up down the list. */}
+      <span className="flex w-16 shrink-0 justify-end text-xs">
+        {opt.gatewayAuthorization
+          ? <span className="text-warning">Sign in</span>
+          : active ? <Check size={14} className="text-green-11" /> : null}
+      </span>
     </button>
   );
 }

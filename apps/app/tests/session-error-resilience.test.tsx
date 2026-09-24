@@ -403,7 +403,7 @@ describe("session error resilience", () => {
     expect(presentation.connectUrl).toBeNull()
     expect(presentation.gatewayAuthorization).toEqual({ cloudProviderId: "ipr_member", credentialSetId: "gcs_member" })
     const html = renderErrorTranscriptWithResume({ name: "APIError", data: { message: body, statusCode: 401 } })
-    expect(html).toContain('data-testid="session-error-sign-in-again"')
+    expect(html).toContain('data-testid="session-error-signed-out-sign-in"')
     expect(html).toContain("Sign in again")
     expect(
       sessionErrorPresentationFromUIMessage(createSessionErrorUIMessage("turn", presentation)),

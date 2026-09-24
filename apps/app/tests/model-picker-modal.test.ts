@@ -13,7 +13,7 @@ afterAll(async () => { await GlobalRegistrator.unregister(); });
 const { createRoot } = await import("react-dom/client");
 const auth = await import("../src/react-app/domains/cloud/den-auth-provider");
 const { createDefaultPlatform, PlatformProvider } = await import("../src/react-app/kernel/platform");
-const { ModelPickerModal, MODEL_PICKER_DEFAULT_SUBTITLE, MODEL_PICKER_UNAVAILABLE_SUBTITLE, resolveModelPickerSubtitle, resolveProviderGroupBadges } = await import("../src/react-app/domains/session/modals/model-picker-modal");
+const { ModelPickerModal, MODEL_PICKER_DEFAULT_SUBTITLE, MODEL_PICKER_UNAVAILABLE_SUBTITLE, resolveModelPickerSubtitle } = await import("../src/react-app/domains/session/modals/model-picker-modal");
 import {
   connectGatewayProvider,
   gatewayConnectCopy,
@@ -353,15 +353,15 @@ test("long picker labels retain full hover text and select the complete model ID
   };
   try {
     await act(async () => root.render(createElement(PlatformProvider, { value: createDefaultPlatform(), children: createElement(Picker) })));
-    for (const text of [providerName, organization, title]) {
+    for (const text of [providerName, title]) {
       expect(label(text)?.textContent).toBe(text);
     }
-    // No model ids and no gateway badge: where a model comes from is the Library's job.
+    // No model ids and no badges: where a model comes from is the Library's job.
     expect(label(modelID)).toBeUndefined();
     expect(document.body.textContent).not.toContain("via OpenWork Gateway");
     const header = label(providerName)?.closest("button");
-    expect(header?.textContent).toMatch(/1 model\b/);
-    expect(header?.querySelectorAll('[data-slot="badge"]')).toHaveLength(3);
+    expect(header?.querySelector('[aria-label="1 model"]')?.textContent).toBe("1");
+    expect(header?.querySelectorAll('[data-slot="badge"]')).toHaveLength(0);
     await toggle("Enabled");
     expect(label(title)).toBeUndefined();
     expect(selected).toEqual([]);
@@ -379,40 +379,15 @@ test("long picker labels retain full hover text and select the complete model ID
   }
 });
 
-describe("model picker provider badges", () => {
-  const importedCloudProviders = {
-    ipr_gateway: { providerId: "ipr_gateway", source: "openwork_gateway" },
-    lpr_team: { providerId: "lpr_team", source: "custom" },
-  };
-  const labels = (group: Parameters<typeof resolveProviderGroupBadges>[0]) =>
-    resolveProviderGroupBadges(group, "Acme").map((badge) => badge.label);
-
+describe("model picker provider keys", () => {
   test("treats inference gateway rows as cloud-managed provider keys", () => {
     expect(isCloudManagedProviderKey("ipr_gateway")).toBe(true);
     expect(isCloudManagedProviderKey("lpr_team")).toBe(true);
     expect(isCloudManagedProviderKey("anthropic")).toBe(false);
-  });
-
-  test("gateway providers carry no extra badge; the Library says where a model comes from", () => {
-    const gatewayProviderIds = resolveGatewayProviderIds(importedCloudProviders);
-    expect([...gatewayProviderIds]).toEqual(["ipr_gateway"]);
-
-    const gateway = labels({
-      isNew: false,
-      isCloud: true,
-      isGateway: gatewayProviderIds.has("ipr_gateway"),
-      hasCurrent: false,
-    });
-    expect(gateway).toEqual(["Acme"]);
-
-    const organization = labels({
-      isNew: false,
-      isCloud: true,
-      isGateway: gatewayProviderIds.has("lpr_team"),
-      hasCurrent: true,
-    });
-    expect(organization).toEqual(["Acme", "Current"]);
-    expect(organization).not.toContain("via OpenWork Gateway");
+    expect([...resolveGatewayProviderIds({
+      ipr_gateway: { providerId: "ipr_gateway", source: "openwork_gateway" },
+      lpr_team: { providerId: "lpr_team", source: "custom" },
+    })]).toEqual(["ipr_gateway"]);
   });
 });
 

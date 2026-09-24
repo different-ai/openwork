@@ -43,8 +43,10 @@ function markProvidersSeen(ids: string[]): void {
  * when someone picks a model that needs their sign-in from a place that has
  * no room to show it, such as the command palette or the composer menu.
  */
-export function openModelPickerForSignIn(): void {
-  window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: {} }));
+export function openModelPickerForSignIn(target: { sessionId?: string; providerId?: string } = {}): void {
+  window.dispatchEvent(new CustomEvent(openModelPickerEvent, {
+    detail: { ...(target.sessionId ? { sessionId: target.sessionId } : {}), ...(target.providerId ? { focusProviderId: target.providerId } : {}) },
+  }));
 }
 
 /**

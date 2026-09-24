@@ -297,7 +297,8 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
     if (!dialog) throw new Error("dialog missing");
     const rect = dialog.getBoundingClientRect();
     const overflow = [dialog, ...dialog.querySelectorAll<HTMLElement>("div, button, span")].filter((node) => {
-      if (!node.clientWidth) return false;
+      // Screen-reader-only text is clipped to 1px on purpose; it never shows.
+      if (!node.clientWidth || node.closest(".sr-only")) return false;
       const box = node.getBoundingClientRect();
       return box.left < rect.left - 1 || box.right > rect.right + 1
         || (node.scrollWidth > node.clientWidth + 1 && getComputedStyle(node).textOverflow !== "ellipsis");
@@ -313,8 +314,9 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
           && style.whiteSpace === "nowrap" && style.textOverflow === "ellipsis" && style.overflowX === "hidden",
       };
     });
-    // Group headers read "<provider> <n> model(s) <badges…>"; badges follow the count.
-    const headers = [...dialog.querySelectorAll("button")].filter((button) => /\b\d+ models?\b/.test((button.textContent ?? "").replace(/\s+/g, " ").trim()));
+    // Group headers read "<provider> <n>"; the count is labeled "<n> model(s)" for screen readers.
+    const headers = [...dialog.querySelectorAll("button")].filter((button) => [...button.querySelectorAll("[aria-label]")]
+      .some((node) => /^\d+ models?$/.test(node.getAttribute("aria-label") ?? "")));
     void modelID;
     const describe = (header: HTMLButtonElement) => ({
       text: (header.textContent ?? "").replace(/\s+/g, " ").trim(),
@@ -369,7 +371,7 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
     const shot = await screenshot(desktopApp);
     const seen = await validate(shot, [
       `The open Models picker shows a provider group named ${PROVIDER_NAME}`,
-      `That group header carries a "${GATEWAY_BADGE_LABEL}" badge`,
+      `That group header carries no "${GATEWAY_BADGE_LABEL}" badge`,
       "No error or crash message is visible",
     ]);
     expect(seen.ok, seen.why).toBe(true);

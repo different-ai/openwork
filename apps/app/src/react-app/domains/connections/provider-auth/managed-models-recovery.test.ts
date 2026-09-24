@@ -136,10 +136,7 @@ describe("managed model recovery", () => {
     )).toBe(false);
   });
 
-  test("reconciles the stored default after server-managed provider syncs", () => {
-    expect(providerAuthStoreSource.includes(
-      "preselectEntitledOrgDefaultModel(providerList)",
-    )).toBe(true);
+  test("refreshes providers after server-managed provider syncs", () => {
     expect(providerAuthStoreSource.includes(
       "await refreshProvidersAfterCloudSync({ force: true }, isCurrent);",
     )).toBe(true);

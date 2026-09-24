@@ -22,6 +22,7 @@ import { isLinkOpenDestination, LOCAL_PREFERENCES_KEY, type LinkOpenDestination 
 import {
   readStoredDefaultModel,
   storedDefaultModelChangedEvent,
+  writeOwnModelPick,
   writeStoredDefaultModel,
 } from "./model-config";
 
@@ -162,7 +163,11 @@ export function LocalProvider({ children }: LocalProviderProps) {
       if (next.defaultModel && (
         next.defaultModel.providerID !== previous.defaultModel?.providerID ||
         next.defaultModel.modelID !== previous.defaultModel?.modelID
-      )) writeStoredDefaultModel(next.defaultModel);
+      )) {
+        // Changing the default through prefs is the person choosing a model.
+        writeStoredDefaultModel(next.defaultModel);
+        writeOwnModelPick(next.defaultModel);
+      }
     },
     [],
   );
@@ -178,22 +183,20 @@ export function LocalProvider({ children }: LocalProviderProps) {
   }, [prefs]);
 
   useEffect(() => {
+    // Follows the stored default (set by the default-model rule, sign-out,
+    // or another window) without recording it as the person's own pick.
     const updateDefaultModel = () => {
       const model = readStoredDefaultModel();
-      setPrefs((previous) => {
-        if (
-          previous.defaultModel?.providerID === model.providerID &&
-          previous.defaultModel.modelID === model.modelID
-        ) {
-          return previous;
-        }
-
-        return {
-          ...previous,
-          defaultModel: model,
-          modelVariant: null,
-        };
-      });
+      const previous = prefsRef.current;
+      if (
+        previous.defaultModel?.providerID === model.providerID &&
+        previous.defaultModel.modelID === model.modelID
+      ) {
+        return;
+      }
+      const next = { ...previous, defaultModel: model, modelVariant: null };
+      prefsRef.current = next;
+      setPrefsRaw(next);
     };
 
     window.addEventListener(storedDefaultModelChangedEvent, updateDefaultModel);

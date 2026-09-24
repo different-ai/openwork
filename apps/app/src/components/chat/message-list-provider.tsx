@@ -50,12 +50,11 @@ interface MessageListContextValue {
   onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string, isCurrent?: () => boolean) => Promise<void>
   /** The conversation's model, for errors that name it. */
   modelLabel?: string | null
-  /** A model that works now, offered when the current one needs a sign-in. */
-  fallbackModel?: FallbackModel | null
+  /** The conversation's Gateway provider, for errors about the person's own account there. */
+  gatewayProvider?: GatewayProviderIdentity | null
 }
 
-/** A ready model a failed message can switch to, e.g. "Use Claude Sonnet 4.5". */
-export type FallbackModel = { label: string; use: () => void }
+export type GatewayProviderIdentity = { providerId: string; providerName: string }
 
 const MessageListContext = React.createContext<MessageListContextValue | null>(null)
 
@@ -91,7 +90,7 @@ interface MessageListProviderProps {
   dispatchAction: (action: DispatchAction) => void
   setPrompt: (prompt: string) => void
   modelLabel?: string | null
-  fallbackModel?: FallbackModel | null
+  gatewayProvider?: GatewayProviderIdentity | null
 }
 
 export interface DispatchAction {
@@ -128,7 +127,7 @@ export function MessageListProvider({
   onMcpReconnect,
   onMcpReopenAuthorization,
   modelLabel = null,
-  fallbackModel = null,
+  gatewayProvider = null,
 }: MessageListProviderProps) {
   const handlersRef = React.useRef({
     dispatchAction,
@@ -205,7 +204,7 @@ export function MessageListProvider({
       connectorIdentities,
       syncDegraded,
       modelLabel,
-      fallbackModel,
+      gatewayProvider,
       ...stableHandlers,
       onOpenSubagentSession: canOpenSubagentSession
         ? stableHandlers.onOpenSubagentSession
@@ -231,7 +230,7 @@ export function MessageListProvider({
       connectorIdentities,
       syncDegraded,
       modelLabel,
-      fallbackModel,
+      gatewayProvider,
       stableHandlers,
       canOpenSubagentSession,
       canResumeInterrupted,

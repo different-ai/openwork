@@ -30,8 +30,14 @@ type GatewayModelAccess = {
   select: (option: ModelOption, commit: () => void, isCurrent: () => boolean) => () => void;
   /** Sign in for a whole provider group without changing the current model. */
   signInProvider: (provider: GatewayConnectProvider) => void;
+  /** The provider this model waits on for the member's sign-in, or null when it works now. */
+  providerFor: (model: ModelRef) => GatewayConnectProvider | null;
   cancel: () => void;
 };
+
+const findWaitingProvider = (providers: readonly GatewayConnectProvider[], model: ModelRef) =>
+  providers.find((entry) => entry.providerId === model.providerID
+    && entry.models?.some((candidate) => candidate.id === model.modelID && candidate.credentialSetId === entry.credentialSetId)) ?? null;
 
 export type GatewayModelSelectionHandle = Pick<GatewayModelAccess, "select">;
 
@@ -44,6 +50,7 @@ const GatewayModelAccessContext = createContext<GatewayModelAccess>({
     return () => undefined;
   },
   signInProvider: () => undefined,
+  providerFor: () => null,
   cancel: () => undefined,
 });
 
@@ -129,8 +136,7 @@ export function GatewayModelAccessProvider(props: {
 
   const select = useCallback<GatewayModelAccess["select"]>((option, commit, isCurrent) => {
     if (option.disabled || disabled.current.includes(option.providerID) || !isCurrent()) return () => undefined;
-    const provider = providersRef.current.find((entry) => entry.providerId === option.providerID
-      && entry.models?.some((model) => model.id === option.modelID && model.credentialSetId === entry.credentialSetId));
+    const provider = findWaitingProvider(providersRef.current, option);
     if (!provider) {
       if (!option.gatewayAuthorization && isCurrent()) commit();
       return () => undefined;
@@ -147,10 +153,12 @@ export function GatewayModelAccessProvider(props: {
     void run(provider, null, null, () => true);
   }, [run]);
 
+  const providerFor = useCallback((model: ModelRef) => findWaitingProvider(props.providers, model), [props.providers]);
+
   useImperativeHandle(props.selectionRef, () => ({ select }), [select]);
 
   return (
-    <GatewayModelAccessContext value={{ options, disabledProviders, signIn, select, signInProvider, cancel }}>
+    <GatewayModelAccessContext value={{ options, disabledProviders, signIn, select, signInProvider, providerFor, cancel }}>
       {props.children}
     </GatewayModelAccessContext>
   );
@@ -177,6 +185,7 @@ export function useGatewayModelSelection(contextKey: string) {
     disabledProviders: access.disabledProviders,
     signIn: access.signIn,
     signInProvider: access.signInProvider,
+    providerFor: access.providerFor,
     cancel: access.cancel,
     select,
   };

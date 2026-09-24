@@ -97,7 +97,6 @@ import {
 import {
   isProviderAddRestrictedByDesktopPolicy,
   isProviderAllowedByDesktopPolicy,
-  resolveEntitledOrgDefaultModel,
   type ModelEntitlementOption,
 } from "./provider-policy";
 import {
@@ -2132,27 +2131,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     );
   };
 
-  const preselectEntitledOrgDefaultModel = (
-    providerList: ProviderListResponse | null | undefined,
-  ) => {
-    const replacement = resolveEntitledOrgDefaultModel(
-      providerListModelEntitlementOptions(providerList),
-      {
-        currentDefault: readStoredDefaultModel(),
-        restrictToCloud: options.checkDesktopAppRestriction({ restriction: "allowCustomProviders" }),
-        checkRestriction: options.checkDesktopAppRestriction,
-      },
-    );
-    if (replacement && !hasPendingGatewayModelSelection()) writeStoredDefaultModel(replacement);
-  };
-
   const refreshProvidersAfterCloudSync = async (optionsArg: {
     dispose?: boolean;
     force?: boolean;
   }, isCurrent = () => !disposed) => {
     const providerList = await refreshProviders(optionsArg, isCurrent);
     if (!isCurrent()) return null;
-    preselectEntitledOrgDefaultModel(providerList);
     return providerList;
   };
 

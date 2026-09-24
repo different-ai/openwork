@@ -22,21 +22,29 @@ const ANSWER = "Here is the launch plan in three lines.";
 
 /**
  * Stands in for the OpenWork Gateway, where the desktop sends model requests.
- * Google Cloud answers exactly as the Gateway does when Google has signed the
- * person out: 401 openwork_auth_required with the provider and credential
- * set. Anthropic streams a short answer in Anthropic's own format. No request
- * reaches a model provider.
+ * While Google has signed the person out, Google Cloud answers exactly as the
+ * Gateway does: 401 openwork_auth_required with the provider and credential
+ * set, and the Gateway drops the dead credential in Den. Once the person signs
+ * in again (a new Google token exchange), Google Cloud answers. Gemini streams
+ * in Google's own format, Anthropic in Anthropic's. No request reaches a model
+ * provider.
  */
-async function gatewayStandIn() {
+async function gatewayStandIn(options: { tokenExchanges: () => number }) {
   const requests: { provider: string; prompt: string }[] = [];
-  let signedOut: { providerId: string; credentialSetId: string } | null = null;
+  let signedOut: { providerId: string; credentialSetId: string; exchangesAtSignOut: number; revoke: () => Promise<void>; revoked: boolean } | null = null;
   const http = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const body = Buffer.concat(chunks).toString();
     const provider = /\/providers\/([^/]+)/.exec(req.url ?? "")?.[1] ?? "";
-    requests.push({ provider, prompt: body.includes("Summarize the launch plan") ? "Summarize the launch plan" : "" });
-    if (signedOut && provider === signedOut.providerId) {
+    // Title requests quote the message too; only the conversation's own turn counts.
+    const asksForAnswer = body.includes("Summarize the launch plan") && !body.includes("Generate a title");
+    requests.push({ provider, prompt: asksForAnswer ? "Summarize the launch plan" : "" });
+    if (signedOut && provider === signedOut.providerId && options.tokenExchanges() <= signedOut.exchangesAtSignOut) {
+      if (!signedOut.revoked) {
+        signedOut.revoked = true;
+        await signedOut.revoke();
+      }
       res.statusCode = 401;
       res.setHeader("content-type", "application/json");
       res.setHeader("x-openwork-auth-required", "1");
@@ -45,6 +53,14 @@ async function gatewayStandIn() {
         type: "invalid_request_error", code: "openwork_auth_required",
         provider_id: signedOut.providerId, credential_set_id: signedOut.credentialSetId,
       } }));
+      return;
+    }
+    if ((req.url ?? "").includes("generateContent")) {
+      res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache" });
+      res.end(`data: ${JSON.stringify({
+        candidates: [{ content: { role: "model", parts: [{ text: ANSWER }] }, finishReason: "STOP", index: 0 }],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 9, totalTokenCount: 19 },
+      })}\n\n`);
       return;
     }
     res.setHeader("content-type", "text/event-stream");
@@ -62,7 +78,9 @@ async function gatewayStandIn() {
   return {
     url: `http://127.0.0.1:${port}`,
     requests: () => [...requests],
-    signOut: (providerId: string, credentialSetId: string) => { signedOut = { providerId, credentialSetId }; },
+    signOut: (providerId: string, credentialSetId: string, revoke: () => Promise<void>) => {
+      signedOut = { providerId, credentialSetId, exchangesAtSignOut: options.tokenExchanges(), revoke, revoked: false };
+    },
     async stop() {
       http.closeAllConnections();
       await new Promise<void>((resolve) => http.close(() => resolve()));
@@ -71,10 +89,10 @@ async function gatewayStandIn() {
 }
 
 type Options = {
-  /** Sam already signed in to Google Cloud (and the conversation uses Gemini). */
+  /** Sam already signed in to Google Cloud. */
   signedIn?: boolean;
-  /** Acme Studio picked Gemini 2.5 Pro as Sam's default model. */
-  defaultToGemini?: boolean;
+  /** Sam picked Gemini 2.5 Pro for new chats earlier. */
+  pickedGemini?: boolean;
 };
 
 /**
@@ -87,7 +105,7 @@ type Options = {
 export async function modelsSignIn(seed: Seed, { place }: { place: Place }, options: Options = {}) {
   if (place.kind !== "local") throw new Error("This world preloads a Google stand-in into the Den child; run it on the local lane.");
   const google = await googleStandIn();
-  const gateway = await gatewayStandIn();
+  const gateway = await gatewayStandIn({ tokenExchanges: () => google.exchanges().length });
   const den = await seed.den({
     web: true,
     env: {
@@ -158,16 +176,10 @@ export async function modelsSignIn(seed: Seed, { place }: { place: Place }, opti
   if (options.signedIn) await signInToGoogleCloud();
 
   const { app, browserUrls } = await desktopWithExternalOpenCapture(seed, den, "sam");
-  if (options.defaultToGemini || options.signedIn) {
-    // Sam's default model is Gemini 2.5 Pro, as it would be after the company set it up.
-    // TODO(primitive): seed a desktop's default model before boot.
-    await seed.evalIn(app, browserScript((ref, providerID, modelID) => {
-      let preferences: unknown = {};
-      try { preferences = JSON.parse(localStorage.getItem("openwork.preferences") ?? "{}"); } catch {}
-      const base = preferences && typeof preferences === "object" && !Array.isArray(preferences) ? preferences : {};
-      localStorage.setItem("openwork.preferences", JSON.stringify({ ...base, defaultModel: { providerID, modelID }, modelVariant: null }));
-      localStorage.setItem("openwork.defaultModel", ref);
-    }, [`${googleCloudId}/${geminiProId}`, googleCloudId, geminiProId]));
+  if (options.pickedGemini) {
+    // Sam chose Gemini 2.5 Pro himself on an earlier day; only that choice is stored.
+    // TODO(primitive): seed a desktop's own model pick before boot.
+    await seed.evalIn(app, browserScript((ref) => { localStorage.setItem("openwork.ownModelPick", ref); }, [`${googleCloudId}/${geminiProId}`]));
     await reload(app);
   }
 
@@ -195,8 +207,11 @@ export async function modelsSignIn(seed: Seed, { place }: { place: Place }, opti
     googleAnswers: (decision: "approve" | "deny") => answerGoogleSignIn({ webSocketDebuggerUrl }, decision),
     googleTokenExchanges: google.exchanges,
     gatewayRequests: gateway.requests,
-    /** Google signs Sam out: the Gateway now refuses Google Cloud requests. */
-    googleSignsSamOut: () => gateway.signOut(googleCloudId, credentialSetId),
+    /** Google signs Sam out: the Gateway refuses Google Cloud requests and drops the dead credential in Den. */
+    googleSignsSamOut: () => gateway.signOut(googleCloudId, credentialSetId, async () => {
+      const revoked = await seed.api(sam, `/v1/inference-providers/${googleCloudId}/oauth?credentialSetId=${encodeURIComponent(credentialSetId)}`, { method: "DELETE" });
+      if (revoked.response.status !== 204) throw new Error(`Den did not drop Sam's Google credential: HTTP ${revoked.response.status}`);
+    }),
     memberConnection: () => memberConnection(sam),
     browser: web satisfies Surface,
   }, {
@@ -207,5 +222,5 @@ export async function modelsSignIn(seed: Seed, { place }: { place: Place }, opti
   });
 }
 
-export const modelsSignInFirstChat = (seed: Seed, ctx: { place: Place }) => modelsSignIn(seed, ctx, { defaultToGemini: true });
-export const modelsSignInSignedIn = (seed: Seed, ctx: { place: Place }) => modelsSignIn(seed, ctx, { signedIn: true });
+export const modelsSignInFirstChat = (seed: Seed, ctx: { place: Place }) => modelsSignIn(seed, ctx, { pickedGemini: true });
+export const modelsSignInSignedIn = (seed: Seed, ctx: { place: Place }) => modelsSignIn(seed, ctx, { signedIn: true, pickedGemini: true });

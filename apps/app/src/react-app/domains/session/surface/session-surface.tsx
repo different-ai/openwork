@@ -52,7 +52,9 @@ import type {
   CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
-import { ModelSignInNotice } from "./model-sign-in-notice";
+import { HeldSendNotice, holdSend, takeHeldSend, useHeldSendStore } from "./held-send";
+import { useGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
+import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener";
 import { sessionComposerDiagnosticReasons } from "./composer/composer-diagnostics";
 import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
 import { useSessionModelSelection } from "./session-model-store";
@@ -613,9 +615,9 @@ export type SessionSurfaceProps = {
   selectedModel: ModelRef;
   /** providerID → modelID → provider model, for per-session variant options. */
   providerCatalog?: ProviderCatalog;
-  /** Models that work now, company-provided first, offered when this conversation's model needs a sign-in. */
-  signInFallbackModels?: { ref: ModelRef; label: string }[];
   gatewayProviderIds?: ReadonlySet<string>;
+  /** Gateway provider id → display name, for messages about the person's own account there. */
+  gatewayProviderNames?: Readonly<Record<string, string>>;
   gatewayUsageProviderScope?: number | null;
   /** Den/import includes OpenWork Models for this org member (not just local sync). */
   openWorkModelsEntitled?: boolean;
@@ -1136,13 +1138,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
     props.onModelChange(nextModel, variant);
     setModelPickerOpen(false);
   }, [props.onModelChange, sessionModel]);
-  // A model that works now, offered when the conversation's model needs a sign-in.
-  const fallbackModel = useMemo(() => {
-    const current = sessionModel.selectedModel;
-    const pick = (props.signInFallbackModels ?? []).find((entry) => entry.ref.providerID !== current.providerID);
-    if (!pick) return null;
-    return { label: pick.label, use: () => handleModelChange(pick.ref, null) };
-  }, [handleModelChange, props.signInFallbackModels, sessionModel.selectedModel]);
+  // The conversation's Gateway provider, named for errors about the person's own account.
+  const gatewayProvider = useMemo(() => {
+    const providerId = sessionModel.selectedModel.providerID;
+    const providerName = props.gatewayProviderIds?.has(providerId) ? props.gatewayProviderNames?.[providerId] : undefined;
+    return providerName ? { providerId, providerName } : null;
+  }, [props.gatewayProviderIds, props.gatewayProviderNames, sessionModel.selectedModel.providerID]);
+  // A message sent while this conversation's model waits on the person's own
+  // sign-in is kept here and sent once the model works.
+  const gatewaySelection = useGatewayModelSelection(`held-send:${props.sessionId}`);
+  const waitingOnProvider = gatewaySelection.providerFor(sessionModel.selectedModel);
+  // The catalog doesn't list a model until sign-in, so name it from the sign-in list.
+  const waitingModelLabel = gatewaySelection.options.find((option) => option.providerID === sessionModel.selectedModel.providerID
+    && option.modelID === sessionModel.selectedModel.modelID)?.title ?? sessionModel.modelLabel;
   const handleModelVariantChange = useCallback((value: string | null) => {
     sessionModel.setVariant(value);
     props.onModelVariantChange(value);
@@ -2228,6 +2236,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const sourceAttachments = submittedComposer?.attachments ?? attachments;
     const text = originalDraft.trim();
     if (!text && sourceAttachments.length === 0) return;
+    if (waitingOnProvider) {
+      // Keep the message; it sends once the person signs in or switches model.
+      holdSend(sessionOwner, {
+        model: sessionModel.selectedModel,
+        composer: snapshotComposerSessionState(submittedComposer ?? {
+          draft: originalDraft, attachments: sourceAttachments, mentions, pasteParts, revertMessageId: null,
+        }),
+      });
+      if ((!sourceComposer || sourceComposer === composerCheckpoint)
+        && useComposerStateStore.getState().sessions[props.sessionId] === composerCheckpoint) clearComposer();
+      return;
+    }
     const focusedComposer = document.activeElement;
     const savedComposer = snapshotComposerSessionState(submittedComposer ?? {
       draft: originalDraft, attachments: sourceAttachments, mentions, pasteParts, revertMessageId: null,
@@ -2323,7 +2343,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } finally {
       setAttachmentsUploading(false);
     }
-  }, [archived, archiveStateKnown, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, mentions, pasteParts, persistedDraftKey, props.onDraftChange, props.opencodeBaseUrl, props.sessionId, sendDraft, sessionOwner]);
+  }, [archived, archiveStateKnown, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, mentions, pasteParts, persistedDraftKey, props.onDraftChange, props.opencodeBaseUrl, props.sessionId, sendDraft, sessionModel.selectedModel, sessionOwner, waitingOnProvider]);
+
+  // The held message goes as soon as the conversation's model works: after
+  // sign-in, or after the person switches model.
+  const heldSend = useHeldSendStore((state) => state.held[sessionOwner] ?? null);
+  const heldModelAvailability = props.resolveModelAvailability?.(sessionModel.selectedModel).status ?? "available";
+  useEffect(() => {
+    if (!heldSend || waitingOnProvider || heldModelAvailability !== "available") return;
+    if (archived || !archiveStateKnown || chatStreaming) return;
+    const held = takeHeldSend(sessionOwner);
+    if (held) void handleSend(held.composer);
+  }, [archived, archiveStateKnown, chatStreaming, handleSend, heldModelAvailability, heldSend, sessionOwner, waitingOnProvider]);
 
   // One-step run from the empty-state hero: the route keeps the continuation
   // in this session's composer and marks the submitted snapshot for auto-send.
@@ -3445,8 +3476,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onMcpReopenAuthorization={handleMcpReopenAuthorization}
                       getConnectionDecision={getConnectionDecision}
                       connectionQuestionToolCallId={nativeConnectionRequest?.questionToolCallId ?? null}
-                      modelLabel={sessionModel.modelLabel}
-                      fallbackModel={fallbackModel}
+                      modelLabel={waitingModelLabel}
+                      gatewayProvider={gatewayProvider}
                     >
                       <MessageList
                         messageIdReplacements={pendingReconciliation.messageIdReplacements}
@@ -3490,7 +3521,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
       </div>
 
       <div ref={composerShellRef} className="shrink-0 px-0 pb-2 pt-2 max-lg:pb-0">
-        <ModelSignInNotice />
+        {heldSend ? (
+          <HeldSendNotice
+            held={heldSend}
+            modelLabel={waitingModelLabel}
+            provider={waitingOnProvider}
+            signIn={gatewaySelection.signIn}
+            onSignIn={gatewaySelection.signInProvider}
+            onCancelSignIn={gatewaySelection.cancel}
+            onSwitchModel={() => window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { sessionId: props.sessionId } }))}
+          />
+        ) : null}
         <GatewayUsageApprovalNotice />
         {gatewayNotice && gatewayUsage.data ? <GatewayUsageNotice key={`${gatewayUsage.scopeKey}:${sessionOwner}`} state={gatewayNotice} status={gatewayUsage.data} stale={gatewayUsage.query.isError} /> : null}
         {(props.providerConnectedCount ?? 0) === 0 ? (
