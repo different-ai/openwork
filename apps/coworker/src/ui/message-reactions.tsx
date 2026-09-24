@@ -126,10 +126,10 @@ export const MessageReactions = memo(function MessageReactions({ messageId, reac
     // A tapback: a small speech bubble on the message's top corner facing the
     // conversation, ringed in the page color so it reads as resting on top.
     // The parent is the message bubble's positioned wrapper.
-    <div className={`absolute -top-6 z-10 ${side === "left" ? "-left-5" : "-right-5"} ${className}`} role="group" aria-label="Message reactions" data-testid="message-reactions" data-message-id={messageId}>
-      <span aria-hidden="true" className={`absolute bottom-0 size-3 rounded-full ${surface} ${toward === "right" ? "right-0" : "left-0"}`} />
-      <span aria-hidden="true" className={`absolute -bottom-2 size-1.5 rounded-full ${surface} ${toward === "right" ? "-right-1" : "-left-1"}`} />
-      <div className={`relative flex h-8 min-w-8 items-center justify-center gap-0.5 rounded-full px-1.5 ${surface} ${ring}`}>
+    <div className={`absolute -top-5 z-10 ${side === "left" ? "-left-4" : "-right-4"} ${className}`} role="group" aria-label="Message reactions" data-testid="message-reactions" data-message-id={messageId}>
+      <span aria-hidden="true" className={`absolute -bottom-1 size-2.5 rounded-full ${surface} ${toward === "right" ? "-right-0.5" : "-left-0.5"}`} />
+      <span aria-hidden="true" className={`absolute -bottom-2.5 size-1.5 rounded-full ${surface} ${toward === "right" ? "-right-1.5" : "-left-1.5"}`} />
+      <div className={`relative flex h-7 min-w-7 items-center justify-center gap-0.5 rounded-full px-1 ${surface} ${ring}`}>
         {reactions.map((reaction) => {
           const label = `${reaction.actor.name} reacted ${reaction.emoji}`;
           return (
@@ -142,7 +142,7 @@ export const MessageReactions = memo(function MessageReactions({ messageId, reac
                 data-actor-slug={reaction.actor.slug}
                 data-actor-created-at={reaction.actor.createdAt}
                 data-emoji={reaction.emoji}
-                className="inline-flex cursor-default select-none items-center justify-center rounded-full text-[16px] leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50"
+                className="inline-flex cursor-default select-none items-center justify-center rounded-full text-[15px] leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50"
               >
                 {reaction.emoji}
               </span>
