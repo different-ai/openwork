@@ -38,3 +38,9 @@ test("the native v2 skill contract explicitly selects v2", () => {
 test("the native model filter regression explicitly selects v2", () => {
   assert.deepEqual(parityProofPlan("evals/specs/engine-provider-filters.e2e.test.ts").map(item => item.engine), ["v2"]);
 });
+
+test("session home proof runs the pinned v2 engine", () => {
+  assert.deepEqual(parityProofPlan("evals/specs/opencode-v2-session-home.e2e.test.ts"), [{
+    engine: "v2", args: ["evals/bin/evals.mjs", "specs/opencode-v2-session-home.e2e.test.ts", "--local", "--engine", "v2"],
+  }]);
+});
