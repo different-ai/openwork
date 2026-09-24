@@ -13,7 +13,7 @@ import { readdir, readFile } from 'node:fs/promises';
 const PACKAGED_BINARY = { env: ['OPENWORK_EVAL_ELECTRON_BINARY'] };
 const definitions = {
   'opencode-v2-session-home.e2e.test.ts': {
-    cases: [{ id: 'HOME-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
+    cases: ['HOME-01', 'HOME-02'].map(id => ({ id, engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } })),
   },
   'gateway-usage-policy.e2e.test.ts': { name: 'Request and approve a Gateway usage extension', placement: 'local' },
   'composer-model-picker-no-subscribe-promo.e2e.test.ts': {

@@ -104,3 +104,72 @@ test("the proxy keeps moved history, actions, active state and events in the hom
     expect(stream).toContain(`"openworkHomeDirectory":${JSON.stringify(home.path)}`);
   } finally { native.stop(true); }
 });
+
+
+test("moved questions and approvals are recovered by home, with nested form events and replies scoped to their session", async () => {
+  const { proxyOpencodeV2Request } = await import("./server.js");
+  const { config, root } = await fixture();
+  config.readOnly = false;
+  const home = config.workspaces[0];
+  if (!home) throw new Error("Missing fixture workspace");
+  const destination = join(root, "worktree");
+  const elsewhere = join(root, "elsewhere");
+  const sessions = [
+    { id: "ses_moved", location: { directory: destination } },
+    { id: "ses_foreign", location: { directory: home.path } },
+  ];
+  const forms = [
+    { id: "frm_moved", sessionID: "ses_moved", metadata: { kind: "question" }, fields: [{ key: "format", type: "string" }] },
+    { id: "frm_foreign", sessionID: "ses_foreign", metadata: { kind: "question" }, fields: [{ key: "secret", type: "string" }] },
+  ];
+  const approvals = forms.map(form => ({ id: form.id.replace("frm", "per"), sessionID: form.sessionID }));
+  const actions: { path: string; directory: string | null }[] = [];
+  const native = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/session") {
+      return Response.json(url.searchParams.has("cursor") ? { data: [sessions[0]], cursor: {} }
+        : { data: [sessions[1]], cursor: { next: "page-two" } });
+    }
+    if (url.pathname === "/api/form/request") return Response.json({ data: [forms[1]], location: { directory: home.path } });
+    if (url.pathname === "/api/permission/request") return Response.json({ data: [approvals[1]] });
+    if (url.pathname === "/api/event") return new Response([
+      { type: "form.created", location: { directory: destination }, data: { form: forms[0] } },
+      { type: "form.created", location: { directory: home.path }, data: { form: forms[1] } },
+      { type: "form.replied", location: { directory: destination }, data: { sessionID: "ses_moved", id: "frm_moved" } },
+      { type: "form.cancelled", location: { directory: destination }, data: { sessionID: "ses_moved", id: "frm_moved" } },
+    ].map(event => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
+    const id = url.pathname.split("/")[3];
+    if (request.method === "GET" && url.pathname.endsWith("/message")) return Response.json({ data: [{
+      type: "location-switched", previous: { location: { directory: id === "ses_moved" ? home.path : elsewhere } },
+    }] });
+    if (request.method === "GET" && url.pathname.endsWith("/form")) return Response.json({ data: forms.filter(form => form.sessionID === id) });
+    if (request.method === "GET" && url.pathname.endsWith("/permission")) return Response.json({ data: approvals.filter(form => form.sessionID === id) });
+    if (request.method === "GET") return Response.json({ data: sessions.find(session => session.id === id) });
+    actions.push({ path: url.pathname, directory: url.searchParams.get("location[directory]") });
+    return new Response(null, { status: 204 });
+  } });
+  const call = (path: string, method = "GET", workspace = home) => {
+    const request = new Request(`http://openwork.test${path}`, { method });
+    return proxyOpencodeV2Request({ config, workspace, request, url: new URL(request.url), proxyPath: `/opencode2${path}`,
+      actor: { type: "host", scope: "owner" }, connection: { url: `http://127.0.0.1:${native.port}`, username: "opencode", password: "test" },
+      syncWorkspaceSkills: async () => {},
+    });
+  };
+  try {
+    // Creation nests sessionID inside data.form, unlike the other session events.
+    const events = await (await call("/api/event")).text();
+    expect(events).toContain('"form.created"');
+    expect(events).toContain('"form.replied"');
+    expect(events).toContain('"form.cancelled"');
+    expect(events).not.toContain("ses_foreign");
+    expect(await (await call("/api/form/request")).json()).toMatchObject({ data: [forms[0]] });
+    expect(await (await call("/api/permission/request")).json()).toMatchObject({ data: [approvals[0]] });
+    for (const suffix of ["form/frm_moved/reply", "form/frm_moved/cancel", "permission/per_moved/reply"]) {
+      expect((await call(`/api/session/ses_moved/${suffix}`, "POST")).status).toBe(204);
+      expect(actions.at(-1)?.directory).toBe(destination);
+      await expect(call(`/api/session/ses_moved/${suffix}`, "POST", { ...home, id: "other", path: destination })).rejects.toMatchObject({ status: 404 });
+    }
+    expect(actions).toHaveLength(3);
+    expect(await (await call("/api/form/request", "GET", { ...home, id: "other", path: destination })).json()).toMatchObject({ data: [] });
+  } finally { native.stop(true); }
+});

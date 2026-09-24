@@ -144,6 +144,7 @@ test('registered case metadata names exact files, supported execution axes, and 
   const entries = await catalog();
   assert.deepEqual(registeredCases.map(({ spec, id, engines }) => ({ spec, id, engines })), [
     { spec: 'opencode-v2-session-home.e2e.test.ts', id: 'HOME-01', engines: ['v2'] },
+    { spec: 'opencode-v2-session-home.e2e.test.ts', id: 'HOME-02', engines: ['v2'] },
     {
       spec: 'composer-model-picker-no-subscribe-promo.e2e.test.ts',
       id: 'MODEL-01',
