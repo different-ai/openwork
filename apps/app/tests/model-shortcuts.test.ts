@@ -139,6 +139,11 @@ describe("pressing a model shortcut", () => {
       .toEqual({ kind: "unavailable", reason: "model_missing" });
   });
 
+  test("an option the picker shows as disabled, such as blocked Auto, never switches", () => {
+    expect(decideModelShortcut({ action: shortcut().action, option: { ...fastModel, disabled: true }, availability: available, current }))
+      .toEqual({ kind: "unavailable", reason: "provider_blocked" });
+  });
+
   test("a catalog that is still loading is pending, never unavailable", () => {
     expect(decideModelShortcut({ action: shortcut().action, option: null, availability: { status: "pending" }, current }))
       .toEqual({ kind: "pending" });

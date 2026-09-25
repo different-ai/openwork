@@ -4,7 +4,7 @@ import * as React from "react";
 import { Check, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { ModelOption, ModelRef } from "@/app/types";
-import { getModelBehaviorControls, getModelBehaviorSelection } from "@/app/lib/model-behavior";
+import { FAST_PRICING_WARNING, getModelBehaviorControls, getModelBehaviorSelection } from "@/app/lib/model-behavior";
 import { FAST_DEFAULT_VARIANT } from "@openwork/types/cloud-model-fast";
 import { fastModeShortcutLabel } from "@/react-app/shell/fast-mode-shortcut";
 import { resolveThinkingModeShortcutOs } from "@/react-app/shell/thinking-mode-shortcut";
@@ -126,7 +126,7 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
           {advanced ? <div className="px-3 pb-2">
             {selected && onBehaviorChange && !isAutoModel(selected) ? <>
               <Button ref={effortButtonRef} data-testid="model-effort" size="sm" variant="ghost" className="h-11 w-full justify-between" disabled={!hasEffort} onClick={() => setEffort(true)}>Effort<span className="text-muted-foreground">{hasEffort ? controls.options.find((option) => option.value === behaviorValue)?.label ?? selectedBehavior.label : "Unavailable"}</span></Button>
-              {controls.hasFast ? <div className="flex h-11 items-center justify-between px-2 text-sm"><span className="flex items-center gap-2">Fast mode<kbd className="hidden rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-sans text-[10px] leading-none text-muted-foreground sm:inline-flex">{fastShortcutLabel}</kbd></span><Switch aria-label="Fast mode" size="sm" checked={controls.fast} disabled={controls.toggleValue === undefined} onCheckedChange={() => { if (controls.toggleValue !== undefined) onBehaviorChange(controls.toggleValue); }} /></div> : null}
+              {controls.hasFast ? <div className="flex h-11 items-center justify-between px-2 text-sm" title={FAST_PRICING_WARNING}><span className="flex items-center gap-2">Fast mode<kbd className="hidden rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-sans text-[10px] leading-none text-muted-foreground sm:inline-flex">{fastShortcutLabel}</kbd></span><Switch aria-label="Fast mode" size="sm" checked={controls.fast} disabled={controls.toggleValue === undefined} onCheckedChange={() => { if (controls.toggleValue !== undefined) onBehaviorChange(controls.toggleValue); }} /></div> : null}
             </> : <p className="px-2 py-2 text-sm text-muted-foreground">{isAutoModel(value) ? "Auto manages its model settings." : "Choose an available model to change its settings."}</p>}
           </div> : null}
         </details>
