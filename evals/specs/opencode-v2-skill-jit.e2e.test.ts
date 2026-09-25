@@ -109,6 +109,8 @@ test("workspace skills change during an ongoing conversation", async ({ world, u
     await remove();
     await ask(null);
   });
+  evidence.recordAssertionEvidence("Workspace skill changes reach the next turn",
+    `Installing, editing, removing and reinstalling a workspace skill through OpenWork changed the very next answer in one conversation, with every sent message kept once and the same engine process throughout.`, true);
 });
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -189,6 +191,8 @@ selectedTest("SKILL-ATTACH explicitly selected skills reach the first native mod
     providerRequestCount: requests.length, visibleBeforeReload: visible,
     visibleAfterReload: await readTranscriptMessages(probe, "user"),
   });
+  evidence.recordAssertionEvidence("Selected skills reach the first model request",
+    `A skill chosen in the composer reached the first ${world.engine} model request exactly once, stayed out of the visible message, and the conversation survived a reload.`, true);
 });
 
 selectedTest("SKILL-MISSING a selected skill removed from the native registry fails visibly without a model request", async ({ world, user, probe, evidence }) => {
@@ -210,6 +214,8 @@ selectedTest("SKILL-MISSING a selected skill removed from the native registry fa
     nativeRequests: await world.nativeRequests(), providerRequests: world.providerRequests(),
     assistantMessages: await readTranscriptMessages(probe, "assistant"),
   });
+  evidence.recordAssertionEvidence("A removed selected skill fails visibly",
+    "After the selected skill left the native registry, sending showed that nothing was sent, with no engine prompt, provider request or assistant message.", true);
 });
 
 // ---------------------------------------------------------------------------
@@ -308,7 +314,7 @@ function jitConversation({ world, user, probe }: { world: JitWorld; user: User; 
   return { ask, mintCode, skillToolIds, firstModelRequestAt, expectNoCodes, codes, runtime: () => runtime };
 }
 
-jitTest("SKILL-NATIVE-01 a malformed workspace skill never blocks prompt admission while the workspace skill lifecycle still converges", async ({ world, user, probe, step }) => {
+jitTest("SKILL-NATIVE-01 a malformed workspace skill never blocks prompt admission while the workspace skill lifecycle still converges", async ({ world, user, probe, step, evidence }) => {
   const talk = jitConversation({ world, user, probe });
   const catalogTurn: SkillJitTurnTarget = { kind: "catalog", skill: world.workspaceSkillName };
   const install = async (code: string, description: string) => {
@@ -351,4 +357,6 @@ jitTest("SKILL-NATIVE-01 a malformed workspace skill never blocks prompt admissi
     expect(await talk.skillToolIds(removed.prompt)).toEqual([]);
     expect(world.cloud.log()).toEqual([]);
   });
+  evidence.recordAssertionEvidence("Workspace skills never block a turn",
+    "A malformed skill and one skill installed in both .agents and .claude were answered normally; installing, editing and removing the workspace skill through OpenWork still changed the next answer.", true);
 });
