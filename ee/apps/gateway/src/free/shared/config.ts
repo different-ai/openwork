@@ -47,6 +47,9 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
     releaseKey, releaseKeyPrevious: releaseKeyPrevious.length >= 32 ? releaseKeyPrevious : "",
     devReleaseSecret: devReleaseSecret.length >= 32 ? devReleaseSecret : "",
     releasesUrl: environment.DESKTOP_FREE_APP_VERSION_URL ?? DESKTOP_FREE_RELEASES_URL,
+    /** Free database work one Gateway instance runs at once, and how much more may wait, before new requests get free_auto_busy. */
+    maxConcurrent: integer("FREE_AUTO_MAX_CONCURRENT", 8, 1, 200),
+    maxQueued: integer("FREE_AUTO_MAX_QUEUED", 32, 0, 1000),
     supportedReleaseCount: integer("DESKTOP_FREE_SUPPORTED_RELEASE_COUNT", 3, 1, 20),
     supportedReleaseMinDays: integer("DESKTOP_FREE_SUPPORTED_RELEASE_MIN_DAYS", 14, 0, 365),
     blockedReleases: (environment.DESKTOP_FREE_BLOCKED_RELEASES ?? "").split(",").map((value) => value.trim().replace(/^v/, "")).filter(Boolean),
