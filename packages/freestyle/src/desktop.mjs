@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, closeSync, writeFileSync } from "node:fs";
 import { createServer, request } from "node:http";
+import { pipeline } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
+import { originTransform, replaceOrigins, templateOrigins } from "./origins.mjs";
 
 // Controller-owned: a virtual display, a VNC server bound to loopback, and the
 // noVNC web client, all behind the preview gateway's own access check. The
@@ -13,6 +15,9 @@ const CDP_PORT = 9825;
 const DEN_FRONT_PORT = 5190;
 const LOGS = "/opt/openwork-preview/desktop";
 const DEN_PROXY_PREFIX = "/api/den";
+// Paths the preview gateway serves from Den's API on Den's public origin.
+const DEN_API_PATH = /^\/(?:v1|mcp)(?:\/|$)|^\/health$|^\/oauth\/client-metadata\.json$/;
+const TEXT = /^(?:text\/(?:html|javascript|x-component|event-stream)|application\/(?:json|javascript|x-javascript))(?:;|$)/i;
 const DESKTOP_WORKSPACE = "/root/Acme";
 
 function service(stack, command, args, name) {
@@ -33,34 +38,44 @@ async function waitFor(check, label, timeoutMs = 60_000) {
   throw new Error(`Desktop ${label} did not become ready`);
 }
 
-function forward(req, res, target, path) {
+function forward(req, res, target, path, pairs) {
   const upstream = request({ hostname: target.hostname, port: target.port, method: req.method, path,
-    headers: { ...req.headers, host: target.host } }, (response) => {
-    res.writeHead(response.statusCode ?? 502, response.headers);
-    response.pipe(res);
+    headers: { ...req.headers, host: target.host, "accept-encoding": "identity" } }, (response) => {
+    const headers = Object.fromEntries(Object.entries(response.headers).map(([key, value]) =>
+      [key, Array.isArray(value) ? value.map((item) => replaceOrigins(item, pairs)) : typeof value === "string" ? replaceOrigins(value, pairs) : value]));
+    const text = !headers["content-encoding"] && TEXT.test(String(headers["content-type"]));
+    if (text) { delete headers["content-length"]; delete headers.etag; }
+    res.writeHead(response.statusCode ?? 502, headers);
+    if (text) pipeline(response, originTransform(pairs), res, (error) => { if (error) res.destroy(error); });
+    else response.pipe(res);
   });
   upstream.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end(); });
   req.pipe(upstream);
 }
 
 /**
- * Den advertises the snapshot's template origins (runtime-config `denApiUrl`
- * and `/api/den` redirects). Only the edge translates them, and only for
- * browsers; inside the VM they never answer, so the desktop's Den calls time
- * out. The desktop instead uses this loopback Den web origin, which keeps
- * every advertised Den address inside the VM. Browsers are unaffected.
+ * Den advertises the snapshot's template origins: runtime-config `denApiUrl`,
+ * `/api/den` redirects, MCP token resources and the Connect App index. Only the
+ * edge translates them, and only for browsers; inside the VM they never answer,
+ * so the desktop's Den calls time out, and its Cloud MCP and Connect Apps are
+ * refused as untrusted. The desktop instead uses this loopback Den origin. It
+ * serves Den's API paths as the gateway does and translates template origins to
+ * itself, keeping every advertised Den address inside the VM and on one trusted
+ * loopback origin. Browsers are unaffected.
  */
-async function startDesktopDenFront(stack, den) {
+export async function startDesktopDenFront(stack, den, port = DEN_FRONT_PORT) {
   const web = new URL(den.webUrl);
   const api = new URL(den.apiUrl);
+  let front = "";
+  let pairs = [];
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://desktop-den.invalid");
     if (req.method === "GET" && url.pathname === "/api/runtime-config") {
       try {
         const upstream = await fetch(new URL(`${url.pathname}${url.search}`, web), { headers: { accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
-        const config = await upstream.json();
+        const config = JSON.parse(replaceOrigins(await upstream.text(), pairs));
         res.writeHead(upstream.status, { "content-type": "application/json", "cache-control": "no-store" });
-        res.end(JSON.stringify({ ...config, denApiUrl: den.apiUrl }));
+        res.end(JSON.stringify({ ...config, denApiUrl: `${front}${DEN_PROXY_PREFIX}` }));
       } catch {
         if (!res.headersSent) res.writeHead(502);
         res.end();
@@ -68,17 +83,19 @@ async function startDesktopDenFront(stack, den) {
       return;
     }
     if (url.pathname === DEN_PROXY_PREFIX || url.pathname.startsWith(`${DEN_PROXY_PREFIX}/`)) {
-      forward(req, res, api, `${url.pathname.slice(DEN_PROXY_PREFIX.length) || "/"}${url.search}`);
+      forward(req, res, api, `${url.pathname.slice(DEN_PROXY_PREFIX.length) || "/"}${url.search}`, pairs);
       return;
     }
-    forward(req, res, web, `${url.pathname}${url.search}`);
+    forward(req, res, DEN_API_PATH.test(url.pathname) ? api : web, `${url.pathname}${url.search}`, pairs);
   });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(DEN_FRONT_PORT, "127.0.0.1", resolve);
+    server.listen(port, "127.0.0.1", resolve);
   });
+  front = `http://127.0.0.1:${server.address().port}`;
+  pairs = [templateOrigins.den, templateOrigins.api].map((origin) => [origin, front]);
   stack.defer(() => new Promise((resolve) => server.close(() => resolve(undefined))));
-  return `http://127.0.0.1:${DEN_FRONT_PORT}`;
+  return { webUrl: front, apiUrl: `${front}${DEN_PROXY_PREFIX}` };
 }
 
 // A just-signed-in app can accept workspace creation before its engine is ready
@@ -159,7 +176,7 @@ export async function startDesktop(stack, world, { prepareProfile = prepareDeskt
   await waitFor(async () => (await fetch(`http://127.0.0.1:${NOVNC_PORT}/vnc.html`, { signal: AbortSignal.timeout(2_000) })).ok, "viewer");
   const status = (value) => writeFileSync(`${LOGS}/status`, value, { mode: 0o600 });
   status("starting");
-  const den = world ? { ...world.den.ref, webUrl: await startDesktopDenFront(stack, world.den.ref) } : undefined;
+  const den = world ? { ...world.den.ref, ...await startDesktopDenFront(stack, world.den.ref) } : undefined;
   const profile = world ? undefined : await prepareProfile();
   if (den) writeFileSync(`${LOGS}/bootstrap.json`, JSON.stringify({ baseUrl: den.webUrl, apiBaseUrl: den.apiUrl, requireSignin: false }), { mode: 0o600 });
   if (profile) writeFileSync(`${LOGS}/profile.json`, JSON.stringify(profile), { mode: 0o600 });

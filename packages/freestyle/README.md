@@ -107,7 +107,11 @@ Template origins are placeholders that only the authenticated edge rewrites for
 browsers. ACME VMs refuse them locally (`/etc/hosts` to loopback): Den still advertises
 them to in-VM clients, and the signed-in desktop's OpenWork Cloud MCP otherwise hung
 at the public edge on every sync, starving the VM until desktop setup reached the
-snapshot deadline. Cloud MCP is unavailable in previews either way.
+snapshot deadline. The desktop itself reaches Den through a loopback front
+(`http://127.0.0.1:5190`) that serves Den's API paths like the gateway and translates
+template origins to its own. Its Cloud MCP endpoint and Connect App index therefore
+share one loopback origin, which the dev-mode desktop trusts, so Connect-hosted MCP
+Apps load in the world desktop.
 
 Den also hands these origins to third parties itself. Connecting an OAuth MCP server,
 the provider registers Den's callback (dynamic client registration) or fetches Den's
