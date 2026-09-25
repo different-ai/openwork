@@ -3,7 +3,7 @@ import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { InferenceKeyTable, MemberTable, OrganizationTable, OrgSubscriptionTable } from "@openwork-ee/den-db"
 import { assertManagedModelsAllowed } from "@openwork/types/den/managed-models-policy"
 import { freeInferenceDefaultPinned, freeInferenceOrganizationAllowed, inferenceSubscribed, inferenceSubscriptionLive } from "@openwork/types/den/inference"
-import { db } from "../../db.js"
+import { db, freeAutoDatabase } from "../../db.js"
 
 type InferenceKeyRow = typeof InferenceKeyTable.$inferSelect
 /** Signed-out desktop: the id is the keyed hash of the machine identifier. */
@@ -38,7 +38,7 @@ function freeOrganization(metadata: Record<string, unknown> | null, subscription
   return true
 }
 
-export async function findMemberFreePrincipal(key: Pick<InferenceKeyRow, "id" | "org_membership_id" | "organization_id">, database: Database = db): Promise<MemberPrincipal | null> {
+export async function findMemberFreePrincipal(key: Pick<InferenceKeyRow, "id" | "org_membership_id" | "organization_id">, database: Database = freeAutoDatabase()): Promise<MemberPrincipal | null> {
   const identity = { inferenceKeyId: key.id, memberId: key.org_membership_id, organizationId: key.organization_id }
   const row = await memberFreePrincipalRow(identity, database)
   if (!row?.userId || !freeOrganization(row.metadata, row.subscription)) return null
@@ -52,7 +52,7 @@ export async function memberFreePrincipalAllowed(principal: FreePrincipal, datab
 }
 
 /** Whether the organization pins Auto for its members. Guests always see Auto pinned. */
-export async function readFreePrincipalDefaultPinned(principal: FreePrincipal, database: Database = db): Promise<boolean> {
+export async function readFreePrincipalDefaultPinned(principal: FreePrincipal, database: Database = freeAutoDatabase()): Promise<boolean> {
   if (principal.kind !== "member") return true
   const row = await memberFreePrincipalRow(principal, database)
   if (!row || row.userId !== principal.id || !freeOrganization(row.metadata, row.subscription)) throw new Error("free_principal_rejected")
