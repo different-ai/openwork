@@ -54,7 +54,8 @@ its API-published SHA-256 digest inside the VM before installation.
 
 ## Saved web evidence checkpoints
 
-Use the PR's **OpenWork Checkpoints** check to open its branch-specific report.
+Checkpoint images appear in the PR's normal **OpenWork Evidence** report (specs
+tagged `checkpoints` run with `--checkpoints` in CI's protected checkpoint lane).
 Pictures with a saved world offer **Open from here** below the image and in its
 viewer, then **Enter saved browser**. Both places share the same copy; **New copy**
 restores the original checkpoint again without reloading the report. Only explicit

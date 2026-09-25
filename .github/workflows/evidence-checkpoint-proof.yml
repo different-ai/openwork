@@ -7,7 +7,6 @@ on:
     paths:
       - .github/workflows/evidence-checkpoint-proof.yml
       - packages/freestyle/**
-      - scripts/prove-freestyle-checkpoints.ts
 
 permissions:
   contents: read

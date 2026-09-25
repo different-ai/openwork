@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { appendFile, readFile } from "node:fs/promises";
 import { internalProofContributor } from "./internal-proof-contributor.mjs";
-import { changedFiles, packagedJourney, proofKey, proofLanes, selectProof } from "./pr-proof.mjs";
+import { changedFiles, checkpointTagged, packagedJourney, proofKey, proofLanes, safePath, selectProof } from "./pr-proof.mjs";
 
 const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, "utf8"));
 if (!event.pull_request) throw new Error("Proof selection requires a pull request event.");
@@ -18,10 +18,15 @@ const files = await changedFiles(api, repo, pr, current.changed_files);
 const { specs } = selectProof(files);
 if (specs.length > 32) throw new Error("More than 32 changed E2E specs; bounded CI selection unavailable. Split the change.");
 const trust = { event, repo, actor: process.env.GITHUB_ACTOR, triggeringActor: process.env.GITHUB_TRIGGERING_ACTOR };
-proofLanes(specs, { ...trust, current });
+// The checkout is the PR head; only spec sources are read, never executed here.
+const taggedSpecs = new Set();
+// An unreadable spec is untagged; its own run reports the problem.
+for (const spec of specs) if (safePath(spec) && checkpointTagged(await readFile(spec, "utf8").catch(() => ""))) taggedSpecs.add(spec);
+const tagged = spec => taggedSpecs.has(spec);
+proofLanes(specs, { ...trust, current }, tagged);
 const latest = api(`repos/${repo}/pulls/${pr}`);
 if (latest.head.sha !== current.head.sha) throw new Error("PR head changed during selection.");
-const { normalSpecs, liveSpecs, packagedSpecs, daytonaSpecs, checkpointSpecs } = proofLanes(specs, { ...trust, current: latest });
+const { normalSpecs, liveSpecs, packagedSpecs, daytonaSpecs, checkpointSpecs } = proofLanes(specs, { ...trust, current: latest }, tagged);
 const internalContributor = internalProofContributor(event.pull_request, event.repository) && internalProofContributor(latest, event.repository);
 const matrix = selected => JSON.stringify({ include: selected.map(spec => ({ spec, key: proofKey(spec) })) });
 const packagedMatrix = selected => JSON.stringify({ include: selected.map(spec => ({ spec, key: proofKey(spec), journey: packagedJourney(spec) })) });
@@ -34,7 +39,7 @@ const liveSummary = liveSpecs.length || daytonaSpecs.length || checkpointSpecs.l
   ? (internalContributor
     ? "\nProof for this internal organization contributor runs automatically in `pr-internal-specs`.\n"
     : "\nProof for this contributor requires reviewer approval of the `pr-slow-specs` environment.\n")
-    + "Daytona Windows proof runs the exact published installer on a private VM; ordinary proof remains unprotected and secret-free.\n"
+    + "Daytona Windows proof runs the exact published installer on a private VM; specs tagged `checkpoints` save reopenable checkpoints on Freestyle; ordinary proof remains unprotected and secret-free.\n"
   : "";
 if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, summary + liveSummary);
 console.log(summary + liveSummary);

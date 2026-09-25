@@ -9,6 +9,7 @@ VM. It does not move the normal test suite or use real model credentials.
 ```sh
 pnpm --filter @openwork/review-app build
 pnpm evals:e2e web-checkpoint-fork --local --engine v1 --surface web --checkpoints
+# Any spec: tag its test { tags: ["checkpoints"] } and run it with --local --checkpoints.
 # Or open a standalone world, using the merged world/source API:
 pnpm world up evidence-web --place freestyle --source app-web=sha:<full-pushed-sha>
 ```
@@ -36,7 +37,7 @@ Checkpoints are explicit and never part of the proof:
 The complete co-located web world is saved: Chromium memory, the engine, Den,
 databases, workspace files and the mock stream.
 
-Open the PR's **OpenWork Checkpoints** check for the branch-specific report.
+Checkpoint images appear in the PR's normal **OpenWork Evidence** report.
 Checkpoint pictures offer **Open from here** directly below the image and inside
 the image viewer, followed by **Enter saved browser**. Both controls share the
 same copy. **New copy** deliberately restores that same checkpoint again without
@@ -58,9 +59,9 @@ and three concurrent forks per checkpoint. Expiry preserves the screenshot.
 Request retries reuse the same fork instead of spending another slot. Provider
 TTL bounds orphan lifetime; normal teardown deletes source and verification VMs.
 
-The PR proof deploys a separate protected review preview from the same head and
-publishes a branch-format report there. It never updates the shared review alias
-or waits for a merge to `dev`. The plan and acceptance boundaries are in
+In CI, changed specs tagged `checkpoints` run in the protected checkpoint lane of
+`pr-proof.yml` with `--checkpoints`. Their records join the PR's normal evidence
+report, which the shared review app opens. The original plan is in
 [`docs/plans/web-evidence-checkpoints.md`](../../docs/plans/web-evidence-checkpoints.md).
 
 ## Existing preview preparation
