@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { desktopCapabilityConfig, desktopPolicyKeys, desktopSigninRequired, normalizeDesktopConfig, restrictedDesktopPolicyValue } from "@openwork/types/den/desktop-policies";
+import { desktopCapabilityConfig, desktopPolicyKeys, normalizeDesktopConfig, restrictedDesktopPolicyValue } from "@openwork/types/den/desktop-policies";
 import { checkDesktopAppRestriction } from "../src/app/cloud/desktop-app-restrictions";
 import { outboundEgressAllowed } from "../src/app/lib/enterprise-activation";
 import type { DesktopDistributionInfo } from "../src/app/lib/desktop";
@@ -10,10 +10,10 @@ test("all desktop flags are advisory, including absent config", () => {
   }
 });
 
-test("runtime projection removes desktop restrictions but preserves Cloud entitlements and source config", () => {
+test("runtime projection removes desktop restrictions but preserves Cloud entitlements, allowed versions and source config", () => {
   const config = normalizeDesktopConfig({
     ...restrictedDesktopPolicyValue,
-    allowedDesktopVersions: [], execution: { commands: "deny" },
+    allowedDesktopVersions: ["0.18.46"], execution: { commands: "deny" },
     connectEnabled: false, automationsEnabled: false, dashboardEnabled: false,
     brandAppName: "Example", showWelcomePage: false,
   });
@@ -21,15 +21,9 @@ test("runtime projection removes desktop restrictions but preserves Cloud entitl
   const projected = desktopCapabilityConfig(config);
   expect(projected).toMatchObject({ connectEnabled: false, automationsEnabled: false, dashboardEnabled: false, brandAppName: "Example", showWelcomePage: false });
   expect(projected.execution).toBeUndefined();
-  expect(projected.allowedDesktopVersions).toBeUndefined();
+  expect(projected.allowedDesktopVersions).toEqual(["0.18.46"]);
   for (const key of desktopPolicyKeys) if (key !== "showWelcomePage") expect(projected[key]).toBeUndefined();
   expect(JSON.stringify(config)).toBe(before);
-});
-
-test("bootstrap sign-in is optional on desktop without changing web sign-in", () => {
-  expect(desktopSigninRequired(true, true)).toBe(false);
-  expect(desktopSigninRequired(true, false)).toBe(true);
-  expect(desktopSigninRequired(false, false)).toBe(false);
 });
 
 test("policy readiness never delays activated desktop egress; activation remains required", () => {

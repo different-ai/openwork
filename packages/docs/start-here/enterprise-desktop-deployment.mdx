@@ -62,7 +62,7 @@ Deployment details worth knowing:
 
 - **Activation.** The app writes `enterpriseActivation` into `desktop-bootstrap.json` only after a signed activation claim verifies. Do not provision this record yourself; a hand-written entry is not proof of a provisioned tenant, and the app treats it as incomplete.
 - **Certificates.** The desktop builds its trust bundle from the OS trust stores — Windows machine and user Root/CA stores, and the macOS administrator-controlled System keychains. Deploy enterprise CAs the way you already do; no OpenWork-specific certificate file exists. See [Certificate trust and proxies](/start-here/certificate-trust-and-proxies).
-- **Desktop policies.** Version pinning and feature policies are delivered by your Den server after sign-in and enforced by the app automatically — no MDM scripting. Manage them in the organization dashboard.
+- **Desktop policies.** Version pinning (allowed desktop versions) is delivered by your Den server after sign-in and enforced by the app's updater automatically — no MDM scripting. Desktop feature policies are temporarily not enforced by the desktop while they are redesigned; they stay saved in Den. Manage both in the organization dashboard.
 
 ## Choosing between install links and MDM
 

@@ -1,18 +1,21 @@
 import { z } from "zod";
 
-/** Desktop enforcement is suspended pending redesign. This is not a Cloud
- * authorization switch: schemas, assignments and resource entitlements remain
- * authoritative in Den. Keep all desktop enforcement entry points on this flag. */
+/** Desktop feature-policy enforcement is suspended pending redesign. This is
+ * not a Cloud authorization switch: schemas, assignments and resource
+ * entitlements remain authoritative in Den. Keep all desktop feature-policy
+ * entry points on this flag.
+ *
+ * Two controls are deliberately NOT behind this flag:
+ * - Required sign-in is a property of the build (enterprise and cloud always
+ *   require it; a public build can opt in through desktop-bootstrap.json).
+ * - `allowedDesktopVersions` is an organization setting, not a desktop policy,
+ *   so the projection below keeps it and the updater keeps honouring it. */
 export const DESKTOP_POLICY_ENFORCEMENT_ENABLED: boolean = false;
-
-export function desktopSigninRequired(requireSignin: boolean, desktop: boolean): boolean {
-  return requireSignin && (!desktop || DESKTOP_POLICY_ENFORCEMENT_ENABLED);
-}
 
 /** Runtime-only projection; never persist this over the control-plane config. */
 export function desktopCapabilityConfig(config: DesktopConfig): DesktopConfig {
   if (DESKTOP_POLICY_ENFORCEMENT_ENABLED) return config;
-  const { execution: _execution, allowedDesktopVersions: _versions, ...effective } = config;
+  const { execution: _execution, ...effective } = config;
   for (const key of desktopPolicyKeys) {
     if (key !== "showWelcomePage") delete effective[key];
   }

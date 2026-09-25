@@ -14,8 +14,9 @@ const test = spec.world(packagedActivatedLaunchWorld, { timeout: 180_000 });
  * The path existing enterprise customers take after an update: the bootstrap
  * already carries an activation stamp, so the activation gate must step aside
  * and the routes behind it must mount. The seeded Den is a closed local port,
- * so this holds with no network at all. Desktop policy enforcement is suspended:
- * even a requireSignin bootstrap opens the session screen with optional sign-in.
+ * so this holds with no network at all; the sign-in surface it lands on reads
+ * its heading from the bootstrap, not from Den. Required sign-in is a property
+ * of the enterprise build, independent of the suspended desktop policies.
  *
  * This is the activated half of a pair: packaged-first-launch boots the same
  * enterprise artifact with no bootstrap and requires the activation gate
@@ -23,6 +24,8 @@ const test = spec.world(packagedActivatedLaunchWorld, { timeout: 180_000 });
  * runs both against one binary.
  */
 const ACTIVATION_GATE_HEADING = "Link this app to your organization";
+const SIGN_IN_HEADING = "Welcome to OpenWork";
+/** Local work stays behind the forced sign-in surface. */
 const SESSION_HEADING = "What do you need done?";
 
 /** Heading of the root error boundary's recovery screen (app-error-boundary.tsx). */
@@ -39,13 +42,13 @@ test("an activated enterprise install boots past the activation gate without a r
   });
   if (flavor !== "enterprise") throw new Error(`Activation only exists in the enterprise flavor; point OPENWORK_EVAL_ELECTRON_BINARY at an enterprise build (got ${flavor})`);
 
-  // Stop on the first of: the session surface, the activation gate, the recovery
+  // Stop on the first of: the sign-in surface, the activation gate, the recovery
   // screen, or a render crash, so a failure names what went wrong instead of
   // timing out on a blank window.
   const rootText = await probe.eventually(() => world.rootText(), {
     within: 60_000,
     label: "activated enterprise routes mounted in #root",
-    until: (text) => text.includes(SESSION_HEADING) || text.includes(ACTIVATION_GATE_HEADING) || RECOVERY_HEADING.test(text) || world.exceptions().some(isRenderCrash),
+    until: (text) => text.includes(SIGN_IN_HEADING) || text.includes(SESSION_HEADING) || text.includes(ACTIVATION_GATE_HEADING) || RECOVERY_HEADING.test(text) || world.exceptions().some(isRenderCrash),
   });
   const mounted = world.exceptions();
   const crashes = mounted.filter(isRenderCrash);
@@ -56,10 +59,11 @@ test("an activated enterprise install boots past the activation gate without a r
   // Negative half: the seeded activation must be honoured, so the gate for an
   // unactivated machine must not appear.
   expect(rootText, "an already-activated install showed the activation gate").not.toContain(ACTIVATION_GATE_HEADING);
-  expect(rootText).toContain(SESSION_HEADING);
-  await user.see({ text: SESSION_HEADING });
+  expect(rootText, "an activated enterprise install let local work start before sign-in").not.toContain(SESSION_HEADING);
+  expect(rootText).toContain(SIGN_IN_HEADING);
+  await user.see({ text: SIGN_IN_HEADING });
   await user.notSee({ text: ACTIVATION_GATE_HEADING });
-  expect(await world.bootError(), "startup failed after the session surface mounted").toBeNull();
+  expect(await world.bootError(), "startup failed after the sign-in surface mounted").toBeNull();
   await user.notSee({ text: RECOVERY_HEADING });
   await user.screenshot();
 
@@ -67,11 +71,12 @@ test("an activated enterprise install boots past the activation gate without a r
   const final = await world.health();
   expect(await world.bootError(), "startup failed during settle").toBeNull();
   expect(final.rootText, "startup recovery appeared during settle").not.toMatch(RECOVERY_HEADING);
-  expect(final.rootText, "the activated session surface disappeared during settle").toContain(SESSION_HEADING);
+  expect(final.rootText, "the activated sign-in surface disappeared during settle").toContain(SIGN_IN_HEADING);
+  expect(final.rootText, "local work became reachable without sign-in during settle").not.toContain(SESSION_HEADING);
   expect(final.rootText, "an activated install returned to the activation gate").not.toContain(ACTIVATION_GATE_HEADING);
   const usable = final.controls.filter((control) => control.visible && control.enabled);
-  expect(usable.some((control) => control.editable), "the session composer must remain visible and editable").toBe(true);
-  expect(usable.some((control) => control.tag === "button" && control.text === "Sign in"), "optional sign-in must remain available").toBe(true);
+  expect(usable.some((control) => control.tag === "button" && control.text === "Sign in to OpenWork"), "Sign in must remain visible and enabled").toBe(true);
+  expect(usable.some((control) => control.tag === "button" && control.text === "Paste sign-in code"), "Sign-in code disclosure must remain visible and enabled").toBe(true);
   const exceptions = world.exceptions();
   const knownRejections = exceptions.filter(isKnownRejection);
   const unexpected = exceptions.filter((exception) => !isRenderCrash(exception) && !isKnownRejection(exception));
@@ -79,8 +84,8 @@ test("an activated enterprise install boots past the activation gate without a r
   expect(exceptions.filter(isRenderCrash).map(describeException), "the renderer threw after the activated enterprise routes mounted").toEqual([]);
 
   evidence.recordAssertionEvidence(
-    `An activated enterprise install with Den at ${world.denBaseUrl} (closed port) mounts "${SESSION_HEADING}" with an editable composer and never shows "${ACTIVATION_GATE_HEADING}"`,
+    `An activated enterprise install with Den at ${world.denBaseUrl} (closed port) mounts "${SIGN_IN_HEADING}" and never shows "${ACTIVATION_GATE_HEADING}" or the session surface`,
     `Final #root after ${REJECTION_SETTLE_MS} ms: ${JSON.stringify(final.rootText.slice(0, 200))}; visible enabled controls: ${JSON.stringify(usable)}; render crashes: ${exceptions.filter(isRenderCrash).length}; allowlisted rejections: ${knownRejections.length} of ${KNOWN_LAUNCH_REJECTIONS.length} known; unexpected rejections: ${unexpected.length}`,
-    exceptions.filter(isRenderCrash).length === 0 && unexpected.length === 0 && !final.rootText.includes(ACTIVATION_GATE_HEADING),
+    exceptions.filter(isRenderCrash).length === 0 && unexpected.length === 0 && !final.rootText.includes(ACTIVATION_GATE_HEADING) && !final.rootText.includes(SESSION_HEADING),
   );
 });
