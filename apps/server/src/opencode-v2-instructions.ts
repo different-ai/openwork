@@ -1,5 +1,5 @@
 import { readdir, readFile, realpath } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { parseFrontmatter } from "./frontmatter.js";
 import { OPENWORK_AGENT_PROMPT } from "./openwork-agent-prompt.js";
 
@@ -52,7 +52,16 @@ export function nativeSkillBody(content: string): string | null {
   return parsed.body.trim();
 }
 
-type Expected = { path: string; content: string };
+type Expected = { path: string; name: string; content: string };
+
+/** Native skill name: frontmatter `name`, else the skill directory (or flat file) name. */
+function nativeSkillName(path: string, content: string): string {
+  try {
+    const { name } = parseFrontmatter(content).data;
+    if (typeof name === "string") return name;
+  } catch { /* nativeSkillBody already rejected unparsable files. */ }
+  return basename(path) === "SKILL.md" ? basename(dirname(path)) : basename(path, ".md");
+}
 
 /**
  * Join the native file watcher, including content-only updates and removals.
@@ -75,7 +84,7 @@ export async function waitForOpenWorkV2Skills(
       scanned.add(path);
       const content = await readFile(file, "utf8").catch(() => null);
       const body = content === null ? null : nativeSkillBody(content);
-      if (body !== null) expected.push({ path, content: body });
+      if (body !== null && content !== null) expected.push({ path, name: nativeSkillName(file, content), content: body });
     }
   }
   const deadline = Date.now() + 5_000;
@@ -85,9 +94,16 @@ export async function waitForOpenWorkV2Skills(
     if (!record(payload) || !Array.isArray(payload.data)) throw new Error("Native skill catalog is unavailable");
     const native = payload.data.filter(record).filter((skill) => typeof skill.location === "string" && typeof skill.content === "string");
     const canonical = await Promise.all(native.map(async (skill) => ({
-      path: await canonicalPath(String(skill.location)), content: String(skill.content).trim(),
+      path: await canonicalPath(String(skill.location)),
+      name: typeof skill.name === "string" ? skill.name : undefined,
+      content: String(skill.content).trim(),
     })));
-    const present = (skill: Expected) => canonical.some((entry) => entry.path === skill.path && entry.content === skill.content);
+    // The engine serves one skill per name. When the same skill is installed in
+    // several folders (e.g. .agents/skills and .claude/skills), the copy it did
+    // not load is shadowed: waiting for it can never succeed, and the CLI runs.
+    const present = (skill: Expected) => canonical.some((entry) => entry.path === skill.path && entry.content === skill.content)
+      || (!canonical.some((entry) => entry.path === skill.path)
+        && canonical.some((entry) => entry.name === skill.name));
     const matches = expected.every(present);
     // Only reconcile directories OpenWork manages. Native plugin-provided
     // skills elsewhere under .opencode are not deleted workspace skills.

@@ -72,3 +72,23 @@ test("v2 discovers remote skills on demand and keeps local skills native", () =>
   expect(connected.skillInstructions).toContain("on demand");
   expect(JSON.stringify(connected)).not.toContain("<available_remote_skills>");
 });
+
+test("a skill installed in two agent folders is served once by the engine and does not block admission", async () => {
+  await withWorkspace(async (root) => {
+    // Same skill copied into .agents/skills and .claude/skills: the engine
+    // serves one skill per name, so the .claude copy is shadowed, not missing.
+    const body = "---\nname: mix-tape\ndescription: Local playground\n---\n\nMaintain the playground.\n";
+    const agents = join(root, ".agents", "skills", "mix-tape", "SKILL.md");
+    const claude = join(root, ".claude", "skills", "mix-tape", "SKILL.md");
+    for (const path of [agents, claude]) {
+      await mkdir(join(path, ".."), { recursive: true });
+      await writeFile(path, body);
+    }
+    let reads = 0;
+    await waitForOpenWorkV2Skills(root, async () => {
+      reads++;
+      return { data: [{ id: "mix-tape", name: "mix-tape", location: agents, content: "Maintain the playground." }] };
+    });
+    expect(reads).toBe(1);
+  });
+});
