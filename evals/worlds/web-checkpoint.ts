@@ -56,7 +56,17 @@ export async function checkpointWorld() {
       viewerState: () => evaluate(viewer.client, () => {
         const page = document.querySelector("iframe")?.contentDocument;
         const canvas = page?.querySelector("canvas");
-        return { connected: Boolean(page?.documentElement.classList.contains("noVNC_connected")), width: canvas?.width ?? 0, height: canvas?.height ?? 0 };
+        const context = canvas?.getContext("2d");
+        let paintedSamples = 0;
+        // The seeded web world uses the light theme. A connected RFB session can
+        // still have an empty black canvas before its first framebuffer arrives.
+        if (canvas && context && canvas.width && canvas.height) {
+          for (const x of [0.2, 0.4, 0.6]) for (const y of [0.25, 0.5, 0.75]) {
+            const pixel = context.getImageData(Math.floor(canvas.width * x), Math.floor(canvas.height * y), 1, 1).data;
+            if (pixel[0] > 180 && pixel[1] > 180 && pixel[2] > 180) paintedSamples++;
+          }
+        }
+        return { connected: Boolean(page?.documentElement.classList.contains("noVNC_connected")), width: canvas?.width ?? 0, height: canvas?.height ?? 0, paintedSamples };
       }),
       async publish(shot: { png: Buffer; hash: string; at: string; checkpoint?: EvidenceCheckpoint }, caption: string) {
         if (!shot.checkpoint) throw new Error("No checkpoint was captured");

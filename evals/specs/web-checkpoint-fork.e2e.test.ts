@@ -102,7 +102,7 @@ test("a reviewer enters a saved web browser with ten sessions and continues a pa
     const viewer = user.on(world.viewer);
     await viewer.navigate(fork.viewerUrl);
     await viewer.see({ role: "button", text: "Continue response" });
-    const frame = await probe.eventually(world.viewerState, { within: 30_000, label: "saved browser framebuffer", until: (value) => value.connected && value.width >= 1280 && value.height >= 700 });
+    const frame = await probe.eventually(world.viewerState, { within: 30_000, label: "saved browser framebuffer", until: (value) => value.connected && value.width >= 1280 && value.height >= 700 && value.paintedSamples >= 4 });
     expect(frame.connected).toBe(true);
     await viewer.screenshot();
     await viewer.click({ role: "button", text: "Continue response" });
