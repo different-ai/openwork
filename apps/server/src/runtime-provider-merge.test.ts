@@ -37,4 +37,10 @@ describe("mergeRuntimeProviderUpdate", () => {
   test("deleting a missing provider is a no-op", () => {
     expect(mergeRuntimeProviderUpdate({ ollama }, { lpr_missing: null })).toEqual({ ollama });
   });
+
+  test("returns same object reference on no-op patch (prevents unnecessary engine reload)", () => {
+    const initial = { ollama };
+    const updated = mergeRuntimeProviderUpdate(initial, { ollama });
+    expect(updated).toBe(initial);
+  });
 });
