@@ -1803,6 +1803,7 @@ export function SessionRoute() {
       },
       environmentRuntimeKey,
       readSideChatHistory,
+      sideChatWorkspaceId: selectedWorkspaceId,
       onApplyEnvironmentChanges: isDesktopRuntime() && selectedWorkspace?.workspaceType !== "remote"
         ? handleApplyEnvironmentChanges
         : undefined,
@@ -1937,6 +1938,7 @@ export function SessionRoute() {
       isRemoteWorkspace: workspace.workspaceType === "remote",
       isSandboxWorkspace: isSandboxWorkspace(workspace),
       readSideChatHistory,
+      sideChatWorkspaceId: workspace.id,
       environmentRuntimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
       onApplyEnvironmentChanges: undefined,
       onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void, agent?: string | null): Promise<CloudMcpSubmissionResult> => {

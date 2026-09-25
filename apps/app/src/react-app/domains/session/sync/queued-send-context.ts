@@ -13,6 +13,7 @@ export type QueuedSendContext = {
   model: ModelRef | null;
   environmentRuntimeKey: string | null;
   readSideChatHistory?: ReadSideChatHistory;
+  sideChatWorkspaceId?: string;
 };
 
 // Context is registered by the mounted surface (enqueueing only happens there)

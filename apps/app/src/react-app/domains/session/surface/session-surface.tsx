@@ -665,6 +665,8 @@ export type SessionSurfaceProps = {
   onOpenTarget?: (target: OpenTarget, options?: OpenTargetOptions, sessionId?: string) => void;
   environmentRuntimeKey?: string | null;
   readSideChatHistory?: ReadSideChatHistory;
+  /** Workbench identity; remote runtime workspace IDs may differ. */
+  sideChatWorkspaceId?: string;
   onApplyEnvironmentChanges?: () => Promise<ApplyEnvironmentChangesResult>;
 };
 
@@ -1093,11 +1095,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
       model: props.selectedModel,
       environmentRuntimeKey: props.environmentRuntimeKey ?? null,
       readSideChatHistory: props.readSideChatHistory,
+      sideChatWorkspaceId: props.sideChatWorkspaceId,
     });
   }, [
     props.client,
     props.environmentRuntimeKey,
     props.readSideChatHistory,
+    props.sideChatWorkspaceId,
     props.modelVariant,
     props.opencodeBaseUrl,
     props.openworkToken,
