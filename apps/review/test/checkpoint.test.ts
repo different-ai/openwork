@@ -55,6 +55,8 @@ test("expired, missing and disconnected checkpoints never allocate a VM", async 
     process.env.FREESTYLE_API_KEY = "synthetic-do-not-call";
     const bad = new Request("https://review.example/r/a/checkpoint/picture", { method: "POST", headers: { origin: "https://review.example" }, body: JSON.stringify({ requestId: "a".repeat(36), snapshotId: "arbitrary" }) });
     assert.equal((await POST(bad, { params: Promise.resolve({ id: current, evidenceId: "picture" }) })).status, 400);
+    const oversized = new Request("https://review.example/r/a/checkpoint/picture", { method: "POST", headers: { origin: "https://review.example" }, body: "x".repeat(201) });
+    assert.equal((await POST(oversized, { params: Promise.resolve({ id: current, evidenceId: "picture" }) })).status, 400);
   } finally {
     if (previousKey === undefined) delete process.env.FREESTYLE_API_KEY; else process.env.FREESTYLE_API_KEY = previousKey;
     if (previousDirectory === undefined) delete process.env.OPENWORK_REVIEW_LOCAL_DIR; else process.env.OPENWORK_REVIEW_LOCAL_DIR = previousDirectory;

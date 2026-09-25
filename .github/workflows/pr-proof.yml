@@ -312,6 +312,9 @@ jobs:
         if: always() && steps.preview.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.OPENWORK_REVIEW_VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.OPENWORK_REVIEW_VERCEL_PROJECT_ID }}
           PREVIEW_URL: ${{ steps.preview.outputs.url }}
           REPORT_ID: ${{ steps.report.outputs.report_id }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -325,6 +328,7 @@ jobs:
               test "$status" = 302 && [[ "$location" == https://vercel.com/sso-api* ]]
             fi
           done
+          pnpm dlx vercel@59.24.0 curl "/r/$REPORT_ID" --deployment "$PREVIEW_URL" --scope "$VERCEL_ORG_ID" --token "$VERCEL_TOKEN" -- --fail --silent --output /dev/null
           printf '## Interactive checkpoint evidence\n\n[Open this branch’s report](%s/r/%s). This protected preview runs the PR code; nothing needs to merge first. Checkpoints expire after 24 hours.\n' "$PREVIEW_URL" "$REPORT_ID" >> "$GITHUB_STEP_SUMMARY"
           gh pr comment "$PR_NUMBER" --body "<!-- web-checkpoint-preview -->
           [Open this branch's interactive checkpoint evidence]($PREVIEW_URL/r/$REPORT_ID). Select a checkpoint image, then **Open from here**. Checkpoints expire after 24 hours. The report records the actual test verdict."
