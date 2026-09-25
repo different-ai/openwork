@@ -86,6 +86,7 @@ export function createWorldView(options: {
   let spinnerFrame = 0;
   let stopped = false;
   let terminalFrame: string[] | undefined;
+  let launchedAt: number | undefined;
 
   const paint = (style: Parameters<typeof styleText>[0], text: string): string => (
     options.color ? styleText(style, text) : text
@@ -95,12 +96,18 @@ export function createWorldView(options: {
   const waitingDetail = (step: StepRow): string | undefined => {
     const waiting = now() - step.updatedAt;
     if (step.status !== "start" || waiting < heartbeatMs) return undefined;
-    return `still waiting (${formatElapsed(waiting)})${step.log ? ` · log ${step.log}` : ""}`;
+    // Keep the current sub-phase visible; only append how long it has been quiet.
+    return `${step.detail ? `${step.detail} · ` : ""}still waiting (${formatElapsed(waiting)})${step.log ? ` · log ${step.log}` : ""}`;
   };
 
   const ttyLines = (): string[] => {
     if (terminalFrame) return terminalFrame;
     const lines = [...headerLines];
+    // Before the world reports its first step (process start, imports, source
+    // pinning) show that it is alive instead of an apparently hung screen.
+    if (steps.length === 0 && launchedAt !== undefined) {
+      lines.push(`${paint("cyan", SPINNER[spinnerFrame % SPINNER.length])} Starting world… (${formatElapsed(now() - launchedAt)})`);
+    }
     for (const step of steps) {
       const elapsed = formatElapsed((step.status === "start" ? now() : step.updatedAt) - step.startedAt);
       if (step.status === "start") {
@@ -134,7 +141,7 @@ export function createWorldView(options: {
   };
 
   const spinner = setInterval(() => {
-    if (!steps.some((step) => step.status === "start")) return;
+    if (!steps.some((step) => step.status === "start") && !(steps.length === 0 && launchedAt !== undefined)) return;
     spinnerFrame += 1;
     redraw();
   }, spinnerMs);
@@ -180,6 +187,7 @@ export function createWorldView(options: {
           headerLines.push(`${paint("yellow", "⚠")} ${result.label}${result.detail ? ` ${result.detail}` : ""}${result.hint ? ` — ${result.hint}` : ""}`);
         }
       }
+      launchedAt = now();
       if (options.mode === "plain") {
         for (const line of headerLines) writeLine(line);
       } else {

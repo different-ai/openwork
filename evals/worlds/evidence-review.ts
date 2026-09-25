@@ -18,6 +18,7 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 export async function reviewWorld(
   environment: "preview" | "production" = "preview",
   sandboxFixture = false,
+  checkpointFixture = false,
 ) {
   const directory = await mkdtemp(join(tmpdir(), "openwork-review-world-"));
   const storage = join(directory, "reports");
@@ -137,6 +138,18 @@ export async function reviewWorld(
     docShots: [receipt],
     title: "Sharing a skill, from link to access",
   });
+  if (checkpointFixture) {
+    const image = bundle.report.evidence.find((entry) => entry.kind === "image");
+    const section = image && bundle.report.sections.find((entry) => entry.sourceId === image.sourceId);
+    if (!image || image.kind !== "image" || !section) throw new Error("Missing review image fixture");
+    for (const expired of [false, true]) {
+      const id = expired ? "expired-checkpoint" : "unconfigured-checkpoint";
+      bundle.report.evidence.push({ ...image, id, caption: expired ? "Expired checkpoint fixture" : "Unavailable checkpoint fixture",
+        checkpoint: { version: 1, provider: "freestyle", id: `ow-evidence-v1-${(expired ? "e" : "f").repeat(32)}`, sourceSha: gitSha, imageHash: image.asset.slice(0, -4),
+          capturedAt: new Date(Date.now() - 3600_000).toISOString(), expiresAt: new Date(Date.now() + (expired ? -1000 : 3600_000)).toISOString() } });
+      section.evidenceIds.push(id);
+    }
+  }
   const passed = await uploadReview(bundle.report, bundle.assets, {
     localDir: storage,
   });
@@ -259,13 +272,13 @@ export async function reviewWorld(
   };
 }
 
-export async function reviewBrowserWorld(_seed: Seed, { place }: { place: Place }) {
+export async function reviewBrowserWorld(_seed: Seed, { place }: { place: Place }, checkpointFixture = false) {
   if (place.kind !== "local") {
     throw new Error("The production review HTTP fixture requires --local; it never provisions a VM.");
   }
   const resources = new AsyncDisposableStack();
   try {
-    const review = resources.use(await reviewWorld());
+    const review = resources.use(await reviewWorld("preview", false, checkpointFixture));
     const host = resources.use(localHost());
     const app = resources.use(await chrome({
       name: "freestyle-review",

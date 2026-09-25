@@ -99,6 +99,7 @@ import { EffectivePermissionsPanel } from "@/react-app/domains/settings/panels/e
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
 import { AdvancedView } from "@/react-app/domains/settings/pages/advanced-view";
 import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
+import { KeyboardShortcutsView } from "@/react-app/domains/settings/pages/keyboard-shortcuts-view";
 import { CloudAccountView } from "@/react-app/domains/settings/pages/cloud-account-view";
 import {
   connectPluginsForComposer,
@@ -318,6 +319,7 @@ export function parseSettingsPath(pathname: string): {
     case "preferences":
     case "permissions":
     case "appearance":
+    case "shortcuts":
     case "environment":
     case "updates":
     case "debug":
@@ -2720,6 +2722,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             setLanguage={setLocale}
             hideTitlebar={hideTitlebar}
             toggleHideTitlebar={() => setHideTitlebar((current) => !current)}
+          />
+        );
+      case "shortcuts":
+        return (
+          <KeyboardShortcutsView
+            client={opencodeClient}
+            baseUrl={opencodeBaseUrl}
+            directory={selectedWorkspaceRoot}
+            onOpenProviders={() => navigateSettingsPath("ai")}
           />
         );
       case "updates":

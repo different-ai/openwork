@@ -827,10 +827,10 @@ export class UserChannel implements User {
     });
   }
 
-  screenshot() {
+  screenshot(options?: { checkpoint?: boolean }) {
     const surface = requireSurface(this.#surface);
     const caption = this.#runtime.currentStepName();
-    return this.#runtime.call("user", "screenshot", "screenshot", surface, () => screenshot(surface, { caption }));
+    return this.#runtime.call("user", "screenshot", "screenshot", surface, () => screenshot(surface, { caption, ...options }));
   }
 
   looks(expectations: string[]): Promise<void> {

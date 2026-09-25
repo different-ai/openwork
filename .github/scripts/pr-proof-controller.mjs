@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { appendFile, readFile } from "node:fs/promises";
+import { internalProofContributor } from "./internal-proof-contributor.mjs";
 import { changedFiles, packagedJourney, proofKey, proofLanes, selectProof } from "./pr-proof.mjs";
 
 const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, "utf8"));
@@ -20,16 +21,20 @@ const trust = { event, repo, actor: process.env.GITHUB_ACTOR, triggeringActor: p
 proofLanes(specs, { ...trust, current });
 const latest = api(`repos/${repo}/pulls/${pr}`);
 if (latest.head.sha !== current.head.sha) throw new Error("PR head changed during selection.");
-const { normalSpecs, liveSpecs, packagedSpecs } = proofLanes(specs, { ...trust, current: latest });
+const { normalSpecs, liveSpecs, packagedSpecs, daytonaSpecs, checkpointSpecs } = proofLanes(specs, { ...trust, current: latest });
+const internalContributor = internalProofContributor(event.pull_request, event.repository) && internalProofContributor(latest, event.repository);
 const matrix = selected => JSON.stringify({ include: selected.map(spec => ({ spec, key: proofKey(spec) })) });
 const packagedMatrix = selected => JSON.stringify({ include: selected.map(spec => ({ spec, key: proofKey(spec), journey: packagedJourney(spec) })) });
 if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT,
-  `matrix=${matrix(normalSpecs)}\nselected=${normalSpecs.length > 0}\nliveMatrix=${matrix(liveSpecs)}\nliveSelected=${liveSpecs.length > 0}\npackagedMatrix=${packagedMatrix(packagedSpecs)}\npackagedSelected=${packagedSpecs.length > 0}\n`);
+  `internalContributor=${internalContributor}\nmatrix=${matrix(normalSpecs)}\nselected=${normalSpecs.length > 0}\nliveMatrix=${matrix(liveSpecs)}\nliveSelected=${liveSpecs.length > 0}\npackagedMatrix=${packagedMatrix(packagedSpecs)}\npackagedSelected=${packagedSpecs.length > 0}\ndaytonaMatrix=${matrix(daytonaSpecs)}\ndaytonaSelected=${daytonaSpecs.length > 0}\ncheckpointMatrix=${matrix(checkpointSpecs)}\ncheckpointSelected=${checkpointSpecs.length > 0}\n`);
 const summary = specs.length
   ? `## PR proof selection\n\n${specs.length} added or changed E2E spec(s) will run on this head; their records are the PR's proof.\n\n${specs.map(spec => `- \`${spec}\``).join("\n")}\n`
   : "## PR proof selection\n\nThis PR adds or changes no `evals/specs/**/*.e2e.test.ts`. No proof was executed and no evidence will be published for it.\n";
-const liveSummary = liveSpecs.length
-  ? "\nLive proof requires reviewer approval of the `pr-slow-specs` environment and executes the whole selected file with real OpenAI. Native parity runs both pinned engines; streaming continuity runs local v1 appWeb. Ordinary proof remains unprotected and secret-free.\n"
+const liveSummary = liveSpecs.length || daytonaSpecs.length || checkpointSpecs.length
+  ? (internalContributor
+    ? "\nProof for this internal organization contributor runs automatically in `pr-internal-specs`.\n"
+    : "\nProof for this contributor requires reviewer approval of the `pr-slow-specs` environment.\n")
+    + "Daytona Windows proof runs the exact published installer on a private VM; ordinary proof remains unprotected and secret-free.\n"
   : "";
 if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, summary + liveSummary);
 console.log(summary + liveSummary);
