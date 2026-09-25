@@ -209,6 +209,8 @@ export function CoworkerHome({
   const [besideDocumentId, setBesideDocumentId] = useState("");
   const documentNavigation: DocumentNavigationGuard = useRef(null);
   const besideNavigation: DocumentNavigationGuard = useRef(null);
+  /** Set only while the profile editor holds unsaved changes. */
+  const settingsNavigation: DocumentNavigationGuard = useRef(null);
   const [documentNotice, setDocumentNotice] = useState("");
   const allowDocumentNavigation = useCallback(() => {
     const message = documentNavigation.current?.() || besideNavigation.current?.() || "";
@@ -354,9 +356,14 @@ export function CoworkerHome({
     });
   }
   const overlayPanel = windowWidth < NARROW_WINDOW && !contextPanel.collapsed;
-  useDocumentNavigationGuard(navigationGuard, () => documentNavigation.current?.() || besideNavigation.current?.()
-    || (!contextPanel.collapsed && contextView === "settings" ? "Close coworker settings before opening another source. Your settings have been kept." : null)
-    || (overlayPanel ? "Close the current sidebar before opening another source. Its contents have been kept." : null));
+  // The side panel never has to be closed to go somewhere else. Only unsaved work asks first:
+  // a document draft, or profile edits in coworker settings (which otherwise save as they change).
+  // A narrow window's overlay panel steps aside instead of blocking.
+  useDocumentNavigationGuard(navigationGuard, () => {
+    const message = documentNavigation.current?.() || besideNavigation.current?.() || settingsNavigation.current?.() || null;
+    if (!message && overlayPanel) collapseContextPanel();
+    return message;
+  });
   const documentHooks: DocumentHooks = {
     list: documents ?? NO_DOCUMENTS,
     onOpenDocument: (documentId) => {
@@ -756,6 +763,7 @@ export function CoworkerHome({
           {contextView === "settings" && settingsLevel.kind === "root" ? (
             <PanelLevel key="settings" direction={nav.direction}>
               <CoworkerSettings
+                navigationGuard={settingsNavigation}
                 runtime={runtime}
                 session={session}
                 coworker={coworker}
@@ -987,6 +995,7 @@ function AiUnavailableNote({
 }
 
 function CoworkerSettings({
+  navigationGuard,
   runtime,
   session,
   coworker,
@@ -1000,6 +1009,7 @@ function CoworkerSettings({
   onOpenAbilities,
   focus,
 }: {
+  navigationGuard: DocumentNavigationGuard;
   runtime: RuntimeInfo;
   session: DenSession | null;
   coworker: CoworkerSummary;
@@ -1075,6 +1085,7 @@ function CoworkerSettings({
     || avatarColor !== coworker.avatarColor
     || avatarGlasses !== coworker.avatarGlasses
     || personality !== coworker.personality;
+  useDocumentNavigationGuard(navigationGuard, () => dirty ? "Save or undo your changes to this coworker's profile before opening another source." : null);
   const flatInput = "w-full rounded-lg border border-transparent bg-white/[0.04] px-2.5 py-1.5 text-sm text-snow outline-none placeholder:text-mist/60 focus:border-spark/40";
 
   return (
