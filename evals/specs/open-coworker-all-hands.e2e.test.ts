@@ -106,7 +106,7 @@ const test = spec.world(async () => {
       if (envelope.ok !== true) throw new Error(`Bridge failed: ${command}: ${String(envelope.error)}`);
       return envelope.result;
     };
-    await invoke("settings.update", { automaticMemoryEnabled: false });
+    await invoke("settings.update", { automaticMemoryEnabled: false, features: { calendar: true, notifications: true } });
     for (const name of ["Scout", "Editor"]) {
       await invoke("coworkers.create", { name, role: "Launch reviewer", mission: "Review the launch without external action.", avatarColor: "blue", avatarGlasses: "round" });
       await invoke("coworkers.update", { slug: name.toLowerCase(), patch: { model: "eval-team/team", modelVariant: "", modelMode: "fixed", modelChosenBy: "person", useAppModelDefaults: name === "Editor" } });

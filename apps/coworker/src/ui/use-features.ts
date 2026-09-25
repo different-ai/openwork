@@ -27,9 +27,9 @@ export function refreshFeatures(): Promise<void> {
   return loading;
 }
 
-/** Turn one feature on or off; every view updates once the setting is saved. */
-export async function setFeature(id: FeatureId, enabled: boolean): Promise<Features> {
-  const settings = await coworkerBridge.settings.update({ features: { ...current, [id]: enabled } });
+/** Turn features on or off in one save; every view updates once the setting is saved. */
+export async function setFeatures(patch: Partial<Features>): Promise<Features> {
+  const settings = await coworkerBridge.settings.update({ features: { ...current, ...patch } });
   const next = normalizeFeatures(settings.features);
   publish(next);
   return next;

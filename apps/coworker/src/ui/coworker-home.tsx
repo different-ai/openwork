@@ -87,6 +87,8 @@ export type CoworkerHomeRequest =
   | { id: number; kind: "activity"; threadId: string }
   | { id: number; kind: "document"; documentId: string }
   | { id: number; kind: "responsibilities" }
+  /** Put a message in the open discussion's composer for the person to send. */
+  | { id: number; kind: "draft"; text: string }
   | { id: number; kind: "turn"; prompt: string };
 
 /**
@@ -311,6 +313,10 @@ export function CoworkerHome({
     }
     if (request.kind === "turn") {
       setTurnRequest({ id: request.id, prompt: request.prompt });
+      return;
+    }
+    if (request.kind === "draft") {
+      setDiscussionDraft({ id: request.id, text: request.text });
       return;
     }
     if (request.kind === "document") {

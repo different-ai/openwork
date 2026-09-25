@@ -51,6 +51,7 @@ import { VoiceContext } from "@/ui/use-voice";
 import { useActivityInbox } from "@/ui/use-activity-inbox";
 import { refreshFeatures, useFeatures } from "@/ui/use-features";
 import { CustomizeCoworker, type CustomizeFocus } from "@/ui/customize-coworker";
+import { MarketplaceDialog } from "@/ui/marketplace";
 import type { ActivityDocumentTarget } from "@/ui/activity-inbox";
 
 const ActivityInbox = lazy(() => import("@/ui/activity-inbox").then((module) => ({ default: module.ActivityInbox })));
@@ -223,6 +224,14 @@ export default function App() {
   const [groupDetailsOpen, setGroupDetailsOpen] = useState(false);
   /** The coworker whose Customize page is open, over the team view, which stays as it was underneath. */
   const [customizing, setCustomizing] = useState<{ slug: string; createdAt: string; focus?: CustomizeFocus; id: number } | null>(null);
+  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
+  // A feature switched off takes its view along: Activity returns to chat and the Marketplace closes.
+  useEffect(() => {
+    if (!features.notifications && mainContent === "activity") navigate("chat", true);
+  }, [features.notifications, mainContent, navigate]);
+  useEffect(() => {
+    if (!features.marketplace) setMarketplaceOpen(false);
+  }, [features.marketplace]);
   const [connecting, setConnecting] = useState(false);
   const [onboardingReady, setOnboardingReady] = useState(false);
   const [onboardingDraft, setOnboardingDraft] = useState<OnboardingDraft>(() => emptyOnboardingDraft());
@@ -1347,6 +1356,7 @@ export default function App() {
               eventGroupIds={eventGroupIds}
               onNewCoworker={() => { navigationGeneration.current += 1; if (allowSourceNavigation()) setCreating(true); }}
               onOpenOpenWork={() => openGlobalSettings()}
+              onOpenMarketplace={() => setMarketplaceOpen(true)}
               groups={liveGroups}
               groupLines={groupLines}
               groupActiveSlugs={groupActiveSlugs}
@@ -1479,6 +1489,24 @@ export default function App() {
           </div>
         )}
       </div>
+      {marketplaceOpen && workspaceActive && features.marketplace ? (
+        <MarketplaceDialog
+          session={session}
+          team={coworkers}
+          current={selected}
+          connect={(selected ? connectBySlug[selected.slug] : undefined) ?? Object.values(connectBySlug)[0] ?? null}
+          onRepairConnect={() => void syncConnect({ force: true, remint: true })}
+          onClose={() => setMarketplaceOpen(false)}
+          onSignIn={() => { setMarketplaceOpen(false); setConnecting(true); }}
+          onAdded={addCoworkerToList}
+          onOpenCoworker={(slug) => { setMarketplaceOpen(false); visitCoworker(slug); }}
+          onTry={(prompt) => {
+            if (!selected) return;
+            setMarketplaceOpen(false);
+            if (visitCoworker(selected.slug)) setHomeRequest({ id: nextRequestId(), slug: selected.slug, kind: "draft", text: prompt });
+          }}
+        />
+      ) : null}
       {customizingCoworker && !globalSettings && !factoryResetOpen && !replayOnboarding ? (
         <div className="absolute inset-0 flex" data-testid="customize-coworker-pane">
           <CustomizeCoworker

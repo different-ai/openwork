@@ -26,8 +26,8 @@ import { Button, ErrorNote, HelpTip, StatusDot } from "@/ui/kit";
 import { LocalProviders } from "@/ui/local-providers";
 import { ModelsMembershipCard } from "@/ui/models-membership";
 import { FreshStartSettings } from "@/ui/fresh-start-settings";
-import { FEATURES, type FeatureId } from "@/lib/features";
-import { setFeature, useFeatures } from "@/ui/use-features";
+import { FEATURES, featureProfile, profileFeatures, type FeatureId, type FeatureProfile, type Features } from "@/lib/features";
+import { setFeatures, useFeatures } from "@/ui/use-features";
 
 export type SettingsSection = "general" | "features" | "model-defaults" | "account" | "models" | "engine" | "fresh-start";
 
@@ -103,19 +103,26 @@ function SettingsRow({ label, value, hint, tone, action }: { label: string; valu
   );
 }
 
+const PROFILES = [
+  { id: "simple", label: "Simple", detail: "Coworkers and conversations. Everything below stays off until you turn it on." },
+  { id: "advanced", label: "Advanced", detail: "Every feature on: the Marketplace, notifications, calendar and more." },
+] as const;
+
 /**
- * Optional features, each one switch. A new person starts with all of them
- * off; turning one on brings in its interface, what coworkers know about it,
- * and any automation it drives.
+ * Optional features: Simple (all off, how everyone starts) or Advanced (all
+ * on) in one choice, then each one switch. Turning one on brings in its
+ * interface, what coworkers know about it, and any automation it drives.
  */
 function FeaturesSettings() {
   const features = useFeatures();
-  const [saving, setSaving] = useState<FeatureId | null>(null);
+  const [saving, setSaving] = useState<FeatureId | FeatureProfile | null>(null);
   const [error, setError] = useState("");
-  async function toggle(id: FeatureId, enabled: boolean) {
-    setSaving(id);
+  const profile = featureProfile(features);
+  const on = FEATURES.filter(({ id }) => features[id]).length;
+  async function save(key: FeatureId | FeatureProfile, patch: Partial<Features>) {
+    setSaving(key);
     setError("");
-    try { await setFeature(id, enabled); }
+    try { await setFeatures(patch); }
     catch { setError("That change could not be saved. Nothing else changed."); }
     finally { setSaving(null); }
   }
@@ -125,6 +132,25 @@ function FeaturesSettings() {
         <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">Features</h2>
         <p className="mt-1 max-w-2xl text-sm text-mist">Open Coworker starts simple. Turn on what you need; turning something off keeps its data for later.</p>
       </div>
+      <div>
+        <div role="radiogroup" aria-label="Mode" className="grid gap-3 sm:grid-cols-2" data-testid="features-profile" data-profile={profile}>
+          {PROFILES.map((choice) => {
+            const selected = profile === choice.id;
+            return (
+              <button key={choice.id} type="button" role="radio" aria-checked={selected} disabled={saving !== null} aria-busy={saving === choice.id || undefined} data-testid={`features-profile-${choice.id}`}
+                onClick={() => { if (!selected) void save(choice.id, profileFeatures(choice.id)); }}
+                className={`rounded-xl border px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/60 disabled:opacity-60 ${selected ? "border-spark/60 bg-spark/10" : "border-line bg-panel/45 hover:bg-white/[0.04]"}`}>
+                <span className="flex items-center gap-2 text-sm font-semibold text-snow">
+                  <span aria-hidden="true" className={`flex size-4 items-center justify-center rounded-full border ${selected ? "border-spark" : "border-white/25"}`}>{selected ? <span className="size-2 rounded-full bg-spark" /> : null}</span>
+                  {choice.label}
+                </span>
+                <span className="mt-1 block pl-6 text-xs leading-relaxed text-mist">{choice.detail}</span>
+              </button>
+            );
+          })}
+        </div>
+        {profile === "custom" ? <p className="mt-2 text-xs text-mist" data-testid="features-profile-custom">Custom: {on} of {FEATURES.length} features on.</p> : null}
+      </div>
       <SettingsCard testId="features-card">
         {FEATURES.map((feature) => (
           <div key={feature.id} className="flex items-start gap-4 border-t border-line px-4 py-3.5 first:border-t-0" data-testid={`feature-${feature.id}`}>
@@ -132,7 +158,7 @@ function FeaturesSettings() {
               <span className="block text-sm font-semibold text-snow">{feature.label}</span>
               <span className="mt-0.5 block text-xs leading-relaxed text-mist">{feature.detail}</span>
             </span>
-            <FeatureSwitch label={feature.label} checked={features[feature.id]} disabled={saving !== null} onChange={(enabled) => void toggle(feature.id, enabled)} />
+            <FeatureSwitch label={feature.label} checked={features[feature.id]} disabled={saving !== null} onChange={(enabled) => void save(feature.id, { [feature.id]: enabled })} />
           </div>
         ))}
       </SettingsCard>

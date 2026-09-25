@@ -25,7 +25,8 @@ import { configureNativePluginBundles, verifyNativePluginBundles } from "./nativ
 import { nativeTurnAgent, coworkerAgent, NATIVE_COORDINATOR_AGENT } from "./native-turns.mjs";
 import { assertTeamCompatibleHomes, teamWorkspaceDirectory, teamWorkspaceId, updateTeamWorkspaceConfig, writeTeamFeatures } from "./team-workspace.mjs";
 import { createLinkPreviews } from "./link-preview.mjs";
-import { DEFAULT_FEATURES } from "../src/lib/features.ts";
+import { DEFAULT_FEATURES, INTERFACE_FEATURES } from "../src/lib/features.ts";
+import { featuredCoworker, featuredInstructions, featuredOrigin, routineInstructions } from "../src/lib/featured-coworkers.ts";
 import { assertOwnedNativeTool, createTeamSessionRegistry, resolveNativeFilesystemScope } from "./team-sessions.mjs";
 import { awaitNativePluginActivation, prepareNativeTurnRoles } from "./turn-roles-plugin.mjs";
 import { dispatchNativeTurn, nativeTurnReceipt, waitForNativeTurn, verifyNativeTurnSkills } from "./native-recovery.mjs";
@@ -68,6 +69,7 @@ import { assignmentToolCatalog, createAssignmentToolHandlers, createSelfToolHand
 import {
   createCoworker,
   createLongTermMemory,
+  slugifyCoworkerName,
   defaultCoworkersDir,
   deleteLongTermMemory,
   deleteRetiredCoworker,
@@ -2916,6 +2918,72 @@ function shortDate(at) {
 
 const installTemplates = createTemplateInstaller(coworkersDir, addCoworker);
 
+/**
+ * Add a coworker featured in the Marketplace: its playbooks (installed for the
+ * whole team, like any skill), its starting instructions, what it already
+ * knows, and, while Calendar is on, its jobs on a schedule. An organization
+ * that manages skills keeps the playbooks out; the coworker joins without them
+ * and its instructions name only what was installed. Adding one that is
+ * already on the team returns it instead of a second copy.
+ */
+async function addFeaturedCoworker(id) {
+  const source = featuredCoworker(String(id ?? ""));
+  if (!source) throw new Error("That coworker is not in the Marketplace.");
+  const current = await listCoworkers(coworkersDir);
+  const existing = current.find((member) => member.templateOrigin === featuredOrigin(source.id));
+  if (existing) return { coworker: existing, skippedPlaybooks: [], notReady: false };
+  const handle = await ensurePlatformServer();
+  const installed = [];
+  const skippedPlaybooks = [];
+  for (const skill of source.skills) {
+    try {
+      await fetchJson(`${handle.url}/workspace/${encodeURIComponent(teamWorkspace().workspaceId)}/skills`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` },
+        body: JSON.stringify({ name: skill.name, description: skill.description, content: skill.body }),
+      }, 30_000);
+      installed.push(skill);
+    } catch (error) {
+      skippedPlaybooks.push(skill.title);
+      console.warn(`[open-coworker] the ${skill.name} playbook was not installed`, error instanceof Error ? error.message : error);
+    }
+  }
+  let name = source.name;
+  for (let suffix = 2; current.some((member) => member.slug === slugifyCoworkerName(name)); suffix += 1) name = `${source.name} ${suffix}`;
+  let coworker;
+  let notReady = false;
+  try {
+    coworker = await addCoworker({
+      name, role: source.role, mission: source.mission, avatarColor: source.avatarColor, avatarGlasses: source.avatarGlasses, personality: source.personality,
+      templateInstructions: featuredInstructions({ ...source, skills: installed }), templateOrigin: featuredOrigin(source.id), templateVersion: "1",
+      firstNote: `Joined from the Marketplace on ${shortDate(Date.now())}.`,
+    });
+  } catch (error) {
+    // The coworker is written before its first warmup, which retries when it
+    // is opened. Finish what it knows and its routines instead of leaving a
+    // half-imported coworker that a second Add would return as it is.
+    coworker = (await listCoworkers(coworkersDir)).find((member) => member.templateOrigin === featuredOrigin(source.id));
+    if (!coworker) throw error;
+    notReady = true;
+    console.warn(`[open-coworker] ${source.name} joined but is not ready yet`, error instanceof Error ? error.message : error);
+  }
+  for (const memory of source.memories) {
+    const created = await createLongTermMemory(coworkersDir, coworker.slug, { title: memory.title, summary: memory.summary });
+    await writeTrackedFile(coworkersDir, coworker.slug, `memory/long-term/${created.file}`, `# ${memory.title}\n\n${memory.body}\n`);
+  }
+  // Routines come along only while Calendar is on; with it off the person sees none, so none are made.
+  const { features } = await readSettings(settingsPath);
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  for (const routine of features.calendar ? source.routines : []) {
+    await createLocalResponsibility(coworkersDir, coworker.slug, {
+      name: routine.name,
+      instructions: routineInstructions(routine, source.skills, new Set(installed.map((skill) => skill.name))),
+      schedule: { kind: "weekly", timezone, daysOfWeek: routine.days, hour: routine.hour, minute: routine.minute },
+    }, Date.now(), await localScheduleOptions());
+  }
+  return { coworker: await getCoworker(coworkersDir, coworker.slug), skippedPlaybooks, notReady };
+}
+
 async function checkedSessionCoworker(input) {
   const coworker = await getCoworker(coworkersDir, input.slug);
   if (coworker.createdAt !== input.createdAt) throw new Error("The original coworker is no longer available.");
@@ -3046,6 +3114,21 @@ const commands = {
     return runtimeInfo();
   },
   "coworkers.list": async () => listPreparedCoworkers(),
+  "marketplace.addCoworker": async ({ id }) => addFeaturedCoworker(id),
+  // Only a skill installed in the team's own folder on this Mac can be removed here;
+  // organization skills are managed in OpenWork.
+  "marketplace.removeSkill": async ({ name }) => {
+    const skill = String(name ?? "").trim();
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(skill)) throw new Error("Choose a skill to remove.");
+    const folder = path.join(teamWorkspace().path, ".opencode", "skills", skill);
+    if (!existsSync(path.join(folder, "SKILL.md"))) throw new Error("That skill is not installed on this Mac.");
+    const handle = await ensurePlatformServer();
+    await fetchJson(`${handle.url}/workspace/${encodeURIComponent(teamWorkspace().workspaceId)}/skills/${encodeURIComponent(skill)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${ownerToken}` },
+    }, 30_000);
+    return { ok: true };
+  },
   "coworkers.get": async ({ slug }) => repairGroupSelection(await getCoworker(coworkersDir, slug), await listGroups(coworkersDir), (owner, patch) => updateCoworker(coworkersDir, owner, patch)),
   "coworkers.openFolder": async ({ slug }) => {
     if (slug !== undefined && typeof slug !== "string") throw new Error("Coworker slug must be a string.");
@@ -3400,8 +3483,10 @@ const commands = {
     const next = await updateSettings(settingsPath, patch);
     progressSummaries.configure(next);
     conversationMemory.configure(next);
-    if (JSON.stringify(previous.features) !== JSON.stringify(next.features)) {
+    const changed = Object.keys(next.features).filter((id) => previous.features[id] !== next.features[id]);
+    if (changed.some((id) => !INTERFACE_FEATURES.includes(id))) {
       // Rewrite every coworker's contract and denied tools now; the next turn prepares against them.
+      // Features that only show or hide part of the app leave the coworkers as they are.
       await installNativeCoworkerPlugins(teamWorkspace(), await ensureToolsServer());
       invalidateWorkspaceReadiness();
     }

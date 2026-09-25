@@ -117,6 +117,55 @@ export function buildDenAccountUrl(baseUrl: string, destination: "models" | "bil
   return url.toString();
 }
 
+/** A page of OpenWork's Library on the web (connector setup, a connector's page), with this app's attribution. */
+export function buildDenLibraryUrl(baseUrl: string, pathname: string): string {
+  const url = new URL(baseUrl);
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("OpenWork needs a web address.");
+  url.pathname = pathname;
+  url.search = "";
+  url.hash = "";
+  url.username = "";
+  url.password = "";
+  url.searchParams.set("utm_source", "opencoworker");
+  url.searchParams.set("utm_medium", "desktop");
+  return url.toString();
+}
+
+// Connectors, read the way OpenWork's desktop Library reads them (apps/app/src/app/lib/den.ts).
+const usableConnectionsSchema = z.object({
+  connections: z.array(z.object({
+    id: z.string().min(1),
+    name: z.string(),
+    url: z.string(),
+    connected: z.boolean().catch(false),
+    /** Always true for a connected shared connection; per member otherwise. */
+    connectedForMe: z.boolean().catch(false),
+    nativeProviderKey: z.string().nullish(),
+  })),
+});
+const connectionPresetsSchema = z.object({
+  presets: z.array(z.object({ presetId: z.string().min(1), displayName: z.string(), url: z.string() })),
+});
+const connectStartSchema = z.object({
+  status: z.enum(["connected", "needs_auth"]),
+  authorizeUrl: z.string().nullish(),
+});
+
+export async function listUsableConnections(session: DenSession): Promise<import("./marketplace.ts").UsableConnection[]> {
+  const payload = usableConnectionsSchema.parse(await denRequest(session.baseUrl, "/v1/mcp-connections?scope=usable", { token: session.token, orgId: session.orgId }));
+  return payload.connections;
+}
+
+export async function listConnectionPresets(session: DenSession): Promise<import("./marketplace.ts").ConnectionPreset[]> {
+  return connectionPresetsSchema.parse(await denRequest(session.baseUrl, "/v1/mcp-connections/presets", { token: session.token, orgId: session.orgId })).presets;
+}
+
+/** Start this person's sign-in to a connection; `needs_auth` comes with the page to finish it on. */
+export async function startConnection(session: DenSession, connectionId: string): Promise<{ status: "connected" | "needs_auth"; authorizeUrl: string | null }> {
+  const payload = connectStartSchema.parse(await denRequest(session.baseUrl, `/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/start`, { token: session.token, orgId: session.orgId }));
+  return { status: payload.status, authorizeUrl: payload.authorizeUrl ?? null };
+}
+
 export async function readModelsMembership(session: DenSession): Promise<ModelsMembership> {
   const payload = await denRequest(session.baseUrl, "/v1/inference", { token: session.token, orgId: session.orgId });
   return modelsMembershipSchema.parse(payload).inference;

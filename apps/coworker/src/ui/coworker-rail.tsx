@@ -6,7 +6,7 @@ import type { DenSession } from "@/lib/den";
 import type { CoworkerActivity } from "@/lib/threads";
 import { CoworkerMark } from "@/ui/brand";
 import { CoworkerAvatar, GroupAvatars } from "@/ui/coworker-avatar";
-import { Button, IconButton, PlusIcon, SearchIcon, SlidersIcon, StatusDot, Tooltip } from "@/ui/kit";
+import { Button, IconButton, PlusIcon, SearchIcon, StatusDot, Tooltip } from "@/ui/kit";
 import type { ResizablePanel } from "@/ui/use-resizable-panel";
 import { CalendarIcon, MainContentSwitch, type MainContent } from "@/ui/main-content-switch";
 import { CalendarSidebar } from "@/ui/calendar-sidebar";
@@ -62,6 +62,7 @@ export function CoworkerRail({
   onSelect,
   onNewCoworker,
   onOpenOpenWork,
+  onOpenMarketplace,
   groups = [],
   groupLines = {},
   groupActiveSlugs = {},
@@ -100,6 +101,8 @@ export function CoworkerRail({
   onSelect: (slug: string) => void;
   onNewCoworker: () => void;
   onOpenOpenWork: () => void;
+  /** Featured coworkers and apps, from the store icon beside the account row while Marketplace is on. */
+  onOpenMarketplace: () => void;
   /** Group chats (several coworkers in one conversation), newest first, archived ones excluded. */
   groups?: CoworkerGroupSummary[];
   /** One plain line per group: the latest activity, when known. */
@@ -113,8 +116,9 @@ export function CoworkerRail({
   activityError?: boolean;
 }) {
   // Without Calendar there are no events: no Chat/Calendar switch, no calendar shortcuts,
-  // and group chats need no filter because they are the only kind.
-  const { calendar: calendarEnabled } = useFeatures();
+  // and group chats need no filter because they are the only kind. Without
+  // Notifications there is no Activity bell; without Marketplace, no store icon.
+  const { calendar: calendarEnabled, notifications: notificationsEnabled, marketplace: marketplaceEnabled } = useFeatures();
   const bySlug = new Map(coworkers.map((coworker) => [coworker.slug, coworker]));
   const membersOf = (group: CoworkerGroupSummary) => group.participantSlugs.map((slug) => bySlug.get(slug)).filter((member): member is CoworkerSummary => Boolean(member));
   const [query, setQuery] = useState("");
@@ -229,7 +233,7 @@ export function CoworkerRail({
     .split(/\s+/).slice(0, 2).map((part) => Array.from(part)[0]).join("").toLocaleUpperCase();
   const accountDescription = `${accountName} · ${accountLabel} · Account and settings`;
   const activityLabel = `Activity${unreadActivity ? ` · ${unreadActivity} unread` : ""}${unreadMentions ? ` · ${unreadMentions} mentions of you` : ""}${activityError ? " · Refresh unavailable" : ""}`;
-  const activityBell = <IconButton label={activityLabel} tooltipSide="right" aria-pressed={mainContent === "activity"} data-testid="coworker-activity-button"
+  const activityBell = !notificationsEnabled ? null : <IconButton label={activityLabel} tooltipSide="right" aria-pressed={mainContent === "activity"} data-testid="coworker-activity-button"
     className={`window-no-drag relative shrink-0 ${collapsed ? "size-6" : "size-7"} ${mainContent === "activity" ? "bg-white/8 text-snow" : ""}`} onClick={() => onMainContentChange("activity")}>
     <svg className="size-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7.5 16.5a2.5 2.5 0 0 0 5 0M5 8a5 5 0 0 1 10 0c0 4 1.75 4.5 1.75 6H3.25C3.25 12.5 5 12 5 8ZM10 1.5V3" /></svg>
     {unreadActivity > 0 ? <span aria-hidden="true" data-testid="activity-badge" className={`pointer-events-none absolute right-0 top-0 flex h-3.5 min-w-3.5 translate-x-1/4 -translate-y-1/4 items-center justify-center rounded-full px-[3px] text-[9px] font-semibold leading-none tabular-nums ring-2 ring-[var(--color-ink)] ${unreadMentions ? "bg-spark text-white" : "bg-white/20 text-snow"}`}>{unreadActivity > 9 ? "9+" : unreadActivity}</span> : activityError ? <span aria-hidden="true" className="absolute right-0 -top-1 text-[10px] text-amber">!</span> : null}
@@ -478,7 +482,8 @@ export function CoworkerRail({
         {panel.collapsed ? <FoldedCalendar data={calendarData} coworkers={coworkers} preferences={calendarPreferences} onPreferencesChange={onCalendarPreferencesChange} onExpand={() => { setFocusSearchOnExpand(true); panel.expand(); }} /> : <CalendarSidebar coworkers={coworkers} data={calendarData} preferences={calendarPreferences} onPreferencesChange={onCalendarPreferencesChange} query={calendarQuery} />}
       </div> : null}
       <div className={activityMode ? "flex min-h-0 flex-1 flex-col" : "hidden"} data-testid="activity-rail-content">{activityContent}</div>
-      <div className="window-no-drag shrink-0 border-t border-line/60 p-2">
+      {/* The account row opens Settings; the Marketplace is one icon beside it. Folded, they stack. */}
+      <div className={`window-no-drag flex shrink-0 items-center gap-1.5 border-t border-line/60 p-2 ${collapsed ? "flex-col" : ""}`}>
         <Tooltip content={collapsed ? accountDescription : ""} side="right">
           <button
             type="button"
@@ -486,24 +491,24 @@ export function CoworkerRail({
             aria-label={`OpenWork account and settings · ${accountName} · ${accountLabel}`}
             title={collapsed ? undefined : "OpenWork account and settings"}
             onClick={onOpenOpenWork}
-            className={`group flex min-h-14 items-center gap-3 rounded-xl border border-transparent bg-white/[0.025] p-2 text-left transition-colors hover:border-white/8 hover:bg-white/5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${collapsed ? "mx-auto w-14 justify-center" : "w-full"}`}
+            className={`group flex min-h-14 min-w-0 items-center gap-3 rounded-xl border border-transparent p-2 text-left transition-colors hover:border-white/8 hover:bg-white/5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${collapsed ? "w-14 justify-center" : "flex-1"}`}
           >
             <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-spark/25 to-spark/5 text-xs font-semibold text-snow ring-1 ring-inset ring-spark/20">
               {session ? accountInitials : <CoworkerMark size={27} tile={false} />}
             </span>
             {!collapsed ? (
-              <>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-semibold leading-4 text-snow">{accountName}</span>
-                  <span className="mt-0.5 block truncate text-[11px] leading-4 text-mist">{accountLabel}</span>
-                </span>
-                <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-lg text-mist transition-colors group-hover:bg-white/5 group-hover:text-snow group-focus-visible:text-snow">
-                  <SlidersIcon className="size-4" />
-                </span>
-              </>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-semibold leading-4 text-snow">{accountName}</span>
+                <span className="mt-0.5 block truncate text-[11px] leading-4 text-mist">{accountLabel}</span>
+              </span>
             ) : null}
           </button>
         </Tooltip>
+        {marketplaceEnabled ? (
+          <IconButton label="Marketplace" tooltip="Marketplace: coworkers and apps" tooltipSide={collapsed ? "right" : "top"} data-testid="coworker-marketplace-button" className="size-10 shrink-0 rounded-xl" onClick={onOpenMarketplace}>
+            <StoreIcon />
+          </IconButton>
+        ) : null}
       </div>
       {/* The rail resizes in every mode, Activity included. */}
       <div
@@ -591,5 +596,13 @@ function FoldedCalendar({ data, coworkers, preferences, onPreferencesChange, onE
         );
       })}
     </div>
+  );
+}
+
+function StoreIcon() {
+  return (
+    <svg viewBox="0 0 20 20" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3.5 8.5v7.25c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25V8.5M2.75 5.25 4 3h12l1.25 2.25a2.5 2.5 0 0 1-4.75 1.1 2.5 2.5 0 0 1-5 0 2.5 2.5 0 0 1-4.75-1.1ZM8 17v-4.25h4V17" />
+    </svg>
   );
 }

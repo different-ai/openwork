@@ -8,6 +8,16 @@
  */
 export const FEATURES = [
   {
+    id: "marketplace",
+    label: "Marketplace",
+    detail: "Add ready-made coworkers, like a chief of staff or an inbox helper, and see the apps they work with.",
+  },
+  {
+    id: "notifications",
+    label: "Notifications",
+    detail: "A bell with unread replies, mentions and reminders from every coworker in one place. While off, replies still arrive in each conversation.",
+  },
+  {
     id: "calendar",
     label: "Calendar",
     detail: "Events, recurring assignments and schedules. While off, nothing runs on a schedule on this Mac and coworkers don't offer to set one up.",
@@ -30,14 +40,32 @@ export const FEATURES = [
   {
     id: "appsTools",
     label: "Apps & tools",
-    detail: "Add and manage apps, skills and tools for each coworker. Whatever is already connected keeps working either way.",
+    detail: "Connect apps and manage the apps, skills and tools each coworker uses. Whatever is already connected keeps working either way.",
   },
 ] as const;
 
 export type FeatureId = (typeof FEATURES)[number]["id"];
 export type Features = Record<FeatureId, boolean>;
 
-export const DEFAULT_FEATURES: Features = { calendar: false, computerUse: false, memory: false, abilities: false, appsTools: false };
+export const DEFAULT_FEATURES: Features = { marketplace: false, notifications: false, calendar: false, computerUse: false, memory: false, abilities: false, appsTools: false };
+
+/** Features that only show or hide part of this app; switching one never rewrites what coworkers are told or may use. */
+export const INTERFACE_FEATURES: readonly FeatureId[] = ["marketplace", "notifications"];
+
+/**
+ * Simple is how everyone starts: every feature off. Advanced turns every
+ * feature on. Anything in between, set one switch at a time, is Custom.
+ */
+export type FeatureProfile = "simple" | "advanced" | "custom";
+
+export function featureProfile(features: Features): FeatureProfile {
+  const on = FEATURES.filter(({ id }) => features[id]).length;
+  return on === 0 ? "simple" : on === FEATURES.length ? "advanced" : "custom";
+}
+
+export function profileFeatures(profile: Exclude<FeatureProfile, "custom">): Features {
+  return Object.fromEntries(FEATURES.map(({ id }) => [id, profile === "advanced"])) as Features;
+}
 
 /** Only an explicit `true` turns a feature on. */
 export function normalizeFeatures(value: unknown, base: Features = DEFAULT_FEATURES): Features {

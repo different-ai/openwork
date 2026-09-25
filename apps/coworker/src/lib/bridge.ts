@@ -162,6 +162,8 @@ export type CoworkerSummary = {
   personality: Personality;
   /** The catalog role this coworker was created from; "" when the person shaped it by hand. */
   roleId: string;
+  /** Where a coworker came from when it was not made here: an organization template, or `featured:<id>` from the Marketplace. */
+  templateOrigin?: string;
   /** The teammate who proposed this coworker and why; null when the person added it themselves. */
   suggestedBy: { slug: string; why: string } | null;
   workspaceId: string;
@@ -677,6 +679,15 @@ export const coworkerBridge = {
     updateTurn: (id: string, turnId: string, patch: GroupTurnPatch) => invoke<CoworkerGroupTurn>("groups.updateTurn", { id, turnId, patch }),
     /** Settle every turn a quit or reload cut off; returns which ones it touched. */
     recoverInterrupted: () => invoke<{ groupId: string; turnId: string }[]>("groups.recoverInterrupted"),
+  },
+  marketplace: {
+    /**
+     * Add a coworker featured in the Marketplace; one already on the team is returned as it is.
+     * Playbooks an organization keeps out are named; `notReady` means its first warmup failed and retries when it is opened.
+     */
+    addCoworker: (id: string) => invoke<{ coworker: CoworkerSummary; skippedPlaybooks: string[]; notReady: boolean }>("marketplace.addCoworker", { id }),
+    /** Remove a skill installed in the team's folder on this Mac. */
+    removeSkill: (name: string) => invoke<{ ok: boolean }>("marketplace.removeSkill", { name }),
   },
   /** The hidden workspace the silent facilitator runs in; created and registered on first use. */
   coordinator: {
