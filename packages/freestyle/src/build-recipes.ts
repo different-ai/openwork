@@ -1,4 +1,5 @@
 import type { PreviewWorld } from "./index.ts";
+import { browserRecipe } from "./browser-recipe.ts";
 
 export function toolsRecipe(world: PreviewWorld): string {
   return `${world === "desktop" ? `node -e 'if (Number(process.versions.node.split(".")[0]) < 24) throw new Error("Desktop previews require Node 24 or newer")'
@@ -9,6 +10,7 @@ ${world !== "app-web" ? `apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y ${world === "acme-web" ? "mysql-server redis-server " : "build-essential python3 curl ca-certificates "}xvfb x11vnc novnc websockify dbus-x11 xauth libgtk-3-0 libnss3 libasound2t64 libgbm1
 # A real Linux desktop (as in Daytona previews): panel, window frames, terminal, files.
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xfce4-session xfwm4 xfce4-panel xfdesktop4 xfce4-settings xfce4-terminal thunar
+${browserRecipe()}
 printf '<!doctype html><meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=1&amp;resize=scale&amp;reconnect=1&amp;reconnect_delay=2000"><title>OpenWork desktop</title>' > /usr/share/novnc/index.html
 ${world === "acme-web" ? `systemctl enable --now mysql redis-server
 mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'password'; FLUSH PRIVILEGES;"` : ""}` : ""}

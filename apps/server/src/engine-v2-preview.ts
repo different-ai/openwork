@@ -1,3 +1,4 @@
+import { migrateOpencodeV1History, opencodeV1DatabasePath, type EngineV2MigrationStatus } from "./opencode-v2-migration.js";
 import { waitForOpenWorkV2Skills } from "./opencode-v2-instructions.js";
 import { executionRules } from "./managed-policy-rules.js";
 import { execFile } from "node:child_process";
@@ -45,6 +46,7 @@ export interface EngineV2PreviewStatus {
   catalogModelIds: string[];
   lastMirroredAt?: string;
   lastError?: string;
+  migration: EngineV2MigrationStatus;
 }
 
 export interface RuntimeProviderRecordLike {
@@ -68,6 +70,7 @@ export interface EngineV2Preview {
   syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void>;
   /** Join the native watcher for local workspace skills only. */
   syncWorkspaceSkills(directory: string): Promise<void>;
+  migrateHistory(): EngineV2PreviewStatus;
   stop(): Promise<void>;
 }
 
@@ -308,6 +311,8 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   const rootDir = join(runtimeStorageDir(config), "opencode-v2", "state");
   const workspaceDir = join(rootDir, "workspace");
   const initialState = resolveInitialEngineV2PreviewState(process.env, readEngineV2PreviewState(config));
+  let migration: EngineV2MigrationStatus = { state: "idle", imported: 0, skipped: 0, total: 0 };
+  let migrationJob: Promise<void> | undefined;
   let enabled = initialState.enabled;
   let chatRouting = initialState.chatRouting === true;
   let allowRunning = true;
@@ -417,6 +422,7 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   function status(): EngineV2PreviewStatus {
     return {
       enabled,
+      migration: { ...migration },
       chatRouting,
       running,
       ...(version === undefined ? {} : { version }),
@@ -596,6 +602,7 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   }
 
   async function setEnabled(nextEnabled: boolean): Promise<EngineV2PreviewStatus> {
+    if (migration.state === "running") throw new Error("Wait for history migration to finish before switching engines.");
     if (nextEnabled && enabled && running) return status();
     await writeEngineV2PreviewState(config, { enabled: nextEnabled, chatRouting });
     enabled = nextEnabled;
@@ -613,6 +620,7 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   }
 
   async function setChatRouting(nextChatRouting: boolean): Promise<EngineV2PreviewStatus> {
+    if (migration.state === "running") throw new Error("Wait for history migration to finish before switching engines.");
     await writeEngineV2PreviewState(config, { enabled, chatRouting: nextChatRouting });
     chatRouting = nextChatRouting;
     return status();
@@ -651,7 +659,29 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     }
   }
 
+  function migrateHistory(): EngineV2PreviewStatus {
+    if (migration.state === "running") return status();
+    migration = { state: "running", imported: 0, skipped: 0, total: 0 };
+    migrationJob = (async () => {
+      try {
+        const source = opencodeV1DatabasePath();
+        const resolved = await resolveBinary(config);
+        enabled = true;
+        allowRunning = true;
+        await writeEngineV2PreviewState(config, { enabled, chatRouting });
+        await start();
+        if (!sidecar) throw new Error("OpenCode v2 could not start. Retry migration.");
+        await migrateOpencodeV1History({ source, storageDir: join(runtimeStorageDir(config), "opencode-v2"),
+          bin: resolved.bin, target: sidecar, progress: (next) => { migration = next; } });
+      } catch (error) {
+        migration = { ...migration, state: "error", error: errorMessage(error) };
+      }
+    })();
+    return status();
+  }
+
   async function stop(): Promise<void> {
+    await migrationJob;
     await stopRuntime();
   }
 
@@ -659,5 +689,5 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     if (enabled) void start().catch(recordStartError);
   }
   if (!options.deferStart) startWhenReady();
-  return { start: startWhenReady, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, refreshProviders, syncWorkspaceMcp, syncWorkspaceSkills, stop };
+  return { start: startWhenReady, migrateHistory, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, refreshProviders, syncWorkspaceMcp, syncWorkspaceSkills, stop };
 }

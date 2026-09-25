@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { OpenCodeLogo } from "./opencode-logo";
-import { SocTypeIBadge } from "./soc-type-i-badge";
+import { SocTypeIIBadge } from "./soc-type-ii-badge";
 
 export function SiteFooter() {
   return (
@@ -63,11 +63,11 @@ export function SiteFooter() {
           </div>
           <Link
             href="/trust"
-            aria-label="SOC 2 Type I. View Trust Center"
+            aria-label="SOC 2 Type II. View Trust Center"
             className="inline-flex shrink-0 items-center text-gray-600 transition-opacity hover:opacity-80"
           >
-            <SocTypeIBadge className="h-12 w-12" />
-            <span className="sr-only">SOC 2 Type I</span>
+            <SocTypeIIBadge className="h-14 w-14" />
+            <span className="sr-only">SOC 2 Type II</span>
           </Link>
         </div>
       </div>

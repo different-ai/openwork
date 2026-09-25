@@ -606,6 +606,10 @@ test("adaptive thinking compatibility uses the granted model behind opaque alias
     { name: "nonmatching version suffix", model: "claude-opus-5preview", input: { thinking: enabled } },
     { name: "absent thinking", input: { output_config: { format } } },
     { name: "disabled thinking", input: { thinking: { type: "disabled" } } },
+    ...["low", "medium", "high", "xhigh", "max"].map(effort => ({
+      name: `Opus 5.5 selected ${effort} survives gateway routing`, model: "claude-opus-5-5",
+      input: { output_config: { effort } },
+    })),
     { name: "already adaptive", input: { thinking: adaptive, output_config: { effort: "medium", format } } },
   ]
   for (const providerName of ["anthropic", "google-vertex-anthropic", "openai"]) {

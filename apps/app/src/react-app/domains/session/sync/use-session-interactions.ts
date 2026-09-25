@@ -117,7 +117,7 @@ function createInteractionHydration(client: Client, workspaceId: string, session
   const directory = workspaceRoot || undefined;
   const children = new Map<string, PermissionHydration>();
   const queued = new Map<string, PermissionHydration>();
-  const native = isOpencodeV2Client(client);
+  const native = isOpencodeV2Client(client) ? client : null;
   let disposed = false;
   let activeReads = 0;
   let legacy: { controller: AbortController; pending: boolean; failed?: boolean; snapshot?: PermissionSnapshot } | undefined;
@@ -176,7 +176,7 @@ function createInteractionHydration(client: Client, workspaceId: string, session
         }
       })();
     }
-    if (!questions?.pending && (!failedOnly || questions?.failed)) {
+    if (!native && !questions?.pending && (!failedOnly || questions?.failed)) {
       const startedAt = Date.now();
       const read: NonNullable<typeof questions> = { controller: new AbortController(), pending: true, snapshot: questions?.snapshot };
       questions = read;
@@ -213,10 +213,19 @@ function createInteractionHydration(client: Client, workspaceId: string, session
       };
       void (async () => {
         try {
-          const items = unwrap(await client.v2.session.permission.list({ sessionID: id }, { signal: child.controller.signal })).data;
-          if (disposed || child.controller.signal.aborted || children.get(id) !== child) return;
-          child.snapshot.items = items;
-          publishPermission(id, child);
+          await Promise.allSettled([
+            (async () => {
+              const items = unwrap(await client.v2.session.permission.list({ sessionID: id }, { signal: child.controller.signal })).data;
+              if (disposed || child.controller.signal.aborted || children.get(id) !== child) return;
+              child.snapshot.items = items;
+              publishPermission(id, child);
+            })(),
+            ...(native ? [(async () => {
+              const items = unwrap(await native.listSessionQuestions({ sessionID: id }, { signal: child.controller.signal }));
+              if (disposed || child.controller.signal.aborted || children.get(id) !== child) return;
+              seedQuestionState(workspaceId, id, items, { snapshotStartedAt: child.snapshot.startedAt });
+            })()] : []),
+          ]);
         } catch {
         } finally {
           child.done = true;
@@ -424,11 +433,9 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
       setQuestionReplyBusy(true);
       try {
         unwrap(
-          await client.question.reply({
-            requestID,
-            answers,
-            directory: workspaceRoot || undefined,
-          }),
+          await (isOpencodeV2Client(client)
+            ? client.replySessionQuestion({ sessionID: pendingQuestion.sessionID, requestID, answers })
+            : client.question.reply({ requestID, answers, directory: workspaceRoot || undefined })),
         );
         settleQuestionState(workspaceId, pendingQuestion.sessionID, requestID);
       } catch (error) {

@@ -2332,6 +2332,7 @@ export type ExternalMcpPresetResponse = {
   authType: "oauth" | "apikey" | "none";
   supportedAuthTypes?: Array<"oauth" | "apikey" | "none">;
   requiresOAuthClient?: boolean;
+  defaultOAuthClientId?: string;
   authorizationServerIssuer?: string;
   defaultOAuthScopes?: Array<string>;
 };
@@ -21515,6 +21516,14 @@ export type GetV1PluginsData = {
      * When true, returns the total matching plugins before the cursor.
      */
     includeTotal?: "true" | "false";
+    /**
+     * Plugins created by this organization member.
+     */
+    ownerId?: string;
+    /**
+     * Include team and owner counts across all matching pages. Each facet ignores its own current selection.
+     */
+    includeFacets?: "true" | "false";
   };
   url: "/v1/plugins";
 };
@@ -21540,6 +21549,17 @@ export type GetV1PluginsResponses = {
     items: Array<PluginArchPluginListItem>;
     nextCursor: string | null;
     total?: number;
+    teamCounts?: Array<{
+      /**
+       * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      count: number;
+    }>;
+    ownerCounts?: Array<{
+      id: string | null;
+      count: number;
+    }>;
   };
 };
 

@@ -110,6 +110,8 @@ export const pluginListQuerySchema = pluginArchPaginationQuerySchema.extend({
   memberId: memberIdSchema.optional().describe("Plugins effectively accessible to this member, including team, organization and collection access."),
   includeAccess: queryBooleanSchema.optional().describe("When true, each plugin the caller manages includes its active access grants."),
   includeTotal: queryBooleanSchema.optional().describe("When true, returns the total matching plugins before the cursor."),
+  ownerId: memberIdSchema.optional().describe("Plugins created by this organization member."),
+  includeFacets: queryBooleanSchema.optional().describe("Include team and owner counts across all matching pages. Each facet ignores its own current selection."),
 }).refine((query) => !query.teamId || !query.memberId, { message: "Choose a team or a member, not both." })
 
 export const marketplaceListQuerySchema = pluginArchPaginationQuerySchema.extend({
@@ -991,6 +993,8 @@ export const pluginListItemSchema = pluginSchema.extend({
 }).meta({ ref: "PluginArchPluginListItem" })
 export const pluginListResponseSchema = pluginArchListResponseSchema("PluginArchPluginListResponse", pluginListItemSchema).extend({
   total: z.number().int().nonnegative().optional(),
+  teamCounts: z.array(z.object({ id: teamIdSchema, count: z.number().int().nonnegative() })).optional(),
+  ownerCounts: z.array(z.object({ id: memberIdSchema.nullable(), count: z.number().int().nonnegative() })).optional(),
 })
 export const pluginDetailResponseSchema = pluginArchDetailResponseSchema("PluginArchPluginDetailResponse", pluginSchema)
 export const pluginMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchPluginMutationResponse", pluginSchema)
