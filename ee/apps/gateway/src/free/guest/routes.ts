@@ -13,7 +13,7 @@ import { createFreeAllowanceStore, type FreeAllowanceStore } from "../shared/all
 import { type AutoConfig } from "../shared/config.js"
 import type { GuestPrincipal } from "../shared/principal.js"
 import { checkDesktopFreeRequest, desktopFreeGateError, type DesktopFreeGateDependencies } from "./gate.js"
-import { sha256Hex, verifySessionPow } from "@openwork/free-auto/node"
+import { releaseKeyFingerprint, sha256Hex, verifySessionPow } from "@openwork/free-auto/node"
 import { createDesktopFreeReleaseSource } from "./releases-source.js"
 import { dispatchFreeCompletion } from "../shared/dispatch.js"
 import { FreeRequestError } from "../shared/errors.js"
@@ -32,6 +32,8 @@ export type FreeRouteDependencies = {
 }
 function defaults(): FreeRouteDependencies {
   const config = env.freeAuto
+  // Compare with the fingerprint the desktop release build prints; a mismatch means every guest on that release is refused.
+  if (config.releaseKey) console.info(`[free-auto] release key fingerprint ${releaseKeyFingerprint(config.releaseKey)}${config.releaseKeyPrevious ? `, previous ${releaseKeyFingerprint(config.releaseKeyPrevious)}` : ""}`)
   return { config, store: createFreeAllowanceStore(config, "anonymous"), fetch: createInferenceEgressFetch(),
     releases: createDesktopFreeReleaseSource({ url: config.releasesUrl, token: process.env.GITHUB_TOKEN?.trim() || undefined }),
     clientAddress: (c) => resolveAnonymousClientAddress(c, config) }
