@@ -6,6 +6,7 @@ import { resolveEvalEngine } from "@openwork/env/eval-engine";
 import type { EvalEngine } from "@openwork/env/eval-engine";
 import { resolveSandboxRef } from "@openwork/env/eval-ref";
 import type { ScreenshotArtifact } from "./screenshot.ts";
+import { parseEvidenceCheckpoint } from "@openwork/freestyle/checkpoint-schema";
 import { judgeVision } from "./validate.ts";
 import type { ValidateOptions, VisualEvidenceResult, VisualExpectationResult } from "./validate.ts";
 
@@ -31,6 +32,8 @@ export interface TestArtifact {
   ok: boolean | null;
   results: VisualExpectationResult[];
   judgments: EvidenceJudgment[];
+  checkpoint?: ScreenshotArtifact["checkpoint"];
+  checkpointError?: string;
 }
 
 export interface JsonArtifact {
@@ -215,6 +218,8 @@ function testArtifact(artifact: StoredTestArtifact): TestArtifact {
     ok: artifact.ok,
     results: artifact.results,
     judgments: artifact.judgments,
+    ...(artifact.checkpoint ? { checkpoint: artifact.checkpoint } : {}),
+    ...(artifact.checkpointError ? { checkpointError: artifact.checkpointError } : {}),
   };
 }
 
@@ -344,7 +349,15 @@ function parseTestArtifact(value: unknown): TestArtifact | null {
   } else {
     judgments.push(...results.map(judgmentForResult));
   }
+  let checkpoint;
+  if (value.checkpoint !== undefined) {
+    try { checkpoint = parseEvidenceCheckpoint(value.checkpoint); } catch { return null; }
+    if (checkpoint.imageHash !== value.hash) return null;
+  }
+  if (value.checkpointError !== undefined && typeof value.checkpointError !== "string") return null;
   return {
+    ...(checkpoint ? { checkpoint } : {}),
+    ...(typeof value.checkpointError === "string" ? { checkpointError: value.checkpointError } : {}),
     caption: value.caption,
     fileName: value.fileName,
     hash: value.hash,
@@ -670,6 +683,8 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
         sequence,
         png: screenshotArtifact.png,
         validationKey: null,
+        checkpoint: screenshotArtifact.checkpoint,
+        checkpointError: screenshotArtifact.checkpointError,
       });
       return join(dir, screenshotFileName);
     },

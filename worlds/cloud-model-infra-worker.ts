@@ -1,3 +1,5 @@
+export const supportedTargets = ["local/host"];
+
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { hold } from "../packages/world/src/hold.ts";

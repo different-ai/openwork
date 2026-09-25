@@ -5,6 +5,9 @@ import { Check, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { ModelOption, ModelRef } from "@/app/types";
 import { getModelBehaviorControls, getModelBehaviorSelection } from "@/app/lib/model-behavior";
+import { FAST_DEFAULT_VARIANT } from "@openwork/types/cloud-model-fast";
+import { fastModeShortcutLabel } from "@/react-app/shell/fast-mode-shortcut";
+import { resolveThinkingModeShortcutOs } from "@/react-app/shell/thinking-mode-shortcut";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -86,7 +89,12 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
   const selectedBehavior = getModelBehaviorSelection(selected?.behaviorOptions ?? behaviorOptions, behaviorValue);
   const controls = getModelBehaviorControls(selectedBehavior.options, selectedBehavior.value);
   const hasEffort = behaviorValue !== null || (selected?.behaviorOptions ?? behaviorOptions).some((option) => option.value !== null);
-  const summary = nonDefaultModelSummary(value, behaviorValue, selectedBehavior.label === "Default + Fast" ? "Fast" : selectedBehavior.label);
+  // Fast shows on its own as a quiet "· Fast" after the model name; the effort beside it is the base level ("High", not "High + Fast").
+  const fastOn = controls.fast && !isAutoModel(value);
+  const summary = fastOn
+    ? (behaviorValue === FAST_DEFAULT_VARIANT ? null : controls.options.find((option) => option.value === behaviorValue)?.label ?? null)
+    : nonDefaultModelSummary(value, behaviorValue, selectedBehavior.label);
+  const fastShortcutLabel = fastModeShortcutLabel(resolveThinkingModeShortcutOs(undefined, typeof navigator === "undefined" ? "" : navigator.platform));
   const select = (option: ModelOption) => choice.choose(option, () => {
     onChange({ providerID: option.providerID, modelID: option.modelID });
     onOpenChange(false);
@@ -100,7 +108,7 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
   }}>
     <PopoverTrigger type="button" disabled={disabled} aria-label="Change model"
       className="inline-flex h-9 min-w-0 items-center gap-1.5 px-2.5 text-sm text-muted-foreground hover:text-foreground focus-visible:rounded focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
-      <span className="max-w-56 truncate">{hideValue ? "Select model" : isAutoModel(value) ? "Auto" : catalog.currentOption?.title || "Select model"}{!hideValue && summary ? ` · ${summary}` : ""}</span><ChevronDown className="size-3" />
+      <span className="max-w-56 truncate">{hideValue ? "Select model" : isAutoModel(value) ? "Auto" : catalog.currentOption?.title || "Select model"}{!hideValue && summary ? ` · ${summary}` : ""}</span>{!hideValue && fastOn ? <span data-testid="model-fast-indicator" className="shrink-0 text-xs font-medium">· Fast</span> : null}<ChevronDown className="size-3" />
     </PopoverTrigger>
     <PopoverContent ref={popupRef} tabIndex={-1} align="start" initialFocus={() => isMobile || focusAlternative ? popupRef.current : searchInputRef.current} data-testid="composer-model-picker" className="flex max-h-[min(var(--available-height),36rem)] w-90 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl p-0">
       {effort && selected ? <div data-slot="model-thinking-submenu" className="overflow-y-auto p-2">
@@ -118,7 +126,7 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
           {advanced ? <div className="px-3 pb-2">
             {selected && onBehaviorChange && !isAutoModel(selected) ? <>
               <Button ref={effortButtonRef} data-testid="model-effort" size="sm" variant="ghost" className="h-11 w-full justify-between" disabled={!hasEffort} onClick={() => setEffort(true)}>Effort<span className="text-muted-foreground">{hasEffort ? controls.options.find((option) => option.value === behaviorValue)?.label ?? selectedBehavior.label : "Unavailable"}</span></Button>
-              {controls.hasFast ? <div className="flex h-11 items-center justify-between px-2 text-sm"><span>Fast mode</span><Switch aria-label="Fast mode" size="sm" checked={controls.fast} disabled={controls.toggleValue === undefined} onCheckedChange={() => { if (controls.toggleValue !== undefined) onBehaviorChange(controls.toggleValue); }} /></div> : null}
+              {controls.hasFast ? <div className="flex h-11 items-center justify-between px-2 text-sm"><span className="flex items-center gap-2">Fast mode<kbd className="hidden rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-sans text-[10px] leading-none text-muted-foreground sm:inline-flex">{fastShortcutLabel}</kbd></span><Switch aria-label="Fast mode" size="sm" checked={controls.fast} disabled={controls.toggleValue === undefined} onCheckedChange={() => { if (controls.toggleValue !== undefined) onBehaviorChange(controls.toggleValue); }} /></div> : null}
             </> : <p className="px-2 py-2 text-sm text-muted-foreground">{isAutoModel(value) ? "Auto manages its model settings." : "Choose an available model to change its settings."}</p>}
           </div> : null}
         </details>

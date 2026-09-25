@@ -10,6 +10,10 @@ const test = spec.world(engineConnectorsParity, {
 test(`PARITY-CONNECTORS ${resolveEvalEngine()}: search assigned capabilities, execute a connector and show its result`, async ({ world, user, probe, step, evidence }) => {
   const document = await world.documentIdentity();
   const runtime = await world.runtime();
+  await step("Connect checks the engine used for chat and can repair its connection", async () => {
+    expect(await world.connectHealth()).toMatchObject({ status: 200, body: { usable: true, usableByCurrentModel: true, firstFailure: null } });
+    expect(await world.connectHealth(true)).toMatchObject({ status: 200, body: { refresh: { performed: true }, health: { usable: true, usableByCurrentModel: true, firstFailure: null } } });
+  });
   await step("Ask for a report without knowing its capability ID or result", async () => {
     const prompt = "Read the latest amber report using my connections.";
     await world.prepareReport(prompt);

@@ -45,7 +45,7 @@ export interface User {
   notSee(target: Target, options?: { timeoutMs?: number }): Promise<void>;
   reload(): Promise<void>;
   navigate(url: string): Promise<void>;
-  screenshot(): Promise<ScreenshotArtifact>;
+  screenshot(options?: { checkpoint?: boolean }): Promise<ScreenshotArtifact>;
   looks(expectations: string[]): Promise<void>;
   on(surface: Surface): User;
 }

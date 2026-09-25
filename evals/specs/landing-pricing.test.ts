@@ -48,7 +48,7 @@ test("visitors can read the trust badge and access every footer link at responsi
   needs({ env: ["OPENWORK_EVAL_LANDING_URL"] });
   const origin = process.env.OPENWORK_EVAL_LANDING_URL;
   await using browser = await chrome({ startUrl: `${origin}/pricing`, headless: true });
-  await eventually(() => evaluateOnSurface(browser, () => Boolean(document.querySelector("footer svg"))), {
+  await eventually(() => evaluateOnSurface(browser, () => Boolean(document.querySelector('footer img[src="/soc-2-type-ii.svg"]'))), {
     within: 30_000,
     until: Boolean,
   });
@@ -58,11 +58,11 @@ test("visitors can read the trust badge and access every footer link at responsi
     const facts = await evaluateOnSurface(browser, async () => {
       await document.fonts.ready;
       const footer = document.querySelector("footer");
-      const badge = footer?.querySelector('a[aria-label^="SOC 2 Type I"]');
-      const icon = badge?.querySelector("svg");
+      const badge = footer?.querySelector('a[aria-label="SOC 2 Type II. View Trust Center"]');
+      const icon = badge?.querySelector<HTMLImageElement>('img[src="/soc-2-type-ii.svg"]');
       if (!footer || !badge || !icon) throw new Error("Footer trust badge or seal missing");
       const label = badge.getAttribute("aria-label") ?? "";
-      if (!label.includes("SOC 2 Type I") && !badge.textContent?.includes("SOC 2 Type I")) {
+      if (label !== "SOC 2 Type II. View Trust Center") {
         throw new Error("Trust badge text missing");
       }
       const bounds = footer.getBoundingClientRect();
@@ -78,7 +78,7 @@ test("visitors can read the trust badge and access every footer link at responsi
         .map((link) => link.getBoundingClientRect().bottom));
       return {
         viewport: window.innerWidth,
-        textVisible: badge.textContent?.includes("SOC 2 Type I") === true,
+        textVisible: badge.textContent?.includes("SOC 2 Type II") === true,
         iconWidth: iconBounds.width,
         iconHeight: iconBounds.height,
         poweredBy: poweredBy.textContent,
@@ -100,7 +100,7 @@ test("visitors can read the trust badge and access every footer link at responsi
       };
     });
     expect(facts, `footer at ${width}px`).toMatchObject({
-      viewport: width, textVisible: true, iconWidth: 48, iconHeight: 48,
+      viewport: width, textVisible: true, iconWidth: 56, iconHeight: 56,
       footerFits: true, contentFits: true, linksVisible: true,
       poweredBy: "Powered by", brandInline: true, brandRowBelowLinks: true,
     });
@@ -110,7 +110,7 @@ test("visitors can read the trust badge and access every footer link at responsi
       ["/download", "Desktop"], ["https://app.openworklabs.com", "Cloud"],
       ["/dashboard", "Dashboard"], ["/enterprise", "Enterprise"], ["/contact", "Contact"],
       ["/trust", "Trust Center"], ["/privacy", "Privacy"], ["/terms", "Terms"],
-      ["https://opencode.ai", ""], ["/trust", "SOC 2 Type I. View Trust Center"],
+      ["https://opencode.ai", "OpenCode"], ["/trust", "SOC 2 Type II. View Trust Center"],
     ]);
     evidence.recordAssertionEvidence(`Footer remains readable and complete at ${width}px`, JSON.stringify(facts), true);
   }
@@ -124,11 +124,11 @@ test("visitors can read the trust badge and access every footer link at responsi
     within: 30_000,
     until: (text) => typeof text === "string" && text.includes("OpenWork Enterprise"),
   });
-  expect(hero).not.toContain("SOC 2 Type II");
-  for (const badge of ["SOC 2 Type I", "SAML SSO + SCIM", "Audit logs", "Self-host or managed", "White labeling"]) {
+  expect(hero).not.toMatch(/SOC 2 Type I\b/);
+  for (const badge of ["SOC 2 Type II", "SAML SSO + SCIM", "Audit logs", "Self-host or managed", "White labeling"]) {
     expect(hero).toContain(badge);
   }
-  evidence.recordAssertionEvidence("Enterprise hero omits the in-progress Type II badge and retains the other badges", hero, true);
+  evidence.recordAssertionEvidence("Enterprise hero shows the completed SOC 2 Type II status and retains the other badges", hero, true);
 });
 
 test("download CTAs request the detected installer once and retain the alternative downloads", async ({ evidence }) => {

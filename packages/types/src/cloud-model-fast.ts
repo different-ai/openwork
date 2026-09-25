@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const CLOUD_MODEL_CONFIG_VERSION = 2;
+export const CLOUD_MODEL_CONFIG_VERSION = 3;
 export const CATALOG_FAST_VARIANT = "__openwork_catalog_fast_v1";
 export const FAST_VARIANT_PREFIX = "__openwork_fast_v1/";
 export const FAST_DEFAULT_VARIANT = `${FAST_VARIANT_PREFIX}default`;
@@ -40,6 +40,27 @@ export function catalogFastVariants(config: Record<string, unknown>, providerNpm
     disabled: true, openworkNativeFast: 1,
     ...(reasoningEfforts.length > 0 ? { reasoningEfforts } : {}),
   } };
+}
+
+/** Translate catalog capabilities into explicit engine variants. Gateway model
+ * IDs can be opaque, so engine name-based defaults cannot recover these choices. */
+export function catalogModelVariants(config: Record<string, unknown>, providerNpm: unknown): Record<string, unknown> | undefined {
+  const fast = catalogFastVariants(config, providerNpm);
+  if (fast) return fast;
+  const modelProvider = isRecord(config.provider) ? config.provider : {};
+  if (providerNpm !== "@ai-sdk/anthropic" || config.reasoning === false
+    || (modelProvider.npm !== undefined && modelProvider.npm !== providerNpm)) return undefined;
+  const efforts = [...new Set((Array.isArray(config.reasoning_options) ? config.reasoning_options : []).flatMap((option) => {
+    const parsed = effortOption.safeParse(option);
+    return parsed.success ? parsed.data.values.filter(value => ["low", "medium", "high", "xhigh", "max"].includes(value)) : [];
+  }))];
+  if (!efforts.length) return undefined;
+  const variants = isRecord(config.variants) ? { ...config.variants } : {};
+  for (const effort of efforts) {
+    // An explicit override (including disabled) always wins over the catalog.
+    if (!Object.hasOwn(variants, effort)) variants[effort] = { effort };
+  }
+  return variants;
 }
 
 export function nativeModelVariants(raw: unknown, providerPackage: string | undefined) {

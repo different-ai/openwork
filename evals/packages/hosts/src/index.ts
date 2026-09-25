@@ -8,3 +8,4 @@ export * from "./provision.ts";
 export * from "./private-web-preview.ts";
 export * from "./resolve.ts";
 export * from "./types.ts";
+export * from "./windows-release.ts";

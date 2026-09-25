@@ -83,6 +83,25 @@ export type OpenworkCloudProviderSyncStatus = {
   skippedProviders: OpenworkCloudProviderSyncSkippedProvider[];
 };
 
+export interface EngineV2MigrationStatus {
+  state: "idle" | "running" | "completed" | "error";
+  imported: number;
+  skipped: number;
+  total: number;
+  error?: string;
+}
+
+function parseEngineV2Migration(value: unknown): EngineV2MigrationStatus | undefined {
+  if (!value || typeof value !== "object" || !("state" in value)
+    || !["idle", "running", "completed", "error"].includes(String(value.state))) return undefined;
+  if (value.state !== "idle" && value.state !== "running" && value.state !== "completed" && value.state !== "error") return undefined;
+  if (!("imported" in value) || typeof value.imported !== "number"
+    || !("skipped" in value) || typeof value.skipped !== "number"
+    || !("total" in value) || typeof value.total !== "number") return undefined;
+  return { state: value.state, imported: value.imported, skipped: value.skipped, total: value.total,
+    error: "error" in value && typeof value.error === "string" ? value.error : undefined };
+}
+
 export interface EngineV2PreviewStatus {
   enabled: boolean;
   running: boolean;
@@ -90,6 +109,7 @@ export interface EngineV2PreviewStatus {
   version?: string;
   pid?: number;
   binSource?: string;
+  migration?: EngineV2MigrationStatus;
   mirroredProviderIds: string[];
   skippedProviderIds: string[];
   catalogModelIds: string[];
@@ -109,6 +129,7 @@ function parseEngineV2PreviewStatus(value: unknown): EngineV2PreviewStatus {
     throw new Error("Invalid OpenCode v2 engine preview status response.");
   }
   return {
+    migration: parseEngineV2Migration("migration" in value ? value.migration : undefined),
     enabled: value.enabled,
     running: value.running,
     chatRouting: "chatRouting" in value && typeof value.chatRouting === "boolean" ? value.chatRouting : false,
@@ -1700,6 +1721,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview/status", {
         token,
         timeoutMs: timeouts.config,
+      })),
+    switchOpencodeEngine: async (engine: "v1" | "v2"): Promise<EngineV2PreviewStatus> =>
+      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {
+        token, method: "PUT", body: { enabled: engine === "v2", chatRouting: engine === "v2" }, timeoutMs: timeouts.config,
+      })),
+    migrateOpencodeHistory: async (): Promise<EngineV2PreviewStatus> =>
+      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview/migrate", {
+        token, hostToken, method: "POST", body: { confirm: true }, timeoutMs: timeouts.config,
       })),
     setEngineV2PreviewEnabled: async (enabled: boolean): Promise<EngineV2PreviewStatus> =>
       parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {

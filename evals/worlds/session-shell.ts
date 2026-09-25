@@ -2236,11 +2236,9 @@ async function archiveWorld(seed: Seed, app: Surface, workspacePath: string, tit
         })),
       };
     }),
-    hoverArchiveButton: async () => {
-      // Disabled buttons reject pointer hits; hover their visible bounds without clicking.
-      const button = await waitForLocated(app, { testId: `session-archive-${candidate.sessionId}` }, { timeoutMs: 10_000 });
-      await hoverAt(app, button.center);
-    },
+    // Native desktop menus are OS widgets, observed through the development bridge.
+    nativeMenu: () => seed.evalIn(app, () => window.__OPENWORK_ELECTRON__.contextMenu.inspect(), { awaitPromise: true }),
+    dismissMenu: () => seed.evalIn(app, () => window.__OPENWORK_ELECTRON__.contextMenu.dismiss(), { awaitPromise: true }),
     mutationRequests: () => seed.evalIn(app, () => window.__archiveAvailabilityRequests),
   };
 }

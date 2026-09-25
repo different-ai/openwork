@@ -259,6 +259,10 @@ import { resolveOpenworkConnection } from "./openwork-connection";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { useShellConfig } from "./shell-config";
 import { useShellShortcuts } from "./use-shell-shortcuts";
+import { shortcutModelRef, type Shortcut } from "@/react-app/domains/shortcuts/model-shortcuts-store";
+import { decideModelShortcut } from "@/react-app/domains/shortcuts/resolve-model-shortcut";
+import { decideFastToggle } from "@/react-app/domains/shortcuts/fast-toggle";
+import { useModelShortcutKeys } from "@/react-app/domains/shortcuts/use-model-shortcut-keys";
 import { useEngineReload } from "./use-engine-reload";
 import { useSessionGroupSync } from "./use-session-group-sync";
 import { useUiStateStore } from "./ui-state-store";
@@ -2704,6 +2708,91 @@ export function SessionRoute() {
   }), [cycleFavoriteModel]);
   useControlAction(cycleFavoriteModelControlAction);
 
+  // Model shortcuts (ENG-398): a saved key switches the focused conversation
+  // to a saved model + reasoning + Fast preference. An unavailable model never
+  // changes the current model and never removes the shortcut.
+  const applyModelShortcutRef = useRef<(shortcut: Shortcut, chordLabel: string, attempt?: number) => void>(() => {});
+  const applyModelShortcut = useCallback((shortcut: Shortcut, _chordLabel: string, attempt = 0) => {
+    const target = captureFavoriteModelTarget(useWorkbenchStore.getState(), favoriteModelScope.current);
+    if (!target) return;
+    const activeSessionId = target.sessionId;
+    const modelRef = shortcutModelRef(shortcut);
+    const selection = activeSessionId ? getSessionModelSelection(activeSessionId) : null;
+    const option = modelPicker.actionOptions.find((entry) => entry.providerID === modelRef.providerID && entry.modelID === modelRef.modelID) ?? null;
+    const decision = decideModelShortcut({
+      action: shortcut.action,
+      option,
+      availability: resolveModelAvailability(modelRef),
+      current: {
+        model: selection?.model ?? (activeSessionId ? local.prefs.defaultModel : newTaskModel) ?? null,
+        variant: selection ? selection.variant : activeSessionId ? modelVariantValue : newTaskVariant,
+      },
+    });
+
+    if (decision.kind === "pending") {
+      // Catalog still settling: retry briefly instead of treating the model as
+      // unavailable. No transient UI is shown for a key press.
+      if (attempt < 10) {
+        window.setTimeout(() => applyModelShortcutRef.current(shortcut, _chordLabel, attempt + 1), 500);
+      }
+      return;
+    }
+    if (decision.kind !== "switch" || !option) return;
+
+    const apply = () => {
+      if (activeSessionId) {
+        const sessionModels = useSessionModelStore.getState();
+        sessionModels.setModel(activeSessionId, modelRef, decision.variant);
+        sessionModels.setVariant(activeSessionId, decision.variant);
+      }
+      // Without a focused conversation the shortcut sets the new-task model, which follows the workspace default.
+      else changeNewTaskModel(modelRef, decision.variant);
+      useModelCollectionsStore.getState().recordRecent(modelRef);
+    };
+    const isCurrent = () => isFavoriteModelTargetCurrent(target, useWorkbenchStore.getState(), favoriteModelScope.current)
+      && (!activeSessionId || getSessionModelSelection(activeSessionId) === selection);
+    const gateway = gatewayModelSelectionRef.current;
+    if (gateway) gateway.select(option, apply, isCurrent);
+    else apply();
+  }, [local.prefs.defaultModel, modelPicker.actionOptions, modelVariantValue, newTaskModel, newTaskVariant, changeNewTaskModel, resolveModelAvailability]);
+  applyModelShortcutRef.current = applyModelShortcut;
+  useModelShortcutKeys(applyModelShortcut);
+
+  // Fast toggle (⌃⇧F / Ctrl+Alt+F): flips Fast for the focused conversation's
+  // model and keeps its reasoning level. A model without Fast never changes.
+  const toggleFastMode = useCallback(() => {
+    const target = captureFavoriteModelTarget(useWorkbenchStore.getState(), favoriteModelScope.current);
+    if (!target) return null;
+    const activeSessionId = target.sessionId;
+    const selection = activeSessionId ? getSessionModelSelection(activeSessionId) : null;
+    const model = selection?.model ?? (activeSessionId ? local.prefs.defaultModel : newTaskModel) ?? null;
+    if (!model?.providerID || !model.modelID) return null;
+    const providerModel = providerCatalog?.[model.providerID]?.[model.modelID];
+    const options = selection
+      ? (providerModel ? getModelBehaviorSummary(model.providerID, providerModel, selection.variant).options : [])
+      : activeSessionId ? modelBehaviorOptions : newTaskBehavior.options;
+    const current = selection ? selection.variant : activeSessionId ? modelVariantValue : newTaskVariant;
+    const decision = decideFastToggle(options, current);
+    if (decision.kind === "not_offered") return null;
+    // Same targets as the thinking-mode cycle: the focused conversation, else the new-task model.
+    if (activeSessionId && selection) useSessionModelStore.getState().setVariant(activeSessionId, decision.next);
+    else if (!activeSessionId) changeNewTaskModel(model, decision.next);
+    else local.setPrefs((previous) => ({ ...previous, modelVariant: decision.next }));
+    return decision.fastOn ? "Fast on" : "Fast off";
+  }, [local, modelBehaviorOptions, modelVariantValue, providerCatalog, newTaskModel, newTaskVariant, newTaskBehavior.options, changeNewTaskModel]);
+
+  const toggleFastModeControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.fast_mode.toggle",
+    label: "Toggle Fast",
+    description: "Turn Fast on or off for the focused conversation's model, keeping its reasoning level.",
+    sideEffect: "mutation",
+    execute: () => {
+      const label = toggleFastMode();
+      return label ? { ok: true, label } : { ok: false, error: "The focused model does not offer Fast." };
+    },
+  }), [toggleFastMode]);
+  useControlAction(toggleFastModeControlAction);
+
   const {
     commandPaletteOpen,
     setCommandPaletteOpen,
@@ -2721,6 +2810,7 @@ export function SessionRoute() {
     onCycleThinkingMode: cycleThinkingMode,
     onCycleFavoriteModel: cycleFavoriteModel,
     onCycleModelSource: () => { cycleFavoriteModel(true); },
+    onToggleFastMode: toggleFastMode,
   });
   useReactRenderWatchdog("SessionRoute", {
     selectedSessionId,
@@ -3992,6 +4082,7 @@ export function SessionRoute() {
       onTitleChange={setRenameWorkspaceTitle}
     />
     <CommandPalette
+      engineClient={client}
       open={commandPaletteOpen}
       onClose={() => setCommandPaletteOpen(false)}
       developerMode={developerMode}

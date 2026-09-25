@@ -39,6 +39,7 @@ type FetchRuntimeControl = (path: string, init?: { method?: string; body?: unkno
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 
 interface RegisterCoreRoutesOptions {
+  nativeEngineForWorkspace?: ConnectSnapshotOptions["nativeEngineForWorkspace"];
   routes: Route[];
   config: ServerConfig;
   tokens: TokenService;
@@ -126,6 +127,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
   const envPendingChangesByRuntime = new Map<string, boolean>();
 
   const connectSnapshotBaseOptions = {
+    nativeEngineForWorkspace: options.nativeEngineForWorkspace,
     resolveOpencodeDirectory,
     createWorkspaceOpencodeClient,
     refreshRegistrationFromLiveStatus,

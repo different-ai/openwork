@@ -6,7 +6,10 @@
   "exports": {
     ".": "./src/index.ts",
     "./builder": "./src/builder.ts",
-    "./outputs": "./src/outputs.ts"
+    "./outputs": "./src/outputs.ts",
+    "./checkpoints": "./src/checkpoints.ts",
+    "./checkpoint-schema": "./src/checkpoint-schema.ts",
+    "./evidence-builder": "./src/evidence-builder.ts"
   },
   "scripts": {
     "test": "node --test test/*.test.ts test/*.test.mjs"

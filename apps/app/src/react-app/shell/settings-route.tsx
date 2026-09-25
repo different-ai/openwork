@@ -101,6 +101,7 @@ import { EffectivePermissionsPanel } from "@/react-app/domains/settings/panels/e
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
 import { AdvancedView } from "@/react-app/domains/settings/pages/advanced-view";
 import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
+import { KeyboardShortcutsView } from "@/react-app/domains/settings/pages/keyboard-shortcuts-view";
 import { CloudAccountView } from "@/react-app/domains/settings/pages/cloud-account-view";
 import {
   connectPluginsForComposer,
@@ -317,6 +318,7 @@ export function parseSettingsPath(pathname: string): {
     case "preferences":
     case "permissions":
     case "appearance":
+    case "shortcuts":
     case "environment":
     case "updates":
     case "debug":
@@ -2720,19 +2722,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               }}
               cloudMcpHealth={cloudMcpHealth}
               refreshCloudMcpHealth={refreshCloudMcpHealth}
-              getEngineV2PreviewStatus={async () => {
-                if (!openworkClient) throw new Error("OpenWork server is not connected.");
-                return openworkClient.getEngineV2PreviewStatus();
-              }}
-              setEngineV2PreviewEnabled={async (enabled) => {
-                if (!openworkClient) throw new Error("OpenWork server is not connected.");
-                return openworkClient.setEngineV2PreviewEnabled(enabled);
-              }}
-              setEngineV2PreviewChatRouting={async (enabled) => {
-                if (!openworkClient) throw new Error("OpenWork server is not connected.");
-                return openworkClient.setEngineV2PreviewChatRouting(enabled);
-              }}
               organizationServer={denSession}
+              engineClient={openworkClient}
             />
             {platform.capabilities.localRuntimeControl ? (
               <RecoveryView
@@ -2768,6 +2759,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             setLanguage={setLocale}
             hideTitlebar={hideTitlebar}
             toggleHideTitlebar={() => setHideTitlebar((current) => !current)}
+          />
+        );
+      case "shortcuts":
+        return (
+          <KeyboardShortcutsView
+            client={opencodeClient}
+            baseUrl={opencodeBaseUrl}
+            directory={selectedWorkspaceRoot}
+            onOpenProviders={() => navigateSettingsPath("ai")}
           />
         );
       case "updates":
@@ -2870,6 +2870,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       )}
 
       <CommandPalette
+        engineClient={openworkClient}
         open={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
         developerMode={developerMode}

@@ -20,6 +20,7 @@ const SETTINGS_KEYWORDS: Partial<Record<SettingsTab, string[]>> = {
   extensions: ["library", "skills", "plugins", "mcp", "connections", "tools", "apps", "computer use"],
   environment: ["env", "environment variables", "secrets", "tokens", "api keys"],
   advanced: ["advanced settings", "runtime", "developer", "connection", "server", "port", "reset", "fix", "repair", "clean up", "troubleshoot", "recovery"],
+  shortcuts: ["shortcut", "shortcuts", "keyboard", "keys", "hotkey", "keybinding", "switch model", "fast"],
   appearance: ["theme", "dark mode", "light mode", "color", "font", "look"],
   updates: ["version", "upgrade", "check for updates", "release"],
   debug: ["logs", "diagnostics", "developer mode"],
