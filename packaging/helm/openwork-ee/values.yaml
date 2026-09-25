@@ -23,6 +23,12 @@ config:
     ownerEmails: ""
     allowPublicSignup: "false"
     requireEmailVerification: "false"
+  audit:
+    # Grant availability without a Cloud plan. Never turns org capture on by itself.
+    selfHostedEnabled: "false"
+    # Rollout gates; org admins separately control capture on their initialized policy.
+    captureEnabled: "false"
+    visibilityEnabled: "false"
   auth:
     passwordBreachScreeningEnabled: "false"
   githubConnector:

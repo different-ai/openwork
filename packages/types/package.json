@@ -88,6 +88,11 @@
       "development": "./src/den/deployment-capabilities.ts",
       "default": "./src/den/deployment-capabilities.ts"
     },
+    "./den/audit": {
+      "types": "./src/den/audit.ts",
+      "development": "./src/den/audit.ts",
+      "default": "./src/den/audit.ts"
+    },
     "./den/gateway": {
       "types": "./src/den/gateway.ts",
       "development": "./src/den/gateway.ts",

@@ -1,3 +1,4 @@
+import type { AuditEntitlement } from "@openwork/types/den/audit"
 import { env } from "./env.js"
 
 export const PLAN_TIERS = ["free", "team", "enterprise"] as const
@@ -12,7 +13,7 @@ export type OrganizationPlan = {
   grandfatheredAt?: string
 }
 
-export const ENTITLEMENT_KEYS = ["sso", "desktopPolicies", "orgControls", "analytics"] as const
+export const ENTITLEMENT_KEYS = ["sso", "desktopPolicies", "orgControls", "analytics", "auditLogs"] as const
 export type EntitlementKey = (typeof ENTITLEMENT_KEYS)[number]
 
 export type OrganizationEntitlements = Record<EntitlementKey, boolean>
@@ -28,6 +29,7 @@ const ENTITLEMENT_FEATURE_LABELS: Record<EntitlementKey, string> = {
   desktopPolicies: "Desktop policies",
   orgControls: "Enforced SSO and desktop version controls",
   analytics: "Usage analytics",
+  auditLogs: "Audit logs",
 }
 
 type MetadataInput = Record<string, unknown> | string | null | undefined
@@ -76,6 +78,12 @@ export function parseOrganizationPlan(metadata: MetadataInput): OrganizationPlan
   }
 }
 
+export function getAuditEntitlement(metadata: MetadataInput, selfHostedEnabled = env.auditSelfHostedEnabled): AuditEntitlement {
+  if (selfHostedEnabled) return { enabled: true, source: "self_hosted" }
+  if (parseOrganizationPlan(metadata).tier === "enterprise") return { enabled: true, source: "enterprise_plan" }
+  return { enabled: false, source: "none" }
+}
+
 export function getOrganizationEntitlements(
   metadata: MetadataInput,
   options: EntitlementOptions = {},
@@ -88,6 +96,7 @@ export function getOrganizationEntitlements(
     desktopPolicies: entitled,
     orgControls: entitled,
     analytics: entitled,
+    auditLogs: getAuditEntitlement(metadata).enabled,
   }
 }
 

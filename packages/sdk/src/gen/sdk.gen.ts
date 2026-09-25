@@ -141,6 +141,16 @@ import type {
   GetApiAuthScimV2SchemasResponses,
   GetApiAuthWellKnownOauthAuthorizationServerResponses,
   GetApiAuthWellKnownOpenidConfigurationResponses,
+  GetAuditEventTypesErrors,
+  GetAuditEventTypesResponses,
+  GetAuditExportErrors,
+  GetAuditExportResponses,
+  GetAuditOperationEventsErrors,
+  GetAuditOperationEventsResponses,
+  GetAuditOperationsErrors,
+  GetAuditOperationsResponses,
+  GetAuditUsageErrors,
+  GetAuditUsageResponses,
   GetAutomationDesktopRunnerPresenceErrors,
   GetAutomationDesktopRunnerPresenceResponses,
   GetAutomationErrors,
@@ -862,6 +872,8 @@ import type {
   TrashGmailMessageResponses,
   UntrashGmailMessageErrors,
   UntrashGmailMessageResponses,
+  UpdateAuditCaptureErrors,
+  UpdateAuditCaptureResponses,
   UpdateAutomationErrors,
   UpdateAutomationResponses,
   UpdateGmailDraftErrors,
@@ -2871,6 +2883,199 @@ export class DenClient extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    });
+  }
+
+  /**
+   * Set organization audit capture
+   *
+   * Fresh organization administrator authorization and visibility required. Only captureOn and expectedRevision are accepted. Enabling requires Enterprise or explicit installation entitlement, capture rollout availability and an operator-initialized policy. Disabling remains available after entitlement loss. Revision conflicts require refresh; matching no-ops do not record duplicate events. Changes and immutable lifecycle evidence commit atomically. Retained history and capacity configuration are unchanged.
+   */
+  public updateAuditCapture<ThrowOnError extends boolean = false>(
+    parameters: {
+      captureOn: boolean;
+      expectedRevision: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "captureOn" },
+            { in: "body", key: "expectedRevision" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<UpdateAuditCaptureResponses, UpdateAuditCaptureErrors, ThrowOnError>({
+      url: "/v1/audit/settings",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * List supported audit event types
+   *
+   * Organization administrator and audit visibility required. Returns the static supported semantic action catalog from the executable provider, audit-read, capture-settings and pilot-policy coverage registries, including hidden child actions and this endpoint's access events. Unique deterministic lexicographic order. This fixed bounded catalog needs no pagination or observed full-history DISTINCT scan. It is independent of loaded rows, time/filter selection and capture category enablement, including empty history; support does not imply this organization has events of every type or that every cloud action is captured. Legacy event types are excluded. Access capture uses the same content-free requested/served policy as other audit reads.
+   */
+  public getAuditEventTypes<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetAuditEventTypesResponses, GetAuditEventTypesErrors, ThrowOnError>({
+      url: "/v1/audit/event-types",
+      ...options,
+    });
+  }
+
+  /**
+   * List retained audit operations
+   *
+   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. The snapshotSequence is the committed tenant publication watermark, not a timestamp or auto-increment allocation. Events above it are excluded, including later children of an existing operation. Missing retained anchors or changed removal counters return 410 audit_history_unavailable; start a new snapshot. These checks are not lossless-drain or retention protection guarantees. Time filters are inclusive operation-start bounds (ISO date or offset date-time; date-only means UTC midnight). actorId is the initiating user ID; outcome is the current OPERATION outcome, not an event outcome. action matches an exact stable action of any child event within the watermark. searchId is an exact case-sensitive ID match (1..255 characters, no controls), not free-text search: operation ID OR any canonical retained child event ID, child envelope requestId or child resource reference ID, scoped to this organization and operation within the watermark. Legacy payloads are not searched. All other filters are AND combined with searchId. Resource filters match stored references within the watermark, without live-resource joins; resourceType requires resourceId. Operation outcome/count/byte projections remain current rather than historical as-of-watermark values. Newest operations first, ordered by server first-recorded time then ID. Summary action and resources describe the FIRST event only (at most 256 stored references), not all affected resources. Expand events for complete evidence; X-Audit-Resource-Scope is first_event.
+   */
+  public getAuditOperations<ThrowOnError extends boolean = false>(
+    parameters?: {
+      limit?: number;
+      cursor?: string;
+      from?: string | string;
+      to?: string | string;
+      actorId?: string;
+      action?: string;
+      outcome?: "running" | "succeeded" | "failed" | "partial" | "unknown";
+      origin?: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin";
+      searchId?: string;
+      resourceId?: string;
+      resourceType?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "limit" },
+            { in: "query", key: "cursor" },
+            { in: "query", key: "from" },
+            { in: "query", key: "to" },
+            { in: "query", key: "actorId" },
+            { in: "query", key: "action" },
+            { in: "query", key: "outcome" },
+            { in: "query", key: "origin" },
+            { in: "query", key: "searchId" },
+            { in: "query", key: "resourceId" },
+            { in: "query", key: "resourceType" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<GetAuditOperationsResponses, GetAuditOperationsErrors, ThrowOnError>({
+      url: "/v1/audit/operations",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * List retained operation events
+   *
+   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. The snapshotSequence is the committed tenant publication watermark, not a timestamp or auto-increment allocation. Events above it are excluded, including later children of an existing operation. Missing retained anchors or changed removal counters return 410 audit_history_unavailable; start a new snapshot. These checks are not lossless-drain or retention protection guarantees. Events are in ascending tenant sequence order and carry complete versioned envelopes. Missing or foreign retained operations return the same 404.
+   */
+  public getAuditOperationEvents<ThrowOnError extends boolean = false>(
+    parameters: {
+      operationId: string;
+      limit?: number;
+      cursor?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "operationId" },
+            { in: "query", key: "limit" },
+            { in: "query", key: "cursor" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      GetAuditOperationEventsResponses,
+      GetAuditOperationEventsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/audit/operations/{operationId}/events",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Read audit retention usage
+   *
+   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Reads stored policy and tenant counters, plus the oldest retained operation. Capture requires audit entitlement, organization captureOn and the deployment capture flag. Entitlement and rollout availability alone never initialize a policy or start capture. Billing is disabled, cleanup is dry-run only and drains are not configured. Logical bytes are not physical database size; access capture may itself add one operation.
+   */
+  public getAuditUsage<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetAuditUsageResponses, GetAuditUsageErrors, ThrowOnError>({
+      url: "/v1/audit/usage",
+      ...options,
+    });
+  }
+
+  /**
+   * Export one audit snapshot page
+   *
+   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. The snapshotSequence is the committed tenant publication watermark, not a timestamp or auto-increment allocation. Events above it are excluded, including later children of an existing operation. Missing retained anchors or changed removal counters return 410 audit_history_unavailable; start a new snapshot. These checks are not lossless-drain or retention protection guarantees. Time filters are inclusive operation-start bounds (ISO date or offset date-time; date-only means UTC midnight). actorId is the initiating user ID; outcome is the current OPERATION outcome, not an event outcome. action matches an exact stable action of any child event within the watermark. searchId is an exact case-sensitive ID match (1..255 characters, no controls), not free-text search: operation ID OR any canonical retained child event ID, child envelope requestId or child resource reference ID, scoped to this organization and operation within the watermark. Legacy payloads are not searched. All other filters are AND combined with searchId. Resource filters match stored references within the watermark, without live-resource joins; resourceType requires resourceId. Operation outcome/count/byte projections remain current rather than historical as-of-watermark values. Exports ALL matching operations' children within the watermark in ascending tenant sequence, not date/ID order. Each response is one bounded attachment, not a continuous drain. Follow X-Audit-Next-Cursor with the same format and filters until that header is absent. X-Audit-Snapshot-Sequence stays fixed. NDJSON has one full envelope per line. CSV has a header on every page and summary fields only: references and changed-field names are JSON cells, no before/after content. Every cell is quoted; formula-leading whitespace/control and =+-@ are prefixed with an apostrophe, backslashes are doubled, controls/multiline characters are encoded as literal backslash-u escapes.
+   */
+  public getAuditExport<ThrowOnError extends boolean = false>(
+    parameters?: {
+      limit?: number;
+      cursor?: string;
+      from?: string | string;
+      to?: string | string;
+      actorId?: string;
+      action?: string;
+      outcome?: "running" | "succeeded" | "failed" | "partial" | "unknown";
+      origin?: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin";
+      searchId?: string;
+      resourceId?: string;
+      resourceType?: string;
+      format?: "ndjson" | "csv";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "limit" },
+            { in: "query", key: "cursor" },
+            { in: "query", key: "from" },
+            { in: "query", key: "to" },
+            { in: "query", key: "actorId" },
+            { in: "query", key: "action" },
+            { in: "query", key: "outcome" },
+            { in: "query", key: "origin" },
+            { in: "query", key: "searchId" },
+            { in: "query", key: "resourceId" },
+            { in: "query", key: "resourceType" },
+            { in: "query", key: "format" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<GetAuditExportResponses, GetAuditExportErrors, ThrowOnError>({
+      url: "/v1/audit/export",
+      ...options,
+      ...params,
     });
   }
 

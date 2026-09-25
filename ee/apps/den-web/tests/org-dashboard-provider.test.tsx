@@ -23,6 +23,8 @@ import { useOrgInferenceProviders } from "../app/(den)/dashboard/_components/inf
 import { LlmProviderDetailScreen } from "../app/(den)/dashboard/_components/llm-provider-detail-screen";
 import { parseOrgContextPayload } from "../app/(den)/_lib/den-org";
 import { getGatewayDashboardAccess } from "../app/(den)/dashboard/_lib/gateway-dashboard-access";
+import { AuditLogsScreen } from "../app/(den)/dashboard/_components/audit-logs-screen";
+import { auditEventTypes, auditUsage, operationsPage } from "./audit-logs-fixtures";
 
 type Reply = { payload: unknown; status?: number };
 const account = { id: "user-1", name: "Member", email: "member@example.test" };
@@ -60,6 +62,7 @@ async function withDashboard(check: (fixture: {
   rerender: (user: typeof account | null) => void;
   unmount: () => void;
   verifyReauth: () => Promise<void>;
+  cancelReauth: () => void;
 }) => Promise<void>, options: {
   setupOrganizationId?: string; activeOrgId?: string; singleOrg?: boolean; metadata?: string; role?: string;
   page?: ReactNode; pathname?: string; outsideGateway?: boolean; deploymentCapabilities?: unknown;
@@ -85,9 +88,11 @@ async function withDashboard(check: (fixture: {
   const replace = mock((_path: string) => {});
   const push = mock((_path: string) => {});
   let verifyReauth: () => Promise<void> = async () => { throw new Error("Reauth dialog not mounted"); };
+  let cancelReauth: () => void = () => { throw new Error("Reauth dialog not mounted"); };
   const RealReauthDialog = reauth.ReauthDialog;
   spyOn(reauth, "ReauthDialog").mockImplementation((props) => {
     verifyReauth = props.onVerified;
+    cancelReauth = props.onCancel;
     return <RealReauthDialog {...props} />;
   });
   const config = { ...runtime.EMPTY_RUNTIME_CONFIG, orgMode: options.singleOrg ? "single_org" : "multi_org" } satisfies runtime.DenWebRuntimeConfig;
@@ -164,6 +169,7 @@ async function withDashboard(check: (fixture: {
       rerender: (user) => { sessionUser = user; render(); },
       unmount: () => { root.unmount(); mounted = false; },
       verifyReauth: () => verifyReauth(),
+      cancelReauth: () => cancelReauth(),
     });
   } finally {
     if (mounted) await act(async () => root.unmount());
@@ -509,6 +515,66 @@ test.each([false, true])("reauthentication replays only in its original workspac
     else expect(await result).toBeUndefined();
     expect(scope.getRequestOrgScope()).toBe(switching ? "org-b" : "org-a");
   });
+});
+
+test.each(["verify", "cancel", "moved-session", "switch", "sign-out", "unmount"])("real audit capture reauth handles %s without changing target or replaying cancellation", async (transition) => {
+  const patches: { orgId: string | null; body: unknown }[] = [];
+  await withDashboard(async ({ container, state, verifyReauth, cancelReauth, rerender, unmount }) => {
+    const flush = async () => { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); }); };
+    await flush();
+    const details = [...container.querySelectorAll("details")].find((entry) => entry.querySelector("summary")?.textContent === "Capture and storage");
+    if (!details) throw new Error("Missing capture disclosure");
+    await act(async () => { details.open = true; details.dispatchEvent(new Event("toggle")); });
+    await flush();
+    const control = container.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Capture audit logs"]');
+    if (!control) throw new Error("Missing capture switch");
+    await act(async () => control.click());
+    await flush();
+    expect(state().reauthDialogOpen).toBe(true);
+    expect(patches).toEqual([{ orgId: "org-a", body: { captureOn: false, expectedRevision: 1 } }]);
+    if (transition === "moved-session") {
+      await act(async () => { await requests.requestJson("/api/auth/organization/set-active", { method: "POST", body: JSON.stringify({ organizationId: "org-b" }) }); });
+      scope.setRequestOrgScope("org-b");
+    }
+    if (transition === "switch") await act(async () => state().switchOrganization("b"));
+    if (transition === "sign-out") await act(async () => rerender(null));
+    if (transition === "unmount") await act(async () => unmount());
+    if (transition === "cancel") await act(async () => cancelReauth());
+    await act(async () => verifyReauth());
+    await flush();
+    const shouldApply = transition === "verify" || transition === "moved-session";
+    expect(patches).toHaveLength(shouldApply ? 2 : 1);
+    for (const patch of patches) expect(patch).toEqual({ orgId: "org-a", body: { captureOn: false, expectedRevision: 1 } });
+    if (shouldApply) {
+      expect(container.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("false");
+      expect(scope.getRequestOrgScope()).toBe("org-a");
+      expect(container.textContent).toContain("Team models");
+    }
+    if (transition === "cancel") expect(container.textContent).toContain("Capture change was not sent");
+  }, { pathname: "/dashboard/audit-logs", outsideGateway: true, page: <AuditLogsScreen />, reply: (path, init) => {
+    if (path === "/v1/audit/settings") {
+      patches.push({ orgId: new Headers(init?.headers).get(scope.ORG_SCOPE_HEADER), body: JSON.parse(String(init?.body)) });
+      if (patches.length === 1) return { status: 403, payload: { error: "reauth", reason: "fresh_session_required" } };
+      if (!auditUsage.policy) throw new Error("Missing policy");
+      return { payload: { ...auditUsage, captureOn: false, captureEnabled: false, policy: { ...auditUsage.policy, enabled: false, revision: 2 } } };
+    }
+    if (path === "/v1/audit/usage") return { payload: auditUsage };
+    if (path === "/v1/audit/event-types") return { payload: auditEventTypes };
+    if (path.startsWith("/v1/audit/operations?")) return { payload: operationsPage() };
+    return undefined;
+  } });
+});
+
+test.each([undefined, null, {}, { auditLogs: false }, { auditLogs: "true" }, { auditLogs: 1 }])("audit entitlement fails closed without explicit boolean true: %j", (entitlements) => {
+  const payload = { organization: orgs[0], currentMember: { id: "member-a", userId: account.id, role: "owner" }, entitlements };
+  expect(parseOrgContextPayload(payload)?.entitlements).toEqual({ sso: true, desktopPolicies: true, orgControls: true, analytics: true, auditLogs: false });
+});
+
+test("audit entitlement parses true without changing legacy explicit denials", () => {
+  const payload = { organization: orgs[0], currentMember: { id: "member-a", userId: account.id, role: "owner" },
+    entitlements: { auditLogs: true, sso: false, desktopPolicies: false, orgControls: false, analytics: false } };
+  expect(parseOrgContextPayload(payload)?.entitlements).toEqual(payload.entitlements);
+  expect(parseOrgContextPayload({ ...payload, entitlements: undefined })?.entitlements.auditLogs).toBe(false);
 });
 
 const unavailableMessage = "This feature is not part of your deployment system, please ask an instance admin to configure deployment";

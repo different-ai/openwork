@@ -178,6 +178,7 @@ const organizationContextResponseSchema = z.object({
     }),
   }).passthrough(),
   deploymentCapabilities: deploymentCapabilitiesSchema,
+  entitlements: z.object({ sso: z.boolean(), desktopPolicies: z.boolean(), orgControls: z.boolean(), analytics: z.boolean(), auditLogs: z.boolean() }),
 }).passthrough().meta({ ref: "OrganizationContextResponse" })
 
 const userEmailRequiredSchema = z.object({
@@ -675,6 +676,8 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         c.set("organizationContext", payload)
       }
 
+      const [currentOrganization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, payload.organization.id)).limit(1)
+      if (!currentOrganization) return c.json({ error: "organization_not_found" }, 404)
       const owner = payload.members.find((member: typeof payload.members[number]) => member.isOwner) ?? null
       // Cloud is entitled by OpenWork Web access (paid subscription or the
       // platform-admin complimentary grant) on hosted deployments; there is no
@@ -711,8 +714,8 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         },
         currentMemberTeams: c.get("memberTeams") ?? [],
         deploymentCapabilities: deploymentCapabilities(),
-        plan: parseOrganizationPlan(payload.organization.metadata),
-        entitlements: getOrganizationEntitlements(payload.organization.metadata),
+        plan: parseOrganizationPlan(currentOrganization.metadata),
+        entitlements: getOrganizationEntitlements(currentOrganization.metadata),
         capabilities: {
           gatewayDashboard: true,
           // Protocol capability: clients must see this explicit signal before

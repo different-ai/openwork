@@ -1,7 +1,6 @@
 import { randomBytes } from "node:crypto"
 import { and, asc, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
-  AuditEventTable,
   AuthUserTable,
   CloudRuntimeInstanceTable,
   DaytonaSandboxTable,
@@ -716,7 +715,8 @@ export async function deleteWorkerCascade(worker: WorkerRow) {
     await tx.delete(DaytonaSandboxTable).where(eq(DaytonaSandboxTable.worker_id, worker.id))
     await tx.delete(WorkerInstanceTable).where(eq(WorkerInstanceTable.worker_id, worker.id))
     await tx.delete(WorkerBundleTable).where(eq(WorkerBundleTable.worker_id, worker.id))
-    await tx.delete(AuditEventTable).where(eq(AuditEventTable.worker_id, worker.id))
+    // Audit references outlive the resource. Organization erasure owns purging;
+    // deleting a worker must not remove either legacy or operation history.
     await tx.delete(WorkerTable).where(eq(WorkerTable.id, worker.id))
   })
 }

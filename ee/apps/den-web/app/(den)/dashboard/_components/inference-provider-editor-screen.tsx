@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { Check, Globe, LockKeyhole, Plus, Search, User, Users } from "lucide-react";
 import type { GatewayAccessGrantWrite, GatewayCredentialSetWrite } from "@openwork/types/den/gateway";
+import { createAuditOperationContext, type AuditOperationContext } from "@openwork/types/den/audit";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenCombobox } from "../../_components/ui/combobox";
@@ -149,21 +150,21 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   }
 
   /** Edits go through the matrix routes: first group, first set, and one grant per audience. */
-  async function syncAccessAndCredential() {
+  async function syncAccessAndCredential(auditContext: AuditOperationContext) {
     if (!provider) return;
     const [group] = provider.modelGroups;
     const [set] = provider.credentialSets;
     if (!group || !set) return;
     const groupModels = allowAllModels ? (detail?.models ?? []).map((model) => model.id) : modelIds;
     if (groupModels.length) {
-      await saveGatewayResource(provider.id, group.id, { resource: "model-groups", body: { name: group.name, description: group.description, modelIds: groupModels, status: "active" } });
+      await saveGatewayResource(provider.id, group.id, { resource: "model-groups", body: { name: group.name, description: group.description, modelIds: groupModels, status: "active" } }, auditContext);
     }
     const { credential, apiKeys, oauthClientId: clientId, oauthClientSecret: clientSecret } = buildInferenceProviderRequestBody(formInput);
     if (credential || apiKeys || credentialMode === "member" || set.credentialMode !== credentialMode) {
       const body: GatewayCredentialSetWrite = { name: set.name, credentialMode, status: "active", credential, apiKeys };
       if (clientId !== undefined) body.oauthClientId = clientId;
       if (clientSecret !== undefined) body.oauthClientSecret = clientSecret;
-      await saveGatewayResource(provider.id, set.id, { resource: "credential-sets", body });
+      await saveGatewayResource(provider.id, set.id, { resource: "credential-sets", body }, auditContext);
     }
     const desired: GatewayAccessGrantWrite["audience"][] = [
       ...(access.allMembers ? [{ type: "organization" as const }] : []),
@@ -172,10 +173,10 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     ];
     const same = (a: GatewayAccessGrantWrite["audience"], b: GatewayAccessGrantWrite["audience"]) => JSON.stringify(a) === JSON.stringify(b);
     const existing = provider.accessGrants.filter((grant) => grant.modelGroupId === group.id && grant.credentialSetId === set.id);
-    for (const grant of existing) if (!desired.some((audience) => same(audience, grant.audience))) await deleteGatewayResource(provider.id, "access-grants", grant.id);
+    for (const grant of existing) if (!desired.some((audience) => same(audience, grant.audience))) await deleteGatewayResource(provider.id, "access-grants", grant.id, auditContext);
     for (const audience of desired) {
       if (!existing.some((grant) => same(grant.audience, audience))) {
-        await saveGatewayResource(provider.id, null, { resource: "access-grants", body: { audience, modelGroupId: group.id, credentialSetId: set.id } });
+        await saveGatewayResource(provider.id, null, { resource: "access-grants", body: { audience, modelGroupId: group.id, credentialSetId: set.id } }, auditContext);
       }
     }
   }
@@ -196,13 +197,14 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
       return setSaveError("People sign in needs a Google OAuth client ID and secret.");
     }
     setSaving(true);
+    const auditContext = createAuditOperationContext();
     try {
       await runReauthableAction("save-inference-provider", async () => {
         if (!provider) {
-          await saveInferenceProvider({ inferenceProviderId: null, body: buildInferenceProviderRequestBody({ ...formInput, name: name.trim() || displayName }) });
+          await saveInferenceProvider({ inferenceProviderId: null, body: buildInferenceProviderRequestBody({ ...formInput, name: name.trim() || displayName }), auditContext });
         } else {
-          await saveInferenceProvider({ inferenceProviderId: provider.id, body: { name: name.trim(), modelIds: allowAllModels ? [] : modelIds, status: "active" } });
-          await syncAccessAndCredential();
+          await saveInferenceProvider({ inferenceProviderId: provider.id, body: { name: name.trim(), modelIds: allowAllModels ? [] : modelIds, status: "active" }, auditContext });
+          await syncAccessAndCredential(auditContext);
           await reload();
         }
         router.push(getAiGatewayProvidersRoute(orgSlug));
@@ -217,9 +219,10 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     if (!provider || saving) return;
     setSaving(true);
     setSaveError(null);
+    const auditContext = createAuditOperationContext();
     try {
       await runReauthableAction("delete-inference-provider", async () => {
-        await deleteInferenceProvider(provider.id);
+        await deleteInferenceProvider(provider.id, auditContext);
         setConfirmDelete(false);
         router.push(getAiGatewayProvidersRoute(orgSlug));
         router.refresh();

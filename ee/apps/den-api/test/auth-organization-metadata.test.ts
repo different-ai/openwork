@@ -20,7 +20,7 @@ beforeAll(async () => {
 
 afterAll(() => mock.restore())
 
-async function beforeCreate(metadata: unknown) {
+async function beforeCreate(metadata: unknown): Promise<{ data: { metadata: Record<string, unknown> } } | undefined> {
   // Invoke the registered hook, not the DB-backed organization creation endpoint.
   for (const plugin of auth.options.plugins ?? []) {
     if (plugin.id === "organization") {
@@ -73,10 +73,18 @@ test("existing malformed metadata and dpaSigned denials are preserved", async ()
   }
 })
 
+test("public organization creation cannot grant itself a commercial plan or audit entitlement", async () => {
+  for (const plan of [null, {}, { tier: "enterprise", source: "manual" }, { tier: "enterprise", source: "stripe" }, { tier: "enterprise", source: "grandfathered" }]) {
+    for (const metadata of [{ plan }, JSON.stringify({ plan })]) await expect(beforeCreate(metadata)).rejects.toMatchObject({
+      status: "FORBIDDEN", body: { message: "plan is reserved for internal platform administration." },
+    })
+  }
+})
+
 test("public organization updates cannot replace capability metadata", async () => {
   for (const plugin of auth.options.plugins ?? []) {
     if (plugin.id !== "organization") continue
-    for (const metadata of [{}, { capabilities: { gatewayDashboard: true } }, { capabilities: { gatewayDashboard: false } }]) {
+    for (const metadata of [{}, { capabilities: { gatewayDashboard: true } }, { capabilities: { gatewayDashboard: false } }, { plan: { tier: "enterprise" } }, { entitlements: { auditLogs: true } }]) {
       await expect(plugin.options.organizationHooks.beforeUpdateOrganization({
         organization: { metadata },
         user: { id: "test-user", name: "Member", email: "member@example.test", emailVerified: true, createdAt: new Date(0), updatedAt: new Date(0) },
