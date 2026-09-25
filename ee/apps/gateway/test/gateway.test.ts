@@ -712,6 +712,24 @@ test("settings.upstreamBaseUrl overrides both provider_config.options.baseURL an
   assert.equal(ignored.upstreamRequests[0]?.url, "https://api.anthropic.com/v1/messages")
 })
 
+test("a custom provider, absent from models.dev, proxies OpenAI chat to its own saved endpoint", async () => {
+  const { app, upstreamRequests } = createTestServer({
+    provider: { provider_id: "openwork-custom", provider_config: { id: "openwork-custom", npm: "@ai-sdk/openai-compatible", env: ["CUSTOM_PROVIDER_API_KEY"] }, settings: { upstreamBaseUrl: "http://127.0.0.1:4321/team-llm/v1" } },
+  })
+  const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "llama-3", messages: [] } }))
+  assert.equal(response.status, 200)
+  const upstream = upstreamRequests[0]
+  assert.ok(upstream)
+  assert.equal(upstream.url, "http://127.0.0.1:4321/team-llm/v1/chat/completions")
+  assert.equal(upstream.headers.get("authorization"), "Bearer upstream-secret")
+  await response.arrayBuffer()
+
+  const unsaved = createTestServer({ provider: { provider_id: "openwork-custom", provider_config: { npm: "@ai-sdk/openai-compatible" } } })
+  const missing = await unsaved.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "llama-3", messages: [] } }))
+  assert.notEqual(missing.status, 200)
+  assert.equal(unsaved.upstreamRequests.length, 0)
+})
+
 test("google: x-goog-api-key auth, key query stripped, alt=sse preserved, model from path, stream usage", async () => {
   const { app, upstreamRequests, logRows } = createTestServer({
     provider: { provider_id: "google", provider_config: { npm: "@ai-sdk/google" } },

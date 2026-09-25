@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describeGatewayAccess } from "../app/(den)/dashboard/_components/inference-provider-request";
-import { orderCatalog, providerTagline } from "../app/(den)/dashboard/_components/inference-provider-picker-screen";
+import { customProviderMatches, orderCatalog, providerTagline } from "../app/(den)/dashboard/_components/inference-provider-picker-screen";
 import {
   getAiGatewayRoute,
   getEditAiGatewayProviderRoute,
@@ -118,12 +118,20 @@ describe("AI Providers tab", () => {
 describe("Gateway provider form", () => {
   test("catalog picker then one form for key, who, and models", () => {
     expect(picker).toContain("Start here");
-    expect(picker).toContain("Another provider");
+    expect(picker).toContain("Custom provider");
+    expect(picker).toContain("getNewAiGatewayProviderRoute(orgSlug, CUSTOM_GATEWAY_PROVIDER_ID)");
+    expect(picker).not.toContain("Another provider");
+    for (const query of ["", "custom", "Custom", "openai-compatible", "self-hosted", "endpoint", "other"]) expect(customProviderMatches(query)).toBe(true);
+    for (const query of ["anthropic", "gemini", "mistral"]) expect(customProviderMatches(query)).toBe(false);
     expect(picker).toContain("getNewAiGatewayProviderRoute(orgSlug, item.id)");
     expect(orderCatalog([{ id: "zeta", name: "Zeta" }, { id: "anthropic", name: "Anthropic" }, { id: "openrouter", name: "OpenRouter" }]).map((entry) => entry.id)).toEqual(["openrouter", "anthropic", "zeta"]);
     expect(providerTagline({ id: "anthropic", modelCount: 9 })).toBe("Claude models");
     expect(providerTagline({ id: "unknown", modelCount: 1 })).toBe("1 model");
-    for (const heading of ["Key", "Who can use it", "Models"]) expect(editor).toContain(`>${heading}</h2>`);
+    for (const heading of ["Who can use it", "Models"]) expect(editor).toContain(`>${heading}</h2>`);
+    expect(editor).toContain('{custom ? "Endpoint and key" : "Key"}</h2>');
+    expect(editor).toContain('data-testid="gateway-custom-endpoint"');
+    expect(editor).toContain("requestLlmProviderTestConnection");
+    expect(editor).toContain('data-testid="gateway-custom-model-add"');
     expect(editor).toContain("Everyone in the organization");
     expect(editor).toContain('data-testid="gateway-access-add-person"');
     expect(editor).toContain('data-testid="gateway-access-add-team"');

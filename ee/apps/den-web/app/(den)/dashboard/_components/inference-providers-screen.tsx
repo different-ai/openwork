@@ -1,5 +1,6 @@
 "use client";
 
+import { CUSTOM_GATEWAY_PROVIDER_ID } from "@openwork/types/den/gateway-custom-provider";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ArrowRight, Box, Plus, Search } from "lucide-react";
@@ -49,7 +50,7 @@ function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; or
       />
       <div className="min-w-0 w-[200px] shrink-0">
         <p className="truncate text-[13px] font-medium text-gray-900">{provider.name}</p>
-        <p className="truncate font-mono text-[11px] text-gray-400">{provider.providerId}</p>
+        <p className="truncate font-mono text-[11px] text-gray-400">{providerSubtitle(provider)}</p>
       </div>
       <p className="w-[140px] shrink-0 text-[13px] text-gray-600">{modelsLabel(provider)}</p>
       <p className={`min-w-0 flex-1 truncate text-[13px] ${nobody ? "text-gray-400" : "text-gray-600"}`} data-testid="gateway-provider-audience">
@@ -105,6 +106,14 @@ function EmptyState({ orgSlug }: { orgSlug: string | null }) {
 }
 
 /** The AI Providers tab of AI Gateway: who can use models, then one row per provider. */
+/** Catalog providers show their catalog id; a custom provider shows where it sends requests. */
+function providerSubtitle(provider: { providerId: string; settings?: Record<string, unknown> }) {
+  if (provider.providerId !== CUSTOM_GATEWAY_PROVIDER_ID) return provider.providerId;
+  const endpoint = provider.settings?.upstreamBaseUrl;
+  if (typeof endpoint !== "string") return "Custom endpoint";
+  try { return new URL(endpoint).host; } catch { return "Custom endpoint"; }
+}
+
 export function GatewayProvidersSection() {
   const { orgId, orgSlug } = useOrgDashboard();
   const { inferenceProviders, busy, error } = useOrgInferenceProviders(orgId);

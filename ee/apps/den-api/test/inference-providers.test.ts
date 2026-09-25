@@ -1407,6 +1407,52 @@ test("enabling a model keeps an empty provider policy unrestricted and does not 
   expect(readRows(details, "accessGrants")).toEqual([])
 })
 
+test("a custom OpenAI-compatible provider serves exactly its own model IDs from its own endpoint", async () => {
+  const body = {
+    name: "Our model server", providerId: "openwork-custom", modelIds: ["team-llm-a", "team-llm-b"],
+    settings: { upstreamBaseUrl: "https://models.example/v1" },
+    credential: { kind: "api_key", secret: "fake-custom-endpoint-key" }, memberIds: [memberId],
+  }
+  const missingEndpoint = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ ...body, settings: {} }) })
+  expect(missingEndpoint.status).toBe(400)
+  expect(await missingEndpoint.json()).toMatchObject({ error: "invalid_settings" })
+  const missingModels = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ ...body, modelIds: [] }) })
+  expect(missingModels.status).toBe(400)
+  expect(await missingModels.json()).toMatchObject({ error: "custom_models_required" })
+  const privateEndpoint = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ ...body, settings: { upstreamBaseUrl: "http://127.0.0.1:9000/v1" } }) })
+  expect(privateEndpoint.status).toBe(400)
+
+  const create = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify(body) })
+  expect(create.status).toBe(201)
+  const provider = readProvider(await create.json())
+  const id = readString(provider, "id")
+  expect(provider).toMatchObject({ providerId: "openwork-custom", name: "Our model server", modelIds: ["team-llm-a", "team-llm-b"], settings: { upstreamBaseUrl: "https://models.example/v1" } })
+  expect(firstRow(provider, "modelGroups").modelIds).toEqual(["team-llm-a", "team-llm-b"])
+  expect(JSON.stringify(provider)).not.toContain("fake-custom-endpoint-key")
+  const usable = readProviderList(await (await request(memberCookie, "/v1/inference-providers?scope=usable")).json()).find((entry) => entry.id === id)
+  if (!usable) throw new Error("Granted custom provider missing")
+  expect(readRows(usable, "models").map((model) => model.upstreamModelId).sort()).toEqual(["team-llm-a", "team-llm-b"])
+
+  const base = `/v1/inference-providers/${id}`
+  const available = await request(ownerCookie, `${base}/available-models`)
+  expect(available.status).toBe(200)
+  expect(readRows(await available.json(), "models").map((row) => row.id)).toEqual(["team-llm-a", "team-llm-b"])
+  const widened = await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ modelIds: ["team-llm-a", "team-llm-b", "team-llm-c"] }) })
+  expect(widened.status).toBe(200)
+  expect(readProvider(await widened.json()).modelIds).toEqual(["team-llm-a", "team-llm-b", "team-llm-c"])
+  const models = await request(ownerCookie, `${base}/models`)
+  expect(models.status).toBe(200)
+  const listed = await models.json()
+  expect(listed).not.toHaveProperty("catalogWarning")
+  expect(readRows(listed, "models").map((row) => row.id).sort()).toEqual(["team-llm-a", "team-llm-b", "team-llm-c"])
+  const emptied = await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ modelIds: [] }) })
+  expect(emptied.status).toBe(400)
+  expect(await emptied.json()).toMatchObject({ error: "custom_models_required" })
+  const moved = await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ settings: { upstreamBaseUrl: "https://other.example/v1" } }) })
+  expect(moved.status).toBe(409)
+  expect(await moved.json()).toMatchObject({ error: "provider_destination_immutable" })
+})
+
 test("Gateway key issuance is atomic, encrypted, and rotates invalid material in the same membership row", async () => {
   const { ensureMemberGatewayKey } = await import("../src/gateway-keys.js")
   const input = { organizationId, memberId: ownerMemberId }

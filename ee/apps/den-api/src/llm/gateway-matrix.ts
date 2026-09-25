@@ -4,6 +4,7 @@ import { AuthUserTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, 
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { createGatewayModelAlias, gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
 import { inferenceCredentialEnvNames, isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
+import { CUSTOM_GATEWAY_PROVIDER_ENV, CUSTOM_GATEWAY_PROVIDER_ID, CUSTOM_GATEWAY_PROVIDER_NPM } from "@openwork/types/den/gateway-custom-provider"
 import { parseGatewayProviderSecret, type GatewayAccessGrant, type GatewayAccessGrantWrite, type GatewayCredentialSet, type GatewayCredentialSetPatch, type GatewayModelGroup, type GatewayModelGroupPatch, type GatewayProviderDetails, type GatewayProviderSummary, type GatewayUsableModel } from "@openwork/types/den/gateway"
 import { db } from "../db.js"
 import { env } from "../env.js"
@@ -40,8 +41,31 @@ export function validateGatewaySettings(config: Record<string, unknown>, setting
   }
 }
 
-export async function gatewayCatalog(providerId: string, modelIds: string[]) {
-  const catalog = await getModelsDevProvider(providerId)
+/**
+ * A custom provider's catalog is its own saved endpoint and model IDs, so every
+ * listed model is trusted as-is and "all models" has no meaning without a list.
+ */
+export function customGatewayCatalog(input: { name: string; modelIds: readonly string[]; settings: Record<string, unknown> }): ModelsDevProvider {
+  const api = input.settings.upstreamBaseUrl
+  if (typeof api !== "string" || !api.trim()) throw new GatewayWriteError(400, "invalid_settings", "A custom provider needs its endpoint in settings.upstreamBaseUrl.")
+  const modelIds = [...new Set(input.modelIds)]
+  if (!modelIds.length) throw new GatewayWriteError(400, "custom_models_required", "List at least one model ID the endpoint serves.")
+  return {
+    id: CUSTOM_GATEWAY_PROVIDER_ID, name: input.name, npm: CUSTOM_GATEWAY_PROVIDER_NPM, env: [...CUSTOM_GATEWAY_PROVIDER_ENV], doc: null, api, config: {},
+    models: modelIds.map((id) => ({ id, name: id, config: { id, name: id, tool_call: true } })),
+  }
+}
+
+/** The trusted catalog for a saved provider: models.dev, or the provider's own list when custom. */
+export async function trustedGatewayCatalog(provider: Pick<GatewayProvider, "provider_id" | "name" | "model_ids" | "settings">): Promise<ModelsDevProvider | null> {
+  if (provider.provider_id !== CUSTOM_GATEWAY_PROVIDER_ID) return getModelsDevProvider(provider.provider_id)
+  return customGatewayCatalog({ name: provider.name, modelIds: provider.model_ids, settings: provider.settings })
+}
+
+export async function gatewayCatalog(providerId: string, modelIds: string[], custom?: { name: string; settings: Record<string, unknown> }) {
+  const catalog = providerId === CUSTOM_GATEWAY_PROVIDER_ID
+    ? customGatewayCatalog({ name: custom?.name ?? "", modelIds, settings: custom?.settings ?? {} })
+    : await getModelsDevProvider(providerId)
   if (!catalog) throw new GatewayWriteError(404, "provider_not_found")
   return resolveGatewayCatalog(catalog, modelIds)
 }
@@ -68,7 +92,7 @@ export function resolveGatewayCatalog(catalog: ModelsDevProvider, modelIds: stri
 
 export async function refreshGatewayCatalog(provider: GatewayProvider) {
   // Catalog I/O never holds a provider/OAuth lock. A failed load cannot prune rows.
-  const catalog = await getModelsDevProvider(provider.provider_id).catch(() => null)
+  const catalog = await trustedGatewayCatalog(provider).catch(() => null)
   return db.transaction(async (tx) => {
     const [current] = await tx.select().from(GatewayProviderTable)
       .where(and(eq(GatewayProviderTable.id, provider.id), eq(GatewayProviderTable.organization_id, provider.organization_id))).for("update")
