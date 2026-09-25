@@ -6,6 +6,8 @@ import { parseEvidenceCheckpoint } from "../src/checkpoint-schema.ts";
 import { CheckpointUnavailable, forkEvidenceCheckpoint, launchEvidenceWorld, deleteEvidenceVm, EVIDENCE_KIND } from "../src/checkpoints.ts";
 
 const sourceSha = "a".repeat(40);
+const fingerprint = "f".repeat(40);
+const template = { id: "template", runtimeFingerprint: fingerprint };
 function checkpoint() {
   return parseEvidenceCheckpoint({ version: 1, provider: "freestyle", id: `ow-evidence-v1-${"b".repeat(32)}`, sourceSha, imageHash: "c".repeat(64),
     capturedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600_000).toISOString() });
@@ -34,7 +36,7 @@ function provider(manifest = checkpoint(), uniqueSlots = false) {
       const guestPath = url.searchParams.get("path") ?? "";
       const key = `${vmId}:${guestPath}`;
       if ((init?.method ?? "GET") !== "GET") { files.set(key, await new Response(init?.body).text()); return Response.json({}); }
-      if (guestPath.endsWith("source-sha")) return new Response(sourceSha);
+      if (guestPath.endsWith("runtime-fingerprint")) return new Response(fingerprint);
       if (guestPath.endsWith("evidence-ready")) return new Response("web-v1");
       if (files.has(key)) return new Response(files.get(key));
       if (guestPath.endsWith("/checkpoint.json")) return new Response(JSON.stringify(manifest));
@@ -67,8 +69,8 @@ test("expired checkpoint fails before any provider call", async () => {
 
 test("web world launch denies egress, bounds lifetime, and rotates private viewer credentials", async () => {
   const mock = provider();
-  const a = await launchEvidenceWorld("template", sourceSha, mock.api, reachable);
-  const b = await launchEvidenceWorld("template", sourceSha, mock.api, reachable);
+  const a = await launchEvidenceWorld(template, sourceSha, mock.api, reachable);
+  const b = await launchEvidenceWorld(template, sourceSha, mock.api, reachable);
   assert.notEqual(a.url, b.url); assert.notEqual(a.cookie, b.cookie);
   assert.deepEqual(mock.creates[0].firewall, { rules: [] });
   assert.equal(mock.creates[0].ttlSeconds, 3600);
@@ -102,7 +104,33 @@ test("a retried request reuses its fork and unique provider slots cap concurrent
 
 test("failed public readiness deletes the allocated VM and unrelated VMs cannot be deleted", async () => {
   const mock = provider();
-  await assert.rejects(launchEvidenceWorld("template", sourceSha, mock.api, async () => new Response(null, { status: 401 })), /readiness/);
+  await assert.rejects(launchEvidenceWorld(template, sourceSha, mock.api, async () => new Response(null, { status: 401 })), /readiness/);
   assert.deepEqual(mock.removed, ["/v5/vms/vm-1"]);
   await assert.rejects(deleteEvidenceVm("vm-99", mock.api), /unrelated/);
+});
+
+test("template reuse ignores test, review and docs files but rebuilds for anything that runs in the VM", async () => {
+  const { evidenceRuntimeFingerprint } = await import("../src/evidence-builder.ts");
+  const base = [
+    { path: "apps/server/src/server.ts", sha: "1".repeat(40), type: "blob" },
+    { path: "apps/app/src/index.tsx", sha: "2".repeat(40), type: "blob" },
+    { path: "worlds/acme-web.ts", sha: "3".repeat(40), type: "blob" },
+  ];
+  const baseline = evidenceRuntimeFingerprint(base);
+  for (const inert of ["evals/specs/web-checkpoint-fork.e2e.test.ts", "evals/worlds/web-checkpoint.ts", "apps/review/components/report.tsx",
+    "packages/review/src/schema.ts", "packages/freestyle/src/checkpoints.ts", ".github/workflows/pr-proof.yml", "docs/guide.md",
+    "apps/server/src/server.test.ts", "evals/packages/cdp/test/cdp.test.ts", "scripts/prepare-evidence-web.ts"]) {
+    assert.equal(evidenceRuntimeFingerprint([...base, { path: inert, sha: "9".repeat(40), type: "blob" }]), baseline, inert);
+  }
+  for (const runtime of ["apps/server/src/other.ts", "ee/apps/den-api/src/index.ts", "evals/packages/behaviors/src/desktop.ts", "worlds/lib/acme-gateway.ts", "scripts/mock-oauth-mcp-server.mjs"]) {
+    assert.notEqual(evidenceRuntimeFingerprint([...base, { path: runtime, sha: "9".repeat(40), type: "blob" }]), baseline, runtime);
+  }
+  const changed = base.map((entry, index) => index === 0 ? { ...entry, sha: "8".repeat(40) } : entry);
+  assert.notEqual(evidenceRuntimeFingerprint(changed), baseline);
+});
+
+test("a reused template must match the requested runtime fingerprint", async () => {
+  const mock = provider();
+  await assert.rejects(launchEvidenceWorld({ id: "template", runtimeFingerprint: "e".repeat(40) }, sourceSha, mock.api, reachable), /source mismatch/);
+  assert.deepEqual(mock.removed, ["/v5/vms/vm-1"]);
 });

@@ -15,7 +15,7 @@ export async function main() {
   if (source?.kind !== "sha") throw new Error("Evidence web requires --source app-web=sha:<full pushed SHA>");
   await using resources = new AsyncDisposableStack();
   const template = await ensureEvidenceSnapshot(source.sha);
-  const session = await launchEvidenceWorld(template.id, source.sha);
+  const session = await launchEvidenceWorld(template, source.sha);
   resources.defer(() => deleteEvidenceVm(session.id));
   await trackResource({ kind: "freestyle-evidence", id: session.id, match: session.id, label: "evidence-web" });
   await hold({ name: "evidence-web", outputs: { viewer: secret(session.url), sourceSha: source.sha, expiresAt: session.expiresAt } });

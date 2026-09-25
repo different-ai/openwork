@@ -39,6 +39,12 @@ page. The deterministic streaming fixture pauses at a known point and exposes
 promised to survive a fork. Screenshot and snapshot capture are ordered, not
 atomic; the controlled stream hold is what makes the streaming comparison exact.
 
+The evidence world template is keyed by a fingerprint of the files that run
+inside the VM (server, app, Den, worlds, eval runtime packages, dependencies and
+the controller), not by commit. Commits that only change specs, host-side test
+worlds, the review app, docs, CI or host-only Freestyle code reuse the existing
+template in seconds. A new world verifies that fingerprint before use.
+
 Limits: ten captures along a VM's checkpoint lineage, 24-hour checkpoint retention, one-hour forks,
 and three concurrent forks per checkpoint. Expiry preserves the screenshot.
 Request retries reuse the same fork instead of spending another slot. Provider

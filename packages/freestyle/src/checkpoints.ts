@@ -35,7 +35,7 @@ export async function readEvidenceSession(id: string, sourceSha: string, api = c
     cdpOrigin: value.origins.cdp, cookie: `__Host-openwork-preview=${value.token}`, expiresAt: value.expiresAt };
 }
 
-async function allocate(input: { snapshotId: string; slug: string; kind: string; sourceSha: string; metadata?: Record<string, string> }, api: ReturnType<typeof client>, probe: typeof fetch = fetch) {
+async function allocate(input: { snapshotId: string; slug: string; kind: string; sourceSha: string; runtimeFingerprint?: string; metadata?: Record<string, string> }, api: ReturnType<typeof client>, probe: typeof fetch = fetch) {
   const nonce = randomUUID().replaceAll("-", "");
   const origins = { desktop: `https://evidence-${nonce}.preview.openwork.software`, cdp: `https://cdp-${nonce}.preview.openwork.software` };
   const created = await api.vms.create({
@@ -46,8 +46,11 @@ async function allocate(input: { snapshotId: string; slug: string; kind: string;
     tls: { rules: Object.values(origins).map((origin) => ({ action: "allow", domain: new URL(origin).hostname, source: { public: true }, destination: { port: 8080 } })) },
   });
   try {
-    if ((await created.vm.fs.readTextFile(`${root}/source-sha`)).trim() !== input.sourceSha
-      || (await created.vm.fs.readTextFile(`${root}/evidence-ready`)).trim() !== "web-v1") throw new Error("Evidence world source mismatch");
+    // A template may be reused across commits whose VM-side files are identical.
+    // New worlds check that fingerprint; forks are bound by their checkpoint manifest.
+    if ((await created.vm.fs.readTextFile(`${root}/evidence-ready`)).trim() !== "web-v1"
+      || (input.runtimeFingerprint !== undefined
+        && (await created.vm.fs.readTextFile(`${root}/runtime-fingerprint`)).trim() !== input.runtimeFingerprint)) throw new Error("Evidence world source mismatch");
     const expiresAt = new Date(Date.parse(created.data.createdAt) + 3600_000).toISOString();
     await created.vm.fs.writeTextFile(ACCESS_FILE, JSON.stringify({ vmId: created.vmId, sourceSha: input.sourceSha, token: randomBytes(32).toString("base64url"), expiresAt, origins }), { mode: 0o600 });
     const result = await readEvidenceSession(created.vmId, input.sourceSha, api);
@@ -56,17 +59,16 @@ async function allocate(input: { snapshotId: string; slug: string; kind: string;
   } catch (error) { await created.vm.delete().catch(() => undefined); throw error; }
 }
 
-export async function launchEvidenceWorld(snapshotId: string, sourceSha: string, api = client(), probe: typeof fetch = fetch) {
-  if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error("Full source SHA required");
-  return allocate({ snapshotId, sourceSha, slug: `ow-evidence-source-${randomUUID().replaceAll("-", "")}`, kind: EVIDENCE_KIND }, api, probe);
+export async function launchEvidenceWorld(template: { id: string; runtimeFingerprint: string }, sourceSha: string, api = client(), probe: typeof fetch = fetch) {
+  if (!/^[a-f0-9]{40}$/.test(sourceSha) || !/^[a-f0-9]{40}$/.test(template.runtimeFingerprint)) throw new Error("Full source SHA and runtime fingerprint required");
+  return allocate({ snapshotId: template.id, runtimeFingerprint: template.runtimeFingerprint, sourceSha, slug: `ow-evidence-source-${randomUUID().replaceAll("-", "")}`, kind: EVIDENCE_KIND }, api, probe);
 }
 
 export async function captureEvidenceCheckpoint(input: { vmId: string; sourceSha: string; imageHash: string }, api = client()): Promise<EvidenceCheckpoint> {
   const vm = await api.vms.get(input.vmId);
   if (![EVIDENCE_KIND, FORK_KIND].includes(vm.metadata.kind) || vm.metadata.sourceSha !== input.sourceSha) throw new Error("Checkpoint source is not an owned evidence world");
   const handle = api.vms.ref(vm.id);
-  if ((await handle.fs.readTextFile(`${root}/source-sha`)).trim() !== input.sourceSha
-    || (await handle.fs.readTextFile(`${root}/evidence-ready`)).trim() !== "web-v1") throw new Error("Checkpoint source does not match the captured app");
+  if ((await handle.fs.readTextFile(`${root}/evidence-ready`)).trim() !== "web-v1") throw new Error("Checkpoint source is not a ready evidence world");
   const countPath = `${root}/checkpoint-count`;
   const count = await handle.fs.exists(countPath) ? Number(await handle.fs.readTextFile(countPath)) : 0;
   if (!Number.isInteger(count) || count < 0 || count >= 10) throw new CheckpointCapacity("This proof has reached its ten-checkpoint limit");
@@ -84,7 +86,6 @@ async function verifyRestoredCheckpoint(vmId: string, checkpoint: EvidenceCheckp
   const vm = api.vms.ref(vmId);
   const restored = parseEvidenceCheckpoint(JSON.parse(await vm.fs.readTextFile(manifest)));
   if (JSON.stringify(restored) !== JSON.stringify(checkpoint)
-    || (await vm.fs.readTextFile(`${root}/source-sha`)).trim() !== checkpoint.sourceSha
     || (await vm.fs.readTextFile(`${root}/evidence-ready`)).trim() !== "web-v1") {
     throw new CheckpointUnavailable("Checkpoint does not match its screenshot");
   }

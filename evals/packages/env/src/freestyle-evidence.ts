@@ -60,7 +60,7 @@ export async function attachEvidenceBrowser(session: EvidenceSession) {
 /** Explicit web-only world; the CI controller still uses its local Blacksmith host. */
 export async function freestyleEvidenceWeb(sourceSha: string) {
   const snapshot = await ensureEvidenceSnapshot(sourceSha);
-  const session = await launchEvidenceWorld(snapshot.id, sourceSha);
+  const session = await launchEvidenceWorld(snapshot, sourceSha);
   try {
     await trackResource({ kind: "freestyle-evidence", id: session.id, match: session.id, label: "evidence-web" });
     const app = await attachEvidenceBrowser(session);
