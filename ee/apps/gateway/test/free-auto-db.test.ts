@@ -8,7 +8,7 @@ import {
   InferenceFreeUsageBucketTable as Bucket, InferenceFreeReservationTable as Reservation,
   InferenceFreeReservationChargeTable as Charge, InferenceFreeControlTable as Control,
   AnonymousInferenceUsageBucketTable as GuestBucket, AnonymousInferenceReservationChargeTable as GuestCharge,
-  InferenceOrgUsageBucketTable, InferenceUsageLedgerEntryTable,
+  InferenceOrgUsageBucketTable, InferenceUsageLedgerEntryTable, OrgSubscriptionTable,
 } from "@openwork-ee/den-db"
 import { and, eq, sql } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
@@ -99,7 +99,7 @@ test("free Auto SQL and 0111 upgrade in an owned random database", { skip: !admi
   const rows = async (statement: string, values: unknown[] = []) => records((await connection.query(statement, values))[0])
   const before = snapshotSchema.parse(JSON.parse(await readFile(new URL("../../../packages/den-db/drizzle/meta/0110_snapshot.json", import.meta.url), "utf8")))
   const after = snapshotSchema.parse(JSON.parse(await readFile(new URL("../../../packages/den-db/drizzle/meta/0111_snapshot.json", import.meta.url), "utf8")))
-  const baseline = ["user", "organization", "member", "gateway_providers", "inference_keys", "inference_org_limit_policies", "inference_org_usage_buckets", "inference_usage_ledger_entries", "inference_usage_ledger_bucket_charges"]
+  const baseline = ["user", "organization", "member", "org_subscriptions", "gateway_providers", "inference_keys", "inference_org_limit_policies", "inference_org_usage_buckets", "inference_usage_ledger_entries", "inference_usage_ledger_bucket_charges"]
   for (const name of baseline) await connection.query(baselineSql(before.tables[name]))
   await connection.query("INSERT INTO gateway_providers (id,organization_id,created_by_org_membership_id,provider_id,name,model_ids,provider_config,settings) VALUES ('old-provider','org-fixture','member-fixture','fixture','Existing provider',JSON_ARRAY('kept-model'),JSON_OBJECT(),JSON_OBJECT())")
   await t.test("0111 executes over 0110 table shapes and preserves old rows with empty default pins", async () => {
@@ -319,6 +319,28 @@ test("free Auto SQL and 0111 upgrade in an owned random database", { skip: !admi
     assert.equal((await bucket(guest)).used_amount, 0)
     assert.equal((await bucket(guest)).reserved_amount, 0)
     assert.equal((await db.select().from(GuestCharge).where(eq(GuestCharge.request_id, admitted.requestId))).length, 4)
+  })
+
+  await t.test("an expired reservation that breaks the charge invariant is set aside instead of wedging every read", async () => {
+    const member = await person(), broken = await admit(member.principal)
+    await db.delete(Charge).where(eq(Charge.request_id, broken.requestId))
+    await db.update(Reservation).set({ expires_at: new Date(Date.now() - 1000) }).where(eq(Reservation.request_id, broken.requestId))
+    assert.equal((await otherStore.read(member.principal, null)).state, "ready")
+    assert.equal((await reservation(broken.requestId)).status, "retained")
+    const next = await admit(member.principal)
+    assert.equal(await store.cancelUndispatched(next.requestId), true)
+  })
+
+  await t.test("an organization Stripe still collects for is refused free Auto even when its Models flag is lost", async () => {
+    const member = await person(), subscriptionId = createDenTypeId("orgSubscription")
+    await db.insert(OrgSubscriptionTable).values({ id: subscriptionId, organization_id: member.input.organizationId, type: "inference",
+      status: "past_due", stripe_customer_id: "cus_fixture", stripe_subscription_id: `sub_${randomUUID()}` })
+    assert.equal(await findMemberFreePrincipal(member.key, db), null)
+    assert.equal(await memberFreePrincipalAllowed(member.principal, replica.db), false)
+    assert.equal(await ensureMemberFreeInferenceCredential(member.input), null)
+    assert.equal((await getMemberInferenceAccess(member.input)).reason, "not_eligible")
+    await db.update(OrgSubscriptionTable).set({ status: "canceled" }).where(eq(OrgSubscriptionTable.id, subscriptionId))
+    assert.ok(await findMemberFreePrincipal(member.key, db), "once Stripe gives up, the organization is unsubscribed")
   })
 
   await t.test("an expired orphan is retained rather than refunded and no longer blocks its person", async () => {
