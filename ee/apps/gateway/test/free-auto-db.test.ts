@@ -321,13 +321,13 @@ test("free Auto SQL and 0111 upgrade in an owned random database", { skip: !admi
     assert.equal((await db.select().from(GuestCharge).where(eq(GuestCharge.request_id, admitted.requestId))).length, 4)
   })
 
-  await t.test("an expired reservation that breaks the charge invariant is set aside instead of wedging every read", async () => {
+  await t.test("an expired reservation that breaks the charge invariant is set aside instead of wedging every admission", async () => {
     const member = await person(), broken = await admit(member.principal)
     await db.delete(Charge).where(eq(Charge.request_id, broken.requestId))
     await db.update(Reservation).set({ expires_at: new Date(Date.now() - 1000) }).where(eq(Reservation.request_id, broken.requestId))
-    assert.equal((await otherStore.read(member.principal, null)).state, "ready")
-    assert.equal((await reservation(broken.requestId)).status, "retained")
+    assert.equal((await otherStore.read(member.principal, null)).state, "ready", "status is read-only and ignores expired holds")
     const next = await admit(member.principal)
+    assert.equal((await reservation(broken.requestId)).status, "retained", "the next admission set the broken hold aside")
     assert.equal(await store.cancelUndispatched(next.requestId), true)
   })
 
@@ -347,9 +347,9 @@ test("free Auto SQL and 0111 upgrade in an owned random database", { skip: !admi
     const member = await person(), admitted = await admit(member.principal)
     await db.update(Reservation).set({ expires_at: new Date(Date.now() - 1000) }).where(eq(Reservation.request_id, admitted.requestId))
     assert.equal((await otherStore.read(member.principal, null)).state, "ready")
+    const next = await admit(member.principal)
     assert.equal((await reservation(admitted.requestId)).status, "retained")
     assert.equal((await bucket(member.principal)).used_amount, hold)
-    const next = await admit(member.principal)
     await store.cancelUndispatched(next.requestId)
     assert.equal((await bucket(member.principal)).used_amount, hold)
   })
