@@ -1,3 +1,4 @@
+import { BALANCED_V2_READINESS, V2NotReadyError } from "./v2-readiness.js";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import * as fs from "node:fs/promises";
@@ -298,14 +299,14 @@ function readinessGate() {
   };
 }
 
-async function startV2Proxy(options?: MockReadOptions) {
+async function startV2Proxy(options?: MockReadOptions & { preview?: Partial<engineV2Preview.EngineV2Preview> }) {
   const workspaceRoot = await createWorkspaceRoot();
   const secondWorkspaceRoot = await createWorkspaceRoot();
   const engine = startMockOpencode({ ...options, nativeV2Directory: workspaceRoot, foreignSessionDirectory: secondWorkspaceRoot });
   const provider = readinessGate();
   const mcp = readinessGate();
   const status = (): engineV2Preview.EngineV2PreviewStatus => ({ migration: { state: "idle", imported: 0, skipped: 0, total: 0 }, enabled: true, chatRouting: true, running: true,
-    mirroredProviderIds: [], skippedProviderIds: [], catalogModelIds: [] });
+    mirroredProviderIds: [], skippedProviderIds: [], catalogModelIds: [], readiness: { policy: BALANCED_V2_READINESS, recent: [] } });
   // Hold only execution preparation; requests still cross the real HTTP server,
   // auth/policy checks, native proxy and ownership lookup into a loopback witness.
   const preview = spyOn(engineV2Preview, "createEngineV2Preview").mockReturnValue({
@@ -314,6 +315,8 @@ async function startV2Proxy(options?: MockReadOptions) {
     ensureWorkspaceReady: provider.wait, refreshProviders: async () => {}, syncWorkspaceMcp: mcp.wait,
     syncWorkspaceSkills: async () => {},
     stop: async () => {},
+    readinessPolicy: () => BALANCED_V2_READINESS, recordReadiness: () => {},
+    ...options?.preview,
   });
   try {
     const openwork = await startOpenworkServer({ workspaceRoot, secondWorkspaceRoot, readOnly: false });
@@ -852,23 +855,84 @@ describe("workspace OpenCode proxy", () => {
     expect(await models.json()).toEqual({ data: [{ id: "m1", providerID: "good", variants: [] }] });
   });
 
-  test.serial("a v2 session whose home cannot be verified is hidden without hiding the rest", async () => {
+  test.serial("a v2 session with unreadable history is scoped by the folder it runs in, and its approvals stay visible", async () => {
     let root = "";
-    const sessions = () => [{ id: "ses_1", location: { directory: root } }, { id: "ses_broken", location: { directory: root } }];
+    let other = "";
+    const sessions = () => [
+      { id: "ses_1", location: { directory: root } },
+      { id: "ses_broken", location: { directory: root } },
+      { id: "ses_broken_elsewhere", location: { directory: other } },
+    ];
+    const events: string[] = [];
     const fixture = await startV2Proxy({
+      preview: { recordReadiness: (event) => { events.push(`${event.check}:${event.outcome}`); } },
       nativeV2Response: (url) => {
         if (url.pathname === "/api/session") return Response.json({ data: sessions() });
-        // Malformed move history: ownership cannot be proven for this session only.
-        if (url.pathname === "/api/session/ses_broken/message") {
+        // Malformed move history: the original folder cannot be proven.
+        if (/^\/api\/session\/ses_broken[^/]*\/message$/.test(url.pathname)) {
           return Response.json({ data: [{ type: "location-switched", data: { previous: {} } }] });
+        }
+        if (url.pathname === "/api/permission/request") {
+          return Response.json({ data: [{ id: "per_1", sessionID: "ses_broken" }, { id: "per_2", sessionID: "ses_broken_elsewhere" }] });
         }
         return undefined;
       },
     });
     root = fixture.workspaceRoot;
+    other = fixture.secondWorkspaceRoot;
+    fixture.provider.release();
+    fixture.mcp.release();
     const list = await fixture.request("/api/session");
     expect(list.status).toBe(200);
-    expect(await list.json()).toEqual({ data: [sessions()[0]] });
+    expect(await list.json()).toEqual({ data: sessions().slice(0, 2) });
+    // Without the fallback, ses_broken's approval would be hidden and its turn would wait forever.
+    const pending = await fixture.request("/api/permission/request");
+    expect(pending.status).toBe(200);
+    expect(await pending.json()).toEqual({ data: [{ id: "per_1", sessionID: "ses_broken" }] });
+    expect(events).toContain("sessions:degraded");
+  });
+
+  test.serial("an unchanged OpenWork instruction entry is written once per session", async () => {
+    const fixture = await startV2Proxy();
+    fixture.provider.release();
+    fixture.mcp.release();
+    for (let turn = 0; turn < 3; turn++) {
+      const prompt = await fixture.request("/api/session/ses_1/prompt", { method: "POST", body: JSON.stringify({ parts: [] }) });
+      expect(prompt.status).toBe(200);
+    }
+    const writes = fixture.engine.requests.filter((item) => item.method === "PUT"
+      && item.pathname === "/api/session/ses_1/instructions/entries/openwork.context");
+    expect(writes).toHaveLength(1);
+  });
+
+  test.serial("a failed instruction write blocks the turn only under a block policy", async () => {
+    const fixture = await startV2Proxy({
+      preview: { readinessPolicy: () => ({ ...BALANCED_V2_READINESS, instructions: "block" }) },
+      nativeV2Response: (url) => url.pathname === "/api/session/ses_1/instructions/entries/openwork.context"
+        ? Response.json({ code: "unavailable" }, { status: 500 }) : undefined,
+    });
+    fixture.provider.release();
+    fixture.mcp.release();
+    const prompt = await fixture.request("/api/session/ses_1/prompt", { method: "POST", body: JSON.stringify({ parts: [] }) });
+    expect(prompt.status).toBe(503);
+    expect(fixture.engine.requests.some((item) => item.pathname === "/api/session/ses_1/prompt")).toBe(false);
+  });
+
+  test.serial("a blocking readiness policy refuses with an explained 503 instead of a generic error", async () => {
+    const fixture = await startV2Proxy({
+      preview: {
+        readinessPolicy: () => ({ ...BALANCED_V2_READINESS, instructions: "block" }),
+        syncWorkspaceSkills: async () => { throw new V2NotReadyError("skills", "fixture skill not loaded"); },
+      },
+    });
+    fixture.provider.release();
+    fixture.mcp.release();
+    const prompt = await fixture.request("/api/session/ses_1/prompt", { method: "POST", body: JSON.stringify({ parts: [] }) });
+    expect(prompt.status).toBe(503);
+    const body = await prompt.json();
+    expect(JSON.stringify(body)).toContain("engine_not_ready");
+    expect(JSON.stringify(body)).toContain("fixture skill not loaded");
+    expect(fixture.engine.requests.some((item) => item.pathname === "/api/session/ses_1/prompt")).toBe(false);
   });
 
   for (const failingGate of ["provider", "mcp"]) {

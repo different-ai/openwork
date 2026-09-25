@@ -1,4 +1,4 @@
-import { readdir, readFile, realpath } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
 import { parseFrontmatter } from "./frontmatter.js";
 import { OPENWORK_AGENT_PROMPT } from "./openwork-agent-prompt.js";
@@ -35,6 +35,23 @@ async function scanSkillFiles(directory: string): Promise<string[]> {
   };
   await visit(directory, true);
   return files;
+}
+
+/**
+ * Cheap identity of the workspace skill files: path, size, and modification
+ * time. Equal fingerprints mean nothing OpenWork would wait for has changed
+ * since the last check, so the previous result can be reused.
+ */
+export async function workspaceSkillFingerprint(directory: string): Promise<string> {
+  const root = await realpath(directory).catch(() => directory);
+  const parts: string[] = [];
+  for (const skillRoot of workspaceNativeSkillRoots(root)) {
+    for (const file of await scanSkillFiles(skillRoot)) {
+      const info = await stat(file).catch(() => null);
+      parts.push(`${file}:${info?.size ?? -1}:${info?.mtimeMs ?? -1}`);
+    }
+  }
+  return parts.sort().join("\n");
 }
 
 /** Name and body the engine publishes for a markdown file, or null when it would skip the file. */

@@ -1,7 +1,15 @@
 import { migrateOpencodeV1History, opencodeV1DatabasePath, type EngineV2MigrationStatus } from "./opencode-v2-migration.js";
-import { waitForOpenWorkV2Skills } from "./opencode-v2-instructions.js";
+import { waitForOpenWorkV2Skills, workspaceSkillFingerprint } from "./opencode-v2-instructions.js";
+import {
+  createV2ReadinessLog,
+  resolveV2ReadinessPolicy,
+  V2NotReadyError,
+  type V2ReadinessEvent,
+  type V2ReadinessPolicy,
+} from "./v2-readiness.js";
 import { executionRules } from "./managed-policy-rules.js";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -58,8 +66,9 @@ export interface EngineV2PreviewStatus {
   catalogModelIds: string[];
   lastMirroredAt?: string;
   lastError?: string;
-  /** Most recent optional check that did not converge; chat proceeded anyway. */
-  lastWarning?: string;
+  /** How each optional pre-turn step behaves, and the latest ones that were
+   * degraded (continued unconfirmed) or blocked. */
+  readiness: { policy: V2ReadinessPolicy; recent: V2ReadinessEvent[] };
   migration: EngineV2MigrationStatus;
 }
 
@@ -82,8 +91,11 @@ export interface EngineV2Preview {
   ensureWorkspaceReady(directory: string): Promise<void>;
   refreshProviders(): Promise<void>;
   syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void>;
-  /** Join the native watcher for local workspace skills only. Never blocks admission. */
+  /** Join the native watcher for local workspace skills. Blocks only under a `block` policy. */
   syncWorkspaceSkills(directory: string): Promise<void>;
+  readinessPolicy(): V2ReadinessPolicy;
+  /** Record a degraded or blocked step observed outside this module. */
+  recordReadiness(event: Pick<V2ReadinessEvent, "check" | "outcome" | "detail">): void;
   migrateHistory(): EngineV2PreviewStatus;
   stop(): Promise<void>;
 }
@@ -320,7 +332,12 @@ export function mapRuntimeMcpToV2(value: unknown): Record<string, unknown> | und
     ...(oauth === undefined ? {} : { oauth }), ...shared };
 }
 
-export function createEngineV2Preview(options: { config: ServerConfig; env?: Pick<EnvService, "list" | "onChange">; deferStart?: boolean }): EngineV2Preview {
+export function createEngineV2Preview(options: {
+  config: ServerConfig;
+  env?: Pick<EnvService, "list" | "onChange">;
+  deferStart?: boolean;
+  readinessPolicy?: V2ReadinessPolicy;
+}): EngineV2Preview {
   const { config } = options;
   const rootDir = join(runtimeStorageDir(config), "opencode-v2", "state");
   const workspaceDir = join(rootDir, "workspace");
@@ -339,37 +356,61 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   let currentCatalogModelIds: string[] = [];
   let lastMirroredAt: string | undefined;
   let lastError: string | undefined;
-  let lastWarning: string | undefined;
-  const warn = (message: string) => { lastWarning = `${new Date().toISOString()} ${message}`; };
+  const policy = options.readinessPolicy ?? resolveV2ReadinessPolicy(process.env.OPENWORK_V2_READINESS);
+  const readinessLog = createV2ReadinessLog();
+  const degraded = (check: V2ReadinessEvent["check"], detail: string) => readinessLog.record({ check, outcome: "degraded", detail });
+  const blocked = (check: V2NotReadyError["check"], detail: string): V2NotReadyError => {
+    readinessLog.record({ check, outcome: "blocked", detail });
+    return new V2NotReadyError(check, detail);
+  };
   let sidecar: ManagedOpencodeV2Server | undefined;
   let unsubscribe: (() => void) | undefined;
   let startPromise: Promise<void> | undefined;
   let mirrorInFlight: Promise<void> | undefined;
   let mirrorDirty = false;
-  const workspaceReadiness = new Map<string, Promise<void>>();
+  // Result of the last provider check per location, reused until providers change.
+  const workspaceReadiness = new Map<string, Promise<boolean>>();
+  // Locations whose providers were confirmed under some earlier mirror.
+  const providersConfirmed = new Set<string>();
   let mirroredSpecs: OpencodeV2ProviderSpec[] = [];
+  let mirroredFingerprint: string | undefined;
   const workspaceMcp = new Map<string, Map<string, string>>();
-  const mcpInFlight = new Map<string, Promise<void>>();
+  const mcpInFlight = new Map<string, Promise<string>>();
   const mcpWorkspaces = new Map<string, string>();
   const mcpRejected = new Map<string, Map<string, { fingerprint: string; at: number }>>();
-  // Locations whose last skill wait did not converge get a short wait until
-  // they do, so a persistent mismatch never costs every prompt the full wait.
-  const skillsUnsettled = new Set<string>();
+  // The last skill check per location, keyed by the workspace skill files'
+  // fingerprint. An unchanged fingerprint reuses the result with no wait.
+  const skillSnapshots = new Map<string, { fingerprint: string; settled: boolean; diagnostic: string }>();
   async function syncWorkspaceSkills(directory: string): Promise<void> {
     const active = sidecar;
     if (!active) throw new Error("OpenCode v2 is not running");
+    const fingerprint = await workspaceSkillFingerprint(directory);
+    const previous = skillSnapshots.get(directory);
+    if (previous?.fingerprint === fingerprint) {
+      if (previous.settled) return;
+      if (policy.skills === "block") throw blocked("skills", previous.diagnostic);
+      degraded("skills", previous.diagnostic);
+      return;
+    }
     // Freshness only: the engine owns which skills load, as it does for the CLI.
-    const result = await waitForOpenWorkV2Skills(directory, async () => {
+    const check = waitForOpenWorkV2Skills(directory, async () => {
       const response = await active.fetchJson("/api/skill", { directory, timeoutMs: 5_000 });
       if (response.status !== 200) throw new Error(`HTTP ${response.status}`);
       return response.json;
-    }, skillsUnsettled.has(directory) ? 500 : 5_000);
-    if (result.settled) {
-      skillsUnsettled.delete(directory);
+    }).then((result) => {
+      const diagnostic = result.settled ? "" : result.diagnostic;
+      skillSnapshots.set(directory, { fingerprint, settled: result.settled, diagnostic });
+      return diagnostic;
+    });
+    if (policy.skills === "background" && previous) {
+      // A confirmed earlier snapshot exists; refresh it without delaying the turn.
+      void check.then((diagnostic) => { if (diagnostic) degraded("skills", diagnostic); }, () => undefined);
       return;
     }
-    skillsUnsettled.add(directory);
-    warn(`Skills: ${result.diagnostic}`);
+    const diagnostic = await check;
+    if (!diagnostic) return;
+    if (policy.skills === "block") throw blocked("skills", diagnostic);
+    degraded("skills", diagnostic);
   }
 
   async function syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void> {
@@ -416,17 +457,18 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
           })).status;
         } catch (error) {
           status = 0;
-          warn(`MCP ${name}: ${errorMessage(error)}`);
+          degraded("mcp", `${name}: ${errorMessage(error)}`);
         }
         if (status !== 204) {
           rejected.set(name, { fingerprint, at: Date.now() });
-          if (status !== 0) warn(`MCP ${name}: registration failed (${status})`);
+          if (status !== 0) degraded("mcp", `${name}: registration failed (${status})`);
           continue;
         }
         rejected.delete(name);
         applied.set(name, fingerprint);
         changed = true;
       }
+      let stillStarting = false;
       if (changed) {
         // Wait briefly so a just-registered connection's tools are in the first
         // turn, but a slow or failing server only delays, never refuses, it.
@@ -440,7 +482,8 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
           });
           if (!pending) break;
           if (Date.now() >= deadline) {
-            warn("MCP: connections were still starting when the request proceeded");
+            stillStarting = true;
+            degraded("mcp", "connections were still starting when the request proceeded");
             break;
           }
           await delay(100);
@@ -449,9 +492,14 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
         // connection startup. Admission follows that registry refresh when it can.
         await delay(250);
       }
+      const unavailable = [...desired.keys()].filter((name) => rejected.has(name));
+      return stillStarting || unavailable.length
+        ? `${unavailable.length ? `rejected: ${unavailable.join(", ")}` : ""}${stillStarting ? `${unavailable.length ? "; " : ""}still starting` : ""}`
+        : "";
     })();
     mcpInFlight.set(directory, pending);
-    try { await pending; }
+    let unavailable: string;
+    try { unavailable = await pending; }
     catch (error) {
       // Retain ownership for removals, but never cache a failed readiness
       // attempt as an applied configuration.
@@ -460,6 +508,9 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
       throw error;
     }
     finally { if (mcpInFlight.get(directory) === pending) mcpInFlight.delete(directory); }
+    // Under a `block` policy every configured connection must be registered
+    // and started before a turn. Registered ones stay cached either way.
+    if (unavailable && policy.mcp === "block") throw blocked("mcp", unavailable);
   }
 
   function status(): EngineV2PreviewStatus {
@@ -476,7 +527,7 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
       catalogModelIds: [...currentCatalogModelIds],
       ...(lastMirroredAt === undefined ? {} : { lastMirroredAt }),
       ...(lastError === undefined ? {} : { lastError }),
-      ...(lastWarning === undefined ? {} : { lastWarning }),
+      readiness: { policy: { ...policy }, recent: readinessLog.recent() },
     };
   }
 
@@ -489,11 +540,16 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     const credentials = new Map((await options.env?.list() ?? []).map((entry) => [entry.key, entry.value]));
     const mapped = mapRuntimeProvidersToV2Specs(providerMap, credentials, localKeys);
     const nextMirroredProviderIds = mapped.specs.map((spec) => spec.id);
+    skippedProviderIds = [...mapped.skippedProviderIds];
+    // Frequent syncs usually change nothing. Re-pushing identical providers
+    // would reset every location's confirmation and make turns wait again.
+    const fingerprint = createHash("sha256").update(JSON.stringify(mapped.specs)).digest("hex");
+    if (fingerprint === mirroredFingerprint) return;
     await active.setProviders(mapped.specs);
     mirroredSpecs = mapped.specs;
+    mirroredFingerprint = fingerprint;
     workspaceReadiness.clear();
     mirroredProviderIds = nextMirroredProviderIds;
-    skippedProviderIds = [...mapped.skippedProviderIds];
     lastMirroredAt = new Date().toISOString();
     const expectedModelIds = mapped.specs.flatMap((spec) => spec.models
       .filter(model => (spec.whitelist === undefined || spec.whitelist.includes(model.id)) && !spec.blacklist?.includes(model.id))
@@ -547,11 +603,14 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   async function closeSidecar(): Promise<void> {
     const active = sidecar;
     workspaceReadiness.clear();
+    providersConfirmed.clear();
+    mirroredFingerprint = undefined;
     sidecar = undefined;
     workspaceMcp.clear();
     mcpWorkspaces.clear();
     mcpRejected.clear();
-    skillsUnsettled.clear();
+    skillSnapshots.clear();
+    readinessLog.clear();
     running = false;
     version = undefined;
     pid = undefined;
@@ -678,30 +737,45 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   }
 
   async function ensureWorkspaceReady(directory: string): Promise<void> {
-    if (mirrorInFlight) await Promise.race([mirrorInFlight, delay(MIRROR_JOIN_TIMEOUT_MS)]);
+    const background = policy.providers === "background" && providersConfirmed.has(directory);
+    if (mirrorInFlight && !background) await Promise.race([mirrorInFlight, delay(MIRROR_JOIN_TIMEOUT_MS)]);
     const active = sidecar;
     if (!active) throw new Error("OpenCode v2 is not running");
-    const existing = workspaceReadiness.get(directory);
-    if (existing) return existing;
-    // V2 discovers configuration asynchronously for each new location. Its
-    // initial catalog can be empty even after the preview location is ready.
-    // This wait improves the first turn; it is not an admission check. The
-    // result, settled or not, is reused until the next provider mirror.
-    const pending = (async () => {
-      const deadline = Date.now() + WORKSPACE_PROVIDER_READY_TIMEOUT_MS;
-      do {
-        const response = await active.fetchJson("/api/provider", { directory, timeoutMs: 5_000 }).catch(() => undefined);
-        const payload = isRecord(response?.json) ? response.json.data : undefined;
-        if (response?.status === 200 && Array.isArray(payload) && mirroredSpecs.every((spec) =>
-          payload.some((provider) => isRecord(provider) && provider.id === spec.id
-            && isRecord(provider.settings) && provider.settings.apiKey === spec.apiKey)
-        )) return;
-        await delay(100);
-      } while (Date.now() < deadline);
-      warn(`Providers: ${directory} did not report every mirrored provider; continuing with the engine's catalog`);
-    })();
-    workspaceReadiness.set(directory, pending);
-    await pending;
+    let pending = workspaceReadiness.get(directory);
+    if (!pending) {
+      // V2 discovers configuration asynchronously for each new location. Its
+      // initial catalog can be empty even after the preview location is ready.
+      pending = (async () => {
+        const deadline = Date.now() + WORKSPACE_PROVIDER_READY_TIMEOUT_MS;
+        do {
+          const response = await active.fetchJson("/api/provider", { directory, timeoutMs: 5_000 }).catch(() => undefined);
+          const payload = isRecord(response?.json) ? response.json.data : undefined;
+          if (response?.status === 200 && Array.isArray(payload) && mirroredSpecs.every((spec) =>
+            payload.some((provider) => isRecord(provider) && provider.id === spec.id
+              && isRecord(provider.settings) && provider.settings.apiKey === spec.apiKey)
+          )) {
+            providersConfirmed.add(directory);
+            return true;
+          }
+          await delay(100);
+        } while (Date.now() < deadline);
+        return false;
+      })();
+      const check = pending;
+      workspaceReadiness.set(directory, check);
+      // A failed check is retried by the next turn when the policy blocks;
+      // otherwise the degraded result is reused until providers change.
+      void check.then((confirmed) => {
+        if (!confirmed && policy.providers === "block" && workspaceReadiness.get(directory) === check) workspaceReadiness.delete(directory);
+      });
+    }
+    // The location was confirmed under an earlier provider set: continue with
+    // it while the current set is confirmed in the background.
+    if (background) return;
+    if (await pending) return;
+    const detail = `${directory} did not report every mirrored provider`;
+    if (policy.providers === "block") throw blocked("providers", detail);
+    degraded("providers", `${detail}; continuing with the engine's catalog`);
   }
 
   function migrateHistory(): EngineV2PreviewStatus {
@@ -734,5 +808,10 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     if (enabled) void start().catch(recordStartError);
   }
   if (!options.deferStart) startWhenReady();
-  return { start: startWhenReady, migrateHistory, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, refreshProviders, syncWorkspaceMcp, syncWorkspaceSkills, stop };
+  return {
+    start: startWhenReady, migrateHistory, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady,
+    refreshProviders, syncWorkspaceMcp, syncWorkspaceSkills, stop,
+    readinessPolicy: () => ({ ...policy }),
+    recordReadiness: (event) => readinessLog.record(event),
+  };
 }

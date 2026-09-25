@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,6 +15,7 @@ import type { ServerConfig } from "./types.js";
 import * as managedV2 from "./managed-opencode-v2.js";
 import * as localAuth from "./opencode-v2-local-auth.js";
 import * as runtimeConfig from "./runtime-opencode-config-store.js";
+import { BALANCED_V2_READINESS, V2NotReadyError, type V2ReadinessPolicy } from "./v2-readiness.js";
 import { buildOpenWorkV2Instructions, waitForOpenWorkV2Skills } from "./opencode-v2-instructions.js";
 
 test("v2 app guidance fits the native entry limit and uses the current native tools", () => {
@@ -284,7 +285,7 @@ test("a connection the engine rejects is skipped and backed off instead of refus
     await preview.syncWorkspaceSkills(root);
     expect(calls.filter((call) => call === "PUT /api/mcp/broken")).toHaveLength(1);
     expect(calls.filter((call) => call === "PUT /api/mcp/good")).toHaveLength(1);
-    expect(preview.status().lastWarning).toContain("Skills:");
+    expect(preview.status().readiness.recent.map((event) => event.check)).toContain("skills");
     expect(preview.status().lastError).toBeUndefined();
   } finally {
     await preview.stop();
@@ -294,3 +295,102 @@ test("a connection the engine rejects is skipped and backed off instead of refus
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+async function withFakeSidecar(
+  policy: V2ReadinessPolicy,
+  respond: (path: string, init: { method?: string; body?: unknown }) => { status: number; json: unknown } | undefined,
+  run: (input: { preview: ReturnType<typeof createEngineV2Preview>; root: string; calls: string[]; pushes: () => number }) => Promise<void>,
+  providers: Record<string, unknown> = {},
+) {
+  const root = await mkdtemp(join(tmpdir(), "openwork-v2-readiness-"));
+  const calls: string[] = [];
+  let pushes = 0;
+  const fake = {
+    url: "http://127.0.0.1:1", username: "opencode", password: "fixture", childPid: 1, exitCode: null, stdout: "", stderr: "",
+    health: async () => ({ healthy: true, version: "fixture", pid: 1 }),
+    injectProvider: async () => {}, setProviders: async () => { pushes++; }, setSkills: async () => {}, close: async () => {},
+    async fetchJson(path: string, init: { method?: string; body?: unknown } = {}) {
+      calls.push(`${init.method ?? "GET"} ${path}`);
+      return respond(path, init) ?? { status: 200, json: { data: [] } };
+    },
+  } satisfies managedV2.ManagedOpencodeV2Server;
+  const spies = [
+    spyOn(managedV2, "createManagedOpencodeV2Server").mockResolvedValue(fake),
+    spyOn(localAuth, "readLocalProviderApiKeys").mockResolvedValue(new Map()),
+    spyOn(runtimeConfig, "readGlobalRuntimeOpencodeConfig").mockResolvedValue({ provider: providers }),
+    spyOn(runtimeConfig, "readEffectiveRuntimeOpencodeConfig").mockResolvedValue({ mcp: {
+      broken: { type: "remote", url: "https://broken.example/mcp" },
+    } }),
+  ];
+  const previousBin = process.env.OPENWORK_OPENCODE2_BIN;
+  process.env.OPENWORK_OPENCODE2_BIN = "opencode2-fixture";
+  const preview = createEngineV2Preview({ config: testConfig(root), deferStart: true, readinessPolicy: policy });
+  try {
+    await preview.setEnabled(true);
+    for (let attempt = 0; attempt < 100 && !preview.status().running; attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(preview.status().running).toBe(true);
+    await run({ preview, root, calls, pushes: () => pushes });
+  } finally {
+    await preview.stop();
+    for (const spy of spies) spy.mockRestore();
+    if (previousBin === undefined) delete process.env.OPENWORK_OPENCODE2_BIN;
+    else process.env.OPENWORK_OPENCODE2_BIN = previousBin;
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test("unchanged workspace skill files reuse the last check with no wait, and a block policy refuses a known mismatch at once", async () => {
+  await withFakeSidecar({ ...BALANCED_V2_READINESS, skills: "block" }, (path) =>
+    path === "/api/skill" ? { status: 200, json: { data: [] } } : undefined, async ({ preview, root, calls }) => {
+    const skill = join(root, ".claude", "skills", "notes", "SKILL.md");
+    await mkdir(join(skill, ".."), { recursive: true });
+    await writeFile(skill, "---\nname: notes\n---\nBody\n");
+    // The engine never reports the skill: the first check waits its budget, then blocks.
+    await expect(preview.syncWorkspaceSkills(root)).rejects.toBeInstanceOf(V2NotReadyError);
+    const reads = calls.filter((call) => call === "GET /api/skill").length;
+    const started = Date.now();
+    await expect(preview.syncWorkspaceSkills(root)).rejects.toBeInstanceOf(V2NotReadyError);
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(calls.filter((call) => call === "GET /api/skill")).toHaveLength(reads);
+    expect(preview.status().readiness.recent[0]).toMatchObject({ check: "skills", outcome: "blocked", count: 2 });
+  });
+}, 15_000);
+
+test("a rejected connection blocks turns only under a block policy", async () => {
+  const reject = (path: string) => path === "/api/mcp/broken" ? { status: 400, json: null } : undefined;
+  await withFakeSidecar(BALANCED_V2_READINESS, reject, async ({ preview, root }) => {
+    await preview.syncWorkspaceMcp("ws_1", root);
+  });
+  await withFakeSidecar({ ...BALANCED_V2_READINESS, mcp: "block" }, reject, async ({ preview, root, calls }) => {
+    await expect(preview.syncWorkspaceMcp("ws_1", root)).rejects.toThrow("rejected: broken");
+    // Still backed off: blocking does not re-register on every request.
+    await expect(preview.syncWorkspaceMcp("ws_1", root)).rejects.toThrow("rejected: broken");
+    expect(calls.filter((call) => call === "PUT /api/mcp/broken")).toHaveLength(1);
+  });
+});
+
+test("identical provider sets are not re-pushed, so confirmed locations stay confirmed", async () => {
+  const providers = { fixture: { options: { baseURL: "https://fixture.example/v1" } } };
+  await withFakeSidecar(BALANCED_V2_READINESS, (path) => path === "/api/provider"
+    ? { status: 200, json: { data: [{ id: "fixture", settings: { apiKey: "openwork-engine-v2-preview-unset" } }] } }
+    : undefined, async ({ preview, root, calls, pushes }) => {
+    expect(pushes()).toBe(1);
+    await preview.ensureWorkspaceReady(root);
+    await preview.refreshProviders();
+    await preview.refreshProviders();
+    await preview.ensureWorkspaceReady(root);
+    expect(pushes()).toBe(1);
+    expect(calls.filter((call) => call === "GET /api/provider")).toHaveLength(1);
+  }, providers);
+});
+
+test("a block policy refuses a location whose providers never confirm, and retries on the next turn", async () => {
+  const providers = { fixture: { options: { baseURL: "https://fixture.example/v1" } } };
+  await withFakeSidecar({ ...BALANCED_V2_READINESS, providers: "block" }, () => undefined, async ({ preview, root, calls }) => {
+    await expect(preview.ensureWorkspaceReady(root)).rejects.toBeInstanceOf(V2NotReadyError);
+    const reads = calls.filter((call) => call === "GET /api/provider").length;
+    await expect(preview.ensureWorkspaceReady(root)).rejects.toBeInstanceOf(V2NotReadyError);
+    expect(calls.filter((call) => call === "GET /api/provider").length).toBeGreaterThan(reads);
+  }, providers);
+}, 30_000);

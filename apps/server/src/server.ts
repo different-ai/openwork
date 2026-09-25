@@ -1,4 +1,5 @@
 import { createV2SessionHomes, nativeSession, nativeSessionDirectory } from "./opencode-v2-session-home.js";
+import { V2NotReadyError, type V2ReadinessEvent, type V2ReadinessPolicy } from "./v2-readiness.js";
 import { createNativeCloudMcpResolver, createRoutedCloudMcpRegistrar } from "./cloud-mcp-v2.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { createTaskRecovery, setTaskRecovery } from "./task-recovery.js";
@@ -983,16 +984,20 @@ export async function startServer(
             actor,
             recoverySignal: taskRecovery?.owns(request) ? request.signal : undefined,
             warn: (message, attributes) => logger.log("warn", message, attributes as LogAttributes | undefined),
+            readiness: { policy: engineV2Preview.readinessPolicy(), record: engineV2Preview.recordReadiness },
           });
           const response = taskRecovery ? await taskRecovery.forward(workspace, "v2", mount.restPath, request, send) : await send();
           return finalizeProxyResponse(response);
         } catch (error) {
           const requestCanceled = isExpectedRequestCancellation(error, request.signal);
-          if (!(error instanceof ApiError) && !requestCanceled) {
+          if (!(error instanceof ApiError) && !(error instanceof V2NotReadyError) && !requestCanceled) {
             recordUnhandledErrorCause(error);
             captureServerException(error, { method: request.method, route: "/workspace/:id/opencode2/*", requestSignal: request.signal });
           }
-          const apiError = error instanceof ApiError
+          // A step the readiness policy blocks on is an expected, explained refusal.
+          const apiError = error instanceof V2NotReadyError
+            ? new ApiError(503, "engine_not_ready", error.message)
+            : error instanceof ApiError
             ? error
             : requestCanceled
               ? new ApiError(499, "request_aborted", "Request was canceled")
@@ -1240,6 +1245,17 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
   return target.toString();
 }
 
+// Per engine process (its URL changes on restart): the last instruction entry
+// written for each session, and the last Connect state seen per location.
+const writtenInstructions = new Map<string, string>();
+const lastConnectReady = new Map<string, boolean>();
+
+function rememberBounded<T>(map: Map<string, T>, key: string, value: T, limit = 1_000): void {
+  map.delete(key);
+  map.set(key, value);
+  if (map.size > limit) map.delete(map.keys().next().value!);
+}
+
 export async function proxyOpencodeV2Request(input: {
   actor: Actor;
   config: ServerConfig;
@@ -1253,9 +1269,12 @@ export async function proxyOpencodeV2Request(input: {
   recoverySignal?: AbortSignal;
   /** Optional preparation that did not complete. The request still proceeds. */
   warn?: (message: string, attributes?: Record<string, unknown>) => void;
+  /** Readiness policy and where degraded or blocked steps are recorded. */
+  readiness?: { policy: V2ReadinessPolicy; record: (event: Pick<V2ReadinessEvent, "check" | "outcome" | "detail">) => void };
 }): Promise<Response> {
   const method = input.request.method.toUpperCase();
   const warn = input.warn ?? (() => undefined);
+  const recordReadiness = input.readiness?.record ?? (() => undefined);
   const readRequest = method === "GET" || method === "HEAD";
   const signal = readRequest
     ? input.recoverySignal ? AbortSignal.any([input.request.signal, input.recoverySignal]) : input.request.signal
@@ -1303,6 +1322,20 @@ export async function proxyOpencodeV2Request(input: {
   };
   const homes = createV2SessionHomes(input.config, readNative);
   const expectedHome = await homes.canonical(input.workspace.path);
+  // When a session's recorded history cannot prove its original folder, scope
+  // it by the folder the engine runs it in now, which is how the CLI lists it.
+  // The fallback is never stored, so readable history still decides later.
+  const resolveHome = async (value: unknown): Promise<string | null> => {
+    try {
+      return await homes.resolve(value);
+    } catch (error) {
+      const directory = nativeSessionDirectory(value);
+      const detail = `${nativeSession(value)?.id ?? "unknown session"}: ${error instanceof Error ? error.message : String(error)}`;
+      recordReadiness({ check: "sessions", outcome: "degraded", detail: `home unverifiable, scoped by current folder (${detail})` });
+      warn("OpenCode v2 session scoped by its current folder: its original folder could not be verified.", { detail });
+      return directory ? await homes.canonical(directory) : null;
+    }
+  };
   const sessionMatch = forwardedPath.match(/^\/api\/session\/([^/]+)(?:\/|$)/);
   const sessionId = sessionMatch?.[1] ? decodeURIComponent(sessionMatch[1]) : null;
   let executionDirectory = input.workspace.path;
@@ -1310,7 +1343,7 @@ export async function proxyOpencodeV2Request(input: {
   // The actual native location still controls execution and tool discovery.
   if (sessionId?.startsWith("ses_")) {
     const session = await readNative(`/api/session/${encodeURIComponent(sessionId)}`);
-    if (await homes.resolve(session) !== expectedHome) {
+    if (await resolveHome(session) !== expectedHome) {
       throw new ApiError(404, "session_not_found", "Session not found");
     }
     executionDirectory = nativeSessionDirectory(session) ?? input.workspace.path;
@@ -1332,8 +1365,14 @@ export async function proxyOpencodeV2Request(input: {
     const mcpPayload: unknown = await loopbackFetch(mcpUrl.toString(), { headers: internalHeaders, signal: AbortSignal.timeout(10_000) })
       .then((response) => response.ok ? response.json() : null)
       .catch(() => null);
-    const connectReady = isRecord(mcpPayload) && Array.isArray(mcpPayload.data) && mcpPayload.data.some((entry) =>
-      isRecord(entry) && entry.name === "openwork-cloud" && isRecord(entry.status) && entry.status.status === "connected");
+    const engineKey = `${input.connection.url}|${executionDirectory}`;
+    // An unreadable status keeps the last known Connect state instead of
+    // telling the agent Connect is gone for this turn.
+    const connectReady = isRecord(mcpPayload) && Array.isArray(mcpPayload.data)
+      ? mcpPayload.data.some((entry) =>
+        isRecord(entry) && entry.name === "openwork-cloud" && isRecord(entry.status) && entry.status.status === "connected")
+      : lastConnectReady.get(engineKey) ?? false;
+    rememberBounded(lastConnectReady, engineKey, connectReady);
     // Keep organization skill discovery on demand through Connect. The full
     // catalog can exceed the engine's instruction-entry request limit.
     await input.syncWorkspaceSkills(executionDirectory);
@@ -1342,10 +1381,26 @@ export async function proxyOpencodeV2Request(input: {
     instructionUrl.pathname = `/api/session/${encodeURIComponent(sessionId)}/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`;
     // OpenWork guidance improves the turn; the engine runs without it, as the
     // CLI does. Managed policy is enforced by engine permissions, not here.
-    const synced = await loopbackFetch(instructionUrl.toString(), {
-      method: "PUT", headers: internalHeaders, body: JSON.stringify({ value }), signal: AbortSignal.timeout(15_000),
-    }).then((response) => response.ok ? null : `HTTP ${response.status}`, (error) => error instanceof Error ? error.message : String(error));
-    if (synced !== null) warn("OpenWork v2 instructions could not be updated; sending the prompt without them.", { error: synced });
+    // The entry persists per session, so an unchanged value is not rewritten.
+    const instructionKey = `${input.connection.url}|${sessionId}`;
+    const instructionBody = JSON.stringify({ value });
+    if (writtenInstructions.get(instructionKey) !== instructionBody) {
+      const failure = await loopbackFetch(instructionUrl.toString(), {
+        method: "PUT", headers: internalHeaders, body: instructionBody, signal: AbortSignal.timeout(15_000),
+      }).then((response) => response.ok ? null : `HTTP ${response.status}`, (error) => error instanceof Error ? error.message : String(error));
+      if (failure === null) {
+        rememberBounded(writtenInstructions, instructionKey, instructionBody);
+      } else {
+        writtenInstructions.delete(instructionKey);
+        const detail = `session ${sessionId}: ${failure}`;
+        if (input.readiness?.policy.instructions === "block") {
+          recordReadiness({ check: "instructions", outcome: "blocked", detail });
+          throw new ApiError(503, "engine_not_ready", `OpenWork instructions could not be updated (${failure})`);
+        }
+        recordReadiness({ check: "instructions", outcome: "degraded", detail });
+        warn("OpenWork v2 instructions could not be updated; sending the prompt with the previous entry, if any.", { error: failure });
+      }
+    }
   }
 
   const requestBody = method === "GET" || method === "HEAD"
@@ -1387,7 +1442,9 @@ export async function proxyOpencodeV2Request(input: {
       return jsonResponse({ data: skill });
     }
     // One entry OpenWork cannot project must not hide the rest of the catalog.
-    return jsonResponse({ data: raw.map(publicSkill).filter((skill) => skill !== null) });
+    const skills = raw.map(publicSkill).filter((skill) => skill !== null);
+    if (skills.length < raw.length) recordReadiness({ check: "catalog", outcome: "degraded", detail: `${raw.length - skills.length} skill entries without an id were dropped` });
+    return jsonResponse({ data: skills });
   }
   if (method === "GET" && /^\/api\/provider(?:\/|$)/.test(decodeURIComponent(forwardedPath)) && response.ok) {
     // Provider.Info includes request settings/headers, which may contain the
@@ -1403,7 +1460,9 @@ export async function proxyOpencodeV2Request(input: {
       if (!provider) throw new ApiError(502, "invalid_engine_response", "Invalid provider metadata");
       return jsonResponse({ data: provider });
     }
-    return jsonResponse({ data: raw.map(publicProvider).filter((provider) => provider !== null) });
+    const providers = raw.map(publicProvider).filter((provider) => provider !== null);
+    if (providers.length < raw.length) recordReadiness({ check: "catalog", outcome: "degraded", detail: `${raw.length - providers.length} provider entries without an id were dropped` });
+    return jsonResponse({ data: providers });
   }
   if (method === "GET" && /^\/api\/model(?:\/|$)/.test(decodeURIComponent(forwardedPath)) && response.ok) {
     // Model overrides and variants can carry credentials too. Keep only the
@@ -1425,7 +1484,10 @@ export async function proxyOpencodeV2Request(input: {
         isRecord(variant) && typeof variant.id === "string" ? [{ id: variant.id }] : []);
       return { ...metadata, variants };
     };
-    return jsonResponse({ data: Array.isArray(raw) ? raw.map(publicModel).filter((model) => model !== undefined) : publicModel(raw) });
+    if (!Array.isArray(raw)) return jsonResponse({ data: publicModel(raw) });
+    const models = raw.map(publicModel).filter((model) => model !== undefined);
+    if (models.length < raw.length) recordReadiness({ check: "catalog", outcome: "degraded", detail: `${raw.length - models.length} model entries without an id or provider were dropped` });
+    return jsonResponse({ data: models });
   }
   if (method === "GET" && /^\/api\/event\/*$/.test(decodeURIComponent(forwardedPath)) && response.ok && response.body) {
     const frames = new BoundedSseFrameBuffer();
@@ -1454,11 +1516,11 @@ export async function proxyOpencodeV2Request(input: {
             if (payload.type === "session.created" && eventData && isRecord(eventData.location)
               && typeof eventData.location.directory === "string") {
               const parent = typeof eventData.parentID === "string"
-                ? await homes.resolve(await readNative(`/api/session/${encodeURIComponent(eventData.parentID)}`)) : null;
+                ? await resolveHome(await readNative(`/api/session/${encodeURIComponent(eventData.parentID)}`)) : null;
               home = await homes.created(eventSessionId, parent ?? eventData.location.directory);
             }
             if (!home && payload.type !== "session.deleted") {
-              try { home = await homes.resolve(await readNative(`/api/session/${encodeURIComponent(eventSessionId)}`)); }
+              try { home = await resolveHome(await readNative(`/api/session/${encodeURIComponent(eventSessionId)}`)); }
               catch (error) {
                 // A late event for an already-deleted unknown session must not
                 // disconnect all other conversations in this workspace.
@@ -1508,7 +1570,9 @@ export async function proxyOpencodeV2Request(input: {
       }
       for (const value of page.data) {
         const session = nativeSession(value);
-        if (typeof session?.id !== "string" || await homes.resolve(value).catch(() => null) !== expectedHome) continue;
+        // Pending permission requests of a session scoped by fallback stay
+        // visible, so its turn can never wait on an approval nobody sees.
+        if (typeof session?.id !== "string" || await resolveHome(value) !== expectedHome) continue;
         owned.add(session.id);
         const directory = nativeSessionDirectory(value);
         if (directory && await homes.canonical(directory) !== expectedHome) moved.add(session.id);
@@ -1549,17 +1613,10 @@ export async function proxyOpencodeV2Request(input: {
     const data = isRecord(payload) && "data" in payload ? payload.data : payload;
     const items = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.items) ? data.items : null;
     if (!items) throw new ApiError(502, "invalid_engine_response", "Invalid session list response");
-    // A session whose home cannot be proven is hidden; it never hides the rest.
-    const scoped = (await Promise.all(items.map(async (item: unknown) => {
-      try {
-        return await homes.resolve(item) === expectedHome ? await homes.project(item) : null;
-      } catch (error) {
-        warn("OpenCode v2 session hidden: its conversation home could not be verified.", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return null;
-      }
-    }))).filter((item) => item !== null);
+    // One unverifiable session never hides the rest of the list.
+    const scoped = (await Promise.all(items.map(async (item: unknown) =>
+      await resolveHome(item) === expectedHome ? await homes.project(item).catch(() => item) : null,
+    ))).filter((item) => item !== null);
     signal?.throwIfAborted();
     const scopedData = isRecord(data) ? { ...data, items: scoped } : scoped;
     const scopedPayload = isRecord(payload) && "data" in payload ? { ...payload, data: scopedData } : scopedData;
@@ -1573,7 +1630,7 @@ export async function proxyOpencodeV2Request(input: {
     const data = isRecord(payload) && isRecord(payload.data) ? payload.data : {};
     const entries = await Promise.all(Object.entries(data).map(async ([id, status]) => {
       const home = await homes.stored(id)
-        ?? await homes.resolve(await readNative(`/api/session/${encodeURIComponent(id)}`)).catch(() => null);
+        ?? await readNative(`/api/session/${encodeURIComponent(id)}`).then(resolveHome, () => null);
       return home === expectedHome ? [id, status] : null;
     }));
     return jsonResponse({ data: Object.fromEntries(entries.filter(entry => entry !== null)) });

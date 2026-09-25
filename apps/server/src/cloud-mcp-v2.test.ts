@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { BALANCED_V2_READINESS } from "./v2-readiness.js";
 import { createNativeCloudMcpResolver, createRoutedCloudMcpRegistrar } from "./cloud-mcp-v2.js";
 import type { EngineV2PreviewStatus } from "./engine-v2-preview.js";
 import type { ServerConfig, WorkspaceInfo } from "./types.js";
@@ -8,7 +9,7 @@ afterEach(() => { while (stops.length) stops.pop()?.(); });
 const workspace: WorkspaceInfo = { id: "fixture", name: "Fixture", path: "/tmp/connect fixture", preset: "starter", workspaceType: "local" };
 const config: ServerConfig = { host: "127.0.0.1", port: 0, token: "fixture", hostToken: "fixture-host", configPath: "/tmp/connect-fixture.json", approval: { mode: "auto", timeoutMs: 1000 }, corsOrigins: [], workspaces: [workspace], authorizedRoots: [workspace.path], readOnly: false, startedAt: 0, tokenSource: "cli", hostTokenSource: "cli", logFormat: "pretty", logRequests: false };
 function status(chatRouting: boolean): EngineV2PreviewStatus {
-  return { enabled: chatRouting, running: chatRouting, chatRouting, mirroredProviderIds: [], skippedProviderIds: [], catalogModelIds: [], migration: { state: "idle", imported: 0, skipped: 0, total: 0 } };
+  return { enabled: chatRouting, running: chatRouting, chatRouting, mirroredProviderIds: [], skippedProviderIds: [], catalogModelIds: [], readiness: { policy: BALANCED_V2_READINESS, recent: [] }, migration: { state: "idle", imported: 0, skipped: 0, total: 0 } };
 }
 
 test("native diagnostics use scoped authenticated APIs and never fall back to v1 when v2 is down", async () => {
