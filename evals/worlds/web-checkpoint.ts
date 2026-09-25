@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { allocateFreePort, setViewport, evaluate } from "@openwork/cdp";
+import { allocateFreePort, setViewport, evaluate, browserScript } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
 import { chrome, localHost } from "@openwork/hosts";
 import { freestyleEvidenceWeb, attachEvidenceBrowser } from "@openwork/env";
@@ -57,6 +57,9 @@ export async function checkpointWorld(bindCheckpoint: BindCheckpoint) {
     }
     return {
       ...world, reviewer, viewer, reviewUrl, sourceSha,
+      // Return only a boolean: signed viewer URLs must not enter evidence logs.
+      reviewHasCopyLink: (url: string) => evaluate(reviewer.client, browserScript((expected) =>
+        Array.from(document.querySelectorAll(".viewer-context a.preview-open")).some((link) => link.getAttribute("href") === expected), [url])),
       viewerState: () => evaluate(viewer.client, () => {
         const page = document.querySelector("iframe")?.contentDocument;
         const canvas = page?.querySelector("canvas");

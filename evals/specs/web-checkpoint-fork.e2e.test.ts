@@ -72,7 +72,11 @@ test("a reviewer enters a saved web browser with ten sessions and continues a pa
     await user.on(firstFork.app).screenshot();
     await reviewUser.click({ role: "button", text: "New copy" });
     const second = await probe.eventually(() => world.openedFork(sessions.id, [firstFork.id]), { within: 90_000, label: "independent replacement copy" });
-    await reviewUser.see({ role: "button", text: "New copy" }, { editable: true, timeoutMs: 90_000 });
+    await reviewProbe.eventually(async () => {
+      const buttons = await reviewProbe.dom(".viewer-context [aria-label='Interactive checkpoint'] button:not(:disabled)[aria-busy='false']");
+      return buttons.elements.some((button) => button.text === "New copy");
+    }, { within: 90_000, label: "new copy action enabled after launch" });
+    await reviewProbe.eventually(() => world.reviewHasCopyLink(second.viewerUrl), { within: 30_000, label: "review link points to the new copy" });
     await reviewUser.see({ role: "link", text: "Enter saved browser" });
     await user.on(second.app).see({ text: "Checkpoint session 10" });
     const list = await agent.on(second.app).list();
