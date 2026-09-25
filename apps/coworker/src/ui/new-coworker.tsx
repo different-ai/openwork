@@ -142,7 +142,7 @@ export function NewCoworker({
       </header>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-8 pt-2">
         {/* m-auto centers the card and still lets it scroll from its top edge on a very short window. */}
-        <div className="creation-card m-auto grid min-w-0 w-full max-w-3xl shrink-0 overflow-hidden rounded-[30px] border border-line md:min-h-[540px] md:grid-cols-[290px_1fr]">
+        <div className="creation-card glass-sheen relative m-auto grid min-w-0 w-full max-w-3xl shrink-0 overflow-hidden rounded-[30px] border border-line md:min-h-[540px] md:grid-cols-[290px_1fr]" data-glint="surface">
           <div className="avatar-stage flex min-h-[300px] flex-col items-center justify-center border-b border-line p-7 md:border-b-0 md:border-r">
             <OnboardingMascotStack
               variant={{ kind: "coworker", identity: previewIdentity, name: name.trim() || "New coworker", color: avatarColor, glasses: avatarGlasses }}

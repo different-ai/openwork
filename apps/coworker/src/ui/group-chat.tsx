@@ -803,7 +803,7 @@ function GroupChatView({
         <div className="flex min-w-0 flex-1 basis-0 items-center gap-1">
           {onExitActivity ? <IconButton className="window-no-drag" label="Go to chat" tooltip="Leave Activity and open this chat" tooltipSide="bottom" onClick={onExitActivity}><ChevronIcon direction="left" /></IconButton> : null}
         </div>
-        <nav aria-label="Where you are" className="window-no-drag flex min-w-0 max-w-[70%] items-center gap-1 rounded-full border border-line bg-panel/90 py-1 pl-1 shadow-[0_8px_24px_rgb(0_0_0/0.35)] backdrop-blur pr-3" data-testid="conversation-breadcrumbs">
+        <nav aria-label="Where you are" data-glint="surface" className="glass-sheen window-no-drag relative flex min-w-0 max-w-[70%] items-center gap-1 rounded-full border border-line bg-panel/90 py-1 pl-1 shadow-[0_8px_24px_rgb(0_0_0/0.35)] backdrop-blur pr-3" data-testid="conversation-breadcrumbs">
           {eventId && onOpenEvent ? (
             <>
               <Tooltip content="Open this event" side="bottom">
@@ -943,7 +943,7 @@ function GroupChatView({
           {assignmentMode ? (
             <p className="mb-2 px-2 text-[11px] text-mist" data-testid="group-assignment-mode">Something one of them should own, separate from this chat</p>
           ) : null}
-          <div className={`relative rounded-[24px] border bg-panel/55 p-3 shadow-[0_8px_32px_rgb(0_0_0/0.35)] backdrop-blur-xl backdrop-saturate-150 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`} data-testid="coworker-input-surface">
+          <div className={`glass-sheen relative rounded-[24px] border bg-panel/55 p-3 shadow-[0_8px_32px_rgb(0_0_0/0.35)] backdrop-blur-xl backdrop-saturate-150 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`} data-testid="coworker-input-surface" data-glint="surface">
             {!assignmentMode ? <VoicePanel voice={voice} /> : null}
             {mention && mentionOptions.length > 0 && !assignmentMode ? (
               <ul

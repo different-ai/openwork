@@ -4,7 +4,7 @@ import { abilitiesSummary } from "@/lib/abilities";
 import { CoworkerAbilitiesEditor } from "@/ui/coworker-abilities";
 import { describeHeaderStatus, describeNow, describeOutcome, mergeRecentWork, relativeTime } from "@/lib/activity-summary";
 import type { ConnectState } from "@/lib/connect";
-import { describeCoworkerSummary, showSummaryLine, summaryRowTitle, type CoworkerSummaryLine, type SummaryKind } from "@/lib/coworker-summary";
+import { describeCoworkerSummary, showSummaryLine, summaryRowTitle, type CoworkerSummaryLine, type SummaryKind, type SummaryPart } from "@/lib/coworker-summary";
 import { referralPrompt } from "@/lib/conversation";
 import type { DenSession } from "@/lib/den";
 import { markAutoPicked, peekStartingModel, takeStartingModel } from "@/lib/model-choice";
@@ -16,7 +16,7 @@ import { useFeatures } from "@/ui/use-features";
 import { ActivityIcon, AppsIcon, Button, CONVERSATION_TOP, ChevronIcon, ErrorNote, IconButton, MemoryIcon, SlidersIcon } from "@/ui/kit";
 import { useResizablePanel } from "@/ui/use-resizable-panel";
 import { PanelContent, PanelHeader, PanelLevel, usePanelNavigation } from "@/ui/panel-nav";
-import { isBackShortcut, pushCrumb, routeDepth, type PanelCrumb } from "@/lib/panel-route";
+import { isBackShortcut, pushCrumb, rootRoute, routeDepth, type PanelCrumb } from "@/lib/panel-route";
 import {
   ABILITIES_CRUMB,
   ACTIVITY_CRUMBS,
@@ -35,12 +35,13 @@ import {
 import { panelViewTooltip } from "@/lib/tooltip";
 import type { PanelBounds } from "@/lib/panel-layout";
 import { MemoryPanel } from "@/ui/memory";
-import { DocumentBesidePane, DocumentsPanel, lastDocumentsOpened, useDocuments, useDocumentNavigationGuard, type DocumentNavigationGuard } from "@/ui/documents";
+import { DocumentBesidePane, DocumentRow, DocumentsPanel, lastDocumentsOpened, useDocuments, useDocumentNavigationGuard, type DocumentNavigationGuard } from "@/ui/documents";
 import { ThreadsPanel, type DocumentHooks } from "@/ui/threads";
 import type { TeamHooks } from "@/ui/team-cards";
 import { WorkersPanel } from "@/ui/workers";
 import { AssignmentsPanel } from "@/ui/assignments";
 import type { WorkerSummary } from "@/lib/workers";
+import type { CoworkerDocumentSummary } from "@/lib/documents";
 import { Row, RowList, useReturnFocus } from "@/ui/rows";
 import type { SettingsSection } from "@/ui/openwork-settings";
 
@@ -71,6 +72,17 @@ const NARROW_WINDOW = 900;
 
 /** Which Activity level each part of the summary line opens. */
 const SUMMARY_LEVELS: Record<SummaryKind, ActivityLevel> = { assignments: "assignments", workers: "workers", documents: "documents" };
+
+/** Activity's tabs: its overview, then each level. */
+type ActivityTab = "root" | ActivityLevel;
+const ACTIVITY_TABS: ReadonlyArray<{ tab: ActivityTab; title: string }> = [
+  { tab: "root", title: "Overview" },
+  { tab: "documents", title: "Documents" },
+  { tab: "workers", title: "Workers" },
+  { tab: "assignments", title: "Assignments" },
+];
+/** How many documents in play the overview shows before "All". */
+const OVERVIEW_DOCUMENTS = 3;
 
 /** The rail and transcript show activity; the header reserves its right edge for Stop. */
 export function HeaderStatusWord({ activity, engineManaged }: { activity: CoworkerActivity | undefined; engineManaged: boolean }) {
@@ -209,6 +221,8 @@ export function CoworkerHome({
   }, []);
   /** From a card's Open: show this document in the Documents level; the id makes repeats distinct. */
   const [openDocumentRequest, setOpenDocumentRequest] = useState<{ id: number; documentId: string } | null>(null);
+  /** Choosing the Documents tab while a document is open returns to the list; the count remounts it. */
+  const [documentsReset, setDocumentsReset] = useState(0);
   /** The document open in the reading pane beside the conversation, when the window has room. */
   const [besideDocumentId, setBesideDocumentId] = useState("");
   const documentNavigation: DocumentNavigationGuard = useRef(null);
@@ -498,6 +512,18 @@ export function CoworkerHome({
 
   const activityLevel = activityScreen(nav.route.path);
   const settingsLevel = settingsScreen(nav.route.path);
+  /** The Activity tabs move sideways between levels from anywhere; the open Documents tab again returns a document to the list. */
+  function selectActivityTab(tab: ActivityTab): void {
+    if (!allowDocumentNavigation()) return;
+    if (tab === activityLevel.kind) {
+      if (tab === "documents") {
+        setOpenDocumentRequest(null);
+        setDocumentsReset((count) => count + 1);
+      }
+      return;
+    }
+    nav.navigate(tab === "root" ? rootRoute<PanelView>("overview") : activityRoute(tab), "none");
+  }
   // A feature turned off while its view is open leaves for the nearest place still there.
   const leaveMemory = nav.route.view === "memory" && !features.memory;
   const leaveSettingsLevel = nav.route.view === "settings"
@@ -520,7 +546,7 @@ export function CoworkerHome({
             {onExitActivity ? <IconButton className="window-no-drag" label="Go to coworker" tooltip={`Leave Activity and open ${coworker.name}`} tooltipSide="bottom" onClick={onExitActivity}><ChevronIcon direction="left" /></IconButton> : null}
             <div ref={setHeaderLeadSlot} className="window-no-drag flex items-center empty:hidden" />
           </div>
-          <nav aria-label="Where you are" className="window-no-drag flex min-w-0 max-w-[70%] items-center gap-1 rounded-full border border-line bg-panel/90 py-1 pl-1 shadow-[0_8px_24px_rgb(0_0_0/0.35)] backdrop-blur pr-1.5" data-testid="conversation-breadcrumbs">
+          <nav aria-label="Where you are" data-glint="surface" className="glass-sheen window-no-drag relative flex min-w-0 max-w-[70%] items-center gap-1 rounded-full border border-line bg-panel/90 py-1 pl-1 shadow-[0_8px_24px_rgb(0_0_0/0.35)] backdrop-blur pr-1.5" data-testid="conversation-breadcrumbs">
             <CoworkerAvatar
               identity={coworker.slug}
               motion="attentive"
@@ -709,6 +735,7 @@ export function CoworkerHome({
             </IconButton>
           ) : undefined}
         />
+        {contextView === "overview" ? <ActivityTabs current={activityLevel.kind} rows={summary.rows} onSelect={selectActivityTab} /> : null}
         <PanelContent route={nav.route} containerRef={setPanelContentElement}>
           {documentNotice && overlayPanel ? <p role="alert" className="text-xs text-mist">{documentNotice}</p> : null}
           {contextView === "overview" && activityLevel.kind === "root" ? (
@@ -718,8 +745,9 @@ export function CoworkerHome({
                 activity={activity}
                 engineManaged={runtime.engineManaged}
                 scheduled={scheduled}
-                summary={summary}
+                documents={documents ?? NO_DOCUMENTS}
                 onOpenThread={openThread}
+                onOpenDocument={documentHooks.onOpenDocument}
                 onOpenLevel={(kind) => nav.push(ACTIVITY_CRUMBS[SUMMARY_LEVELS[kind]], `activity:${kind}`)}
               />
             </PanelLevel>
@@ -727,6 +755,7 @@ export function CoworkerHome({
           {contextView === "overview" && activityLevel.kind === "documents" ? (
             <PanelLevel key="documents" direction={nav.direction}>
               <DocumentsPanel
+                key={documentsReset}
                 coworker={coworker}
                 documents={documents}
                 error={documentsError}
@@ -826,18 +855,69 @@ export function CoworkerHome({
 }
 
 /**
- * The Activity root, as flat rows with hairlines: what is happening now (the
- * subject, its note, the time), then what the coworker holds — Documents,
- * Workers, Assignments — each opening its level, then Recent. The header owns
- * the state word, so nothing here repeats it.
+ * Activity's levels as tabs under the header, so moving between Documents,
+ * Workers and Assignments is one click from anywhere instead of back and in
+ * again. A tab shows its count, and Documents a dot for changes since the
+ * person last looked; the full words ("2 assignments") are there for screen readers.
+ */
+function ActivityTabs({ current, rows, onSelect }: { current: ActivityTab; rows: readonly SummaryPart[]; onSelect: (tab: ActivityTab) => void }) {
+  const listRef = useRef<HTMLDivElement>(null);
+  return (
+    <div
+      ref={listRef}
+      role="tablist"
+      aria-label="Activity"
+      className="flex shrink-0 items-center gap-0.5 overflow-x-auto border-b border-line px-3 [scrollbar-width:none]"
+      data-testid="activity-tabs"
+      onKeyDown={(event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        const index = ACTIVITY_TABS.findIndex(({ tab }) => tab === current);
+        const next = ACTIVITY_TABS[(index + (event.key === "ArrowRight" ? 1 : ACTIVITY_TABS.length - 1)) % ACTIVITY_TABS.length];
+        if (!next) return;
+        event.preventDefault();
+        onSelect(next.tab);
+        window.requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
+      }}
+    >
+      {ACTIVITY_TABS.map(({ tab, title }) => {
+        const row = tab === "root" ? undefined : rows.find((candidate) => candidate.kind === tab);
+        const selected = current === tab;
+        return (
+          <button
+            key={tab}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            tabIndex={selected ? 0 : -1}
+            title={row?.note || undefined}
+            data-testid={tab === "root" ? "activity-tab-overview" : `activity-row-${tab}`}
+            onClick={() => onSelect(tab)}
+            className={`-mb-px flex shrink-0 items-center gap-1 border-b-2 px-2 pb-2 pt-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${selected ? "border-snow text-snow" : "border-transparent text-mist hover:text-snow"}`}
+          >
+            {title}
+            {row && row.count > 0 ? <span aria-hidden="true" className="text-[10px] tabular-nums text-mist">{row.count}</span> : null}
+            {row && row.changed > 0 ? <span aria-hidden="true" className="size-1.5 rounded-full bg-spark" data-testid="activity-tab-changed" /> : null}
+            {row && row.count > 0 ? <span className="sr-only">, {summaryRowTitle(row)}{row.changed > 0 ? `, ${row.changed} new` : ""}</span> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * The Activity overview: what is happening now (the subject, its note, the
+ * time), the documents in play as files to open, then Recent. The tabs above
+ * reach every level; the header owns the state word, so nothing here repeats it.
  */
 function CoworkerOverview({
   coworker,
   activity,
   engineManaged,
   scheduled,
-  summary,
+  documents,
   onOpenThread,
+  onOpenDocument,
   onOpenLevel,
 }: {
   coworker: CoworkerSummary;
@@ -845,13 +925,15 @@ function CoworkerOverview({
   engineManaged: boolean;
   /** Scheduled assignments on this Mac, for the Recent list's finished runs. */
   scheduled: LocalResponsibility[];
-  summary: CoworkerSummaryLine;
+  documents: readonly CoworkerDocumentSummary[];
   onOpenThread: (threadId: string) => void;
+  onOpenDocument: (documentId: string) => void;
   onOpenLevel: (kind: SummaryKind) => void;
 }) {
   const now = describeNow(activity);
   const nowNote = now.note;
   const recent = mergeRecentWork(activity, scheduled);
+  const inPlay = documents.filter((document) => document.status === "active").sort((a, b) => b.updatedAt - a.updatedAt);
   const nowTime = relativeTime(activity?.updatedAt ?? 0);
   const canOpenSubject = Boolean(activity?.threadId);
   const showNow = Boolean(now.subject) || Boolean(engineManaged && nowNote);
@@ -891,19 +973,23 @@ function CoworkerOverview({
         ) : null}
       </section>
 
-      <RowList label={`What ${coworker.name} holds`} testId="coworker-holdings" divided>
-        {summary.rows.map((row) => (
-          <Row
-            key={row.kind}
-            id={`activity:${row.kind}`}
-            title={summaryRowTitle(row)}
-            status={row.note || undefined}
-            mark={row.changed > 0}
-            onOpen={() => onOpenLevel(row.kind)}
-            testId={`activity-row-${row.kind}`}
-          />
-        ))}
-      </RowList>
+      {inPlay.length > 0 ? (
+        <section aria-label="Documents in play" data-testid="overview-documents">
+          <div className="mb-1 flex items-center justify-between gap-2 px-1">
+            <h3 className="text-[11px] font-medium text-mist">Documents</h3>
+            {documents.length > OVERVIEW_DOCUMENTS || inPlay.length < documents.length ? (
+              <button type="button" className="text-[11px] text-mist transition-colors hover:text-snow" onClick={() => onOpenLevel("documents")} data-testid="overview-documents-all">
+                All {documents.length}
+              </button>
+            ) : null}
+          </div>
+          <ul className="-mx-1 space-y-0.5">
+            {inPlay.slice(0, OVERVIEW_DOCUMENTS).map((document) => (
+              <DocumentRow key={document.id} document={document} coworkerName={coworker.name} onSelect={() => onOpenDocument(document.id)} testId="overview-document" />
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {recent.length > 0 ? (
         <section aria-label="Recent activity" className="border-t border-line pt-3" data-testid="coworker-recent-activity">

@@ -98,26 +98,34 @@ function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-/** A row in the Documents view: title, one-line summary, when, and who. */
-function DocumentRow({ document, coworkerName, onSelect }: { document: CoworkerDocumentSummary; coworkerName: string; onSelect: () => void }) {
+/**
+ * A document as a file: its page mark (tinted while it is in play), the title
+ * with how long ago it changed, and one line of what it holds. Who changed it
+ * last and when, in full, are in the tooltip.
+ */
+export function DocumentRow({ document, coworkerName, onSelect, testId = "document-row" }: { document: CoworkerDocumentSummary; coworkerName: string; onSelect: () => void; testId?: string }) {
+  const active = document.status === "active";
+  const ago = relativeTime(document.updatedAt);
   return (
     <li>
       <button
         type="button"
-        data-testid="document-row"
+        data-testid={testId}
         data-document-id={document.id}
         data-status={document.status}
-        className="flex w-full items-start gap-3 px-1 py-2.5 text-left transition-colors hover:bg-white/4 focus-visible:bg-white/4 focus-visible:outline-none"
+        title={`${document.title} · updated ${whenLabel(document.updatedAt) || "earlier"} ${byLabel(document, coworkerName)}`}
+        className="group flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-white/[0.04] focus-visible:bg-white/[0.04] focus-visible:outline-none"
         onClick={onSelect}
       >
-        <div className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-snow">{document.title}</span>
-          {document.summary ? <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-mist">{document.summary}</p> : null}
-        </div>
-        <span className="shrink-0 pt-0.5 text-right text-[10px] leading-relaxed text-mist">
-          {whenLabel(document.updatedAt)}
-          <br />
-          {byLabel(document, coworkerName)}
+        <span aria-hidden="true" className={`flex size-9 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset ${active ? "bg-spark/10 text-spark ring-spark/20" : "bg-white/[0.04] text-mist ring-white/10"}`}>
+          <DocumentsIcon className="size-[18px]" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-baseline gap-2">
+            <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-snow">{document.title}</span>
+            {ago ? <span className="shrink-0 text-[10px] tabular-nums text-mist">{ago}</span> : null}
+          </span>
+          <span className="mt-0.5 block truncate text-[11px] text-mist">{document.summary || `${document.words} words, ${byLabel(document, coworkerName)}`}</span>
         </span>
       </button>
     </li>
@@ -126,7 +134,7 @@ function DocumentRow({ document, coworkerName, onSelect }: { document: CoworkerD
 
 function RowList({ documents, coworkerName, onSelect, testId }: { documents: CoworkerDocumentSummary[]; coworkerName: string; onSelect: (id: string) => void; testId: string }) {
   return (
-    <ul className="divide-y divide-line" data-testid={testId}>
+    <ul className="-mx-2 space-y-0.5" data-testid={testId}>
       {documents.map((document) => (
         <DocumentRow key={document.id} document={document} coworkerName={coworkerName} onSelect={() => onSelect(document.id)} />
       ))}
@@ -200,19 +208,16 @@ export function DocumentsPanel({
   }
 
   return (
-    <div className="space-y-4" data-testid="documents-panel">
-      <p className="text-xs leading-relaxed text-mist">
-        The depth behind {coworker.name}'s replies: plans, briefs, comparisons, notes. {coworker.name} keeps about five in play and puts the rest aside.
-      </p>
+    <div className="space-y-5" data-testid="documents-panel">
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {documents === null ? (
         <Empty>Reading documents…</Empty>
       ) : documents.length === 0 ? (
-        <Empty>No documents yet. Ask {coworker.name} for a plan, a comparison, or research and it will write one here.</Empty>
+        <Empty>No documents yet. Ask {coworker.name} for a plan, a comparison, or research and it will write one here. It keeps about five in play and puts the rest aside.</Empty>
       ) : (
         <>
           <section className="space-y-2">
-            <h3 className="px-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-mist/80">Active · {groups.active.length}</h3>
+            <h3 className="text-[11px] font-medium text-mist">In play · {groups.active.length}</h3>
             {groups.active.length > 0 ? (
               <RowList documents={groups.active} coworkerName={coworker.name} onSelect={setSelectedId} testId="documents-active" />
             ) : (
@@ -221,7 +226,7 @@ export function DocumentsPanel({
           </section>
           {groups.aside.length > 0 ? (
             <details className="group space-y-2" data-testid="documents-aside">
-              <summary className="flex cursor-pointer list-none items-center gap-1.5 px-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-mist/80 marker:hidden hover:text-snow">
+              <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-medium text-mist marker:hidden hover:text-snow">
                 <span>Put aside · {groups.aside.length}</span>
                 <span className="text-mist/60 transition-transform group-open:rotate-90" aria-hidden="true">›</span>
               </summary>
@@ -232,7 +237,7 @@ export function DocumentsPanel({
             <div className="space-y-2">
               <button
                 type="button"
-                className="px-1 text-[10px] text-mist underline decoration-mist/40 underline-offset-2 hover:text-snow"
+                className="text-[11px] text-mist underline decoration-mist/40 underline-offset-2 hover:text-snow"
                 data-testid="documents-archived-link"
                 onClick={() => setShowArchived((value) => !value)}
               >

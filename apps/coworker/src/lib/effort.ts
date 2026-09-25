@@ -8,7 +8,7 @@
  * thinks hard, the facilitator thinks least), the preference shifts it, and
  * the result snaps to the nearest effort the model actually offers. A model
  * that offers no efforts runs at its default whatever the dial says, and an
- * exact thinking effort the person fixed in Customize › Advanced always wins.
+ * exact thinking effort the person fixed in Customize › AI model always wins.
  * The same preference nudges which lane a message takes and how many turns a
  * Worker gets when nobody chose, so "work harder" reaches the Workers too.
  */
@@ -186,6 +186,6 @@ export function describeEffortUsed(input: { variant: string; stop: EffortStop; k
     facilitator: "choosing who answers",
   };
   if (!input.variant) return `Thinking effort: the model's default — ${kind[input.kind]}`;
-  if (input.fixed) return `Thinking effort: ${input.variant} — fixed in Customize › Advanced`;
+  if (input.fixed) return `Thinking effort: ${input.variant} — fixed in Customize › AI model`;
   return `Thinking effort: ${input.variant} — ${effortStopLabel(input.stop)}, ${kind[input.kind]}`;
 }

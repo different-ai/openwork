@@ -49,6 +49,7 @@ import { AppLoader, CoworkerMark } from "@/ui/brand";
 import type { SettingsSection } from "@/ui/openwork-settings";
 import { VoiceContext } from "@/ui/use-voice";
 import { useActivityInbox } from "@/ui/use-activity-inbox";
+import { useGlints } from "@/ui/glints";
 import { refreshFeatures, useFeatures } from "@/ui/use-features";
 import { CustomizeCoworker, type CustomizeFocus } from "@/ui/customize-coworker";
 import { MarketplaceDialog } from "@/ui/marketplace";
@@ -206,6 +207,8 @@ export default function App() {
   const [calendarRequest, setCalendarRequest] = useState<CalendarRequest | null>(null);
   const [groupDocumentRequest, setGroupDocumentRequest] = useState<{ id: number; groupId: string; documentId: string } | null>(null);
   const features = useFeatures();
+  // Now and then light crosses one glass surface on screen.
+  useGlints();
   const calendar = useCalendarData(coworkers, session, Boolean(runtime) && features.calendar);
   const [calendarPreferences, setCalendarPreferences] = useCalendarPreferences();
 
@@ -222,7 +225,7 @@ export default function App() {
   /** A request made of one coworker's view from elsewhere: a group's "Choose AI model" or an assignment it created. */
   const [homeRequest, setHomeRequest] = useState<(CoworkerHomeRequest & { slug: string; createdAt?: string }) | null>(null);
   const [groupDetailsOpen, setGroupDetailsOpen] = useState(false);
-  /** The coworker whose Customize page is open, over the team view, which stays as it was underneath. */
+  /** The coworker whose Customize dialog is open, over the team view, which stays as it was underneath. */
   const [customizing, setCustomizing] = useState<{ slug: string; createdAt: string; focus?: CustomizeFocus; id: number } | null>(null);
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   // A feature switched off takes its view along: Activity returns to chat and the Marketplace closes.
@@ -1295,6 +1298,8 @@ export default function App() {
 
   const customizingCoworker = customizing ? coworkers.find((coworker) => coworker.slug === customizing.slug && coworker.createdAt === customizing.createdAt) ?? null : null;
   const workspaceActive = !globalSettings && !factoryResetOpen && !replayOnboarding && !customizingCoworker;
+  /** The Customize dialog sits over the team view, which stays visible but inactive beneath it. */
+  const customizeOpen = Boolean(customizingCoworker) && !globalSettings && !factoryResetOpen && !replayOnboarding;
   const settingsActive = Boolean(globalSettings) && !factoryResetOpen && !replayOnboarding;
   const activityVisible = mainContent === "activity";
   const contentContext = activityVisible ? activityContext : mainContent;
@@ -1306,7 +1311,7 @@ export default function App() {
     <VoiceContext.Provider value={{ accountKey: session ? `${sessionKey(session)}\u0000${session.userEmail}` : "signed-out", openModels: () => openGlobalSettings("models"), signIn: () => setConnecting(true) }}>
     <div key={accountKey} className="window-shell relative flex h-full overflow-hidden" data-testid="coworker-shell">
       <div
-        className={workspaceActive ? "flex min-w-0 flex-1" : "hidden"}
+        className={workspaceActive || customizeOpen ? "flex min-w-0 flex-1" : "hidden"}
         data-testid="coworker-workspace"
         data-active={workspaceActive ? "true" : "false"}
       >
@@ -1507,8 +1512,8 @@ export default function App() {
           }}
         />
       ) : null}
-      {customizingCoworker && !globalSettings && !factoryResetOpen && !replayOnboarding ? (
-        <div className="absolute inset-0 flex" data-testid="customize-coworker-pane">
+      {customizingCoworker && customizeOpen ? (
+        <div className="contents" data-testid="customize-coworker-pane">
           <CustomizeCoworker
             key={`${customizingCoworker.slug}:${customizing?.id}`}
             runtime={runtime}

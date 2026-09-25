@@ -244,7 +244,8 @@ export function CoworkerRail({
 
   return (
     <aside
-      className={`glass-rail relative z-20 flex h-full shrink-0 flex-col border-r border-line ${panel.resizing ? "" : "transition-[width] duration-200"}`}
+      data-glint="surface"
+      className={`glass-rail glass-sheen relative z-20 flex h-full shrink-0 flex-col border-r border-line ${panel.resizing ? "" : "transition-[width] duration-200"}`}
       style={{ width }}
       data-testid="coworker-rail"
       data-collapsed={collapsed ? "true" : "false"}

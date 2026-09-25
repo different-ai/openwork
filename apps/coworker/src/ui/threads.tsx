@@ -284,7 +284,7 @@ function newQueuedId(): string {
 }
 
 export const NO_TOOL_MODEL_MESSAGE =
-  "No connected AI model can use tools. Connect an AI provider in OpenWork, or choose an AI model in Customize › Advanced.";
+  "No connected AI model can use tools. Connect an AI provider in OpenWork, or choose one in Customize › AI model.";
 
 type WorkspaceProblem = { message: string; technical: string };
 
@@ -410,7 +410,7 @@ export function ThreadsPanel({
   /** How the conversation answers a coworker's offers about the team. */
   team?: TeamHooks;
   headerSlots: HeaderSlots;
-  /** The coworker's Customize page, opened at Advanced (its AI models) — the first recovery step after a model failure. */
+  /** The coworker's Customize page, opened at its AI model — the first recovery step after a model failure. */
   onOpenModelSettings: () => void;
   /** The OpenWork account section — where a provider is reconnected. */
   onOpenAccount: () => void;
@@ -2203,7 +2203,7 @@ function ThreadView({
       const run = await onSyncProviders();
       if (run.status === "failed") {
         voice.abandonReply(voiceIntent);
-        setProviderRefreshNote("Providers could not be refreshed. You can still use a suggested model above or choose one in Customize › Advanced.");
+        setProviderRefreshNote("Providers could not be refreshed. You can still use a suggested model above or choose one in Customize › AI model.");
         return;
       }
       const catalog = await threads.listModelCatalog();
@@ -2213,7 +2213,7 @@ function ThreadView({
       if (!decision.model) {
         voice.abandonReply(voiceIntent);
         setRecommendedModel(recommendModel(catalog, { exclude: failedModelId || coworker.model }));
-        setProviderRefreshNote("Providers refreshed, but the selected model is still unavailable. Use the suggestion above or choose another AI model in Customize › Advanced.");
+        setProviderRefreshNote("Providers refreshed, but the selected model is still unavailable. Use the suggestion above or choose another AI model in Customize › AI model.");
         return;
       }
       setProviderRefreshNote("");
@@ -2221,7 +2221,7 @@ function ThreadView({
       void retryPending({ model: { providerId: pick.providerId, modelId: pick.modelId, ...(decision.variant ? { variant: decision.variant } : {}) }, label: pick.modelLabel }, voiceIntent);
     } catch (cause) {
       voice.abandonReply(voiceIntent);
-      setProviderRefreshNote("Providers could not be refreshed. You can still use a suggested model above or choose one in Customize › Advanced.");
+      setProviderRefreshNote("Providers could not be refreshed. You can still use a suggested model above or choose one in Customize › AI model.");
     }
   }
 
@@ -3571,7 +3571,7 @@ function DiscussionComposer({
             Something {coworkerName} should own, separate from this chat
           </p>
         ) : null}
-        <div className={`rounded-[24px] border bg-panel/55 p-3 shadow-[0_8px_32px_rgb(0_0_0/0.35)] backdrop-blur-xl backdrop-saturate-150 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`} data-testid="coworker-input-surface">
+        <div className={`glass-sheen relative rounded-[24px] border bg-panel/55 p-3 shadow-[0_8px_32px_rgb(0_0_0/0.35)] backdrop-blur-xl backdrop-saturate-150 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`} data-testid="coworker-input-surface" data-glint="surface">
           {!assignmentMode ? <VoicePanel voice={voice} /> : null}
           {!assignmentMode && skills.length ? <div className="flex flex-wrap gap-2 px-1 pb-2" aria-label="Selected skills">
             {skills.map((skill, index) => <span key={`${skill.id}:${index}`} className="inline-flex max-w-full items-center gap-2 rounded-full border border-line px-2 py-1 text-xs text-snow" data-testid="coworker-selected-skill">
@@ -3740,7 +3740,7 @@ function MessageComposer({
   return (
     <div className="px-5 pb-2 pt-2" data-testid="coworker-composer" data-working={working ? "true" : "false"}>
       <div className="mx-auto max-w-3xl">
-        <div className="rounded-[24px] border border-line bg-panel/55 p-3 shadow-[0_8px_32px_rgb(0_0_0/0.35)] backdrop-blur-xl backdrop-saturate-150 transition-colors focus-within:border-spark/50">
+        <div className="glass-sheen relative rounded-[24px] border border-line bg-panel/55 p-3 shadow-[0_8px_32px_rgb(0_0_0/0.35)] backdrop-blur-xl backdrop-saturate-150 transition-colors focus-within:border-spark/50" data-glint="surface">
           <textarea
             ref={fieldRef}
             aria-label={placeholder.replace("…", "")}

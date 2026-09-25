@@ -54,7 +54,10 @@ function ModelPreferences({ preferences, saving, onSave }: {
 }
 
 /** Shared by app Settings and the coworker's sidebar. Both edit the same saved choices. */
-export function CoworkerModelSettings({ runtime, session, coworker, onCoworkerChanged, onSyncProviders, onOpenAccount, onOpenModelDefaults, catalog, catalogLoading, onRefreshCatalog }: {
+/** One part of a coworker's model settings, for a page that shows them one at a time. */
+export type ModelSettingsPart = "model" | "effort" | "helpers";
+
+export function CoworkerModelSettings({ runtime, session, coworker, onCoworkerChanged, onSyncProviders, onOpenAccount, onOpenModelDefaults, catalog, catalogLoading, onRefreshCatalog, part }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
   coworker: CoworkerSummary;
@@ -65,6 +68,8 @@ export function CoworkerModelSettings({ runtime, session, coworker, onCoworkerCh
   catalog?: EngineModelCatalog;
   catalogLoading?: boolean;
   onRefreshCatalog?: (options: { sync?: boolean }) => Promise<void>;
+  /** Only this part: how it answers you, its thinking pace, or its helpers. Every part when omitted. */
+  part?: ModelSettingsPart;
 }) {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -127,9 +132,17 @@ export function CoworkerModelSettings({ runtime, session, coworker, onCoworkerCh
   const pickerProps = { runtime, session, coworker, onSyncProviders, onConnect: onOpenAccount, compact: true, catalog: modelCatalog, catalogLoading, previewLoading, onRefreshCatalog: refreshModelContext };
   const preferences = normalizeModelSelectionPreferences(coworker.modelSelectionPreferences);
   const inheritsConversation = usesAppConversationDefault(coworker);
+  const show = (which: ModelSettingsPart) => !part || part === which;
+  const effort = (
+    <div className={part ? "" : "mt-5"} data-testid="coworker-effort-settings">
+      {inheritsConversation ? <details className="mb-2 text-[11px] leading-relaxed text-mist"><summary className="cursor-pointer">How this works with shared settings</summary><p className="mt-1">This preference applies when shared effort is Automatic. A fixed shared effort takes priority for conversations. Your personal exact effort remains saved for assignments.</p></details> : null}
+      <EffortDial stop={coworker.effortPreference} onChange={(effortPreference) => void update({ effortPreference })} coworkerName={coworker.name} fixedVariant={coworker.modelVariant} compact={false} />
+    </div>
+  );
   return (
     <fieldset disabled={saving} aria-busy={saving} className="min-w-0 space-y-6 disabled:opacity-70">
-      <section data-testid="coworker-model-settings">
+      {part === "effort" ? effort : null}
+      {show("model") ? <section data-testid="coworker-model-settings">
         <div className="flex items-center gap-2"><h3 className="text-sm font-semibold text-snow">My conversation model</h3><HelpTip label="conversation model" content={`The AI model ${coworker.name} uses to reply to you. You can use the shared choice or choose one just for ${coworker.name}. Switching back keeps the personal choice saved.`} /></div>
         <p className="mb-3 mt-1 text-xs text-mist" data-testid="coworker-model-note">How {coworker.name} answers your messages.</p>
         <div className="mb-3 space-y-2 rounded-xl border border-line bg-panel p-3" role="radiogroup" aria-label="Conversation model source">
@@ -156,16 +169,15 @@ export function CoworkerModelSettings({ runtime, session, coworker, onCoworkerCh
           <summary className="cursor-pointer font-medium text-snow">How Automatic chooses · {preferences.priority === "cost" ? "Lower cost" : preferences.priority === "capability" ? "More capable" : "Balanced"}</summary>
           <ModelPreferences key={`${coworker.slug}:${JSON.stringify(preferences)}`} preferences={preferences} saving={saving} onSave={(modelSelectionPreferences) => void update({ modelSelectionPreferences })} />
         </details>
-        <div className="mt-5" data-testid="coworker-effort-settings">
-          {inheritsConversation ? <details className="mb-2 text-[11px] leading-relaxed text-mist"><summary className="cursor-pointer">How this works with shared settings</summary><p className="mt-1">This preference applies when shared effort is Automatic. A fixed shared effort takes priority for conversations. Your personal exact effort remains saved for assignments.</p></details> : null}
-          <EffortDial stop={coworker.effortPreference} onChange={(effortPreference) => void update({ effortPreference })} coworkerName={coworker.name} fixedVariant={coworker.modelVariant} compact={false} />
-        </div>
-      </section>
-      <section className="space-y-5 border-t border-line pt-4" data-testid="coworker-worker-model-settings">
+        {part ? null : effort}
+      </section> : null}
+      {show("helpers") ? <section className={`space-y-5 ${part ? "" : "border-t border-line pt-4"}`} data-testid="coworker-worker-model-settings">
         <div>
           <div className="flex items-center gap-2"><h3 className="text-sm font-semibold text-snow">My helpers</h3><HelpTip label="helpers" content={`When ${coworker.name} asks another AI to help, these models handle that work. Choices here apply to new helpers; existing helpers keep their models.`} /></div>
           <p className="mt-1 text-xs text-mist">Choose who helps with difficult decisions and longer tasks.</p>
         </div>
+        {/* On their own tab the two helpers sit side by side, so neither needs a scroll. */}
+        <div className={part === "helpers" ? "grid gap-6 md:grid-cols-2" : "space-y-5"}>
         <div data-testid="thinking-model-settings">
           <div className="flex items-center gap-2"><h4 className="text-xs font-medium text-snow">My deep thinking model</h4><HelpTip label="deep thinking model" content={`Helps ${coworker.name} weigh a difficult decision before work begins. It returns a short decision brief.`} /></div>
           <p className="mb-3 mt-1 text-xs text-mist">For hard choices before work starts.</p>
@@ -176,11 +188,12 @@ export function CoworkerModelSettings({ runtime, session, coworker, onCoworkerCh
           <p className="mb-3 mt-1 text-xs text-mist">For research, making things, and other longer work.</p>
           <ModelPicker {...pickerProps} automaticPreview={preview("delivery")} value={coworker.deliveryModel ?? ""} modelVariant={coworker.deliveryModelVariant ?? ""} onChange={(selection) => void updateWorker("delivery", selection)} forWorker />
         </div>
+        </div>
         <details className="text-[11px] leading-relaxed text-mist">
           <summary className="cursor-pointer font-medium">When do changes apply?</summary>
           <p className="mt-2">New Workers keep the model and effort they start with. If that model becomes unavailable, they stop instead of switching providers. Changing these defaults does not rewrite existing Worker selections or assignment settings.</p>
         </details>
-      </section>
+      </section> : null}
       <p className="text-[11px] text-mist" role="status">{saving ? "Saving..." : saved ? `Settings saved for ${coworker.name}.` : `Model and effort changes save automatically for ${coworker.name} only. Automatic preferences use Save preferences.`}</p>
       {error ? <div role="alert"><ErrorNote>{error}</ErrorNote></div> : null}
     </fieldset>

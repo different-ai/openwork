@@ -1055,3 +1055,40 @@ body.is-resizing-panel * {
     animation: none;
   }
 }
+
+/* Glass sheen: now and then a faint light crosses a glass surface (ui/glints.ts
+   picks one and sets data-glinting for a single sweep). It passes under the
+   surface's content, so faces, words and controls stay in front of it. */
+.glass-sheen {
+  isolation: isolate;
+}
+
+.glass-sheen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 42%, rgb(255 255 255 / 0.06) 47%, rgb(255 255 255 / 0.13) 50%, rgb(255 255 255 / 0.06) 53%, transparent 58%) no-repeat;
+  background-size: 300% 100%;
+  background-position: 120% 0;
+  opacity: 0;
+}
+
+.glass-sheen[data-glinting="true"]::after {
+  animation: glass-sheen 1500ms cubic-bezier(0.45, 0, 0.2, 1) both;
+}
+
+@keyframes glass-sheen {
+  0% { opacity: 0; background-position: 120% 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { opacity: 0; background-position: -20% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glass-sheen::after {
+    display: none;
+  }
+}

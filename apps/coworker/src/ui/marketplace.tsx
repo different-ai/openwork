@@ -254,8 +254,8 @@ export function MarketplaceDialog({ session, team, current, connect, onRepairCon
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-5 backdrop-blur-[2px]" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section role="dialog" aria-modal="true" aria-labelledby={titleId} data-testid="marketplace" data-view={view.kind}
-        className="window-no-drag relative flex h-[min(760px,calc(100vh-40px))] w-full max-w-[920px] flex-col overflow-hidden rounded-2xl border border-line bg-ink shadow-[0_32px_96px_rgb(0_0_0/0.6)]">
+      <section role="dialog" aria-modal="true" aria-labelledby={titleId} data-testid="marketplace" data-view={view.kind} data-glint="surface"
+        className="glass-sheen window-no-drag relative flex h-[min(760px,calc(100vh-40px))] w-full max-w-[920px] flex-col overflow-hidden rounded-2xl border border-line bg-ink shadow-[0_32px_96px_rgb(0_0_0/0.6)]">
         <header className="flex shrink-0 items-center gap-2 px-7 pb-2 pt-6">
           {view.kind !== "home" ? <IconButton label="Back" tooltipSide="bottom" onClick={() => open({ kind: "home" })}><ChevronIcon direction="left" /></IconButton> : null}
           <h1 id={titleId} className="text-lg font-semibold tracking-[-0.015em] text-snow">Marketplace</h1>

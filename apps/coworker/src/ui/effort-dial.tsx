@@ -7,7 +7,7 @@ import { HelpTip } from "@/ui/kit";
  * Dynamic effort sets the coworker's pace. The composer control opens a
  * five-stop slider and an optional preview of how different tasks adapt.
  * Each turn derives its effort from this preference and the kind of work;
- * a supported fixed effort in Customize › Advanced still takes priority.
+ * a supported fixed effort in Customize › AI model still takes priority.
  */
 export function EffortDial({
   stop,

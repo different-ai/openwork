@@ -40,8 +40,8 @@ export type PanelNavigation<View extends string> = {
   showView: (view: View) => void;
   /** Show a view at its root. */
   toRoot: (view: View) => void;
-  /** Go anywhere: a deep link or a search result, with its trail built. */
-  navigate: (route: PanelRoute<View>) => void;
+  /** Go anywhere: a deep link or a search result, with its trail built. A tab switch passes `none`: it moves sideways, not deeper or back. */
+  navigate: (route: PanelRoute<View>, direction?: PanelDirection) => void;
   push: (crumb: PanelCrumb, fromRow?: string) => void;
   /** Replace the path inside the current view, as if navigated; remembers the row it came from. */
   setPath: (path: PanelCrumb[], fromRow?: string) => void;
@@ -92,10 +92,10 @@ export function usePanelNavigation<View extends string>(options: {
   const toRoot = useCallback((view: View) => {
     move(rootRoute(view), routeRef.current.view === view && routeDepth(routeRef.current) > 0 ? "back" : "none");
   }, [move]);
-  const navigate = useCallback((next: PanelRoute<View>) => {
+  const navigate = useCallback((next: PanelRoute<View>, direction?: PanelDirection) => {
     const current = routeRef.current;
     const deeper = next.view === current.view && routeDepth(next) > routeDepth(current);
-    move(next, next.view !== current.view ? "none" : deeper ? "forward" : "back");
+    move(next, direction ?? (next.view !== current.view ? "none" : deeper ? "forward" : "back"));
   }, [move]);
   const push = useCallback((crumb: PanelCrumb, fromRow?: string) => {
     const current = routeRef.current;

@@ -129,11 +129,11 @@ export function GroupAvatars({ members, size = 26, animated = true, motion = "qu
   );
 }
 
-function ColorSwatches({ color, onColorChange }: { color: AvatarColor; onColorChange: (color: AvatarColor) => void }) {
+function ColorSwatches({ color, onColorChange, tight = false }: { color: AvatarColor; onColorChange: (color: AvatarColor) => void; tight?: boolean }) {
   return (
-    <div className="flex flex-col gap-2">
+    <div className={`flex flex-col ${tight ? "gap-1" : "gap-2"}`}>
       {AVATAR_COLOR_ROWS.map((row, index) => (
-        <div key={index} className="flex flex-wrap gap-2">
+        <div key={index} className={`flex flex-wrap ${tight ? "gap-1" : "gap-2"}`}>
           {row.map((option) => (
             <button
               key={option.id}
@@ -164,9 +164,37 @@ export function AvatarControls({
   glasses: AvatarGlasses;
   onColorChange: (color: AvatarColor) => void;
   onGlassesChange: (glasses: AvatarGlasses) => void;
-  /** `rows` lays each choice out as a label beside its control, for flat settings lists. */
-  layout?: "stacked" | "rows";
+  /** `rows` lays each choice out as a label beside its control, for flat settings lists; `compact` keeps both rows of colors and wraps glasses as chips, for a narrow column. */
+  layout?: "stacked" | "rows" | "compact";
 }) {
+  if (layout === "compact") {
+    return (
+      <div className="space-y-4">
+        <fieldset>
+          <legend className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-mist">Color</legend>
+          <ColorSwatches color={color} onColorChange={onColorChange} tight />
+        </fieldset>
+        <fieldset>
+          <legend className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-mist">Glasses</legend>
+          <div className="flex flex-wrap gap-1">
+            {AVATAR_GLASSES.map((option) => (
+              <button
+                key={option.id}
+                aria-pressed={glasses === option.id}
+                className={`rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition-colors ${
+                  glasses === option.id ? "bg-white/10 text-snow ring-1 ring-white/10" : "text-mist hover:bg-white/5 hover:text-snow"
+                }`}
+                onClick={() => onGlassesChange(option.id)}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+      </div>
+    );
+  }
   if (layout === "rows") {
     return (
       <>
