@@ -28,6 +28,7 @@ export interface TestArtifact {
   results: ArtifactExpectationResult[];
   judgments: ArtifactJudgment[];
   checkpoint?: ImageEvidence["checkpoint"];
+  checkpointMatch?: ImageEvidence["checkpointMatch"];
   checkpointError?: string;
 }
 
@@ -168,8 +169,10 @@ function parseArtifact(value: unknown): TestArtifact | null {
   const checkpoint = value.checkpoint === undefined ? undefined : checkpointSchema.safeParse(value.checkpoint);
   if (checkpoint && (!checkpoint.success || checkpoint.data.imageHash !== value.hash)) return null;
   if (value.checkpointError !== undefined && typeof value.checkpointError !== "string") return null;
+  if (value.checkpointMatch !== undefined && (!checkpoint?.success || (value.checkpointMatch !== "exact" && value.checkpointMatch !== "approximate"))) return null;
   return {
     ...(checkpoint?.success ? { checkpoint: checkpoint.data } : {}),
+    ...(value.checkpointMatch === "exact" || value.checkpointMatch === "approximate" ? { checkpointMatch: value.checkpointMatch } : {}),
     ...(typeof value.checkpointError === "string" ? { checkpointError: value.checkpointError } : {}),
     caption: value.caption,
     fileName: value.fileName,

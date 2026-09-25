@@ -33,6 +33,7 @@ export interface TestArtifact {
   results: VisualExpectationResult[];
   judgments: EvidenceJudgment[];
   checkpoint?: ScreenshotArtifact["checkpoint"];
+  checkpointMatch?: ScreenshotArtifact["checkpointMatch"];
   checkpointError?: string;
 }
 
@@ -218,6 +219,7 @@ function testArtifact(artifact: StoredTestArtifact): TestArtifact {
     results: artifact.results,
     judgments: artifact.judgments,
     ...(artifact.checkpoint ? { checkpoint: artifact.checkpoint } : {}),
+    ...(artifact.checkpointMatch ? { checkpointMatch: artifact.checkpointMatch } : {}),
     ...(artifact.checkpointError ? { checkpointError: artifact.checkpointError } : {}),
   };
 }
@@ -354,8 +356,10 @@ function parseTestArtifact(value: unknown): TestArtifact | null {
     if (checkpoint.imageHash !== value.hash) return null;
   }
   if (value.checkpointError !== undefined && typeof value.checkpointError !== "string") return null;
+  if (value.checkpointMatch !== undefined && (!checkpoint || (value.checkpointMatch !== "exact" && value.checkpointMatch !== "approximate"))) return null;
   return {
     ...(checkpoint ? { checkpoint } : {}),
+    ...(value.checkpointMatch === "exact" || value.checkpointMatch === "approximate" ? { checkpointMatch: value.checkpointMatch } : {}),
     ...(typeof value.checkpointError === "string" ? { checkpointError: value.checkpointError } : {}),
     caption: value.caption,
     fileName: value.fileName,
@@ -679,6 +683,7 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
         png: screenshotArtifact.png,
         validationKey: null,
         checkpoint: screenshotArtifact.checkpoint,
+        checkpointMatch: screenshotArtifact.checkpointMatch,
         checkpointError: screenshotArtifact.checkpointError,
       });
       return join(dir, screenshotFileName);

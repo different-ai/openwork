@@ -18,15 +18,23 @@ artifact. No Infisical integration is required or added. CI uses the existing
 protected `pr-slow-specs` environment and repository secret. The key's delivery
 can later change without changing capture or fork APIs.
 
-An opted-in world registers a capture provider with the testkit for its app
-browser and the app browsers opened inside verification forks. Their explicit
-`user.screenshot()` calls also save a checkpoint; `user.screenshot({ checkpoint:
-false })` keeps the ordinary behavior. The complete co-located web world is saved:
-Chromium memory, the engine, Den, databases, workspace files and the mock stream.
-The Blacksmith review browser and noVNC client are not that world; their images
-are labeled screenshot-only. Capture failure keeps the PNG and fails
-the checkpoint proof, rather than silently claiming an interactive checkpoint.
-There is no whole-VM checkpoint without a registered provider.
+Checkpoints are explicit and never part of the proof:
+
+- A spec saves one with `user.checkpoint(caption?)` or `step(name, fn, { checkpoint: true })`.
+  Tests tagged `checkpoints` also keep their end state. `user.screenshot()` never saves one.
+- They run only with `--checkpoints`, on a world that advertises the capability
+  (`checkpointCapability` from `@openwork/env`). Only Freestyle-backed worlds do;
+  anywhere else the run prints one warning and continues unchanged.
+- Capture rule: take image A, start the snapshot without waiting for it to be
+  saved, send no input for 5 s (the VM state was captured 0.19–4.1 s after the
+  call in measurements), take image B. The same route and visible text label the
+  checkpoint **exact**, otherwise **approximate**. The world's `stop()` waits for
+  pending saves before deleting its VM.
+- A capture failure keeps the image, marks it screenshot-only and never fails the test.
+- Opened copies, the review browser and the noVNC client are never checkpointed.
+
+The complete co-located web world is saved: Chromium memory, the engine, Den,
+databases, workspace files and the mock stream.
 
 Open the PR's **OpenWork Checkpoints** check for the branch-specific report.
 Checkpoint pictures offer **Open from here** directly below the image and inside
@@ -36,8 +44,8 @@ reloading the report; retrying a failed initial launch retains its request ID.
 Each new launch creates an independent copy behind the private preview gateway. The viewer shows the restored Chromium tab, not a new
 page. The deterministic streaming fixture pauses at a known point and exposes
 **Continue response** in the viewer. Real external-provider connections are not
-promised to survive a fork. Screenshot and snapshot capture are ordered, not
-atomic; the controlled stream hold is what makes the streaming comparison exact.
+promised to survive a fork. The controlled stream hold keeps the paused response still while its checkpoint
+is captured.
 
 The evidence world template is keyed by a fingerprint of the files that run
 inside the VM (server, app, Den, worlds, eval runtime packages, dependencies and

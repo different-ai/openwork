@@ -50,7 +50,8 @@ import {
 import type { App, Den, Place, WorldResources } from "@openwork/env";
 import { chrome, desktop } from "@openwork/hosts";
 import type { DesktopHandle } from "@openwork/hosts";
-import { screenshot, validate } from "@openwork/test-evidence";
+import { findCheckpointCapability, screenshot, takeCheckpoint, validate } from "@openwork/test-evidence";
+import type { CheckpointCapability, ScreenshotArtifact } from "@openwork/test-evidence";
 import type {
   StepRecord,
   StepRecordInput,
@@ -75,6 +76,7 @@ import type {
   SeeOptions,
   SpecAdapters,
   Step,
+  StepOptions,
   TypeOptions,
   User,
 } from "./types.ts";
@@ -292,6 +294,9 @@ export class SpecRuntime {
   #stepDepth = 0;
   #stepBlocked = false;
   readonly #stepNames: string[] = [];
+  #capability: CheckpointCapability | undefined;
+  #warnedNoCapture = false;
+  #actedSinceCheckpoint = true;
 
   /** Name of the innermost `step()` currently running; screenshots taken inside it are captioned with it. */
   currentStepName(): string | undefined {
@@ -331,6 +336,36 @@ export class SpecRuntime {
 
   setPrimary(value: unknown): void {
     this.primary = primarySurface(value);
+    this.#capability = findCheckpointCapability(value);
+  }
+
+  /**
+   * Checkpoints are an addition to the evidence, never the proof. They run only
+   * when requested (`--checkpoints`) on a world that can capture the surface;
+   * anything else prints one warning and the test continues unchanged.
+   */
+  async checkpoint(surface: Surface | null, caption: string | undefined, quiet = false): Promise<ScreenshotArtifact | undefined> {
+    if (process.env.OPENWORK_EVIDENCE_CHECKPOINTS !== "1") return undefined;
+    const capability = this.#capability;
+    if (!surface || !capability || capability.surface !== surface || !capability.available()) {
+      if (!quiet && !this.#warnedNoCapture) {
+        this.#warnedNoCapture = true;
+        console.warn(`[openwork/testkit] Checkpoints skipped: this world cannot capture ${surface ? `surface "${surface.handle.name}"` : "without a primary surface"} (placement ${this.place.kind}). The test runs normally.`);
+      }
+      return undefined;
+    }
+    // Unit tests shorten the hold; real runs use the measured default.
+    const holdMs = Number(process.env.OPENWORK_EVIDENCE_CHECKPOINT_HOLD_MS) || undefined;
+    const result = await this.call("user", "checkpoint", `checkpoint(${caption ?? ""})`, surface, () =>
+      takeCheckpoint(surface, capability, { caption: caption ?? this.currentStepName(), holdMs }));
+    this.#actedSinceCheckpoint = false;
+    return result;
+  }
+
+  /** Tagged tests keep their end state, unless nothing changed since the last checkpoint. */
+  async checkpointEndState(): Promise<void> {
+    if (!this.#actedSinceCheckpoint) return;
+    await this.checkpoint(this.primary, "End state", true);
   }
 
   emit(entry: TraceEntryInput): TraceEntry {
@@ -347,7 +382,7 @@ export class SpecRuntime {
 
   checkOrder(channel: TraceChannel, verb: string): void {
     if (this.stack.disposed) throw new Error("World is disposed; refused before launch.");
-    if (channel === "user" || channel === "agent") this.acted = true;
+    if (channel === "user" || channel === "agent") { this.acted = true; this.#actedSinceCheckpoint = true; }
     if ((channel === "seed" || channel === "seed:raw") && this.stage === "body" && !this.acted) {
       throw new SeedBeforeActError(verb);
     }
@@ -417,7 +452,7 @@ export class SpecRuntime {
     this.setOutcome("failed", messageText(error));
   }
 
-  step: Step = async <T>(name: string, fn: () => Promise<T> | T): Promise<T> => {
+  step: Step = async <T>(name: string, fn: () => Promise<T> | T, options: StepOptions = {}): Promise<T> => {
     if (this.#stepBlocked) {
       const step = this.sink.recordStep({ name, depth: this.#stepDepth, ok: "not-reached" });
       this.adapters.observe?.step?.(step);
@@ -430,6 +465,7 @@ export class SpecRuntime {
     const startedAt = Date.now();
     try {
       const result = await fn();
+      if (options.checkpoint) await this.checkpoint(this.primary, name);
       const ms = Date.now() - startedAt;
       const step = this.sink.recordStep({ name, depth, ok: true, ms });
       this.adapters.observe?.step?.(step);
@@ -827,10 +863,14 @@ export class UserChannel implements User {
     });
   }
 
-  screenshot(options?: { checkpoint?: boolean }) {
+  screenshot() {
     const surface = requireSurface(this.#surface);
     const caption = this.#runtime.currentStepName();
-    return this.#runtime.call("user", "screenshot", "screenshot", surface, () => screenshot(surface, { caption, ...options }));
+    return this.#runtime.call("user", "screenshot", "screenshot", surface, () => screenshot(surface, { caption }));
+  }
+
+  checkpoint(caption?: string) {
+    return this.#runtime.checkpoint(this.#surface, caption);
   }
 
   looks(expectations: string[]): Promise<void> {

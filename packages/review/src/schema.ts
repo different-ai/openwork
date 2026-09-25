@@ -66,6 +66,8 @@ export const reviewSchema = z
           description: z.string(),
           judgments: z.array(judgment),
           checkpoint: checkpointSchema.optional(),
+          // "exact": the screen did not change while the checkpoint was captured.
+          checkpointMatch: z.enum(["exact", "approximate"]).optional(),
           checkpointError: z.string().max(200).optional(),
         }),
       ]),

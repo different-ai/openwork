@@ -5,6 +5,8 @@ import { parallelSuite, suiteWorkerCount } from "./runner/stack-suite.ts";
 const common = {
   environment: "node",
   testTimeout: 120_000,
+  // Tags are explicit opt-ins that CI reads; strictTags rejects unknown ones.
+  tags: [{ name: "checkpoints", description: "Save the world's end state (and marked steps) as reopenable checkpoints when run with --checkpoints on a world that can capture." }],
 };
 const appSource = fileURLToPath(new URL("../apps/app/src/", import.meta.url));
 const appResolve = {

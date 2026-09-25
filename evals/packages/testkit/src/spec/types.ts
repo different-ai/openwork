@@ -45,7 +45,13 @@ export interface User {
   notSee(target: Target, options?: { timeoutMs?: number }): Promise<void>;
   reload(): Promise<void>;
   navigate(url: string): Promise<void>;
-  screenshot(options?: { checkpoint?: boolean }): Promise<ScreenshotArtifact>;
+  screenshot(): Promise<ScreenshotArtifact>;
+  /**
+   * Save a reopenable checkpoint of this moment and record its image. Only when the
+   * run asked for checkpoints (`--checkpoints`) and the world can capture this
+   * surface; otherwise a one-line warning is printed and nothing is saved.
+   */
+  checkpoint(caption?: string): Promise<ScreenshotArtifact | undefined>;
   looks(expectations: string[]): Promise<void>;
   on(surface: Surface): User;
 }
@@ -88,7 +94,13 @@ export interface Probe {
   on(surface: Surface): Probe;
 }
 
-export type Step = <T>(name: string, fn: () => Promise<T> | T) => Promise<T>;
+export interface StepOptions {
+  /** Save a reopenable checkpoint of the world when this step passes (see `User.checkpoint`). */
+  checkpoint?: boolean;
+}
+
+/** Options come last so every existing `(name, fn)` step implementation still fits. */
+export type Step = <T>(name: string, fn: () => Promise<T> | T, options?: StepOptions) => Promise<T>;
 
 export type WorldFn<W> = (seed: Seed, ctx: { place: Place }) => Promise<W>;
 

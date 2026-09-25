@@ -95,6 +95,7 @@ export function OpenCheckpoint({ id, image, connected, placement = "viewer" }: {
         : !connected ? "Checkpoint access is not configured. Contact the review app owner."
         : state.busy ? "Opening an independent copy…"
         : state.fork ? "Previous copy expired. Open from here to restore this checkpoint again."
+        : image.checkpointMatch === "approximate" ? "Saved browser available, captured while the screen was still changing. Opens a private copy for one hour."
         : "Saved browser available. Opens a private copy for one hour.")}
     </p>
   </section>;
