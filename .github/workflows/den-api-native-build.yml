@@ -1,0 +1,82 @@
+name: Den API Native Build
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/den-api-native-build.yml"
+      - "ee/apps/den-api/**"
+      - "ee/packages/den-db/**"
+      - "packages/automations/**"
+      - "packages/connect-link/**"
+      - "packages/email/**"
+      - "packages/enterprise-mcp-client/**"
+      - "packages/install-config/**"
+      - "packages/types/**"
+      - "pnpm-lock.yaml"
+  push:
+    branches:
+      - "dev"
+    paths:
+      - ".github/workflows/den-api-native-build.yml"
+      - "ee/apps/den-api/**"
+      - "ee/packages/den-db/**"
+      - "packages/automations/**"
+      - "packages/connect-link/**"
+      - "packages/email/**"
+      - "packages/enterprise-mcp-client/**"
+      - "packages/install-config/**"
+      - "packages/types/**"
+      - "pnpm-lock.yaml"
+
+concurrency:
+  group: den-api-native-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  native-build:
+    name: Build and smoke native output
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        continue-on-error: true
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Build Den API native output
+        run: pnpm --dir ee/apps/den-api run build
+
+      - name: Smoke Node-condition workspace imports
+        working-directory: ee/apps/den-api
+        run: node --input-type=module -e "await import('@openwork/types/automations'); await import('@openwork/automations'); console.log('den-api node-condition imports resolve')"
+
+      - name: Assert built entry exists
+        run: test -s ee/apps/den-api/dist/main.js
