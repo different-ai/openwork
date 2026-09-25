@@ -55,7 +55,7 @@ test("a reviewer enters a saved web browser with ten sessions and continues a pa
 
   const reviewUser = user.on(world.reviewer);
   const reviewProbe = probe.on(world.reviewer);
-  await step("after: clicking the saved sessions image opens an independent browser", async () => {
+  const firstFork = await step("after: clicking the saved sessions image opens an independent browser", async () => {
     await reviewUser.navigate(sessions.url);
     await reviewUser.click({ role: "link", label: "Inspect Ten saved sessions" });
     await reviewUser.see({ role: "button", text: "Open from here" });
@@ -67,6 +67,25 @@ test("a reviewer enters a saved web browser with ten sessions and continues a pa
     expect((await agent.on(fork.app).list()).filter((entry) => entry.title.startsWith("Checkpoint session "))).toHaveLength(10);
     await user.on(fork.app).screenshot();
     evidence.recordAssertionEvidence("The review action restores product state", "The actual launch route created a private fork; its restored browser lists ten sessions after the source VM was deleted.", true);
+    return fork;
+  });
+
+  await step("changes in one saved browser do not change another copy", async () => {
+    await agent.on(firstFork.app).createSession("Only in this copy");
+    await user.on(firstFork.app).see({ text: "Only in this copy" });
+    await user.on(firstFork.app).screenshot();
+    await reviewUser.reload();
+    await reviewUser.see({ role: "button", text: "Open from here" });
+    await reviewUser.click({ role: "button", text: "Open from here" });
+    await reviewUser.see({ role: "link", text: "Enter saved browser" }, { timeoutMs: 90_000 });
+    const second = await world.openedFork(sessions.id, [firstFork.id]);
+    await user.on(second.app).see({ text: "Checkpoint session 10" });
+    const list = await agent.on(second.app).list();
+    expect(list.filter((entry) => entry.title.startsWith("Checkpoint session "))).toHaveLength(10);
+    expect(list.some((entry) => entry.title === "Only in this copy")).toBe(false);
+    expect((await agent.on(firstFork.app).list()).some((entry) => entry.title === "Only in this copy")).toBe(true);
+    await user.on(second.app).screenshot();
+    evidence.recordAssertionEvidence("Each browser is an independent working copy", "A new session exists only in the first fork; a second launch still has the original ten sessions.", true);
   });
 
   await step("after: the paused screenshot opens at partial text and continues the same response", async () => {
@@ -83,6 +102,8 @@ test("a reviewer enters a saved web browser with ten sessions and continues a pa
     const viewer = user.on(world.viewer);
     await viewer.navigate(fork.viewerUrl);
     await viewer.see({ role: "button", text: "Continue response" });
+    const frame = await probe.eventually(world.viewerState, { within: 30_000, label: "saved browser framebuffer", until: (value) => value.connected && value.width >= 1280 && value.height >= 700 });
+    expect(frame.connected).toBe(true);
     await viewer.screenshot();
     await viewer.click({ role: "button", text: "Continue response" });
     await user.on(fork.app).see({ text: `${partial} ${remaining}` }, { timeoutMs: 60_000 });
