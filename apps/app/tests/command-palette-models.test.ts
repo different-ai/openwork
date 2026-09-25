@@ -69,6 +69,12 @@ describe("command palette models", () => {
       favorites: [next], onSelect: () => { throw new Error("must not select an inaccessible model"); } });
     expect(unavailable.onNextPinnedModel()).toBeNull();
     expect(unavailable.onCycleModelSource()).toBeNull();
+    // Cycling onto Auto never carries the previous model's effort, even when Auto's catalog lists the same value.
+    const intoAuto: unknown[] = [];
+    const reasoning = { ...auto, behaviorOptions: [{ value: "high", label: "High" }] } as typeof auto;
+    createCommandPaletteModelControls({ options: [next, reasoning], current: next, behavior: "high",
+      favorites: [reasoning], onSelect: (model, behavior) => intoAuto.push({ model, behavior }) }).onNextPinnedModel();
+    expect(intoAuto).toEqual([{ model: { providerID: "openwork-free", modelID: "openai/gpt-5.6-luna" }, behavior: null }]);
   });
 
   test("navigates behavior to models to root", () => {

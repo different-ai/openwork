@@ -105,7 +105,10 @@ export function resolveRetainedSelection(input: RetainedSelectionInput): Retaine
   const policyBlocked = !isProviderAllowedByDesktopPolicy({ providerId: current.providerID, restrictToCloud: input.restrictToCloud, checkRestriction: input.checkRestriction });
   const signedOut = !input.signedIn && isCloudManagedProviderKey(current.providerID);
   const implicitStarter = !input.sessionScoped && !known && !saved && current.providerID === "opencode" && current.modelID === "big-pickle";
-  if (implicitStarter || (input.catalogState === "loading" && !policyBlocked && !signedOut)) return undefined;
+  // The free Zen starter is only hidden from the list once better models exist; it still works, so it is not "unavailable".
+  const hiddenZenFallback = Boolean(known && !known.disabled && known.providerID === "opencode" && known.isFree === true);
+  if (implicitStarter || (hiddenZenFallback && !policyBlocked && !blockedBySaved)
+    || (input.catalogState === "loading" && !policyBlocked && !signedOut)) return undefined;
   return {
     model: current,
     title: signedOut ? undefined : known?.title ?? saved?.title,

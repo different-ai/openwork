@@ -480,7 +480,7 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
     await user.click({ role: "button", label: "High" });
     await user.see({ testId: "model-effort" }, { text: /High/ });
     expect((await probe.dom('[role="switch"][aria-label="Fast mode"][aria-checked="true"]')).elements).toHaveLength(1);
-    await user.see(trigger, { text: /^Fast witness · High \+ Fast$/ });
+    await user.see(trigger, { text: /^Fast witness · High · Fast$/ });
     await user.screenshot();
   });
 });

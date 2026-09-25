@@ -254,7 +254,7 @@ for (const surface of ["compact", "full"]) {
           const menu = document.querySelector(surface === "compact" ? '[data-testid="composer-model-picker"]' : '[data-testid="current-model-settings"]');
           const toggle = menu?.querySelector<HTMLButtonElement>('[role="switch"]');
           if (!toggle) throw new Error("Missing main-menu Fast mode switch");
-          expect(toggle.closest('[title]')?.getAttribute("title") ?? "").not.toContain("pricing");
+          expect(toggle.closest('[title]')?.getAttribute("title") ?? "").toContain("higher pricing");
           const wasChecked = toggle.getAttribute("aria-checked") === "true";
           await act(async () => toggle.click());
           expect(menu?.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe(String(!wasChecked));
