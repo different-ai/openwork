@@ -53,8 +53,10 @@ test(`EDIT-BUSY ${resolveEvalEngine()}: replace a running message instead of que
       await user.see({ text: partial.trim() }, { timeoutMs: 30_000 });
       await user.see("Stop");
       expect((await world.mock.agentReplyState(original)).complete).toBe(false);
-      await user.hover({ text: original });
-      await user.click({ role: "button", label: "Edit message", nth: expectedUsers.length });
+      // The context menu remains stable while streamed text changes the layout;
+      // the hover-only toolbar can move away from the pointer on a slower runner.
+      await user.rightClick({ text: original }, { hitTest: false });
+      await user.click({ role: "menuitem", label: "Edit message" });
       await user.see("composer", { text: original });
       await user.type("composer", edited, { replace: true, verify: true });
       await user.screenshot();
