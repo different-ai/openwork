@@ -188,10 +188,10 @@ Clients normally refresh automatically. The values matter when diagnosing reconn
 
 ## What the gateway exposes
 
-Instead of flooding your client with hundreds of tool definitions, the gateway keeps the tool list small and constant. `/mcp/agent` exposes two discovery tools:
+Instead of exposing every API operation as a tool, `/mcp/agent` provides two capability-routing tools alongside direct authoring tools and the Apps available to you:
 
 - `search_capabilities` searches the capabilities available to the signed-in member.
-- `execute_capability` runs an exact capability name returned by `search_capabilities`.
+- `execute_capability` runs an exact capability name returned by `search_capabilities`, except authored App launches: call their exact `open_app_cob_*` direct tool instead.
 
 Search can include OpenWork Cloud resources such as skills, plugins, connectors, Collections, workers, members, roles, teams, model providers, and org-connected external MCP tools when those capabilities are enabled and shared with the member.
 
@@ -223,11 +223,134 @@ Some gateway results come back as MCP Apps: interactive UI rendered from a tool 
 
 To put an MCP App on a team dashboard, see [Dashboards](/cloud/share-with-your-team/dashboards).
 
-OpenWork's renderer supports a [documented subset of the stable 2026-01-26 host protocol](/cloud/share-with-your-team/dashboards#supported-host-protocol): complete launch input before result, inline display, bounded resizing and teardown, and server tools and links gated by the originating view. Conversation actions keep their original endpoint, workspace, session and live launch lease, including in split panes; dashboard actions keep their exact launching endpoint with no conversation session. Archived conversations, cached dashboard previews without a fresh launch, and generated read-only views cannot call tools or open links. Message/context writes, View tools, resource proxies, streaming input, and full progress/cancellation forwarding are not supported. This is not a claim that every App feature runs in OpenWork.
+OpenWork's renderer supports a [documented subset of the stable 2026-01-26 host protocol](/cloud/share-with-your-team/dashboards#supported-host-protocol): complete launch input before result, inline display, bounded resizing and teardown, and server tools and links gated by the originating view. Conversation actions keep their original endpoint, workspace, session and live launch lease, including in split panes; dashboard actions keep their exact launching endpoint with no conversation session. Archived conversations, cached dashboard previews without a fresh launch, and legacy generated read-only views cannot call tools or open links. Message/context writes, View tools, resource proxies, streaming input, and full progress/cancellation forwarding are not supported. This is not a claim that every App feature runs in OpenWork.
 
 The gateway preserves provider `structuredContent` rather than adding fields to it. OpenWork launch and helper information lives in namespaced `_meta` keys (`openwork/mcpApp`, `openwork/serverTools`). Advisory schema warnings use `openwork/schemaGuidance` in `_meta` and a separate model-visible text block; private provider `_meta` is not copied into that text. See [Provider data and gateway additions](/cloud/share-with-your-team/dashboards#provider-data-and-gateway-additions).
 
 MCP Apps from third-party providers render in OpenWork through its private App host. For an external MCP Apps-capable client, enable direct exposure and add the connection's own MCP URL from **Your Connections → Use in another app**. That endpoint exposes resources bound to permitted model-visible tools; it does not expose arbitrary resources or app-only helper tools. Initial App loading and interactive callback support are distinct. See [Use a connection in another MCP client](/cloud/share-with-your-team/shared-mcp-connections#use-a-connection-in-another-mcp-client).
+
+### Build a portable App
+
+Use `create_app` directly for a new App, dashboard, or interactive view. No
+Workflow, receipt, output schema, or Automation is required. Authored App tools
+are available when the organization has member-facing MCP connections enabled
+(the default); where they are turned off, `save_artifact_view` keeps its legacy
+creation path. It accepts:
+
+- `title`, `reactSource`, and a non-empty `textFallback`.
+- Optional `description`, `cssSource`, and `pluginId`.
+
+Omit `pluginId` to create a new private Plugin named after the App. If you
+already have a Plugin with that name, creation returns `duplicate_plugin` with
+its ID: pass that `pluginId` or choose another title. Supply an existing Plugin
+only when authorized to edit it. The result is a text summary and structured
+`{ app }`, including `appId`, `pluginId`, `revisionId`, `title`, `description`,
+`textFallback`, `toolName`, and `resourceUri`. Creation does not open a panel,
+run tools, or create a Workflow.
+
+`read_app({ appId })` requires `mcp:read` and editor access and returns
+`{ app, reactSource, cssSource }`. Before editing, read the latest source, then
+call `update_app` with `appId`, `expectedRevisionId`, and complete replacement
+`title`, `reactSource`, `textFallback`, and optional `description`/`cssSource`.
+Creation and updates require `mcp:write`; shared-resource fresh-session checks
+still apply. An update preserves the App and Plugin identities and publishes a
+new immutable revision. A revision conflict requires another read, not a blind
+retry.
+
+### Discover and open an authored App
+
+`tools/list` advertises each accessible App as `open_app_cob_*`. Searches with
+`type: all`, `mcp`, or `marketplace` also return these direct tool names with
+`kind: mcp_app`, `argumentsSchema`, and `mcpApp.resourceUri`. Call that exact
+direct tool with `{}` or `{ input: { ... } }`, where input values are JSON-safe.
+Do not pass Workflow IDs or a resource override.
+
+The tool definition binds one immutable
+`ui://openwork/apps/<appId>/revisions/<revisionId>/index.html` resource with
+standard model and app visibility. Launch returns `{ app, input }` and the
+App's text fallback; it does not run data tools. `resources/read` rechecks
+access, including reads of older exact revisions. New HTTP requests rediscover
+current tools, and creation/updates notify clients that tool and resource lists
+changed.
+
+Calling an authored App through `execute_capability` returns an instruction to
+call its exact direct launch tool. It does **not** open or render the App: a
+generic tool cannot vary a static standard MCP Apps resource binding. Generic
+marketplace execution and Code Mode never return authored React/CSS source or
+compiled HTML. This does not change legacy App fallback or connected-provider
+forwarding.
+
+### Authoring contract
+
+Default-export a React component receiving `{ app, input, result, hostContext }`.
+`React` is injected; use `React.useState` and other React APIs without imports.
+`input` is the launch input, `result` is the launch `CallToolResult` (read
+`result?.structuredContent`; it is `undefined` until the host delivers it), and
+`hostContext` is supplied by the host. Authored source cannot import modules, fetch, use
+browser/host globals, execute dynamic code, load external resources, or use
+URL-bearing elements. Native `<form>` elements are blocked: use labeled inputs
+and explicit `type="button"` controls.
+
+Use the standard bridge for data and actions:
+
+```tsx
+export default function App({ app }) {
+  const [status, setStatus] = React.useState("Ready");
+  async function discover() {
+    setStatus("Searching");
+    try {
+      const result = await app.callServerTool({
+        name: "search_capabilities",
+        arguments: { query: "project", type: "all" },
+      });
+      setStatus(result.isError ? "Search failed" : "Search complete");
+    } catch {
+      setStatus("Search unavailable");
+    }
+  }
+  return <main><p role="status">{status}</p><button type="button" onClick={discover}>Find projects</button></main>;
+}
+```
+
+Use exact discovered names and argument shapes for subsequent calls.
+`search_capabilities`, `execute_capability`, and Workflows remain ordinary tools;
+they are not a required parent runtime. Normal host consent, connection grants,
+organization policy, and MCP scopes still apply, including `mcp:write` for every
+external provider invocation. Apps add no per-App tool grant. Check
+`app.getHostCapabilities()?.serverTools` before calling tools. Hosts may require
+a user click before calling a tool that is not read-only: OpenWork does, and
+`execute_capability` is not read-only. So only read-only tools such as
+`search_capabilities` may run on mount; start data loads and actions that use
+`execute_capability` from an explicit button and show `tool_requires_approval`
+as a blocked state. Nested provider visibility is not independently
+verified by this builder. Existing Workflow and passthrough authorization is
+unchanged.
+
+The bridge uses standard `autoResize: true`. `app.sendSizeChanged({ height })`
+requests a height, not a fixed layout guarantee: hosts may clamp it and automatic
+size updates continue. Follow `DESIGN.md`: compact neutral layouts, one focal
+action, clear loading/empty/error/blocked states, and no internal scrolling or
+automatic navigation. Host interaction support varies; text-only clients receive
+the fallback. No private `openwork/*` launch metadata or App-host token is required
+by the authored App protocol.
+
+### Sharing and legacy retirement
+
+An App stays inside its Plugin and follows existing Plugin, config-object, and
+Marketplace grants. Share that same Plugin rather than creating a separate App
+package. Sharing an App never shares a member's credentials or bypasses the
+recipient's connection access. Viewer access to launch an App does not grant
+editor access to its source.
+
+`save_artifact_view` is legacy **edit-only**: without `artifactViewId`, it returns
+`deprecated_creation` and directs authors to `create_app`. Existing view edits,
+immutable resources, rendering, and their Workflow bindings remain available.
+There is no automatic migration, alias, or new Workflow binding.
+
+Retirement of old Apps must wait for a compatible client release and verification
+of existing edit/render/resource flows and an explicit migration decision. This
+is a compatibility plan, not a deletion schedule or a claim that legacy data has
+been removed.
 
 ## Troubleshooting
 

@@ -1,3 +1,4 @@
+import { mcpAppProjectionSchema } from "@openwork/types/mcp-app";
 import type { CloudImportedPlugin } from "@/app/cloud/import-state";
 import type {
   DenAssignedMarketplaceCapability,
@@ -324,6 +325,19 @@ export async function listAssignedConnectCapabilities(input: {
           marketplaceName: skill.marketplaceName,
           pluginName: skill.pluginName,
           connectCapabilityName: skill.connectCapabilityName,
+        });
+      } else if (object.objectType === "app") {
+        const app = mcpAppProjectionSchema.strip().safeParse(object.latestVersion?.normalizedPayloadJson);
+        if (!app.success || app.data.appId !== object.id || app.data.revisionId !== object.latestVersion?.id) continue;
+        pluginCard.files.push({
+          configObjectId: object.id,
+          objectType: "app",
+          title: app.data.title,
+          path: `openwork-connect://${marketplace.id}/${resolved.plugin.id}/${object.id}`,
+          versionId: app.data.revisionId,
+          updatedAt: object.updatedAt,
+          marketplaceName: marketplace.name,
+          pluginName: resolved.plugin.name,
         });
       } else if (object.objectType === "command" || object.objectType === "agent") {
         pluginCard.files.push({

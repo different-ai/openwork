@@ -46,6 +46,14 @@ function thingsLabel(count: number): string {
 
 export function WhatsInside({ plugin }: { plugin: DenPlugin }) {
   const rows = [
+    ...plugin.authoredApps.map((app) => ({
+      key: `app:${app.id}`,
+      logo: <LetterTile name={app.name} />,
+      title: app.name,
+      description: "",
+      kind: "App",
+      href: pluginChatDeepLink({ name: `the ${app.name} app from ${plugin.name}` }),
+    })),
     ...plugin.skills.map((skill) => ({
       key: `skill:${skill.id}`,
       logo: <KindTile kind="skill" />,
@@ -74,7 +82,7 @@ export function WhatsInside({ plugin }: { plugin: DenPlugin }) {
       <ItemPanel>
         {rows.length === 0 ? <p className="px-5 py-4 text-[13px] text-gray-500">Nothing inside yet.</p> : null}
         {rows.map((row) => (
-          <ItemRow key={row.key} logo={row.logo} title={row.title} description={row.description || undefined} action={<span className="text-[12px] text-gray-500">{row.kind}</span>} />
+          <ItemRow key={row.key} logo={row.logo} title={row.title} description={row.description || undefined} href={"href" in row && typeof row.href === "string" ? row.href : undefined} action={<span className="text-[12px] text-gray-500">{row.kind}</span>} />
         ))}
       </ItemPanel>
     </section>

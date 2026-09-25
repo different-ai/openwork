@@ -1,19 +1,20 @@
 import { describe, expect, test } from "bun:test";
 
-import { createDenClient } from "../src/app/lib/den";
+import { createDenClient, type DenOrgPlugin } from "../src/app/lib/den";
 import {
+  connectPluginsForComposer,
   listAssignedConnectCapabilities,
 } from "../src/react-app/domains/session/surface/connect-capability-inventory";
 
 describe("assigned OpenWork Connect capability inventory", () => {
-  test("keeps assigned Workflows returned by Den", async () => {
+  test.each(["workflow", "app"])("keeps assigned %s components returned by Den", async (objectType) => {
     const originalFetch = globalThis.fetch;
     const fetchMock: typeof fetch = async () => new Response(JSON.stringify({
       items: [{
         marketplaceId: "marketplace_1",
         pluginId: "plugin_1",
         configObjectId: "script_1",
-        objectType: "workflow",
+        objectType,
       }],
     }), {
       headers: { "Content-Type": "application/json" },
@@ -29,8 +30,72 @@ describe("assigned OpenWork Connect capability inventory", () => {
         marketplaceId: "marketplace_1",
         pluginId: "plugin_1",
         configObjectId: "script_1",
-        objectType: "workflow",
+        objectType,
       }]);
+    } finally {
+      Object.defineProperty(globalThis, "fetch", { configurable: true, value: originalFetch });
+    }
+  });
+
+  test.each([null, "private-author-source"])("projects redacted Apps into Library without installing or exposing source (%s)", async (rawSourceText) => {
+    const app = {
+      kind: "authored_mcp_app", schemaVersion: 1,
+      appId: "cob_00000000000000000000000001", pluginId: "plg_00000000000000000000000002",
+      revisionId: "cov_00000000000000000000000003", title: "Planning board",
+      description: "Plan the week", textFallback: "Planning board is ready.",
+      toolName: "open_app_cob_00000000000000000000000001",
+      resourceUri: "ui://openwork/apps/cob_00000000000000000000000001/revisions/cov_00000000000000000000000003/index.html",
+    };
+    const plugin: DenOrgPlugin = {
+      id: app.pluginId, name: "Planning kit", description: null, status: "active",
+      memberCount: 1, updatedAt: null, componentCounts: { app: 1 },
+    };
+    const payloads = [
+      { ...app, reactSource: "private-react-source", cssSource: "private-css-source", html: "private-compiled-html" },
+      { kind: "remote_mcp_app", sourceUrl: "https://example.test/legacy.html" },
+      { ...app, kind: "unknown_app" },
+      { ...app, schemaVersion: 2 },
+    ];
+    const originalFetch = globalThis.fetch;
+    const fetchMock: typeof fetch = async () => Response.json({ items: payloads.map((payload, index) => ({
+      id: `membership_${index}`, pluginId: plugin.id, configObjectId: index === 0 ? app.appId : `legacy_${index}`,
+      configObject: {
+        id: index === 0 ? app.appId : `legacy_${index}`, objectType: "app", title: index === 0 ? app.title : "Legacy app",
+        status: "active", latestVersion: {
+          id: app.revisionId, schemaVersion: "openwork.mcp-app/1", rawSourceText, normalizedPayloadJson: payload,
+        },
+      },
+    })) });
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchMock });
+    try {
+      const resolved = await createDenClient({ baseUrl: "http://den.local", token: "token" }).getOrgPluginResolved("org_1", plugin);
+      expect(resolved.memberships.map((item) => item.configObject?.objectType)).toEqual(["app", "app", "app", "app"]);
+      expect(resolved.memberships[0]?.configObject?.latestVersion?.normalizedPayloadJson).toEqual(app);
+      expect(resolved.memberships.every((item) => item.configObject?.latestVersion?.rawSourceText === null)).toBe(true);
+      const inventory = await listAssignedConnectCapabilities({
+        organizationId: "org_1",
+        client: {
+          listAssignedMarketplaceCapabilities: async () => [],
+          listMeLibraryPlugins: async () => [plugin],
+          listOrgMarketplaces: async () => [],
+          getOrgMarketplaceResolved: async () => { throw new Error("No marketplace assigned"); },
+          getOrgPluginResolved: async () => resolved,
+        },
+      });
+      const cards = connectPluginsForComposer(inventory.plugins);
+      expect(cards).toHaveLength(1);
+      expect(cards[0]?.files).toEqual([{
+        configObjectId: app.appId, objectType: "app", title: app.title,
+        path: `openwork-connect://me-library/${app.pluginId}/${app.appId}`,
+        versionId: app.revisionId, updatedAt: null, marketplaceName: "Library", pluginName: plugin.name,
+        skillName: undefined, skillOrigin: undefined, connectCapabilityName: undefined,
+      }]);
+      expect(cards[0]?.importedAt).toBeNull();
+      expect(inventory.skills).toEqual([]);
+      expect(inventory.mcpServers).toEqual([]);
+      for (const hidden of ["private-", "legacy.html", ".opencode/", app.toolName, app.resourceUri]) {
+        expect(JSON.stringify(cards)).not.toContain(hidden);
+      }
     } finally {
       Object.defineProperty(globalThis, "fetch", { configurable: true, value: originalFetch });
     }

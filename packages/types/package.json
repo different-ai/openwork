@@ -46,6 +46,13 @@
       "development": "./src/workflows.ts",
       "default": "./src/workflows.ts"
     },
+    "./mcp-app": {
+      "types": "./src/mcp-app.ts",
+      "development": "./src/mcp-app.ts",
+      "bun": "./src/mcp-app.ts",
+      "browser": "./src/mcp-app.ts",
+      "default": "./dist/mcp-app.js"
+    },
     "./skill-created-app": {
       "types": "./src/skill-created-app.ts",
       "development": "./src/skill-created-app.ts",

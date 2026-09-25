@@ -75,11 +75,14 @@ describe("Connect cloud-readiness row resolution", () => {
 
   test("falls back for old servers without cloudReadiness", () => {
     expect(resolveConnectRowGroup(undefined, "member", { skill: 1 })).toBe("ready");
+    expect(resolveConnectRowGroup(undefined, "member", { app: 1 })).toBe("ready");
     expect(resolveConnectRowGroup(undefined, "member", { tool: 1 })).toBe("excluded");
   });
 
   test("formats row meta for component counts and mixed setup states", () => {
     expect(formatPluginConnectRowMeta({ componentCounts: { skill: 2, command: 1 } })).toBe("2 skills · 1 command");
+    expect(formatPluginConnectRowMeta({ componentCounts: { app: 1 } })).toBe("1 App");
+    expect(formatPluginConnectRowMeta({ componentCounts: { app: 2, skill: 1 } })).toBe("2 Apps · 1 skill");
     expect(formatPluginConnectRowMeta({
       componentCounts: { skill: 1, mcp: 1 },
       cloudReadiness: {
@@ -103,5 +106,7 @@ describe("Connect cloud-readiness row resolution", () => {
     expect(isDesktopInstallableMarketplacePlugin({ componentCounts: {}, cloudReadiness: { state: "desktop_only", hasInstructional: false, connections: [] } })).toBe(true);
     expect(isDesktopInstallableMarketplacePlugin({ componentCounts: {}, cloudReadiness: { state: "ready", hasInstructional: true, connections: [] } })).toBe(false);
     expect(isDesktopInstallableMarketplacePlugin({ componentCounts: { tool: 1 } })).toBe(true);
+    expect(isDesktopInstallableMarketplacePlugin({ componentCounts: { app: 1 } })).toBe(false);
+    expect(isDesktopInstallableMarketplacePlugin({ componentCounts: { app: 1 }, cloudReadiness: { state: "ready", hasInstructional: false, connections: [] } })).toBe(false);
   });
 });
