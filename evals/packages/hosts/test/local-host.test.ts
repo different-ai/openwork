@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { allocateFreePort } from "@openwork/cdp";
-import { electronProfilePaths, electronSurfaceEnv, freePort, pruneStaleSurfaceProfiles, registerLiveProfileRoot, resolveChromeBinary, stopOwnedElectronSurface, unregisterLiveProfileRoot } from "../src/local.ts";
+import { electronLaunchEnv, electronProfilePaths, electronSurfaceEnv, freePort, pruneStaleSurfaceProfiles, registerLiveProfileRoot, resolveChromeBinary, stopOwnedElectronSurface, unregisterLiveProfileRoot } from "../src/local.ts";
 
 const ENV_KEYS = [
   "APPDATA",
@@ -117,6 +117,33 @@ test("electronSurfaceEnv maps the v2 eval lane before caller overrides", () => {
     if (previous === undefined) delete process.env.OPENWORK_EVAL_ENGINE;
     else process.env.OPENWORK_EVAL_ENGINE = previous;
   }
+});
+
+test("electronLaunchEnv keeps the launching shell's OPENCODE_* out of the app", () => {
+  const paths = electronProfilePaths(join(tmpdir(), "openwork-local-host-launch-env"));
+  const options = {
+    appName: "OpenWork Eval launch",
+    appIdentifier: "com.differentai.openwork.eval.launch",
+    port: 5125,
+    cdpPort: 9125,
+  };
+  // What an OpenWork agent shell exports for the host app's own engine.
+  const shell = {
+    PATH: "/usr/bin:/bin",
+    OPENCODE_DB: "/host/opencode.db",
+    OPENCODE_CONFIG: "/host/opencode.json",
+    OPENCODE_PASSWORD: "host-password",
+  };
+
+  const env = electronLaunchEnv(shell, electronSurfaceEnv(paths, options));
+  assert.equal(env.PATH, "/usr/bin:/bin");
+  assert.equal(env.OPENCODE_DB, undefined);
+  assert.equal(env.OPENCODE_CONFIG, undefined);
+  assert.equal(env.OPENCODE_PASSWORD, undefined);
+  assert.equal(env.OPENCODE_CONFIG_DIR, paths.opencodeConfigDir);
+
+  const explicit = electronLaunchEnv(shell, electronSurfaceEnv(paths, options, { OPENCODE_DB: "/profile/opencode.db" }));
+  assert.equal(explicit.OPENCODE_DB, "/profile/opencode.db");
 });
 
 test("stopOwnedElectronSurface verifies profile ownership before removing it", async () => {
