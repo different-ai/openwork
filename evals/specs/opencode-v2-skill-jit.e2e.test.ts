@@ -324,6 +324,16 @@ jitTest("SKILL-NATIVE-01 a malformed workspace skill never blocks prompt admissi
     expect(await world.cloudNativeSkills()).toEqual([]);
   });
 
+  await step("the same skill installed in both .agents and .claude never blocks the next turn", async () => {
+    // Skill installers commonly copy one skill into every agent folder. The
+    // engine serves one copy per name; the turn must run as it does in the CLI.
+    const duplicate = "---\nname: shared-helper\ndescription: Formats changelog entries.\n---\n\nFormat changelog entries as bullet points.\n";
+    for (const folder of [".agents", ".claude"] as const) await world.writeWorkspaceSkillFile("shared-helper", duplicate, folder);
+    const turn = await talk.ask(catalogTurn, "UNAVAILABLE");
+    expect(turn.text).toMatch(/OpenWork/i);
+    expect(await talk.skillToolIds(turn.prompt)).toEqual([]);
+  });
+
   await step("installing, editing and removing the workspace skill still changes the next answer", async () => {
     const first = talk.mintCode();
     await install(first, "Answers amber release report requests.");

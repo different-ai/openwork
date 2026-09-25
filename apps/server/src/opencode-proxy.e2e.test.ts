@@ -308,6 +308,7 @@ async function startV2Proxy(options?: MockReadOptions) {
     start() {}, migrateHistory: status, status, setEnabled: async () => status(), setChatRouting: async () => status(),
     connection: () => ({ url: `http://127.0.0.1:${engine.server.port}`, username: "opencode", password: "fixture" }),
     ensureWorkspaceReady: provider.wait, refreshProviders: async () => {}, syncWorkspaceMcp: mcp.wait,
+    settleWorkspaceSkills: async () => {},
     stop: async () => {},
   });
   try {

@@ -2786,6 +2786,9 @@ function createRoutes(
         action: "added",
       });
     }
+    if (imported.files.some((file) => file.objectType === "skill") && workspace.workspaceType !== "remote") {
+      await engineV2Preview.settleWorkspaceSkills(workspace.path);
+    }
 
     // Hot-register any bundled MCP servers with the running engine.
     await syncRuntimeMcpToOpencodeEngine(
@@ -2851,6 +2854,9 @@ function createRoutes(
         action: "added",
       });
     }
+    if (imported.files.some((file) => file.objectType === "skill") && workspace.workspaceType !== "remote") {
+      await engineV2Preview.settleWorkspaceSkills(workspace.path);
+    }
 
     // Hot-register any bundled MCP servers with the running engine.
     await syncRuntimeMcpToOpencodeEngine(
@@ -2900,6 +2906,9 @@ function createRoutes(
         name: file.title,
         action: "removed",
       });
+    }
+    if (removed.files.some((file) => file.objectType === "skill") && workspace.workspaceType !== "remote") {
+      await engineV2Preview.settleWorkspaceSkills(workspace.path);
     }
 
     return jsonResponse({ item: removed, warnings: [] });
@@ -3660,6 +3669,9 @@ function createRoutes(
       action: result.action,
       path: result.path,
     });
+    // The next v2 turn should see a skill OpenWork just wrote; the engine's
+    // own watcher normally catches up within ~200 ms.
+    if (workspace.workspaceType !== "remote") await engineV2Preview.settleWorkspaceSkills(workspace.path);
     return jsonResponse({ name, path: result.path, description: description ?? "", scope: "project" });
   });
 
@@ -3693,6 +3705,7 @@ function createRoutes(
       action: "removed",
       path: result.path,
     });
+    if (workspace.workspaceType !== "remote") await engineV2Preview.settleWorkspaceSkills(workspace.path);
     return jsonResponse({ ok: true, name, path: result.path });
   });
 
