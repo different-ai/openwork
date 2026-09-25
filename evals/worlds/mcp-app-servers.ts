@@ -352,7 +352,9 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
       if (!fixturePaths.includes(path)) { response.writeHead(404).end(); return; }
       if (request.method === "GET" && path.endsWith("/")) {
         response.setHeader("Content-Type", "text/html");
-        response.end(built.html);
+        // Name the person each page acts as, so evidence screenshots say whose view they show.
+        const viewer = path === "/owner/" ? "the owner" : path === "/member/" ? "a teammate" : "a teammate without access";
+        response.end(built.html.replace("</h1>", `</h1><span data-testid="viewer">Signed in as ${viewer}</span>`));
       } else if (request.method === "GET" && path === "/host.js") {
         response.setHeader("Content-Type", "text/javascript");
         response.end(built.script);
