@@ -11,6 +11,15 @@ test("parity proof explicitly selects both engines for complete specs", () => {
   assert.throws(() => parityProofPlan("evals/specs/unreviewed.e2e.test.ts"), /Unsupported/);
 });
 
+test("connector tool activity publishes separate v1 and v2 journeys", () => {
+  const plan = parityProofPlan("evals/specs/connector-tool-call-branding.e2e.test.ts");
+  assert.deepEqual(plan.map(item => item.engine), ["v1", "v2"]);
+  assert.deepEqual(plan.map(item => item.args), [
+    ["evals/bin/evals.mjs", "specs/connector-tool-call-branding.e2e.test.ts", "--local", "--engine", "v1"],
+    ["evals/bin/evals.mjs", "specs/connector-tool-call-branding.e2e.test.ts", "--local", "--engine", "v2"],
+  ]);
+});
+
 test("either engine failing or skipping keeps proof red; both always run", async () => {
   for (const codes of [[0, 0], [1, 0], [0, 1], [2, 0], [0, 2]]) {
     const calls = [];
@@ -37,4 +46,10 @@ test("the native v2 skill contract explicitly selects v2", () => {
 
 test("the native model filter regression explicitly selects v2", () => {
   assert.deepEqual(parityProofPlan("evals/specs/engine-provider-filters.e2e.test.ts").map(item => item.engine), ["v2"]);
+});
+
+test("session home proof runs the pinned v2 engine", () => {
+  assert.deepEqual(parityProofPlan("evals/specs/opencode-v2-session-home.e2e.test.ts"), [{
+    engine: "v2", args: ["evals/bin/evals.mjs", "specs/opencode-v2-session-home.e2e.test.ts", "--local", "--engine", "v2"],
+  }]);
 });

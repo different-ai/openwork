@@ -1,3 +1,5 @@
+export const supportedTargets = ["local/host"];
+
 import { fileURLToPath } from "node:url";
 import { hold } from "../packages/world/src/hold.ts";
 import { launchHeadlessWeb } from "../packages/world/src/headless-web.ts";

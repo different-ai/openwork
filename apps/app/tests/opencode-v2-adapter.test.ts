@@ -385,6 +385,18 @@ describe("OpenCode v2 event translation", () => {
     } }, state)).toBeNull();
   });
 
+  test("a native move updates the stable UI home without settling the active execution", () => {
+    const state = createV2EventTranslationState();
+    translateV2Event({ type: "session.execution.started", data: { sessionID: "ses_move" } }, state);
+    expect(translateV2Event({
+      type: "session.moved", location: { directory: "/home" },
+      openworkWorkingLocation: { directory: "/worktree" },
+      data: { sessionID: "ses_move", location: { directory: "/worktree" } },
+    }, state)).toEqual([{ type: "session.updated", properties: { info: { id: "ses_move", directory: "/home" } } }]);
+    expect(translateV2Event({ type: "session.execution.interrupted", data: { sessionID: "ses_move", reason: "user" } }, state))
+      .toEqual([{ type: "session.execution.interrupted", properties: { sessionID: "ses_move", reason: "user", sequence: undefined } }]);
+  });
+
   test("uses the created envelope timestamp for an untitled session", () => {
     const created = 1_788_548_737_221;
     const event = {
@@ -2500,6 +2512,59 @@ describe("v2 question forms", () => {
         { type: expected, properties: { requestID: form.id, sessionID: form.sessionID } },
       ]);
     }
+  });
+
+  test("an owned live question can be recovered and answered while the global pending list is unavailable", async () => {
+    const originalFetch = globalThis.fetch;
+    const paths: string[] = [];
+    let reply: unknown;
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const path = new URL(request.url).pathname;
+      paths.push(path);
+      if (path.endsWith("/api/form/request")) return Response.json({ message: "Unrelated conversation is unavailable" }, { status: 500 });
+      if (request.method === "GET" && path.endsWith("/form")) return Response.json({ data: [form] });
+      if (request.method === "GET" && path.endsWith("/form/frm_choice")) return Response.json({ data: form });
+      reply = await request.json();
+      return new Response(null, { status: 204 });
+    };
+    try {
+      const client = createClientV2("http://owner.test/opencode2", "/workspace", {});
+      // This client saw only the SSE question, not a successful pending list.
+      expect((await client.replySessionQuestion({ sessionID: form.sessionID, requestID: form.id,
+        answers: [["Summary"], ["Facts", "Custom section"]] })).data).toBe(true);
+      expect(reply).toEqual({ answer: { q0: "summary_value", q1: ["facts_value", "Custom section"] } });
+      expect(paths).toEqual([
+        "/opencode2/api/session/ses_side/form/frm_choice",
+        "/opencode2/api/session/ses_side/form/frm_choice/reply",
+      ]);
+      expect((await client.listSessionQuestions({ sessionID: form.sessionID })).data?.[0]?.id).toBe(form.id);
+      expect(paths.at(-1)).toBe("/opencode2/api/session/ses_side/form");
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("a failed owned reply stays retryable and never sends a mismatched form", async () => {
+    const originalFetch = globalThis.fetch;
+    let failReply = true;
+    let mismatch = false;
+    let writes = 0;
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.method === "GET") return Response.json({ data: mismatch ? { ...form, sessionID: "ses_other" } : form });
+      writes += 1;
+      return failReply ? Response.json({ message: "Retry later" }, { status: 503 }) : new Response(null, { status: 204 });
+    };
+    try {
+      const client = createClientV2("http://owner.test/opencode2", "/workspace", {});
+      const input = { sessionID: form.sessionID, requestID: form.id, answers: [["Summary"], ["Facts"]] };
+      expect((await client.replySessionQuestion(input)).response.status).toBe(503);
+      failReply = false;
+      expect((await client.replySessionQuestion(input)).data).toBe(true);
+      expect(writes).toBe(2);
+      mismatch = true;
+      expect((await client.replySessionQuestion(input)).error).toEqual({ name: "InvalidV2QuestionResponse" });
+      expect(writes).toBe(2);
+    } finally { globalThis.fetch = originalFetch; }
   });
 
   test("an interaction client can answer a live form it never listed, preserving values and custom text", async () => {

@@ -1,3 +1,5 @@
+export const supportedTargets = ["local/host", "daytona/linux"];
+
 import { app } from "../evals/packages/env/src/desktop-app.ts";
 import type { App } from "../evals/packages/env/src/desktop-app.ts";
 import { server } from "../evals/packages/env/src/den.ts";

@@ -1,3 +1,5 @@
+export const supportedTargets = ["local/host"];
+
 import { createOrgConnection, createPluginWithSkill, denFetch } from "../evals/packages/behaviors/src/index.ts";
 import type { DenSession } from "../evals/packages/behaviors/src/index.ts";
 import { app } from "../evals/packages/env/src/desktop-app.ts";
