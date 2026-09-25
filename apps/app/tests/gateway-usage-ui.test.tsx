@@ -361,6 +361,13 @@ test("approval dismiss hides every session, survives rehydration, and leaves fut
   await flush();
   expect(notices()).toHaveLength(0);
   const first = status.buckets[0];
+  status = { ...status, buckets: [{ ...first, extensionMicroUsd: 500_000, allowanceMicroUsd: 1_500_000, remainingMicroUsd: 200_000, canRequestReset: false }] };
+  await act(async () => { await latest().query.refetch(); });
+  await flush();
+  expect(notices()).toHaveLength(2);
+  expect(notices()[0].querySelector("h2")?.textContent).toBe("You got $0.50 more today");
+  await act(async () => button("Dismiss usage increase approval")?.click());
+  expect(notices()).toHaveLength(0);
   status = { ...status, buckets: [first, { ...first, id: "another-bucket", timeframe: "month" }] };
   await act(async () => { await latest().query.refetch(); });
   await flush();
@@ -495,32 +502,72 @@ test("reset mutation refetches own truth and prevents a pending duplicate", asyn
   expect(writes).toBe(1);
 });
 
-test("approved extension remains exhausted but cannot request another reset", async () => {
-  const eligible = usageStatus().buckets[0];
-  expect(eligible.extensionMicroUsd).toBe(0);
-  expect(eligible.allowanceMicroUsd).toBe(eligible.baseAllowanceMicroUsd);
-  expect(eligible.remainingMicroUsd).toBe(eligible.allowanceMicroUsd - eligible.usedMicroUsd);
-  expect(eligible.canRequestReset).toBe(true);
-  expect(eligible.resetRequestStatus).toBeNull();
+test.each(["settings", "chat"])("exhausted approved extension opens another inline reason form in %s and pending prevents duplicates", async (surface) => {
   status = approvedUsageStatus();
   const approved = status.buckets[0];
   expect(approved).toMatchObject({
     baseAllowanceMicroUsd: 1_000_000, extensionMicroUsd: 250_000, allowanceMicroUsd: 1_250_000,
     usedMicroUsd: 1_300_000, remainingMicroUsd: -50_000,
-    canRequestReset: false, resetRequestStatus: "approved",
+    canRequestReset: true, resetRequestStatus: "approved",
   });
   expect(approved.remainingMicroUsd).toBe(approved.allowanceMicroUsd - approved.usedMicroUsd);
+  await act(async () => {
+    if (surface === "settings") root?.render(shell(<GatewayUsageSettingsView onOpenAccount={() => {}} />));
+    else renderProbe();
+  });
+  await flush();
+  if (surface === "settings") {
+    expect(container.textContent).toContain("$0.00 of $1.25 left");
+    expect(container.textContent).toContain("Each approval adds 25% of your base allowance");
+    expect(container.textContent).not.toContain("once per period");
+  } else {
+    expect(container.querySelector('[data-testid="gateway-usage-notice"] h2')?.textContent).toBe("You’ve used today’s $1.25");
+  }
+  const ask = button("Ask for $0.25 more");
+  if (!ask) throw new Error("Missing repeat increase action");
+  expect(ask.disabled).toBe(false);
+  await act(async () => ask.click());
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  const textarea = container.querySelector("textarea");
+  const submit = button("Send request");
+  if (!textarea || !submit) throw new Error("Missing repeat increase form");
+  expect(textarea.required).toBe(true);
+  expect(submit.disabled).toBe(true);
+  await typeReason(textarea, " Another extension ");
+  await act(async () => submit.click());
+  await flush();
+  expect(submitted).toEqual({ bucketId: approved.id, reason: "Another extension" });
+  expect(writes).toBe(1);
+  expect(container.querySelector("textarea")).toBeNull();
+  expect(button("Ask for $0.25 more")).toBeUndefined();
+  expect(container.textContent).toMatch(/waiting for an admin/i);
+  await act(async () => renderProbe());
+  await flush();
+  expect(latest().data?.buckets[0]).toMatchObject({
+    ...approved, resetRequestStatus: "pending", canRequestReset: false,
+  });
+  await act(async () => {
+    await expect(latest().reset.mutateAsync({ bucketId: approved.id, reason: "Duplicate" })).rejects.toThrow("eligibility");
+  });
+  expect(writes).toBe(1);
+});
+
+test("approved extension with remaining allowance cannot request another increase", async () => {
+  status = approvedUsageStatus();
+  status = { ...status, state: "within_limit", buckets: status.buckets.map((bucket) => ({
+    ...bucket, usedMicroUsd: 1_000_000, remainingMicroUsd: 250_000, canRequestReset: false,
+  })) };
   await act(async () => root?.render(shell(<GatewayUsageSettingsView onOpenAccount={() => {}} />)));
   await flush();
   expect(container.textContent).toContain("Added $0.25");
-  expect(container.textContent).toContain("$0.00 of $1.25 left");
+  expect(container.textContent).toContain("$0.25 of $1.25 left");
   expect(button("Ask for $0.25 more")).toBeUndefined();
   await act(async () => renderProbe());
   await flush();
+  expect(container.querySelector('[data-testid="gateway-usage-notice"]')).toBeNull();
   await act(async () => {
-    await expect(latest().reset.mutateAsync({ bucketId: approved.id, reason: "Another extension" })).rejects.toThrow("eligibility");
+    await expect(latest().reset.mutateAsync({ bucketId: status.buckets[0].id, reason: "Too early" })).rejects.toThrow("eligibility");
   });
-  await flush();
   expect(writes).toBe(0);
 });
 

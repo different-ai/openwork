@@ -450,7 +450,7 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     });
     expectSettledCoverage(settled);
     expect(settled.coverage.trackingStartedAt).toBe(exhausted.coverage.trackingStartedAt);
-    expect(settled).toMatchObject({ state: "blocked", buckets: [{ id: initialBucket.id, usedMicroUsd: 2_000_000, extensionMicroUsd: 250_000, allowanceMicroUsd: 1_250_000, resetRequestStatus: "approved", canRequestReset: false }] });
+    expect(settled).toMatchObject({ state: "blocked", buckets: [{ id: initialBucket.id, usedMicroUsd: 2_000_000, extensionMicroUsd: 250_000, allowanceMicroUsd: 1_250_000, resetRequestStatus: "approved", canRequestReset: true }] });
     expect(await world.rejectedCalls()).toEqual(rejectedBefore);
     expect(await own(world.control)).toMatchObject({ state: "unlimited", buckets: [] });
     if (typeof info.id !== "string" || !/^[A-Za-z0-9_-]+$/.test(info.id)) throw new Error("Native assistant has no valid message ID");
@@ -460,6 +460,64 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     expect(answer.elements[0]?.text).toContain("Complete café");
     await capture("Desktop native recovery completed", member, memberProbe, answerSelector);
     evidence.recordAssertionEvidence("Den approval restores actual Desktop composer completion, not a direct HTTP bypass", JSON.stringify({ engine: world.engine, nativeAssistantCompleted: true, renderedAnswer: "Complete café", upstreamRequests: world.upstreamCount(), streamed: true, settledCostMicroUsd: 1_000_000, totalUsedMicroUsd: settled.buckets[0]?.usedMicroUsd, additionalRejections: 0 }), true);
+  });
+  await step("member requests another increase after exhaustion and Den adds to the existing extension", async () => {
+    const previousHistory = await requests(world.member, "/me?view=history");
+    const repeatReason = "Finish the remaining synthetic review after using the first increase";
+    await member.see({ testId: "gateway-usage-notice" }, { text: /used this month’s \$1\.25/, timeoutMs: 60_000 });
+    await member.click({ role: "button", label: "Ask for $0.25 more" });
+    await member.see({ role: "textbox", label: "What do you need it for?" });
+    expect((await memberProbe.dom('[role="dialog"]')).elements).toHaveLength(0);
+    expect((await memberProbe.dom('[data-testid="gateway-usage-notice"] button[type="submit"]:disabled')).elements).toHaveLength(1);
+    await member.type({ role: "textbox", label: "What do you need it for?" }, repeatReason);
+    await capture("Desktop repeat increase form", member, memberProbe, '[data-testid="gateway-usage-notice"]');
+    await member.click({ role: "button", label: "Send request" });
+    const rows = await probe.eventually(() => requests(world.member, "/me"), {
+      within: 15_000, intervalMs: 200, label: "second distinct Desktop increase request persisted",
+      until: (value) => value.length === 1 && value[0]?.reason === repeatReason && value[0]?.status === "pending",
+    });
+    const request = rows[0];
+    if (!request) throw new Error("Repeat increase request missing");
+    expect(request.id).not.toBe(pending.id);
+    expect(request).toMatchObject({ bucketId: initialBucket.id, allowanceMicroUsd: 1_250_000, usedMicroUsd: 2_000_000 });
+    expect(await requests()).toEqual(rows);
+    await member.see({ testId: "gateway-usage-notice" }, { text: /Asked for \$0\.25 more this month[\s\S]*Waiting for an admin/, timeoutMs: 15_000 });
+    await member.notSee({ role: "textbox", label: "What do you need it for?" });
+    await member.notSee({ role: "button", label: "Ask for $0.25 more" });
+    expect((await own()).buckets[0]).toMatchObject({ canRequestReset: false, resetRequestStatus: "pending" });
+    const duplicate = await seed.api(world.member, requestsPath, { method: "POST", body: JSON.stringify({ bucketId: initialBucket.id, reason: repeatReason }) });
+    expect(duplicate.response.status).toBe(200);
+    expect(usageRecord(duplicate.body).id).toBe(request.id);
+    expect(await requests()).toEqual(rows);
+    await admin.click({ role: "button", label: "Refresh requests" });
+    await admin.see({ text: repeatReason });
+    await admin.see({ text: "+$0.25 allowance ($1.50 total); may increase provider charges; no undo." });
+    await admin.click({ role: "button", label: "Approve 25% for Usage Member, 1 month" });
+    const approved = await probe.eventually(own, {
+      within: 15_000, intervalMs: 200, label: "second approval accumulates without clearing usage",
+      until: (value) => value.buckets[0]?.extensionMicroUsd === 500_000,
+    });
+    expect(approved).toMatchObject({ state: "blocked", buckets: [{
+      id: initialBucket.id, baseAllowanceMicroUsd: 1_000_000, extensionMicroUsd: 500_000,
+      allowanceMicroUsd: 1_500_000, usedMicroUsd: 2_000_000, remainingMicroUsd: -500_000,
+      resetAt: initialBucket.resetAt, resetRequestStatus: "approved", canRequestReset: true,
+    }] });
+    expect(await requests()).toEqual([]);
+    const history = await requests(world.den.admin, "?view=history");
+    expect(history).toHaveLength(2);
+    expect(history.filter((entry) => entry.id === pending.id)).toEqual(previousHistory);
+    expect(history.find((entry) => entry.id === request.id)).toMatchObject({ status: "approved", reviewedBy: world.adminId, allowanceMicroUsd: 1_500_000, usedMicroUsd: 2_000_000, resetAt: initialBucket.resetAt });
+    expect(await requests(world.member, "/me?view=history")).toEqual(history);
+    expect(await requests(world.control, "/me?view=history")).toEqual([]);
+    await openUsageFromAccountMenu(/This month\s*0% left/);
+    await member.see({ text: /\$0\.00 of \$1\.50 left/ });
+    await member.see({ role: "button", label: "Ask for $0.25 more" });
+    await capture("Desktop repeat approval still exhausted", member, memberProbe, '[aria-label="This month usage"]');
+    expect((await world.generate()).status).toBe(429);
+    expect(world.upstreamCount()).toBe(2);
+    expect((await own()).buckets).toEqual(approved.buckets);
+    expect(await own(world.control)).toMatchObject({ state: "unlimited", buckets: [] });
+    evidence.recordAssertionEvidence("Repeated increases accumulate without forgiving consumption or duplicating requests", "A second Desktop reason produced a distinct pending request; duplicate submission reused it. Den added another 250000 micro-USD, preserving both review records and reset time. Usage of $2 still exceeds $1.50, so Gateway remains blocked and another increase is eligible.", true);
   });
   evidence.recordAssertionEvidence("Desktop request and Den approval restore the same native session", "The member submitted a required reason through the blocked-notice dialog; Den displayed it and granted exactly 250000 micro-USD without forgiving consumption. After approval, a real Desktop composer send produced a completed native assistant and rendered answer with one streaming upstream call and a settled $1 cost. Total usage became $2, correctly exhausting the $1.25 allowance again; the control member remained unlimited.", true);
 });
