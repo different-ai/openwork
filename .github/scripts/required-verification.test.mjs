@@ -154,7 +154,14 @@ test('credentialed controllers use default-branch code; evidence publishing is i
   assert.match(authorization, /ref: \$\{\{ github.event.repository.default_branch \}\}/);
   assert.doesNotMatch(authorization, /pnpm|npm|environment:|secrets\./);
   assert.doesNotMatch(producer, /pull_requests\[0\]/);
-  assert.match(producer, /environment: .*pr-slow-specs/);
+  assert.match(authorization, /internalContributor: \$\{\{ steps.authorize.outputs.internalContributor \}\}/);
+  const journeyEnvironments = producer.split("\n").filter(line => line.trim().startsWith("environment:"));
+  assert.equal(journeyEnvironments.length, 2);
+  for (const environment of journeyEnvironments) {
+    assert.ok(environment.includes("github.event_name == 'workflow_run'"));
+    assert.ok(environment.includes("needs.authorize.outputs.internalContributor == 'true' && 'pr-internal-specs' || 'pr-slow-specs'"));
+    assert.ok(environment.includes("|| 'scheduled-e2e-regression'"));
+  }
   const gate = publisher.split('  required-verification:')[1].split('  check-publisher:')[0];
   assert.match(gate, /checks: write/);
   assert.doesNotMatch(gate, /OPENWORK_REVIEW_URL|BLOB|conclusion ==/);

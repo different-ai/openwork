@@ -47,7 +47,7 @@ export function proofLanes(specs, { event, current, repo, actor, triggeringActor
     const identities = [actor, triggeringActor, event?.pull_request?.user?.login, current?.user?.login];
     if (![event?.pull_request, current].every(pr => sameRepo(pr?.head?.repo) && sameRepo(pr?.base?.repo))
       || identities.some(login => typeof login !== "string" || !login || login.toLowerCase() === "dependabot[bot]")) {
-      throw new Error("Live PR proof is unsupported for forks, untrusted repository metadata, or Dependabot. A maintainer must move the reviewed change to a same-repository PR and approve the pr-slow-specs environment; do not bypass or skip the selected live or Windows spec.");
+      throw new Error("Live PR proof is unsupported for forks, untrusted repository metadata, or Dependabot. A maintainer must move the reviewed change to a same-repository PR (organization members run automatically; other contributors need pr-slow-specs approval); do not bypass or skip the selected live or Windows spec.");
     }
   }
   return { normalSpecs, liveSpecs, packagedSpecs, daytonaSpecs, checkpointSpecs };
