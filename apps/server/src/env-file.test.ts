@@ -9,7 +9,9 @@ import {
   InvalidEnvKeyError,
   isReservedEnvKey,
   isValidEnvKey,
+  resolveDefaultEnvStorePath,
 } from "./env-file.js";
+import type { ServerConfig } from "./types.js";
 
 describe("env-file", () => {
   let dir: string;
@@ -188,5 +190,36 @@ describe("env-file", () => {
     const svc = new EnvService({ path });
     await expect(svc.upsertMany([{ key: "SAFE", value: "new" }])).rejects.toBeInstanceOf(EnvStoreReadError);
     expect(readFileSync(path, "utf8")).toBe("{ this is not json");
+  });
+});
+
+describe("resolveDefaultEnvStorePath", () => {
+  const previousOverride = process.env.OPENWORK_ENV_STORE;
+
+  beforeEach(() => {
+    delete process.env.OPENWORK_ENV_STORE;
+  });
+
+  afterEach(() => {
+    if (previousOverride === undefined) delete process.env.OPENWORK_ENV_STORE;
+    else process.env.OPENWORK_ENV_STORE = previousOverride;
+  });
+
+  // tokens.json and runtime.sqlite already sit beside the active config, so an
+  // isolated `--config` / OPENWORK_SERVER_CONFIG run must not leave env.json
+  // pointing at the default store.
+  test("places env.json beside the active server config", () => {
+    const config = { configPath: "/srv/profile/server.json" } as ServerConfig;
+    expect(resolveDefaultEnvStorePath(config)).toBe(join("/srv", "profile", "env.json"));
+  });
+
+  test("OPENWORK_ENV_STORE still wins over the config directory", () => {
+    process.env.OPENWORK_ENV_STORE = join("/explicit", "env.json");
+    const config = { configPath: "/srv/profile/server.json" } as ServerConfig;
+    expect(resolveDefaultEnvStorePath(config)).toBe(join("/explicit", "env.json"));
+  });
+
+  test("falls back to the default store when no config path is known", () => {
+    expect(resolveDefaultEnvStorePath()).toBe(resolveDefaultEnvStorePath({} as ServerConfig));
   });
 });
