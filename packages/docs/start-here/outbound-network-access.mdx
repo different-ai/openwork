@@ -17,6 +17,7 @@ release-assets.githubusercontent.com
 objects.githubusercontent.com
 registry.npmjs.org
 models.openworklabs.com
+inference.openworklabs.com
 ```
 
 Common misses:
@@ -39,6 +40,7 @@ Common misses:
 | `objects.githubusercontent.com` | Required in practice for legacy/rollback | Legacy GitHub release-asset redirect target. | Older clients or rollback downloads can fail partway through. |
 | `registry.npmjs.org` | Required in practice unless npm is mirrored | `npx` package resolution for `openwork-ui-mcp` and development-only helper commands. | OpenWork UI-control MCP is unavailable. |
 | `models.openworklabs.com` | Required in practice unless mirrored | Default OpenCode model catalog passed as `OPENCODE_MODELS_URL`. | Model selection can be stale, incomplete, or unavailable. |
+| `inference.openworklabs.com` | Required for Auto | The OpenWork Gateway that serves Auto, the free starting model, before and after sign-in. | Auto is unavailable; connected providers still work. |
 | `cdn.simpleicons.org` | Optional | Provider icons when no local icon exists. | Some icons are missing. |
 | `www.google.com` | Optional | Favicon image service and embedded browser new-tab page. | Favicons or the browser panel new tab may not load. |
 | `accounts.google.com` | Opt-in, browser sign-in | Google authorization opened by the Cloud connection flow. | Google Workspace sign-in cannot complete. |

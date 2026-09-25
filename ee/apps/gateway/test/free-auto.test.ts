@@ -519,6 +519,11 @@ test("the release list is cached, served stale through source failures, and malf
   const large = createDesktopFreeReleaseSource({ url: "https://api.github.test/releases",
     fetch: async () => Response.json(github.map((release) => ({ ...release, body: notes, assets: Array.from({ length: 4 }, () => ({ name: notes })) }))) })
   assert.deepEqual((await large())?.map((release) => release.version), ["1.2.3", "1.2.2", "1.2.1", "1.2.0", "1.1.9"], "a realistic-size GitHub list is accepted")
+  const sent: Array<string | null> = []
+  const recordAuthorization = async (_url: string | URL | Request, init?: RequestInit) => { sent.push(new Headers(init?.headers).get("authorization")); return Response.json(github) }
+  await createDesktopFreeReleaseSource({ url: "https://api.github.com/repos/different-ai/openwork/releases", token: "gh-test-token", fetch: recordAuthorization })()
+  await createDesktopFreeReleaseSource({ url: "https://releases.example.test/list", token: "gh-test-token", fetch: recordAuthorization })()
+  assert.deepEqual(sent, ["Bearer gh-test-token", null], "the GitHub token is only sent to api.github.com")
   const custom = createDesktopFreeReleaseSource({ url: "https://metadata.test/releases", fetch: async () => Response.json({ releases: [{ version: "v1.2.3", publishedAt: "2026-09-23T00:00:00Z" }] }) })
   assert.deepEqual(await custom(), [{ version: "1.2.3", publishedAt: Date.parse("2026-09-23T00:00:00Z") }])
   for (const body of [{ latestAppVersion: "1.2.3" }, [{ tag_name: 1 }], "1.2.3", []]) {

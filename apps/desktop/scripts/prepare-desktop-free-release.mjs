@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { deriveReleaseSecret as deriveSharedReleaseSecret } from "@openwork/free-auto/node";
+import { deriveReleaseSecret as deriveSharedReleaseSecret, releaseKeyFingerprint } from "@openwork/free-auto/node";
 
 const CHUNK = 8;
 // Fixed shuffle of the 8 stored parts (4 mask chunks, 4 masked-secret chunks).
@@ -71,7 +71,7 @@ export function writeDesktopFreeReleaseModule({ masterKey, version, outPath, ci 
   }
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, obfuscateReleaseSecret(deriveReleaseSecret(key, version), version, random), { encoding: "utf8", mode: 0o644 });
-  return { tagged: true };
+  return { tagged: true, fingerprint: releaseKeyFingerprint(key) };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -80,5 +80,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const outPath = outIndex >= 0 ? resolve(process.argv[outIndex + 1]) : resolve(desktopRoot, "electron", "generated", "desktop-free-release.mjs");
   const version = JSON.parse(readFileSync(resolve(desktopRoot, "package.json"), "utf8")).version;
   const result = writeDesktopFreeReleaseModule({ masterKey: process.env.DESKTOP_FREE_RELEASE_KEY, version, outPath });
-  console.log(`[desktop-free-release] ${result.tagged ? "tagged" : "untagged"} build for ${version}`);
+  // The fingerprint is not secret; the gateway logs the same one at startup when it holds the same key.
+  console.log(`[desktop-free-release] ${result.tagged ? `tagged build for ${version}, release key fingerprint ${result.fingerprint}` : `untagged build for ${version}`}`);
 }
