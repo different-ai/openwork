@@ -1,0 +1,120 @@
+---
+title: "Connect Atlassian (Jira/Confluence) to OpenWork"
+description: "Allow OpenWork as an Atlassian MCP OAuth client, publish the connector, and connect individual member accounts"
+---
+
+Atlassian's hosted MCP server lets OpenWork use Jira and Confluence through each
+member's existing Atlassian permissions. The recommended OpenWork setup uses
+**Individual accounts** so every member reviews Atlassian's consent screen and
+acts as themselves.
+
+<Info>
+  An Atlassian organization admin must allow the OpenWork callback origin before
+  members connect. This provider policy is separate from OpenWork access grants
+  and user consent.
+</Info>
+
+## 1. Allow the OpenWork callback origin in Atlassian
+
+Atlassian allows its own [supported domains](https://support.atlassian.com/security-and-access-policies/docs/available-atlassian-rovo-mcp-server-domains/)
+by default. OpenWork is not currently on that list, so add its origin:
+
+1. Open Atlassian Administration and select the organization.
+2. Select **Rovo**, then **Rovo MCP server**.
+3. Select **Add domain**.
+4. Add this exact origin for hosted OpenWork Cloud:
+
+   ```text
+   https://api.openworklabs.com
+   ```
+
+The scheme is required. This narrow rule allows the exact hosted API origin.
+OpenWork's exact hosted callback is:
+
+```text
+https://api.openworklabs.com/v1/mcp-connections/oauth/callback
+```
+
+Atlassian also documents optional `/**` path matchers. An administrator can
+evaluate a path-specific rule such as
+`https://api.openworklabs.com/v1/mcp-connections/oauth/**`, but OpenWork has not
+live-verified that narrower form with Atlassian. Use the exact origin rule above
+for the documented setup. The allowlist entry is the OAuth callback/client
+origin. Do not enter `https://mcp.atlassian.com` or an Atlassian tenant URL.
+
+Atlassian's current documentation describes domain controls and an **Allow
+Atlassian supported domains** setting, which is on by default. It does not
+document a separate master enable switch or a per-dynamically-registered-client
+approval queue. See Atlassian's [current administration steps](https://support.atlassian.com/security-and-access-policies/docs/control-atlassian-rovo-mcp-server-settings/).
+
+## 2. Publish the Atlassian connector in OpenWork Cloud
+
+1. In the OpenWork Cloud dashboard, open **Connectors** and add a connector.
+2. Use Atlassian's official OAuth MCP endpoint:
+
+   ```text
+   https://mcp.atlassian.com/v2/mcp
+   ```
+
+3. Choose OAuth and **Individual accounts**.
+4. Grant access to the intended workspace, teams, or people, then create the
+   connector.
+
+Administrator access to the connector does not grant Atlassian consent for a
+member. It only makes the connector available to that member.
+
+## 3. Connect a member account
+
+1. Reuse the existing Atlassian connection; do not create a duplicate to retry
+   sign-in.
+2. Open **Your Connections** in OpenWork Cloud. In current desktop builds, the
+   same connection inventory is under `Settings` > `Library` > `Connections`;
+   older versions label it `Settings` > `OpenWork Connect`.
+3. If Atlassian appears under **Needs your sign-in**, select **Connect** and
+   complete Atlassian's consent flow.
+4. Return to OpenWork and wait for the connection to move to **Ready to use**.
+
+The same member does not need to consent again when the connection already
+shows as connected. Domain allowance does not bypass the member's Jira or
+Confluence permissions.
+
+## 4. Verify read access first
+
+Use **Test tools** from the connector menu and run a read-only Jira or
+Confluence tool before enabling MCP Apps or write tools. Confirm that results
+match the connected member's expected Atlassian access.
+
+If Atlassian IP allowlisting is enabled, the OpenWork request source must also
+be permitted. Controls on the Rovo MCP server **Permissions** tab continue to
+apply. If you use interactive Jira or Confluence widgets with strict egress
+filtering, allow `*.atlassian.net` so the widget content can load.
+
+## Self-hosted OpenWork
+
+Do not allow the hosted `api.openworklabs.com` origin for a self-hosted
+deployment. Use the actual public API callback host configured by
+`DEN_API_PUBLIC_URL`, or copy the saved callback URL from the existing
+connection. For example, a deployment with the illustrative public API origin
+`https://api.openwork.example.com` uses:
+
+```text
+https://api.openwork.example.com/v1/mcp-connections/oauth/callback
+```
+
+Existing connections can preserve a legacy callback URL. Use the saved value
+rather than changing it only to reconnect.
+
+## Troubleshooting
+
+- A provider-page error can only be confirmed after the browser reaches
+  Atlassian. Waiting for OpenWork or a polling timeout does not prove that the
+  callback was reached.
+- A generic `404` or `405` response is distinct from Atlassian blocking a
+  domain; neither status by itself proves a domain-policy problem.
+- If sign-in still fails after the origin is allowed, retry the existing
+  connection and inspect the provider page. Do not create another connector.
+- If sign-in succeeds but tool calls fail, check the member's Atlassian product
+  permissions, optional IP allowlist, and Rovo MCP server permissions.
+
+For general connector administration and tool policy, see
+[Sharing MCP connections with your team](/cloud/share-with-your-team/shared-mcp-connections).
