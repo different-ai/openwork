@@ -1,5 +1,4 @@
 import { migrateOpencodeV1History, opencodeV1DatabasePath, type EngineV2MigrationStatus } from "./opencode-v2-migration.js";
-import { waitForOpenWorkV2Skills } from "./opencode-v2-instructions.js";
 import { executionRules } from "./managed-policy-rules.js";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -68,8 +67,6 @@ export interface EngineV2Preview {
   ensureWorkspaceReady(directory: string): Promise<void>;
   refreshProviders(): Promise<void>;
   syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void>;
-  /** Join the native watcher for local workspace skills only. */
-  syncWorkspaceSkills(directory: string): Promise<void>;
   migrateHistory(): EngineV2PreviewStatus;
   stop(): Promise<void>;
 }
@@ -335,16 +332,6 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   const workspaceMcp = new Map<string, Map<string, string>>();
   const mcpInFlight = new Map<string, Promise<void>>();
   const mcpWorkspaces = new Map<string, string>();
-  async function syncWorkspaceSkills(directory: string): Promise<void> {
-    const active = sidecar;
-    if (!active) throw new Error("OpenCode v2 is not running");
-    await waitForOpenWorkV2Skills(directory, async () => {
-      const response = await active.fetchJson("/api/skill", { directory, timeoutMs: 5_000 });
-      if (response.status !== 200) throw new Error("Native workspace skills are unavailable");
-      return response.json;
-    });
-  }
-
   async function syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void> {
     mcpWorkspaces.set(directory, workspaceId);
     // Serialize each location, then re-read authoritative state. A queued call
@@ -689,5 +676,5 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     if (enabled) void start().catch(recordStartError);
   }
   if (!options.deferStart) startWhenReady();
-  return { start: startWhenReady, migrateHistory, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, refreshProviders, syncWorkspaceMcp, syncWorkspaceSkills, stop };
+  return { start: startWhenReady, migrateHistory, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, refreshProviders, syncWorkspaceMcp, stop };
 }
