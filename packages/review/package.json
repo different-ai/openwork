@@ -8,6 +8,7 @@
     "./storage": "./src/storage.ts"
   },
   "dependencies": {
+    "@openwork/freestyle": "workspace:*",
     "@vercel/blob": "^2.3.0",
     "zod": "4.3.6"
   }

@@ -139,6 +139,7 @@ export async function prepareDesktopProfile() {
 export function desktopProfileEnvironment(profile, environment = process.env) {
   return {
     PATH: environment.PATH, LANG: "en_US.UTF-8",
+    BROWSER: "/usr/local/bin/openwork-preview-browser",
     pnpm_config_verify_deps_before_run: "false", GOMEMLIMIT: "512MiB",
     COREPACK_HOME: "/opt/openwork-preview/corepack", COREPACK_ENABLE_NETWORK: "0",
     ...profile.environment,
@@ -165,7 +166,7 @@ export async function startDesktop(stack, world, { prepareProfile = prepareDeskt
   const env = {
     ...(profile ? desktopProfileEnvironment(profile) : {
       ...process.env, OPENWORK_DESKTOP_BOOTSTRAP_PATH: `${LOGS}/bootstrap.json`, OPENWORK_ELECTRON_USERDATA: "/root/.openwork-desktop",
-    }), DISPLAY: DESKTOP_DISPLAY, OPENWORK_WORKSPACE_DIR: "/workspace", PORT: "5186",
+    }), DISPLAY: DESKTOP_DISPLAY, BROWSER: "/usr/local/bin/openwork-preview-browser", OPENWORK_WORKSPACE_DIR: "/workspace", PORT: "5186",
     OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: String(CDP_PORT), OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN: "1",
     OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION: "1",
     // The snapshot builder already fetched the sidecars and helpers.

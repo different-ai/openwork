@@ -1,3 +1,5 @@
+export const supportedTargets = ["local/host"];
+
 import { app } from "../evals/packages/env/src/desktop-app.ts";
 import type { App } from "../evals/packages/env/src/desktop-app.ts";
 import { denFetch } from "../evals/packages/behaviors/src/den.ts";

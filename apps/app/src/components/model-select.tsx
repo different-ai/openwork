@@ -60,6 +60,9 @@ import {
   useModelCollectionsStore,
 } from "@/react-app/domains/session/models/model-collections-store";
 import { favoriteModelShortcutLabel } from "@/react-app/shell/favorite-model-shortcut";
+import { fastModeShortcutLabel } from "@/react-app/shell/fast-mode-shortcut";
+import { useModelShortcutsStore } from "@/react-app/domains/shortcuts/model-shortcuts-store";
+import { formatChord, resolveShortcutOs } from "@/react-app/domains/shortcuts/shortcut-keys";
 
 function getProviderDisplayName(providerId: string) {
   return providerId
@@ -269,6 +272,13 @@ export function ModelSelect({
   const shortcutLabel = thinkingModeShortcutLabel(shortcutOs);
   const reverseShortcutLabel = thinkingModeShortcutLabel(shortcutOs, "reverse");
   const favoriteShortcutLabel = shortcutOs === "macos" ? "⌃⇧M" : favoriteModelShortcutLabel;
+  const fastShortcutLabel = fastModeShortcutLabel(shortcutOs);
+  const modelShortcuts = useModelShortcutsStore((state) => state.shortcuts);
+  const modelShortcutOs = resolveShortcutOs(platform.os, typeof navigator === "undefined" ? "" : navigator.platform);
+  const modelShortcutLabels = React.useMemo(() => new Map(modelShortcuts.map((shortcut) => [
+    modelRefKey({ providerID: shortcut.action.providerID, modelID: shortcut.action.modelID }),
+    formatChord(shortcut.keys, modelShortcutOs),
+  ])), [modelShortcutOs, modelShortcuts]);
 
   const isMobile = useIsMobile();
   const modelButtonRef = React.useRef<HTMLButtonElement>(null);
@@ -336,7 +346,12 @@ export function ModelSelect({
   const selectedControls = getModelBehaviorControls(selectedThinkingOptions, behaviorValue);
   const effectiveBehaviorLabel = selectedOption?.behaviorLabel ?? behaviorLabel ?? "Default";
   const effortLabel = selectedControls.options.find((option) => option.value === behaviorValue)?.label ?? effectiveBehaviorLabel;
-  const triggerBehaviorLabel = selectedOption?.behaviorValue === FAST_DEFAULT_VARIANT ? "Fast" : effectiveBehaviorLabel;
+  // Fast is shown on its own as a quiet "Fast" next to the model name; the
+  // effort label beside it is the base level (High, not "High + Fast").
+  const fastOn = selectedControls.fast;
+  const triggerBehaviorLabel = fastOn
+    ? (behaviorValue === FAST_DEFAULT_VARIANT ? null : effortLabel)
+    : effectiveBehaviorLabel;
   const currentFavorite = favoriteOptions.find((option) => isSameModel(value, option)) ?? favoriteOptions[0] ?? null;
   const nextFavorite = nextFavoriteModel(favoriteOptions, value);
   const showBehavior = !hideValue
@@ -440,14 +455,17 @@ export function ModelSelect({
                 ? "Select model"
                 : (selectedOption?.title || "Select model")}
             </span>
-            {showBehavior ? (
+            {showBehavior && triggerBehaviorLabel ? (
               <span className="shrink-0 text-gray-9">· {triggerBehaviorLabel}</span>
+            ) : null}
+            {!hideValue && fastOn ? (
+              <span data-testid="model-fast-indicator" className="shrink-0 text-xs font-medium text-gray-9">· Fast</span>
             ) : null}
           </span>
           <ChevronDown className="h-3 w-3" />
         </TooltipTrigger>
         <TooltipContent>
-          Change model · Cycle thinking ({shortcutLabel} forward, {reverseShortcutLabel} back)
+          Change model · Cycle thinking ({shortcutLabel} forward, {reverseShortcutLabel} back) · Fast ({fastShortcutLabel})
         </TooltipContent>
       </Tooltip>
       <PopoverContent
@@ -481,6 +499,9 @@ export function ModelSelect({
             {selectedControls.hasFast ? (
               <div className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-sm transition-colors hover:bg-accent" title={FAST_PRICING_WARNING}>
                 <label htmlFor={fastModeId} className="min-w-0 flex-1 cursor-pointer font-medium text-foreground">Fast mode</label>
+                <kbd className="hidden shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-sans text-[10px] leading-none text-muted-foreground sm:inline-flex">
+                  {fastShortcutLabel}
+                </kbd>
                 <Switch
                   id={fastModeId}
                   size="sm"
@@ -553,6 +574,11 @@ export function ModelSelect({
                 >
                   <ProviderIcon providerId={option.providerID} providerName={option.description} className="size-3.5 opacity-70" size={14} />
                   <span className="min-w-0 flex-1 truncate text-foreground">{option.title}</span>
+                  {modelShortcutLabels.get(modelRefKey(option)) ? (
+                    <kbd data-testid="model-shortcut-key" className="shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground">
+                      {modelShortcutLabels.get(modelRefKey(option))}
+                    </kbd>
+                  ) : null}
                    {option.gatewayAuthorization ? <span className="text-xs text-muted-foreground">Sign-in required</span> : isSameModel(value, option) ? <Check className="size-3.5 shrink-0 text-muted-foreground" /> : null}
                 </button>
               ))}
@@ -649,6 +675,11 @@ export function ModelSelect({
                                 <span className="block truncate text-foreground">{option.title}</span>
                                 <span className="block truncate text-xs text-muted-foreground">{option.gatewayAuthorization ? "Sign-in required" : option.description ?? getProviderDisplayName(option.providerID)}</span>
                               </span>
+                              {modelShortcutLabels.get(modelRefKey(option)) ? (
+                                <kbd data-testid="model-shortcut-key" className="shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground">
+                                  {modelShortcutLabels.get(modelRefKey(option))}
+                                </kbd>
+                              ) : null}
                               <button
                                 type="button"
                                 className="cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"

@@ -18,6 +18,7 @@ const worldImports: Record<string, () => Promise<unknown>> = {
   "cloud-model-infra-worker.ts": () => import("../../worlds/cloud-model-infra-worker.ts"),
   "cloud-model-infra.ts": () => import("../../worlds/cloud-model-infra.ts"),
   "cross-workspace-split-view.ts": () => import("../../worlds/cross-workspace-split-view.ts"),
+  "den-gateway-local.ts": () => import("../../worlds/den-gateway-local.ts"),
   "den-split-origin-kind.ts": () => import("../../worlds/den-split-origin-kind.ts"),
   "desktop-prod-live.ts": () => import("../../worlds/desktop-prod-live.ts"),
   "dev-headless.ts": () => import("../../worlds/dev-headless.ts"),

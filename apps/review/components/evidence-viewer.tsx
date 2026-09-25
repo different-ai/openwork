@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReviewReport } from "@openwork/review";
 import { CopyButton } from "./copy-button";
+import { OpenCheckpoint } from "./open-checkpoint";
 
-export function EvidenceViewer({ report, id }: { report: ReviewReport; id: string }) {
+export function EvidenceViewer({ report, id, connected = false }: { report: ReviewReport; id: string; connected?: boolean }) {
   const images = report.evidence.filter((item) => item.kind === "image");
   const [selected, setSelected] = useState<string | null>(null);
   const [actualSize, setActualSize] = useState(false);
@@ -51,6 +52,7 @@ export function EvidenceViewer({ report, id }: { report: ReviewReport; id: strin
       <div className="viewer-body">
         <div className={`viewer-image${actualSize ? " actual-size" : ""}`} tabIndex={0} aria-label="Screenshot"><img src={`/r/${id}/assets/${item.asset}`} alt={item.caption} /></div>
         <aside className="viewer-context" aria-label="Evidence context">
+          <OpenCheckpoint key={item.id} id={id} image={item} connected={connected} />
           <CopyButton label="Copy image link" value={`#evidence-${item.id}`} link />
           <p>{item.description}</p>
           <p>{source?.name}</p>

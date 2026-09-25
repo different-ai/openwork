@@ -385,7 +385,7 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
     id,
     slug: readString(source, "slug") ?? id,
     projectID: readString(source, "projectID") ?? "v2",
-    directory: readString(source, "directory") ?? readString(location, "directory") ?? directory ?? "",
+    directory: readString(source, "openworkHomeDirectory") ?? readString(source, "directory") ?? readString(location, "directory") ?? directory ?? "",
     // Keep native untitled sessions eligible for compatibility title recovery.
     title: readString(source, "title") || `New session - ${new Date(created).toISOString()}`,
     version: readString(source, "version") ?? "v2",
@@ -1058,6 +1058,15 @@ export function translateV2Event(
   const properties = eventProperties(value);
   const sessionID = readSessionID(properties);
 
+  if (type === "session.moved") {
+    // The server keeps this stream attached to the conversation's home while
+    // routing native operations to its current working directory.
+    const home = readString(readRecord(value, "location") ?? {}, "directory");
+    return sessionID && home ? [{ type: "session.updated", properties: {
+      info: { id: sessionID, directory: home },
+    } }] : null;
+  }
+
   if (type === "session.inbox.enqueued") {
     const messageID = readString(properties, "inboxID");
     const item = readRecord(properties, "item");
@@ -1651,7 +1660,7 @@ export function isOpencodeV2BaseUrl(baseUrl: string): boolean {
 
 const v2Clients = new WeakSet<ReturnType<typeof createClient>>();
 
-export function isOpencodeV2Client(client: ReturnType<typeof createClient>): boolean {
+export function isOpencodeV2Client(client: ReturnType<typeof createClient>): client is OpencodeV2Client {
   return v2Clients.has(client);
 }
 
@@ -1785,13 +1794,15 @@ export function createClientV2(
   };
 
   const listQuestions = async (
-    _parameters: DirectoryParameters = {}, options?: RequestOptions,
+    parameters: DirectoryParameters & { sessionID?: string } = {}, options?: RequestOptions,
   ): Promise<FieldsResult<QuestionRequest[]>> => {
-    const result = await request("GET", "/api/form/request", undefined, options?.signal);
+    const path = parameters.sessionID
+      ? `/api/session/${encodeURIComponent(parameters.sessionID)}/form` : "/api/form/request";
+    const result = await request("GET", path, undefined, options?.signal);
     if (!result.response.ok) return failedResult(result);
     const questions = responseItems(result.payload).flatMap((item) => {
       const question = mapV2Question(item);
-      if (!question) return [];
+      if (!question || (parameters.sessionID && question.request.sessionID !== parameters.sessionID)) return [];
       questionFormsByID.set(question.request.id, question);
       return [question.request];
     });
@@ -1799,12 +1810,23 @@ export function createClientV2(
   };
 
   const settleQuestion = async (
-    parameters: DirectoryParameters & { requestID: string; answers?: string[][] },
+    parameters: DirectoryParameters & { requestID: string; sessionID?: string; answers?: string[][] },
     options?: RequestOptions,
   ): Promise<FieldsResult<boolean>> => {
-    // SSE and interaction clients have separate lifetimes. A question received
-    // live must also be answerable without having appeared in the initial list.
-    if (!questionFormsByID.has(parameters.requestID)) {
+    // The UI knows the owning session even when this interaction client never
+    // listed the live form. Never make its reply depend on other conversations.
+    const cached = questionFormsByID.get(parameters.requestID);
+    if (parameters.sessionID && (!cached || cached.request.sessionID !== parameters.sessionID)) {
+      const result = await request("GET",
+        `/api/session/${encodeURIComponent(parameters.sessionID)}/form/${encodeURIComponent(parameters.requestID)}`,
+        undefined, options?.signal);
+      if (!result.response.ok) return failedResult(result);
+      const question = mapV2Question(responseData(result.payload));
+      if (!question || question.request.id !== parameters.requestID || question.request.sessionID !== parameters.sessionID) {
+        return failedResult({ ...result, payload: { name: "InvalidV2QuestionResponse" } });
+      }
+      questionFormsByID.set(parameters.requestID, question);
+    } else if (!cached) {
       const listed = await listQuestions(parameters, options);
       if (listed.data === undefined) return { error: listed.error, request: listed.request, response: listed.response };
     }
@@ -2265,7 +2287,12 @@ export function createClientV2(
   Object.assign(compatibilityClient.mcp, adapter.mcp);
   Object.assign(compatibilityClient.event, adapter.event);
   v2Clients.add(compatibilityClient);
-  return Object.assign(compatibilityClient, { listSessionsPage: session.list, listMessagesPage: session.messages });
+  return Object.assign(compatibilityClient, {
+    listSessionsPage: session.list, listMessagesPage: session.messages,
+    listSessionQuestions: (parameters: SessionParameters, options?: RequestOptions) => listQuestions(parameters, options),
+    replySessionQuestion: (parameters: SessionParameters & { requestID: string; answers: string[][] }, options?: RequestOptions) =>
+      settleQuestion(parameters, options),
+  });
 }
 
 export type OpencodeV2Client = ReturnType<typeof createClientV2>;

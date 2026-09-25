@@ -706,15 +706,28 @@ export async function server(options: ServerOptions): Promise<Den> {
     const orgShape = options.org ?? {};
     const isolatePreparedTest = Boolean(preparedSandbox && options.provision !== false);
     const bootstrapAdmin = options.seedProfile === "demo-org" ? defaultReuseAdmin() : personDefaults("admin", orgShape.admin, runId);
-    const provisioned = await provisionDenSandbox({
-      ref: base.ref,
-      reuse: preparedSandbox,
-      reuseUrls,
-      bootstrapAdminEmail: bootstrapAdmin.email,
-      env: denEnv,
-      ...(options.daytonaAutoStopMinutes === undefined ? {} : { autoStopMinutes: options.daytonaAutoStopMinutes }),
-      log: (line) => console.error(`[openwork/testkit] ${line}`),
-    });
+    const denStep = steps.step("den-daytona", preparedSandbox ? "Den (prepared Daytona sandbox)" : `Den on Daytona @ ${base.ref.slice(0, 9)}`);
+    let provisioned: Awaited<ReturnType<typeof provisionDenSandbox>>;
+    try {
+      provisioned = await provisionDenSandbox({
+        ref: base.ref,
+        reuse: preparedSandbox,
+        reuseUrls,
+        bootstrapAdminEmail: bootstrapAdmin.email,
+        env: denEnv,
+        ...(options.daytonaAutoStopMinutes === undefined ? {} : { autoStopMinutes: options.daytonaAutoStopMinutes }),
+        log: (line) => {
+          console.error(`[openwork/testkit] ${line}`);
+          // Surface the provisioner's own phase markers ("==> sandbox gate...") live.
+          const phase = /^==> (.+?)\.\.\.$/.exec(line.trim());
+          if (phase?.[1]) void denStep.progress(phase[1]);
+        },
+      });
+      await denStep.ok(provisioned.sandbox);
+    } catch (error) {
+      await denStep.fail(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
     let bootedMocks: { handles: Record<string, MockHandle>; env: Record<string, string> } = { handles: {}, env: {} };
     try {
       bootedMocks = await bootDaytonaMocks(provisioned.sandbox, options.mocks ?? {});
