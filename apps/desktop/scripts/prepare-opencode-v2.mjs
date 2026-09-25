@@ -33,7 +33,9 @@ export async function prepareOpencodeV2(sidecarDir, target) {
     execFileSync(process.platform === "win32" ? "curl.exe" : "curl", ["--fail", "--silent", "--show-error", "--max-time", "180", "--output", archive, artifact.url]);
     const bytes = await readFile(archive);
     if (`sha512-${createHash("sha512").update(bytes).digest("base64")}` !== artifact.integrity) throw new Error("OpenCode v2 archive integrity mismatch");
-    execFileSync("tar", ["-xzf", archive, "-C", staging, `package/bin/${name}`]);
+    // Relative paths: Windows release jobs run from Git Bash, whose GNU tar reads
+    // a drive-letter path such as C:\... as a remote host ("Cannot connect to C:").
+    execFileSync("tar", ["-xzf", "binary.tgz", `package/bin/${name}`], { cwd: staging });
     await copyFile(join(staging, "package", "bin", name), binary);
     await chmod(binary, 0o755);
     if (process.platform === "darwin" && key.startsWith("darwin-")) {

@@ -4,10 +4,11 @@
  * path (`npm i -g openwork-server && openwork-server web`).
  */
 import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { openworkServerDataDir } from "@openwork/paths";
 
 export const OPENCODE_GITHUB_REPO = "anomalyco/opencode";
@@ -112,11 +113,26 @@ async function findFile(root: string, name: string): Promise<string | null> {
   return null;
 }
 
+/**
+ * Windows ships bsdtar as System32\tar.exe, which extracts .zip. A Git Bash or
+ * MSYS PATH puts GNU tar first instead: it cannot read .zip and treats a
+ * drive-letter path such as C:\... as a remote host ("Cannot connect to C:").
+ */
+function tarCommand(): string {
+  if (process.platform !== "win32") return "tar";
+  const systemRoot = process.env.SystemRoot?.trim() || process.env.windir?.trim() || "C:\\Windows";
+  const bsdtar = join(systemRoot, "System32", "tar.exe");
+  return existsSync(bsdtar) ? bsdtar : "tar";
+}
+
 function extractArchive(archive: string, asset: string, destination: string): void {
   const useUnzip = asset.endsWith(".zip") && process.platform !== "win32";
-  const command = useUnzip ? "unzip" : "tar";
-  const args = useUnzip ? ["-q", archive, "-d", destination] : ["-xf", archive, "-C", destination];
-  const result = spawnSync(command, args, { stdio: "inherit" });
+  const command = useUnzip ? "unzip" : tarCommand();
+  // Relative paths keep drive letters out of tar's archive argument.
+  const cwd = dirname(archive);
+  const target = relative(cwd, destination) || ".";
+  const args = useUnzip ? ["-q", archive, "-d", destination] : ["-xf", basename(archive), "-C", target];
+  const result = spawnSync(command, args, { cwd, stdio: "inherit" });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} exited with ${result.status} while extracting ${asset}`);
 }

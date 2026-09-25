@@ -35,7 +35,9 @@ export async function installOpencodeV2Binary(cacheRoot: string, version: string
     if (integrity !== artifact.integrity) throw new Error("OpenCode v2 archive integrity mismatch");
     const archive = join(staging, "binary.tgz");
     await writeFile(archive, bytes, { mode: 0o600 });
-    await exec("tar", ["-xzf", archive, "-C", staging, `package/bin/${name}`], { timeout: 60_000 });
+    // Relative paths: a GNU tar on PATH (Git Bash, MSYS) reads a drive-letter
+    // path such as C:\... as a remote host ("Cannot connect to C:").
+    await exec("tar", ["-xzf", "binary.tgz", `package/bin/${name}`], { cwd: staging, timeout: 60_000 });
     const extracted = join(staging, "package", "bin", name);
     await chmod(extracted, 0o755);
     await rename(extracted, binary);
