@@ -1,3 +1,5 @@
+export const supportedTargets = ["local/host"];
+
 import { denFetch } from "../evals/packages/behaviors/src/den.ts";
 import type { DenSession } from "../evals/packages/behaviors/src/den.ts";
 import { createAdmin, createOrg, server } from "../evals/packages/env/src/den.ts";

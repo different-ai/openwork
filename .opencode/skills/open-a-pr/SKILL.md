@@ -5,13 +5,13 @@ description: Open a PR, write or rewrite a PR description, "the PR body is too l
 
 # Skill: Open a PR
 
-A PR body is read in thirty seconds, before the diff. It answers four
+A PR body is read in thirty seconds, before the diff. It answers a few
 questions and stops. Everything else lives in the commit messages, the spec,
 and the report CI posts.
 
 ## The shape
 
-`.github/pull_request_template.md`. Fill every heading; add none. Under ~200
+`.github/pull_request_template.md`. Fill every heading; add none. Under ~250
 words total.
 
 ```markdown
@@ -24,6 +24,16 @@ The pain a person felt or the risk we carried. Not the mechanism.
 ## What was the situation before?
 What the person saw or could not do. Concrete enough to recognise in the
 "before" screenshot.
+
+## How is this implemented?
+Two to five bullets for the reviewer: the main pieces that changed and how
+they connect, so the diff reads in order. File paths, tool names, routes and
+flags go here, not in the sections above.
+
+## What else changed?
+Anything in the diff that is not part of the main task: drive-by fixes,
+refactors, renames, dependency bumps, test or tooling tweaks. One bullet
+each, so the reviewer is not surprised by them. `none` if nothing.
 
 ## Release note
 One sentence for people who use OpenWork, or `none`.

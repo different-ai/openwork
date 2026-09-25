@@ -1,3 +1,5 @@
+export const supportedTargets = ["local/host", "daytona/linux"];
+
 import { createAdmin, createOrg, server } from "../evals/packages/env/src/den.ts";
 import type { Den, DenOrgHandle } from "../evals/packages/env/src/den.ts";
 import { resolvePlace } from "../evals/packages/env/src/place.ts";

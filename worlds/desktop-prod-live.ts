@@ -1,3 +1,5 @@
+export const supportedTargets = ["local/macos"];
+
 import { localHost, resolveInstalledProductionDesktopState } from "../evals/packages/hosts/src/index.ts";
 import type { InstalledProductionDesktopState } from "../evals/packages/hosts/src/index.ts";
 import { liveSharedProductionApp } from "../evals/packages/env/src/desktop-app.ts";

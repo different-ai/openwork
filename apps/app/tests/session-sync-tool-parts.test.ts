@@ -92,6 +92,9 @@ describe("tool part mapper", () => {
   test("forwards native tool start time without inventing pending timing", () => {
     expect(parseDynamicToolUIPart(writeToolPart("running", { description: "Review" }, { tool: "task" })))
       .toMatchObject({ callProviderMetadata: { openwork: { toolStartedAt: 1 } } });
+    expect(parseDynamicToolUIPart(writeToolPart("running", { code: "return 1" }, {
+      tool: "execute", metadata: { openworkV2CodeMode: true },
+    }))?.callProviderMetadata?.openwork?.toolStartedAt).toBe(1);
     expect(parseDynamicToolUIPart(writeToolPart("pending", { description: "Review" }, { tool: "task" })))
       .toMatchObject({ callProviderMetadata: { opencode: { partId: "part-write" } } });
     expect(parseDynamicToolUIPart(writeToolPart("pending", { description: "Review" }, { tool: "task" }))?.callProviderMetadata?.openwork?.toolStartedAt)

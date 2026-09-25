@@ -1,7 +1,7 @@
 export const OpenWorkConnectInstaller = () => {
   const MCP_SERVER_URL = "https://api.openworklabs.com/mcp/agent";
-  const CODEX_CONNECTIONS_DEEPLINK = "codex://settings/connections";
-  const CHATGPT_SETTINGS_URL = "https://chatgpt.com/#settings/Connectors";
+  const CURSOR_INSTALL_LINK = "cursor://anysphere.cursor-deeplink/mcp/install?name=openwork&config=eyJ1cmwiOiJodHRwczovL2FwaS5vcGVud29ya2xhYnMuY29tL21jcC9hZ2VudCJ9";
+  const VS_CODE_INSTALL_LINK = "vscode:mcp/install?%7B%22name%22%3A%22openwork%22%2C%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fapi.openworklabs.com%2Fmcp%2Fagent%22%7D";
   const CODEX_LOGIN_COMMAND = "codex mcp login openwork";
   const CODEX_RECONNECT_COMMAND = `codex mcp logout openwork
 codex mcp login openwork`;
@@ -13,10 +13,12 @@ opencode mcp auth openwork`;
       id: "cursor",
       label: "Cursor",
       eyebrow: "Cursor Desktop and Web/Agents",
-      helper: "Setup-only for Cursor Desktop and Cursor Web/Agents. Cursor Desktop's OAuth callback cursor://anysphere.cursor-mcp/oauth/callback is accepted with PKCE S256 enforced.",
+      helper: "Click Add to Cursor and approve the install, then sign in when Cursor asks. On Cursor Web or Agents, paste the server URL instead.",
       supportStatus: "Setup only",
       supportExplanation: "Setup guide only: paste the server URL into Cursor and start OAuth. Cursor Desktop's cursor://anysphere.cursor-mcp/oauth/callback callback is accepted through an exact allowlist with PKCE S256 enforced. Native proof is not complete.",
       copyText: MCP_SERVER_URL,
+      installLink: CURSOR_INSTALL_LINK,
+      installLabel: "Add to Cursor",
     },
     {
       id: "codex",
@@ -71,10 +73,12 @@ opencode mcp auth openwork`;
       id: "vs-code",
       label: "VS Code",
       eyebrow: "VS Code MCP command",
-      helper: "Run this from a shell with the VS Code CLI on your path, then start OAuth from VS Code's MCP server prompt.",
+      helper: "Click Install in VS Code, or run this from a shell with the VS Code CLI on your path. Then start OAuth from VS Code's MCP server prompt.",
       supportStatus: "Setup only",
       supportExplanation: "Setup guide only: add the server with the VS Code CLI, then start OAuth from VS Code's MCP server prompt. Native proof is not complete.",
       copyText: `code --add-mcp '{"name":"openwork","type":"http","url":"${MCP_SERVER_URL}"}'`,
+      installLink: VS_CODE_INSTALL_LINK,
+      installLabel: "Install in VS Code",
     },
     {
       id: "any-client",
@@ -164,13 +168,9 @@ opencode mcp auth openwork`;
             <h3 className="mb-0 mt-2 text-xl font-semibold text-gray-950 dark:text-white">{activeInstall.label}</h3>
             <p className="mb-4 mt-1 text-sm text-gray-500 dark:text-gray-400">{activeInstall.helper}</p>
           </div>
-          {activeInstall.id === "codex" ? (
-            <a href={CODEX_CONNECTIONS_DEEPLINK} onClick={() => void copyText(MCP_SERVER_URL)} className="shrink-0 rounded-full bg-[#011627] px-5 py-2.5 text-sm font-medium text-white">
-              Open settings + copy URL
-            </a>
-          ) : activeInstall.id === "chatgpt-desktop" ? (
-            <a href={CHATGPT_SETTINGS_URL} target="_blank" rel="noreferrer" onClick={() => copy("chatgpt-url", MCP_SERVER_URL)} className="shrink-0 rounded-full bg-[#011627] px-5 py-2.5 text-sm font-medium text-white">
-              {copied === "chatgpt-url" ? "Copied URL" : "Open settings + copy URL"}
+          {activeInstall.installLink ? (
+            <a href={activeInstall.installLink} className="shrink-0 rounded-full bg-[#011627] px-5 py-2.5 text-sm font-medium text-white">
+              {activeInstall.installLabel}
             </a>
           ) : null}
         </div>

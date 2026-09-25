@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { Building, Check, Cloud, Laptop } from "lucide-react";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import type { ModelOption, ModelRef } from "@/app/types";
@@ -12,6 +12,8 @@ import type { MenuAction } from "@/components/ui/action-menu-model";
 import { Command, CommandCollection, CommandGroup, CommandGroupLabel, CommandHeader, CommandInput, CommandItem, CommandList, CommandPanel } from "@/components/ui/command";
 import { immutableModelPin, isAutoModel, isPinModelShortcut, markExplicitModelChoice, modelGroups, modelSource, modelSubtitle, modelTitle, orderedModelPins, retainedModelCopy, withAutoDefaultPin, MODEL_SOURCE_LABELS, type ModelGroup, type ModelPickerCatalogState, type RetainedModelSelection } from "./model-catalog";
 import { modelRefKey, useModelCollectionsStore } from "@/react-app/domains/session/models/model-collections-store";
+import { useModelShortcutsStore } from "@/react-app/domains/shortcuts/model-shortcuts-store";
+import { formatChord, resolveShortcutOs } from "@/react-app/domains/shortcuts/shortcut-keys";
 
 export function ModelSourceIcon({ model }: { model: ModelRef & { source?: ModelOption["source"] } }) {
   const source = modelSource(model);
@@ -80,6 +82,12 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
 }: ModelPickerListProps & { autoRow?: AutoRowState }) {
   const favorites = useModelCollectionsStore((state) => state.favorites);
   const recent = useModelCollectionsStore((state) => state.recent);
+  // A model bound to a saved shortcut in Settings shows its key on the row.
+  const modelShortcuts = useModelShortcutsStore((state) => state.shortcuts);
+  const shortcutLabels = useMemo(() => {
+    const os = resolveShortcutOs(undefined, typeof navigator === "undefined" ? "" : navigator.platform);
+    return new Map(modelShortcuts.map((shortcut) => [modelRefKey({ providerID: shortcut.action.providerID, modelID: shortcut.action.modelID }), formatChord(shortcut.keys, os)]));
+  }, [modelShortcuts]);
   const groups = modelGroups(options, favorites, recent, query);
   const pins = orderedModelPins(options, favorites);
   const pinned = new Set(pins.map(modelRefKey));
@@ -182,6 +190,7 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
                 {!fixed && !blocked ? <Button type="button" variant="ghost" size="sm" aria-label={`${pinLabel}: ${name}`} className="h-7 px-2 text-xs opacity-0 group-hover/model:opacity-100 group-focus-within/model:opacity-100 group-data-highlighted/model:opacity-100 focus:opacity-100"
                   onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onKeyDown={(event) => event.stopPropagation()}
                   onClick={(event) => { event.preventDefault(); event.stopPropagation(); toggle(option); }}>{pinned.has(key) ? "Unpin" : "Pin"}</Button> : null}
+                {shortcutLabels.get(key) ? <kbd data-testid="model-shortcut-key" className="shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground">{shortcutLabels.get(key)}</kbd> : null}
                 <span data-slot="model-source" className="flex size-4 shrink-0 items-center justify-center"><ModelSourceIcon model={option} /></span>
                 <span data-slot="model-selection" className="flex size-4 shrink-0 items-center justify-center">{active ? <Check aria-hidden="true" className="size-4 text-muted-foreground" /> : null}</span>
               </ActionContextMenu>;

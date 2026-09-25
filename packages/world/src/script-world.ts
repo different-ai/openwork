@@ -10,6 +10,9 @@ import { formatOutputLines, type OutputMeta } from "./outputs.ts";
 import { receiptName } from "./stage.ts";
 import { assertWorldName } from "./store.ts";
 import type { ScriptWorldSnapshot } from "./hold.ts";
+import { OS_ENV, isWorldOs } from "./target.ts";
+import { SOURCES_ENV } from "./source.ts";
+import { SEEDS_ENV } from "./seed.ts";
 
 const DEFAULT_START_TIMEOUT_MS = 10 * 60 * 1_000;
 const DOWN_TIMEOUT_MS = 60 * 1_000;
@@ -72,6 +75,7 @@ export function parseScriptWorldSnapshot(text: string): ScriptWorldSnapshot {
     || (value.version === 2 && "recipeHash" in value && value.recipeHash !== undefined && typeof value.recipeHash !== "string")
     || (value.invocationHash !== undefined && (value.version !== 2 || typeof value.invocationHash !== "string"))
     || (value.version === 2 && "place" in value && value.place !== undefined && typeof value.place !== "string")
+    || (value.version === 2 && "os" in value && value.os !== undefined && !isWorldOs(value.os))
   ) {
     throw new Error("The file is not a valid script world snapshot.");
   }
@@ -88,6 +92,7 @@ export function parseScriptWorldSnapshot(text: string): ScriptWorldSnapshot {
     ...(value.version === 2 && typeof value.recipeHash === "string" ? { recipeHash: value.recipeHash } : {}),
     ...(value.version === 2 && typeof value.invocationHash === "string" ? { invocationHash: value.invocationHash } : {}),
     ...(value.version === 2 && typeof value.place === "string" ? { place: value.place } : {}),
+    ...(value.version === 2 && typeof value.os === "string" ? { os: value.os } : {}),
   };
 }
 
@@ -262,8 +267,11 @@ export interface LaunchScriptWorldOptions {
   invocationHash?: string;
   env?: NodeJS.ProcessEnv;
   place?: string;
+  os?: string;
   print: (line: string) => void;
   foregroundLog?: boolean;
+  /** The CLI view already renders outputs on ready; avoid printing them twice. */
+  quietReady?: boolean;
   onSpawn?: (pid: number) => void;
 }
 
@@ -289,6 +297,12 @@ export async function launchScriptWorld(options: LaunchScriptWorldOptions): Prom
   else env.OPENWORK_WORLD_INVOCATION_HASH = options.invocationHash;
   if (options.place === undefined) delete env.OPENWORK_WORLD_PLACE;
   else env.OPENWORK_WORLD_PLACE = options.place;
+  if (options.os === undefined) delete env[OS_ENV];
+  else env[OS_ENV] = options.os;
+  // Composed inputs are CLI-owned; never inherit an un-fingerprinted recipe
+  // from the operator's shell or a parent world.
+  if (options.env?.[SOURCES_ENV] === undefined) delete env[SOURCES_ENV];
+  if (options.env?.[SEEDS_ENV] === undefined) delete env[SEEDS_ENV];
   await assertNoRunningSnapshot(snapshotPath, stagedName);
   await rm(eventPath, { force: true });
 
@@ -325,11 +339,13 @@ export async function launchScriptWorld(options: LaunchScriptWorldOptions): Prom
     if (spawnError) throw spawnError;
     const snapshot = await readScriptWorldSnapshot(snapshotPath);
     if (snapshot) {
-      for (const line of formatOutputLines(snapshot.outputs, snapshot.outputMeta ?? {}, { reveal: false })) {
-        options.print(line);
+      if (!options.quietReady) {
+        for (const line of formatOutputLines(snapshot.outputs, snapshot.outputMeta ?? {}, { reveal: false })) {
+          options.print(line);
+        }
+        options.print(`snapshot  ${snapshotPath}`);
+        options.print(`log  ${logPath}`);
       }
-      options.print(`snapshot  ${snapshotPath}`);
-      options.print(`log  ${logPath}`);
       return 0;
     }
     if (child.exitCode !== null || child.signalCode !== null) {

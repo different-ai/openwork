@@ -1,3 +1,5 @@
+export const supportedTargets = ["local/host"];
+
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { server } from "../evals/packages/env/src/den.ts";

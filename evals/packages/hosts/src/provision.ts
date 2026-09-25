@@ -288,7 +288,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function desktopReleaseArtifact(release: DesktopRelease): { assetName: string; binaryName: string } {
+function desktopReleaseArtifact(release: DesktopRelease, platform: "linux" | "windows" = "linux"): { assetName: string; binaryName: string } {
   if (!/^\d+\.\d+\.\d+$/.test(release.version)) {
     throw new Error(`Desktop release version must be an exact x.y.z version without a tag prefix; received ${JSON.stringify(release.version)}.`);
   }
@@ -297,16 +297,19 @@ function desktopReleaseArtifact(release: DesktopRelease): { assetName: string; b
     throw new Error(`Unsupported desktop release distribution ${JSON.stringify(release.distribution)}. Use public, cloud, or enterprise.`);
   }
   return {
-    assetName: `${artifact.prefix}-linux-x64-${release.version}.tar.gz`,
-    binaryName: artifact.binary,
+    assetName: platform === "windows"
+      ? `${artifact.prefix}-win-x64-${release.version}.exe`
+      : `${artifact.prefix}-linux-x64-${release.version}.tar.gz`,
+    binaryName: platform === "windows" ? "OpenWork.exe" : artifact.binary,
   };
 }
 
 export async function resolvePublishedDesktopRelease(
   release: DesktopRelease,
   fetchImpl: typeof fetch = fetch,
+  platform: "linux" | "windows" = "linux",
 ): Promise<PublishedDesktopRelease> {
-  const { assetName, binaryName } = desktopReleaseArtifact(release);
+  const { assetName, binaryName } = desktopReleaseArtifact(release, platform);
   const tag = `v${release.version}`;
   const response = await fetchImpl(`https://api.github.com/repos/${RELEASE_REPOSITORY}/releases/tags/${tag}`, {
     headers: { accept: "application/vnd.github+json", "user-agent": "openwork-release-preview" },
