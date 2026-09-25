@@ -26,7 +26,8 @@ export function createCommandPaletteModelControls(input: CommandPaletteModelCont
   const nextPinnedOption = input.options.find((option) => option.providerID === nextPin?.providerID && option.modelID === nextPin.modelID);
   const cycle = (option: ModelOption | undefined | null) => {
     if (!option || option.disabled) return null;
-    const behavior = option.behaviorOptions?.some((choice) => choice.value === input.behavior) ? input.behavior : null;
+    // Auto manages its own settings, so it never inherits the previous model's effort.
+    const behavior = !isAutoModel(option) && option.behaviorOptions?.some((choice) => choice.value === input.behavior) ? input.behavior : null;
     input.onSelect({ providerID: option.providerID, modelID: option.modelID }, behavior, option);
     return modelTitle(option);
   };

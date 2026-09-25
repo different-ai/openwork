@@ -50,7 +50,7 @@ test("disabled enrollment issues no key and touches no free tables", async () =>
 })
 
 test("joined member of an unsubscribed organization gets an OpenWork Models key for the regular routes", async () => {
-  results = [[{ metadata: {} }], [person], []]
+  results = [[{ metadata: {} }], [], [person], []]
   const credential = await ensureMemberFreeInferenceCredential(input)
   expect(credential?.apiKey).toMatch(/^ow_inf_/)
   expect(credential?.baseURL).toBe("https://inference.example.test/api/v1")
@@ -63,10 +63,10 @@ test("joined member of an unsubscribed organization gets an OpenWork Models key 
 test("credential issuance reuses the member's active key and rotates a key that no longer matches", async () => {
   const apiKey = `ow_inf_${"a".repeat(43)}`
   const existing = { id: "existing-key", encryptedKey: apiKey, keyHash: await inferenceBearerKeyStorageDigest(inferenceBearerKey(apiKey)) }
-  results = [[{ metadata: {} }], [person], [existing]]
+  results = [[{ metadata: {} }], [], [person], [existing]]
   expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).toBe(apiKey)
   expect(writes).toEqual([])
-  results = [[{ metadata: {} }], [person], [{ ...existing, keyHash: "stale" }]]
+  results = [[{ metadata: {} }], [], [person], [{ ...existing, keyHash: "stale" }]]
   expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).not.toBe(apiKey)
   expect(writes.map((write) => write.table)).toEqual([InferenceKeyTable, InferenceKeyTable])
   expect(writes[0].value).toMatchObject({ status: "revoked" })
@@ -81,6 +81,18 @@ test("subscribed organizations use paid Models instead of free Auto", async () =
   expect(writes).toEqual([])
 })
 
+test("an organization Stripe still collects for is never downgraded to free Auto when its Models flag is lost", async () => {
+  for (const status of ["active", "trialing", "past_due", "incomplete"]) {
+    results = [[{ metadata: {} }], [{ status }]]
+    expect(await ensureMemberFreeInferenceCredential(input)).toBeNull()
+    results = [[{ metadata: {}, nowMs: now.getTime() }], [{ status }]]
+    expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "unavailable", reason: "not_eligible" })
+  }
+  // Once Stripe has given up, the organization is unsubscribed and free Auto may serve it.
+  results = [[{ metadata: {} }], [{ status: "canceled" }], [person], []]
+  expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).toMatch(/^ow_inf_/)
+})
+
 test("DPA policy rejects provisioning and status without touching paid credentials", async () => {
   results = [[{ metadata: { dpaSigned: true } }]]
   await expect(ensureMemberFreeInferenceCredential(input)).rejects.toMatchObject({ code: "managed_models_disabled_for_dpa" })
@@ -92,7 +104,7 @@ test("DPA policy rejects provisioning and status without touching paid credentia
 test("admin opt-out and missing active membership deny issuance", async () => {
   results = [[{ metadata: { inferenceFree: { offerAllowed: false } } }]]
   expect(await ensureMemberFreeInferenceCredential(input)).toBeNull()
-  results = [[{ metadata: {} }], []]
+  results = [[{ metadata: {} }], [], []]
   expect(await ensureMemberFreeInferenceCredential(input)).toBeNull()
   results = [[]]
   expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "unavailable", reason: "not_eligible", remainingUsd: null })
@@ -100,7 +112,7 @@ test("admin opt-out and missing active membership deny issuance", async () => {
 })
 
 test("member status includes cross-week pending state and never offers a paid model", async () => {
-  results = [[{ metadata: {}, nowMs: now.getTime() }], [], [{ id: "old-week-pending" }], [{ blocked: false }]]
+  results = [[{ metadata: {}, nowMs: now.getTime() }], [], [], [{ id: "old-week-pending" }], [{ blocked: false }]]
   const access = await getMemberInferenceAccess(input)
   expect(access).toMatchObject({ kind: "free", reason: "free_request_in_progress", canUpgrade: false, weeklyLimitUsd: 5 })
   expect(access.catalog?.map((model) => model.modelID)).toEqual(["openai/gpt-5.6-luna"])
@@ -123,7 +135,7 @@ test("Auto pin policy defaults on and updates only its metadata leaf", () => {
 })
 
 test("member pin policy is authoritative without changing model availability", async () => {
-  results = [[{ metadata: { inferenceFree: { defaultPinned: false } }, nowMs: now.getTime() }], [], [], []]
+  results = [[{ metadata: { inferenceFree: { defaultPinned: false } }, nowMs: now.getTime() }], [], [], [], []]
   expect(await getMemberInferenceAccess(input)).toMatchObject({ defaultPinned: false, kind: "free", modelID: "openai/gpt-5.6-luna" })
   results = [[{ metadata: { dpaSigned: true, inferenceFree: { defaultPinned: true } }, nowMs: now.getTime() }]]
   expect(await getMemberInferenceAccess(input)).toMatchObject({ defaultPinned: true, kind: "unavailable", reason: "admin_disabled" })

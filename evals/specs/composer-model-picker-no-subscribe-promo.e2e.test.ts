@@ -450,11 +450,11 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
     await user.click({ role: "button", label: "Default" });
     await user.click({ role: "switch", label: "Fast mode" });
     expect((await probe.dom('[role="switch"][aria-label="Fast mode"][aria-checked="true"]')).elements).toHaveLength(1);
-    await user.see(trigger, { text: /^Fast witness · Fast$/ });
+    await user.see(trigger, { text: /^Fast witness\s*· Fast$/ });
     await user.screenshot();
     await user.reload();
     await user.see("Run task", { timeoutMs: 60_000 });
-    await user.see(trigger, { text: /^Fast witness · Fast$/ });
+    await user.see(trigger, { text: /^Fast witness\s*· Fast$/ });
     await user.click(trigger);
     await openAdvanced();
     await user.see({ role: "switch", label: "Fast mode" });
@@ -480,7 +480,7 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
     await user.click({ role: "button", label: "High" });
     await user.see({ testId: "model-effort" }, { text: /High/ });
     expect((await probe.dom('[role="switch"][aria-label="Fast mode"][aria-checked="true"]')).elements).toHaveLength(1);
-    await user.see(trigger, { text: /^Fast witness · High \+ Fast$/ });
+    await user.see(trigger, { text: /^Fast witness · High\s*· Fast$/ });
     await user.screenshot();
   });
 });

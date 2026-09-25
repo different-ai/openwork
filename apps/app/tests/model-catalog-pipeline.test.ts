@@ -88,6 +88,14 @@ describe("a saved choice that is not selectable", () => {
     expect(resolveRetainedSelection({ ...base, catalog, catalogState: "loading", current: { providerID: "gone", modelID: "x" } })).toBeUndefined();
     expect(resolveRetainedSelection({ ...base, catalog, sessionScoped: false, current: { providerID: "opencode", modelID: "big-pickle" } })).toBeUndefined();
   });
+  test("the free Zen starter hidden behind better models still works, so it is never called unavailable", () => {
+    const catalog = catalogFor(["opencode", "anthropic"]);
+    const current = { providerID: "opencode", modelID: "big-pickle" };
+    expect(keys(catalog.options)).not.toContain("opencode/big-pickle");
+    expect(resolveRetainedSelection({ ...base, catalog, current })).toBeUndefined();
+    expect(resolveRetainedSelection({ ...base, catalog, sessionScoped: false, current })).toBeUndefined();
+    expect(resolveRetainedSelection({ ...base, catalog, current, saved: { model: current, reason: "disabled" } })?.reason).toBe("disabled");
+  });
   test("a known policy or disabled block keeps the model out of the list even if its provider reappears", () => {
     const catalog = catalogFor(["anthropic"]);
     const current = { providerID: "anthropic", modelID: "claude-opus-4-6" };

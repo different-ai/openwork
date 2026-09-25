@@ -3,7 +3,7 @@ import { createHmac } from "node:crypto";
 import {
   DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_SESSION_PATH, MEMBER_FREE_STATUS_PATH, clampSessionPowParams, compareDesktopVersions,
   desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeVersionError, isDesktopFreeSignableRoute, leadingZeroBits,
-  lowestDesktopVersion, parseDesktopReleases, releaseTagRequired, supportedDesktopReleases,
+  lowestDesktopVersion, parseDesktopReleases, supportedDesktopReleases,
 } from "../src/index.js";
 import { freeRequestReservation, freeUsageAmount, parseInstallRamp, rampedDeviceAmount, DEFAULT_INSTALL_RAMP } from "../src/accounting.js";
 import { deriveReleaseSecret, matchReleaseTag, releaseTag, sha256Hex, solveSessionPow, startSessionPow, verifySessionPow } from "../src/node.js";
@@ -75,8 +75,6 @@ describe("release window", () => {
     expect(compareDesktopVersions("1.2.3-alpha", "1.2.3")).toBe(-1);
     expect(desktopFreeVersionError("1.1.9", ["1.2.3", "1.2.0"])?.minimumVersion).toBe("1.2.0");
     expect(desktopFreeVersionError("1.2.3", [])?.code).toBe("desktop_version_unavailable");
-    expect(releaseTagRequired(["1.2.3", "1.2.1"], "1.2.1")).toBe(true);
-    expect(releaseTagRequired(["1.2.3", "1.2.0"], "1.2.1")).toBe(false);
   });
   test("release lists parse from GitHub or a plain list, and reject malformed entries", () => {
     expect(parseDesktopReleases([{ tag_name: "v1.2.3", draft: false, prerelease: false, published_at: "2026-09-23T00:00:00Z" }, { tag_name: "v9", draft: true, prerelease: false, published_at: "2026-09-23T00:00:00Z" }])?.map((r) => r.version)).toEqual(["1.2.3"]);

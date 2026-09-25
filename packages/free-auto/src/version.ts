@@ -47,11 +47,6 @@ export function desktopFreeVersionError(currentVersion: string, supported: reado
     message: `Update OpenWork Desktop to ${minimumVersion} or newer to use Auto.` };
   return null;
 }
-/** v2 proofs (no release tag) are accepted only while a release that predates tags is still supported. */
-export function releaseTagRequired(supported: readonly string[], firstReleaseTagVersion: string | null): boolean {
-  if (!firstReleaseTagVersion) return false;
-  return supported.every((version) => (compareDesktopVersions(version, firstReleaseTagVersion) ?? -1) >= 0);
-}
 /**
  * Accepts GitHub's `/releases` list (drafts and prereleases skipped) or
  * `{ releases: [{ version, publishedAt }] }`. Any malformed entry rejects the whole list.

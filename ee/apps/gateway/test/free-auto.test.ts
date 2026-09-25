@@ -10,7 +10,7 @@ import { readAutoConfig, FREE_OPENAI_CHAT_URL } from "../src/free/shared/config.
 import { freeRequestReservation, freeUsageAmount, rampedDeviceAmount } from "@openwork/free-auto/accounting"
 import { verifyDesktopFreeProof } from "../src/free/guest/proof.js"
 import { createDesktopFreeReleaseSource } from "../src/free/guest/releases-source.js"
-import { desktopFreeVersionError, releaseTagRequired, supportedDesktopReleases, type DesktopRelease } from "@openwork/free-auto"
+import { desktopFreeVersionError, supportedDesktopReleases, type DesktopRelease } from "@openwork/free-auto"
 import { deriveReleaseSecret, releaseTag, sha256Hex as desktopFreeHash } from "@openwork/free-auto/node"
 import { createAnonymousIdentities, issueAnonymousToken, verifyAnonymousToken, canonicalizeAnonymousAddress } from "../src/free/guest/identity.js"
 import { prepareFreeRequest, readFreeRequest } from "../src/free/shared/request.js"
@@ -129,7 +129,7 @@ test("free Auto stays off without the dedicated OpenAI key or release key and ne
   assert.equal(defaults.anonymousEnabled, false)
   assert.equal(defaults.member.weeklyBudgetUsd, 5)
   assert.equal(defaults.deviceWeeklyAmount / INFERENCE_USAGE_CONVERSION_FACTOR, 1)
-  assert.deepEqual([defaults.supportedReleaseCount, defaults.supportedReleaseMinDays, defaults.blockedReleases, defaults.firstReleaseTagVersion], [3, 14, [], null])
+  assert.deepEqual([defaults.supportedReleaseCount, defaults.supportedReleaseMinDays, defaults.blockedReleases], [3, 14, []])
   const withoutKey = readAutoConfig({ INFERENCE_FREE_ENABLED: "true", ANONYMOUS_INFERENCE_ENABLED: "true", ANONYMOUS_TOKEN_SECRET: "t".repeat(40),
     ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "a".repeat(40), ANONYMOUS_OPENROUTER_API_KEY: "legacy", INFERENCE_FREE_UPSTREAM_API_KEY: "legacy" })
   assert.equal(withoutKey.memberEnabled, false)
@@ -144,7 +144,6 @@ test("free Auto stays off without the dedicated OpenAI key or release key and ne
   assert.equal(readAutoConfig({ DESKTOP_FREE_DEV_RELEASE_SECRET: "d".repeat(40) }).devReleaseSecret, "")
   assert.equal(readAutoConfig({ OPENWORK_DEV_MODE: "1", DESKTOP_FREE_DEV_RELEASE_SECRET: "d".repeat(40) }).devReleaseSecret, "d".repeat(40))
   assert.throws(() => readAutoConfig({ DESKTOP_FREE_RELEASE_KEY: "s".repeat(40), ANONYMOUS_TOKEN_SECRET: "s".repeat(40) }))
-  assert.throws(() => readAutoConfig({ DESKTOP_FREE_FIRST_RELEASE_TAG_VERSION: "v1.2.3" }))
   assert.deepEqual(readAutoConfig({ DESKTOP_FREE_BLOCKED_RELEASES: " v1.2.2, 1.2.1 ,, " }).blockedReleases, ["1.2.2", "1.2.1"])
   assert.throws(() => readAutoConfig({ INFERENCE_FREE_ENABLED: "true", INFERENCE_FREE_WEEKLY_BUDGET_USD: "1" }))
   assert.throws(() => readAutoConfig({ INFERENCE_FREE_OPENAI_MODEL: "openai/gpt-5.6-luna" }))
@@ -382,17 +381,15 @@ test("the release tag must come from the secret of the claimed version, the prev
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${devGuest.token}`, undefined, { version: "0.0.0-dev", source: devGuest.source, secret: devSecret }))).status, 401, "but only when the gateway is in dev mode")
 })
 
-test("v2 proofs are accepted until every supported release carries a tag, then refused with the update wall", async () => {
-  const before = fixture()
-  assert.equal((await before.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`, undefined, { proofVersion: 2 }))).status, 200)
-  const cutover = fixture({ config: { ...config, firstReleaseTagVersion: "1.2.0" } })
-  const response = await cutover.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { proofVersion: 2 }))
+test("an untagged (v2) proof is always refused with the update wall, since no released build sends one", async () => {
+  const f = fixture()
+  const response = await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { proofVersion: 2 }))
   assert.equal(response.status, 426)
   assert.equal((await response.json()).error.code, "desktop_update_required")
-  assert.equal((await cutover.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`))).status, 200)
-  assert.equal(releaseTagRequired(["1.2.3", "1.2.0"], "1.2.1"), false)
-  assert.equal(releaseTagRequired(["1.2.3", "1.2.1"], "1.2.1"), true)
-  assert.equal(releaseTagRequired(["1.2.3"], null), false)
+  const status = await (await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`, undefined, { proofVersion: 2 }))).json()
+  assert.equal(status.state, "update_required")
+  assert.equal(f.requests.length, 0)
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`))).status, 200, "a tagged release proof still works")
 })
 
 test("policy flip before dispatch cancels admission without an upstream call", async () => {

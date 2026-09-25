@@ -8,7 +8,7 @@ import { useSetWorkspaceDefaultModel } from "@/react-app/kernel/use-workspace-mo
 import { ModelPickerList } from "@/react-app/domains/models/model-picker-list";
 import { buildModelCatalog, resolveRetainedSelection, withoutBlockedSelection } from "@/react-app/domains/models/catalog";
 import { useModelChoice } from "@/react-app/domains/models/use-model-catalog";
-import { getModelBehaviorControls, getModelBehaviorSelection } from "@/app/lib/model-behavior";
+import { FAST_PRICING_WARNING, getModelBehaviorControls, getModelBehaviorSelection } from "@/app/lib/model-behavior";
 import { readDenSettings } from "@/app/lib/den";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { gatewayConnectCopy, gatewayConnectProviderKey, type GatewayConnectProvider } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
@@ -106,7 +106,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             <div className="flex h-11 items-center justify-between text-sm"><span>Effort</span><span className="text-muted-foreground">{behavior.label}</span></div>
             <p role="status" className="pb-2 text-xs text-muted-foreground">{getModelBehaviorSelection(behavior.options, controls.fast ? controls.toggleValue ?? null : behavior.value).description}</p>
             <div role="group" aria-label="Thinking and effort" className="flex flex-wrap gap-1">{controls.options.map((option) => <Button key={option.value ?? "default"} size="sm" variant="ghost" aria-pressed={option.value === behavior.value} onClick={() => props.onBehaviorChange(props.current, option.value)}>{option.label}</Button>)}</div>
-            {controls.hasFast ? <div className="flex h-11 items-center justify-between text-sm"><span>Fast mode</span><Switch aria-label="Fast mode" size="sm" checked={controls.fast} disabled={controls.toggleValue === undefined} onCheckedChange={() => { if (controls.toggleValue !== undefined) props.onBehaviorChange(props.current, controls.toggleValue); }} /></div> : null}
+            {controls.hasFast ? <div className="flex h-11 items-center justify-between text-sm" title={FAST_PRICING_WARNING}><span>Fast mode</span><Switch aria-label="Fast mode" size="sm" checked={controls.fast} disabled={controls.toggleValue === undefined} onCheckedChange={() => { if (controls.toggleValue !== undefined) props.onBehaviorChange(props.current, controls.toggleValue); }} /></div> : null}
           </> : <p className="text-sm text-muted-foreground">{isAutoModel(props.current) ? "Auto manages its model settings." : "Choose an available model to change its settings."}</p>}
         </div> : null}
       </details>
