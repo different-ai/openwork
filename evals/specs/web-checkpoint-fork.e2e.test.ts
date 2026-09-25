@@ -47,7 +47,7 @@ test("a reviewer enters a saved web browser with ten sessions and continues a pa
 
   await step("the original response completes and its entire test VM is removed", async () => {
     await world.continueStream();
-    await user.see({ text: remaining }, { timeoutMs: 60_000 });
+    await user.see({ text: `${partial} ${remaining}` }, { timeoutMs: 60_000 });
     await user.screenshot({ checkpoint: false });
     await world.stop();
     evidence.recordAssertionEvidence("Forks cannot depend on the original VM", "The original response completed, then the owning VM was deleted before either review launch.", true);
@@ -85,7 +85,7 @@ test("a reviewer enters a saved web browser with ten sessions and continues a pa
     await viewer.see({ role: "button", text: "Continue response" });
     await viewer.screenshot();
     await viewer.click({ role: "button", text: "Continue response" });
-    await user.on(fork.app).see({ text: remaining }, { timeoutMs: 60_000 });
+    await user.on(fork.app).see({ text: `${partial} ${remaining}` }, { timeoutMs: 60_000 });
     expect(await fork.streamState()).toEqual({ held: false, complete: true, streamCount: 1 });
     await user.on(fork.app).screenshot();
     evidence.recordAssertionEvidence("The saved partial response continues", "The restored tab showed partial text before release, then received the remaining response without a reload.", true);

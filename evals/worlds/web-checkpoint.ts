@@ -76,7 +76,7 @@ export async function checkpointWorld() {
         const session = await readEvidenceSession(vm.id, sourceSha, api);
         const app = resources.use(await attachEvidenceBrowser(session));
         return { app, viewerUrl: session.url, continueStream: () => continueEvidenceStream(vm.id), id: vm.id,
-          async streamState() {
+          async streamState(): Promise<unknown> {
             const response = await fetch(new URL("/__evidence/state", session.url), { headers: { cookie: session.cookie }, signal: AbortSignal.timeout(10_000) });
             if (!response.ok) throw new Error("Fork stream witness unavailable");
             return response.json();

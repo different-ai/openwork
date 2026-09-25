@@ -14,6 +14,8 @@ export async function evidenceCdpRelay(session: Pick<EvidenceSession, "cdpOrigin
   if (remote.protocol !== "https:" || !/^cdp-[a-f0-9]{32}\.preview\.openwork\.software$/.test(remote.hostname)) throw new Error("Invalid evidence CDP origin");
   const peers = new Set<Duplex>();
   const server = createServer((req, res) => {
+    // This loopback endpoint is for the Node controller, not arbitrary websites.
+    if (req.headers.origin || req.headers["sec-fetch-site"]) { res.writeHead(403).end(); return; }
     const upstream = request({ hostname: remote.hostname, port: 443, path: req.url, method: req.method,
       headers: { cookie: session.cookie, host: remote.host, "content-type": "application/json" }, timeout: 30_000 }, (response) => {
       res.writeHead(response.statusCode ?? 502, { "content-type": "application/json", "cache-control": "no-store" }); response.pipe(res);
@@ -23,8 +25,9 @@ export async function evidenceCdpRelay(session: Pick<EvidenceSession, "cdpOrigin
   });
   server.on("connection", (socket) => { peers.add(socket); socket.on("close", () => peers.delete(socket)); });
   server.on("upgrade", (req, socket, head) => {
+    if (req.headers.origin || req.headers["sec-fetch-site"]) { socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"); return; }
     const upstream = request({ hostname: remote.hostname, port: 443, path: req.url,
-      headers: { ...req.headers, host: remote.host, cookie: session.cookie, origin: remote.origin } });
+      headers: { ...req.headers, host: remote.host, cookie: session.cookie } });
     upstream.on("upgrade", (response, peer, upstreamHead) => {
       peers.add(peer); peer.on("close", () => peers.delete(peer));
       socket.write(`HTTP/1.1 101 Switching Protocols\r\n${Object.entries(response.headers).map(([key, value]) => `${key}: ${value}`).join("\r\n")}\r\n\r\n`);

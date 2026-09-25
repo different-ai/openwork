@@ -6,6 +6,23 @@ export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 const headers = { "cache-control": "private, no-store" };
 
+async function smallBody(request: Request): Promise<string> {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      size += next.value.byteLength;
+      if (size > 200) throw new Error("Oversized request");
+      chunks.push(next.value);
+    }
+    return Buffer.concat(chunks).toString("utf8");
+  } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+}
+
 export async function POST(request: Request, { params }: { params: Promise<{ id: string; evidenceId: string }> }) {
   const url = new URL(request.url);
   const authority = request.headers.get("host") ?? url.host;
@@ -23,8 +40,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return Response.json({ error: "Checkpoint access is not configured. Contact the review app owner." }, { status: 503, headers });
   let requestId: string;
   try {
-    const text = await request.text();
-    if (text.length > 200) throw new Error("Oversized request");
+    const text = await smallBody(request);
     const body: unknown = JSON.parse(text);
     if (typeof body !== "object" || body === null || !("requestId" in body) || typeof body.requestId !== "string"
       || !/^[a-f0-9-]{36}$/.test(body.requestId) || Object.keys(body).length !== 1) throw new Error("Invalid request");
