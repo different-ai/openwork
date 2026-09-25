@@ -8,6 +8,8 @@ const sha = "a".repeat(40);
 function mockApi(snapshotCreatedAt = new Date().toISOString(), files: Record<string, string> = {}) {
   const creates: Record<string, unknown>[] = [];
   const writes: string[] = [];
+  const writesByVm = new Map<string, string[]>();
+  const createsByVm = new Map<string, Record<string, unknown>>();
   const deleted: string[] = [];
   const commands: string[] = [];
   const api = new Freestyle({ apiKey: "synthetic", fetch: async (input, init) => {
@@ -16,18 +18,27 @@ function mockApi(snapshotCreatedAt = new Date().toISOString(), files: Record<str
     if (path === "/v5/vms" && init?.method === "POST") {
       const body: unknown = JSON.parse(String(init.body));
       assert.ok(typeof body === "object" && body !== null && !Array.isArray(body));
-      creates.push(Object.fromEntries(Object.entries(body)));
-      return Response.json({ id: `vm-${creates.length}`, createdAt: new Date().toISOString() });
+      const creation = Object.fromEntries(Object.entries(body));
+      creates.push(creation);
+      const id = `vm-${creates.length}`;
+      createsByVm.set(id, creation);
+      return Response.json({ id, createdAt: new Date().toISOString() });
     }
     const guestPath = new URL(String(input)).searchParams.get("path") ?? "";
     const file = Object.entries(files).find(([name]) => guestPath.endsWith(`/${name}`));
     if (path.includes("/fs/") && file && (init?.method ?? "GET") === "GET") return new Response(file[1]);
-    if (path.includes("/fs/")) { writes.push(await new Response(init?.body).text()); return Response.json({}); }
+    if (path.includes("/fs/")) {
+      const body = await new Response(init?.body).text();
+      writes.push(body);
+      const vmId = path.split("/")[3];
+      writesByVm.set(vmId, [...(writesByVm.get(vmId) ?? []), body]);
+      return Response.json({});
+    }
     if (path.endsWith("/exec-await")) { commands.push(String(init?.body)); return Response.json({ statusCode: 0, stdout: "" }); }
     if (init?.method === "DELETE") { deleted.push(path); return new Response(null, { status: 204 }); }
     throw new Error(`Unexpected provider request ${init?.method} ${path}`);
   } });
-  return { api, creates, writes, deleted, commands };
+  return { api, creates, writes, createsByVm, writesByVm, deleted, commands };
 }
 
 const reachable: typeof fetch = async (input) => new URL(String(input)).pathname === "/__openwork_launch"
@@ -258,12 +269,18 @@ test("desktop clones use only their viewer, isolated access and exact source eve
   assert.equal(first.url, first.outputs.desktopUrl.value);
   assert.deepEqual(Object.keys(first.outputs).sort(), ["desktopStatus", "desktopUrl", "previewCookie"]);
   assert.deepEqual(provider.commands, []);
-  for (const [index, session] of [first, second].entries()) {
+  for (const session of [first, second]) {
     const domain = new URL(session.url).hostname;
     assert.match(domain, /^desktop-[a-f0-9]{32}\.preview\.openwork\.software$/);
-    assert.equal(provider.creates[index].ttlSeconds, 600);
-    assert.deepEqual(provider.creates[index].tls, { rules: [{ action: "allow", domain, source: { public: true }, destination: { port: 8080 } }] });
-    const access = JSON.parse(provider.writes[index]);
+    // Concurrent file uploads can complete in either order. Match receipts to
+    // their VM, never to the index at which a response body finished reading.
+    const creation = provider.createsByVm.get(session.id);
+    const writes = provider.writesByVm.get(session.id);
+    assert.ok(creation);
+    assert.ok(writes && writes.length === 1);
+    assert.equal(creation.ttlSeconds, 600);
+    assert.deepEqual(creation.tls, { rules: [{ action: "allow", domain, source: { public: true }, destination: { port: 8080 } }] });
+    const access = JSON.parse(writes[0]);
     assert.deepEqual(access.origins, { desktop: `https://${domain}` });
     assert.equal(access.templateOrigins, undefined);
     assert.equal(access.expiresAt, session.expiresAt);
