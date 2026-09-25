@@ -783,9 +783,12 @@ describe("workspace OpenCode proxy", () => {
         expect(JSON.stringify(payload)).toContain(suffix ? "Stored history" : "Stored thread");
       }
       const reads = fixture.engine.requests.slice(before);
-      expect(reads.map((item) => item.pathname)).toEqual([
+      const paths = reads.map((item) => item.pathname);
+      // Home backfill resolves listed sessions concurrently, so their history reads may land in either order.
+      const backfill = gate === fixture.provider ? ["/api/session/ses_1/message", "/api/session/ses_foreign/message"] : [];
+      expect(paths.slice(1, 1 + backfill.length).sort()).toEqual(backfill);
+      expect([paths[0], ...paths.slice(1 + backfill.length)]).toEqual([
         "/api/session",
-        ...(gate === fixture.provider ? ["/api/session/ses_1/message", "/api/session/ses_foreign/message"] : []),
         "/api/session/ses_1", "/api/session/ses_1",
         "/api/session/ses_1", "/api/session/ses_1/message",
         "/api/session/ses_1", "/api/session/ses_1/message/msg_1",
