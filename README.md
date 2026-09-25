@@ -98,6 +98,7 @@ The fastest path from a fresh clone to a running dev build.
 
 - **Node 24** — pinned in [`.nvmrc`](./.nvmrc) (`nvm use` picks it up).
 - **pnpm 11** — pinned in `package.json` (`packageManager`); run `corepack enable` to use the pinned version automatically. Never use npm or yarn.
+- **[Bun](https://bun.sh)** — `apps/server`'s build shells out to `bun` directly; without it, `pnpm install` / `pnpm dev` fails with `sh: bun: command not found`. Install with `brew install oven-sh/bun/bun` (macOS) or see [bun.sh](https://bun.sh) for other platforms.
 - **Git with DCO sign-off** — every commit needs a `Signed-off-by` trailer (`git commit -s`). See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ### First run
