@@ -16,7 +16,12 @@ test("SIDE-01 a side chat reads fresh main-chat decisions after reload and a v2 
   }, [pane]));
   const send = async (pane: "primary" | "secondary", text: string) => {
     await user.type({ placeholder: "Describe your task...", nth: pane === "primary" ? 0 : 1 }, text, { replace: true, verify: true });
-    await user.press("Enter");
+    await probe.eventually(() => probe.eval(browserScript((pane) => {
+      const root = document.querySelector('[data-workbench-pane="' + pane + '"]') ?? (pane === "primary" ? document : null);
+      return [...(root?.querySelectorAll("button") ?? [])].some(button =>
+        (button.getAttribute("aria-label") === "Run task" || button.textContent?.trim() === "Run task") && !button.disabled);
+    }, [pane])), { within: 15_000, label: `${pane} is ready to send the draft`, until: ready => ready });
+    await user.click({ role: "button", label: "Run task", nth: pane === "primary" ? 0 : 1 });
   };
   const awaitAnswer = (pane: "primary" | "secondary", expected: string) => probe.eventually(() => answer(pane), {
     within: 45_000, label: `${pane} answers from the main conversation's actual decision`, until: text => text.includes(expected),
@@ -53,6 +58,7 @@ test("SIDE-01 a side chat reads fresh main-chat decisions after reload and a v2 
     await awaitAnswer("primary", world.updated);
     await user.reload();
     await user.see({ placeholder: "Describe your task...", nth: 1 }, { editable: true, timeoutMs: 30_000 });
+    await awaitAnswer("secondary", world.initial);
     await send("secondary", world.question);
     await awaitAnswer("secondary", world.updated);
     expect(await probe.hash()).toBe(route);
