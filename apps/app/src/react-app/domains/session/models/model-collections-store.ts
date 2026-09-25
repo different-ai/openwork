@@ -1,6 +1,25 @@
 import { create } from "zustand";
 
-import type { ModelRef } from "@/app/types";
+import type { ModelOption, ModelRef } from "@/app/types";
+
+export const useModelPickerCatalogStore = create<{
+  bySession: Record<string, { owner: symbol; options: readonly ModelOption[] }>;
+  publish: (sessionId: string, owner: symbol, options: readonly ModelOption[]) => void;
+  release: (sessionId: string, owner: symbol) => void;
+}>((set) => ({
+  bySession: {},
+  publish: (sessionId, owner, options) => set((state) => {
+    const previous = state.bySession[sessionId];
+    if (previous?.owner === owner && JSON.stringify(previous.options) === JSON.stringify(options)) return state;
+    return { bySession: { ...state.bySession, [sessionId]: { owner, options } } };
+  }),
+  release: (sessionId, owner) => set((state) => {
+    if (state.bySession[sessionId]?.owner !== owner) return state;
+    const bySession = { ...state.bySession };
+    delete bySession[sessionId];
+    return { bySession };
+  }),
+}));
 
 const STORAGE_KEY = "openwork.modelCollections.v1";
 export const MAX_RECENT_MODELS = 5;
@@ -93,6 +112,7 @@ export const useModelCollectionsStore = create<ModelCollectionsStore>((set) => (
     return { favorites };
   }),
   recordRecent: (model) => set((state) => {
+    try { window.localStorage.setItem("openwork.modelChoice.explicit", "1"); } catch {}
     const recent = recordRecentModel(state.recent, model);
     writeStoredCollections({ favorites: state.favorites, recent });
     return { recent };

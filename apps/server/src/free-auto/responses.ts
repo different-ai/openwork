@@ -14,8 +14,12 @@ function isRecommendation(value: unknown): value is ManagedModelRecommendation {
     && Array.isArray(value.capabilities) && value.capabilities.every((capability) => typeof capability === "string");
 }
 
-/** A validated status, merged over `base`. A ready status must carry an allowance and a version floor. */
-export function parseStatus(payload: unknown, base: DesktopFreeAccessStatus): DesktopFreeAccessStatus {
+/**
+ * A validated status, merged over `base`. A ready status must carry an
+ * allowance; guests also need a version floor, because the Gateway version-gates
+ * guests while members use their Models key on /api/v1, which is not gated.
+ */
+export function parseStatus(payload: unknown, base: DesktopFreeAccessStatus, member = false): DesktopFreeAccessStatus {
   if (!isRecord(payload)) throw new Error("Invalid desktop free status.");
   const allowance = payload.allowance;
   let validatedAllowance: DesktopFreeAccessStatus["allowance"] = null;
@@ -27,12 +31,14 @@ export function parseStatus(payload: unknown, base: DesktopFreeAccessStatus): De
   }
   const state = payload.state;
   if (state !== "ready" && state !== "update_required" && state !== "unavailable" && state !== "exhausted") throw new Error("Invalid desktop free status state.");
-  if (state === "ready" && (!validatedAllowance || typeof payload.minimumVersion !== "string")) throw new Error("Incomplete desktop free status.");
+  if (state === "ready" && (!validatedAllowance || (!member && typeof payload.minimumVersion !== "string"))) throw new Error("Incomplete desktop free status.");
   return {
     ...base, state, code: typeof payload.code === "string" ? payload.code : null,
     minimumVersion: typeof payload.minimumVersion === "string" ? payload.minimumVersion : null,
     allowance: validatedAllowance,
     ...(Array.isArray(payload.catalog) ? { catalog: payload.catalog.filter(isRecommendation) } : {}),
+    // Den's organization Auto pin travels with status so an admin unpin reaches native pickers.
+    ...(typeof payload.defaultPinned === "boolean" ? { defaultPinned: payload.defaultPinned } : {}),
   };
 }
 const EXHAUSTED_CODES = ["anonymous_limit_exceeded", "anonymous_reservation_does_not_fit", "free_allowance_exhausted"];

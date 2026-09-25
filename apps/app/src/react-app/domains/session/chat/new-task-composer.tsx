@@ -127,7 +127,7 @@ const emptyFiles = async (): Promise<string[]> => [];
 const FALLBACK_MODEL: ModelRef = { providerID: "", modelID: "" };
 
 /**
- * The real session composer, reused for the "What do you need done?" empty
+ * The real session composer, reused for the "What should we work on?" empty
  * state. The draft (including skill/mention tokens) is seeded into the
  * created session's composer, so pills typed here survive the handoff.
  * Attachments are collected before the session exists and seeded into the

@@ -24,6 +24,7 @@ import {
   REQUEST_BODY_LIMIT, REQUEST_BODY_TIMEOUT_MS, REQUEST_LIFETIME_MS, SESSION_TIMEOUT_MS, STATUS_CACHE_MS, readRelaySettings, type RelaySettings,
 } from "./settings.js";
 
+export type AutoPreferences = { enabled: boolean; available: boolean; canEnable: boolean };
 type Logger = { log: (level: "info" | "warn" | "error", message: string, attributes?: Record<string, unknown>) => void };
 const IDENTITY_CHANGED = "Auto's account changed. Retry after reloading the engine.";
 const freshLocalToken = () => `owf_local_${randomBytes(32).toString("base64url")}`;
@@ -64,6 +65,7 @@ export class AnonymousInferenceService {
   private sessionPow: SessionPowParams;
   private readonly powPool = new SessionPowPool();
   private heartbeat: ReturnType<typeof setInterval> | null = null;
+  private preferenceQueue: Promise<void> = Promise.resolve();
   /** A 503 from the guest session route: replayed until it lapses, so no proof of work is spent on a switched-off gateway. */
   private guestRefusal: { until: number; failure: RemoteFailure } | null = null;
   /** Set by the server: reload the engine's providers after the relay credential it holds was replaced. */
@@ -185,17 +187,19 @@ export class AnonymousInferenceService {
     if (this.stopped || this.config.readOnly) return false;
     const runtime = await readGlobalRuntimeOpencodeConfig(this.config);
     let permitted = this.enabled && runtime.managedPolicy?.allowCustomProviders !== false;
+    let reason = !this.enabled ? "disabled by environment" : !permitted ? "custom providers blocked by policy" : null;
     if (permitted) {
       try {
         const { machineId } = await this.config.anonymousInference!.desktop.identity();
         // Start paying for the first guest session while the app is still loading.
         this.warmSessionPow(machineId);
-      } catch { permitted = false; }
+      } catch (error) { permitted = false; reason = error instanceof Error ? error.message : "identity unavailable"; }
     }
     let changed = false;
     await writeGlobalRuntimeOpencodeConfig(this.config, (snapshot) => {
       const current = snapshot.provider?.[ANONYMOUS_INFERENCE_PROVIDER_ID];
-      permitted = permitted && !runtimeDisabledProviderList(snapshot).includes(ANONYMOUS_INFERENCE_PROVIDER_ID);
+      if (permitted && runtimeDisabledProviderList(snapshot).includes(ANONYMOUS_INFERENCE_PROVIDER_ID)) { permitted = false; reason = "turned off in this workspace"; }
+      if (permitted && current !== undefined && !isOwnedProvider(current)) reason = "a user-defined provider already uses its id";
       if (!permitted || (current !== undefined && !isOwnedProvider(current))) {
         this.disable();
         if (!isOwnedProvider(current)) return snapshot;
@@ -208,9 +212,44 @@ export class AnonymousInferenceService {
       changed = JSON.stringify(current) !== JSON.stringify(provider);
       return changed ? { ...snapshot, provider: mergeRuntimeProviderUpdate(snapshot.provider, { [ANONYMOUS_INFERENCE_PROVIDER_ID]: provider }) } : snapshot;
     });
+    if (reason) this.logger.log("warn", `Auto is not registered: ${reason}`);
     if (changed || this.relayConfigFailed) await writeOpenworkRuntimeConfigFile(this.config);
     this.relayConfigFailed = false;
     return changed;
+  }
+
+  // ── The person's Auto on/off preference ────────────────────────────────
+
+  /** Whether Auto is turned on here, whether it could be, and whether it is registered right now. */
+  async preferences(): Promise<AutoPreferences> {
+    const runtime = await readGlobalRuntimeOpencodeConfig(this.config);
+    const enabled = !runtimeDisabledProviderList(runtime).includes(ANONYMOUS_INFERENCE_PROVIDER_ID);
+    const canEnable = this.enabled && !this.stopped && runtime.managedPolicy?.allowCustomProviders !== false;
+    return { enabled, available: enabled && canEnable && this.available && !this.relayConfigFailed, canEnable };
+  }
+
+  /** Turns Auto on or off for this device; turning it off also retires the engine's relay credential. Calls run one at a time. */
+  setEnabled(enabled: boolean): Promise<AutoPreferences> {
+    const run = this.preferenceQueue.then(async () => {
+      if (this.config.readOnly) throw new ApiError(403, "read_only", "This device is read-only.");
+      if (enabled) {
+        await managedDesktopPolicy(this.config).assert("model", { providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID });
+        if (!(await this.preferences()).canEnable) throw new ApiError(403, "auto_blocked", "Auto is unavailable on this device or blocked by your administrator.");
+      } else {
+        this.disable();
+        this.localAccessToken = freshLocalToken();
+        this.failures.clear();
+      }
+      await writeGlobalRuntimeOpencodeConfig(this.config, (runtime) => ({
+        ...runtime,
+        disabled_providers: [...new Set([...runtimeDisabledProviderList(runtime).filter((id) => id !== ANONYMOUS_INFERENCE_PROVIDER_ID), ...(enabled ? [] : [ANONYMOUS_INFERENCE_PROVIDER_ID])])],
+      }));
+      await this.initialize(this.boundPort ?? this.config.port);
+      await writeOpenworkRuntimeConfigFile(this.config);
+      return this.preferences();
+    });
+    this.preferenceQueue = run.then(() => undefined, () => undefined);
+    return run;
   }
 
   private unavailable(code = "anonymous_unavailable"): DesktopFreeAccessStatus {
@@ -265,7 +304,7 @@ export class AnonymousInferenceService {
       if (force) this.failures.clear();
       const timed = () => AbortSignal.any([signal, AbortSignal.timeout(SESSION_TIMEOUT_MS)]);
       const response = await this.remote(DESKTOP_FREE_STATUS_PATH, "GET", new Uint8Array(), true, timed());
-      const value = parseStatus(await readJson(response.body, ERROR_BODY_LIMIT, timed()), this.unavailable());
+      const value = parseStatus(await readJson(response.body, ERROR_BODY_LIMIT, timed()), this.unavailable(), Boolean(authorization));
       signal.throwIfAborted();
       if (authorization && this.memberCredential?.authorization !== authorization) throw new Error("Member Auto credential changed.");
       this.cachedStatus = { key, expiresAt: Date.now() + STATUS_CACHE_MS, value };

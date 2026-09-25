@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import type { UIMessage } from "ai";
+import { replyModelFromInfo } from "./reply-model";
 import type { FilePart, Part, TextPart, ToolPart } from "@opencode-ai/sdk/v2/client";
 
 import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
@@ -175,9 +176,12 @@ export function snapshotToUIMessages(snapshot: Pick<OpenworkSessionSnapshot, "me
     const uiMessage = {
       id: message.info.id,
       role: message.info.role,
-      ...(typeof created === "number" || typeof parentID === "string"
-        ? { metadata: { opencode: { ...(typeof created === "number" ? { created } : {}), ...(typeof completed === "number" ? { completed } : {}), ...(typeof parentID === "string" ? { parentID } : {}) } } }
-        : {}),
+      metadata: { opencode: {
+        ...(typeof created === "number" ? { created } : {}),
+        ...(typeof completed === "number" ? { completed } : {}),
+        ...(typeof parentID === "string" ? { parentID } : {}),
+        ...(replyModelFromInfo(message.info) ? { replyModel: replyModelFromInfo(message.info) } : {}),
+      } },
       parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
         if (part.type === "text") {
           const mapped = textPartToUIPart(part);

@@ -2,7 +2,7 @@ import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { InferenceKeyTable, MemberTable, OrganizationTable, OrgSubscriptionTable } from "@openwork-ee/den-db"
 import { assertManagedModelsAllowed } from "@openwork/types/den/managed-models-policy"
-import { freeInferenceOrganizationAllowed, inferenceSubscribed, inferenceSubscriptionLive } from "@openwork/types/den/inference"
+import { freeInferenceDefaultPinned, freeInferenceOrganizationAllowed, inferenceSubscribed, inferenceSubscriptionLive } from "@openwork/types/den/inference"
 import { db, freeAutoDatabase } from "../../db.js"
 
 type InferenceKeyRow = typeof InferenceKeyTable.$inferSelect
@@ -49,4 +49,12 @@ export async function memberFreePrincipalAllowed(principal: FreePrincipal, datab
   if (principal.kind !== "member") return true
   const row = await memberFreePrincipalRow(principal, database)
   return Boolean(row && row.userId === principal.id && freeOrganization(row.metadata, row.subscription))
+}
+
+/** Whether the organization pins Auto for its members. Guests always see Auto pinned. */
+export async function readFreePrincipalDefaultPinned(principal: FreePrincipal, database: Database = freeAutoDatabase()): Promise<boolean> {
+  if (principal.kind !== "member") return true
+  const row = await memberFreePrincipalRow(principal, database)
+  if (!row || row.userId !== principal.id || !freeOrganization(row.metadata, row.subscription)) throw new Error("free_principal_rejected")
+  return freeInferenceDefaultPinned(row.metadata)
 }

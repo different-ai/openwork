@@ -869,7 +869,7 @@ describe("cloud provider sync in server-capability mode", () => {
     } finally { store.dispose(); }
   });
 
-  test("maps imported provider status by cloud provider id", async () => {
+  test("maps imported provider status and ordered authorized pins by cloud provider id", async () => {
     const storage = installWindow({ origin: "https://self-hosted.example" });
     installCloudSession(storage);
     const requests: RecordedRequest[] = [];
@@ -881,14 +881,13 @@ describe("cloud provider sync in server-capability mode", () => {
         name: "Team OpenAI",
         source: "custom",
         updatedAt: "2026-08-04T00:00:00.000Z",
-        modelIds: ["gpt-test"],
+        modelIds: ["gpt-test", "gpt-second"],
+        pinnedModelIds: ["gpt-second", "not-granted", "gpt-test", "gpt-second"],
         importedAt: 123,
       }],
     });
     const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
-
     await store.refreshImportedCloudProviders();
-
     expect(store.getSnapshot().importedCloudProviders.cloud_1).toEqual({
       cloudProviderId: "cloud_1",
       providerId: "lpr_cloud_1",
@@ -896,7 +895,8 @@ describe("cloud provider sync in server-capability mode", () => {
       name: "Team OpenAI",
       source: "custom",
       updatedAt: "2026-08-04T00:00:00.000Z",
-      modelIds: ["gpt-test"],
+      modelIds: ["gpt-test", "gpt-second"],
+      pinnedModelIds: ["gpt-second", "gpt-test"],
       importedAt: 123,
     });
   });

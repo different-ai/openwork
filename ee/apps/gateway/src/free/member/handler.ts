@@ -8,7 +8,7 @@ import { createFreeAllowanceStore, type FreeAllowanceStore } from "../shared/all
 import { FREE_OPENAI_CHAT_URL, type AutoConfig } from "../shared/config.js"
 import { dispatchFreeCompletion } from "../shared/dispatch.js"
 import { freeError, FreeRequestError } from "../shared/errors.js"
-import { findMemberFreePrincipal } from "../shared/principal.js"
+import { findMemberFreePrincipal, readFreePrincipalDefaultPinned } from "../shared/principal.js"
 import { FreeAutoBusyError } from "../shared/capacity.js"
 import { prepareFreeRequest, readFreeRequest } from "../shared/request.js"
 import type { InferenceKeyRow } from "../../middleware/inference-auth.js"
@@ -21,12 +21,13 @@ export type FreeMemberDependencies = {
   store: FreeAllowanceStore;
   fetch: typeof fetch;
   findMember: typeof findMemberFreePrincipal;
+  defaultPinned: typeof readFreePrincipalDefaultPinned;
   usageLog?: { insert: InsertRequestLog; update?: UpdateRequestLog; reporter?: InferenceReporter };
 }
 function defaults(): FreeMemberDependencies {
   const config = env.freeAuto
   return { config, store: createFreeAllowanceStore(config, "member"), fetch: createInferenceEgressFetch(), findMember: findMemberFreePrincipal,
-    usageLog: { insert: insertRequestLogIntoDb, update: updateRequestLogInDb } }
+    defaultPinned: readFreePrincipalDefaultPinned, usageLog: { insert: insertRequestLogIntoDb, update: updateRequestLogInDb } }
 }
 function disabled() {
   return Response.json({ error: { message: "OpenWork Models are not enabled for this organization.", type: "invalid_request_error", code: "inference_disabled" } },
@@ -52,7 +53,7 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
       }
       if (method === "GET" && path === MEMBER_FREE_STATUS_PATH) {
         const status: DesktopFreeAccessStatus = { currentVersion: "", minimumVersion: null, providerID: DESKTOP_FREE_PROVIDER_ID,
-          modelID: DESKTOP_FREE_MODEL_ID, catalog: managedModelCatalog(), ...await store.read(principal, null) }
+          modelID: DESKTOP_FREE_MODEL_ID, catalog: managedModelCatalog(), defaultPinned: await dependencies.defaultPinned(principal), ...await store.read(principal, null) }
         return c.json(status, 200, { "cache-control": "no-store" })
       }
       if (method !== "POST" || path !== MEMBER_FREE_CHAT_PATH) return freeError(404, "not_found", "Only Auto is available without an OpenWork Models subscription.")

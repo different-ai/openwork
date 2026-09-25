@@ -72,7 +72,8 @@ function button(text: string) {
 async function click(text: string) { await act(async () => button(text).click()); }
 async function choose(name: string) {
   const title = Array.from(document.querySelectorAll<HTMLElement>("[title]")).find((node) => node.title === name);
-  const control = title?.closest("button");
+  // Picker rows are list options; palette-free surfaces still render plain buttons.
+  const control = title?.closest<HTMLElement>("[data-model-key], button");
   if (!control) throw new Error(`Missing model: ${name}`);
   await act(async () => control.click());
 }
@@ -246,36 +247,33 @@ test("Settings gateway OAuth row says Login", () => {
   expect(html).not.toContain(">Connect<");
 });
 
-test.each(["Favorites", "Recent", "Next"])("compact %s selection cannot bypass Login or record a recent model early", async (entry) => {
-  const selected: ModelRef[] = [];
-  const pending = options[0]!;
-  useModelCollectionsStore.setState({ favorites: entry === "Recent" ? [] : [pending], recent: entry === "Recent" ? [pending] : [] });
-  const before = useModelCollectionsStore.getState().recent;
-  const queryClient = new QueryClient();
-  await act(async () => root.render(<PlatformProvider value={createDefaultPlatform()}>
-    <QueryClientProvider client={queryClient}>
+function compactPicker(input: { selected: ModelRef[]; disabledProviders?: string[]; login?: () => Promise<boolean>; queryClient: InstanceType<typeof QueryClient> }) {
+  return <PlatformProvider value={createDefaultPlatform()}>
+    <QueryClientProvider client={input.queryClient}>
       <WorkspaceProvider client={null} selectedWorkspaceRoot="/fixture">
-        <GatewayModelAccessProvider providers={providers} scopeKey="org/session" login={async () => true}>
-          <ModelSelect open value={original} fallbackOptions={[localOption]} onOpenChange={() => undefined} onChange={(model) => selected.push(model)} />
+        <GatewayModelAccessProvider providers={providers} disabledProviders={input.disabledProviders} scopeKey="org/session" login={input.login ?? (async () => true)}>
+          <ModelSelect open value={original} fallbackOptions={[localOption]} onOpenChange={() => undefined} onChange={(model) => input.selected.push(model)} />
         </GatewayModelAccessProvider>
       </WorkspaceProvider>
     </QueryClientProvider>
-  </PlatformProvider>));
-  const rootButton = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-slot="model-select-root"] button')).find((node) => node.textContent?.startsWith(entry === "Recent" ? "Model" : "Favorites"));
-  if (!rootButton) throw new Error("Missing compact submenu");
-  await act(async () => rootButton.click());
-  const submenu = entry === "Recent"
-    ? Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-group"]')).find((group) => group.querySelector('[data-slot="command-group-label"]')?.textContent === "Recent")
-    : document.querySelector<HTMLElement>('[data-slot="model-favorites-submenu"]');
-  if (!submenu) throw new Error(`Missing ${entry} submenu`);
-  const choice = entry === "Next"
-    ? Array.from(submenu.querySelectorAll<HTMLButtonElement>("button")).find((node) => node.textContent?.startsWith("Next"))
-    : submenu.querySelector<HTMLElement>(`[data-model-key="${pending.providerID}:${pending.modelID}"]`);
+  </PlatformProvider>;
+}
+function group(label: string) {
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-group"]'))
+    .find((node) => node.querySelector('[data-slot="command-group-label"]')?.textContent === label);
+}
+
+test.each(["Pinned", "Recent"])("compact %s selection cannot bypass Login or record a recent model early", async (entry) => {
+  const selected: ModelRef[] = [];
+  const pending = options[0]!;
+  useModelCollectionsStore.setState({ favorites: entry === "Pinned" ? [pending] : [], recent: entry === "Recent" ? [pending] : [] });
+  const before = useModelCollectionsStore.getState().recent;
+  const queryClient = new QueryClient();
+  await act(async () => root.render(compactPicker({ selected, queryClient })));
+  const choice = group(entry)?.querySelector<HTMLElement>(`[data-model-key="${pending.providerID}:${pending.modelID}"]`);
   if (!choice) throw new Error(`Missing ${entry} model ${pending.modelID}`);
-  if (entry !== "Next") {
-    expect(choice.textContent).toContain("Personal");
-    expect(choice.textContent).toContain("Sign-in required");
-  }
+  expect(choice.textContent).toContain("Personal");
+  expect(choice.textContent).toContain("Sign-in required");
   await act(async () => choice.click());
   expect(document.body.textContent).toContain("Log in to this provider to use the models");
   expect(selected).toEqual([]);
@@ -285,46 +283,54 @@ test.each(["Favorites", "Recent", "Next"])("compact %s selection cannot bypass L
   queryClient.clear();
 });
 
-test("disabled pending-only provider retains Enable without allowing Login or manufacturing a connection", async () => {
+test("the palette's Next pinned model cannot bypass Login or record a recent model early", async () => {
+  const { CommandPalette } = await import("../src/react-app/shell/command-palette");
+  const pending = options[0]!;
+  useModelCollectionsStore.setState({ favorites: [pending], recent: [] });
   const selected: ModelRef[] = [];
-  const toggles: Array<[string, boolean]> = [];
-  let disabledProviders = [providers[0]!.providerId];
-  let starts = 0;
-  const render = () => root.render(picker({ selected, disabledProviders,
-    login: async () => { starts++; return true; },
-    onToggleProvider: (id, enabled) => { toggles.push([id, enabled]); disabledProviders = enabled ? [] : [id]; render(); },
-  }));
-  await act(async () => render());
-  expect(document.querySelector(`[title="${options[0]!.modelID}"]`)).toBeNull();
-  await click("Enable");
-  expect(toggles).toEqual([[providers[0]!.providerId, true]]);
-  expect(starts).toBe(0);
+  await act(async () => root.render(<PlatformProvider value={createDefaultPlatform()}>
+    <GatewayModelAccessProvider providers={providers} scopeKey="org/session" login={async () => true}>
+      <CommandPalette open developerMode={false} sessions={[]} selectedModel={original} modelOptions={[localOption, ...options]}
+        onSelectModel={(model) => selected.push(model)} onClose={() => undefined} onOpenSession={() => undefined}
+        onCreateNewSession={() => undefined} onOpenSettings={() => undefined} onOpenExtensions={() => undefined} />
+    </GatewayModelAccessProvider>
+  </PlatformProvider>));
+  const next = document.querySelector<HTMLElement>('[data-command-palette-item="models.next-pinned"]');
+  if (!next) throw new Error("Missing Next pinned model action");
+  await act(async () => next.click());
+  expect(document.body.textContent).toContain("Log in to this provider to use the models");
   expect(selected).toEqual([]);
+  expect(useModelCollectionsStore.getState().recent).toEqual([]);
+  await click("Cancel");
+  expect(selected).toEqual([]);
+});
+
+test("a disabled provider's pending models are not offered and cannot start Login until it is turned back on", async () => {
+  const selected: ModelRef[] = [];
+  let starts = 0;
+  const login = async () => { starts++; return true; };
+  await act(async () => root.render(picker({ selected, disabledProviders: [providers[0]!.providerId], login })));
+  expect(document.querySelector(`[data-model-key="${options[0]!.providerID}:${options[0]!.modelID}"]`)).toBeNull();
+  expect(document.body.textContent).not.toContain("Log in to this provider to use the models");
+  expect(starts).toBe(0);
+  await act(async () => root.render(picker({ selected, disabledProviders: [], login })));
   await choose("Personal");
   expect(document.body.textContent).toContain("Log in to this provider to use the models");
   expect(starts).toBe(0);
+  expect(selected).toEqual([]);
   await click("Cancel");
 });
 
-test("disabled pending and ready favorites/recents stay out of the compact picker", async () => {
+test("disabled pending and ready pins and recents stay out of the compact picker", async () => {
   const pending = options[0]!;
   useModelCollectionsStore.setState({ favorites: [pending, localOption], recent: [options[1]!] });
   const queryClient = new QueryClient();
   const selected: ModelRef[] = [];
   let starts = 0;
-  await act(async () => root.render(<PlatformProvider value={createDefaultPlatform()}>
-    <QueryClientProvider client={queryClient}><WorkspaceProvider client={null} selectedWorkspaceRoot="/fixture">
-      <GatewayModelAccessProvider providers={providers} disabledProviders={[pending.providerID, localOption.providerID]} scopeKey="org/session" login={async () => { starts++; return true; }}>
-        <ModelSelect open value={original} fallbackOptions={[localOption]} onOpenChange={() => undefined} onChange={(model) => selected.push(model)} />
-      </GatewayModelAccessProvider>
-    </WorkspaceProvider></QueryClientProvider>
-  </PlatformProvider>));
-  const favorites = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-slot="model-select-root"] button')).find((node) => node.textContent?.startsWith("Favorites"));
-  expect(favorites?.disabled).toBe(true);
-  const model = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-slot="model-select-root"] button')).find((node) => node.textContent?.startsWith("Model"));
-  if (!model) throw new Error("Missing model submenu");
-  await act(async () => model.click());
+  await act(async () => root.render(compactPicker({ selected, queryClient, disabledProviders: [pending.providerID, localOption.providerID], login: async () => { starts++; return true; } })));
   expect(document.querySelectorAll("[data-model-key]")).toHaveLength(0);
+  expect(group("Pinned")).toBeUndefined();
+  expect(group("Recent")).toBeUndefined();
   expect(starts).toBe(0);
   expect(selected).toEqual([]);
   queryClient.clear();
@@ -394,7 +400,7 @@ test("picker merges pending assignments without exposing the unconnected engine 
   function Probe() {
     const picker = useModelPicker({ client: null, baseUrl: "https://engine.example.test", workspaceRoot: "/fixture",
       fallbackOptions: [localOption], pendingProviders: providers, cloudProvidersEnabled: signedIn, disabledProviders });
-    displayed = picker.displayOptions;
+    displayed = picker.knownOptions;
     return <output>{picker.options.map((option) => option.modelID).join(",")}</output>;
   }
   const render = () => root.render(<QueryClientProvider client={queryClient}><Probe /></QueryClientProvider>);

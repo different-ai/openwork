@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { McpStatusMap } from "../types";
 import type { ConnectionActionIntent } from "@openwork/types/connection-action-app";
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
@@ -19,6 +20,10 @@ import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
 import type { DenOrgMarketplace, DenOrgPluginResolved, DenResourceSnapshot } from "./den-types";
 import type { CloudImportedMarketplace, CloudImportedPlugin, CloudImportedProvider } from "../cloud/import-state";
+import { desktopFreeAccessStatusSchema } from "./inference-access";
+
+const desktopFreePreferencesSchema = z.object({ enabled: z.boolean(), available: z.boolean(), canEnable: z.boolean(), refresh: z.enum(["reloaded", "deferred"]).optional() });
+export type DesktopFreePreferences = z.infer<typeof desktopFreePreferencesSchema>;
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -153,6 +158,7 @@ function parseCloudImportedProvider(value: unknown): CloudImportedProvider | nul
     !("name" in value) || typeof value.name !== "string" ||
     !("modelIds" in value) || !Array.isArray(value.modelIds) || !value.modelIds.every((item) => typeof item === "string")
   ) return null;
+  const modelIds = value.modelIds;
   return {
     cloudProviderId: value.cloudProviderId,
     providerId: value.providerId,
@@ -161,6 +167,8 @@ function parseCloudImportedProvider(value: unknown): CloudImportedProvider | nul
     source: "source" in value && typeof value.source === "string" ? value.source : null,
     updatedAt: "updatedAt" in value && typeof value.updatedAt === "string" ? value.updatedAt : null,
     modelIds: value.modelIds,
+    pinnedModelIds: "pinnedModelIds" in value && Array.isArray(value.pinnedModelIds)
+      ? [...new Set(value.pinnedModelIds.filter((id): id is string => typeof id === "string"))].filter((id) => modelIds.includes(id)) : [],
     ...("modelConfigVersion" in value && typeof value.modelConfigVersion === "number"
       ? { modelConfigVersion: value.modelConfigVersion } : {}),
     importedAt: "importedAt" in value && typeof value.importedAt === "number" ? value.importedAt : null,
@@ -1656,6 +1664,10 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
   return {
     baseUrl,
+    desktopFreePreferences: async () => desktopFreePreferencesSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preferences", { hostToken, timeoutMs: timeouts.config })),
+    setDesktopFreeEnabled: async (enabled: boolean) => desktopFreePreferencesSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preferences", { hostToken, method: "PUT", body: { enabled }, timeoutMs: timeouts.cloudMcpReconcile })),
+    desktopFreeStatus: async () => desktopFreeAccessStatusSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/status", { token, timeoutMs: 15_000 })),
+    desktopFreePreflight: async () => desktopFreeAccessStatusSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preflight", { token, method: "POST", timeoutMs: 15_000 })),
     token,
     health: () =>
       requestJson<{ ok: boolean; version: string; uptimeMs: number }>(baseUrl, "/health", { token, hostToken, timeoutMs: timeouts.health }),

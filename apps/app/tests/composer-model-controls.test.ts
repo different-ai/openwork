@@ -21,13 +21,14 @@ const providerAuthModalPath = fileURLToPath(
 describe("composer model controls", () => {
   test("picker inputs keep mobile text readable without timer-driven keyboard reopening", () => {
     const source = readFileSync(new URL("../src/components/model-select.tsx", import.meta.url), "utf8");
-    expect(source).toContain('autoFocus={false} placeholder="Search models..." className="h-9 text-base sm:text-base md:text-base lg:text-sm"');
-    expect(source).toContain("target?.focus({ preventScroll: true })");
-    expect(source).toContain("setPane(effortReturnPaneRef.current)");
-    expect(source).toContain('effortReturnPaneRef.current = pane === "favorites" ? "favorites" : "model"');
+    const list = readFileSync(new URL("../src/react-app/domains/models/model-picker-list.tsx", import.meta.url), "utf8");
+    expect(source).toContain("autoFocusSearch={false}");
+    expect(list).toContain('placeholder="Search models…" className="h-8 text-base sm:text-base md:text-base lg:text-sm"');
+    expect(source).toContain("?.focus({ preventScroll: true })");
+    expect(source).toContain("setEffort(false)");
     expect(source).not.toContain("requestAnimationFrame");
     const fullPicker = readFileSync(new URL("../src/react-app/domains/session/modals/model-picker-modal.tsx", import.meta.url), "utf8");
-    expect(fullPicker).toContain("text-base lg:text-sm");
+    expect(fullPicker).toContain("<ModelPickerList");
     expect(fullPicker).toContain("initialFocus={() => isMobile ? titleRef.current : searchInputRef.current}");
     expect(fullPicker).not.toContain("requestAnimationFrame");
   });
@@ -44,7 +45,7 @@ describe("composer model controls", () => {
     expect(modelSelect).toContain("disabled={props.steering}");
     expect(modelSelect).not.toContain("disabled={props.busy}");
     expect(modelSelect).toContain("behaviorOptions={props.modelBehaviorOptions}");
-    expect(modelSelectSource).toContain("setThinkingFor(option)");
+    expect(modelSelectSource).toContain("setEffort(true)");
     expect(modelSelectSource).not.toContain("setThinkingOpen(true)");
     expect(modelSelectSource).toContain('data-slot="model-thinking-submenu"');
     expect(modelSelectSource).not.toContain("onMouseEnter");
@@ -54,10 +55,13 @@ describe("composer model controls", () => {
     expect(fullPicker).toContain("store.setModel(modelPickerSessionId, model, value)");
     expect(fullPicker).toContain("store.setVariant(modelPickerSessionId, value)");
     const behaviorCallback = fullPicker.slice(fullPicker.indexOf("onBehaviorChange="), fullPicker.indexOf("onToggleProvider="));
-    expect(behaviorCallback).toContain("modelVariant: value");
+    expect(behaviorCallback).toContain("changeNewTaskModel(model, value)");
     expect(behaviorCallback).not.toContain("defaultModel:");
     const favoriteCycle = sessionRouteSource.slice(sessionRouteSource.indexOf("const cycleFavoriteModel ="), sessionRouteSource.indexOf("const cycleFavoriteModelControlAction"));
-    expect(favoriteCycle).toContain("sanitizeModelBehaviorValue(next.providerID, providerModel, selection ? selection.variant : modelVariantValue)");
+    const paletteModels = readFileSync(new URL("../src/react-app/shell/command-palette-models.ts", import.meta.url), "utf8");
+    expect(paletteModels).toContain("option.behaviorOptions?.some((choice) => choice.value === input.behavior)");
+    expect(favoriteCycle).toContain("useModelPickerCatalogStore.getState().bySession[activeSessionId]?.options");
+    expect(favoriteCycle).toContain("else changeNewTaskModel(next, variant)");
     expect(favoriteCycle).not.toContain("getModelBehaviorSummary");
   });
 
@@ -86,7 +90,7 @@ describe("composer model controls", () => {
     const sessionProviderAuthSource = readFileSync(sessionProviderAuthPath, "utf8");
 
     expect(sessionRouteSource).toContain('await refreshCloudProviderSync("manual");');
-    expect(sessionRouteSource).toContain("applyLastUsedModelToSession(session.id)");
+    expect(sessionRouteSource).toContain("applyWorkspaceDefaultToSession(session.id, endpoint)");
     expect(sessionProviderAuthSource).toContain(
       "setCompletedCloudProviderSync({ context: cloudProviderSyncContext, providerList });",
     );

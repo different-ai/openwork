@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { afterAll, beforeAll, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, expect, mock, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -186,6 +186,60 @@ function composerContext(): NewTaskComposerContext {
   };
 }
 
+test("signed-out first use keeps its heading and chips above the composer, reports verified free access, and never sends on chip or provider actions", async () => {
+  window.localStorage.clear();
+  const { SessionEmptyHero } = await import("../src/react-app/domains/session/chat/session-empty-hero");
+  const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+  const { WorkspaceProvider } = await import("../src/react-app/shell/workspace-provider");
+  const { PlatformProvider, createDefaultPlatform } = await import("../src/react-app/kernel/platform");
+  const { LocalProvider } = await import("../src/react-app/kernel/local-provider");
+  const { ShellConfigProvider } = await import("../src/react-app/shell/shell-config");
+  const { autoAccessStatusQueryKey } = await import("../src/react-app/domains/cloud/auto-access-ui");
+  const { unavailableDesktopFreeStatus } = await import("../src/app/lib/inference-access");
+  const auth = await import("../src/react-app/domains/cloud/den-auth-provider");
+  const policy = await import("../src/react-app/domains/cloud/desktop-config-provider");
+  const mobile = await import("../src/hooks/use-mobile");
+  const signedOut: ReturnType<typeof auth.useDenAuth> = { status: "signed_out", isSignedIn: false, user: null, verifiedIdentity: null, error: null, refresh: async () => {} };
+  const spies = [spyOn(auth, "useDenAuth").mockReturnValue(signedOut), spyOn(policy, "useCheckDesktopRestriction").mockReturnValue(() => false),
+    spyOn(policy, "useOrgRestrictions").mockReturnValue({}), spyOn(mobile, "useIsMobile").mockReturnValue(false)];
+  const client = new QueryClient();
+  const key = autoAccessStatusQueryKey(signedOut, undefined, workspaceId);
+  client.setQueryData(key, { ...unavailableDesktopFreeStatus(), state: "ready", minimumVersion: "1.0.0", allowance: { limitUsd: 1, usedUsd: 0, reservedUsd: 0, remainingUsd: 1, resetsAt: "2026-09-28T00:00:00Z" } });
+  let sends = 0; let connects = 0;
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<PlatformProvider value={createDefaultPlatform()}><QueryClientProvider client={client}><WorkspaceProvider client={null} workspaceId={workspaceId} selectedWorkspaceRoot="/workspace"><LocalProvider><ShellConfigProvider>
+      <SessionEmptyHero providerCount={1} composer={{ ...composerContext(), selectedModel: { providerID: "openwork-free", modelID: "openai/gpt-5.6-luna" } }} onRunTask={() => { sends++; }} onOpenProviderAuth={() => { connects++; }} />
+    </ShellConfigProvider></LocalProvider></WorkspaceProvider></QueryClientProvider></PlatformProvider>));
+    expect(container.querySelector("h2")?.textContent).toBe("What should we work on?");
+    expect(container.querySelectorAll("[data-empty-suggestions] button")).toHaveLength(3);
+    const intro = container.querySelector("[data-empty-introduction]");
+    const dock = container.querySelector("[data-empty-composer-dock]");
+    expect(intro?.nextElementSibling).toBe(dock);
+    expect(container.textContent).toContain("Auto is free on this device. No account needed.");
+    expect(container.querySelector('[data-testid="first-use-local-caption"]')?.textContent).toContain("Files stay on this device.");
+    expect(container.textContent).toContain("to sync your Library.");
+    expect(container.textContent).not.toContain("while it sleeps");
+    await act(async () => container.querySelector<HTMLButtonElement>("[data-empty-suggestions] button")?.click());
+    expect(latestEditor?.draft).toContain("Summarize the files in this folder");
+    const connect = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Connect your own provider");
+    await act(async () => connect?.click());
+    expect(connects).toBe(1); expect(sends).toBe(0);
+    await act(async () => client.setQueryData(key, { ...unavailableDesktopFreeStatus(), state: "unavailable" }));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(container.textContent).not.toContain("No account needed");
+    expect(sends).toBe(0);
+  } finally {
+    await act(async () => root.unmount()); container.remove(); client.clear();
+    const { clearSessionDraft, NEW_TASK_DRAFT_SESSION_ID } = await import("../src/react-app/domains/session/sync/draft-store");
+    const { useComposerStateStore } = await import("../src/react-app/domains/session/surface/composer-state-store");
+    clearSessionDraft(draftScope, workspaceId, NEW_TASK_DRAFT_SESSION_ID);
+    useComposerStateStore.getState().clearSession(composerContext().draftOwnerKey ?? "");
+    for (const spy of spies) spy.mockRestore();
+  }
+});
+
 test("keystrokes typed while a new-task send is in flight do not pre-fill the next New task composer", async () => {
   window.localStorage.clear();
   const [
@@ -269,8 +323,8 @@ test("keystrokes typed while a new-task send is in flight do not pre-fill the ne
 
   try {
     await act(async () => root.render(tree));
-    expect(container.querySelector("h2")?.textContent).toBe("What do you need done?");
-    expect(container.textContent).not.toContain("Describe it in plain language");
+    expect(container.querySelector("h2")?.textContent).toBe("What should we work on?");
+    expect(container.textContent).toContain("Describe it in plain language. OpenWork works on the files in this folder.");
 
     // #4796: an unsent prompt is persisted so it survives navigation.
     await type("Summarize the deploy checklist");

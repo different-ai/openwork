@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, mock, test } from "bun:test"
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
 import type { UIMessage } from "ai"
 import { act } from "react"
 import { createRoot } from "react-dom/client"
 import { renderToStaticMarkup } from "react-dom/server"
+import { PlatformProvider, createDefaultPlatform } from "../src/react-app/kernel/platform"
 
 import { MessageList } from "../src/components/chat/message-list"
 import { TaskRecovery } from "../src/components/chat/task-recovery"
@@ -627,10 +628,10 @@ describe("session error technical details", () => {
     },
   }
 
-  const renderErrorTranscript = (error: unknown, developerMode: boolean) => {
+  const renderErrorTranscript = (error: unknown, developerMode: boolean, messages?: UIMessage[]) => {
     const message = createSessionErrorUIMessage("assistant-turn", presentOpencodeSessionError(error))
     return renderToStaticMarkup(
-      <MessageListProvider
+      <PlatformProvider value={createDefaultPlatform()}><MessageListProvider
         workspaceId="workspace-1"
         sessionId="session-1"
         showThinking={false}
@@ -645,10 +646,25 @@ describe("session error technical details", () => {
         onMcpReconnect={async () => "connected"}
         onMcpReopenAuthorization={async () => undefined}
       >
-        <MessageList messages={[message]} status="ready" />
-      </MessageListProvider>,
+        <MessageList messages={messages ?? [message]} status="ready" />
+      </MessageListProvider></PlatformProvider>,
     )
   }
+
+  test("Auto rejection stays beside a dimmed unprocessed message with free sign-in and switch actions", async () => {
+    const auth = await import("../src/react-app/domains/cloud/den-auth-provider")
+    const spy = spyOn(auth, "useDenAuth").mockReturnValue({ status: "signed_out", user: null, verifiedIdentity: null, isSignedIn: false, error: null, refresh: async () => undefined })
+    try {
+      const html = renderErrorTranscript(null, false, [{ id: "not-sent", role: "user", metadata: { autoAccessWall: { state: "limit" }, unprocessed: true }, parts: [{ type: "text", text: "Unprocessed request" }] }])
+      expect(html).toContain('data-unprocessed="true"')
+      expect(html).toContain("opacity-50")
+      expect(html).toContain("This week’s free limit is used up")
+      expect(html).toContain("Sign in to OpenWork")
+      expect(html).toContain("Switch model")
+      expect(html).not.toMatch(/Upgrade|USD|View plans|automatically retry/)
+      expect(renderErrorTranscript({ code: "anonymous_limit_exceeded" }, false)).toContain('data-testid="auto-access-wall"')
+    } finally { spy.mockRestore() }
+  })
 
   test("end users see only the plain error card", () => {
     const html = renderErrorTranscript(providerFailure, false)

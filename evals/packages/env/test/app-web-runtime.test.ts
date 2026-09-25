@@ -4,7 +4,7 @@ import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isolatedRuntimeEnvironment, parseRemoteRuntime } from "../src/app-web-runtime.ts";
+import { appWebDenEnvironment, isolatedRuntimeEnvironment, parseRemoteRuntime } from "../src/app-web-runtime.ts";
 import { bootAppWebWorld } from "../../../../worlds/app-web.ts";
 
 test("seed app-web runtime remains isolated and Cloud-off", () => {
@@ -17,6 +17,43 @@ test("seed app-web runtime remains isolated and Cloud-off", () => {
   assert.equal(env.OPENWORK_VITE_CACHE_DIR, "/tmp/owned-fixture/cache/vite");
   assert.equal(env.OPENWORK_TOKEN, undefined);
   assert.equal(env.OPENWORK_HOST_TOKEN, undefined);
+});
+
+test("app-web engine overrides are isolated from ambient matrix selection", () => {
+  const previous = process.env.OPENWORK_EVAL_ENGINE;
+  try {
+    for (const ambient of [undefined, "v1", "v2"]) {
+      if (ambient === undefined) delete process.env.OPENWORK_EVAL_ENGINE;
+      else process.env.OPENWORK_EVAL_ENGINE = ambient;
+      assert.equal(isolatedRuntimeEnvironment("/tmp/owned-fixture").OPENWORK_ENGINE_V2_PREVIEW, ambient === "v2" ? "1" : "0");
+      for (const engine of ["v1", "v2"] satisfies Array<"v1" | "v2">) {
+        const env = isolatedRuntimeEnvironment("/tmp/owned-fixture", engine);
+        assert.equal(env.OPENWORK_ENGINE_V2_PREVIEW, engine === "v2" ? "1" : "0");
+        assert.equal(env.VITE_DISABLE_OPENWORK_MODELS, "1");
+        assert.equal(env.OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY, "0");
+        assert.equal(process.env.OPENWORK_EVAL_ENGINE, ambient);
+      }
+    }
+  } finally {
+    if (previous === undefined) delete process.env.OPENWORK_EVAL_ENGINE;
+    else process.env.OPENWORK_EVAL_ENGINE = previous;
+  }
+});
+
+test("app-web pins an explicit fixture Den without enabling hosted Cloud or seeding auth", () => {
+  assert.deepEqual(appWebDenEnvironment(), {});
+  const den = { apiUrl: "http://127.0.0.1:4101", webUrl: "http://127.0.0.1:4102" };
+  assert.deepEqual(appWebDenEnvironment(den), {
+    VITE_DEN_API_BASE_URL: den.apiUrl,
+    VITE_DEN_BASE_URL: den.webUrl,
+  });
+  const env = { ...isolatedRuntimeEnvironment("/tmp/owned-fixture"), ...appWebDenEnvironment(den) };
+  assert.equal(env.OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY, "0");
+  assert.equal(env.VITE_DISABLE_OPENWORK_MODELS, "1");
+  assert.equal(env.OPENWORK_TOKEN, undefined);
+  for (const apiUrl of ["file:///tmp/den", "http://user:secret@127.0.0.1:4101", "http://127.0.0.1:4101?token=secret"]) {
+    assert.throws(() => appWebDenEnvironment({ ...den, apiUrl }), /App-web Den addresses/);
+  }
 });
 
 test("remote runtime receipts preserve loopback identity and never expose malformed output", () => {

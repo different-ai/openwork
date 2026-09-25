@@ -1,4 +1,5 @@
 import type { UIMessage } from "ai";
+import { autoAccessWallFromError, autoAccessWallSchema, autoWallCopy, type AutoAccessWall } from "@/app/lib/inference-access";
 import { parseGatewayUsageError, gatewayUsageErrorEvidenceSchema, type GatewayUsageErrorEvidence } from "../../cloud/gateway-usage-state";
 
 import { safeStringify } from "../../../../app/utils";
@@ -19,6 +20,7 @@ export type OpencodeSessionErrorPresentation = {
    */
   connectUrl?: string | null;
   gatewayUsage?: GatewayUsageErrorEvidence;
+  autoAccessWall?: AutoAccessWall;
   providerId?: string | null;
 };
 
@@ -319,6 +321,11 @@ function technicalErrorDetails(error: unknown, fallback: string, fields: ReturnT
 }
 
 export function presentOpencodeSessionError(error: unknown, fallback = "Session failed"): OpencodeSessionErrorPresentation {
+  const wall = autoAccessWallFromError(error);
+  if (wall) {
+    const copy = autoWallCopy(wall, true);
+    return { kind: "generic", title: copy.title, description: copy.detail, technicalDetails: "", recoveryPrompt: null, autoAccessWall: wall };
+  }
   const fields = sessionErrorFields(error, fallback);
   const gatewayAuth = detectGatewayAuthRequired(error, fields);
   const gatewaySelection = safeStringify(error)?.includes("gateway_selection_required") === true;
@@ -364,6 +371,7 @@ export function sessionErrorPresentationFromUIMessage(message: UIMessage): Openc
   ) {
     return null;
   }
+  if (candidate.autoAccessWall !== undefined && !autoAccessWallSchema.safeParse(candidate.autoAccessWall).success) return null;
   if (candidate.gatewayUsage !== undefined && !gatewayUsageErrorEvidenceSchema.safeParse(candidate.gatewayUsage).success) return null;
   if (candidate.providerId !== undefined && candidate.providerId !== null && typeof candidate.providerId !== "string") return null;
   return candidate as OpencodeSessionErrorPresentation;

@@ -8,7 +8,7 @@ import {
   packagedActivatedLaunchWorld,
 } from "../worlds/packaged-first-launch.ts";
 
-const test = spec.world(packagedActivatedLaunchWorld, { timeout: 180_000 });
+const test = spec.world(packagedActivatedLaunchWorld, { needs: { env: ["OPENWORK_EVAL_ELECTRON_BINARY"] }, timeout: 180_000 });
 
 /**
  * The path existing enterprise customers take after an update: the bootstrap
@@ -23,7 +23,7 @@ const test = spec.world(packagedActivatedLaunchWorld, { timeout: 180_000 });
  * runs both against one binary.
  */
 const ACTIVATION_GATE_HEADING = "Link this app to your organization";
-const SESSION_HEADING = "What do you need done?";
+const SESSION_HEADING = "What should we work on?";
 
 /** Heading of the root error boundary's recovery screen (app-error-boundary.tsx). */
 const RECOVERY_HEADING = /OpenWork hit an unexpected error|OpenWork couldn't start/;

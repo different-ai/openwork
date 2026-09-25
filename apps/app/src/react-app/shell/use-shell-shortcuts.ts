@@ -22,6 +22,7 @@ import {
   type ThinkingModeShortcutDirection,
 } from "./thinking-mode-shortcut";
 import { isFavoriteModelShortcut } from "./favorite-model-shortcut";
+import { isCycleModelSourceShortcut } from "@/react-app/domains/models/model-catalog";
 import { isFastModeShortcut } from "./fast-mode-shortcut";
 
 export type UseShellShortcutsInput = {
@@ -32,6 +33,7 @@ export type UseShellShortcutsInput = {
   onPrevSessionTab?: () => void;
   onCycleThinkingMode?: (direction: ThinkingModeShortcutDirection) => void;
   onCycleFavoriteModel?: () => void;
+  onCycleModelSource?: () => void;
   onToggleFastMode?: () => void;
 };
 
@@ -122,6 +124,12 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
   //   Ctrl+Shift+F (macOS) / Ctrl+Alt+F (Windows/Linux) -> toggle Fast
   //   Cmd/Ctrl+1–9      -> matching visible sidebar session
   const handleGlobalShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (event.defaultPrevented) return;
+    if (isCycleModelSourceShortcut(event)) {
+      event.preventDefault();
+      if (!event.repeat) input.onCycleModelSource?.();
+      return;
+    }
     if (isFavoriteModelShortcut(event)) {
       event.preventDefault();
       if (!event.repeat) onCycleFavoriteModel?.();

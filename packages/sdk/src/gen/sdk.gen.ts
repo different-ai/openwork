@@ -291,6 +291,8 @@ import type {
   GetV1InferenceAnalyticsConsumptionResponses,
   GetV1InferenceAnalyticsSettingsResponses,
   GetV1InferenceErrors,
+  GetV1InferenceFreeProviderErrors,
+  GetV1InferenceFreeProviderResponses,
   GetV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors,
   GetV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses,
   GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors,
@@ -524,6 +526,8 @@ import type {
   PatchV1GatewayUsageLimitPoliciesByPolicyIdResponses,
   PatchV1InferenceAnalyticsSettingsResponses,
   PatchV1InferenceErrors,
+  PatchV1InferenceFreePinsErrors,
+  PatchV1InferenceFreePinsResponses,
   PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors,
   PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses,
   PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors,
@@ -4114,6 +4118,47 @@ export class DenClient extends HeyApiClient {
       PutV1DiagnosticsEgressTokenErrors,
       ThrowOnError
     >({ url: "/v1/diagnostics/egress/token", ...options });
+  }
+
+  /**
+   * Get organization Free provider summary
+   *
+   * Admins only. Returns the organization's Auto pin policy, joined-member allowance counts and recorded free usage attributed to this organization. Allowances are person-wide; usage totals exclude other organizations, anonymous devices and paid inference. No individual balances or identities are returned.
+   */
+  public getV1InferenceFreeProvider<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetV1InferenceFreeProviderResponses,
+      GetV1InferenceFreeProviderErrors,
+      ThrowOnError
+    >({ url: "/v1/inference/free/provider", ...options });
+  }
+
+  /**
+   * Set the organization Auto pin
+   *
+   * A fresh owner/admin session may change only defaultPinned. Unpinning changes picker curation, not free model availability or personal pins. The atomic metadata update preserves DPA, offerAllowed and all unrelated organization configuration.
+   */
+  public patchV1InferenceFreePins<ThrowOnError extends boolean = false>(
+    parameters: {
+      defaultPinned: boolean;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "defaultPinned" }] }]);
+    return (options?.client ?? this.client).patch<
+      PatchV1InferenceFreePinsResponses,
+      PatchV1InferenceFreePinsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference/free/pins",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
   }
 
   /**

@@ -172,6 +172,25 @@ test("test evidence records the selected engine in JSON and the HTML header", as
   }
 });
 
+test("test evidence records a world-owned engine without changing the ambient engine", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openwork-test-evidence-world-engine-"));
+  const previous = process.env.OPENWORK_EVAL_ENGINE;
+  process.env.OPENWORK_EVAL_ENGINE = "v1";
+  try {
+    const testEvidence = createTestEvidence({ name: "world engine", outDir: dir });
+    testEvidence.setEngine("v2");
+    await testEvidence.close();
+    assert.equal((await payload(dir)).engine, "v2");
+    assert.match(await readFile(join(dir, "index.html"), "utf8"), /engine v2/);
+    assert.equal(process.env.OPENWORK_EVAL_ENGINE, "v1");
+    assert.throws(() => testEvidence.setEngine("v1"), /closed/);
+  } finally {
+    if (previous === undefined) delete process.env.OPENWORK_EVAL_ENGINE;
+    else process.env.OPENWORK_EVAL_ENGINE = previous;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("test evidence records the sandbox ref next to the runner gitSha under Daytona placement only", async () => {
   const dir = await mkdtemp(join(tmpdir(), "openwork-test-evidence-ref-"));
   const previous = {

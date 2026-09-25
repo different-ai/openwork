@@ -81,8 +81,11 @@ export type ProviderAuthModalProps = {
     code?: string,
   ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   onRefreshProviders?: () => Promise<unknown>;
-  showOpenWorkModelsSubscribe?: boolean;
-  onSubscribeOpenWorkModels?: () => void | Promise<void>;
+  openWorkModelsState?: "included" | "off" | "unavailable";
+  organizationName?: string;
+  organizationProviderIds?: ReadonlySet<string>;
+  organizationProviderCount?: number;
+  onOpenDen?: () => void;
   onClose: () => void;
 };
 
@@ -91,7 +94,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const isRemoteWorker = workerType === "remote";
 
   const [view, setView] = useState<
-    "list" | "method" | "api" | "oauth-code" | "oauth-auto" | "openwork-subscribe"
+    "list" | "method" | "api" | "oauth-code" | "oauth-auto"
   >("list");
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [apiKeyInput, setApiKeyInput] = useState("");
@@ -205,22 +208,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       })
       .sort(compareProviders);
 
-    if (props.showOpenWorkModelsSubscribe) {
-      const connectedToOpenWork = connected.has(OPENWORK_MODELS_PROVIDER_ID);
-      return [
-        {
-          id: OPENWORK_MODELS_PROVIDER_ID,
-          name: "OpenWork",
-          methods: [{ type: "cloud", label: "Subscribe" }],
-          connected: connectedToOpenWork,
-          env: [],
-        },
-        ...nextEntries.filter((entry) => entry.id.trim().toLowerCase() !== OPENWORK_MODELS_PROVIDER_ID),
-      ];
-    }
-
-    return nextEntries;
-  }, [isRemoteWorker, props.authMethods, props.connectedProviderIds, props.gatewayProviderIds, props.providers, props.showOpenWorkModelsSubscribe]);
+    return nextEntries.filter((entry) => entry.id !== OPENWORK_MODELS_PROVIDER_ID && entry.id !== "openwork-free");
+  }, [isRemoteWorker, props.authMethods, props.connectedProviderIds, props.gatewayProviderIds, props.providers]);
 
   const selectedEntry = useMemo(
     () => entries.find((entry) => entry.id === selectedProviderId) ?? null,
@@ -538,10 +527,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       return;
     }
 
-    if (method.type === "cloud") {
-      setView("openwork-subscribe");
-      return;
-    }
+    if (method.type === "cloud") return;
 
     setView("api");
   };
@@ -551,11 +537,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     setSelectedProviderId(entry.id);
     returnProviderIdRef.current = entry.id;
-
-    if (props.showOpenWorkModelsSubscribe && entry.id.trim().toLowerCase() === OPENWORK_MODELS_PROVIDER_ID) {
-      setView("openwork-subscribe");
-      return;
-    }
 
     if (entry.methods.length === 1) {
       void handleMethodSelect(entry.methods[0], entry);
@@ -606,11 +587,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const handleBack = () => {
-    if (resolvedView === "openwork-subscribe") {
-      resetState();
-      return;
-    }
-
     if (resolvedView === "oauth-code" || resolvedView === "oauth-auto") {
       if ((selectedEntry?.methods.length ?? 0) > 1) {
         setView("method");
@@ -693,9 +669,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     if (method.type === "oauth") {
       return "Continue in the browser and let OpenWork finish the connection automatically.";
     }
-    if (method.type === "cloud") {
-      return "Subscribe to OpenWork Models.";
-    }
+    if (method.type === "cloud") return "Managed by your organization.";
     if (isOpencodeZenProvider(entry.id)) {
       return "Sign in to OpenCode Zen with an API key to unlock paid models alongside the free tier.";
     }
@@ -713,10 +687,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
         initialFocus={() => isMobile ? titleRef.current : searchInputRef.current ?? titleRef.current}
         className="flex max-h-[calc(100vh-2rem)] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle ref={titleRef} tabIndex={-1}>Connect providers</DialogTitle>
-          <DialogDescription>
-            Sign in to services or use providers managed by your organization.
-          </DialogDescription>
+          <DialogTitle ref={titleRef} tabIndex={-1}>Connect a provider</DialogTitle>
+          <DialogDescription className="sr-only">Add a key to this device. Organization providers are managed in Den.</DialogDescription>
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -753,17 +725,24 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     />
                   </div>
 
+                  {(!searchQuery.trim() || "OpenWork Models Auto".toLowerCase().includes(searchQuery.trim().toLowerCase())) && (props.openWorkModelsState || props.connectedProviderIds.includes("openwork-free")) ? (
+                    <div className="flex items-center gap-3 border-b border-border px-3 py-3" data-testid="included-openwork-provider">
+                      <ProviderIcon providerId="openwork" size={20} />
+                      <div className="min-w-0 flex-1"><div className="text-sm font-medium">OpenWork Models</div><div className="text-xs text-muted-foreground">Auto · Free · No key needed</div></div>
+                      <span className="text-xs text-muted-foreground">{props.openWorkModelsState === "off" ? "Turned off in settings" : props.openWorkModelsState === "unavailable" ? "Unavailable on this device" : "Included"}</span>
+                    </div>
+                  ) : null}
                   {filteredEntries.length ? (
                     filteredEntries.map((entry, index) => (
                       <div key={entry.id}>
                         {index === 0 && entry.connected ? (
                           <div className="px-1 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-10">
-                            Connected
-                          </div>
+                             On this device
+                           </div>
                         ) : null}
                         {index === connectedCount && !entry.connected ? (
                           <div className="px-1 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-10">
-                            {connectedCount ? "All providers" : "Providers"}
+                             Available to add
                           </div>
                         ) : null}
                         <button
@@ -809,6 +788,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                               {entry.id}
                             </div>
 
+                            {props.organizationProviderIds?.has(entry.id) ? <div className="mt-1 text-xs text-muted-foreground">Also available from {props.organizationName || "your organization"}</div> : null}
                             <div className="mt-2 flex flex-wrap gap-1.5">
                               {entry.methods.map((method) => (
                                 <span
@@ -932,26 +912,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                 </div>
               ) : null}
 
-              {resolvedView === "openwork-subscribe" && selectedEntry ? (
-                <div className="rounded-xl border border-blue-6/50 bg-blue-2/25 shadow-sm p-5 space-y-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <div className="text-sm font-medium text-gray-12">OpenWork Models</div>
-                      <div className="text-xs text-gray-10 mt-1">
-                        Frontier intelligence, hand picked for your team&apos;s most ambitious work.
-                      </div>
-                    </div>
-                    <Button variant="ghost" onClick={handleBack} disabled={actionDisabled}>
-                      Back
-                    </Button>
-                  </div>
-                  <div className="flex items-center justify-end">
-                    <Button onClick={() => void props.onSubscribeOpenWorkModels?.()} disabled={actionDisabled}>
-                      Subscribe
-                    </Button>
-                  </div>
-                </div>
-              ) : null}
 
               {resolvedView === "oauth-code" && selectedEntry && oauthSession ? (
                 <div className="rounded-xl border border-gray-6/40 bg-gray-2/50 shadow-sm p-5 space-y-4">
@@ -1079,6 +1039,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
         </div>
 
         <DialogFooter className="shrink-0 flex-col gap-3">
+          {resolvedView === "list" && props.organizationProviderCount !== undefined ? <div className="flex w-full items-center justify-between gap-3 text-xs text-muted-foreground"><span>{props.organizationProviderCount} providers from {props.organizationName || "your organization"}</span>{props.onOpenDen ? <Button size="sm" variant="ghost" onClick={props.onOpenDen}>Manage in Den</Button> : null}</div> : null}
           <div className="min-h-[16px] text-xs text-gray-10">
             {props.submitting ? submittingLabel() : null}
           </div>

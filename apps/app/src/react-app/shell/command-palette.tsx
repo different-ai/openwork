@@ -31,13 +31,19 @@ import {
 import { Button } from "@/components/ui/button";
 import { ChevronLeftIcon } from "lucide-react";
 import type { ModelOption, ModelRef } from "@/app/types";
-import { useGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
+import { useModelChoice } from "@/react-app/domains/models/use-model-catalog";
 import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { usePlatform } from "../kernel/platform";
+import { ModelSourceIcon } from "@/react-app/domains/models/model-picker-list";
+import { ProviderIcon } from "../design-system/provider-icon";
+import { resolveExtensionIconSrc } from "../design-system/extension-icon-src";
+import { isAutoModel, modelTitle, publicModelTitle } from "@/react-app/domains/models/model-catalog";
+import { useModelCollectionsStore } from "../domains/session/models/model-collections-store";
 import {
   buildCommandPaletteBehaviorItems,
   buildCommandPaletteModelItems,
   commandPaletteBackMode,
+  createCommandPaletteModelControls,
   type CommandPaletteMode,
 } from "./command-palette-models";
 import { buildCommandPaletteSplitSessions, type CommandPaletteSessionRef } from "./command-palette-sessions";
@@ -115,7 +121,9 @@ export type CommandPaletteProps = {
   modelOptions?: ModelOption[];
   selectedModel?: ModelRef;
   selectedModelBehavior?: string | null;
-  onSelectModel?: (model: ModelRef, behavior: string | null) => void;
+  onSelectModel?: (model: ModelRef, behavior?: string | null) => void;
+  onNextPinnedModel?: () => void;
+  onCycleModelSource?: () => void;
   /** Optional — open a URL in the user's browser. Falls back to window.open. */
   onOpenUrl?: (url: string) => void;
   /** Optional: current session servers/artifacts exposed through Cmd/Ctrl+K. */
@@ -199,6 +207,15 @@ export function CommandPalette(props: CommandPaletteProps) {
   const sessionGroupCount = props.sessionGroups?.length ?? 0;
   const canMoveCurrentSessionToGroup = Boolean(props.currentSessionForGroupMove && props.onMoveCurrentSessionToGroup);
   const hasNestedModelPicker = props.modelOptions !== undefined && props.onSelectModel !== undefined;
+  const favorites = useModelCollectionsStore((state) => state.favorites);
+  const recentModels = useModelCollectionsStore((state) => state.recent);
+  const choice = useModelChoice(JSON.stringify([props.selectedModel, props.selectedModelBehavior]));
+  const modelControls = createCommandPaletteModelControls({ options: props.modelOptions ?? [], current: props.selectedModel,
+    behavior: props.selectedModelBehavior, favorites, onSelect: (model, behavior, option) => {
+      choice.choose(option, () => props.onSelectModel?.(model, behavior));
+    } });
+  const currentModelOption = props.modelOptions?.find((option) => option.providerID === props.selectedModel?.providerID && option.modelID === props.selectedModel.modelID);
+  const currentModelTitle = currentModelOption ? publicModelTitle(currentModelOption) : undefined;
   // Organization policy (`allowControlSettings`) can hide desktop settings;
   // the settings palette entries follow the same allow-list as the settings nav.
   const checkDesktopRestriction = useCheckDesktopRestriction();
@@ -242,10 +259,18 @@ export function CommandPalette(props: CommandPaletteProps) {
           },
         }]
       : []),
+    ...(hasNestedModelPicker || props.onNextPinnedModel ? [{ id: "models.next-pinned", title: "Next pinned model", shortcut: "Ctrl+Shift+M", group: ACTIONS_GROUP,
+      detail: modelControls.nextPinnedOption ? [currentModelTitle, modelTitle(modelControls.nextPinnedOption)].filter(Boolean).join(" → ") : "No alternative pinned model",
+      disabled: !modelControls.nextPinnedOption,
+      action: () => { (props.onNextPinnedModel ?? modelControls.onNextPinnedModel)(); props.onClose(); } }] : []),
+    ...(hasNestedModelPicker || props.onCycleModelSource ? [{ id: "models.next-source", title: "Cycle model source", shortcut: "Ctrl+Alt+M", group: ACTIONS_GROUP,
+      detail: modelControls.sourceCycleDetail || "No accessible model sources", disabled: !modelControls.nextSourceOption,
+      action: () => { (props.onCycleModelSource ?? modelControls.onCycleModelSource)(); props.onClose(); } }] : []),
     ...(hasNestedModelPicker || props.onOpenModelPicker
       ? [{
           id: "models",
           title: "Models",
+          meta: currentModelTitle,
           detail: "Choose the LLM that runs your next prompts",
           searchText: "model models llm provider openai anthropic claude gpt gemini switch pick select default",
           group: ACTIONS_GROUP,
@@ -326,7 +351,7 @@ export function CommandPalette(props: CommandPaletteProps) {
         openUrl("https://openwork.dev/feedback");
       },
     },
-  ], [accessibleTargetCount, canMoveCurrentSessionToGroup, hasNestedModelPicker, props, sessionGroupCount]);
+  ], [accessibleTargetCount, canMoveCurrentSessionToGroup, hasNestedModelPicker, props, sessionGroupCount, currentModelTitle, modelControls]);
 
   const settingsItems = useMemo(
     () => buildCommandPaletteSettingsItems({
@@ -509,9 +534,8 @@ export function CommandPalette(props: CommandPaletteProps) {
     }))
   ), [props]);
 
-  const gatewaySelection = useGatewayModelSelection(JSON.stringify([props.selectedModel, props.selectedModelBehavior]));
   const modelItems = useMemo<PaletteItem[]>(() => (
-    buildCommandPaletteModelItems(props.modelOptions ?? [], props.selectedModel).map((item) => ({
+    buildCommandPaletteModelItems(props.modelOptions ?? [], props.selectedModel, favorites, recentModels).map((item) => ({
       id: item.id,
       title: item.title,
       detail: item.detail,
@@ -519,18 +543,13 @@ export function CommandPalette(props: CommandPaletteProps) {
       searchText: item.searchText,
       disabled: item.option.disabled,
       action: () => {
-        if (!item.option.gatewayAuthorization && (item.option.behaviorOptions?.length ?? 0) > 0) {
-          setBehaviorModel(item.option);
-          setMode("model-behavior");
-          return;
-        }
-        gatewaySelection.select(item.option, () => {
-          props.onSelectModel?.({ providerID: item.option.providerID, modelID: item.option.modelID }, null);
+        choice.choose(item.option, () => {
+          props.onSelectModel?.({ providerID: item.option.providerID, modelID: item.option.modelID });
           props.onClose();
         });
       },
     }))
-  ), [gatewaySelection.select, props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel]);
+  ), [choice.choose, props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel, favorites, recentModels]);
 
   const behaviorItems = useMemo<PaletteItem[]>(() => {
     if (!behaviorModel) return [];
@@ -547,13 +566,13 @@ export function CommandPalette(props: CommandPaletteProps) {
       action: () => {
         const currentOption = props.modelOptions?.find((option) => option.providerID === behaviorModel.providerID && option.modelID === behaviorModel.modelID);
         if (!currentOption) return;
-        gatewaySelection.select(currentOption, () => {
+        choice.choose(currentOption, () => {
           props.onSelectModel?.({ providerID: behaviorModel.providerID, modelID: behaviorModel.modelID }, item.option.value);
           props.onClose();
         });
       },
     }));
-  }, [behaviorModel, gatewaySelection.select, props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel, props.selectedModelBehavior]);
+  }, [behaviorModel, choice.choose, props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel, props.selectedModelBehavior]);
 
   const navigateBack = () => {
     const nextMode = commandPaletteBackMode(mode);
@@ -563,7 +582,7 @@ export function CommandPalette(props: CommandPaletteProps) {
   };
 
   const handleEscape = (event: ReactKeyboardEvent<HTMLElement>) => {
-    if (gatewaySelection.loginOpen) return;
+    if (choice.loginOpen) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -606,8 +625,10 @@ export function CommandPalette(props: CommandPaletteProps) {
               ? behaviorItems
           : [];
 
-  const renderPaletteItem = (item: PaletteItem) => (
-    <CommandItem
+  const paletteModels = useMemo(() => new Map((props.modelOptions ?? []).map((option) => [`model:${option.providerID}:${option.modelID}`, option])), [props.modelOptions]);
+  const renderPaletteItem = (item: PaletteItem) => {
+    const model = paletteModels.get(item.id);
+    return <CommandItem
       key={item.id}
       value={mode === "root" ? item.id : item}
       data-command-palette-item={item.id}
@@ -617,6 +638,10 @@ export function CommandPalette(props: CommandPaletteProps) {
         item.action();
       }}
     >
+      {model ? <span data-slot="model-provider-mark" className="flex size-4 shrink-0 items-center justify-center">
+        {isAutoModel(model) ? <img src={resolveExtensionIconSrc("/openwork-mark.svg")} alt="OpenWork" className="size-4" />
+          : <ProviderIcon providerId={model.providerID} providerName={model.description} size={16} />}
+      </span> : null}
       <div className="min-w-0 flex-1">
         <div className="truncate font-medium">{item.title}</div>
         {item.breadcrumb || item.detail ? (
@@ -633,11 +658,12 @@ export function CommandPalette(props: CommandPaletteProps) {
           <span className="sr-only">{item.searchText}</span>
         ) : null}
       </div>
+      {model && !isAutoModel(model) ? <span data-slot="model-source" className="flex size-4 shrink-0 items-center justify-center"><ModelSourceIcon model={model} /></span> : null}
       {item.shortcut || item.meta ? (
         <CommandShortcut>{item.shortcut ?? item.meta}</CommandShortcut>
       ) : null}
-    </CommandItem>
-  );
+    </CommandItem>;
+  };
 
   return (
     <>
@@ -690,7 +716,7 @@ export function CommandPalette(props: CommandPaletteProps) {
                       : mode === "groups"
                         ? "Search groups..."
                         : mode === "models"
-                          ? "Search models..."
+                          ? "Search models…"
                           : mode === "model-behavior"
                             ? "Search thinking or effort..."
                         : t("session.palette_placeholder_actions")

@@ -100,7 +100,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     if (auth.error) return auth.error
     const status: DesktopFreeAccessStatus = { state: "unavailable", code: "anonymous_unavailable", currentVersion: auth.proof.appVersion,
       minimumVersion: auth.minimumVersion, providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID,
-      allowance: null, catalog: managedModelCatalog() }
+      allowance: null, catalog: managedModelCatalog(), defaultPinned: true }
     if (auth.versionError) {
       status.state = auth.versionError.code === "desktop_update_required" ? "update_required" : "unavailable"
       status.code = auth.versionError.code

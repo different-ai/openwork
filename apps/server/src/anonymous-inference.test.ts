@@ -21,7 +21,8 @@ const ready: DesktopFreeAccessStatus = {
   providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID,
   allowance: { limitUsd: 1, usedUsd: 0.2, reservedUsd: 0, remainingUsd: 0.8, resetsAt: "2030-01-07T00:00:00Z" },
 };
-const memberReady: DesktopFreeAccessStatus = { ...ready, allowance: { ...ready.allowance!, limitUsd: 5, remainingUsd: 4.8 } };
+// Members reach Auto on /api/v1 with their Models key: no desktop version floor is reported.
+const memberReady: DesktopFreeAccessStatus = { ...ready, currentVersion: "", minimumVersion: null, allowance: { ...ready.allowance!, limitUsd: 5, remainingUsd: 4.8 }, defaultPinned: false };
 const credentialPath = "/api/den/v1/inference/free/credential";
 const rawChat = '{ "model": "openai/gpt-5.6-luna", "messages": [] }';
 const memberKey = (session: CloudProviderDenSession) => `ow_inf_${createHash("sha256").update(`${session.token === "fixture-session-refreshed" ? "fixture-session" : session.token}:${session.orgId}`).digest("base64url")}`;
@@ -233,8 +234,11 @@ test("HTTP exchange switches guest to member, caches only in memory, and invalid
     try {
       await service.initialize(9876);
       expect((await service.status()).allowance?.limitUsd).toBe(1);
+      expect((await service.status()).defaultPinned).toBeUndefined();
       await connectMember();
       expect((await service.status()).allowance?.limitUsd).toBe(5);
+      // An organization Auto unpin travels through the native status so members' pickers honor it.
+      expect((await service.status()).defaultPinned).toBe(false);
       expect((await service.handle(await localRequest("models"), "models")).status).toBe(200);
       await activate();
       const response = await service.handle(await localRequest(), "chat/completions");
@@ -534,6 +538,28 @@ test("local disable and policy denial prevent credential issuance, and user prov
   });
 });
 
+test("Auto preference persists, revokes the old relay and re-enables without reviving its credential", async () => {
+  await fixture(async ({ service, config, environment, localRequest, requests, activate }) => {
+    await service.initialize(9876);
+    const stale = await localRequest();
+    expect(await service.setEnabled(false)).toMatchObject({ enabled: false, available: false });
+    expect((await readGlobalRuntimeOpencodeConfig(config)).disabled_providers).toContain(DESKTOP_FREE_PROVIDER_ID);
+    expect((await service.handle(stale.clone(), "chat/completions")).status).not.toBe(200);
+    expect(requests).toHaveLength(0);
+    const restarted = new AnonymousInferenceService(config, { log: () => {} }, environment);
+    await restarted.initialize(9876);
+    expect(await restarted.preferences()).toMatchObject({ enabled: false, available: false });
+    restarted.stop();
+    expect(await service.setEnabled(true)).toMatchObject({ enabled: true, available: true });
+    expect((await service.handle(stale, "chat/completions")).status).not.toBe(200);
+    expect(requests).toHaveLength(0);
+    // Turning Auto off ended any live task; a new send is needed before the engine may spend again.
+    expect((await service.handle(await localRequest(), "chat/completions")).status).toBe(403);
+    await activate();
+    expect((await service.handle(await localRequest(), "chat/completions")).status).toBe(200);
+  });
+});
+
 test("local relay refuses oversized or non-free requests before enrollment", async () => {
   await fixture(async ({ service, requests, localRequest, connectMember, activate }) => {
     await service.initialize(9876);
@@ -616,6 +642,16 @@ test("an engine call that names its session must name one the user started", asy
     expect(await foreign.json()).toMatchObject({ error: { code: "auto_not_activated" } });
     // An engine that sends no session header still works inside the window.
     expect((await service.handle(await localRequest(), "chat/completions")).status).toBe(200);
+  });
+});
+
+test("only members may report ready without a desktop version floor; guests still need a verified one", async () => {
+  await fixture(async ({ service, reject }) => {
+    await service.initialize(9876);
+    reject(DESKTOP_FREE_STATUS_PATH, 200, { ...ready, minimumVersion: null });
+    expect((await service.status(true)).state).toBe("unavailable");
+    reject(DESKTOP_FREE_STATUS_PATH, 200, ready);
+    expect((await service.status(true)).state).toBe("ready");
   });
 });
 

@@ -87,6 +87,24 @@ const userMessage: UIMessage = {
 };
 
 describe("finished turn step fold (single OpenCode message per turn)", () => {
+  test.each([false, true])("resolved reply is always visible on the work rail, with folded steps: %s", (folded) => {
+    const assistant: UIMessage = {
+      id: "resolved-reply", role: "assistant",
+      metadata: { opencode: { created: 1_000, completed: 80_000,
+        replyModel: { modelID: "served-witness", providerID: "provider", name: "Served witness", resolved: true } } },
+      parts: [...(folded ? [bashPart("one"), bashPart("two"), bashPart("three"), bashPart("four"), bashPart("five")] : []),
+        { type: "text", text: "Final answer", state: "done" }],
+    };
+    const markup = renderList([userMessage, assistant]);
+    expect(markup).toContain('data-testid="completed-work-rail"');
+    expect(markup).toContain("Worked for 1m 19s");
+    expect(markup).toContain('data-testid="reply-model"');
+    expect(markup.indexOf('data-testid="reply-model"')).toBeLessThan(markup.indexOf("Final answer"));
+    expect(markup.match(/data-testid="reply-model"/g)).toHaveLength(1);
+    const unresolved = { ...assistant, metadata: { opencode: { replyModel: { modelID: "requested-model", providerID: "provider" } } } };
+    expect(renderList([userMessage, unresolved])).not.toContain('data-testid="reply-model"');
+  });
+
   test.each([true, false])("unfinished idle tools are quiet in read-only=%s current and history views", (readOnly) => {
     const assistant: UIMessage = {
       id: "unfinished-assistant", role: "assistant",

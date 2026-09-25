@@ -130,6 +130,7 @@ export interface TestEvidenceRecorder {
   recordTrace(entry: TraceEntryInput): TraceEntry;
   recordStep(step: StepRecordInput): StepRecord;
   setOutcome(outcome: TestOutcome, failure?: string): void;
+  setEngine(engine: EvalEngine): void;
   close(): Promise<string>;
   [Symbol.asyncDispose](): Promise<void>;
 }
@@ -600,7 +601,7 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
   const createdAt = new Date().toISOString();
   const gitSha = gitValue(["HEAD"]);
   const sandboxRef = resolveSandboxRef();
-  const engine = resolveEvalEngine();
+  let engine = resolveEvalEngine();
   const branch = gitValue(["--abbrev-ref", "HEAD"]);
   let nextSequence = 1;
   let nextTraceSequence = 1;
@@ -658,6 +659,10 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
 
   return {
     dir,
+    setEngine(value) {
+      assertOpen();
+      engine = value;
+    },
     recordScreenshot(screenshotArtifact, options) {
       assertOpen();
       const sequence = nextSequence;

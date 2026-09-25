@@ -65,6 +65,8 @@ export type AutomationEditorPinnedWorkflow = {
 }
 
 export type AutomationEditorProps = {
+  /** Opens AI provider settings when the picker offers to connect more providers. */
+  onOpenProviderSettings?: () => void
   initial?: CreateAutomation | null
   initialKey?: string
   /** Fixed by the creating surface; changes the copy, never a control. */
@@ -319,7 +321,8 @@ export function AutomationEditor(props: AutomationEditorProps) {
               ...current,
               model: { providerId: model.providerID, modelId: model.modelID, variant },
             }))}
-            onOpenSettings={() => setPickerOpen(false)}
+            onOpenSettings={() => { setPickerOpen(false); props.onOpenProviderSettings?.() }}
+            onOpenProviderSettings={props.onOpenProviderSettings}
             onClose={() => setPickerOpen(false)}
           />
         </div>}

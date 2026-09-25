@@ -21,6 +21,7 @@ import {
   type OpenworkServerCapabilities,
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
+  type DesktopFreePreferences,
 } from "@/app/lib/openwork-server";
 import { buildOpenworkEnvRuntimeKey } from "@/app/lib/openwork-env-runtime";
 import {
@@ -155,10 +156,6 @@ import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-noti
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
 import {
   hasOpenWorkModelsAvailable,
-  hideOpenWorkModelsPromo,
-  useOpenWorkModelsPromoEligibility,
-  isOpenWorkModelsPromoHidden,
-  openWorkModelsPromoChangedEvent,
   shouldShowOpenWorkModelsSyncing,
 } from "@/react-app/domains/cloud/openwork-models-promo";
 import {
@@ -194,6 +191,7 @@ import { abortSessionSafe, listCommands } from "@/app/lib/opencode-session";
 import { notifyAlert } from "./notifications";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { CommandPalette, type PaletteItem } from "./command-palette";
+import { applyDefaultModelPreference } from "./command-palette-models";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
 import { buildFeedbackUrl } from "@/app/lib/feedback";
@@ -1026,8 +1024,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).some(isOpenWorkCloudProvider),
     [providerAuthSnapshot.cloudOrgProviders, providerAuthSnapshot.importedCloudProviders],
   );
-  const [openWorkModelsPromoHidden, setOpenWorkModelsPromoHidden] = useState(isOpenWorkModelsPromoHidden);
-  const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
   // Entitled = Den/import says OpenWork Models is included. Available = local
   // engine actually exposes selectable openwork models.
   const openWorkModelsEntitled = cloudSession.isSignedIn && hasOpenWorkCloudProvider;
@@ -1041,38 +1037,51 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     workspaceReady: Boolean(selectedWorkspaceId && activeClient),
     reloadPending: providerAuthSnapshot.cloudProviderServerSync?.reloadPending === true,
   });
-  const showOpenWorkModelsSubscribe =
-    openWorkModelsPromoEligible &&
-    !openWorkModelsEntitled &&
-    !openWorkModelsAvailable &&
-    !openWorkModelsPromoHidden;
-  const showOpenWorkModelsConnect =
-    openWorkModelsPromoEligible &&
-    !openWorkModelsEntitled &&
-    !openWorkModelsAvailable &&
-    openWorkModelsPromoHidden;
-
+  const openProvidersInDen = useCallback(() => {
+    platform.openLink(new URL("/dashboard/gateway-providers", cloudSession.baseUrl).href);
+  }, [cloudSession.baseUrl, platform]);
+  const autoClient = isDesktopRuntime() && openworkServerSnapshot.openworkServerClient && isLoopbackOpenworkServerUrl(openworkServerSnapshot.openworkServerClient.baseUrl) ? openworkServerSnapshot.openworkServerClient : null;
+  const [autoPreferences, setAutoPreferences] = useState<DesktopFreePreferences | null>(null);
+  const [autoBusy, setAutoBusy] = useState(false);
+  const [autoError, setAutoError] = useState<string | null>(null);
+  const autoGeneration = useRef(0);
   useEffect(() => {
-    const handlePromoChanged = () => setOpenWorkModelsPromoHidden(isOpenWorkModelsPromoHidden());
-    window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
-    return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
-  }, []);
-
-  const dismissOpenWorkModelsPromo = useCallback(() => {
-    hideOpenWorkModelsPromo();
-    setOpenWorkModelsPromoHidden(true);
-  }, []);
-
-  const subscribeToOpenWorkModels = useCallback(() => {
-    providerAuthStore.closeProviderAuthModal();
-    const accountPath = selectedWorkspaceId
-      ? workspaceSettingsRoute(selectedWorkspaceId, "cloud-account")
-      : "/settings/cloud-account";
-    navigate(accountPath);
-    window.setTimeout(() => {
-      platform.openLink(getDenInferenceUrl(cloudSession.baseUrl));
-    }, 0);
-  }, [cloudSession.baseUrl, navigate, platform, providerAuthStore, selectedWorkspaceId]);
+    const generation = ++autoGeneration.current;
+    setAutoPreferences(null);
+    setAutoBusy(false);
+    setAutoError(null);
+    if (autoClient) void autoClient.desktopFreePreferences().then((value) => {
+      if (generation === autoGeneration.current) setAutoPreferences(value);
+    }).catch(() => {
+      if (generation === autoGeneration.current) setAutoError("Could not verify Auto on this device. Reopen settings to retry.");
+    });
+    return () => { autoGeneration.current++; };
+  }, [autoClient]);
+  const setAutoEnabled = useCallback(async (enabled: boolean) => {
+    if (!autoClient || autoBusy) return;
+    const generation = autoGeneration.current;
+    setAutoBusy(true);
+    setAutoError(null);
+    try {
+      const value = await autoClient.setDesktopFreeEnabled(enabled);
+      if (generation !== autoGeneration.current) return;
+      setAutoPreferences(value);
+      setDisabledProviders((current) => [...current.filter((id) => id !== "openwork-free"), ...(value.enabled ? [] : ["openwork-free"])]);
+      await providerAuthStore.refreshProviders({ force: true });
+      if (generation === autoGeneration.current && value.refresh === "deferred") setAutoError("Preference saved. Models will refresh when the current work finishes.");
+    } catch {
+      if (generation !== autoGeneration.current) return;
+      setAutoPreferences(null);
+      setAutoError("Could not verify the change to Auto. Check its state before retrying.");
+      try { const value = await autoClient.desktopFreePreferences(); if (generation === autoGeneration.current) setAutoPreferences(value); } catch {}
+    } finally {
+      if (generation === autoGeneration.current) setAutoBusy(false);
+    }
+  }, [autoClient, autoBusy, providerAuthStore]);
+  const organizationProviderIds = useMemo(() => new Set([
+    ...Object.values(providerAuthSnapshot.importedCloudProviders).map((provider) => provider.sourceProviderId),
+    ...providerAuthSnapshot.cloudOrgProviders.map((provider) => provider.providerId),
+  ]), [providerAuthSnapshot.importedCloudProviders, providerAuthSnapshot.cloudOrgProviders]);
 
   const handleOpenProviderAuth = useCallback(() => {
     if (providerAuthStore.isProviderAddRestricted()) {
@@ -1204,7 +1213,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     onLoadError: handleModelPickerLoadError,
     pendingProviders: gatewayConnectProviders,
     disabledProviders,
+    gatewayProviderIds,
     cloudProvidersEnabled: cloudSession.isSignedIn,
+    importedProviders: providerAuthSnapshot.importedCloudProviders,
   });
   const currentCloudMcpModel = useMemo<OpenworkCloudMcpProviderModelContext | null>(() => {
     const provider = local.prefs.defaultModel?.providerID.trim() ?? "";
@@ -2470,14 +2481,21 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               toast.info("Stopped waiting. Browser sign-in was not revoked. Refresh AI Providers after finishing, or Connect again to retry.");
             }}
             onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
-            showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
-            showOpenWorkModelsConnect={showOpenWorkModelsConnect}
             showOpenWorkModelsSyncing={showOpenWorkModelsSyncing}
-            onSubscribeOpenWorkModels={subscribeToOpenWorkModels}
-            onDismissOpenWorkModels={dismissOpenWorkModelsPromo}
+            autoPreferences={autoPreferences}
+            autoBusy={autoBusy}
+            autoError={autoError}
+            onSetAutoEnabled={autoClient ? setAutoEnabled : undefined}
+            organizationProviderIds={organizationProviderIds}
+            onOpenDen={openProvidersInDen}
             cloudProvidersView={
               <CloudProvidersView
+                key={`${cloudSession.baseUrl}:${cloudSession.activeOrganization?.id ?? "signed-out"}`}
                 embedded
+                onOpenDen={openProvidersInDen}
+                gatewayConnectProviders={gatewayConnectProviders}
+                connectingGatewayProviderId={connectingGatewayProviderId}
+                onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
                 checkDesktopAppRestriction={checkDesktopRestriction}
                 cloudOrgProviders={providerAuthSnapshot.cloudOrgProviders}
                 connectCloudProvider={providerAuthStore.connectCloudProvider}
@@ -2866,6 +2884,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           modelPicker.setRecentProviderIds(new Set());
           window.requestAnimationFrame(() => modelPicker.setOpen(true));
         }}
+        modelOptions={modelPicker.actionOptions}
+        selectedModel={local.prefs.defaultModel ?? undefined}
+        selectedModelBehavior={local.prefs.modelVariant ?? null}
+        onSelectModel={(next, behavior) => local.setPrefs((prev) => applyDefaultModelPreference(prev, next, behavior))}
         sessions={paletteSessionOptions}
         extraItems={checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]}
       />
@@ -2905,8 +2927,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onSubmitApiKey={providerAuthStore.submitProviderApiKey}
         onSubmitOAuth={providerAuthStore.completeProviderAuthOAuth}
         onRefreshProviders={providerAuthStore.refreshProviders}
-        showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
-        onSubscribeOpenWorkModels={subscribeToOpenWorkModels}
+        openWorkModelsState={autoPreferences ? !autoPreferences.enabled ? "off" : autoPreferences.available ? "included" : "unavailable" : undefined}
+        organizationName={cloudSession.activeOrgName}
+        organizationProviderIds={organizationProviderIds}
+        organizationProviderCount={cloudSession.isSignedIn ? new Set([...providerAuthSnapshot.cloudOrgProviders.map((provider) => provider.id), ...Object.keys(providerAuthSnapshot.importedCloudProviders), ...gatewayConnectProviders.map((provider) => provider.cloudProviderId)]).size : undefined}
+        onOpenDen={cloudSession.isSignedIn ? openProvidersInDen : undefined}
         onClose={() => providerAuthStore.closeProviderAuthModal()}
       />
       <RenameWorkspaceModal
@@ -2979,7 +3004,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       />
       <ModelPickerModal
         open={modelPicker.open}
-        options={modelPicker.displayOptions}
+        options={modelPicker.options}
+        knownOptions={modelPicker.knownOptions}
         disabledProviders={disabledProviders}
         gatewayProviderIds={gatewayProviderIds}
         gatewayConnectProviders={gatewayConnectProviders}
@@ -2992,17 +3018,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           local.prefs.defaultModel ?? { providerID: "", modelID: "" }
         }
         onSelect={(next: ModelRef) => {
-          local.setPrefs((prev) => ({
-            ...prev,
-            defaultModel: next,
-            modelVariant: prev.defaultModel?.providerID === next.providerID && prev.defaultModel.modelID === next.modelID
-              ? prev.modelVariant
-              : null,
-          }));
+          local.setPrefs((prev) => applyDefaultModelPreference(prev, next));
           modelPicker.setOpen(false);
         }}
         onBehaviorChange={(_model, value) => local.setPrefs((previous) => ({ ...previous, modelVariant: value }))}
-        onOpenSettings={() => {}}
+        catalogState={modelPicker.catalogState}
+        onRefreshOrganizationModels={async () => { await providerAuthStore.refreshCloudOrgProviders({ force: true }); }}
+        onOpenSettings={() => { modelPicker.setOpen(false); navigateSettingsPath("ai"); }}
+        onOpenProviderSettings={() => navigateSettingsPath("ai")}
         onClose={() => modelPicker.setOpen(false)}
       />
     </GatewayModelAccessProvider>

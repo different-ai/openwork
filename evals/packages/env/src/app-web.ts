@@ -15,7 +15,7 @@ import {
 } from "@openwork/hosts";
 import type { SandboxRepoSourceReceipt } from "@openwork/hosts";
 import { startLocalRuntime, startRemoteRuntime } from "./app-web-runtime.ts";
-import type { AppWebRuntime } from "./app-web-runtime.ts";
+import type { AppWebRuntime, AppWebRuntimeOptions } from "./app-web-runtime.ts";
 import type { MockBoot, MockHandle } from "./mock.ts";
 import type { Place } from "./place.ts";
 import { observeAppWebNetwork } from "./app-web-network.ts";
@@ -30,6 +30,9 @@ const MOCK_SCRIPT_PATH = join(REPO_ROOT, "scripts", "mock-oauth-mcp-server.mjs")
 
 export interface SeedAppWebOptions {
   workspacePath: string;
+  engine?: AppWebRuntimeOptions["engine"];
+  den?: AppWebRuntimeOptions["den"];
+  webPort?: number;
   emptyWorkspace?: boolean;
   /** Explicit fixture runtime settings; the normal isolated environment is retained. */
   env?: Record<string, string>;
@@ -245,7 +248,7 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
         sourcePreparedFingerprint: source.preparedFingerprint,
       };
       mocks = await bootRemoteMocks(sandbox, options.mocks ?? {});
-      runtime = await startRemoteRuntime(sandbox, worldName, workspaceRoot, source, { syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin, env: options.env, emptyWorkspace: options.emptyWorkspace });
+      runtime = await startRemoteRuntime(sandbox, worldName, workspaceRoot, source, { engine: options.engine, den: options.den, webPort: options.webPort, syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin, env: options.env, emptyWorkspace: options.emptyWorkspace });
     } else {
       // Capture only the commit identity, before mocks or app processes launch.
       // Do not expose git stderr, checkout paths, or environment in evidence.
@@ -263,7 +266,7 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
         throw new Error("Invalid local app-web source SHA receipt.");
       }
       mocks = await bootLocalMocks(options.place, options.mocks ?? {});
-      runtime = await startLocalRuntime(worldName, workspaceRoot, { syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin, env: options.env, emptyWorkspace: options.emptyWorkspace });
+      runtime = await startLocalRuntime(worldName, workspaceRoot, { engine: options.engine, den: options.den, webPort: options.webPort, syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin, env: options.env, emptyWorkspace: options.emptyWorkspace });
       browser = await chrome({
         name: worldName,
         host: options.place.host(),

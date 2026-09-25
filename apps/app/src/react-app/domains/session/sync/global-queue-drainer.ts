@@ -7,6 +7,11 @@ import { composeNativeSessionSnapshot, getNativeSession } from "@/app/lib/openco
 import { hasTerminalSessionReply, sendSessionCommand, sessionHasPendingSubmission, sessionWorkHeld, submitAfterInterruption } from "@/app/lib/opencode-interruption";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import type { ComposerDraft, ModelRef } from "@/app/types";
+import { isAutoModel } from "@/react-app/domains/models/model-catalog";
+import { AutoAccessRejected, autoAccessWallFromError, preflightAutoSubmission } from "@/app/lib/inference-access";
+import { rejectedTurnOwnerKey } from "./draft-store";
+import { retainRejectedTurn } from "./rejected-turn";
+import { queuedDraftTexts } from "./queued-draft-persistence";
 import { readStoredDefaultModel } from "@/react-app/kernel/model-config";
 import { useSessionActivityStore } from "../status/session-activity-store";
 import {
@@ -65,7 +70,8 @@ function sameContext(left: QueuedSendContext, right: QueuedSendContext) {
     && left.variant === right.variant
     && left.model?.providerID === right.model?.providerID
     && left.model?.modelID === right.model?.modelID
-    && left.environmentRuntimeKey === right.environmentRuntimeKey;
+    && left.environmentRuntimeKey === right.environmentRuntimeKey
+    && (left.rejectedOwner ? rejectedTurnOwnerKey(left.rejectedOwner) : "") === (right.rejectedOwner ? rejectedTurnOwnerKey(right.rejectedOwner) : "");
 }
 
 function serializeSDKError(error: unknown): string {
@@ -105,7 +111,7 @@ async function performQueuedDraftSend(
   if (session.time.archived || sessionWorkHeld(context.opencodeBaseUrl, sessionId)) return "cancelled";
 
   const sessionModelSelection = getSessionModelSelection(sessionId);
-  const sendModel = sessionModelSelection?.model ?? readStoredDefaultModelSafely() ?? context.model;
+  const sendModel = sessionModelSelection?.model ?? context.model ?? readStoredDefaultModelSafely();
   const sendVariant = sessionModelSelection ? sessionModelSelection.variant : context.variant;
   const createEngineClient = isOpencodeV2BaseUrl(context.opencodeBaseUrl) ? createClientV2 : createClient;
   const opencodeClient = createEngineClient(
@@ -114,52 +120,68 @@ async function performQueuedDraftSend(
     { token: context.openworkToken, mode: "openwork" },
   );
 
+  if (context.isCurrent?.() === false) return "cancelled";
   if (draft.mode === "shell") {
     await shellInSession(opencodeClient, sessionId, text, { messageID: draft.messageId });
     return "sent";
   }
 
-  if (draft.command) {
-    const result = await sendSessionCommand(context.opencodeBaseUrl, opencodeClient, {
+  if (sendModel && isAutoModel(sendModel)) {
+    if (!context.rejectedOwner) return "cancelled";
+    const result = await preflightAutoSubmission({ model: sendModel, client: context.client,
+      isCurrent: () => getQueuedSendGeneration(sessionId) === generation && getQueuedSendContext(sessionId) === context && context.isCurrent?.() !== false,
+    });
+    if (result?.outcome === "cancelled") return "cancelled";
+    if (result?.outcome === "blocked") throw new AutoAccessRejected(result.wall);
+  }
+  try {
+    if (draft.command) {
+      const result = await sendSessionCommand(context.opencodeBaseUrl, opencodeClient, {
+        sessionID: sessionId,
+        messageID: draft.messageId,
+        command: draft.command.name,
+        arguments: draft.command.arguments,
+        ...(sendModel && isAutoModel(sendModel) ? { model: `${sendModel.providerID}/${sendModel.modelID}` } : {}),
+      });
+      if (result.error) throw new Error(serializeSDKError(result.error));
+      return "sent";
+    }
+
+    const parts = await draftToParts(draft, context.workspaceRoot, sessionId, {
+      client: context.client,
+      workspaceId: context.workspaceId,
+    });
+    assertQueuedSendCurrent(sessionId, generation);
+    const system = await buildOpenworkSessionSystemContext(context.client, {
+      workspaceId: context.workspaceId,
+      cacheKey: sessionId,
+      runtimeKey: context.environmentRuntimeKey,
+    });
+    assertQueuedSendCurrent(sessionId, generation);
+    if (sessionWorkHeld(context.opencodeBaseUrl, sessionId) || context.isCurrent?.() === false) return "cancelled";
+    const result = await opencodeClient.session.promptAsync({
       sessionID: sessionId,
       messageID: draft.messageId,
-      command: draft.command.name,
-      arguments: draft.command.arguments,
+      parts,
+      model: sendModel ?? undefined,
+      agent: context.agent ?? undefined,
+      ...(sendVariant ? { variant: sendVariant } : {}),
+      system,
     });
-    if (result.error) throw new Error(serializeSDKError(result.error));
+    if (result.error) {
+      if (isPromptAdmissionUnknown(result.error)) throw result.error;
+      throw new Error(serializeSDKError(result.error));
+    }
+    assertQueuedSendCurrent(sessionId, generation);
+    if (sendModel) {
+      useSessionModelStore.getState().setModel(sessionId, sendModel, sendVariant ?? null);
+    }
     return "sent";
+  } catch (error) {
+    const wall = isAutoModel(sendModel) ? autoAccessWallFromError(error, sendModel) : null;
+    if (wall && !isPromptAdmissionUnknown(error)) throw new AutoAccessRejected(wall);
+    throw error;
   }
-
-  const parts = await draftToParts(draft, context.workspaceRoot, sessionId, {
-    client: context.client,
-    workspaceId: context.workspaceId,
-  });
-  assertQueuedSendCurrent(sessionId, generation);
-  const system = await buildOpenworkSessionSystemContext(context.client, {
-    workspaceId: context.workspaceId,
-    cacheKey: sessionId,
-    runtimeKey: context.environmentRuntimeKey,
-  });
-  assertQueuedSendCurrent(sessionId, generation);
-  if (sessionWorkHeld(context.opencodeBaseUrl, sessionId)) return "cancelled";
-  const result = await opencodeClient.session.promptAsync({
-    sessionID: sessionId,
-    messageID: draft.messageId,
-    parts,
-    model: sendModel ?? undefined,
-    agent: context.agent ?? undefined,
-    ...(sendVariant ? { variant: sendVariant } : {}),
-    system,
-  });
-  if (result.error) {
-    if (isPromptAdmissionUnknown(result.error)) throw result.error;
-    throw new Error(serializeSDKError(result.error));
-  }
-  assertQueuedSendCurrent(sessionId, generation);
-  if (sendModel) {
-    useSessionModelStore.getState().setModel(sessionId, sendModel, sendVariant ?? null);
-  }
-  return "sent";
 }
 
 // Mirrors withoutRevertTarget in ../surface/session-surface.tsx without
@@ -374,6 +396,10 @@ async function attemptDrain(sessionId: string) {
   try {
     const outcome = await submitAfterInterruption(context.opencodeBaseUrl, sessionId,
       () => performQueuedDraftSend(context, sessionId, draft, generation), draft.messageId);
+    if (outcome === "cancelled" && context.rejectedOwner) {
+      dispatchQueuedDrain(sessionId, { type: "send_error", itemId: nextItem.id });
+      return;
+    }
     if (outcome === "sent") useComposerStateStore.getState().removeQueuedDraft(sessionId, nextItem.id);
     dispatchQueuedDrain(sessionId, {
       type: "send_result",
@@ -396,7 +422,14 @@ async function attemptDrain(sessionId: string) {
     );
     markTaskRunStart(sessionId);
   } catch (error) {
-    if (isPromptAdmissionUnknown(error)) {
+    if (error instanceof AutoAccessRejected && context.rejectedOwner && getQueuedSendGeneration(sessionId) === generation) {
+      await retainRejectedTurn({ owner: context.rejectedOwner, opencodeBaseUrl: context.opencodeBaseUrl, draft, wall: error.wall,
+        afterMessageId: context.afterMessageId?.() ?? null, queuedItemId: nextItem.id,
+        remainingQueued: queuedDraftTexts(getComposerQueuedDrafts(useComposerStateStore.getState(), sessionId).filter((item) => item.id !== nextItem.id)),
+        client: context.client, workspaceRoot: context.workspaceRoot, localRuntime: context.localRuntime === true,
+      });
+      dispatchQueuedDrain(sessionId, { type: "send_result", itemId: nextItem.id, outcome: "blocked", at: Date.now() });
+    } else if (isPromptAdmissionUnknown(error)) {
       dispatchQueuedDrain(sessionId, {
         type: "send_unknown", itemId: nextItem.id, messageID: draft.messageId, at: Date.now(), deferred: Boolean(draft.command),
       });

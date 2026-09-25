@@ -438,7 +438,8 @@ export type ModelOption = {
   isFree: boolean;
   isRecommended?: boolean;
   /** "cloud" for org-managed providers (lpr_*), undefined for local. */
-  source?: "cloud";
+  source?: "cloud" | "gateway" | "local";
+  organizationPinOrder?: number;
   gatewayAuthorization?: { cloudProviderId: string; credentialSetId: string };
 };
 

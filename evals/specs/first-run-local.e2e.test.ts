@@ -6,7 +6,7 @@ const test = spec.world(localFirstRunWorld);
 
 test("first launch opens an empty signed-out workspace and runs the first prompt without onboarding", async ({ world, user, probe, step }) => {
   await step("Start directly in the normal empty app", async () => {
-    await user.see({ text: /What do you need done\?/ }, { timeoutMs: 180_000 });
+    await user.see({ text: /What should we work on\?/ }, { timeoutMs: 180_000 });
     await user.see("composer", { editable: true, text: "" });
     await user.see("Run task");
     await user.see({ testId: "account-status-menu" }, { text: /Sign in/ });
@@ -37,7 +37,8 @@ test("first launch opens an empty signed-out workspace and runs the first prompt
     const sessions = await probe.desktopApi(`/workspace/${workspaceId}/opencode/session`);
     expect(sessions.status).toBe(200);
     expect(sessions.body).toEqual([]);
-    await user.see({ text: /Using the free starter model/ });
+    await user.see({ role: "button", label: "Change model" });
+    await user.see({ text: "Big Pickle" });
     expect(await probe.storage("openwork.defaultModel")).toBe("opencode/big-pickle");
   });
 

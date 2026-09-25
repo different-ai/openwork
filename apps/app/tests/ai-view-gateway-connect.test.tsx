@@ -26,7 +26,7 @@ test("Settings > AI providers renders a skipped member_auth_required gateway pro
   expect(html).toContain("Member Vertex");
   expect(html).toContain("via OpenWork Gateway");
   expect(html).toContain("Sign in to Member Vertex to use it");
-  expect(html).toContain("Connect");
+  expect(html).toContain("Login");
   expect(html).not.toContain('disabled=""');
 
   const noUrl = renderToStaticMarkup(
@@ -68,7 +68,7 @@ test("clicking Connect uses authenticated OAuth rather than the supplied authUrl
     ));
     const button = container.querySelector<HTMLButtonElement>("button");
     if (!button) throw new Error("Expected the Connect button");
-    expect(button.textContent).toContain("Connect");
+    expect(button.textContent).toContain("Login");
     await act(async () => button.click());
     expect(await done).toBe(true);
     expect(opened).toEqual(["https://accounts.google.com/o/oauth2/v2/auth?state=fixture"]);

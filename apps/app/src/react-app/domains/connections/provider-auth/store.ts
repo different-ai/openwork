@@ -291,6 +291,8 @@ export type ProviderOAuthStartResult = {
  * renderer-side import path owns the state (remote/hostless workspaces).
  */
 export type CloudProviderServerSyncState = {
+  lastRun?: { at: string | number; status: "applied" | "noop" | "failed" | "no_session"; message?: string } | null;
+  lastVerifiedAt?: string | number | null;
   reloadPending: boolean;
   skippedProviders: Record<string, OpenworkCloudProviderSyncSkippedProvider>;
 };
@@ -747,6 +749,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           gatewayUsageProviderScope: status.hasSession && verifiedGatewayUsageContext === contextKey
             ? refreshOptions?.verifiedScope ?? current.gatewayUsageProviderScope : null,
           cloudProviderServerSync: {
+            ...(status.lastRun === undefined || status.lastRun === null ? {} : { lastRun: status.lastRun }),
+            ...(() => {
+              const verifiedAt = status.lastRun && (status.lastRun.status === "applied" || status.lastRun.status === "noop") ? status.lastRun.at : current.cloudProviderServerSync?.lastVerifiedAt;
+              return verifiedAt === undefined ? {} : { lastVerifiedAt: verifiedAt };
+            })(),
             reloadPending: status.reloadPending,
             skippedProviders: Object.fromEntries((status.hasSession ? status.skippedProviders.filter((provider) => provider.reason !== "member_auth_required" || verifiedGatewayUsageContext === contextKey) : []).map((provider) => [provider.credentialSetId ? `${provider.cloudProviderId}:${provider.credentialSetId}` : provider.cloudProviderId, provider])),
           },
@@ -1946,6 +1953,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           source: provider.source,
           updatedAt: provider.updatedAt ?? null,
           modelIds: getProviderModelIds(provider),
+          pinnedModelIds: provider.pinnedModelIds?.filter((id) => getProviderModelIds(provider).includes(id)) ?? [],
           modelConfigVersion: CLOUD_MODEL_CONFIG_VERSION,
           importedAt: Date.now(),
         },

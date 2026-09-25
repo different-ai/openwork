@@ -34,7 +34,7 @@ test("pinned idle sessions archive from the sidebar and mailbox without a focuse
   const noSessionFocused = async () => {
     expect(await probe.hash()).toBe(root);
     expect((await world.facts()).surfaces).toEqual([]);
-    await user.see({ text: "What do you need done?" });
+    await user.see({ text: "What should we work on?" });
   };
   const untouched = async () => {
     for (const target of [a1, child]) expect(await session(target.sessionId)).toMatchObject({ archived: false, status: "idle" });

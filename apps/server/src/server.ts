@@ -2556,6 +2556,23 @@ function createRoutes(
     cloudProviderSync.markReloadPending();
     return "deferred";
   };
+  const privateProviderResponse = (value: unknown) => {
+    const response = jsonResponse(value);
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  };
+  addRoute(routes, "GET", "/anonymous-inference/preferences", "host-token", async () =>
+    privateProviderResponse(await anonymousInference.preferences()));
+  addRoute(routes, "PUT", "/anonymous-inference/preferences", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.enabled !== "boolean" || Object.keys(body).some((key) => key !== "enabled")) {
+      throw new ApiError(400, "invalid_payload", "Only enabled is accepted.");
+    }
+    const preferences = await anonymousInference.setEnabled(body.enabled);
+    const refresh = await applyManagedProviderReload(resolveEngineRuntimeWorkspace(config));
+    return jsonResponse({ ...preferences, refresh });
+  });
   const nativeEngineForWorkspace = createNativeCloudMcpResolver(engineV2Preview);
   registerCoreRoutes({
     nativeEngineForWorkspace,

@@ -14,6 +14,18 @@ const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const manifestPath = join(repoRoot, "docs", "enterprise", "outbound-access.json");
 
 describe("selective egress deny", () => {
+  test("documents desktop Auto free inference as an optional server route", async () => {
+    const manifest = outboundManifestFromUnknown(JSON.parse(await readFile(manifestPath, "utf8")));
+    const entries = manifest?.hosts.filter((entry) => entry.host === "inference.openworklabs.com");
+    expect(entries).toHaveLength(1);
+    expect(entries?.[0]).toMatchObject({
+      kind: "fetched",
+      components: ["server"],
+      requirement: "optional",
+      blockedEffect: expect.stringMatching(/Auto free inference.*BYOK and local providers remain usable/),
+    });
+  });
+
   test("returns an actionable blocked-host response backed by the outbound manifest", async () => {
     await using lab = await startEgressLab({ profile: "deny", denyHosts: ["github.com", "127.0.0.1"] });
     const denied = await readDeniedHostFacts(lab);

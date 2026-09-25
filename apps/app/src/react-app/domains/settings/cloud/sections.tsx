@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { formatRelativeTime } from "@/app/utils";
 import type { CloudImportedPlugin, CloudImportedProvider } from "../../../../app/cloud/import-state";
 import type {
   DenOrgMarketplaceResolved,
@@ -36,6 +37,7 @@ import {
 } from "../settings-list";
 import { t } from "@/i18n";
 import { useCloudSession } from "./cloud-session-provider";
+import { ProviderIcon } from "../../../design-system/provider-icon";
 
 export type CloudProviderRowStatus =
   | "connected"
@@ -209,6 +211,7 @@ function CloudProviderListItem({ actionId, row, onRetry }: CloudProviderListItem
 
   return (
     <SettingsListItem>
+      <ProviderIcon providerId={row.imported?.sourceProviderId ?? row.provider?.providerId ?? ""} providerName={row.name} size={20} />
       <SettingsListItemContent>
         <SettingsListTitle>
           <SettingsListItemTitle>{row.name}</SettingsListItemTitle>
@@ -217,11 +220,7 @@ function CloudProviderListItem({ actionId, row, onRetry }: CloudProviderListItem
           </SettingsPill>
         </SettingsListTitle>
         <SettingsListItemDescription>
-          {[
-            row.provider?.providerId ?? row.imported?.providerId,
-            row.provider?.hasApiKey ? t("den.credentials_ready_badge") : null,
-            row.detail,
-          ].filter(Boolean).join(" · ")}
+          {row.detail}
         </SettingsListItemDescription>
       </SettingsListItemContent>
       {row.status === "error" && row.provider ? (
@@ -386,108 +385,23 @@ export interface CloudProvidersSectionProps {
   rows: CloudProviderRow[];
   onRefresh: () => void | Promise<void>;
   onRetry: (cloudProviderId: string) => void | Promise<void>;
+  onOpenDen?: () => void;
+  lastVerifiedAt?: string | number | null;
+  additionalRows?: React.ReactNode;
+  additionalCount?: number;
 }
 
-export function CloudProvidersSection({
-  actionError,
-  actionId,
-  busy,
-  rows,
-  onRefresh,
-  onRetry,
-}: CloudProvidersSectionProps) {
-  const { hasActiveOrg } = useCloudSession();
-  const [searchQuery, setSearchQuery] = React.useState("");
-  const visibleRows = useSearch({ items: rows, keys: nameSearchKeys, query: searchQuery });
-  const statuses: CloudProviderRowStatus[] = [
-    "connected",
-    "syncing",
-    "error",
-    "conflict",
-    "blocked",
-    "needs_credential",
-    "needs_server",
-    "unavailable",
-  ];
-  const providerGroups = statuses
-    .map((status) => ({
-      value: status,
-      label: cloudProviderStatusLabel(status),
-      rows: visibleRows.filter((row) => row.status === status),
-    }))
-    .filter((group) => group.rows.length > 0);
-
-  return (
-    <SettingsSection>
-      <SettingsSectionHeader>
-        <SettingsSectionHeaderContent>
-          <SettingsSectionHeaderTitle>
-            {t("den.cloud_providers_title")}
-          </SettingsSectionHeaderTitle>
-          <SettingsSectionHeaderDescription>{t("den.cloud_providers_hint")}</SettingsSectionHeaderDescription>
-        </SettingsSectionHeaderContent>
-        <SettingsSectionHeaderActions>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={[busy, !hasActiveOrg].some(Boolean)}
-            onClick={() => void onRefresh()}
-          >
-            {busy ? t("den.cloud_provider_syncing") : t("den.sync_now")}
-          </Button>
-        </SettingsSectionHeaderActions>
-      </SettingsSectionHeader>
-
-      {actionError ? <SettingsNotice tone="error">{actionError}</SettingsNotice> : null}
-
-      {!busy && rows.length === 0 ? (
-        <SettingsListEmptyState>
-          {hasActiveOrg ? t("den.no_cloud_providers") : t("den.choose_org_for_providers")}
-        </SettingsListEmptyState>
-      ) : null}
-
-      {rows.length > 0 ? (
-        <>
-          <Field>
-            <FieldLabel className="sr-only" htmlFor="cloud-provider-search">
-              Search
-            </FieldLabel>
-            <SettingsListSearchInput
-              id="cloud-provider-search"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.currentTarget.value)}
-            />
-            <FieldDescription className="sr-only">Search for a provider.</FieldDescription>
-          </Field>
-
-          {visibleRows.length > 0 ? (
-            <Accordion multiple defaultValue={statuses}>
-              {providerGroups.map((group) => (
-                <AccordionItem key={group.value} value={group.value}>
-                  <AccordionTrigger className="items-center hover:no-underline group gap-x-3">
-                    <span className="group-hover:underline">{group.label}</span>
-                    <SettingsPill>{group.rows.length}</SettingsPill>
-                  </AccordionTrigger>
-                  <AccordionContent className="px-1.5 pb-1.5">
-                    <SettingsList>
-                      {group.rows.map((row) => (
-                        <CloudProviderListItem
-                          key={row.key}
-                          actionId={actionId}
-                          row={row}
-                          onRetry={onRetry}
-                        />
-                      ))}
-                    </SettingsList>
-                  </AccordionContent>
-                </AccordionItem>
-              ))}
-            </Accordion>
-          ) : (
-            <SettingsListEmptyState>No providers match your search.</SettingsListEmptyState>
-          )}
-        </>
-      ) : null}
-    </SettingsSection>
-  );
+export function CloudProvidersSection({ actionError, actionId, busy, rows, onRefresh, onRetry, onOpenDen, lastVerifiedAt, additionalRows, additionalCount = 0 }: CloudProvidersSectionProps) {
+  const { hasActiveOrg, activeOrgName } = useCloudSession();
+  const verified = lastVerifiedAt ? new Date(lastVerifiedAt) : null;
+  const timestamp = verified && Number.isFinite(verified.getTime()) ? formatRelativeTime(verified.getTime()) : null;
+  return <SettingsSection>
+    <SettingsSectionHeader><SettingsSectionHeaderContent><SettingsSectionHeaderTitle>From {activeOrgName || "your organization"}</SettingsSectionHeaderTitle></SettingsSectionHeaderContent><SettingsSectionHeaderActions>{onOpenDen ? <Button variant="ghost" size="sm" onClick={onOpenDen}>Open in Den</Button> : null}</SettingsSectionHeaderActions></SettingsSectionHeader>
+    <span className="text-xs text-muted-foreground">Managed in Den</span>
+    {actionError ? <SettingsNotice tone="error">{actionError}</SettingsNotice> : null}
+    {busy && !rows.length && !additionalCount ? <div role="status" aria-label="Loading organization providers" className="grid gap-3">{[0, 1].map((key) => <div key={key} className="h-12 animate-pulse rounded-md bg-muted" />)}</div> : null}
+    {!busy && !rows.length && !additionalCount ? <SettingsListEmptyState>{hasActiveOrg ? t("den.no_cloud_providers") : t("den.choose_org_for_providers")}</SettingsListEmptyState> : null}
+    <SettingsList>{rows.map((row) => <CloudProviderListItem key={row.key} actionId={actionId} row={row} onRetry={onRetry} />)}{additionalRows}</SettingsList>
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3 text-xs text-muted-foreground"><span>{timestamp ? `Synced with Den ${timestamp}` : "Not synced with Den yet"} · {rows.length + additionalCount} providers</span><Button variant="ghost" size="sm" disabled={busy || !hasActiveOrg} onClick={() => void onRefresh()}>{busy ? "Syncing…" : "Sync now"}</Button></div>
+  </SettingsSection>;
 }

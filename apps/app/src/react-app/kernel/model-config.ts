@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import {
   DEFAULT_MODEL,
@@ -14,6 +14,78 @@ import {
 import { normalizeModelBehaviorValue } from "../../app/lib/model-behavior";
 
 export const storedDefaultModelChangedEvent = "openwork.defaultModelChanged";
+export const workspaceDefaultModelChangedEvent = "openwork.workspaceDefaultModelChanged";
+
+export type WorkspaceModelScope = { profileId: string; runtime: string; workspaceId: string };
+export type WorkspaceDefaultModel = { model: ModelRef; variant: string | null };
+
+export function workspaceModelScope(input: {
+  profileId: string | null;
+  workspaceId: string;
+  opencodeBaseUrl: string;
+  localRuntime: boolean;
+}): WorkspaceModelScope | null {
+  if (!input.profileId?.trim() || !input.workspaceId.trim() || !input.opencodeBaseUrl.trim()) return null;
+  try {
+    const url = new URL(input.opencodeBaseUrl);
+    const local = input.localRuntime && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    return { profileId: input.profileId, workspaceId: input.workspaceId,
+      runtime: `${local ? "desktop:" : url.origin}${url.pathname.replace(/\/+$/, "").replace(/\/opencode2?$/, "")}` };
+  } catch { return null; }
+}
+
+export function workspaceDefaultModelKey(scope: WorkspaceModelScope | null): string | null {
+  return scope?.profileId && scope.runtime && scope.workspaceId
+    ? `openwork.workspaceDefaultModel.v1.${JSON.stringify([scope.profileId, scope.runtime, scope.workspaceId])}` : null;
+}
+
+function readWorkspaceDefaultRaw(key: string | null) {
+  try { return key && typeof window !== "undefined" ? window.localStorage.getItem(key) : null; } catch { return null; }
+}
+
+function parseWorkspaceDefault(raw: string | null): WorkspaceDefaultModel | null {
+  try {
+    const value: unknown = raw ? JSON.parse(raw) : null;
+    if (!value || typeof value !== "object" || !("model" in value)) return null;
+    const model = parseStoredModel(value.model);
+    if (!model?.providerID || !model.modelID) return null;
+    const variant = "variant" in value && typeof value.variant === "string" ? normalizeModelBehaviorValue(value.variant) : null;
+    return { model, variant };
+  } catch { return null; }
+}
+
+export function readWorkspaceDefaultModel(scope: WorkspaceModelScope | null): WorkspaceDefaultModel | null {
+  return parseWorkspaceDefault(readWorkspaceDefaultRaw(workspaceDefaultModelKey(scope)));
+}
+
+export function setWorkspaceDefaultModel(scope: WorkspaceModelScope | null, model: ModelRef, variant: string | null = null): boolean {
+  const key = workspaceDefaultModelKey(scope);
+  if (!key || !model.providerID || !model.modelID || typeof window === "undefined") return false;
+  try {
+    window.localStorage.setItem(key, JSON.stringify({ model: { providerID: model.providerID, modelID: model.modelID }, variant }));
+    window.dispatchEvent(new Event(workspaceDefaultModelChangedEvent));
+    return true;
+  } catch { return false; }
+}
+
+function subscribeWorkspaceDefault(listener: () => void) {
+  window.addEventListener(workspaceDefaultModelChangedEvent, listener);
+  window.addEventListener("storage", listener);
+  return () => {
+    window.removeEventListener(workspaceDefaultModelChangedEvent, listener);
+    window.removeEventListener("storage", listener);
+  };
+}
+
+export function useWorkspaceDefaultModel(scope: WorkspaceModelScope | null) {
+  const key = workspaceDefaultModelKey(scope);
+  const raw = useSyncExternalStore(subscribeWorkspaceDefault, () => readWorkspaceDefaultRaw(key), () => null);
+  return useMemo(() => parseWorkspaceDefault(raw), [raw]);
+}
+
+export function resolveNewTaskModel(scope: WorkspaceModelScope | null, fallback: { model: ModelRef | null; variant: string | null }) {
+  return readWorkspaceDefaultModel(scope) ?? fallback;
+}
 
 export type SessionChoiceOverride = {
   model?: ModelRef | null;

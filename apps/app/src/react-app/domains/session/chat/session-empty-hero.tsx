@@ -1,22 +1,13 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowRight, X, Zap } from "lucide-react";
-
-import { DEFAULT_MODEL } from "@/app/constants";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { DescriptiveButton, DescriptiveButtonTitle } from "@/components/descriptive-button";
+import { Button } from "@/components/ui/button";
+import { AutoFirstUseStatus, openAutoSignIn } from "../../cloud/auto-access-ui";
+import { isAutoModel } from "@/react-app/domains/models/model-catalog";
 import type { ComposerAttachment } from "@/app/types";
 import { resolveOrganizationPromptCardContent } from "@/components/chat/task-suggestions";
 import { useCheckDesktopRestriction, useOrgRestrictions } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
-import {
-  getOpenWorkModelsActionUrl,
-  hideOpenWorkModelsPromo,
-  isOpenWorkModelsPromoHidden,
-  openWorkModelsPromoChangedEvent,
-  useOpenWorkModelsPromoEligibility,
-} from "@/react-app/domains/cloud/openwork-models-promo";
-import { usePlatform } from "@/react-app/kernel/platform";
 import { persistableComposerDraftText, useComposerStateStore } from "@/react-app/domains/session/surface/composer-state-store";
 import { useNewTaskDraftState } from "@/react-app/domains/session/sync/draft-store";
 import {
@@ -34,26 +25,9 @@ type HeroSuggestion = {
 };
 
 const DEFAULT_SUGGESTIONS: HeroSuggestion[] = [
-  {
-    title: "Summarize my week",
-    description: "Pull highlights from email and calendar.",
-    prompt: "Summarize my week: pull the highlights from my connected email and calendar and give me a short digest of what happened and what needs my attention.",
-  },
-  {
-    title: "Clean up a spreadsheet",
-    description: "Drop in a CSV and describe the result you want.",
-    prompt: "Create a sample CSV file with 20 rows of fake customer data (name, email, company, revenue). Then show me a summary of the data.",
-  },
-  {
-    title: "Draft a document",
-    description: "Reports, emails, or briefs from a few bullet points.",
-    prompt: "Draft a one-page project brief. Ask me for the bullet points you need, then turn them into a clear, well-structured document.",
-  },
-  {
-    title: "Automate a web task",
-    description: "Use the built-in browser for repetitive steps.",
-    prompt: "Open craigslist.org in the browser and search for couches for sale. Show me the top 5 results with prices.",
-  },
+  { title: "Summarize this folder", description: "Summarize the files in this workspace.", prompt: "Summarize the files in this folder and highlight what needs my attention." },
+  { title: "Find TODOs and open questions", description: "Find outstanding work in this folder.", prompt: "Find TODOs and open questions in this folder. Summarize the outstanding work and link to the relevant files." },
+  { title: "Draft a release note", description: "Draft a release note from this workspace.", prompt: "Draft a release note from the changes in this workspace. Ask me if the release scope is unclear." },
 ];
 
 export type SessionEmptyHeroProps = {
@@ -71,12 +45,6 @@ export type SessionEmptyHeroProps = {
   composer?: NewTaskComposerContext | null;
 };
 
-/**
- * Paper "first chat" empty state: the real session composer front and
- * center with suggestion cards below. Suggestions come from desktop
- * policies (organization onboarding prompts) when configured, with
- * built-in defaults otherwise.
- */
 export function SessionEmptyHero(props: SessionEmptyHeroProps) {
   // The session is created on submit, so until then the prompt has no
   // conversation to live in. Persist it under the workspace's reserved slot so
@@ -125,16 +93,7 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
   const orgRestrictions = useOrgRestrictions();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const canAddProviders = !checkDesktopRestriction({ restriction: "allowCustomProviders" });
-  const platform = usePlatform();
   const denAuth = useDenAuth();
-  const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
-  const [modelsPromoHidden, setModelsPromoHidden] = useState(isOpenWorkModelsPromoHidden);
-
-  useEffect(() => {
-    const handlePromoChanged = () => setModelsPromoHidden(isOpenWorkModelsPromoHidden());
-    window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
-    return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
-  }, []);
 
   // A chat deep link (Den's connector "Chat" action) seeds the composer with
   // the connector chip and its starter prompt; the person reviews and sends.
@@ -150,15 +109,7 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
     return () => window.removeEventListener(pendingChatSeedEvent, seed);
   }, []);
 
-  // Quiet inline lead to OpenWork Models: replaces the old startup dialog
-  // interrupt. Shown only while the session runs on the free starter model
-  // (the built-in `opencode` provider) and the hosted offering applies.
-  const onFreeStarterModel = props.composer?.selectedModel.providerID === DEFAULT_MODEL.providerID;
-  const showModelsHint =
-    openWorkModelsPromoEligible &&
-    !modelsPromoHidden &&
-    !props.composer?.openWorkModelsEntitled &&
-    onFreeStarterModel;
+  const showAutoStatus = denAuth.status === "signed_out" && isAutoModel(props.composer?.selectedModel) && !props.composer?.modelUnavailable;
 
   const organizationPrompts = orgRestrictions.onboardingPrompts;
   const suggestions: HeroSuggestion[] = organizationPrompts !== undefined
@@ -203,75 +154,27 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
   };
 
   return (
-    <div data-chat-empty-hero className="mx-auto flex w-full max-w-[640px] flex-col gap-6 px-4 max-lg:h-full max-lg:min-h-0 max-lg:gap-4 max-lg:overflow-y-auto max-lg:px-3 max-lg:pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-6">
-      <div data-empty-greeting hidden={hideIntroduction} className="text-center max-lg:pt-6">
-        <h2 className="text-lg font-medium tracking-tight text-foreground">
-          What do you need done?
-        </h2>
-      </div>
-
-      <div ref={composerDockRef} onFocusCapture={() => setComposing(true)} data-empty-composer-dock className="max-lg:sticky max-lg:bottom-0 max-lg:order-last max-lg:mt-auto max-lg:shrink-0 max-lg:bg-dls-surface">
-      <NewTaskComposer
-        draft={prompt}
-        onDraftChange={setPrompt}
-        onRunTask={submit}
-        busy={props.busy ?? false}
-        context={props.composer ?? null}
-      />
-      </div>
-
-      {showModelsHint ? (
-        <div
-          className="flex items-center justify-center gap-2 text-[12px] text-muted-foreground"
-          data-testid="openwork-models-hint"
-        >
-          <span>Using the free starter model.</span>
-          <button
-            type="button"
-            className="flex items-center gap-1 font-medium text-blue-10 transition-colors hover:text-blue-11"
-            onClick={() => platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn, "sign-up"))}
-          >
-            Get frontier models with no API keys
-            <ArrowRight className="size-3" />
-          </button>
-          <button
-            type="button"
-            className="flex size-5 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:text-foreground"
-            onClick={hideOpenWorkModelsPromo}
-            aria-label="Hide OpenWork Models hint"
-          >
-            <X className="size-3" />
-          </button>
+    <div data-chat-empty-hero className={`mx-auto flex h-full min-h-0 w-full flex-1 flex-col gap-6 px-8 pb-4 max-lg:gap-4 max-lg:overflow-y-auto max-lg:px-3 max-lg:pb-[max(0.5rem,env(safe-area-inset-bottom))] ${props.composer?.destination?.parent ? "" : "lg:absolute lg:inset-0"}`}>
+      <div data-empty-introduction hidden={hideIntroduction} className={hideIntroduction ? "hidden" : "flex min-h-56 w-full max-w-[800px] flex-1 flex-col items-center justify-center gap-5 self-center py-12 text-center"}>
+        <div data-empty-greeting hidden={hideIntroduction} className="space-y-1.5">
+          <h2 className="text-xl font-bold leading-7 tracking-tight text-foreground">What should we work on?</h2>
+          <p className="text-sm leading-5 text-muted-foreground">{props.composer?.workspaceId ? "Describe it in plain language. OpenWork works on the files in this folder." : "Describe a task in plain language to start a conversation."}</p>
         </div>
-      ) : null}
-
-      {!showModelsHint && canAddProviders && props.providerCount === 0 && props.onOpenProviderAuth ? (
-        <button
-          type="button"
-          className="flex w-full items-start gap-3 rounded-xl border border-blue-7/50 bg-blue-2/40 p-3.5 text-left transition-colors hover:bg-blue-3/50"
-          onClick={props.onOpenProviderAuth}
-        >
-          <Zap className="mt-0.5 size-4 shrink-0 text-blue-10" />
-          <div>
-            <div className="text-[13px] font-medium text-foreground">Connect a model provider</div>
-            <div className="mt-0.5 text-[12px] text-muted-foreground">
-              Add an API key for Anthropic, OpenAI, Google, or other providers so tasks can run.
-            </div>
-          </div>
-        </button>
-      ) : null}
-
-      <div data-empty-suggestions hidden={hideIntroduction} className={hideIntroduction ? "hidden" : "grid gap-2 sm:grid-cols-2"}>
-        {suggestions.map((suggestion) => (
-          <DescriptiveButton
-            key={suggestion.title}
-            className="min-h-10 items-center rounded-xl bg-background px-3 py-2 text-foreground hover:border-foreground/20 hover:bg-muted/60 max-lg:min-h-11"
-            aria-label={`${suggestion.title}: ${suggestion.description}`}
-            onClick={() => fillPrompt(suggestion.prompt)}
-          >
-            <DescriptiveButtonTitle>{suggestion.title}</DescriptiveButtonTitle>
-          </DescriptiveButton>
-        ))}
+        <div data-empty-suggestions hidden={hideIntroduction} className="flex flex-wrap justify-center gap-2">
+          {suggestions.map((suggestion) => <Button key={suggestion.title} variant="outline" size="sm" className="min-h-8 rounded-full px-3 text-sm max-lg:min-h-11"
+            aria-label={`${suggestion.title}: ${suggestion.description}`} onClick={() => fillPrompt(suggestion.prompt)}>{suggestion.title}</Button>)}
+        </div>
+        {showAutoStatus ? <AutoFirstUseStatus onConnect={canAddProviders ? props.onOpenProviderAuth : undefined} /> : null}
+        {!showAutoStatus && canAddProviders && props.providerCount === 0 && props.onOpenProviderAuth ? <div className="flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground">
+          <span>Connect a provider to get started.</span><Button variant="outline" size="sm" onClick={props.onOpenProviderAuth}>Connect a model provider</Button>
+        </div> : null}
+      </div>
+      <div ref={composerDockRef} onFocusCapture={() => setComposing(true)} data-empty-composer-dock className="mt-auto w-full max-w-[800px] shrink-0 self-center max-lg:sticky max-lg:bottom-0 max-lg:order-last max-lg:mt-auto max-lg:shrink-0 max-lg:bg-dls-surface">
+        <NewTaskComposer draft={prompt} onDraftChange={setPrompt} onRunTask={submit} busy={props.busy ?? false} context={props.composer ?? null} />
+        {denAuth.status === "signed_out" ? <p className="mt-2 text-center text-xs text-muted-foreground" data-testid="first-use-local-caption">
+          {props.composer?.isRemoteWorkspace || props.composer?.isSandboxWorkspace ? "Files stay in this workspace. " : "Files stay on this device. "}
+          <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => openAutoSignIn()}>Sign in to OpenWork Cloud</button> to sync your Library.
+        </p> : null}
       </div>
     </div>
   );

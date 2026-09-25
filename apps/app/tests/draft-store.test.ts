@@ -9,6 +9,8 @@ import {
   resolveSessionDraftScope,
   SESSION_DRAFT_STORAGE_KEY,
   sessionDraftScopeKey,
+  rejectedTurnOwner,
+  type RejectedTurn,
 } from "../src/react-app/domains/session/sync/draft-store";
 
 type StorageMutation = { key: string | null; newValue: string | null };
@@ -51,6 +53,81 @@ function sharedStorageContexts() {
 const aliceOps = cloudSessionDraftScope({ principalId: "usr_alice", organizationId: "org_ops" });
 const aliceFinance = cloudSessionDraftScope({ principalId: "usr_alice", organizationId: "org_finance" });
 const bobOps = cloudSessionDraftScope({ principalId: "usr_bob", organizationId: "org_ops" });
+
+describe("durable rejected turns", () => {
+  const owner = rejectedTurnOwner({ draftScope: "local", denBaseUrl: "https://den.example", opencodeBaseUrl: "http://127.0.0.1:4096/opencode2", workspaceId: "workspace-a", sessionId: "session-a", localRuntime: true });
+  const turn: RejectedTurn = { id: "rejected-a", text: "Unprocessed task", created: 100, afterMessageId: "previous", wall: { state: "limit" }, attachments: [] };
+
+  test("relaunch retains the rejected row while retiring only its queued mirror and preserving newer composer text", () => {
+    const shared = sharedStorageContexts();
+    const writer = createSessionDraftStore(shared.context("writer"));
+    writer.save("local", owner.workspaceId, owner.sessionId, { text: "newer edits", mode: "prompt", queued: [turn.text, "queued follower"] });
+    expect(writer.saveRejected(owner, turn, { remaining: ["queued follower"] })).toBe("saved");
+    writer.dispose();
+    const restored = createSessionDraftStore(shared.context("restarted"));
+    expect(restored.getRejected(owner)).toEqual([turn]);
+    expect(restored.get("local", owner.workspaceId, owner.sessionId)).toEqual({ text: "newer edits", mode: "prompt", queued: ["queued follower"] });
+    restored.clear("local", owner.workspaceId, owner.sessionId);
+    expect(restored.getRejected(owner)).toEqual([turn]);
+  });
+
+  test("only an explicit recovery moves that turn across sign-in, once, to the verified account and organization", () => {
+    const shared = sharedStorageContexts();
+    const writer = createSessionDraftStore(shared.context("writer"));
+    const identity = { principalId: "usr_alice", organizationId: "org_ops" };
+    writer.saveRejected(owner, turn);
+    writer.saveRejected({ ...owner, sessionId: "other-session" }, { ...turn, id: "other", text: "Do not transfer another conversation" });
+    expect(writer.claimRejectedRecovery(owner.denBaseUrl, identity, 1000)).toBe(false);
+    expect(writer.beginRejectedRecovery(owner, turn.id, 1000)).toBe(true);
+    writer.dispose();
+    const restarted = createSessionDraftStore(shared.context("restart"));
+    expect(restarted.claimRejectedRecovery("https://another-den.example", identity, 1001)).toBe(false);
+    expect(restarted.claimRejectedRecovery(owner.denBaseUrl, identity, 1001)).toBe(true);
+    expect(restarted.getRejected({ ...owner, scopeId: aliceOps })).toEqual([turn]);
+    expect(restarted.getRejected(owner)).toEqual([]);
+    expect(restarted.hasMovedRejected(owner, turn.id)).toBe(true);
+    expect(restarted.hasMovedRejected({ ...owner, sessionId: "other-session" }, turn.id)).toBe(false);
+    expect(restarted.getRejected({ ...owner, scopeId: bobOps })).toEqual([]);
+    expect(restarted.getRejected({ ...owner, scopeId: aliceFinance })).toEqual([]);
+    expect(restarted.getRejected({ ...owner, sessionId: "other-session" })).toHaveLength(1);
+    expect(restarted.claimRejectedRecovery(owner.denBaseUrl, { principalId: "usr_bob", organizationId: "org_ops" }, 1002)).toBe(false);
+    const nextLaunch = createSessionDraftStore(shared.context("next-launch"));
+    expect(nextLaunch.getRejected({ ...owner, scopeId: aliceOps })).toEqual([turn]);
+    expect(nextLaunch.getRejected({ ...owner, scopeId: null })).toEqual([]);
+  });
+
+  test("late file persistence cannot resurrect a recovered guest row or overwrite its submitted text", () => {
+    const shared = sharedStorageContexts();
+    const writer = createSessionDraftStore(shared.context("writer"));
+    writer.saveRejected(owner, turn);
+    writer.beginRejectedRecovery(owner, turn.id, 1000);
+    writer.claimRejectedRecovery(owner.denBaseUrl, { principalId: "usr_alice", organizationId: "org_ops" }, 1001);
+    writer.saveRejected(owner, { ...turn, text: "stale text", attachments: [{ name: "notes.pdf", mime: "application/pdf", url: "file:///workspace/.opencode/openwork/inbox/notes.pdf" }] });
+    expect(writer.getRejected(owner)).toEqual([]);
+    expect(writer.getRejected({ ...owner, scopeId: aliceOps })[0]).toMatchObject({ text: turn.text, attachments: [{ name: "notes.pdf" }] });
+  });
+
+  test("local runtime port changes retain ownership, but another engine, endpoint, session, organization, or Den does not", () => {
+    const shared = sharedStorageContexts();
+    const writer = createSessionDraftStore(shared.context("writer"));
+    writer.saveRejected(owner, turn);
+    const movedPort = rejectedTurnOwner({ draftScope: "local", denBaseUrl: owner.denBaseUrl, opencodeBaseUrl: "http://127.0.0.1:4999/opencode2", workspaceId: owner.workspaceId, sessionId: owner.sessionId, localRuntime: true });
+    expect(writer.getRejected(movedPort)).toEqual([turn]);
+    for (const other of [{ ...owner, runtime: "desktop:/opencode" }, { ...owner, runtime: "https://remote.example/opencode2" }, { ...owner, workspaceId: "workspace-b" }, { ...owner, sessionId: "session-b" }, { ...owner, scopeId: aliceOps }, { ...owner, denBaseUrl: "https://another-den.example" }]) expect(writer.getRejected(other)).toEqual([]);
+    writer.beginRejectedRecovery(owner, turn.id, 1000);
+    expect(writer.claimRejectedRecovery(owner.denBaseUrl, { principalId: "usr_alice", organizationId: "org_ops" }, 1000 + 31 * 60_000)).toBe(false);
+  });
+
+  test("storage failure leaves the existing queued mirror and newer draft intact", () => {
+    const shared = sharedStorageContexts();
+    const context = shared.context("writer");
+    const writer = createSessionDraftStore(context);
+    writer.save("local", owner.workspaceId, owner.sessionId, { text: "newer draft", mode: "prompt", queued: [turn.text] });
+    const failing = createSessionDraftStore({ storage: { ...context.storage, setItem: () => { throw new Error("storage unavailable"); } } });
+    expect(failing.saveRejected(owner, turn, { remaining: [] })).toBe("unavailable");
+    expect(writer.get("local", owner.workspaceId, owner.sessionId)).toEqual({ text: "newer draft", mode: "prompt", queued: [turn.text] });
+  });
+});
 
 describe("session draft storage v2", () => {
   test("makes credential changes unreadable until the new account and organization are verified", () => {

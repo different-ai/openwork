@@ -151,7 +151,7 @@ export function getSettingsTabLabel(tab: SettingsTab) {
 export function getSettingsTabDescription(tab: SettingsTab) {
   switch (tab) {
     case "ai":
-      return "Connect services that provide AI models";
+      return "Connect OpenAI, Anthropic, local models and more";
     case "ollama":
       return "Connect to Ollama and manage local models";
     case "preferences":

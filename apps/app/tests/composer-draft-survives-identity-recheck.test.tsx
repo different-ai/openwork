@@ -115,7 +115,9 @@ test("composer text survives a Cloud identity re-check and still clears across a
   const snapshot = createSnapshot();
   mock.module("@/components/model-select", () => ({ ModelSelect: () => null }));
   mock.module("@/react-app/domains/session/surface/composer/workspace-run-mode-menu", () => ({ WorkspaceRunModeMenu: () => null }));
+  const nativeSessionModule = await import("../src/app/lib/opencode-session-native");
   mock.module("@/app/lib/opencode-session-native", () => ({
+    ...nativeSessionModule,
     composeNativeSessionHistory: async () => snapshot,
   }));
   const { SessionSurface } = await import("../src/react-app/domains/session/surface/session-surface");
@@ -203,6 +205,23 @@ test("composer text survives a Cloud identity re-check and still clears across a
       "the text typed during the re-check to persist once the scope resolves",
     );
 
+    const { startQueuedDraftPersistence } = await import("../src/react-app/domains/session/sync/queued-draft-persistence");
+    const { claimQueuedSend, dispatchQueuedDrain } = await import("../src/react-app/domains/session/surface/queued-drain-machine");
+    await act(async () => {
+      claimQueuedSend(sessionId, "blocked-owner");
+      dispatchQueuedDrain(sessionId, { type: "send_error", itemId: "blocked-owner" });
+    });
+    const stopQueuedPersistence = startQueuedDraftPersistence();
+    try {
+      await act(async () => useComposerStateStore.getState().appendQueuedDraft(sessionId, {
+        mode: "prompt", text: "private queued follow-up", parts: [{ type: "text", text: "private queued follow-up" }], attachments: [],
+      }));
+      expect(getSessionDraft(aliceScope, workspaceId, sessionId)?.queued).toEqual(["private queued follow-up"]);
+      await act(async () => root.render(surface(bobScope)));
+      expect(useComposerStateStore.getState().queuedDrafts[sessionId]).toBeUndefined();
+      expect(getSessionDraft(aliceScope, workspaceId, sessionId)?.queued).toEqual(["private queued follow-up"]);
+      expect(getSessionDraft(bobScope, workspaceId, sessionId)).toBeNull();
+    } finally { stopQueuedPersistence(); }
     // A real account boundary still replaces the composer and exposes nothing
     // of the previous person's text.
     await act(async () => root.render(surface(bobScope)));

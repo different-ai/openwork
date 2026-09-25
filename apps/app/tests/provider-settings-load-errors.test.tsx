@@ -128,7 +128,6 @@ function ProviderSettings({ harness }: { harness: Harness }) {
       onDisconnectProvider={() => undefined}
       canDisconnectProvider={() => true}
       canAddProviders={true}
-      showOpenWorkModelsSubscribe={ui.connected.length === 0}
     />
   );
 }
@@ -174,7 +173,7 @@ test("cold discovery waits, reports SDK failure, and only shows empty setup afte
   expect(harness.store.getSnapshot().providerLoadState).toEqual({ status: "ready", error: null });
   const empty = render(harness);
   expect(empty).toContain(t("settings.no_providers_connected"));
-  expect(empty).toContain("Subscribe");
+  expect(empty).not.toContain("Subscribe");
   expect(empty).not.toContain('role="alert"');
   expect(empty).not.toContain('disabled=""');
   expectReadOnly(harness);

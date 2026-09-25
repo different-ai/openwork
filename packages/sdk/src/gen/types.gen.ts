@@ -1021,6 +1021,10 @@ export type InferenceAccessResponse = {
       | "free_request_in_progress"
       | "upstream_unavailable"
       | null;
+    /**
+     * Organization-managed Auto pin for this membership. False removes only the organization pin; model access and personal pins are unchanged. Pins never grant access.
+     */
+    defaultPinned?: boolean;
     canUpgrade: false;
     catalog?: Array<{
       modelID: string;
@@ -10164,6 +10168,131 @@ export type PutV1DiagnosticsEgressTokenResponses = {
 
 export type PutV1DiagnosticsEgressTokenResponse =
   PutV1DiagnosticsEgressTokenResponses[keyof PutV1DiagnosticsEgressTokenResponses];
+
+export type GetV1InferenceFreeProviderData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/free/provider";
+};
+
+export type GetV1InferenceFreeProviderErrors = {
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Workspace admin permission required.
+   */
+  403: ForbiddenError;
+  /**
+   * Free provider summary unavailable.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type GetV1InferenceFreeProviderError = GetV1InferenceFreeProviderErrors[keyof GetV1InferenceFreeProviderErrors];
+
+export type GetV1InferenceFreeProviderResponses = {
+  /**
+   * Free provider summary returned.
+   */
+  200: {
+    provider: {
+      state: "available" | "disabled" | "unavailable";
+      reason:
+        | "admin_disabled"
+        | "not_eligible"
+        | "free_disabled"
+        | "accounting_unavailable"
+        | "free_allowance_exhausted"
+        | "free_request_in_progress"
+        | "upstream_unavailable"
+        | null;
+      defaultPinned: boolean;
+      modelGroup: {
+        id: "free";
+        name: "Free";
+      };
+      catalog: Array<{
+        modelID: string;
+        displayName: string;
+        providerName: string;
+        summary: string;
+        recommended: boolean;
+        rank: number;
+        capabilities: Array<string>;
+      }>;
+      allowance: {
+        usageScope: "organization";
+        allowanceScope: "person";
+        windowStartAt: string;
+        resetsAt: string;
+        weeklyLimitUsd: number;
+        joinedMembers: number;
+        eligibleMembers: number;
+        /**
+         * Current eligible members whose recorded weekly usage plus reservations reaches their person-wide limit; not a probe of Gateway request headroom. Null when accounting cannot be verified.
+         */
+        exhaustedMembers: number | null;
+        usedUsd: number | null;
+        reservedUsd: number | null;
+        retainedUsd: number | null;
+        requestCount: number | null;
+      };
+    };
+  };
+};
+
+export type GetV1InferenceFreeProviderResponse =
+  GetV1InferenceFreeProviderResponses[keyof GetV1InferenceFreeProviderResponses];
+
+export type PatchV1InferenceFreePinsData = {
+  body: {
+    defaultPinned: boolean;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/free/pins";
+};
+
+export type PatchV1InferenceFreePinsErrors = {
+  /**
+   * Provide only defaultPinned.
+   */
+  400: InvalidRequestError;
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Fresh workspace admin permission required.
+   */
+  403: ForbiddenError;
+  /**
+   * Organization policy unavailable.
+   */
+  503: {
+    error: "managed_models_disabled_for_dpa" | "managed_models_policy_unavailable";
+    message: string;
+  };
+};
+
+export type PatchV1InferenceFreePinsError = PatchV1InferenceFreePinsErrors[keyof PatchV1InferenceFreePinsErrors];
+
+export type PatchV1InferenceFreePinsResponses = {
+  /**
+   * Auto pin saved.
+   */
+  200: {
+    defaultPinned: boolean;
+  };
+};
+
+export type PatchV1InferenceFreePinsResponse =
+  PatchV1InferenceFreePinsResponses[keyof PatchV1InferenceFreePinsResponses];
 
 export type GetV1InferenceAccessData = {
   body?: never;

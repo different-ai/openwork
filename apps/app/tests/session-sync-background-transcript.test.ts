@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 import type { UIMessage } from "ai";
+import { snapshotToUIMessages } from "../src/react-app/domains/session/sync/usechat-adapter";
 
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
 import {
@@ -71,6 +72,27 @@ afterAll(() => {
 });
 
 describe("background session transcript", () => {
+  test("live updates and snapshot projection retain parent identity alongside reply model metadata", () => {
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, "session-a");
+    const info = {
+      id: "msg-a", sessionID: "session-a", role: "assistant" as const, parentID: "user-a",
+      modelID: "served-model", providerID: "openwork-free", time: { created: 1, completed: 2 },
+      mode: "build", agent: "build", path: { cwd: "/workspace", root: "/workspace" },
+      cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    };
+    try {
+      const projected = snapshotToUIMessages({ messages: [{ info, parts: [textPart("Done")] }] });
+      expect(projected[0]?.metadata).toMatchObject({ opencode: { parentID: "user-a", replyModel: { modelID: "served-model" } } });
+      __applySessionSyncEventForTest(syncInput, { type: "message.updated", properties: { info } });
+      __applySessionSyncEventForTest(syncInput, { type: "message.part.updated", properties: { part: textPart("Done") } });
+      __applySessionSyncEventForTest(syncInput, { type: "message.updated", properties: {
+        info: { id: "msg-a", role: "assistant", sessionID: "session-a", time: { completed: 3 } },
+      } });
+      expect(transcript()?.[0]?.metadata).toMatchObject({ opencode: { parentID: "user-a", completed: 3, replyModel: { modelID: "served-model" } } });
+      expect(transcript()?.[0]?.parts).toMatchObject([{ type: "text", text: "Done" }]);
+    } finally { release(); cleanup(); }
+  });
   test("native revert commit removes the old suffix from visible and paged history before clearing the cursor", () => {
     const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
     const release = trackWorkspaceSessionSync(syncInput, "session-a");

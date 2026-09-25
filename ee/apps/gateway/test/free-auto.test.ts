@@ -117,7 +117,8 @@ function fixture(overrides: Partial<import("../src/free/guest/routes.js").FreeRo
   const app = new Hono()
   registerAnonymousInferenceRoutes(app, { config, store, releases: async () => releases, now: () => now, clientAddress: () => "127.0.0.1", fetch, ...overrides })
   const memberApp = new Hono()
-  const handler = createFreeMemberHandler({ config, store: { ...store, family: "member" }, fetch, findMember: async (key) => key.id === keyRow.id ? member : null, ...memberOverrides })
+  const handler = createFreeMemberHandler({ config, store: { ...store, family: "member" }, fetch, findMember: async (key) => key.id === keyRow.id ? member : null,
+    defaultPinned: async () => true, ...memberOverrides })
   memberApp.all("/api/v1/*", (c) => handler(c, { ...keyRow, key_hash: "", key_prefix: null, name: null, encrypted_key: null, status: "active", revoked_at: null, created_at: new Date(), updated_at: new Date() }))
   return { app, memberApp, principals, receipts, requests, calls, store }
 }
@@ -153,7 +154,7 @@ test("free Auto stays off without the dedicated OpenAI key or release key and ne
 test("disabled endpoints do not verify metadata, write accounting, or dispatch", async () => {
   const off = readAutoConfig({})
   const f = fixture({ config: off, releases: async () => { throw new Error("must not call") } })
-  const handler = createFreeMemberHandler({ config: off, store: f.store, fetch: async () => { throw new Error("must not call") }, findMember: async () => member })
+  const handler = createFreeMemberHandler({ config: off, store: f.store, fetch: async () => { throw new Error("must not call") }, findMember: async () => member, defaultPinned: async () => true })
   const memberApp = new Hono().all("/api/v1/*", (c) => handler(c, { ...keyRow } as never))
   assert.equal((await f.app.fetch(session())).status, 503)
   assert.equal((await memberApp.fetch(new Request(`https://free.test${MEMBER_FREE_CHAT_PATH}`, { method: "POST", body: prompt, headers: { "content-type": "application/json" } }))).status, 403)
@@ -329,7 +330,7 @@ test("a member key never reaches the guest routes and a guest token never reache
   const f = fixture()
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${memberKey}`, prompt))).status, 401)
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_MODELS_PATH, `Bearer ${memberKey}`))).status, 401)
-  const handler = createFreeMemberHandler({ config, store: f.store, fetch: async () => { throw new Error("must not call") }, findMember: async () => null })
+  const handler = createFreeMemberHandler({ config, store: f.store, fetch: async () => { throw new Error("must not call") }, findMember: async () => null, defaultPinned: async () => true })
   const response = await new Hono().all("/api/v1/*", (c) => handler(c, { ...keyRow } as never)).fetch(new Request(`https://free.test${MEMBER_FREE_CHAT_PATH}`,
     { method: "POST", body: prompt, headers: { "content-type": "application/json", authorization: `Bearer ${guest()}` } }))
   assert.equal(response.status, 403)
@@ -535,6 +536,22 @@ function memberCall(app: Hono, path: string, init: RequestInit = {}) {
   return app.fetch(new Request(`https://free.test${path}`, init))
 }
 const memberChat = { method: "POST", body: prompt, headers: { "content-type": "application/json" } }
+
+test("member status carries org Auto pin policy while guests remain pinned and unpinning does not remove the model", async () => {
+  const f = fixture({}, undefined, { defaultPinned: async () => false })
+  const memberStatus = await memberCall(f.memberApp, MEMBER_FREE_STATUS_PATH)
+  assert.equal(memberStatus.status, 200)
+  assert.equal((await memberStatus.json()).defaultPinned, false)
+  const guestStatus = await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`))
+  assert.equal((await guestStatus.json()).defaultPinned, true)
+  const catalog = await memberCall(f.memberApp, MEMBER_FREE_MODELS_PATH)
+  assert.equal(catalog.status, 200)
+  assert.equal((await catalog.json()).data[0].id, INFERENCE_FREE_MODEL_ID)
+  assert.equal(f.requests.length, 0)
+  assert.equal(f.principals.length, 0)
+  const failed = fixture({}, undefined, { defaultPinned: async () => { throw new Error("Policy unavailable") } })
+  assert.equal((await memberCall(failed.memberApp, MEMBER_FREE_STATUS_PATH)).status, 503)
+})
 
 test("member Auto requests join the organization's usage as OpenWork Models, logged against the member's key; guests are never logged", async () => {
   const rows: Array<Record<string, unknown>> = []

@@ -1,5 +1,6 @@
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import type { ModelRef } from "@/app/types";
+import type { RejectedTurnOwner } from "./draft-store";
 
 export type QueuedSendContext = {
   workspaceId: string;
@@ -11,6 +12,10 @@ export type QueuedSendContext = {
   variant: string | null;
   model: ModelRef | null;
   environmentRuntimeKey: string | null;
+  rejectedOwner?: RejectedTurnOwner;
+  localRuntime?: boolean;
+  isCurrent?: () => boolean;
+  afterMessageId?: () => string | null;
 };
 
 // Context is registered by the mounted surface (enqueueing only happens there)

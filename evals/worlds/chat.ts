@@ -1,4 +1,4 @@
-import { addInitScript, browserScript, reattachSurface, reload, type Surface } from "@openwork/cdp";
+import { addInitScript, allocateFreePorts, browserScript, reattachSurface, reload, type Surface } from "@openwork/cdp";
 import { CATALOG_FAST_VARIANT, FAST_DEFAULT_VARIANT, fastVariantId } from "@openwork/types/cloud-model-fast";
 import { spawn } from "node:child_process";
 import { mkdtempSync, realpathSync } from "node:fs";
@@ -632,15 +632,92 @@ export async function focusContinuity(seed: Seed) {
 }
 
 export async function modelPicker(seed: Seed) {
-  const den = await seed.den();
-  const app = await seed.desktop({ den, as: "admin" });
-  const session = await seedSessionRetry(seed, app);
-  return { app, den, session };
+  const [webPort] = await allocateFreePorts(1);
+  if (!webPort) throw new Error("No app-web port available for the picker fixture");
+  const den = await seed.den({
+    trustedOrigins: [`http://127.0.0.1:${webPort}`],
+    mocks: { provider: seed.mock({ isolatedProcessEnv: true }) },
+  });
+  const witness = den.mocks.provider;
+  const created = await seed.api(den.admin, "/v1/llm-providers", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Organization provider", source: "custom", allMembers: true, memberIds: [], teamIds: [],
+      apiKey: "synthetic-picker-key",
+      customConfig: {
+        id: "picker-organization", name: "Organization provider", npm: "@ai-sdk/openai-compatible",
+        options: { baseURL: `${witness.url}/v1` }, env: ["PICKER_FIXTURE_API_KEY"],
+        models: [{ id: "organization-model", name: "Organization witness", tool_call: true }],
+      },
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const provider = recordValue(created.body, "llmProvider");
+  const organizationProviderId = recordValue(provider, "id");
+  if (created.response.status !== 201 || typeof organizationProviderId !== "string") {
+    throw new Error(`Picker organization provider setup failed: HTTP ${created.response.status}`);
+  }
+  const workspacePath = seed.tmpPath("model-picker");
+  const app = await seed.appWeb({ name: "model-picker", workspacePath, webPort, den: den.ref });
+  await addInitScript(app.client, browserScript((providerId) => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const response = await originalFetch(input, init);
+      const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+      if (method !== "GET" || !/\/v1\/llm-providers(?:\/[^/]+\/connect)?$/.test(url.pathname) || !response.ok) return response;
+      const body: unknown = await response.clone().json();
+      if (!body || typeof body !== "object") return response;
+      const pin = (entry: unknown) => {
+        if (entry && typeof entry === "object" && "id" in entry && entry.id === providerId) {
+          return { ...entry, pinnedModelIds: ["organization-model"] };
+        }
+        return entry;
+      };
+      const next = {
+        ...body,
+        ...("llmProviders" in body && Array.isArray(body.llmProviders) ? { llmProviders: body.llmProviders.map(pin) } : {}),
+        ...("llmProvider" in body ? { llmProvider: pin(body.llmProvider) } : {}),
+      };
+      return new Response(JSON.stringify(next), { status: response.status, headers: { "content-type": "application/json" } });
+    };
+  }, [organizationProviderId]));
+  await seed.evalIn(app, () => { location.reload(); return true; });
+  await seed.signIn(app, den.admin, "picker member");
+  const workspace = await seed.workspace(app, workspacePath);
+  const auto = { providerID: "openwork-free", modelID: "openai/gpt-5.6-luna" };
+  const byok = { providerID: "picker-byok", modelID: "byok-model" };
+  const favorite = { providerID: "picker-byok", modelID: "pinned-model" };
+  const recent = { providerID: "picker-byok", modelID: "recent-model" };
+  const organization = { providerID: organizationProviderId, modelID: "organization-model" };
+  const providerOptions = { baseURL: `${witness.url}/v1`, apiKey: "synthetic-picker-key" };
+  await configureProvider(seed, app, workspace.workspaceId, organization.providerID, organization.modelID, {
+    enabled_providers: [auto.providerID, byok.providerID, organization.providerID, "openwork"],
+    provider: {
+      [auto.providerID]: { npm: "@ai-sdk/openai-compatible", name: "OpenWork Free", options: providerOptions,
+        models: { [auto.modelID]: { name: "GPT-5.6 Luna" } } },
+      openwork: { npm: "@ai-sdk/openai-compatible", name: "OpenWork Models", options: providerOptions,
+        models: { "hosted-model": { name: "Hosted witness" } } },
+      [byok.providerID]: { npm: "@ai-sdk/openai-compatible", name: "BYOK provider", options: providerOptions,
+        models: { [byok.modelID]: { name: "BYOK witness" }, [favorite.modelID]: { name: "Pinned witness" }, [recent.modelID]: { name: "Recent witness" } } },
+      [organization.providerID]: { npm: "@ai-sdk/openai-compatible", name: "Organization provider", options: providerOptions,
+        models: { [organization.modelID]: { name: "Organization witness" } } },
+    },
+  });
+  await seed.evalIn(app, browserScript((favorite, recent) => {
+    localStorage.setItem("openwork.modelCollections.v1", JSON.stringify({ favorites: [favorite], recent: [recent] }));
+    location.reload();
+    return true;
+  }, [favorite, recent]));
+  const session = await seedSessionRetry(seed, app, { title: "Choose a model without losing a draft" });
+  return { app, den, workspace, session, auto, byok, favorite, recent, organization,
+    requests: () => witness.agentRequests(),
+  };
 }
 
 /** Model picker contract through a real native engine and a synthetic provider. */
 export async function modelPickerEffortWeb(seed: Seed) {
-  const engine = resolveEvalEngine();
+  const engine = "v2";
   const fastProviderId = "fast-witness";
   const fastModelId = "gpt-5.4";
   const providerId = "effort-witness";
@@ -650,7 +727,7 @@ export async function modelPickerEffortWeb(seed: Seed) {
     promptMarker: prompt, latestUserTurn: true, finalReply: "Air scatters blue light more strongly.", steps: [],
   }] });
   const workspacePath = seed.tmpPath("model-picker-effort");
-  const app = await seed.appWeb({ name: "model-picker-effort", workspacePath, mocks: { agent: mock } });
+  const app = await seed.appWeb({ name: "model-picker-effort", workspacePath, engine, mocks: { agent: mock } });
   // Observe model references without consuming or changing the app's requests.
   await addInitScript(app.client, () => {
     window.__modelEffortRequests = [];
