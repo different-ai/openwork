@@ -709,6 +709,24 @@ test("a switched-off guest gateway is not asked again, and no proof of work is s
     // A send with Auto selected asks straight away.
     await activate().catch(() => undefined);
     expect(mints()).toBe(3);
+    // So does the app's preflight before a send, or its Retry.
+    await service.preflight();
+    expect(mints()).toBe(4);
+    // The background heartbeat still honours the refusal.
+    await service.status(true);
+    expect(mints()).toBe(4);
+  });
+});
+
+test("signing in replaces the engine's relay credential and asks the engine to reload its providers", async () => {
+  await fixture(async ({ service, connectMember }) => {
+    await service.initialize(9876);
+    let reloads = 0;
+    service.onEngineConfigChanged = () => { reloads++; };
+    await connectMember();
+    expect(reloads).toBe(1);
+    await service.setMemberSession(null);
+    expect(reloads).toBe(2);
   });
 });
 
