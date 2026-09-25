@@ -654,6 +654,28 @@ test("minting a guest session does the proof of work for its own nonce and redoe
   });
 });
 
+test("a switched-off guest gateway is not asked again, and no proof of work is solved, until its refusal lapses or someone sends with Auto", async () => {
+  await fixture(async ({ service, requests, reject, advance, activate }) => {
+    await service.initialize(9876);
+    reject(DESKTOP_FREE_SESSION_PATH, 503, { error: { code: "anonymous_unavailable" } });
+    const mints = () => requests.filter((request) => request.path === DESKTOP_FREE_SESSION_PATH).length;
+    expect((await service.status(true)).code).toBe("anonymous_unavailable");
+    expect(mints()).toBe(1);
+    for (let beat = 0; beat < 5; beat++) {
+      advance(60_000);
+      expect((await service.status(true)).code).toBe("anonymous_unavailable");
+    }
+    expect((await service.status()).state).toBe("unavailable");
+    expect(mints()).toBe(1);
+    advance(10 * 60_000);
+    await service.status(true);
+    expect(mints()).toBe(2);
+    // A send with Auto selected asks straight away.
+    await activate().catch(() => undefined);
+    expect(mints()).toBe(3);
+  });
+});
+
 test("while the app is open and signed out, the relay sends a signed status heartbeat so active time accrues", async () => {
   await fixture(async ({ service, requests, connectMember }) => {
     await service.initialize(9876);

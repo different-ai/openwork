@@ -20,7 +20,7 @@ import { isOwnedProvider, ownedProvider } from "./provider-config.js";
 import { memberCredentialFailure, parseGuestSession, parseMemberCredential, parseStatus, requestedSessionPow, statusFromRejection } from "./responses.js";
 import { SessionPowPool } from "./session-pow.js";
 import {
-  ANONYMOUS_INFERENCE_PROVIDER_ID, ERROR_BODY_LIMIT, FAILURE_CACHE_LIMIT, FAILURE_CACHE_MS, HEADER_TIMEOUT_MS, MEMBER_CREDENTIAL_CACHE_MS,
+  ANONYMOUS_INFERENCE_PROVIDER_ID, ERROR_BODY_LIMIT, FAILURE_CACHE_LIMIT, FAILURE_CACHE_MS, GUEST_REFUSAL_DEFAULT_MS, GUEST_REFUSAL_MAX_MS, GUEST_REFUSAL_MIN_MS, HEADER_TIMEOUT_MS, MEMBER_CREDENTIAL_CACHE_MS,
   REQUEST_BODY_LIMIT, REQUEST_BODY_TIMEOUT_MS, REQUEST_LIFETIME_MS, SESSION_TIMEOUT_MS, STATUS_CACHE_MS, readRelaySettings, type RelaySettings,
 } from "./settings.js";
 
@@ -64,9 +64,11 @@ export class AnonymousInferenceService {
   private sessionPow: SessionPowParams;
   private readonly powPool = new SessionPowPool();
   private heartbeat: ReturnType<typeof setInterval> | null = null;
+  /** A 503 from the guest session route: replayed until it lapses, so no proof of work is spent on a switched-off gateway. */
+  private guestRefusal: { until: number; failure: RemoteFailure } | null = null;
 
   constructor(private readonly config: ServerConfig, private readonly logger: Logger,
-    environment: NodeJS.ProcessEnv = process.env, now: () => number = Date.now) {
+    environment: NodeJS.ProcessEnv = process.env, private readonly now: () => number = Date.now) {
     this.settings = readRelaySettings(environment);
     this.sessionPow = this.settings.pow;
     this.activation = new TaskActivation(now);
@@ -86,6 +88,7 @@ export class AnonymousInferenceService {
     this.resetIdentityController("Desktop free access identity changed.");
     this.session = null;
     this.sessionPromise = null;
+    this.guestRefusal = null;
     this.cachedStatus = null;
     this.failures.clear();
     this.relayPrincipalPending = Boolean(sameScope && this.relayPrincipal);
@@ -279,6 +282,8 @@ export class AnonymousInferenceService {
     const free = isRecord(model) ? model.providerID === DESKTOP_FREE_PROVIDER_ID
       : typeof model === "string" && model.startsWith(`${DESKTOP_FREE_PROVIDER_ID}/`);
     if (!free) return;
+    // A person asking for Auto is worth one fresh attempt even while a refusal is held.
+    this.guestRefusal = null;
     const status = await this.status(true);
     if (status.state !== "ready") throw new ApiError(statusHttpCode(status.state),
       status.code ?? "anonymous_unavailable", "Auto is not available. Check desktop free access status.", status);
@@ -343,6 +348,8 @@ export class AnonymousInferenceService {
 
   private async guestSession(): Promise<DesktopFreeSession> {
     if (this.session && this.session.expiresAt - 30_000 > Date.now()) return this.session;
+    if (this.guestRefusal && this.guestRefusal.until > this.now()) throw this.guestRefusal.failure;
+    this.guestRefusal = null;
     if (this.sessionPromise) return this.sessionPromise;
     const signal = this.identityController.signal;
     const pending = this.mintGuestSession(signal, this.sessionPow, true);
@@ -356,8 +363,6 @@ export class AnonymousInferenceService {
     const { machineId } = await this.config.anonymousInference!.desktop.identity();
     const job = this.powPool.take(machineId, params);
     const pow = await job.promise;
-    // The next session's work starts now, so it is ready long before this session expires.
-    this.powPool.warm(machineId, params);
     const body = new TextEncoder().encode(JSON.stringify({ pow }));
     const timed = () => AbortSignal.any([signal, AbortSignal.timeout(SESSION_TIMEOUT_MS)]);
     let response: Response;
@@ -366,10 +371,13 @@ export class AnonymousInferenceService {
     } catch (error) {
       // The gateway may ask for more work than this build assumed; do it once.
       const asked = retry && error instanceof RemoteFailure && error.status === 400 ? requestedSessionPow(error.payload(), params) : null;
+      if (error instanceof RemoteFailure && error.status === 503) this.guestRefusal = { until: this.now() + guestRefusalMs(error.headers), failure: error };
       if (!asked) throw error;
       this.sessionPow = asked;
       return this.mintGuestSession(signal, asked, false);
     }
+    // The next session's work starts once this one is granted, so it is ready long before this session expires.
+    this.powPool.warm(machineId, params);
     return parseGuestSession(await readJson(response.body, ERROR_BODY_LIMIT, timed()));
   }
 
@@ -477,4 +485,10 @@ export class AnonymousInferenceService {
   }
 
   stop(): void { this.stopped = true; this.disable(); this.failures.clear(); this.powPool.cancel(); }
+}
+
+function guestRefusalMs(headers: Headers): number {
+  const seconds = Number(headers.get("retry-after"));
+  const ms = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : GUEST_REFUSAL_DEFAULT_MS;
+  return Math.min(GUEST_REFUSAL_MAX_MS, Math.max(GUEST_REFUSAL_MIN_MS, ms));
 }
