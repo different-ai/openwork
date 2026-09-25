@@ -1056,9 +1056,10 @@ body.is-resizing-panel * {
   }
 }
 
-/* Glass sheen: now and then a faint light crosses a glass surface (ui/glints.ts
-   picks one and sets data-glinting for a single sweep). It passes under the
-   surface's content, so faces, words and controls stay in front of it. */
+/* Glass light: a rare, faint band that crosses every glass surface at once,
+   left to right at one speed, so it reads as one light passing through the
+   app (ui/glints.ts sets the timing). It passes under each surface's content:
+   faces, words and controls stay in front of it. */
 .glass-sheen {
   isolation: isolate;
 }
@@ -1070,25 +1071,38 @@ body.is-resizing-panel * {
   z-index: -1;
   border-radius: inherit;
   pointer-events: none;
-  background: linear-gradient(105deg, transparent 42%, rgb(255 255 255 / 0.06) 47%, rgb(255 255 255 / 0.13) 50%, rgb(255 255 255 / 0.06) 53%, transparent 58%) no-repeat;
-  background-size: 300% 100%;
-  background-position: 120% 0;
-  opacity: 0;
+  background: linear-gradient(100deg, transparent, rgb(255 255 255 / 0.03) 38%, rgb(255 255 255 / 0.075) 50%, rgb(255 255 255 / 0.03) 62%, transparent) no-repeat;
+  background-size: var(--sheen-band, 240px) 100%;
+  background-position: calc(-1 * var(--sheen-band, 240px)) 0;
 }
 
 .glass-sheen[data-glinting="true"]::after {
-  animation: glass-sheen 1500ms cubic-bezier(0.45, 0, 0.2, 1) both;
+  animation: glass-sheen var(--sheen-duration, 1400ms) linear var(--sheen-delay, 0ms) both;
 }
 
 @keyframes glass-sheen {
-  0% { opacity: 0; background-position: 120% 0; }
-  20% { opacity: 1; }
-  80% { opacity: 1; }
-  100% { opacity: 0; background-position: -20% 0; }
+  from { background-position: calc(-1 * var(--sheen-band, 240px)) 0; }
+  to { background-position: var(--sheen-end, 100%) 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .glass-sheen::after {
     display: none;
   }
+}
+
+/* One quiet scrollbar everywhere: thin, no track, a soft thumb that firms up while the pointer is over its list. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.12) transparent;
+}
+
+*:hover {
+  scrollbar-color: rgb(255 255 255 / 0.22) transparent;
+}
+
+/* Once the team list scrolls, rows fade out before they reach the title that floats over it. */
+.rail-list[data-scrolled="true"] {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 24px, #000 54px);
+  mask-image: linear-gradient(to bottom, transparent 24px, #000 54px);
 }

@@ -52,6 +52,9 @@ function activityTextTone(activity: CoworkerActivity | undefined): string {
 
 const DOT_BG: Record<Tone, string> = { spark: "bg-spark", ready: "bg-ready", amber: "bg-amber", rose: "bg-rose", mist: "bg-mist" };
 
+/** The floating list title's height: the list starts below it and names the section under it. */
+const RAIL_TITLE_HEIGHT = 34;
+
 export function CoworkerRail({
   coworkers,
   runtime,
@@ -122,6 +125,18 @@ export function CoworkerRail({
   const bySlug = new Map(coworkers.map((coworker) => [coworker.slug, coworker]));
   const membersOf = (group: CoworkerGroupSummary) => group.participantSlugs.map((slug) => bySlug.get(slug)).filter((member): member is CoworkerSummary => Boolean(member));
   const [query, setQuery] = useState("");
+  /** The list scrolled (its rows fade out under the title), and which section the title names. */
+  const listRef = useRef<HTMLElement>(null);
+  const groupTitleRef = useRef<HTMLDivElement>(null);
+  const [listScrolled, setListScrolled] = useState(false);
+  const [listSection, setListSection] = useState<"coworkers" | "groups">("coworkers");
+  const followList = () => {
+    const list = listRef.current;
+    if (!list) return;
+    setListScrolled(list.scrollTop > 1);
+    const groupTop = groupTitleRef.current?.offsetTop ?? Number.POSITIVE_INFINITY;
+    setListSection(list.scrollTop + RAIL_TITLE_HEIGHT >= groupTop ? "groups" : "coworkers");
+  };
   const [calendarQuery, setCalendarQuery] = useState("");
   const [showGroupFilters, setShowGroupFilters] = useState(false);
   const filterMenuId = useId();
@@ -366,8 +381,14 @@ export function CoworkerRail({
         </>
       ) : (
         <>
-          <p className="px-4 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Coworkers</p>
-          <nav aria-label="Coworkers" className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-5">
+          {/* One scroll for the whole list, its bar the full height. The title floats over the top and names
+              the section beneath it; rows fade out before they reach it, so it needs no background of its own. */}
+          <div className="relative flex min-h-0 flex-1 flex-col">
+          <p aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 z-10 px-4 pb-1.5 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist" data-testid="rail-section-title">
+            {listSection === "groups" ? "Group chats" : "Coworkers"}
+          </p>
+          <nav ref={listRef} onScroll={followList} aria-label="Coworkers" className="rail-list min-h-0 flex-1 overflow-y-auto pb-5" style={{ paddingTop: RAIL_TITLE_HEIGHT }} data-scrolled={listScrolled ? "true" : "false"} data-testid="coworker-rail-list">
+            <div className="space-y-0.5 px-2">
             {visibleCoworkers.map((coworker) => {
               const activity = activityBySlug[coworker.slug];
               const active = coworker.slug === selectedSlug;
@@ -428,12 +449,14 @@ export function CoworkerRail({
             })}
             {coworkers.length === 0 ? <p className="px-2.5 py-4 text-xs text-mist">No coworkers yet. Add your first teammate.</p> : null}
             {coworkers.length > 0 && visibleCoworkers.length === 0 ? <p className="px-2.5 py-4 text-xs text-mist">No matching coworkers.</p> : null}
+            </div>
             {coworkers.length > 0 || groups.length > 0 ? (
               <>
-                <div className="flex items-center justify-between gap-2 px-2 pt-3">
+                <div ref={groupTitleRef} className="mt-2 flex items-center justify-between gap-2 pb-1.5 pl-4 pr-2 pt-3">
                   <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Group chats</p>
                   {filterControl}
                 </div>
+                <div className="space-y-0.5 px-2">
                 {visibleGroups.map((group) => {
                   const members = membersOf(group);
                   const active = group.id === selectedGroupId;
@@ -473,9 +496,11 @@ export function CoworkerRail({
                     New group chat
                   </button>
                 ) : null}
+                </div>
               </>
             ) : null}
           </nav>
+          </div>
         </>
       )}
       </div>

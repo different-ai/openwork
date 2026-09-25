@@ -5,6 +5,7 @@ import { StaticCoworkerAvatar, type StaticCoworkerAvatarProps, type AvatarColor,
 import { useAvatarMotion, type AvatarGather } from "./coworker-avatar-motion";
 
 export type { AvatarColor, AvatarGlasses } from "./coworker-avatar-artwork";
+export { avatarFill } from "./coworker-avatar-artwork";
 export { acknowledgeCoworker } from "./coworker-avatar-motion";
 export type { AvatarMotion, AvatarReaction } from "./coworker-avatar-motion";
 

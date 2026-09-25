@@ -26,6 +26,11 @@ const PALETTES: Record<AvatarColor, { fill: string; edge: string; depth: string 
   grape: { fill: "#e3b6ff", edge: "#c692e6", depth: "#9c72b6" },
 };
 
+/** A face's main color, for things drawn around it (a card's backdrop, a tint). */
+export function avatarFill(color: AvatarColor): string {
+  return PALETTES[color].fill;
+}
+
 export type StaticCoworkerAvatarProps = {
   name: string;
   color: AvatarColor;

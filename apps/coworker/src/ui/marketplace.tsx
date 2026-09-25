@@ -3,7 +3,7 @@ import { coworkerBridge, type CoworkerSummary } from "@/lib/bridge";
 import type { AbilitySkill } from "@/lib/abilities";
 import { describeConnect, type ConnectState } from "@/lib/connect";
 import { buildDenLibraryUrl, listConnectionPresets, listUsableConnections, startConnection, type DenSession } from "@/lib/den";
-import { FEATURED_COWORKERS, describeRoutine, featuredCoworker, featuredIdOf, type FeaturedCoworker } from "@/lib/featured-coworkers";
+import { FEATURED_CATEGORIES, FEATURED_COWORKERS, describeRoutine, featuredCoworker, featuredIdOf, type FeaturedCoworker } from "@/lib/featured-coworkers";
 import {
   CONNECTORS,
   connector as connectorById,
@@ -15,7 +15,7 @@ import {
   type ConnectorState,
   type MarketplaceConnector,
 } from "@/lib/marketplace";
-import { acknowledgeCoworker, CoworkerAvatar } from "@/ui/coworker-avatar";
+import { acknowledgeCoworker, avatarFill, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { ChevronIcon, IconButton, SearchIcon } from "@/ui/kit";
 import { useFeatures } from "@/ui/use-features";
 
@@ -217,7 +217,7 @@ export function MarketplaceDialog({ session, team, current, connect, onRepairCon
         onBrowseApps={() => { setTab("apps"); open({ kind: "home" }); }} onOpenApp={(id) => open({ kind: "connector", id })} />
     );
   } else {
-    const coworkers = FEATURED_COWORKERS.filter((featured) => matchesQuery(search, featured.name, featured.role, featured.tagline));
+    const coworkers = FEATURED_COWORKERS.filter((featured) => matchesQuery(search, featured.name, featured.role, featured.tagline, featured.category));
     const apps = CONNECTORS.filter((entry) => matchesQuery(search, entry.name, entry.description, entry.category));
     body = (
       <div className="view-enter">
@@ -242,10 +242,22 @@ export function MarketplaceDialog({ session, team, current, connect, onRepairCon
             ) : <p className="py-16 text-center text-sm text-mist">No app matches “{search}”.</p>}
           </>
         ) : coworkers.length ? (
-          <div className="grid gap-x-8 gap-y-2 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
-            {coworkers.map((featured) => (
-              <CoworkerRow key={featured.id} featured={featured} action={addButton(featured)} onOpen={() => open({ kind: "coworker", id: featured.id })} />
-            ))}
+          <div className="space-y-9">
+            {FEATURED_CATEGORIES.map((category) => {
+              const inCategory = coworkers.filter((featured) => featured.category === category);
+              return inCategory.length ? (
+                <section key={category} aria-label={category} data-testid="marketplace-category">
+                  <h2 className="mb-3 text-sm font-medium text-snow">{category}</h2>
+                  <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(190px,1fr))]">
+                    {inCategory.map((featured) => (
+                      <CoworkerCard key={featured.id} featured={featured} action={addButton(featured)}
+                        apps={appsOn ? featured.integrations.map((id) => connectorById(id)).filter((entry): entry is MarketplaceConnector => Boolean(entry)) : []}
+                        onOpen={() => open({ kind: "coworker", id: featured.id })} />
+                    ))}
+                  </div>
+                </section>
+              ) : null;
+            })}
           </div>
         ) : <p className="py-16 text-center text-sm text-mist">No coworker matches “{search}”.</p>}
       </div>
@@ -306,19 +318,33 @@ export function MarketplaceDialog({ session, team, current, connect, onRepairCon
   );
 }
 
-/** One featured coworker: its face (which follows the pointer), name and one line. */
-function CoworkerRow({ featured, action, onOpen }: { featured: FeaturedCoworker; action: ReactNode; onOpen: () => void }) {
+/**
+ * One featured coworker as a character: its face (which follows the pointer)
+ * on a backdrop of its own color, then its name, role and one line, the apps
+ * it works with when Apps & tools is on, and Add or Open. The card opens its page.
+ */
+function CoworkerCard({ featured, action, apps, onOpen }: { featured: FeaturedCoworker; action: ReactNode; apps: MarketplaceConnector[]; onOpen: () => void }) {
   const identity = `marketplace:${featured.id}`;
   return (
     <article data-testid="marketplace-coworker" data-id={featured.id} onPointerEnter={() => acknowledgeCoworker(identity)}
-      className="group relative flex items-center gap-4 rounded-xl px-3 py-4 transition-colors hover:bg-white/[0.03]">
+      className="group relative flex flex-col overflow-hidden rounded-xl border border-line bg-white/[0.015] transition-colors hover:border-white/15">
       <button type="button" onClick={onOpen} aria-label={`Meet ${featured.name}`} className="absolute inset-0 z-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/60" />
-      <span className="pointer-events-none relative"><CoworkerAvatar identity={identity} name={featured.name} color={featured.avatarColor} glasses={featured.avatarGlasses} size={48} motion="playful" /></span>
-      <span className="pointer-events-none relative min-w-0 flex-1">
-        <span className="block truncate text-[15px] text-snow">{featured.name}</span>
-        <span className="mt-0.5 line-clamp-2 text-[13px] text-mist">{featured.tagline}</span>
+      <span className="pointer-events-none relative flex h-24 items-center justify-center" style={{ background: `color-mix(in srgb, ${avatarFill(featured.avatarColor)} 12%, transparent)` }} data-testid="marketplace-coworker-stage">
+        <CoworkerAvatar identity={identity} name={featured.name} color={featured.avatarColor} glasses={featured.avatarGlasses} size={60} motion="playful" />
       </span>
-      {action}
+      <span className="pointer-events-none relative flex flex-1 flex-col p-3.5">
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="shrink-0 text-[15px] font-medium text-snow">{featured.name}</span>
+          <span className="truncate text-xs text-mist">{featured.role}</span>
+        </span>
+        <span className="mt-1 line-clamp-2 text-[13px] leading-snug text-mist">{featured.tagline}</span>
+        <span className="mt-auto flex items-center justify-between gap-2 pt-3">
+          <span className="flex min-w-0 items-center gap-1.5" aria-label={apps.length ? `Works with ${apps.map((entry) => entry.name).join(", ")}` : undefined}>
+            {apps.slice(0, 4).map((entry) => <ConnectorLogo key={entry.id} entry={entry} size={18} />)}
+          </span>
+          <span className="pointer-events-auto">{action}</span>
+        </span>
+      </span>
     </article>
   );
 }
