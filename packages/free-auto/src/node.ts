@@ -23,6 +23,13 @@ export function deriveReleaseSecret(masterKey: string, version: string): Uint8Ar
   if (!version) throw new Error("A release version is required.");
   return Uint8Array.from(createHmac("sha256", key).update(version).digest());
 }
+/**
+ * A short, non-secret label for a master key. The desktop build prints it and the gateway logs it at startup, so a
+ * deploy can confirm both sides hold the same key without either one revealing it.
+ */
+export function releaseKeyFingerprint(masterKey: string): string {
+  return createHmac("sha256", masterKey.trim()).update("openwork-free-release-key-fingerprint").digest("hex").slice(0, 12);
+}
 type ReleaseTagInput = Omit<Extract<DesktopFreeProofClaims, { version: 3 }>, "version" | "releaseTag"> & DesktopFreeProofRequest;
 export function releaseTag(secret: Uint8Array, input: ReleaseTagInput): string {
   return createHmac("sha256", secret).update(desktopFreeReleaseTagMessage(input)).digest("hex");

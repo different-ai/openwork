@@ -16,7 +16,9 @@ export function createDesktopFreeReleaseSource(options: { url: string; fetch?: t
       const url = new URL(options.url)
       if (url.protocol !== "https:" || url.username || url.password || url.hash) return null
       const response = await fetcher(url, { redirect: "error", signal: AbortSignal.timeout(3000),
-        headers: { accept: "application/json", "user-agent": "OpenWork-Desktop-Free-Access", ...(options.token ? { authorization: `Bearer ${options.token}` } : {}) } })
+        // The GitHub token only ever goes to GitHub, whatever the release list URL is set to.
+        headers: { accept: "application/json", "user-agent": "OpenWork-Desktop-Free-Access",
+          ...(options.token && url.hostname === "api.github.com" ? { authorization: `Bearer ${options.token}` } : {}) } })
       if (!response.ok || response.redirected || response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
         void response.body?.cancel().catch(() => undefined)
         return null

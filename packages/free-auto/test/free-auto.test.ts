@@ -6,7 +6,7 @@ import {
   lowestDesktopVersion, parseDesktopReleases, supportedDesktopReleases,
 } from "../src/index.js";
 import { freeRequestReservation, freeUsageAmount, parseInstallRamp, rampedDeviceAmount, DEFAULT_INSTALL_RAMP } from "../src/accounting.js";
-import { deriveReleaseSecret, matchReleaseTag, releaseTag, sha256Hex, solveSessionPow, startSessionPow, verifySessionPow } from "../src/node.js";
+import { deriveReleaseSecret, matchReleaseTag, releaseKeyFingerprint, releaseTag, sha256Hex, solveSessionPow, startSessionPow, verifySessionPow } from "../src/node.js";
 
 const base = { publicKey: "k".repeat(59) + "=", machineId: "c".repeat(64), appVersion: "1.2.3", platform: "darwin" as const, arch: "arm64" as const, timestamp: 1, nonce: "7b1f0c2e-5a6d-4b8c-9d0e-1f2a3b4c5d6e" };
 const request = { method: "post", path: DESKTOP_FREE_CHAT_PATH, bodyHash: sha256Hex("{}"), authorizationHash: sha256Hex("") };
@@ -52,6 +52,13 @@ describe("proof of work", () => {
 });
 
 describe("release secrets", () => {
+  test("the key fingerprint is stable, differs per key, and does not reveal the key or any release secret", () => {
+    const key = "k".repeat(40);
+    expect(releaseKeyFingerprint(key)).toBe(releaseKeyFingerprint(` ${key} `));
+    expect(releaseKeyFingerprint(key)).toMatch(/^[0-9a-f]{12}$/);
+    expect(releaseKeyFingerprint(key)).not.toBe(releaseKeyFingerprint("j".repeat(40)));
+    expect(Buffer.from(deriveReleaseSecret(key, "1.2.3")).toString("hex")).not.toContain(releaseKeyFingerprint(key));
+  });
   const masterKey = "test-only-release-master-key-2222222222222222222";
   test("secret is HMAC(master, version) and the tag verifies only with the claimed version's secret", () => {
     const secret = deriveReleaseSecret(masterKey, "1.2.3");
