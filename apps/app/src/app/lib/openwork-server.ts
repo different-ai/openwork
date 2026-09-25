@@ -24,6 +24,11 @@ import { desktopFreeAccessStatusSchema } from "./inference-access";
 
 const desktopFreePreferencesSchema = z.object({ enabled: z.boolean(), available: z.boolean(), canEnable: z.boolean(), refresh: z.enum(["reloaded", "deferred"]).optional() });
 export type DesktopFreePreferences = z.infer<typeof desktopFreePreferencesSchema>;
+const providerKeyShareEligibilitySchema = z.object({ organizationId: z.string(), memberId: z.string(), organizationName: z.string(), eligible: z.boolean(), reason: z.string().nullable(), teams: z.array(z.object({ id: z.string(), name: z.string() })) });
+export type ProviderKeyShareEligibility = z.infer<typeof providerKeyShareEligibilitySchema>;
+export type ProviderKeyShareInput = { providerId: string; organizationId: string; memberId: string; allMembers: boolean; teamIds: string[]; removeLocal: boolean; confirmed: true };
+const providerKeyShareResultSchema = z.object({ share: z.object({ requestId: z.string(), organizationId: z.string(), providerId: z.string(), inferenceProviderId: z.string() }), localRemoved: z.boolean() });
+export type ProviderKeyShareResult = z.infer<typeof providerKeyShareResultSchema>;
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -1664,6 +1669,11 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
   return {
     baseUrl,
+    localProviderKeyMetadata: async () => z.object({ providers: z.array(z.object({ providerId: z.string(), name: z.string(), savedAt: z.number() })) }).parse(await requestJson<unknown>(baseUrl, "/local-provider-keys", { hostToken, desktopTransport: "main", timeoutMs: timeouts.config })),
+    saveLocalProviderKey: (providerId: string, key: string) => requestJson<{ saved: boolean; refresh: "reloaded" | "deferred" }>(baseUrl, `/local-provider-keys/${encodeURIComponent(providerId)}`, { hostToken, desktopTransport: "main", method: "PUT", body: { key }, timeoutMs: timeouts.cloudMcpReconcile }),
+    deleteLocalProviderKey: (providerId: string) => requestJson<{ removed: boolean }>(baseUrl, `/local-provider-keys/${encodeURIComponent(providerId)}`, { hostToken, desktopTransport: "main", method: "DELETE", body: {}, timeoutMs: timeouts.cloudMcpReconcile }),
+    providerKeyShareEligibility: async (providerId: string, organizationId: string) => providerKeyShareEligibilitySchema.parse(await requestJson<unknown>(baseUrl, `/local-provider-keys/${encodeURIComponent(providerId)}/share?organizationId=${encodeURIComponent(organizationId)}`, { hostToken, desktopTransport: "main", timeoutMs: 20_000 })),
+    shareProviderKey: async (body: ProviderKeyShareInput) => providerKeyShareResultSchema.parse(await requestJson<unknown>(baseUrl, `/local-provider-keys/${encodeURIComponent(body.providerId)}/share`, { hostToken, desktopTransport: "main", method: "POST", body, timeoutMs: timeouts.cloudMcpReconcile })),
     desktopFreePreferences: async () => desktopFreePreferencesSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preferences", { hostToken, timeoutMs: timeouts.config })),
     setDesktopFreeEnabled: async (enabled: boolean) => desktopFreePreferencesSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preferences", { hostToken, method: "PUT", body: { enabled }, timeoutMs: timeouts.cloudMcpReconcile })),
     desktopFreeStatus: async () => desktopFreeAccessStatusSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/status", { token, timeoutMs: 15_000 })),

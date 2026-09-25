@@ -26,7 +26,7 @@ import {
   workspaceOpenworkRead,
   workspaceOpenworkWrite,
 } from "../../../../app/lib/desktop";
-import { OpenworkServerError } from "../../../../app/lib/openwork-server";
+import { OpenworkServerError, isLoopbackOpenworkServerUrl } from "../../../../app/lib/openwork-server";
 import type {
   Client,
   ProviderListItem,
@@ -1622,6 +1622,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         throw new Error(`${t("providers.not_oauth_flow_prefix")} ${resolved}.`);
       }
 
+      const host = options.openworkServer.getSnapshot().openworkServerClient;
+      if (isDesktopRuntime() && options.selectedWorkspaceDisplay().workspaceType !== "remote" && host && isLoopbackOpenworkServerUrl(host.baseUrl)) {
+        try {
+          const metadata = await host.localProviderKeyMetadata();
+          if (metadata.providers.some((provider) => provider.providerId === resolved)) throw new Error("Disconnect the saved device API key in AI Providers before switching this provider to sign-in.");
+        } catch (error) { if (!(error instanceof OpenworkServerError) || error.status !== 404) throw error; }
+      }
       const auth = unwrap(
         await c.provider.oauth.authorize({ providerID: resolved, method: oauthIndex }),
       );
@@ -1862,7 +1869,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       if (providerId.trim().toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
         await ensureProjectProviderDisabledState(providerId, false);
       }
-      await c.auth.set({ providerID: providerId, auth: { type: "api", key: trimmed } });
+      const host = options.openworkServer.getSnapshot().openworkServerClient;
+      const deviceKey = isDesktopRuntime() && options.selectedWorkspaceDisplay().workspaceType !== "remote" && host && isLoopbackOpenworkServerUrl(host.baseUrl) && ["anthropic", "openai", "google", "openrouter"].includes(providerId);
+      let stored = false;
+      if (deviceKey) {
+        try { await host.saveLocalProviderKey(providerId, trimmed); stored = true; }
+        catch (error) {
+          if (!(error instanceof OpenworkServerError) || (error.status !== 404 && error.code !== "local_key_unavailable")) throw error;
+        }
+      }
+      if (!stored) await c.auth.set({ providerID: providerId, auth: { type: "api", key: trimmed } });
       await refreshProviders({ dispose: true });
       return `${t("status.connected")} ${providerId}`;
     } catch (error) {
@@ -2526,6 +2542,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         return `${t("providers.disconnected_prefix")} ${resolved}`;
       }
 
+      const host = options.openworkServer.getSnapshot().openworkServerClient;
+      if (isDesktopRuntime() && options.selectedWorkspaceDisplay().workspaceType !== "remote" && host && isLoopbackOpenworkServerUrl(host.baseUrl)) {
+        try { await host.deleteLocalProviderKey(resolved); }
+        catch (error) { if (!(error instanceof OpenworkServerError) || error.status !== 404) throw error; }
+      }
+      if (!isCurrentWorkspace()) throw new Error(t("providers.disconnect_unverified"));
       await removeProviderAuthCredentials(resolved);
       const updated = requireDiscovery(await refreshProviders({ dispose: true }, isCurrentWorkspace));
       if (updated.connected.includes(resolved)) {

@@ -40,6 +40,31 @@ export type {
   InferenceUsageSource as GatewayUsageSource,
 } from "./inference.js";
 
+export const GATEWAY_LOCAL_KEY_SHARE_PROVIDERS = ["anthropic", "openai", "google", "openrouter"] as const;
+export type GatewayLocalKeyShareProvider = (typeof GATEWAY_LOCAL_KEY_SHARE_PROVIDERS)[number];
+export interface GatewayLocalKeyShareEligibility {
+  organizationId: string;
+  memberId: string;
+  organizationName: string;
+  teams: Array<{ id: string; name: string }>;
+  eligible: boolean;
+  reason: string | null;
+}
+export interface GatewayLocalKeyShareInput {
+  requestId: string;
+  providerId: string;
+  name: string;
+  credential: { kind: "api_key"; secret: string };
+  allMembers: boolean;
+  teamIds: string[];
+}
+export interface GatewayLocalKeyShareReceipt {
+  requestId: string;
+  organizationId: string;
+  providerId: string;
+  inferenceProviderId: string;
+}
+
 export const GATEWAY_KEY_STATUSES = ["active", "revoked"] as const;
 export type GatewayKeyStatus = (typeof GATEWAY_KEY_STATUSES)[number];
 export type GatewayResourceStatus = InferenceProviderStatus;
