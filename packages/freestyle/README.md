@@ -109,6 +109,13 @@ them to in-VM clients, and the signed-in desktop's OpenWork Cloud MCP otherwise 
 at the public edge on every sync, starving the VM until desktop setup reached the
 snapshot deadline. Cloud MCP is unavailable in previews either way.
 
+Den also hands these origins to third parties itself. Connecting an OAuth MCP server,
+the provider registers Den's callback (dynamic client registration) or fetches Den's
+client metadata document, and checks the callback again at token exchange, while the
+browser only ever sees the clone's. ACME previews preload `src/egress.mjs` into Den to
+apply the gateway's translation to requests leaving the VM, and the gateway serves
+Den's public client metadata document without the preview cookie.
+
 CI's desktop chat check runs inside the clone with its own 240-second deadline, always
 prints one result line (step names and timings only) and exits; the host waits longer,
 so a failure names its step instead of a killed command.

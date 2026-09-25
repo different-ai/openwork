@@ -18,6 +18,10 @@ import type { AcmeStreamCheckpoint } from "./lib/acme-gateway.ts";
 import { probeAcmeGateway } from "./lib/acme-gateway-probe.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+// A preview's Den sends its template origins to OAuth providers directly (client
+// registration, token exchange); this translates them on the way out, as the
+// preview gateway does for browsers.
+const PREVIEW_EGRESS = new URL("../packages/freestyle/src/egress.mjs", import.meta.url).href;
 const ACME_WEB_NAME = "acme-web";
 
 export interface AcmeWebWorld {
@@ -40,7 +44,10 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: 
   const den = stack.use(await server({
     place,
     env: { ...gateway.env, DEN_DASHBOARDS_ENABLED: "true", RESEND_API_KEY: "", SMTP_HOST: "",
-      ...(preview ? { DEN_WEB_ALLOWED_DEV_ORIGINS: new URL(preview.den).hostname } : {}) },
+      ...(preview ? {
+        DEN_WEB_ALLOWED_DEV_ORIGINS: new URL(preview.den).hostname,
+        NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${PREVIEW_EGRESS}`].filter(Boolean).join(" "),
+      } : {}) },
     seedProfile: "demo-org",
     trustedOrigins: [`http://127.0.0.1:${webPort}`, ...(preview ? Object.values(preview) : [])],
     publicOrigins: preview ? { web: preview.den, api: preview.den } : undefined,
