@@ -40,19 +40,12 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
   const devReleaseSecret = devMode ? environment.DESKTOP_FREE_DEV_RELEASE_SECRET?.trim() || "" : ""
   const distinct = new Set([releaseKey, releaseKeyPrevious, devReleaseSecret, tokenSecret, accountingIdentityKey].filter(Boolean))
   if (distinct.size !== [releaseKey, releaseKeyPrevious, devReleaseSecret, tokenSecret, accountingIdentityKey].filter(Boolean).length) throw new Error("Free Auto secrets must be distinct")
-  const version = (name: string) => {
-    const value = environment[name]?.trim()
-    if (value !== undefined && value !== "" && !/^\d+\.\d+\.\d+$/.test(value)) throw new Error(`Invalid ${name}`)
-    return value || null
-  }
   return {
     member, memberEnabled: member.enabled && ready,
     anonymousEnabled: flag("ANONYMOUS_INFERENCE_ENABLED") && ready && tokenSecret.length >= 32 && tokenSecret !== accountingIdentityKey && releaseKey.length >= 32,
     apiKey, upstreamModel, tokenSecret, accountingIdentityKey,
     releaseKey, releaseKeyPrevious: releaseKeyPrevious.length >= 32 ? releaseKeyPrevious : "",
     devReleaseSecret: devReleaseSecret.length >= 32 ? devReleaseSecret : "",
-    /** Once every supported release is at or above this version, v2 proofs (no release tag) are refused. */
-    firstReleaseTagVersion: version("DESKTOP_FREE_FIRST_RELEASE_TAG_VERSION"),
     releasesUrl: environment.DESKTOP_FREE_APP_VERSION_URL ?? DESKTOP_FREE_RELEASES_URL,
     supportedReleaseCount: integer("DESKTOP_FREE_SUPPORTED_RELEASE_COUNT", 3, 1, 20),
     supportedReleaseMinDays: integer("DESKTOP_FREE_SUPPORTED_RELEASE_MIN_DAYS", 14, 0, 365),
