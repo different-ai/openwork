@@ -36,7 +36,10 @@ export async function dispatchFreeCompletion(input: {
   let dispatched = false
   try {
     signal.throwIfAborted()
-    if (!await store.dispatch(requestId, principal, admission.deadlineAt)) return freeError(403, "free_principal_rejected")
+    if (!await store.dispatch(requestId, principal, admission.deadlineAt)) {
+      await usageLog?.finish({ status: 403, outcome: "rejected", errorCode: "free_principal_rejected" }).catch(() => undefined)
+      return freeError(403, "free_principal_rejected")
+    }
     dispatched = true
     signal.throwIfAborted()
     const response = await input.fetch(FREE_OPENAI_CHAT_URL, {
