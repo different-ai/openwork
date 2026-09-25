@@ -253,6 +253,8 @@ export type DenOrgCapabilities = {
   orgManagedDashboards: boolean;
   installLinks: boolean;
   mcpConnections: boolean;
+  /** Apps built in OpenWork are served as their own MCP servers; absent (off) on older servers. */
+  appMcpServers?: boolean;
   /** Always on: Workflows/Code Mode shipped for every organization. Older servers may still return false. */
   workflows: boolean;
   /** Effective Web offer; true for the global switch or this organization's complimentary admin grant. */
@@ -1071,13 +1073,14 @@ function parseOrgAuthMethods(value: unknown): DenOrgAuthMethods {
 
 function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
   if (!isRecord(value)) {
-    return { orgManagedDashboards: false, installLinks: false, mcpConnections: false, workflows: true, openworkWeb: false, cloud: false };
+    return { orgManagedDashboards: false, installLinks: false, mcpConnections: false, appMcpServers: false, workflows: true, openworkWeb: false, cloud: false };
   }
 
   return {
     orgManagedDashboards: value.orgManagedDashboards === true,
     installLinks: value.installLinks === true,
     mcpConnections: value.mcpConnections === true,
+    appMcpServers: value.appMcpServers === true,
     // Workflows are enabled everywhere on current servers; only an explicit
     // false from an older server still hides the surface.
     workflows: value.workflows !== false,

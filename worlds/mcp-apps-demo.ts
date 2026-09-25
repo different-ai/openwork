@@ -6,8 +6,9 @@
 // It starts a mock "Inventory" MCP server, connects it to the org, saves two
 // Workflows, and builds the "Order calculator" App through OpenWork Connect's
 // create_app. The App is its own MCP server with three composed tools:
-// todays_date (live Workflow, read-only), lookup_unit_price (Inventory
-// connection tool, read-only), and price_total (Workflow with input).
+// todays_date (live Workflow, read-only, runs on open), lookup_unit_price
+// (Inventory connection tool, runs on a click), and price_total (Workflow with
+// input, runs on a click).
 // Output includes disposable tokens: keep it out of logs, PRs, and notes.
 import { spawn } from "node:child_process";
 import { openSync, readFileSync } from "node:fs";
@@ -177,17 +178,17 @@ export default function OrderCalculator({ app, input }) {
       .then(reply => setToday(reply.isError ? null : payload(reply).value?.today))
       .catch(() => setToday(null));
   }, [app, toolsAvailable]);
-  // Read-only tools may run without a click, so the price follows the product.
-  React.useEffect(() => {
-    if (!toolsAvailable || !sku.trim()) return;
-    let current = true;
-    setPrice(null); setTotal(null);
-    app.callServerTool({ name: "lookup_unit_price", arguments: { sku: sku.trim() } })
-      .then(reply => { if (!current) return; if (reply.isError) throw new Error("Price lookup failed"); setPrice(payload(reply).unitPrice); setStatus(""); })
-      .catch(error => { if (current) setStatus(error.message); });
-    return () => { current = false; };
-  }, [app, toolsAvailable, sku]);
-  // OpenWork lets one click authorize one tool call, so the write is the only call this button makes.
+  // A connection tool asks before each call, and OpenWork lets one click
+  // authorize one tool call, so each button makes exactly one.
+  async function lookUp() {
+    setStatus("Looking up price"); setPrice(null); setTotal(null);
+    try {
+      const reply = await app.callServerTool({ name: "lookup_unit_price", arguments: { sku: sku.trim() } });
+      if (reply.isError) throw new Error("Price lookup failed");
+      setPrice(payload(reply).unitPrice);
+      setStatus("");
+    } catch (error) { setStatus(error.message); }
+  }
   async function calculate() {
     setStatus("Calculating"); setTotal(null);
     try {
@@ -201,8 +202,9 @@ export default function OrderCalculator({ app, input }) {
     <h1>Order calculator</h1>
     {!toolsAvailable && <p role="status">Server tools unavailable. Open this App in a host that enables server tools.</p>}
     <p>{today ? "Prices as of " + today : "Loading pricing date"}</p>
-    <label>Product <input value={sku} onChange={event => setSku(event.target.value)} /></label>
+    <label>Product <input value={sku} onChange={event => { setSku(event.target.value); setPrice(null); setTotal(null); }} /></label>
     <label>Quantity <input type="number" min="1" value={quantity} onChange={event => setQuantity(event.target.value)} /></label>
+    <button type="button" disabled={!toolsAvailable || !sku.trim()} onClick={lookUp}>Look up price</button>
     <button type="button" disabled={!toolsAvailable || price === null} onClick={calculate}>Calculate total</button>
     {price !== null && <p>Unit price {price}</p>}
     {status && <p role="status">{status}</p>}

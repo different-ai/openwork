@@ -573,6 +573,16 @@ test("where create_app is available, legacy views are read-only: they render, re
   })
 })
 
+test("while legacy views are read-only, a live draft still previews but offers no Save that would fail", async () => {
+  await withClient(async (client) => {
+    const result = await client.callTool({ name: `preview_artifact_${viewId}`, arguments: {} })
+    expect(result.isError).not.toBe(true)
+    expect(result.structuredContent).toEqual(payload)
+    expect(result._meta).toMatchObject({ resourceDigest: digest })
+    expect(result._meta?.["openwork/appDraft"]).toBeUndefined()
+  }, { views: [{ ...view, dataMode: "live" }], legacyViewsWritable: false })
+})
+
 test("legacy views retain snapshot inputs and do not advertise live execution", async () => {
   let receiptId: string | undefined
   await withClient(async (client) => {

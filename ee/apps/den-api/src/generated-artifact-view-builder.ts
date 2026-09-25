@@ -76,6 +76,9 @@ function diagnosticsFrom(error: unknown): GeneratedArtifactViewBuildDiagnostic[]
   return [diagnostic(error instanceof Error ? error.message : "React view build failed.")]
 }
 
+// Workflow-bound Artifact views keep refusing only the first 16, as they
+// always have; MCP Apps refuse the whole list.
+const ARTIFACT_HOST_GLOBAL_COUNT = 16
 const HOST_GLOBAL_NAMES = [
   "process", "globalThis", "window", "document", "self", "parent", "top", "opener", "frames",
   "location", "navigator", "history", "postMessage", "localStorage", "sessionStorage", "indexedDB",
@@ -92,9 +95,13 @@ const HOST_GLOBAL_DEFINES = Object.fromEntries(HOST_GLOBAL_NAMES.map((name, inde
   `__openwork_forbidden_host_global_${index}__`,
 ]))
 
-// Real imports are also rejected by the bundler; this pattern only needs to
-// catch module syntax without matching prose such as "required" or "import your files".
-const AUTHORED_MODULE_PATTERN = /\bimport\s*(?:\(|\.|(?:type\s+)?(?:["'{*]|[\w$]+\s*(?:,|from\b)))|\brequire\s*\(|\bexport\s*(?:type\s+)?(?:\*|\{[^}]*\})\s*(?:as\s+[\w$]+\s*)?from\b/u
+// The bundler rejects real imports anyway; these patterns only explain the
+// refusal early. Artifact views keep the check they have always had.
+const ARTIFACT_MODULE_PATTERN = /\b(?:import|require)\s*(?:\(|["'{])/u
+// MCP Apps also name default, namespace, type, and meta imports and reexports,
+// matching only real module syntax so text such as "important," "imported from",
+// "to import." or data.import still builds.
+const AUTHORED_MODULE_PATTERN = /\bimport\s*(?:\(|["'{*]|\.\s*meta\b)|\bimport\s+(?:type\s+)?(?:[\w$]+\s*,\s*[{*]|[\w$]+\s+from\s*["']|\{[^}]*\}\s*from\s*["']|\*\s*as\s+[\w$]+\s+from\s*["'])|\brequire\s*\(|\bexport\s*(?:type\s+)?(?:\*|\{[^}]*\})\s*(?:as\s+[\w$]+\s*)?from\s*["']/u
 const SAFE_REACT_FACTORY = "__openworkSafeReact"
 
 async function sourcePolicyDiagnostic(reactSource: string, cssSource: string, runtime: "artifact" | "mcp-app"): Promise<GeneratedArtifactViewBuildDiagnostic | null> {
@@ -110,7 +117,9 @@ async function sourcePolicyDiagnostic(reactSource: string, cssSource: string, ru
   // may take props such as data={rows}. The runtime guard still checks DOM props.
   const mcpApp = runtime === "mcp-app"
   const forbidden = [
-    { pattern: AUTHORED_MODULE_PATTERN, label: "module imports or reexports" },
+    mcpApp
+      ? { pattern: AUTHORED_MODULE_PATTERN, label: "module imports or reexports" }
+      : { pattern: ARTIFACT_MODULE_PATTERN, label: "module imports" },
     { pattern: /@jsx(?:Runtime|ImportSource|Frag)?\b/u, label: "JSX compiler directives" },
     { pattern: /\b__openworkSafeReact\b/u, label: "reserved compiler bindings" },
     ...(mcpApp ? [] : [{ pattern: /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|Worker)\b/u, label: "network APIs" }]),
@@ -123,7 +132,9 @@ async function sourcePolicyDiagnostic(reactSource: string, cssSource: string, ru
     { pattern: /<\/?(?:script|iframe|object|embed|form|base|link|meta|style|svg|math)\b/iu, label: "unsafe HTML elements" },
   ]
   const blocked = forbidden.find(({ pattern }) => pattern.test(reactSource))
-  if (blocked) return diagnostic(`Generated ${subject} cannot use ${blocked.label}. Use component props and React rendering only.`)
+  if (blocked) {
+    return diagnostic(`Generated ${subject} cannot use ${blocked.label}. ${mcpApp ? "Use component props" : "Use props.data"} and React rendering only.`)
+  }
 
   // esbuild's define substitution is scope-aware: it replaces only unbound
   // global references and leaves local bindings such as `const top = ...`
@@ -143,21 +154,24 @@ async function sourcePolicyDiagnostic(reactSource: string, cssSource: string, ru
   } catch (error) {
     return diagnosticsFrom(error)[0] ?? diagnostic("React view build failed.")
   }
-  if (AUTHORED_MODULE_PATTERN.test(scopeAnalyzedSource)) {
+  if (mcpApp && AUTHORED_MODULE_PATTERN.test(scopeAnalyzedSource)) {
     return diagnostic(`Generated ${subject} cannot use module imports or reexports.`)
   }
   if (scopeAnalyzedSource.includes(SAFE_REACT_FACTORY)) {
     return diagnostic(`Generated ${subject} cannot use reserved compiler bindings.`)
   }
   const hostGlobal = HOST_GLOBAL_NAMES.find((_, index) =>
-    scopeAnalyzedSource.includes(`__openwork_forbidden_host_global_${index}__`))
+    (mcpApp || index < ARTIFACT_HOST_GLOBAL_COUNT)
+    && scopeAnalyzedSource.includes(`__openwork_forbidden_host_global_${index}__`))
   if (hostGlobal) {
     return diagnostic(`Generated ${subject} cannot use the browser host global "${hostGlobal}". Use component props and React rendering only.`)
   }
-  if (/@import\b/iu.test(cssSource) || /url\s*\(/iu.test(cssSource)) {
-    return diagnostic("Generated CSS cannot import or reference external resources.")
-  }
-  if (/<\/style/iu.test(cssSource)) return diagnostic("Generated CSS cannot close the bundle style element.")
+  const cssSubject = mcpApp ? "Generated CSS" : "Generated Artifact CSS"
+  const externalCss = mcpApp
+    ? /@import\b/iu.test(cssSource) || /url\s*\(/iu.test(cssSource)
+    : /^\s*@import\b/mu.test(cssSource) || /url\s*\(/u.test(cssSource)
+  if (externalCss) return diagnostic(`${cssSubject} cannot import or reference external resources.`)
+  if (/<\/style/iu.test(cssSource)) return diagnostic(`${cssSubject} cannot close the bundle style element.`)
   return null
 }
 

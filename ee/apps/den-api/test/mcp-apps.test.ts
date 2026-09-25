@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } from "bun:test"
-import { eq, inArray } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
   ConfigObjectAccessGrantTable,
@@ -47,6 +47,7 @@ let db: typeof import("../src/db.js").db
 let apps: typeof import("../src/mcp-apps.js")
 let store: typeof import("../src/routes/org/plugin-system/store.js")
 let compiler: typeof import("../src/generated-artifact-view-builder.js")
+let marketplace: typeof import("../src/mcp/marketplace-capabilities.js")
 let closeDb: () => Promise<void>
 const organizations: DenTypeId<"organization">[] = []
 const users: DenTypeId<"user">[] = []
@@ -228,6 +229,7 @@ describe.skipIf(!process.env.DEN_TEST_DATABASE_URL)("authored MCP Apps with isol
     apps = await import("../src/mcp-apps.js")
     store = await import("../src/routes/org/plugin-system/store.js")
     compiler = await import("../src/generated-artifact-view-builder.js")
+    marketplace = await import("../src/mcp/marketplace-capabilities.js")
   })
 
   afterEach(async () => {
@@ -398,6 +400,9 @@ describe.skipIf(!process.env.DEN_TEST_DATABASE_URL)("authored MCP Apps with isol
     } finally {
       failingBuild.mockRestore()
     }
+    // The builder's own policy refusals are fixed text that says what to change.
+    await expect(apps.updateMcpApp({ resolveTools, context, ...source, reactSource: "export default function App() { fetch('x'); return <p /> }", appId: app.appId, expectedRevisionId: app.revisionId }))
+      .rejects.toThrow('MCP App compilation failed. Generated MCP Apps cannot use the browser host global "fetch". Use component props and React rendering only. No revision was published.')
   })
 
   test("compiler integrity failures publish nothing and source corruption never leaks through generic reads", async () => {
@@ -549,8 +554,9 @@ describe.skipIf(!process.env.DEN_TEST_DATABASE_URL)("authored MCP Apps with isol
     await expect(server(outsider)).rejects.toThrow("not available")
     await expect(server(viewer, false)).rejects.toThrow("not available")
 
+    // Omitted tools keep the published bindings without resolving them again.
     const kept = await apps.updateMcpApp({ resolveTools: resolving, context, ...source, appId: app.appId, expectedRevisionId: app.revisionId })
-    expect(declared.at(-1)).toEqual([{ ...declaredTool, mode: "input" }])
+    expect(declared).toEqual([[declaredTool]])
     expect(kept.tools).toEqual(app.tools)
     const cleared = await apps.updateMcpApp({ resolveTools: resolving, context, ...source, tools: [], appId: app.appId, expectedRevisionId: kept.revisionId })
     expect(declared.at(-1)).toEqual([])
@@ -609,11 +615,68 @@ describe.skipIf(!process.env.DEN_TEST_DATABASE_URL)("authored MCP Apps with isol
     await expect(apps.readMcpApp({ context: stale, appId: app.appId })).resolves.toBeDefined()
     await expect(apps.updateMcpApp({ resolveTools, context: stale, ...source, appId: app.appId, expectedRevisionId: updated.revisionId })).rejects.toMatchObject({ error: "reauth" })
     await expect(apps.createMcpApp({ resolveTools, context: stale, ...source, pluginId: app.pluginId })).rejects.toMatchObject({ error: "reauth" })
-    // Connect has no browser session to step up; editor access still gates it, as update_skill does.
-    const viaConnect = await apps.updateMcpApp({ resolveTools, context: stale, requireFreshSession: false, ...source, appId: app.appId, expectedRevisionId: updated.revisionId })
+    // A Connect MCP token has no browser session to step up; editor access still gates it, as for API keys.
+    const viaConnect = await apps.updateMcpApp({ resolveTools, context: { ...stale, mcpToken: true }, ...source, appId: app.appId, expectedRevisionId: updated.revisionId })
     expect(viaConnect.revisionId).not.toBe(updated.revisionId)
-    await expect(apps.updateMcpApp({ resolveTools, context: viewer, requireFreshSession: false, ...source, appId: app.appId, expectedRevisionId: viaConnect.revisionId })).rejects.toThrow("Missing editor access")
-    await expect(apps.createMcpApp({ resolveTools, context: stale, requireFreshSession: false, ...source, title: "Second shared App", pluginId: app.pluginId })).resolves.toMatchObject({ pluginId: app.pluginId })
+    await expect(apps.updateMcpApp({ resolveTools, context: { ...viewer, mcpToken: true }, ...source, appId: app.appId, expectedRevisionId: viaConnect.revisionId })).rejects.toThrow("Missing editor access")
+    await expect(apps.createMcpApp({ resolveTools, context: { ...stale, mcpToken: true }, ...source, title: "Second shared App", pluginId: app.pluginId })).resolves.toMatchObject({ pluginId: app.pluginId })
+  })
+
+  test("an update keeps the CSS and description it omits, and clears them when given empty values", async () => {
+    const context = await actor()
+    const app = await apps.createMcpApp({ resolveTools, context, ...source })
+    const { cssSource: _css, description: _description, ...rest } = source
+    const updated = await apps.updateMcpApp({ resolveTools, context, ...rest, reactSource: "export default function App() { return <p>New</p> }", appId: app.appId, expectedRevisionId: app.revisionId })
+    expect(updated.description).toBe(source.description)
+    expect(await apps.readMcpApp({ context, appId: app.appId })).toMatchObject({ cssSource: source.cssSource, reactSource: "export default function App() { return <p>New</p> }" })
+    const cleared = await apps.updateMcpApp({ resolveTools, context, ...rest, cssSource: "", description: "", appId: app.appId, expectedRevisionId: updated.revisionId })
+    expect(cleared.description).toBeNull()
+    expect((await apps.readMcpApp({ context, appId: app.appId })).cssSource).toBe("")
+  })
+
+  test("an App's Workflow tools run through its own Plugin, so sharing that Plugin shares them, and only Workflow managers may add them", async () => {
+    const context = await actor()
+    const teammate = await actor(access(context).organizationId)
+    const organizationId = access(context).organizationId
+    const workflowPlugin = await store.createPlugin({ context, name: "My Workflows" })
+    const workflow = await store.createConfigObject({
+      context, objectType: "workflow", sourceMode: "cloud", pluginIds: [workflowPlugin.id],
+      value: { metadata: { title: "Weekly summary" }, normalizedPayloadJson: { language: "codemode-js", requiredCapabilities: [] }, rawSourceText: "return { ok: true }" },
+    })
+    const binding: McpAppToolBinding = {
+      name: "weekly_summary", description: "This week's summary.", capability: `plugin:${workflowPlugin.id}:${workflow.id}`,
+      kind: "workflow", mode: "live", inputSchema: { type: "object" }, readOnly: true,
+    }
+    const declared: McpAppToolDeclaration[] = [{ name: binding.name, description: binding.description, capability: binding.capability, mode: "live" }]
+    const app = await apps.createMcpApp({ resolveTools: async () => [binding], context, ...source, tools: declared })
+    const routed = `plugin:${app.pluginId}:${workflow.id}`
+    expect(app.tools.map((tool) => tool.capability)).toEqual([routed])
+    const inAppPlugin = () => db.select().from(PluginConfigObjectTable).where(and(
+      eq(PluginConfigObjectTable.pluginId, normalizeDenTypeId("plugin", app.pluginId)),
+      eq(PluginConfigObjectTable.configObjectId, workflow.id),
+      isNull(PluginConfigObjectTable.removedAt),
+    ))
+    expect(await inAppPlugin()).toHaveLength(1)
+
+    // Sharing only the App's Plugin lets the teammate run its Workflow through it.
+    const workflowsFor = async (member: PluginArchActorContext) => (await marketplace.listAccessibleWorkflows({ ...access(member) }))
+      .map((entry) => [entry.pluginId, entry.configObjectId])
+    expect(await workflowsFor(teammate)).toEqual([])
+    await grantPlugin(context, app, teammate)
+    expect(await workflowsFor(teammate)).toEqual([[app.pluginId, workflow.id]])
+    expect((await apps.loadMcpAppServerDefinition({ ...access(teammate), appId: app.appId })).tools.map((tool) => tool.capability)).toEqual([routed])
+
+    // A co-editor who does not manage the Workflow can still edit the App that already runs it.
+    await db.insert(ConfigObjectAccessGrantTable).values({ id: createDenTypeId("configObjectAccessGrant"), configObjectId: normalizeDenTypeId("configObject", app.appId), organizationId, orgMembershipId: access(teammate).member.orgMembershipId, role: "editor", createdByOrgMembershipId: access(context).member.orgMembershipId })
+    const edited = await apps.updateMcpApp({ resolveTools: async () => [{ ...binding, capability: routed }], context: teammate, ...source, title: "Edited by teammate", tools: [{ ...declared[0]!, capability: routed }], appId: app.appId, expectedRevisionId: app.revisionId })
+    expect(edited.tools.map((tool) => tool.capability)).toEqual([routed])
+
+    // Someone who can only use a Workflow cannot share it through an App of their own.
+    const pluginsBefore = await db.select().from(PluginTable).where(eq(PluginTable.organizationId, organizationId))
+    const refused = apps.createMcpApp({ resolveTools: async () => [binding], context: teammate, ...source, title: "Teammate app", tools: declared })
+    await expect(refused).rejects.toMatchObject({ code: "mcp_app_tool_unavailable" })
+    await expect(refused).rejects.toThrow("Tool weekly_summary: sharing an App shares the Workflows its tools run, so only a manager of this Workflow can add it to an App.")
+    expect(await db.select().from(PluginTable).where(eq(PluginTable.organizationId, organizationId))).toHaveLength(pluginsBefore.length)
   })
 
   test("encoded payload size is bounded even when the HTML byte limit passes", async () => {

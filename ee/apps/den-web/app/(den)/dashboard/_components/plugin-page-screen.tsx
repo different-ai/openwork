@@ -95,8 +95,9 @@ export function WhatsInside({ plugin }: { plugin: DenPlugin }) {
 export function AppMcpServers({ plugin }: { plugin: DenPlugin }) {
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const { orgContext } = useOrgDashboard();
-  // App servers follow the organization's member-facing MCP connections setting.
-  if (plugin.authoredApps.length === 0 || orgContext?.capabilities.mcpConnections !== true) return null;
+  // Den reports App servers only while its deployment switch and the
+  // organization's member-facing MCP connections setting are both on.
+  if (plugin.authoredApps.length === 0 || orgContext?.capabilities.appMcpServers !== true) return null;
   return (
     <section className="flex flex-col gap-2.5" data-testid="app-mcp-servers">
       <SectionTitle title="Use in another app" />

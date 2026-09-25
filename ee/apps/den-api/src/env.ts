@@ -540,10 +540,10 @@ const generatedArtifactViewsEnabled =
   (parsed.DEN_GENERATED_ARTIFACT_VIEWS_ENABLED ?? "false").trim().toLowerCase() === "true"
 
 // Apps built through Connect are served as their own MCP servers, and older
-// Workflow-bound views become read-only. On by default; false restores the
-// previous behavior (no App servers, writable Workflow-bound views).
-const appMcpServersEnabled =
-  (parsed.DEN_APP_MCP_SERVERS_ENABLED ?? "true").trim().toLowerCase() !== "false"
+// Workflow-bound views become read-only. On by default, including when set
+// empty; false, 0, off, or no (or any other value) restores the previous
+// behavior: no App servers, writable Workflow-bound views.
+const appMcpServersEnabled = parseBooleanFlag(optionalString(parsed.DEN_APP_MCP_SERVERS_ENABLED) ?? "true")
 
 // Desktop availability stays fail-closed, while an entirely unconfigured
 // server preserves the published-client runtime. An explicit availability

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { and, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
-import { ConfigObjectTable, ConfigObjectVersionTable, PluginTable } from "@openwork-ee/den-db/schema"
+import { ConfigObjectTable, ConfigObjectVersionTable, PluginConfigObjectTable, PluginTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
   createMcpAppInputSchema,
@@ -16,6 +16,7 @@ import {
   type CreateMcpAppInput,
   type McpAppCompiledRevision,
   type McpAppCsp,
+  type McpAppSource,
   type McpAppSummary,
   type McpAppToolBinding,
   type McpAppToolDeclaration,
@@ -25,13 +26,21 @@ import {
 import { db } from "./db.js"
 import { buildGeneratedMcpApp, type GeneratedArtifactViewBuildResult } from "./generated-artifact-view-builder.js"
 import type { McpMemberIdentity } from "./mcp/external-capabilities.js"
-import { listAccessibleMarketplaceCapabilityReferences } from "./mcp/marketplace-capabilities.js"
+import { buildMarketplaceCapabilityName, listAccessibleMarketplaceCapabilityReferences, parseMarketplaceCapabilityName } from "./mcp/marketplace-capabilities.js"
 import {
+  PluginArchAuthorizationError,
   pluginArchResourceHasExpandedAudience,
   requirePluginArchResourceRole,
   type PluginArchActorContext,
 } from "./routes/org/plugin-system/access.js"
-import { createConfigObject, createPlugin, INTERNAL_MCP_APP_WRITE, PluginArchRouteFailure, setPluginLifecycle } from "./routes/org/plugin-system/store.js"
+import {
+  attachConfigObjectToPlugin,
+  createConfigObject,
+  createPlugin,
+  INTERNAL_MCP_APP_WRITE,
+  PluginArchRouteFailure,
+  setPluginLifecycle,
+} from "./routes/org/plugin-system/store.js"
 
 export class McpAppError extends Error {
   constructor(readonly status: 400 | 404 | 409 | 413 | 422, readonly code: string, message: string) {
@@ -87,10 +96,6 @@ function compiledRevision(row: Revision): McpAppCompiledRevision | null {
   return parsed.success ? parsed.data : null
 }
 
-function toolDeclarations(payload: McpAppCompiledRevision): McpAppToolDeclaration[] {
-  return payload.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability, mode: tool.mode }))
-}
-
 async function activeApp(organizationId: DenTypeId<"organization">, id: DenTypeId<"configObject">, reader: DatabaseReader = db) {
   const [row] = await reader.select().from(ConfigObjectTable).where(and(
     eq(ConfigObjectTable.organizationId, organizationId),
@@ -111,33 +116,32 @@ async function latestRevision(organizationId: DenTypeId<"organization">, id: Den
 }
 
 /**
- * Shared writes normally step up to a fresh browser session. MCP calls carry
- * none, so the Connect builder passes requireFreshSession: false, as
- * update_skill does; its MCP write scope and editor access still gate writes.
+ * Shared writes step up to a fresh browser session. Connect's MCP token
+ * actors are non-interactive and skip that step, as API keys do; their write
+ * scope and editor access still gate every write.
  */
-async function requireEditor(context: PluginArchActorContext, id: DenTypeId<"configObject">, write: boolean, requireFreshSession?: boolean) {
+async function requireEditor(context: PluginArchActorContext, id: DenTypeId<"configObject">, write: boolean) {
   await requirePluginArchResourceRole({
     context,
     resourceId: id,
     resourceKind: "config_object",
     role: "editor",
-    requireFreshSession: write && (requireFreshSession
-      ?? await pluginArchResourceHasExpandedAudience({ context, resourceId: id, resourceKind: "config_object" })),
+    requireFreshSession: write && await pluginArchResourceHasExpandedAudience({ context, resourceId: id, resourceKind: "config_object" }),
   })
 }
 
-async function editableApp(context: PluginArchActorContext, id: DenTypeId<"configObject">, write: boolean, requireFreshSession?: boolean) {
+async function editableApp(context: PluginArchActorContext, id: DenTypeId<"configObject">, write: boolean) {
   const organizationId = context.organizationContext.organization.id
   const row = await activeApp(organizationId, id)
   if (!row) return notFound()
-  await requireEditor(context, row.id, write, requireFreshSession)
+  await requireEditor(context, row.id, write)
   const version = await latestRevision(organizationId, row.id)
   const payload = version && compiledRevision(version)
   if (!version || !payload) return notFound()
   return { row, version, payload }
 }
 
-async function editablePlugin(context: PluginArchActorContext, id: string, requireFreshSession?: boolean) {
+async function editablePlugin(context: PluginArchActorContext, id: string) {
   let pluginId: DenTypeId<"plugin">
   try {
     pluginId = normalizeDenTypeId("plugin", id)
@@ -156,20 +160,92 @@ async function editablePlugin(context: PluginArchActorContext, id: string, requi
     resourceId: pluginId,
     resourceKind: "plugin",
     role: "editor",
-    requireFreshSession: requireFreshSession ?? await pluginArchResourceHasExpandedAudience({ context, resourceId: pluginId, resourceKind: "plugin" }),
+    requireFreshSession: await pluginArchResourceHasExpandedAudience({ context, resourceId: pluginId, resourceKind: "plugin" }),
   })
   return pluginId
 }
 
+// The builder's own policy and size refusals are fixed text naming what to
+// change, so they are returned as written; compiler errors keep a generic hint.
+const BUILDER_POLICY_MESSAGE = /^Generated [^.]* cannot /u
+const BUILDER_LIMIT_MESSAGE = /^(?:(?:React|CSS) source exceeds \d+ bytes\.|Compiled MCP App exceeds \d+ bytes\.|React view build exceeded the server time limit\.)$/u
+
 function compileFailure(result?: GeneratedArtifactViewBuildResult): McpAppError {
   const diagnostic = result?.diagnostics[0]
   const location = diagnostic?.line != null ? ` at line ${diagnostic.line}${diagnostic.column != null ? `, column ${diagnostic.column}` : ""}` : ""
-  const hint = diagnostic?.message.includes("cannot use") || diagnostic?.message.includes("cannot import")
-    ? "Use React rendering and the supplied App bridge; external resources, host globals, imports, and dynamic code are not supported."
-    : diagnostic?.message.includes("exceeds") || diagnostic?.message.includes("time limit")
-      ? "Reduce the source or compiled App size and complexity."
+  const hint = diagnostic && BUILDER_POLICY_MESSAGE.test(diagnostic.message)
+    ? diagnostic.message
+    : diagnostic && BUILDER_LIMIT_MESSAGE.test(diagnostic.message)
+      ? `${diagnostic.message} Reduce the source or compiled App size and complexity.`
       : "Check React/TSX syntax and provide a default-exported React component."
   return new McpAppError(422, "mcp_app_compile_failed", `MCP App compilation failed${location}. ${hint} No revision was published.`)
+}
+
+/** The stored source of a revision, verified against the digest it was compiled from. */
+function storedSource(version: Revision, payload: McpAppCompiledRevision): McpAppSource {
+  let source: unknown
+  try {
+    source = JSON.parse(version.rawSourceText ?? "")
+  } catch {
+    throw new McpAppError(422, "mcp_app_invalid_source", "The stored App source is invalid.")
+  }
+  const parsed = mcpAppSourceSchema.safeParse(source)
+  if (!parsed.success || sourceDigest({ ...payload, ...parsed.data }) !== payload.sourceDigest) {
+    throw new McpAppError(422, "mcp_app_invalid_source", "The stored App source failed its integrity check.")
+  }
+  return parsed.data
+}
+
+type WorkflowTool = { tool: McpAppToolBinding; workflowId: DenTypeId<"configObject"> }
+
+function workflowTools(tools: McpAppToolBinding[]): WorkflowTool[] {
+  return tools.flatMap((tool) => {
+    const parsed = tool.kind === "workflow" ? parseMarketplaceCapabilityName(tool.capability) : null
+    return parsed ? [{ tool, workflowId: normalizeDenTypeId("configObject", parsed.configObjectId) }] : []
+  })
+}
+
+/**
+ * The bound Workflows that are not yet in the App's Plugin. Adding one widens
+ * who can run it, so the author must manage it, as attachConfigObjectToPlugin
+ * requires; this is checked before anything is created.
+ */
+async function workflowsToAdd(context: PluginArchActorContext, pluginId: DenTypeId<"plugin"> | null, tools: WorkflowTool[]): Promise<DenTypeId<"configObject">[]> {
+  const ids = [...new Set(tools.map((entry) => entry.workflowId))]
+  const present = new Set(pluginId && ids.length > 0 ? (await db.select({ id: PluginConfigObjectTable.configObjectId }).from(PluginConfigObjectTable).where(and(
+    eq(PluginConfigObjectTable.organizationId, context.organizationContext.organization.id),
+    eq(PluginConfigObjectTable.pluginId, pluginId),
+    inArray(PluginConfigObjectTable.configObjectId, ids),
+    isNull(PluginConfigObjectTable.removedAt),
+  ))).map((row) => row.id) : [])
+  const missing = ids.filter((id) => !present.has(id))
+  for (const id of missing) {
+    try {
+      await requirePluginArchResourceRole({ context, resourceId: id, resourceKind: "config_object", role: "manager" })
+    } catch (error) {
+      if (!(error instanceof PluginArchAuthorizationError) || error.error !== "forbidden") throw error
+      const name = tools.find((entry) => entry.workflowId === id)?.tool.name
+      throw new McpAppError(422, "mcp_app_tool_unavailable", `Tool ${name}: sharing an App shares the Workflows its tools run, so only a manager of this Workflow can add it to an App. Bind a Workflow you manage, or ask its owner to add it. No revision was published.`)
+    }
+  }
+  return missing
+}
+
+/** Workflow tools run through the App's own Plugin, so sharing that Plugin shares them. */
+function throughPlugin(tools: McpAppToolBinding[], pluginId: string): McpAppToolBinding[] {
+  return tools.map((tool) => {
+    const parsed = tool.kind === "workflow" ? parseMarketplaceCapabilityName(tool.capability) : null
+    return parsed ? { ...tool, capability: buildMarketplaceCapabilityName(pluginId, parsed.configObjectId) } : tool
+  })
+}
+
+/**
+ * Adds bound Workflows to the App's Plugin just before the App is written. If
+ * that write then fails, a Workflow stays where its manager chose to add it;
+ * removing it could break another editor's concurrent write that binds it.
+ */
+async function addWorkflows(context: PluginArchActorContext, pluginId: DenTypeId<"plugin">, workflowIds: DenTypeId<"configObject">[]) {
+  for (const configObjectId of workflowIds) await attachConfigObjectToPlugin({ context, configObjectId, pluginId })
 }
 
 async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpAppToolBinding[]) {
@@ -214,20 +290,20 @@ async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpApp
   return { payload, rawSourceText }
 }
 
-export async function createMcpApp({ context, resolveTools, requireFreshSession, ...source }: CreateMcpAppInput & {
+export async function createMcpApp({ context, resolveTools, ...source }: CreateMcpAppInput & {
   context: PluginArchActorContext
   resolveTools: ResolveMcpAppTools
-  requireFreshSession?: boolean
 }): Promise<McpAppSummary> {
   const parsed = createMcpAppInputSchema.safeParse(source)
   if (!parsed.success) throw new McpAppError(400, "invalid_mcp_app_input", "Provide a title, complete React/CSS source, a non-empty text fallback, and uniquely named tools within the App limits.")
   const input = parsed.data
-  let pluginId = input.pluginId ? await editablePlugin(context, input.pluginId, requireFreshSession) : null
-  const tools = await resolveTools(input.tools ?? [])
-  const compiled = await compile(input, pluginId ?? createDenTypeId("plugin"), tools)
+  let pluginId = input.pluginId ? await editablePlugin(context, input.pluginId) : null
+  const resolved = await resolveTools(input.tools ?? [])
+  const workflows = await workflowsToAdd(context, pluginId, workflowTools(resolved))
+  const compiled = await compile(input, pluginId ?? createDenTypeId("plugin"), resolved)
   let createdPluginId: DenTypeId<"plugin"> | null = null
   if (pluginId) {
-    await editablePlugin(context, pluginId, requireFreshSession)
+    await editablePlugin(context, pluginId)
   } else {
     try {
       const plugin = await createPlugin({ context, name: input.title, description: input.description })
@@ -239,13 +315,24 @@ export async function createMcpApp({ context, resolveTools, requireFreshSession,
       throw error
     }
   }
-  const payload = { ...compiled.payload, pluginId }
+  const appPluginId = pluginId
+  // Do not leave an empty private Plugin behind; it would also block a retry
+  // with the same title as a duplicate.
+  const discardPlugin = async () => {
+    if (createdPluginId) await setPluginLifecycle({ action: "archive", context, pluginId: createdPluginId }).catch(() => undefined)
+  }
+  try {
+    await addWorkflows(context, appPluginId, workflows)
+  } catch (error) {
+    await discardPlugin()
+    throw error
+  }
+  const payload = { ...compiled.payload, pluginId: appPluginId, tools: throughPlugin(compiled.payload.tools, appPluginId) }
   const saved = await createConfigObject({
     context,
     objectType: "app",
-    pluginIds: [pluginId],
+    pluginIds: [appPluginId],
     sourceMode: "cloud",
-    ...(requireFreshSession === undefined ? {} : { requireFreshSession }),
     value: {
       metadata: { title: payload.title, description: payload.description },
       normalizedPayloadJson: payload,
@@ -253,30 +340,38 @@ export async function createMcpApp({ context, resolveTools, requireFreshSession,
       schemaVersion: MCP_APP_CONFIG_SCHEMA_VERSION,
     },
   }, INTERNAL_MCP_APP_WRITE).catch(async (error: unknown) => {
-    // Do not leave an empty private Plugin behind; it would also block a retry
-    // with the same title as a duplicate.
-    if (createdPluginId) await setPluginLifecycle({ action: "archive", context, pluginId: createdPluginId }).catch(() => undefined)
+    await discardPlugin()
     throw error
   })
   if (!saved.latestVersion) throw new McpAppError(422, "mcp_app_save_failed", "The MCP App revision could not be retrieved.")
   return summarizeMcpAppRevision({ appId: saved.id, revisionId: saved.latestVersion.id, payload })
 }
 
-export async function updateMcpApp({ context, resolveTools, requireFreshSession, ...source }: UpdateMcpAppInput & {
+export async function updateMcpApp({ context, resolveTools, ...source }: UpdateMcpAppInput & {
   context: PluginArchActorContext
   resolveTools: ResolveMcpAppTools
-  requireFreshSession?: boolean
 }): Promise<McpAppSummary> {
   const parsed = updateMcpAppInputSchema.safeParse(source)
   if (!parsed.success) throw new McpAppError(400, "invalid_mcp_app_input", "Provide appId, expectedRevisionId, and complete replacement App source, title, text fallback, and uniquely named tools.")
   const input = parsed.data
   const id = appId(input.appId)
   const expectedId = revisionId(input.expectedRevisionId)
-  const current = await editableApp(context, id, true, requireFreshSession)
+  const current = await editableApp(context, id, true)
   if (current.version.id !== expectedId) throw new McpAppError(409, "mcp_app_revision_conflict", "This MCP App has changed. Read it again before updating.")
-  // Omitted tools keep the App's current tools, re-resolved for the editor.
-  const tools = await resolveTools(input.tools ?? toolDeclarations(current.payload))
-  const compiled = await compile(input, current.payload.pluginId, tools)
+  const pluginId = normalizeDenTypeId("plugin", current.payload.pluginId)
+  // Omitted CSS, description, and tools keep the App's current ones; stored
+  // tools stay as published instead of being resolved again.
+  const resolved = input.tools ? await resolveTools(input.tools) : current.payload.tools
+  const workflows = input.tools ? await workflowsToAdd(context, pluginId, workflowTools(resolved)) : []
+  const compiled = await compile({
+    ...input,
+    cssSource: input.cssSource ?? storedSource(current.version, current.payload).cssSource,
+    description: input.description ?? current.payload.description ?? undefined,
+  }, pluginId, throughPlugin(resolved, pluginId))
+  // Rechecked after compiling, outside the transaction so a slow check never
+  // holds the row lock and a second pool connection at once.
+  await requireEditor(context, id, true)
+  await addWorkflows(context, pluginId, workflows)
   const organizationId = context.organizationContext.organization.id
   return db.transaction(async (tx) => {
     const [locked] = await tx.select().from(ConfigObjectTable).where(and(
@@ -284,7 +379,6 @@ export async function updateMcpApp({ context, resolveTools, requireFreshSession,
       eq(ConfigObjectTable.id, id),
     )).limit(1).for("update")
     if (!locked || locked.objectType !== "app" || locked.status !== "active" || locked.deletedAt) return notFound()
-    await requireEditor(context, id, true, requireFreshSession)
     const latest = await latestRevision(organizationId, id, tx)
     if (!latest || latest.id !== expectedId || !compiledRevision(latest)) {
       throw new McpAppError(409, "mcp_app_revision_conflict", "This MCP App has changed. Read it again before updating.")
@@ -317,17 +411,8 @@ export async function updateMcpApp({ context, resolveTools, requireFreshSession,
 
 export async function readMcpApp(input: { context: PluginArchActorContext; appId: string }): Promise<ReadMcpAppOutput> {
   const { version, payload } = await editableApp(input.context, appId(input.appId), false)
-  let source: unknown
-  try {
-    source = JSON.parse(version.rawSourceText ?? "")
-  } catch {
-    throw new McpAppError(422, "mcp_app_invalid_source", "The stored App source is invalid.")
-  }
-  const parsed = mcpAppSourceSchema.safeParse(source)
-  if (!parsed.success || sourceDigest({ ...payload, ...parsed.data }) !== payload.sourceDigest) {
-    throw new McpAppError(422, "mcp_app_invalid_source", "The stored App source failed its integrity check.")
-  }
-  return { app: summarizeMcpAppRevision({ appId: version.configObjectId, revisionId: version.id, payload }), ...parsed.data }
+  const source = storedSource(version, payload)
+  return { app: summarizeMcpAppRevision({ appId: version.configObjectId, revisionId: version.id, payload }), ...source }
 }
 
 async function accessibleAppPlugins(input: McpAppAccessInput): Promise<Map<string, string>> {

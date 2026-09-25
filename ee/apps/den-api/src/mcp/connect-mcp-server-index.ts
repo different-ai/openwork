@@ -6,7 +6,7 @@ export const CONNECT_MCP_SERVER_INDEX_URI = "openwork://connect/mcp-servers/inde
 export const CONNECT_MCP_SERVER_INDEX_SCHEMA_VERSION = "openwork.connect/mcp-servers/1"
 export const CONNECT_MCP_APP_HOST_CAPABILITY_HEADER = "x-openwork-mcp-client-capabilities"
 export const CONNECT_MCP_APP_HOST_CAPABILITY = "mcp-app-host-v1"
-/** Released desktops reject a larger index outright, so it is capped here. */
+/** Released desktops reject an index with more servers outright, so Apps never push it past this. */
 export const CONNECT_MCP_SERVER_INDEX_MAX_SERVERS = 100
 const INDEX_DESCRIPTION_MAX_CHARS = 1_024
 
@@ -47,9 +47,20 @@ const byName = (left: ConnectMcpServerIndexEntry, right: ConnectMcpServerIndexEn
   left.name.localeCompare(right.name) || left.connectionId.localeCompare(right.connectionId)
 
 /**
- * Connections, then the member's authored Apps. Each App is its own directly
- * exposed MCP server at a connection path, so desktop reconciliation registers
- * it for the model like any direct connection.
+ * How many Apps fit beside this many connections. Apps only fill the room
+ * connections leave, so they never change which connections a desktop sees,
+ * and OpenWork can only open an App that is listed.
+ */
+export function connectMcpServerIndexAppCapacity(connectionCount: number): number {
+  return Math.max(0, CONNECT_MCP_SERVER_INDEX_MAX_SERVERS - connectionCount)
+}
+
+/**
+ * Connections, then, for the App host, the member's authored Apps in title
+ * order while they fit. Each App is its own MCP server at a connection path,
+ * listed so the host can open it but never exposed to the model directly: its
+ * tools are for the App itself. Without apps, the index is exactly the
+ * connection index it has always been.
  */
 export function buildConnectMcpServerIndex(input: {
   enabled: boolean
@@ -72,12 +83,13 @@ export function buildConnectMcpServerIndex(input: {
       name: app.title,
       description: app.description ? app.description.slice(0, INDEX_DESCRIPTION_MAX_CHARS) : null,
       url: `${input.publicOrigin}${app.serverPath}`,
-      exposeDirectly: true,
+      exposeDirectly: false,
     }))
     .sort(byName)
+    .slice(0, connectMcpServerIndexAppCapacity(connections.length))
   return {
     schemaVersion: CONNECT_MCP_SERVER_INDEX_SCHEMA_VERSION,
-    servers: [...connections, ...apps].slice(0, CONNECT_MCP_SERVER_INDEX_MAX_SERVERS).sort(byName),
+    servers: apps.length === 0 ? connections : [...connections, ...apps].sort(byName),
   }
 }
 
@@ -90,7 +102,9 @@ export function registerConnectMcpServerIndex(input: {
 }) {
   input.server.registerResource("openwork-connect-mcp-servers", CONNECT_MCP_SERVER_INDEX_URI, {
     title: "OpenWork Connect MCP servers",
-    description: "Member-authorized MCP servers available through OpenWork Connect, including each App the member can use.",
+    description: input.apps === undefined
+      ? "Member-authorized MCP servers available through OpenWork Connect."
+      : "Member-authorized MCP servers available through OpenWork Connect, including each App the member can use.",
     mimeType: "application/json",
   }, async () => ({
     contents: [{

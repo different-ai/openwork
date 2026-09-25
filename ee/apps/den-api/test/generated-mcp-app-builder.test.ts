@@ -471,9 +471,13 @@ test("accepts prose, capability names, and component props that resemble blocked
     ...input,
     reactSource: `function Chart({ data }) { return <ul>{data.map((row) => <li key={row}>{row}</li>)}</ul> }
       export default function View({ app }) {
+        const [imports] = React.useState([])
+        const report = { import: { total: 3 } }
         return <main>
           <label>Email (required)<input aria-required="true" required /></label>
           <p>This field is required. Ready to import your files. This is important.</p>
+          <p>This step is important, so review it. 12 rows imported from Gmail. Choose a CSV file to import.</p>
+          <p>Import contacts, then import orders from Shopify. {imports.length} {report.import.total}</p>
           <p>Persistent Worker status</p>
           <Chart data={["a", "b"]} />
           <button type="button" onClick={() => app.callServerTool({ name: "execute_capability", arguments: { name: "web.fetch" } })}>Run</button>

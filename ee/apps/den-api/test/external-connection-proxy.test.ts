@@ -42,7 +42,7 @@ const {
   readyExternalMcpConnectionsForMember,
 } = await import("../src/capability-sources/external-mcp-connections.js")
 const { ExternalMcpDiagnosticError } = await import("../src/capability-sources/external-mcp-diagnostics.js")
-const { buildConnectMcpServerIndex, selectConnectMcpServerIndexConnections } = await import("../src/mcp/connect-mcp-server-index.js")
+const { buildConnectMcpServerIndex, connectMcpServerIndexAppCapacity, selectConnectMcpServerIndexConnections } = await import("../src/mcp/connect-mcp-server-index.js")
 
 const resourceUri = "ui://fixture/healthy.html"
 const html = "<!doctype html><html><body>Healthy native MCP App</body></html>"
@@ -798,7 +798,7 @@ test("ordinary clients only see directly exposed connections in the index while 
   }).servers.map((server) => server.exposeDirectly)).toEqual([false, true])
 })
 
-test("each App the member can use is listed as its own directly exposed server after connections, within the desktop limit", () => {
+test("the App host index lists each App the member can use, never exposed directly, in the room connections leave", () => {
   const app = (index: number) => ({
     appId: `cob_01k28e8q8pf8r9sff9mhyq${String(index).padStart(4, "0")}`,
     pluginId: "plg_01k28e8q8pf8r9sff9mhyqxved",
@@ -807,6 +807,11 @@ test("each App the member can use is listed as its own directly exposed server a
     description: index === 0 ? "d".repeat(2_000) : null,
     serverPath: `/mcp/agent/connections/cob_01k28e8q8pf8r9sff9mhyq${String(index).padStart(4, "0")}`,
   })
+  const connections = (count: number) => Array.from({ length: count }, (_, position) => ({
+    ...(directConnection as Record<string, unknown>),
+    id: `emc_fixture_${String(position).padStart(3, "0")}`,
+    name: `Connection ${String(position).padStart(3, "0")}`,
+  })) as never[]
   const index = buildConnectMcpServerIndex({
     enabled: true,
     connections: [directConnection],
@@ -814,21 +819,36 @@ test("each App the member can use is listed as its own directly exposed server a
     publicOrigin: "https://openwork.example",
   })
   expect(index.servers.map((server) => server.name)).toEqual(["App 000", "App 001", "Fixture MCP"])
+  // Listed so the App host can open it; its tools never reach the model directly.
   expect(index.servers[0]).toEqual({
     connectionId: app(0).appId,
     name: "App 000",
     description: "d".repeat(1_024),
     url: `https://openwork.example${app(0).serverPath}`,
-    exposeDirectly: true,
+    exposeDirectly: false,
   })
+  expect(index.servers.find((server) => server.name === "Fixture MCP")?.exposeDirectly).toBe(true)
+
+  // Apps take only the room connections leave, in title order.
+  expect([0, 1, 99, 100, 150].map(connectMcpServerIndexAppCapacity)).toEqual([100, 99, 1, 0, 0])
   const crowded = buildConnectMcpServerIndex({
     enabled: true,
     connections: [directConnection],
-    apps: Array.from({ length: 150 }, (_, position) => app(position)),
+    apps: Array.from({ length: 150 }, (_, position) => app(149 - position)),
     publicOrigin: "https://openwork.example",
   })
   expect(crowded.servers).toHaveLength(100)
+  expect(crowded.servers.filter((server) => server.name.startsWith("App ")).map((server) => server.name))
+    .toEqual(Array.from({ length: 99 }, (_, position) => app(position).title))
   expect(crowded.servers.some((server) => server.name === "Fixture MCP")).toBe(true)
+  const full = buildConnectMcpServerIndex({ enabled: true, connections: connections(100), apps: [app(0)], publicOrigin: "https://openwork.example" })
+  expect(full.servers.map((server) => server.name)).not.toContain("App 000")
+  expect(full.servers).toHaveLength(100)
+
+  // Without Apps the index is the connection index it has always been, uncapped.
+  const plain = buildConnectMcpServerIndex({ enabled: true, connections: connections(120), publicOrigin: "https://openwork.example" })
+  expect(plain.servers).toHaveLength(120)
+  expect(buildConnectMcpServerIndex({ enabled: true, connections: connections(120), apps: [], publicOrigin: "https://openwork.example" })).toEqual(plain)
   expect(buildConnectMcpServerIndex({ enabled: false, connections: [], apps: [app(1)], publicOrigin: "https://openwork.example" }).servers).toEqual([])
 })
 

@@ -85,6 +85,7 @@ import {
 } from "../capability-sources/external-mcp-connections.js"
 import {
   CONNECT_MCP_APP_HOST_CAPABILITY_HEADER,
+  connectMcpServerIndexAppCapacity,
   registerConnectMcpServerIndex,
   selectConnectMcpServerIndexConnections,
   supportsConnectMcpAppHost,
@@ -533,12 +534,28 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     const appAccess = { organizationId: principal.organizationId, member: memberIdentity, enabled: externalMcpConnectionsEnabled }
     let mcpAppsPromise: Promise<McpAppEntry[]> | null = null
     const loadMcpApps = () => mcpAppsPromise ??= listAccessibleMcpApps(appAccess).catch(() => [])
+    // OpenWork opens an App only through the server index, where Apps fill the
+    // room connections leave. Every usable connection may be listed, so only
+    // Apps that fit beside all of them are offered to open.
+    let openableAppsPromise: Promise<McpAppEntry[]> | null = null
+    const loadOpenableApps = () => openableAppsPromise ??= (async () => {
+      const apps = await loadMcpApps()
+      if (apps.length === 0 || !memberIdentity) return apps
+      const connections = await listUsableExternalMcpConnections({
+        organizationId,
+        orgMembershipId: memberIdentity.orgMembershipId,
+        teamIds: memberIdentity.teamIds,
+      }).catch(() => null)
+      return connections ? apps.slice(0, connectMcpServerIndexAppCapacity(connections.length)) : []
+    })()
     const server = createAgentMcpServer({ appServers: appServersEnabled })
     registerAgentConnectionActionApp(server, { organizationId: principal.organizationId, member: memberIdentity })
     if (appServersEnabled) {
-      const appActor = () => {
+      const appActor = (): PluginArchActorContext => {
         if (!libraryContext) throw new AppBuilderError("mcp_membership_revoked", "The OpenWork Cloud membership for this connection is unavailable.")
-        return libraryContext
+        // A non-interactive token principal, like an API key: its write scope
+        // and editor access gate App writes, with no browser session to renew.
+        return { ...libraryContext, mcpToken: true }
       }
       const appOperation = async <Result,>(run: () => Promise<Result>): Promise<Result> => {
         try {
@@ -558,13 +575,14 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         scopes: principal.scopes,
         publicOrigin: redirectUriBase,
         service: {
-          // MCP calls carry no browser session; the write scope and editor access gate App writes.
-          create: (request) => appOperation(() => createMcpApp({ ...request, context: appActor(), resolveTools, requireFreshSession: false })),
-          update: (request) => appOperation(() => updateMcpApp({ ...request, context: appActor(), resolveTools, requireFreshSession: false })),
+          create: (request) => appOperation(() => createMcpApp({ ...request, context: appActor(), resolveTools })),
+          update: (request) => appOperation(() => updateMcpApp({ ...request, context: appActor(), resolveTools })),
           read: (request) => appOperation(() => readMcpApp({ ...request, context: appActor() })),
         },
+        canOpen: async (appId) => (await loadOpenableApps()).some((app) => app.appId === appId),
         notifyCatalogChanged: () => {
           mcpAppsPromise = null
+          openableAppsPromise = null
           handlers.notify.resourcesChanged(notificationScope)
         },
       })
@@ -589,7 +607,8 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         registerConnectMcpServerIndex({
           server,
           enabled: indexReadable,
-          apps: appServersEnabled ? await loadMcpApps() : [],
+          // Only the App host opens Apps; every other reader gets the connection index unchanged.
+          ...(appServersEnabled && connectMcpAppHostSupported ? { apps: await loadMcpApps() } : {}),
           connections: await readyExternalMcpConnectionsForMember(indexCandidates, memberIdentity.orgMembershipId),
           publicOrigin: redirectUriBase,
         })
@@ -658,7 +677,8 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           const plugin = parseMarketplaceCapabilityName(match.name)
           return !plugin || !appIds.has(plugin.configObjectId)
         })
-        const matches = [...ordinaryMatches, ...searchMcpApps(apps, query, redirectUriBase)].sort(compareCapabilityMatches).slice(0, boundedLimit)
+        const openable = includeApps ? await loadOpenableApps() : []
+        const matches = [...ordinaryMatches, ...searchMcpApps(openable, query, redirectUriBase)].sort(compareCapabilityMatches).slice(0, boundedLimit)
         return capabilitySearchToolResult(matches, result.externalCoverageHint, intent === "connect" && (type === undefined || type === "all" || type === "mcp") && !matches.some(match => match.name.startsWith("mcp:")) ? connectorCatalogForQuery(query) : null, intent === "connect")
       },
     )
@@ -694,7 +714,10 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         const definition = plugin && await isActiveMcpApp({ organizationId: principal.organizationId, appId: plugin.configObjectId })
           ? await loadMcpAppServerDefinition({ ...appAccess, appId: plugin.configObjectId }).catch(() => null)
           : null
-        if (definition) return mcpAppLaunchResult({ app: definition.app, publicOrigin: redirectUriBase, message: `Opened ${definition.app.title}.`, launchInput: body })
+        if (definition) {
+          const canOpen = (await loadOpenableApps()).some((app) => app.appId === definition.app.appId)
+          return mcpAppLaunchResult({ app: definition.app, publicOrigin: redirectUriBase, message: `Opened ${definition.app.title}.`, launchInput: body, canOpen })
+        }
         const result = await executeCapabilityWithBudget({
           capability: name,
           invoke: async (): Promise<ExecuteCapabilityToolResult> => (

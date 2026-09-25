@@ -92,6 +92,8 @@ function registerRenderTool(input: {
   revision: GeneratedArtifactView["revisions"][number]
   preview: boolean
   run?: boolean
+  /** A live draft OpenWork may offer to save; never while legacy views are read-only. */
+  draft?: boolean
   loadData: (request: LoadDataRequest) => Promise<WorkflowArtifactLoadResult>
 }): RegisteredTool {
   const toolName = `${input.run ? "run" : input.preview ? "preview" : "render"}_artifact_${input.view.id}`
@@ -149,7 +151,7 @@ function registerRenderTool(input: {
             artifactViewId: input.view.id,
             viewRevisionId: input.revision.id,
           }),
-          ...(input.view.dataMode === "live" && input.preview ? {
+          ...(input.view.dataMode === "live" && input.draft ? {
             "openwork/appDraft": { appId: input.view.id, revisionId: input.revision.id, title: input.view.title },
           } : {}),
           appTitle: input.view.title,
@@ -211,7 +213,7 @@ export function registerAgentGeneratedArtifactViews(input: {
     if (!revision) return
     registeredTools.set(key, {
       revisionId: revision.id,
-      registration: registerRenderTool({ server: input.server, view, revision, preview, run, loadData: input.loadData }),
+      registration: registerRenderTool({ server: input.server, view, revision, preview, run, draft: preview && input.legacyViewsWritable === true, loadData: input.loadData }),
     })
   }
 

@@ -45,6 +45,8 @@ const bindings: McpAppToolBinding[] = [
   },
 ]
 const declarations = bindings.map(({ name, description, capability, mode }) => ({ name, description, capability, mode }))
+// Connect's App operations run as a non-interactive MCP token actor.
+const tokenContext = { ...context, mcpToken: true }
 const source = {
   title: "Project explorer",
   textFallback: "Open Project explorer.",
@@ -80,6 +82,8 @@ const resolverCalls: unknown[] = []
 const resourceReads: unknown[] = []
 let normalExecutions: unknown[] = []
 let workflowCreations = 0
+let usableConnections = 0
+let servedBindings: McpAppToolBinding[] = bindings
 let registerAgentMcpRoutes: typeof import("../src/mcp/agent.js")["registerAgentMcpRoutes"]
 let registerExternalConnectionProxyRoutes: typeof import("../src/mcp/external-connection-proxy.js")["registerExternalConnectionProxyRoutes"]
 let apps: typeof import("../src/mcp-apps.js")
@@ -143,7 +147,7 @@ beforeAll(async () => {
     verifyMcpRequest: async () => ({ userId, organizationId, scopes, payload: {} }),
   }))
   const connections = await import("../src/capability-sources/external-mcp-connections.js")
-  spyOn(connections, "listUsableExternalMcpConnections").mockImplementation(async () => [])
+  spyOn(connections, "listUsableExternalMcpConnections").mockImplementation(async () => Array.from({ length: usableConnections }, (_, index) => ({ id: `emc_fixture_${index}` })) as never)
   spyOn(connections, "readyExternalMcpConnectionsForMember").mockImplementation(async () => [])
   const external = await import("../src/mcp/external-capabilities.js")
   spyOn(external, "resolveMcpMemberIdentity").mockImplementation(async () => memberPresent ? member : null)
@@ -177,14 +181,13 @@ beforeAll(async () => {
   })
   spyOn(apps, "updateMcpApp").mockImplementation(async ({ resolveTools, ...request }) => {
     if (mutationError) throw mutationError
-    expect(request.context).toEqual(context)
-    expect(request.requireFreshSession).toBe(false)
+    expect(request.context).toEqual(tokenContext)
     expect(await resolveTools(request.tools ?? [])).toEqual(bindings)
     current = nextSummary
     return current
   })
   spyOn(apps, "readMcpApp").mockImplementation(async (request) => {
-    expect(request.context).toEqual(context)
+    expect(request.context).toEqual(tokenContext)
     if (!editor) throw new access.PluginArchAuthorizationError(403, "forbidden", "Editor access is required.")
     return { app: current ?? appSummary, reactSource: source.reactSource, cssSource: "" }
   })
@@ -203,7 +206,7 @@ beforeAll(async () => {
     if (!current || !visible || !memberPresent || !request.enabled || request.appId !== appId) {
       throw new apps.McpAppError(404, "mcp_app_not_found", "MCP App or revision is not available.")
     }
-    return { app: current, tools: bindings }
+    return { app: current, tools: servedBindings }
   })
   spyOn(apps, "loadMcpAppResource").mockImplementation(async (request) => {
     resourceReads.push(request)
@@ -226,21 +229,24 @@ beforeEach(() => {
   enabled = editor = visible = memberPresent = grant = true
   useMarketplaceFixture = false
   mutationError = catalogError = null
-  created.length = resolverCalls.length = resourceReads.length = workflowCreations = 0
+  created.length = resolverCalls.length = resourceReads.length = workflowCreations = usableConnections = 0
   normalExecutions = []
+  servedBindings = bindings
   version = { schemaVersion: MCP_APP_CONFIG_SCHEMA_VERSION, normalizedPayloadJson: { kind: "authored_mcp_app", html: "compiled-marker" }, rawSourceText: source.reactSource }
 })
 afterAll(() => mock.restore())
 
-async function withClient(path: string, run: (client: Client) => Promise<void>) {
+async function withClient(path: string, run: (client: Client) => Promise<void>, headers?: Record<string, string>) {
   const app = new Hono<{ Variables: { requestId: string } }>()
   app.use("*", async (c, next) => { c.set("requestId", "req_app_servers"); await next() })
-  app.get("/openapi.json", (c) => c.json({ paths: {} }))
+  // One Den read, so App tools bound to it pass the read check on every call.
+  app.get("/openapi.json", (c) => c.json({ paths: { "/v1/projects": { get: { operationId: "getV1Projects", tags: ["Workflows"], summary: "List projects", responses: {} } } } }))
   registerAgentMcpRoutes(app)
   registerExternalConnectionProxyRoutes(app)
   const client = new Client({ name: "route-client", version: "1" }, { capabilities: {} })
   await client.connect(new StreamableHTTPClientTransport(new URL(`${origin}${path}`), {
     fetch: (url, init) => app.request(new Request(url, init)),
+    ...(headers ? { requestInit: { headers } } : {}),
   }))
   try { await run(client) } finally { await client.close() }
 }
@@ -255,12 +261,15 @@ test("create_app builds an App that opens in OpenWork and names its own MCP serv
     expect(createdResult.structuredContent).toEqual({ app: appSummary, input: {}, mcpUrl: appUrl })
     expect(createdResult._meta).toEqual(launchMeta(appSummary))
     expect(JSON.stringify(createdResult.content)).toContain(appUrl)
-    expect(created).toEqual([{ ...source, context, requireFreshSession: false, resolved: bindings }])
+    expect(created).toEqual([{ ...source, context: tokenContext, resolved: bindings }])
     expect(resolverCalls).toEqual([{ scopes: ["mcp:read", "mcp:write"], member, tools: declarations }])
     expect(workflowCreations).toBe(0)
     expect(normalExecutions).toEqual([])
 
-    expect((await client.callTool({ name: "read_app", arguments: { appId } })).structuredContent).toMatchObject({ reactSource: source.reactSource, app: { tools: appSummary.tools } })
+    const read = await client.callTool({ name: "read_app", arguments: { appId } })
+    expect(read.structuredContent).toMatchObject({ reactSource: source.reactSource, app: { tools: appSummary.tools } })
+    // Hosts that forward only text still get the source update_app replaces.
+    expect(JSON.stringify(read.content)).toContain("source-marker")
     const updated = await client.callTool({ name: "update_app", arguments: { ...source, appId, expectedRevisionId: revisionId } })
     expect(updated.structuredContent).toEqual({ app: nextSummary, input: {}, mcpUrl: appUrl })
     expect(updated._meta).toEqual(launchMeta(nextSummary))
@@ -268,23 +277,47 @@ test("create_app builds an App that opens in OpenWork and names its own MCP serv
   })
 })
 
-test("the Connect server index lists each App as a directly exposed MCP server", async () => {
+test("the Connect server index lists each App for the App host only, never exposed to the model directly", async () => {
   current = appSummary
-  const readIndex = async () => {
+  const readIndex = async (appHost: boolean) => {
     let servers: unknown
+    if (appHost) scopes = new Set(["mcp:read", "mcp:write", "mcp:app-host"])
     await withClient("/mcp/agent", async (client) => {
       const index = await client.readResource({ uri: "openwork://connect/mcp-servers/index.json" })
       const text = index.contents[0] && "text" in index.contents[0] ? index.contents[0].text : "{}"
       servers = JSON.parse(text).servers
-    })
+    }, appHost ? { "x-openwork-mcp-client-capabilities": "mcp-app-host-v1" } : undefined)
     return servers
   }
-  expect(await readIndex()).toEqual([{ connectionId: appId, name: source.title, description: null, url: appUrl, exposeDirectly: true }])
+  expect(await readIndex(true)).toEqual([{ connectionId: appId, name: source.title, description: null, url: appUrl, exposeDirectly: false }])
+  // Ordinary clients get the connection index unchanged.
+  expect(await readIndex(false)).toEqual([])
   visible = false
-  expect(await readIndex()).toEqual([])
+  expect(await readIndex(true)).toEqual([])
   visible = true
   enabled = false
-  expect(await readIndex()).toEqual([])
+  expect(await readIndex(true)).toEqual([])
+})
+
+test("an App past the index limit is not offered to open inside OpenWork, but keeps its MCP URL", async () => {
+  current = appSummary
+  usableConnections = 100
+  await withClient("/mcp/agent", async (client) => {
+    const search = await client.callTool({ name: "search_capabilities", arguments: { query: "project" } })
+    expect(JSON.stringify(search.structuredContent)).not.toContain('"kind":"mcp_app"')
+    const opened = await client.callTool({ name: "execute_capability", arguments: { name: `plugin:${pluginId}:${appId}` } })
+    expect(opened._meta).toBeUndefined()
+    expect(opened.structuredContent).toEqual({ app: appSummary, input: {}, mcpUrl: appUrl })
+    expect(JSON.stringify(opened.content)).toContain("past that limit")
+    const updated = await client.callTool({ name: "update_app", arguments: { ...source, appId, expectedRevisionId: revisionId } })
+    expect(updated._meta).toBeUndefined()
+    expect(JSON.stringify(updated.content)).toContain(appUrl)
+  })
+  usableConnections = 99
+  await withClient("/mcp/agent", async (client) => {
+    const opened = await client.callTool({ name: "execute_capability", arguments: { name: `plugin:${pluginId}:${appId}` } })
+    expect(opened._meta).toEqual(launchMeta(nextSummary))
+  })
 })
 
 test("search and execute open a built App through its own server instead of its generic Plugin entry", async () => {
@@ -344,7 +377,7 @@ test("each App's own MCP server exposes only its launch tool, declared tools, an
     await client.callTool({ name: "create_note", arguments: { text: "Ship it" } })
     expect(normalExecutions).toEqual([
       { scopes: ["mcp:read", "mcp:write"], member, request: { name: "getProjects", query: { q: "roadmap" } } },
-      { scopes: ["mcp:read", "mcp:write"], member, request: { name: "mcp:emc_notes:create_note", body: { text: "Ship it" }, schemaDigest: bindings[1]?.schemaDigest } },
+      { scopes: ["mcp:read", "mcp:write"], member, request: { name: "mcp:emc_notes:create_note", body: { text: "Ship it" }, schemaDigest: bindings[1]?.schemaDigest, requireSchemaMatch: true } },
     ])
 
     expect((await client.listResources()).resources).toEqual([expect.objectContaining({ uri: appSummary.resourceUri, name: source.title, mimeType: "text/html;profile=mcp-app" })])
@@ -365,6 +398,17 @@ test("each App's own MCP server exposes only its launch tool, declared tools, an
     expect(JSON.stringify(write.content)).toContain("insufficient_mcp_scope")
     expect(normalExecutions).toHaveLength(1)
   })
+
+  // A connection tool never runs without asking, whatever its stored binding says.
+  scopes = new Set(["mcp:read"])
+  normalExecutions = []
+  servedBindings = [{ ...bindings[1]!, readOnly: true }]
+  await withClient(appSummary.serverPath, async (client) => {
+    expect((await client.listTools()).tools[1]).toMatchObject({ name: "create_note", annotations: { readOnlyHint: false, destructiveHint: true } })
+    expect(JSON.stringify((await client.callTool({ name: "create_note", arguments: { text: "Ship it" } })).content)).toContain("insufficient_mcp_scope")
+    expect(normalExecutions).toEqual([])
+  })
+  servedBindings = bindings
 
   for (const change of [() => { visible = false }, () => { enabled = false }, () => { memberPresent = false }]) {
     scopes = new Set(["mcp:read", "mcp:write"])
@@ -460,6 +504,12 @@ test("with App servers off, Connect keeps its previous surface and App URLs refu
       expect(JSON.stringify(search.structuredContent)).not.toContain('"kind":"mcp_app"')
     })
     await expect(withClient(appSummary.serverPath, async () => undefined)).rejects.toThrow()
+    // Chat's generic Plugin match no longer points at tools that do not exist.
+    useMarketplaceFixture = true
+    const hint = await marketplace.executeMarketplaceCapability({ organizationId, pluginId, configObjectId: appId, member, enabled: true })
+    expect(hint).toMatchObject({ ok: true, result: { status: "unsupported" } })
+    expect(JSON.stringify(hint)).toContain("turned off")
+    for (const missing of ["read_app", MCP_APP_LAUNCH_TOOL_NAME, mcpAppServerPath(appId)]) expect(JSON.stringify(hint)).not.toContain(missing)
   } finally {
     Object.assign(env, { appMcpServersEnabled: true })
   }

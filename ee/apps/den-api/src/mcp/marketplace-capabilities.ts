@@ -28,6 +28,7 @@ import {
 import { EXTERNAL_MCP_PRESETS } from "../capability-sources/external-mcp-presets.js"
 import { getConnectedAccount, getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
 import { db } from "../db.js"
+import { env } from "../env.js"
 import { resolvePluginArchGrantRole } from "../routes/org/plugin-system/access.js"
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
 import { parseCodemodeScriptPayload, type CodemodeScriptInputIssue } from "./codemode-script-object.js"
@@ -1510,6 +1511,8 @@ export async function searchMarketplaceCapabilities(input: {
 export async function listAccessibleWorkflows(input: {
   member: McpMemberIdentity
   organizationId: string
+  /** Only these Workflows, so a caller that needs a few skips loading the rest. */
+  configObjectIds?: ReadonlySet<string>
 }): Promise<AccessibleWorkflow[]> {
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
   if (!await getActiveMember(organizationId, input.member)) return []
@@ -1522,6 +1525,7 @@ export async function listAccessibleWorkflows(input: {
   const seen = new Set<string>()
   for (const row of rows) {
     if (canonicalConfigObjectType(row.configObject.objectType) !== "workflow" || seen.has(row.configObject.id)) continue
+    if (input.configObjectIds && !input.configObjectIds.has(row.configObject.id)) continue
     const version = await latestVersion(row.configObject.id, organizationId)
     if (!version) continue
     const parsed = parseCodemodeScriptPayload(version.normalizedPayloadJson)
@@ -1610,7 +1614,9 @@ export async function executeMarketplaceCapability(input: {
       result: {
         ...basePayload(row),
         status: "unsupported",
-        hint: `This App is its own MCP server at ${mcpAppServerPath(row.configObject.id)}; its ${MCP_APP_LAUNCH_TOOL_NAME} tool opens it. Code Mode and generic Plugin execution do not open Apps or return their source. Editors can use read_app to edit it. No App was opened.`,
+        hint: env.appMcpServersEnabled
+          ? `This App is its own MCP server at ${mcpAppServerPath(row.configObject.id)}; its ${MCP_APP_LAUNCH_TOOL_NAME} tool opens it. Code Mode and generic Plugin execution do not open Apps or return their source. Editors can use read_app to edit it. No App was opened.`
+          : "Apps built in OpenWork are turned off on this server, so this App cannot be opened or edited here. No App was opened.",
       },
     }
   }

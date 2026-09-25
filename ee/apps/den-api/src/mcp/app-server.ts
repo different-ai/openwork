@@ -76,15 +76,21 @@ function launchTool(definition: McpAppServerDefinition): Tool {
   }
 }
 
+/** Only reads Den verified itself run without asking; a connection tool always asks. */
+function verifiedReadOnly(binding: McpAppToolBinding): boolean {
+  return binding.readOnly && binding.kind !== "mcp"
+}
+
 function boundTool(binding: McpAppToolBinding): Tool {
+  const readOnly = verifiedReadOnly(binding)
   return {
     name: binding.name,
     description: binding.description,
     inputSchema: { ...binding.inputSchema, type: "object" },
     annotations: {
-      readOnlyHint: binding.readOnly,
-      destructiveHint: !binding.readOnly,
-      idempotentHint: binding.readOnly,
+      readOnlyHint: readOnly,
+      destructiveHint: !readOnly,
+      idempotentHint: readOnly,
       openWorldHint: binding.kind !== "api",
     },
     _meta: { ui: { visibility: ["model", "app"] } },
@@ -149,7 +155,7 @@ export function createMcpAppServer(input: {
     }
     const binding = tools.find((tool) => tool.name === request.params.name)
     if (!binding) throw new McpError(ErrorCode.InvalidParams, `Tool ${request.params.name} is not available on ${app.title}.`)
-    const requiredScope = binding.readOnly ? DEN_MCP_READ_SCOPE : DEN_MCP_WRITE_SCOPE
+    const requiredScope = verifiedReadOnly(binding) ? DEN_MCP_READ_SCOPE : DEN_MCP_WRITE_SCOPE
     if (!input.scopes.has(requiredScope)) return scopeError(binding.name, requiredScope)
     return input.callTool(binding, args)
   })

@@ -22,6 +22,8 @@ export type PluginArchCapability = "config_object.create" | "connector_account.c
 export type PluginArchActorContext = {
   apiKey?: true
   automation?: true
+  /** A scoped MCP bearer token, which never carries a browser session. */
+  mcpToken?: true
   memberTeams: MemberTeamSummary[]
   organizationContext: OrganizationContext
   session: { createdAt?: Date | string | null } | null | undefined
@@ -114,9 +116,9 @@ export function hasPluginArchCapability(context: PluginArchActorContext, capabil
 }
 
 function ensureFreshPluginArchAdmin(context: PluginArchActorContext, sessionMaxAgeMs?: number) {
-  if (context.apiKey === true || context.automation === true) {
-    // Session freshness is a step-up check for interactive humans. API keys and connector automation
-    // are non-interactive principals authorized by their scoped organization membership.
+  if (context.apiKey === true || context.automation === true || context.mcpToken === true) {
+    // Session freshness is a step-up check for interactive humans. API keys, connector automation,
+    // and MCP tokens are non-interactive principals authorized by their scoped organization membership.
     return
   }
   if (!isPluginArchOrgAdmin(context) || hasFreshPrivilegedSession({ session: context.session }, new Date(), sessionMaxAgeMs)) {

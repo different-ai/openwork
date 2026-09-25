@@ -81,38 +81,41 @@ export function appSource(revision: string, options: { title?: string; sampleOrd
       const [price, setPrice] = React.useState(null);
       const [total, setTotal] = React.useState(null);
       const [failure, setFailure] = React.useState("");
-      const [busy, setBusy] = React.useState(false);
+      const [busy, setBusy] = React.useState("");
       const toolsAvailable = Boolean(app.getHostCapabilities()?.serverTools);
       React.useEffect(() => {
         if (!toolsAvailable) return;
-        // Read-only tools may run when the App opens: the live Workflow, then the Inventory lookup.
-        (async () => {
-          const date = await app.callServerTool({ name: ${JSON.stringify(toolNames.live)}, arguments: { timeZone: "UTC" } });
-          if (date.isError) throw new Error("Pricing date unavailable");
-          setToday(payload(date).value?.today);
-          const lookup = await app.callServerTool({ name: ${JSON.stringify(toolNames.connection)}, arguments: { sku: input.sku } });
-          if (lookup.isError) throw new Error("Price lookup failed");
-          setPrice(payload(lookup).unitPrice);
-        })().catch(error => setFailure(error.message));
+        // Only reads OpenWork verifies run when the App opens: here, the live Workflow.
+        app.callServerTool({ name: ${JSON.stringify(toolNames.live)}, arguments: { timeZone: "UTC" } })
+          .then(date => { if (date.isError) throw new Error("Pricing date unavailable"); setToday(payload(date).value?.today); })
+          .catch(error => setFailure(error.message));
       }, [app, toolsAvailable]);
-      async function calculate() {
-        // OpenWork lets one click authorize one tool call, so the write is the only call this button makes.
-        setBusy(true); setFailure("");
-        try {
-          const reply = await app.callServerTool({ name: ${JSON.stringify(toolNames.workflow)}, arguments: { quantity: input.quantity, unitPrice: price } });
-          const next = payload(reply);
-          if (reply.isError) throw new Error(next.message || "The calculation failed");
-          setTotal(next.value?.total);
-        } catch (error) { setFailure(error.message); }
-        finally { setBusy(false); }
+      // A connection tool or Workflow run asks first, and OpenWork lets one
+      // click authorize one tool call, so each button makes exactly one.
+      async function run(label, call) {
+        setBusy(label); setFailure("");
+        try { await call(); } catch (error) { setFailure(error.message); }
+        finally { setBusy(""); }
       }
+      const lookUp = () => run("Looking up price", async () => {
+        const lookup = await app.callServerTool({ name: ${JSON.stringify(toolNames.connection)}, arguments: { sku: input.sku } });
+        if (lookup.isError) throw new Error("Price lookup failed");
+        setPrice(payload(lookup).unitPrice);
+      });
+      const calculate = () => run("Calculating", async () => {
+        const reply = await app.callServerTool({ name: ${JSON.stringify(toolNames.workflow)}, arguments: { quantity: input.quantity, unitPrice: price } });
+        const next = payload(reply);
+        if (reply.isError) throw new Error(next.message || "The calculation failed");
+        setTotal(next.value?.total);
+      });
       return <main>
         <header><h1>${title}</h1><span>Ready — ${revision}</span></header>
         {!toolsAvailable && <p role="status">Server tools unavailable. Reopen in a host that enables server tools.</p>}
         <p data-testid="pricing-date">{today ? "Prices as of " + today : "Loading pricing date"}</p>
         <p data-testid="order-line">{input.quantity ?? 0} × {input.sku ?? "no product"}{price !== null ? " at " + price : ""}</p>
-        <button type="button" disabled={!toolsAvailable || busy || price === null} onClick={calculate}>Calculate total</button>
-        {busy && <p role="status">Calculating</p>}
+        <button type="button" disabled={!toolsAvailable || busy !== ""} onClick={lookUp}>Look up price</button>
+        <button type="button" disabled={!toolsAvailable || busy !== "" || price === null} onClick={calculate}>Calculate total</button>
+        {busy && <p role="status">{busy}</p>}
         {failure && <p role="alert">{failure}</p>}
         {total !== null && <output data-testid="total" aria-label="Total">{String(total)}</output>}
       </main>;
@@ -210,9 +213,10 @@ type Endpoint = "connect" | "app";
 type RequestWitness = { persona: Persona; endpoint: Endpoint; via: "setup" | "client"; method: string; params: Record<string, unknown>; result: Record<string, unknown>; resourceDigest?: string };
 
 /**
- * An owner builds an App through OpenWork Connect whose own MCP server binds a
- * saved Workflow as its one tool. A standard MCP Apps reference host talks
- * only to that App's MCP URL, as the owner, a teammate, and an outsider.
+ * An owner builds an App through OpenWork Connect whose own MCP server composes
+ * a live Workflow, an Inventory connection tool, and a Workflow. A standard MCP
+ * Apps reference host talks only to that App's MCP URL, as the owner, a
+ * teammate, and an outsider.
  */
 const inventoryTool: MockMcpTool = {
   name: toolNames.connection,
@@ -289,6 +293,8 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
   const outsider = den.members.outsider;
   if (!member || !outsider) throw new Error("Synthetic members missing");
   const tokens = new Map<Persona, string>();
+  // Each desktop reads the Connect server index as its private App host.
+  const appHostTokens = new Map<Persona, string>();
   for (const [persona, session] of [["owner", den.admin], ["member", member], ["outsider", outsider]] satisfies Array<[Persona, typeof den.admin]>) {
     const minted = await seed.api(session, "/v1/mcp/token", {
       method: "POST", headers: { "x-openwork-org-id": organizationId },
@@ -296,14 +302,18 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
     });
     if (!minted.response.ok) throw new Error(`MCP token setup failed: ${minted.response.status}`);
     tokens.set(persona, field(minted.body, "token"));
+    appHostTokens.set(persona, field(minted.body, "appHostToken"));
   }
   let sequence = 0;
   let appServerPath = "";
   const requests: RequestWitness[] = [];
-  async function rpc(persona: Persona, endpoint: Endpoint, method: string, params: Record<string, unknown>, via: "setup" | "client" = "setup") {
+  async function rpc(persona: Persona, endpoint: Endpoint, method: string, params: Record<string, unknown>, via: "setup" | "client" = "setup", appHost = false) {
     const response = await fetch(`${den.ref.apiUrl}${endpoint === "app" ? appServerPath : "/mcp/agent"}`, {
       method: "POST",
-      headers: { authorization: `Bearer ${tokens.get(persona)}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      headers: {
+        authorization: `Bearer ${(appHost ? appHostTokens : tokens).get(persona)}`, "content-type": "application/json", accept: "application/json, text/event-stream",
+        ...(appHost ? { "x-openwork-mcp-client-capabilities": "mcp-app-host-v1" } : {}),
+      },
       body: JSON.stringify({ jsonrpc: "2.0", id: ++sequence, method, params }),
       signal: AbortSignal.timeout(90_000),
     });
@@ -329,7 +339,7 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
     if (result.response.status !== 201) throw new Error(`Viewer grant failed: ${result.response.status}`);
   }
 
-  const { procedure, live, capabilities, tools, created } = await composeOrderCalculator(seed, den.admin, connection.id, (name, args) => call("owner", name, args));
+  const { procedure, capabilities, tools, created } = await composeOrderCalculator(seed, den.admin, connection.id, (name, args) => call("owner", name, args));
   appServerPath = created.serverPath;
 
   const built = await buildStandardMcpAppHost();
@@ -381,9 +391,9 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
   return {
     app, pluginWeb, den, created, capabilities, tools, url, requests, rpc, call,
     inventoryCalls: (options: { sinceIso?: string; atLeast?: number } = {}) => den.mocks.inventory.toolCalls({ name: toolNames.connection, atLeast: 0, ...options }),
+    /** Shares only the App's own Plugin, which carries the Workflows its tools run. */
     async share() {
       await grant(`/v1/plugins/${created.pluginId}/access`);
-      for (const workflow of [procedure, live]) await grant(`/v1/config-objects/${workflow.configObjectId}/access`);
     },
     /** Every write path a Workflow-bound view had, tried against the running Den. */
     async legacyWrites() {
@@ -405,8 +415,9 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
       }));
       return { current, updated };
     },
+    /** The Connect server index as this person's desktop App host reads it. */
     async index(persona: Persona) {
-      const read = await rpc(persona, "connect", "resources/read", { uri: indexUri });
+      const read = await rpc(persona, "connect", "resources/read", { uri: indexUri }, "setup", true);
       const content = rows(read.contents)[0];
       return rows(record(JSON.parse(field(content, "text"))).servers);
     },
