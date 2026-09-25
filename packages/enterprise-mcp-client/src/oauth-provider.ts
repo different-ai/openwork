@@ -1,5 +1,6 @@
 import { OAuthClientInformationFullSchema, OAuthClientInformationSchema, OAuthTokensSchema } from "@modelcontextprotocol/core"
-import { discoverAuthorizationServerMetadata, IssuerMismatchError } from "@modelcontextprotocol/client"
+import { createHash } from "node:crypto"
+import { auth, discoverAuthorizationServerMetadata, IssuerMismatchError } from "@modelcontextprotocol/client"
 import type {
   AuthorizationServerMetadata,
   OAuthClientInformationContext,
@@ -27,6 +28,16 @@ type OAuthFlowContext =
   | { kind: "connect"; authorizationId?: string }
   | { kind: "callback"; authorizationId: string }
   | { kind: "runtime" }
+
+/**
+ * Refreshes in flight in this process, keyed by connection and by a hash of
+ * the refresh token being spent. Refresh tokens are commonly single-use
+ * (OAuth 2.1 rotation): two concurrent refreshes with the same token make the
+ * authorization server reject the second one as reuse, and servers with reuse
+ * detection then revoke the whole grant. One refresh per token; every other
+ * operation waits for it and reads the rotated credential from persistence.
+ */
+const refreshesInFlight = new Map<string, Promise<void>>()
 
 type VerifiedOAuthDiscoveryState = OAuthDiscoveryState & {
   openworkMetadataVerification?: {
@@ -406,6 +417,45 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     }
     this.loadedCredential = { ...record, tokens }
     return tokens
+  }
+
+  /**
+   * Refreshes ahead of expiry, at most once per refresh token across the
+   * concurrent operations of this process, so that parallel requests never
+   * race a single-use refresh token after a shared 401. Best effort: any
+   * failure is left to the SDK's reactive 401 path, which is unchanged.
+   */
+  async refreshAheadIfExpiring(input: { serverUrl: URL; fetchFn: EnterpriseMcpFetch }): Promise<void> {
+    let record: EnterpriseMcpOAuthCredential | undefined
+    try {
+      record = await this.persistence.credentials.load(this.context())
+    } catch {
+      return
+    }
+    const refreshToken = record?.tokens.refresh_token
+    if (!record || !refreshToken || record.expiresAt === undefined) return
+    if (record.expiresAt > this.clock.now() + this.expirationSkewMs) return
+    const key = `${this.connectionId}:${createHash("sha256").update(refreshToken).digest("hex")}`
+    const inFlight = refreshesInFlight.get(key)
+    if (inFlight) {
+      await inFlight
+      return
+    }
+    // No await between the lookup above and the set below: the check-and-claim
+    // is atomic on the event loop.
+    const flight = (async () => {
+      // A refresh for this token may have completed between our load and the
+      // claim; spending the token again would be exactly the reuse to avoid.
+      const current = await this.persistence.credentials.load(this.context())
+      if (current?.tokens.refresh_token !== refreshToken) return
+      await auth(this, { serverUrl: input.serverUrl, fetchFn: input.fetchFn })
+    })().catch(() => undefined)
+    refreshesInFlight.set(key, flight)
+    try {
+      await flight
+    } finally {
+      if (refreshesInFlight.get(key) === flight) refreshesInFlight.delete(key)
+    }
   }
 
   async saveTokens(tokens: StoredOAuthTokens, context?: OAuthClientInformationContext): Promise<void> {
