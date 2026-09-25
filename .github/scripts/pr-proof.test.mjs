@@ -121,7 +121,7 @@ test("untrusted live and Windows selection fail closed, even on maintainer rerun
     const trust = trustFixture();
     mutate(trust);
     for (const selected of [liveSpec, windowsSpec]) {
-      assert.throws(() => proofLanes([normalSpec, selected], trust), /unsupported.*maintainer.*same-repository PR.*approve the pr-slow-specs/);
+      assert.throws(() => proofLanes([normalSpec, selected], trust), /unsupported.*maintainer.*same-repository PR.*pr-slow-specs approval/);
     }
     assert.deepEqual(proofLanes([normalSpec], trust), { normalSpecs: [normalSpec], liveSpecs: [], packagedSpecs: [], daytonaSpecs: [], checkpointSpecs: [] });
   });
@@ -251,7 +251,7 @@ test("workflow keeps ordinary proof unprotected and gates all live PR code befor
   for (const actor of ["github.event.pull_request.user.login", "github.actor", "github.triggering_actor"]) {
     assert.ok(gate.includes(`${actor} != 'dependabot[bot]'`));
   }
-  assert.match(gate, /environment: pr-slow-specs/);
+  assertInternalEnvironmentGate(gate);
   assert.match(gate, /runs-on: blacksmith-4vcpu-ubuntu-2404/);
   assert.match(gate, /matrix: \$\{\{ fromJSON\(needs.select.outputs.liveMatrix\) \}\}/);
   for (const job of [ordinary, live, windows]) {
@@ -287,7 +287,7 @@ test("Windows proof only executes the exact reviewed spec after same-repo approv
   assert.ok(windows);
   const gate = windows.split("    steps:\n")[0];
   assert.match(gate, /needs.select.outputs.daytonaSelected == 'true'/);
-  assert.match(gate, /environment: pr-slow-specs/);
+  assertInternalEnvironmentGate(gate);
   for (const side of ["head", "base"]) {
     assert.ok(gate.includes(`github.event.pull_request.${side}.repo.full_name == github.repository`));
     assert.ok(gate.includes(`github.event.pull_request.${side}.repo.id == github.event.repository.id`));
@@ -394,7 +394,7 @@ test("checkpoint proof stays on the branch and is gated before credentials or de
   const workflow = await readFile(new URL("../workflows/pr-proof.yml", import.meta.url), "utf8");
   const job = workflow.split("\n  checkpoint-proof:\n")[1].split("\n  windows-proof:\n")[0];
   const gate = job.split("    steps:\n")[0];
-  assert.match(gate, /environment: pr-slow-specs/);
+  assertInternalEnvironmentGate(gate);
   for (const side of ["head", "base"]) {
     assert.ok(gate.includes(`github.event.pull_request.${side}.repo.id == github.event.repository.id`));
     assert.ok(gate.includes(`github.event.pull_request.${side}.repo.fork == false`));
@@ -419,5 +419,37 @@ test("native real-model parity is protected and cannot leak into ordinary proof"
   for (const [, mutate] of untrusted) {
     const trust = trustFixture(); mutate(trust);
     assert.throws(() => proofLanes([parity], trust), /unsupported/);
+  }
+});
+
+function assertInternalEnvironmentGate(gate) {
+  assert.match(gate, /environment:\n      name:/);
+  assert.ok(gate.includes("github.event.repository.owner.type == 'Organization'"));
+  assert.ok(gate.includes("github.event.pull_request.user.type == 'User'"));
+  assert.ok(gate.includes(`contains(fromJSON('["MEMBER", "OWNER"]'), github.event.pull_request.author_association)`));
+  assert.ok(gate.includes("needs.select.outputs.internalContributor == 'true'"));
+  assert.ok(gate.includes("'pr-internal-specs' || 'pr-slow-specs'"));
+}
+
+test("internal approval output requires both event and current membership; all credentialed lanes get accurate summaries", async () => {
+  for (const spec of [liveSpec, windowsSpec, "evals/specs/web-checkpoint-fork.e2e.test.ts"]) {
+    for (const [eventAssociation, currentAssociation, internal] of [
+      ["MEMBER", "MEMBER", true], ["OWNER", "OWNER", true],
+      ["COLLABORATOR", "COLLABORATOR", false],
+      ["MEMBER", "COLLABORATOR", false], ["COLLABORATOR", "MEMBER", false],
+      [undefined, undefined, false],
+    ]) {
+      const trust = trustFixture();
+      trust.event.repository.owner = { type: "Organization" };
+      trust.event.pull_request.author_association = eventAssociation;
+      trust.event.pull_request.user.type = "User";
+      trust.current.author_association = currentAssociation;
+      trust.current.user.type = "User";
+      trust.current.changed_files = 1;
+      const result = await runController(trust, [file(spec)]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.ok(result.output.includes(`internalContributor=${internal}\n`));
+      assert.match(result.summary, internal ? /runs automatically in `pr-internal-specs`/ : /requires reviewer approval.*pr-slow-specs/);
+    }
   }
 });
