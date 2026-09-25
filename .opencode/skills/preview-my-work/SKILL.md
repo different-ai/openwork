@@ -53,8 +53,12 @@ its API-published SHA-256 digest inside the VM before installation.
 
 ## Saved web evidence checkpoints
 
-For a checkpoint-enabled report, select the screenshot, choose **Open from
-here**, then **Enter saved browser**. This creates an independent private VM;
+Use the PR's **OpenWork Checkpoints** check to open its branch-specific report.
+Pictures with a saved world offer **Open from here** below the image and in its
+viewer, then **Enter saved browser**. Both places share the same copy; **New copy**
+restores the original checkpoint again without reloading the report. App shots
+inside verification forks are checkpointed too. Review UI, noVNC-client images,
+and explicit opt-outs are marked screenshot-only. This creates an independent private VM;
 it never resumes or changes the original test VM. The captured Chromium tab is
 shown through noVNC. A held mock response offers **Continue response**. Do not
 promise restoration of a live connection to an external model provider.

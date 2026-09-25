@@ -26,7 +26,7 @@ export async function readEvidenceSession(id: string, sourceSha: string, api = c
   const owner = await api.vms.get(id);
   if (![EVIDENCE_KIND, FORK_KIND].includes(owner.metadata.kind) || owner.metadata.sourceSha !== sourceSha) throw new Error("Not an owned evidence VM");
   const value: unknown = JSON.parse(await api.vms.ref(id).fs.readTextFile(ACCESS_FILE));
-  if (!record(value) || typeof value.token !== "string" || !/^[\w-]{43}$/.test(value.token)
+  if (!record(value) || value.vmId !== owner.id || value.sourceSha !== sourceSha || typeof value.token !== "string" || !/^[\w-]{43}$/.test(value.token)
     || typeof value.expiresAt !== "string" || !Number.isFinite(Date.parse(value.expiresAt)) || Date.parse(value.expiresAt) <= Date.now() || !record(value.origins)
     || typeof value.origins.desktop !== "string" || typeof value.origins.cdp !== "string"
     || !/^https:\/\/evidence-[a-f0-9]{32}\.preview\.openwork\.software$/.test(value.origins.desktop)
@@ -49,7 +49,7 @@ async function allocate(input: { snapshotId: string; slug: string; kind: string;
     if ((await created.vm.fs.readTextFile(`${root}/source-sha`)).trim() !== input.sourceSha
       || (await created.vm.fs.readTextFile(`${root}/evidence-ready`)).trim() !== "web-v1") throw new Error("Evidence world source mismatch");
     const expiresAt = new Date(Date.parse(created.data.createdAt) + 3600_000).toISOString();
-    await created.vm.fs.writeTextFile(ACCESS_FILE, JSON.stringify({ token: randomBytes(32).toString("base64url"), expiresAt, origins }), { mode: 0o600 });
+    await created.vm.fs.writeTextFile(ACCESS_FILE, JSON.stringify({ vmId: created.vmId, sourceSha: input.sourceSha, token: randomBytes(32).toString("base64url"), expiresAt, origins }), { mode: 0o600 });
     const result = await readEvidenceSession(created.vmId, input.sourceSha, api);
     await waitForPublicAccess(result.url, probe, undefined, "desktop");
     return result;
@@ -63,8 +63,10 @@ export async function launchEvidenceWorld(snapshotId: string, sourceSha: string,
 
 export async function captureEvidenceCheckpoint(input: { vmId: string; sourceSha: string; imageHash: string }, api = client()): Promise<EvidenceCheckpoint> {
   const vm = await api.vms.get(input.vmId);
-  if (vm.metadata.kind !== EVIDENCE_KIND || vm.metadata.sourceSha !== input.sourceSha) throw new Error("Checkpoint source is not an owned evidence world");
+  if (![EVIDENCE_KIND, FORK_KIND].includes(vm.metadata.kind) || vm.metadata.sourceSha !== input.sourceSha) throw new Error("Checkpoint source is not an owned evidence world");
   const handle = api.vms.ref(vm.id);
+  if ((await handle.fs.readTextFile(`${root}/source-sha`)).trim() !== input.sourceSha
+    || (await handle.fs.readTextFile(`${root}/evidence-ready`)).trim() !== "web-v1") throw new Error("Checkpoint source does not match the captured app");
   const countPath = `${root}/checkpoint-count`;
   const count = await handle.fs.exists(countPath) ? Number(await handle.fs.readTextFile(countPath)) : 0;
   if (!Number.isInteger(count) || count < 0 || count >= 10) throw new CheckpointCapacity("This proof has reached its ten-checkpoint limit");
@@ -74,8 +76,18 @@ export async function captureEvidenceCheckpoint(input: { vmId: string; sourceSha
   await handle.fs.writeTextFile(countPath, String(count + 1));
   await handle.fs.writeTextFile(manifest, JSON.stringify(checkpoint), { mode: 0o600 });
   const result = await handle.snapshot({ slug: checkpoint.id, ttlSeconds: 86400, autoDeleteSeconds: 86400 });
-  if (result.snapshot.public) { await api.vms.snapshots.delete(result.snapshotId); throw new Error("Evidence snapshots must be private"); }
+  if (result.snapshot.public !== false) { await api.vms.snapshots.delete(result.snapshotId); throw new Error("Evidence snapshots must be private"); }
   return checkpoint;
+}
+
+async function verifyRestoredCheckpoint(vmId: string, checkpoint: EvidenceCheckpoint, api: ReturnType<typeof client>) {
+  const vm = api.vms.ref(vmId);
+  const restored = parseEvidenceCheckpoint(JSON.parse(await vm.fs.readTextFile(manifest)));
+  if (JSON.stringify(restored) !== JSON.stringify(checkpoint)
+    || (await vm.fs.readTextFile(`${root}/source-sha`)).trim() !== checkpoint.sourceSha
+    || (await vm.fs.readTextFile(`${root}/evidence-ready`)).trim() !== "web-v1") {
+    throw new CheckpointUnavailable("Checkpoint does not match its screenshot");
+  }
 }
 
 /** Caller resolves checkpoint from the authenticated immutable report, never the request body. */
@@ -86,7 +98,7 @@ export async function forkEvidenceCheckpoint(value: unknown, reportId: string, r
   let snapshot;
   try { snapshot = await api.vms.snapshots.get(checkpoint.id); }
   catch (error) { if (isMissing(error)) throw new CheckpointUnavailable("This checkpoint is no longer available"); throw error; }
-  if (snapshot.public || snapshot.slug !== checkpoint.id) throw new CheckpointUnavailable("Invalid evidence snapshot");
+  if (snapshot.public !== false || snapshot.slug !== checkpoint.id) throw new CheckpointUnavailable("Invalid evidence snapshot");
   const key = createHash("sha256").update(checkpoint.id).digest("hex").slice(0, 24);
   // Provider-enforced unique slots bound concurrent forks across server instances.
   for (let slot = 0; slot < 3; slot++) {
@@ -95,16 +107,26 @@ export async function forkEvidenceCheckpoint(value: unknown, reportId: string, r
       const result = await allocate({ snapshotId: snapshot.id, slug, kind: FORK_KIND, sourceSha: checkpoint.sourceSha,
         metadata: { reportId, requestId, checkpoint: checkpoint.id } }, api, probe);
       try {
-        const restored = parseEvidenceCheckpoint(JSON.parse(await api.vms.ref(result.id).fs.readTextFile(manifest)));
-        if (JSON.stringify(restored) !== JSON.stringify(checkpoint)) throw new CheckpointUnavailable("Checkpoint does not match its screenshot");
+        await verifyRestoredCheckpoint(result.id, checkpoint, api);
+        // Preserve the launch receipt separately: later captures of this working
+        // copy update checkpoint.json but must not change retry ownership.
+        await api.vms.ref(result.id).fs.writeTextFile(`${root}/restored-checkpoint.json`, JSON.stringify({ vmId: result.id, checkpoint }), { mode: 0o600 });
         return result;
       } catch (error) { await api.vms.delete(result.id); throw error; }
     } catch (error) {
       if (!(error instanceof FreestyleApiError) || error.status !== 409) throw error;
       const existing = await api.vms.get(slug).catch((cause: unknown) => { if (isMissing(cause)) return null; throw cause; });
       if (!existing) throw error; // Account quota, not an occupied slot.
-      if (existing.metadata.kind === FORK_KIND && existing.metadata.reportId === reportId && existing.metadata.requestId === requestId) {
-        return readEvidenceSession(existing.id, checkpoint.sourceSha, api);
+      if (existing.metadata.kind === FORK_KIND && existing.metadata.reportId === reportId && existing.metadata.requestId === requestId
+        && existing.metadata.checkpoint === checkpoint.id && existing.metadata.sourceSha === checkpoint.sourceSha) {
+        const receipt: unknown = JSON.parse(await api.vms.ref(existing.id).fs.readTextFile(`${root}/restored-checkpoint.json`));
+        if (!record(receipt) || receipt.vmId !== existing.id
+          || JSON.stringify(parseEvidenceCheckpoint(receipt.checkpoint)) !== JSON.stringify(checkpoint)) {
+          throw new Error("Restored copy initialization is incomplete");
+        }
+        const resumed = await readEvidenceSession(existing.id, checkpoint.sourceSha, api);
+        await waitForPublicAccess(resumed.url, probe, undefined, "desktop");
+        return resumed;
       }
     }
   }

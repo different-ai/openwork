@@ -2,11 +2,7 @@ import { spec, registerScreenshotCheckpoint } from "@openwork/testkit";
 import { expect } from "vitest";
 import { checkpointWorld } from "../worlds/web-checkpoint.ts";
 
-const test = spec.world(async () => {
-  const world = await checkpointWorld();
-  const unregister = registerScreenshotCheckpoint(world.app, world.capture);
-  return { ...world, async [Symbol.asyncDispose]() { unregister(); await world[Symbol.asyncDispose](); } };
-}, {
+const test = spec.world(() => checkpointWorld(registerScreenshotCheckpoint), {
   resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
   needs: { placement: "local", env: ["FREESTYLE_API_KEY"], optIn: ["OPENWORK_EVIDENCE_CHECKPOINTS"] },
   timeout: 1_200_000,
@@ -48,7 +44,7 @@ test("a reviewer enters a saved web browser with ten sessions and continues a pa
   await step("the original response completes and its entire test VM is removed", async () => {
     await world.continueStream();
     await user.see({ text: `${partial} ${remaining}` }, { timeoutMs: 60_000 });
-    await user.screenshot({ checkpoint: false });
+    await user.screenshot();
     await world.stop();
     evidence.recordAssertionEvidence("Forks cannot depend on the original VM", "The original response completed, then the owning VM was deleted before either review launch.", true);
   });
@@ -74,11 +70,10 @@ test("a reviewer enters a saved web browser with ten sessions and continues a pa
     await agent.on(firstFork.app).createSession("Only in this copy");
     await user.on(firstFork.app).see({ text: "Only in this copy" });
     await user.on(firstFork.app).screenshot();
-    await reviewUser.reload();
-    await reviewUser.see({ role: "button", text: "Open from here" });
-    await reviewUser.click({ role: "button", text: "Open from here" });
-    await reviewUser.see({ role: "link", text: "Enter saved browser" }, { timeoutMs: 90_000 });
-    const second = await world.openedFork(sessions.id, [firstFork.id]);
+    await reviewUser.click({ role: "button", text: "New copy" });
+    const second = await probe.eventually(() => world.openedFork(sessions.id, [firstFork.id]), { within: 90_000, label: "independent replacement copy" });
+    await reviewUser.see({ role: "button", text: "New copy" }, { editable: true, timeoutMs: 90_000 });
+    await reviewUser.see({ role: "link", text: "Enter saved browser" });
     await user.on(second.app).see({ text: "Checkpoint session 10" });
     const list = await agent.on(second.app).list();
     expect(list.filter((entry) => entry.title.startsWith("Checkpoint session "))).toHaveLength(10);

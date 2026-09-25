@@ -403,6 +403,12 @@ test("checkpoint proof stays on the branch and is gated before credentials or de
   assert.match(job, /web-checkpoint-fork --local --engine v1 --surface web --checkpoints/);
   assert.match(job, /node scripts\/publish-checkpoint-evidence.ts/);
   assert.match(job, /pnpm dlx vercel@48 deploy --target preview/);
+  const authenticatedProbe = job.split("\n").find((line) => line.includes("pnpm dlx vercel@59.24.0 curl"));
+  assert.ok(authenticatedProbe);
+  assert.doesNotMatch(authenticatedProbe, /--token/);
+  assert.match(job, /VERCEL_TOKEN: \$\{\{ secrets.VERCEL_TOKEN \}\}/);
+  assert.match(job, /context='OpenWork Checkpoints'/);
+  assert.match(job, /state="\$PROOF_STATE"/);
   assert.doesNotMatch(job, /alias set|infisical|OPENAI_API_KEY|ANTHROPIC_API_KEY/);
   assert.match(job, /https:\/\/vercel.com\/sso-api/);
 });
