@@ -18,7 +18,7 @@ test("a reviewer keeps the screenshot when a checkpoint is unavailable or expire
     await user.press("Escape");
     await user.click({ role: "link", label: "Inspect Unavailable checkpoint fixture" });
     await user.see({ text: "Checkpoint access is not configured. Contact the review app owner." });
-    expect((await probe.dom("section[aria-label='Interactive checkpoint'] button:disabled")).elements).toHaveLength(1);
+    expect((await probe.dom(".viewer-context section[aria-label='Interactive checkpoint'] button:disabled")).elements).toHaveLength(1);
     evidence.recordAssertionEvidence("Unavailable actions remain visible", "Open from here is disabled and names the review app owner. No live provider credential is supplied in this fixture.", true);
     await user.screenshot();
   });
@@ -27,7 +27,7 @@ test("a reviewer keeps the screenshot when a checkpoint is unavailable or expire
     await user.click({ role: "link", label: "Inspect Expired checkpoint fixture" });
     await user.see({ text: "Checkpoint expired. Screenshot only." });
     expect((await probe.dom(".viewer-image img")).elements).toHaveLength(1);
-    expect((await probe.dom("section[aria-label='Interactive checkpoint'] button:disabled")).elements).toHaveLength(1);
+    expect((await probe.dom(".viewer-context section[aria-label='Interactive checkpoint'] button:disabled")).elements).toHaveLength(1);
     evidence.recordAssertionEvidence("Expiry does not delete evidence", "The image remains visible while the expired checkpoint is disabled. This fixture tests rendering, not actual VM expiry.", true);
     await user.screenshot();
   });

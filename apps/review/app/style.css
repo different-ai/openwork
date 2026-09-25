@@ -101,6 +101,9 @@ footer { padding: 0 0 24px; color: var(--muted-foreground); font-size: 12px; }
 .preview-launch-row { justify-content: space-between; }
 .preview-launch-actions .primary, .preview-open { background: var(--primary); color: var(--background); border-radius: var(--radius); padding: 8px 12px; font-weight: 600; }
 .preview-state { color: var(--muted-foreground); }
+.checkpoint-card { padding-inline: 12px; }
+/* The modal owns the active controls; keep background cards out of focus/locators. */
+.report:has(.evidence-viewer[open]) .checkpoint-card { visibility: hidden; }
 .preview-state, .preview-error { margin: 8px 0; font-size: 12px; }
 .preview-details { color: var(--muted-foreground); }
 .connection-group { margin-top: 16px; }

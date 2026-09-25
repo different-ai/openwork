@@ -18,21 +18,28 @@ artifact. No Infisical integration is required or added. CI uses the existing
 protected `pr-slow-specs` environment and repository secret. The key's delivery
 can later change without changing capture or fork APIs.
 
-An opted-in world registers a capture provider with the testkit. Its explicit
+An opted-in world registers a capture provider with the testkit for its app
+browser and the app browsers opened inside verification forks. Their explicit
 `user.screenshot()` calls also save a checkpoint; `user.screenshot({ checkpoint:
-false })` keeps the ordinary behavior. Capture failure keeps the PNG and fails
+false })` keeps the ordinary behavior. The complete co-located web world is saved:
+Chromium memory, the engine, Den, databases, workspace files and the mock stream.
+The Blacksmith review browser and noVNC client are not that world; their images
+are labeled screenshot-only. Capture failure keeps the PNG and fails
 the checkpoint proof, rather than silently claiming an interactive checkpoint.
 There is no whole-VM checkpoint without a registered provider.
 
-Select a checkpoint image in the report, choose **Open from here**, then
-**Enter saved browser**. Each launch creates an independent copy behind the
-private preview gateway. The viewer shows the restored Chromium tab, not a new
+Open the PR's **OpenWork Checkpoints** check for the branch-specific report.
+Checkpoint pictures offer **Open from here** directly below the image and inside
+the image viewer, followed by **Enter saved browser**. Both controls share the
+same copy. **New copy** deliberately restores that same checkpoint again without
+reloading the report; retrying a failed initial launch retains its request ID.
+Each new launch creates an independent copy behind the private preview gateway. The viewer shows the restored Chromium tab, not a new
 page. The deterministic streaming fixture pauses at a known point and exposes
 **Continue response** in the viewer. Real external-provider connections are not
 promised to survive a fork. Screenshot and snapshot capture are ordered, not
 atomic; the controlled stream hold is what makes the streaming comparison exact.
 
-Limits: ten captures per source VM, 24-hour checkpoint retention, one-hour forks,
+Limits: ten captures along a VM's checkpoint lineage, 24-hour checkpoint retention, one-hour forks,
 and three concurrent forks per checkpoint. Expiry preserves the screenshot.
 Request retries reuse the same fork instead of spending another slot. Provider
 TTL bounds orphan lifetime; normal teardown deletes source and verification VMs.

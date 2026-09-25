@@ -6,6 +6,7 @@ import { EvidenceViewer } from "./evidence-viewer";
 import { summarizeReview } from "@openwork/review";
 import type { ReviewEvidence, ReviewReport } from "@openwork/review";
 import { LaunchPreview } from "./launch-preview";
+import { CheckpointProvider, OpenCheckpoint } from "./open-checkpoint";
 
 export function Judgments({ items }: { items: ReviewEvidence["judgments"] }) {
   return (
@@ -48,7 +49,7 @@ export function Report({ report, id, connected }: { report: ReviewReport; id: st
     });
   }
   return (
-    <main className={`report${sandboxOpen ? " sandbox-open" : ""}`}>
+    <CheckpointProvider><main className={`report${sandboxOpen ? " sandbox-open" : ""}`}>
       <div className="intro">
         <div className="report-toolbar">
           <code title={report.gitSha}>{report.gitSha.slice(0, 7)}</code>
@@ -211,6 +212,7 @@ export function Report({ report, id, connected }: { report: ReviewReport; id: st
                         <CopyButton label="Copy image link" value={`#evidence-${item.id}`} link />
                         {item.description && <p>{item.description}</p>}
                       </figcaption>
+                      <OpenCheckpoint id={id} image={item} connected={connected} placement="card" />
                       {item.judgments.length > 0 && (
                         <details
                           className="visual"
@@ -256,6 +258,6 @@ export function Report({ report, id, connected }: { report: ReviewReport; id: st
         Recorded evidence · Human discussion and approval remain on the pull
         request.
       </footer>
-    </main>
+    </main></CheckpointProvider>
   );
 }

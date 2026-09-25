@@ -242,6 +242,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      statuses: write
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -330,6 +331,8 @@ jobs:
           VERCEL_PROJECT_ID: ${{ vars.OPENWORK_REVIEW_VERCEL_PROJECT_ID }}
           PREVIEW_URL: ${{ steps.preview.outputs.url }}
           REPORT_ID: ${{ steps.report.outputs.report_id }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          PROOF_STATE: ${{ steps.proof.outcome == 'success' && 'success' || 'failure' }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
@@ -341,10 +344,17 @@ jobs:
               test "$status" = 302 && [[ "$location" == https://vercel.com/sso-api* ]]
             fi
           done
-          pnpm dlx vercel@59.24.0 curl "/r/$REPORT_ID" --deployment "$PREVIEW_URL" --scope "$VERCEL_ORG_ID" --token "$VERCEL_TOKEN" -- --fail --silent --output /dev/null
+          # vercel curl consumes VERCEL_TOKEN from env; --token is forwarded to curl.
+          pnpm dlx vercel@59.24.0 curl "/r/$REPORT_ID" --deployment "$PREVIEW_URL" --scope "$VERCEL_ORG_ID" -- --fail --silent --output /dev/null
           printf '## Interactive checkpoint evidence\n\n[Open this branch’s report](%s/r/%s). This protected preview runs the PR code; nothing needs to merge first. Checkpoints expire after 24 hours.\n' "$PREVIEW_URL" "$REPORT_ID" >> "$GITHUB_STEP_SUMMARY"
+          # A distinct entry point avoids the shared reviewer's older, static-only UI.
+          gh api --silent --method POST "repos/$GITHUB_REPOSITORY/statuses/$SOURCE_SHA" \
+            -f state="$PROOF_STATE" -f context='OpenWork Checkpoints' \
+            -f target_url="$PREVIEW_URL/r/$REPORT_ID" \
+            -f description='Interactive browser checkpoints; see report for test verdict'
           gh pr comment "$PR_NUMBER" --body "<!-- web-checkpoint-preview -->
-          [Open this branch's interactive checkpoint evidence]($PREVIEW_URL/r/$REPORT_ID). Select a checkpoint image, then **Open from here**. Checkpoints expire after 24 hours. The report records the actual test verdict."
+          **[Open saved browsers from this PR]($PREVIEW_URL/r/$REPORT_ID)**
+          Use the **OpenWork Checkpoints** check for this interactive report. Pictures with **Open from here** restore a private copy of the app; **New copy** restores that same checkpoint again. Review-page images and UI-state examples are screenshot-only. Checkpoints expire after 24 hours. The report records the actual test verdict."
 
   windows-proof:
     needs: select

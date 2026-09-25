@@ -36,8 +36,9 @@ function provider(manifest = checkpoint(), uniqueSlots = false) {
       if ((init?.method ?? "GET") !== "GET") { files.set(key, await new Response(init?.body).text()); return Response.json({}); }
       if (guestPath.endsWith("source-sha")) return new Response(sourceSha);
       if (guestPath.endsWith("evidence-ready")) return new Response("web-v1");
-      if (guestPath.endsWith("checkpoint.json")) return new Response(JSON.stringify(manifest));
-      return new Response(files.get(key) ?? "", { status: files.has(key) ? 200 : 404 });
+      if (files.has(key)) return new Response(files.get(key));
+      if (guestPath.endsWith("/checkpoint.json")) return new Response(JSON.stringify(manifest));
+      return new Response("", { status: 404 });
     }
     if (path.startsWith("/v5/vms/")) {
       const created = creates[Number(vmId.split("-")[1]) - 1];
@@ -45,7 +46,7 @@ function provider(manifest = checkpoint(), uniqueSlots = false) {
     }
     throw new Error(`Unexpected provider operation ${path}`);
   } });
-  return { api, creates, removed };
+  return { api, creates, removed, files };
 }
 const reachable: typeof fetch = async (input) => new URL(String(input)).pathname === "/__openwork_launch"
   ? new Response(null, { status: 303, headers: { "set-cookie": "__Host-openwork-preview=synthetic" } }) : new Response("noVNC");
@@ -88,6 +89,9 @@ test("fork validates its captured screenshot manifest and leaves the source unto
 test("a retried request reuses its fork and unique provider slots cap concurrent copies", async () => {
   const value = checkpoint(); const mock = provider(value, true); const requestId = randomUUID();
   const first = await forkEvidenceCheckpoint(value, "d".repeat(32), requestId, mock.api, reachable);
+  // A new screenshot of a working copy replaces its capture manifest, not the
+  // immutable receipt identifying the copy returned by this launch request.
+  mock.files.set(`${first.id}:/opt/openwork-preview/checkpoint.json`, JSON.stringify({ ...value, id: `ow-evidence-v1-${"e".repeat(32)}` }));
   const again = await forkEvidenceCheckpoint(value, "d".repeat(32), requestId, mock.api, reachable);
   assert.equal(again.id, first.id); assert.equal(again.url, first.url); assert.equal(mock.creates.length, 1);
   await forkEvidenceCheckpoint(value, "d".repeat(32), randomUUID(), mock.api, reachable);
