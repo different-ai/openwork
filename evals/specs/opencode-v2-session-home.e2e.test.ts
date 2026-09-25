@@ -95,3 +95,25 @@ questionTest("HOME-02 a moved task shows its question live and after reload, the
   evidence.recordAssertionEvidence("Questions follow their conversation after a native move",
     "A real v2 session_move is followed by a native question tool. Its answer controls appear in the original chat, survive a reload, and resume the waiting task. Only model decisions are synthetic.", true);
 });
+
+questionTest("HOME-03 an unavailable global question list cannot prevent answering the current question", async ({ world, user, agent, probe, step, evidence }) => {
+  await agent.run("session.open", { sessionId: world.session.sessionId });
+  await user.see("composer", { editable: true });
+  await user.type("composer", world.prompt, { replace: true, verify: true });
+  await user.click("Run task");
+  await user.see({ role: "button", label: new RegExp(world.answer) }, { timeoutMs: 60_000 });
+  await step("the workspace question list fails while the current question remains visible", async () => {
+    const unavailable = await world.failGlobalQuestionList();
+    expect(unavailable.status).toBe(500);
+    await user.screenshot();
+  });
+  await step("answering the visible question completes the task despite the failed list", async () => {
+    await user.see({ role: "button", label: new RegExp(world.answer) }, { timeoutMs: 30_000 });
+    await user.click({ role: "button", label: new RegExp(world.answer) });
+    await user.see({ text: world.completed }, { timeoutMs: 45_000 });
+    await user.see("Run task", { timeoutMs: 30_000 });
+    await user.screenshot();
+  });
+  evidence.recordAssertionEvidence("A failed workspace lookup cannot block a question reply",
+    "A real v2 question stays answerable when the global pending-list HTTP endpoint returns the observed 500 session_unavailable error. Only that failing boundary and model decisions are synthetic; form reads and the answer run against the real engine.", true);
+});

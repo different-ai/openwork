@@ -51,6 +51,7 @@ async function bootSessionHome(seed: Seed, mode: "stop" | "question") {
     return { status: response.status, body };
   }, [path]), { awaitPromise: true });
   const mount = `/workspace/${workspace.workspaceId}/opencode2/api`;
+  let fault: Awaited<ReturnType<typeof failPendingQuestionList>> | undefined;
   return { app, workspace, session, home, destination, prompt, followup, reply, question, answer, completed,
     questions: () => read(`${mount}/form/request`),
     sessionState: () => read(`${mount}/session/${session.sessionId}`),
@@ -73,6 +74,13 @@ async function bootSessionHome(seed: Seed, mode: "stop" | "question") {
       });
       if (!response.ok) throw new Error("Could not prepare follow-up model response");
     },
+    async failGlobalQuestionList() {
+      const endpoint = app.client.webSocketDebuggerUrl;
+      if (!endpoint) throw new Error("Question-list fault requires a browser debugging connection");
+      fault = await failPendingQuestionList(endpoint);
+      return read(`${mount}/form/request`);
+    },
+    async [Symbol.asyncDispose]() { await fault?.[Symbol.asyncDispose](); },
     requests: () => witness.agentRequests({ promptMarker: followup }),
   };
 }
@@ -80,3 +88,55 @@ async function bootSessionHome(seed: Seed, mode: "stop" | "question") {
 // World functions receive (seed, { place }); keep the mode out of that slot.
 export async function sessionHome(seed: Seed) { return bootSessionHome(seed, "stop"); }
 export async function movedSessionQuestion(seed: Seed) { return bootSessionHome(seed, "question"); }
+
+/** Inject only the observed failing HTTP boundary; all session/form APIs stay native. */
+async function failPendingQuestionList(endpoint: string) {
+  const socket = new WebSocket(endpoint);
+  const commands = new Map<number, ReturnType<typeof Promise.withResolvers<void>>>();
+  let nextId = 1;
+  let failure: unknown;
+  const send = async (method: string, params: Record<string, unknown> = {}) => {
+    const id = nextId++;
+    const call = Promise.withResolvers<void>();
+    commands.set(id, call);
+    const timer = setTimeout(() => call.reject(new Error(`Question-list fault timed out: ${method}`)), 10_000);
+    try { socket.send(JSON.stringify({ id, method, params })); await call.promise; }
+    finally { clearTimeout(timer); commands.delete(id); }
+  };
+  socket.addEventListener("message", event => {
+    const message: unknown = JSON.parse(String(event.data));
+    if (!record(message)) return;
+    if (typeof message.id === "number") {
+      const call = commands.get(message.id);
+      if (message.error) call?.reject(new Error("Question-list fault command failed"));
+      else call?.resolve();
+    }
+    if (message.method !== "Fetch.requestPaused" || !record(message.params) || typeof message.params.requestId !== "string") return;
+    if (!record(message.params.request) || message.params.request.method !== "GET") {
+      void send("Fetch.continueRequest", { requestId: message.params.requestId }).catch(error => { failure = error; });
+      return;
+    }
+    void send("Fetch.fulfillRequest", {
+      requestId: message.params.requestId, responseCode: 500,
+      responseHeaders: [{ name: "Content-Type", value: "application/json" }, { name: "Access-Control-Allow-Origin", value: "*" }],
+      body: Buffer.from(JSON.stringify({ code: "session_unavailable", message: "Conversation could not be read" })).toString("base64"),
+    }).catch(error => { failure = error; });
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Question-list fault could not connect")), 10_000);
+      socket.addEventListener("open", () => { clearTimeout(timer); resolve(); }, { once: true });
+      socket.addEventListener("error", () => { clearTimeout(timer); reject(new Error("Question-list fault could not connect")); }, { once: true });
+    });
+    await send("Fetch.enable", { patterns: [{ urlPattern: "*/opencode2/api/form/request*", requestStage: "Request" }] });
+  } catch (error) { socket.close(); throw error; }
+  return {
+    async [Symbol.asyncDispose]() {
+      try { await send("Fetch.disable"); if (failure) throw failure; }
+      finally { socket.close(); }
+    },
+  };
+}
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
