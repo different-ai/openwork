@@ -135,7 +135,7 @@ test("Auto pin policy defaults on and updates only its metadata leaf", () => {
 })
 
 test("member pin policy is authoritative without changing model availability", async () => {
-  results = [[{ metadata: { inferenceFree: { defaultPinned: false } }, nowMs: now.getTime() }], [], [], []]
+  results = [[{ metadata: { inferenceFree: { defaultPinned: false } }, nowMs: now.getTime() }], [], [], [], []]
   expect(await getMemberInferenceAccess(input)).toMatchObject({ defaultPinned: false, kind: "free", modelID: "openai/gpt-5.6-luna" })
   results = [[{ metadata: { dpaSigned: true, inferenceFree: { defaultPinned: true } }, nowMs: now.getTime() }]]
   expect(await getMemberInferenceAccess(input)).toMatchObject({ defaultPinned: true, kind: "unavailable", reason: "admin_disabled" })
