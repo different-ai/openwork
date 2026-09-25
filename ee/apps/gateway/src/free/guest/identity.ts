@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto"
-import { isIP } from "node:net"
+import { BlockList, isIP } from "node:net"
 import { getConnInfo } from "@hono/node-server/conninfo"
 import type { Context } from "hono"
 import { z } from "zod"
@@ -37,19 +37,39 @@ export function canonicalizeAnonymousAddress(input: string): string | null {
   return groups.map((part) => part.toString(16).padStart(4, "0")).join(":")
 }
 function quotaAddress(address: string) { return address.includes(":") ? `${address.split(":").slice(0, 4).join(":")}::/64` : address }
+/**
+ * Trusted proxies are exact addresses or CIDR ranges ("10.0.0.0/8"): hosts such as Render reach the Gateway from
+ * addresses that change, inside a private range. Any malformed entry disables trust altogether (fails closed).
+ */
+export function trustedProxyMatcher(entries: readonly string[]): ((address: string) => boolean) | null {
+  if (entries.length === 0) return null
+  const list = new BlockList()
+  for (const entry of entries) {
+    const [raw = "", prefix, extra] = entry.split("/")
+    const address = canonicalizeAnonymousAddress(raw)
+    if (!address || extra !== undefined) return null
+    const family = isIP(address) === 4 ? "ipv4" : "ipv6"
+    if (prefix === undefined) { list.addAddress(address, family); continue }
+    const bits = /^\d{1,3}$/.test(prefix) ? Number(prefix) : NaN
+    if (!Number.isInteger(bits) || bits < 8 || bits > (family === "ipv4" ? 32 : 128)) return null
+    list.addSubnet(address, bits, family)
+  }
+  return (address) => list.check(address, isIP(address) === 4 ? "ipv4" : "ipv6")
+}
 export function resolveAnonymousClientAddress(c: Context, config: AutoConfig) {
   const socket = canonicalizeAnonymousAddress(getConnInfo(c).remote.address ?? "")
   if (!socket) return null
   if (config.trustProxyHops === 0) return quotaAddress(socket)
-  const trusted = new Set(config.trustedProxyIps.map(canonicalizeAnonymousAddress))
-  if (trusted.has(null) || trusted.size === 0) return null
+  const trusted = trustedProxyMatcher(config.trustedProxyIps)
+  if (!trusted) return null
   const forwarded = c.req.header("x-forwarded-for")
   if (!forwarded) return null
   const chain = [...forwarded.split(",").map(canonicalizeAnonymousAddress), socket]
   const index = chain.length - 1 - config.trustProxyHops
   if (index < 0 || chain.includes(null)) return null
   for (let offset = 0; offset < config.trustProxyHops; offset++) {
-    if (!trusted.has(chain[chain.length - 1 - offset])) return null
+    const hop = chain[chain.length - 1 - offset]
+    if (!hop || !trusted(hop)) return null
   }
   const address = chain[index]
   return address ? quotaAddress(address) : null
