@@ -211,7 +211,7 @@ import { ModelPickerModal, MODEL_PICKER_UNAVAILABLE_SUBTITLE } from "@/react-app
 import { CommandPalette, type PaletteItem, type SessionGroupOption } from "./command-palette";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { requestRenameSession } from "./session-actions-bus";
-import type { ThinkingModeShortcutDirection } from "./thinking-mode-shortcut";
+import { resolveThinkingModeShortcutOs, type ThinkingModeShortcutDirection } from "./thinking-mode-shortcut";
 import { SessionSearchDialog } from "./session-search-dialog";
 import type { SessionMessageFetcher } from "@/react-app/domains/session/search/session-search";
 import { useBootState } from "./boot-state";
@@ -259,7 +259,9 @@ import { useShellConfig } from "./shell-config";
 import { useShellShortcuts } from "./use-shell-shortcuts";
 import { shortcutModelRef, type Shortcut } from "@/react-app/domains/shortcuts/model-shortcuts-store";
 import { decideModelShortcut } from "@/react-app/domains/shortcuts/resolve-model-shortcut";
-import { switchedNoticeCopy, unavailableNoticeCopy } from "@/react-app/domains/shortcuts/model-shortcut-messages";
+import { fastToggleNoticeCopy, switchedNoticeCopy, unavailableNoticeCopy } from "@/react-app/domains/shortcuts/model-shortcut-messages";
+import { decideFastToggle } from "@/react-app/domains/shortcuts/fast-toggle";
+import { fastModeShortcutLabel } from "./fast-mode-shortcut";
 import { useModelShortcutNoticeStore } from "@/react-app/domains/shortcuts/model-shortcut-notice";
 import { useModelShortcutKeys } from "@/react-app/domains/shortcuts/use-model-shortcut-keys";
 import { useEngineReload } from "./use-engine-reload";
@@ -2798,6 +2800,60 @@ export function SessionRoute() {
   applyModelShortcutRef.current = applyModelShortcut;
   useModelShortcutKeys(applyModelShortcut);
 
+  // Fast toggle (⌃⇧F / Ctrl+Alt+F): flips Fast for the focused conversation's
+  // model and keeps its reasoning level. A model without Fast never changes.
+  const toggleFastMode = useCallback(() => {
+    const target = captureFavoriteModelTarget(useWorkbenchStore.getState(), favoriteModelScope.current);
+    if (!target) return null;
+    const activeSessionId = target.sessionId;
+    const selection = activeSessionId ? getSessionModelSelection(activeSessionId) : null;
+    const model = selection?.model ?? local.prefs.defaultModel ?? null;
+    if (!model?.providerID || !model.modelID) return null;
+    const providerModel = providerCatalog?.[model.providerID]?.[model.modelID];
+    const options = selection
+      ? (providerModel ? getModelBehaviorSummary(model.providerID, providerModel, selection.variant).options : [])
+      : modelBehaviorOptions;
+    const current = selection ? selection.variant : modelVariantValue;
+    const modelTitle = providerModel?.name || model.modelID;
+    const decision = decideFastToggle(options, current);
+    const notices = useModelShortcutNoticeStore.getState();
+    const targetSessionId = activeSessionId ?? null;
+    const setVariant = (value: string | null) => {
+      if (activeSessionId && selection) useSessionModelStore.getState().setVariant(activeSessionId, value);
+      local.setPrefs((previous) => ({ ...previous, modelVariant: value }));
+    };
+    const chordLabel = fastModeShortcutLabel(resolveThinkingModeShortcutOs(platform.os, typeof navigator === "undefined" ? "" : navigator.platform));
+    const copy = fastToggleNoticeCopy({ modelTitle, fastOn: decision.kind === "toggle" ? decision.fastOn : null });
+    if (decision.kind === "not_offered") {
+      notices.show({
+        targetSessionId, tone: copy.tone, title: copy.title, chordLabel,
+        actions: [{
+          label: copy.actions[0]?.label ?? "Pick a model with Fast",
+          onClick: () => window.dispatchEvent(new CustomEvent(openModelPickerEvent, activeSessionId ? { detail: { sessionId: activeSessionId } } : undefined)),
+        }],
+      });
+      return null;
+    }
+    setVariant(decision.next);
+    notices.show({
+      targetSessionId, tone: copy.tone, title: copy.title, detail: copy.detail, fast: copy.fast, chordLabel,
+      actions: [{ label: copy.actions[0]?.label ?? "Undo", onClick: () => setVariant(current) }],
+    });
+    return decision.fastOn ? "Fast on" : "Fast off";
+  }, [local, modelBehaviorOptions, modelVariantValue, platform.os, providerCatalog]);
+
+  const toggleFastModeControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.fast_mode.toggle",
+    label: "Toggle Fast",
+    description: "Turn Fast on or off for the focused conversation's model, keeping its reasoning level.",
+    sideEffect: "mutation",
+    execute: () => {
+      const label = toggleFastMode();
+      return label ? { ok: true, label } : { ok: false, error: "The focused model does not offer Fast." };
+    },
+  }), [toggleFastMode]);
+  useControlAction(toggleFastModeControlAction);
+
   const {
     commandPaletteOpen,
     setCommandPaletteOpen,
@@ -2814,6 +2870,7 @@ export function SessionRoute() {
     onPrevSessionTab: goToPrevSessionTab,
     onCycleThinkingMode: cycleThinkingMode,
     onCycleFavoriteModel: cycleFavoriteModel,
+    onToggleFastMode: toggleFastMode,
   });
   useReactRenderWatchdog("SessionRoute", {
     selectedSessionId,

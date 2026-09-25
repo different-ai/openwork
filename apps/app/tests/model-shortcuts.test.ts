@@ -17,6 +17,9 @@ import {
 import { decideModelShortcut, resolveShortcutVariant } from "../src/react-app/domains/shortcuts/resolve-model-shortcut";
 import { switchedNoticeCopy, unavailableNoticeCopy } from "../src/react-app/domains/shortcuts/model-shortcut-messages";
 import { shortcutRowState } from "../src/react-app/domains/shortcuts/shortcut-row-state";
+import { decideFastToggle } from "../src/react-app/domains/shortcuts/fast-toggle";
+import { fastToggleNoticeCopy } from "../src/react-app/domains/shortcuts/model-shortcut-messages";
+import { fastModeShortcutLabel, isFastModeShortcut } from "../src/react-app/shell/fast-mode-shortcut";
 
 const keyEvent = (overrides: Partial<Parameters<typeof chordFromEvent>[0]> = {}) => ({
   altKey: false,
@@ -181,5 +184,33 @@ describe("settings row state", () => {
     expect(shortcutRowState({ providerID: "google", modelID: "gemini", blocked: false, catalog })).toEqual({ kind: "provider_disconnected", providerName: "Google" });
     expect(shortcutRowState({ providerID: "openai", modelID: "gpt-5", blocked: true, catalog })).toEqual({ kind: "blocked" });
     expect(shortcutRowState({ providerID: "openai", modelID: "gpt-5", blocked: false, catalog: null })).toEqual({ kind: "pending" });
+  });
+});
+
+describe("Fast toggle", () => {
+  const fastOptions = [{ value: null }, { value: "high" }, { value: FAST_DEFAULT_VARIANT }, { value: fastVariantId("high") }];
+  const fKey = (overrides: Partial<Parameters<typeof isFastModeShortcut>[0]> = {}) => ({
+    altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, key: "f", code: "KeyF", ...overrides,
+  });
+
+  test("the default key is Control+Shift+F on macOS and Control+Alt+F elsewhere, never a search chord", () => {
+    expect(fastModeShortcutLabel("macos")).toBe("⌃⇧F");
+    expect(fastModeShortcutLabel("other")).toBe("Ctrl+Alt+F");
+    expect(isFastModeShortcut(fKey({ ctrlKey: true, shiftKey: true, key: "F" }), "macos")).toBe(true);
+    expect(isFastModeShortcut(fKey({ metaKey: true, shiftKey: true }), "macos")).toBe(false);
+    expect(isFastModeShortcut(fKey({ ctrlKey: true, altKey: true }), "other")).toBe(true);
+    expect(isFastModeShortcut(fKey({ ctrlKey: true, shiftKey: true }), "other")).toBe(false);
+    expect(isFastModeShortcut(fKey({ ctrlKey: true, altKey: true, getModifierState: (key) => key === "AltGraph" }), "other")).toBe(false);
+    expect(chordProblem("Ctrl+Shift+F", "macos")).toEqual({ kind: "built_in", label: "Toggle Fast" });
+    expect(chordProblem("Mod+Alt+F", "other")).toEqual({ kind: "built_in", label: "Toggle Fast" });
+  });
+
+  test("toggling keeps the reasoning level and a model without Fast is left alone", () => {
+    expect(decideFastToggle(fastOptions, "high")).toEqual({ kind: "toggle", next: fastVariantId("high"), fastOn: true });
+    expect(decideFastToggle(fastOptions, fastVariantId("high"))).toEqual({ kind: "toggle", next: "high", fastOn: false });
+    expect(decideFastToggle(fastOptions, null)).toEqual({ kind: "toggle", next: FAST_DEFAULT_VARIANT, fastOn: true });
+    expect(decideFastToggle([{ value: null }, { value: "high" }], "high")).toEqual({ kind: "not_offered" });
+    expect(fastToggleNoticeCopy({ modelTitle: "Kimi K2", fastOn: null })).toMatchObject({ tone: "info", title: "Fast isn't offered for Kimi K2" });
+    expect(fastToggleNoticeCopy({ modelTitle: "GPT-5", fastOn: true })).toMatchObject({ tone: "success", title: "Fast on for GPT-5", detail: "Higher pricing." });
   });
 });

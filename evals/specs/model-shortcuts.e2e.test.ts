@@ -12,8 +12,8 @@ type RowSnapshot = { elements: Array<{ text: string; attributes?: Record<string,
 
 const rowTexts = (snapshot: RowSnapshot) => snapshot.elements.map((element) => element.text.replace(/\s+/g, " ").trim());
 
-test("a member switches models with saved keys, Fast is kept as a preference, and a retired model's key stays and explains itself", async ({ world, user, probe, step, evidence }) => {
-  const { mod, chord } = world;
+test("a member switches models with saved keys, toggles Fast with one key, and a retired model's key stays and explains itself", async ({ world, user, probe, step, evidence }) => {
+  const { mod, chord, fastKey } = world;
   evidence.recordAssertionEvidence("platform keys", `${mod}+Alt+n shown as ${chord(1)}`, true);
   const openShortcutSettings = async () => {
     await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness/, timeoutMs: 60_000 });
@@ -103,11 +103,39 @@ test("a member switches models with saved keys, Fast is kept as a preference, an
     evidence.recordAssertionEvidence("after Undo", "composer shows Fast witness again", true);
   });
 
+  await step("the default Fast key turns Fast off and back on for Fast witness, keeping High, and the model shows a quiet Fast", async () => {
+    await user.see({ testId: "model-fast-indicator" }, { text: "Fast" });
+    await user.press(fastKey);
+    await user.see({ testId: "model-shortcut-notice" }, { text: /Fast off for Fast witness/ });
+    await user.notSee({ testId: "model-fast-indicator" });
+    await user.see({ role: "button", label: "Change model" }, { text: /^Fast witness\s*· High$/ });
+    await user.screenshot();
+    await user.press(fastKey);
+    await user.see({ testId: "model-shortcut-notice" }, { text: /Fast on for Fast witness\s+Higher pricing/ });
+    await user.see({ testId: "model-fast-indicator" }, { text: "Fast" });
+    await user.see({ role: "button", label: "Change model" }, { text: /^Fast witness\s*· High\s*Fast$/ });
+    const stored = JSON.stringify(await probe.storage("openwork.sessionModels.v1"));
+    evidence.recordAssertionEvidence("Fast back on at High", stored.slice(0, 300), stored.includes(fastVariantId("high")));
+    expect(stored).toContain(fastVariantId("high"));
+    await user.screenshot();
+  });
+
+  await step("on a model without Fast, the Fast key changes nothing and says Fast isn't offered", async () => {
+    await user.press(`${mod}+Alt+2`);
+    await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness/ });
+    await user.press(fastKey);
+    await user.see({ testId: "model-shortcut-notice" }, { text: /Fast isn't offered for Reasoning witness/ });
+    await user.notSee({ testId: "model-fast-indicator" });
+    await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness\s*· High$/ });
+    evidence.recordAssertionEvidence("model unchanged", "composer still shows Reasoning witness · High", true);
+    await user.screenshot();
+  });
+
   await step("after: the retired model's key leaves the current model alone, says why, and is not deleted", async () => {
     await user.press(`${mod}+Alt+9`);
     await user.see({ testId: "model-shortcut-notice" }, { text: /Retired witness isn't available/, timeoutMs: 15_000 });
     await user.see({ role: "button", label: "Pick another model" });
-    await user.see({ role: "button", label: "Change model" }, { text: /^Fast witness/ });
+    await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness/ });
     const stored = JSON.stringify(await probe.storage("openwork.shortcuts.v1"));
     const kept = stored.includes("sc_retired");
     evidence.recordAssertionEvidence("retired shortcut still saved", kept ? "openwork.shortcuts.v1 still contains the Retired witness key" : stored.slice(0, 300), kept);

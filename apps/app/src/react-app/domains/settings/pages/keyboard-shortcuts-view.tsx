@@ -38,6 +38,7 @@ import { SHORTCUT_RECORDER_ATTRIBUTE } from "@/react-app/domains/shortcuts/use-m
 import { getConnectedProviderItems, useProviderListQuery } from "@/react-app/infra/provider-list-query";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { favoriteModelShortcutLabel } from "@/react-app/shell/favorite-model-shortcut";
+import { fastModeShortcutLabel } from "@/react-app/shell/fast-mode-shortcut";
 import { resolveThinkingModeShortcutOs, thinkingModeShortcutLabel } from "@/react-app/shell/thinking-mode-shortcut";
 
 import { LayoutSection, LayoutStack } from "../settings-layout";
@@ -375,6 +376,7 @@ export function KeyboardShortcutsView(props: KeyboardShortcutsViewProps) {
     { label: "Command palette", keys: formatChord("Mod+K", os) },
     { label: "Next saved model", keys: os === "macos" ? "⌃⇧M" : favoriteModelShortcutLabel },
     { label: "Cycle reasoning", keys: thinkingModeShortcutLabel(thinkingOs) },
+    { label: "Toggle Fast", keys: fastModeShortcutLabel(thinkingOs) },
   ];
 
   return (

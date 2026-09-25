@@ -85,3 +85,16 @@ export function unavailableNoticeCopy(input: {
       };
   }
 }
+
+export function fastToggleNoticeCopy(input: { modelTitle: string; fastOn: boolean | null }): NoticeCopy {
+  if (input.fastOn === null) {
+    return {
+      tone: "info",
+      title: `Fast isn't offered for ${input.modelTitle}`,
+      actions: [{ kind: "pick_another", label: "Pick a model with Fast" }],
+    };
+  }
+  return input.fastOn
+    ? { tone: "success", title: `Fast on for ${input.modelTitle}`, detail: "Higher pricing.", fast: true, actions: [{ kind: "undo", label: "Turn off" }] }
+    : { tone: "info", title: `Fast off for ${input.modelTitle}`, detail: "Standard speed.", actions: [{ kind: "undo", label: "Turn on" }] };
+}

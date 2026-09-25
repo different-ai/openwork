@@ -91,6 +91,8 @@ const BUILT_IN_CHORDS: ReadonlyArray<{ chord: string; label: string; os?: Shortc
   { chord: "Mod+Alt+T", label: "Cycle reasoning", os: "other" },
   { chord: "Mod+Alt+Shift+T", label: "Cycle reasoning backward", os: "other" },
   { chord: "Mod+Alt+/", label: "Change model" },
+  { chord: "Ctrl+Shift+F", label: "Toggle Fast", os: "macos" },
+  { chord: "Mod+Alt+F", label: "Toggle Fast", os: "other" },
 ];
 
 export type ChordProblem =

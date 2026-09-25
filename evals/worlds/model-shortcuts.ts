@@ -63,6 +63,8 @@ export async function modelShortcutsWeb(seed: Seed) {
     app, engine, workspace, session, providerId, modelId, fastProviderId, fastModelId,
     /** Primary modifier for key presses on this platform. */
     mod: mac ? "Meta" : "Control",
+    /** The default Fast toggle key on this platform. */
+    fastKey: mac ? "Control+Shift+F" : "Control+Alt+F",
     /** How the app labels Mod+Alt+n on this platform. */
     chord: (digit: number) => (mac ? `⌥⌘${digit}` : `Ctrl+Alt+${digit}`),
   };
