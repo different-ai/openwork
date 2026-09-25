@@ -1,3 +1,5 @@
+export const supportedTargets = ["local/host"];
+
 import { spawn } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";

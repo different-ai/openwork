@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { parseEvidenceCheckpoint } from "@openwork/freestyle/checkpoint-schema";
+export const checkpointSchema = z.unknown().transform((value, ctx) => {
+  try { return parseEvidenceCheckpoint(value); }
+  catch { ctx.addIssue({ code: "custom", message: "Invalid evidence checkpoint" }); return z.NEVER; }
+});
 
 export const reportIdSchema = z.string().regex(/^[a-f0-9]{32}$/);
 export const assetNameSchema = z
@@ -60,6 +65,8 @@ export const reviewSchema = z
           asset: assetNameSchema,
           description: z.string(),
           judgments: z.array(judgment),
+          checkpoint: checkpointSchema.optional(),
+          checkpointError: z.string().max(200).optional(),
         }),
       ]),
     ),
@@ -69,6 +76,12 @@ export const reviewSchema = z
     for (const entries of [report.sources, report.sections, report.evidence]) {
       if (new Set(entries.map((entry) => entry.id)).size !== entries.length)
         fail("IDs must be unique within each collection.");
+    }
+    for (const entry of report.evidence) {
+      if (entry.kind === "image" && entry.checkpoint) {
+        if (entry.checkpoint.sourceSha !== report.gitSha || entry.asset !== `${entry.checkpoint.imageHash}.png`)
+          fail("Checkpoint must match the report commit and screenshot bytes.");
+      }
     }
     const sources = new Set(report.sources.map((entry) => entry.id));
     const evidenceIds = new Set(report.evidence.map((entry) => entry.id));

@@ -1,3 +1,5 @@
+export const supportedTargets = ["local/host"];
+
 import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";

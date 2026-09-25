@@ -1,3 +1,5 @@
+export const supportedTargets = ["local/host", "daytona/linux", "freestyle/linux"];
+
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
