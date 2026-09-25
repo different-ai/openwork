@@ -5,6 +5,9 @@ import { fileURLToPath } from "node:url";
 import { prepareServerConstants } from "./prepare-server-constants.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+// The free Auto release key is handed only to the step that derives the release tag, never to the other builds.
+const desktopFreeReleaseKey = process.env.DESKTOP_FREE_RELEASE_KEY;
+delete process.env.DESKTOP_FREE_RELEASE_KEY;
 const desktopRoot = resolve(__dirname, "..");
 const repoRoot = resolve(desktopRoot, "../..");
 const electronSidecarDir = resolve(desktopRoot, "resources", "sidecars");
@@ -53,7 +56,8 @@ writeSentryBuildConfig();
 // Each stable release carries its own free Auto release tag; see the script for what it can and cannot prove.
 // The script derives the tag secret with @openwork/free-auto, which plain node loads from its dist build.
 run(pnpmCmd, ["--filter", "@openwork/free-auto", "build"], repoRoot);
-run(nodeCmd, [resolve(__dirname, "prepare-desktop-free-release.mjs")], desktopRoot);
+run(nodeCmd, [resolve(__dirname, "prepare-desktop-free-release.mjs")], desktopRoot,
+  desktopFreeReleaseKey ? { DESKTOP_FREE_RELEASE_KEY: desktopFreeReleaseKey } : undefined);
 // Build the server TS → JS so Electron can import it in-process
 // CI already compiles this exact checkout in the required build job.
 if (!process.argv.includes("--server-built")) {
