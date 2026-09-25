@@ -581,6 +581,19 @@ test("member Auto requests join the organization's usage as OpenWork Models, log
   assert.equal(rows.length, 2, "guest requests are never attributed to an organization")
 })
 
+test("a member request refused at dispatch still closes its usage log row", async () => {
+  const rows: Array<Record<string, unknown>> = []
+  const usageLog = { insert: async (row: Record<string, unknown>) => { rows.push({ ...row }) }, update: async (row: Record<string, unknown>) => { rows.push({ ...row }); return true } }
+  const base = fixture()
+  const f = fixture({}, undefined, { usageLog: usageLog as never, store: { ...base.store, family: "member", dispatch: async () => false } })
+  const response = await memberCall(f.memberApp, MEMBER_FREE_CHAT_PATH, memberChat)
+  assert.equal(response.status, 403)
+  assert.equal(f.requests.length, 0)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(rows.length, 2, "one pending insert and one finishing update")
+  assert.equal(rows[1].outcome, "rejected")
+})
+
 test("member Auto fails closed when the Gateway request log cannot be written, without consuming allowance", async () => {
   const f = fixture({}, undefined, { usageLog: { insert: async () => { throw new Error("accounting offline") } } })
   const response = await memberCall(f.memberApp, MEMBER_FREE_CHAT_PATH, memberChat)

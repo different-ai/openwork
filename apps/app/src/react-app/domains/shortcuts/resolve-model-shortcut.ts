@@ -16,6 +16,8 @@ import type { ModelSwitchAction } from "./model-shortcuts-store";
 
 export type ShortcutModelOption = {
   behaviorOptions?: ReadonlyArray<{ value: string | null }>;
+  /** The picker shows this option but will not select it right now (e.g. Auto while its allowance is blocked). */
+  disabled?: boolean;
 };
 
 export type ModelShortcutDecision =
@@ -66,6 +68,7 @@ export function decideModelShortcut(input: {
   if (availability.status === "unavailable") return { kind: "unavailable", reason: availability.reason };
   if (availability.status === "pending") return { kind: "pending" };
   if (!option) return { kind: "unavailable", reason: "model_missing" };
+  if (option.disabled) return { kind: "unavailable", reason: "provider_blocked" };
 
   const values = (option.behaviorOptions ?? []).map((entry) => entry.value);
   const resolved = resolveShortcutVariant(values, action.effort, action.fast);
