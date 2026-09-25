@@ -6,8 +6,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
+import type { SurfaceHandle } from "@openwork/cdp";
 import { allocateFreePort } from "@openwork/cdp";
-import { electronProfilePaths, electronSurfaceEnv, freePort, pruneStaleSurfaceProfiles, registerLiveProfileRoot, resolveChromeBinary, stopOwnedElectronSurface, unregisterLiveProfileRoot } from "../src/local.ts";
+import { electronProfilePaths, electronSurfaceEnv, freePort, pruneStaleSurfaceProfiles, registerLiveProfileRoot, resolveChromeBinary, retainOwnedElectronLog, removeOwnedSurfaceFiles, stopOwnedElectronSurface, unregisterLiveProfileRoot } from "../src/local.ts";
 
 const ENV_KEYS = [
   "APPDATA",
@@ -285,6 +286,67 @@ test("pruneStaleSurfaceProfiles removes untracked profiles and never touches liv
     assert.equal(await readFile(join(livePath, "marker.txt"), "utf8"), "keep");
     await assert.rejects(access(stalePath));
     assert.deepEqual(killed, [stalePath]);
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("retains an opted-in host Electron log outside the profile that disposal removes", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "openwork-retained-electron-log-"));
+  const profileDir = join(rootDir, "profiles", "desktop-boot-123");
+  const logPath = join(profileDir, "electron.log");
+  const retentionDir = join(rootDir, "profiles", "retained");
+  const handle: SurfaceHandle = {
+    name: "Desktop boot",
+    kind: "electron",
+    hostKind: "local",
+    cdpUrl: "http://127.0.0.1:9222",
+    pid: 123,
+    profileDir,
+    meta: { log: logPath, profileRoot: profileDir, profileOwner: "host" },
+  };
+
+  try {
+    await mkdir(profileDir, { recursive: true });
+    await writeFile(logPath, "packaged smoke witness\n", "utf8");
+
+    const retainedPath = await retainOwnedElectronLog(handle, retentionDir);
+
+    assert.equal(retainedPath, join(retentionDir, "desktop-boot-123", "electron.log"));
+    assert.ok(retainedPath);
+    assert.equal(await readFile(retainedPath, "utf8"), "packaged smoke witness\n");
+    await removeOwnedSurfaceFiles(handle);
+    await assert.rejects(access(profileDir));
+    assert.equal(await readFile(retainedPath, "utf8"), "packaged smoke witness\n");
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("does not retain caller-owned logs or copy them into their disposable profile", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "openwork-unretained-electron-log-"));
+  const profileDir = join(rootDir, "profile");
+  const logPath = join(profileDir, "electron.log");
+  try {
+    await mkdir(profileDir, { recursive: true });
+    await writeFile(logPath, "caller-owned log\n", "utf8");
+    const callerOwned: SurfaceHandle = {
+      name: "Caller profile",
+      kind: "electron",
+      hostKind: "local",
+      cdpUrl: "http://127.0.0.1:9222",
+      profileDir,
+      meta: { log: logPath, profileRoot: profileDir, profileOwner: "caller" },
+    };
+    const hostOwned: SurfaceHandle = {
+      ...callerOwned,
+      meta: { log: logPath, profileRoot: profileDir, profileOwner: "host" },
+    };
+
+    assert.equal(await retainOwnedElectronLog(callerOwned, join(rootDir, "retained")), null);
+    assert.equal(await retainOwnedElectronLog(hostOwned, profileDir), null);
+    await assert.rejects(access(join(rootDir, "retained")));
+    await assert.rejects(access(join(profileDir, "caller-profile-unknown", "electron.log")));
   } finally {
     await rm(rootDir, { recursive: true, force: true });
   }
