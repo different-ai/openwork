@@ -51,7 +51,10 @@ test("stable CI builds refuse to ship without a key; other builds get an untagge
     assert.deepEqual(writeDesktopFreeReleaseModule({ masterKey: "", version: "1.2.3", outPath, ci: false }), { tagged: false });
     assert.match(await readFile(outPath, "utf8"), /return null/);
     assert.deepEqual(writeDesktopFreeReleaseModule({ masterKey: undefined, version: "0.0.0-dev", outPath, ci: true }), { tagged: false });
-    assert.deepEqual(writeDesktopFreeReleaseModule({ masterKey, version: "1.2.3", outPath, ci: true }), { tagged: true });
+    const tagged = writeDesktopFreeReleaseModule({ masterKey, version: "1.2.3", outPath, ci: true });
+    assert.equal(tagged.tagged, true);
+    assert.match(tagged.fingerprint, /^[0-9a-f]{12}$/);
+    assert.ok(!masterKey.includes(tagged.fingerprint), "the fingerprint does not reveal the key");
     const module = await import(outPath);
     assert.deepEqual(Buffer.from(module.reveal()), deriveReleaseSecret(masterKey, "1.2.3"));
   } finally { await rm(root, { recursive: true, force: true }); }
