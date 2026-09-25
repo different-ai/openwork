@@ -53,3 +53,9 @@ test("session home proof runs the pinned v2 engine", () => {
     engine: "v2", args: ["evals/bin/evals.mjs", "specs/opencode-v2-session-home.e2e.test.ts", "--local", "--engine", "v2"],
   }]);
 });
+
+test("the v2 upkeep read proof runs the pinned v2 engine", () => {
+  assert.deepEqual(parityProofPlan("evals/specs/opencode-v2-reads-during-mcp-startup.e2e.test.ts"), [{
+    engine: "v2", args: ["evals/bin/evals.mjs", "specs/opencode-v2-reads-during-mcp-startup.e2e.test.ts", "--local", "--engine", "v2"],
+  }]);
+});
