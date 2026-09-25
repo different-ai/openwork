@@ -821,6 +821,7 @@ export async function startServer(
     logger: toManagedProviderAuthLogger(logger),
   });
   const anonymousInference = new AnonymousInferenceService(config, logger);
+  anonymousInference.onEngineConfigChanged = () => { if (config.workspaces.length > 0 || enginePoolForConfig(config)) cloudProviderSync.markReloadPending(); };
   managedDesktopPolicy(config).onChange = () => {
     void anonymousInference.initialize(config.port).then((changed) => {
       if (changed && config.workspaces.length > 0) cloudProviderSync.markReloadPending();
@@ -2524,7 +2525,7 @@ function createRoutes(
   for (const action of ["preflight", "refresh"]) {
     addRoute(routes, "POST", `/anonymous-inference/${action}`, "client", async (ctx) => {
       requireClientScope(ctx, "collaborator");
-      return jsonResponse(await anonymousInference.status(true));
+      return jsonResponse(await anonymousInference.preflight());
     });
   }
   addRoute(routes, "GET", "/anonymous-inference/v1/models", "none", (ctx) =>

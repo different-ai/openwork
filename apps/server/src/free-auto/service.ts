@@ -68,6 +68,8 @@ export class AnonymousInferenceService {
   private preferenceQueue: Promise<void> = Promise.resolve();
   /** A 503 from the guest session route: replayed until it lapses, so no proof of work is spent on a switched-off gateway. */
   private guestRefusal: { until: number; failure: RemoteFailure } | null = null;
+  /** Set by the server: reload the engine's providers after the relay credential it holds was replaced. */
+  onEngineConfigChanged: (() => void) | null = null;
 
   constructor(private readonly config: ServerConfig, private readonly logger: Logger,
     environment: NodeJS.ProcessEnv = process.env, private readonly now: () => number = Date.now) {
@@ -113,7 +115,8 @@ export class AnonymousInferenceService {
     this.cachedStatus = null;
     this.failures.clear();
     this.relayConfigUpdate = this.relayConfigUpdate.then(async () => {
-      if (this.boundPort !== null && !this.stopped) await this.initialize(this.boundPort);
+      // The running engine still holds the old credential until it reloads its providers.
+      if (this.boundPort !== null && !this.stopped && await this.initialize(this.boundPort)) this.onEngineConfigChanged?.();
     }).catch(() => {
       this.relayConfigFailed = true;
       this.logger.log("warn", "Auto identity changed but its engine configuration could not be refreshed.");
@@ -279,6 +282,12 @@ export class AnonymousInferenceService {
   }
 
   // ── Status and task activation ─────────────────────────────────────────
+
+  /** A person asked (preflight before a send, or Retry): ask the gateway again even while a guest refusal is held. */
+  async preflight(): Promise<DesktopFreeAccessStatus> {
+    this.guestRefusal = null;
+    return this.status(true);
+  }
 
   async status(force = false): Promise<DesktopFreeAccessStatus> {
     const signal = this.identityController.signal;
