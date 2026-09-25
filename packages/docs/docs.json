@@ -69,7 +69,8 @@
           {
             "group": "Troubleshooting",
             "pages": [
-              "start-here/troubleshooting/diagnostic-prompts"
+              "start-here/troubleshooting/diagnostic-prompts",
+              "start-here/troubleshooting/agent-diagnostics-reference"
             ]
           },
           {
