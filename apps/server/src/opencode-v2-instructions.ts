@@ -1,5 +1,5 @@
 import { readdir, readFile, realpath } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { parseFrontmatter } from "./frontmatter.js";
 import { OPENWORK_AGENT_PROMPT } from "./openwork-agent-prompt.js";
 
@@ -37,8 +37,8 @@ async function scanSkillFiles(directory: string): Promise<string[]> {
   return files;
 }
 
-/** Body the engine publishes for a markdown file, or null when it would skip the file. */
-export function nativeSkillBody(content: string): string | null {
+/** Name and body the engine publishes for a markdown file, or null when it would skip the file. */
+export function nativeSkillEntry(path: string, content: string): { name: string; body: string } | null {
   let parsed: { data: Record<string, unknown>; body: string };
   try {
     parsed = parseFrontmatter(content);
@@ -49,21 +49,37 @@ export function nativeSkillBody(content: string): string | null {
   if (name !== undefined && typeof name !== "string") return null;
   if (description !== undefined && typeof description !== "string") return null;
   if (slash !== undefined && typeof slash !== "boolean") return null;
-  return parsed.body.trim();
+  const fallback = basename(path) === "SKILL.md" ? basename(dirname(path)) : basename(path, ".md");
+  return { name: name ?? fallback, body: parsed.body.trim() };
 }
 
-type Expected = { path: string; content: string };
+/** Body the engine publishes for a markdown file, or null when it would skip the file. */
+export function nativeSkillBody(content: string): string | null {
+  return nativeSkillEntry("SKILL.md", content)?.body ?? null;
+}
+
+type Expected = { path: string; name: string; content: string };
+
+export type NativeSkillSync = { settled: true } | { settled: false; diagnostic: string };
 
 /**
  * Join the native file watcher, including content-only updates and removals.
  * Reconciliation uses the engine's own contract (location + body) rather than
  * OpenWork's stricter create/delete validation, so a native-valid workspace
  * skill with a directory/name mismatch or no description never blocks admission.
+ *
+ * This is a freshness wait, never an admission gate: the engine decides what it
+ * loads. A skill shadowed by a same-named skill elsewhere (for example the same
+ * skill installed in both `.agents/skills` and `.claude/skills`) is served once
+ * by the engine and counts as present. When the catalog is unreadable or does
+ * not converge in time, the caller proceeds exactly as the CLI would and only
+ * reports the diagnostic.
  */
 export async function waitForOpenWorkV2Skills(
   directory: string,
   readNative: () => Promise<unknown>,
-): Promise<boolean> {
+  timeoutMs = 5_000,
+): Promise<NativeSkillSync> {
   const canonicalPath = (path: string) => realpath(path).catch(() => path);
   const root = await canonicalPath(directory);
   const managedRoots = workspaceNativeSkillRoots(root);
@@ -74,33 +90,48 @@ export async function waitForOpenWorkV2Skills(
       const path = await canonicalPath(file);
       scanned.add(path);
       const content = await readFile(file, "utf8").catch(() => null);
-      const body = content === null ? null : nativeSkillBody(content);
-      if (body !== null) expected.push({ path, content: body });
+      const entry = content === null ? null : nativeSkillEntry(file, content);
+      if (entry !== null) expected.push({ path, name: entry.name, content: entry.body });
     }
   }
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + timeoutMs;
   let diagnostic = "";
   do {
-    const payload = await readNative();
-    if (!record(payload) || !Array.isArray(payload.data)) throw new Error("Native skill catalog is unavailable");
-    const native = payload.data.filter(record).filter((skill) => typeof skill.location === "string" && typeof skill.content === "string");
-    const canonical = await Promise.all(native.map(async (skill) => ({
-      path: await canonicalPath(String(skill.location)), content: String(skill.content).trim(),
-    })));
-    const present = (skill: Expected) => canonical.some((entry) => entry.path === skill.path && entry.content === skill.content);
-    const matches = expected.every(present);
-    // Only reconcile directories OpenWork manages. Native plugin-provided
-    // skills elsewhere under .opencode are not deleted workspace skills.
-    const removed = canonical.some((entry) => managedRoots.some((skillRoot) => entry.path.startsWith(skillRoot + sep))
-      && !scanned.has(entry.path));
-    diagnostic = JSON.stringify({
-      missingWorkspace: expected.filter((skill) => !present(skill)).map((skill) => skill.path),
-      removed,
-    });
-    if (matches && !removed) return true;
+    let payload: unknown;
+    try {
+      payload = await readNative();
+    } catch (error) {
+      // Freshness cannot be confirmed; waiting longer only delays the prompt.
+      return { settled: false, diagnostic: `Native skill catalog is unavailable: ${error instanceof Error ? error.message : String(error)}` };
+    }
+    if (record(payload) && Array.isArray(payload.data)) {
+      const native = payload.data.filter(record).filter((skill) => typeof skill.location === "string" && typeof skill.content === "string");
+      const canonical = await Promise.all(native.map(async (skill) => ({
+        path: await canonicalPath(String(skill.location)),
+        name: typeof skill.name === "string" ? skill.name : undefined,
+        content: String(skill.content).trim(),
+      })));
+      // The engine serves one skill per name. A copy it chose not to load is
+      // shadowed, and waiting for it can never succeed.
+      const present = (skill: Expected) => canonical.some((entry) => entry.path === skill.path && entry.content === skill.content)
+        || (!canonical.some((entry) => entry.path === skill.path)
+          && canonical.some((entry) => entry.name === skill.name && entry.path !== skill.path));
+      const matches = expected.every(present);
+      // Only reconcile directories OpenWork manages. Native plugin-provided
+      // skills elsewhere under .opencode are not deleted workspace skills.
+      const removed = canonical.some((entry) => managedRoots.some((skillRoot) => entry.path.startsWith(skillRoot + sep))
+        && !scanned.has(entry.path));
+      diagnostic = JSON.stringify({
+        missingWorkspace: expected.filter((skill) => !present(skill)).map((skill) => skill.path),
+        removed,
+      });
+      if (matches && !removed) return { settled: true };
+    } else {
+      return { settled: false, diagnostic: "Native skill catalog returned an unexpected shape" };
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   } while (Date.now() < deadline);
-  throw new Error(`Native skills did not reach the current workspace contents: ${diagnostic}`);
+  return { settled: false, diagnostic: `Native skills did not reach the current workspace contents: ${diagnostic}` };
 }
 
 /** Discover remote skills on demand through Connect; native skills are workspace files. */

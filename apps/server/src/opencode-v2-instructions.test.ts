@@ -72,3 +72,39 @@ test("v2 discovers remote skills on demand and keeps local skills native", () =>
   expect(connected.skillInstructions).toContain("on demand");
   expect(JSON.stringify(connected)).not.toContain("<available_remote_skills>");
 });
+
+test("a skill installed in two agent folders is served once by the engine and does not block admission", async () => {
+  await withWorkspace(async (root) => {
+    // Same skill copied into .agents/skills and .claude/skills: the engine
+    // serves one skill per name, so the .claude copy is shadowed, not missing.
+    const body = "---\nname: mix-tape\ndescription: Local playground\n---\n\nMaintain the playground.\n";
+    const agents = join(root, ".agents", "skills", "mix-tape", "SKILL.md");
+    const claude = join(root, ".claude", "skills", "mix-tape", "SKILL.md");
+    for (const path of [agents, claude]) {
+      await mkdir(join(path, ".."), { recursive: true });
+      await writeFile(path, body);
+    }
+    let reads = 0;
+    const result = await waitForOpenWorkV2Skills(root, async () => {
+      reads++;
+      return { data: [{ id: "mix-tape", name: "mix-tape", location: agents, content: "Maintain the playground." }] };
+    });
+    expect(result).toEqual({ settled: true });
+    expect(reads).toBe(1);
+  });
+});
+
+test("an unconverged or unreadable native catalog reports a diagnostic instead of refusing the prompt", async () => {
+  await withWorkspace(async (root) => {
+    const skill = join(root, ".claude", "skills", "notes", "SKILL.md");
+    await mkdir(join(skill, ".."), { recursive: true });
+    await writeFile(skill, "---\nname: notes\n---\nCurrent body\n");
+    const stale = await waitForOpenWorkV2Skills(root, async () => (
+      { data: [{ id: "notes", name: "notes", location: skill, content: "Old body" }] }), 150);
+    expect(stale.settled).toBe(false);
+    if (!stale.settled) expect(stale.diagnostic).toContain(skill);
+    const unreadable = await waitForOpenWorkV2Skills(root, async () => { throw new Error("HTTP 503"); }, 150);
+    expect(unreadable.settled).toBe(false);
+    if (!unreadable.settled) expect(unreadable.diagnostic).toContain("HTTP 503");
+  });
+});

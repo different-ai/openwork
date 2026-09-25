@@ -921,7 +921,12 @@ export async function startServer(
             && /^\/opencode\/auth\/[^/]+$/.test(mount.restPath)) {
             // The ordinary local-provider form writes v1's credential store.
             // Join v2 catalog reconciliation before reporting that save complete.
-            await engineV2Preview.refreshProviders();
+            // The save already succeeded; a slow catalog confirmation is only reported.
+            await engineV2Preview.refreshProviders().catch((error) => {
+              logger.log("warn", "OpenCode v2 provider refresh did not confirm after a credential save.", {
+                error: error instanceof Error ? error.message : String(error),
+              });
+            });
           }
           return finalizeProxyResponse(response);
         } catch (error) {
@@ -977,6 +982,7 @@ export async function startServer(
             },
             actor,
             recoverySignal: taskRecovery?.owns(request) ? request.signal : undefined,
+            warn: (message, attributes) => logger.log("warn", message, attributes as LogAttributes | undefined),
           });
           const response = taskRecovery ? await taskRecovery.forward(workspace, "v2", mount.restPath, request, send) : await send();
           return finalizeProxyResponse(response);
@@ -1245,8 +1251,11 @@ export async function proxyOpencodeV2Request(input: {
   syncWorkspaceSkills: EngineV2Preview["syncWorkspaceSkills"];
   prepareSessionDirectory?: (directory: string) => Promise<void>;
   recoverySignal?: AbortSignal;
+  /** Optional preparation that did not complete. The request still proceeds. */
+  warn?: (message: string, attributes?: Record<string, unknown>) => void;
 }): Promise<Response> {
   const method = input.request.method.toUpperCase();
+  const warn = input.warn ?? (() => undefined);
   const readRequest = method === "GET" || method === "HEAD";
   const signal = readRequest
     ? input.recoverySignal ? AbortSignal.any([input.request.signal, input.recoverySignal]) : input.request.signal
@@ -1320,8 +1329,9 @@ export async function proxyOpencodeV2Request(input: {
     const mcpUrl = new URL(target);
     mcpUrl.pathname = "/api/mcp";
     const internalHeaders = new Headers({ authorization: headers.get("authorization") ?? "", "content-type": "application/json" });
-    const mcpResponse = await loopbackFetch(mcpUrl.toString(), { headers: internalHeaders, signal: AbortSignal.timeout(10_000) });
-    const mcpPayload: unknown = mcpResponse.ok ? await mcpResponse.json() : null;
+    const mcpPayload: unknown = await loopbackFetch(mcpUrl.toString(), { headers: internalHeaders, signal: AbortSignal.timeout(10_000) })
+      .then((response) => response.ok ? response.json() : null)
+      .catch(() => null);
     const connectReady = isRecord(mcpPayload) && Array.isArray(mcpPayload.data) && mcpPayload.data.some((entry) =>
       isRecord(entry) && entry.name === "openwork-cloud" && isRecord(entry.status) && entry.status.status === "connected");
     // Keep organization skill discovery on demand through Connect. The full
@@ -1330,10 +1340,12 @@ export async function proxyOpencodeV2Request(input: {
     const value = buildOpenWorkV2Instructions(connectReady);
     const instructionUrl = new URL(target);
     instructionUrl.pathname = `/api/session/${encodeURIComponent(sessionId)}/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`;
+    // OpenWork guidance improves the turn; the engine runs without it, as the
+    // CLI does. Managed policy is enforced by engine permissions, not here.
     const synced = await loopbackFetch(instructionUrl.toString(), {
       method: "PUT", headers: internalHeaders, body: JSON.stringify({ value }), signal: AbortSignal.timeout(15_000),
-    });
-    if (!synced.ok) throw new ApiError(502, "engine_instruction_sync_failed", "OpenWork instructions could not be updated");
+    }).then((response) => response.ok ? null : `HTTP ${response.status}`, (error) => error instanceof Error ? error.message : String(error));
+    if (synced !== null) warn("OpenWork v2 instructions could not be updated; sending the prompt without them.", { error: synced });
   }
 
   const requestBody = method === "GET" || method === "HEAD"
@@ -1365,13 +1377,17 @@ export async function proxyOpencodeV2Request(input: {
     const payload: unknown = await response.json();
     const raw = isRecord(payload) && "data" in payload ? payload.data : payload;
     const publicSkill = (value: unknown) => {
-      if (!isRecord(value) || typeof value.id !== "string") {
-        throw new ApiError(502, "invalid_engine_response", "Invalid skill metadata");
-      }
+      if (!isRecord(value) || typeof value.id !== "string") return null;
       if (!value.id.startsWith("openwork-cloud-")) return value;
       return Object.fromEntries(Object.entries(value).filter(([key]) => ["id", "name", "description", "slash"].includes(key)));
     };
-    return jsonResponse({ data: Array.isArray(raw) ? raw.map(publicSkill) : publicSkill(raw) });
+    if (!Array.isArray(raw)) {
+      const skill = publicSkill(raw);
+      if (!skill) throw new ApiError(502, "invalid_engine_response", "Invalid skill metadata");
+      return jsonResponse({ data: skill });
+    }
+    // One entry OpenWork cannot project must not hide the rest of the catalog.
+    return jsonResponse({ data: raw.map(publicSkill).filter((skill) => skill !== null) });
   }
   if (method === "GET" && /^\/api\/provider(?:\/|$)/.test(decodeURIComponent(forwardedPath)) && response.ok) {
     // Provider.Info includes request settings/headers, which may contain the
@@ -1379,13 +1395,15 @@ export async function proxyOpencodeV2Request(input: {
     const payload: unknown = await response.json();
     const raw = isRecord(payload) && "data" in payload ? payload.data : payload;
     const publicProvider = (value: unknown) => {
-      if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") {
-        throw new ApiError(502, "invalid_engine_response", "Invalid provider metadata");
-      }
-      return { id: value.id, name: value.name };
+      if (!isRecord(value) || typeof value.id !== "string") return null;
+      return { id: value.id, name: typeof value.name === "string" ? value.name : value.id };
     };
-    const data = Array.isArray(raw) ? raw.map(publicProvider) : publicProvider(raw);
-    return jsonResponse({ data });
+    if (!Array.isArray(raw)) {
+      const provider = publicProvider(raw);
+      if (!provider) throw new ApiError(502, "invalid_engine_response", "Invalid provider metadata");
+      return jsonResponse({ data: provider });
+    }
+    return jsonResponse({ data: raw.map(publicProvider).filter((provider) => provider !== null) });
   }
   if (method === "GET" && /^\/api\/model(?:\/|$)/.test(decodeURIComponent(forwardedPath)) && response.ok) {
     // Model overrides and variants can carry credentials too. Keep only the
@@ -1395,6 +1413,7 @@ export async function proxyOpencodeV2Request(input: {
     const publicModel = (value: unknown) => {
       if (value === null) return null;
       if (!isRecord(value) || typeof value.id !== "string" || typeof value.providerID !== "string") {
+        if (Array.isArray(raw)) return undefined;
         throw new ApiError(502, "invalid_engine_response", "Invalid model metadata");
       }
       const metadata = Object.fromEntries(Object.entries(value).filter(([key]) => [
@@ -1406,7 +1425,7 @@ export async function proxyOpencodeV2Request(input: {
         isRecord(variant) && typeof variant.id === "string" ? [{ id: variant.id }] : []);
       return { ...metadata, variants };
     };
-    return jsonResponse({ data: Array.isArray(raw) ? raw.map(publicModel) : publicModel(raw) });
+    return jsonResponse({ data: Array.isArray(raw) ? raw.map(publicModel).filter((model) => model !== undefined) : publicModel(raw) });
   }
   if (method === "GET" && /^\/api\/event\/*$/.test(decodeURIComponent(forwardedPath)) && response.ok && response.body) {
     const frames = new BoundedSseFrameBuffer();
@@ -1489,7 +1508,7 @@ export async function proxyOpencodeV2Request(input: {
       }
       for (const value of page.data) {
         const session = nativeSession(value);
-        if (typeof session?.id !== "string" || await homes.resolve(value) !== expectedHome) continue;
+        if (typeof session?.id !== "string" || await homes.resolve(value).catch(() => null) !== expectedHome) continue;
         owned.add(session.id);
         const directory = nativeSessionDirectory(value);
         if (directory && await homes.canonical(directory) !== expectedHome) moved.add(session.id);
@@ -1530,9 +1549,17 @@ export async function proxyOpencodeV2Request(input: {
     const data = isRecord(payload) && "data" in payload ? payload.data : payload;
     const items = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.items) ? data.items : null;
     if (!items) throw new ApiError(502, "invalid_engine_response", "Invalid session list response");
-    const scoped = (await Promise.all(items.map(async (item: unknown) =>
-      await homes.resolve(item) === expectedHome ? homes.project(item) : null,
-    ))).filter((item) => item !== null);
+    // A session whose home cannot be proven is hidden; it never hides the rest.
+    const scoped = (await Promise.all(items.map(async (item: unknown) => {
+      try {
+        return await homes.resolve(item) === expectedHome ? await homes.project(item) : null;
+      } catch (error) {
+        warn("OpenCode v2 session hidden: its conversation home could not be verified.", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      }
+    }))).filter((item) => item !== null);
     signal?.throwIfAborted();
     const scopedData = isRecord(data) ? { ...data, items: scoped } : scoped;
     const scopedPayload = isRecord(payload) && "data" in payload ? { ...payload, data: scopedData } : scopedData;
@@ -1545,7 +1572,8 @@ export async function proxyOpencodeV2Request(input: {
     const payload: unknown = await response.json();
     const data = isRecord(payload) && isRecord(payload.data) ? payload.data : {};
     const entries = await Promise.all(Object.entries(data).map(async ([id, status]) => {
-      const home = await homes.stored(id) ?? await homes.resolve(await readNative(`/api/session/${encodeURIComponent(id)}`));
+      const home = await homes.stored(id)
+        ?? await homes.resolve(await readNative(`/api/session/${encodeURIComponent(id)}`)).catch(() => null);
       return home === expectedHome ? [id, status] : null;
     }));
     return jsonResponse({ data: Object.fromEntries(entries.filter(entry => entry !== null)) });

@@ -47,6 +47,8 @@ type MockReadOptions = {
   onRead?: (request: Request) => Promise<void>;
   sessions?: unknown;
   messagePage?: (request: Request) => Response;
+  /** Replace one native v2 response; undefined falls through to the defaults. */
+  nativeV2Response?: (url: URL, request: Request) => Response | undefined;
 };
 
 function startMockOpencode(input?: MockReadOptions & { holdCommand?: Promise<void>; foreignSessionDirectory?: string; nativeV2Directory?: string; recovery?: { active: boolean; turn: number } }) {
@@ -70,6 +72,8 @@ function startMockOpencode(input?: MockReadOptions & { holdCommand?: Promise<voi
       if (request.method === "GET") await input?.onRead?.(request);
 
       if (input?.nativeV2Directory) {
+        const override = input.nativeV2Response?.(url, request);
+        if (override) return override;
         const sessionId = url.pathname.match(/^\/api\/session\/(ses_[^/]+)$/)?.[1];
         if (sessionId) {
           if (sessionId === "ses_missing") return Response.json({ code: "not_found" }, { status: 404 });
@@ -809,6 +813,62 @@ describe("workspace OpenCode proxy", () => {
       "GET /api/session/ses_1", "GET /api/mcp",
       "PUT /api/session/ses_1/instructions/entries/openwork.context", "POST /api/session/ses_1/prompt",
     ]);
+  });
+
+  test.serial("v2 prompts proceed when optional OpenWork preparation cannot complete", async () => {
+    // The engine would accept this prompt when run directly; unavailable
+    // connection status or guidance must not turn it into a server error.
+    const fixture = await startV2Proxy({
+      nativeV2Response: (url) => url.pathname === "/api/mcp"
+        || url.pathname === "/api/session/ses_1/instructions/entries/openwork.context"
+        ? Response.json({ code: "unavailable" }, { status: 500 }) : undefined,
+    });
+    fixture.provider.release();
+    fixture.mcp.release();
+    const prompt = await fixture.request("/api/session/ses_1/prompt", { method: "POST", body: JSON.stringify({ parts: [] }) });
+    expect(prompt.status).toBe(200);
+    expect(fixture.engine.requests.at(-1)).toMatchObject({ method: "POST", pathname: "/api/session/ses_1/prompt" });
+  });
+
+  test.serial("v2 catalogs drop entries OpenWork cannot project instead of failing the whole list", async () => {
+    const fixture = await startV2Proxy({
+      nativeV2Response: (url) => {
+        if (url.pathname === "/api/provider") {
+          return Response.json({ data: [{ id: "good", name: "Good", settings: { apiKey: "secret" } }, { name: "no id" }, { id: "nameless" }] });
+        }
+        if (url.pathname === "/api/model") {
+          return Response.json({ data: [{ id: "m1", providerID: "good", settings: { apiKey: "secret" } }, { id: "orphan" }] });
+        }
+        return undefined;
+      },
+    });
+    fixture.provider.release();
+    fixture.mcp.release();
+    const providers = await fixture.request("/api/provider");
+    expect(providers.status).toBe(200);
+    expect(await providers.json()).toEqual({ data: [{ id: "good", name: "Good" }, { id: "nameless", name: "nameless" }] });
+    const models = await fixture.request("/api/model");
+    expect(models.status).toBe(200);
+    expect(await models.json()).toEqual({ data: [{ id: "m1", providerID: "good", variants: [] }] });
+  });
+
+  test.serial("a v2 session whose home cannot be verified is hidden without hiding the rest", async () => {
+    let root = "";
+    const sessions = () => [{ id: "ses_1", location: { directory: root } }, { id: "ses_broken", location: { directory: root } }];
+    const fixture = await startV2Proxy({
+      nativeV2Response: (url) => {
+        if (url.pathname === "/api/session") return Response.json({ data: sessions() });
+        // Malformed move history: ownership cannot be proven for this session only.
+        if (url.pathname === "/api/session/ses_broken/message") {
+          return Response.json({ data: [{ type: "location-switched", data: { previous: {} } }] });
+        }
+        return undefined;
+      },
+    });
+    root = fixture.workspaceRoot;
+    const list = await fixture.request("/api/session");
+    expect(list.status).toBe(200);
+    expect(await list.json()).toEqual({ data: [sessions()[0]] });
   });
 
   for (const failingGate of ["provider", "mcp"]) {

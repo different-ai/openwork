@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,9 @@ import {
   writeEngineV2PreviewState,
 } from "./engine-v2-preview.js";
 import type { ServerConfig } from "./types.js";
+import * as managedV2 from "./managed-opencode-v2.js";
+import * as localAuth from "./opencode-v2-local-auth.js";
+import * as runtimeConfig from "./runtime-opencode-config-store.js";
 import { buildOpenWorkV2Instructions, waitForOpenWorkV2Skills } from "./opencode-v2-instructions.js";
 
 test("v2 app guidance fits the native entry limit and uses the current native tools", () => {
@@ -240,5 +243,54 @@ test("null or empty native endpoint overrides cannot bypass catalog origin valid
     } }, new Map([["NATIVE_API_KEY", "private-fixture-key"]]));
     expect(result.skippedProviderIds).toEqual(["native"]);
     expect(result.specs).toEqual([]);
+  }
+});
+
+
+test("a connection the engine rejects is skipped and backed off instead of refusing every request", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openwork-v2-mcp-reject-"));
+  const calls: string[] = [];
+  const fake = {
+    url: "http://127.0.0.1:1", username: "opencode", password: "fixture", childPid: 1, exitCode: null, stdout: "", stderr: "",
+    health: async () => ({ healthy: true, version: "fixture", pid: 1 }),
+    injectProvider: async () => {}, setProviders: async () => {}, setSkills: async () => {}, close: async () => {},
+    async fetchJson(path: string, init: { method?: string } = {}) {
+      calls.push(`${init.method ?? "GET"} ${path}`);
+      if (path === "/api/mcp/broken") return { status: 400, json: { message: "unsupported" } };
+      if (path.startsWith("/api/mcp/")) return { status: 204, json: null };
+      if (path === "/api/mcp") return { status: 200, json: { data: [{ name: "good", status: { status: "connected" } }] } };
+      if (path === "/api/skill") return { status: 503, json: null };
+      return { status: 200, json: { data: [] } };
+    },
+  } satisfies managedV2.ManagedOpencodeV2Server;
+  const spies = [
+    spyOn(managedV2, "createManagedOpencodeV2Server").mockResolvedValue(fake),
+    spyOn(localAuth, "readLocalProviderApiKeys").mockResolvedValue(new Map()),
+    spyOn(runtimeConfig, "readGlobalRuntimeOpencodeConfig").mockResolvedValue({}),
+    spyOn(runtimeConfig, "readEffectiveRuntimeOpencodeConfig").mockResolvedValue({ mcp: {
+      good: { type: "remote", url: "https://good.example/mcp" },
+      broken: { type: "remote", url: "https://broken.example/mcp" },
+    } }),
+  ];
+  const previousBin = process.env.OPENWORK_OPENCODE2_BIN;
+  process.env.OPENWORK_OPENCODE2_BIN = "opencode2-fixture";
+  const preview = createEngineV2Preview({ config: testConfig(root), deferStart: true });
+  try {
+    await preview.setEnabled(true);
+    for (let attempt = 0; attempt < 100 && !preview.status().running; attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(preview.status().running).toBe(true);
+    await preview.syncWorkspaceMcp("ws_1", root);
+    await preview.syncWorkspaceMcp("ws_1", root);
+    await preview.syncWorkspaceSkills(root);
+    expect(calls.filter((call) => call === "PUT /api/mcp/broken")).toHaveLength(1);
+    expect(calls.filter((call) => call === "PUT /api/mcp/good")).toHaveLength(1);
+    expect(preview.status().lastWarning).toContain("Skills:");
+    expect(preview.status().lastError).toBeUndefined();
+  } finally {
+    await preview.stop();
+    for (const spy of spies) spy.mockRestore();
+    if (previousBin === undefined) delete process.env.OPENWORK_OPENCODE2_BIN;
+    else process.env.OPENWORK_OPENCODE2_BIN = previousBin;
+    await rm(root, { recursive: true, force: true });
   }
 });
