@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AGENTS_CONTRACT_VERSION, COWORKER_INSTRUCTIONS, agentsContractVersion, agentsTemplate } from "./coworkers.mjs";
+import { DEFAULT_FEATURES } from "../src/lib/features.ts";
 import { coordinatorConfig } from "./coordinator.mjs";
 import { nativeConfig, nativePermissions, updateNativeConfig } from "./native-config.mjs";
 import { NATIVE_PLUGIN_FILES } from "./native-plugin.mjs";
@@ -33,12 +34,28 @@ export function teamWorkspacePlan({ coworkersDir, workspaces }) {
 export const TEAM_CONTEXT_FILE = path.join(".opencode", "coworker-context.json");
 export const TEAM_ABILITIES_FILE = path.join(".opencode", "coworker-abilities.json");
 
+export const TEAM_FEATURES_FILE = path.join(".opencode", "coworker-features.json");
+
+/**
+ * Tools of a feature that is turned off. The turn roles plugin reads the list
+ * from the team location: the model is not offered these tools and a call to
+ * one is refused, so a coworker or its Workers cannot schedule or drive the
+ * desktop while Calendar or Computer use is off.
+ */
+export function featureOffTools(features = DEFAULT_FEATURES) {
+  return [
+    ...(features.calendar ? [] : ["coworker_event_*", "coworker_assignment_*", "coworker_assignments_list", "coworker_workplace_calendar"]),
+    ...(features.computerUse ? [] : ["coworker_computer_*"]),
+  ];
+}
+
 /** The native agent entry for one coworker: contract as system prompt, home-scoped file access, no model (per turn). */
-export function coworkerAgentDefinition(teamRoot, coworker, coworkers = []) {
+
+export function coworkerAgentDefinition(teamRoot, coworker, coworkers = [], features = DEFAULT_FEATURES) {
   return {
     mode: "primary",
     description: `Open Coworker teammate ${coworker.name}`,
-    system: `${agentsTemplate({ name: coworker.name })}\nYour home is ${coworker.path}. Resolve the relative home file names above inside that directory, not the shared engine location. Shared location and broad shell access are not a filesystem sandbox.`,
+    system: `${agentsTemplate({ name: coworker.name, features })}\nYour home is ${coworker.path}. Resolve the relative home file names above inside that directory, not the shared engine location. Shared location and broad shell access are not a filesystem sandbox.`,
     permissions: coworker.nativePermissions ?? [],
   };
 }
@@ -53,11 +70,11 @@ export function teamAgentContractVersion(config, slug) {
  * hidden coordinator. Retired coworkers' entries disappear; agents the app does
  * not own (native defaults, plugin-registered isolated agents) are left alone.
  */
-export function teamAgents(teamRoot, coworkers, existing = {}) {
+export function teamAgents(teamRoot, coworkers, existing = {}, features = DEFAULT_FEATURES) {
   const agents = {};
   for (const [id, agent] of Object.entries(existing ?? {})) if (coworkerAgentOwner(id) === null && !Object.hasOwn(coordinatorConfig().agents, id)) agents[id] = agent;
   Object.assign(agents, coordinatorConfig().agents);
-  for (const coworker of [...coworkers].sort((a, b) => a.slug.localeCompare(b.slug))) agents[coworkerAgent(coworker.slug)] = coworkerAgentDefinition(teamRoot, coworker, coworkers);
+  for (const coworker of [...coworkers].sort((a, b) => a.slug.localeCompare(b.slug))) agents[coworkerAgent(coworker.slug)] = coworkerAgentDefinition(teamRoot, coworker, coworkers, features);
   return agents;
 }
 
@@ -88,14 +105,14 @@ export async function assertTeamCompatibleHomes(coworkers) {
   return configured;
 }
 
-export async function updateTeamWorkspaceConfig(teamRoot, coworkers) {
+export async function updateTeamWorkspaceConfig(teamRoot, coworkers, features = DEFAULT_FEATURES) {
   coworkers = await assertTeamCompatibleHomes(coworkers);
   await mkdir(teamWorkspaceDirectory(teamRoot), { recursive: true, mode: 0o700 });
   return updateNativeConfig(teamWorkspaceDirectory(teamRoot), (config) => ({
     $schema: "https://opencode.ai/config.json",
     ...config,
     permissions: Array.isArray(config.permissions) ? config.permissions : [],
-    agents: teamAgents(teamRoot, coworkers, config.agents),
+    agents: teamAgents(teamRoot, coworkers, config.agents, features),
   }));
 }
 
@@ -107,6 +124,11 @@ async function writeIfChanged(target, content) {
   await chmod(temporary, 0o600);
   await rename(temporary, target);
   return true;
+}
+
+/** Which tools are off because their feature is turned off in the app. */
+export async function writeTeamFeatures(teamRoot, features = DEFAULT_FEATURES) {
+  return writeIfChanged(path.join(teamWorkspaceDirectory(teamRoot), TEAM_FEATURES_FILE), JSON.stringify({ off: featureOffTools(features) }));
 }
 
 /** The one loopback connection every installed plugin uses to reach the app's broker. */

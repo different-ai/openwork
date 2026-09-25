@@ -66,6 +66,7 @@ import { usesAppConversationDefault, type ModelDefaults } from "@/lib/model-defa
 import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview, type WorkerSummary } from "@/lib/workers";
 import { WorkerDecisionCards } from "@/ui/worker-decision";
 import { WorkersPanel } from "@/ui/workers";
+import { useFeatures } from "@/ui/use-features";
 import { coworkerToolName } from "@/lib/coworker-tools";
 import { EXECUTION_KINDS, executionMetadata, executionState, safeWorkLabel, summarizeWorkerReceipt } from "@/lib/work-receipt";
 import { executionProgress, pendingAdmissionState, type ExecutionActivity } from "@/lib/progress-activity";
@@ -283,7 +284,7 @@ function newQueuedId(): string {
 }
 
 export const NO_TOOL_MODEL_MESSAGE =
-  "No connected AI model can use tools. Connect an AI provider in OpenWork, or choose an AI model in Coworker settings.";
+  "No connected AI model can use tools. Connect an AI provider in OpenWork, or choose an AI model in Customize › Advanced.";
 
 type WorkspaceProblem = { message: string; technical: string };
 
@@ -409,7 +410,7 @@ export function ThreadsPanel({
   /** How the conversation answers a coworker's offers about the team. */
   team?: TeamHooks;
   headerSlots: HeaderSlots;
-  /** Coworker settings, opened at the AI model section — the first recovery step after a model failure. */
+  /** The coworker's Customize page, opened at Advanced (its AI models) — the first recovery step after a model failure. */
   onOpenModelSettings: () => void;
   /** The OpenWork account section — where a provider is reconnected. */
   onOpenAccount: () => void;
@@ -2202,7 +2203,7 @@ function ThreadView({
       const run = await onSyncProviders();
       if (run.status === "failed") {
         voice.abandonReply(voiceIntent);
-        setProviderRefreshNote("Providers could not be refreshed. You can still use a suggested model above or choose one in Coworker settings.");
+        setProviderRefreshNote("Providers could not be refreshed. You can still use a suggested model above or choose one in Customize › Advanced.");
         return;
       }
       const catalog = await threads.listModelCatalog();
@@ -2212,7 +2213,7 @@ function ThreadView({
       if (!decision.model) {
         voice.abandonReply(voiceIntent);
         setRecommendedModel(recommendModel(catalog, { exclude: failedModelId || coworker.model }));
-        setProviderRefreshNote("Providers refreshed, but the selected model is still unavailable. Use the suggestion above or choose another AI model in Coworker settings.");
+        setProviderRefreshNote("Providers refreshed, but the selected model is still unavailable. Use the suggestion above or choose another AI model in Customize › Advanced.");
         return;
       }
       setProviderRefreshNote("");
@@ -2220,7 +2221,7 @@ function ThreadView({
       void retryPending({ model: { providerId: pick.providerId, modelId: pick.modelId, ...(decision.variant ? { variant: decision.variant } : {}) }, label: pick.modelLabel }, voiceIntent);
     } catch (cause) {
       voice.abandonReply(voiceIntent);
-      setProviderRefreshNote("Providers could not be refreshed. You can still use a suggested model above or choose one in Coworker settings.");
+      setProviderRefreshNote("Providers could not be refreshed. You can still use a suggested model above or choose one in Customize › Advanced.");
     }
   }
 
@@ -2505,6 +2506,8 @@ function ThreadView({
   const [floatingSlot, setFloatingSlot] = useState<HTMLDivElement | null>(null);
   const [computerOpenRequest, setComputerOpenRequest] = useState(0);
   const [browserOpenRequest, setBrowserOpenRequest] = useState(0);
+  // Computer use is optional: while it is off there is no Computer control to open.
+  const { computerUse } = useFeatures();
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-ink" data-active={active} data-testid={kind === "discussion" ? "coworker-discussion-view" : kind === "worker" ? "coworker-worker-view" : "coworker-assignment-view"}>
@@ -2538,7 +2541,7 @@ function ThreadView({
           </IconButton>
         ) : null}
       />
-      {active && kind === "discussion" && browserEligible && headerSlots.tools ? createPortal(<Suspense fallback={null}><ComputerControl key={`${coworker.slug}:${threadId}`} slug={coworker.slug} threadId={threadId} statusSlot={controlStatusSlot} floatingSlot={floatingSlot} openRequest={computerOpenRequest} onOpenRequestHandled={() => setComputerOpenRequest(0)} onBackToConversation={() => voice.fieldRef.current?.focus()} /></Suspense>, headerSlots.tools) : null}
+      {active && computerUse && kind === "discussion" && browserEligible && headerSlots.tools ? createPortal(<Suspense fallback={null}><ComputerControl key={`${coworker.slug}:${threadId}`} slug={coworker.slug} threadId={threadId} statusSlot={controlStatusSlot} floatingSlot={floatingSlot} openRequest={computerOpenRequest} onOpenRequestHandled={() => setComputerOpenRequest(0)} onBackToConversation={() => voice.fieldRef.current?.focus()} /></Suspense>, headerSlots.tools) : null}
       {/* Progress and problems show inline in the conversation; this keeps the turn state readable to assistive tech and tests. */}
       <div className="@container/discussion min-h-0 min-w-0 flex-1">
       <div className="flex h-full min-h-0 min-w-0 flex-col @min-[760px]/discussion:flex-row">
@@ -2684,7 +2687,7 @@ function ThreadView({
       {kind !== "worker" && turnState.next.length > 0 ? (
         <NextRows items={turnState.next} onEdit={editQueued} onRemove={(id) => commitTurnState((state) => removeQueued(state, id))} onSendNow={(id) => void sendQueuedNow(id)} />
       ) : null}
-      {kind === "discussion" && browserEligible ? <WorkersPanel coworker={coworker} threadId={threadId} compact onOpenComputer={() => setComputerOpenRequest((value) => value + 1)} onOpenBrowser={() => setBrowserOpenRequest((value) => value + 1)} /> : null}
+      {kind === "discussion" && browserEligible ? <WorkersPanel coworker={coworker} threadId={threadId} compact onOpenComputer={computerUse ? () => setComputerOpenRequest((value) => value + 1) : undefined} onOpenBrowser={() => setBrowserOpenRequest((value) => value + 1)} /> : null}
       {kind === "discussion" ? (
         <div ref={setControlStatusSlot} className="shrink-0 space-y-2 px-5 pt-2 empty:hidden" data-testid="coworker-control-status" />
       ) : null}
@@ -3548,6 +3551,8 @@ function DiscussionComposer({
   fixedVariant?: string;
   onEffortChange?: (stop: EffortStop) => void;
 }) {
+  // Recurring work needs Calendar; without it the starting points stay with one-off work.
+  const { calendar: calendarEnabled } = useFeatures();
   const value = assignmentMode ? assignment : message;
   const submit = assignmentMode ? onCreateAssignment : onSend;
   const held = busy || Boolean(waiting);
@@ -3608,7 +3613,7 @@ function DiscussionComposer({
                   {[
                     { label: "Turn a goal into a plan", prompt: "Help me turn a goal into a practical plan. Ask what I want to achieve and when I need it, then help me create a short working document with next steps." },
                     { label: "Work through a document", prompt: "Help me improve a document. Ask me to share it and tell you who it is for, then identify the most useful changes before drafting a revision." },
-                    { label: "Take recurring work off my plate", prompt: "Help me choose one recurring task you can take off my plate. Ask about the task, the apps it needs, and when I want the result. Propose a responsibility for me to review before scheduling it." },
+                    ...(calendarEnabled ? [{ label: "Take recurring work off my plate", prompt: "Help me choose one recurring task you can take off my plate. Ask about the task, the apps it needs, and when I want the result. Propose a responsibility for me to review before scheduling it." }] : []),
                   ].map((starter) => <button key={starter.label} type="button" className="block w-full rounded-lg px-2 py-2 text-left text-xs text-snow hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/45" onClick={() => { onMessageChange(starter.prompt); fieldRef.current?.focus(); }}>{starter.label}</button>)}
                   <p className="pt-2 text-[11px] text-mist">Choose a starting point, edit it, then send.</p>
                 </PopoverDisclosure>

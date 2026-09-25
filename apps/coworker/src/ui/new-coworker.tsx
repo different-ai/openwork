@@ -1,7 +1,11 @@
 import { WORK_PATTERNS, rolesForPattern, teamAdvicePrompt, workPattern } from "@/lib/work-patterns";
 import { slugOfName } from "@/lib/onboarding-team";
-import { useEffect, useId, useRef, useState } from "react";
-import { coworkerBridge, type AvatarColor, type AvatarGlasses, type CoworkerSummary, type TeamRole } from "@/lib/bridge";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { coworkerBridge, type AvatarColor, type AvatarGlasses, type CoworkerSummary, type RuntimeInfo, type TeamRole } from "@/lib/bridge";
+import type { DenSession } from "@/lib/den";
+import { resolveModelPreview, type ModelChoicePreview } from "@/lib/model-choice";
+import { createCoworkerThreads, type EngineModelCatalog } from "@/lib/threads";
+import { ModelPicker, type ModelSelection } from "@/ui/model-picker";
 import { acknowledgeCoworker, AvatarControls } from "@/ui/coworker-avatar";
 import { OnboardingMascotStack } from "@/ui/onboarding-mascot";
 import { DEFAULT_PERSONALITY, type Personality } from "@/lib/personalities";
@@ -17,18 +21,23 @@ const SUGGESTED_ROLES = 3;
 
 /**
  * Creation establishes only a durable identity and workspace: a name and a
- * look, with an optional second step for role, mission, and personality. Each
- * step stays focused; the coworker starts on OpenWork's default AI
- * model, and that choice lives in Coworker settings once it exists. Existing
- * teams first see up to three missing roles, then customize a selected role
- * or start from scratch. Recommendations never crowd the identity form.
+ * look, with an optional second step for role, mission, and personality, and
+ * under Advanced there, the AI model. Each step stays focused; without a
+ * choice the coworker starts on Automatic, and every choice stays editable on
+ * its Customize page. Existing teams first see up to three missing roles, then
+ * customize a selected role or start from scratch. Recommendations never crowd
+ * the identity form.
  */
 export function NewCoworker({
+  runtime,
+  session,
   onCreated,
   onCancel,
   team = [],
   onAskTeam,
 }: {
+  runtime: RuntimeInfo;
+  session: DenSession | null;
   onCreated: (coworker: CoworkerSummary) => void;
   /** Null on first run, when there is no team to go back to. */
   onCancel: (() => void) | null;
@@ -45,6 +54,9 @@ export function NewCoworker({
   const [avatarColor, setAvatarColor] = useState<AvatarColor>("blue");
   const [avatarGlasses, setAvatarGlasses] = useState<AvatarGlasses>("round");
   const [personality, setPersonality] = useState<Personality>(DEFAULT_PERSONALITY);
+  /** Null is Automatic. */
+  const [model, setModel] = useState<ModelSelection | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [roleId, setRoleId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -96,24 +108,23 @@ export function NewCoworker({
       const fromCatalog = catalog.find((item) => item.id === roleId);
       // The catalog role travels only while the role the person kept is still that role.
       const keptRole = fromCatalog && role.trim() === fromCatalog.role ? fromCatalog.id : "";
-      onCreated(
-        await coworkerBridge.coworkers.create({
-          name: name.trim(),
-          role: role.trim(),
-          mission: mission.trim(),
-          avatarColor,
-          avatarGlasses,
-          personality,
-          ...(keptRole ? { roleId: keptRole } : {}),
-        }),
-      );
+      const created = await coworkerBridge.coworkers.create({
+        name: name.trim(),
+        role: role.trim(),
+        mission: mission.trim(),
+        avatarColor,
+        avatarGlasses,
+        personality,
+        ...(keptRole ? { roleId: keptRole } : {}),
+      });
+      onCreated(model ? await coworkerBridge.coworkers.update(created.slug, { model: model.model, modelVariant: model.modelVariant, modelChosenBy: "person", useAppModelDefaults: false }) : created);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setBusy(false);
     }
   }
 
-  const detailsCount = [role.trim(), mission.trim(), personality !== DEFAULT_PERSONALITY ? "personality" : ""].filter(Boolean).length;
+  const detailsCount = [role.trim(), mission.trim(), personality !== DEFAULT_PERSONALITY ? "personality" : "", model ? "model" : ""].filter(Boolean).length;
 
   return (
     <div className="window-shell flex h-full min-w-0 flex-1 flex-col" data-testid="new-coworker">
@@ -228,7 +239,7 @@ export function NewCoworker({
                 <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-spark">Optional</p>
                 <h1 className="mt-1 text-2xl font-semibold tracking-[-0.035em] text-snow">Role, mission, and personality</h1>
                 <p className="mt-1 max-w-sm text-sm leading-relaxed text-mist">
-                  Everything here can be changed later in Coworker settings.
+                  Everything here can be changed later on the coworker's Customize page.
                 </p>
                 <div className="mt-5 space-y-3">
                   <Field label="Role">
@@ -250,6 +261,11 @@ export function NewCoworker({
                   </Field>
                   <PersonalityPicker value={personality} seed={name.trim() || "coworker"} onChange={setPersonality} />
                 </div>
+                <details className="mt-5 border-t border-line pt-4" data-testid="new-coworker-advanced" onToggle={(event) => { if (event.currentTarget.open) setAdvancedOpen(true); }}>
+                  <summary className="cursor-pointer text-sm font-medium text-snow">Advanced</summary>
+                  <p className="mt-1 text-xs text-mist">The AI model {name.trim() || "this coworker"} answers with. Automatic chooses one for you.</p>
+                  {advancedOpen ? <div className="mt-3"><StartingModel runtime={runtime} session={session} value={model} onChange={setModel} /></div> : null}
+                </details>
               </>
             )}
 
@@ -286,6 +302,54 @@ export function NewCoworker({
           <RetiredCoworkers onRestored={onCreated} />
         </div>
       </div>
+    </div>
+  );
+}
+
+/** The model a new coworker starts on, from the models connected to this app; nothing is read until Advanced opens. */
+function StartingModel({ runtime, session, value, onChange }: {
+  runtime: RuntimeInfo;
+  session: DenSession | null;
+  value: ModelSelection | null;
+  onChange: (value: ModelSelection | null) => void;
+}) {
+  const [catalog, setCatalog] = useState<EngineModelCatalog>({ models: [], connectedProviderIds: [], cloud: null });
+  const [preview, setPreview] = useState<ModelChoicePreview | undefined>(undefined);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      if (!runtime.engineManaged) throw new Error("The AI service is not running yet.");
+      const [{ workspaceId }, settings] = await Promise.all([coworkerBridge.coordinator.ensure(), coworkerBridge.settings.get()]);
+      const next = await createCoworkerThreads({ serverUrl: runtime.serverUrl, workspaceId, token: runtime.ownerToken }).listModelCatalog();
+      setCatalog(next);
+      setPreview(resolveModelPreview(next, "conversation", settings.modelDefaults));
+    } catch (cause) {
+      setError(`Models could not be read. ${cause instanceof Error ? cause.message : String(cause)}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [runtime.engineManaged, runtime.ownerToken, runtime.serverUrl]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  return (
+    <div className="space-y-2">
+      <ModelPicker
+        runtime={runtime}
+        session={session}
+        catalog={catalog}
+        catalogLoading={loading}
+        onRefreshCatalog={refresh}
+        defaultPurpose="conversation"
+        value={value?.model ?? ""}
+        modelVariant={value?.modelVariant ?? ""}
+        automaticPreview={preview}
+        previewLoading={loading}
+        compact
+        onChange={(selection) => onChange(selection.model ? selection : null)}
+      />
+      {error ? <p role="status" className="text-[11px] leading-relaxed text-amber">{error}</p> : null}
     </div>
   );
 }

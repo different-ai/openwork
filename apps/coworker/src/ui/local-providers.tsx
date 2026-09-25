@@ -12,14 +12,12 @@ import {
   busyProviderIds,
   connectReducer,
   openAiSetupGuard,
-  pickFreeModel,
   planLocalMode,
   type AddableProvider,
   type ConnectState,
   type ConnectedRow,
 } from "@/lib/local-providers";
 import { MODEL_GROWTH_OFFER_IDS, modelGrowthOffer, type ModelGrowthOfferId } from "@/lib/model-growth";
-import { resolveOnboardingModelDefaults } from "@/lib/model-choice";
 import { createCoworkerThreads, type EngineModelCatalog } from "@/lib/threads";
 import { Button, ErrorNote, StatusDot, inputClass } from "@/ui/kit";
 import { OptionRow } from "@/ui/interactions";
@@ -193,7 +191,7 @@ function KeyForm({ provider, onSaved, onCancel }: { provider: AddableProvider; o
   );
 }
 
-function CustomForm({ onSaved, onCancel, onStartModel }: { onSaved: (line: string, providerId: string) => void; onCancel: () => void; onStartModel?: (modelId: string, providerId?: string) => void }) {
+function CustomForm({ onSaved, onCancel }: { onSaved: (line: string, providerId: string) => void; onCancel: () => void }) {
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
   const [key, setKey] = useState("");
@@ -223,7 +221,6 @@ function CustomForm({ onSaved, onCancel, onStartModel }: { onSaved: (line: strin
       const result = await coworkerBridge.localProviders.custom.add({ name, address, key, models: ordered });
       setKey("");
       onSaved(`Connection saved. ${result.modelCount} model${result.modelCount === 1 ? "" : "s"} listed.`, result.providerId);
-      if (startWith && onStartModel) onStartModel(`${result.providerId}/${startWith}`, result.providerId);
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
@@ -271,10 +268,7 @@ export function LocalProviders({
   onExploreThinking,
   onExploreTeams,
   onModelsChanged,
-  onProviderConnected,
   onRuntimeChanged,
-  onStartModel,
-  chooseLabel,
 }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
@@ -285,13 +279,8 @@ export function LocalProviders({
   onExploreTeams?: () => void;
   /** Something connected or disconnected: the model catalog changed. */
   onModelsChanged?: (providerId?: string) => void;
-  onProviderConnected?: (providerId: string) => void;
   /** The platform restarted while getting ready; re-read runtime info. */
   onRuntimeChanged?: () => Promise<void>;
-  /** The person picked a model to start with ("providerId/modelId"). */
-  onStartModel?: (modelId: string, providerId?: string) => void;
-  /** What the free-model row's action says when `onStartModel` is given. */
-  chooseLabel?: string;
 }) {
   const [readiness, setReadiness] = useState<LocalProvidersReadiness>(EMPTY_READINESS);
   const [findings, setFindings] = useState<LocalProviderFinding[]>([]);
@@ -370,7 +359,6 @@ export function LocalProviders({
     const visible = loaded ? findings : findings.filter((finding) => finding.how !== "in-use");
     return planLocalMode({ findings: visible, readiness, catalog });
   }, [catalog, findings, loaded, readiness]);
-  const freeModel = useMemo(() => pickFreeModel(catalog), [catalog]);
   const setupReady = loaded && found && readiness.engineManaged && !refreshing;
   const openaiBusy = ["codex", "opencode:openai", "add:openai"].some((id) => states[id]?.phase === "connecting" || states[id]?.phase === "waiting");
   const openaiGuard = openAiSetupGuard(findings, readiness);
@@ -412,10 +400,9 @@ export function LocalProviders({
   }
 
   const changed = useCallback(async (providerId?: string) => {
-    if (providerId) onProviderConnected?.(providerId);
     await refresh();
     onModelsChanged?.(providerId);
-  }, [onModelsChanged, onProviderConnected, refresh]);
+  }, [onModelsChanged, refresh]);
 
   function savedProvider(line: string, providerId: string) {
     setAdding("");
@@ -649,12 +636,6 @@ export function LocalProviders({
                 testId={`connected-${row.providerId}`}
               >
                 <span className="text-[11px] tabular-nums text-mist" data-testid={`connected-${row.providerId}-count`}>{row.modelCount} model{row.modelCount === 1 ? "" : "s"}</span>
-                {onStartModel && chooseLabel ? (
-                  <Button variant="ghost" onClick={() => {
-                    const choice = resolveOnboardingModelDefaults(catalog, undefined, row.providerId).defaults.conversation;
-                    onStartModel(choice.model, row.providerId);
-                  }}>{chooseLabel}</Button>
-                ) : null}
                 {row.canDisconnect ? (
                   disconnecting?.providerId === row.providerId ? (
                     <>
@@ -680,9 +661,6 @@ export function LocalProviders({
         >
           {loaded && !plan.free.available ? (
             <span className="text-[11px] text-mist" data-testid="free-model-coming-soon">{COPY.freeComingSoon}</span>
-          ) : null}
-          {onStartModel && chooseLabel && freeModel ? (
-            <Button variant="default" onClick={() => onStartModel(freeModel.id, freeModel.providerId)} data-testid="free-model-choose">{chooseLabel}</Button>
           ) : null}
         </FlatRow>
         <FlatRow
@@ -711,7 +689,6 @@ export function LocalProviders({
                 <CustomForm
                   onSaved={savedProvider}
                   onCancel={() => setAdding("")}
-                  onStartModel={onStartModel}
                 />
               ) : null}
               {addableChosen ? (

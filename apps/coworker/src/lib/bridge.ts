@@ -326,6 +326,8 @@ export type CoworkerSettings = {
   progressSummaryModelId: string;
   automaticMemoryEnabled: boolean;
   memoryModelId: string;
+  /** Optional features, off until turned on in Settings → Features. */
+  features: import("./features.ts").Features;
 };
 
 /** One recorded change to the coworker's memory or soul, by the coworker, the person, or an undo. */

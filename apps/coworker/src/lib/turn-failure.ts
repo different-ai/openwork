@@ -82,7 +82,7 @@ export function describeTurnFailure(raw: string, coworkerName: string, retryable
   if (/^No connected AI model can use tools\./.test(message)) {
     return {
       headline: "No connected AI model can use tools.",
-      detail: "Connect an AI provider in OpenWork, or choose an AI model in Coworker settings.",
+      detail: "Connect an AI provider in OpenWork, or choose an AI model in Customize › Advanced.",
       technical: "",
       modelRelated: true,
       transient: false,

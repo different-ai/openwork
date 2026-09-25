@@ -10,6 +10,7 @@ import { describeHeaderStatus } from "@/lib/activity-summary";
 import type { CoworkerActivity } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { Button, ChevronIcon, IconButton, inputClass } from "@/ui/kit";
+import { useFeatures } from "@/ui/use-features";
 
 export type ActivityDocumentTarget =
   | { kind: "coworker"; slug: string; createdAt: string; documentId: string; title: string; revision: number }
@@ -320,7 +321,11 @@ function EventSections({ calendar, coworkers, selectedId, onOpenEvent, onOpenCal
 }
 
 export function ActivityInbox({ active, selectedId, items, loading, error, busy, coworkers, groups, activityBySlug, onRefresh, onMarkRead, onOpen, onOpenDocument, calendar, onOpenEvent, onOpenCalendar, onNewEvent }: ActivityInboxProps) {
-  const [filter, setFilter] = useState<Filter>("all");
+  // Without Calendar, Activity has no event sections, reminders or Events filter.
+  const { calendar: calendarEnabled } = useFeatures();
+  const filters = calendarEnabled ? FILTERS : FILTERS.filter(({ id }) => id !== "events");
+  const [chosenFilter, setFilter] = useState<Filter>("all");
+  const filter: Filter = !calendarEnabled && chosenFilter === "events" ? "all" : chosenFilter;
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [query, setQuery] = useState("");
   const [actionError, setActionError] = useState("");
@@ -331,10 +336,11 @@ export function ActivityInbox({ active, selectedId, items, loading, error, busy,
   const documents = useActivityDocuments(active, coworkers, groups);
   const bySlug = new Map(coworkers.map((coworker) => [coworker.slug, coworker]));
   const byGroup = new Map(groups.filter((group) => !group.archivedAt).map((group) => [group.id, group]));
-  const unreadIds = items.filter((item) => item.readAt === null).map((item) => item.id);
+  const unreadIds = items.filter((item) => item.readAt === null && (calendarEnabled || item.kind !== "event-reminder")).map((item) => item.id);
   const histories: HistoryEntry[] = [...documents.entries];
   for (const item of items) {
     if (item.kind === "event-reminder") {
+      if (!calendarEnabled) continue;
       histories.push({ kind: "activity", category: "events", item, thread: [item], id: item.id, at: item.at, title: item.title, location: `Event · ${eventTime(item.target.scheduledFor)}`, label: "Event reminder", preview: item.preview });
       continue;
     }
@@ -394,7 +400,7 @@ export function ActivityInbox({ active, selectedId, items, loading, error, busy,
     setActionError("");
     onRefresh();
     documents.refresh();
-    void calendar.refresh();
+    if (calendarEnabled) void calendar.refresh();
   };
 
   return (
@@ -409,11 +415,11 @@ export function ActivityInbox({ active, selectedId, items, loading, error, busy,
         </div>
         <input type="search" aria-label="Search activity" placeholder="Search activity" value={query} onChange={(event) => setQuery(event.target.value)} className={`${inputClass} mt-2 min-h-8 rounded-lg px-2 py-1.5 text-xs`} />
         <div role="group" aria-label="Filter activity" className="mt-1.5 flex flex-wrap gap-0.5">
-          {FILTERS.map(({ id, label }) => <button key={id} type="button" aria-pressed={filter === id} aria-controls={feedId} onClick={() => setFilter(id)} className={`min-h-8 rounded-md px-1.5 text-[11px] ${FOCUS} ${filter === id ? "bg-white/8 font-semibold text-snow" : "text-mist hover:bg-white/4 hover:text-snow"}`}>{label}</button>)}
+          {filters.map(({ id, label }) => <button key={id} type="button" aria-pressed={filter === id} aria-controls={feedId} onClick={() => setFilter(id)} className={`min-h-8 rounded-md px-1.5 text-[11px] ${FOCUS} ${filter === id ? "bg-white/8 font-semibold text-snow" : "text-mist hover:bg-white/4 hover:text-snow"}`}>{label}</button>)}
         </div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <EventSections calendar={calendar} coworkers={coworkers} selectedId={selectedId} onOpenEvent={onOpenEvent} onOpenCalendar={onOpenCalendar} onNewEvent={onNewEvent} />
+        {calendarEnabled ? <EventSections calendar={calendar} coworkers={coworkers} selectedId={selectedId} onOpenEvent={onOpenEvent} onOpenCalendar={onOpenCalendar} onNewEvent={onNewEvent} /> : null}
         <div id={feedId} className="px-2 pb-3">
           <div className="flex items-center justify-between gap-1 py-1">
             <h2 className="px-1 text-[11px] font-medium text-mist">Recent activity</h2>

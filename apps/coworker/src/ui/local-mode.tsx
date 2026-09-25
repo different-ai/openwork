@@ -6,14 +6,12 @@ import { LocalProviders } from "@/ui/local-providers";
 type LocalModeProps = {
   runtime: RuntimeInfo;
   session: DenSession | null;
-  onContinue: (choice?: { modelId: string; providerId?: string }) => void;
+  onContinue: () => void;
   onBack: () => void;
 } & ({ replay: true } | {
   replay?: false;
   onConnectAccount: () => void;
   onRuntimeChanged: () => Promise<void>;
-  onProviderConnected?: (providerId: string) => void;
-  onModelsChanged?: (providerId?: string) => void;
 });
 
 export function LocalModeScreen(props: LocalModeProps) {
@@ -50,10 +48,6 @@ export function LocalModeScreen(props: LocalModeProps) {
               session={session}
               onConnectAccount={props.onConnectAccount}
               onRuntimeChanged={props.onRuntimeChanged}
-              onProviderConnected={props.onProviderConnected}
-              onModelsChanged={props.onModelsChanged}
-              onStartModel={(modelId, providerId) => onContinue({ modelId, providerId })}
-              chooseLabel="Start with this"
             />}
           </div>
         </section>
@@ -61,7 +55,7 @@ export function LocalModeScreen(props: LocalModeProps) {
 
       <footer className="window-no-drag flex shrink-0 items-center justify-between gap-4 border-t border-line/60 px-6 py-4 md:px-8">
         <span className="text-[11px] text-mist">{props.replay ? "Your team and conversations are right where you left them." : "You can change all of this later under OpenWork › AI models."}</span>
-        <Button variant="primary" onClick={() => onContinue()} data-testid="local-mode-continue">{props.replay ? "Back to my team" : "Continue"}</Button>
+        <Button variant="primary" onClick={onContinue} data-testid="local-mode-continue">{props.replay ? "Back to my team" : "Continue"}</Button>
       </footer>
     </div>
   );

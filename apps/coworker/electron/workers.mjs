@@ -104,7 +104,7 @@ export function resolveWorkerModel(coworker, purpose, providers, snapshot = null
     roleVariant = automatic?.variant ?? "";
   }
   const separator = id.indexOf("/");
-  if (separator <= 0 || separator === id.length - 1) throw new Error("Choose a model in Coworker settings before starting a Worker. No default or paid fallback was selected.");
+  if (separator <= 0 || separator === id.length - 1) throw new Error("Choose a model in Customize › Advanced before starting a Worker. No default or paid fallback was selected.");
   const providerId = id.slice(0, separator);
   const modelId = id.slice(separator + 1);
   const model = providers.find((provider) => provider.id === providerId)?.models?.[modelId];

@@ -48,7 +48,8 @@ export function useCalendarData(
     let again = false;
     let previous = empty();
     setData(previous);
-    setLoading(true);
+    // Off (Calendar turned off, or no AI service yet) means empty and settled, never loading.
+    setLoading(enabled);
     if (!enabled) {
       refreshRef.current = async () => {};
       return;

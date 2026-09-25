@@ -48,7 +48,7 @@ export function panelViewTooltip(view: PanelView, coworkerName: string): string 
     case "memory":
       return `Memory — what ${coworkerName} knows and remembers`;
     case "settings":
-      return `Coworker settings — look, role, AI model, apps & tools, retire`;
+      return `Coworker settings — customize ${coworkerName}, open its folder, or retire it`;
   }
 }
 

@@ -23,8 +23,9 @@ import { globalOpencodeConfigDir, openworkConfigDir } from "@openwork/paths";
 import { createHeadlessThreadClientV2 as createHeadlessThreadClient, createNativeV2Client, createNativeV2Id, nativeCatalogProviders, toTranscript } from "@openwork/headless-threads/v2";
 import { configureNativePluginBundles, verifyNativePluginBundles } from "./native-plugin.mjs";
 import { nativeTurnAgent, coworkerAgent, NATIVE_COORDINATOR_AGENT } from "./native-turns.mjs";
-import { assertTeamCompatibleHomes, teamWorkspaceDirectory, teamWorkspaceId, updateTeamWorkspaceConfig } from "./team-workspace.mjs";
+import { assertTeamCompatibleHomes, teamWorkspaceDirectory, teamWorkspaceId, updateTeamWorkspaceConfig, writeTeamFeatures } from "./team-workspace.mjs";
 import { createLinkPreviews } from "./link-preview.mjs";
+import { DEFAULT_FEATURES } from "../src/lib/features.ts";
 import { assertOwnedNativeTool, createTeamSessionRegistry, resolveNativeFilesystemScope } from "./team-sessions.mjs";
 import { awaitNativePluginActivation, prepareNativeTurnRoles } from "./turn-roles-plugin.mjs";
 import { dispatchNativeTurn, nativeTurnReceipt, waitForNativeTurn, verifyNativeTurnSkills } from "./native-recovery.mjs";
@@ -1498,9 +1499,12 @@ async function installNativeCoworkerPlugins(coworker, server) {
     if (coworker.slug && !coworkers.some((current) => current.slug === coworker.slug && current.createdAt === coworker.createdAt)) throw new Error("This coworker was replaced before its tools were prepared.");
     const context = { mode: "team", url: server.url.replace(/\/mcp$/, "/context"), token: coworkerToolToken(".team") };
     const configured = await assertTeamCompatibleHomes(coworkers);
-    const revision = JSON.stringify([configured.map(({ slug, createdAt, name, nativePermissions }) => ({ slug, createdAt, name, nativePermissions })), context]);
+    // The optional features shape every coworker's contract and which tools are off.
+    const { features } = await readSettings(settingsPath);
+    const revision = JSON.stringify([configured.map(({ slug, createdAt, name, nativePermissions }) => ({ slug, createdAt, name, nativePermissions })), context, features]);
     if (installedTeamRevision === revision) return;
-    await updateTeamWorkspaceConfig(coworkersDir, coworkers);
+    await updateTeamWorkspaceConfig(coworkersDir, coworkers, features);
+    await writeTeamFeatures(coworkersDir, features);
     await installCollaborationPlugin(team, context);
     await installComputerPlugin(team);
     await installBrowserPlugin(team);
@@ -1825,6 +1829,9 @@ async function syncWorkerNote(slug, worker, finding = null) {
 async function spawnWorker(slug, input, spawnedBy) {
   if (input.control !== undefined) {
     workerControlRequest(input.control);
+    if (input.control === "computer" && !(await readSettings(settingsPath)).features.computerUse) {
+      throw new Error("Computer use is off in this app. The person can turn it on in Settings, Features.");
+    }
     await computerDiscussion(slug, input.spawnedFromThreadId);
     if (input.purpose === "thinking" || input.lifespan?.kind === "open") throw new Error("Control needs a bounded delivery Worker.");
   }
@@ -2220,7 +2227,9 @@ async function recoverInterruptedWorkers() {
 }
 
 async function runDueLocalResponsibilities() {
-  await events.tick().catch((error) => console.warn("[open-coworker] Event scheduling could not advance:", error.message));
+  // Calendar drives every automation: while it is off, Events and scheduled assignments do not run.
+  const { features } = await readSettings(settingsPath).catch(() => ({ features: DEFAULT_FEATURES }));
+  if (features.calendar) await events.tick().catch((error) => console.warn("[open-coworker] Event scheduling could not advance:", error.message));
   const now = Date.now();
   await recoverInterruptedWorkers().catch((error) => {
     console.warn("[open-coworker] Worker recovery failed", error);
@@ -2235,14 +2244,14 @@ async function runDueLocalResponsibilities() {
       for (const item of items) {
         const key = `${coworker.slug}:${item.id}`;
         const persistedQueue = item.runs.find((run) => run.status === "queued");
-        if (persistedQueue && !activeLocalRuns.has(key) && !isQueued(key)) {
+        if (features.calendar && persistedQueue && !activeLocalRuns.has(key) && !isQueued(key)) {
           queuedLocalRuns.push(queuedResponsibilityRun(coworker.slug, item.id, persistedQueue.id));
         }
       }
       return items;
     }).catch(() => []);
     for (const responsibility of responsibilities) {
-      if (responsibility.state !== "active" || !responsibility.nextDueAt || responsibility.nextDueAt > now) continue;
+      if (!features.calendar || responsibility.state !== "active" || !responsibility.nextDueAt || responsibility.nextDueAt > now) continue;
       const trigger = now - responsibility.nextDueAt > 30_000 ? "recovery" : "scheduled";
       await startLocalResponsibilityRun(coworker.slug, responsibility.id, trigger);
     }
@@ -3387,9 +3396,15 @@ const commands = {
     return (transport?.models ?? []).map(({ id, label, cost }) => ({ id, label, cost }));
   },
   "settings.update": async (patch) => {
+    const previous = await readSettings(settingsPath);
     const next = await updateSettings(settingsPath, patch);
     progressSummaries.configure(next);
     conversationMemory.configure(next);
+    if (JSON.stringify(previous.features) !== JSON.stringify(next.features)) {
+      // Rewrite every coworker's contract and denied tools now; the next turn prepares against them.
+      await installNativeCoworkerPlugins(teamWorkspace(), await ensureToolsServer());
+      invalidateWorkspaceReadiness();
+    }
     if (patch?.maxParallelLocalRuns !== undefined) void drainLocalRunQueue();
     return next;
   },

@@ -17,7 +17,6 @@ import {
   type ProgressModelOption,
 } from "@/lib/threads";
 import { PROGRESS_LIMITS } from "@/lib/progress-config";
-import { carryVariant, clearAutoPicked } from "@/lib/model-choice";
 import { effortStopLabel } from "@/lib/effort";
 import { usesAppConversationDefault } from "@/lib/model-defaults";
 import { AppModelDefaults } from "@/ui/app-model-defaults";
@@ -27,11 +26,14 @@ import { Button, ErrorNote, HelpTip, StatusDot } from "@/ui/kit";
 import { LocalProviders } from "@/ui/local-providers";
 import { ModelsMembershipCard } from "@/ui/models-membership";
 import { FreshStartSettings } from "@/ui/fresh-start-settings";
+import { FEATURES, type FeatureId } from "@/lib/features";
+import { setFeature, useFeatures } from "@/ui/use-features";
 
-export type SettingsSection = "general" | "model-defaults" | "account" | "models" | "engine" | "fresh-start";
+export type SettingsSection = "general" | "features" | "model-defaults" | "account" | "models" | "engine" | "fresh-start";
 
 const SECTIONS: Array<{ id: SettingsSection; label: string; detail: string }> = [
   { id: "general", label: "My coworkers", detail: "Personal choices for each coworker" },
+  { id: "features", label: "Features", detail: "Turn optional features on or off" },
   { id: "model-defaults", label: "Shared AI models", detail: "Models used by default across the team" },
   { id: "account", label: "Account", detail: "OpenWork account and organization" },
   { id: "models", label: "Available models", detail: "AI models your coworkers can choose" },
@@ -101,6 +103,53 @@ function SettingsRow({ label, value, hint, tone, action }: { label: string; valu
   );
 }
 
+/**
+ * Optional features, each one switch. A new person starts with all of them
+ * off; turning one on brings in its interface, what coworkers know about it,
+ * and any automation it drives.
+ */
+function FeaturesSettings() {
+  const features = useFeatures();
+  const [saving, setSaving] = useState<FeatureId | null>(null);
+  const [error, setError] = useState("");
+  async function toggle(id: FeatureId, enabled: boolean) {
+    setSaving(id);
+    setError("");
+    try { await setFeature(id, enabled); }
+    catch { setError("That change could not be saved. Nothing else changed."); }
+    finally { setSaving(null); }
+  }
+  return (
+    <>
+      <div>
+        <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">Features</h2>
+        <p className="mt-1 max-w-2xl text-sm text-mist">Open Coworker starts simple. Turn on what you need; turning something off keeps its data for later.</p>
+      </div>
+      <SettingsCard testId="features-card">
+        {FEATURES.map((feature) => (
+          <div key={feature.id} className="flex items-start gap-4 border-t border-line px-4 py-3.5 first:border-t-0" data-testid={`feature-${feature.id}`}>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-snow">{feature.label}</span>
+              <span className="mt-0.5 block text-xs leading-relaxed text-mist">{feature.detail}</span>
+            </span>
+            <FeatureSwitch label={feature.label} checked={features[feature.id]} disabled={saving !== null} onChange={(enabled) => void toggle(feature.id, enabled)} />
+          </div>
+        ))}
+      </SettingsCard>
+      {error ? <ErrorNote>{error}</ErrorNote> : null}
+    </>
+  );
+}
+
+function FeatureSwitch({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <button type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} onClick={() => onChange(!checked)}
+      className={`relative mt-0.5 inline-flex h-6 w-10 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/60 disabled:opacity-60 ${checked ? "bg-spark" : "bg-white/12"}`}>
+      <span aria-hidden="true" className={`inline-block size-5 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+    </button>
+  );
+}
+
 function SettingsCard({ children, testId }: { children: ReactNode; testId?: string }) {
   return <section className="overflow-hidden rounded-2xl border border-line bg-panel/45" data-testid={testId}>{children}</section>;
 }
@@ -157,15 +206,6 @@ export function OpenWorkSettings({
   useEffect(() => {
     if (active && session && section === "account") void onSyncTemplates();
   }, [active, session, section, onSyncTemplates]);
-  async function chooseModelFor(coworker: CoworkerSummary, modelId: string) {
-    setError("");
-    try {
-      clearAutoPicked(coworker.slug);
-      onCoworkerChanged?.(await coworkerBridge.coworkers.update(coworker.slug, { model: modelId, modelVariant: carryVariant(coworker.modelVariant, catalog.models.find((model) => model.id === modelId)), modelChosenBy: "person" }));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  }
   const [restarting, setRestarting] = useState(false);
   async function restartRuntime() {
     setRestarting(true);
@@ -327,6 +367,7 @@ export function OpenWorkSettings({
                 {SECTIONS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
               </select>
             </label>
+            {section === "features" ? <FeaturesSettings /> : null}
             {section === "fresh-start" ? <FreshStartSettings onReplay={onReplayOnboarding} onFactoryReset={onFactoryReset} /> : null}
             {section === "model-defaults" ? <AppModelDefaults active={active} runtime={runtime} session={session} catalog={catalog} catalogLoaded={catalogLoaded} catalogLoading={refreshing} onRefreshCatalog={refreshConfiguration} onOpenModels={() => setSection("models")} /> : null}
             {section === "general" ? (
@@ -496,8 +537,6 @@ export function OpenWorkSettings({
                     onConnectAccount={onConnect}
                     onModelsChanged={() => void refreshConfiguration()}
                     onRuntimeChanged={onRefreshRuntime}
-                    onStartModel={selectedCoworker ? (modelId) => void chooseModelFor(selectedCoworker, modelId) : undefined}
-                    chooseLabel={selectedCoworker ? `Use for ${selectedCoworker.name}` : undefined}
                   />
                 </div>
               </>

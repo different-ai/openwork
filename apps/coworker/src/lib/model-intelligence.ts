@@ -207,7 +207,7 @@ function choose(catalog: { models: EngineModelOption[] }, lane: ModelLane, optio
       || Number(reasoning(b) === true) - Number(reasoning(a) === true) || a.id.localeCompare(b.id))[0];
   if (!anchor) {
     return decision(null, options.standard === undefined
-      ? "No model is set and none is recommended yet. Sign in to OpenWork or connect an AI provider, or choose a model in Coworker settings."
+      ? "No model is set and none is recommended yet. Sign in to OpenWork or connect an AI provider, or choose a model in Customize › Advanced."
       : "The standard model is unavailable; no implicit replacement was selected.");
   }
   if (fallback && (preferences.avoided.includes(anchor.id) || !costsNoMoreThan(anchor, anchor))) return decision(null, "The original standard is avoided or lacks both known token prices; no fallback was selected.");

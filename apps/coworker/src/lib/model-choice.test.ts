@@ -13,7 +13,6 @@ import {
   previewAutomaticChoice,
   resolveDiscussionModel,
   resolveModelPreview,
-  resolveOnboardingModelDefaults,
   describeModelPreview,
   setStartingModel,
   takeStartingModel,
@@ -311,12 +310,10 @@ test("connected role preferences preserve Gateway boundaries, prices and exact c
   const luna = catalog.models.find((model) => model.modelId === "gwm_luna");
   assert.ok(luna?.intelligence);
   const purposes: ModelPurpose[] = ["conversation", "thinking", "delivery", "facilitator"];
-  const onboarding = resolveOnboardingModelDefaults(catalog);
   for (const purpose of purposes) {
     assert.equal(preferredRoleModel(catalog, purpose)?.id, luna.id);
     assert.equal(chooseAutomaticRoleModel(catalog, purpose).model?.id, luna.id);
     assert.equal(chooseAutomaticRoleModel(catalog, purpose).variant, undefined, "no automatic role forces a fixed effort");
-    assert.deepEqual(onboarding.defaults[purpose], { model: luna.id, modelVariant: "" });
   }
   for (const query of ["", "  GPT luna  ", "LUNA_gPt", "gpt5.6-luna", "OW/OpenAI GPT Luna", "ipr_fixture/gwm_luna"]) assert.equal(matchesModelSearch(luna, query), true, query);
   assert.equal(matchesModelSearch(luna, "gpt astra"), false, "every query token must match");
@@ -387,43 +384,6 @@ test("connected role preferences preserve Gateway boundaries, prices and exact c
     assert.equal(preview.variant, variants.includes("high") ? "high" : "", "only an advertised effort or the model default is chosen");
   }
   assert.equal(JSON.stringify({ owner, defaults: DEFAULT_MODEL_DEFAULTS }), beforePreview, "previews never persist Automatic as a fixed choice");
-});
-
-test("onboarding role recommendations stay provider-scoped and preserve unavailable explicit choices", () => {
-  const models = catalog();
-  for (const model of models.models) model.variants = ["low", "high"];
-  const saved = normalizeModelDefaults({
-    conversation: { model: "gone/exact", modelVariant: "high" }, thinking: { modelVariant: "high" },
-    delivery: { model: "anthropic/claude-haiku-4-5", modelVariant: "missing" },
-  });
-  const before = JSON.stringify({ models, saved, defaults: DEFAULT_MODEL_DEFAULTS });
-  const recommended = resolveOnboardingModelDefaults(models, saved, "openai");
-  for (const purpose of ["conversation", "delivery"] satisfies ModelPurpose[]) {
-    assert.deepEqual(recommended.defaults[purpose], saved[purpose]);
-    assert.equal(recommended.previews[purpose].state, "unavailable", "unavailable exact models and efforts remain visible");
-  }
-  assert.deepEqual(recommended.defaults.thinking, { model: "openai/gpt-5", modelVariant: "high" });
-  assert.equal(recommended.previews.thinking.state, "ready");
-  assert.deepEqual(recommended.defaults.facilitator, { model: "openai/gpt-5-mini", modelVariant: "" });
-  const singleProvider = resolveOnboardingModelDefaults(models, DEFAULT_MODEL_DEFAULTS, "anthropic");
-  for (const preview of Object.values(singleProvider.previews)) {
-    assert.ok(preview.state === "ready");
-    assert.equal(preview.model.providerId, "anthropic", "all four roles use the just-connected provider, not another provider's default");
-    assert.equal(preview.model.toolCall, true);
-    assert.ok(preview.model.variants.includes(preview.variant));
-  }
-  assert.deepEqual(resolveOnboardingModelDefaults(models, singleProvider.defaults, "openai").defaults, singleProvider.defaults, "later connections cannot overwrite reviewed role selections");
-  const unsupported = normalizeModelDefaults({ facilitator: { modelVariant: "missing" } });
-  const refusedEffort = resolveOnboardingModelDefaults(models, unsupported, "openai");
-  assert.deepEqual(refusedEffort.defaults.facilitator, unsupported.facilitator);
-  assert.equal(refusedEffort.previews.facilitator.state, "unavailable");
-  for (const providerId of [undefined, "disconnected"]) {
-    const unresolved = resolveOnboardingModelDefaults(models, DEFAULT_MODEL_DEFAULTS, providerId);
-    assert.deepEqual(unresolved.defaults, DEFAULT_MODEL_DEFAULTS, "an ambiguous or absent connection must not become a saved model");
-    for (const preview of Object.values(unresolved.previews)) assert.equal(preview.state, "unavailable");
-  }
-  assert.deepEqual(resolveOnboardingModelDefaults({ models: [] }, saved, "openai").defaults, saved);
-  assert.equal(JSON.stringify({ models, saved, defaults: DEFAULT_MODEL_DEFAULTS }), before, "recommendations do not mutate models or saved defaults");
 });
 
 test("fixed discussion models ignore automatic preferences and never replace an exact missing ID; empty records inherit", () => {

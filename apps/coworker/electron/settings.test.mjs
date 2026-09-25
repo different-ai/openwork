@@ -20,6 +20,7 @@ import {
   scheduleGuardrails,
   updateSettings,
 } from "./settings.mjs";
+import { DEFAULT_FEATURES } from "../src/lib/features.ts";
 
 const roots = [];
 async function settingsFile() {
@@ -41,6 +42,7 @@ const defaults = {
   progressSummaryModelId: "",
   automaticMemoryEnabled: true,
   memoryModelId: "",
+  features: DEFAULT_FEATURES,
 };
 
 test("the parallel-run limit has a sensible default and stays within 1–8", () => {
@@ -289,4 +291,15 @@ test("main ownership survives settings and navigation, rejects recovered work an
   await manager.tick();
   assert.equal(manager.noteFor(activity), undefined);
   manager.stop();
+});
+
+test("optional features start off, and turning one on keeps the others as they were", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "coworker-features-"));
+  roots.push(root);
+  const file = path.join(root, "coworker-settings.json");
+  assert.deepEqual((await readSettings(file)).features, DEFAULT_FEATURES);
+  assert.deepEqual((await updateSettings(file, { features: { calendar: true } })).features, { ...DEFAULT_FEATURES, calendar: true });
+  const next = await updateSettings(file, { features: { computerUse: true }, maxRunsPerDay: 2 });
+  assert.deepEqual(next.features, { ...DEFAULT_FEATURES, calendar: true, computerUse: true }, "a partial update keeps the other features");
+  assert.deepEqual((await updateSettings(file, { features: { calendar: "yes" } })).features.calendar, true, "only a boolean changes a feature");
 });

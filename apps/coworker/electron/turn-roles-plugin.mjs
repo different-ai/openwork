@@ -122,6 +122,22 @@ export default Plugin.define({ id: "coworker.turn-roles", effect: (ctx) => Effec
     try { return JSON.parse(await readFile(path.join(ctx.location.directory, ".opencode", "coworker-context.json"), "utf8")).mode === "team"; }
     catch (error) { if (error.code === "ENOENT") return false; throw error; }
   }, catch: () => new Tool.Error({ message: "The native coworker connection is unavailable." }) }).pipe(Effect.orDie);
+  // Tools of an app feature that is turned off (Calendar, Computer use), listed by the
+  // app beside the team config: never offered to the model, and refused if called.
+  let offText = "";
+  let offList = [];
+  const offTools = teamMode ? Effect.promise(async () => {
+    let text = "";
+    try { text = await readFile(path.join(ctx.location.directory, ".opencode", "coworker-features.json"), "utf8"); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    if (text !== offText) {
+      const listed = text ? JSON.parse(text).off : [];
+      offList = Array.isArray(listed) ? listed.filter((pattern) => typeof pattern === "string" && pattern) : [];
+      offText = text;
+    }
+    return offList;
+  }) : Effect.succeed([]);
+  const isOff = (list, name) => list.some((pattern) => pattern.endsWith("*") ? name.startsWith(pattern.slice(0, -1)) : name === pattern);
   let homePolicyText = teamMode ? yield* Effect.promise(() => readFile(path.join(ctx.location.directory, "opencode.json"), "utf8")) : "";
   let homePolicy = teamMode ? JSON.parse(homePolicyText) : {};
   const homePolicyCounts = new Map(Object.entries(homePolicy.agents ?? {}).map(([id, agent]) => [id, agent.permissions?.length ?? 0]));
@@ -184,10 +200,12 @@ export default Plugin.define({ id: "coworker.turn-roles", effect: (ctx) => Effec
       });
     }
   });
-  yield* ctx.session.hook("context", (event) => Effect.sync(() => {
+  yield* ctx.session.hook("context", (event) => Effect.gen(function* () {
     const blocked = denied.get(event.agent);
     if (blocked && !prepared) throw new Error("Native turn role inheritance is not ready.");
     if (blocked) for (const name of Object.keys(event.tools)) if (blocked.has(name)) delete event.tools[name];
+    const off = yield* offTools;
+    if (off.length) for (const name of Object.keys(event.tools)) if (isOff(off, name)) delete event.tools[name];
     // With OpenWork Connect on this turn, web search goes through its capabilities.
     // Removing the native tool also removes its provider-consent prompt.
     if (event.tools["openwork-cloud_search_capabilities"] && event.tools.websearch) {
@@ -197,7 +215,10 @@ export default Plugin.define({ id: "coworker.turn-roles", effect: (ctx) => Effec
     if ((event.agent === "build" || event.agent.startsWith("coworker-") || blocked) && event.tools.execute) event.system.push({ type: "text", text: "Use native execute for eligible multi-step tool reads: combine independent reads, filter the results, and return a concise answer. Discover exact available signatures from the native tool catalog; do not guess names or copy an inventory. Keep Coworker's mutations, rich receipts, delegation, and browser/computer controls on their direct tools. Code Mode does not grant permissions or bypass this turn's role. Do not retry an uncertain action." });
   }));
   yield* ctx.tool.hook("execute.before", (event) => checkPolicy.pipe(Effect.andThen(() => denied.has(event.agent) && (!prepared || denied.get(event.agent).has(event.tool))
-    ? Effect.fail(new Tool.Error({ message: "This native turn role cannot use " + event.tool + "." })) : Effect.void)));
+    ? Effect.fail(new Tool.Error({ message: "This native turn role cannot use " + event.tool + "." })) : Effect.void),
+    Effect.andThen(() => offTools),
+    Effect.andThen((off) => isOff(off, event.tool)
+      ? Effect.fail(new Tool.Error({ message: "This is turned off in Open Coworker. The person can turn it on in Settings, Features." })) : Effect.void)));
 }) });
 `;
 

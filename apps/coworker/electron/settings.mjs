@@ -5,6 +5,7 @@
  */
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { normalizeModelDefaults } from "../src/lib/model-defaults.ts";
+import { normalizeFeatures } from "../src/lib/features.ts";
 
 export const SETTINGS_FILE = "coworker-settings.json";
 
@@ -53,6 +54,8 @@ export function normalizeSettings(value) {
     progressSummaryModelId: typeof source.progressSummaryModelId === "string" && source.progressSummaryModelId.length <= 256 && /^[\x21-\x7e]+\/[\x21-\x7e]+$/.test(source.progressSummaryModelId) ? source.progressSummaryModelId : "",
     automaticMemoryEnabled: source.automaticMemoryEnabled !== false,
     memoryModelId: typeof source.memoryModelId === "string" && source.memoryModelId.length <= 256 && /^[\x21-\x7e]+\/[\x21-\x7e]+$/.test(source.memoryModelId) ? source.memoryModelId : "",
+    // Optional features are off until the person turns them on.
+    features: normalizeFeatures(source.features),
   };
 }
 
@@ -72,7 +75,7 @@ export async function readSettings(file) {
 
 export async function updateSettings(file, patch) {
   const current = await readSettings(file);
-  const next = normalizeSettings({ ...current, ...(patch && typeof patch === "object" ? patch : {}), modelDefaults: normalizeModelDefaults(patch?.modelDefaults, current.modelDefaults) });
+  const next = normalizeSettings({ ...current, ...(patch && typeof patch === "object" ? patch : {}), modelDefaults: normalizeModelDefaults(patch?.modelDefaults, current.modelDefaults), features: normalizeFeatures(patch?.features, current.features) });
   const temporary = `${file}.${process.pid}.tmp`;
   await writeFile(temporary, `${JSON.stringify({ version: 1, ...next }, null, 2)}\n`, "utf8");
   await rename(temporary, file);

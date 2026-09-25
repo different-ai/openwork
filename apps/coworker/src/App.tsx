@@ -42,14 +42,15 @@ const RAIL_BOUNDS: PanelBounds = { min: 220, max: 380, collapsedWidth: 88, colla
 import { OnboardingWelcome } from "@/ui/onboarding";
 import { OnboardingIntents } from "@/ui/onboarding-intents";
 import { OnboardingTeam } from "@/ui/onboarding-team";
-import { chooseOnboardingModel, completeOnboardingDraft, connectOnboardingProvider, emptyOnboardingDraft, loadOnboardingDraft, onboardingDraftForContext, onboardingStepFor, resumeOnboardingDraft, saveOnboardingDraft, toggleIntent, type OnboardingDraft, type OnboardingStep } from "@/lib/onboarding-team";
-import { OnboardingModelDefaults } from "@/ui/app-model-defaults";
+import { completeOnboardingDraft, emptyOnboardingDraft, loadOnboardingDraft, onboardingDraftForContext, onboardingStepFor, resumeOnboardingDraft, saveOnboardingDraft, toggleIntent, type OnboardingDraft, type OnboardingStep } from "@/lib/onboarding-team";
 import { LocalModeScreen } from "@/ui/local-mode";
 import type { TeamRole } from "@/lib/bridge";
 import { AppLoader, CoworkerMark } from "@/ui/brand";
 import type { SettingsSection } from "@/ui/openwork-settings";
 import { VoiceContext } from "@/ui/use-voice";
 import { useActivityInbox } from "@/ui/use-activity-inbox";
+import { refreshFeatures, useFeatures } from "@/ui/use-features";
+import { CustomizeCoworker, type CustomizeFocus } from "@/ui/customize-coworker";
 import type { ActivityDocumentTarget } from "@/ui/activity-inbox";
 
 const ActivityInbox = lazy(() => import("@/ui/activity-inbox").then((module) => ({ default: module.ActivityInbox })));
@@ -203,7 +204,8 @@ export default function App() {
   }, []);
   const [calendarRequest, setCalendarRequest] = useState<CalendarRequest | null>(null);
   const [groupDocumentRequest, setGroupDocumentRequest] = useState<{ id: number; groupId: string; documentId: string } | null>(null);
-  const calendar = useCalendarData(coworkers, session, Boolean(runtime));
+  const features = useFeatures();
+  const calendar = useCalendarData(coworkers, session, Boolean(runtime) && features.calendar);
   const [calendarPreferences, setCalendarPreferences] = useCalendarPreferences();
 
   const [creatingGroup, setCreatingGroup] = useState(false);
@@ -219,6 +221,8 @@ export default function App() {
   /** A request made of one coworker's view from elsewhere: a group's "Choose AI model" or an assignment it created. */
   const [homeRequest, setHomeRequest] = useState<(CoworkerHomeRequest & { slug: string; createdAt?: string }) | null>(null);
   const [groupDetailsOpen, setGroupDetailsOpen] = useState(false);
+  /** The coworker whose Customize page is open, over the team view, which stays as it was underneath. */
+  const [customizing, setCustomizing] = useState<{ slug: string; createdAt: string; focus?: CustomizeFocus; id: number } | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [onboardingReady, setOnboardingReady] = useState(false);
   const [onboardingDraft, setOnboardingDraft] = useState<OnboardingDraft>(() => emptyOnboardingDraft());
@@ -316,7 +320,8 @@ export default function App() {
     const observation = runtimeObservation.current;
     const bootSession = sessionRef.current;
     try {
-      const list = await coworkerBridge.coworkers.list();
+      // Optional features are read before the first screen, so nothing turned on appears late.
+      const [list] = await Promise.all([coworkerBridge.coworkers.list(), refreshFeatures()]);
       const info = await coworkerBridge.runtimeInfo();
       // A fresh window runs no group turn, so any still recorded as running was cut off: settle it first.
       await coworkerBridge.groups.recoverInterrupted().catch(() => []);
@@ -324,10 +329,8 @@ export default function App() {
       if (request !== bootGeneration.current || sessionRef.current !== bootSession) return;
       const currentSession = sessionRef.current;
       const restored = onboardingDraftForContext(currentSession && !currentSession.userEmail ? emptyOnboardingDraft() : loadOnboardingDraft(window.sessionStorage), onboardingContext(currentSession));
-      const settings = list.length === 0 && !restored.modelsReviewed && !onboardingStepFor(restored) ? await coworkerBridge.settings.get() : null;
-      if (request !== bootGeneration.current || sessionRef.current !== bootSession) return;
-      const resumed = resumeOnboardingDraft(restored, list.length > 0, settings?.modelDefaults);
-      const saved: OnboardingDraft = currentSession && list.length === 0 && !resumed.modelsReviewed && !onboardingStepFor(resumed) ? { ...resumed, step: "models" } : resumed;
+      const resumed = resumeOnboardingDraft(restored, list.length > 0);
+      const saved: OnboardingDraft = currentSession && list.length === 0 && !resumed.completed && !onboardingStepFor(resumed) ? { ...resumed, step: "intents" } : resumed;
       const step = onboardingStepFor(saved);
       if (observation === runtimeObservation.current) applyRuntime(info);
       setBots(list);
@@ -336,7 +339,7 @@ export default function App() {
         current && list.some((coworker) => coworker.slug === current) ? current : (list[0]?.slug ?? ""),
       );
       updateOnboardingDraft(saved);
-      setOnboardingReady(!step && (list.length > 0 || saved.modelsReviewed === true));
+      setOnboardingReady(!step && (list.length > 0 || saved.completed === true));
       setCreating(step === "create");
       setBootError("");
       setBootReady(true);
@@ -451,13 +454,12 @@ export default function App() {
     if (!first) return;
     setBots((current) => [...current, ...result.created.filter((item) => !current.some((known) => known.slug === item.slug))]);
     setSelectedSlug((current) => current || first.slug);
+    // Coworkers arrived (an import, or the team an organization assigned): the person meets
+    // them, unless they are in the middle of choosing a team of their own.
     const draft = onboardingDraftRef.current;
-    if (onboardingStepFor(draft) || coworkersRef.current.length === 0) {
-      if (!draft.modelsReviewed) {
-        updateOnboardingDraft({ ...onboardingDraftForContext(draft, onboardingContext(sessionRef.current)), step: "models" });
-        setOnboardingReady(false);
-      }
-    } else {
+    const choosingOwnTeam = Boolean(onboardingStepFor(draft)) && (draft.intents.length > 0 || draft.drafts.length > 0);
+    if (!choosingOwnTeam) {
+      if (onboardingStepFor(draft)) updateOnboardingDraft(completeOnboardingDraft(draft));
       setOnboardingReady(true);
       setCreating(false);
     }
@@ -547,7 +549,7 @@ export default function App() {
       const previous = onboardingDraftRef.current;
       const scoped = onboardingDraftForContext(next.userEmail ? previous : emptyOnboardingDraft(), onboardingContext(next));
       if (firstRun) {
-        updateOnboardingDraft({ ...scoped, providerId: undefined, step: "models", modelsReviewed: false });
+        updateOnboardingDraft({ ...scoped, step: "intents" });
         setOnboardingReady(false);
       } else updateOnboardingDraft(scoped);
       clearAccountPresentation();
@@ -914,10 +916,10 @@ export default function App() {
 
   // Opening a conversation reads it: its activity leaves the unread list, the way
   // opening a thread clears its badge in a messaging app. Only while the chat is on screen.
-  const openGroupId = groups.some((group) => group.id === selectedGroupId) ? selectedGroupId : "";
+  const openGroupId = groups.some((group) => group.id === selectedGroupId && (features.calendar || !group.eventId)) ? selectedGroupId : "";
   const readingSlug = openGroupId ? "" : selected?.slug ?? "";
   const readingCreatedAt = openGroupId ? "" : selected?.createdAt ?? "";
-  const chatOnScreen = mainContent === "chat" && !globalSettings && !factoryResetOpen && !replayOnboarding;
+  const chatOnScreen = mainContent === "chat" && !globalSettings && !factoryResetOpen && !replayOnboarding && !customizing;
   const unreadInOpenChat = inbox.items.filter((item) => item.readAt === null && item.kind !== "event-reminder" && (openGroupId
     ? item.target.kind === "group" && item.target.groupId === openGroupId
     : item.target.kind === "private" && item.slug === readingSlug && item.coworkerCreatedAt === readingCreatedAt)).map((item) => item.id).join(",");
@@ -965,31 +967,6 @@ export default function App() {
   if (coworkers.length === 0 && calendar.loading && !onboardingStep && !creating) return <AppLoader />;
 
   if (!creating && ((onboardingStep && onboardingStep !== "create") || (coworkers.length === 0 && calendar.events.length === 0 && !onboardingReady))) {
-    if (onboardingStep === "models") {
-      return (
-        <OnboardingModelDefaults
-          key={accountKey}
-          runtime={runtime}
-          session={session}
-          draft={onboardingDraft}
-          onChange={updateOnboardingDraft}
-          onBack={() => setOnboardingStep(onboardingDraft.providerId ? "local" : "welcome")}
-          onManageConnections={() => setOnboardingStep("local")}
-          onSyncProviders={syncProviders}
-          onRuntimeChanged={applyRuntime}
-          onContinue={(modelChoices) => {
-            const current = onboardingDraftRef.current;
-            if (current.step === "create") {
-              updateOnboardingDraft({ ...current, modelChoices, modelsReviewed: true, step: "create" });
-              setOnboardingReady(true);
-              setCreating(true);
-            } else if (current.drafts.length > 0 || current.intents.length > 0 || coworkersRef.current.length === 0) {
-              updateOnboardingDraft({ ...current, modelChoices, modelsReviewed: true, step: current.drafts.length ? "team" : "intents" });
-            } else finishOnboarding();
-          }}
-        />
-      );
-    }
     const teamCatalogNotice = teamCatalogError ? <div role="alert" className="window-no-drag flex shrink-0 items-center gap-3 px-6 py-3">
       <ErrorNote>{teamCatalogError}</ErrorNote>
       <Button variant="ghost" className="shrink-0 text-xs" onClick={() => setTeamCatalogReload((current) => current + 1)}>Retry loading roles</Button>
@@ -1026,7 +1003,7 @@ export default function App() {
               onToggle={(id) => updateOnboardingDraft((current) => ({ ...current, intents: toggleIntent(current.intents, id), drafts: [] }))}
               onContinue={() => void proposeTeam()}
               onOwn={addOwnCoworker}
-              onBack={() => setOnboardingStep("models")}
+              onBack={() => setOnboardingStep(session ? "welcome" : "local")}
             />
           </fieldset>
           {teamCatalogNotice}
@@ -1042,13 +1019,8 @@ export default function App() {
           session={session}
           onConnectAccount={() => setConnecting(true)}
           onRuntimeChanged={refreshRuntime}
-          onProviderConnected={(providerId) => updateOnboardingDraft((current) => connectOnboardingProvider(current, providerId))}
           onBack={() => setOnboardingStep("welcome")}
-          onContinue={(choice) => updateOnboardingDraft((current) => {
-            const scoped = connectOnboardingProvider(current, choice?.providerId);
-            const next = choice?.modelId ? chooseOnboardingModel(scoped, "conversation", { model: choice.modelId, modelVariant: scoped.modelChoices?.conversation?.modelVariant ?? "" }) : scoped;
-            return { ...next, step: "models" };
-          })}
+          onContinue={() => setOnboardingStep("intents")}
         />
       );
     }
@@ -1067,8 +1039,10 @@ export default function App() {
     );
   }
 
-  const liveGroups = groups.filter((group) => !group.archivedAt);
-  const selectedGroup = groups.find((group) => group.id === selectedGroupId) ?? null;
+  // With Calendar off, an Event's conversation is hidden along with the Event.
+  const shownGroup = (group: CoworkerGroupSummary) => features.calendar || !group.eventId;
+  const liveGroups = groups.filter((group) => !group.archivedAt && shownGroup(group));
+  const selectedGroup = groups.find((group) => group.id === selectedGroupId && shownGroup(group)) ?? null;
   const eventGroupIds = new Set(calendar.events.map((event) => event.groupId));
   const selectedEventTarget = selectedGroup ? groupEventTarget(selectedGroup, calendar.events, groupEventSource ?? undefined) : undefined;
   const selectedEvent = selectedEventTarget ? eventForTarget(calendar.events, calendar.eventRuns, selectedEventTarget) : undefined;
@@ -1295,6 +1269,13 @@ export default function App() {
     setSelectedActivityId(`document:coworker:${owner.slug}:${owner.createdAt}:${target.documentId}`);
   }
 
+  function openCustomize(slug: string, focus?: CustomizeFocus) {
+    const coworker = coworkersRef.current.find((member) => member.slug === slug);
+    if (!coworker) return;
+    navigationGeneration.current += 1;
+    setCustomizing({ slug, createdAt: coworker.createdAt, ...(focus ? { focus } : {}), id: nextRequestId() });
+  }
+
   function removeCoworkerFromList(slug: string) {
     const remaining = coworkers.filter((coworker) => coworker.slug !== slug);
     setBots(remaining);
@@ -1303,11 +1284,12 @@ export default function App() {
     }
   }
 
-  const workspaceActive = !globalSettings && !factoryResetOpen && !replayOnboarding;
+  const customizingCoworker = customizing ? coworkers.find((coworker) => coworker.slug === customizing.slug && coworker.createdAt === customizing.createdAt) ?? null : null;
+  const workspaceActive = !globalSettings && !factoryResetOpen && !replayOnboarding && !customizingCoworker;
   const settingsActive = Boolean(globalSettings) && !factoryResetOpen && !replayOnboarding;
   const activityVisible = mainContent === "activity";
   const contentContext = activityVisible ? activityContext : mainContent;
-  const calendarVisible = contentContext === "calendar" || (contentContext === "chat" && !selected && !selectedGroup);
+  const calendarVisible = features.calendar && (contentContext === "calendar" || (contentContext === "chat" && !selected && !selectedGroup));
   const chatActive = workspaceActive && !calendarVisible;
   const calendarReminder = inbox.items.find((item) => item.kind === "event-reminder" && item.id === calendarRequest?.reminderId);
 
@@ -1319,10 +1301,12 @@ export default function App() {
         data-testid="coworker-workspace"
         data-active={workspaceActive ? "true" : "false"}
       >
-        {creating || (!selected && calendar.events.length === 0) ? (
+        {creating || (!selected && (!features.calendar || calendar.events.length === 0)) ? (
           // Creation takes the whole window: the team list returns once the coworker exists.
           <div key="create" className="flex min-w-0 flex-1">
             <NewCoworker
+              runtime={runtime}
+              session={session}
               team={coworkers}
               onAskTeam={(slug, prompt) => { setCreating(false); visitCoworker(slug, prompt); }}
               onCancel={selected || coworkers.length > 0 || calendar.events.length > 0 ? () => setCreating(false) : null}
@@ -1354,7 +1338,7 @@ export default function App() {
               coworkers={coworkers}
               activityBySlug={visibleActivityBySlug}
               selectedSlug={activityVisible || selectedGroup ? "" : selectedSlug}
-              unreadActivity={inbox.items.filter((item) => item.readAt === null).length}
+              unreadActivity={inbox.items.filter((item) => item.readAt === null && (features.calendar || item.kind !== "event-reminder")).length}
               unreadMentions={inbox.items.filter((item) => item.readAt === null && item.kind === "mention").length}
               activityError={Boolean(inbox.error)}
               panel={rail}
@@ -1444,9 +1428,7 @@ export default function App() {
                   setSelectedGroupId("");
                 }}
                 onActivityLine={setGroupLine}
-                onChooseModel={(slug) => {
-                  if (visitCoworker(slug)) setHomeRequest({ id: nextRequestId(), slug, kind: "settings", section: "model" });
-                }}
+                onChooseModel={(slug) => openCustomize(slug, "model")}
                 onOpenAssignment={(slug, threadId) => {
                   if (visitCoworker(slug)) setHomeRequest({ id: nextRequestId(), slug, kind: "thread", threadId });
                 }}
@@ -1479,10 +1461,11 @@ export default function App() {
               canHandOff={allowSourceNavigation}
               onHandOff={(slug, prompt) => visitCoworker(slug, prompt)}
               onVisitCoworker={(slug) => visitCoworker(slug)}
+              onCustomize={(focus) => openCustomize(selected.slug, focus)}
             /> : null
             )}
             </div>
-            <div className={calendarVisible ? "flex min-h-0 min-w-0 flex-1" : "hidden"}>
+            {features.calendar ? <div className={calendarVisible ? "flex min-h-0 min-w-0 flex-1" : "hidden"}>
               <CalendarView active={workspaceActive && calendarVisible && !creatingGroup && !groupDetailsOpen} coworkers={coworkers} data={calendar} preferences={calendarPreferences} onPreferencesChange={setCalendarPreferences} request={calendarRequest}
                 onExitActivity={activityVisible ? () => navigate("calendar", true) : undefined}
                 activityReminder={calendarReminder ? { id: calendarReminder.id, read: calendarReminder.readAt !== null, busy: inbox.busy, onMarkRead: () => inbox.markRead([calendarReminder.id]) } : undefined}
@@ -1491,11 +1474,27 @@ export default function App() {
                 if (!visitCoworker(slug)) return;
                 setHomeRequest(threadId ? { id: nextRequestId(), slug, kind: "thread", threadId } : { id: nextRequestId(), slug, kind: "responsibilities" });
               }} />
-            </div>
+            </div> : null}
             </div>
           </div>
         )}
       </div>
+      {customizingCoworker && !globalSettings && !factoryResetOpen && !replayOnboarding ? (
+        <div className="absolute inset-0 flex" data-testid="customize-coworker-pane">
+          <CustomizeCoworker
+            key={`${customizingCoworker.slug}:${customizing?.id}`}
+            runtime={runtime}
+            session={session}
+            coworker={customizingCoworker}
+            focus={customizing?.focus}
+            onCoworkerChanged={updateCoworkerInList}
+            onSyncProviders={syncProviders}
+            onOpenAccount={() => openGlobalSettings("account")}
+            onOpenModelDefaults={() => openGlobalSettings("model-defaults")}
+            onDone={() => setCustomizing(null)}
+          />
+        </div>
+      ) : null}
       {globalSettingsMounted ? (
         <div
           className={settingsActive ? "absolute inset-0 flex" : "hidden"}

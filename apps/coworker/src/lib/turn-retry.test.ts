@@ -25,7 +25,7 @@ test("a model that cannot do the job, a refused account, a denied tool, or a sto
     'APIError: No endpoints found that support tool use. Try disabling "bash".',
     "This model does not support tool calling",
     'The saved model "missing/one" is not available: provider "missing" is not connected on this Mac.',
-    "No connected AI model can use tools. Connect an AI provider in OpenWork, or choose an AI model in Coworker settings.",
+    "No connected AI model can use tools. Connect an AI provider in OpenWork, or choose an AI model in Customize › Advanced.",
     "ProviderError: 401 Unauthorized",
     "403 Forbidden",
     "Invalid API key",

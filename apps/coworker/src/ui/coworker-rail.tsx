@@ -13,6 +13,7 @@ import { CalendarSidebar } from "@/ui/calendar-sidebar";
 import type { CalendarData } from "@/ui/calendar-data";
 import { calendarItems } from "@/lib/calendar";
 import type { CalendarPreferences, CalendarPreferencesChange } from "@/ui/calendar-preferences";
+import { useFeatures } from "@/ui/use-features";
 
 export type CoworkerMainContent = MainContent;
 
@@ -111,6 +112,9 @@ export function CoworkerRail({
   unreadMentions?: number;
   activityError?: boolean;
 }) {
+  // Without Calendar there are no events: no Chat/Calendar switch, no calendar shortcuts,
+  // and group chats need no filter because they are the only kind.
+  const { calendar: calendarEnabled } = useFeatures();
   const bySlug = new Map(coworkers.map((coworker) => [coworker.slug, coworker]));
   const membersOf = (group: CoworkerGroupSummary) => group.participantSlugs.map((slug) => bySlug.get(slug)).filter((member): member is CoworkerSummary => Boolean(member));
   const [query, setQuery] = useState("");
@@ -128,7 +132,8 @@ export function CoworkerRail({
     return { groups: true, events: true };
   });
   useEffect(() => { try { window.localStorage.setItem("coworker.rail.group-types.v1", JSON.stringify(groupTypes)); } catch { /* Filtering still works without storage. */ } }, [groupTypes]);
-  const visibleGroups = groups.filter((group) => !group.archivedAt && (group.eventId || eventGroupIds.has(group.id) ? groupTypes.events : groupTypes.groups) && (!query.trim() || group.name.toLowerCase().includes(query.trim().toLowerCase())));
+  const isEvent = (group: CoworkerGroupSummary) => Boolean(group.eventId || eventGroupIds.has(group.id));
+  const visibleGroups = groups.filter((group) => !group.archivedAt && (!calendarEnabled ? !isEvent(group) : isEvent(group) ? groupTypes.events : groupTypes.groups) && (!query.trim() || group.name.toLowerCase().includes(query.trim().toLowerCase())));
   const [peek, setPeek] = useState<{ slug: string; top: number } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [focusSearchOnExpand, setFocusSearchOnExpand] = useState(false);
@@ -144,7 +149,7 @@ export function CoworkerRail({
   const activityMode = mainContent === "activity";
   const collapsed = panel.collapsed && !activityMode;
   const width = activityMode ? Math.max(panel.bounds.min, panel.width) : panel.width;
-  const calendarMode = mainContent === "calendar";
+  const calendarMode = calendarEnabled && mainContent === "calendar";
 
   function closeGroupFilters(restoreFocus = false) {
     setShowGroupFilters(false);
@@ -229,7 +234,7 @@ export function CoworkerRail({
     <svg className="size-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7.5 16.5a2.5 2.5 0 0 0 5 0M5 8a5 5 0 0 1 10 0c0 4 1.75 4.5 1.75 6H3.25C3.25 12.5 5 12 5 8ZM10 1.5V3" /></svg>
     {unreadActivity > 0 ? <span aria-hidden="true" data-testid="activity-badge" className={`pointer-events-none absolute right-0 top-0 flex h-3.5 min-w-3.5 translate-x-1/4 -translate-y-1/4 items-center justify-center rounded-full px-[3px] text-[9px] font-semibold leading-none tabular-nums ring-2 ring-[var(--color-ink)] ${unreadMentions ? "bg-spark text-white" : "bg-white/20 text-snow"}`}>{unreadActivity > 9 ? "9+" : unreadActivity}</span> : activityError ? <span aria-hidden="true" className="absolute right-0 -top-1 text-[10px] text-amber">!</span> : null}
   </IconButton>;
-  const filterControl = <IconButton label="Filter group chats and events" tooltipSide="right" aria-haspopup="menu" aria-expanded={showGroupFilters} aria-controls={showGroupFilters ? filterMenuId : undefined} data-testid="group-filter-trigger" className={!groupTypes.groups || !groupTypes.events ? "text-spark" : ""} onClick={(event) => showGroupFilters ? closeGroupFilters(true) : openGroupFilters(event.currentTarget)} onKeyDown={(event) => { if (event.key === "ArrowDown") { event.preventDefault(); openGroupFilters(event.currentTarget); } }}>
+  const filterControl = !calendarEnabled ? null : <IconButton label="Filter group chats and events" tooltipSide="right" aria-haspopup="menu" aria-expanded={showGroupFilters} aria-controls={showGroupFilters ? filterMenuId : undefined} data-testid="group-filter-trigger" className={!groupTypes.groups || !groupTypes.events ? "text-spark" : ""} onClick={(event) => showGroupFilters ? closeGroupFilters(true) : openGroupFilters(event.currentTarget)} onKeyDown={(event) => { if (event.key === "ArrowDown") { event.preventDefault(); openGroupFilters(event.currentTarget); } }}>
     <svg className="size-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" aria-hidden="true"><path d="M2 3h12L9.5 8v4.25l-3 1V8L2 3Z" /></svg>
   </IconButton>;
 
@@ -245,7 +250,7 @@ export function CoworkerRail({
         {/* Use the existing titlebar space; the Chat / Calendar row never moves.
             In the folded rail the native traffic lights own that space. */}
         {!collapsed ? <div className="absolute right-3 top-2">{activityBell}</div> : null}
-        <MainContentSwitch value={mainContent} onChange={onMainContentChange} chatAvailable={chatAvailable} compact={collapsed} />
+        {calendarEnabled ? <MainContentSwitch value={mainContent} onChange={onMainContentChange} chatAvailable={chatAvailable} compact={collapsed} /> : null}
         <div className={`${activityMode ? "hidden" : "flex"} items-center ${collapsed ? "justify-center gap-0" : "gap-2"}`}>
           {collapsed ? <>
             {!calendarMode ? <IconButton label="Search coworkers" className="window-no-drag size-6" data-testid="coworker-rail-search" onClick={() => { setFocusSearchOnExpand(true); panel.expand(); }}><SearchIcon /></IconButton> : null}
@@ -301,9 +306,9 @@ export function CoworkerRail({
                     className={`absolute bottom-1.5 right-1.5 size-2.5 rounded-full ring-2 ring-[rgb(7_10_15)] ${DOT_BG[tone]} ${activity?.state === "working" ? "animate-pulse" : ""}`}
                   />
                 </button>
-                <Tooltip content={`Open ${coworker.name}'s calendar`} side="right">
+                {calendarEnabled ? <Tooltip content={`Open ${coworker.name}'s calendar`} side="right">
                   <button type="button" aria-label={`Open ${coworker.name}'s calendar`} className="window-no-drag absolute bottom-1 left-0 inline-flex size-4 items-center justify-center rounded bg-ink/80 text-mist hover:text-snow focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 [&>svg]:size-[14px]" onClick={(event) => { event.stopPropagation(); onOpenCalendar(coworker.slug); }} data-testid="coworker-calendar-shortcut"><CalendarIcon /></button>
-                </Tooltip>
+                </Tooltip> : null}
                 </div>
               );
             })}
@@ -399,9 +404,9 @@ export function CoworkerRail({
                       <span className="min-w-[3ch] shrink-0 text-right text-[10px] leading-5 tabular-nums text-mist">{relativeTime(activity?.updatedAt ?? 0)}</span>
                     </span>
                     <span data-testid="coworker-rail-status" className={`mt-0.5 flex h-4 min-w-0 items-center gap-1.5 text-[11px] font-medium leading-4 ${activityTextTone(activity)}`}>
-                      <Tooltip content={`Open ${coworker.name}'s calendar`} side="right">
+                      {calendarEnabled ? <Tooltip content={`Open ${coworker.name}'s calendar`} side="right">
                         <button type="button" aria-label={`Open ${coworker.name}'s calendar`} className="window-no-drag pointer-events-auto inline-flex size-4 shrink-0 items-center justify-center rounded text-mist hover:bg-white/6 hover:text-snow focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 [&>svg]:size-[14px]" onClick={(event) => { event.stopPropagation(); onOpenCalendar(coworker.slug); }} data-testid="coworker-calendar-shortcut"><CalendarIcon /></button>
-                      </Tooltip>
+                      </Tooltip> : null}
                       <span className="flex size-2 shrink-0 items-center justify-center"><StatusDot tone={activityTone(activity)} /></span>
                       <RailStatusLabel coworker={coworker} activity={activity} />
                     </span>
@@ -446,7 +451,7 @@ export function CoworkerRail({
                         <GroupAvatars members={members} size={22} motion="navigation" activeSlugs={groupActiveSlugs[group.id]} />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="flex h-5 items-center gap-2"><span className="min-w-0 truncate text-sm font-semibold leading-5 text-snow">{group.name}</span>{group.eventId || eventGroupIds.has(group.id) ? <span className="shrink-0 text-[9px] font-medium text-spark">Event</span> : null}</span>
+                        <span className="flex h-5 items-center gap-2"><span className="min-w-0 truncate text-sm font-semibold leading-5 text-snow">{group.name}</span>{isEvent(group) ? <span className="shrink-0 text-[9px] font-medium text-spark">Event</span> : null}</span>
                         <span className="mt-0.5 block h-4 truncate text-[11px] leading-4 text-mist" title={groupLines[group.id] || members.map((member) => member.name).join(", ")} data-testid="group-rail-line">{groupLines[group.id] || members.map((member) => member.name).join(", ")}</span>
                       </span>
                     </button>
@@ -469,9 +474,9 @@ export function CoworkerRail({
         </>
       )}
       </div>
-      <div className={calendarMode ? "flex min-h-0 flex-1 flex-col" : "hidden"} data-testid="calendar-rail-content">
+      {calendarEnabled ? <div className={calendarMode ? "flex min-h-0 flex-1 flex-col" : "hidden"} data-testid="calendar-rail-content">
         {panel.collapsed ? <FoldedCalendar data={calendarData} coworkers={coworkers} preferences={calendarPreferences} onPreferencesChange={onCalendarPreferencesChange} onExpand={() => { setFocusSearchOnExpand(true); panel.expand(); }} /> : <CalendarSidebar coworkers={coworkers} data={calendarData} preferences={calendarPreferences} onPreferencesChange={onCalendarPreferencesChange} query={calendarQuery} />}
-      </div>
+      </div> : null}
       <div className={activityMode ? "flex min-h-0 flex-1 flex-col" : "hidden"} data-testid="activity-rail-content">{activityContent}</div>
       <div className="window-no-drag shrink-0 border-t border-line/60 p-2">
         <Tooltip content={collapsed ? accountDescription : ""} side="right">
@@ -510,7 +515,7 @@ export function CoworkerRail({
       >
         <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-spark/45 group-focus-visible:bg-spark/70" />
       </div>
-      {showGroupFilters && !calendarMode ? createPortal(<div ref={filterMenuRef} id={filterMenuId} role="menu" aria-label="Conversation types" data-testid="group-filter-menu" className="window-no-drag fixed z-50 max-h-[calc(100vh-16px)] w-44 max-w-[calc(100vw-16px)] overflow-y-auto rounded-xl border border-line bg-ink p-1 shadow-[0_8px_24px_rgb(0_0_0/0.45)]" style={filterPosition ?? { top: 0, left: 0, visibility: "hidden" }} onKeyDown={(event) => {
+      {showGroupFilters && calendarEnabled && !calendarMode ? createPortal(<div ref={filterMenuRef} id={filterMenuId} role="menu" aria-label="Conversation types" data-testid="group-filter-menu" className="window-no-drag fixed z-50 max-h-[calc(100vh-16px)] w-44 max-w-[calc(100vw-16px)] overflow-y-auto rounded-xl border border-line bg-ink p-1 shadow-[0_8px_24px_rgb(0_0_0/0.45)]" style={filterPosition ?? { top: 0, left: 0, visibility: "hidden" }} onKeyDown={(event) => {
         if (event.key === "Tab") { closeGroupFilters(true); return; }
         if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
         event.preventDefault();

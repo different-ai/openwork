@@ -5,6 +5,7 @@ import type { DenSession } from "@/lib/den";
 import type { ThreadListItem } from "@/lib/threads";
 import { Button, StatusDot } from "@/ui/kit";
 import { ResponsibilitiesPanel } from "@/ui/responsibilities";
+import { useFeatures } from "@/ui/use-features";
 
 /**
  * The Assignments level of Activity: every one-off assignment the coworker
@@ -46,6 +47,8 @@ export function AssignmentsPanel({
   onNewAssignment: () => void;
 }) {
   const once = onceOnlyAssignments(assignments, scheduled);
+  // Scheduled assignments are part of Calendar; while it is off only one-off assignments show.
+  const { calendar } = useFeatures();
   return (
     <section aria-label="Assignments" className="flex min-h-full flex-col gap-5" data-testid="coworker-assignments">
       <div>
@@ -91,7 +94,7 @@ export function AssignmentsPanel({
           </ul>
         )}
       </div>
-      <ResponsibilitiesPanel
+      {calendar ? <ResponsibilitiesPanel
         session={session}
         coworkers={coworkers}
         coworker={coworker}
@@ -101,7 +104,7 @@ export function AssignmentsPanel({
         onConnect={onConnect}
         onOpenThread={onOpenThread}
         onExplain={onExplain}
-      />
+      /> : null}
     </section>
   );
 }

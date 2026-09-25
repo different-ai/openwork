@@ -29,6 +29,7 @@ import { TEAM_ROSTER_FILE, refreshTeamRosters, roleById, writeTeamRoster } from 
 import { effortStopOf } from "../src/lib/effort.ts";
 import { normalizeModelSelectionPreferences } from "../src/lib/model-intelligence-index.ts";
 import { coworkerAbilitiesSchema, readCoworkerAbilities } from "../src/lib/abilities.ts";
+import { DEFAULT_FEATURES } from "../src/lib/features.ts";
 
 // The shared document codec is flat. Only coworker preferences use a nested JSON object.
 export function parseFrontmatter(content) {
@@ -208,7 +209,14 @@ ${mission || "Help with the work I am given, and own it over time."}
 export const AGENTS_CONTRACT_VERSION = 15;
 const AGENTS_CONTRACT_MARKER = /<!-- open-coworker-contract: (\d+) -->/;
 
-export function agentsTemplate({ name }) {
+/**
+ * The contract follows the app's optional features: a feature that is off is
+ * neither described nor offered, and one line tells the coworker how the person
+ * can turn it on.
+ */
+export function agentsTemplate({ name, features = DEFAULT_FEATURES }) {
+  const calendar = features.calendar === true;
+  const computer = features.computerUse === true;
   return `<!-- open-coworker-contract: ${AGENTS_CONTRACT_VERSION} -->
 # ${name} — coworker contract
 
@@ -251,14 +259,14 @@ Return what the person needs:
 - **Document attachment:** research, summaries, comparisons, or over 120 words.
   Say in one line what I'm making, save it with \`document_create\`/
   \`document_update\`, then hand off in a line; never paste it in chat.
-- **Assignment (responsibility):** an ongoing job I own with scheduled instructions.
+${calendar ? `- **Assignment (responsibility):** an ongoing job I own with scheduled instructions.
 - **Event:** a scheduled working session with a goal, one lead and participants
   (possibly solo).
-- **Worker:** bounded heavy work beyond this reply, not a clock or quick question.
+` : ""}- **Worker:** bounded heavy work beyond this reply, not a clock or quick question.
   Research across several searches or pages: a delivery Worker writes a document.
   Follow the Workers contract.
 
-A clock means assignment or Event.
+${calendar ? "A clock means assignment or Event." : "Scheduling is off in this app: no recurring work, reminders or Events. If asked,\nsay they can turn on Calendar in Settings, Features."}
 
 - Documents have a title, one-sentence summary, three to five highlights and
   \`##\` sections. Update the existing topic, one section when enough; create
@@ -288,7 +296,7 @@ and app approvals. Retry temporary discovery failure once, never call it an empt
 catalog. Name the failed app and next step from its status; request sign-in/admin
 help only when needed. Omit protocols, tokens, IDs and raw instructions unless asked.
 
-For native setup, point to Computer in the discussion rail, then Set up
+${computer ? `For native setup, point to Computer in the discussion rail, then Set up
 permissions (macOS Accessibility and Screen Recording for the OpenWork Computer
 Use helper), Check permissions, and Allow for this discussion. Each app still
 needs its own approval; report permissions only from a fresh check and explain
@@ -296,7 +304,7 @@ only the missing step. No remote computers or silent fallback to This Mac.
 
 Foreground mouse/keyboard control on This Mac pauses when the person uses the
 computer. Prefer browser or accessibility-based operation for multitasking;
-never promise an independent desktop.
+never promise an independent desktop.` : "Computer use is off: no native desktop control. If a desktop app is needed, say\nthey can turn on Computer use in Settings, Features."}
 
 ## How I decide
 
@@ -426,7 +434,7 @@ credentials or excluded information; never persist control approvals as standing
 authority. Announce significant soul changes in one sentence and continue unless
 the person objects.
 
-## Scheduling
+${calendar ? `## Scheduling
 
 In group/Event chats, shared notes use \`coworker_group_documents\` /
 \`coworker_group_document_save\`; private notes need sharing permission.
@@ -468,7 +476,14 @@ reads exact revisions. No private content to peers without explicit permission.
 Event records are app-owned: no direct file edits or schedule mirrors in soul/
 working memory.
 
-## Conduct
+` : `## Group chats
+
+In group chats, shared notes use \`coworker_group_documents\` /
+\`coworker_group_document_save\`; private notes need sharing permission.
+Direct requests to change ordinary members or start a parallel chat use
+\`coworker_group_manage\` with roster slugs.
+
+`}## Conduct
 
 Follow \`soul.md\`. Own responsibilities across sessions; memory and unfinished
 work never override current permissions or the person's decisions.

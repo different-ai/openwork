@@ -12,7 +12,8 @@ import { after, test } from "node:test";
 import { assignmentToolCatalog, selfToolCatalog } from "./assignment-tools.mjs";
 import { DEFAULT_INSTRUCTIONS, toolCatalog } from "./coworker-tools.mjs";
 import { COWORKER_INSTRUCTIONS, agentsTemplate, createCoworker, createLongTermMemory } from "./coworkers.mjs";
-import { coworkerAgentDefinition } from "./team-workspace.mjs";
+import { coworkerAgentDefinition, featureOffTools } from "./team-workspace.mjs";
+import { DEFAULT_FEATURES, FEATURES } from "../src/lib/features.ts";
 import { createDocument } from "./documents.mjs";
 import { eventToolCatalog } from "./events.mjs";
 import { teamToolCatalog } from "./team-tools.mjs";
@@ -29,6 +30,9 @@ export const BUSY_STACK_BUDGET_CHARS = 36_000;
 /** A separately measured native layer; not an increase to the file/MCP caps. */
 export const NATIVE_EVENT_CATALOG_BUDGET_CHARS = 10_000;
 
+/** Every optional feature on: the longest contract a coworker can carry. */
+const ALL_FEATURES = Object.fromEntries(FEATURES.map(({ id }) => [id, true]));
+
 const roots = [];
 after(async () => {
   await Promise.all(roots.map((dir) => rm(dir, { recursive: true, force: true })));
@@ -42,8 +46,8 @@ function registeredMcpCatalog() {
 
 async function layers(coworker) {
   const files = await Promise.all(COWORKER_INSTRUCTIONS.map(async (file) => [file, await readFile(path.join(coworker.path, file), "utf8")]));
-  const contract = agentsTemplate({ name: coworker.name });
-  const system = coworkerAgentDefinition(path.dirname(coworker.path), coworker).system;
+  const contract = agentsTemplate({ name: coworker.name, features: ALL_FEATURES });
+  const system = coworkerAgentDefinition(path.dirname(coworker.path), coworker, [], ALL_FEATURES).system;
   assert.ok(system.startsWith(contract));
   files.push(["AGENTS.md", contract], ["native owner location", system.slice(contract.length)]);
   return [...files, ["registered MCP catalog", JSON.stringify(registeredMcpCatalog())], ["registered MCP instructions", DEFAULT_INSTRUCTIONS]];
@@ -100,4 +104,16 @@ test("files and registered MCP stay bounded, with a separate native Event catalo
   const grew = busy.filter(([name, text]) => text.length !== fresh.find(([other]) => other === name)[1].length).map(([name]) => name);
   assert.deepEqual(grew, ["memory/index.md", "documents/index.md"]);
   assert.ok(busyTotal - freshTotal < 2_000, `five documents and ten memories add ${busyTotal - freshTotal} chars`);
+});
+
+test("a feature that is off is neither described nor offered, and the coworker can say how to turn it on", () => {
+  const coworker = { slug: "nova", name: "Nova", path: "/team/nova" };
+  const off = coworkerAgentDefinition("/team", coworker, [], DEFAULT_FEATURES).system;
+  const on = coworkerAgentDefinition("/team", coworker, [], ALL_FEATURES).system;
+  assert.deepEqual(featureOffTools(ALL_FEATURES), []);
+  for (const tool of ["coworker_event_*", "coworker_assignment_*", "coworker_workplace_calendar", "coworker_computer_*"]) assert.ok(featureOffTools(DEFAULT_FEATURES).includes(tool), tool);
+  assert.match(on, /## Scheduling/);
+  assert.doesNotMatch(off, /## Scheduling|coworker_event_/);
+  assert.match(off, /turn on Calendar in Settings, Features/);
+  assert.match(off, /turn on Computer use in Settings, Features/);
 });
