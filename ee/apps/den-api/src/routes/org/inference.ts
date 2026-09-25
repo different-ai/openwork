@@ -3,7 +3,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { assertOrganizationManagedModelsAllowed } from "../../organization-metadata.js"
-import { getInferenceStatus, setInferenceEnabled, getMemberInferenceAccess, ensureMemberFreeInferenceCredential } from "../../inference.js"
+import { allowFreeInferenceOffer, getInferenceStatus, setInferenceEnabled, getMemberInferenceAccess, ensureMemberFreeInferenceCredential } from "../../inference.js"
 import { INFERENCE_ACCESS_REASONS } from "@openwork/types/den/inference"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
@@ -148,6 +148,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
           await assertOrganizationManagedModelsAllowed(payload.organization.id)
           const subscribed = await organizationHasActiveInferenceSubscription(payload.organization.id)
           if (!subscribed) {
+            await allowFreeInferenceOffer(payload.organization.id)
             return c.json({
               inference: {
                 ...await getInferenceStatus(payload.organization.id),

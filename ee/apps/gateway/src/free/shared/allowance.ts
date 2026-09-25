@@ -41,6 +41,10 @@ export function freeUsageBucketId(scope: string, identity: string, window: strin
 }
 function stableId(parts: string[]) { return freeIdentityHash("free", parts.join(":")) }
 
+class FreeAccountingInvariantError extends Error {
+  constructor(readonly invariant: "charge" | "bucket") { super(`Free accounting ${invariant} invariant`) }
+}
+
 export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowanceFamily, database = db) {
   const { control: Control, bucket: Bucket, reservation: Reservation, charge: Charge, rate: Rate } = family === "member" ? memberTables : anonymousTables
   const owns = (principal: FreePrincipal) => principal.kind === (family === "member" ? "member" : "installation")
@@ -110,14 +114,16 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
     const decision = mode === "settle" ? freeSettlementDecision(reservation, receipt) : { amount: 0, status: "cancelled", unsafe: false } as const
     if (!decision) return false
     const charges = await tx.select().from(Charge).where(eq(Charge.request_id, reservation.request_id))
-    if (charges.length !== chargeCount) throw new Error("Free accounting charge invariant")
+    if (charges.length !== chargeCount) throw new FreeAccountingInvariantError("charge")
+    // Check every bucket before writing any, so a broken reservation leaves nothing half-applied.
+    const updates: Array<{ id: string; reserved: number; used: number }> = []
     for (const charge of charges) {
       const [bucket] = await tx.select().from(Bucket).where(eq(Bucket.id, charge.bucket_id)).limit(1).for("update")
       if (!bucket || bucket.reserved_amount < charge.reserved_amount || charge.reserved_amount !== reservation.reserved_amount
-        || !Number.isSafeInteger(bucket.used_amount + decision.amount)) throw new Error("Free accounting bucket invariant")
-      await tx.update(Bucket).set({ reserved_amount: bucket.reserved_amount - charge.reserved_amount,
-        used_amount: bucket.used_amount + decision.amount }).where(eq(Bucket.id, bucket.id))
+        || !Number.isSafeInteger(bucket.used_amount + decision.amount)) throw new FreeAccountingInvariantError("bucket")
+      updates.push({ id: bucket.id, reserved: bucket.reserved_amount - charge.reserved_amount, used: bucket.used_amount + decision.amount })
     }
+    for (const update of updates) await tx.update(Bucket).set({ reserved_amount: update.reserved, used_amount: update.used }).where(eq(Bucket.id, update.id))
     if (decision.unsafe) await tx.update(Control).set({ blocked: true }).where(eq(Control.id, controlId))
     await tx.update(Reservation).set({ status: decision.status, actual_amount: decision.amount,
       external_event_id: receipt?.eventId ?? null }).where(eq(Reservation.request_id, reservation.request_id))
@@ -125,7 +131,14 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
   }
   async function reap(tx: Tx, now: Date) {
     const expired = await tx.select().from(Reservation).where(and(inArray(Reservation.status, active), lte(Reservation.expires_at, now))).limit(100).for("update")
-    for (const reservation of expired) await finish(tx, reservation, null)
+    for (const reservation of expired) {
+      try { await finish(tx, reservation, null) } catch (error) {
+        if (!(error instanceof FreeAccountingInvariantError)) throw error
+        // One broken row must not wedge every status read and reservation behind it: set it aside, keeping its hold.
+        await tx.update(Reservation).set({ status: "retained" }).where(eq(Reservation.request_id, reservation.request_id))
+        console.error("[free-auto] quarantined an expired reservation that failed the accounting invariant", { family, requestId: reservation.request_id, invariant: error.invariant })
+      }
+    }
   }
   async function byRequest(tx: Tx, requestId: string): Promise<Held | undefined> {
     const [reservation] = await tx.select().from(Reservation).where(eq(Reservation.request_id, requestId)).limit(1).for("update")
