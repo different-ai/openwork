@@ -101,7 +101,7 @@ services:
     build:
       context: ../../
       dockerfile: packaging/docker/Dockerfile.den
-    command: ["sh", "-lc", "cd /app/ee/packages/den-db && yes | node --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts && node /app/ee/apps/den-api/dist/main.js"]
+    command: ["sh", "-lc", "cd /app/ee/packages/den-db && yes | node --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts && node --import tsx /app/ee/apps/den-api/dist/main.js"]
     depends_on:
       mysql:
         condition: service_healthy
