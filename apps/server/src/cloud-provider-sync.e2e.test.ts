@@ -185,6 +185,57 @@ afterEach(async () => {
 });
 
 describe("cloud provider sync gateway", () => {
+  test("ordered pin metadata updates import status without changing engine config or reloading", async () => {
+    const root = await createRoot();
+    const config = serverConfig(root, "https://engine.example.test");
+    const groupId = "gmg_00000000000000000000000001";
+    const setId = "gcs_00000000000000000000000002";
+    const modelIds = ["00000000000000000000000003", "00000000000000000000000004"].map((suffix) => `gwm_${groupId.slice(4)}_${setId.slice(4)}_${suffix}`);
+    let pinnedModelIds: string[] | undefined = [modelIds[1], modelIds[0]];
+    const provider = {
+      id: "ipr_pins", providerId: "anthropic", name: "Pinned models", source: "openwork_gateway",
+      updatedAt: "2026-09-18T00:00:00.000Z", credentialStatus: "ready", authorizationRequests: [],
+      providerConfig: { env: ["IPR_PINS_ANTHROPIC_API_KEY"], npm: "@ai-sdk/anthropic", api: "https://gateway.example.test/v1/providers/ipr_pins" },
+      models: modelIds.map((id, index) => ({ id, name: `Model ${index}`, config: { id }, upstreamModelId: `model-${index}`, modelGroupId: groupId, modelGroupName: "Team models", credentialSetId: setId, credentialSetName: "Team key" })),
+    };
+    const gatewayKey = "ow_gw_pin-test";
+    const fetchImpl = Object.assign(async (input: Parameters<typeof globalThis.fetch>[0]) => {
+      const url = new URL(String(input));
+      if (url.origin === "https://engine.example.test") return Response.json(true);
+      const current = { ...provider, ...(pinnedModelIds === undefined ? {} : { pinnedModelIds }) };
+      if (url.pathname === "/v1/llm-providers") return Response.json({ llmProviders: [] });
+      if (url.pathname === "/v1/inference-providers") return Response.json({ inferenceProviders: [current] });
+      if (url.pathname === "/v1/inference-providers/ipr_pins/connect") return Response.json({ inferenceProvider: { ...current, apiKey: gatewayKey, apiKeys: { IPR_PINS_ANTHROPIC_API_KEY: gatewayKey } } });
+      throw new Error(`Unexpected request: ${url.pathname}`);
+    }, { preconnect: globalThis.fetch.preconnect });
+    let reloads = 0;
+    const sync = new CloudProviderSync({ config, env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }), fetchImpl,
+      reloadEngine: async () => { reloads += 1; return reloadedInPlace(); }, intervalMs: 3_600_000 });
+    stops.push(() => sync.stop());
+    await sync.setSession({ baseUrl: "https://den.example.test", token: "den-token", orgId: "org_pins" });
+    expect((await sync.run("pins-initial")).status).toBe("applied");
+    expect(sync.status().providers[0]?.pinnedModelIds).toEqual([modelIds[1], modelIds[0]]);
+    sync.status().providers[0]?.pinnedModelIds.reverse();
+    expect(sync.status().providers[0]?.pinnedModelIds).toEqual([modelIds[1], modelIds[0]]);
+    const runtimeBefore = await readGlobalRuntimeOpencodeConfig(config);
+    const reloadsBefore = reloads;
+    pinnedModelIds = [...modelIds];
+    provider.updatedAt = "2026-09-18T01:00:00.000Z";
+    expect((await sync.run("pins-reorder")).status).toBe("noop");
+    expect(sync.status().providers[0]?.pinnedModelIds).toEqual(modelIds);
+    pinnedModelIds = [modelIds[0], "unauthorized-model", modelIds[0]];
+    expect((await sync.run("pins-filter")).status).toBe("noop");
+    expect(sync.status().providers[0]?.pinnedModelIds).toEqual([modelIds[0]]);
+    for (const pins of [[], undefined]) {
+      pinnedModelIds = pins;
+      expect((await sync.run("pins-clear-or-legacy")).status).toBe("noop");
+      expect(sync.status().providers[0]?.pinnedModelIds).toEqual([]);
+    }
+    expect(await readGlobalRuntimeOpencodeConfig(config)).toEqual(runtimeBefore);
+    expect(reloads).toBe(reloadsBefore);
+    expect(JSON.stringify(runtimeBefore)).not.toContain("pinnedModelIds");
+  });
+
   for (const mode of ["sync", "offline sync", "cold cleanup"]) {
     test(`forged provider import baselines never confer cleanup ownership during ${mode}`, async () => {
       const root = await createRoot();

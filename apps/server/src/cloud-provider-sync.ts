@@ -67,6 +67,7 @@ export type CloudProviderSyncStatusProvider = {
   source: string | null;
   updatedAt: string | null;
   modelIds: string[];
+  pinnedModelIds: string[];
   importedAt: number;
   modelConfigVersion: number;
 };
@@ -142,6 +143,7 @@ type DenProvider = {
   updatedAt: string | null;
   providerConfig: JsonRecord;
   models: DenProviderModel[];
+  pinnedModelIds: string[];
 };
 
 type DenProviderConnection = DenProvider & {
@@ -336,6 +338,7 @@ function parseProvider(value: unknown, idPattern: RegExp = /^lpr_/i): DenProvide
     updatedAt: readOptionalString(value.updatedAt),
     providerConfig: parseJsonRecord(value.providerConfig),
     models,
+    pinnedModelIds: [...new Set(readStringList(value.pinnedModelIds))].filter((id) => models.some((model) => model.id === id)),
   };
 }
 
@@ -1020,7 +1023,7 @@ export class CloudProviderSync {
     return {
       hasSession: this.session !== null,
       lastRun: this.lastRun ? { ...this.lastRun } : null,
-      providers: this.providers.map((provider) => ({ ...provider, modelIds: [...provider.modelIds] })),
+      providers: this.providers.map((provider) => ({ ...provider, modelIds: [...provider.modelIds], pinnedModelIds: [...provider.pinnedModelIds] })),
       reloadPending: this.reloadPending,
       skippedProviders: this.skippedProviders.map((provider) => ({ ...provider })),
     };
@@ -1464,6 +1467,7 @@ export class CloudProviderSync {
         source: entry.provider.source,
         updatedAt: entry.provider.updatedAt,
         modelIds: entry.provider.models.map((model) => model.id).sort(),
+        pinnedModelIds: entry.provider.pinnedModelIds,
         modelConfigVersion: CLOUD_MODEL_CONFIG_VERSION,
         importedAt,
       };

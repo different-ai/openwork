@@ -25,7 +25,7 @@ const ELECTRON_UPDATER_CHANNEL_FILENAME = "electron-updater-channel.v1.json";
 // package.json so the UI always shows the correct version.
 const __updater_dirname = path.dirname(fileURLToPath(import.meta.url));
 let _cachedAppVersion = null;
-function resolveAppVersion(app) {
+export function resolveAppVersion(app) {
   if (_cachedAppVersion) return _cachedAppVersion;
   const electronVersion = app.getVersion();
   // If packaged, app.getVersion() is correct (set by electron-builder).

@@ -1397,6 +1397,7 @@ export function createRuntimeManager({
   desktopRoot,
   listLocalWorkspacePaths,
   localManagedMcpVaultKey,
+  anonymousInference = undefined,
   workspaceMkdir = mkdir,
   workspacePlatform = process.platform,
 }) {
@@ -1995,6 +1996,7 @@ export function createRuntimeManager({
       opencodeBin: managedOpencode?.path ?? undefined,
       opencodeCwd: managedOpencodeWorkdir(),
       localManagedMcpVaultKey,
+      anonymousInference,
     });
     inProcessServer = handle;
     openworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;

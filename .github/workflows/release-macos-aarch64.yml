@@ -720,6 +720,8 @@ jobs:
           # TARGET tells prepare-sidecar.mjs which architecture's opencode binary
           # to download (critical for cross-arch builds like x64 on arm64 mac).
           TARGET: ${{ matrix.target_triple }}
+          # Only this step derives the release's free Auto tag; no other step sees the master key.
+          DESKTOP_FREE_RELEASE_KEY: ${{ secrets.DESKTOP_FREE_RELEASE_KEY }}
         run: pnpm --filter @openwork/desktop build:electron
 
       - name: Package Electron (macOS, signed + notarized)

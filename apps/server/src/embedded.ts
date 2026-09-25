@@ -51,6 +51,7 @@ export type EmbeddedServerOptions = CliArgs & {
   /** Secure key custody for the local managed MCP credential vault. */
   localManagedMcpVaultKey?: LocalManagedMcpVaultKeyProvider;
   resumeInterruptedTasks?: boolean;
+  anonymousInference?: ServerConfig["anonymousInference"];
 };
 
 export type EmbeddedServerHandle = {
@@ -73,6 +74,7 @@ export type EmbeddedServerHandle = {
 export async function startEmbeddedServer(options: EmbeddedServerOptions): Promise<EmbeddedServerHandle> {
   const config = await resolveServerConfig(options);
   config.localManagedMcpVaultKey = options.localManagedMcpVaultKey;
+  config.anonymousInference = options.anonymousInference;
   config.resumeInterruptedTasks = options.resumeInterruptedTasks === true && options.manageOpencode === true && !config.opencodeBaseUrl;
   const logger = createServerLogger(config);
 

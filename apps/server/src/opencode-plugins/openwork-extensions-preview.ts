@@ -1273,7 +1273,8 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown, _options
   event: fulfillGmailAttachments.event,
   dispose: fulfillGmailAttachments.dispose,
   "chat.headers": async (input: { sessionID: string; model: { providerID: string }; message: { id: string } }, output: { headers: Record<string, string> }) => {
-    if (input.model.providerID !== "openwork") return;
+    // OpenWork Models and free Auto: the desktop relay checks the session against the task the user started.
+    if (input.model.providerID !== "openwork" && input.model.providerID !== "openwork-free") return;
     output.headers["x-openwork-session-id"] = input.sessionID;
     output.headers["x-openwork-task-id"] = input.message.id;
   },
