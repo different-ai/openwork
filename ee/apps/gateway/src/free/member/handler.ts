@@ -9,6 +9,7 @@ import { FREE_OPENAI_CHAT_URL, type AutoConfig } from "../shared/config.js"
 import { dispatchFreeCompletion } from "../shared/dispatch.js"
 import { freeError, FreeRequestError } from "../shared/errors.js"
 import { findMemberFreePrincipal, readFreePrincipalDefaultPinned } from "../shared/principal.js"
+import { FreeAutoBusyError } from "../shared/capacity.js"
 import { prepareFreeRequest, readFreeRequest } from "../shared/request.js"
 import type { InferenceKeyRow } from "../../middleware/inference-auth.js"
 import { safeInferenceReporter, sentryInferenceReporter, type InferenceReporter } from "../../inference-reporting.js"
@@ -74,7 +75,7 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
           return recorder
         } : undefined })
     } catch (error) {
-      if (error instanceof FreeRequestError || error instanceof ManagedModelsPolicyError) return freeError(error.status, error.code, error.message)
+      if (error instanceof FreeRequestError || error instanceof ManagedModelsPolicyError || error instanceof FreeAutoBusyError) return freeError(error.status, error.code, error.message)
       return freeError(503, "free_member_unavailable")
     }
   }

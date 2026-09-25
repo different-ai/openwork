@@ -1,4 +1,4 @@
-import { and, count, eq, inArray, lte, sql } from "@openwork-ee/den-db/drizzle"
+import { and, count, eq, gt, inArray, lte, sql } from "@openwork-ee/den-db/drizzle"
 import {
   DesktopFreeProofNonceTable as Nonce, AnonymousInferenceIdentityTable as Identity,
   AnonymousInferenceControlTable, AnonymousInferenceUsageBucketTable, AnonymousInferenceReservationTable,
@@ -11,7 +11,8 @@ import { DESKTOP_FREE_PROOF_CLOCK_SKEW_MS, type DesktopFreeAccessStatus } from "
 import { freeIdentityHash, freePrincipalHash, memberFreePrincipalAllowed, type FreePrincipal } from "./principal.js"
 import { freeRequestReservation, rampedDeviceAmount } from "@openwork/free-auto/accounting"
 import type { AutoConfig } from "./config.js"
-import { db } from "../../db.js"
+import { db, freeAutoDatabase } from "../../db.js"
+import { createFreeCapacity, type FreeCapacity } from "./capacity.js"
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 // Guests and members keep separate tables with the same accounting columns. The
@@ -45,10 +46,24 @@ class FreeAccountingInvariantError extends Error {
   constructor(readonly invariant: "charge" | "bucket") { super(`Free accounting ${invariant} invariant`) }
 }
 
-export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowanceFamily, database = db) {
+let sharedCapacity: FreeCapacity | undefined
+/** One limit per process, shared by guests and members. */
+function processCapacity(config: AutoConfig) {
+  sharedCapacity ??= createFreeCapacity({ maxActive: config.maxConcurrent, maxQueued: config.maxQueued })
+  return sharedCapacity
+}
+
+export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowanceFamily, database: typeof db = freeAutoDatabase(), capacity: FreeCapacity = processCapacity(config)) {
   const { control: Control, bucket: Bucket, reservation: Reservation, charge: Charge, rate: Rate } = family === "member" ? memberTables : anonymousTables
   const owns = (principal: FreePrincipal) => principal.kind === (family === "member" ? "member" : "installation")
 
+  /** The control row without its lock: for reads that must not queue behind admissions. */
+  async function peek(tx: Tx) {
+    const [row] = await tx.select({ blocked: Control.blocked, nowMs: sql<number>`unix_timestamp(current_timestamp(3)) * 1000` })
+      .from(Control).where(eq(Control.id, controlId)).limit(1)
+    // Before the first admission ever creates the row there is nothing to block, and the local clock will do.
+    return { blocked: row?.blocked ?? false, now: row ? new Date(Number(row.nowMs)) : new Date() }
+  }
   async function lock(tx: Tx) {
     await tx.insert(Control).values({ id: controlId }).onDuplicateKeyUpdate({ set: { id: sql`${Control.id}` } })
     const [row] = await tx.select({ blocked: Control.blocked, nowMs: sql<number>`unix_timestamp(current_timestamp(3)) * 1000` })
@@ -149,7 +164,7 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
     family,
     async consumeNonce(proof: { keyThumbprint: string; nonce: string; timestamp: number }, ipHash: string): Promise<"accepted" | "replay" | "unavailable"> {
       if (family !== "anonymous") return "unavailable"
-      return database.transaction(async (tx) => {
+      return capacity.run(() => database.transaction(async (tx) => {
         const { now } = await lock(tx)
         if (Math.abs(now.getTime() - proof.timestamp) > DESKTOP_FREE_PROOF_CLOCK_SKEW_MS) return "unavailable"
         await tx.delete(Nonce).where(lte(Nonce.expires_at, now)).limit(1000)
@@ -163,12 +178,12 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
         if (Number(total?.amount ?? 0) >= 50000) return "unavailable"
         await tx.insert(Nonce).values({ id, expires_at: new Date(proof.timestamp + DESKTOP_FREE_PROOF_CLOCK_SKEW_MS + 1000) })
         return "accepted"
-      })
+      }))
     },
     /** Mints a guest session. A machine never seen before also counts against the IP's daily new-identity cap. */
     async consumeSession(ipHash: string, installationHash: string): Promise<"accepted" | "capacity" | "new_identity_capped"> {
       if (family !== "anonymous") return "capacity"
-      return database.transaction(async (tx) => {
+      return capacity.run(() => database.transaction(async (tx) => {
         const { blocked, now } = await lock(tx)
         if (blocked) return "capacity"
         const [known] = await tx.select({ id: Identity.id }).from(Identity).where(eq(Identity.id, installationHash)).limit(1)
@@ -178,14 +193,15 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
           { kind: "session-global", identity: "global", limit: 10000 }], now)) return "capacity"
         await identityActivity(tx, { kind: "installation", id: installationHash }, now)
         return "accepted"
-      })
+      }))
     },
     async read(principal: FreePrincipal, ipHash: string | null): Promise<Pick<DesktopFreeAccessStatus, "state" | "code" | "allowance">> {
       if (!owns(principal)) return { state: "unavailable", code: "free_principal_rejected", allowance: null }
-      return database.transaction(async (tx) => {
-        const { blocked, now } = await lock(tx)
+      // Status is most of the free traffic (every open, signed-out app checks in each minute), so it reads without the
+      // global lock and leaves expired holds for the next reservation to clear.
+      return capacity.run(() => database.transaction(async (tx) => {
+        const { blocked, now } = await peek(tx)
         if (!await memberFreePrincipalAllowed(principal, tx)) return { state: "unavailable", code: "free_principal_rejected", allowance: null }
-        await reap(tx, now)
         const { activeMs } = await identityActivity(tx, principal, now)
         let allowance: DesktopFreeAccessStatus["allowance"] = null
         let limited = false, sharedLimited = false
@@ -204,16 +220,16 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
         }
         if (blocked) return { state: "unavailable", code: "free_accounting_blocked", allowance }
         const [pending] = await tx.select({ id: Reservation.request_id }).from(Reservation)
-          .where(and(eq(Reservation.principal_hash, freePrincipalHash(principal)), inArray(Reservation.status, active))).limit(1)
+          .where(and(eq(Reservation.principal_hash, freePrincipalHash(principal)), inArray(Reservation.status, active), gt(Reservation.expires_at, now))).limit(1)
         if (pending) return { state: "unavailable", code: "free_request_in_progress", allowance }
         if (limited) return { state: "exhausted", code: "anonymous_reservation_does_not_fit", allowance }
         if (sharedLimited) return { state: "unavailable", code: "anonymous_capacity_exceeded", allowance }
         return { state: "ready", code: null, allowance }
-      })
+      }))
     },
     async reserve(principal: FreePrincipal, ipHash: string | null, requestId: string, deadlineAt: number): Promise<FreeAdmission> {
       if (!owns(principal)) return { ok: false, code: "free_principal_rejected" }
-      return database.transaction(async (tx) => {
+      return capacity.run(() => database.transaction(async (tx) => {
         const { blocked, now } = await lock(tx)
         if (blocked || now.getTime() >= deadlineAt || !await memberFreePrincipalAllowed(principal, tx)) return { ok: false, code: "free_principal_rejected" }
         await reap(tx, now)
@@ -252,7 +268,7 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
           await tx.insert(Charge).values({ id: stableId([requestId, row.id]), request_id: requestId, bucket_id: row.id, reserved_amount: amount })
         }
         return { ok: true, requestId, deadlineAt: expiresAt }
-      })
+      }))
     },
     async dispatch(requestId: string, principal: FreePrincipal, deadlineAt: number) {
       if (!owns(principal)) return false

@@ -1,4 +1,5 @@
 import type { Context, Hono } from "hono"
+import { FreeAutoBusyError } from "../shared/capacity.js"
 import { z } from "zod"
 import {
   DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH,
@@ -41,6 +42,7 @@ function bearer(request: Request) {
 }
 function errorResponse(error: unknown) {
   if (error instanceof FreeRequestError) return desktopFreeGateError(error.status, error.code, error.message)
+  if (error instanceof FreeAutoBusyError) return desktopFreeGateError(error.status, error.code, error.message)
   return desktopFreeGateError(503, "anonymous_unavailable")
 }
 function versionResponse(error: DesktopFreeVersionError) {
