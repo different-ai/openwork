@@ -41,6 +41,7 @@ export const GatewayProviderTable = mysqlTable(
     name: varchar("name", { length: 255 }).notNull(),
     // Empty policy follows all supported catalog models; group membership stays explicit.
     model_ids: compatJsonColumn<string[]>("model_ids").notNull().default(sql`(JSON_ARRAY())`),
+    pinned_model_ids: compatJsonColumn<string[]>("pinned_model_ids").notNull().default(sql`(JSON_ARRAY())`),
     provider_config: compatJsonColumn<Record<string, unknown>>("provider_config").notNull(),
     settings: compatJsonColumn<Record<string, unknown>>("settings").notNull(),
     // Compatibility metadata only. Credential sets own mode and OAuth config.

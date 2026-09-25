@@ -3,9 +3,12 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { assertOrganizationManagedModelsAllowed } from "../../organization-metadata.js"
-import { getInferenceStatus, setInferenceEnabled } from "../../inference.js"
+import { allowFreeInferenceOffer, getInferenceStatus, setInferenceEnabled, getMemberInferenceAccess, ensureMemberFreeInferenceCredential } from "../../inference.js"
+import { INFERENCE_ACCESS_REASONS } from "@openwork/types/den/inference"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { env } from "../../env.js"
 import { organizationHasActiveInferenceSubscription } from "../../stripe-billing.js"
-import { jsonValidator, orgRoleRoute } from "../../middleware/index.js"
+import { jsonValidator, orgRoleRoute, orgMemberRoute } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
@@ -47,7 +50,50 @@ const managedModelsPolicyErrorSchema = z.object({
   message: z.string(),
 })
 
+const freeAccessSchema = z.object({
+  access: z.object({ kind: z.enum(["free", "paid", "exhausted", "unavailable"]), modelID: z.string().nullable(),
+    weeklyLimitUsd: z.number().nullable(), usedUsd: z.number().nullable(), reservedUsd: z.number().nullable(),
+    remainingUsd: z.number().nullable(), resetsAt: z.string().datetime().nullable(), reason: z.enum(INFERENCE_ACCESS_REASONS).nullable(),
+    canUpgrade: z.literal(false), catalog: z.array(z.object({ modelID: z.string(), displayName: z.string(), providerName: z.string(),
+      summary: z.string(), recommended: z.boolean(), rank: z.number(), capabilities: z.array(z.string()) })).optional() }),
+}).meta({ ref: "InferenceAccessResponse" })
+const freeCredentialSchema = z.object({ credential: z.object({ apiKey: z.string(), baseURL: z.string(), statusURL: z.string(), modelID: z.string() }) })
+
 export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  app.get("/v1/inference/access", describeRoute({ tags: ["Inference"], summary: "Get my free Auto allowance",
+    description: "Returns the authenticated joined member's person-wide weekly Auto allowance without credentials.",
+    responses: { 200: jsonResponse("Auto allowance returned.", freeAccessSchema),
+      401: jsonResponse("Authentication required.", unauthorizedSchema), 403: jsonResponse("Active membership required.", forbiddenSchema) },
+  }), orgMemberRoute(), async (c) => {
+    const context = c.get("organizationContext")
+    const user = c.get("user")
+    if (!user) return c.json({ error: "unauthorized" }, 401)
+    c.header("Cache-Control", "no-store")
+    const access = await getMemberInferenceAccess({ organizationId: context.organization.id, memberId: context.currentMember.id,
+      userId: normalizeDenTypeId("user", user.id) })
+    return c.json({ access })
+  })
+  app.post("/v1/inference/free/credential", describeRoute({ tags: ["Inference"], summary: "Get my free Auto credential",
+    description: "Issues or reuses the member's OpenWork Models key for an organization without a Models subscription. Until the organization subscribes, the Gateway serves only free Auto on it, within the member's weekly allowance. Subscribed organizations and admin opt-outs are refused.",
+    responses: { 200: jsonResponse("Member Auto credential returned.", freeCredentialSchema),
+      401: jsonResponse("Authentication required.", unauthorizedSchema), 403: jsonResponse("Auto access denied.", forbiddenSchema),
+      503: jsonResponse("Auto unavailable.", z.object({ error: z.string() })) },
+  }), orgMemberRoute(), async (c) => {
+    const context = c.get("organizationContext")
+    const user = c.get("user")
+    if (!user) return c.json({ error: "unauthorized" }, 401)
+    c.header("Cache-Control", "no-store")
+    if (!env.inferenceFree.enabled) return c.json({ error: "free_disabled" }, 503)
+    try {
+      const credential = await ensureMemberFreeInferenceCredential({ organizationId: context.organization.id, memberId: context.currentMember.id,
+        userId: normalizeDenTypeId("user", user.id) })
+      return credential ? c.json({ credential }) : c.json({ error: "forbidden" }, 403)
+    } catch (error) {
+      if (error instanceof ManagedModelsPolicyError) return c.json({ error: error.code, message: error.message }, error.status)
+      return c.json({ error: "free_accounting_unavailable" }, 503)
+    }
+  })
+
   app.get(
     "/v1/inference",
     describeRoute({
@@ -102,6 +148,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
           await assertOrganizationManagedModelsAllowed(payload.organization.id)
           const subscribed = await organizationHasActiveInferenceSubscription(payload.organization.id)
           if (!subscribed) {
+            await allowFreeInferenceOffer(payload.organization.id)
             return c.json({
               inference: {
                 ...await getInferenceStatus(payload.organization.id),
@@ -115,6 +162,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
           organizationId: payload.organization.id,
           enabled: input.enabled,
           tier: input.tier,
+          source: "admin",
         })
         return c.json({ inference: { ...inference, subscribed: await organizationHasActiveInferenceSubscription(payload.organization.id) } })
       } catch (error) {

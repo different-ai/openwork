@@ -5,6 +5,7 @@ export default defineConfig({
     index: "src/index.ts",
     "den-urls": "src/den-urls.ts",
     "inference-bearer-key": "src/inference-bearer-key.ts",
+    "free-inference-digest": "src/free-inference-digest.ts",
     "gateway-bearer-key": "src/gateway-bearer-key.ts",
     "gateway-routing": "src/gateway-routing.ts",
     "gateway-env": "src/gateway-env.ts",

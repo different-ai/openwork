@@ -23,6 +23,7 @@ COPY patches /app/patches
 RUN node -e "const fs = require('node:fs'); fs.appendFileSync('/app/pnpm-workspace.yaml', '\nallowUnusedPatches: true\n')"
 
 COPY packages/types/package.json /app/packages/types/package.json
+COPY packages/free-auto/package.json /app/packages/free-auto/package.json
 COPY packages/ui/package.json /app/packages/ui/package.json
 COPY packages/install-config/package.json /app/packages/install-config/package.json
 COPY packages/workbook/package.json /app/packages/workbook/package.json
@@ -36,6 +37,7 @@ COPY apps/app/package.json /app/apps/app/package.json
 RUN pnpm install --frozen-lockfile --trust-lockfile
 
 COPY packages/types /app/packages/types
+COPY packages/free-auto /app/packages/free-auto
 COPY packages/ui /app/packages/ui
 COPY packages/install-config /app/packages/install-config
 COPY packages/workbook /app/packages/workbook
@@ -48,6 +50,7 @@ COPY apps/server/src/mcp-app-sandbox.ts /app/apps/server/src/mcp-app-sandbox.ts
 COPY apps/app /app/apps/app
 
 RUN pnpm --dir /app/packages/types run build
+RUN pnpm --dir /app/packages/free-auto run build
 RUN pnpm --dir /app/packages/ui run build
 RUN pnpm --dir /app/packages/install-config run build
 RUN pnpm --dir /app/ee/packages/utils run build

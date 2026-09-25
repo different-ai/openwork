@@ -660,6 +660,9 @@ importers:
       '@openwork/enterprise-mcp-client':
         specifier: workspace:*
         version: link:../../../packages/enterprise-mcp-client
+      '@openwork/free-auto':
+        specifier: workspace:*
+        version: link:../../../packages/free-auto
       '@openwork/headless-threads':
         specifier: workspace:*
         version: link:../../../packages/headless-threads
@@ -995,6 +998,9 @@ importers:
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      '@openwork/free-auto':
+        specifier: workspace:*
+        version: link:../../../packages/free-auto
       '@openwork/types':
         specifier: workspace:*
         version: link:../../../packages/types
@@ -1389,6 +1395,22 @@ importers:
       tsx:
         specifier: ^4.23.1
         version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/free-auto:
+    dependencies:
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../types
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.7
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

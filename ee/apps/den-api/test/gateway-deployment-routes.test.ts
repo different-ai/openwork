@@ -51,6 +51,7 @@ const { env } = await import("../src/env.js")
 const { buildOpenWorkProviderConfig, readInferenceMetadata } = await import("../src/inference.js")
 const { deploymentCapabilities } = await import("../src/gateway-deployment.js")
 const { registerOrgInferenceProviderRoutes } = await import("../src/routes/org/inference-providers.js")
+const { publicGatewayPinnedModelIds } = await import("../src/llm/gateway-matrix.js")
 const app = new Hono()
 app.onError((error, c) => {
   if (error.message === "fixture_storage_reached") return c.json({ error: error.message }, 503)
@@ -138,6 +139,50 @@ test("enabled management retains admin checks and privileged-session checks", as
     expect(await response.json()).toMatchObject({ error: "reauth" })
     expect(storageCalls).toBe(0)
   }
+})
+
+test("public pin projection preserves configured order, expands usable aliases and drops revoked access", () => {
+  const models = [
+    { id: "gwm_alpha", upstreamModelId: "alpha" },
+    { id: "gwm_beta_group_one", upstreamModelId: "beta" },
+    { id: "gwm_beta_group_two", upstreamModelId: "beta" },
+  ]
+  const pins = ["beta", "not-granted", "alpha"]
+  expect(publicGatewayPinnedModelIds(pins, models)).toEqual(["gwm_beta_group_one", "gwm_beta_group_two", "gwm_alpha"])
+  expect(publicGatewayPinnedModelIds(pins, models.filter((model) => model.upstreamModelId !== "beta"))).toEqual(["gwm_alpha"])
+  expect(publicGatewayPinnedModelIds(pins, [])).toEqual([])
+  expect(publicGatewayPinnedModelIds([], models)).toEqual([])
+  expect(publicGatewayPinnedModelIds(["beta", "beta"], models)).toEqual(["gwm_beta_group_one", "gwm_beta_group_two"])
+  expect(storageCalls).toBe(0)
+})
+
+test("pin-only PATCH requires fresh admin access and rejects duplicate, mixed or malformed pins before storage", async () => {
+  env.gatewayEnabled = true
+  const patch = (body: unknown) => app.request(resource, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+  role = "member"
+  expect((await patch({ pinnedModelIds: [] })).status).toBe(403)
+  role = "owner"
+  fresh = false
+  expect((await patch({ pinnedModelIds: [] })).status).toBe(403)
+  fresh = true
+  for (const body of [
+    { pinnedModelIds: ["model", "model"] },
+    { pinnedModelIds: [" model", "model "] },
+    { pinnedModelIds: [""] },
+    { pinnedModelIds: [42] },
+    { pinnedModelIds: Array.from({ length: 501 }, (_, index) => `model-${index}`) },
+    { pinnedModelIds: null },
+    { pinnedModelIds: [], modelIds: [] },
+    { pinnedModelIds: [], name: "Unrelated rename" },
+    { pinnedModelIds: [], unknown: true },
+  ]) expect((await patch(body)).status).toBe(400)
+  expect(storageCalls).toBe(0)
+  for (const pinnedModelIds of [[], ["beta", "alpha"]]) {
+    const response = await patch({ pinnedModelIds })
+    expect(response.status).toBe(503)
+    expect(await response.json()).toMatchObject({ error: "fixture_storage_reached" })
+  }
+  expect(storageCalls).toBe(2)
 })
 
 test("enabled management reaches existing handlers regardless of retired org rollout metadata", async () => {

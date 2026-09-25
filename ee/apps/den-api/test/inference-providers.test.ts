@@ -71,6 +71,7 @@ function request(cookie: string, path: string, init: RequestInit = {}) {
   return app.fetch(new Request(`${API_ORIGIN}${path}`, { ...init, headers }))
 }
 
+let catalogReads = 0
 const catalog = {
   anthropic: {
     id: "anthropic",
@@ -172,6 +173,7 @@ beforeAll(async () => {
   mock.module("../src/db.js", () => ({ db: realDb }))
   mock.module("../src/llm/models-dev.js", () => ({
     getModelsDevProvider: async (providerId: string) => {
+      catalogReads += 1
       if (catalogUnavailable) return null
       if (providerId === "anthropic") return catalog.anthropic
       if (providerId === "amazon-bedrock") return catalog["amazon-bedrock"]
@@ -255,6 +257,8 @@ afterAll(async () => {
   await db.delete(schema.InferenceOrgUsageBucketTable).where(drizzle.eq(schema.InferenceOrgUsageBucketTable.organization_id, organizationId))
   await db.delete(schema.InferenceOrgLimitPolicyTable).where(drizzle.eq(schema.InferenceOrgLimitPolicyTable.organization_id, organizationId))
 
+  const { cache } = await import("../src/cache.js")
+  await Promise.all([ownerSessionToken, memberSessionToken, outsiderSessionToken].map((token) => cache.auth.deleteSession(token)))
   await db.delete(schema.AuthSessionTable).where(drizzle.inArray(schema.AuthSessionTable.id, [ownerSessionId, memberSessionId, outsiderSessionId]))
   await db.delete(schema.OrganizationRoleTable).where(drizzle.eq(schema.OrganizationRoleTable.organizationId, organizationId))
   await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.organizationId, organizationId))
@@ -428,6 +432,7 @@ test("all gateway management boundaries deny nonadmin creators, require fresh ad
   const writes: Array<{ path: string; method: string; body?: Record<string, unknown> }> = [
     { path: "/v1/inference-providers", method: "POST", body: input },
     { path: base, method: "PATCH", body: { name: "Denied rename" } },
+    { path: base, method: "PATCH", body: { pinnedModelIds: ["claude-sonnet-4"] } },
     { path: base, method: "DELETE" },
     { path: `${base}/model-groups`, method: "POST", body: { name: "Denied group", modelIds: input.modelIds } },
     { path: `${base}/model-groups/${groupId}`, method: "PATCH", body: { name: "Denied group edit" } },
@@ -503,6 +508,7 @@ test("all gateway management boundaries deny nonadmin creators, require fresh ad
       expect(await snapshot()).toEqual(beforeStaleWrites)
       await setMemberSessionCreatedAt(new Date())
       expect((await request(memberCookie, base, { method: "PATCH", body: JSON.stringify({ name: `Allowed ${role}` }) })).status).toBe(200)
+      expect((await request(memberCookie, base, { method: "PATCH", body: JSON.stringify({ pinnedModelIds: input.modelIds }) })).status).toBe(200)
     }
     expect((await request(memberCookie, `${base}/credential-sets/${setId}`, { method: "PATCH", body: JSON.stringify({ name: "Admin edit" }) })).status).toBe(200)
     expect((await request(memberCookie, `${base}/model-groups/${groupId}`, { method: "PATCH", body: JSON.stringify({ name: "Admin group" }) })).status).toBe(200)
@@ -1461,6 +1467,70 @@ test("Vertex create and PATCH accept the runtime project and location constraint
       expect(readProvider(await (await request(ownerCookie, `/v1/inference-providers/${id}`)).json()).settings).toEqual(settings)
     }
   }
+})
+
+test("ordered pins preserve the matrix and expose only caller-usable aliases", async () => {
+  const createdResponse = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({
+    name: "Pinned models", providerId: "anthropic", modelIds: [],
+    credential: { kind: "api_key", secret: "fake-pin-upstream-key" }, memberIds: [memberId],
+  }) })
+  expect(createdResponse.status).toBe(201)
+  const created = readProvider(await createdResponse.json())
+  const id = readString(created, "id")
+  const base = `/v1/inference-providers/${id}`
+  const groupId = readString(firstRow(created, "modelGroups"), "id")
+  const setId = readString(firstRow(created, "credentialSets"), "id")
+  const grantId = readString(firstRow(created, "accessGrants"), "id")
+  expect(created.pinnedModelIds).toEqual([])
+  const configuredPins = ["claude-sonnet-4", "claude-haiku-4"]
+  const readsBeforePin = catalogReads
+  const savedResponse = await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ pinnedModelIds: configuredPins }) })
+  expect(savedResponse.status).toBe(200)
+  expect(catalogReads).toBe(readsBeforePin)
+  const saved = readProvider(await savedResponse.json())
+  expect(saved.pinnedModelIds).toEqual(configuredPins)
+  for (const field of ["name", "modelIds", "modelGroups", "credentialSets", "accessGrants", "settings"]) expect(saved[field]).toEqual(created[field])
+  expect(saved.models).toEqual([])
+  expect((await request(ownerCookie, `${base}/connect`)).status).toBe(403)
+
+  const connected = readProvider(await (await request(memberCookie, `${base}/connect`)).json())
+  const usableModels = readRows(connected, "models")
+  const expectedPins = configuredPins.map((id) => {
+    const model = usableModels.find((model) => model.upstreamModelId === id)
+    if (!model) throw new Error("Missing usable pinned model")
+    return readString(model, "id")
+  })
+  expect(connected.pinnedModelIds).toEqual(expectedPins)
+  expect(usableModels.map((model) => model.name)).toEqual(["Claude Haiku 4", "Claude Sonnet 4"])
+  const listed = readProviderList(await (await request(memberCookie, "/v1/inference-providers")).json()).find((provider) => provider.id === id)
+  expect(listed?.pinnedModelIds).toEqual(expectedPins)
+  for (const body of [
+    { pinnedModelIds: ["claude-sonnet-4", "claude-sonnet-4"] },
+    { pinnedModelIds: [], modelIds: [] },
+    { pinnedModelIds: [], extra: true },
+    { pinnedModelIds: [42] },
+  ]) expect((await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify(body) })).status).toBe(400)
+  for (const pinnedModelIds of [["unknown-model"], [expectedPins[0]]]) {
+    expect((await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ pinnedModelIds }) })).status).toBe(404)
+  }
+  expect(readProvider(await (await request(ownerCookie, base)).json()).pinnedModelIds).toEqual(configuredPins)
+
+  const restricted = await request(ownerCookie, `${base}/model-groups/${groupId}`, { method: "PATCH", body: JSON.stringify({ modelIds: ["claude-haiku-4"] }) })
+  expect(restricted.status).toBe(200)
+  const filtered = readProvider(await (await request(memberCookie, `${base}/connect`)).json())
+  expect(filtered.pinnedModelIds).toEqual([expectedPins[1]])
+  expect(readProvider(await (await request(ownerCookie, base)).json()).pinnedModelIds).toEqual(configuredPins)
+
+  expect((await request(ownerCookie, `${base}/credential-sets/${setId}`, { method: "PATCH", body: JSON.stringify({ status: "disabled" }) })).status).toBe(200)
+  expect(readProviderList(await (await request(memberCookie, "/v1/inference-providers")).json()).some((provider) => provider.id === id)).toBe(false)
+  expect((await request(memberCookie, `${base}/connect`)).status).toBe(403)
+  expect((await request(ownerCookie, `${base}/credential-sets/${setId}`, { method: "PATCH", body: JSON.stringify({ status: "active", credential: { kind: "api_key", secret: "fake-replacement-pin-key" } }) })).status).toBe(200)
+  expect((await request(ownerCookie, `${base}/access-grants/${grantId}`, { method: "DELETE" })).status).toBe(204)
+  expect(readProviderList(await (await request(memberCookie, "/v1/inference-providers")).json()).some((provider) => provider.id === id)).toBe(false)
+  expect((await request(memberCookie, `${base}/connect`)).status).toBe(403)
+  const cleared = await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ pinnedModelIds: [] }) })
+  expect(cleared.status).toBe(200)
+  expect(readProvider(await cleared.json()).pinnedModelIds).toEqual([])
 })
 
 test("explicit group/set grants reduce by specificity within the pair and choose a stable equivalent grant", async () => {

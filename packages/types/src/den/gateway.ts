@@ -188,6 +188,7 @@ export interface GatewayProviderSummary {
   /** Display when catalog refresh is unavailable or compatibility excludes catalog models. */
   catalogWarning?: string;
   models: GatewayUsableModel[];
+  pinnedModelIds: string[];
   authorizationRequests: GatewayAuthorizationRequest[];
   migration?: GatewayProviderMigration;
   /** Legacy management hints. Never flatten these back into matrix writes. */

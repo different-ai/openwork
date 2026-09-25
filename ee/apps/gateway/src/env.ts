@@ -2,6 +2,7 @@ import "./load-env.js";
 import type { DenDbMode, PlanetScaleCredentials } from "@openwork-ee/den-db";
 import { gatewayInteger, gatewayOrigin, parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env";
 import { z } from "zod";
+import { readAutoConfig } from "./free/shared/config.js";
 
 const EnvSchema = z
   .object({
@@ -130,6 +131,7 @@ const planetscale: PlanetScaleCredentials | null =
     : null;
 
 export const env = {
+  freeAuto: readAutoConfig(process.env),
   gatewayEnabled: gatewayDeployment.enabled,
   upstreamTimeoutMs: parsed.GATEWAY_UPSTREAM_TIMEOUT_MS,
   port: parsed.PORT,

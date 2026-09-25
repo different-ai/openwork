@@ -35,6 +35,7 @@ const setParams = paramsSchema.extend(idParamSchema("credentialSetId", "gatewayC
 const grantParams = paramsSchema.extend(idParamSchema("grantId", "inferenceProviderAccess").shape)
 const nameSchema = z.string().trim().min(1).max(255)
 const modelIdsSchema = z.array(nameSchema).max(500)
+const pinnedModelIdsSchema = modelIdsSchema.refine((ids) => new Set(ids).size === ids.length, "Pinned models must be unique.")
 const enableModelsSchema = z.object({ modelGroupId: denTypeIdSchema("gatewayModelGroup"), modelIds: modelIdsSchema.min(1) }).strict()
 const modelManagementGroupSchema = z.object({ id: denTypeIdSchema("gatewayModelGroup"), name: z.string(), status: z.enum(GATEWAY_PROVIDER_STATUSES), modelIds: modelIdsSchema })
 const modelManagementProviderSchema = z.object({ id: denTypeIdSchema("inferenceProvider"), name: z.string(), providerId: z.string(), status: z.enum(GATEWAY_PROVIDER_STATUSES), modelIds: modelIdsSchema, modelGroups: z.array(modelManagementGroupSchema) })
@@ -53,7 +54,12 @@ const settingsSchema = z.object({ project: z.string().trim().max(255).optional()
 const legacyFields = { credentialMode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES).optional(), credential: credentialSchema.optional(), apiKeys: apiKeysSchema.optional(), ...oauthFields, allMembers: z.boolean().optional(), memberIds: z.array(denTypeIdSchema("member")).max(500).optional(), teamIds: z.array(denTypeIdSchema("team")).max(500).optional() }
 const universeSchema = modelIdsSchema.describe("Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.")
 const createSchema = z.object({ name: nameSchema, providerId: nameSchema, modelIds: universeSchema.default([]), settings: settingsSchema.optional(), status: z.enum(GATEWAY_PROVIDER_STATUSES).optional(), ...legacyFields }).strict().superRefine(singleCredential)
-const patchSchema = z.object({ name: nameSchema.optional(), providerId: nameSchema.optional(), modelIds: universeSchema.optional(), settings: settingsSchema.optional(), status: z.enum(GATEWAY_PROVIDER_STATUSES).optional(), ...legacyFields }).strict().superRefine(singleCredential)
+const patchSchema = z.object({ name: nameSchema.optional(), providerId: nameSchema.optional(), modelIds: universeSchema.optional(), pinnedModelIds: pinnedModelIdsSchema.optional(), settings: settingsSchema.optional(), status: z.enum(GATEWAY_PROVIDER_STATUSES).optional(), ...legacyFields }).strict().superRefine((input, ctx) => {
+  singleCredential(input, ctx)
+  if (input.pinnedModelIds !== undefined && Object.keys(input).length !== 1) {
+    ctx.addIssue({ code: "custom", path: ["pinnedModelIds"], message: "Update pinned models separately from provider configuration." })
+  }
+})
 const oauthQuery = z.object({ credentialSetId: denTypeIdSchema("gatewayCredentialSet").optional(), redirectTo: z.string().trim().min(1).max(2048).optional() }).strict()
 function singleCredential(input: { credential?: unknown; apiKeys?: unknown }, ctx: z.RefinementCtx) {
   if (input.credential !== undefined && input.apiKeys !== undefined) ctx.addIssue({ code: "custom", message: "Provide credential or apiKeys, not both." })
@@ -65,7 +71,7 @@ const setSchema = z.object({ id: denTypeIdSchema("gatewayCredentialSet"), name: 
 const grantSchema = grantWrite.extend({ id: denTypeIdSchema("inferenceProviderAccess") })
 const modelSchema = z.object({ id: z.string(), name: z.string(), config: z.object({ id: z.string() }).catchall(z.unknown()), upstreamModelId: z.string(), modelGroupId: denTypeIdSchema("gatewayModelGroup"), modelGroupName: z.string(), credentialSetId: denTypeIdSchema("gatewayCredentialSet"), credentialSetName: z.string() })
 const summarySchema = z.object({
-  modelIds: universeSchema, catalogWarning: z.string().optional(),
+  modelIds: universeSchema, pinnedModelIds: z.array(z.string()).describe("Ordered catalog model IDs in management responses; only caller-usable gwm aliases in public list/connect responses. Pins never grant access."), catalogWarning: z.string().optional(),
   id: denTypeIdSchema("inferenceProvider"), providerId: z.string(), name: z.string(), source: z.literal("openwork_gateway"), credentialMode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES), credentialStatus, authUrl: z.string().nullable(), status: z.enum(GATEWAY_PROVIDER_STATUSES), updatedAt: z.string().datetime(), providerConfig: z.record(z.string(), z.unknown()),
   models: z.array(modelSchema),
   authorizationRequests: z.array(z.object({ credentialSetId: denTypeIdSchema("gatewayCredentialSet"), name: z.string(), authUrl: z.string(), models: z.array(modelSchema).optional() })),
@@ -298,7 +304,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const catalog = await gatewayCatalog(input.providerId, input.modelIds)
       validateGatewaySettings(catalog.config, input.settings ?? {})
       const now = new Date()
-      const provider: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: catalog.catalog.id, name: input.name, model_ids: [...new Set(input.modelIds)], provider_config: catalog.config, settings: input.settings ?? {}, credential_mode: input.credentialMode ?? "org", oauth_client_id: null, oauth_client_secret: null, status: input.status ?? "active", created_at: now, updated_at: now }
+      const provider: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: catalog.catalog.id, name: input.name, model_ids: [...new Set(input.modelIds)], pinned_model_ids: [], provider_config: catalog.config, settings: input.settings ?? {}, credential_mode: input.credentialMode ?? "org", oauth_client_id: null, oauth_client_secret: null, status: input.status ?? "active", created_at: now, updated_at: now }
       await db.transaction(async (tx) => {
         const member = await liveMember(tx, actor, true, true)
         await tx.insert(GatewayProviderTable).values(provider)
@@ -309,12 +315,28 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.patch("/v1/inference-providers/:inferenceProviderId", route("Update inference gateway provider", "Partially updates the provider name, model universe or status and returns management details. Provider identity and upstream destination are immutable; changing them requires a new provider. Legacy credential or audience fields are rejected with matrix_write_required: edit credential sets and access grants instead. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", detailsResponse), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(patchSchema), async (c) => {
+  app.patch("/v1/inference-providers/:inferenceProviderId", route("Update inference gateway provider", "Partially updates the provider name, model universe or status and returns management details. A pin-only PATCH with pinnedModelIds replaces the ordered catalog-model pins without changing models, groups, credentials or grants; duplicates and unknown models are rejected. Pins do not grant access. Provider identity and upstream destination are immutable; changing them requires a new provider. Legacy credential or audience fields are rejected with matrix_write_required: edit credential sets and access grants instead. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", detailsResponse), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(patchSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const input = c.req.valid("json")
       if (input.credentialMode !== undefined || input.credential !== undefined || input.apiKeys !== undefined || input.oauthClientId !== undefined || input.oauthClientSecret !== undefined || input.memberIds !== undefined || input.teamIds !== undefined || input.allMembers !== undefined) {
         throw new GatewayWriteError(409, "matrix_write_required", "Edit credential-sets and access-grants explicitly. Flat PATCH cannot replace the access matrix.")
+      }
+      const pinnedModelIds = input.pinnedModelIds
+      if (pinnedModelIds !== undefined) {
+        const provider = await db.transaction(async (tx) => {
+          const existing = await getProvider(tx, actor, c.req.valid("param").inferenceProviderId, true, true)
+          const models = (await tx.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, existing.id)))
+            .filter((model) => (!existing.model_ids.length || existing.model_ids.includes(model.model_id))
+              && !gatewayModelConfigurationError(existing.provider_config, [model.model_config]))
+          if (pinnedModelIds.some((id) => !models.some((model) => model.model_id === id))) {
+            throw new GatewayWriteError(404, "model_not_found", "Pins accept configured catalog model IDs from this provider only.")
+          }
+          const updated_at = new Date()
+          await tx.update(GatewayProviderTable).set({ pinned_model_ids: pinnedModelIds, updated_at }).where(eq(GatewayProviderTable.id, existing.id))
+          return { ...existing, pinned_model_ids: pinnedModelIds, updated_at }
+        })
+        return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { refreshCatalog: false }) })
       }
       const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId, true)
       const trusted = await getModelsDevProvider(before.provider_id)
@@ -793,7 +815,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         const [creator] = await tx.select({ id: MemberTable.id }).from(MemberTable).where(and(eq(MemberTable.id, source.createdByOrgMembershipId), eq(MemberTable.organizationId, actor.organization.id), isNull(MemberTable.removedAt)))
         if (!creator || access.some((row) => row.orgMembershipId !== null && row.teamId !== null)) throw invalid("Source audiences or creator are invalid.")
         const now = new Date()
-        const provider: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: source.createdByOrgMembershipId, provider_id: source.providerId, name: source.name, model_ids: models.map((model) => model.modelId), provider_config: { ...config, env: trusted.env }, settings: { migration: { llmProviderId: source.id, runtimeEnvNames: runtimeProviderEnvNames(source) } }, credential_mode: "org", oauth_client_id: null, oauth_client_secret: null, status: "active", created_at: now, updated_at: now }
+        const provider: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: source.createdByOrgMembershipId, provider_id: source.providerId, name: source.name, model_ids: models.map((model) => model.modelId), pinned_model_ids: [], provider_config: { ...config, env: trusted.env }, settings: { migration: { llmProviderId: source.id, runtimeEnvNames: runtimeProviderEnvNames(source) } }, credential_mode: "org", oauth_client_id: null, oauth_client_secret: null, status: "active", created_at: now, updated_at: now }
         await tx.insert(GatewayProviderTable).values(provider)
         await writeGatewayModels(tx, provider, models.map((model) => ({ id: model.modelId, name: model.name, config: model.modelConfig })))
         const matrix = await defaultMatrix(tx, provider, { name: source.name, providerId: source.providerId, modelIds: models.map((model) => model.modelId), credential }, member.id)

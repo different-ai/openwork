@@ -119,6 +119,111 @@ export type InferenceOrganizationMetadata = {
   tier: InferenceTier;
 };
 
+export const INFERENCE_FREE_MODEL_ID = "openai/gpt-5.6-luna";
+export const INFERENCE_FREE_ENV = {
+  enabled: "INFERENCE_FREE_ENABLED",
+  weeklyBudgetUsd: "INFERENCE_FREE_WEEKLY_BUDGET_USD",
+  modelID: "INFERENCE_FREE_MODEL_ID",
+} as const;
+
+export type FreeInferenceConfig = {
+  enabled: boolean;
+  weeklyBudgetUsd: number;
+  weeklyLimitAmount: number;
+  modelID: typeof INFERENCE_FREE_MODEL_ID;
+};
+
+export function readFreeInferenceConfig(environment: Record<string, string | undefined>): FreeInferenceConfig {
+  const enabled = environment[INFERENCE_FREE_ENV.enabled] ?? "false";
+  if (!["true", "false", "1", "0"].includes(enabled)) throw new Error("Invalid INFERENCE_FREE_ENABLED");
+  const budget = environment[INFERENCE_FREE_ENV.weeklyBudgetUsd] ?? "5";
+  const weeklyBudgetUsd = Number(budget);
+  const weeklyLimitAmount = Math.floor(weeklyBudgetUsd * INFERENCE_USAGE_CONVERSION_FACTOR);
+  if (!budget.trim() || !Number.isFinite(weeklyBudgetUsd) || weeklyBudgetUsd < 0 || weeklyBudgetUsd > 100
+    || !Number.isSafeInteger(weeklyLimitAmount)) throw new Error("Invalid INFERENCE_FREE_WEEKLY_BUDGET_USD");
+  const modelID = environment[INFERENCE_FREE_ENV.modelID] ?? INFERENCE_FREE_MODEL_ID;
+  if (modelID !== INFERENCE_FREE_MODEL_ID) throw new Error("Unapproved free model");
+  return { enabled: enabled === "true" || enabled === "1", weeklyBudgetUsd: weeklyLimitAmount / INFERENCE_USAGE_CONVERSION_FACTOR, weeklyLimitAmount, modelID };
+}
+
+export function freeInferenceWindow(now = new Date()) {
+  const start = new Date(now);
+  start.setUTCHours(0, 0, 0, 0);
+  start.setUTCDate(start.getUTCDate() - (start.getUTCDay() + 6) % 7);
+  return { start, end: new Date(start.getTime() + INFERENCE_WINDOW_DURATIONS_MS.weekly) };
+}
+
+export const INFERENCE_ACCESS_REASONS = [
+  "admin_disabled", "not_eligible", "free_disabled", "accounting_unavailable",
+  "free_allowance_exhausted", "free_request_in_progress", "upstream_unavailable",
+] as const;
+export type InferenceAccessReason = (typeof INFERENCE_ACCESS_REASONS)[number];
+export type ManagedModelRecommendation = {
+  modelID: string; displayName: string; providerName: string; summary: string;
+  recommended: boolean; rank: number; capabilities: string[];
+};
+export type InferenceAccess = {
+  kind: "paid" | "free" | "exhausted" | "unavailable";
+  modelID: string | null;
+  weeklyLimitUsd: number | null;
+  usedUsd: number | null;
+  reservedUsd: number | null;
+  remainingUsd: number | null;
+  resetsAt: string | null;
+  reason: InferenceAccessReason | null;
+  canUpgrade?: boolean;
+  catalog?: ManagedModelRecommendation[];
+};
+
+export function managedModelCatalog(): ManagedModelRecommendation[] {
+  return [{ modelID: INFERENCE_FREE_MODEL_ID, displayName: "Auto", providerName: "OpenWork",
+    summary: "Free automatic model", recommended: true, rank: 1, capabilities: ["tools"] }];
+}
+
+/**
+ * Stripe states in which an organization is still paying, or still being collected, for OpenWork Models.
+ * Free Auto never serves such an organization, even when its metadata says Models are off: that mismatch is
+ * an entitlement incident to surface, not a customer to downgrade silently.
+ */
+export const INFERENCE_LIVE_SUBSCRIPTION_STATUSES = ["active", "trialing", "past_due", "incomplete"] as const;
+export function inferenceSubscriptionLive(status: string | null | undefined): boolean {
+  return (INFERENCE_LIVE_SUBSCRIPTION_STATUSES as readonly string[]).includes(status ?? "");
+}
+
+/** Subscribed organizations use paid OpenWork Models; free Auto is only for unsubscribed members. */
+export function inferenceSubscribed(metadata: Record<string, unknown> | null): boolean {
+  const inference = metadata?.inference;
+  return typeof inference === "object" && inference !== null && "enabled" in inference && inference.enabled === true;
+}
+
+export function freeInferenceOrganizationAllowed(metadata: Record<string, unknown> | null): boolean {
+  const inference = metadata?.inference;
+  const free = metadata?.inferenceFree;
+  if (typeof inference === "object" && inference !== null && "enabled" in inference && inference.enabled === false) return false;
+  if (typeof free === "object" && free !== null && "offerAllowed" in free && free.offerAllowed === false) return false;
+  return true;
+}
+
+export function freeInferenceAccess(input: {
+  config: FreeInferenceConfig;
+  reason?: InferenceAccessReason | null;
+  bucket?: { limit_amount: number; used_amount: number; reserved_amount: number; blocked: boolean } | null;
+  now?: Date;
+}): InferenceAccess {
+  const limit = input.bucket?.limit_amount ?? input.config.weeklyLimitAmount;
+  const used = input.bucket?.used_amount ?? 0;
+  const reserved = input.bucket?.reserved_amount ?? 0;
+  const valid = [limit, used, reserved].every((amount) => Number.isSafeInteger(amount) && amount >= 0);
+  const remaining = Math.max(0, limit - used - reserved);
+  const reason = input.reason ?? (!input.config.enabled ? "free_disabled" : !valid || input.bucket?.blocked
+    ? "accounting_unavailable" : remaining === 0 ? "free_allowance_exhausted" : reserved > 0 ? "free_request_in_progress" : null);
+  return { kind: reason === null || reason === "free_request_in_progress" ? "free" : reason === "free_allowance_exhausted" ? "exhausted" : "unavailable",
+    modelID: input.config.modelID, weeklyLimitUsd: valid ? limit / INFERENCE_USAGE_CONVERSION_FACTOR : null,
+    usedUsd: valid ? used / INFERENCE_USAGE_CONVERSION_FACTOR : null, reservedUsd: valid ? reserved / INFERENCE_USAGE_CONVERSION_FACTOR : null,
+    remainingUsd: valid ? remaining / INFERENCE_USAGE_CONVERSION_FACTOR : null, resetsAt: freeInferenceWindow(input.now).end.toISOString(),
+    reason, canUpgrade: false, catalog: managedModelCatalog() };
+}
+
 // --- Inference gateway (per-org provider destinations) ---
 
 export const INFERENCE_PROVIDER_CREDENTIAL_MODES = ["org", "member"] as const;
@@ -147,7 +252,8 @@ export const INFERENCE_PROVIDER_CREDENTIAL_STATUSES = [
 export type InferenceProviderCredentialStatus =
   (typeof INFERENCE_PROVIDER_CREDENTIAL_STATUSES)[number];
 
-export const INFERENCE_REQUEST_ROUTES = ["openwork_openrouter", "org_provider"] as const;
+// openwork_free: signed-in members' free Auto, served from the dedicated OpenAI key.
+export const INFERENCE_REQUEST_ROUTES = ["openwork_openrouter", "org_provider", "openwork_free"] as const;
 export type InferenceRequestRoute = (typeof INFERENCE_REQUEST_ROUTES)[number];
 
 export const INFERENCE_REQUEST_PROTOCOLS = [

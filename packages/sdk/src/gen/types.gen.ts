@@ -1003,6 +1003,37 @@ export type DesktopPolicyListResponse = {
   }>;
 };
 
+export type InferenceAccessResponse = {
+  access: {
+    kind: "free" | "paid" | "exhausted" | "unavailable";
+    modelID: string | null;
+    weeklyLimitUsd: number | null;
+    usedUsd: number | null;
+    reservedUsd: number | null;
+    remainingUsd: number | null;
+    resetsAt: string | null;
+    reason:
+      | "admin_disabled"
+      | "not_eligible"
+      | "free_disabled"
+      | "accounting_unavailable"
+      | "free_allowance_exhausted"
+      | "free_request_in_progress"
+      | "upstream_unavailable"
+      | null;
+    canUpgrade: false;
+    catalog?: Array<{
+      modelID: string;
+      displayName: string;
+      providerName: string;
+      summary: string;
+      recommended: boolean;
+      rank: number;
+      capabilities: Array<string>;
+    }>;
+  };
+};
+
 export type InferenceStatus = {
   enabled: boolean;
   tier: "tier1" | "tier2";
@@ -1411,6 +1442,10 @@ export type GatewayProviderDetails = {
    * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
    */
   modelIds: Array<string>;
+  /**
+   * Ordered catalog model IDs in management responses; only caller-usable gwm aliases in public list/connect responses. Pins never grant access.
+   */
+  pinnedModelIds: Array<string>;
   catalogWarning?: string;
   /**
    * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
@@ -1572,6 +1607,10 @@ export type GatewayProviderSummary = {
    * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
    */
   modelIds: Array<string>;
+  /**
+   * Ordered catalog model IDs in management responses; only caller-usable gwm aliases in public list/connect responses. Pins never grant access.
+   */
+  pinnedModelIds: Array<string>;
   catalogWarning?: string;
   /**
    * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
@@ -10126,6 +10165,79 @@ export type PutV1DiagnosticsEgressTokenResponses = {
 export type PutV1DiagnosticsEgressTokenResponse =
   PutV1DiagnosticsEgressTokenResponses[keyof PutV1DiagnosticsEgressTokenResponses];
 
+export type GetV1InferenceAccessData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/access";
+};
+
+export type GetV1InferenceAccessErrors = {
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Active membership required.
+   */
+  403: ForbiddenError;
+};
+
+export type GetV1InferenceAccessError = GetV1InferenceAccessErrors[keyof GetV1InferenceAccessErrors];
+
+export type GetV1InferenceAccessResponses = {
+  /**
+   * Auto allowance returned.
+   */
+  200: InferenceAccessResponse;
+};
+
+export type GetV1InferenceAccessResponse = GetV1InferenceAccessResponses[keyof GetV1InferenceAccessResponses];
+
+export type PostV1InferenceFreeCredentialData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/free/credential";
+};
+
+export type PostV1InferenceFreeCredentialErrors = {
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Auto access denied.
+   */
+  403: ForbiddenError;
+  /**
+   * Auto unavailable.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type PostV1InferenceFreeCredentialError =
+  PostV1InferenceFreeCredentialErrors[keyof PostV1InferenceFreeCredentialErrors];
+
+export type PostV1InferenceFreeCredentialResponses = {
+  /**
+   * Member Auto credential returned.
+   */
+  200: {
+    credential: {
+      apiKey: string;
+      baseURL: string;
+      statusURL: string;
+      modelID: string;
+    };
+  };
+};
+
+export type PostV1InferenceFreeCredentialResponse =
+  PostV1InferenceFreeCredentialResponses[keyof PostV1InferenceFreeCredentialResponses];
+
 export type GetV1InferenceData = {
   body?: never;
   path?: never;
@@ -14493,6 +14605,7 @@ export type PatchV1InferenceProvidersByInferenceProviderIdData = {
      * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
      */
     modelIds?: Array<string>;
+    pinnedModelIds?: Array<string>;
     settings?: {
       project?: string;
       location?: string;
@@ -14638,6 +14751,10 @@ export type GetV1InferenceProvidersByInferenceProviderIdConnectResponses = {
        * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
        */
       modelIds: Array<string>;
+      /**
+       * Ordered catalog model IDs in management responses; only caller-usable gwm aliases in public list/connect responses. Pins never grant access.
+       */
+      pinnedModelIds: Array<string>;
       catalogWarning?: string;
       /**
        * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.

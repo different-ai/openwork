@@ -771,6 +771,20 @@
       "when": 1790207299296,
       "tag": "0110_early_hiroim",
       "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "5",
+      "when": 1790269435106,
+      "tag": "0111_free_auto_and_provider_pins",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "5",
+      "when": 1790272704184,
+      "tag": "0112_free_auto_request_route",
+      "breakpoints": true
     }
   ]
 }

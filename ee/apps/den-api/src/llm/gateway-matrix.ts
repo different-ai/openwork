@@ -281,12 +281,16 @@ export function gatewayGrantSummary(row: typeof GatewayProviderAccessTable.$infe
     audience: row.org_membership_id ? { type: "member", memberId: row.org_membership_id } : row.team_id ? { type: "team", teamId: row.team_id } : { type: "organization" } }
 }
 
-export function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: true): Promise<GatewayProviderDetails>
-export function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: boolean): Promise<GatewayProviderSummary>
-export async function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: boolean): Promise<GatewayProviderDetails | GatewayProviderSummary> {
+export function publicGatewayPinnedModelIds(pinnedModelIds: readonly string[], usableModels: readonly Pick<GatewayUsableModel, "id" | "upstreamModelId">[]) {
+  return [...new Set(pinnedModelIds.flatMap((id) => usableModels.filter((model) => model.upstreamModelId === id).map((model) => model.id)))]
+}
+
+export function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: true, options?: { refreshCatalog?: boolean }): Promise<GatewayProviderDetails>
+export function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: boolean, options?: { refreshCatalog?: boolean }): Promise<GatewayProviderSummary>
+export async function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: boolean, options: { refreshCatalog?: boolean } = {}): Promise<GatewayProviderDetails | GatewayProviderSummary> {
   const [member] = await db.select({ userId: MemberTable.userId }).from(MemberTable).where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, provider.organization_id), isNull(MemberTable.removedAt)))
   if (!member?.userId) throw new GatewayWriteError(403, "forbidden")
-  const refreshed = await refreshGatewayCatalog(provider)
+  const refreshed = options.refreshCatalog === false ? { provider, catalogWarning: undefined } : await refreshGatewayCatalog(provider)
   provider = refreshed.provider
   const models = (await db.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id)))
     .filter((model) => (!provider.model_ids.length || provider.model_ids.includes(model.model_id))
@@ -352,10 +356,13 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
   }
   for (const request of authorizationRequests) request.models.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
   const migration = provider.settings.migration
+  usableModels.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+  const pinnedModelIds = provider.pinned_model_ids ?? []
   const summary: GatewayProviderSummary = {
     modelIds: provider.model_ids, ...(refreshed.catalogWarning ? { catalogWarning: refreshed.catalogWarning } : {}),
+    pinnedModelIds: manage ? pinnedModelIds : publicGatewayPinnedModelIds(pinnedModelIds, usableModels),
     id: provider.id, providerId: provider.provider_id, name: provider.name, source: "openwork_gateway", credentialMode: sets.length > 0 && sets.every((set) => set.credential_mode === "member") ? "member" : "org", status: provider.status, updatedAt: provider.updated_at.toISOString(),
-    providerConfig: buildGatewayProviderConfig(provider, env.gatewayPublicBaseUrl), models: usableModels.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)), authorizationRequests,
+    providerConfig: buildGatewayProviderConfig(provider, env.gatewayPublicBaseUrl), models: usableModels, authorizationRequests,
     credentialStatus: usableModels.length ? "ready" : authorizationRequests.length ? "member_auth_required" : "org_credential_missing", authUrl: authorizationRequests[0]?.authUrl ?? null,
   }
   if (typeof migration === "object" && migration !== null && "llmProviderId" in migration && typeof migration.llmProviderId === "string"

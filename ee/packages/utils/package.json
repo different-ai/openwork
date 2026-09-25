@@ -36,6 +36,11 @@
       "development": "./src/inference-credentials.ts",
       "default": "./dist/inference-credentials.js"
     },
+    "./free-inference-digest": {
+      "types": "./src/free-inference-digest.ts",
+      "development": "./src/free-inference-digest.ts",
+      "default": "./dist/free-inference-digest.js"
+    },
     "./gateway-bearer-key": {
       "types": "./src/gateway-bearer-key.ts",
       "development": "./src/gateway-bearer-key.ts",
