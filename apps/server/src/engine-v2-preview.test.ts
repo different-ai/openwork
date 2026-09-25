@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,9 @@ import {
   writeEngineV2PreviewState,
 } from "./engine-v2-preview.js";
 import type { ServerConfig } from "./types.js";
+import * as managedV2 from "./managed-opencode-v2.js";
+import * as localAuth from "./opencode-v2-local-auth.js";
+import * as runtimeConfig from "./runtime-opencode-config-store.js";
 import { buildOpenWorkV2Instructions } from "./opencode-v2-instructions.js";
 
 test("v2 app guidance fits the native entry limit and uses the current native tools", () => {
@@ -228,4 +231,131 @@ test("null or empty native endpoint overrides cannot bypass catalog origin valid
     expect(result.skippedProviderIds).toEqual(["native"]);
     expect(result.specs).toEqual([]);
   }
+});
+
+
+type FakeSidecarReply = { status: number; json: unknown };
+
+/** A running engine v2 preview over a scripted sidecar; nothing is spawned. */
+async function withFakeSidecar(
+  input: {
+    reply: (path: string, method: string) => FakeSidecarReply | Promise<FakeSidecarReply>;
+    providers?: Record<string, unknown>;
+    mcp?: Record<string, Record<string, unknown>>;
+    waits?: Parameters<typeof createEngineV2Preview>[0]["waits"];
+  },
+  run: (preview: ReturnType<typeof createEngineV2Preview>, root: string, calls: string[]) => Promise<void>,
+) {
+  const root = await mkdtemp(join(tmpdir(), "openwork-v2-upkeep-"));
+  const calls: string[] = [];
+  const fake = {
+    url: "http://127.0.0.1:1", username: "opencode", password: "fixture", childPid: 1, exitCode: null, stdout: "", stderr: "",
+    health: async () => ({ healthy: true, version: "fixture", pid: 1 }),
+    injectProvider: async () => {}, setProviders: async () => {}, setSkills: async () => {}, close: async () => {},
+    async fetchJson(path: string, init: { method?: string } = {}) {
+      const method = init.method ?? "GET";
+      calls.push(`${method} ${path}`);
+      return await input.reply(path, method);
+    },
+  } satisfies managedV2.ManagedOpencodeV2Server;
+  const spies = [
+    spyOn(managedV2, "createManagedOpencodeV2Server").mockResolvedValue(fake),
+    spyOn(localAuth, "readLocalProviderApiKeys").mockResolvedValue(new Map()),
+    spyOn(runtimeConfig, "readGlobalRuntimeOpencodeConfig").mockResolvedValue({ provider: input.providers ?? {} }),
+    spyOn(runtimeConfig, "readEffectiveRuntimeOpencodeConfig").mockResolvedValue({ mcp: input.mcp ?? {} }),
+  ];
+  const previousBin = process.env.OPENWORK_OPENCODE2_BIN;
+  process.env.OPENWORK_OPENCODE2_BIN = "opencode2-fixture";
+  const preview = createEngineV2Preview({ config: testConfig(root), deferStart: true, waits: input.waits });
+  try {
+    await preview.setEnabled(true);
+    for (let attempt = 0; attempt < 200 && !preview.status().running; attempt++) await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(preview.status().running).toBe(true);
+    await run(preview, root, calls);
+  } finally {
+    await preview.stop();
+    for (const spy of spies) spy.mockRestore();
+    if (previousBin === undefined) delete process.env.OPENWORK_OPENCODE2_BIN;
+    else process.env.OPENWORK_OPENCODE2_BIN = previousBin;
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+const orgProvider = { orga: { name: "Org A", options: { baseURL: "https://example.test/v1", apiKey: "fixture-key" }, models: { m1: { name: "M1" } } } };
+
+test("folder readiness joins the provider push, not the slow catalog confirmation", async () => {
+  const started = Date.now();
+  await withFakeSidecar({
+    providers: orgProvider,
+    reply: (path) => {
+      if (path === "/api/provider") return { status: 200, json: { data: [{ id: "orga", settings: { apiKey: "fixture-key" } }] } };
+      // The catalog confirmation lags for over a second, as a cold sidecar does.
+      if (path === "/api/model") return { status: 200, json: { data: Date.now() - started > 1_200 ? [{ id: "m1", providerID: "orga" }] : [] } };
+      return { status: 200, json: { data: [] } };
+    },
+  }, async (preview, root) => {
+    const before = Date.now();
+    await preview.ensureWorkspaceReady(root);
+    expect(Date.now() - before).toBeLessThan(800);
+    expect(preview.status().lastWarning).toBeUndefined();
+  });
+});
+
+test("a folder whose catalog never lists the mirrored providers is served after a bounded wait, not refused", async () => {
+  await withFakeSidecar({
+    providers: orgProvider,
+    waits: { workspaceProviderReadyMs: 150 },
+    reply: (path) => path === "/api/model"
+      ? { status: 200, json: { data: [{ id: "m1", providerID: "orga" }] } }
+      : { status: 200, json: { data: [] } },
+  }, async (preview, root, calls) => {
+    await preview.ensureWorkspaceReady(root);
+    expect(preview.status().lastWarning).toContain("did not list every mirrored provider");
+    // The outcome is reused until the next mirror, so polls never repeat the wait.
+    const reads = calls.length;
+    await preview.ensureWorkspaceReady(root);
+    expect(calls.length).toBe(reads);
+  });
+});
+
+test("a connection the engine rejects is skipped and backed off; a slow one only delays", async () => {
+  await withFakeSidecar({
+    waits: { mcpSettleMs: 150 },
+    mcp: { good: { type: "remote", url: "https://good.example/mcp" }, broken: { type: "remote", url: "https://broken.example/mcp" } },
+    reply: (path) => {
+      if (path === "/api/mcp/broken") return { status: 400, json: { message: "unsupported" } };
+      if (path.startsWith("/api/mcp/")) return { status: 204, json: null };
+      // "good" never leaves pending: the settle wait ends at its bound.
+      if (path === "/api/mcp") return { status: 200, json: { data: [{ name: "good", status: { status: "pending" } }] } };
+      return { status: 200, json: { data: [] } };
+    },
+  }, async (preview, root, calls) => {
+    await preview.syncWorkspaceMcp("ws_1", root);
+    await preview.syncWorkspaceMcp("ws_1", root);
+    expect(calls.filter((call) => call === "PUT /api/mcp/broken")).toHaveLength(1);
+    expect(calls.filter((call) => call === "PUT /api/mcp/good")).toHaveLength(1);
+    expect(preview.status().lastWarning).toMatch(/still starting|registration failed/);
+    expect(preview.status().lastError).toBeUndefined();
+  });
+});
+
+test("warming a folder starts its upkeep in the background without waiting", async () => {
+  let releaseRegistration = () => {};
+  const registration = new Promise<void>((resolve) => { releaseRegistration = resolve; });
+  await withFakeSidecar({
+    mcp: { good: { type: "remote", url: "https://good.example/mcp" } },
+    reply: async (path, method) => {
+      if (method === "PUT") { await registration; return { status: 204, json: null }; }
+      if (path === "/api/mcp") return { status: 200, json: { data: [{ name: "good", status: { status: "connected" } }] } };
+      return { status: 200, json: { data: [] } };
+    },
+  }, async (preview, root, calls) => {
+    preview.warmWorkspace("ws_1", root);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls).toContain("PUT /api/mcp/good");
+    preview.warmWorkspace("ws_1", root);
+    releaseRegistration();
+    await preview.syncWorkspaceMcp("ws_1", root);
+    expect(calls.filter((call) => call === "PUT /api/mcp/good")).toHaveLength(1);
+  });
 });

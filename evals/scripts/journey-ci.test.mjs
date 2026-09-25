@@ -209,6 +209,7 @@ test('registered case metadata names exact files, supported execution axes, and 
       id: 'SKILL-NATIVE-01',
       engines: ['v2'],
     },
+    { spec: 'opencode-v2-reads-during-mcp-startup.e2e.test.ts', id: 'UPKEEP-01', engines: ['v2'] },
   ]);
   for (const registered of registeredCases) {
     assert(entries.some(entry => entry.spec === registered.spec));

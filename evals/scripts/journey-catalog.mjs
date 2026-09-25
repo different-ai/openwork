@@ -94,6 +94,10 @@ const definitions = {
       { id: 'SKILL-NATIVE-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
     ],
   },
+  'opencode-v2-reads-during-mcp-startup.e2e.test.ts': {
+    name: 'Keep the conversation responsive while a connection starts', placement: 'local',
+    cases: [{ id: 'UPKEEP-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
+  },
 };
 
 export const registeredCases = Object.freeze(Object.entries(definitions).flatMap(([spec, definition]) =>
