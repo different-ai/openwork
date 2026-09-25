@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readAsset, type ControllerAsset } from "./assets.ts";
 import { client } from "./index.ts";
 import { runScript, type BuildOptions } from "./builder.ts";
 import { toolsRecipe, dependencyRecipe, checkoutRecipe } from "./build-recipes.ts";
@@ -11,6 +11,9 @@ import { digest, sourceTree, dependencyFingerprint, dependencyInput, ensureLayer
  * Freestyle controller files that do enter the VM are digested separately.
  */
 const INERT_PATH = /^(?:\.github\/|\.opencode\/|\.warden\/|docs\/|packages\/docs\/|evals\/(?:specs|worlds|scripts|bin|results)\/|apps\/review\/|packages\/review\/|packages\/freestyle\/|scripts\/(?:prove|prepare|publish|verify|soak)-[^/]+$)|(?:^|\/)(?:test|tests|__tests__)\/|\.(?:test|spec|e2e\.test)\.[cm]?[jt]sx?$|\.mdx?$/;
+
+/** Bump the version when the template layout changes; cleanup reclaims older ones. */
+export const EVIDENCE_TEMPLATE_PREFIX = "ow-evidence-web-v2-";
 
 export function evidenceRuntimeFingerprint(entries: SourceEntry[]): string {
   return digest(JSON.stringify(entries.filter((entry) => entry.type === "blob" && !INERT_PATH.test(entry.path))
@@ -52,12 +55,12 @@ NODE
 ${dependencies}`, options);
     },
   }, api);
-  const files = ["evidence-runtime.mjs", "evidence-control.mjs", "gateway.mjs", "origins.mjs"];
-  const controller = await Promise.all(files.map((file) => readFile(new URL(file, import.meta.url), "utf8")));
+  const files: ControllerAsset[] = ["evidence-runtime.mjs", "evidence-control.mjs", "gateway.mjs", "origins.mjs"];
+  const controller = await Promise.all(files.map(readAsset));
   // Keyed by what runs in the VM, not by commit: test, review-UI, docs and CI-only
   // commits reuse the template. The copy records the fingerprint it was built for.
   const runtimeFingerprint = evidenceRuntimeFingerprint(entries);
-  const template = await ensureLayer({ slug: `ow-evidence-web-v2-${digest(depsSlug + controller.join("\n") + runtimeFingerprint)}`, stage: "evidence-world", observe, ttlSeconds: 86400,
+  const template = await ensureLayer({ slug: `${EVIDENCE_TEMPLATE_PREFIX}${digest(depsSlug + controller.join("\n") + runtimeFingerprint)}`, stage: "evidence-world", observe, ttlSeconds: 86400,
     parent: async () => deps.id,
     prepare: async (vm) => {
       for (const [index, name] of files.entries()) await vm.fs.writeTextFile(`/opt/openwork-preview/${name}`, controller[index]);

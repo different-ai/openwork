@@ -57,7 +57,7 @@ or waits for a merge to `dev`. The plan and acceptance boundaries are in
 
 ## Existing preview preparation
 
-CI prepares one running snapshot per commit and world. Each reviewer launch still
+The first reviewer launch builds one running snapshot per commit and world. Each launch
 clones that snapshot into a separate VM with its own URLs, access token, and filesystem.
 ACME additionally isolates MySQL and Redis. Build caches never contain a reviewer's running VM.
 
@@ -66,8 +66,7 @@ clone with its web links hidden. It installs no MySQL or Redis and starts no Den
 AI Gateway, seeded accounts, or separate web preview. Its private viewer is the
 primary URL. The app's blank-slate profile isolates its home, config, engine and
 user-data paths. Desktop health and source refresh verify empty onboarding rather
-than invoking ACME session renewal. A separate CI job verifies two clones, exact
-source, signed-out state and access isolation before deleting them.
+than invoking ACME session renewal.
 
 Preparation reuses four private, immutable layers:
 
@@ -123,17 +122,8 @@ and startup commands still do.
 Changing dependencies or build inputs can still take several minutes. The fastest path
 is a frontend change whose backend and build inputs are already cached.
 
-To measure reliability on a branch before merging, dispatch the prewarm workflow
-against it with a soak: `gh workflow run freestyle-prewarm.yml --ref <branch> -f soak_runs=30`.
-After the normal checks, the ACME job repeats the complete verification that many
-times against the same snapshot (five at a time by default), uploads
-`freestyle-soak-proof.json`, and fails unless every run passes. Thirty clean runs
-bound the failure rate below 10% at 95% confidence; sixty, below 5%. The branch's
-workflow pin decides which controller runs. Locally:
-`node --env-file=.env.freestyle.local scripts/soak-freestyle-preview.ts <sha> 10 5`.
-
-CI uploads `freestyle-build-proof-<world>.json` and writes a stage table to its job
-summary. `totalMs` measures preparation through a fully materialized running snapshot,
+`scripts/prepare-freestyle-preview.ts` writes `freestyle-build-proof-<world>.json` and a stage
+table (to the job summary when run in Actions). `totalMs` measures preparation through a fully materialized running snapshot,
 including cache misses, and excludes runner setup and subsequent independent-clone
 checks. Nested stage durations overlap: do not add them. A `world` cache hit means
 that exact commit was already prepared and is not evidence of a fast new build.
