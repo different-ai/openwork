@@ -1,3 +1,4 @@
+import type { ReadSideChatHistory } from "../sync/side-chat-context";
 /** @jsxImportSource react */
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { UIMessage } from "ai";
@@ -663,6 +664,7 @@ export type SessionSurfaceProps = {
   onOpenSubagentSession?: (sessionId: string) => void;
   onOpenTarget?: (target: OpenTarget, options?: OpenTargetOptions, sessionId?: string) => void;
   environmentRuntimeKey?: string | null;
+  readSideChatHistory?: ReadSideChatHistory;
   onApplyEnvironmentChanges?: () => Promise<ApplyEnvironmentChangesResult>;
 };
 
@@ -1090,10 +1092,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
       variant: props.modelVariant,
       model: props.selectedModel,
       environmentRuntimeKey: props.environmentRuntimeKey ?? null,
+      readSideChatHistory: props.readSideChatHistory,
     });
   }, [
     props.client,
     props.environmentRuntimeKey,
+    props.readSideChatHistory,
     props.modelVariant,
     props.opencodeBaseUrl,
     props.openworkToken,

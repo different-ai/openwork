@@ -65,7 +65,8 @@ function sameContext(left: QueuedSendContext, right: QueuedSendContext) {
     && left.variant === right.variant
     && left.model?.providerID === right.model?.providerID
     && left.model?.modelID === right.model?.modelID
-    && left.environmentRuntimeKey === right.environmentRuntimeKey;
+    && left.environmentRuntimeKey === right.environmentRuntimeKey
+    && left.readSideChatHistory === right.readSideChatHistory;
 }
 
 function serializeSDKError(error: unknown): string {
@@ -138,6 +139,7 @@ async function performQueuedDraftSend(
   const system = await buildOpenworkSessionSystemContext(context.client, {
     workspaceId: context.workspaceId,
     cacheKey: sessionId,
+    readSideChatHistory: context.readSideChatHistory,
     runtimeKey: context.environmentRuntimeKey,
   });
   assertQueuedSendCurrent(sessionId, generation);
