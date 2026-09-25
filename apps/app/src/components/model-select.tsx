@@ -459,7 +459,7 @@ export function ModelSelect({
               <span className="shrink-0 text-gray-9">· {triggerBehaviorLabel}</span>
             ) : null}
             {!hideValue && fastOn ? (
-              <span data-testid="model-fast-indicator" className="shrink-0 text-xs font-medium text-gray-9">Fast</span>
+              <span data-testid="model-fast-indicator" className="shrink-0 text-xs font-medium text-gray-9">· Fast</span>
             ) : null}
           </span>
           <ChevronDown className="h-3 w-3" />
