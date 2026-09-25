@@ -40,7 +40,7 @@ describe("install re-validates the organization's desktop version policy", () =>
       onReleaseChannelChange,
       updateAutoCheck: false,
       updateAutoDownload: true,
-      updatePolicyKnown: true,
+      allowedVersionsKnown: true,
       desktopConfig: props.desktopConfig,
       refreshDesktopConfig,
       setError,

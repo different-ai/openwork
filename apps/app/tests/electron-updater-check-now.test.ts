@@ -71,7 +71,7 @@ describe("Settings staged-update discovery", () => {
       onReleaseChannelChange,
       updateAutoCheck: autoCheck,
       updateAutoDownload: autoDownload,
-      updatePolicyKnown: true,
+      allowedVersionsKnown: true,
       desktopConfig: config,
       refreshDesktopConfig,
       setError,

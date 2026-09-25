@@ -380,11 +380,15 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     [desktopConfigHandler],
   );
   const refreshFresh = useCallback(
-    // Callers (updater install re-check, recovery picker, onboarding branding)
-    // need the organization's current allowed-versions setting, so always
-    // fetch. Return the same capability projection the provider state uses so
-    // suspended desktop policy keys never reach them.
-    () => desktopConfigHandler(true).then(desktopCapabilityConfig),
+    // Callers (updater checks and install re-check, recovery picker, onboarding
+    // branding) need the organization's current allowed desktop versions, so
+    // always fetch. When Den is unreachable or older and the fetch fails, fall
+    // back to the last known config instead of failing the update flow. Return
+    // the same capability projection the provider state uses so suspended
+    // desktop policy keys never reach them.
+    () => desktopConfigHandler(true)
+      .catch(() => currentDesktopConfigRef.current)
+      .then(desktopCapabilityConfig),
     [desktopConfigHandler],
   );
 
