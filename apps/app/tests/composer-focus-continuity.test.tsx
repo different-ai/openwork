@@ -85,6 +85,7 @@ async function waitFor(predicate: () => boolean, label: string) {
 }
 
 test.each([
+  ...["enter", "modified-enter", "button"].map(editSubmission => ({ name: `busy edit via ${editSubmission} replaces its original turn without entering the queue`, editSubmission })),
   { name: "composer focus, shared Restore, pending stops, and optimistic sends preserve drafts through snapshots and first-message handoff", queueRegression: false, modeRegression: false },
   { name: "busy Enter clears persisted composer text and attachments without losing queued messages or newer typing", queueRegression: true, modeRegression: false },
   { name: "busy mode selection preserves the running turn and composer draft", queueRegression: false, modeRegression: true },
@@ -98,7 +99,7 @@ test.each([
   { name: "mobile web cancelled send keeps the keyboard", mobileOutcome: "cancelled" },
   { name: "mobile web rejected send keeps the keyboard", mobileOutcome: "rejected" },
   { name: "mobile web uncertain send keeps the keyboard", mobileOutcome: "unknown" },
-])("$name", async ({ queueRegression, modeRegression, orderingRegression, firstSendRegression, mobileOutcome }) => {
+])("$name", async ({ queueRegression, modeRegression, orderingRegression, firstSendRegression, mobileOutcome, editSubmission }) => {
   const sessionId = `session-focus-continuity${orderingRegression ? `-${orderingRegression}` : firstSendRegression ? "-first-send" : ""}`;
   window.localStorage.clear();
   const require = createRequire(import.meta.url);
@@ -540,6 +541,30 @@ test.each([
     if (!editor) throw new Error("Expected the Lexical editor");
     editor.focus();
     expect(document.activeElement).toBe(editor);
+
+    if (editSubmission) {
+      await openMessageMenu("edit");
+      await waitFor(() => editor.textContent === "Keep this session mounted.", "the original message in the editor");
+      expect(useComposerStateStore.getState().sessions[sessionId]?.revertMessageId).toBe("existing-user-message");
+      await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Replace the running turn"));
+      expect(container.querySelector('button[aria-label="Stop"]')).toBeNull();
+      const send = container.querySelector<HTMLButtonElement>('button[aria-label="Run task"]');
+      expect(send?.disabled).toBe(false);
+      await act(async () => {
+        if (editSubmission === "button") send?.click();
+        else editor.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Enter", ctrlKey: editSubmission === "modified-enter", bubbles: true, cancelable: true,
+        }));
+      });
+      await waitFor(() => sentDrafts.length === 1, "the edit submitted immediately");
+      expect(sentDrafts[0]?.text).toBe("Replace the running turn");
+      expect(sentDrafts[0]?.revertMessageId).toBe("existing-user-message");
+      expect(useComposerStateStore.getState().queuedDrafts[sessionId] ?? []).toEqual([]);
+      await act(async () => submission.resolve({ outcome: "blocked" }));
+      await waitFor(() => editor.textContent === "Replace the running turn", "a rejected edit restored to the composer");
+      expect(useComposerStateStore.getState().sessions[sessionId]?.revertMessageId).toBe("existing-user-message");
+      return;
+    }
 
     if (mobileOutcome) {
       await act(async () => useComposerStateStore.getState().setDraft(sessionId, ""));
@@ -1334,7 +1359,11 @@ test.each([
           parts,
         })),
       };
-      await act(async () => queryClient.setQueryData(transcriptKey(workspaceId, sessionId), snapshotToUIMessages(nativeSnapshot)));
+      fetchedSnapshot = nativeSnapshot;
+      await act(async () => {
+        queryClient.setQueryData(snapshotKey(workspaceId, sessionId), nativeSnapshot);
+        queryClient.setQueryData(transcriptKey(workspaceId, sessionId), snapshotToUIMessages(nativeSnapshot));
+      });
     };
     nativeMessages.push({ id: "native-historical", role: "user", text: "Historical attachment", time: { created: 100 } });
     await refreshNativeTranscript();
@@ -1461,18 +1490,15 @@ test.each([
       expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Composer continuation beside queue");
     };
     submission = Promise.withResolvers<CloudMcpSubmissionResult>();
-    const queuedHistory = Promise.withResolvers<OpenworkSessionSnapshot>();
-    const ensureSnapshot = spyOn(queryClient, "ensureQueryData").mockImplementation(() => queuedHistory.promise);
+    // Complete cached history lets admission begin immediately. Hold the send
+    // itself to check duplicate clicks and session switches while it is pending.
     const sendsBeforeQueue = sentDrafts.length;
     await act(async () => sendNow());
     expectQueuedSending();
-    expect(sentDrafts).toHaveLength(sendsBeforeQueue);
+    expect(sentDrafts).toHaveLength(sendsBeforeQueue + 1);
     await act(async () => renderSession(otherSessionId));
     expect(container.querySelector('button[aria-label="Sending..."]')).toBeNull();
     await act(async () => renderSession());
-    expectQueuedSending();
-    await act(async () => queuedHistory.resolve(fetchedSnapshot));
-    ensureSnapshot.mockRestore();
     expectQueuedSending();
     expect(sentDrafts).toHaveLength(sendsBeforeQueue + 1);
     expect(sentDrafts.at(-1)?.text).toBe("Promote this queued message");
@@ -1550,7 +1576,8 @@ test.each([
     await act(async () => submission.reject(new PromptAdmissionUnknownError({ messageID: queuedUnknownId })));
     expect(getQueuedDrainState(sessionId).phase).toMatchObject({ kind: "admission_unknown", messageID: queuedUnknownId });
     expect(container.textContent).toContain("It may already be running");
-    expect(useComposerStateStore.getState().queuedDrafts[sessionId]).toBeUndefined();
+    // Keep the uncertain row for reconciliation, but fence it from another send.
+    expect(useComposerStateStore.getState().queuedDrafts[sessionId]?.map(item => item.draft.text)).toEqual(["Uncertain queued message"]);
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Newer composer edits during queue send");
     await act(async () => {
       useComposerStateStore.getState().appendQueuedDraft(sessionId, queueDraft("Do not retry uncertain admission"));
@@ -1706,7 +1733,7 @@ test("new-task composer keeps stable presentation and preserves submission owner
     expect(container.querySelector('[data-loading-message="starting"]')).toBeNull();
     expect(container.textContent).not.toContain("Starting");
     expect(container.querySelector('[data-loading-message="working"]')).toBeNull();
-    expect(container.querySelector('button[aria-label="Creating conversation..."]')?.getAttribute("aria-busy")).toBe("true");
+    expect(container.querySelector('button[aria-label="Send"]')?.getAttribute("aria-busy")).toBe("true");
   };
   const expectSettled = () => {
     expect(container.querySelector('[data-loading-message="starting"]')).toBeNull();
@@ -1745,7 +1772,7 @@ test("new-task composer keeps stable presentation and preserves submission owner
     expect(heroEditor.getAttribute("contenteditable")).toBe("true");
     expect(capturedHandoff?.submitted.draft).toBe("First hero message");
     expectPendingHero();
-    expect(container.querySelector('button[aria-label="Creating conversation..."]')?.getAttribute("aria-busy")).toBe("true");
+    expect(container.querySelector('button[aria-label="Send"]')?.getAttribute("aria-busy")).toBe("true");
     expect(container.querySelector('button[aria-label="Preparing connected service tools…"]')).toBeNull();
     await act(async () => updateHeroDraft("Newer hero draft"));
     expect(capturedHandoff?.getContinuation().draft).toBe("Newer hero draft");
@@ -1782,7 +1809,7 @@ test("new-task composer keeps stable presentation and preserves submission owner
     expect(creations).toBe(2);
     expect(container.querySelector('[data-lexical-editor="true"]')).toBe(heroEditor);
     expect(heroEditor.getAttribute("contenteditable")).toBe("true");
-    expect(container.querySelector('button[aria-label="Creating conversation..."]')?.getAttribute("aria-busy")).toBe("true");
+    expect(container.querySelector('button[aria-label="Send"]')?.getAttribute("aria-busy")).toBe("true");
     expect(container.querySelector('button[aria-label="Preparing connected service tools…"]')).toBeNull();
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("");
     expect(container.querySelector('[data-message-role="user"]')).toBeNull();

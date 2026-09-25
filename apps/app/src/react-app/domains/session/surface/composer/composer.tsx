@@ -59,6 +59,7 @@ type ComposerProps = {
   onQueue: () => void | Promise<void>;
   onStop: () => void | Promise<void>;
   busy: boolean;
+  editing?: boolean;
   stopping?: boolean;
   steering: boolean;
   submissionPreparing: boolean;
@@ -316,17 +317,20 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
 
   // Editor submit (Enter). While idle this sends normally; while busy
   // Enter queues until the agent finishes, and Cmd/Ctrl+Enter steers.
+  // An edit always replaces its original turn through the immediate send path.
   const handleEditorSubmit = useCallback((options: { queue: boolean }) => {
     const hasContent = props.draft.trim().length > 0 || props.attachments.length > 0;
     if (!hasContent) return;
-    if (props.submissionPreparing) return;
-    if (props.busy) {
+    if (props.submissionPreparing || props.stopping) return;
+    if (props.busy && !props.editing) {
       if (options.queue) void props.onSteer();
       else void props.onQueue();
       return;
     }
     void props.onSend();
-  }, [props.busy, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing]);
+  }, [props.busy, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
+
+  const showStop = props.busy && !props.editing;
 
   const slashCommandQuery = getSlashCommandQuery(props.draft);
   const slashOpenNext = slashCommandQuery !== null;
@@ -1598,8 +1602,8 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
 
               {/*
                 Action area: one circular control.
-                - Idle: send arrow.
-                - Busy: stop icon in that same slot (Enter still queues;
+                - Idle or editing: send arrow.
+                - Busy follow-up: stop icon in that same slot (Enter still queues;
                   Cmd/Ctrl+Enter still steers).
               */}
               <div data-composer-actions className="col-start-2 row-start-2 ml-auto flex shrink-0 items-center gap-1.5">
@@ -1610,7 +1614,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                     if (event.pointerType === "touch" && window.matchMedia("(max-width: 1023px)").matches) event.preventDefault();
                   }}
                   onClick={
-                    props.busy
+                    showStop
                       ? props.onStop
                       : !canSend || props.submissionPreparing
                         ? undefined
@@ -1619,12 +1623,12 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   disabled={
                     props.disabled
                     || props.stopping
-                    || (!props.busy && (!canSend || props.submissionPreparing))
+                    || (!showStop && (!canSend || props.submissionPreparing))
                   }
                   aria-label={
                     props.stopping
                       ? t("composer.stopping")
-                      : props.busy
+                      : showStop
                         ? t("composer.stop")
                         : props.submissionPreparing
                           ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
@@ -1634,7 +1638,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   className={`inline-flex h-9 max-h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
                     props.stopping
                       ? "cursor-wait bg-[var(--dls-accent)] text-[var(--dls-accent-fg)]"
-                      : props.busy
+                      : showStop
                         ? "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
                         : !canSend || props.disabled || props.submissionPreparing
                           ? "bg-gray-4 text-gray-10"
@@ -1643,7 +1647,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   title={
                     props.stopping
                       ? t("composer.stopping")
-                      : props.busy
+                      : showStop
                         ? t("composer.stop")
                         : props.submissionPreparing
                           ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
@@ -1652,7 +1656,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                 >
                   {props.stopping ? (
                     <LoaderCircle size={15} className="animate-spin" />
-                  ) : props.busy ? (
+                  ) : showStop ? (
                     <Square size={12} fill="currentColor" />
                   ) : props.submissionPreparing ? (
                     <LoaderCircle size={15} className="animate-spin" />
@@ -1662,7 +1666,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   <span className="sr-only">
                     {props.stopping
                       ? t("composer.stopping")
-                      : props.busy
+                      : showStop
                         ? t("composer.stop")
                         : props.submissionPreparing
                           ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
