@@ -1,4 +1,5 @@
 import { previewWorld, PreviewLaunchError, type PreviewSession, type PreviewWorld } from "@openwork/freestyle";
+import type { BuildProgress } from "@openwork/freestyle/progress";
 
 export interface LaunchDependencies {
   readReview(id: string): Promise<{ gitSha: string } | null>;
@@ -6,8 +7,8 @@ export interface LaunchDependencies {
   hasSnapshot(gitSha: string, world: PreviewWorld): Promise<boolean>;
   launchPreview(input: { gitSha: string; reportId: string; world: PreviewWorld }): Promise<PreviewSession>;
   buildSnapshot(gitSha: string, world: PreviewWorld): Promise<unknown>;
-  /** True while a builder VM for this commit/world is alive. */
-  isBuilding(gitSha: string, world: PreviewWorld): Promise<boolean>;
+  /** What a first build of this commit/world is doing right now. */
+  buildProgress(gitSha: string, world: PreviewWorld): Promise<BuildProgress>;
   /** Runs work after the response has been sent (Next's `after`). */
   schedule(task: () => Promise<void>): void;
   connected(): boolean;
@@ -90,8 +91,9 @@ export function launchHandlers(deps: LaunchDependencies) {
     try { world = previewWorld(new URL(request.url).searchParams.get("world") ?? "app-web"); }
     catch { return Response.json({ error: "Unknown preview world." }, { status: 400, headers }); }
     try {
-      const ready = await deps.hasSnapshot(report.gitSha, world);
-      return Response.json({ ready, building: ready ? false : await deps.isBuilding(report.gitSha, world) }, { status: 200, headers });
+      if (await deps.hasSnapshot(report.gitSha, world)) return Response.json({ ready: true, building: false }, { status: 200, headers });
+      const progress = await deps.buildProgress(report.gitSha, world);
+      return Response.json({ ready: false, building: progress.building, progress }, { status: 200, headers });
     }
     catch { return Response.json({ error: "Freestyle could not be reached." }, { status: 502, headers }); }
   }

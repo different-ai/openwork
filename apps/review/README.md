@@ -132,12 +132,16 @@ Anonymous report, JSON, and image requests must redirect to Vercel Authenticatio
 
 ## Interactive Freestyle previews
 
-Nothing prepares previews ahead of time. The first **Launch in Freestyle** for a
-commit and world builds its snapshot after the request returns (`202`), within the
-function's 800-second budget, while the page polls `GET /r/<id>/launch?world=…` and
-shows how long the build has run. The page then launches as usual. Reusable layers
-(tools, dependencies, compiled output, running template) stay cached, so a first
-build is usually a few minutes. The provider's builder lock deduplicates concurrent
+When the evidence report for a PR push is published, the **Evidence review** workflow
+builds that commit's `app-web` and `acme-web` snapshots in the background, so
+**Launch in Freestyle** is usually ready at the first click. Otherwise the first
+launch of a commit and world builds its snapshot after the request returns (`202`),
+within the function's 800-second budget. The page polls `GET /r/<id>/launch?world=…`,
+which reports the build's current layer and finished service steps (read from the
+builder VM tagged with the commit), and shows them like `pnpm world up`: finished
+steps with their times, the running step, and what is left. It launches when the
+snapshot is ready. Typical first builds: about 2 minutes for OpenWork web and 6 for
+ACME with warm caches. The provider's builder lock deduplicates concurrent
 first launches. Only the guest VM fetches and executes PR code, without the
 provider credential. Clones resume the snapshot's processes; launch only assigns
 public access, renews expired demo sessions if needed, and checks readiness.

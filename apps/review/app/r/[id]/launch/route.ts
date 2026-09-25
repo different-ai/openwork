@@ -1,7 +1,8 @@
 // Explicit extension: node --test loads this route without Next's resolver.
 import { after } from "next/server.js";
 import { readReview } from "@openwork/review/storage";
-import { ensureSnapshot, isBuilding } from "@openwork/freestyle/builder";
+import { ensureSnapshot } from "@openwork/freestyle/builder";
+import { buildProgress } from "@openwork/freestyle/progress";
 import { findSnapshot, launchPreview } from "@openwork/freestyle";
 import { launchHandlers } from "../../../../lib/launch.ts";
 
@@ -19,7 +20,7 @@ const handlers = launchHandlers({
     // never receive credentials, so the log holds no secrets.
     diagnostic: async (stage, log) => console.error("Freestyle preview builder log", { gitSha, world, stage, tail: log.split("\n").slice(-60).join("\n") }),
   }),
-  isBuilding: (gitSha, world) => isBuilding(gitSha, world),
+  buildProgress: (gitSha, world) => buildProgress(gitSha, world),
   schedule: (task) => after(task),
   connected: () => Boolean(process.env.FREESTYLE_API_KEY?.trim()),
 });

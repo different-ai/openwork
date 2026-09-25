@@ -2,24 +2,41 @@
 
 import { useEffect, useRef, useState } from "react";
 import { CopyButton } from "./copy-button";
+import { BuildReadiness, advance, startTracking, type BuildStepView, type BuildTracker } from "./build-readiness";
 import { parsePreviewOutputs, type PreviewOutputs } from "@openwork/freestyle/outputs";
 
 interface Session { url: string; expiresAt: string; outputs: PreviewOutputs; desktop: boolean; world: string }
 
 // A first launch builds the commit's snapshot after the POST returns 202.
-const BUILD_POLL_MS = 10_000;
+const BUILD_POLL_MS = 4_000;
 const BUILD_GIVE_UP_MS = 15 * 60_000;
 // No builder VM is alive while the source tree is read or between layers, so only
 // a sustained absence after this grace period counts as a failed build.
 const BUILD_FAILED_GRACE_MS = 2 * 60_000;
 const BUILD_FAILED_IDLE_POLLS = 3;
 
-async function buildState(id: string, world: string): Promise<{ ready: boolean; building: boolean }> {
+const WORLD_NAMES: Record<string, string> = { "app-web": "OpenWork web", "acme-web": "ACME", desktop: "Desktop only" };
+
+interface BuildPoll { ready: boolean; building: boolean; layer?: string; steps: BuildStepView[] }
+
+function progressOf(body: object): Pick<BuildPoll, "layer" | "steps"> {
+  const progress: unknown = "progress" in body ? body.progress : undefined;
+  if (typeof progress !== "object" || progress === null) return { steps: [] };
+  const layer = "layer" in progress && typeof progress.layer === "string" ? progress.layer : undefined;
+  const raw: unknown = "steps" in progress ? progress.steps : [];
+  const steps: BuildStepView[] = [];
+  if (Array.isArray(raw)) for (const step of raw) {
+    if (typeof step === "object" && step !== null && "id" in step && typeof step.id === "string" && "ms" in step && typeof step.ms === "number") steps.push({ id: step.id, ms: step.ms });
+  }
+  return { ...(layer ? { layer } : {}), steps };
+}
+
+async function buildState(id: string, world: string): Promise<BuildPoll> {
   const response = await fetch(`/r/${id}/launch?world=${encodeURIComponent(world)}`, { cache: "no-store" });
-  if (!response.ok) return { ready: false, building: true };
+  if (!response.ok) return { ready: false, building: true, steps: [] };
   const body: unknown = await response.json();
-  if (typeof body !== "object" || body === null) return { ready: false, building: true };
-  return { ready: "ready" in body && body.ready === true, building: "building" in body && body.building === true };
+  if (typeof body !== "object" || body === null) return { ready: false, building: true, steps: [] };
+  return { ready: "ready" in body && body.ready === true, building: "building" in body && body.building === true, ...progressOf(body) };
 }
 
 export function LaunchPreview({ id, connected }: { id: string; connected: boolean }) {
@@ -29,18 +46,11 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
   const [busy, setBusy] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [buildingSince, setBuildingSince] = useState<number | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  const [build, setBuild] = useState<{ tracker: BuildTracker; world: string } | null>(null);
   const mounted = useRef(true);
 
   // Set in the body too: React's development double-mount runs the cleanup once.
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useEffect(() => {
-    if (buildingSince === null) return;
-    const timer = setInterval(() => setNow(Date.now()), 15_000);
-    return () => clearInterval(timer);
-  }, [buildingSince]);
-
   useEffect(() => {
     if (!session) return;
     const update = () => setExpired(Date.now() >= Date.parse(session.expiresAt));
@@ -54,6 +64,7 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
     if (busy) return;
     setBusy(true);
     setError(null);
+    setBuild(null);
     let buildOutcome: "still-building" | "failed" | null = null;
     try {
       const requestedWorld = world === "acme-desktop" ? "acme-web" : world;
@@ -62,18 +73,26 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
       let response = await request();
       if (response.status === 202) {
         const started = Date.now();
-        setBuildingSince(started); setNow(started);
+        let tracker = startTracking(started);
+        setBuild({ tracker, world: requestedWorld });
         let idlePolls = 0;
         while (true) {
           const state = await buildState(id, requestedWorld);
           if (!mounted.current) return;
           if (state.ready) break;
+          tracker = advance(tracker, state, Date.now());
+          setBuild({ tracker, world: requestedWorld });
           idlePolls = state.building ? 0 : idlePolls + 1;
-          if (idlePolls >= BUILD_FAILED_IDLE_POLLS && Date.now() - started > BUILD_FAILED_GRACE_MS) { buildOutcome = "failed"; throw new Error("Build failed"); }
-          if (Date.now() - started > BUILD_GIVE_UP_MS) { buildOutcome = "still-building"; throw new Error("Still building"); }
+          const failed = idlePolls >= BUILD_FAILED_IDLE_POLLS && Date.now() - started > BUILD_FAILED_GRACE_MS;
+          if (failed || Date.now() - started > BUILD_GIVE_UP_MS) {
+            buildOutcome = failed ? "failed" : "still-building";
+            // Keep the steps on screen, marking where the build stopped.
+            setBuild({ tracker: { ...tracker, failed: true }, world: requestedWorld });
+            throw new Error(buildOutcome);
+          }
           await new Promise((resolve) => setTimeout(resolve, BUILD_POLL_MS));
         }
-        setBuildingSince(null);
+        setBuild(null);
         response = await request();
       }
       if (!response.ok) throw new Error("The sandbox could not launch. Try again.");
@@ -95,7 +114,7 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
         : buildOutcome === "failed" ? "This commit's sandbox could not be built. Try again; if it fails again, ask the review app owner to check the review app logs."
         : failure instanceof TypeError ? "The reviewer could not be reached. Reload this page and try again."
         : "The sandbox could not launch. Try again.");
-    } finally { setBusy(false); setBuildingSince(null); }
+    } finally { setBusy(false); }
   }
 
   const services: [string, { value: string }][] = session ? Object.entries(session.outputs).filter(([, entry]) => entry.group === "Services") : [];
@@ -122,12 +141,12 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
         {session && !expired && <a className="preview-open" href={session.url} target="_blank" rel="noreferrer">{session.desktop ? "Open desktop" : "Open sandbox"}</a>}
         <button type="button" className={session && !expired ? "quiet" : "primary"} onClick={launch} disabled={!connected || busy} aria-busy={busy} aria-describedby="preview-state">{expired ? "Launch again" : session ? "Launch another" : "Launch in Freestyle"}</button>
       </div>
-      <p id="preview-state" className={error ? "preview-error" : "preview-state"} role={error ? "alert" : "status"}>
+      {(!build || error) && <p id="preview-state" className={error ? "preview-error" : "preview-state"} role={error ? "alert" : "status"}>
         {!connected ? "Freestyle is not connected. The review app owner can connect it."
-          : error ?? (buildingSince !== null ? `Building this commit's sandbox for its first launch · ${Math.max(1, Math.round((now - buildingSince) / 60_000))} min`
-            : busy ? "Your new sandbox is starting. This can take a few minutes."
+          : error ?? (busy ? "Your new sandbox is starting. This can take a few minutes."
             : expired ? "Expired. Launch again to create a fresh sandbox." : session ? `${session.world} · Expires ${new Date(session.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Fresh sandbox per launch · 2-hour lifetime")}
-      </p>
+      </p>}
+      {build && <BuildReadiness tracker={build.tracker} world={build.world} worldName={WORLD_NAMES[build.world] ?? build.world} />}
       {session && !expired && <section aria-label="Your connection details">
         <div className="preview-launch-row">
           <CopyButton label="Copy all connection details" value={JSON.stringify({ sandboxUrl: session.url, ...Object.fromEntries(Object.entries(session.outputs).map(([key, entry]) => [key, entry.value])) }, null, 2)} />
@@ -156,7 +175,7 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
         </details>
       </section>}
       <details className="preview-details"><summary>Sandbox details</summary>
-        <p>OpenWork web runs the OpenWork web app and its local engine. Desktop only opens the real desktop app from this commit with a fresh, signed-out profile: no Den, databases, AI Gateway, demo accounts, or separate web preview. Its local engine and internal renderer belong to the desktop app. ACME web and ACME desktop keep the full stack with demo accounts and a simulated model upstream. Each launch restores this commit’s snapshot into a separate sandbox; the first launch of a commit builds that snapshot, which takes several minutes. Sandboxes expire after two hours; work is not saved.</p>
+        <p>OpenWork web runs the OpenWork web app and its local engine. Desktop only opens the real desktop app from this commit with a fresh, signed-out profile: no Den, databases, AI Gateway, demo accounts, or separate web preview. Its local engine and internal renderer belong to the desktop app. ACME web and ACME desktop keep the full stack with demo accounts and a simulated model upstream. Each launch restores this commit’s snapshot into a separate sandbox; the first launch of a commit builds that snapshot (usually about 2 minutes for OpenWork web and 6 for ACME) unless its evidence report already prepared it. Sandboxes expire after two hours; work is not saved.</p>
       </details>
     </div>
   );

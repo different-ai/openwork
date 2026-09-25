@@ -178,3 +178,20 @@ footer { padding: 0 0 24px; color: var(--muted-foreground); font-size: 12px; }
   .evidence-viewer { width: calc(100vw - 16px); height: calc(100vh - 16px); }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* First-build readiness: one row per step, like `pnpm world up`. */
+.readiness { margin-top: 12px; }
+.readiness-title { margin: 0 0 8px; font-weight: 600; }
+.readiness ol, .readiness ul { list-style: none; margin: 0; padding: 0; }
+.readiness ul { margin: 4px 0 4px 22px; }
+.readiness li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; min-height: 24px; }
+.readiness ul li { min-height: 20px; font-size: 12px; }
+.readiness ul { flex-basis: 100%; }
+.readiness-glyph { width: 14px; flex-shrink: 0; text-align: center; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.readiness-label { flex: 1; }
+.readiness-detail { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.readiness li[data-state="done"] > .readiness-glyph { color: var(--green-11); }
+.readiness li[data-state="running"] > .readiness-glyph { color: var(--foreground); }
+.readiness li[data-state="pending"] { color: var(--muted-foreground); }
+.readiness li[data-state="failed"] > .readiness-glyph { color: var(--destructive); }
+.readiness-footer { margin: 8px 0 0; color: var(--muted-foreground); font-size: 12px; }

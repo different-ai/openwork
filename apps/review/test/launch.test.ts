@@ -6,17 +6,21 @@ import test from "node:test";
 import { POST } from "../app/r/[id]/launch/route.ts";
 import { launchHandlers, type LaunchDependencies } from "../lib/launch.ts";
 import type { PreviewSession } from "@openwork/freestyle";
+import type { BuildProgress } from "@openwork/freestyle/progress";
+
+const RUNNING: BuildProgress = { building: true, layer: "running-template", since: "2026-09-25T10:00:00Z", steps: [{ id: "checkout", ms: 5000 }] };
 
 const sha = "c".repeat(40);
 function fakes(ready: boolean, building = false) {
-  const calls = { built: 0, launched: 0, scheduled: [] as (() => Promise<void>)[] };
+  const scheduled: (() => Promise<void>)[] = [];
+  const calls = { built: 0, launched: 0, scheduled };
   const session: PreviewSession = { id: "vm-1", snapshotId: "sh-1", gitSha: sha, url: "https://ow-x.preview.openwork.software/", expiresAt: new Date(Date.now() + 3600_000).toISOString(), world: "app-web", outputs: {} };
   const deps: LaunchDependencies = {
     readReview: async () => ({ gitSha: sha }),
     hasSnapshot: async () => ready,
     launchPreview: async () => { calls.launched++; return session; },
     buildSnapshot: async () => { calls.built++; },
-    isBuilding: async () => building,
+    buildProgress: async () => building ? RUNNING : { building: false, steps: [] },
     schedule: (task) => { calls.scheduled.push(task); },
     connected: () => true,
   };
@@ -46,7 +50,12 @@ test("a commit with a snapshot launches directly and schedules nothing", async (
 });
 
 test("readiness polling reports ready, building, or neither without building or launching", async () => {
-  for (const [ready, building, expected] of [[true, true, { ready: true, building: false }], [false, true, { ready: false, building: true }], [false, false, { ready: false, building: false }]] as const) {
+  const cases: [boolean, boolean, unknown][] = [
+    [true, true, { ready: true, building: false }],
+    [false, true, { ready: false, building: true, progress: RUNNING }],
+    [false, false, { ready: false, building: false, progress: { building: false, steps: [] } }],
+  ];
+  for (const [ready, building, expected] of cases) {
     const { deps, calls } = fakes(ready, building);
     const response = await launchHandlers(deps).GET(new Request("https://review.example/r/test/launch?world=acme-web"), params);
     assert.equal(response.status, 200);
