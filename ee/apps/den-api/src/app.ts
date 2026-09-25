@@ -183,9 +183,9 @@ if (!env.corsHandledByEdge) {
     cors({
       origin: resolveStrictCorsOrigin,
       credentials: true,
-      allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id"],
+      allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id", "X-OpenWork-Audit-Correlation"],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-      exposeHeaders: ["Content-Length"],
+      exposeHeaders: ["Content-Length", "Content-Disposition", "X-Audit-Next-Cursor", "X-Audit-Snapshot-Sequence", "X-Audit-Resource-Scope"],
       maxAge: 600,
     }),
   )

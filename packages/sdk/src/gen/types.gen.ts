@@ -696,6 +696,13 @@ export type OrganizationContextResponse = {
     version: 1;
     aiGateway: boolean;
   };
+  entitlements: {
+    sso: boolean;
+    desktopPolicies: boolean;
+    orgControls: boolean;
+    analytics: boolean;
+    auditLogs: boolean;
+  };
   [key: string]: unknown;
 };
 
@@ -7478,6 +7485,595 @@ export type PostV1ApiKeysResponses = {
 };
 
 export type PostV1ApiKeysResponse = PostV1ApiKeysResponses[keyof PostV1ApiKeysResponses];
+
+export type UpdateAuditCaptureData = {
+  body: {
+    captureOn: boolean;
+    expectedRevision: number;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/audit/settings";
+};
+
+export type UpdateAuditCaptureErrors = {
+  /**
+   * Only captureOn and a nonnegative safe expectedRevision are accepted.
+   */
+  400: InvalidRequestError;
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Enabling capture requires audit availability.
+   */
+  402: EnterprisePlanRequiredError;
+  /**
+   * Administrator permission, fresh authentication and visibility required.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "audit_visibility_disabled";
+      };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Refresh a changed policy, request operator initialization or wait for capture rollout.
+   */
+  409: {
+    error: "audit_policy_changed" | "audit_policy_not_configured" | "audit_capture_unavailable";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type UpdateAuditCaptureError = UpdateAuditCaptureErrors[keyof UpdateAuditCaptureErrors];
+
+export type UpdateAuditCaptureResponses = {
+  /**
+   * Latest audit policy, entitlement and retained usage.
+   */
+  200: {
+    entitlement: {
+      enabled: boolean;
+      source: "enterprise_plan" | "self_hosted" | "none";
+    };
+    captureOn: boolean;
+    captureAvailable: boolean;
+    policy: {
+      organizationId: string;
+      revision: number;
+      source: "cloud" | "operator";
+      enabled: boolean;
+      categories: Array<"change" | "security" | "execution" | "access" | "read" | "request" | "lifecycle">;
+      allowance: number;
+      excessMode: "delete_oldest" | "paid_overage" | "keep_all";
+      effectiveAt: string;
+      captureStartedAt: string | null;
+      attachmentWindowSeconds: number;
+    } | null;
+    captureEnabled: boolean;
+    retainedOperations: number;
+    eventCount: number;
+    logicalBytes: number;
+    oldestAvailableAt: string | null;
+    measuredAt: string | null;
+    billing: "disabled";
+    cleanup: "dry_run";
+    drains: "not_configured";
+  };
+};
+
+export type UpdateAuditCaptureResponse = UpdateAuditCaptureResponses[keyof UpdateAuditCaptureResponses];
+
+export type GetAuditEventTypesData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/audit/event-types";
+};
+
+export type GetAuditEventTypesErrors = {
+  /**
+   * Malformed query, cursor, mismatched filters, operation scope or export format.
+   */
+  400: {
+    error: "audit_invalid_query" | "audit_invalid_cursor";
+  };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization administrator permission and audit visibility required.
+   */
+  403: {
+    error: "forbidden" | "audit_visibility_disabled";
+    message?: string;
+  };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type GetAuditEventTypesError = GetAuditEventTypesErrors[keyof GetAuditEventTypesErrors];
+
+export type GetAuditEventTypesResponses = {
+  /**
+   * The full static supported action catalog, not observed tenant event counts.
+   */
+  200: {
+    eventTypes: Array<string>;
+  };
+};
+
+export type GetAuditEventTypesResponse = GetAuditEventTypesResponses[keyof GetAuditEventTypesResponses];
+
+export type GetAuditOperationsData = {
+  body?: never;
+  path?: never;
+  query?: {
+    /**
+     * Maximum rows in this page.
+     */
+    limit?: number;
+    /**
+     * Opaque nextCursor from the prior page of the same query and mode.
+     */
+    cursor?: string;
+    /**
+     * Inclusive operation-start bound; date-only is UTC midnight. from must not exceed to.
+     */
+    from?: string | string;
+    /**
+     * Inclusive operation-start bound; date-only is UTC midnight. from must not exceed to.
+     */
+    to?: string | string;
+    /**
+     * Initiating user ID, not a delegated event actor or membership ID.
+     */
+    actorId?: string;
+    /**
+     * Exact stable action of any child event within the snapshot watermark.
+     */
+    action?: string;
+    /**
+     * Current operation outcome; not an individual event outcome.
+     */
+    outcome?: "running" | "succeeded" | "failed" | "partial" | "unknown";
+    /**
+     * Stored operation origin.
+     */
+    origin?: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin";
+    /**
+     * Exact case-sensitive operation, child event, child request or stored child resource reference ID within the snapshot watermark; OR across ID kinds, AND with other filters. Not free-text or legacy payload search.
+     */
+    searchId?: string;
+    /**
+     * Exact case-sensitive stored reference ID from any child within the watermark.
+     */
+    resourceId?: string;
+    /**
+     * Optional stored reference type; requires resourceId.
+     */
+    resourceType?: string;
+  };
+  url: "/v1/audit/operations";
+};
+
+export type GetAuditOperationsErrors = {
+  /**
+   * Malformed query, cursor, mismatched filters, operation scope or export format.
+   */
+  400: {
+    error: "audit_invalid_query" | "audit_invalid_cursor";
+  };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization administrator permission and audit visibility required.
+   */
+  403: {
+    error: "forbidden" | "audit_visibility_disabled";
+    message?: string;
+  };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type GetAuditOperationsError = GetAuditOperationsErrors[keyof GetAuditOperationsErrors];
+
+export type GetAuditOperationsResponses = {
+  /**
+   * One bounded summary per operation.
+   */
+  200: {
+    operations: Array<{
+      id: string;
+      kind: string;
+      scope: string;
+      action: string;
+      initiatingActor: {
+        type: "user" | "service" | "system" | "unknown";
+        id: string | null;
+        memberId?: string;
+        credentialId?: string;
+      };
+      origin: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin";
+      originTrust: "authenticated" | "reported";
+      startedAt: string;
+      outcome: "running" | "succeeded" | "failed" | "partial" | "unknown";
+      eventCount: number;
+      logicalBytes: number;
+      resources: Array<{
+        type: string;
+        id: string;
+        relationship: "target" | "parent" | "related";
+        label?: string;
+      }>;
+    }>;
+    nextCursor: string | null;
+    snapshotSequence: number;
+  };
+};
+
+export type GetAuditOperationsResponse = GetAuditOperationsResponses[keyof GetAuditOperationsResponses];
+
+export type GetAuditOperationEventsData = {
+  body?: never;
+  path: {
+    operationId: string;
+  };
+  query?: {
+    /**
+     * Maximum rows in this page.
+     */
+    limit?: number;
+    /**
+     * Opaque nextCursor from the prior page of the same query and mode.
+     */
+    cursor?: string;
+  };
+  url: "/v1/audit/operations/{operationId}/events";
+};
+
+export type GetAuditOperationEventsErrors = {
+  /**
+   * Malformed query, cursor, mismatched filters, operation scope or export format.
+   */
+  400: {
+    error: "audit_invalid_query" | "audit_invalid_cursor";
+  };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization administrator permission and audit visibility required.
+   */
+  403: {
+    error: "forbidden" | "audit_visibility_disabled";
+    message?: string;
+  };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type GetAuditOperationEventsError = GetAuditOperationEventsErrors[keyof GetAuditOperationEventsErrors];
+
+export type GetAuditOperationEventsResponses = {
+  /**
+   * A bounded ascending page of event envelopes.
+   */
+  200: {
+    events: Array<{
+      schemaVersion: 1;
+      id: string;
+      organizationId: string;
+      operationId: string;
+      sequence: number;
+      operation: {
+        kind: string;
+        scope: string;
+        origin: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin";
+        originTrust: "authenticated" | "reported";
+        initiatingActor: {
+          type: "user" | "service" | "system" | "unknown";
+          id: string | null;
+          memberId?: string;
+          credentialId?: string;
+        };
+        startedAt: string;
+      };
+      actor: {
+        type: "user" | "service" | "system" | "unknown";
+        id: string | null;
+        memberId?: string;
+        credentialId?: string;
+      };
+      action: string;
+      category: "change" | "security" | "execution" | "access" | "read" | "request" | "lifecycle";
+      outcome: "succeeded" | "failed" | "denied" | "unknown";
+      occurredAt: string;
+      recordedAt: string;
+      requestId: string | null;
+      jobRunId?: string;
+      causedByEventId?: string;
+      resources: Array<{
+        type: string;
+        id: string;
+        relationship: "target" | "parent" | "related";
+        label?: string;
+      }>;
+      changes?: {
+        before: {
+          [key: string]: unknown;
+        } | null;
+        after: {
+          [key: string]: unknown;
+        } | null;
+        changedFields: Array<string>;
+      };
+      reasonCode?: string;
+      logicalBytes: number;
+    }>;
+    nextCursor: string | null;
+    snapshotSequence: number;
+  };
+};
+
+export type GetAuditOperationEventsResponse = GetAuditOperationEventsResponses[keyof GetAuditOperationEventsResponses];
+
+export type GetAuditUsageData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/audit/usage";
+};
+
+export type GetAuditUsageErrors = {
+  /**
+   * Malformed query, cursor, mismatched filters, operation scope or export format.
+   */
+  400: {
+    error: "audit_invalid_query" | "audit_invalid_cursor";
+  };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization administrator permission and audit visibility required.
+   */
+  403: {
+    error: "forbidden" | "audit_visibility_disabled";
+    message?: string;
+  };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type GetAuditUsageError = GetAuditUsageErrors[keyof GetAuditUsageErrors];
+
+export type GetAuditUsageResponses = {
+  /**
+   * Current stored audit policy and usage, without a history scan.
+   */
+  200: {
+    entitlement: {
+      enabled: boolean;
+      source: "enterprise_plan" | "self_hosted" | "none";
+    };
+    captureOn: boolean;
+    captureAvailable: boolean;
+    policy: {
+      organizationId: string;
+      revision: number;
+      source: "cloud" | "operator";
+      enabled: boolean;
+      categories: Array<"change" | "security" | "execution" | "access" | "read" | "request" | "lifecycle">;
+      allowance: number;
+      excessMode: "delete_oldest" | "paid_overage" | "keep_all";
+      effectiveAt: string;
+      captureStartedAt: string | null;
+      attachmentWindowSeconds: number;
+    } | null;
+    captureEnabled: boolean;
+    retainedOperations: number;
+    eventCount: number;
+    logicalBytes: number;
+    oldestAvailableAt: string | null;
+    measuredAt: string | null;
+    billing: "disabled";
+    cleanup: "dry_run";
+    drains: "not_configured";
+  };
+};
+
+export type GetAuditUsageResponse = GetAuditUsageResponses[keyof GetAuditUsageResponses];
+
+export type GetAuditExportData = {
+  body?: never;
+  path?: never;
+  query?: {
+    /**
+     * Maximum rows in this page.
+     */
+    limit?: number;
+    /**
+     * Opaque nextCursor from the prior page of the same query and mode.
+     */
+    cursor?: string;
+    /**
+     * Inclusive operation-start bound; date-only is UTC midnight. from must not exceed to.
+     */
+    from?: string | string;
+    /**
+     * Inclusive operation-start bound; date-only is UTC midnight. from must not exceed to.
+     */
+    to?: string | string;
+    /**
+     * Initiating user ID, not a delegated event actor or membership ID.
+     */
+    actorId?: string;
+    /**
+     * Exact stable action of any child event within the snapshot watermark.
+     */
+    action?: string;
+    /**
+     * Current operation outcome; not an individual event outcome.
+     */
+    outcome?: "running" | "succeeded" | "failed" | "partial" | "unknown";
+    /**
+     * Stored operation origin.
+     */
+    origin?: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin";
+    /**
+     * Exact case-sensitive operation, child event, child request or stored child resource reference ID within the snapshot watermark; OR across ID kinds, AND with other filters. Not free-text or legacy payload search.
+     */
+    searchId?: string;
+    /**
+     * Exact case-sensitive stored reference ID from any child within the watermark.
+     */
+    resourceId?: string;
+    /**
+     * Optional stored reference type; requires resourceId.
+     */
+    resourceType?: string;
+    format?: "ndjson" | "csv";
+  };
+  url: "/v1/audit/export";
+};
+
+export type GetAuditExportErrors = {
+  /**
+   * Malformed query, cursor, mismatched filters, operation scope or export format.
+   */
+  400: {
+    error: "audit_invalid_query" | "audit_invalid_cursor";
+  };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization administrator permission and audit visibility required.
+   */
+  403: {
+    error: "forbidden" | "audit_visibility_disabled";
+    message?: string;
+  };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type GetAuditExportError = GetAuditExportErrors[keyof GetAuditExportErrors];
+
+export type GetAuditExportResponses = {
+  /**
+   * A bounded attachment page. No next-cursor header means this snapshot is exhausted.
+   */
+  200: string;
+};
+
+export type GetAuditExportResponse = GetAuditExportResponses[keyof GetAuditExportResponses];
 
 export type GetV1BrandAssetsByOrganizationIdByKindByVersionData = {
   body?: never;

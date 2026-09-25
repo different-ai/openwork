@@ -6,6 +6,8 @@ import {
   Laptop,
   LayoutDashboard,
   LibraryBig,
+  LockKeyhole,
+  ScrollText,
   Plug,
   SlidersHorizontal,
   Sparkles,
@@ -18,6 +20,7 @@ import {
   getAiGatewayRoute,
   getAnalyticsRoute,
   getApiKeysRoute,
+  getAuditLogsRoute,
   getAutomationsRoute,
   getBillingRoute,
   getDesktopPoliciesRoute,
@@ -109,9 +112,10 @@ export function buildDashboardNavSections({
         { href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop },
       ]
     : [];
-  const observabilityItems: DashboardNavItem[] = access.isAdmin && orgSlug
+  const observabilityItems: DashboardNavItem[] = orgSlug
     ? [
-        { href: getAnalyticsRoute(orgSlug), label: "Analytics", icon: BarChart3 },
+        ...(access.isAdmin ? [{ href: getAnalyticsRoute(orgSlug), label: "Analytics", icon: BarChart3 }] : []),
+        { href: getAuditLogsRoute(orgSlug), label: "Audit logs", icon: access.isAdmin ? ScrollText : LockKeyhole, ...(access.isAdmin ? {} : { badge: "Admin access" }) },
       ]
     : [];
   const settingsChildren: DashboardNavChild[] = orgSlug
@@ -162,6 +166,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   Advanced: ["marketplace", "collections", "branding", "brand appearance"],
   "AI Gateway": ["llm", "provider", "gateway", "inference", "usage"],
   Analytics: ["usage", "stats", "consumption", "workflow runs", "history", "langfuse"],
+  "Audit logs": ["audit", "history", "operations", "changes", "security"],
   "API Keys": ["token", "secret"],
   Billing: ["plan", "invoice", "payment"],
   "Bring Your Own Keys (Legacy)": ["llm", "provider", "byok", "api key"],

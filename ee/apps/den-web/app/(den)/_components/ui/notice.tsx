@@ -26,14 +26,16 @@ export function DenNotice({
   message,
   tone,
   className,
+  icon,
 }: {
   message: ReactNode;
   tone?: DenNoticeTone;
   className?: string;
+  icon?: LucideIcon;
 }) {
   const resolvedTone =
     tone ?? (typeof message === "string" && ROUTINE_SECURITY_MESSAGES.has(message) ? "info" : "error");
-  const Icon = toneIcons[resolvedTone];
+  const Icon = icon ?? toneIcons[resolvedTone];
 
   return (
     <div

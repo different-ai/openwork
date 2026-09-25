@@ -16,7 +16,7 @@ const INTERNAL_RESPONSE_HEADERS = new Set([
   "x-request-id",
   "x-vercel-id",
 ])
-const SAFE_X_RESPONSE_HEADERS = new Set(["x-content-type-options"])
+const SAFE_X_RESPONSE_HEADERS = new Set(["x-content-type-options", "x-audit-next-cursor", "x-audit-snapshot-sequence", "x-audit-resource-scope"])
 
 function isInternalResponseHeader(name: string) {
   const normalized = name.toLowerCase()

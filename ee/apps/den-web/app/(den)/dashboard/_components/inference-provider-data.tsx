@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GatewayAccessGrantWrite, GatewayCredentialSetWrite, GatewayModelGroupWrite } from "@openwork/types/den/gateway";
+import { auditOperationHeaders, type AuditOperationContext } from "@openwork/types/den/audit";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import {
@@ -107,13 +108,14 @@ export function useInferenceProvider(orgId: string | null, inferenceProviderId: 
 export async function saveInferenceProvider(input: {
   inferenceProviderId: string | null;
   body: Partial<InferenceProviderRequestBody>;
+  auditContext?: AuditOperationContext;
 }): Promise<DenInferenceProvider> {
   const path = input.inferenceProviderId
     ? `/v1/inference-providers/${encodeURIComponent(input.inferenceProviderId)}`
     : `/v1/inference-providers`;
   const { response, payload } = await requestJson(
     path,
-    { method: input.inferenceProviderId ? "PATCH" : "POST", body: JSON.stringify(input.body) },
+    { method: input.inferenceProviderId ? "PATCH" : "POST", body: JSON.stringify(input.body), headers: auditOperationHeaders(input.auditContext) },
     20000,
   );
   if (!response.ok) {
@@ -131,26 +133,26 @@ type GatewayResourceWrite =
   | { resource: "credential-sets"; body: GatewayCredentialSetWrite }
   | { resource: "access-grants"; body: GatewayAccessGrantWrite };
 
-export async function saveGatewayResource(providerId: string, id: string | null, input: GatewayResourceWrite) {
+export async function saveGatewayResource(providerId: string, id: string | null, input: GatewayResourceWrite, auditContext?: AuditOperationContext) {
   const path = `/v1/inference-providers/${encodeURIComponent(providerId)}/${input.resource}${id ? `/${encodeURIComponent(id)}` : ""}`;
   const { response, payload } = await requestJson(path, {
-    method: id ? "PATCH" : "POST", body: JSON.stringify(input.body),
+    method: id ? "PATCH" : "POST", body: JSON.stringify(input.body), headers: auditOperationHeaders(auditContext),
   }, 20000);
   if (!response.ok) throw getRequestError(payload, response, `Could not save ${input.resource} (${response.status}).`);
 }
 
-export async function deleteGatewayResource(providerId: string, resource: GatewayResourceWrite["resource"], id: string) {
+export async function deleteGatewayResource(providerId: string, resource: GatewayResourceWrite["resource"], id: string, auditContext?: AuditOperationContext) {
   const { response, payload } = await requestJson(
     `/v1/inference-providers/${encodeURIComponent(providerId)}/${resource}/${encodeURIComponent(id)}`,
-    { method: "DELETE" }, 20000,
+    { method: "DELETE", headers: auditOperationHeaders(auditContext) }, 20000,
   );
   if (!response.ok) throw getRequestError(payload, response, `Could not delete ${resource} (${response.status}).`);
 }
 
-export async function deleteInferenceProvider(inferenceProviderId: string) {
+export async function deleteInferenceProvider(inferenceProviderId: string, auditContext?: AuditOperationContext) {
   const { response, payload } = await requestJson(
     `/v1/inference-providers/${encodeURIComponent(inferenceProviderId)}`,
-    { method: "DELETE" },
+    { method: "DELETE", headers: auditOperationHeaders(auditContext) },
     12000,
   );
   if (response.status !== 204 && !response.ok) {

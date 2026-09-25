@@ -50,8 +50,8 @@ export async function invitationHasAdminTeam(tx: TeamMutationTransaction, invita
 }
 
 // Never cache authority: IdP removals and designation changes apply on the next check.
-export async function listOrganizationAdminTeamGrants(organizationId: typeof TeamTable.$inferSelect.organizationId) {
-  return db.select({ memberId: MemberTable.id, id: TeamTable.id, name: TeamTable.name })
+export async function listOrganizationAdminTeamGrants(organizationId: typeof TeamTable.$inferSelect.organizationId, database: typeof db | TeamMutationTransaction = db) {
+  return database.select({ memberId: MemberTable.id, id: TeamTable.id, name: TeamTable.name })
     .from(TeamTable)
     .innerJoin(TeamMemberTable, eq(TeamMemberTable.teamId, TeamTable.id))
     .innerJoin(MemberTable, and(

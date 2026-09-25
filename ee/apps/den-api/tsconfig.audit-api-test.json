@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../../../..",
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "customConditions": ["development"],
+    "types": ["node", "bun-types/test"]
+  },
+  "include": ["src/audit/queries.ts", "src/audit/cursors.ts", "src/audit/exports.ts", "src/routes/org/audit.ts", "test/audit-api*.ts", "src/audit/coverage.ts", "src/audit/pilot-policy.ts", "scripts/audit-pilot.ts", "test/audit-rollout*.ts", "src/routes/org/core.ts", "test/entitlements.test.ts", "test/auth-organization-metadata.test.ts", "test/org-deployment-capabilities.test.ts"]
+}

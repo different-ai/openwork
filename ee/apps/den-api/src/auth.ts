@@ -1185,6 +1185,9 @@ export const auth = betterAuth({
           if ("dpaSigned" in metadata) {
             throw new APIError("FORBIDDEN", { message: "dpaSigned is reserved for internal platform administration." });
           }
+          if ("plan" in metadata) {
+            throw new APIError("FORBIDDEN", { message: "plan is reserved for internal platform administration." });
+          }
           const capabilities = metadata.capabilities;
           if (capabilities && typeof capabilities === "object" && "gatewayDashboard" in capabilities) {
             const retainedCapabilities = { ...capabilities };

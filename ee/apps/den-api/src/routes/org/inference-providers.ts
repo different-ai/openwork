@@ -5,10 +5,13 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, GATEWAY_PROVIDER_CREDENTIAL_MODES, GATEWAY_PROVIDER_CREDENTIAL_STATUSES, GATEWAY_PROVIDER_STATUSES, type GatewayAccessGrantWrite, type GatewayProviderConnectResponse, type GatewayProviderSummary } from "@openwork/types/den/gateway"
 import { gatewayMemberConnectionsResponseSchema } from "@openwork/types/den/inference"
 import type { Hono, MiddlewareHandler } from "hono"
+import type {} from "hono/request-id"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { createPkcePair, OAuthTokenExchangeError, resolvePublicApiBaseUrl } from "../../capability-sources/generic-oauth.js"
 import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
+import { bindProviderGrantAuditTarget, loadProviderAudit, providerAuditMutation, providerAuditStep, providerRequestAuditContext, recordProviderAttempt, type ProviderAuditCapture } from "../../audit/provider.js"
+import { recheckAuditEntitlement } from "../../audit/capture.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { gatewayManagementUnavailable, gatewayManagementUnavailableSchema } from "../../gateway-deployment.js"
@@ -95,12 +98,40 @@ const managementRead: MiddlewareHandler<{ Variables: OrgRouteVariables }> = asyn
   if (unavailable) return c.json(unavailable, 403)
   await next()
 }
+const providerAuditRequests = new WeakMap<Request, { providerId: string; capture: ProviderAuditCapture | null }>()
 const managementWrite: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
-  const permission = ensureOrganizationAdmin(c, managementMessage)
-  if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
-  const unavailable = gatewayManagementUnavailable()
-  if (unavailable) return c.json(unavailable, 403)
-  await next()
+  const actor = c.get("organizationContext")
+  const step = providerAuditStep(c.req.method, c.req.routePath)
+  const parsed = paramsSchema.safeParse({ inferenceProviderId: c.req.param("inferenceProviderId") })
+  const providerId = parsed.success ? parsed.data.inferenceProviderId : createDenTypeId("inferenceProvider")
+  const capture = actor && step && "auditCaptureEnabled" in env && env.auditCaptureEnabled === true
+    ? await loadProviderAudit(db, true, providerRequestAuditContext({ organizationId: actor.organization.id, memberId: actor.currentMember.id, userId: actor.currentMember.userId, credentialId: c.get("apiKey")?.id, providerId, workflowStep: step, routeParams: { groupId: c.req.param("groupId"), credentialSetId: c.req.param("credentialSetId"), grantId: c.req.param("grantId") }, serverRequestId: c.get("requestId"), headers: c.req.raw.headers }), step)
+    : null
+  providerAuditRequests.set(c.req.raw, { providerId, capture })
+  let status = 500
+  try {
+    const permission = ensureOrganizationAdmin(c, managementMessage)
+    if (!permission.ok) { status = orgAccessFailureStatus(permission.response); return c.json(permission.response, orgAccessFailureStatus(permission.response)) }
+    const unavailable = gatewayManagementUnavailable()
+    if (unavailable) { status = 403; return c.json(unavailable, 403) }
+    await next()
+    status = c.res.status
+  } finally {
+    providerAuditRequests.delete(c.req.raw)
+    await recordProviderAttempt(db, capture, status)
+  }
+}
+async function providerTransaction<T>(c: { req: { raw: Request; param: (key: string) => string | undefined }; get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }, mutate: (tx: GatewayTx, provider: GatewayProvider) => Promise<T>): Promise<T> {
+  const actor = c.get("organizationContext")
+  const id = c.req.param("inferenceProviderId")
+  if (!actor || !id) throw new GatewayWriteError(403, "forbidden")
+  return db.transaction(async (tx) => {
+    const capture = providerAuditRequests.get(c.req.raw)?.capture ?? null
+    // Match membership/role mutation order: organization before member/provider.
+    if (capture) await recheckAuditEntitlement(tx, actor.organization.id)
+    const provider = await getProvider(tx, actor, id, true, true)
+    return providerAuditMutation(tx, capture, () => mutate(tx, provider))
+  })
 }
 async function liveMember(database: GatewayTx | typeof db, actor: Actor, lock: boolean, manage = false) {
   const query = database.select().from(MemberTable).where(and(eq(MemberTable.id, actor.currentMember.id), eq(MemberTable.organizationId, actor.organization.id), isNull(MemberTable.removedAt)))
@@ -217,8 +248,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const before = await getProvider(db, actor, params.inferenceProviderId, true)
       const catalog = await getModelsDevProvider(before.provider_id)
       if (!catalog) throw new GatewayWriteError(409, "provider_catalog_unavailable")
-      const result = await db.transaction(async (tx) => {
-        const provider = await getProvider(tx, actor, params.inferenceProviderId, true, true)
+      const result = await providerTransaction(c, async (tx, provider) => {
         return enableGatewayGroupModels(tx, provider, catalog, normalizeDenTypeId("gatewayModelGroup", input.modelGroupId), input.modelIds)
       })
       return c.json(result)
@@ -298,12 +328,16 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const catalog = await gatewayCatalog(input.providerId, input.modelIds)
       validateGatewaySettings(catalog.config, input.settings ?? {})
       const now = new Date()
-      const provider: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: catalog.catalog.id, name: input.name, model_ids: [...new Set(input.modelIds)], provider_config: catalog.config, settings: input.settings ?? {}, credential_mode: input.credentialMode ?? "org", oauth_client_id: null, oauth_client_secret: null, status: input.status ?? "active", created_at: now, updated_at: now }
+      const provider: GatewayProvider = { id: normalizeDenTypeId("inferenceProvider", providerAuditRequests.get(c.req.raw)?.providerId ?? createDenTypeId("inferenceProvider")), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: catalog.catalog.id, name: input.name, model_ids: [...new Set(input.modelIds)], provider_config: catalog.config, settings: input.settings ?? {}, credential_mode: input.credentialMode ?? "org", oauth_client_id: null, oauth_client_secret: null, status: input.status ?? "active", created_at: now, updated_at: now }
       await db.transaction(async (tx) => {
+        const capture = providerAuditRequests.get(c.req.raw)?.capture ?? null
+        if (capture) await recheckAuditEntitlement(tx, actor.organization.id)
         const member = await liveMember(tx, actor, true, true)
-        await tx.insert(GatewayProviderTable).values(provider)
-        await writeGatewayModels(tx, provider, catalog.models)
-        await defaultMatrix(tx, provider, input, member.id)
+        await providerAuditMutation(tx, capture, async () => {
+          await tx.insert(GatewayProviderTable).values(provider)
+          await writeGatewayModels(tx, provider, catalog.models)
+          await defaultMatrix(tx, provider, input, member.id)
+        })
       })
       return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true) }, 201)
     } catch (error) { return respond(c, error) }
@@ -318,8 +352,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       }
       const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId, true)
       const trusted = await getModelsDevProvider(before.provider_id)
-      const provider = await db.transaction(async (tx) => {
-        const existing = await getProvider(tx, actor, c.req.valid("param").inferenceProviderId, true, true)
+      const provider = await providerTransaction(c, async (tx, existing) => {
         if (input.providerId !== undefined && input.providerId !== existing.provider_id) throw new GatewayWriteError(409, "provider_identity_immutable", "Create a separate provider rather than moving existing groups and credentials to another catalog provider.")
         if (!trusted || trusted.id !== existing.provider_id || trusted.npm !== readProviderConfigNpm(existing.provider_config)) throw new GatewayWriteError(400, "provider_requires_configuration")
         const config = existing.provider_config
@@ -363,9 +396,8 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
   app.post("/v1/inference-providers/:inferenceProviderId/model-groups", route("Create gateway model group", "Creates and returns a model group using supported catalog model IDs from this provider; creating a group alone grants no access. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", z.object({ modelGroup: groupSchema }), 201), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(groupWrite), async (c) => {
     try {
       const actor = c.get("organizationContext")
-      await refreshGatewayCatalog(await getProvider(db, actor, c.req.valid("param").inferenceProviderId, true))
-      const result = await db.transaction(async (tx) => {
-        const provider = await getProvider(tx, actor, c.req.valid("param").inferenceProviderId, true, true)
+      await refreshGatewayCatalog(await getProvider(db, actor, c.req.valid("param").inferenceProviderId, true), providerAuditRequests.get(c.req.raw)?.capture ?? null)
+      const result = await providerTransaction(c, async (tx, provider) => {
         const id = await writeGatewayGroup(tx, provider, c.req.valid("json"))
         await touch(tx, provider)
         return { provider, id }
@@ -380,9 +412,8 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     try {
       const actor = c.get("organizationContext")
       const params = c.req.valid("param")
-      await refreshGatewayCatalog(await getProvider(db, actor, params.inferenceProviderId, true))
-      const result = await db.transaction(async (tx) => {
-        const provider = await getProvider(tx, actor, params.inferenceProviderId, true, true)
+      await refreshGatewayCatalog(await getProvider(db, actor, params.inferenceProviderId, true), providerAuditRequests.get(c.req.raw)?.capture ?? null)
+      const result = await providerTransaction(c, async (tx, provider) => {
         const id = await writeGatewayGroup(tx, provider, c.req.valid("json"), normalizeDenTypeId("gatewayModelGroup", params.groupId))
         await touch(tx, provider)
         return { provider, id }
@@ -396,8 +427,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
   app.delete("/v1/inference-providers/:inferenceProviderId/model-groups/:groupId", route("Delete gateway model group", "Deletes the group and its model links, returning an empty 204. Referencing access grants must be removed first or the operation returns model_group_in_use. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", undefined, 204), orgMemberRoute(), managementWrite, paramValidator(groupParams), async (c) => {
     try {
       const params = c.req.valid("param")
-      await db.transaction(async (tx) => {
-        const provider = await getProvider(tx, c.get("organizationContext"), params.inferenceProviderId, true, true)
+      await providerTransaction(c, async (tx, provider) => {
         const id = normalizeDenTypeId("gatewayModelGroup", params.groupId)
         const [group] = await tx.select().from(GatewayModelGroupTable).where(and(eq(GatewayModelGroupTable.id, id), eq(GatewayModelGroupTable.gateway_provider_id, provider.id)))
         if (!group) throw new GatewayWriteError(404, "model_group_not_found")
@@ -424,8 +454,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const actor = c.get("organizationContext")
       const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId, true)
       const trusted = await getModelsDevProvider(before.provider_id)
-      const result = await db.transaction(async (tx) => {
-        const provider = await getProvider(tx, actor, c.req.valid("param").inferenceProviderId, true, true)
+      const result = await providerTransaction(c, async (tx, provider) => {
         if (!trusted || trusted.id !== provider.provider_id) throw new GatewayWriteError(400, "provider_requires_configuration")
         const set = await writeGatewaySet(tx, { ...provider, provider_config: { ...provider.provider_config, env: trusted.env } }, c.req.valid("json"), { createdByOrgMembershipId: actor.currentMember.id })
         await touch(tx, provider)
@@ -443,8 +472,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const params = c.req.valid("param")
       const before = await getProvider(db, actor, params.inferenceProviderId, true)
       const trusted = await getModelsDevProvider(before.provider_id)
-      const result = await db.transaction(async (tx) => {
-        const provider = await getProvider(tx, actor, params.inferenceProviderId, true, true)
+      const result = await providerTransaction(c, async (tx, provider) => {
         if (!trusted || trusted.id !== provider.provider_id) throw new GatewayWriteError(400, "provider_requires_configuration")
         const set = await writeGatewaySet(tx, { ...provider, provider_config: { ...provider.provider_config, env: trusted.env } }, c.req.valid("json"), normalizeDenTypeId("gatewayCredentialSet", params.credentialSetId))
         await touch(tx, provider)
@@ -460,8 +488,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
   app.delete("/v1/inference-providers/:inferenceProviderId/credential-sets/:credentialSetId", route("Delete gateway credential set", "Deletes a credential set, its credentials and pending sign-ins, revokes applicable Google tokens, and returns an empty 204. Referencing grants must be removed first or the operation returns credential_set_in_use. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", undefined, 204), orgMemberRoute(), managementWrite, paramValidator(setParams), async (c) => {
     try {
       const params = c.req.valid("param")
-      const credentials = await db.transaction(async (tx) => {
-        const provider = await getProvider(tx, c.get("organizationContext"), params.inferenceProviderId, true, true)
+      const credentials = await providerTransaction(c, async (tx, provider) => {
         const id = normalizeDenTypeId("gatewayCredentialSet", params.credentialSetId)
         const [set] = await tx.select().from(GatewayCredentialSetTable).where(and(eq(GatewayCredentialSetTable.id, id), eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))).for("update")
         if (!set) throw new GatewayWriteError(404, "credential_set_not_found")
@@ -489,8 +516,8 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
   app.post("/v1/inference-providers/:inferenceProviderId/access-grants", route("Create gateway access grant", "Links a model group and credential set from this provider to an organization, team or member audience and returns the grant. An identical existing grant returns access_grant_exists. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", z.object({ accessGrant: grantSchema }), 201), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(grantWrite), async (c) => {
     try {
       const input = c.req.valid("json")
-      const id = await db.transaction(async (tx) => {
-        const provider = await getProvider(tx, c.get("organizationContext"), c.req.valid("param").inferenceProviderId, true, true)
+      bindProviderGrantAuditTarget(providerAuditRequests.get(c.req.raw)?.capture ?? null, input)
+      const id = await providerTransaction(c, async (tx, provider) => {
         const id = await writeGatewayGrant(tx, provider, input)
         await touch(tx, provider)
         return id
@@ -502,8 +529,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     try {
       const input = c.req.valid("json")
       const params = c.req.valid("param")
-      const accessGrant = await db.transaction(async (tx) => {
-        const provider = await getProvider(tx, c.get("organizationContext"), params.inferenceProviderId, true, true)
+      const accessGrant = await providerTransaction(c, async (tx, provider) => {
         const id = normalizeDenTypeId("inferenceProviderAccess", params.grantId)
         const [existing] = await tx.select().from(GatewayProviderAccessTable).where(and(eq(GatewayProviderAccessTable.id, id), eq(GatewayProviderAccessTable.gateway_provider_id, provider.id)))
         if (!existing) throw new GatewayWriteError(404, "access_grant_not_found")
@@ -520,8 +546,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     app.delete(path, route("Remove inference provider access grant", "Deletes exactly the selected grant and returns an empty 204; the legacy /access/{grantId} URL has the same behavior. Other grants and member credentials are retained, and OAuth callbacks recheck remaining access. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", undefined, 204), orgMemberRoute(), managementWrite, paramValidator(grantParams), async (c) => {
       try {
         const params = c.req.valid("param")
-        await db.transaction(async (tx) => {
-          const provider = await getProvider(tx, c.get("organizationContext"), params.inferenceProviderId, true, true)
+        await providerTransaction(c, async (tx, provider) => {
           const id = normalizeDenTypeId("inferenceProviderAccess", params.grantId)
           const [grant] = await tx.select().from(GatewayProviderAccessTable).where(and(eq(GatewayProviderAccessTable.id, id), eq(GatewayProviderAccessTable.gateway_provider_id, provider.id)))
           if (!grant) throw new GatewayWriteError(404, "access_grant_not_found")
@@ -536,8 +561,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
 
   app.delete("/v1/inference-providers/:inferenceProviderId", route("Delete inference gateway provider", "Deletes the provider, models, groups, credential sets, grants, credentials and pending sign-ins, and revokes applicable Google tokens. Returns an empty 204; historical request logs and usage rollups are retained. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.", undefined, 204), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), async (c) => {
     try {
-      const credentials = await db.transaction(async (tx) => {
-        const provider = await getProvider(tx, c.get("organizationContext"), c.req.valid("param").inferenceProviderId, true, true)
+      const credentials = await providerTransaction(c, async (tx, provider) => {
         await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.gateway_provider_id, provider.id))
         const credentials = await tx.select().from(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.gateway_provider_id, provider.id)).for("update")
         const groups = await tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.gateway_provider_id, provider.id))

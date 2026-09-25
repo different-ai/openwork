@@ -313,6 +313,7 @@ function exportTableNames(statements: string[]) {
 // seeded CREATE TABLE must not already contain the columns the replay adds).
 // worker: added by 0002 and 0084. oauth*: added by 0056.
 const SEED_COLUMN_STRIPS: Record<string, string[]> = {
+  audit_event: ["operation_id", "sequence", "envelope", "logical_bytes", "idempotency_key", "content_hash"],
   worker: [
     "last_heartbeat_at",
     "last_active_at",
@@ -358,8 +359,32 @@ function statementForSeed(statement: string) {
   for (const column of strips) {
     seeded = seeded.replace(new RegExp(`\\n\\s*\`${column}\` [^,\\n]+,`, "i"), "")
   }
-  return seeded
+  if (tableName === "audit_event") {
+    for (const name of ["audit_event_org_sequence", "audit_event_idempotency"]) {
+      seeded = seeded.replace(new RegExp(`\\n\\s*CONSTRAINT \`${name}\` [^\\n]+`, "i"), "")
+    }
+    seeded = seeded.replace(/(`actor_user_id` varchar\(64\))(?! NOT NULL)/i, "$1 NOT NULL")
+  }
+  return seeded.replace(/,\s*\n\)/g, "\n)")
 }
+
+test("audit seed strips migration-owned columns and constraints while restoring the legacy actor requirement", async () => {
+  const migration = await readFile(join(migrationsFolder, "0111_audit_operation_capture.sql"), "utf8")
+  const added = [...migration.matchAll(/ALTER\s+TABLE\s+`audit_event`\s+ADD\s+`([^`]+)`/gi)].map((match) => match[1])
+  assert.deepEqual(added.sort(), [...SEED_COLUMN_STRIPS.audit_event].sort())
+  const statement = "CREATE TABLE `audit_event` (\n"
+    + " `id` varchar(64) NOT NULL,\n `org_id` varchar(64) NOT NULL,\n `actor_user_id` varchar(64),\n"
+    + added.map((column) => ` \`${column}\` varchar(64),\n`).join("")
+    + " CONSTRAINT `audit_event_id` PRIMARY KEY(`id`),\n"
+    + " CONSTRAINT `audit_event_org_sequence` UNIQUE(`org_id`,`sequence`),\n"
+    + " CONSTRAINT `audit_event_idempotency` UNIQUE(`org_id`,`operation_id`,`idempotency_key`)\n);"
+  const seeded = statementForSeed(statement)
+  for (const column of added) assert.equal(seeded.includes(`\`${column}\``), false)
+  assert.match(seeded, /`actor_user_id` varchar\(64\) NOT NULL/)
+  assert.match(seeded, /CONSTRAINT `audit_event_id` PRIMARY KEY\(`id`\)/)
+  assert.doesNotMatch(seeded, /audit_event_org_sequence|audit_event_idempotency|,\s*\)/)
+  assert.equal(statementForSeed(seeded), seeded)
+})
 
 test("worker seed strips every column added by committed migrations", async () => {
   const migrationEntries = (await readdir(migrationsFolder))

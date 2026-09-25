@@ -1,6 +1,7 @@
 import { afterAll, expect, mock, test } from "bun:test"
 import { Hono, type MiddlewareHandler } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { parseDeploymentCapabilities } from "@openwork/types/den/deployment-capabilities"
 import * as validation from "../src/middleware/validation.js"
 
@@ -12,7 +13,8 @@ process.env.OPENWORK_DEV_MODE = "1"
 process.env.GATEWAY_ENABLED = "false"
 process.env.DEN_ORG_MODE = "single_org"
 
-const rows = { from: () => rows, where: () => rows, limit: async () => [] }
+let databaseMetadata: unknown
+const rows = { from: (table: unknown) => ({ where: () => ({ limit: async () => table === OrganizationTable ? [{ metadata: databaseMetadata ?? metadata }] : [] }) }) }
 mock.module("../src/db.js", () => ({ db: { select: () => rows } }))
 mock.module("../src/auth.js", () => ({ auth: { api: {} } }))
 
@@ -39,7 +41,7 @@ mock.module("../src/middleware/index.js", () => ({
 
 const { env } = await import("../src/env.js")
 const { registerOrgCoreRoutes } = await import("../src/routes/org/core.js")
-const app = new Hono()
+const app = new Hono<{ Variables: import("../src/routes/org/shared.js").OrgRouteVariables }>()
 registerOrgCoreRoutes(app)
 afterAll(() => mock.restore())
 
@@ -63,6 +65,22 @@ test("authenticated GET /v1/org always exposes gateway compatibility independent
     expect(payload.capabilities.gatewayDashboard).toBe(true)
     expect(payload.organization.deploymentCapabilities).toBeUndefined()
   }
+})
+
+test("GET /v1/org exposes fresh audit entitlement, not cached metadata or single-org/legacy gating grants", async () => {
+  env.planGatingEnabled = false
+  env.auditSelfHostedEnabled = false
+  metadata = { plan: { tier: "enterprise" } }
+  databaseMetadata = { plan: { tier: "free" } }
+  expect((await (await app.request("/v1/org")).json()).entitlements.auditLogs).toBe(false)
+  metadata = {}
+  databaseMetadata = { plan: { tier: "enterprise", source: "manual" } }
+  expect((await (await app.request("/v1/org")).json()).entitlements.auditLogs).toBe(true)
+  env.auditSelfHostedEnabled = true
+  databaseMetadata = { plan: { tier: "team" } }
+  expect((await (await app.request("/v1/org")).json()).entitlements.auditLogs).toBe(true)
+  env.auditSelfHostedEnabled = false
+  databaseMetadata = undefined
 })
 
 test("unauthenticated callers do not receive deployment capabilities", async () => {

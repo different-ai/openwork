@@ -20,6 +20,7 @@ import {
   getAutomationsRoute,
   getBackgroundAgentsRoute,
   getApiKeysRoute,
+  getAuditLogsRoute,
   getBrandAppearanceRoute,
   getBillingRoute,
   getCustomLlmProvidersRoute,
@@ -225,6 +226,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
 
   if (pathname === dashboardRoot) {
     return "Home";
+  }
+  if (pathname.startsWith(getAuditLogsRoute(orgSlug))) {
+    return "Audit logs";
   }
   if (pathname.startsWith(getAnalyticsRoute(orgSlug))) {
     return "Analytics";

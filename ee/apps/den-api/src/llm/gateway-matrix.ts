@@ -5,6 +5,8 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { createGatewayModelAlias, gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
 import { inferenceCredentialEnvNames, isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
 import { parseGatewayProviderSecret, type GatewayAccessGrant, type GatewayAccessGrantWrite, type GatewayCredentialSet, type GatewayCredentialSetPatch, type GatewayModelGroup, type GatewayModelGroupPatch, type GatewayProviderDetails, type GatewayProviderSummary, type GatewayUsableModel } from "@openwork/types/den/gateway"
+import { loadProviderAudit, providerAuditMutation, providerSystemAuditContext, recordProviderAttempt, type ProviderAuditCapture } from "../audit/provider.js"
+import { recheckAuditEntitlement } from "../audit/capture.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { buildGatewayModelConfig, buildGatewayProviderConfig, buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "./inference-provider-config.js"
@@ -66,24 +68,36 @@ export function resolveGatewayCatalog(catalog: ModelsDevProvider, modelIds: stri
   return { catalog, config, models, ...(warnings.length ? { catalogWarning: warnings.join(" ") } : {}) }
 }
 
-export async function refreshGatewayCatalog(provider: GatewayProvider) {
+export async function refreshGatewayCatalog(provider: GatewayProvider, audit?: ProviderAuditCapture | null) {
+  const capture = audit === undefined
+    ? await loadProviderAudit(db, "auditCaptureEnabled" in env && env.auditCaptureEnabled === true, providerSystemAuditContext(provider.organization_id, provider.id), "catalog.refresh")
+    : audit ? { ...audit, step: "catalog.refresh" } : null
+  if (capture && (capture.context.scope !== provider.id || capture.context.organizationId !== provider.organization_id)) throw new Error("audit_provider_scope_mismatch")
   // Catalog I/O never holds a provider/OAuth lock. A failed load cannot prune rows.
   const catalog = await getModelsDevProvider(provider.provider_id).catch(() => null)
-  return db.transaction(async (tx) => {
-    const [current] = await tx.select().from(GatewayProviderTable)
-      .where(and(eq(GatewayProviderTable.id, provider.id), eq(GatewayProviderTable.organization_id, provider.organization_id))).for("update")
-    if (!current) throw new GatewayWriteError(404, "inference_provider_not_found")
-    if (!catalog) return { provider: current, catalogWarning: "Catalog refresh unavailable. Previously configured models are retained within the saved modelIds policy." }
-    if (catalog.id !== current.provider_id || !isSupportedGatewayNpm(catalog.npm) || catalog.npm !== readProviderConfigNpm(current.provider_config)) {
-      return { provider: current, catalogWarning: "The catalog provider SDK changed or is unsupported. Create a separate provider to use the new SDK; the saved provider configuration is retained." }
-    }
-    const resolved = resolveGatewayCatalog(catalog, current.model_ids, current.provider_config, false)
-    if (await writeGatewayModels(tx, current, resolved.models)) {
-      current.updated_at = new Date()
-      await tx.update(GatewayProviderTable).set({ updated_at: current.updated_at }).where(eq(GatewayProviderTable.id, current.id))
-    }
-    return { provider: current, catalogWarning: resolved.catalogWarning }
-  })
+  try {
+    return await db.transaction(async (tx) => {
+      if (capture) await recheckAuditEntitlement(tx, provider.organization_id)
+      const [current] = await tx.select().from(GatewayProviderTable)
+        .where(and(eq(GatewayProviderTable.id, provider.id), eq(GatewayProviderTable.organization_id, provider.organization_id))).for("update")
+      if (!current) throw new GatewayWriteError(404, "inference_provider_not_found")
+      if (!catalog) return { provider: current, catalogWarning: "Catalog refresh unavailable. Previously configured models are retained within the saved modelIds policy." }
+      if (catalog.id !== current.provider_id || !isSupportedGatewayNpm(catalog.npm) || catalog.npm !== readProviderConfigNpm(current.provider_config)) {
+        return { provider: current, catalogWarning: "The catalog provider SDK changed or is unsupported. Create a separate provider to use the new SDK; the saved provider configuration is retained." }
+      }
+      const resolved = resolveGatewayCatalog(catalog, current.model_ids, current.provider_config, false)
+      return providerAuditMutation(tx, capture, async () => {
+        if (await writeGatewayModels(tx, current, resolved.models)) {
+          current.updated_at = new Date()
+          await tx.update(GatewayProviderTable).set({ updated_at: current.updated_at }).where(eq(GatewayProviderTable.id, current.id))
+        }
+        return { provider: current, catalogWarning: resolved.catalogWarning }
+      })
+    })
+  } catch (error) {
+    await recordProviderAttempt(db, capture, error instanceof GatewayWriteError ? error.status : 500)
+    throw error
+  }
 }
 
 /** Keep model row IDs stable so existing wire aliases and overlapping links survive catalog edits. */
@@ -163,7 +177,7 @@ export async function writeGatewayGroup(tx: GatewayTx, provider: GatewayProvider
   if (existing) await tx.update(GatewayModelGroupTable).set(values).where(eq(GatewayModelGroupTable.id, id))
   else await tx.insert(GatewayModelGroupTable).values({ id, gateway_provider_id: provider.id, ...values })
   if (selected) {
-    await tx.delete(GatewayModelGroupModelTable).where(eq(GatewayModelGroupModelTable.model_group_id, id))
+    if (existing) await tx.delete(GatewayModelGroupModelTable).where(eq(GatewayModelGroupModelTable.model_group_id, id))
     if (selected.length) await tx.insert(GatewayModelGroupModelTable).values(selected.map((model) => ({ id: createDenTypeId("gatewayModelGroupModel"), model_group_id: id, gateway_provider_model_id: model.id })))
   }
   return id
@@ -227,7 +241,9 @@ export async function writeGatewaySet(tx: GatewayTx, provider: GatewayProvider, 
   }
   // Lock exchanges before tokens, but defer cancellation until validation succeeds. Renames do neither.
   if (modeChanged || clientChanged || disabled) await tx.select({ id: GatewayProviderOauthStateTable.id }).from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.credential_set_id, id)).for("update")
-  const credentials = await tx.select().from(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.credential_set_id, id)).for("update")
+  // A newly allocated set cannot own credentials yet. Locking its absent index
+  // range would make otherwise independent concurrent creations deadlock.
+  const credentials = existing ? await tx.select().from(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.credential_set_id, id)).for("update") : []
   if (credentials.some((row) => row.organization_id !== provider.organization_id || row.gateway_provider_id !== provider.id)) throw new GatewayWriteError(409, "credential_set_inconsistent")
   const orgCredential = credentials.find((row) => row.subject === "org" && row.org_membership_id === null)
   const credential = normalizeCredential(input, provider, mode === existing?.credential_mode ? orgCredential : undefined)
