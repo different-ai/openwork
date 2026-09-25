@@ -270,6 +270,8 @@ export interface LaunchScriptWorldOptions {
   os?: string;
   print: (line: string) => void;
   foregroundLog?: boolean;
+  /** The CLI view already renders outputs on ready; avoid printing them twice. */
+  quietReady?: boolean;
   onSpawn?: (pid: number) => void;
 }
 
@@ -337,11 +339,13 @@ export async function launchScriptWorld(options: LaunchScriptWorldOptions): Prom
     if (spawnError) throw spawnError;
     const snapshot = await readScriptWorldSnapshot(snapshotPath);
     if (snapshot) {
-      for (const line of formatOutputLines(snapshot.outputs, snapshot.outputMeta ?? {}, { reveal: false })) {
-        options.print(line);
+      if (!options.quietReady) {
+        for (const line of formatOutputLines(snapshot.outputs, snapshot.outputMeta ?? {}, { reveal: false })) {
+          options.print(line);
+        }
+        options.print(`snapshot  ${snapshotPath}`);
+        options.print(`log  ${logPath}`);
       }
-      options.print(`snapshot  ${snapshotPath}`);
-      options.print(`log  ${logPath}`);
       return 0;
     }
     if (child.exitCode !== null || child.signalCode !== null) {

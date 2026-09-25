@@ -717,6 +717,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
           os: target.os,
           print,
           foregroundLog: !command.detach && mode === "tty",
+          quietReady: mode === "tty",
           onSpawn: (pid) => { childPid = pid; },
         });
       } catch (error) {

@@ -6,7 +6,7 @@ import { createV2SessionHomes } from "../../apps/server/src/opencode-v2-session-
 import { configureProvider } from "./chat.ts";
 
 /** Real UI, server and native engine. Only the model's decisions are scripted. */
-export async function sessionHome(seed: Seed, mode: "stop" | "question" = "stop") {
+async function bootSessionHome(seed: Seed, mode: "stop" | "question") {
   if (resolveEvalEngine() !== "v2") throw new SkipError("Session moves require OpenCode v2");
   const requested = seed.tmpPath("conversation-home");
   const requestedWorktree = seed.tmpPath("conversation-worktree");
@@ -77,4 +77,6 @@ export async function sessionHome(seed: Seed, mode: "stop" | "question" = "stop"
   };
 }
 
-export const movedSessionQuestion = (seed: Seed) => sessionHome(seed, "question");
+// World functions receive (seed, { place }); keep the mode out of that slot.
+export async function sessionHome(seed: Seed) { return bootSessionHome(seed, "stop"); }
+export async function movedSessionQuestion(seed: Seed) { return bootSessionHome(seed, "question"); }

@@ -51,14 +51,17 @@ test("Windows commands remain one encoded argument with Unicode and quotes intac
 test("Windows release provisions private VM, verifies asset, launches as interactive user and cleans up", async () => {
   const { exec, calls, scripts } = fake();
   let tracked: string | undefined;
+  const steps: string[] = [];
   const desktop = await provisionWindowsReleaseSandbox({
     release: RELEASE, lifetimeMinutes: 120, exec,
+    step: (id) => ({ ok: () => { steps.push(`${id}:ok`); }, fail: () => { steps.push(`${id}:fail`); } }),
     releaseFetch: async () => Response.json(metadata),
     request: async (input) => new Response(String(input).includes("vnc.html") ? "noVNC" : "OpenWork/0.18.52"),
     onCreated: async (id, name) => { tracked = `${id}/${name}`; },
     log: () => {},
   });
   assert.equal(desktop.sandbox, VM);
+  assert.deepEqual(steps, ["win-release", "win-create", "win-download", "win-install", "win-launch", "win-viewer", "win-cdp"].map((id) => `${id}:ok`));
   assert.match(tracked ?? "", /^45baa63f-.*\/openwork-world-win-[0-9a-f]{16}$/);
   assert.equal(desktop.startup.state, "cdp-responsive");
   assert.equal(desktop.release.assetName, NAME);
