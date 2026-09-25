@@ -1,0 +1,19 @@
+{
+  "name": "tenki-openwork-example",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Boot the OpenWork server inside a Tenki Cloud sandbox and verify it end to end",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@tenkicloud/sandbox": "^0.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
