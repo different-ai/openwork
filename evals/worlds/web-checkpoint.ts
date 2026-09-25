@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { allocateFreePort, setViewport } from "@openwork/cdp";
+import { allocateFreePort, setViewport, evaluate } from "@openwork/cdp";
 import { chrome, localHost } from "@openwork/hosts";
 import { freestyleEvidenceWeb, attachEvidenceBrowser } from "@openwork/env";
 import type { EvidenceCheckpoint } from "../../packages/freestyle/src/checkpoint-schema.ts";
@@ -53,6 +53,11 @@ export async function checkpointWorld() {
     }
     return {
       ...world, reviewer, viewer, reviewUrl, sourceSha,
+      viewerState: () => evaluate(viewer.client, () => {
+        const page = document.querySelector("iframe")?.contentDocument;
+        const canvas = page?.querySelector("canvas");
+        return { connected: Boolean(page?.documentElement.classList.contains("noVNC_connected")), width: canvas?.width ?? 0, height: canvas?.height ?? 0 };
+      }),
       async publish(shot: { png: Buffer; hash: string; at: string; checkpoint?: EvidenceCheckpoint }, caption: string) {
         if (!shot.checkpoint) throw new Error("No checkpoint was captured");
         const image = `${shot.hash}.png`;
@@ -67,11 +72,12 @@ export async function checkpointWorld() {
         const id = await uploadReview(report, [{ name: image, body: shot.png }, { name: "capture.json", body: Buffer.from(JSON.stringify({ capturedAt: shot.at, sourceSha, imageHash: shot.hash })) }], { localDir: storage });
         return { id, url: `${reviewUrl}/r/${id}` };
       },
-      async openedFork(reportId: string) {
+      async openedFork(reportId: string, existingIds: readonly string[] = []) {
         const api = client();
         const found = await api.vms.list({ metadata: `kind:${FORK_KIND},reportId:${reportId}`, limit: 3 });
-        if (found.vms.length !== 1) throw new Error("Expected one private fork from the review action");
-        const vm = found.vms[0];
+        const created = found.vms.filter((vm) => !existingIds.includes(vm.id));
+        if (created.length !== 1) throw new Error("Expected one private fork from the review action");
+        const vm = created[0];
         resources.defer(() => deleteEvidenceVm(vm.id));
         const session = await readEvidenceSession(vm.id, sourceSha, api);
         const app = resources.use(await attachEvidenceBrowser(session));
