@@ -7,6 +7,7 @@ import Link from "next/link";
 import { type ComponentProps, type ReactNode, useRef, useState } from "react";
 import { type ButtonSize, type ButtonVariant, buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 /** A button-styled client-side link, so moving between steps keeps the page state. */
 export function LinkButton({ variant = "secondary", size = "md", className = "", ...rest }: ComponentProps<typeof Link> & {
@@ -147,6 +148,7 @@ export function ConfirmDialog({ confirm, destructive = false, onConfirm, onClose
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const { reauthDialogOpen } = useOrgDashboard();
   // Keep the last copy while the dialog closes, so it doesn't blank out mid-exit.
   const [shown, setShown] = useState({ confirm, destructive });
   const changed = confirm && (confirm.title !== shown.confirm?.title
@@ -174,7 +176,9 @@ export function ConfirmDialog({ confirm, destructive = false, onConfirm, onClose
   }
 
   return (
-    <AlertDialog.Root open={Boolean(confirm)} onOpenChange={(open) => { if (!open && !busy) close(); }}>
+    // Step aside while the identity check is open: it renders below this portal
+    // and would be unclickable. The pending action resumes once it resolves.
+    <AlertDialog.Root open={Boolean(confirm) && !reauthDialogOpen} onOpenChange={(open) => { if (!open && !busy) close(); }}>
       <AlertDialog.Portal>
         <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-gray-950/45" />
         <AlertDialog.Popup initialFocus={cancelRef} aria-busy={busy} data-testid="confirm-dialog" className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-gray-200 bg-white p-5 outline-none">
