@@ -33,7 +33,8 @@ function WorkerList({ coworker, threadId, compact = false, onOpenThread, onOpenC
   const [workers, setWorkers] = useState<WorkerSummary[] | null>(null);
   const [expandedId, setExpandedId] = useState("");
   const [creating, setCreating] = useState(false);
-  const [open, setOpen] = useState(true);
+  // Beside the chat the shelf starts as a small pill; the full Workers view is always in the panel.
+  const [open, setOpen] = useState(!compact);
   const [error, setError] = useState("");
   const request = useRef(0);
   const reading = useRef(false);
@@ -69,16 +70,36 @@ function WorkerList({ coworker, threadId, compact = false, onOpenThread, onOpenC
     setWorkers((current) => current?.some((item) => item.id === worker.id) ? current.map((item) => item.id === worker.id ? worker : item) : [worker, ...(current ?? [])]);
   }
 
-  const items = workers ?? [];
+  const all = workers ?? [];
+  // Beside the chat only work still under way shows; finished Workers stay in the Workers view.
+  const items = compact ? all.filter(isLiveWorker) : all;
   const needsApproval = items.filter((worker) => isLiveWorker(worker) && worker.control?.state === "needs-approval").length;
+  const approvalOpened = useRef(false);
+  useEffect(() => {
+    if (!compact) return;
+    if (needsApproval > 0 && !approvalOpened.current) { approvalOpened.current = true; setOpen(true); }
+    if (needsApproval === 0) approvalOpened.current = false;
+  }, [compact, needsApproval]);
   if (compact && items.length === 0 && !error && !creating) return null;
+
+  if (compact && !open && !creating) return (
+    <div className="mx-5 mt-2 flex" data-testid="coworker-worker-shelf" data-origin-thread={threadId} data-open="false">
+      <button type="button" aria-expanded={false} onClick={() => setOpen(true)} data-testid="coworker-worker-shelf-toggle"
+        className="inline-flex items-center gap-2 rounded-full border border-line bg-panel/60 px-3 py-1 text-xs text-snow backdrop-blur-xl transition-colors hover:bg-panel focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50">
+        <span aria-hidden="true" className="size-1.5 rounded-full bg-spark motion-safe:animate-pulse" />
+        {items.length === 1 ? "1 Worker working" : `${items.length} Workers working`}
+        {needsApproval > 0 ? <span className="text-amber">· {needsApproval} needs approval</span> : null}
+        <span aria-hidden="true" className="text-mist">▸</span>
+      </button>
+    </div>
+  );
 
   return (
     <div className={compact ? "mx-5 mt-2 flex max-h-[32dvh] min-h-0 shrink flex-col rounded-xl border border-line bg-panel/60 px-3 py-1" : "flex min-h-full flex-col gap-5"} data-testid={compact ? "coworker-worker-shelf" : "coworker-workers"} data-origin-thread={threadId}>
       <section className={compact ? "flex min-h-0 flex-col" : ""} aria-label={compact ? "Work beside this conversation" : "Workers in this discussion"}>
         <div className="mb-1 flex shrink-0 items-center justify-between px-1">
           {compact ? <button type="button" className="min-w-0 py-2 text-left text-xs text-snow focus-visible:outline-spark" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-            Work beside chat · {items.length}{needsApproval > 0 ? <span className="ml-2 text-amber">{needsApproval} needs approval</span> : null}<span aria-hidden="true" className="ml-2 text-mist">{open ? "−" : "+"}</span>
+            Work beside chat · {items.length}{needsApproval > 0 ? <span className="ml-2 text-amber">{needsApproval} needs approval</span> : null}<span aria-hidden="true" className="ml-2 text-mist">{open ? "− Minimize" : "+"}</span>
           </button> : <h3 className="text-[11px] font-semibold text-mist">Workers in this discussion</h3>}
           {!creating ? (
             <Button variant="ghost" className="shrink-0 px-2 text-xs" onClick={() => { setCreating(true); setOpen(true); }} data-testid="new-worker-button">New Worker</Button>
