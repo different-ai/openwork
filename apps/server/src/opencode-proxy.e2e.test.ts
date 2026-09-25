@@ -784,14 +784,10 @@ describe("workspace OpenCode proxy", () => {
       }
       const reads = fixture.engine.requests.slice(before);
       const paths = reads.map((item) => item.pathname);
-      if (gate === fixture.provider) {
-        // List decoration probes these two histories concurrently. Their arrival
-        // order is not a contract; preserve the ordered ownership checks below.
-        expect(paths.splice(1, 2).sort()).toEqual([
-          "/api/session/ses_1/message", "/api/session/ses_foreign/message",
-        ]);
-      }
-      expect(paths).toEqual([
+      // Home backfill resolves listed sessions concurrently, so their history reads may land in either order.
+      const backfill = gate === fixture.provider ? ["/api/session/ses_1/message", "/api/session/ses_foreign/message"] : [];
+      expect(paths.slice(1, 1 + backfill.length).sort()).toEqual(backfill);
+      expect([paths[0], ...paths.slice(1 + backfill.length)]).toEqual([
         "/api/session",
         "/api/session/ses_1", "/api/session/ses_1",
         "/api/session/ses_1", "/api/session/ses_1/message",

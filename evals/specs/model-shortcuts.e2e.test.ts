@@ -12,7 +12,7 @@ type RowSnapshot = { elements: Array<{ text: string; attributes?: Record<string,
 
 const rowTexts = (snapshot: RowSnapshot) => snapshot.elements.map((element) => element.text.replace(/\s+/g, " ").trim());
 
-test("a member switches models with saved keys, toggles Fast with one key, and a retired model's key stays and explains itself", async ({ world, user, probe, step, evidence }) => {
+test("a member switches models with saved keys and toggles Fast without opening a notice above the composer", async ({ world, user, probe, step, evidence }) => {
   const { mod, chord, fastKey } = world;
   evidence.recordAssertionEvidence("platform keys", `${mod}+Alt+n shown as ${chord(1)}`, true);
   const openShortcutSettings = async () => {
@@ -83,7 +83,7 @@ test("a member switches models with saved keys, toggles Fast with one key, and a
 
   await step("after: in the conversation one key press switches to Fast witness at High with Fast", async () => {
     await user.press(`${mod}+Alt+1`);
-    await user.see({ testId: "model-shortcut-notice" }, { text: /Switched to Fast witness\s+high reasoning, Fast/ });
+    await user.notSee({ testId: "model-shortcut-notice" });
     await user.see({ role: "button", label: "Change model" }, { text: /^Fast witness/ });
     const stored = await probe.storage("openwork.sessionModels.v1");
     const serialized = JSON.stringify(stored);
@@ -93,48 +93,49 @@ test("a member switches models with saved keys, toggles Fast with one key, and a
     await user.screenshot();
   });
 
-  await step("the second key switches to Reasoning witness at High, and Undo puts Fast witness back", async () => {
+  await step("the second key switches to Reasoning witness at High, and the first key switches straight back", async () => {
     await user.press(`${mod}+Alt+2`);
-    await user.see({ testId: "model-shortcut-notice" }, { text: /Switched to Reasoning witness\s+high reasoning/ });
     await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness/ });
+    await user.notSee({ testId: "model-shortcut-notice" });
     await user.screenshot();
-    await user.click({ role: "button", label: "Undo" });
+    await user.press(`${mod}+Alt+1`);
     await user.see({ role: "button", label: "Change model" }, { text: /^Fast witness/ });
-    evidence.recordAssertionEvidence("after Undo", "composer shows Fast witness again", true);
+    evidence.recordAssertionEvidence("first key again", "composer shows Fast witness again without an intermediate notice", true);
   });
 
   await step("the default Fast key turns Fast off and back on for Fast witness, keeping High, and the model shows a quiet Fast", async () => {
-    await user.see({ testId: "model-fast-indicator" }, { text: "Fast" });
+    await user.see({ testId: "model-fast-indicator" }, { text: /Fast/ });
     await user.press(fastKey);
-    await user.see({ testId: "model-shortcut-notice" }, { text: /Fast off for Fast witness/ });
     await user.notSee({ testId: "model-fast-indicator" });
     await user.see({ role: "button", label: "Change model" }, { text: /^Fast witness\s*· High$/ });
     await user.screenshot();
     await user.press(fastKey);
-    await user.see({ testId: "model-shortcut-notice" }, { text: /Fast on for Fast witness\s+Higher pricing/ });
-    await user.see({ testId: "model-fast-indicator" }, { text: "Fast" });
-    await user.see({ role: "button", label: "Change model" }, { text: /^Fast witness\s*· High\s*Fast$/ });
+    await user.see({ testId: "model-fast-indicator" }, { text: /Fast/ });
+    await user.see({ role: "button", label: "Change model" }, { text: /^Fast witness\s*· High\s*· Fast$/ });
+    await user.notSee({ testId: "model-shortcut-notice" });
     const stored = JSON.stringify(await probe.storage("openwork.sessionModels.v1"));
     evidence.recordAssertionEvidence("Fast back on at High", stored.slice(0, 300), stored.includes(fastVariantId("high")));
     expect(stored).toContain(fastVariantId("high"));
     await user.screenshot();
   });
 
-  await step("on a model without Fast, the Fast key changes nothing and says Fast isn't offered", async () => {
+  await step("on a model without Fast, the Fast key quietly changes nothing", async () => {
     await user.press(`${mod}+Alt+2`);
     await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness/ });
+    const before = JSON.stringify(await probe.storage("openwork.sessionModels.v1"));
     await user.press(fastKey);
-    await user.see({ testId: "model-shortcut-notice" }, { text: /Fast isn't offered for Reasoning witness/ });
     await user.notSee({ testId: "model-fast-indicator" });
+    await user.notSee({ testId: "model-shortcut-notice" });
     await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness\s*· High$/ });
-    evidence.recordAssertionEvidence("model unchanged", "composer still shows Reasoning witness · High", true);
+    const after = JSON.stringify(await probe.storage("openwork.sessionModels.v1"));
+    evidence.recordAssertionEvidence("model unchanged", "composer still shows Reasoning witness · High and stored selection is unchanged", before === after);
+    expect(after).toBe(before);
     await user.screenshot();
   });
 
-  await step("after: the retired model's key leaves the current model alone, says why, and is not deleted", async () => {
+  await step("after: the retired model's key quietly leaves the current model alone and is not deleted", async () => {
     await user.press(`${mod}+Alt+9`);
-    await user.see({ testId: "model-shortcut-notice" }, { text: /Retired witness isn't available/, timeoutMs: 15_000 });
-    await user.see({ role: "button", label: "Pick another model" });
+    await user.notSee({ testId: "model-shortcut-notice" });
     await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness/ });
     const stored = JSON.stringify(await probe.storage("openwork.shortcuts.v1"));
     const kept = stored.includes("sc_retired");

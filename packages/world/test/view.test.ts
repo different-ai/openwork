@@ -127,6 +127,34 @@ test("tty view redraws spinner rows and collapses to ready outputs", async () =>
   assert.match(output, /\u001b\[\d+A/);
 });
 
+test("tty view shows a live starting row before the first step and updates a running step's detail in place", async () => {
+  let output = "";
+  const sink: ViewSink = { write: (text) => { output += text; }, isTTY: true, columns: 100 };
+  const view = createWorldView({ sink, mode: "tty", color: false, spinnerMs: 5, heartbeatMs: 60_000 });
+  view.header({ name: "demo", receipt: "/tmp/demo.json" });
+  await delay(12);
+  assert.match(output, /[◐◓◑◒] Starting world… \(/);
+  view.apply({ t: new Date().toISOString(), type: "step", id: "den", label: "Den on Daytona", status: "start" });
+  view.apply({ t: new Date().toISOString(), type: "step", id: "den", label: "Den on Daytona", status: "start", detail: "sandbox gate" });
+  await delay(12);
+  const frames = output.split("\u001b[");
+  const latest = frames.slice(-12).join("\u001b[");
+  assert.match(latest, /Den on Daytona  sandbox gate/);
+  assert.doesNotMatch(latest, /Starting world…/);
+  view.stop();
+});
+
+test("the stalled-step heartbeat keeps the running step's current phase", async () => {
+  let output = "";
+  const sink: ViewSink = { write: (text) => { output += text; }, isTTY: true, columns: 120 };
+  const view = createWorldView({ sink, mode: "tty", color: false, spinnerMs: 5, heartbeatMs: 10 });
+  view.header({ name: "demo", receipt: "/tmp/demo.json" });
+  view.apply({ t: new Date().toISOString(), type: "step", id: "den", label: "Den", status: "start", detail: "Starting server stack" });
+  await delay(40);
+  view.stop();
+  assert.match(output, /Den {2}Starting server stack · still waiting \(/);
+});
+
 test("view mode remains plain for plain, CI, no-color, and dumb terminals", () => {
   assert.deepEqual(detectViewMode({}, { plain: true }), { mode: "plain", color: false });
   assert.deepEqual(detectViewMode({ CI: "1" }, {}), { mode: "plain", color: false });

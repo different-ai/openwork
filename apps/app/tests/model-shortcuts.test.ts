@@ -15,10 +15,8 @@ import {
   type Shortcut,
 } from "../src/react-app/domains/shortcuts/model-shortcuts-store";
 import { decideModelShortcut, resolveShortcutVariant } from "../src/react-app/domains/shortcuts/resolve-model-shortcut";
-import { switchedNoticeCopy, unavailableNoticeCopy } from "../src/react-app/domains/shortcuts/model-shortcut-messages";
 import { shortcutRowState } from "../src/react-app/domains/shortcuts/shortcut-row-state";
 import { decideFastToggle } from "../src/react-app/domains/shortcuts/fast-toggle";
-import { fastToggleNoticeCopy } from "../src/react-app/domains/shortcuts/model-shortcut-messages";
 import { fastModeShortcutLabel, isFastModeShortcut } from "../src/react-app/shell/fast-mode-shortcut";
 
 const keyEvent = (overrides: Partial<Parameters<typeof chordFromEvent>[0]> = {}) => ({
@@ -155,23 +153,6 @@ describe("pressing a model shortcut", () => {
   });
 });
 
-describe("notice copy", () => {
-  test("success names the model, level and Fast; skipped Fast says standard speed", () => {
-    expect(switchedNoticeCopy({ modelTitle: "GPT-5", effortLabel: "High", fastApplied: true, fastSkipped: false, effortSkipped: false, requestedEffortLabel: "High" }))
-      .toMatchObject({ tone: "success", title: "Switched to GPT-5", detail: "high reasoning, Fast", fast: true });
-    expect(switchedNoticeCopy({ modelTitle: "Kimi K2", effortLabel: null, fastApplied: false, fastSkipped: true, effortSkipped: false, requestedEffortLabel: null }))
-      .toMatchObject({ tone: "info", detail: "at standard speed. Fast isn't offered right now." });
-  });
-
-  test("each unavailable reason offers one fix; blocked is neutral, not an error", () => {
-    const disconnected = unavailableNoticeCopy({ modelTitle: "Gemini 2.5 Pro", providerName: "Google", reason: "provider_not_connected" });
-    expect(disconnected).toMatchObject({ tone: "warning", title: "Gemini 2.5 Pro isn't available", detail: "Google is disconnected." });
-    expect(disconnected.actions.find((action) => action.primary)?.label).toBe("Reconnect Google");
-    expect(unavailableNoticeCopy({ modelTitle: "Zen", providerName: null, reason: "provider_blocked" }).tone).toBe("blocked");
-    expect(unavailableNoticeCopy({ modelTitle: "Old", providerName: "Acme", reason: "model_missing" }).tone).toBe("error");
-  });
-});
-
 describe("settings row state", () => {
   const catalog = {
     all: [{ id: "openai", name: "OpenAI" }, { id: "google", name: "Google" }],
@@ -210,7 +191,5 @@ describe("Fast toggle", () => {
     expect(decideFastToggle(fastOptions, fastVariantId("high"))).toEqual({ kind: "toggle", next: "high", fastOn: false });
     expect(decideFastToggle(fastOptions, null)).toEqual({ kind: "toggle", next: FAST_DEFAULT_VARIANT, fastOn: true });
     expect(decideFastToggle([{ value: null }, { value: "high" }], "high")).toEqual({ kind: "not_offered" });
-    expect(fastToggleNoticeCopy({ modelTitle: "Kimi K2", fastOn: null })).toMatchObject({ tone: "info", title: "Fast isn't offered for Kimi K2" });
-    expect(fastToggleNoticeCopy({ modelTitle: "GPT-5", fastOn: true })).toMatchObject({ tone: "success", title: "Fast on for GPT-5", detail: "Higher pricing." });
   });
 });

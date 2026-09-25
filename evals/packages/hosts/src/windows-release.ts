@@ -54,6 +54,25 @@ async function pollWindowsUntil<T>(read: () => Promise<T | undefined>, timeoutMs
   throw new Error(`${label} timed out: ${lastError instanceof Error ? lastError.message : "no response"}`);
 }
 
+/** Progress seam; the world layer maps it onto its step events. */
+export interface ProvisionStep {
+  ok(detail?: string): unknown;
+  fail(detail?: string): unknown;
+}
+export type ProvisionStepReporter = (id: string, label: string) => ProvisionStep;
+
+async function stage<T>(report: ProvisionStepReporter | undefined, id: string, label: string, action: () => Promise<T>, detail?: (value: T) => string | undefined): Promise<T> {
+  const step = report?.(id, label);
+  try {
+    const value = await action();
+    await step?.ok(detail?.(value));
+    return value;
+  } catch (error) {
+    await step?.fail(error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+}
+
 export interface WindowsReleaseSandbox extends AsyncDisposable {
   sandbox: string;
   release: PublishedDesktopRelease;
@@ -79,10 +98,13 @@ export async function provisionWindowsReleaseSandbox(options: {
   onCreated?: (sandbox: string, name: string) => Promise<void>;
   log?: (message: string) => void;
   startupTimeoutMs?: number;
+  step?: ProvisionStepReporter;
 }): Promise<WindowsReleaseSandbox> {
   const exec = options.exec ?? defaultDaytonaExec;
   const log = options.log ?? console.error;
-  const release = await resolvePublishedDesktopRelease(options.release, options.releaseFetch, "windows");
+  const step = options.step;
+  const release = await stage(step, "win-release", `Resolve published release ${options.release.version} (${options.release.distribution})`,
+    () => resolvePublishedDesktopRelease(options.release, options.releaseFetch, "windows"), (value) => value.assetName);
   if (!Number.isSafeInteger(options.lifetimeMinutes) || options.lifetimeMinutes < 0 || options.lifetimeMinutes > 1410) {
     throw new Error("Windows world lifetime must be 0-1410 minutes (30 minutes reserved for startup and provider cleanup).");
   }
@@ -90,6 +112,7 @@ export async function provisionWindowsReleaseSandbox(options: {
   let sandbox = name;
   let created = false;
   try {
+    await stage(step, "win-create", "Create private Windows VM", async () => {
     await checkedExec(exec, ["create", "--name", name, "--snapshot", SNAPSHOT,
       "--auto-pause", "0", "--auto-delete", "-1",
       "--ttl", String(options.lifetimeMinutes === 0 ? 0 : options.lifetimeMinutes + 30),
@@ -109,6 +132,7 @@ export async function provisionWindowsReleaseSandbox(options: {
       try { await runPowerShell(exec, sandbox, "Write-Output 'EXEC_READY'", "Windows exec readiness", 30_000); return true; }
       catch { return undefined; }
     }, 300_000, "Windows exec readiness");
+    }, () => sandbox);
 
     // The GitHub API digest and byte count are both checked inside the VM.
     const digest = release.digest.slice("sha256:".length);
@@ -118,11 +142,14 @@ export async function provisionWindowsReleaseSandbox(options: {
       `if ((Get-Item -LiteralPath ${literal(INSTALLER)}).Length -ne ${release.size}) { throw 'Published Windows release size mismatch' }\n` +
       `if ((Get-FileHash -Algorithm SHA256 -LiteralPath ${literal(INSTALLER)}).Hash.ToLowerInvariant() -ne ${literal(digest)}) { throw 'Published Windows release SHA-256 mismatch' }\n` +
       `Write-Output 'WINDOWS_RELEASE_VERIFIED'`;
-    const verified = await runPowerShell(exec, sandbox, download, "published Windows release digest", 900_000);
-    if (!verified.includes("WINDOWS_RELEASE_VERIFIED")) throw new Error("Windows installer digest witness did not finish.");
+    await stage(step, "win-download", "Download installer and verify SHA-256 in the VM", async () => {
+      const verified = await runPowerShell(exec, sandbox, download, "published Windows release digest", 900_000);
+      if (!verified.includes("WINDOWS_RELEASE_VERIFIED")) throw new Error("Windows installer digest witness did not finish.");
+    }, () => release.digest.slice(0, 19));
     log("==> Windows published installer verified");
 
     const installCmd = "C:\\ow\\install.cmd";
+    await stage(step, "win-install", "Install as the signed-in Administrator", async () => {
     await runPowerShell(exec, sandbox,
       `${commandFile(installCmd, ["@echo off", `"${INSTALLER}" /S`])}\n${task("OpenWorkWorldInstall", installCmd)}`,
       "install Windows release as interactive Administrator");
@@ -132,8 +159,10 @@ export async function provisionWindowsReleaseSandbox(options: {
         "Windows interactive installer status", 30_000);
       return result.includes("INSTALLED") ? true : undefined;
     }, 300_000, "Windows interactive installer");
+    });
 
     const launchCmd = "C:\\ow\\launch.cmd";
+    await stage(step, "win-launch", "Launch OpenWork in the desktop session", async () => {
     await runPowerShell(exec, sandbox,
       `${commandFile(launchCmd, ["@echo off", `"${BINARY}" --no-sandbox --remote-debugging-port=9222 > "${LOG}" 2>&1`])}\n${task("OpenWorkWorldLaunch", launchCmd)}`,
       "launch Windows release as interactive Administrator");
@@ -144,15 +173,20 @@ export async function provisionWindowsReleaseSandbox(options: {
       return output.includes("GUI_SESSION_1") ? true : undefined;
     }, 120_000, "Windows GUI session");
     if (!observed) throw new Error("Windows GUI session not observed.");
+    }, () => "session 1");
 
     const expiresInSeconds = Math.min(86_400, (options.lifetimeMinutes || 1440) * 60 + 600);
-    const viewerPreview = await privateWebPreview(sandbox, 6080, exec, expiresInSeconds);
-    const viewer = new URL("/vnc.html", viewerPreview.browserOrigin);
-    viewer.search = "autoconnect=1&resize=scale&reconnect=1&reconnect_delay=2000";
-    const viewerResponse = await (options.request ?? fetch)(viewer.href, { signal: AbortSignal.timeout(20_000) });
-    if (!viewerResponse.ok || !(await viewerResponse.text()).includes("noVNC")) throw new Error("Windows noVNC viewer is not ready.");
+    const viewer = await stage(step, "win-viewer", "Open private noVNC viewer", async () => {
+      const viewerPreview = await privateWebPreview(sandbox, 6080, exec, expiresInSeconds);
+      const url = new URL("/vnc.html", viewerPreview.browserOrigin);
+      url.search = "autoconnect=1&resize=scale&reconnect=1&reconnect_delay=2000";
+      const viewerResponse = await (options.request ?? fetch)(url.href, { signal: AbortSignal.timeout(20_000) });
+      if (!viewerResponse.ok || !(await viewerResponse.text()).includes("noVNC")) throw new Error("Windows noVNC viewer is not ready.");
+      return url;
+    });
 
     let cdpUrl: string | undefined;
+    const cdpStep = step?.("win-cdp", "Wait for the app to answer (CDP)");
     try {
       await pollWindowsUntil(async () => {
         const response = await runPowerShell(exec, sandbox,
@@ -163,8 +197,11 @@ export async function provisionWindowsReleaseSandbox(options: {
       const response = await (options.request ?? fetch)(new URL("/json/version", privateCdp.browserOrigin), { signal: AbortSignal.timeout(10_000) });
       if (!response.ok || !(await response.text()).includes(`OpenWork/${release.version}`)) throw new Error("Windows CDP is not reachable through the signed private preview.");
       cdpUrl = privateCdp.browserOrigin;
+      await cdpStep?.ok(`OpenWork/${release.version}`);
     } catch (error) {
-      log(`==> Windows app not CDP-responsive: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      await cdpStep?.fail(`not responsive; viewer kept for inspection — ${message}`);
+      log(`==> Windows app not CDP-responsive: ${message}`);
     }
     const startup: ElectronStartupObservation = cdpUrl
       ? { state: "cdp-responsive", detail: "Published Windows app runs in interactive session 1 and responds through private CDP" }

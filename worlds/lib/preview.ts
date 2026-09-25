@@ -15,6 +15,9 @@ import { hold } from "../../packages/world/src/hold.ts";
 import { output, secret } from "../../packages/world/src/outputs.ts";
 import { targetFromEnv } from "../../packages/world/src/target.ts";
 import { trackResource } from "../../packages/world/src/ledger.ts";
+import { progress } from "../../packages/world/src/events.ts";
+
+const previewSteps = progress();
 import { provisionWindowsReleaseSandbox } from "../../evals/packages/hosts/src/windows-release.ts";
 import { sourceFor, sourcesFromEnv } from "../../packages/world/src/source.ts";
 import { seedsFromEnv } from "../../packages/world/src/seed.ts";
@@ -190,6 +193,9 @@ export async function bootPreview(stack: AsyncDisposableStack, place: Place, sur
         release,
         lifetimeMinutes: Number(process.env.OPENWORK_WORLD_PREVIEW_LIFETIME_MINUTES ?? "120"),
         onCreated: (sandbox, name) => trackResource({ kind: "daytona-windows-preview", id: sandbox, match: name, label: "Windows published desktop" }),
+        step: (id, label) => previewSteps.step(id, label),
+        // Provisioning chatter belongs in the world log, not over the live step list.
+        log: (line) => console.log(line),
       }))
     : undefined;
   const releaseDesktop = release && !windowsRelease ? stack.use(await blankReleaseApp({ place, release })) : undefined;
