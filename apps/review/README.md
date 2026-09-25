@@ -227,9 +227,14 @@ Freestyle previews use the verified `preview.openwork.software` wildcard: `*.pre
 
 ## Developer review workspace
 
-Evidence is the default surface. The compact header keeps the selected-evidence
-verdict and commit visible; All, Failed, and Incomplete filter sections without
-changing the report verdict or hiding declared coverage gaps. Next failure returns
+Evidence is the default surface. A verdict banner is the focal element: a
+status icon, the selected-evidence verdict, one sentence saying where to look
+first, and test/check/screenshot counts. Each section shows its checks as
+"N of M checks passed" (open only when one is not passed) and its screenshots
+as a numbered gallery; commit, capture time, links and the raw record sit
+under "Source and diagnostics". Screenshots with a saved browser carry a
+"Saved browser" badge; the checkpoint controls live only in the viewer. All, Failed, and Incomplete filter sections
+without changing the report verdict or hiding declared coverage gaps. Next failure returns
 to all sections and focuses the next failed section. Narrow screens retain a
 native section selector.
 
