@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { prepareParityBinaries } from "./engine-parity-binaries.mjs";
 
 const specs = new Set([
+  "evals/specs/side-chat-context.e2e.test.ts",
   "evals/specs/opencode-v2-session-home.e2e.test.ts",
   "evals/specs/anthropic-gateway-effort.e2e.test.ts",
   "evals/specs/session-archive-undo.e2e.test.ts",

@@ -1,4 +1,4 @@
-import { sideChatSystemContext } from "../chat/workbench-store";
+import { buildSideChatContext, type ReadSideChatHistory } from "./side-chat-context";
 import type { OpenworkServerClient } from "../../../../app/lib/openwork-server";
 import { readOpenworkEnvPendingChanges } from "../../../../app/lib/openwork-env-runtime";
 import { readOpenworkRuntimeFacts, renderOpenworkRuntimeContext } from "./runtime-context";
@@ -82,15 +82,18 @@ export async function buildOpenworkSessionSystemContext(
   client: OpenworkServerClient | null,
   options: {
     workspaceId?: string;
+    readSideChatHistory?: ReadSideChatHistory;
     cacheKey?: string;
     runtimeKey?: string | null;
     readPendingChanges?: () => boolean;
     desktopTransport?: "main";
   } = {},
 ): Promise<string> {
-  const envContext = await buildOpenworkEnvSystemContext(client, options);
+  const [envContext, sideChatContext] = await Promise.all([
+    buildOpenworkEnvSystemContext(client, options),
+    options.workspaceId && options.cacheKey
+      ? buildSideChatContext(options.workspaceId, options.cacheKey, options.readSideChatHistory) : undefined,
+  ]);
   const runtimeContext = renderOpenworkRuntimeContext(readOpenworkRuntimeFacts());
-  const sideChatContext = options.workspaceId && options.cacheKey
-    ? sideChatSystemContext(options.workspaceId, options.cacheKey) : undefined;
   return [runtimeContext, envContext, sideChatContext].filter(Boolean).join("\n\n");
 }

@@ -128,6 +128,7 @@ import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-noti
 import { ReactSessionRuntime } from "@/react-app/domains/session/sync/runtime-sync";
 import { createSessionChildIdsSelector, useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store";
 import { createWorkspaceSessionAttentionSelector, sessionAttentionLabel, sessionAttentionSidebarStatus } from "@/react-app/domains/session/status/session-attention";
+import type { ReadSideChatHistory } from "@/react-app/domains/session/sync/side-chat-context";
 import { buildOpenworkSessionSystemContext } from "@/react-app/domains/session/sync/env-context";
 import {
   applySessionRevert,
@@ -571,6 +572,13 @@ export function SessionRoute() {
     navigationGeneration: routeNavigationRef.current.generation,
   };
   const archiveDisabledReason = isOpencodeV2BaseUrl(opencodeBaseUrl) ? V2_SESSION_ARCHIVE_UNAVAILABLE : undefined;
+  const readSideChatHistory = useCallback<ReadSideChatHistory>((main, options) => {
+    const workspace = workspacesRef.current.find(item => item.id === main.workspaceId);
+    const endpoint = endpointForSessionWorkspace(workspace);
+    if (!endpoint) return Promise.reject(new Error("Main conversation workspace is unavailable"));
+    return composeNativeSessionHistory(endpoint, main.sessionId, options);
+  }, [endpointForSessionWorkspace, workspacesRef]);
+
   const canPrefetchSelectedWorkspace = Boolean(opencodeClient && selectedWorkspaceEndpoint && !selectedWorkspaceError);
   const prefetchRuntimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId;
   const cancelOpeningPrefetchRef = useRef<(() => void) | undefined>(undefined);
@@ -1654,6 +1662,7 @@ export function SessionRoute() {
                   const parts = await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint);
                   assertCurrent();
                   const system = await buildOpenworkSessionSystemContext(client, {
+                    readSideChatHistory,
                     workspaceId: selectedWorkspaceId,
                     cacheKey: targetSessionId,
                     runtimeKey: environmentRuntimeKey,
@@ -1793,6 +1802,8 @@ export function SessionRoute() {
         }));
       },
       environmentRuntimeKey,
+      readSideChatHistory,
+      sideChatWorkspaceId: selectedWorkspaceId,
       onApplyEnvironmentChanges: isDesktopRuntime() && selectedWorkspace?.workspaceType !== "remote"
         ? handleApplyEnvironmentChanges
         : undefined,
@@ -1805,6 +1816,7 @@ export function SessionRoute() {
     hasUsableModel,
     handleApplyEnvironmentChanges,
     environmentRuntimeKey,
+    readSideChatHistory,
     local,
     listAgents,
     listSlashCommands,
@@ -1925,6 +1937,8 @@ export function SessionRoute() {
       },
       isRemoteWorkspace: workspace.workspaceType === "remote",
       isSandboxWorkspace: isSandboxWorkspace(workspace),
+      readSideChatHistory,
+      sideChatWorkspaceId: workspace.id,
       environmentRuntimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
       onApplyEnvironmentChanges: undefined,
       onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void, agent?: string | null): Promise<CloudMcpSubmissionResult> => {
@@ -2014,6 +2028,7 @@ export function SessionRoute() {
                   const parts = await draftToParts(draft, workspaceRoot, targetSessionId, endpoint);
                   assertCurrent();
                   const system = await buildOpenworkSessionSystemContext(endpoint.client, {
+                    readSideChatHistory,
                     workspaceId: workspace.id,
                     cacheKey: targetSessionId,
                     runtimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
@@ -2120,6 +2135,7 @@ export function SessionRoute() {
     endpointForSessionWorkspace,
     engineReloadVersion,
     environmentRuntimeKey,
+    readSideChatHistory,
     errorsByWorkspaceId,
     handleOpenExtensions,
     handleOpenSettings,

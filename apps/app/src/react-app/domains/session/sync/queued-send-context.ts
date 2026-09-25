@@ -1,3 +1,4 @@
+import type { ReadSideChatHistory } from "./side-chat-context";
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import type { ModelRef } from "@/app/types";
 
@@ -11,6 +12,8 @@ export type QueuedSendContext = {
   variant: string | null;
   model: ModelRef | null;
   environmentRuntimeKey: string | null;
+  readSideChatHistory?: ReadSideChatHistory;
+  sideChatWorkspaceId?: string;
 };
 
 // Context is registered by the mounted surface (enqueueing only happens there)
