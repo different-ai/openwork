@@ -1,4 +1,4 @@
-import { DESKTOP_FREE_PROOF_HEADER, desktopFreeVersionError, lowestDesktopVersion, releaseTagRequired, supportedDesktopReleases,
+import { DESKTOP_FREE_PROOF_HEADER, desktopFreeVersionError, lowestDesktopVersion, supportedDesktopReleases,
   type DesktopRelease } from "@openwork/free-auto"
 import { verifyDesktopFreeProof, type DesktopFreeBinding, type VerifiedDesktopFreeProof } from "./proof.js"
 import type { FreeAllowanceStore } from "../shared/allowance.js"
@@ -9,7 +9,7 @@ import { releaseSecretCandidates } from "./release-secrets.js"
 export type DesktopFreeGateDependencies = {
   releases: () => Promise<DesktopRelease[] | null>;
   consumeNonce: FreeAllowanceStore["consumeNonce"];
-  config: Pick<AutoConfig, "releaseKey" | "releaseKeyPrevious" | "devReleaseSecret" | "firstReleaseTagVersion" | "supportedReleaseCount" | "supportedReleaseMinDays" | "blockedReleases">;
+  config: Pick<AutoConfig, "releaseKey" | "releaseKeyPrevious" | "devReleaseSecret" | "supportedReleaseCount" | "supportedReleaseMinDays" | "blockedReleases">;
   now?: () => number;
 }
 export const desktopFreeGateError = freeError
@@ -35,7 +35,8 @@ export async function checkDesktopFreeRequest(request: Request, bodyHash: string
     const minimumVersion = supported ? lowestDesktopVersion(supported) : null
     // A dev-secret proof comes from an unversioned developer build; it is not held to the release window.
     let versionError = proof.releaseSource === "dev" ? null : desktopFreeVersionError(proof.appVersion, supported)
-    if (!versionError && proof.version === 2 && supported && releaseTagRequired(supported, config.firstReleaseTagVersion)) {
+    // No released build ever sent an untagged (v2) proof, so one only comes from an unkeyed or forged client.
+    if (!versionError && proof.version === 2) {
       versionError = { code: "desktop_update_required", currentVersion: proof.appVersion, minimumVersion,
         message: `Update OpenWork Desktop to ${minimumVersion} or newer to use Auto.` }
     }
