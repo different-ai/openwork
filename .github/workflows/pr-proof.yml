@@ -255,6 +255,11 @@ jobs:
       - uses: ./.github/actions/setup-browser
       - name: Build this branch's review app
         run: pnpm --filter @openwork/review-app build
+      - name: Prove live memory and internal stream restoration
+        env:
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          CHECKPOINT_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/prove-freestyle-checkpoints.ts
       - name: Prepare this branch's isolated web world
         timeout-minutes: 35
         env:
@@ -273,6 +278,14 @@ jobs:
         run: |
           test "$PROOF_SPEC" = 'evals/specs/web-checkpoint-fork.e2e.test.ts'
           xvfb-run -a pnpm evals:e2e web-checkpoint-fork --local --engine v1 --surface web --checkpoints
+      - name: Save the platform prerequisite receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: checkpoint-memory-${{ github.run_attempt }}
+          path: results/checkpoint-probe/report.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Save selected native testkit and Vitest records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
