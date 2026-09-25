@@ -15,7 +15,7 @@ import { bundledLanguages, codeToHtml } from "shiki";
 
 import { faviconUrlForHref } from "@/lib/favicon";
 
-import { markdownMath } from "./markdown-math";
+import { markdownMath, renderMathHtml } from "./markdown-math";
 import { parseSessionReference } from "@/components/chat/session-reference";
 import { containsInlineHtml, markUnsafeReferenceTokens, stripSessionReferenceAttributes, renderSessionReferenceText, sessionReferenceHtml, type ResolveSessionReference } from "./session-reference-html";
 
@@ -696,4 +696,33 @@ export async function renderHighlightedMarkdownHtml(text: string, presentation: 
   const { highlightedMarkdownParser } = parsersForPresentation(presentation, resolveReference);
   const html = await highlightedMarkdownParser.parse(text, { async: true });
   return sanitizeMarkdownHtml(html);
+}
+
+const USER_MATH_RE = /\$\$([\s\S]+?)\$\$|\$(?![\d\s])([^$\n]+?)\$(?!\d)/g;
+
+export function renderUserMathHtml(text: string): string {
+  if (!text.trim()) {
+    return "";
+  }
+
+  const parts: string[] = [];
+  let last = 0;
+  let match: RegExpExecArray | null;
+  const re = new RegExp(USER_MATH_RE.source, "g");
+
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > last) {
+      parts.push(escapeHtml(text.slice(last, match.index)));
+    }
+    const isDisplay = match[1] !== undefined;
+    const mathContent = (isDisplay ? match[1] : match[2])!.trim();
+    parts.push(renderMathHtml(mathContent, isDisplay));
+    last = re.lastIndex;
+  }
+
+  if (last < text.length) {
+    parts.push(escapeHtml(text.slice(last)));
+  }
+
+  return sanitizeMarkdownHtml(parts.join(""));
 }

@@ -19,6 +19,7 @@ import {
   hasFencedCodeBlock,
   renderHighlightedMarkdownHtml,
   renderMarkdownHtml,
+  renderUserMathHtml,
   setCodeCopyButtonState,
   setCodeWrapButtonState,
   syncMarkdownImagePreviews,
@@ -67,6 +68,7 @@ type MarkdownBlockInnerProps = {
   /** Opt in only for conversation prose, never tool output or artifact previews. */
   sessionReferences?: boolean;
   highlightQuery?: string;
+  mathOnly?: boolean;
 } & Omit<
   React.ComponentProps<"div">,
   "ref" | "className" | "children" | "dangerouslySetInnerHTML"
@@ -87,6 +89,7 @@ function MarkdownBlockInner({
   streaming,
   sessionReferences = false,
   highlightQuery,
+  mathOnly,
   ...props
 }: MarkdownBlockInnerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -106,15 +109,16 @@ function MarkdownBlockInner({
   const resolveReference = sessionReferences ? references?.resolve : undefined;
   const streamingRenderer = useMemo(() => createStreamingMarkdownRenderer("chat", resolveReference), [resolveReference]);
   const streamedBlocks = useMemo(
-    () => (streaming ? streamingRenderer.render(text) : null),
-    [streaming, streamingRenderer, text],
+    // mathOnly renderer has no streaming blocks — user bubbles render at once.
+    () => (mathOnly || !streaming ? null : streamingRenderer.render(text)),
+    [mathOnly, streaming, streamingRenderer, text],
   );
   useEffect(() => {
     if (!streaming) streamingRenderer.reset();
   }, [streaming, streamingRenderer]);
   const syncHtml = useMemo(
-    () => (streamedBlocks ? "" : renderMarkdownHtml(text, "chat", resolveReference)),
-    [streamedBlocks, text, resolveReference],
+    () => (mathOnly ? renderUserMathHtml(text) : streamedBlocks ? "" : renderMarkdownHtml(text, "chat", resolveReference)),
+    [mathOnly, streamedBlocks, text, resolveReference],
   );
   const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string; resolveReference: typeof resolveReference } | null>(null);
 
@@ -184,7 +188,8 @@ function MarkdownBlockInner({
     : rendered.blocks.every((block) => !block.__html);
 
   useEffect(() => {
-    if (streaming || !hasFencedCodeBlock(text)) {
+    // mathOnly renderer has no async shiki step — skip entirely.
+    if (mathOnly || streaming || !hasFencedCodeBlock(text)) {
       setHighlightedHtml(null);
       return;
     }
@@ -204,7 +209,7 @@ function MarkdownBlockInner({
       cancelled = true;
       stopObserving();
     };
-  }, [isEmpty, rendered.kind, streaming, text, resolveReference]);
+}, [isEmpty, mathOnly, rendered.kind, streaming, text, resolveReference]);
 
   useMermaidEnhancer(rootRef, rendered, !streaming);
 

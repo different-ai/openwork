@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "../src/components/markdown/markdown-primitive";
+import { renderHighlightedMarkdownHtml, renderMarkdownHtml, renderUserMathHtml } from "../src/components/markdown/markdown-primitive";
 
 describe("markdown math", () => {
   test("renders inline $...$ math with KaTeX instead of raw LaTeX source", () => {
@@ -88,5 +88,64 @@ describe("markdown math", () => {
     const html = renderMarkdownHtml("$E = mc^2$", "surface");
 
     expect(html).toContain('class="katex"');
+  });
+});
+
+describe("user bubble math renderer", () => {
+  test("renders inline $...$ math in user bubbles", () => {
+    const html = renderUserMathHtml("Compute $E = mc^2$ for me.");
+
+    expect(html).toContain('class="katex"');
+    expect(html).not.toContain("$E = mc^2$");
+    expect(html).toContain("Compute");
+    expect(html).toContain("for me.");
+  });
+
+  test("renders $$...$$ as display math in user bubbles", () => {
+    const html = renderUserMathHtml("Solve $$\n\\int_0^1 x^2 dx = \\frac{1}{3}\n$$");
+
+    expect(html).toContain("katex-display");
+    expect(html).toContain("<mfrac>");
+    expect(html).not.toContain("$$");
+  });
+
+  test("leaves currency amounts alone in user bubbles", () => {
+    const html = renderUserMathHtml("It costs $5 and $10 per seat.");
+
+    expect(html).not.toContain('class="katex"');
+    expect(html).toContain("$5");
+    expect(html).toContain("$10");
+  });
+
+  test("does not run a full markdown parser on user text", () => {
+    const html = renderUserMathHtml("# heading *emphasis* and `code`");
+
+    // Hashes, asterisks and backticks stay literal — no <h1>, <em> or <code>.
+    expect(html).not.toContain("<h1");
+    expect(html).not.toContain("<em>");
+    expect(html).not.toContain("<code>");
+    expect(html).toContain("# heading *emphasis* and `code`");
+  });
+
+  test("fails gracefully on malformed LaTeX in user bubbles", () => {
+    const html = renderUserMathHtml("Start $\\frac{1}{$ end.");
+
+    expect(html.length).toBeGreaterThan(0);
+    expect(html).toContain("Start");
+    expect(html).toContain("end.");
+  });
+
+  test("escapes HTML in user bubbles before sanitization", () => {
+    const html = renderUserMathHtml("x <script>alert(1)</script> $a$");
+
+    // The raw tag must never survive; it is escaped into visible text.
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("katex");
+  });
+
+  test("returns empty output for blank user text", () => {
+    expect(renderUserMathHtml("")).toBe("");
+    expect(renderUserMathHtml("   ")).toBe("");
   });
 });

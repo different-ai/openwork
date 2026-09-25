@@ -817,10 +817,23 @@ const UserMessage = React.memo(
       onOpenTarget(target)
     }
     const messageText = React.useMemo(() => getMessagesText([message]), [message])
+    const userText = React.useMemo(
+      () => message.parts.map((part) => (part.type === "text" ? part.text : "")).join(""),
+      [message.parts],
+    )
     const inlineParts = React.useMemo(
       () => message.parts.filter((part) => (part.type === "text" && Boolean(part.text)) || isFileUIPart(part)),
       [message.parts],
     )
+    const hasSkillChips = USER_SKILL_TOKEN_RE.test(userText)
+    // PLAIN_URL_RE is a global regexp; use a fresh copy so its lastIndex state
+    // never leaks across renders.
+    const hasBareUrl = new RegExp(PLAIN_URL_RE.source).test(userText)
+    // Session-reference prose paints through the React plain-text pipeline;
+    // math renders through the math-only markdown block. Only hand a bubble to
+    // the math renderer when it can do so without dropping references, chips,
+    // or URL anchoring, and there is actually a $ delimiter worth rendering.
+    const useMathBubble = !hasSkillChips && !references && !hasBareUrl && userText.includes("$")
     const hasContent = inlineParts.length > 0
     const menuActions: MenuAction[] = []
     if (messageText) menuActions.push(
@@ -849,41 +862,59 @@ const UserMessage = React.memo(
                 className="group flex w-full flex-col items-end gap-1 !select-text"
                 style={{ userSelect: "text" }}
               >
-                {hasContent ? (
-                  <MessageContent
-                    className="bg-muted text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 sm:max-w-[75%] !select-text not-prose"
-                    style={{ userSelect: "text" }}
-                    onClick={openLink}
-                  >
-                    {inlineParts.map((part, index) => {
-                      if (part.type === "text") {
-                        return (
-                          <span key={`text-${index}`} className="whitespace-pre-wrap">
-                            {renderUserText(part.text, highlightQuery, references)}
-                          </span>
-                        )
-                      }
-                      if (isFileUIPart(part)) {
-                        // An attachment is identified by its position among the
-                        // message's files, not by its URL or filename: a sent image
-                        // first shows the composer's blob: preview, then the server's
-                        // recompressed data: copy. Keeping one element lets the
-                        // browser swap the bitmap in place instead of remounting an
-                        // <img> that has to decode before it can paint.
-                        const attachmentIndex = inlineParts.slice(0, index).filter(isFileUIPart).length
-                        return (
-                          <span
-                            key={`file-${attachmentIndex}`}
-                            className="mx-1 inline-flex align-middle not-prose"
-                          >
-                            <FileMessage part={part} tone="user" />
-                          </span>
-                        )
-                      }
-                      return null
-                    })}
-                  </MessageContent>
-                ) : null}
+                {useMathBubble ? (
+                  <>
+                    {message.parts.filter(isFileUIPart).map((part, index) => (
+                      <FileMessage key={`${part.url}-${index}`} part={part} tone="user" />
+                    ))}
+                    {message.parts.some((part) => part.type === "text" && part.text) ? (
+                      <MessageContent
+                        className="bg-muted text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 whitespace-pre-wrap sm:max-w-[75%] !select-text not-prose"
+                        style={{ userSelect: "text" }}
+                        mathOnly
+                        highlightQuery={highlightQuery}
+                      >
+                        {userText}
+                      </MessageContent>
+                    ) : null}
+                  </>
+                ) : (
+                  hasContent ? (
+                    <MessageContent
+                      className="bg-muted text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 sm:max-w-[75%] !select-text not-prose"
+                      style={{ userSelect: "text" }}
+                      onClick={openLink}
+                    >
+                      {inlineParts.map((part, index) => {
+                        if (part.type === "text") {
+                          return (
+                            <span key={`text-${index}`} className="whitespace-pre-wrap">
+                              {renderUserText(part.text, highlightQuery, references)}
+                            </span>
+                          )
+                        }
+                        if (isFileUIPart(part)) {
+                          // An attachment is identified by its position among the
+                          // message's files, not by its URL or filename: a sent image
+                          // first shows the composer's blob: preview, then the server's
+                          // recompressed data: copy. Keeping one element lets the
+                          // browser swap the bitmap in place instead of remounting an
+                          // <img> that has to decode before it can paint.
+                          const attachmentIndex = inlineParts.slice(0, index).filter(isFileUIPart).length
+                          return (
+                            <span
+                              key={`file-${attachmentIndex}`}
+                              className="mx-1 inline-flex align-middle not-prose"
+                            >
+                              <FileMessage part={part} tone="user" />
+                            </span>
+                          )
+                        }
+                        return null
+                      })}
+                    </MessageContent>
+                  ) : null
+                )}
                 {!isStreaming && (
                   <MessageActions
                     className={cn(
