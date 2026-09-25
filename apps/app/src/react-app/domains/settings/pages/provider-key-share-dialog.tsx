@@ -82,8 +82,8 @@ export function ProviderKeyShareDialog({ provider, organizationId, client, onClo
         </div>
         <p className="text-xs text-muted-foreground">Administrator access verified for {organization}. Sharing checks it again; if Den cannot confirm the transfer, the key stays on this device.</p>
       </fieldset> : null}
-      <DialogFooter>
-        <Button variant="ghost" disabled={busy} onClick={onOpenDen}>Open in Den</Button>
+      <DialogFooter className="sm:flex-wrap">
+        <Button variant="ghost" className="sm:mr-auto" disabled={busy} onClick={onOpenDen}>Open in Den</Button>
         {!checking && !eligibility?.eligible ? <Button variant="outline" onClick={() => setRevision((value) => value + 1)}>Check again</Button> : null}
         <Button variant="outline" disabled={busy} onClick={onClose}>Cancel</Button>
         <Button disabled={checking || busy || !eligibility?.eligible || (!allMembers && !teamIds.length)} onClick={() => void share()}>{busy ? "Sharing…" : "Share with organization"}</Button>
