@@ -1,14 +1,14 @@
 import type { ModelsDevProvider } from "./models-dev.js"
 import { GATEWAY_REQUEST_MODEL_HEADER } from "@openwork/types/den/gateway"
-import { validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
+import { inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
 import { inferenceCredentialEnvNames } from "@openwork-ee/utils/inference-credentials"
 import { readProviderEnvNames, runtimeProviderEnvNames } from "./provider-credentials.js"
 
 type JsonRecord = Record<string, unknown>
 
 /**
- * models.dev `npm` packages the inference gateway can proxy (plan §5.3 minus
- * Bedrock, which needs SigV4 re-signing and is deferred). Anything else is
+ * models.dev `npm` packages the inference gateway can proxy (plan §5.3).
+ * Bedrock requests are re-signed with SigV4 by the gateway. Anything else is
  * rejected at create time with `unsupported_provider`.
  */
 export const SUPPORTED_GATEWAY_NPM_PACKAGES = [
@@ -21,6 +21,8 @@ export const SUPPORTED_GATEWAY_NPM_PACKAGES = [
   "@ai-sdk/google",
   "@ai-sdk/google-vertex",
   "@ai-sdk/google-vertex/anthropic",
+  "@ai-sdk/amazon-bedrock",
+  "@ai-sdk/amazon-bedrock/mantle",
 ] as const
 
 export type SupportedGatewayNpm = (typeof SUPPORTED_GATEWAY_NPM_PACKAGES)[number]
@@ -135,6 +137,24 @@ export function upstreamBaseUrlSettingError(settings: JsonRecord): string | null
   return null
 }
 
+/** Amazon Bedrock (Converse) and Amazon Bedrock (OpenAI, Mantle) share region settings and AWS keys. */
+export function isAwsGatewayNpm(npm: string | null): boolean {
+  return npm === "@ai-sdk/amazon-bedrock" || npm === "@ai-sdk/amazon-bedrock/mantle"
+}
+
+/**
+ * Bedrock's upstream host is derived from `settings.region`, so the gateway never
+ * sends Bedrock requests to an admin-chosen host. Only an operator-allowlisted
+ * origin (a deployment-owned private endpoint or proxy) may override it.
+ */
+export function bedrockSettingsError(settings: JsonRecord, allowedOrigins = inferenceEgressAllowedOrigins()): string | null {
+  if (!isAwsRegion(settings.region)) return "Amazon Bedrock requires an AWS region code such as us-east-1."
+  const override = settings.upstreamBaseUrl
+  if (override === undefined) return null
+  const origin = (() => { try { return typeof override === "string" ? new URL(override).origin : null } catch { return null } })()
+  return origin && allowedOrigins.has(origin) ? null : "Amazon Bedrock endpoints are derived from the region; a custom upstream URL must be an operator-approved origin."
+}
+
 /** Persist and expose only the documented non-secret settings. */
 export function publicProviderSettings(settings: JsonRecord): JsonRecord {
   return Object.fromEntries(["project", "location", "resourceName", "apiVersion", "region", "upstreamBaseUrl"]
@@ -194,7 +214,11 @@ export function buildGatewayProviderConfig(
       if (typeof row.settings?.[key] === "string") options[key] = row.settings[key]
     }
   }
-  const credentialEnv = swap?.env ?? (npm === "@ai-sdk/azure" ? ["AZURE_API_KEY"] : inferenceCredentialEnvNames(readProviderEnvNames(config)))
+  // Both Bedrock SDKs send AWS_BEARER_TOKEN_BEDROCK as a bearer instead of
+  // signing locally; the gateway replaces it with SigV4 using the org's AWS keys.
+  const credentialEnv = swap?.env ?? (npm === "@ai-sdk/azure" ? ["AZURE_API_KEY"]
+    : isAwsGatewayNpm(npm) ? ["AWS_BEARER_TOKEN_BEDROCK"]
+      : inferenceCredentialEnvNames(readProviderEnvNames(config)))
   const env = runtimeProviderEnvNames({ id: row.id, source: "openwork_gateway", providerConfig: { env: credentialEnv } })
   return {
     ...config,

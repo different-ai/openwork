@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
+import path from "node:path"
+import { deriveBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
 import {
+  bedrockSettingsError,
+  isAwsGatewayNpm,
   buildGatewayModelConfig,
   buildGatewayProviderConfig,
   buildProviderConfigSnapshot,
@@ -224,7 +229,62 @@ test("buildProviderConfigSnapshot keeps only the opencode block fields", () => {
   })
 })
 
-test("isSupportedGatewayNpm accepts the proxied SDK families and rejects Bedrock and unknown packages", () => {
+test("Amazon Bedrock keeps its native SDK, sends the gateway key as the Bedrock bearer, and requires a region-derived host", () => {
+  const config = buildProviderConfigSnapshot({
+    id: "amazon-bedrock", name: "Amazon Bedrock", npm: "@ai-sdk/amazon-bedrock",
+    env: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION", "AWS_BEARER_TOKEN_BEDROCK"],
+    api: null, doc: null, config: {}, models: [],
+  })
+  expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock")).toBe(true)
+  expect(gatewayConfigurationError(config, { region: "us-east-1" })).toBeNull()
+  expect(buildGatewayProviderConfig({ id: "ipr_01jbedrock", provider_config: config, settings: { region: "us-east-1" } }, baseUrl)).toEqual({
+    id: "amazon-bedrock", name: "Amazon Bedrock", npm: "@ai-sdk/amazon-bedrock", env: ["IPR_01JBEDROCK_AWS_BEARER_TOKEN_BEDROCK"],
+    api: `${baseUrl}api/v1/providers/ipr_01jbedrock`,
+    options: { baseURL: `${baseUrl}api/v1/providers/ipr_01jbedrock` },
+  })
+
+  for (const region of ["us-east-1", "eu-central-2", "ap-southeast-1", "us-gov-west-1"]) expect(bedrockSettingsError({ region })).toBeNull()
+  for (const settings of [{}, { region: "" }, { region: "US-EAST-1" }, { region: "us-east" }, { region: "evil.com/x" }, { region: "us-east-1.evil.com" }, { region: "us-east-1#" }, { region: 1 }]) {
+    expect(bedrockSettingsError(settings)).not.toBeNull()
+  }
+  expect(bedrockSettingsError({ region: "us-east-1", upstreamBaseUrl: "https://bedrock.example/v1" }, new Set())).toContain("derived from the region")
+  expect(bedrockSettingsError({ region: "us-east-1", upstreamBaseUrl: "https://bedrock-proxy.internal.example" }, new Set(["https://bedrock-proxy.internal.example"]))).toBeNull()
+
+  // Cross-region inference profile ids use the provider SDK; mantle models do not and are excluded.
+  expect(gatewayModelConfigurationError(config, [{ id: "global.anthropic.claude-sonnet-4-6" }, { id: "us.amazon.nova-pro-v1:0" }])).toBeNull()
+  expect(gatewayModelConfigurationError(config, [{ provider: { npm: "@ai-sdk/amazon-bedrock/mantle", api: "https://bedrock-mantle.${AWS_REGION}.api.aws/openai/v1" } }])).not.toBeNull()
+})
+
+test("Amazon Bedrock (OpenAI) is a separate Mantle provider: bearer env for the desktop SDK, Bedrock region rules, derived models admissible", () => {
+  const catalog: unknown = JSON.parse(readFileSync(path.resolve(import.meta.dir, "../../gateway/src/models/base.json"), "utf8"))
+  if (!isRecord(catalog)) throw new Error("base.json must be an object")
+  const derived = deriveBedrockMantleProvider(catalog)
+  if (!derived || !isRecord(derived.models)) throw new Error("expected a derived Mantle provider")
+  const config = buildProviderConfigSnapshot({
+    id: "amazon-bedrock-mantle", name: "Amazon Bedrock (OpenAI)", npm: "@ai-sdk/amazon-bedrock/mantle", env: ["AWS_BEARER_TOKEN_BEDROCK"],
+    api: null, doc: null, config: {}, models: [],
+  })
+  expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock/mantle")).toBe(true)
+  expect(isAwsGatewayNpm("@ai-sdk/amazon-bedrock/mantle")).toBe(true)
+  expect(isAwsGatewayNpm("@ai-sdk/openai")).toBe(false)
+  expect(buildGatewayProviderConfig({ id: "ipr_01jmantle", provider_config: config, settings: { region: "us-west-2" } }, baseUrl)).toEqual({
+    id: "amazon-bedrock-mantle", name: "Amazon Bedrock (OpenAI)", npm: "@ai-sdk/amazon-bedrock/mantle", env: ["IPR_01JMANTLE_AWS_BEARER_TOKEN_BEDROCK"],
+    api: `${baseUrl}api/v1/providers/ipr_01jmantle`,
+    options: { baseURL: `${baseUrl}api/v1/providers/ipr_01jmantle` },
+  })
+  const models = Object.values(derived.models).filter(isRecord)
+  expect(models).toHaveLength(13)
+  // No derived model overrides the SDK or carries the region template, so all 13 are admitted and none point the desktop elsewhere.
+  expect(gatewayModelConfigurationError(config, models)).toBeNull()
+  for (const model of models) {
+    const desktop = buildGatewayModelConfig({ id: "gwm_fixture", name: "Fixture", config: model })
+    expect(JSON.stringify(desktop)).not.toContain("bedrock-mantle.")
+  }
+  // The Converse provider still excludes them.
+  expect(gatewayModelConfigurationError({ npm: "@ai-sdk/amazon-bedrock" }, models.slice(0, 1))).not.toBeNull()
+})
+
+test("isSupportedGatewayNpm accepts the proxied SDK families and rejects unknown packages", () => {
   for (const npm of [
     "@ai-sdk/anthropic",
     "@ai-sdk/openai",
@@ -235,10 +295,12 @@ test("isSupportedGatewayNpm accepts the proxied SDK families and rejects Bedrock
     "@ai-sdk/google",
     "@ai-sdk/google-vertex",
     "@ai-sdk/google-vertex/anthropic",
+    "@ai-sdk/amazon-bedrock",
+    "@ai-sdk/amazon-bedrock/mantle",
   ]) {
     expect(isSupportedGatewayNpm(npm)).toBe(true)
   }
-  expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock")).toBe(false)
+  expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock/unknown")).toBe(false)
   expect(isSupportedGatewayNpm("@ai-sdk/cohere")).toBe(false)
   expect(isSupportedGatewayNpm(null)).toBe(false)
 })
@@ -318,3 +380,7 @@ test("gateway models carry diagnostic selection headers while preserving safe SD
     "anthropic-beta": "safe-beta", "x-openwork-gateway-request-model": "gwm_fixture",
   } })
 })
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}

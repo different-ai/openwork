@@ -31,6 +31,11 @@
       "development": "./src/inference-egress.ts",
       "default": "./dist/inference-egress.js"
     },
+    "./bedrock-mantle-catalog": {
+      "types": "./src/bedrock-mantle-catalog.ts",
+      "development": "./src/bedrock-mantle-catalog.ts",
+      "default": "./dist/bedrock-mantle-catalog.js"
+    },
     "./inference-credentials": {
       "types": "./src/inference-credentials.ts",
       "development": "./src/inference-credentials.ts",
@@ -64,7 +69,7 @@
   },
   "scripts": {
     "build": "tsup",
-    "test": "bun test src/observability.test.ts src/den-urls.test.ts src/inference-bearer-key.test.ts"
+    "test": "bun test src/observability.test.ts src/den-urls.test.ts src/inference-bearer-key.test.ts src/bedrock-mantle-catalog.test.ts"
   },
   "dependencies": {
     "luxon": "^3.6.1",

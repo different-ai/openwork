@@ -6280,6 +6280,7 @@ export class DenClient extends HeyApiClient {
       allMembers?: boolean;
       memberIds?: Array<string>;
       teamIds?: Array<string>;
+      reuseCredentialFrom?: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -6301,6 +6302,7 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "allMembers" },
             { in: "body", key: "memberIds" },
             { in: "body", key: "teamIds" },
+            { in: "body", key: "reuseCredentialFrom" },
           ],
         },
       ],

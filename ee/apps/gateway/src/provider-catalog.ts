@@ -3,11 +3,14 @@
 import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { BEDROCK_MANTLE_PROVIDER_ID, bedrockMantleApiPathsFromCatalog, withBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
 
 export type CatalogProvider = {
   npm: string | null
   api: string | null
   env: string[]
+  /** Upstream API path per model id (Bedrock Mantle serves models under /v1 or /openai/v1). */
+  modelApiPaths?: ReadonlyMap<string, string>
 }
 
 export type ProviderCatalog = {
@@ -32,9 +35,11 @@ function readCatalogProvider(value: unknown): CatalogProvider | null {
 export function createProviderCatalog(raw: unknown): ProviderCatalog {
   const providers = new Map<string, CatalogProvider>()
   if (isRecord(raw)) {
-    for (const [id, value] of Object.entries(raw)) {
+    // Same derivation as Den's catalog, so both see one amazon-bedrock-mantle provider.
+    for (const [id, value] of Object.entries(withBedrockMantleProvider(raw))) {
       const provider = readCatalogProvider(value)
-      if (provider) providers.set(id, provider)
+      if (!provider) continue
+      providers.set(id, id === BEDROCK_MANTLE_PROVIDER_ID ? { ...provider, modelApiPaths: bedrockMantleApiPathsFromCatalog(raw) } : provider)
     }
   }
   return {

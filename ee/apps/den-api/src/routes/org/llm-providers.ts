@@ -513,6 +513,9 @@ async function normalizeLlmProviderInput(
     if (!provider) {
       throw createFailure(404, "provider_not_found", "The selected provider was not found in models.dev.")
     }
+    if (provider.npm === "@ai-sdk/amazon-bedrock/mantle") {
+      throw createFailure(400, "gateway_only_provider", `${provider.name} is available through AI Gateway, not Bring your own keys.`)
+    }
 
     const requestedModelIds = [...new Set(input.modelIds ?? [])]
     const modelsById = new Map(provider.models.map((model) => [model.id, model]))
