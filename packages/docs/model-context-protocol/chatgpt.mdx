@@ -1,67 +1,32 @@
 ---
-title: "Connect OpenWork MCP to ChatGPT"
+title: "Connect ChatGPT"
 sidebarTitle: "ChatGPT"
 description: "Add OpenWork MCP to ChatGPT: paste https://api.openworklabs.com/mcp/agent in Settings > MCP servers and sign in with OAuth."
 ---
 
-The OpenWork MCP server ([OpenWork Connect](/cloud/run-in-the-cloud/cloud-mcp))
-enables ChatGPT Desktop to use the OpenWork capabilities your organization has
-made available to you: Gmail read/search, Calendar list/create, Drive
-search/read, Gmail draft creation, shared MCP connections such as Notion,
-Linear, Slack, Stripe, Exa, and Context7, shared skills, and OpenWork Cloud
-resources like skills, plugins, Collections, workers, members, roles, teams,
-and LLM providers. The server exposes only `search_capabilities` and
-`execute_capability`, so ChatGPT searches what you can access and runs exact
-capability names instead of loading hundreds of tool definitions into context.
+Give ChatGPT your organization's OpenWork skills, plugins, and connections.
 
-## Server URL
+<Steps>
+<Step title="Open MCP settings">
+In ChatGPT, open `Settings > MCP servers` ([open settings](https://chatgpt.com/#settings/Connectors)).
+</Step>
+<Step title="Paste the URL">
 
 ```text
 https://api.openworklabs.com/mcp/agent
 ```
 
-OAuth sign-in uses your OpenWork account, and the organization you pick is
-pinned into the token. If you do not have an account, create a
-[free OpenWork account](https://app.openworklabs.com?mode=sign-up).
+</Step>
+<Step title="Sign in">
+Start OAuth from the connection prompt, sign in to OpenWork, and pick your organization.
+</Step>
+</Steps>
 
-## Setup
-
-1. Open ChatGPT `Settings > MCP servers`
-   ([open settings](https://chatgpt.com/#settings/Connectors)).
-
-2. Paste the server URL:
-
-   ```text
-   https://api.openworklabs.com/mcp/agent
-   ```
-
-3. Start OAuth from ChatGPT's connection prompt, sign in to OpenWork, and pick
-   the organization ChatGPT should use.
-
-## Switch organizations
-
-Open ChatGPT `Settings > MCP servers`, disconnect or clear the `OpenWork`
-server's stored auth, then connect again and choose the organization you want.
-
-<Note>
-This is a setup guide. These steps match OpenWork Connect's OAuth profile:
-HTTPS or HTTP loopback callbacks, PKCE S256, Client ID Metadata Documents, and
-dynamic client registration fallback. ChatGPT Desktop is listed as setup only because native proof is not
-complete. See the
-[client support status](/cloud/run-in-the-cloud/cloud-mcp#client-support-status)
-table.
-</Note>
-
-## What you can ask
-
-- "Which OpenWork organization am I connected to?"
-- "Search my org's capabilities for calendar tools, then list tomorrow's events."
-- "Create a skill that writes weekly status reports and share it with my whole organization."
-- "Find the Q3 launch page in Notion and summarize it."
-
-## What's next
-
-- Read the [hub overview](/cloud/run-in-the-cloud/cloud-mcp) for OAuth, token,
-  server exposure, and troubleshooting details.
-- Publish Notion, Linear, Slack, and other shared tools with
-  [shared MCP connections](/cloud/share-with-your-team/shared-mcp-connections).
+<AccordionGroup>
+  <Accordion title="Switch organizations">
+    In `Settings > MCP servers`, disconnect `OpenWork`, then connect again and pick another organization.
+  </Accordion>
+  <Accordion title="Support status">
+    Setup only: these steps follow OpenWork's OAuth profile, but native end-to-end proof is not complete. See the [MCP Gateway reference](/cloud/run-in-the-cloud/cloud-mcp#reference).
+  </Accordion>
+</AccordionGroup>

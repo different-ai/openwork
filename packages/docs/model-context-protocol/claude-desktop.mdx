@@ -1,50 +1,31 @@
 ---
-title: "Connect OpenWork MCP to Claude Desktop"
+title: "Connect Claude Desktop"
 sidebarTitle: "Claude Desktop"
 description: "Add OpenWork MCP to Claude Desktop as a custom connector with the URL https://api.openworklabs.com/mcp/agent, or through mcp-remote."
 ---
 
-The OpenWork MCP server ([OpenWork Connect](/cloud/run-in-the-cloud/cloud-mcp))
-enables Claude Desktop to use the OpenWork capabilities your organization has
-made available to you: Gmail read/search, Calendar list/create, Drive
-search/read, Gmail draft creation, shared MCP connections such as Notion,
-Linear, Slack, Stripe, Exa, and Context7, shared skills, and OpenWork Cloud
-resources like skills, plugins, Collections, workers, members, roles, teams,
-and LLM providers. The server exposes only `search_capabilities` and
-`execute_capability`, so Claude Desktop searches what you can access and runs
-exact capability names instead of loading hundreds of tool definitions into
-context.
+Give Claude Desktop your organization's OpenWork skills, plugins, and connections.
 
-## Server URL
+<Steps>
+<Step title="Add a custom connector">
+Open `Settings` > `Connectors` > `Add custom connector`, name it `OpenWork`, and use:
 
 ```text
 https://api.openworklabs.com/mcp/agent
 ```
 
-OAuth sign-in uses your OpenWork account, and the organization you pick is
-pinned into the token. If you do not have an account, create a
-[free OpenWork account](https://app.openworklabs.com?mode=sign-up).
+</Step>
+<Step title="Sign in">
+Click `Connect`, sign in to OpenWork in the browser, and pick your organization.
+</Step>
+<Step title="Try it">
+Ask: "Which OpenWork organization am I connected to?"
+</Step>
+</Steps>
 
-## Connect
-
-1. Open Claude Desktop `Settings` > `Connectors`.
-
-2. Click `Add custom connector`.
-
-3. Name it `OpenWork` and set the URL to:
-
-   ```text
-   https://api.openworklabs.com/mcp/agent
-   ```
-
-4. Click `Connect`, then finish the browser sign-in and choose your
-   organization. Claude's connector OAuth uses an HTTPS callback, which
-   OpenWork accepts.
-
-## Fallback config
-
-For Claude Desktop builds without custom connectors, open `Settings` >
-`Developer` > `Edit Config` and add this to `claude_desktop_config.json`:
+<AccordionGroup>
+  <Accordion title="No custom connectors in your build?">
+    Open `Settings` > `Developer` > `Edit Config`, add this to `claude_desktop_config.json`, and restart Claude Desktop:
 
 ```json
 {
@@ -57,33 +38,11 @@ For Claude Desktop builds without custom connectors, open `Settings` >
 }
 ```
 
-`mcp-remote` runs the OAuth locally on an HTTP loopback callback, which
-OpenWork accepts. Restart Claude Desktop after editing the config.
-
-## Switch organizations
-
-Remove the stored MCP auth token for `openwork`, then connect again and choose
-the organization you want during browser sign-in.
-
-<Note>
-This is a setup guide. These steps match OpenWork Connect's OAuth profile:
-HTTPS or HTTP loopback callbacks, PKCE S256, Client ID Metadata Documents, and
-dynamic client registration fallback. Claude Desktop is listed as setup only because native proof is not
-complete. See the
-[client support status](/cloud/run-in-the-cloud/cloud-mcp#client-support-status)
-table.
-</Note>
-
-## What you can ask
-
-- "Which OpenWork organization am I connected to?"
-- "Add omar@example.com to my organization."
-- "Assign Priya to the Sales team."
-- "Find the Q3 launch page in Notion and summarize it."
-
-## What's next
-
-- Read the [hub overview](/cloud/run-in-the-cloud/cloud-mcp) for OAuth, token,
-  server exposure, and troubleshooting details.
-- Publish Notion, Linear, Slack, and other shared tools with
-  [shared MCP connections](/cloud/share-with-your-team/shared-mcp-connections).
+  </Accordion>
+  <Accordion title="Switch organizations">
+    Remove the stored `openwork` token, then connect again and pick another organization.
+  </Accordion>
+  <Accordion title="Support status">
+    Setup only: these steps follow OpenWork's OAuth profile, but native end-to-end proof is not complete. See the [MCP Gateway reference](/cloud/run-in-the-cloud/cloud-mcp#reference).
+  </Accordion>
+</AccordionGroup>

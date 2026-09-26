@@ -1,45 +1,31 @@
 ---
-title: "Connect OpenWork MCP to VS Code"
+title: "Connect VS Code"
 sidebarTitle: "VS Code"
 description: "Add OpenWork MCP to VS Code with one command: code --add-mcp with the URL https://api.openworklabs.com/mcp/agent, then start the server and sign in."
 ---
 
-The OpenWork MCP server ([OpenWork Connect](/cloud/run-in-the-cloud/cloud-mcp))
-enables VS Code to use the OpenWork capabilities your organization has made
-available to you: Gmail read/search, Calendar list/create, Drive search/read,
-Gmail draft creation, shared MCP connections such as Notion, Linear, Slack,
-Stripe, Exa, and Context7, shared skills, and OpenWork Cloud resources like
-skills, plugins, Collections, workers, members, roles, teams, and LLM
-providers. The server exposes only `search_capabilities` and
-`execute_capability`, so VS Code searches what you can access and runs exact
-capability names instead of loading hundreds of tool definitions into context.
+Give VS Code your organization's OpenWork skills, plugins, and connections.
 
-## Server URL
-
-```text
-https://api.openworklabs.com/mcp/agent
-```
-
-OAuth sign-in uses your OpenWork account, and the organization you pick is
-pinned into the token. If you do not have an account, create a
-[free OpenWork account](https://app.openworklabs.com?mode=sign-up).
-
-## Setup
-
-[Install in VS Code](vscode:mcp/install?%7B%22name%22%3A%22openwork%22%2C%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fapi.openworklabs.com%2Fmcp%2Fagent%22%7D)
-in one click, or run this command:
+<Steps>
+<Step title="Add the server">
+[Install in VS Code](vscode:mcp/install?%7B%22name%22%3A%22openwork%22%2C%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fapi.openworklabs.com%2Fmcp%2Fagent%22%7D) in one click, or run:
 
 ```sh
 code --add-mcp '{"name":"openwork","type":"http","url":"https://api.openworklabs.com/mcp/agent"}'
 ```
 
-Then open the Command Palette and run `MCP: List Servers` > `openwork` >
-`Start Server`. Follow the sign-in prompt and choose your organization.
+</Step>
+<Step title="Sign in">
+Run `MCP: List Servers` > `openwork` > `Start Server`, sign in to OpenWork, and pick your organization.
+</Step>
+<Step title="Try it">
+Ask: "Which OpenWork organization am I connected to?"
+</Step>
+</Steps>
 
-## Manual setup
-
-Open the Command Palette and run `MCP: Open User Configuration`, or edit
-`.vscode/mcp.json` for one workspace:
+<AccordionGroup>
+  <Accordion title="Manual config">
+    Run `MCP: Open User Configuration`, or edit `.vscode/mcp.json` for one workspace:
 
 ```json
 {
@@ -52,33 +38,11 @@ Open the Command Palette and run `MCP: Open User Configuration`, or edit
 }
 ```
 
-Then run `MCP: List Servers` > `openwork` > `Start Server`, and follow the
-sign-in prompt.
-
-## Switch organizations
-
-Remove the stored MCP auth token for `openwork`, then start the server again
-and choose the organization you want during browser sign-in.
-
-<Note>
-This is a setup guide. These steps match OpenWork Connect's OAuth profile:
-HTTPS or HTTP loopback callbacks, PKCE S256, Client ID Metadata Documents, and
-dynamic client registration fallback. VS Code is listed as setup only because native proof is not complete.
-See the
-[client support status](/cloud/run-in-the-cloud/cloud-mcp#client-support-status)
-table.
-</Note>
-
-## What you can ask
-
-- "Which OpenWork organization am I connected to?"
-- "Assign Priya to the Sales team."
-- "Search my org's capabilities for calendar tools, then list tomorrow's events."
-- "Find the Q3 launch page in Notion and summarize it."
-
-## What's next
-
-- Read the [hub overview](/cloud/run-in-the-cloud/cloud-mcp) for OAuth, token,
-  server exposure, and troubleshooting details.
-- Publish Notion, Linear, Slack, and other shared tools with
-  [shared MCP connections](/cloud/share-with-your-team/shared-mcp-connections).
+  </Accordion>
+  <Accordion title="Switch organizations">
+    Remove the stored `openwork` token, start the server again, and pick another organization.
+  </Accordion>
+  <Accordion title="Support status">
+    Setup only: these steps follow OpenWork's OAuth profile, but native end-to-end proof is not complete. See the [MCP Gateway reference](/cloud/run-in-the-cloud/cloud-mcp#reference).
+  </Accordion>
+</AccordionGroup>

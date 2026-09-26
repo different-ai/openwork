@@ -1,76 +1,45 @@
 ---
-title: "Connect OpenWork MCP to Codex"
+title: "Connect Codex"
 sidebarTitle: "Codex"
 description: "Add OpenWork MCP to Codex with one command: codex mcp add openwork --url https://api.openworklabs.com/mcp/agent, then codex mcp login openwork."
 ---
 
-The OpenWork MCP server ([OpenWork Connect](/cloud/run-in-the-cloud/cloud-mcp))
-enables Codex to use the OpenWork capabilities your organization has made
-available to you: Gmail read/search, Calendar list/create, Drive search/read,
-Gmail draft creation, shared MCP connections such as Notion, Linear, Slack,
-Stripe, Exa, and Context7, shared skills, and OpenWork Cloud resources like
-skills, plugins, Collections, workers, members, roles, teams, and LLM
-providers. The server exposes only `search_capabilities` and
-`execute_capability`, so Codex searches what you can access and runs exact
-capability names instead of loading hundreds of tool definitions into context.
+Give Codex your organization's OpenWork skills, plugins, and connections.
 
-## Server URL
+<Steps>
+<Step title="Add the server">
 
-```text
-https://api.openworklabs.com/mcp/agent
+```sh
+codex mcp add openwork --url https://api.openworklabs.com/mcp/agent
 ```
 
-OAuth sign-in uses your OpenWork account, and the organization you pick is
-pinned into the token. If you do not have an account, create a
-[free OpenWork account](https://app.openworklabs.com?mode=sign-up).
+In the Codex desktop app, paste the URL in `codex://settings/connections` instead.
 
-## Setup
+</Step>
+<Step title="Sign in">
 
-1. Add OpenWork Connect:
+```sh
+codex mcp login openwork
+```
 
-   ```sh
-   codex mcp add openwork --url https://api.openworklabs.com/mcp/agent
-   ```
+Sign in to OpenWork in the browser and pick your organization.
 
-2. Log in and finish the browser sign-in:
+</Step>
+<Step title="Try it">
+Ask: "Which OpenWork organization am I connected to?"
+</Step>
+</Steps>
 
-   ```sh
-   codex mcp login openwork
-   ```
-
-In the Codex desktop app, open `codex://settings/connections` and paste the
-server URL there instead.
-
-## Switch organizations
-
-Log out, then log in again and choose the organization you want:
+<AccordionGroup>
+  <Accordion title="Switch organizations">
 
 ```sh
 codex mcp logout openwork
 codex mcp login openwork
 ```
 
-<Note>
-This is a setup guide. These steps match OpenWork Connect's OAuth profile:
-HTTPS or HTTP loopback callbacks, PKCE S256, Client ID Metadata Documents, and
-dynamic client registration fallback. Codex is listed as setup only because native proof is not complete.
-See the
-[client support status](/cloud/run-in-the-cloud/cloud-mcp#client-support-status)
-table.
-</Note>
-
-## What you can ask
-
-- "Which OpenWork organization am I connected to?"
-- "Add omar@example.com to my organization."
-- "Search my org's capabilities for calendar tools, then list tomorrow's events."
-- "Create a skill that writes weekly status reports and share it with my whole organization."
-
-## What's next
-
-- Read the [hub overview](/cloud/run-in-the-cloud/cloud-mcp) for OAuth, token,
-  server exposure, and troubleshooting details.
-- Publish Notion, Linear, Slack, and other shared tools with
-  [shared MCP connections](/cloud/share-with-your-team/shared-mcp-connections).
-- Connect from a remote environment with
-  [OpenWork MCP on a remote machine](/cloud/run-in-the-cloud/connect-openwork-mcp-remote-machine).
+  </Accordion>
+  <Accordion title="Support status">
+    Setup only: these steps follow OpenWork's OAuth profile, but native end-to-end proof is not complete. See the [MCP Gateway reference](/cloud/run-in-the-cloud/cloud-mcp#reference).
+  </Accordion>
+</AccordionGroup>

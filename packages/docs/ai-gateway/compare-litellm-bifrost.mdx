@@ -1,16 +1,10 @@
 ---
-title: "OpenWork AI Gateway vs LiteLLM vs Bifrost"
+title: "AI Gateway vs LiteLLM vs Bifrost"
 sidebarTitle: "Compare: LiteLLM and Bifrost"
 description: "A factual comparison of OpenWork AI Gateway, LiteLLM, and Bifrost: license, deployment, SSO and RBAC, spend tracking, per-member credentials, MCP gateway, skills sharing, and pricing, plus how to use OpenWork with LiteLLM or Bifrost."
 ---
 
-LiteLLM and Bifrost are mature, standalone LLM gateways: you put them in front of model providers and point applications at one OpenAI-compatible API. OpenWork AI Gateway is part of a workspace product: it sits alongside the OpenWork agent app, skill and MCP sharing, and the organization control plane. You do not have to choose, because OpenWork can use a LiteLLM or Bifrost gateway you already run.
-
-<Note>
-Facts about LiteLLM and Bifrost come from their public docs and repositories as of September 25, 2026, linked below. Check those sources for current details. A dash (—) means we could not confirm it.
-</Note>
-
-## At a glance
+LiteLLM and Bifrost are standalone gateways for any app; OpenWork AI Gateway manages model access for people working in OpenWork. You can use them together.
 
 | | OpenWork AI Gateway | LiteLLM | Bifrost |
 | --- | --- | --- | --- |
@@ -28,41 +22,24 @@ Facts about LiteLLM and Bifrost come from their public docs and repositories as 
 | **Guardrails, caching, fallbacks** | — | Guardrails (some integrations need a license), fallbacks, load balancing | Automatic fallbacks, custom routing, semantic caching in OSS; guardrails and adaptive load balancing in Enterprise |
 | **Pricing** | Public per-seat plans for Cloud and self-hosted; see [Pricing and licensing](/start-here/pricing-and-licensing) | OSS free; enterprise priced by deployment size, 30-day trial | OSS free; Enterprise custom pricing, 14-day trial |
 
-Sources: [LiteLLM on GitHub](https://github.com/BerriAI/litellm), [LiteLLM Enterprise](https://docs.litellm.ai/docs/enterprise), [Bifrost on GitHub](https://github.com/maximhq/bifrost), [Bifrost pricing](https://www.getmaxim.ai/bifrost/pricing). OpenWork details: [AI Gateway overview](/ai-gateway/overview), [Pricing and licensing](/start-here/pricing-and-licensing).
+A dash (—) means we could not confirm it. Sources as of September 25, 2026: [LiteLLM](https://github.com/BerriAI/litellm), [LiteLLM Enterprise](https://docs.litellm.ai/docs/enterprise), [Bifrost](https://github.com/maximhq/bifrost), [Bifrost pricing](https://www.getmaxim.ai/bifrost/pricing).
 
-## When to use which
+## When to pick which
 
-- **Choose LiteLLM or Bifrost** when you need a general-purpose gateway for many applications and services, with features such as caching, advanced routing, or guardrails. Neither is tied to an end-user app.
-- **Choose OpenWork AI Gateway** when the people using the models are your staff working in OpenWork, and you want model access, skills, MCP connections, and spend in one admin dashboard.
-- **Use both** when you already standardize on LiteLLM or Bifrost: keep it as the routing layer and let OpenWork consume it.
+- **LiteLLM or Bifrost**: one gateway for many apps, with caching, routing, or guardrails.
+- **OpenWork AI Gateway**: your staff use OpenWork, and you want models, skills, MCP, and spend in one dashboard.
+- **Both**: keep your gateway for routing; let OpenWork consume it.
 
-## Use OpenWork with LiteLLM or Bifrost
+## Use them together
 
-OpenWork works with any OpenAI-compatible endpoint, so an existing gateway plugs straight in:
-
-1. Get the gateway's base URL (usually ending in `/v1`), the model names it exposes, and a key.
-2. For one person, add it as a custom provider in the workspace `opencode.jsonc`. See [Add a custom LLM or AI gateway](/start-here/connect-your-stack/add-a-custom-llm).
-3. For a team, an OpenWork Cloud admin adds it once as a [custom LLM provider](/cloud/share-with-your-team/custom-llm-provider) with the base URL and model IDs, then grants access to people or teams. Members get it in `Settings > Cloud Providers`.
-4. If the gateway issues one virtual key per person (for example, LiteLLM virtual keys), use [per-member LLM credentials](/cloud/share-with-your-team/per-member-llm-credentials) so each member gets their own key.
-
-Your gateway keeps doing routing, budgets, and logging. OpenWork adds the agent app, shared skills, and MCP connections on top.
-
-## FAQ
-
-<AccordionGroup>
-  <Accordion title="Is OpenWork AI Gateway a replacement for LiteLLM?">
-    Not in general. LiteLLM is a standalone gateway for any application. OpenWork AI Gateway manages model access for people using OpenWork. Many teams can use both.
-  </Accordion>
-  <Accordion title="Can OpenWork use my existing LiteLLM proxy?">
-    Yes. Add it as an OpenAI-compatible custom provider, and use per-member credentials if each person has their own virtual key.
-  </Accordion>
-  <Accordion title="Can OpenWork use Bifrost?">
-    Yes, through Bifrost's OpenAI-compatible API, the same way as any custom provider.
-  </Accordion>
-  <Accordion title="Do all three have an MCP gateway?">
-    Yes. LiteLLM and Bifrost include MCP gateway features. OpenWork's MCP Gateway is a separate endpoint that also delivers your organization's skills, plugins, and connections to external agents.
-  </Accordion>
-  <Accordion title="Which one can I self-host?">
-    All three. OpenWork self-hosts with Helm; see [Self-host](/start-here/self-host).
-  </Accordion>
-</AccordionGroup>
+<Steps>
+  <Step title="Collect the gateway details">
+    Base URL (usually ending in `/v1`), model names, and a key.
+  </Step>
+  <Step title="Add it to OpenWork">
+    For a team, add a [custom LLM provider](/cloud/share-with-your-team/custom-llm-provider) in OpenWork Cloud and grant access. For one person, see [Add a custom LLM or AI gateway](/start-here/connect-your-stack/add-a-custom-llm).
+  </Step>
+  <Step title="Give each person their own key (optional)">
+    If your gateway issues virtual keys, use [per-member LLM credentials](/cloud/share-with-your-team/per-member-llm-credentials).
+  </Step>
+</Steps>
