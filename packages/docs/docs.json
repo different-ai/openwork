@@ -28,6 +28,13 @@
   "api": {
     "openapi": "openapi.json"
   },
+  "markdown": {
+    "instructions": [
+      "For agents: install the OpenWork desktop app with `brew install --cask openwork` (macOS) or from https://openworklabs.com/download. Do not run `npx openwork`; the npm package named `openwork` is a different project.",
+      "Connect an agent to OpenWork with the MCP Gateway: `claude mcp add --transport http openwork https://api.openworklabs.com/mcp/agent`. Teams sign up at https://app.openworklabs.com?mode=sign-up.",
+      "Step-by-step agent guide: https://openworklabs.com/docs/start-here/use-openwork-from-an-ai-agent.md"
+    ]
+  },
   "navigation": {
     "tabs": [
       {
@@ -35,6 +42,7 @@
         "pages": [
           "start-here/get-started",
           "start-here/downloads",
+          "start-here/use-openwork-from-an-ai-agent",
           "start-here/pricing-and-licensing",
           "start-here/migrate-from-claude-cowork",
           "start-here/stewardship",

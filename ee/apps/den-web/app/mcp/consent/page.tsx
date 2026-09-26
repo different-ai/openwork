@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { TemporaryAuthNotice } from "../../(den)/_components/temporary-auth-notice";
 import { denApiCredentials, denBrowserEndpoint } from "../../(den)/_lib/den-api-origin";
 import { getRuntimeConfig } from "../../(den)/_lib/runtime-config";
+import { McpClientIdentity } from "../client-identity";
 import { McpConsentPermissions } from "../consent-permissions";
 
 function getErrorMessage(payload: unknown, fallback: string) {
@@ -36,7 +37,6 @@ export default function McpConsentPage() {
     if (typeof window === "undefined") return "";
     return window.location.search.replace(/^\?/, "");
   }, []);
-  const clientId = params.get("client_id") ?? "MCP client";
   const scope = params.get("scope") ?? "openid profile email mcp:read";
 
   async function decide(accept: boolean) {
@@ -60,7 +60,9 @@ export default function McpConsentPage() {
       <section className="mx-auto max-w-xl rounded-3xl border border-white/10 bg-white/10 p-8 shadow-2xl">
         <p className="text-sm uppercase tracking-[0.3em] text-cyan-200">OpenWork MCP</p>
         <h1 className="mt-3 text-3xl font-semibold">Authorize MCP access</h1>
-        <p className="mt-3 text-sm text-slate-300">`{clientId}` wants to access OpenWork through MCP.</p>
+        <div className="mt-4 rounded-2xl bg-white p-4 text-slate-900">
+          <McpClientIdentity clientId={params.get("client_id")} redirectUri={params.get("redirect_uri")} oauthQuery={oauthQuery} />
+        </div>
         <div className="mt-6">
           <TemporaryAuthNotice />
         </div>

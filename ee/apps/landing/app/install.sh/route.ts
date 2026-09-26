@@ -7,6 +7,10 @@
 // It is intentionally named `openwork-bootstrap` so setup guides can refer to a
 // specific bootstrap command. It does not use npm or npx.
 //
+// This does NOT install the OpenWork desktop app. The script header and final
+// output say so and print the app install commands, because agents asked to
+// "install OpenWork" otherwise reach for this URL.
+//
 // Usage (the docs tell users to download + inspect before running):
 //   curl -fsSLo /tmp/openwork-install.sh https://openworklabs.com/install.sh
 //   less /tmp/openwork-install.sh
@@ -15,9 +19,19 @@ export const dynamic = "force-static";
 
 const installScript = `#!/usr/bin/env sh
 # OpenWork bootstrap installer.
-# Installs the \`openwork-bootstrap\` command into a user-writable bin dir.
-# No admin privileges, no npm, no npx.
+# Installs the \`openwork-bootstrap\` command (org setup CLI for agents) into a
+# user-writable bin dir. No admin privileges, no npm, no npx. Requires Node.js 20+.
+#
+# This does NOT install the OpenWork desktop app. To install the app:
+#   macOS:   brew install --cask openwork
+#   Any OS:  https://openworklabs.com/download
+#            (direct: https://openworklabs.com/download/<mac-arm64|mac-x64|win-x64|win-arm64|linux-x64|linux-arm64>)
+#   Or, after this script: openwork-bootstrap install app --manifest https://openworklabs.com/install-manifest.json
+# Agent setup guide: https://openworklabs.com/start.md
 set -eu
+
+echo "Installing the openwork-bootstrap CLI (org setup for agents)."
+echo "This does not install the OpenWork desktop app; see the end of this script's output."
 
 CLI_URL="\${OPENWORK_BOOTSTRAP_CLI_URL:-https://openworklabs.com/openwork-bootstrap.mjs}"
 BIN_DIR="\${OPENWORK_BIN_DIR:-$HOME/.local/bin}"
@@ -68,6 +82,12 @@ echo "  export PATH=$BIN_DIR"':$PATH'
 echo
 echo "Verify with:"
 echo "  openwork-bootstrap doctor --json"
+echo
+echo "The OpenWork desktop app is installed separately:"
+echo "  macOS:   brew install --cask openwork"
+echo "  Any OS:  https://openworklabs.com/download"
+echo "  Or:      openwork-bootstrap install app --manifest https://openworklabs.com/install-manifest.json"
+echo "Agent setup guide: https://openworklabs.com/start.md"
 `;
 
 export function GET() {

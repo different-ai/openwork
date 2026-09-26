@@ -234,7 +234,7 @@ test("organization delete denies non-owners", async () => {
   const response = await deleteOrganization()
 
   expect(response.status).toBe(403)
-  await expect(response.json()).resolves.toEqual({ error: "forbidden" })
+  await expect(response.json()).resolves.toMatchObject({ error: "forbidden", code: "requires_admin", retryable: false })
   expect(cancelledOrganizationIds).toEqual([])
   expect(callOrder).toEqual([])
   expect(linearCreatedIssues).toEqual([])

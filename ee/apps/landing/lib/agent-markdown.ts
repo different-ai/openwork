@@ -50,6 +50,8 @@ No. Desktop mode keeps files local; prompts go directly to your chosen LLM provi
 - Agent skills index — \`/.well-known/agent-skills/index.json\`
 - llms.txt — \`/llms.txt\`
 - API catalog (RFC 9727) — \`/.well-known/api-catalog\`
+- MCP server card — \`/.well-known/mcp/server-card.json\`
+- Install the app — \`brew install --cask openwork\` or [download](https://openworklabs.com/download) (not \`npx openwork\`, which is a different project)
 - Sitemap — \`/sitemap.xml\`
 
 Backed by Y Combinator.
@@ -181,25 +183,41 @@ Open OpenWork, switch to GLM 5.2, and ask the chat to organize your tasks.
 - [Full changelog](https://openworklabs.com/docs/changelog)
 `
 
-const download = `# Get Started with OpenWork
+const download = `# Download OpenWork
 
-> Create a free OpenWork Cloud account first, then use the guided desktop app access flow.
+> Free and open source desktop app for macOS, Windows, and Linux. No account required.
 
-## Start here
+Do not run \`npx openwork\` or \`npm install openwork\`: the npm package named \`openwork\` is a different project.
 
-- [Get Started for free](https://app.openworklabs.com?mode=sign-up)
-- Create or select your workspace.
-- Follow the Cloud app's desktop app access flow.
+## Install
 
-## Supported platforms
+- macOS (Homebrew): \`brew install --cask openwork\`
+- macOS Apple Silicon (.dmg): https://openworklabs.com/download/mac-arm64
+- macOS Intel (.dmg): https://openworklabs.com/download/mac-x64
+- Windows x64 (.exe): https://openworklabs.com/download/win-x64
+- Windows ARM64 (.exe): https://openworklabs.com/download/win-arm64
+- Linux x64 (.AppImage): https://openworklabs.com/download/linux-x64
+- Linux ARM64 (.AppImage): https://openworklabs.com/download/linux-arm64
+- Every release and file: https://github.com/different-ai/openwork/releases
 
-- macOS
-- Windows
-- Linux
+Each \`/download/<platform>\` URL redirects to the installer in the latest stable release.
 
-## After signing up
+## First run
 
-Once the desktop app is running, use the [workspace-guide skill](https://openworklabs.com/.well-known/agent-skills/workspace-guide/SKILL.md) for first-run orientation.
+1. Open OpenWork and pick a folder it may work in.
+2. Choose a model: sign in with ChatGPT, add an API key, or use a local model.
+3. Run a task, for example "Summarize this folder."
+
+## Joining a team?
+
+- New team: sign up at https://app.openworklabs.com?mode=sign-up (first 5 seats free), then follow the [team quickstart](https://openworklabs.com/docs/cloud/team-quickstart).
+- Existing team: click \`Joining a team? Sign in\` in the desktop app.
+
+## For agents
+
+- [install-openwork skill](https://openworklabs.com/.well-known/agent-skills/install-openwork/SKILL.md)
+- [workspace-guide skill](https://openworklabs.com/.well-known/agent-skills/workspace-guide/SKILL.md) for first-run orientation
+- [llms.txt](https://openworklabs.com/llms.txt)
 `
 
 const connect = `# OpenWork Connect
@@ -211,6 +229,16 @@ const connect = `# OpenWork Connect
 - First 5 seats are free
 - [Get started free](https://app.openworklabs.com?mode=sign-up)
 - [Read the docs](https://openworklabs.com/docs)
+
+## Connect your agent
+
+MCP server URL: \`https://api.openworklabs.com/mcp/agent\` (Streamable HTTP, OAuth sign-in).
+
+- Claude Code: \`claude mcp add --transport http openwork https://api.openworklabs.com/mcp/agent\`
+- Codex: \`codex mcp add openwork --url https://api.openworklabs.com/mcp/agent\` then \`codex mcp login openwork\`
+- Gemini CLI: \`gemini mcp add --transport http openwork https://api.openworklabs.com/mcp/agent\`
+- Other clients: [Connect OpenWork MCP](https://openworklabs.com/docs/start-here/connect-openwork-mcp)
+- [MCP server card](https://openworklabs.com/.well-known/mcp/server-card.json)
 `
 
 const cloud = `# OpenWork Cloud
