@@ -6,7 +6,7 @@ const test = spec.world(taskActivityWeb, {
   resources: { surfaces: ["appWeb"], services: ["mock"] },
 });
 
-test("ACT-01 delegated-task activity stays with its original message after a follow-up", async ({ world, user, probe, evidence }) => {
+test("ACT-01 delegated-task activity stays with its original message after a follow-up", async ({ world, user, probe, evidence, step }) => {
   await user.type("composer", world.prompt);
   await user.click("Run task");
   const native = await probe.eventually(() => world.native(), {
@@ -29,7 +29,13 @@ test("ACT-01 delegated-task activity stays with its original message after a fol
   });
   expect(advanced).not.toBe(working);
   evidence.recordJsonArtifact("Parent working footer during delegation", { working, advanced });
+  await step("before: the parent keeps the child chat closed while the delegated task is still running", async () => {
+    await user.see({ text: /Build isolated Azure repro/ });
+    expect((await probe.dom(`[data-session-surface-id="${native.childId}"]`)).elements).toHaveLength(0);
+    await user.screenshot();
+  });
   await user.type("composer", "What is the update?", { verify: true });
+
   // Busy Enter queues; the production Cmd/Ctrl+Enter shortcut sends steering now.
   await user.press(world.app.handle.hostKind !== "daytona" && process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
   await user.see({ text: "Build isolated Azure repro" });
@@ -67,6 +73,9 @@ test("ACT-01 delegated-task activity stays with its original message after a fol
       titleStyle: { color: style.color, backgroundImage: style.backgroundImage, animationName: style.animationName },
       mutedColors: [getComputedStyle(suffix).color, getComputedStyle(status).color],
       reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+      // The hover foreground is served under `@media (hover: hover)`; a
+      // touch-only or headless pointer keeps the running treatment instead.
+      hoverCapable: matchMedia("(hover: hover)").matches,
     };
   });
   await user.hover("composer");
@@ -92,14 +101,34 @@ test("ACT-01 delegated-task activity stays with its original message after a fol
   expect(rendered.titleStyle.animationName).toBe(rendered.reducedMotion ? "none" : "ow-text-shimmer");
   if (!rendered.reducedMotion) expect(rendered.titleStyle.backgroundImage).toContain("linear-gradient");
 
+  await step("after: fresh child output refreshes the parent card without opening the child", async () => {
+    const before = await world.replyState();
+    const released = await world.releaseChild();
+    const after = await probe.eventually(() => world.replyState(), {
+      within: 5_000, intervalMs: 100, label: "fresh child output is delivered while its chat stays closed",
+      until: (value) => value.deliveredChunks >= before.deliveredChunks + 1,
+    });
+    const updated = await probe.eventually(readActivity, {
+      within: 5_000, intervalMs: 100, label: "parent card receives fresh child activity",
+      until: (value) => value.text.includes("Last activity: Response updated")
+        && value.childId === native.childId,
+    });
+    expect(after.deliveredChunks).toBe(before.deliveredChunks + 1);
+    expect(updated.text).toContain("Last activity: Response updated");
+    expect((await probe.dom(`[data-session-surface-id="${native.childId}"]`)).elements).toHaveLength(0);
+    evidence.recordJsonArtifact("Parent card after fresh child output", { before, released, after, updated });
+    await user.screenshot();
+  });
+
   await user.hover({ role: "button", label: /Build isolated Azure repro/ });
   const hovered = await probe.eventually(readActivity, {
     within: 5_000, intervalMs: 50, label: "hovered task title uses solid foreground",
     until: (value) => value.hovered && value.colorSettled
-      && value.titleStyle.backgroundImage === "none" && value.titleStyle.animationName === "none"
-      && value.titleStyle.color === value.buttonColor,
+      && (!value.hoverCapable || (value.titleStyle.backgroundImage === "none" && value.titleStyle.animationName === "none"
+        && value.titleStyle.color === value.buttonColor)),
   });
-  expect(hovered.titleStyle.color).not.toBe(rendered.buttonColor);
+  if (hovered.hoverCapable) expect(hovered.titleStyle.color).not.toBe(rendered.buttonColor);
+  else expect(hovered.titleStyle).toEqual(rendered.titleStyle);
   expect(hovered.mutedColors).toEqual(rendered.mutedColors);
   expect(hovered.text).toMatch(/Working/);
 
@@ -114,7 +143,9 @@ test("ACT-01 delegated-task activity stays with its original message after a fol
   expect(restored.mutedColors).toEqual(rendered.mutedColors);
   evidence.recordJsonArtifact("Delegated task hover", { rendered, hovered, restored });
   evidence.recordAssertionEvidence("Running task titles use the normal hover foreground",
-    "Hover replaces the title shimmer with solid inherited text; pointer leave restores its running treatment without recoloring the agent label or status.", true);
+    hovered.hoverCapable
+      ? "Hover replaces the title shimmer with solid inherited text; pointer leave restores its running treatment without recoloring the agent label or status."
+      : "This browser reports no hover-capable pointer, so the running treatment stays in place under the pointer and the agent label and status keep their colors.", true);
   await user.click({ role: "button", label: /Build isolated Azure repro/ });
   await user.see({ text: /ACTIVITY_CHILD_HOLD/ });
   await user.see({ text: /Working/ });
@@ -122,7 +153,7 @@ test("ACT-01 delegated-task activity stays with its original message after a fol
   await user.see({ text: /ACTIVITY_CHILD_HOLD/ }, { timeoutMs: 30_000 });
   await user.see({ text: /Working/ });
   expect((await probe.dom(`[data-session-surface-id="${native.childId}"]`)).elements).toHaveLength(1);
-  expect((await world.replyState()).deliveredChunks).toBe(1);
+  expect((await world.replyState()).deliveredChunks).toBe(2);
   await user.notSee({ text: "Activity child finished." });
   evidence.recordAssertionEvidence("Delegated activity opens the exact live child across reload",
     "Original row shimmers before follow-up; opening it and reloading preserves the child session, prompt and Working state while the provider remains held.", true);

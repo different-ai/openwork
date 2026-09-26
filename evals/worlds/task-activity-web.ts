@@ -21,8 +21,8 @@ export async function taskActivityWeb(seed: Seed) {
       } }],
     }, {
       promptMarker: marker, latestUserTurn: true, steps: [],
-      finalReply: "Activity child started. Activity child finished.",
-      finalReplyChunks: ["Activity child started. ", "Activity child finished."],
+      finalReply: "Activity child started. Activity child is still working. Activity child finished.",
+      finalReplyChunks: ["Activity child started. ", "Activity child is still working. ", "Activity child finished."],
       finalReplyInitiallyReleasedChunks: 1,
     }] }),
   } });
@@ -70,5 +70,13 @@ export async function taskActivityWeb(seed: Seed) {
     }
     return null;
   }, [workspace.workspaceId, session.sessionId, engine]), { awaitPromise: true });
-  return { app, workspace, session, prompt, native, replyState: () => mock.agentReplyState(marker) };
+  return {
+    app,
+    workspace,
+    session,
+    prompt,
+    native,
+    replyState: () => mock.agentReplyState(marker),
+    releaseChild: (count = 1) => mock.releaseAgentReply(marker, count),
+  };
 }

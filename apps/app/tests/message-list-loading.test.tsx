@@ -21,6 +21,7 @@ import type { TaskToolPart } from "../src/lib/build-in-tools";
 import { WorkspaceProvider } from "../src/react-app/shell/workspace-provider";
 import { createDefaultPlatform, PlatformProvider } from "../src/react-app/kernel/platform";
 import * as sessionSync from "../src/react-app/domains/session/sync/session-sync";
+import { getReactQueryClient } from "../src/react-app/infra/query-client";
 
 const inspectChild = mock((_sessionId: string) => {});
 
@@ -197,6 +198,73 @@ const delegated: UIMessage = { id: "assistant", role: "assistant", parts: [task]
 const followup: UIMessage = { id: "followup", role: "user", parts: [{ type: "text", text: "What is the update?" }] };
 
 describe("task-linked meaningful progress", () => {
+  test("a parent card receives real child delta progress without a baseline or navigation", async () => {
+    const ownedDom = typeof window === "undefined";
+    if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
+    const actEnvironment = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const clock = spyOn(Date, "now").mockReturnValue(1_000);
+    const input = { workspaceId: "ws", baseUrl: "http://localhost/test-engine", openworkToken: "token", visibleSessionId: "session" };
+    const other = { ...input, workspaceId: "other-workspace" };
+    const cleanup = sessionSync.__createWorkspaceSessionSyncForTest(input);
+    const cleanupOther = sessionSync.__createWorkspaceSessionSyncForTest(other);
+    const info = { id: "child-output", sessionID: "child", role: "assistant", time: { created: 1_000 } };
+    const part = { id: "child-text", messageID: "child-output", sessionID: "child", type: "text", text: "PRIVATE" };
+    const progress = { type: "message.part.delta", properties: { sessionID: "child", messageID: "child-output", partID: "child-text", field: "text", delta: " OUTPUT" } };
+    sessionSync.__setSessionSyncDeltaFlushSchedulerForTest((_lane, flush) => {
+      flush();
+      return () => {};
+    });
+    const childTranscript = () => getReactQueryClient().getQueryData<UIMessage[]>(sessionSync.transcriptKey("ws", "child"));
+    try {
+      useSessionActivityStore.getState().setRunStatus("ws", "session", { type: "busy" });
+      for (const target of [input, other]) {
+        sessionSync.__applySessionSyncEventForTest(target, { type: "session.status", properties: { sessionID: "child", status: { type: "busy" } } });
+      }
+      sessionSync.__applySessionSyncEventForTest(input, { type: "message.updated", properties: { info } });
+      sessionSync.__applySessionSyncEventForTest(input, { type: "message.part.updated", properties: { part } });
+      expect(childTranscript()).toBeUndefined();
+      useSessionActivityStore.getState().observeTranscript("ws", "session", [userMessage, delegated]);
+      clock.mockReturnValue(62_000);
+      sessionSync.trackWorkspaceSessionSync(input, "session");
+      await act(async () => root.render(list([userMessage, delegated], "streaming")));
+      expect(container.textContent).toContain("Still working — waiting for updates");
+      await act(async () => sessionSync.__applySessionSyncEventForTest(other, progress));
+      expect(container.textContent).toContain("Still working — waiting for updates");
+      await act(async () => sessionSync.__applySessionSyncEventForTest(input, { ...progress, properties: { ...progress.properties, delta: "" } }));
+      expect(container.textContent).toContain("Still working — waiting for updates");
+      await act(async () => sessionSync.__applySessionSyncEventForTest(input, progress));
+      const card = container.querySelector('[data-subagent-run="delegation"]');
+      expect(card?.textContent).toContain("Working");
+      expect(card?.textContent).not.toContain("Still working — waiting for updates");
+      expect(card?.textContent).not.toContain("Last activity:");
+      expect(card?.getAttribute("data-subagent-activity")).toBe("shimmer");
+      expect(useSessionActivityStore.getState().recordsByWorkspaceId.ws.child.latestActivity).toBeNull();
+      expect(childTranscript()?.flatMap((message) => message.parts) ?? []).toEqual([]);
+      expect(inspectChild).not.toHaveBeenCalled();
+      await act(async () => {
+        sessionSync.__applySessionSyncEventForTest(input, { type: "message.updated", properties: { info } });
+        sessionSync.__applySessionSyncEventForTest(input, { type: "message.part.updated", properties: { part: { ...part, text: "PRIVATE OUTPUT" } } });
+      });
+      expect(childTranscript()).toMatchObject([{ role: "assistant", parts: [{ type: "text", text: "PRIVATE OUTPUT" }] }]);
+      expect(card?.textContent).toContain("Last activity: Response updated");
+      expect(container.textContent).not.toContain("PRIVATE OUTPUT");
+      expect(inspectChild).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => root.unmount());
+      cleanup();
+      cleanupOther();
+      sessionSync.__setSessionSyncDeltaFlushSchedulerForTest(null);
+      clock.mockRestore();
+      getReactQueryClient().clear();
+      container.remove();
+      Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+      if (ownedDom) await GlobalRegistrator.unregister();
+    }
+  });
   test("keeps the working footer for current delegations without duplicating ordinary tool activity", () => {
     expect(renderList([userMessage, delegated], "streaming")).toContain('data-loading-message="working"');
     const ordinaryTool: UIMessage = {

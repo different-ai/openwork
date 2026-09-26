@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:test";
 import type { UIMessage } from "ai";
 
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
@@ -8,6 +8,7 @@ import {
   __setSessionSyncDeltaFlushSchedulerForTest,
   trackWorkspaceSessionSync,
   snapshotKey,
+  statusKey,
   transcriptKey,
 } from "../src/react-app/domains/session/sync/session-sync";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
@@ -56,7 +57,7 @@ beforeEach(() => {
     flush();
     return () => {};
   });
-  useSessionActivityStore.getState().removeSession("workspace-a", "session-a");
+  useSessionActivityStore.setState({ recordsByWorkspaceId: {}, statusesByWorkspaceId: {}, waitingByWorkspaceId: {} });
 });
 
 afterEach(() => {
@@ -68,6 +69,150 @@ afterEach(() => {
 afterAll(() => {
   if (previousQueryClient === undefined) Reflect.deleteProperty(globalThis, "__owReactQueryClient");
   else Reflect.set(globalThis, "__owReactQueryClient", previousQueryClient);
+});
+
+const parentMessages: UIMessage[] = [{
+  id: "parent-message", role: "assistant", parts: [{
+    type: "dynamic-tool", toolName: "task", toolCallId: "task-call", state: "input-available",
+    input: { description: "Review notes" }, callProviderMetadata: { openwork: { childSessionId: "session-a" } },
+  }],
+}];
+
+function declareAssistant() {
+  __applySessionSyncEventForTest(syncInput, {
+    type: "message.updated",
+    properties: { info: { id: "msg-a", role: "assistant", sessionID: "session-a", time: { created: 1 } } },
+  });
+}
+
+function declareTask() {
+  __applySessionSyncEventForTest(syncInput, {
+    type: "message.updated",
+    properties: { info: { id: "parent-message", role: "assistant", sessionID: "parent", time: { created: 1 } } },
+  });
+  __applySessionSyncEventForTest(syncInput, {
+    type: "message.part.updated", properties: { part: {
+      id: "task-part", messageID: "parent-message", sessionID: "parent", type: "tool", tool: "task", callID: "task-call",
+      state: { status: "running", input: { description: "Review notes" }, title: "Review notes", metadata: { sessionId: "session-a" }, time: { start: 1 } },
+    } },
+  });
+}
+
+describe("related child live progress", () => {
+  test("admits a created child synchronously for its full live stream", () => {
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    trackWorkspaceSessionSync(syncInput, "parent");
+    try {
+      __applySessionSyncEventForTest(syncInput, { type: "session.created", properties: { info: { id: "session-a", parentID: "parent" } } });
+      declareAssistant();
+      __applySessionSyncEventForTest(syncInput, { type: "message.part.updated", properties: { part: textPart("Hello") } });
+      delta(" world");
+      delta("!");
+      expect(transcript()).toMatchObject([{ id: "msg-a", role: "assistant", parts: [{ type: "text", text: "Hello world!" }] }]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test.each(["live", "restored"])("admits a %s task reference without child metadata", (source) => {
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    try {
+      if (source === "restored") useSessionActivityStore.getState().observeTranscript("workspace-a", "parent", parentMessages, true);
+      trackWorkspaceSessionSync(syncInput, "parent");
+      if (source === "live") declareTask();
+      declareAssistant();
+      __applySessionSyncEventForTest(syncInput, { type: "message.part.updated", properties: { part: textPart("Hello") } });
+      delta(" world");
+      expect(transcript()?.[0]?.parts).toMatchObject([{ type: "text", text: "Hello world" }]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("missing declarations do not block real delta progress or synthesize text", () => {
+    const clock = spyOn(Date, "now").mockReturnValue(1_000);
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    try {
+      __applySessionSyncEventForTest(syncInput, { type: "session.status", properties: { sessionID: "session-a", status: { type: "busy" } } });
+      declareAssistant();
+      __applySessionSyncEventForTest(syncInput, { type: "message.part.updated", properties: { part: textPart("PRIVATE") } });
+      expect(transcript()).toBeUndefined();
+      trackWorkspaceSessionSync(syncInput, "parent");
+      declareTask();
+      const before = useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]["session-a"];
+      clock.mockReturnValue(62_000);
+      delta("");
+      expect(useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]["session-a"]).toBe(before);
+      delta(" OUTPUT");
+      const after = useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]["session-a"];
+      expect(after.lastProgressAt).toBe(62_000);
+      expect(after.runActive).toBe(true);
+      expect(after.runStatusAt).toBe(before.runStatusAt);
+      expect(after.latestActivity).toBe(before.latestActivity);
+      expect(transcript()?.flatMap((message) => message.parts) ?? []).toEqual([]);
+      expect(JSON.stringify(after)).not.toContain("PRIVATE");
+      expect(JSON.stringify(after)).not.toContain("OUTPUT");
+      declareAssistant();
+      __applySessionSyncEventForTest(syncInput, { type: "message.part.updated", properties: { part: textPart("PRIVATE OUTPUT") } });
+      expect(transcript()).toMatchObject([{ role: "assistant", parts: [{ type: "text", text: "PRIVATE OUTPUT" }] }]);
+    } finally {
+      cleanup();
+      clock.mockRestore();
+    }
+  });
+
+  test.each(["session.idle", "session.execution.succeeded", "session.execution.failed"])("late deltas leave %s activity unchanged", (terminalEvent) => {
+    const clock = spyOn(Date, "now").mockReturnValue(1_000);
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    try {
+      trackWorkspaceSessionSync(syncInput, "parent");
+      declareTask();
+      __applySessionSyncEventForTest(syncInput, { type: "session.status", properties: { sessionID: "session-a", status: { type: "busy" } } });
+      declareAssistant();
+      __applySessionSyncEventForTest(syncInput, { type: "message.part.updated", properties: { part: textPart("Hello") } });
+      __applySessionSyncEventForTest(syncInput, { type: terminalEvent, properties: { sessionID: "session-a" } });
+      const before = useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]["session-a"];
+      const statusBefore = getReactQueryClient().getQueryData(statusKey("workspace-a", "session-a"));
+      clock.mockReturnValue(62_000);
+      delta(" late");
+      expect(useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]["session-a"]).toBe(before);
+      expect(before.runActive).toBe(false);
+      expect(getReactQueryClient().getQueryData(statusKey("workspace-a", "session-a"))).toEqual(statusBefore);
+    } finally {
+      cleanup();
+      clock.mockRestore();
+    }
+  });
+
+  test("discovery and progress stay within the parent's workspace", () => {
+    const other = { ...syncInput, workspaceId: "workspace-b" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const cleanupOther = __createWorkspaceSessionSyncForTest(other);
+    const clock = spyOn(Date, "now").mockReturnValue(1_000);
+    try {
+      useSessionActivityStore.getState().observeTranscript("workspace-b", "parent", parentMessages);
+      trackWorkspaceSessionSync(syncInput, "parent");
+      __applySessionSyncEventForTest(syncInput, { type: "session.created", properties: { info: { id: "session-a", parentID: "unrelated" } } });
+      declareAssistant();
+      __applySessionSyncEventForTest(syncInput, { type: "message.part.updated", properties: { part: textPart("Hello") } });
+      expect(transcript()).toBeUndefined();
+      declareTask();
+      __applySessionSyncEventForTest(syncInput, { type: "session.status", properties: { sessionID: "session-a", status: { type: "busy" } } });
+      __applySessionSyncEventForTest(other, { type: "session.status", properties: { sessionID: "session-a", status: { type: "busy" } } });
+      const before = useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]["session-a"];
+      clock.mockReturnValue(62_000);
+      __applySessionSyncEventForTest(other, { type: "message.part.delta", properties: { sessionID: "session-a", messageID: "msg-a", partID: "part-text", field: "text", delta: "other" } });
+      expect(useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]["session-a"]).toBe(before);
+      expect(useSessionActivityStore.getState().recordsByWorkspaceId["workspace-b"]["session-a"].lastProgressAt).toBe(62_000);
+      expect(transcript()).toBeUndefined();
+      delta("here");
+      expect(useSessionActivityStore.getState().recordsByWorkspaceId["workspace-a"]["session-a"].lastProgressAt).toBe(62_000);
+    } finally {
+      cleanup();
+      cleanupOther();
+      clock.mockRestore();
+    }
+  });
 });
 
 describe("background session transcript", () => {

@@ -70,6 +70,7 @@ export const getRootSessions = (sessions: WorkspaceSessionGroup["sessions"]) =>
 export const getSessionDescendantIds = (
   sessions: WorkspaceSessionGroup["sessions"],
   sessionId: string,
+  taskChildren: Readonly<Record<string, readonly string[]>> = {},
 ): string[] => {
   const root = sessionId.trim();
   if (!root) return [];
@@ -88,6 +89,15 @@ export const getSessionDescendantIds = (
       visited.add(id);
       descendants.push(id);
       nextParents.add(id);
+    }
+    for (const parent of parents) {
+      for (const child of taskChildren[parent] ?? []) {
+        const id = child.trim();
+        if (!id || visited.has(id)) continue;
+        visited.add(id);
+        descendants.push(id);
+        nextParents.add(id);
+      }
     }
     parents = nextParents;
   }
