@@ -411,6 +411,12 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       flow: { kind: "runtime" },
       operation: async (session) => {
         try {
+          if (session.oauthProvider) {
+            await session.oauthProvider.refreshAheadIfExpiring({
+              serverUrl: session.serverUrl,
+              fetchFn: session.observer.fetch,
+            })
+          }
           await connectWithProtocolNegotiation({
             session,
             connectionId: input.connection.id,
