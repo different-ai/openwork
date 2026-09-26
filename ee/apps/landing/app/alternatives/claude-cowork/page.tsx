@@ -10,7 +10,7 @@ import { baseOpenGraph, withSocialMetadata } from "../../../lib/seo";
 export const metadata = withSocialMetadata({
   title: "Free, open-source Claude Cowork alternative — OpenWork",
   description:
-    "OpenWork is a free, open-source alternative to Claude Cowork for macOS, Windows, and Linux. Use any model — including local models and your own API keys — and share skills and MCP servers with your team.",
+    "OpenWork is the free, open-source Claude Cowork alternative for macOS, Windows, and Linux. Any model, local models, your own API keys.",
   alternates: {
     canonical: "/alternatives/claude-cowork"
   },

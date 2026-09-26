@@ -39,7 +39,7 @@ export const metadata = {
   metadataBase: new URL("https://openworklabs.com"),
   title: "OpenWork — Free, open-source Claude Cowork alternative",
   description:
-    "Free, open-source desktop app for macOS, Windows, and Linux. Run any model — local models or your own API keys — on your own files, and share skills and MCP servers with your team.",
+    "Free, open-source desktop AI agent app for macOS, Windows, and Linux. Any model, local models, your own keys. Share skills and MCPs with your team.",
   alternates: {
     canonical: "/"
   },

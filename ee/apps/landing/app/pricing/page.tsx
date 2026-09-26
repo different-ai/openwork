@@ -61,7 +61,7 @@ const pricingSchema = {
 export const metadata = withSocialMetadata({
   title: "OpenWork Pricing — Free up to 5 users, $10 Team, $40 Enterprise",
   description:
-    "OpenWork is free for up to 5 users. Team is $10 per seat per month. Enterprise is $40 per user per month, billed annually, with SSO, desktop policies, and spend observability — same price cloud or self-hosted, volume pricing above 250 users. Add-ons: OpenWork Cloud Computer and OpenWork models.",
+    "Free for up to 5 users. Team $10 per seat/month. Enterprise $40 per user/month with SSO and desktop policies. Same price cloud or self-hosted.",
   alternates: {
     canonical: "/pricing"
   },

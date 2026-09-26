@@ -8,7 +8,7 @@ import { baseOpenGraph, withSocialMetadata } from "../../../lib/seo";
 export const metadata = withSocialMetadata({
   title: "OpenWork vs Claude Cowork on 3P (Bedrock, Vertex, Foundry)",
   description:
-    "Running Claude Desktop or Cowork on Amazon Bedrock, Google Vertex, or Microsoft Foundry? Compare features and costs with OpenWork: keep your gateway and cloud spend, use any model, and share skills and MCP servers from one control plane.",
+    "Running Claude Cowork on Bedrock, Vertex, or Foundry? Compare OpenWork: keep your gateway and cloud spend, use any model, share skills and MCPs.",
   alternates: {
     canonical: "/alternatives/claude-cowork-3p"
   },
