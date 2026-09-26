@@ -37,7 +37,8 @@ body:has(.docs-intro) #header {
   text-transform: uppercase;
 }
 
-#content-area .docs-intro h1 {
+#content-area .docs-intro h1,
+#content-area .docs-intro .docs-hero-title {
   margin: 0;
   max-width: 680px;
   font-size: clamp(2.25rem, 4vw, 3rem);
