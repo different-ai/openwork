@@ -1,439 +1,368 @@
 "use client";
 
-import { useId, useState, type ReactNode } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
+import { useId, useState } from "react";
 
 import {
   anthropicPricingCheckedAt,
   calculatePlanCosts,
+  planPrices,
   pricingSources,
   usageProfileIds,
   usageProfiles,
-  type Billing,
   type PlanCost,
   type PlanId,
-  type Usage,
   type UsageProfileId
 } from "../lib/cowork-cost";
 import { modelPrices, modelPricesFetchedAt, type ModelPrice } from "../lib/model-prices";
+import { BrandLogo } from "./lp-brand-logos";
 import { LpSectionHeader } from "./lp-primitives";
 
 type Props = {
   defaultUsers?: number;
   defaultOpenworkModelId?: string;
-  /** Plans to emphasise, e.g. the 3P comparison. */
-  highlight?: PlanId[];
+  /** The two plans shown as big numbers, Claude first. */
+  highlight?: [PlanId, PlanId];
   heading?: string;
 };
 
-const billingOptions: Billing[] = ["annual", "monthly"];
 const claudeModels = modelPrices.filter((model) => model.claude);
 const fallbackModel = modelPrices[0];
+const sliderMax = 1000;
+
+const shownPlans: { id: PlanId; label: string; note?: string }[] = [
+  { id: "claude-team-standard", label: "Claude Team", note: "Excludes usage over plan limits" },
+  { id: "claude-enterprise", label: "Claude Enterprise" },
+  { id: "claude-3p", label: "Claude on 3P" },
+  { id: "openwork-team", label: "OpenWork Team" },
+  { id: "openwork-enterprise", label: "OpenWork Enterprise" }
+];
+
+const profileLabels: Record<UsageProfileId, string> = { light: "Light", typical: "Typical", heavy: "Heavy" };
 
 function findModel(id: string): ModelPrice {
   return modelPrices.find((model) => model.id === id) ?? fallbackModel;
 }
 
-function parseNumber(value: string, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+function planLabel(id: PlanId): string {
+  return shownPlans.find((plan) => plan.id === id)?.label ?? id;
 }
 
-const wholeDollars = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-const cents = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const dollars = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+const compactDollars = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  notation: "compact",
+  maximumFractionDigits: 1
+});
 
-const fieldClass =
-  "mt-1.5 w-full rounded-[10px] border border-[var(--lp-border)] bg-white px-3 py-2 text-[14px] text-[var(--lp-ink)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--lp-ink)]";
-const labelClass = "block text-[13px] font-medium text-[var(--lp-ink)]";
+const brandByProvider: Record<string, "claude" | "openai" | "gemini" | "mistral"> = {
+  anthropic: "claude",
+  openai: "openai",
+  google: "gemini",
+  mistral: "mistral"
+};
 
-function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: ReactNode }) {
+function ProviderMark({ model }: { model: ModelPrice }) {
+  const brand = brandByProvider[model.provider];
+  if (brand) return <BrandLogo name={brand} className="h-4 w-4 text-[var(--lp-ink)]" />;
   return (
-    <div>
-      <label htmlFor={htmlFor} className={labelClass}>
-        {label}
-      </label>
-      {children}
-    </div>
+    <span
+      aria-hidden="true"
+      className="flex h-4 w-4 items-center justify-center rounded-full bg-[var(--lp-ink)] text-[9px] font-semibold text-[var(--lp-page)]"
+    >
+      {model.providerName.charAt(0)}
+    </span>
   );
 }
 
-function ModelOptions({ models, markClaude = false }: { models: ModelPrice[]; markClaude?: boolean }) {
+function ModelSelect({
+  id,
+  label,
+  models,
+  value,
+  onChange
+}: {
+  id: string;
+  label: string;
+  models: ModelPrice[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
   const providers = Array.from(new Set(models.map((model) => model.providerName)));
   return (
-    <>
-      {providers.map((provider) => (
-        <optgroup key={provider} label={provider}>
-          {models
-            .filter((model) => model.providerName === provider)
-            .map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.label}
-                {markClaude && model.claude ? " (works with Cowork)" : ""}
-              </option>
-            ))}
-        </optgroup>
-      ))}
-    </>
+    <div>
+      <label htmlFor={id} className="block text-[13px] text-[var(--lp-muted)]">
+        {label}
+      </label>
+      <div className="relative mt-2">
+        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
+          <ProviderMark model={findModel(value)} />
+        </span>
+        <select
+          id={id}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="h-11 w-full appearance-none rounded-[12px] bg-[var(--lp-page)] pl-9 pr-9 text-[14px] font-medium text-[var(--lp-ink)] shadow-[0_0_0_1px_var(--lp-border)] transition-shadow duration-150 hover:shadow-[0_0_0_1px_var(--lp-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--lp-ink)]"
+        >
+          {providers.map((provider) => (
+            <optgroup key={provider} label={provider}>
+              {models
+                .filter((model) => model.providerName === provider)
+                .map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label}
+                  </option>
+                ))}
+            </optgroup>
+          ))}
+        </select>
+        <ChevronDown
+          aria-hidden="true"
+          strokeWidth={1.5}
+          className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--lp-muted)]"
+        />
+      </div>
+    </div>
   );
 }
 
 export function CoworkCostCalculator({
   defaultUsers = 50,
   defaultOpenworkModelId = "deepseek-v4-pro",
-  highlight = [],
+  highlight = ["claude-enterprise", "openwork-team"],
   heading = "What will it cost?"
 }: Props) {
   const id = useId();
   const [usersText, setUsersText] = useState(String(defaultUsers));
-  const [profile, setProfile] = useState<UsageProfileId | "custom">("typical");
-  const [inputText, setInputText] = useState(String(usageProfiles.typical.usage.inputMillions));
-  const [outputText, setOutputText] = useState(String(usageProfiles.typical.usage.outputMillions));
-  const [cacheText, setCacheText] = useState(String(usageProfiles.typical.usage.cacheReadShare * 100));
+  const [profile, setProfile] = useState<UsageProfileId>("typical");
   const [claudeModelId, setClaudeModelId] = useState("claude-sonnet-5");
   const [openworkModelId, setOpenworkModelId] = useState(defaultOpenworkModelId);
-  const [routeModelId, setRouteModelId] = useState("deepseek-v4-flash");
-  const [routeText, setRouteText] = useState("0");
-  const [billing, setBilling] = useState<Billing>("annual");
 
-  const users = Math.max(1, Math.round(parseNumber(usersText, defaultUsers)));
-  const usage: Usage = {
-    inputMillions: parseNumber(inputText, 0),
-    outputMillions: parseNumber(outputText, 0),
-    cacheReadShare: Math.min(100, parseNumber(cacheText, 0)) / 100
-  };
-  const routeShare = Math.min(100, parseNumber(routeText, 0)) / 100;
+  const parsedUsers = Number(usersText);
+  const users = Number.isFinite(parsedUsers) && parsedUsers >= 1 ? Math.round(parsedUsers) : defaultUsers;
+  const openworkModel = findModel(openworkModelId);
 
   const plans = calculatePlanCosts({
     users,
-    usage,
+    usage: usageProfiles[profile].usage,
     claudeModel: findModel(claudeModelId),
-    openworkModel: findModel(openworkModelId),
-    routeModel: findModel(routeModelId),
-    routeShare,
-    claudeTeamBilling: billing
+    openworkModel,
+    routeModel: openworkModel,
+    routeShare: 0,
+    claudeTeamBilling: "annual"
   });
 
-  const lowest = plans
-    .filter((plan) => plan.available)
-    .reduce<PlanCost | null>((best, plan) => (!best || plan.totalMonthly < best.totalMonthly ? plan : best), null);
-
-  function selectProfile(next: UsageProfileId) {
-    setProfile(next);
-    const preset = usageProfiles[next].usage;
-    setInputText(String(preset.inputMillions));
-    setOutputText(String(preset.outputMillions));
-    setCacheText(String(preset.cacheReadShare * 100));
-  }
+  const byId = new Map(plans.map((plan) => [plan.id, plan]));
+  const rows = shownPlans.flatMap((shown) => {
+    const plan = byId.get(shown.id);
+    return plan ? [{ ...shown, plan }] : [];
+  });
+  const max = Math.max(1, ...rows.filter((row) => row.plan.available).map((row) => row.plan.totalMonthly));
+  const [claudeFocus, openworkFocus] = highlight.map((planId) => byId.get(planId));
+  const delta = claudeFocus && openworkFocus ? (claudeFocus.totalMonthly - openworkFocus.totalMonthly) * 12 : 0;
 
   return (
-    <section aria-label={heading}>
-      <LpSectionHeader label="Cost calculator" heading={heading} size="small" />
+    <section aria-labelledby={`${id}-heading`}>
+      <div id={`${id}-heading`}>
+        <LpSectionHeader label="Cost calculator" heading={heading} size="small" />
+      </div>
 
-      <div className="mt-9 grid gap-8 lg:grid-cols-[320px_minmax(0,1fr)]">
+      <div className="mt-9 rounded-[24px] bg-[var(--lp-tonal)] p-5 md:p-8">
         <form
-          className="flex flex-col gap-5 self-start rounded-[20px] bg-[var(--lp-tonal)] p-6"
           onSubmit={(event) => event.preventDefault()}
           aria-label="Cost calculator inputs"
+          className="grid gap-6 md:grid-cols-2 lg:grid-cols-[1.2fr_1fr_1fr_1fr]"
         >
-          <Field label="People using it" htmlFor={`${id}-users`}>
+          <div>
+            <div className="flex items-center justify-between">
+              <label htmlFor={`${id}-users`} className="text-[13px] text-[var(--lp-muted)]">
+                People
+              </label>
+              <input
+                id={`${id}-users`}
+                type="number"
+                inputMode="numeric"
+                min={1}
+                step={1}
+                value={usersText}
+                onChange={(event) => setUsersText(event.target.value)}
+                className="h-8 w-[84px] rounded-[8px] bg-[var(--lp-page)] px-2 text-right text-[14px] font-medium tabular-nums text-[var(--lp-ink)] shadow-[0_0_0_1px_var(--lp-border)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--lp-ink)]"
+              />
+            </div>
             <input
-              id={`${id}-users`}
-              type="number"
-              inputMode="numeric"
+              type="range"
               min={1}
+              max={sliderMax}
               step={1}
-              value={usersText}
+              value={Math.min(users, sliderMax)}
               onChange={(event) => setUsersText(event.target.value)}
-              className={fieldClass}
+              aria-label="People, slider"
+              className="mt-4 h-11 w-full cursor-pointer accent-[var(--lp-ink)]"
             />
-          </Field>
+          </div>
 
           <fieldset>
-            <legend className={labelClass}>Usage per person</legend>
-            <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+            <legend className="text-[13px] text-[var(--lp-muted)]">Usage per person</legend>
+            <div className="mt-2 grid h-11 grid-cols-3 rounded-[12px] bg-[var(--lp-page)] p-1 shadow-[0_0_0_1px_var(--lp-border)]">
               {usageProfileIds.map((key) => (
                 <label
                   key={key}
-                  className="cursor-pointer rounded-[10px] border border-[var(--lp-border)] bg-white px-2 py-2 text-center text-[12.5px] text-[var(--lp-body)] transition-colors duration-150 has-[:checked]:border-[var(--lp-ink)] has-[:checked]:text-[var(--lp-ink)] has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--lp-ink)]"
+                  className="flex cursor-pointer items-center justify-center rounded-[8px] text-[13px] text-[var(--lp-body)] transition-colors duration-150 has-[:checked]:bg-[var(--lp-ink)] has-[:checked]:font-medium has-[:checked]:text-[var(--lp-page)] has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--lp-ink)]"
                 >
                   <input
                     type="radio"
                     name={`${id}-profile`}
                     value={key}
                     checked={profile === key}
-                    onChange={() => selectProfile(key)}
+                    onChange={() => setProfile(key)}
                     className="sr-only"
                   />
-                  {usageProfiles[key].label}
-                </label>
-              ))}
-            </div>
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              <Field label="Input (M tokens/mo)" htmlFor={`${id}-input`}>
-                <input
-                  id={`${id}-input`}
-                  type="number"
-                  inputMode="decimal"
-                  min={0}
-                  step="any"
-                  value={inputText}
-                  onChange={(event) => {
-                    setProfile("custom");
-                    setInputText(event.target.value);
-                  }}
-                  className={fieldClass}
-                />
-              </Field>
-              <Field label="Output (M tokens/mo)" htmlFor={`${id}-output`}>
-                <input
-                  id={`${id}-output`}
-                  type="number"
-                  inputMode="decimal"
-                  min={0}
-                  step="any"
-                  value={outputText}
-                  onChange={(event) => {
-                    setProfile("custom");
-                    setOutputText(event.target.value);
-                  }}
-                  className={fieldClass}
-                />
-              </Field>
-              <Field label="Cached input (%)" htmlFor={`${id}-cache`}>
-                <input
-                  id={`${id}-cache`}
-                  type="number"
-                  inputMode="decimal"
-                  min={0}
-                  max={100}
-                  step={5}
-                  value={cacheText}
-                  onChange={(event) => {
-                    setProfile("custom");
-                    setCacheText(event.target.value);
-                  }}
-                  className={fieldClass}
-                />
-              </Field>
-            </div>
-          </fieldset>
-
-          <Field label="Claude model for Claude plans" htmlFor={`${id}-claude-model`}>
-            <select
-              id={`${id}-claude-model`}
-              value={claudeModelId}
-              onChange={(event) => setClaudeModelId(event.target.value)}
-              className={fieldClass}
-            >
-              <ModelOptions models={claudeModels} />
-            </select>
-          </Field>
-
-          <Field label="Model for OpenWork" htmlFor={`${id}-openwork-model`}>
-            <select
-              id={`${id}-openwork-model`}
-              value={openworkModelId}
-              onChange={(event) => setOpenworkModelId(event.target.value)}
-              className={fieldClass}
-            >
-              <ModelOptions models={modelPrices} markClaude />
-            </select>
-          </Field>
-
-          <div className="grid grid-cols-[1fr_96px] gap-2">
-            <Field label="Route some work to" htmlFor={`${id}-route-model`}>
-              <select
-                id={`${id}-route-model`}
-                value={routeModelId}
-                onChange={(event) => setRouteModelId(event.target.value)}
-                className={fieldClass}
-              >
-                <ModelOptions models={modelPrices} markClaude />
-              </select>
-            </Field>
-            <Field label="Share (%)" htmlFor={`${id}-route-share`}>
-              <input
-                id={`${id}-route-share`}
-                type="number"
-                inputMode="decimal"
-                min={0}
-                max={100}
-                step={10}
-                value={routeText}
-                onChange={(event) => setRouteText(event.target.value)}
-                className={fieldClass}
-              />
-            </Field>
-          </div>
-
-          <fieldset>
-            <legend className={labelClass}>Claude Team billing</legend>
-            <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-              {billingOptions.map((option) => (
-                <label
-                  key={option}
-                  className="cursor-pointer rounded-[10px] border border-[var(--lp-border)] bg-white px-2 py-2 text-center text-[12.5px] capitalize text-[var(--lp-body)] transition-colors duration-150 has-[:checked]:border-[var(--lp-ink)] has-[:checked]:text-[var(--lp-ink)] has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--lp-ink)]"
-                >
-                  <input
-                    type="radio"
-                    name={`${id}-billing`}
-                    value={option}
-                    checked={billing === option}
-                    onChange={() => setBilling(option)}
-                    className="sr-only"
-                  />
-                  {option}
+                  {profileLabels[key]}
                 </label>
               ))}
             </div>
           </fieldset>
+
+          <ModelSelect
+            id={`${id}-claude-model`}
+            label="Claude plans use"
+            models={claudeModels}
+            value={claudeModelId}
+            onChange={setClaudeModelId}
+          />
+          <ModelSelect
+            id={`${id}-openwork-model`}
+            label="OpenWork uses"
+            models={modelPrices}
+            value={openworkModelId}
+            onChange={setOpenworkModelId}
+          />
         </form>
 
-        <div className="min-w-0">
-          <div aria-live="polite" className="sr-only">
-            {lowest ? `Lowest monthly total: ${lowest.name}, ${wholeDollars.format(lowest.totalMonthly)}` : ""}
+        <div className="mt-8 grid gap-8 border-t border-[var(--lp-border)] pt-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] lg:gap-12">
+          <div aria-live="polite" className="grid grid-cols-2 gap-6 self-start">
+            {[claudeFocus, openworkFocus].map((plan) =>
+              plan ? (
+                <div key={plan.id}>
+                  <div className="text-[13px] text-[var(--lp-muted)]">{planLabel(plan.id)}</div>
+                  <div className="mt-1 text-[34px] font-light leading-[40px] tracking-[-0.02em] tabular-nums md:text-[44px] md:leading-[50px]">
+                    {plan.available ? compactDollars.format(plan.totalMonthly) : "—"}
+                  </div>
+                  <div className="text-[13px] text-[var(--lp-muted)]">per month</div>
+                </div>
+              ) : null
+            )}
+            <p className="col-span-2 text-[14px] font-medium text-[var(--lp-ink)]">
+              {delta >= 0
+                ? `OpenWork saves ${dollars.format(delta)} a year`
+                : `OpenWork costs ${dollars.format(-delta)} more a year`}
+            </p>
           </div>
 
-          <div className="hidden md:block">
-            <table className="w-full border-collapse text-left text-[14px] leading-[21px]">
-              <caption className="sr-only">
-                Estimated cost for {users} people, per month and per year
-              </caption>
-              <thead>
-                <tr className="border-b border-[var(--lp-border)] text-[12.5px] text-[var(--lp-muted)]">
-                  <th scope="col" className="py-3 pr-4 font-medium">Plan</th>
-                  <th scope="col" className="whitespace-nowrap py-3 pr-4 text-right font-medium">Per person / mo</th>
-                  <th scope="col" className="whitespace-nowrap py-3 pr-4 text-right font-medium">Total / mo</th>
-                  <th scope="col" className="whitespace-nowrap py-3 pr-2 text-right font-medium">Total / yr</th>
-                </tr>
-              </thead>
-              <tbody>
-                {plans.map((plan) => (
-                  <tr
-                    key={plan.id}
-                    className={`border-b border-[var(--lp-border)] align-top ${
-                      highlight.includes(plan.id) ? "bg-[var(--lp-tonal)]" : ""
-                    }`}
-                  >
-                    <th scope="row" className="py-4 pl-2 pr-4 font-normal">
-                      <PlanLabel plan={plan} lowest={lowest?.id === plan.id} />
-                    </th>
-                    <PlanNumbers plan={plan} />
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <ul className="md:hidden">
-            {plans.map((plan) => (
-              <li
-                key={plan.id}
-                className={`border-b border-[var(--lp-border)] px-1 py-4 ${
-                  highlight.includes(plan.id) ? "rounded-[12px] bg-[var(--lp-tonal)] px-3" : ""
-                }`}
-              >
-                <PlanLabel plan={plan} lowest={lowest?.id === plan.id} />
-                {plan.available ? (
-                  <dl className="mt-3 grid grid-cols-3 gap-2 text-[13px]">
-                    <MobileValue label="Per person / mo" value={cents.format(plan.perUserMonthly)} />
-                    <MobileValue label="Total / mo" value={wholeDollars.format(plan.totalMonthly)} />
-                    <MobileValue label="Total / yr" value={wholeDollars.format(plan.totalAnnual)} />
-                  </dl>
-                ) : null}
-              </li>
+          <ul aria-label={`Monthly cost for ${users} people`} className="space-y-3.5">
+            {rows.map(({ id: planId, label, note, plan }) => (
+              <PlanBar
+                key={planId}
+                label={label}
+                note={note}
+                plan={plan}
+                max={max}
+                focused={highlight.includes(planId)}
+              />
             ))}
           </ul>
-
-          <p className="mt-5 text-[13px] leading-[20px] text-[var(--lp-muted)]">
-            Tokens usually cost more than seats, so the model you pick moves the total most.
-            OpenWork&apos;s seat costs more than Claude Enterprise&apos;s, and Claude Desktop on 3P has no seat fee.
-            The savings come from choosing or routing to cheaper models.
-          </p>
-
-          <details className="group mt-5 border-t border-[var(--lp-border)] pt-4">
-            <summary className="flex cursor-pointer list-none items-center gap-2 text-[14px] font-medium text-[var(--lp-ink)] [&::-webkit-details-marker]:hidden">
-              <span aria-hidden="true" className="inline-block transition-transform duration-150 group-open:rotate-90">›</span>
-              How we calculate
-            </summary>
-            <div className="mt-3 space-y-2 text-[13px] leading-[20px] text-[var(--lp-body)]">
-              <p>
-                Tokens per person = input × ((1 − cached share) × input price + cached share × cache-read price) + output × output price.
-                Prices are per 1M tokens. When a provider publishes no cache price, cached input uses the input price.
-              </p>
-              <p>With routing, OpenWork tokens = (1 − share) × main model + share × routed model.</p>
-              <p>
-                Claude Team: seats × $25 monthly or $20 annual (Standard), $125 or $100 (Premium). 2–150 seats. Usage within plan
-                limits is included; usage credits beyond limits are not estimated.
-              </p>
-              <p>Claude Enterprise: max(people, 20) × $20 + Claude tokens. Claude Desktop on 3P: Claude tokens only.</p>
-              <p>OpenWork Team: people × $10 + tokens. OpenWork Enterprise: people × $40 + tokens, billed annually.</p>
-              <p>
-                Model prices are list API prices from models.dev as of {modelPricesFetchedAt}. Your provider or committed-spend
-                price may differ. Anthropic plan prices as of {anthropicPricingCheckedAt}.
-              </p>
-            </div>
-          </details>
-
-          <p className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-[12.5px] text-[var(--lp-muted)]">
-            <span>Sources:</span>
-            {pricingSources.map((source) => (
-              <a
-                key={source.href}
-                href={source.href}
-                className="underline decoration-[var(--lp-border)] underline-offset-4 hover:decoration-[var(--lp-ink)]"
-                {...(source.href.startsWith("http") ? { target: "_blank", rel: "noreferrer" } : {})}
-              >
-                {source.label}
-              </a>
-            ))}
-          </p>
         </div>
+
+        <p className="mt-8 text-[13px] leading-[20px] text-[var(--lp-body)]">
+          Tokens outweigh seats, so the model you pick moves the total more than the plan.
+        </p>
+
+        <details className="group mt-4 border-t border-[var(--lp-border)] pt-4">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] font-medium text-[var(--lp-ink)] [&::-webkit-details-marker]:hidden">
+            <ChevronRight
+              aria-hidden="true"
+              strokeWidth={2}
+              className="h-3.5 w-3.5 transition-transform duration-150 ease-out group-open:rotate-90"
+            />
+            How we calculate
+          </summary>
+          <ul className="mt-3 space-y-1.5 text-[12.5px] leading-[19px] text-[var(--lp-body)]">
+            <li>
+              Tokens per person = input × (uncached × input price + cached × cache price) + output × output price.
+              Presets assume 5M, 25M, or 100M input tokens a month, 70% cached.
+            </li>
+            <li>
+              Claude Team: ${planPrices.claudeTeamStandard.annual}/seat annual, up to {planPrices.claudeTeamMaxSeats} seats.
+              Enterprise: ${planPrices.claudeEnterpriseSeat}/seat, {planPrices.claudeEnterpriseMinSeats} minimum, plus tokens.
+              3P: tokens only.
+            </li>
+            <li>
+              OpenWork Team: ${planPrices.openworkTeamSeat}/seat plus tokens. Enterprise: ${planPrices.openworkEnterpriseSeat}/user
+              annual, volume pricing above {planPrices.openworkEnterpriseVolumeAbove}.
+            </li>
+            <li>
+              List prices from models.dev ({modelPricesFetchedAt}); Anthropic plans checked {anthropicPricingCheckedAt}.
+              Committed-spend discounts are not included.
+            </li>
+            <li className="flex flex-wrap gap-x-3 gap-y-1 pt-1">
+              {pricingSources.map((source) => (
+                <a
+                  key={source.href}
+                  href={source.href}
+                  className="text-[var(--lp-muted)] underline decoration-[var(--lp-border)] underline-offset-4 hover:decoration-[var(--lp-ink)]"
+                  {...(source.href.startsWith("http") ? { target: "_blank", rel: "noreferrer" } : {})}
+                >
+                  {source.label}
+                </a>
+              ))}
+            </li>
+          </ul>
+        </details>
       </div>
     </section>
   );
 }
 
-function PlanLabel({ plan, lowest }: { plan: PlanCost; lowest: boolean }) {
+function PlanBar({
+  label,
+  note,
+  plan,
+  max,
+  focused
+}: {
+  label: string;
+  note?: string;
+  plan: PlanCost;
+  max: number;
+  focused: boolean;
+}) {
+  const openwork = plan.vendor === "openwork";
+  const width = plan.available ? Math.max(1.5, (plan.totalMonthly / max) * 100) : 0;
   return (
-    <div>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[14.5px] font-medium text-[var(--lp-ink)]">{plan.name}</span>
-        {lowest ? <span className="text-[12px] font-medium text-[var(--lp-status)]">Lowest</span> : null}
+    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1.5 md:grid-cols-[150px_minmax(0,1fr)_88px]">
+      <div className="min-w-0">
+        <div className={`truncate text-[13.5px] ${focused ? "font-medium text-[var(--lp-ink)]" : "text-[var(--lp-body)]"}`}>
+          {label}
+        </div>
+        {note ? <div className="truncate text-[11.5px] text-[var(--lp-muted)]">{note}</div> : null}
       </div>
-      <div className="mt-0.5 text-[12.5px] text-[var(--lp-muted)]">{plan.modelLabel}</div>
-      {plan.notes.length > 0 ? (
-        <ul className="mt-1.5 space-y-0.5 text-[12px] leading-[17px] text-[var(--lp-muted)]">
-          {plan.notes.map((note) => (
-            <li key={note}>{note}</li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
-  );
-}
-
-function PlanNumbers({ plan }: { plan: PlanCost }) {
-  if (!plan.available) {
-    return (
-      <td colSpan={3} className="py-4 pr-2 text-right text-[13px] text-[var(--lp-muted)]">
-        Not available at this size
-      </td>
-    );
-  }
-  return (
-    <>
-      <td className="py-4 pr-4 text-right tabular-nums">{cents.format(plan.perUserMonthly)}</td>
-      <td className="py-4 pr-4 text-right font-medium tabular-nums">{wholeDollars.format(plan.totalMonthly)}</td>
-      <td className="py-4 pr-2 text-right tabular-nums">{wholeDollars.format(plan.totalAnnual)}</td>
-    </>
-  );
-}
-
-function MobileValue({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-[11.5px] text-[var(--lp-muted)]">{label}</dt>
-      <dd className="mt-0.5 font-medium tabular-nums text-[var(--lp-ink)]">{value}</dd>
-    </div>
+      <div className="order-last col-span-2 h-2.5 overflow-hidden rounded-full bg-[var(--lp-page)] md:order-none md:col-span-1">
+        {plan.available ? (
+          <div
+            aria-hidden="true"
+            className={`h-full rounded-full transition-[width] duration-200 ease-out motion-reduce:transition-none ${
+              openwork ? "bg-[var(--lp-ink)]" : focused ? "bg-[var(--lp-muted)]" : "bg-[var(--lp-border)]"
+            }`}
+            style={{ width: `${width}%` }}
+          />
+        ) : null}
+      </div>
+      <div
+        className={`text-right text-[13.5px] tabular-nums ${focused ? "font-medium text-[var(--lp-ink)]" : "text-[var(--lp-body)]"}`}
+      >
+        {plan.available ? dollars.format(plan.totalMonthly) : `Max ${planPrices.claudeTeamMaxSeats}`}
+      </div>
+    </li>
   );
 }
