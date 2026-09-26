@@ -78,6 +78,7 @@ export type ToolDescription = {
   readonly path: string
   readonly description: string
   readonly signature: string
+  readonly metadata?: Readonly<Record<string, Schema.Json>>
 }
 
 export type SafeObject = Record<string, unknown>
@@ -97,6 +98,7 @@ const SearchItem = Schema.Struct({
   path: Schema.String,
   description: Schema.String,
   signature: Schema.String,
+  metadata: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
 })
 const SearchOutput = Schema.Struct({
   items: Schema.Array(SearchItem),
@@ -125,6 +127,7 @@ export class ToolRuntimeError extends Error {
   constructor(
     readonly kind:
       | "UnknownTool"
+      | "ToolUnavailable"
       | "InvalidToolInput"
       | "InvalidToolOutput"
       | "InvalidDataValue"
@@ -330,6 +333,7 @@ const describeDefinition = <R>(path: string, definition: Definition<R>): ToolDes
   path,
   description: definition.description,
   signature: `${toolExpression(path)}(input: ${inputTypeScript(definition, true)}): Promise<${outputTypeScript(definition, true)}>`,
+  ...(definition.metadata ? { metadata: definition.metadata } : {}),
 })
 
 const visibleDefinitions = <R>(tools: HostTools<R>) =>
@@ -700,6 +704,8 @@ const resolve = <R>(tools: HostTools<R>, path: ReadonlyArray<string>): HostTool<
 export type ToolRuntime<R = never> = {
   readonly root: ToolReference
   readonly calls: Array<ToolCall>
+  /** First availability failure, retained for hosts that opt into strict live execution. */
+  readonly unavailable: () => ToolRuntimeError | undefined
   readonly invoke: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>
   /** Enumerable namespace/tool names at one node of the callable tool tree; see `namespaceKeys`. */
   readonly keys: (path: ReadonlyArray<string>) => ReadonlyArray<string>
@@ -713,6 +719,7 @@ export const make = <R>(
   hooks?: ToolCallHooks<R>,
 ): ToolRuntime<R> => {
   const calls: Array<ToolCall> = []
+  let unavailable: ToolRuntimeError | undefined
   const callableTools = {
     ...tools,
     [reservedNamespace]: { search: makeSearchTool(searchIndex) },
@@ -755,6 +762,7 @@ export const make = <R>(
   return {
     root: new ToolReference([]),
     calls,
+    unavailable: () => unavailable,
     keys: (path) => namespaceKeys(callableTools, path),
     invoke: (path, args) =>
       Effect.gen(function* () {
@@ -766,7 +774,18 @@ export const make = <R>(
             recordCall(call)
             return calls.length - 1
           }).pipe(Effect.tap((index) => hooks?.onToolCallStart?.({ index, name, input }) ?? Effect.void))
-        const tool = resolve(callableTools, path)
+        let tool: HostTool<R> | Definition<R>
+        try {
+          tool = resolve(callableTools, path)
+        } catch (error) {
+          if (error instanceof ToolRuntimeError && error.kind === "UnknownTool") unavailable ??= error
+          throw error
+        }
+        if (isDefinition(tool) && tool.unavailableReason !== undefined) {
+          const error = new ToolRuntimeError("ToolUnavailable", tool.unavailableReason)
+          unavailable ??= error
+          throw error
+        }
         let describedInput: unknown
         if (isDefinition(tool)) {
           if (externalArgs.length !== 1)

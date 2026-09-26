@@ -217,6 +217,42 @@ test("a non-admin member has zero admin capabilities in search, execute, and the
   expect(firstText(executed)).toContain("unknown_capability")
 })
 
+test("discovery reports live eligibility across sources without enumerating extra tools", async () => {
+  const sources = fixtureSources()
+  sources.catalog.search = async () => [
+    { ...fixtureMatch("catalog"), method: "GET" },
+    { ...fixtureMatch("catalog"), name: "writeFixture", method: "POST" },
+  ]
+  sources.native.search = async () => [
+    { ...fixtureMatch("native"), method: "GET" },
+    { ...fixtureMatch("native"), name: "native:fixture:*", kind: "connection_status", scriptPath: undefined },
+  ]
+  sources.remoteSession.search = async () => [{ ...fixtureMatch("remoteSession"), scriptPath: undefined }]
+  sources.externalMcp.search = async () => [{ ...fixtureMatch("externalMcp"), method: "GET" }]
+  sources.marketplace.search = async () => [
+    fixtureMatch("marketplace"),
+    { ...fixtureMatch("marketplace"), name: "plugin:fixture:workflow", kind: "workflow", scriptPath: undefined },
+  ]
+  for (const source of Object.values(sources)) source.enumerate = async () => { throw new Error("Search must not enumerate") }
+  const registry = createCapabilityRegistry(sources)
+  const { matches } = await registry.search(fixtureContext(true), { query: "fixture", limit: 20 })
+  const eligibility = Object.fromEntries(matches.map((match) => [match.name, match.liveEligibility]))
+  expect(eligibility).toEqual({
+    [FIXTURES.catalog.capabilityName]: { eligible: true },
+    writeFixture: { eligible: false, reason: "not_read_only" },
+    [FIXTURES.native.capabilityName]: { eligible: true },
+    "native:fixture:*": { eligible: false, reason: "no_script_path" },
+    [FIXTURES.externalMcp.capabilityName]: { eligible: false, reason: "external_authority" },
+    [FIXTURES.marketplace.capabilityName]: { eligible: true },
+    "plugin:fixture:workflow": { eligible: false, reason: "no_script_path" },
+    [FIXTURES.builtinSkill.capabilityName]: { eligible: true },
+    [FIXTURES.remoteSession.capabilityName]: { eligible: false, reason: "no_script_path" },
+    [FIXTURES.admin.capabilityName]: { eligible: false, reason: "not_read_only" },
+  })
+  const member = await registry.search(fixtureContext(false), { query: "fixture", limit: 20 })
+  expect(member.matches.some((match) => match.name === FIXTURES.admin.capabilityName)).toBe(false)
+})
+
 test("keeps installation and disabled generated-view operations out of every generic capability consumer", () => {
   const disabled = { generatedArtifactViewsEnabled: false }
   expect(catalogOperationAvailableToCapabilities(disabled, { method: "POST", path: "/v1/remote-mcp-apps" })).toBe(false)

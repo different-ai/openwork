@@ -196,6 +196,17 @@ function routeFailure(error: unknown) {
     } as const
   }
   const unavailablePrefix = "workflow_capability_unavailable:"
+  const ineligiblePrefix = "workflow_live_capability_ineligible:"
+  if (message.startsWith(ineligiblePrefix)) {
+    return {
+      status: 400,
+      body: {
+        error: "workflow_live_capability_ineligible",
+        capability: message.slice(ineligiblePrefix.length),
+        message: "This dependency is no longer eligible for live Code Mode. Live Workflows require Den-authoritative read-only capabilities. Discover eligible tools, update the procedure, and retest in live mode before saving.",
+      },
+    } as const
+  }
   if (message.startsWith(unavailablePrefix)) {
     const capability = message.slice(unavailablePrefix.length)
     const isSearch = capability === "$codemode.search" || capability === "tools.$codemode.search"

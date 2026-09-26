@@ -30,7 +30,7 @@ export function field(value: unknown, key: string): string {
   return found;
 }
 
-async function inAppDocuments(app: Surface, action: "read" | "details" | "isolation") {
+export async function inAppDocuments(app: Surface, action: "read" | "details" | "isolation" | "visible") {
   const values: string[] = [];
   const seen = new Set<string>();
   const targets = (await listTargets(app.handle.cdpUrl)).filter(entry => entry.type === "iframe"
@@ -57,6 +57,14 @@ async function inAppDocuments(app: Surface, action: "read" | "details" | "isolat
         const value = await evaluate({ ...client, send: (method, params, options) => client.send(method, { ...params, contextId }, options) }, browserScript((action) => {
           if (action === "isolation") return document.body.dataset.isolationReport ?? "";
           if (action === "read") return document.body.innerText;
+          if (action === "visible") {
+            const heading = document.querySelector("h1");
+            if (!heading) return "";
+            const rect = heading.getBoundingClientRect();
+            const style = getComputedStyle(heading);
+            if (document.visibilityState !== "visible" || rect.width < 10 || rect.height < 10 || rect.bottom <= 0 || rect.top >= innerHeight || style.visibility !== "visible" || style.display === "none" || style.opacity === "0") return "";
+            return document.body.innerText;
+          }
           document.querySelector<HTMLButtonElement>("button")?.click();
           return "";
         }, [action]));
