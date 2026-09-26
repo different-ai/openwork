@@ -1,3 +1,4 @@
+import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
 import { afterAll, beforeEach, expect, mock, spyOn, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { createDenDb } from "@openwork-ee/den-db"
@@ -153,4 +154,22 @@ test("usage without a member filter does not constrain the membership", async ()
   replies = [[], [], [], []]
   await readGatewayUsage(org, { groupBy: "model", days: 31, filterIds: [] }, now)
   expect(queries[0]).not.toContain("`org_membership_id` = ")
+})
+
+test("OpenWork Models usage reports as its own family, labelled by its public model name and offered as a filter", async () => {
+  const hex = (value: string) => Buffer.from(value).toString("hex").toUpperCase()
+  const [modelId, alias] = Object.entries(INFERENCE_MODEL_ALIASES)[0]!
+  const hosted = `model:${hex("openwork")}:${hex(modelId)}`
+  replies = [
+    [["series", hosted, JSON.stringify([bucket("4", "2", "0")]), null], ["option", "openwork", null, null]],
+    [],
+    [],
+    [],
+  ]
+  const { usage } = await readGatewayUsage(org, { groupBy: "model", days: 31, filterIds: [] }, now)
+  expect(usage.series).toEqual([{ id: hosted, label: alias.displayName }])
+  expect(usage.filterOptions).toContainEqual({ id: "openwork", label: "OpenWork Models" })
+  // The organization's own providers and hosted OpenWork Models both feed the read.
+  expect(queries[0]).toContain("`route` in (")
+  expect(queries[0]).toContain("`route` in ('openwork_openrouter') then")
 })

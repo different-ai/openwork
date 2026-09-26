@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-
 import { AuthUserTable, GatewayProviderModelTable, GatewayProviderTable, GatewayRequestLogTable, GatewayUsageRollupTable, MemberTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import type { GatewayUsageDay, GatewayUsageOption, GatewayUsageResponse } from "@openwork/types/den/gateway-usage"
+import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -30,7 +31,7 @@ const querySchema = z.object({
     ctx.addIssue({ code: "custom", path: ["memberId"], message: "memberId cannot be combined with team grouping." })
   }
   for (const id of query.filterIds) {
-    const valid = query.groupBy === "model" ? isDenTypeId("inferenceProvider", id)
+    const valid = query.groupBy === "model" ? id === OPENWORK_MODELS_OPTION_ID || isDenTypeId("inferenceProvider", id)
       : query.groupBy === "person" ? isDenTypeId("member", id)
       : isDenTypeId("team", id)
     if (!valid) ctx.addIssue({ code: "custom", path: ["filterIds"], message: "Filter IDs must match the selected grouping." })
@@ -76,6 +77,11 @@ function addNullableCount(total: number | null, value: string | null): number | 
 function checkCardinality(size: number, limit: number) {
   if (size > limit) throw new UsageReadError("gateway_usage_too_large", "Usage has too many categories. Narrow the date range or filters; no categories have been truncated or combined.")
 }
+
+/** Hosted OpenWork Models usage reports alongside the organization's own Gateway providers (Paper: Gateway grid). */
+const OPENWORK_MODELS_OPTION_ID = "openwork"
+const OPENWORK_MODELS_LABEL = "OpenWork Models"
+const USAGE_ROUTES = ["org_provider", "openwork_openrouter"] as const
 
 const labelOrder = (left: GatewayUsageOption, right: GatewayUsageOption) => left.label.localeCompare(right.label, "en") || left.id.localeCompare(right.id, "en")
 
@@ -160,12 +166,14 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
   function dimensions(table: typeof raw | typeof rollup, timestamp: typeof raw.started_at | typeof rollup.bucket_start) {
     // Epoch arithmetic gives UTC calendar dates even if a DB session is not UTC.
     const date = sql<string>`date_format(timestampadd(day, floor(unix_timestamp(${timestamp}) / 86400), '1970-01-01'), '%Y-%m-%d')`.as("usage_date")
-    const filterId = (query.groupBy === "model" ? sql<string | null>`${table.gateway_provider_id}`
+    const filterId = (query.groupBy === "model" ? sql<string | null>`coalesce(${table.gateway_provider_id}, case when ${table.route} in ('openwork_openrouter') then ${OPENWORK_MODELS_OPTION_ID} end)`
       : sql<string | null>`${table.org_membership_id}`).as("filter_id")
     // Hex encodes the exact family/model tuple, independent of DB collation,
     // configured instances, request aliases, model groups and credential sets.
+    // OpenWork Models is its own family so it never merges with an organization's own providers.
+    const family = sql<string>`case when ${table.route} in ('openwork_openrouter') then ${OPENWORK_MODELS_OPTION_ID} else ${table.upstream_provider_id} end`
     const seriesId = (query.groupBy === "model"
-      ? sql<string>`concat('model:', hex(${table.upstream_provider_id}), ':', coalesce(hex(${table.upstream_model}), '~'))`
+      ? sql<string>`concat('model:', hex(${family}), ':', coalesce(hex(${table.upstream_model}), '~'))`
       : sql<string>`${table.org_membership_id}`).as("series_id")
     return { date, seriesId, filterId }
   }
@@ -200,7 +208,7 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
     totalCostMicroUsd: sql<string>`coalesce(sum(${raw.cost_micro_usd}), 0)`.as("total_cost_micro_usd"),
     unpricedRequests: sql<string | null>`count(*) - count(${raw.cost_micro_usd})`.as("unpriced_requests"),
   }).from(raw).where(and(
-    eq(raw.organization_id, organizationId), eq(raw.route, "org_provider"), isNotNull(raw.completed_at),
+    eq(raw.organization_id, organizationId), inArray(raw.route, [...USAGE_ROUTES]), isNotNull(raw.completed_at),
     sql`${raw.started_at} >= from_unixtime(${fromSeconds}) and ${raw.started_at} < from_unixtime(${endSeconds})`,
     query.memberId === undefined ? undefined : sql`${raw.org_membership_id} = ${query.memberId}`,
   )).groupBy(rawDimensions.date, rawDimensions.seriesId, rawDimensions.filterId).unionAll(db.select({
@@ -216,7 +224,7 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
     totalCostMicroUsd: sql<string>`coalesce(sum(${rollup.cost_micro_usd}), 0)`.as("total_cost_micro_usd"),
     unpricedRequests: sql<string | null>`case when count(${rollup.cost_count}) = count(*) then sum(${rollup.request_count}) - sum(${rollup.cost_count}) else null end`.as("unpriced_requests"),
   }).from(rollup).where(and(
-    eq(rollup.organization_id, organizationId), eq(rollup.route, "org_provider"), inArray(rollup.granularity, ["hour", "day"]),
+    eq(rollup.organization_id, organizationId), inArray(rollup.route, [...USAGE_ROUTES]), inArray(rollup.granularity, ["hour", "day"]),
     sql`${rollup.bucket_start} >= from_unixtime(${fromSeconds}) and ${rollup.bucket_start} < from_unixtime(${endSeconds})`,
     query.memberId === undefined ? undefined : sql`${rollup.org_membership_id} = ${query.memberId}`,
   )).groupBy(rollupDimensions.date, rollupDimensions.seriesId, rollupDimensions.filterId)).as("usage_sources")
@@ -301,6 +309,13 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
       .where(eq(GatewayProviderTable.organization_id, organizationId)).limit(MAX_OPTIONS + 1)
     checkCardinality(providers.length, MAX_OPTIONS)
     for (const provider of providers) options.set(provider.id, provider.label)
+    options.set(OPENWORK_MODELS_OPTION_ID, OPENWORK_MODELS_LABEL)
+    for (const row of series) {
+      const { family, model } = modelIdentityParts(row.id)
+      if (family !== OPENWORK_MODELS_OPTION_ID || model === null) continue
+      const alias = Object.entries(INFERENCE_MODEL_ALIASES).find(([id]) => id === model)?.[1]
+      modelLabels.set(row.id, alias?.displayName ?? model)
+    }
     // These are saved catalog names, not the decorated usable-model aliases.
     const modelSeriesId = sql<string>`concat('model:', hex(${GatewayProviderTable.provider_id}), ':', hex(${GatewayProviderModelTable.model_id}))`.as("model_series_id")
     const models = await db.select({ id: modelSeriesId,
