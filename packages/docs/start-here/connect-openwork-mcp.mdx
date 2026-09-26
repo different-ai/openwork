@@ -1,0 +1,157 @@
+---
+title: "Add OpenWork MCP to Claude Code, Codex, Cursor and more (one command)"
+sidebarTitle: "Add OpenWork MCP to your agent"
+description: "Connect Claude Code, Codex, Gemini CLI, OpenCode, Cursor, VS Code, Claude Desktop, or ChatGPT to OpenWork MCP at https://api.openworklabs.com/mcp/agent with one command, then sign in in the browser."
+---
+
+OpenWork MCP is one remote MCP server that gives any agent your organization's skills, plugins, workflows, and connections. Add this URL to your MCP client, sign in to OpenWork in the browser, and pick your organization:
+
+```text
+https://api.openworklabs.com/mcp/agent
+```
+
+## 1. Add the server
+
+<Tabs>
+  <Tab title="Claude Code">
+    ```sh
+    claude mcp add --transport http openwork https://api.openworklabs.com/mcp/agent
+    ```
+
+    Add `-s user` to make it available in every project. Then run `/mcp` in Claude Code, select `openwork`, and sign in. [Full guide](/model-context-protocol/claude-code)
+  </Tab>
+  <Tab title="Codex">
+    ```sh
+    codex mcp add openwork --url https://api.openworklabs.com/mcp/agent
+    codex mcp login openwork
+    ```
+
+    [Full guide](/model-context-protocol/codex)
+  </Tab>
+  <Tab title="Gemini CLI">
+    ```sh
+    gemini mcp add --transport http openwork https://api.openworklabs.com/mcp/agent
+    ```
+
+    Start `gemini`, then run `/mcp auth openwork`. [Full guide](/model-context-protocol/gemini-cli)
+  </Tab>
+  <Tab title="OpenCode">
+    Add this to your OpenCode config:
+
+    ```json
+    {
+      "mcp": {
+        "openwork": {
+          "type": "remote",
+          "enabled": true,
+          "url": "https://api.openworklabs.com/mcp/agent",
+          "oauth": {}
+        }
+      }
+    }
+    ```
+
+    Then run:
+
+    ```sh
+    opencode mcp auth openwork
+    ```
+
+    [Full guide](/model-context-protocol/opencode)
+  </Tab>
+  <Tab title="Cursor">
+    [Add OpenWork to Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=openwork&config=eyJ1cmwiOiJodHRwczovL2FwaS5vcGVud29ya2xhYnMuY29tL21jcC9hZ2VudCJ9) in one click, or add a remote MCP server in Cursor's MCP settings with this URL:
+
+    ```text
+    https://api.openworklabs.com/mcp/agent
+    ```
+
+    Start OAuth from Cursor's connection prompt. [Full guide](/model-context-protocol/cursor)
+  </Tab>
+  <Tab title="VS Code">
+    ```sh
+    code --add-mcp '{"name":"openwork","type":"http","url":"https://api.openworklabs.com/mcp/agent"}'
+    ```
+
+    Or [install in VS Code](vscode:mcp/install?%7B%22name%22%3A%22openwork%22%2C%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fapi.openworklabs.com%2Fmcp%2Fagent%22%7D) in one click. Then run `MCP: List Servers` > `openwork` > `Start Server`. [Full guide](/model-context-protocol/vs-code)
+  </Tab>
+  <Tab title="Claude Desktop">
+    Open `Settings` > `Connectors` > `Add custom connector`, name it `OpenWork`, and use this URL:
+
+    ```text
+    https://api.openworklabs.com/mcp/agent
+    ```
+
+    For builds without custom connectors, add this to `claude_desktop_config.json`:
+
+    ```json
+    {
+      "mcpServers": {
+        "openwork": {
+          "command": "npx",
+          "args": ["-y", "mcp-remote@latest", "https://api.openworklabs.com/mcp/agent"]
+        }
+      }
+    }
+    ```
+
+    [Full guide](/model-context-protocol/claude-desktop)
+  </Tab>
+  <Tab title="ChatGPT">
+    Open ChatGPT `Settings > MCP servers` ([open settings](https://chatgpt.com/#settings/Connectors)), paste this URL, and start OAuth from the connection prompt:
+
+    ```text
+    https://api.openworklabs.com/mcp/agent
+    ```
+
+    [Full guide](/model-context-protocol/chatgpt)
+  </Tab>
+</Tabs>
+
+Windsurf and Zed connect through `mcp-remote`; see the [Windsurf](/model-context-protocol/windsurf) and [Zed](/model-context-protocol/zed) guides. Any client that supports remote Streamable HTTP MCP servers with OAuth can use the same URL.
+
+## 2. Sign in and pick your organization
+
+1. Your client opens a browser window.
+2. Sign in to OpenWork. No account yet? [Create a free one](https://app.openworklabs.com?mode=sign-up).
+3. Choose the organization the client should use. That organization is pinned to the client's token; to switch later, log out of the `openwork` server in your client and sign in again.
+
+## 3. Ask your agent to use it
+
+The server keeps your client's tool list small. It exposes two tools:
+
+- `search_capabilities` finds what you can use: skills, plugins, workflows, org connections (for example, Gmail, Drive, Slack, or Linear), and other shared resources.
+- `execute_capability` runs an exact capability that search returned.
+
+Try: "Which OpenWork organization am I connected to?" or "Use my team's weekly status skill on this repo." You only see what your organization has shared with you, and your role and org policies still apply.
+
+## Client support status
+
+OpenCode is verified end to end. The other clients have setup guides that follow OpenWork's OAuth profile, but native end-to-end proof is not complete yet. See the [client support status table](/cloud/run-in-the-cloud/cloud-mcp#client-support-status).
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="What is the OpenWork MCP server URL?">
+    `https://api.openworklabs.com/mcp/agent`. Self-hosted deployments serve it from their own Den API origin, by default `https://api.<your-den-web-host>/mcp/agent`.
+  </Accordion>
+  <Accordion title="Do I need the OpenWork desktop app?">
+    No. The MCP server works with external clients. If you do use the desktop app, it connects automatically when you sign in; there is nothing to configure.
+  </Accordion>
+  <Accordion title="Is it free?">
+    You can create a free OpenWork account to connect. What you can reach depends on what your organization shares; see [Pricing and licensing](/start-here/pricing-and-licensing).
+  </Accordion>
+  <Accordion title="How do I share a skill or connection so it shows up here?">
+    An admin publishes it once in OpenWork Cloud and grants access. See [Share skills and MCP servers with your team](/start-here/do-work-with-it/share-your-setup).
+  </Accordion>
+  <Accordion title="My client says 401 or invalid_grant.">
+    Run the client's logout and login (or auth) commands for `openwork` again. See [troubleshooting](/cloud/run-in-the-cloud/cloud-mcp#troubleshooting).
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+- [OpenWork MCP Gateway reference](/cloud/run-in-the-cloud/cloud-mcp): OAuth details, token lifetimes, scopes, and MCP Apps
+- [Connect OpenWork MCP from a remote machine](/cloud/run-in-the-cloud/connect-openwork-mcp-remote-machine)
+- [OpenWork AI Gateway](/ai-gateway/overview)
+- [Migrate from Claude Cowork](/start-here/migrate-from-claude-cowork)

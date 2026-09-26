@@ -34,6 +34,7 @@
         "tab": "Start here",
         "pages": [
           "start-here/get-started",
+          "start-here/connect-openwork-mcp",
           "start-here/downloads",
           "start-here/pricing-and-licensing",
           "start-here/stewardship",
@@ -190,6 +191,8 @@
       {
         "tab": "AI Gateway",
         "pages": [
+          "ai-gateway/overview",
+          "ai-gateway/compare-litellm-bifrost",
           "ai-gateway/google-agent-platform",
           "ai-gateway/counting-usage",
           "ai-gateway/token-costs"
@@ -221,6 +224,14 @@
     {
       "source": "/model-context-protocol",
       "destination": "/cloud/run-in-the-cloud/cloud-mcp"
+    },
+    {
+      "source": "/mcp",
+      "destination": "/start-here/connect-openwork-mcp"
+    },
+    {
+      "source": "/ai-gateway",
+      "destination": "/ai-gateway/overview"
     },
     {
       "source": "/quickstart",
