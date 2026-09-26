@@ -215,7 +215,7 @@ export async function createTaskRecovery(
       const serializedSend = async () => {
         const previous = admissions.get(admissionKey);
         const operation = (previous ?? Promise.resolve()).catch(() => {}).then(() => {
-          if (owned && (!current(owned) || req.signal.aborted)) throw new Error("Recovery admission cancelled");
+          if (owned && (!current(owned) || req.signal.aborted)) return new Response(null, { status: 409 });
           return send();
         });
         admissions.set(admissionKey, operation);
