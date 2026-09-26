@@ -14,7 +14,7 @@
   ],
   "scripts": {
     "check": "node --check bin/openwork.mjs && node --check evals/agent-test-evidence-openwork-bootstrap.mjs && node --check evals/agent-test-evidence-openwork-app-install.mjs && node --check evals/agent-test-evidence-linux-container.mjs",
-    "test": "node test/openwork-bootstrap.test.mjs"
+    "test": "node test/openwork-bootstrap.test.mjs && node test/login.test.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -10,7 +10,8 @@ openwork-bootstrap install --bin-dir ~/.local/bin --install-dir ~/.openwork/boot
 openwork-bootstrap doctor --json
 openwork-bootstrap install app --manifest https://example.com/openwork-install-manifest.json
 openwork-bootstrap doctor --app --json
-OPENWORK_OWNER_PASSWORD='<generated-password>' openwork-bootstrap cloud onboard --base-url https://den.example.com --owner-email ada@example.com --org-name 'Ada Workspace' --invite-email teammate@example.com --skill-name 'First skill' --json
+openwork-bootstrap login --base-url https://den.example.com
+openwork-bootstrap cloud onboard --base-url https://den.example.com --org-name 'Ada Workspace' --invite-email teammate@example.com --skill-name 'First skill' --json
 ```
 
 Current scope:
@@ -21,18 +22,16 @@ Current scope:
   Supported artifact types: macOS `.dmg`, `.zip`, `.tar.gz`/`.tgz`, Linux
   `.AppImage`, and Windows `.exe`/`.msi` copy-installs.
 - `doctor` verifies the CLI install and, optionally, a Den API health endpoint.
-- `cloud onboard` drives the headless REST onboarding flow: sign up, sign in,
-  create an org, invite a teammate, and create a starter skill.
-  Hosted OpenWork Cloud requires a 6-digit email code before the first
-  sign-in, so run it in two steps:
-
-  ```bash
-  OPENWORK_OWNER_PASSWORD='<generated-password>' openwork-bootstrap cloud onboard --request-code --base-url https://api.openworklabs.com --owner-email ada@example.com --json
-  # ask the person for the code from their inbox, then:
-  OPENWORK_OWNER_PASSWORD='<generated-password>' openwork-bootstrap cloud onboard --verification-code 123456 --base-url https://api.openworklabs.com --owner-email ada@example.com --org-name 'Ada Workspace' --invite-email teammate@example.com --json
-  ```
-
-  The code step verifies before it signs in (each new sign-in emails a new
-  code). Use `--verification-code-stdin` to keep the code out of shell history.
+- `login` signs in with the OAuth 2.0 device authorization grant (RFC 8628):
+  it prints a link and a one-time code, the person approves in the browser, and
+  the session is saved to `~/.openwork/credentials.json` (mode 0600, override
+  with `OPENWORK_CREDENTIALS_PATH`). `OPENWORK_API_TOKEN` takes precedence.
+  `logout` revokes the session and deletes the file.
+- `cloud onboard` creates an org, invites a teammate, and creates a starter
+  skill as the signed-in person. The `--owner-email`/`--owner-password*` flags
+  still work but are deprecated: passwords end up in shell history. On the deprecated
+  password path, hosted Cloud still needs the two-step email code
+  (`--request-code`, then `--verification-code <code>` or
+  `--verification-code-stdin`).
 
 This is a bootstrap layer for install and Cloud onboarding; runtime hosting uses the desktop app, OpenWork Cloud, or `openwork-server`.
