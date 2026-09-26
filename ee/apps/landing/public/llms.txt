@@ -47,6 +47,7 @@ One URL brings the user's organization skills, plugins, and connections into any
 - OAuth protected-resource metadata: https://api.openworklabs.com/.well-known/oauth-protected-resource/mcp/agent
 - OpenAPI (Den API): https://api.openworklabs.com/openapi.json
 - Agent skills index: https://openworklabs.com/.well-known/agent-skills/index.json
+- Agent registration and sign-in for agents (auth.md): https://openworklabs.com/auth.md. Covers MCP OAuth, device login for CLIs, and anonymous workspaces a person claims later.
 - Guide for agents: [Use OpenWork from an AI agent](https://openworklabs.com/docs/start-here/use-openwork-from-an-ai-agent)
 
 ## What OpenWork does

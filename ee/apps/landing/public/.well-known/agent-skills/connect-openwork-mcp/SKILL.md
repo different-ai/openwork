@@ -56,5 +56,6 @@ Don't claim the connection works until step 3 passes.
 ## If it fails
 
 - 401 or `invalid_grant`: log out of `openwork` in the client and sign in again.
+- No person can sign in yet (headless agent): see https://openworklabs.com/auth.md for anonymous workspaces a person claims later.
 - Self-hosted OpenWork: use your own Den API origin, for example `https://api.<your-den-web-host>/mcp/agent`.
 - Reference: https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp

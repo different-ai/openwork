@@ -17,6 +17,7 @@ export const config = {
     "/alternatives/claude-cowork-3p",
     "/llms.txt",
     "/start.md",
+    "/auth.md",
     "/docs/:path*",
     "/.well-known/:path*",
   ],

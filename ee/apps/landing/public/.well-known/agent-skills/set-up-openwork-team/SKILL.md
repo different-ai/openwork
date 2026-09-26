@@ -32,6 +32,8 @@ openwork-bootstrap doctor --json
 
 Then run `openwork-bootstrap cloud bootstrap-workspace` exactly as start.md describes. Teammate emails passed with `--teammate-emails` are invited once a human claims the workspace.
 
+To keep building in that workspace before anyone claims it (adding skills and connections through the MCP gateway), or to sign the CLI in as an existing user without a password, follow https://openworklabs.com/auth.md.
+
 ## Then: bring OpenWork into the team's agents
 
 Each member can connect their coding agent to the organization with the `connect-openwork-mcp` skill: https://openworklabs.com/.well-known/agent-skills/connect-openwork-mcp/SKILL.md

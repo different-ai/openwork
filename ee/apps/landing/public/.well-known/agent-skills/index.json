@@ -13,14 +13,14 @@
       "type": "skill",
       "description": "Connect the OpenWork MCP Gateway (https://api.openworklabs.com/mcp/agent) to Claude Code, Codex, Gemini CLI, Cursor, VS Code, Claude Desktop, or ChatGPT so the agent can use the user's OpenWork organization skills, plugins, and connections.",
       "url": "https://openworklabs.com/.well-known/agent-skills/connect-openwork-mcp/SKILL.md",
-      "sha256": "8dd930f519c53ba9b7b4c8af669d5763c7fe0e12ef343f079c8d1e4ce5107371"
+      "sha256": "275a59d4392eb8ebffcd8bbc18708aa749447d1f66e72b1b89ed1f512d9d908a"
     },
     {
       "name": "set-up-openwork-team",
       "type": "skill",
       "description": "Set up OpenWork for a team - sign up for OpenWork Cloud, create the organization, invite teammates, share models through the AI Gateway, and share a skill. Use when a team or company wants OpenWork with shared skills, models, or policies.",
       "url": "https://openworklabs.com/.well-known/agent-skills/set-up-openwork-team/SKILL.md",
-      "sha256": "f5ab438cf4f2fa4fe5ebe78c0135d651131a364e9f3d4ff8f5576974b44feed1"
+      "sha256": "867437e71c2b0941aebb8ae1e8b369abffe2aab08541053d6d8f6e1560bf144b"
     },
     {
       "name": "workspace-guide",
