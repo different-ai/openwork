@@ -10,16 +10,31 @@ Connect model providers once, decide who can use which model, and see what it co
 
 <Steps>
   <Step title="Add a provider">
-    In the OpenWork Cloud dashboard, open `AI Gateway` > `AI Providers` > `Add provider`. Pick the provider, the models to expose, and the credential.
+    In the OpenWork Cloud dashboard, open `AI Gateway` > `AI Providers` > `Add provider` and pick one from the catalog.
+    <Frame>
+      <img src="https://b8tgacyg507ru26g.public.blob.vercel-storage.com/docs/ai-gateway/2026-09/add-provider-catalog-hCm3YnlhrYW0BlOcEqNmDfTd0eWnKw.png" alt="Add Anthropic: shared API key, who can use it, and which models" />
+    </Frame>
   </Step>
-  <Step title="Grant access">
-    Grant model groups to the whole organization, a team, or one member.
+  <Step title="Choose who can use it">
+    Keep `Everyone in the organization`, or add specific teams and people. Pick all models or only some.
+    <Frame>
+      <img src="https://b8tgacyg507ru26g.public.blob.vercel-storage.com/docs/ai-gateway/2026-09/provider-ready-Uvj2euKqQpFH9YN0DixyiYgqwBUIEj.png" alt="Anthropic provider row: all models, everyone, ready" />
+    </Frame>
+  </Step>
+  <Step title="Limit models (optional)">
+    Under `Who can use models`, choose `Only models you provide` so members can't add their own keys.
+    <Frame>
+      <img src="https://b8tgacyg507ru26g.public.blob.vercel-storage.com/docs/ai-gateway/2026-09/model-policy-7C1rRsSLjiajaokEa8MlBXbnNBNdzR.png" alt="Who can use models set to Only models you provide" />
+    </Frame>
+  </Step>
+  <Step title="Set spend limits">
+    On `Limits`, give a team or person a daily, weekly, or monthly USD amount. Pause or warn when it runs out.
+    <Frame>
+      <img src="https://b8tgacyg507ru26g.public.blob.vercel-storage.com/docs/ai-gateway/2026-09/new-spend-limit-MVlmRqN5nFVJM5LcyTW7iFvPSo80Ox.png" alt="New spend limit: Design team, $20 a day and $300 a month" />
+    </Frame>
   </Step>
   <Step title="Test it">
-    Ask a member to pick the model in the desktop app and send a prompt. Granted models sync automatically.
-  </Step>
-  <Step title="Watch spend">
-    See usage and cost on `Overview`. Set USD allowances with hard limits on `Limits`.
+    A member picks the model in the desktop app or OpenWork Web and sends a prompt. Granted models sync automatically.
   </Step>
 </Steps>
 
