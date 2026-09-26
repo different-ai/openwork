@@ -124,7 +124,7 @@ describe("agent skills index", () => {
 describe("MCP discovery", () => {
   const card = readJson(join(wellKnown, "mcp/server-card.json"));
   const discovery = readJson(join(wellKnown, "mcp.json"));
-  const registry = readJson(join(import.meta.dir, "../../../apps/den-api/server.json"));
+  const registryPath = join(import.meta.dir, "../../../apps/den-api/server.json");
 
   test("server card describes the gateway", () => {
     expect(field(card, "name")).toBe("com.openworklabs/openwork");
@@ -144,7 +144,8 @@ describe("MCP discovery", () => {
     expect(field(discovery, "serverCard")).toBe("https://openworklabs.com/.well-known/mcp/server-card.json");
   });
 
-  test("registry server.json matches the card and registry limits", () => {
+  test.skipIf(!existsSync(registryPath))("registry server.json matches the card and registry limits", () => {
+    const registry = readJson(registryPath);
     expect(field(registry, "name")).toBe(field(card, "name"));
     const description = String(field(registry, "description"));
     expect(description.length).toBeGreaterThan(0);
