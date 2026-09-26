@@ -99,7 +99,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
   const platform = usePlatform();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
-  const [treeOpen, setTreeOpen] = useState(true);
+  const [treeOpen, setTreeOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const lastSyncedRef = useRef<string | null>(null);
   const failedDraftRef = useRef<string | null>(null);

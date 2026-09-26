@@ -5,10 +5,16 @@ import { artifactCodeBrowserWorld } from "../worlds/first-run.ts";
 const test = spec.world(artifactCodeBrowserWorld);
 
 test("artifact editor renders code with Pierre and browses workspace files", async ({ world, user, probe, step, evidence, place }) => {
-  await user.click("Select tab: overflow-tab-12.md");
-  await user.see({ placeholder: "Search files" }, { timeoutMs: 30_000 });
+  await step("An artifact opens with workspace files collapsed", async () => {
+    await user.click("Select tab: overflow-tab-12.md");
+    await user.see({ role: "button", label: "Show workspace files" });
+    await user.notSee({ placeholder: "Search files" });
+    await user.screenshot();
+  });
 
   await step("A TypeScript file opens beside the workspace tree", async () => {
+    await user.click({ role: "button", label: "Show workspace files" });
+    await user.see({ placeholder: "Search files" }, { timeoutMs: 30_000 });
     await user.type({ placeholder: "Search files" }, "openwork-artifact-proof.ts");
     await user.press("Tab");
     await user.press("Tab");
@@ -25,6 +31,18 @@ test("artifact editor renders code with Pierre and browses workspace files", asy
       "The code viewer visibly contains the TypeScript declaration export const artifactEditor = true",
       "No error dialog, blank artifact surface, or crash message is visible",
     ]);
+  });
+
+  await step("Workspace files can be hidden and reopened while the artifact stays visible", async () => {
+    await user.click({ role: "button", label: "Hide workspace files" });
+    await user.see({ role: "button", label: "Show workspace files" });
+    await user.notSee({ placeholder: "Search files" });
+    expect(await world.visibleArtifactCode()).toContain("export const artifactEditor = true");
+    await user.screenshot();
+    await user.click({ role: "button", label: "Show workspace files" });
+    await user.see({ placeholder: "Search files" });
+    expect(await world.visibleArtifactCode()).toContain("export const artifactEditor = true");
+    await user.screenshot();
   });
 
   await step("Restricted folders show an honest notice while readable files remain usable", async () => {
