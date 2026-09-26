@@ -1,14 +1,26 @@
 # OpenWork
 
-OpenWork is a free, open-source desktop app made for sharing AI workflows. It is an open-source alternative to Claude Cowork and Codex for macOS, Windows, and Linux.
+OpenWork is the free, open-source alternative to Claude Cowork and Codex: a desktop app for macOS, Windows, and Linux where AI agents do real work on your own files. It is built on [OpenCode](https://opencode.ai), works with any model — 50+ providers, your own API keys, or local models via Ollama — and lets teams share skills and MCP servers.
+
+[**Download OpenWork**](https://openworklabs.com/download) · [GitHub releases](https://github.com/different-ai/openwork/releases) · [Docs](https://openworklabs.com/docs)
+
+Read this in: [简体中文](./translated_readmes/README_ZH.md) · [繁體中文](./translated_readmes/README_ZH_hk.md) · [日本語](./translated_readmes/README_JA.md)
 
 Add one OpenWork MCP to Codex, Claude Code, Cursor, or another compatible agent and reuse the same skills, MCPs, and connected services across your tools, teammates, and machines. Create something once, share it with coworkers or friends, or keep it for yourself.
 
 The desktop app is there when you want a dedicated workspace, but it is not required. You can use OpenWork from the agent you already have. For larger organizations, the admin interface lets you publish capabilities, manage access, and configure shared or per-user connections.
 
-[**Download OpenWork**](https://openworklabs.com/download)
-
 <img width="1481" height="842" alt="OpenWork desktop app" src="https://github.com/user-attachments/assets/66a8dd9b-5260-488c-957d-e54331e78c1c" />
+
+## Why OpenWork instead of Claude Cowork
+
+- **Free and open source.** The desktop app is MIT-licensed; no OpenWork account is required to use it locally.
+- **Any model.** Bring your own API key, sign in with ChatGPT, or run local models through Ollama or any OpenAI-compatible server. See [Add a custom LLM](https://openworklabs.com/docs/start-here/connect-your-stack/add-a-custom-llm).
+- **Runs on macOS, Windows, and Linux** as a desktop app — not a CLI.
+- **Your files stay local.** Cloud is optional.
+- **Share skills and MCP servers with your team.** See [Share skills with your team](https://openworklabs.com/docs/start-here/do-work-with-it/share-your-setup) and [Shared MCP connections](https://openworklabs.com/docs/cloud/share-with-your-team/shared-mcp-connections).
+- **Self-host** the team control plane on your own infrastructure. See [Self-host](https://openworklabs.com/docs/start-here/self-host).
+- **Bring your Cowork setup.** Skills, Claude-compatible plugins, and MCP servers carry over. See [Migrate from Claude Cowork](https://openworklabs.com/docs/start-here/migrate-from-claude-cowork).
 
 ## Install with your AI agent
 
