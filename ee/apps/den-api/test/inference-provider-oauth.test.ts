@@ -806,7 +806,7 @@ test("personal OAuth requires a current same-org member grant, never permits sha
   const credentials = () => db.select().from(schema.GatewayProviderCredentialTable).where(drizzle.eq(schema.GatewayProviderCredentialTable.gateway_provider_id, id))
   const callback = (state: string, cookie = memberCookie) => browserRequest(`/v1/inference-providers/oauth/callback?code=fake-code&state=${encodeURIComponent(state)}`, cookie)
   // Ordinary self-service must not inherit the fresh-auth requirement for administration.
-  await db.update(schema.AuthSessionTable).set({ createdAt: new Date(Date.now() - 60 * 60 * 1000) }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
+  await db.update(schema.AuthSessionTable).set({ createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000) }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
   try {
     await withFakeGoogle(
       () => Response.json({ access_token: "fake-personal-access", refresh_token: "fake-personal-refresh", expires_in: 3600 }),

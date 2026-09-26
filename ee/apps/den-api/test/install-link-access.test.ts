@@ -308,7 +308,7 @@ test("admins with a fresh session can explicitly rotate install links", async ()
 
 test("explicit rotation still requires a fresh privileged session", async () => {
   role = "admin"
-  sessionCreatedAt = new Date(Date.now() - 16 * 60 * 1000)
+  sessionCreatedAt = new Date(Date.now() - 3 * 60 * 60 * 1000)
   const response = await mint(createApp(), { rotate: true })
 
   expect(response.status).toBe(403)

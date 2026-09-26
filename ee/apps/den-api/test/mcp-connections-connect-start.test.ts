@@ -108,7 +108,7 @@ beforeAll(async () => {
     activeOrganizationId: organizationId,
     token: staleSessionToken,
     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-    createdAt: new Date(Date.now() - 60 * 60 * 1000),
+    createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
   })
   const connection = await createExternalMcpConnection({
     organizationId,

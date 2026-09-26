@@ -37,7 +37,7 @@ const memberRoute: MiddlewareHandler = async (c, next) => {
     organization: { id: organizationId, metadata: { capabilities: { gatewayDashboard: legacyDashboard } } },
     currentMember: { id: memberId, role, isOwner: role === "owner" },
   })
-  c.set("session", { createdAt: new Date(Date.now() - (fresh ? 0 : 3_600_000)) })
+  c.set("session", { createdAt: new Date(Date.now() - (fresh ? 0 : 3 * 3_600_000)) })
   await next()
 }
 mock.module("../src/middleware/index.js", () => ({

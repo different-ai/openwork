@@ -503,7 +503,7 @@ test("all gateway management boundaries deny nonadmin creators, require fresh ad
 
     for (const role of ["admin", "super-admin", "owner", "provider-manager,admin"]) {
       await db.update(schema.MemberTable).set({ role }).where(drizzle.eq(schema.MemberTable.id, memberId))
-      await setMemberSessionCreatedAt(new Date(Date.now() - 60 * 60 * 1000))
+      await setMemberSessionCreatedAt(new Date(Date.now() - 3 * 60 * 60 * 1000))
       for (const path of reads) expect((await request(memberCookie, path)).status).toBe(200)
       const beforeStaleWrites = await snapshot()
       for (const attempt of writes) {
