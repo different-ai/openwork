@@ -107,7 +107,8 @@ test("visitors can read the trust badge and access every footer link at responsi
     if (width >= 768) expect(facts.badgeBesideBrand, `trust badge beside brand at ${width}px`).toBe(true);
     expect(facts.links).toEqual([
       ["/docs", "Docs"], ["/pricing", "Pricing"], ["/roadmap", "Roadmap"],
-      ["/download", "Desktop"], ["https://app.openworklabs.com", "Cloud"],
+      ["/download", "Desktop"], ["/alternatives/claude-cowork", "Claude Cowork alternative"],
+      ["https://app.openworklabs.com", "Cloud"],
       ["/dashboard", "Dashboard"], ["/enterprise", "Enterprise"], ["/contact", "Contact"],
       ["/trust", "Trust Center"], ["/privacy", "Privacy"], ["/terms", "Terms"],
       ["https://opencode.ai", "OpenCode"], ["/trust", "SOC 2 Type II. View Trust Center"],

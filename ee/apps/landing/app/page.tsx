@@ -11,9 +11,9 @@ export const metadata = withSocialMetadata({
   },
   openGraph: {
     ...baseOpenGraph,
-    title: "OpenWork — Open source Claude Cowork alternative for teams",
+    title: "OpenWork — Free, open-source Claude Cowork alternative",
     description:
-      "Bring your own model and provider, wire in your tools and context, and ship reusable agent setups across your org — with guardrails built in.",
+      "Free, open-source desktop app for macOS, Windows, and Linux. Run any model — local models or your own API keys — on your own files, and share skills and MCP servers with your team.",
     url: "https://openworklabs.com"
   }
 });
@@ -23,7 +23,7 @@ const softwareApplicationSchema = {
   "@type": "SoftwareApplication",
   name: "OpenWork",
   description:
-    "Open source Claude Cowork alternative. Desktop app that lets teams use 50+ LLMs, bring their own provider keys, and ship reusable agent setups with guardrails.",
+    "Free, open-source Claude Cowork alternative. Desktop app for macOS, Windows, and Linux that works with 50+ model providers, local models, and your own API keys, with shared skills and MCP servers for teams.",
   url: "https://openworklabs.com",
   applicationCategory: "BusinessApplication",
   operatingSystem: "macOS, Windows, Linux",

@@ -1,3 +1,5 @@
+import { claudeCoworkAlternativeMarkdown } from "./claude-cowork-alternative"
+
 const home = `# OpenWork
 
 > The open-source Claude Cowork alternative. Chat on files, use skills, schedule tasks, automate a browser, and run on any model — plus an MCP gateway for your whole team.
@@ -19,6 +21,7 @@ const home = `# OpenWork
 - **Sign in to the hosted workspace** — [Cloud](https://app.openworklabs.com)
 - **SSO / audit / procurement** — [Enterprise](https://openworklabs.com/enterprise)
 - **Docs** — [openworklabs.com/docs](https://openworklabs.com/docs)
+- **Compare with Claude Cowork** — [Claude Cowork alternative](https://openworklabs.com/alternatives/claude-cowork)
 - **Migrate from Claude Cowork** — [Migration guide](https://openworklabs.com/docs/start-here/migrate-from-claude-cowork)
 
 ## How it compares
@@ -230,6 +233,7 @@ export const agentMarkdown: Record<string, string> = {
   "/download": download,
   "/trust": trust,
   "/glm-5.2": glm52,
+  "/alternatives/claude-cowork": claudeCoworkAlternativeMarkdown,
 }
 
 export const agentMarkdownRoutes = Object.keys(agentMarkdown)
