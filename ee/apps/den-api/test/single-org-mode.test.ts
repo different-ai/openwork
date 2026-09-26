@@ -97,6 +97,90 @@ test("single-org signup policy blocks private email signup and leaves multi-org 
   expect(multiOrg).toBeNull()
 })
 
+const privateSignupViolation = {
+  error: "single_org_signup_disabled" as const,
+  message: "Email signup is disabled for this deployment. Use your organization's SSO or a pre-provisioned account to sign in.",
+}
+
+test("user-creation signup guard blocks email OTP sign-in for unknown addresses in a private single org", async () => {
+  const violation = await signupPolicy.resolveUserCreationSignupPolicyViolation({
+    path: "/sign-in/email-otp",
+    email: "stranger@outside.com",
+    hasBootstrapGrant: false,
+    hasPendingInvitation: async () => false,
+    getViolation: async () => privateSignupViolation,
+  })
+  expect(violation).toEqual(privateSignupViolation)
+})
+
+test("user-creation signup guard honours pending invitations on every self-service path", async () => {
+  for (const path of ["/sign-in/email-otp", "/sign-up/email", "/callback/google"]) {
+    const violation = await signupPolicy.resolveUserCreationSignupPolicyViolation({
+      path,
+      email: "invited@acme.com",
+      hasBootstrapGrant: false,
+      hasPendingInvitation: async (email) => email === "invited@acme.com",
+      getViolation: async () => privateSignupViolation,
+    })
+    expect(violation).toBeNull()
+  }
+})
+
+test("user-creation signup guard allows the initial-admin bootstrap grant", async () => {
+  const violation = await signupPolicy.resolveUserCreationSignupPolicyViolation({
+    path: "/sign-up/email",
+    email: "owner@acme.com",
+    hasBootstrapGrant: true,
+    hasPendingInvitation: async () => false,
+    getViolation: async () => {
+      throw new Error("bootstrap grant should short-circuit the policy lookup")
+    },
+  })
+  expect(violation).toBeNull()
+})
+
+test("bootstrap exceptions never authorize OTP or social user creation", async () => {
+  for (const path of ["/sign-in/email-otp", "/callback/google"]) {
+    expect(await signupPolicy.resolveUserCreationSignupPolicyViolation({
+      path,
+      email: "uninvited@example.test",
+      hasBootstrapGrant: true,
+      hasPendingInvitation: async () => false,
+      getViolation: async () => privateSignupViolation,
+    })).toEqual(privateSignupViolation)
+  }
+})
+
+test("user-creation signup guard leaves SSO and programmatic creation to their own authorization", async () => {
+  const getViolation = async () => {
+    throw new Error("SSO and programmatic creation must not consult the self-service policy")
+  }
+  for (const path of ["/sso/callback/okta", "/sso/saml2/sp/acs/okta", "/sign-in/sso", null, undefined]) {
+    const violation = await signupPolicy.resolveUserCreationSignupPolicyViolation({
+      path,
+      email: "user@acme.com",
+      hasBootstrapGrant: false,
+      hasPendingInvitation: async () => false,
+      getViolation,
+    })
+    expect(violation).toBeNull()
+  }
+  expect(signupPolicy.isSsoUserCreationPath("/sign-in/email-otp")).toBe(false)
+})
+
+test("user-creation signup guard passes when the policy has no objection", async () => {
+  const violation = await signupPolicy.resolveUserCreationSignupPolicyViolation({
+    path: "/sign-in/email-otp",
+    email: "user@acme.com",
+    hasBootstrapGrant: false,
+    hasPendingInvitation: async () => {
+      throw new Error("invitation lookup is only needed when the policy objects")
+    },
+    getViolation: async () => null,
+  })
+  expect(violation).toBeNull()
+})
+
 test("single-org owner bootstrap honors configured owner emails", () => {
   expect(singleOrgPolicy.resolveSingleOrgMembershipRole({
     activeOwnerCount: 0,

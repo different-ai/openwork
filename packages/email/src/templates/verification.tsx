@@ -1,19 +1,51 @@
 import { Body, Container, Head, Heading, Html, Preview, Section, Text } from "@react-email/components"
 
+export type VerificationEmailPurpose = "sign-in" | "email-verification" | "forget-password" | "change-email"
+
 export type VerificationEmailProps = {
   verificationCode: string
+  /** Why the code was requested. Matches Better Auth's email OTP `type`. Defaults to email verification. */
+  purpose?: VerificationEmailPurpose
 }
 
-export function VerificationEmail({ verificationCode }: VerificationEmailProps) {
+const copyByPurpose: Record<VerificationEmailPurpose, { preview: string; heading: string; text: string }> = {
+  "sign-in": {
+    preview: "Your OpenWork sign-in code is",
+    heading: "Sign in to OpenWork",
+    text: "Enter this code to finish signing in to OpenWork.",
+  },
+  "email-verification": {
+    preview: "Your OpenWork verification code is",
+    heading: "Verify your email",
+    text: "Enter this code to confirm your email address for OpenWork.",
+  },
+  "forget-password": {
+    preview: "Your OpenWork password reset code is",
+    heading: "Reset your password",
+    text: "Enter this code to continue resetting your OpenWork password.",
+  },
+  "change-email": {
+    preview: "Your OpenWork email change code is",
+    heading: "Confirm your new email",
+    text: "Enter this code to confirm the new email address for your OpenWork account.",
+  },
+}
+
+export function verificationEmailSubject({ verificationCode, purpose }: VerificationEmailProps) {
+  return `${copyByPurpose[purpose ?? "email-verification"].preview} ${verificationCode}`
+}
+
+export function VerificationEmail({ verificationCode, purpose }: VerificationEmailProps) {
+  const copy = copyByPurpose[purpose ?? "email-verification"]
   return (
     <Html>
       <Head />
-      <Preview>Your OpenWork verification code is {verificationCode}</Preview>
+      <Preview>{copy.preview} {verificationCode}</Preview>
       <Body style={styles.body}>
         <Container style={styles.container}>
           <Text style={styles.eyebrow}>OpenWork</Text>
-          <Heading style={styles.heading}>Verify your email</Heading>
-          <Text style={styles.text}>Enter this code to finish signing in to OpenWork.</Text>
+          <Heading style={styles.heading}>{copy.heading}</Heading>
+          <Text style={styles.text}>{copy.text}</Text>
           <Section style={styles.codeBox}>
             <Text style={styles.code}>{verificationCode}</Text>
           </Section>

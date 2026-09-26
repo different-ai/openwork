@@ -94,8 +94,8 @@ import {
   findEnterpriseAuthRequirementForUserId,
 } from "./enterprise-auth-requirement.js";
 import { normalizeLoginEmail } from "./auth-login-options.js";
-import { getAuthBodyEmail, getSingleOrgEmailSignupPolicyViolation } from "./single-org-signup-policy.js";
-import { readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstrap.js";
+import { getAuthBodyEmail, getSingleOrgEmailSignupPolicyViolation, resolveUserCreationSignupPolicyViolation } from "./single-org-signup-policy.js";
+import { authorizeInitialAdminBootstrapSignup, readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstrap.js";
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
@@ -401,6 +401,28 @@ async function hasPendingInvitationForEmail(input: { invitationIdOrToken: string
   return Boolean(invitation);
 }
 
+// Invitation-restricted self-service sign-in: a pending, unexpired invitation
+// for the exact address is enough (email OTP proves inbox control; there is no
+// invite token on that route).
+async function hasAnyPendingInvitationForEmail(email: string) {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  const [invitation] = await db
+    .select({ id: schema.InvitationTable.id })
+    .from(schema.InvitationTable)
+    .where(and(
+      eq(schema.InvitationTable.status, "pending"),
+      gt(schema.InvitationTable.expiresAt, new Date()),
+      sql`lower(${schema.InvitationTable.email}) = ${normalized}`,
+    ))
+    .limit(1);
+
+  return Boolean(invitation);
+}
+
 function normalizeRawRoleValue(roleValue: string) {
   return splitOrganizationRoles(roleValue)
     .map((role) => normalizeOrganizationRoleName(role))
@@ -660,6 +682,22 @@ export const auth = betterAuth({
           const ssoProviderId = readStringProperty(context?.params, "providerId");
           if (ssoProviderId && await isScimDeprovisionedEmailForSsoProvider({ ssoProviderId, email })) {
             throw new APIError("FORBIDDEN", { message: SCIM_DEPROVISIONED_SIGN_IN_MESSAGE });
+          }
+          // Single-org signup policy for every self-service creation path. The
+          // request hook above only sees /sign-up/email; email OTP sign-in and
+          // other plugins create users without passing through it.
+          const signupViolation = await resolveUserCreationSignupPolicyViolation({
+            path: context?.path ?? null,
+            email,
+            hasBootstrapGrant: context?.path === "/sign-up/email" && Boolean(await authorizeInitialAdminBootstrapSignup({
+              body: context.body,
+              email,
+            })),
+            hasPendingInvitation: hasAnyPendingInvitationForEmail,
+            getViolation: getSingleOrgEmailSignupPolicyViolation,
+          });
+          if (signupViolation) {
+            throw new APIError("FORBIDDEN", { message: signupViolation.message });
           }
           return {
             data: {
@@ -1143,7 +1181,7 @@ export const auth = betterAuth({
         await sendEmail({
           to: email,
           template: "verification",
-          props: { verificationCode: otp },
+          props: { verificationCode: otp, purpose: type },
         });
       },
     }),

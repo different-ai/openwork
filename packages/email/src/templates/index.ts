@@ -3,13 +3,13 @@ import { DownloadLinkEmail, type DownloadLinkEmailProps } from "./download-link.
 import { FeedbackEmail, type FeedbackEmailProps } from "./feedback.js"
 import { OrganizationInviteEmail, type OrganizationInviteEmailProps } from "./organization-invite.js"
 import { PasswordResetEmail, type PasswordResetEmailProps } from "./password-reset.js"
-import { VerificationEmail, type VerificationEmailProps } from "./verification.js"
+import { VerificationEmail, verificationEmailSubject, type VerificationEmailProps } from "./verification.js"
 
 export type { DownloadLinkEmailProps } from "./download-link.js"
 export type { FeedbackEmailProps } from "./feedback.js"
 export type { OrganizationInviteEmailProps } from "./organization-invite.js"
 export type { PasswordResetEmailProps } from "./password-reset.js"
-export type { VerificationEmailProps } from "./verification.js"
+export type { VerificationEmailProps, VerificationEmailPurpose } from "./verification.js"
 
 export type EmailTemplateProps = {
   verification: VerificationEmailProps
@@ -22,7 +22,7 @@ export type EmailTemplateProps = {
 export type EmailTemplate = keyof EmailTemplateProps
 
 export const emailSubjects: { [Template in EmailTemplate]: (props: EmailTemplateProps[Template]) => string } = {
-  verification: ({ verificationCode }) => `Your OpenWork verification code is ${verificationCode}`,
+  verification: (props) => verificationEmailSubject(props),
   passwordReset: () => "Reset your OpenWork password",
   organizationInvite: ({ organizationName }) => `You're invited to join ${organizationName} on OpenWork`,
   downloadLink: () => "Your OpenWork download link",
