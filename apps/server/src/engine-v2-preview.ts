@@ -1,3 +1,4 @@
+import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
 import { migrateOpencodeV1History, opencodeV1DatabasePath, type EngineV2MigrationStatus } from "./opencode-v2-migration.js";
 import { executionRules } from "./managed-policy-rules.js";
 import { waitForEngineSkillChanges } from "./opencode-v2-skill-settle.js";
@@ -335,6 +336,7 @@ export function createEngineV2Preview(options: {
   config: ServerConfig;
   env?: Pick<EnvService, "list" | "onChange">;
   deferStart?: boolean;
+  hostReadRequest?: (path: string, init?: RequestInit) => Promise<unknown>;
   waits?: Partial<typeof ENGINE_V2_UPKEEP_WAITS>;
 }): EngineV2Preview {
   const { config } = options;
@@ -359,6 +361,7 @@ export function createEngineV2Preview(options: {
   let lastWarning: string | undefined;
   const warn = (message: string) => { lastWarning = `${new Date().toISOString()} ${message}`; };
   let sidecar: ManagedOpencodeV2Server | undefined;
+  let contextBridge: Awaited<ReturnType<typeof createV2ContextBridge>> | undefined;
   let unsubscribe: (() => void) | undefined;
   let startPromise: Promise<void> | undefined;
   let mirrorInFlight: Promise<void> | undefined;
@@ -571,9 +574,10 @@ export function createEngineV2Preview(options: {
     running = false;
     version = undefined;
     pid = undefined;
-    if (!active) return;
+    const bridge = contextBridge;
+    contextBridge = undefined;
     try {
-      await active.close();
+      await Promise.all([bridge?.close(), active?.close()]);
     } catch (error) {
       lastError = errorMessage(error);
     }
@@ -588,7 +592,9 @@ export function createEngineV2Preview(options: {
     // skills now use the same metadata/on-demand Connect path as v1.
     await rm(join(rootDir, "cloud-skills"), { recursive: true, force: true });
     const opencodeModelsUrl = await resolveOpencodeModelsUrl();
+    contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest) : undefined;
     const managed = await createManagedOpencodeV2Server({
+      contextTools: contextBridge,
       bin: resolved.bin,
       rootDir,
       env: { OPENCODE_MODELS_URL: opencodeModelsUrl },
@@ -639,7 +645,7 @@ export function createEngineV2Preview(options: {
       await startPromise;
       return;
     }
-    const pending = startSidecar();
+    const pending = startSidecar().catch(async error => { await closeSidecar(); throw error; });
     startPromise = pending;
     try {
       await pending;

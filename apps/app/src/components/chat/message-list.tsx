@@ -20,6 +20,7 @@ import {
 import {
   DynamicToolUIPart,
   isFileUIPart,
+  isToolUIPart,
   ToolUIPart,
   type FileUIPart,
   type UIMessage,
@@ -1495,6 +1496,11 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
   const { workspaceId, sessionId } = useMessageList()
   const workspace = useWorkspaceMaybe()
   const tasks = React.useMemo(() => activeDelegatedTasks(messages), [messages])
+  const delegatedIds = React.useMemo(() => [...new Set(messages.flatMap(message => message.parts)
+    .filter(isToolUIPart).filter(isTaskToolPart).map(taskChildSessionId).filter((id): id is string => Boolean(id)))], [messages])
+  const backgroundCount = useSessionActivityStore(state => delegatedIds.filter(id =>
+    state.recordsByWorkspaceId[workspaceId]?.[id]?.runActive).length)
+
   const [observedAt] = React.useState(() => Date.now())
   const lastProgressAt = useSessionActivityStore((state) => {
     const records = state.recordsByWorkspaceId[workspaceId]
@@ -1617,6 +1623,9 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
         )
         }}
       >
+        {!runActive && backgroundCount > 0 && <p data-background-agents className="px-3 py-2 text-sm text-muted-foreground md:px-5">
+          {syncDegraded ? "Background activity — reconnecting…" : `${backgroundCount} ${backgroundCount === 1 ? "agent" : "agents"} running`}
+        </p>}
         {showLoading && <LoadingMessage elapsedSeconds={runElapsedSeconds} starting={status === "submitted"} />}
         {showReconnecting && <ReconnectingMessage lastConfirmedAt={syncHealth?.lastConfirmedAt ?? null} />}
         {retryStatus ? <RetryMessage status={retryStatus} /> : null}

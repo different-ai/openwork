@@ -82,12 +82,13 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
   )
   const permissionPending = (child?.waitingPermissionIds.length ?? 0) > 0
   const questionPending = (child?.waitingQuestionIds.length ?? 0) > 0
-  const inFlight = isToolPartInFlight(part)
+  const childRunning = child?.runActive === true || childStatus?.type === "busy" || childStatus?.type === "retry"
+  const inFlight = isToolPartInFlight(part) || childRunning
   const isFailed = part.state === "output-error"
   const duration = trackToolCallDuration(part)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   // Native start time survives reload; optimistic timing survives remounts.
-  const startedAt = getToolCallStartedAt(part)
+  const startedAt = childRunning && child && child.runStartedAt > 0 ? child.runStartedAt : getToolCallStartedAt(part)
   const lastProgressAt = child?.lastProgressAt || startedAt || 0
   const noNewActivity = hasNoNewActivity({
     active: inFlight, lastProgressAt, now: Date.now(),
@@ -96,8 +97,8 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
     permissionPending, questionPending, retrying: childStatus?.type === "retry" || child?.retrying, noNewActivity,
     timingUnknown: startedAt === null,
     syncDegraded, inFlight, failed: isFailed,
-    childFailed: inFlight && child?.errorActive,
-    resultPending: Boolean(child && !child.runActive && child.runStatusAt > 0) || (!parentActive && !child?.runActive),
+    childFailed: child?.errorActive,
+    resultPending: !childRunning && (Boolean(child && !child.runActive && child.runStatusAt > 0) || !parentActive),
   })
   useEffect(() => {
     // While run liveness is unconfirmed the counter must not tick; the

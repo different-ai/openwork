@@ -1,7 +1,7 @@
 import type { EnginePermissionRule } from "./managed-policy-rules.js";
 import { nativeModelVariants } from "@openwork/types/cloud-model-fast";
 import { gatewayBase } from "./gateway-quota.js";
-import { openworkGatewayQuotaV2PluginPath, openworkProviderFiltersV2PluginPath } from "./openwork-extensions-plugin-path.js";
+import { openworkContextV2PluginPath, openworkGatewayQuotaV2PluginPath, openworkProviderFiltersV2PluginPath } from "./openwork-extensions-plugin-path.js";
 import { pathToFileURL } from "node:url";
 // Parallel v2 lane prototype: provider injection is a watched-config write. This module
 // deliberately has no reload/dispose call, unlike managed-opencode.ts and server.ts reloadOpencodeEngine.
@@ -41,6 +41,7 @@ export interface ManagedOpencodeV2ServerOptions {
   port?: number;
   env?: Record<string, string>;
   bootTimeoutMs?: number;
+  contextTools?: { url: string; token: string };
   permissions?: () => Promise<EnginePermissionRule[]>;
 }
 
@@ -89,6 +90,8 @@ export function renderOpencodeV2Config(input: {
   skills: string[];
   gatewayQuotaPluginDirectory?: string;
   providerFiltersPluginDirectory?: string;
+  contextPluginDirectory?: string;
+  contextTools?: { url: string; token: string };
 }): Record<string, unknown> {
   const providerConfig: Record<string, unknown> = {};
   for (const provider of input.providers) {
@@ -137,6 +140,7 @@ export function renderOpencodeV2Config(input: {
   const filters = Object.fromEntries(input.providers.filter(provider => provider.whitelist !== undefined || provider.blacklist !== undefined)
     .map(provider => [provider.id, { whitelist: provider.whitelist, blacklist: provider.blacklist }]));
   const plugins = [
+    ...(input.contextTools && input.contextPluginDirectory ? [{ package: pathToFileURL(input.contextPluginDirectory).href, options: input.contextTools }] : []),
     ...(Object.keys(gatewayProviders).length && input.gatewayQuotaPluginDirectory ? [{
       package: pathToFileURL(input.gatewayQuotaPluginDirectory).href,
       options: { providers: gatewayProviders },
@@ -164,6 +168,7 @@ export async function createManagedOpencodeV2Server(
   const configDir = join(options.rootDir, "config");
   const gatewayQuotaPluginDirectory = join(options.rootDir, "gateway-quota-plugin");
   const providerFiltersPluginDirectory = join(options.rootDir, "provider-filters-plugin");
+  const contextPluginDirectory = join(options.rootDir, "context-plugin");
   const password = randomBytes(24).toString("base64url");
   const username = "opencode";
   let url = "";
@@ -200,6 +205,12 @@ export async function createManagedOpencodeV2Server(
   await writeFile(join(providerFiltersPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
   await writeFile(join(providerFiltersPluginDirectory, "server.js"),
     `export { default } from ${JSON.stringify(pathToFileURL(openworkProviderFiltersV2PluginPath()).href)};\n`, { mode: 0o600 });
+  if (options.contextTools) {
+    await mkdir(contextPluginDirectory, { recursive: true, mode: 0o700 });
+    await writeFile(join(contextPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
+    await writeFile(join(contextPluginDirectory, "server.js"),
+      `export { default } from ${JSON.stringify(pathToFileURL(openworkContextV2PluginPath()).href)};\n`, { mode: 0o600 });
+  }
   // Replace the generated config before boot, removing stale managed-policy
   // registrations while retaining independent engine permissions. Leave the
   // old entrypoint on disk: another configuration may still reference it.
@@ -302,6 +313,8 @@ export async function createManagedOpencodeV2Server(
       providers: [...providers.values()],
       gatewayQuotaPluginDirectory,
       providerFiltersPluginDirectory,
+      contextPluginDirectory,
+      contextTools: options.contextTools,
       ...(options.permissions ? { permissions: await options.permissions() } : {}),
       skills,
     }), null, 2)}\n`, { mode: 0o600 });

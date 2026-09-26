@@ -1,3 +1,4 @@
+import { openworkReadTransport } from "./openwork-read-transport.js";
 import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { ApiError } from "../errors.js";
@@ -329,6 +330,8 @@ async function uiControlRequest(
 }
 
 async function serverGet(path: string): Promise<unknown> {
+  const transport = openworkReadTransport.getStore();
+  if (transport) return transport.get(path);
   const { url, token } = requireOpenWorkServer();
   const response = await fetch(`${url}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -732,6 +735,8 @@ async function readSessionDescendantIds(base: string, sessionId: string): Promis
 }
 
 async function readSessionActivity(workspace: OpenWorkWorkspace, session: SessionInfo): Promise<SessionActivity> {
+  const transport = openworkReadTransport.getStore();
+  if (transport?.activity) return transport.activity(workspace.id, session.id);
   const base = `/workspace/${encodeURIComponent(workspace.id)}/opencode`;
   const probe = (path: string) => serverGet(`${base}${path}`).catch(() => null);
   const [statuses, permissions, questions, descendants] = await Promise.all([
@@ -1225,6 +1230,8 @@ function proposeAutomation(rawArgs: unknown, context: OpenCodeContext): object {
 }
 
 async function postJson(path: string, body: ExtensionActionPayload | Record<string, unknown>, signal?: AbortSignal, gmailAttachment = false): Promise<unknown> {
+  const transport = openworkReadTransport.getStore();
+  if (transport) return transport.post(path, body, signal);
   if (gmailAttachment && (!serverUrl() || !serverToken())) {
     throw new ApiError(409, "gmail_host_unavailable", "OpenWork host transport is unavailable. Run this tool from OpenWork.");
   }
