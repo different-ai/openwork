@@ -36,19 +36,17 @@ export function ClaudeCoworkAlternativePage({ stars }: Props) {
           <DownloadLink className="lp-pill-primary">Download OpenWork free</DownloadLink>
         </CompareHero>
 
-        <CompareSection id="comparison-heading" heading="OpenWork vs Claude Cowork">
-          <div className="mx-auto max-w-[760px]">
-            <CompareTable
-              caption="OpenWork compared with Claude Cowork"
-              columns={comparisonColumns}
-              rows={comparisonRows}
-              highlight="openwork"
-              sources={comparisonSources}
-            />
-          </div>
+        <CompareSection id="comparison-heading" heading="OpenWork vs Claude Cowork" narrow>
+          <CompareTable
+            caption="OpenWork compared with Claude Cowork"
+            columns={comparisonColumns}
+            rows={comparisonRows}
+            highlight="openwork"
+            sources={comparisonSources}
+          />
         </CompareSection>
 
-        <div id="cost" className="scroll-mt-28 py-14 md:py-20">
+        <div id="cost" className="scroll-mt-28 py-12 md:py-16">
           <CoworkCostCalculator />
           <div className="mt-6">
             <LpArrowLink href={CLAUDE_COWORK_3P_PATH}>On Bedrock, Vertex, or Foundry? Compare with Claude on 3P</LpArrowLink>
@@ -59,7 +57,7 @@ export function ClaudeCoworkAlternativePage({ stars }: Props) {
           <CompareCards cards={alternativeCards} />
         </CompareSection>
 
-        <div className="py-14 md:py-20">
+        <div className="py-12 md:py-16">
           <LandingFaq entries={claudeCoworkAlternativeFaq} />
         </div>
 

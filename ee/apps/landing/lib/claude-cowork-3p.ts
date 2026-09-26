@@ -39,7 +39,7 @@ export const threeWayRows: CompareRow<ThreeWayColumnKey>[] = [
   { label: "Share plugins with your team", enterprise: true, thirdParty: false, openwork: true },
   { label: "Browser access", enterprise: true, thirdParty: false, openwork: "Alpha" },
   { label: "Mobile app", enterprise: true, thirdParty: false, openwork: false },
-  { label: "Usage analytics and audit", enterprise: true, thirdParty: "OpenTelemetry", openwork: true },
+  { label: "Usage analytics and audit", enterprise: true, thirdParty: "Export only", openwork: true },
   { label: "Self-host the control plane", enterprise: false, thirdParty: false, openwork: true }
 ];
 

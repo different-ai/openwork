@@ -132,7 +132,7 @@ export function CompareTable<Key extends string>({
       </table>
       <p className="mt-5 flex flex-wrap gap-x-3 gap-y-1 text-[12.5px] leading-[20px] text-[var(--lp-muted)]">
         <span>{checkedAt ? `Sources, checked ${checkedAt}:` : "Sources:"}</span>
-        {sources.map((source, index) => (
+        {sources.map((source) => (
           <a
             key={source.href}
             href={source.href}
@@ -140,7 +140,6 @@ export function CompareTable<Key extends string>({
             rel="noreferrer"
             className="underline decoration-[var(--lp-border)] underline-offset-4 hover:decoration-[var(--lp-ink)]"
           >
-            <sup className="mr-0.5">{index + 1}</sup>
             {source.label}
           </a>
         ))}
@@ -195,14 +194,17 @@ export function CompareHero({ heading, sub, children, note }: PageHeroProps) {
 export function CompareSection({
   id,
   heading,
-  children
+  children,
+  narrow = false
 }: {
   id: string;
   heading: string;
   children: ReactNode;
+  /** Constrain heading and content to a reading width, for two-column tables. */
+  narrow?: boolean;
 }) {
   return (
-    <section aria-labelledby={id} className="scroll-mt-28 py-14 md:py-20">
+    <section aria-labelledby={id} className={`scroll-mt-28 py-12 md:py-16 ${narrow ? "mx-auto max-w-[760px]" : ""}`}>
       <h2
         id={id}
         className="mb-9 text-[32px] font-light leading-[38px] tracking-[-0.015em] md:text-[40px] md:leading-[46px]"

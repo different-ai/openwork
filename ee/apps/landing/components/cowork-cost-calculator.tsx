@@ -31,7 +31,7 @@ const fallbackModel = modelPrices[0];
 const sliderMax = 1000;
 
 const shownPlans: { id: PlanId; label: string; note?: string }[] = [
-  { id: "claude-team-standard", label: "Claude Team", note: "Excludes usage over plan limits" },
+  { id: "claude-team-standard", label: "Claude Team", note: "Within plan limits" },
   { id: "claude-enterprise", label: "Claude Enterprise" },
   { id: "claude-3p", label: "Claude on 3P" },
   { id: "openwork-team", label: "OpenWork Team" },
@@ -55,6 +55,10 @@ const compactDollars = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 1
 });
+
+function bigDollars(value: number): string {
+  return value >= 10_000 ? compactDollars.format(value) : dollars.format(value);
+}
 
 const brandByProvider: Record<string, "claude" | "openai" | "gemini" | "mistral"> = {
   anthropic: "claude",
@@ -247,7 +251,7 @@ export function CoworkCostCalculator({
                 <div key={plan.id}>
                   <div className="text-[13px] text-[var(--lp-muted)]">{planLabel(plan.id)}</div>
                   <div className="mt-1 text-[34px] font-light leading-[40px] tracking-[-0.02em] tabular-nums md:text-[44px] md:leading-[50px]">
-                    {plan.available ? compactDollars.format(plan.totalMonthly) : "—"}
+                    {plan.available ? bigDollars(plan.totalMonthly) : "—"}
                   </div>
                   <div className="text-[13px] text-[var(--lp-muted)]">per month</div>
                 </div>

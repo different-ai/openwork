@@ -43,7 +43,7 @@ export function ClaudeCowork3pPage({ stars }: Props) {
           />
         </CompareSection>
 
-        <div id="cost" className="scroll-mt-28 py-14 md:py-20">
+        <div id="cost" className="scroll-mt-28 py-12 md:py-16">
           <CoworkCostCalculator
             defaultUsers={500}
             highlight={["claude-3p", "openwork-enterprise"]}
@@ -55,7 +55,7 @@ export function ClaudeCowork3pPage({ stars }: Props) {
           <CompareCards cards={threePCards} />
         </CompareSection>
 
-        <div className="py-14 md:py-20">
+        <div className="py-12 md:py-16">
           <LandingFaq entries={claudeCowork3pFaq} />
         </div>
 
