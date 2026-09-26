@@ -2,11 +2,24 @@ import { and, desc, eq, inArray, isNull, isNotNull, lte, or, sql } from "@openwo
 import { ArtifactViewRevisionTable, ArtifactViewTable, DashboardAppTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { GeneratedArtifactView, GeneratedArtifactViewRevision } from "@openwork/types/workflows"
+import { memberFacingMcpConnectionsEnabled } from "./capability-sources/external-mcp-rollout.js"
 import { db } from "./db.js"
+import { env } from "./env.js"
 import { getWorkflowAccess, getWorkflowDetail } from "./workflows.js"
 import { buildGeneratedArtifactView } from "./generated-artifact-view-builder.js"
 import type { PluginArchActorContext } from "./routes/org/plugin-system/access.js"
 import { artifactViewResourceUri } from "./artifact-view-resource.js"
+
+/**
+ * Workflow-bound views are read-only wherever Apps are built as their own MCP
+ * servers (DEN_APP_MCP_SERVERS_ENABLED and the member-facing MCP connections
+ * setting). They keep rendering, running live data, and can be retired, but
+ * are not created, edited, or re-activated.
+ */
+export function legacyArtifactViewsReadOnly(context: PluginArchActorContext): boolean {
+  return env.appMcpServersEnabled
+    && memberFacingMcpConnectionsEnabled(context.organizationContext.organization.metadata, { gatingEnabled: env.mcpConnectionsGatingEnabled })
+}
 
 const ARTIFACT_VIEW_LIST_LIMIT = 50
 const ARTIFACT_VIEW_REVISION_LIST_LIMIT = 50
@@ -233,6 +246,7 @@ export async function saveArtifactViewRevision(input: {
   cssSource?: string
   dataMode?: "live" | "snapshot"
 }): Promise<GeneratedArtifactView> {
+  if (legacyArtifactViewsReadOnly(input.context)) throw new Error("legacy_view_read_only")
   const script = await getWorkflowDetail({ context: input.context, configObjectId: input.configObjectId })
   if (!script.canManage) throw new Error("artifact_view_not_found")
   if (!script.currentVersion.outputSchema || !script.currentVersion.outputSchemaDigest) {
@@ -321,6 +335,7 @@ export async function activateArtifactViewRevision(input: {
   revisionId: string
   save?: { title: string; useInWorkflow: boolean; expectedActiveRevisionId: string | null }
 }): Promise<GeneratedArtifactView> {
+  if (legacyArtifactViewsReadOnly(input.context)) throw new Error("legacy_view_read_only")
   const view = await accessibleView({ context: input.context, artifactViewId: input.artifactViewId, role: "manager" })
   const revisionId = parseRevisionId(input.revisionId)
   const revisions = await db.select().from(ArtifactViewRevisionTable).where(and(

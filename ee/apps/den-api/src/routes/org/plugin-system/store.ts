@@ -29,6 +29,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
+import { isAuthoredMcpAppVersion, redactMcpAppRevision } from "@openwork/types/mcp-app"
 import type { PluginArchActorContext, PluginArchResourceKind, PluginArchRole } from "./access.js"
 import { isPluginArchOrgAdmin, PluginArchAuthorizationError, pluginArchResourceHasExpandedAudience, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchPluginRoles, resolvePluginArchResourceRole } from "./access.js"
 import { CONTENT_EDIT_SESSION_MAX_AGE_MS, memberHasRole } from "../shared.js"
@@ -646,7 +647,21 @@ function deriveSkillProjection(value: ConfigObjectInput) {
   }
 }
 
+export const INTERNAL_MCP_APP_WRITE = Symbol("internal-mcp-app-write")
+
+function rejectAuthoredMcpAppWrite(value: Parameters<typeof isAuthoredMcpAppVersion>[0], internal?: typeof INTERNAL_MCP_APP_WRITE) {
+  if (isAuthoredMcpAppVersion(value) && internal !== INTERNAL_MCP_APP_WRITE) {
+    throw new PluginArchRouteFailure(400, "reserved_mcp_app_schema", "Authored MCP Apps must be compiled and published through create_app or update_app.")
+  }
+}
+
 function deriveProjection(input: { objectType: ConfigObjectRow["objectType"]; value: ConfigObjectInput }) {
+  if (input.objectType === "app" && isAuthoredMcpAppVersion(input.value)) {
+    const metadata = input.value.metadata ?? {}
+    const title = clampCodePoints(normalizeOptionalString(typeof metadata.title === "string" ? metadata.title : null) ?? "MCP App", PROJECTION_TITLE_MAX_CHARS)
+    const description = typeof metadata.description === "string" ? clampUtf8Bytes(metadata.description.trim(), PROJECTION_TEXT_MAX_BYTES) || null : null
+    return { title, description, searchText: clampUtf8Bytes([title, description].filter(Boolean).join("\n"), PROJECTION_TEXT_MAX_BYTES) }
+  }
   if (input.objectType === "skill") {
     return deriveSkillProjection(input.value)
   }
@@ -725,6 +740,7 @@ function serializeVersion(row: ConfigObjectVersionRow) {
   // Workflow authoring data belongs to the role-aware Workflow management API.
   // Generic config-object reads must not bypass that boundary for viewers.
   const isCodemodeWorkflowVersion = row.schemaVersion === "codemode-script-v1"
+  const isAuthoredApp = isAuthoredMcpAppVersion(row)
   return {
     configObjectId: row.configObjectId,
     connectorSyncEventId: row.connectorSyncEventId,
@@ -733,10 +749,12 @@ function serializeVersion(row: ConfigObjectVersionRow) {
     createdVia: row.createdVia,
     id: row.id,
     isDeletedVersion: row.isDeletedVersion,
-    normalizedPayloadJson: isCodemodeWorkflowVersion
-      ? redactWorkflowNormalizedPayloadAuthoringDetails(row.normalizedPayloadJson)
-      : row.normalizedPayloadJson,
-    rawSourceText: isCodemodeWorkflowVersion ? null : row.rawSourceText,
+    normalizedPayloadJson: isAuthoredApp
+      ? redactMcpAppRevision(row)
+      : isCodemodeWorkflowVersion
+        ? redactWorkflowNormalizedPayloadAuthoringDetails(row.normalizedPayloadJson)
+        : row.normalizedPayloadJson,
+    rawSourceText: isCodemodeWorkflowVersion || isAuthoredApp ? null : row.rawSourceText,
     schemaVersion: row.schemaVersion,
     sourceRevisionRef: row.sourceRevisionRef,
   }
@@ -1660,7 +1678,8 @@ export async function createConfigObject(input: {
   requireFreshSession?: boolean
   sourceMode: ConfigObjectRow["sourceMode"]
   value: ConfigObjectInput
-}) {
+}, internal?: typeof INTERNAL_MCP_APP_WRITE) {
+  rejectAuthoredMcpAppWrite(input.value, internal)
   if (input.sourceMode === "connector") {
     throw new PluginArchRouteFailure(400, "invalid_request", "Connector-managed config objects must be created through connector sync.")
   }
@@ -1803,9 +1822,14 @@ export async function createConfigObjectVersion(input: {
   requireFreshSession?: boolean
   value: ConfigObjectInput
 }) {
+  rejectAuthoredMcpAppWrite(input.value)
   const row = await getConfigObjectRow(input.context.organizationContext.organization.id, input.configObjectId)
   if (!row) {
     throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
+  }
+  if (row.objectType === "app") {
+    const latest = (await getLatestVersions([row.id])).get(row.id)
+    if (latest) rejectAuthoredMcpAppWrite(latest)
   }
   const requireFreshSession = input.requireFreshSession
     ?? await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
@@ -1891,7 +1915,7 @@ export async function listConfigObjectPlugins(input: { context: PluginArchActorC
 
 export async function attachConfigObjectToPlugin(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; membershipSource?: PluginMembershipRow["membershipSource"]; pluginId: PluginId }) {
   const configObject = await ensureVisibleConfigObject(input.context, input.configObjectId)
-  if (configObject.objectType === "workflow" || configObject.objectType === "script") {
+  if (configObject.objectType === "workflow" || configObject.objectType === "script" || configObject.objectType === "app") {
     // Adding a Workflow to a Plugin can expand its audience through Plugin and
     // Marketplace grants, so only a Workflow manager may make that sharing
     // decision. Other config-object membership behavior stays compatible.
@@ -2849,6 +2873,7 @@ export async function createPluginBundle(input: {
     value: ConfigObjectInput
   }> = []
   for (const component of input.components ?? []) {
+    if (component.value) rejectAuthoredMcpAppWrite(component.value)
     if (component.connectionId !== undefined) {
       if (component.type !== "mcp") {
         throw new PluginArchRouteFailure(400, "invalid_request", "connectionId is only allowed on mcp components.")

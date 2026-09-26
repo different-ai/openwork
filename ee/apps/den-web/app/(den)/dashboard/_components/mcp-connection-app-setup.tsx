@@ -18,11 +18,12 @@ export function connectionMcpSetupUrl(publicApiUrl: string, connectionId: string
   }
 }
 
-export function McpConnectionAppSetup({ connection, publicApiUrl, enabled, className = "" }: {
+export function McpConnectionAppSetup({ connection, publicApiUrl, enabled, className = "", label = "Use in another app" }: {
   connection: Pick<ExternalMcpConnection, "id" | "exposeDirectly" | "nativeProviderKey">;
   publicApiUrl: string;
   enabled: boolean;
   className?: string;
+  label?: string;
 }) {
   const [copyResult, setCopyResult] = useState<{ url: string; status: "copying" | "copied" | "error" } | null>(null);
   const url = connectionMcpSetupUrl(publicApiUrl, connection.id);
@@ -43,7 +44,7 @@ export function McpConnectionAppSetup({ connection, publicApiUrl, enabled, class
 
   return (
     <details className={`rounded-xl border border-gray-100 bg-gray-50 p-3 ${className}`}>
-      <summary className="cursor-pointer text-[12px] font-medium text-gray-700">Use in another app</summary>
+      <summary className="cursor-pointer text-[12px] font-medium text-gray-700">{label}</summary>
       <div className="mt-3 space-y-2 text-[12px] leading-5 text-gray-600">
         <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white p-2">
           <p className="min-w-0 flex-1 break-all font-mono text-[11px] text-gray-800">

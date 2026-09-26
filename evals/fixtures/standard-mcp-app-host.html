@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reference MCP Apps host</title>
+  <style>
+    :root { color-scheme: light; font: 13px/1.5 system-ui, sans-serif; color: #1c2024; background: #f8f9fa; }
+    body { margin: 0; padding: 24px; }
+    header { display: flex; align-items: center; gap: 16px; padding-bottom: 16px; }
+    h1 { font-size: 18px; font-weight: 600; }
+    select, button, textarea { font: inherit; padding: 8px 12px; }
+    .input { display: flex; align-items: center; gap: 16px; }
+    textarea { width: 420px; height: 42px; resize: none; }
+    iframe { display: block; width: 100%; height: 160px; border: 0; }
+    [role="alert"] { color: #8e1f1f; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Reference MCP Apps host</h1>
+    <label for="tools">App</label>
+    <select id="tools"></select>
+    <button id="open" disabled>Open app</button>
+    <span id="status" role="status">Connecting</span>
+  </header>
+  <div class="input"><label for="arguments">Launch arguments</label><textarea id="arguments">{}</textarea></div>
+  <p id="error" role="alert" hidden></p>
+  <p id="bounds">Frame bounds 160–720 px</p>
+  <div id="view"></div>
+  <script type="module" src="/host.js"></script>
+</body>
+</html>

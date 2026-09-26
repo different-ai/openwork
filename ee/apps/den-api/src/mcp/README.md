@@ -78,6 +78,60 @@ Untagged operations are excluded by default. Today these are OAuth/MCP discovery
 
 They are required for OAuth/MCP setup, but should not appear as callable MCP tools.
 
+### Apps as MCP servers
+
+`create_app`, `update_app`, and `read_app` on `/mcp/agent` build Apps; they are
+not App launch surfaces. Each App is a Plugin config object served as its own
+MCP server at `/mcp/agent/connections/<appId>`, beside directly exposed
+connections, so OAuth resource matching and desktop index reconciliation work
+unchanged. That server lists only `open_app` (fixed `ui://` revision binding),
+the App's declared tools, and its revision resources.
+
+A declared tool binds one exact capability. Publishing resolves it as the
+author, looking up only that capability (the Workflow, one connection's tool
+list, or the Den operation), and stores its argument shape, input schema, and
+read-only flag in the revision. Read-only means Den verified it: Den and native
+GET operations, and `live` Workflows. Den and native writes are refused as App
+tools; connection tools and Workflow runs with input are never read-only,
+whatever their provider's annotations say, so hosts ask before each call.
+
+Calls run through the ordinary executor as the caller. `api` tools take
+`{ path, query, body }` and are rechecked as GETs on every call; `mcp` tools
+take the tool's own arguments and fail closed once the provider's input schema
+no longer matches the published digest; Workflow tools take the Workflow's
+input, and `live` ones run read-only with only an optional `timeZone`. Results
+drop the `openwork/mcpApp` and `openwork/serverTools` hints, which name tools on
+`/mcp/agent`. Plugin access is rechecked on every request; unavailable Apps
+return a JSON-RPC error.
+
+`create_app` and `update_app` add each bound Workflow to the App's Plugin and
+route its tool through that Plugin, so sharing the Plugin shares the Workflows;
+adding one requires Workflow manager access. `update_app` keeps omitted
+`cssSource`, `description`, and `tools`, reusing stored bindings as published.
+Connect runs these writes as an `mcpToken` actor, which skips the
+fresh-session step-up the way API keys do.
+
+The Connect server index lists accessible Apps only to the App host
+(`mcp-app-host-v1` with the app-host scope), with `exposeDirectly: false`, so
+their tools never become model-facing servers. Apps fill only the room
+connections leave under the desktop limit of 100. Search returns each App that
+fits beside every usable connection as `kind: mcp_app`, and executing it returns
+an `openwork/mcpApp` launch reference to the App's own server; an App past the
+limit keeps its MCP URL but gets no launch.
+
+Where `create_app` is available, Workflow-bound views are read-only:
+`save_artifact_view` (create or edit), `activate_artifact_view_revision`, and
+the REST save and activate routes return `legacy_view_read_only`. Existing views
+keep their render, preview, run, and resource paths, and can still be retired.
+
+`DEN_APP_MCP_SERVERS_ENABLED` (default `true`) gates all of this per
+deployment, together with each organization's member-facing MCP connections
+setting; the org `appMcpServers` capability reports the result. `false`, `0`,
+`off`, or `no` restores the previous surface: no builder tools or App servers,
+the original connection index and `save_artifact_view` guidance, and writable
+Workflow-bound views. Eval Dens that enable generated artifact views default it
+to `false` so older Workflow-bound journeys keep testing that mode.
+
 ### Live generated apps
 
 GeneratedArtifactView.dataMode is optional on the wire. An absent value means

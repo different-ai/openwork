@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { getPluginComponentCount, getPluginPartsSummary, parsePluginAuthoredApps, type DenPlugin } from "../app/(den)/dashboard/_components/plugin-data";
+import { pluginChatDeepLink, WhatsInside } from "../app/(den)/dashboard/_components/plugin-page-screen";
 import {
   accessPeopleIds,
   managedAccessStatus,
@@ -123,6 +127,70 @@ describe("Who can use it wording", () => {
     expect(pluginShareSubtitle({ skills: [skill], commands: [command], mcps: [connector] }))
       .toBe("They get the skill, the command and HubSpot. Each person uses their own HubSpot account.");
     expect(pluginShareSubtitle({ skills: [], commands: [], mcps: [] })).toBe("They get everything inside it.");
+  });
+});
+
+describe("authored Apps inside Plugins", () => {
+  const app = {
+    kind: "authored_mcp_app", schemaVersion: 1,
+    appId: "cob_00000000000000000000000001", pluginId: "plg_00000000000000000000000002",
+    revisionId: "cov_00000000000000000000000003", title: "Planning board",
+    description: "Plan the week", textFallback: "Planning board is ready.",
+    toolName: "open_app",
+    resourceUri: "ui://openwork/apps/cob_00000000000000000000000001/revisions/cov_00000000000000000000000003/index.html",
+    serverPath: "/mcp/agent/connections/cob_00000000000000000000000001",
+    tools: [],
+  };
+  const contents = (normalizedPayloadJson: unknown, objectType = "app", rawSourceText: string | null = null) => ({ items: [{
+    configObject: {
+      id: app.appId, title: app.title, description: app.description, objectType,
+      latestVersion: { id: app.revisionId, schemaVersion: "openwork.mcp-app/1", rawSourceText, normalizedPayloadJson },
+    },
+  }] });
+  const pluginWith = (payload: unknown): DenPlugin => ({
+    id: app.pluginId, name: "Planning kit", slug: "planning-kit", description: "", version: null,
+    author: "Your organization", category: "workflows", installed: true, source: { type: "marketplace", marketplace: "Team" },
+    skills: [], hooks: [], mcps: [], agents: [], commands: [], workflows: [], apps: [],
+    authoredApps: parsePluginAuthoredApps(payload), createdAt: "2026-09-23", updatedAt: "2026-09-23",
+    createdByOrgMembershipId: null, requiresProvider: "any",
+  });
+
+  test("recognizes the generic redacted summary without requiring author source", () => {
+    const plugin = pluginWith(contents(app));
+    expect(plugin.authoredApps).toEqual([{ id: app.appId, name: app.title, description: app.description, revisionId: app.revisionId }]);
+    expect(plugin.apps).toEqual([]);
+    expect(getPluginComponentCount(plugin)).toBe(1);
+    expect(getPluginPartsSummary(plugin)).toBe("1 App");
+    const mixed = { ...plugin, skills: [{ id: "skill-1", name: "Plan", description: "" }] };
+    expect(getPluginComponentCount(mixed)).toBe(2);
+    expect(getPluginPartsSummary(mixed)).toBe("1 App · 1 Skill");
+  });
+
+  test("does not reinterpret legacy URL Apps, unknown schemas, or mismatched revisions", () => {
+    for (const payload of [
+      { kind: "remote_mcp_app", sourceUrl: "https://example.test/legacy.html" },
+      { ...app, kind: "unknown_app" },
+      { ...app, schemaVersion: 2 },
+      { ...app, appId: "cob_00000000000000000000000004" },
+      { ...app, revisionId: "cov_00000000000000000000000004" },
+      null,
+    ]) expect(parsePluginAuthoredApps(contents(payload))).toEqual([]);
+    expect(parsePluginAuthoredApps(contents(app, "skill"))).toEqual([]);
+    expect(parsePluginAuthoredApps({ items: [null, {}] })).toEqual([]);
+  });
+
+  test("renders an App title and badge with the existing chat handoff, never source or a renderer", () => {
+    const plugin = pluginWith(contents({ ...app, reactSource: "private-react-source", cssSource: "private-css-source", html: "private-compiled-html", sourceUrl: "https://example.test/private-source" }, "app", "private-raw-source"));
+    const html = renderToStaticMarkup(createElement(WhatsInside, { plugin }));
+    expect(html).toContain("Planning board");
+    expect(html).toContain(">App</span>");
+    expect(html).toContain("1 thing");
+    expect(html).not.toContain("Nothing inside yet");
+    expect(html).toContain(pluginChatDeepLink({ name: "the Planning board app from Planning kit" }));
+    for (const hidden of ["private-", app.resourceUri, app.toolName, "iframe", "Install", "Grant access"]) {
+      expect(html).not.toContain(hidden);
+      expect(JSON.stringify(plugin.authoredApps)).not.toContain(hidden);
+    }
   });
 });
 

@@ -79,6 +79,7 @@ async function withClient<T>(
     save: () => Promise<GeneratedArtifactView>
     activate: (request: { artifactViewId: string; revisionId: string }) => Promise<GeneratedArtifactView>
     retire: () => Promise<GeneratedArtifactView>
+    legacyViewsWritable: boolean
   }> = {},
 ): Promise<T> {
   const server = new McpServer(
@@ -98,6 +99,7 @@ async function withClient<T>(
       server.sendToolListChanged()
       server.sendResourceListChanged()
     },
+    legacyViewsWritable: overrides.legacyViewsWritable ?? true,
   })
   const client = new Client({ name: "host", version: "1.0.0" }, { capabilities: {} })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -238,7 +240,7 @@ test("returns actionable tool errors for missing schemas and failed builds", asy
   await withClient(async (client) => {
     const missingSchema = await client.callTool({
       name: "save_artifact_view",
-      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
     })
     expect(missingSchema.isError).toBe(true)
     expect(JSON.stringify(missingSchema.content)).toContain("artifact_view_output_schema_required")
@@ -257,7 +259,7 @@ test("returns actionable tool errors for missing schemas and failed builds", asy
   await withClient(async (client) => {
     const failed = await client.callTool({
       name: "save_artifact_view",
-      arguments: { configObjectId, title: view.title, reactSource: "export default function View( {" },
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View( {" },
     })
     expect(failed.isError).toBe(true)
     expect(JSON.stringify(failed.content)).toContain("artifact_view_build_failed")
@@ -274,7 +276,7 @@ test.each(draftDataModes)("%s draft metadata preserves compatible desktop previe
   await withClient(async (client) => {
     const saved = await client.callTool({
       name: "save_artifact_view",
-      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
     })
     expect(saved.isError).not.toBe(true)
     const text = JSON.stringify(saved.content)
@@ -309,13 +311,13 @@ test.each(draftDataModes)("%s draft metadata preserves compatible desktop previe
   })
 })
 
-test.each(draftDataModes)("%s new drafts preserve explicit preview metadata without activation", async (dataMode) => {
+test.each(draftDataModes)("%s edits of existing drafts preserve explicit preview metadata without activation", async (dataMode) => {
   let loads = 0
   const draftView = { ...view, dataMode, activeRevisionId: null }
   await withClient(async (client) => {
     const saved = await client.callTool({
       name: "save_artifact_view",
-      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
     })
     expect(saved.isError, JSON.stringify(saved.content)).not.toBe(true)
     expect(saved.structuredContent).toEqual({ view: draftView })
@@ -362,7 +364,7 @@ test.each([null, activeRevisionId])("live preview recovery preserves the draft w
     client.setNotificationHandler("notifications/tools/list_changed", () => { changed += 1 })
     const failed = await client.callTool({
       name: "save_artifact_view",
-      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
     })
     expect(failed.isError).toBe(true)
     expect(failed._meta?.["openwork/appDraft"]).toBeUndefined()
@@ -427,7 +429,7 @@ test.each(draftDataModes.filter((mode) => mode !== "live"))("%s preview failure 
   await withClient(async (client) => {
     const failed = await client.callTool({
       name: "save_artifact_view",
-      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
     })
     expect(failed.isError).toBe(true)
     const content = failed.content?.[0]
@@ -525,7 +527,7 @@ test.each([undefined, { state: "needs_connection", message: "Connect your accoun
       const result = await client.callTool({
         name,
         arguments: name === "save_artifact_view"
-          ? { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" } : {},
+          ? { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" } : {},
       })
       expect(result.isError).toBe(true)
       expect(result._meta?.["openwork/mcpApp"]).toBeUndefined()
@@ -536,6 +538,49 @@ test.each([undefined, { state: "needs_connection", message: "Connect your accoun
     save: async () => ({ ...view, dataMode: "live" }),
     loadData: async () => ({ ok: false, error: "capability_unavailable", message: "Data unavailable", connectionCard }),
   })
+})
+
+test("where create_app is available, legacy views are read-only: they render, read, and retire but are never saved or re-activated", async () => {
+  const writes: string[] = []
+  let loads = 0
+  await withClient(async (client) => {
+    const reactSource = "export default function View() { return <div /> }"
+    for (const request of [
+      { name: "save_artifact_view", arguments: { configObjectId, title: view.title, reactSource } },
+      { name: "save_artifact_view", arguments: { artifactViewId: view.id, configObjectId, title: view.title, reactSource } },
+      { name: "activate_artifact_view_revision", arguments: { artifactViewId: view.id, revisionId: view.revisions[0]!.id } },
+    ]) {
+      const result = await client.callTool(request)
+      expect(result.isError).toBe(true)
+      expect(JSON.stringify(result.content)).toContain("legacy_view_read_only")
+      expect(JSON.stringify(result.content)).toContain("create_app")
+      expect(result._meta).toBeUndefined()
+    }
+    expect(writes).toEqual([])
+    expect(loads).toBe(0)
+    const rendered = await client.callTool({ name: `render_artifact_${view.id}`, arguments: {} })
+    expect(rendered.isError).not.toBe(true)
+    expect(loads).toBe(1)
+    expect((await client.readResource({ uri: view.revisions[0]!.resourceUri })).contents[0]).toMatchObject({ uri: view.revisions[0]!.resourceUri })
+    expect((await client.callTool({ name: "retire_artifact_view", arguments: { artifactViewId: view.id } })).isError).not.toBe(true)
+    expect(writes).toEqual(["retire"])
+  }, {
+    legacyViewsWritable: false,
+    save: async () => { writes.push("save"); return view },
+    activate: async () => { writes.push("activate"); return view },
+    retire: async () => { writes.push("retire"); return { ...view, status: "retired", activeRevisionId: null } },
+    loadData: async () => { loads += 1; return { ok: true, payload, markdown: "# Snapshot" } },
+  })
+})
+
+test("while legacy views are read-only, a live draft still previews but offers no Save that would fail", async () => {
+  await withClient(async (client) => {
+    const result = await client.callTool({ name: `preview_artifact_${viewId}`, arguments: {} })
+    expect(result.isError).not.toBe(true)
+    expect(result.structuredContent).toEqual(payload)
+    expect(result._meta).toMatchObject({ resourceDigest: digest })
+    expect(result._meta?.["openwork/appDraft"]).toBeUndefined()
+  }, { views: [{ ...view, dataMode: "live" }], legacyViewsWritable: false })
 })
 
 test("legacy views retain snapshot inputs and do not advertise live execution", async () => {
@@ -551,5 +596,20 @@ test("legacy views retain snapshot inputs and do not advertise live execution", 
       receiptId = request.receiptId
       return { ok: true, payload, markdown: "# Snapshot" }
     },
+  })
+})
+
+test("legacy creation keeps working where create_app is unavailable", async () => {
+  let saves = 0
+  await withClient(async (client) => {
+    const result = await client.callTool({
+      name: "save_artifact_view",
+      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+    })
+    expect(JSON.stringify(result.content)).not.toContain("legacy_view_read_only")
+    expect(saves).toBe(1)
+  }, {
+    save: async () => { saves += 1; return view },
+    legacyViewsWritable: true,
   })
 })

@@ -725,6 +725,11 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           mcpConnections: memberFacingMcpConnectionsEnabled(payload.organization.metadata, {
             gatingEnabled: env.mcpConnectionsGatingEnabled,
           }),
+          // Apps built in OpenWork are their own MCP servers only while the
+          // deployment switch and member-facing MCP connections are both on.
+          appMcpServers: env.appMcpServersEnabled && memberFacingMcpConnectionsEnabled(payload.organization.metadata, {
+            gatingEnabled: env.mcpConnectionsGatingEnabled,
+          }),
           // Workflows/Code Mode are enabled for every organization; the field
           // remains for published clients that still read it.
           workflows: true,

@@ -103,6 +103,8 @@ export type ExecuteCapabilityToolResult = {
 export type CapabilityExecuteInput = {
   name: string
   schemaDigest?: string
+  /** Refuse an external tool whose input schema no longer matches schemaDigest. */
+  requireSchemaMatch?: boolean
   path?: unknown
   query?: unknown
   body?: unknown
@@ -575,6 +577,7 @@ const externalMcpSource: CapabilitySource = {
       toolName: parsed.toolName,
       args: normalizeToolBody(input.body),
       schemaDigest: input.schemaDigest,
+      ...(input.requireSchemaMatch ? { requireSchemaMatch: true } : {}),
       redirectUriBase: ctx.redirectUriBase,
     })
     return result.ok

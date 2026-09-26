@@ -35,6 +35,8 @@ function seedRequiredEnv() {
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
   process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? "http://127.0.0.1:8790"
+  // These journeys build Workflow-bound views, which are writable only with App servers off.
+  process.env.DEN_APP_MCP_SERVERS_ENABLED = "false"
 }
 
 type Db = typeof import("../src/db.js").db

@@ -1086,26 +1086,23 @@ export async function probeExternalConnectionStatus(input: {
   return { ok: true, connected: true, connection: { id: connection.id, name: connection.name } }
 }
 
+type ExternalCapabilityFailure = Extract<ExternalCapabilityExecuteResult, { ok: false }>
+type PreparedExternalCapability = {
+  ok: true
+  connection: NonNullable<Awaited<ReturnType<typeof getExternalMcpConnection>>>
+  member: { orgMembershipId: DenTypeId<"member"> } | undefined
+}
+
 /**
- * Executes a namespaced external capability, scoped to the calling
- * principal's org AND member: the member must hold a grant (org-wide,
- * direct, or team), and for per-member connections must have connected
- * their own account — the call then runs as them.
+ * What every call to one external tool checks before reaching its provider:
+ * the connection, the member's grant, the tool policy, and usable credentials.
  */
-export async function executeExternalCapability(input: {
+async function prepareExternalCapability(input: {
   organizationId: string
   member: McpMemberIdentity | null
-  scopes: ReadonlySet<string>
   connectionId: string
   toolName: string
-  args: unknown
-  schemaDigest?: string
-  redirectUriBase: string
-  /** Additional provider-hint restriction; never replaces write-scope authorization. */
-  requireReadOnly?: boolean
-  /** Fail closed when the live input schema no longer matches schemaDigest. */
-  requireSchemaMatch?: boolean
-}): Promise<ExternalCapabilityExecuteResult> {
+}): Promise<PreparedExternalCapability | ExternalCapabilityFailure> {
   if (!input.member) {
     return { ok: false, error: "forbidden", message: "No active org membership for this token." }
   }
@@ -1209,6 +1206,65 @@ export async function executeExternalCapability(input: {
       connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
     }
   }
+  return { ok: true, connection, member }
+}
+
+/**
+ * One external tool as the member would call it, for binding into an App: the
+ * same checks as a call, then the provider's current definition of that tool.
+ */
+export async function describeExternalCapability(input: {
+  organizationId: string
+  member: McpMemberIdentity | null
+  connectionId: string
+  toolName: string
+  redirectUriBase: string
+}): Promise<{ ok: true; inputSchema: Record<string, unknown> } | ExternalCapabilityFailure> {
+  const prepared = await prepareExternalCapability(input)
+  if (!prepared.ok) return prepared
+  const { connection, member } = prepared
+  const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
+  let tools: Awaited<ReturnType<typeof listExternalMcpTools>>
+  try {
+    tools = await listExternalMcpTools(connection, redirectUriFor(input.redirectUriBase, connection.id), member, undefined, deadline)
+  } catch {
+    return { ok: false, error: "connection_failed", message: `"${connection.name}" did not list its tools. Try again in a moment.`, retryable: true }
+  }
+  const tool = tools.find((candidate) => candidate.name === input.toolName)
+  if (!tool) {
+    return {
+      ok: false,
+      error: "unknown_capability",
+      capability: buildExternalCapabilityName(connection.id, input.toolName),
+      message: `No current tool named "${input.toolName}" exists on "${connection.name}".`,
+    }
+  }
+  return { ok: true, inputSchema: tool.inputSchema }
+}
+
+/**
+ * Executes a namespaced external capability, scoped to the calling
+ * principal's org AND member: the member must hold a grant (org-wide,
+ * direct, or team), and for per-member connections must have connected
+ * their own account — the call then runs as them.
+ */
+export async function executeExternalCapability(input: {
+  organizationId: string
+  member: McpMemberIdentity | null
+  scopes: ReadonlySet<string>
+  connectionId: string
+  toolName: string
+  args: unknown
+  schemaDigest?: string
+  redirectUriBase: string
+  /** Additional provider-hint restriction; never replaces write-scope authorization. */
+  requireReadOnly?: boolean
+  /** Fail closed when the live input schema no longer matches schemaDigest. */
+  requireSchemaMatch?: boolean
+}): Promise<ExternalCapabilityExecuteResult> {
+  const prepared = await prepareExternalCapability(input)
+  if (!prepared.ok) return prepared
+  const { connection, member } = prepared
 
   let currentSchemaDigest: string | undefined
   let schemaGuidance: ExternalMcpSchemaGuidance | undefined
@@ -1257,7 +1313,7 @@ export async function executeExternalCapability(input: {
         ok: false,
         error: "policy_blocked",
         capability: buildExternalCapabilityName(connection.id, input.toolName),
-        message: `${input.toolName} now advertises a different input schema, so OpenWork blocked the Remote MCP App call until its cached revision is refreshed.`,
+        message: `${input.toolName} now takes different inputs than when this App was published, so OpenWork blocked the call. An editor can update the App to use the tool's current inputs.`,
         sameArgumentsRetryable: false,
         retry: { action: "search_capabilities", searchRequired: true },
       }
