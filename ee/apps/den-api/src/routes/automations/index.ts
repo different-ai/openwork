@@ -46,9 +46,10 @@ import {
   capRunnerNotificationPollDelayForKeepalive,
   nextRunnerNotificationPollDelay,
 } from "../../automations/runner-notification-poll.js"
+import { typeId } from "@openwork-ee/utils/typeid"
 
-const idParamsSchema = z.object({ id: z.string().min(1).max(160) })
-const automationRunParamsSchema = z.object({ id: z.string().min(1).max(160) })
+const idParamsSchema = z.object({ id: typeId.schema("automation") })
+const automationRunParamsSchema = z.object({ id: typeId.schema("automationRun") })
 const paginationSchema = z.object({
   cursor: z.string().min(1).max(160).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
