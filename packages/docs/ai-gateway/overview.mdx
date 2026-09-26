@@ -1,0 +1,69 @@
+---
+title: "OpenWork AI Gateway: shared model access, per-team permissions, and spend tracking"
+sidebarTitle: "Overview"
+description: "OpenWork AI Gateway lets admins connect OpenAI, Anthropic, Google, Vertex AI, Azure, Bedrock, Mistral, OpenRouter, or OpenAI-compatible providers once, choose which teams and people can use which models, and track tokens and cost."
+---
+
+OpenWork AI Gateway is the model layer of an OpenWork organization. An admin connects model providers once with keys held on the server, decides which models each team or person can use, and sees token usage and estimated cost by model, team, and person. Members just pick a model in the OpenWork app; they never handle provider keys.
+
+<Note>
+AI Gateway is part of OpenWork's control plane, not a standalone proxy. If you already run LiteLLM, Bifrost, or your own gateway, OpenWork can use it too. See [OpenWork AI Gateway vs LiteLLM vs Bifrost](/ai-gateway/compare-litellm-bifrost).
+</Note>
+
+## What it does
+
+- **Connect providers once.** Add a provider from the catalog and store its credential on the server. Supported provider SDKs: OpenAI, Anthropic, Google (Gemini), Google Vertex AI (Gemini and Claude), Azure, Amazon Bedrock, Mistral, OpenRouter, and catalog providers that use an OpenAI-compatible API.
+- **Shared or per-member credentials.** Most providers use one organization credential. For Google Vertex AI, each member can sign in with their own Google account so Google IAM controls access. See [Google Agent Platform (Vertex AI)](/ai-gateway/google-agent-platform).
+- **Model access per team and person.** Group models, then grant each group to the whole organization, a team, or one member. By default a provider exposes all of its supported catalog models; you can restrict it to a list.
+- **Spend limits.** The `Limits` tab assigns usage allowances in USD, with hard limits and optional increase requests.
+- **Usage and cost dashboard.** See tokens or estimated cost for the last 31 UTC days, grouped by model, team, or person. See [Counting usage](/ai-gateway/counting-usage) and [Token costs](/ai-gateway/token-costs).
+
+## How members use it
+
+1. An admin opens `AI Gateway` in the OpenWork Cloud dashboard and adds a provider under `AI Providers`.
+2. The admin chooses which models to expose and grants them to the organization, teams, or people. `Users & Teams` shows each person's and team's models, limits, and last-31-day spend.
+3. Members sign in to the OpenWork desktop app. Granted Gateway models sync to their workspace automatically and appear in the model picker. OpenWork Web instances receive them too.
+4. Requests go through OpenWork Gateway with a per-member Gateway key, so usage is attributed to the person who made it.
+
+## Set it up
+
+1. In the OpenWork Cloud dashboard, open `AI Gateway`, then `AI Providers`, and click `Add provider`.
+2. Pick the provider, choose the models to expose, and enter the credential.
+3. Grant access to everyone, specific teams, or specific members.
+4. Ask a member to open the model picker in the desktop app and send a test prompt.
+5. Watch usage and cost on the `Overview` tab, and set allowances on `Limits`.
+
+Self-hosted deployments first need to [enable OpenWork Gateway](/self-host/gateway).
+
+## AI Gateway, OpenWork Models, and Bring your Own Keys
+
+| | What it is |
+| --- | --- |
+| **AI Gateway** | Your providers and keys, routed through OpenWork Gateway with access rules, limits, and usage tracking. |
+| **OpenWork Models** | A managed model subscription from OpenWork, with no provider keys needed. Billed separately and not included in Gateway usage graphs. |
+| **Bring your Own Keys** | An org-managed provider synced to member workspaces, where the app calls the provider directly. See [Managed LLM provider](/cloud/share-with-your-team/managed-llm-provider), [Custom LLM provider](/cloud/share-with-your-team/custom-llm-provider), and [Per-member LLM credentials](/cloud/share-with-your-team/per-member-llm-credentials). |
+
+AI Gateway is also separate from the [OpenWork MCP Gateway](/start-here/connect-openwork-mcp), which brings skills and connections (not models) into external agents.
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Which model providers does OpenWork AI Gateway support?">
+    Providers built on these SDKs: OpenAI, Anthropic, Google, Google Vertex AI (including Claude on Vertex), Azure, Amazon Bedrock, Mistral, OpenRouter, and catalog providers that use an OpenAI-compatible API. The exact list of models comes from the models.dev catalog.
+  </Accordion>
+  <Accordion title="Can I limit which models a team can use?">
+    Yes. Put models in groups and grant each group to the organization, a team, or a member.
+  </Accordion>
+  <Accordion title="How accurate is the cost view?">
+    Costs are estimates based on reported token usage and public model prices at the time of each request, or on a provider-reported cost when one is returned. They are not your provider's bill. See [Token costs](/ai-gateway/token-costs).
+  </Accordion>
+  <Accordion title="Can I self-host AI Gateway?">
+    Yes. It runs as the `ee/apps/gateway` service alongside Den and ships in the Helm chart. Follow [Enable OpenWork Gateway](/self-host/gateway).
+  </Accordion>
+  <Accordion title="How much does it cost?">
+    OpenWork's public plans apply to both Cloud and self-hosted deployments. Shared keys are part of the Team plan, and spend observability is part of Enterprise. See [Pricing and licensing](/start-here/pricing-and-licensing). Model usage is billed by your providers.
+  </Accordion>
+  <Accordion title="Can I keep using LiteLLM or another gateway?">
+    Yes. Add it as an OpenAI-compatible provider. See [Use OpenWork with LiteLLM or Bifrost](/ai-gateway/compare-litellm-bifrost#use-openwork-with-litellm-or-bifrost).
+  </Accordion>
+</AccordionGroup>
