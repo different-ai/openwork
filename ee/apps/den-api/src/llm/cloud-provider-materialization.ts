@@ -525,7 +525,7 @@ function buildProviderConfig(provider: CloudProviderMaterializationProvider) {
   }
 
   const whitelist = readStringList(provider.providerConfig.whitelist)
-  if (whitelist.length > 0) {
+  if (Array.isArray(provider.providerConfig.whitelist)) {
     config.whitelist = whitelist
   }
 

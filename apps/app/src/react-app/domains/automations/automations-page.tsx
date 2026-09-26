@@ -168,9 +168,6 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
   const ready = denAuth.isSignedIn && Boolean(client && organizationId)
   const queryRoot = ["den", "automations", organizationId]
   const zenModelRestricted = useDesktopRestriction("allowZenModel")
-  const freeStarterInRuntime = props.providerCatalog === undefined || Boolean(
-    props.providerCatalog[AUTOMATION_FREE_MODEL.providerId]?.[AUTOMATION_FREE_MODEL.modelId],
-  )
 
   const listQuery = useQuery({
     queryKey: [...queryRoot, "list"],
@@ -224,13 +221,19 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
     },
   })
 
+  const modelPlacement = creating ? placement : detailQuery.data?.revision.executionTarget ?? placement
+  const modelCatalog = modelPlacement === "desktop"
+    && (!detailQuery.data?.revision.workspaceId || creating || detailQuery.data.revision.workspaceId === props.workspaceId)
+    ? props.providerCatalog
+    : undefined
   // The free Zen starter is a published-Desktop exception; Cloud runs revalidate
   // against the organization's own providers.
   const models = useMemo(
     () => automationModelOptions(providersQuery.data ?? [], {
-      includeFreeStarter: placement === "desktop" && !zenModelRestricted && freeStarterInRuntime,
+      includeFreeStarter: modelPlacement === "desktop" && !zenModelRestricted,
+      catalog: modelCatalog,
     }),
-    [freeStarterInRuntime, placement, providersQuery.data, zenModelRestricted],
+    [modelPlacement, providersQuery.data, modelCatalog, zenModelRestricted],
   )
   const filteredItems = useMemo(() => {
     const normalized = query.trim().toLowerCase()
