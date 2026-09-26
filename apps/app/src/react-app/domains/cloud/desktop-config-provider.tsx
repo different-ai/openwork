@@ -12,7 +12,7 @@ import {
 } from "react";
 import { MCP_QUICK_CONNECT } from "../../../app/constants";
 import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "../settings/extension-state";
-import { DESKTOP_POLICY_ENFORCEMENT_ENABLED, desktopCapabilityConfig, desktopPolicyKeys } from "@openwork/types/den/desktop-policies";
+import { desktopCapabilityConfig, desktopPolicyKeys } from "@openwork/types/den/desktop-policies";
 
 import {
   checkDesktopAppRestriction,
@@ -215,7 +215,8 @@ type DesktopConfigState = {
  * Fetches the org-scoped desktop policy config
  * (`packages/types/den/desktop-policies.ts` shape) and caches it in
  * localStorage. The runtime projection omits desktop restrictions while
- * enforcement is suspended; Cloud entitlements and branding stay intact.
+ * enforcement is suspended; Cloud entitlements, branding and the
+ * organization's allowed desktop versions stay intact.
  * Re-fetches on Den session / settings events and on a one-hour interval.
  */
 export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) {
@@ -379,11 +380,15 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     [desktopConfigHandler],
   );
   const refreshFresh = useCallback(
-    // Eval refreshes still supply branding while policy enforcement is off.
-    // The handler applies the same capability projection as real config.
-    () => DESKTOP_POLICY_ENFORCEMENT_ENABLED || (import.meta.env.DEV && devRefreshDesktopConfigRef.current !== null)
-      ? desktopConfigHandler(true)
-      : Promise.resolve(currentDesktopConfigRef.current),
+    // Callers (updater checks and install re-check, recovery picker, onboarding
+    // branding) need the organization's current allowed desktop versions, so
+    // always fetch. When Den is unreachable or older and the fetch fails, fall
+    // back to the last known config instead of failing the update flow. Return
+    // the same capability projection the provider state uses so suspended
+    // desktop policy keys never reach them.
+    () => desktopConfigHandler(true)
+      .catch(() => currentDesktopConfigRef.current)
+      .then(desktopCapabilityConfig),
     [desktopConfigHandler],
   );
 

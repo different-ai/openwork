@@ -1,5 +1,12 @@
 # Forkable web evidence: branch-local implementation plan
 
+> **Status (2026-09):** shipped, then simplified. Checkpoints are explicit
+> (`user.checkpoint()`, `step(..., { checkpoint: true })`, end state of tests tagged
+> `checkpoints`), capture no longer waits for the snapshot to be saved, CI selects
+> tagged specs, and records publish through the normal evidence report. The
+> synthetic probe, branch-format report and per-PR review deployment below were
+> removed. See `packages/freestyle/README.md` for current behavior.
+
 ## Outcome and scope
 
 An opted-in web proof runs its test controller on Blacksmith and its complete

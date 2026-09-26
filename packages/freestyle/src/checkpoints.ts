@@ -64,7 +64,20 @@ export async function launchEvidenceWorld(template: { id: string; runtimeFingerp
   return allocate({ snapshotId: template.id, runtimeFingerprint: template.runtimeFingerprint, sourceSha, slug: `ow-evidence-source-${randomUUID().replaceAll("-", "")}`, kind: EVIDENCE_KIND }, api, probe);
 }
 
-export async function captureEvidenceCheckpoint(input: { vmId: string; sourceSha: string; imageHash: string }, api = client()): Promise<EvidenceCheckpoint> {
+export interface StartedCheckpoint {
+  checkpoint: EvidenceCheckpoint;
+  /** Resolves once the provider has fully saved the snapshot. Await it before deleting the VM. */
+  saved: Promise<void>;
+}
+
+/**
+ * Starts a snapshot and returns without waiting for it to be saved. Measured on
+ * the ACME template: the VM state is captured 0.2–4.1 s after the call starts and
+ * the VM keeps running, but the call only returns once the snapshot is fully saved
+ * (23–436 s). Callers hold input briefly, continue, and await `saved` before
+ * deleting the VM.
+ */
+export async function startEvidenceCheckpoint(input: { vmId: string; sourceSha: string; imageHash: string }, api = client()): Promise<StartedCheckpoint> {
   const vm = await api.vms.get(input.vmId);
   if (![EVIDENCE_KIND, FORK_KIND].includes(vm.metadata.kind) || vm.metadata.sourceSha !== input.sourceSha) throw new Error("Checkpoint source is not an owned evidence world");
   const handle = api.vms.ref(vm.id);
@@ -77,8 +90,17 @@ export async function captureEvidenceCheckpoint(input: { vmId: string; sourceSha
     sourceSha: input.sourceSha, imageHash: input.imageHash, capturedAt: new Date(now).toISOString(), expiresAt: new Date(now + 86400_000).toISOString() });
   await handle.fs.writeTextFile(countPath, String(count + 1));
   await handle.fs.writeTextFile(manifest, JSON.stringify(checkpoint), { mode: 0o600 });
-  const result = await handle.snapshot({ slug: checkpoint.id, ttlSeconds: 86400, autoDeleteSeconds: 86400 });
-  if (result.snapshot.public !== false) { await api.vms.snapshots.delete(result.snapshotId); throw new Error("Evidence snapshots must be private"); }
+  const saved = handle.snapshot({ slug: checkpoint.id, ttlSeconds: 86400, autoDeleteSeconds: 86400 }).then(async (result) => {
+    if (result.snapshot.public !== false) { await api.vms.snapshots.delete(result.snapshotId); throw new Error("Evidence snapshots must be private"); }
+  });
+  // Mark handled now; callers still observe a failure when they await it.
+  saved.catch(() => undefined);
+  return { checkpoint, saved };
+}
+
+export async function captureEvidenceCheckpoint(input: { vmId: string; sourceSha: string; imageHash: string }, api = client()): Promise<EvidenceCheckpoint> {
+  const { checkpoint, saved } = await startEvidenceCheckpoint(input, api);
+  await saved;
   return checkpoint;
 }
 

@@ -9,6 +9,7 @@ VM. It does not move the normal test suite or use real model credentials.
 ```sh
 pnpm --filter @openwork/review-app build
 pnpm evals:e2e web-checkpoint-fork --local --engine v1 --surface web --checkpoints
+# Any spec: tag its test { tags: ["checkpoints"] } and run it with --local --checkpoints.
 # Or open a standalone world, using the merged world/source API:
 pnpm world up evidence-web --place freestyle --source app-web=sha:<full-pushed-sha>
 ```
@@ -18,17 +19,25 @@ artifact. No Infisical integration is required or added. CI uses the existing
 protected `pr-slow-specs` environment and repository secret. The key's delivery
 can later change without changing capture or fork APIs.
 
-An opted-in world registers a capture provider with the testkit for its app
-browser and the app browsers opened inside verification forks. Their explicit
-`user.screenshot()` calls also save a checkpoint; `user.screenshot({ checkpoint:
-false })` keeps the ordinary behavior. The complete co-located web world is saved:
-Chromium memory, the engine, Den, databases, workspace files and the mock stream.
-The Blacksmith review browser and noVNC client are not that world; their images
-are labeled screenshot-only. Capture failure keeps the PNG and fails
-the checkpoint proof, rather than silently claiming an interactive checkpoint.
-There is no whole-VM checkpoint without a registered provider.
+Checkpoints are explicit and never part of the proof:
 
-Open the PR's **OpenWork Checkpoints** check for the branch-specific report.
+- A spec saves one with `user.checkpoint(caption?)` or `step(name, fn, { checkpoint: true })`.
+  Tests tagged `checkpoints` also keep their end state. `user.screenshot()` never saves one.
+- They run only with `--checkpoints`, on a world that advertises the capability
+  (`checkpointCapability` from `@openwork/env`). Only Freestyle-backed worlds do;
+  anywhere else the run prints one warning and continues unchanged.
+- Capture rule: take image A, start the snapshot without waiting for it to be
+  saved, send no input for 5 s (the VM state was captured 0.19–4.1 s after the
+  call in measurements), take image B. The same route and visible text label the
+  checkpoint **exact**, otherwise **approximate**. The world's `stop()` waits for
+  pending saves before deleting its VM.
+- A capture failure keeps the image, marks it screenshot-only and never fails the test.
+- Opened copies, the review browser and the noVNC client are never checkpointed.
+
+The complete co-located web world is saved: Chromium memory, the engine, Den,
+databases, workspace files and the mock stream.
+
+Checkpoint images appear in the PR's normal **OpenWork Evidence** report.
 Checkpoint pictures offer **Open from here** directly below the image and inside
 the image viewer, followed by **Enter saved browser**. Both controls share the
 same copy. **New copy** deliberately restores that same checkpoint again without
@@ -36,8 +45,8 @@ reloading the report; retrying a failed initial launch retains its request ID.
 Each new launch creates an independent copy behind the private preview gateway. The viewer shows the restored Chromium tab, not a new
 page. The deterministic streaming fixture pauses at a known point and exposes
 **Continue response** in the viewer. Real external-provider connections are not
-promised to survive a fork. Screenshot and snapshot capture are ordered, not
-atomic; the controlled stream hold is what makes the streaming comparison exact.
+promised to survive a fork. The controlled stream hold keeps the paused response still while its checkpoint
+is captured.
 
 The evidence world template is keyed by a fingerprint of the files that run
 inside the VM (server, app, Den, worlds, eval runtime packages, dependencies and
@@ -50,14 +59,14 @@ and three concurrent forks per checkpoint. Expiry preserves the screenshot.
 Request retries reuse the same fork instead of spending another slot. Provider
 TTL bounds orphan lifetime; normal teardown deletes source and verification VMs.
 
-The PR proof deploys a separate protected review preview from the same head and
-publishes a branch-format report there. It never updates the shared review alias
-or waits for a merge to `dev`. The plan and acceptance boundaries are in
+In CI, changed specs tagged `checkpoints` run in the protected checkpoint lane of
+`pr-proof.yml` with `--checkpoints`. Their records join the PR's normal evidence
+report, which the shared review app opens. The original plan is in
 [`docs/plans/web-evidence-checkpoints.md`](../../docs/plans/web-evidence-checkpoints.md).
 
 ## Existing preview preparation
 
-CI prepares one running snapshot per commit and world. Each reviewer launch still
+The first reviewer launch builds one running snapshot per commit and world. Each launch
 clones that snapshot into a separate VM with its own URLs, access token, and filesystem.
 ACME additionally isolates MySQL and Redis. Build caches never contain a reviewer's running VM.
 
@@ -66,8 +75,7 @@ clone with its web links hidden. It installs no MySQL or Redis and starts no Den
 AI Gateway, seeded accounts, or separate web preview. Its private viewer is the
 primary URL. The app's blank-slate profile isolates its home, config, engine and
 user-data paths. Desktop health and source refresh verify empty onboarding rather
-than invoking ACME session renewal. A separate CI job verifies two clones, exact
-source, signed-out state and access isolation before deleting them.
+than invoking ACME session renewal.
 
 Preparation reuses four private, immutable layers:
 
@@ -99,7 +107,18 @@ Template origins are placeholders that only the authenticated edge rewrites for
 browsers. ACME VMs refuse them locally (`/etc/hosts` to loopback): Den still advertises
 them to in-VM clients, and the signed-in desktop's OpenWork Cloud MCP otherwise hung
 at the public edge on every sync, starving the VM until desktop setup reached the
-snapshot deadline. Cloud MCP is unavailable in previews either way.
+snapshot deadline. The desktop itself reaches Den through a loopback front
+(`http://127.0.0.1:5190`) that serves Den's API paths like the gateway and translates
+template origins to its own. Its Cloud MCP endpoint and Connect App index therefore
+share one loopback origin, which the dev-mode desktop trusts, so Connect-hosted MCP
+Apps load in the world desktop.
+
+Den also hands these origins to third parties itself. Connecting an OAuth MCP server,
+the provider registers Den's callback (dynamic client registration) or fetches Den's
+client metadata document, and checks the callback again at token exchange, while the
+browser only ever sees the clone's. ACME previews preload `src/egress.mjs` into Den to
+apply the gateway's translation to requests leaving the VM, and the gateway serves
+Den's public client metadata document without the preview cookie.
 
 CI's desktop chat check runs inside the clone with its own 240-second deadline, always
 prints one result line (step names and timings only) and exits; the host waits longer,
@@ -123,17 +142,8 @@ and startup commands still do.
 Changing dependencies or build inputs can still take several minutes. The fastest path
 is a frontend change whose backend and build inputs are already cached.
 
-To measure reliability on a branch before merging, dispatch the prewarm workflow
-against it with a soak: `gh workflow run freestyle-prewarm.yml --ref <branch> -f soak_runs=30`.
-After the normal checks, the ACME job repeats the complete verification that many
-times against the same snapshot (five at a time by default), uploads
-`freestyle-soak-proof.json`, and fails unless every run passes. Thirty clean runs
-bound the failure rate below 10% at 95% confidence; sixty, below 5%. The branch's
-workflow pin decides which controller runs. Locally:
-`node --env-file=.env.freestyle.local scripts/soak-freestyle-preview.ts <sha> 10 5`.
-
-CI uploads `freestyle-build-proof-<world>.json` and writes a stage table to its job
-summary. `totalMs` measures preparation through a fully materialized running snapshot,
+`scripts/prepare-freestyle-preview.ts` writes `freestyle-build-proof-<world>.json` and a stage
+table (to the job summary when run in Actions). `totalMs` measures preparation through a fully materialized running snapshot,
 including cache misses, and excludes runner setup and subsequent independent-clone
 checks. Nested stage durations overlap: do not add them. A `world` cache hit means
 that exact commit was already prepared and is not evidence of a fast new build.

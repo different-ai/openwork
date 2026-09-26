@@ -83,7 +83,6 @@ test("the proxy keeps moved history, actions, active state and events in the hom
     const request = new Request(`http://openwork.test${path}`, { method });
     return proxyOpencodeV2Request({ config, workspace, request, url: new URL(request.url), proxyPath: `/opencode2${path}`,
       actor: { type: "host", scope: "owner" }, connection: { url: `http://127.0.0.1:${native.port}`, username: "opencode", password: "test" },
-      syncWorkspaceSkills: async () => {},
     });
   };
   try {
@@ -152,7 +151,6 @@ test("moved questions and approvals are recovered by home, with nested form even
     const request = new Request(`http://openwork.test${path}`, { method });
     return proxyOpencodeV2Request({ config, workspace, request, url: new URL(request.url), proxyPath: `/opencode2${path}`,
       actor: { type: "host", scope: "owner" }, connection: { url: `http://127.0.0.1:${native.port}`, username: "opencode", password: "test" },
-      syncWorkspaceSkills: async () => {},
     });
   };
   try {

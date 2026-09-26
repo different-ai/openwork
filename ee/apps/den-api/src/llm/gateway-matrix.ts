@@ -4,10 +4,11 @@ import { AuthUserTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, 
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { createGatewayModelAlias, gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
 import { inferenceCredentialEnvNames, isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
+import { isAwsRegion } from "@openwork-ee/utils/inference-egress"
 import { parseGatewayProviderSecret, type GatewayAccessGrant, type GatewayAccessGrantWrite, type GatewayCredentialSet, type GatewayCredentialSetPatch, type GatewayModelGroup, type GatewayModelGroupPatch, type GatewayProviderDetails, type GatewayProviderSummary, type GatewayUsableModel } from "@openwork/types/den/gateway"
 import { db } from "../db.js"
 import { env } from "../env.js"
-import { buildGatewayModelConfig, buildGatewayProviderConfig, buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "./inference-provider-config.js"
+import { bedrockSettingsError, isAwsGatewayNpm, buildGatewayModelConfig, buildGatewayProviderConfig, buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "./inference-provider-config.js"
 import { isGoogleOAuthInferenceProviderId } from "./inference-provider-google-oauth.js"
 import { effectiveGatewayGrants, memberGatewayTeams } from "./inference-provider-lifecycle.js"
 import { getModelsDevProvider, type ModelsDevProvider } from "./models-dev.js"
@@ -35,6 +36,8 @@ export function validateGatewaySettings(config: Record<string, unknown>, setting
       throw new GatewayWriteError(400, "invalid_settings", "Vertex requires a 6-63 character project ID or 6-20 digit project number, and global or a region ending in digits.")
     }
   }
+  const bedrockError = isAwsGatewayNpm(npm) ? bedrockSettingsError(settings) : null
+  if (bedrockError) throw new GatewayWriteError(400, "invalid_settings", bedrockError)
   if (npm === "@ai-sdk/azure" && (typeof settings.resourceName !== "string" || !/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/.test(settings.resourceName))) {
     throw new GatewayWriteError(400, "invalid_settings", "Azure requires a resourceName DNS label.")
   }
@@ -191,9 +194,50 @@ function normalizeCredential(input: GatewayCredentialSetPatch, provider: Gateway
   try {
     const parsed = parseGatewayProviderSecret(credential.kind, credential.secret)
     if (!isInferenceCredentialKindSupported(parsed.kind, provider.provider_id)
-      || parsed.kind === "api_key_map" && !pickInferenceApiKeyFromMap(parsed.apiKeys, envNames)) throw new Error("invalid")
+      || parsed.kind === "api_key_map" && !pickInferenceApiKeyFromMap(parsed.apiKeys, envNames)
+      || parsed.kind === "aws_keys" && parsed.awsKeys.region !== undefined && !isAwsRegion(parsed.awsKeys.region)) throw new Error("invalid")
   } catch { throw new GatewayWriteError(400, "invalid_credential", "Credential kind and key fields must match the trusted provider catalog.") }
   return credential
+}
+
+/**
+ * Copies the org AWS credential of another Amazon Bedrock provider in the same
+ * organization, server-side, so an admin can reuse saved keys without the
+ * secret ever reaching the browser. Only an active org-mode set with exactly
+ * one active AWS keys or Bedrock API key credential qualifies. A region stored
+ * on the source keys is dropped so the new provider's own region applies.
+ */
+export async function reusableAwsCredential(tx: GatewayTx, target: GatewayProvider, sourceId: string): Promise<CredentialInput> {
+  const unavailable = () => new GatewayWriteError(400, "credential_source_unavailable", "Those saved AWS keys can't be reused. Enter the keys for this provider instead.")
+  if (!isAwsGatewayNpm(readProviderConfigNpm(target.provider_config))) throw unavailable()
+  const [source] = await tx.select().from(GatewayProviderTable)
+    .where(and(eq(GatewayProviderTable.id, normalizeDenTypeId("inferenceProvider", sourceId)), eq(GatewayProviderTable.organization_id, target.organization_id)))
+  if (!source || source.id === target.id || source.status !== "active" || !isAwsGatewayNpm(readProviderConfigNpm(source.provider_config))) throw unavailable()
+  const rows = await tx.select({ credential: GatewayProviderCredentialTable }).from(GatewayProviderCredentialTable)
+    .innerJoin(GatewayCredentialSetTable, eq(GatewayCredentialSetTable.id, GatewayProviderCredentialTable.credential_set_id))
+    .where(and(
+      eq(GatewayProviderCredentialTable.gateway_provider_id, source.id),
+      eq(GatewayProviderCredentialTable.organization_id, target.organization_id),
+      eq(GatewayProviderCredentialTable.subject, "org"),
+      isNull(GatewayProviderCredentialTable.org_membership_id),
+      eq(GatewayProviderCredentialTable.status, "active"),
+      eq(GatewayCredentialSetTable.gateway_provider_id, source.id),
+      eq(GatewayCredentialSetTable.credential_mode, "org"),
+      eq(GatewayCredentialSetTable.status, "active"),
+    ))
+  const usable = rows.map((row) => row.credential)
+    .filter((row) => (row.kind === "aws_keys" || row.kind === "api_key") && (!row.expires_at || row.expires_at.getTime() > Date.now()))
+  if (usable.length !== 1) throw unavailable()
+  const [credential] = usable
+  try {
+    const parsed = parseGatewayProviderSecret(credential.kind, credential.secret)
+    if (parsed.kind === "aws_keys") {
+      const { region: _region, ...keys } = parsed.awsKeys
+      return { kind: "aws_keys", secret: JSON.stringify(keys) }
+    }
+    if (parsed.kind === "api_key" && parsed.apiKey) return { kind: "api_key", secret: parsed.apiKey }
+  } catch { /* A malformed source is simply not reusable. */ }
+  throw unavailable()
 }
 
 export async function writeGatewaySet(tx: GatewayTx, provider: GatewayProvider, input: GatewayCredentialSetPatch, target: GatewaySet["id"] | { createdByOrgMembershipId: GatewayMemberId }) {

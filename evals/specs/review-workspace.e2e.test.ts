@@ -13,6 +13,7 @@ test("a reviewer can triage failures and inspect linked evidence without losing 
     await user.see({ role: "heading", text: "Sharing a skill, from link to access" });
     await user.notSee({ role: "combobox", label: "Preview world" });
     await user.see({ text: "Selected evidence: Failed" });
+    await user.see({ text: "1 section has a failing check. Start there." });
     await user.click({ role: "button", text: "Failed (1)" });
     expect((await probe.dom(".sections > .section")).elements).toHaveLength(1);
     expect((await probe.dom(".checks[open]")).elements).toHaveLength(1);
@@ -22,7 +23,7 @@ test("a reviewer can triage failures and inspect linked evidence without losing 
     await user.see({ text: "No incomplete sections." });
     await user.click({ role: "button", text: "Next failure" });
     expect((await probe.dom(".sections > .section")).elements).toHaveLength(3);
-    evidence.recordAssertionEvidence("Failure filters and next-failure navigation preserve honest results", "The failed report filters to one failed section with expanded assertions; the empty incomplete filter gives recovery; Next failure restores all three sections.", true);
+    evidence.recordAssertionEvidence("Failure filters and next-failure navigation preserve honest results", "The verdict banner names the failing section count; the failed report filters to one failed section with expanded checks; the empty incomplete filter gives recovery; Next failure restores all three sections.", true);
   });
 
   await step("screenshots retain source assertions, support zoom, and restore keyboard focus", async () => {
@@ -62,6 +63,7 @@ test("a reviewer can triage failures and inspect linked evidence without losing 
     await user.navigate(`${world.baseUrl}/r/${world.incomplete}`);
     await user.click({ role: "button", text: "Incomplete (1)" });
     await user.see({ text: "Selected evidence: Incomplete" });
+    await user.see({ text: "Nothing failed, but 1 section is missing evidence or waiting for a judgment and 1 declared gap." });
     await user.see({ text: "Desktop restart remains outside this selected evidence." });
     await user.screenshot();
     await user.navigate(`${world.baseUrl}/r/${world.reference}`);

@@ -11,8 +11,15 @@ import type { PackagedFlavor } from "../worlds/packaged-first-launch.ts";
 
 const test = spec.world(packagedFirstLaunchWorld, { timeout: 180_000 });
 
+/**
+ * What a brand-new machine sees on first launch. The cloud and enterprise
+ * flavors render a gate above the routes: cloud requires sign-in and
+ * enterprise requires activation (then sign-in). Both are build properties,
+ * independent of the suspended desktop policies. The public flavor has no gate
+ * and is covered by app-smoke.
+ */
 const FIRST_LAUNCH_HEADING: Partial<Record<PackagedFlavor, string>> = {
-  cloud: "What do you need done?",
+  cloud: "Welcome to OpenWork",
   enterprise: "Link this app to your organization",
 };
 
@@ -66,7 +73,9 @@ test("a packaged flavor renders its first-launch surface without a render crash"
     expect(usable.some((control) => control.tag === "input" && control.testId === "organization-server-input"), "Workspace address must remain visible and enabled").toBe(true);
     expect(usable.some((control) => control.tag === "button" && control.testId === "organization-server-continue"), "Continue must remain visible and enabled").toBe(true);
   } else {
-    expect(usable.some((control) => control.editable), "Signed-out task composer must remain visible and editable").toBe(true);
+    expect(usable.some((control) => control.tag === "button" && control.text === "Sign in to OpenWork"), "Sign in must remain visible and enabled").toBe(true);
+    expect(usable.some((control) => control.tag === "button" && control.text === "Paste sign-in code"), "Sign-in code disclosure must remain visible and enabled").toBe(true);
+    expect(final.rootText, "a cloud install let local work start before sign-in").not.toContain("What do you need done?");
   }
   const exceptions = world.exceptions();
   const knownRejections = exceptions.filter(isKnownRejection);

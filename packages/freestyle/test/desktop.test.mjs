@@ -7,7 +7,10 @@ import { pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { startDesktop, desktopProfileEnvironment } from "../src/desktop.mjs";
+import { startDesktop, startDesktopDenFront, desktopProfileEnvironment } from "../src/desktop.mjs";
+import { createServer } from "node:http";
+import { once } from "node:events";
+import { templateOrigins } from "../src/origins.mjs";
 import { bootDesktopOnly } from "../src/desktop-runtime.mjs";
 import { inspectDesktop } from "../src/desktop-state.mjs";
 import { refreshDesktop } from "../src/desktop-refresh.mjs";
@@ -89,6 +92,51 @@ test("fresh profiles isolate every state path and do not inherit credentials or 
     assert.equal(globalOpencodeConfigDir(options), env.OPENCODE_CONFIG_DIR);
     await assert.rejects(readFile(env.OPENWORK_DESKTOP_BOOTSTRAP_PATH), { code: "ENOENT" });
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("the desktop's Den front keeps Cloud MCP and the Connect App index on its own loopback origin", async () => {
+  const seen = [];
+  const listen = async (name, handler) => {
+    const server = createServer((req, res) => { seen.push(`${name} ${req.method} ${req.url} ${req.headers["accept-encoding"]}`); handler(req, res); });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return { server, url: `http://127.0.0.1:${server.address().port}` };
+  };
+  const index = JSON.stringify({ servers: [{ url: `${templateOrigins.den}/mcp/agent/connections/cob_1` }] });
+  const web = await listen("web", (req, res) => {
+    if (req.url === "/api/runtime-config") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ denApiUrl: templateOrigins.den, docs: `${templateOrigins.den}/docs` })); return; }
+    if (req.url === "/logo.png") { res.writeHead(200, { "content-type": "image/png" }); res.end(templateOrigins.den); return; }
+    res.writeHead(302, { location: `${templateOrigins.den}/login` }); res.end();
+  });
+  const api = await listen("api", (req, res) => {
+    if (req.url === "/v1/mcp/token") {
+      const body = JSON.stringify({ resource: `${templateOrigins.den}/mcp` });
+      res.writeHead(200, { "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) }); res.end(body); return;
+    }
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.end(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: 1, result: { contents: [{ text: index }] } })}\n\n`);
+  });
+  const stack = new AsyncDisposableStack();
+  try {
+    const front = await startDesktopDenFront(stack, { webUrl: web.url, apiUrl: api.url }, 0);
+    const origin = front.webUrl;
+    assert.equal(front.apiUrl, `${origin}/api/den`);
+    assert.deepEqual(await (await fetch(`${origin}/api/runtime-config`)).json(), { denApiUrl: `${origin}/api/den`, docs: `${origin}/docs` });
+    // The desktop derives its Cloud MCP URL from the token's resource, then reads the
+    // App index there; both must name this origin to be reachable and trusted.
+    assert.deepEqual(await (await fetch(`${front.apiUrl}/v1/mcp/token`)).json(), { resource: `${origin}/mcp` });
+    const stream = await (await fetch(`${origin}/mcp/agent`, { method: "POST", body: "{}" })).text();
+    const event = JSON.parse(stream.split("data: ")[1]);
+    assert.deepEqual(JSON.parse(event.result.contents[0].text), { servers: [{ url: `${origin}/mcp/agent/connections/cob_1` }] });
+    assert.equal((await fetch(`${origin}/dashboard`, { redirect: "manual" })).headers.get("location"), `${origin}/login`);
+    assert.equal(await (await fetch(`${origin}/logo.png`)).text(), templateOrigins.den);
+    assert.deepEqual(seen.filter((line) => !line.startsWith("web GET /api/runtime-config")), [
+      "api GET /v1/mcp/token identity", "api POST /mcp/agent identity", "web GET /dashboard identity", "web GET /logo.png identity",
+    ]);
+  } finally {
+    await stack.disposeAsync();
+    web.server.close(); api.server.close();
+  }
 });
 
 test("shared launcher has no Den front, sign-in or workspace side effects without a world", async (t) => {

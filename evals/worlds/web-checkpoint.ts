@@ -5,20 +5,21 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { allocateFreePort, setViewport, evaluate, browserScript } from "@openwork/cdp";
-import type { Surface } from "@openwork/cdp";
 import { chrome, localHost } from "@openwork/hosts";
 import { freestyleEvidenceWeb, attachEvidenceBrowser } from "@openwork/env";
 import type { EvidenceCheckpoint } from "../../packages/freestyle/src/checkpoint-schema.ts";
 import { uploadReview } from "@openwork/review/storage";
 import type { ReviewReport } from "@openwork/review";
 import { client } from "../../packages/freestyle/src/index.ts";
-import { captureEvidenceCheckpoint, deleteEvidenceVm, FORK_KIND, readEvidenceSession, continueEvidenceStream } from "../../packages/freestyle/src/checkpoints.ts";
+import { deleteEvidenceVm, FORK_KIND, readEvidenceSession, continueEvidenceStream } from "../../packages/freestyle/src/checkpoints.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
-type BindCheckpoint = (surface: Surface, capture: (input: { imageHash: string; capturedAt: string }) => Promise<EvidenceCheckpoint>) => () => void;
-
-export async function checkpointWorld(bindCheckpoint: BindCheckpoint) {
+/**
+ * The web world runs in its own Freestyle VM and advertises that it can be
+ * checkpointed; the runner-local review app and browsers exercise the result.
+ */
+export async function checkpointWorld() {
   if (process.env.OPENWORK_EVIDENCE_CHECKPOINTS !== "1") throw new Error("Opt in with OPENWORK_EVIDENCE_CHECKPOINTS=1");
   const sourceSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
   if (process.env.OPENWORK_EVIDENCE_SOURCE_SHA && process.env.OPENWORK_EVIDENCE_SOURCE_SHA !== sourceSha) throw new Error("Evidence source must equal the runner checkout");
@@ -26,8 +27,8 @@ export async function checkpointWorld(bindCheckpoint: BindCheckpoint) {
   const temporary = await mkdtemp(join(tmpdir(), "openwork-web-checkpoint-"));
   resources.defer(() => rm(temporary, { recursive: true, force: true }));
   try {
+    // The evidence world advertises its checkpoint capability; spreading keeps it.
     const world = resources.use(await freestyleEvidenceWeb(sourceSha));
-    resources.defer(bindCheckpoint(world.app, world.capture));
     const host = resources.use(localHost());
     const reviewer = resources.use(await chrome({ host, name: "checkpoint-reviewer", headless: true }));
     await setViewport(reviewer, { width: 1440, height: 1000, deviceScaleFactor: 1 });
@@ -97,8 +98,8 @@ export async function checkpointWorld(bindCheckpoint: BindCheckpoint) {
         const vm = created[0];
         resources.defer(() => deleteEvidenceVm(vm.id));
         const session = await readEvidenceSession(vm.id, sourceSha, api);
+        // Opened copies are for the reviewer to explore; they are never checkpointed.
         const app = resources.use(await attachEvidenceBrowser(session));
-        resources.defer(bindCheckpoint(app, ({ imageHash }) => captureEvidenceCheckpoint({ vmId: vm.id, sourceSha, imageHash }, api)));
         return { app, viewerUrl: session.url, continueStream: () => continueEvidenceStream(vm.id), id: vm.id,
           async streamState(): Promise<unknown> {
             const response = await fetch(new URL("/__evidence/state", session.url), { headers: { cookie: session.cookie }, signal: AbortSignal.timeout(10_000) });

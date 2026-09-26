@@ -2,6 +2,19 @@
 title: "Changelog"
 "og:description": "OpenWork release notes: new features, improvements, and bug fixes."
 ---
+<Update label="September 25th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.54](https://github.com/different-ai/openwork/compare/v0.18.52...v0.18.54): Enterprise sign-in and version pinning are back, plus Amazon Bedrock and model shortcuts
+
+  - **Organization sign-in and allowed versions work again.** OpenWork Enterprise and OpenWork Cloud desktops once again ask people to sign in to their organization before they start working, and desktop updates skip any version an admin removed from **Allowed desktop versions**. Other desktop policies stay saved but are not enforced on the desktop while they are redesigned.
+  - **Amazon Bedrock in AI Gateway.** For admins: add Amazon Bedrock and Amazon Bedrock (OpenAI) with an AWS region and access keys, and reuse the saved keys for the second one. Anthropic effort choices are kept through the gateway.
+  - **Switch models with a key.** In Settings › Keyboard shortcuts you can bind a key to a saved model with its reasoning level and Fast. ⌃⇧F (Ctrl+Alt+F on Windows and Linux) turns Fast on or off, and the model name shows "· Fast" while it's on.
+  - **Chat keeps its place.** Editing a message while a reply is running replaces it instead of queueing the edit. Conversations stay in their folder when an agent changes directory, and questions and approvals no longer disappear. You can switch between OpenCode engines from the command palette and choose whether to copy older chats across. Agent tool work is summarized by what it did instead of raw tool names.
+  - **Simpler connector setup.** For admins in OpenWork Cloud: API-key, custom sign-in, Google Workspace and Microsoft 365 connectors use the new setup flow and can be edited in place, and Plugins has clearer filters. Apps like Claude Code, Codex and Cursor can connect to OpenWork Connect without registering first, failed sign-ins explain what to do next, and the MCP docs have one-click Cursor and VS Code install links.
+  - **Also in this release.** Windows installers are published again. Updating no longer fails with a checksum error after a release is re-run. Update controls in Settings are more compact, a second OpenWork profile no longer stops the first one's engine, and the website shows OpenWork's completed SOC 2 Type II audit.
+
+</Update>
+
 <Update label="September 24th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
   ## [v0.18.52](https://github.com/different-ai/openwork/compare/v0.18.50...v0.18.52): Manage your Library from the desktop, find anything from one + menu, and a rebuilt AI Gateway

@@ -17,7 +17,8 @@ import { matrixRow, memoryStore, row as oauthRow } from "./google-oauth-refresh-
 import type { GatewayAccessRow } from "../src/provider-access.js"
 import { createProviderCatalog, getCatalogProvider } from "../src/provider-catalog.js"
 import type { GatewayRequestLogRow as InferenceRequestLogRow } from "../src/request-log.js"
-import { bedrockStreamFrames } from "./helpers/event-stream.js"
+import { bedrockStreamFrames, eventStreamFrame } from "./helpers/event-stream.js"
+import { loadPricingCatalogFromFile } from "../src/pricing.js"
 
 process.env.OPENWORK_DEV_MODE = "1"
 process.env.DATABASE_URL = "mysql://fixture:fixture@127.0.0.1:1/gateway_unit_fixture"
@@ -49,8 +50,15 @@ const catalog = createProviderCatalog({
   "google-vertex-anthropic": { npm: "@ai-sdk/google-vertex/anthropic", env: ["GOOGLE_VERTEX_PROJECT"] },
   openrouter: { npm: "@openrouter/ai-sdk-provider", api: "https://openrouter.ai/api/v1", env: ["OPENROUTER_API_KEY"] },
   groq: { npm: "@ai-sdk/groq", api: "https://api.groq.com/openai/v1", env: ["GROQ_API_KEY"] },
-  "amazon-bedrock": { npm: "@ai-sdk/amazon-bedrock", env: ["AWS_ACCESS_KEY_ID"] },
+  "amazon-bedrock": {
+    npm: "@ai-sdk/amazon-bedrock", env: ["AWS_ACCESS_KEY_ID"],
+    models: {
+      "openai.gpt-5.5": { id: "openai.gpt-5.5", provider: { npm: "@ai-sdk/amazon-bedrock/mantle", api: "https://bedrock-mantle.${AWS_REGION}.api.aws/openai/v1", shape: "responses" } },
+      "openai.gpt-oss-20b": { id: "openai.gpt-oss-20b", provider: { npm: "@ai-sdk/amazon-bedrock/mantle", api: "https://bedrock-mantle.${AWS_REGION}.api.aws/v1", shape: "responses" } },
+    },
+  },
 })
+const mantleProvider = { provider_id: "amazon-bedrock-mantle", provider_config: { npm: "@ai-sdk/amazon-bedrock/mantle" }, settings: { region: "us-west-2" } }
 
 type UpstreamRequest = {
   url: string
@@ -171,7 +179,7 @@ function createTestServer(options: TestServerOptions = {}) {
   const credentialRow = options.credential === null ? null : credential(options.credential)
   const base = matrixRow()
   const set: GatewayAccessRow["credentialSet"] = { ...base.credentialSet, id: credentialSetId, gateway_provider_id: providerId, credential_mode: "org", ...options.credentialSet }
-  const accessRows = options.accessRows ?? ["mistral-small-latest", "mistral-embed", "fixture", "gpt-4o", "gpt-5", "claude-sonnet-4-5", "llama-3", "x", "gemini-2.5-pro", "gemini", "claude", "anthropic.claude-3-5-sonnet-20241022-v2:0"].map((model): GatewayAccessRow => ({
+  const accessRows = options.accessRows ?? ["mistral-small-latest", "mistral-embed", "fixture", "gpt-4o", "gpt-5", "claude-sonnet-4-5", "llama-3", "x", "gemini-2.5-pro", "gemini", "claude", "anthropic.claude-3-5-sonnet-20241022-v2:0", "us.anthropic.claude-sonnet-4-6", "openai.gpt-5.5", "openai.gpt-oss-20b"].map((model): GatewayAccessRow => ({
     ...base, credentialSet: set,
     grant: { ...base.grant, gateway_provider_id: providerId, org_membership_id: null, audience_key: "organization" },
     group: { ...base.group, gateway_provider_id: providerId },
@@ -1376,6 +1384,234 @@ test("bedrock: non-stream converse JSON usage; settings.region host; missing reg
   const missingRow = await waitForRows(missing.logRows)
   assert.equal(missingRow.error_code, "provider_misconfigured")
   assert.equal(missingRow.gateway_provider_credential_id, credentialId)
+})
+
+test("bedrock: host is derived from the region; catalog URLs, unapproved overrides and invalid regions never choose the destination", async () => {
+  const catalogUrls = createTestServer({
+    provider: {
+      provider_id: "amazon-bedrock",
+      provider_config: { npm: "@ai-sdk/amazon-bedrock", api: "https://catalog.example.test", options: { baseURL: "https://options.example.test" } },
+      settings: { region: "ap-southeast-2" },
+    },
+    credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b" }) },
+    fetch: async () => Response.json({ output: {}, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }),
+  })
+  const response = await catalogUrls.app.fetch(gatewayRequest({ path: "/model/claude/converse", body: { messages: [] } }))
+  assert.equal(response.status, 200)
+  await response.arrayBuffer()
+  assert.equal(catalogUrls.upstreamRequests[0]?.url, "https://bedrock-runtime.ap-southeast-2.amazonaws.com/model/claude/converse")
+
+  // An operator-allowlisted origin (private endpoint/proxy) may carry a Bedrock API key.
+  const operator = createTestServer({
+    provider: { provider_id: "amazon-bedrock", provider_config: { npm: "@ai-sdk/amazon-bedrock" }, settings: { region: "us-east-1", upstreamBaseUrl: "http://127.0.0.1:4321" } },
+    credential: { kind: "api_key", secret: "bedrock-api-key" },
+    fetch: async () => Response.json({ output: {} }),
+  })
+  const operatorResponse = await operator.app.fetch(gatewayRequest({ path: "/model/claude/converse", body: { messages: [] } }))
+  assert.equal(operatorResponse.status, 200)
+  await operatorResponse.arrayBuffer()
+  assert.equal(operator.upstreamRequests[0]?.url, "http://127.0.0.1:4321/model/claude/converse")
+
+  for (const [settings, keyRegion] of [[{ region: "us-east-1", upstreamBaseUrl: "https://attacker.example.test/v1" }, undefined], [{ region: "us-east-1.attacker.test" }, undefined], [{ region: "us-east-1" }, "attacker.test/x"], [{ region: "US-EAST-1" }, undefined]] as const) {
+    const fixture = createTestServer({
+      provider: { provider_id: "amazon-bedrock", provider_config: { npm: "@ai-sdk/amazon-bedrock" }, settings },
+      credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b", ...(keyRegion ? { region: keyRegion } : {}) }) },
+    })
+    const rejected = await fixture.app.fetch(gatewayRequest({ path: "/model/claude/converse", body: { messages: [] } }))
+    assert.equal(rejected.status, 502)
+    assert.equal((await readError(rejected)).code, "provider_misconfigured")
+    assert.equal(fixture.upstreamRequests.length, 0)
+  }
+})
+
+test("bedrock: a Bedrock API key is forwarded as a bearer to the settings region without SigV4", async () => {
+  const { app, upstreamRequests } = createTestServer({
+    provider: { provider_id: "amazon-bedrock", provider_config: { npm: "@ai-sdk/amazon-bedrock" }, settings: { region: "eu-central-1" } },
+    credential: { kind: "api_key", secret: "bedrock-api-key" },
+    fetch: async () => Response.json({ output: {}, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }),
+  })
+  const response = await app.fetch(gatewayRequest({ path: "/model/claude/converse", body: { messages: [] } }))
+  assert.equal(response.status, 200)
+  await response.arrayBuffer()
+  assert.equal(upstreamRequests[0]?.url, "https://bedrock-runtime.eu-central-1.amazonaws.com/model/claude/converse")
+  assert.equal(upstreamRequests[0]?.headers.get("authorization"), "Bearer bedrock-api-key")
+  assert.equal(upstreamRequests[0]?.headers.get("x-amz-date"), null)
+})
+
+test("bedrock: Converse tool calls, images and cache points pass through unchanged and the event stream is relayed byte-for-byte", async () => {
+  const body = {
+    system: [{ text: "Be brief." }, { cachePoint: { type: "default" } }],
+    messages: [
+      { role: "user", content: [{ text: "Weather?" }, { image: { format: "png", source: { bytes: "iVBORw0KGgo=" } } }] },
+      { role: "assistant", content: [{ toolUse: { toolUseId: "t1", name: "weather", input: { city: "Paris", model: "not-a-selection" } } }] },
+      { role: "user", content: [{ toolResult: { toolUseId: "t1", content: [{ json: { tempC: 21 } }], status: "success" } }] },
+    ],
+    toolConfig: { tools: [{ toolSpec: { name: "weather", description: "Get weather", inputSchema: { json: { type: "object", properties: { city: { type: "string" } } } } } }], toolChoice: { auto: {} } },
+    inferenceConfig: { maxTokens: 256, temperature: 0 },
+    additionalModelRequestFields: { thinking: { type: "enabled", budget_tokens: 1024 } },
+  }
+  const streamBytes = [
+    eventStreamFrame("messageStart", { role: "assistant" }),
+    eventStreamFrame("contentBlockStart", { contentBlockIndex: 0, start: { toolUse: { toolUseId: "t2", name: "weather" } } }),
+    eventStreamFrame("contentBlockDelta", { contentBlockIndex: 0, delta: { toolUse: { input: "{\"city\":\"Lyon\"}" } } }),
+    eventStreamFrame("contentBlockStop", { contentBlockIndex: 0 }),
+    eventStreamFrame("messageStop", { stopReason: "tool_use" }),
+    eventStreamFrame("metadata", { usage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 }, metrics: { latencyMs: 300 } }),
+  ]
+  const { app, upstreamRequests, logRows } = createTestServer({
+    provider: { provider_id: "amazon-bedrock", provider_config: { npm: "@ai-sdk/amazon-bedrock" }, settings: { region: "us-east-1" } },
+    credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b" }) },
+    fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const frame of streamBytes) controller.enqueue(frame)
+        controller.close()
+      },
+    }), { status: 200, headers: { "content-type": "application/vnd.amazon.eventstream" } }),
+  })
+  const response = await app.fetch(gatewayRequest({ path: "/model/us.anthropic.claude-sonnet-4-6/converse-stream", body }))
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get("content-type"), "application/vnd.amazon.eventstream")
+  const relayed = new Uint8Array(await response.arrayBuffer())
+  const expected = new Uint8Array(streamBytes.reduce((sum, frame) => sum + frame.byteLength, 0))
+  let offset = 0
+  for (const frame of streamBytes) { expected.set(frame, offset); offset += frame.byteLength }
+  assert.deepEqual(relayed, expected)
+  assert.equal(upstreamRequests[0]?.url, "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-6/converse-stream")
+  assert.deepEqual(parseJsonObject(upstreamRequests[0]?.body ?? null), body)
+  const row = await waitForRows(logRows)
+  assert.equal(row.outcome, "ok")
+  assert.equal(row.requested_model, "us.anthropic.claude-sonnet-4-6")
+  assert.equal(row.total_tokens, 19)
+})
+
+test("bedrock: AWS auth failures are replaced with a sanitized Bedrock-shaped error that never echoes the canonical request", async () => {
+  const leak = "The Canonical String for this request should have been 'POST\n/model/claude/converse\n\nx-amz-security-token:SESSION_SECRET_MARKER\n'"
+  for (const [errorType, code] of [
+    ["SignatureDoesNotMatchException:http://internal.amazon.com/coral/com.amazon.coral.service/", "provider_authentication_failed"],
+    ["UnrecognizedClientException", "provider_authentication_failed"],
+    ["ExpiredTokenException", "provider_authentication_failed"],
+    ["AccessDeniedException", "provider_permission_denied"],
+  ] as const) {
+    const { app, logRows } = createTestServer({
+      provider: { provider_id: "amazon-bedrock", provider_config: { npm: "@ai-sdk/amazon-bedrock" }, settings: { region: "us-east-1" } },
+      credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b", sessionToken: "SESSION_SECRET_MARKER" }) },
+      fetch: async () => Response.json({ message: leak }, { status: 403, headers: { "x-amzn-errortype": errorType, "x-amzn-requestid": "aws-req" } }),
+    })
+    const response = await app.fetch(gatewayRequest({ path: "/model/claude/converse", body: { messages: [] } }))
+    assert.equal(response.status, 403)
+    const text = await response.text()
+    assert.ok(!text.includes("SESSION_SECRET_MARKER"))
+    const payload = parseJsonObject(text)
+    assert.equal(typeof payload.message, "string")
+    assert.ok(isRecord(payload.error))
+    assert.equal(payload.error.code, code)
+    const row = await waitForRows(logRows)
+    assert.equal(row.outcome, "upstream_error")
+    assert.equal(row.error_code, code)
+  }
+
+  const throttled = createTestServer({
+    provider: { provider_id: "amazon-bedrock", provider_config: { npm: "@ai-sdk/amazon-bedrock" }, settings: { region: "us-east-1" } },
+    credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b" }) },
+    fetch: async () => Response.json({ message: "Too many requests, please wait before trying again." }, { status: 429, headers: { "x-amzn-errortype": "ThrottlingException" } }),
+  })
+  const throttledResponse = await throttled.app.fetch(gatewayRequest({ path: "/model/claude/converse", body: { messages: [] } }))
+  assert.equal(throttledResponse.status, 429)
+  assert.equal(throttledResponse.headers.get("x-amzn-errortype"), "ThrottlingException")
+  assert.deepEqual(await throttledResponse.json(), { message: "Too many requests, please wait before trying again." })
+})
+
+test("mantle: the catalog derives amazon-bedrock-mantle with per-model API paths from the Bedrock models", () => {
+  const mantle = catalog.getCatalogProvider("amazon-bedrock-mantle")
+  assert.equal(mantle?.npm, "@ai-sdk/amazon-bedrock/mantle")
+  assert.deepEqual(mantle?.env, ["AWS_BEARER_TOKEN_BEDROCK"])
+  assert.equal(mantle?.modelApiPaths?.get("openai.gpt-5.5"), "/openai/v1")
+  assert.equal(mantle?.modelApiPaths?.get("openai.gpt-oss-20b"), "/v1")
+  const bundled = getCatalogProvider("amazon-bedrock-mantle")
+  assert.equal(bundled?.modelApiPaths?.size, 13)
+  assert.equal(getCatalogProvider("amazon-bedrock")?.npm, "@ai-sdk/amazon-bedrock")
+  // Usage is priced under the derived provider id from the same catalog.
+  assert.equal(loadPricingCatalogFromFile().getModelPrice("amazon-bedrock-mantle", "openai.gpt-oss-20b")?.input, 0.07)
+})
+
+test("mantle: aws_keys chat completions are SigV4-signed for bedrock-mantle after the body rewrite, at the model's /openai/v1 path, with stream usage", async () => {
+  const now = new Date("2026-09-03T12:00:00Z")
+  const { app, upstreamRequests, logRows } = createTestServer({
+    provider: mantleProvider,
+    credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "AKIDEXAMPLE", secretAccessKey: "secret", sessionToken: "tok" }) },
+    now,
+    fetch: async () => sseResponse(['data: {"id":"c1","choices":[{"delta":{"content":"hi"}}]}\n\n', 'data: {"id":"c1","model":"openai.gpt-5.5","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}}\n\n', "data: [DONE]\n\n"]),
+  })
+  const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "openai.gpt-5.5", stream: true, messages: [{ role: "user", content: "hi" }], tools: [{ type: "function", function: { name: "f", parameters: { type: "object" } } }] } }))
+  assert.equal(response.status, 200)
+  await response.text()
+  const upstream = upstreamRequests[0]
+  assert.ok(upstream)
+  assert.equal(upstream.url, "https://bedrock-mantle.us-west-2.api.aws/openai/v1/chat/completions")
+  const sent = parseJsonObject(upstream.body)
+  assert.deepEqual(sent.stream_options, { include_usage: true })
+  const authorization = upstream.headers.get("authorization") ?? ""
+  assert.match(authorization, /^AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\/20260903\/us-west-2\/bedrock-mantle\/aws4_request, SignedHeaders=content-type;host;x-amz-date;x-amz-security-token;x-openwork-request-id, Signature=[0-9a-f]{64}$/)
+  assert.ok(!authorization.includes(gatewayKey))
+  const { signAwsRequest } = await import("../src/credentials/aws-sigv4.js")
+  const check = new Headers()
+  for (const name of ["content-type", "x-openwork-request-id"]) check.set(name, upstream.headers.get(name) ?? "")
+  signAwsRequest({ method: "POST", url: new URL(upstream.url), headers: check, body: upstream.body, credentials: { accessKeyId: "AKIDEXAMPLE", secretAccessKey: "secret", sessionToken: "tok" }, region: "us-west-2", service: "bedrock-mantle", now })
+  assert.equal(check.get("authorization"), authorization)
+  const row = await waitForRows(logRows)
+  assert.equal(row.protocol, "openai_chat")
+  assert.equal(row.upstream_host, "bedrock-mantle.us-west-2.api.aws")
+  assert.equal(row.usage_source, "stream")
+  assert.equal(row.total_tokens, 30)
+})
+
+test("mantle: a Bedrock API key reaches /v1/responses as a bearer; a v1-prefixed client path is not doubled; usage from JSON", async () => {
+  for (const path of ["/responses", "/v1/responses"]) {
+    const { app, upstreamRequests, logRows } = createTestServer({
+      provider: mantleProvider,
+      credential: { kind: "api_key", secret: "bedrock-api-key" },
+      fetch: async () => Response.json({ id: "resp_1", model: "openai.gpt-oss-20b", output: [], usage: { input_tokens: 4, output_tokens: 6, total_tokens: 10 } }),
+    })
+    const response = await app.fetch(gatewayRequest({ path, body: { model: "openai.gpt-oss-20b", input: "hi", store: false } }))
+    assert.equal(response.status, 200)
+    await response.arrayBuffer()
+    assert.equal(upstreamRequests[0]?.url, "https://bedrock-mantle.us-west-2.api.aws/v1/responses")
+    assert.equal(upstreamRequests[0]?.headers.get("authorization"), "Bearer bedrock-api-key")
+    assert.equal(upstreamRequests[0]?.headers.get("x-amz-date"), null)
+    const row = await waitForRows(logRows)
+    assert.equal(row.protocol, "openai_responses")
+    assert.equal(row.usage_source, "json")
+    assert.equal(row.total_tokens, 10)
+  }
+})
+
+test("mantle: only chat and responses, a validated region host, and sanitized AWS auth errors", async () => {
+  const unsupported = createTestServer({ provider: mantleProvider, credential: { kind: "api_key", secret: "k" } })
+  for (const path of ["/embeddings", "/models/openai.gpt-5.5", "/files"]) {
+    const rejected = await unsupported.app.fetch(gatewayRequest({ path, body: { model: "openai.gpt-5.5", input: "x" } }))
+    assert.equal(rejected.status, 400)
+  }
+  assert.equal(unsupported.upstreamRequests.length, 0)
+
+  for (const settings of [{ region: "us-west-2.evil.test" }, { region: "us-west-2", upstreamBaseUrl: "https://evil.test/v1" }]) {
+    const fixture = createTestServer({ provider: { ...mantleProvider, settings }, credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b" }) } })
+    const rejected = await fixture.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "openai.gpt-5.5", messages: [] } }))
+    assert.equal(rejected.status, 502)
+    assert.equal(fixture.upstreamRequests.length, 0)
+  }
+
+  const denied = createTestServer({
+    provider: mantleProvider,
+    credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b", sessionToken: "SESSION_SECRET_MARKER" }) },
+    fetch: async () => Response.json({ error: { message: "x-amz-security-token:SESSION_SECRET_MARKER" } }, { status: 403 }),
+  })
+  const response = await denied.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "openai.gpt-5.5", messages: [] } }))
+  assert.equal(response.status, 403)
+  const text = await response.text()
+  assert.ok(!text.includes("SESSION_SECRET_MARKER"))
+  const payload = parseJsonObject(text)
+  assert.ok(isRecord(payload.error))
+  assert.equal(payload.error.code, "provider_permission_denied")
 })
 
 test("aws_keys on a non-bedrock provider is rejected before upstream auth materialization", async () => {

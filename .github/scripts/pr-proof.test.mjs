@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { changedFiles, packagedJourney, proofArtifact, proofLanes, selectProof } from "./pr-proof.mjs";
+import { changedFiles, checkpointTagged, packagedJourney, proofArtifact, proofLanes, selectProof } from "./pr-proof.mjs";
 
 const file = (filename, status = "modified", previous_filename) => ({ filename, status, ...(previous_filename ? { previous_filename } : {}) });
 
@@ -382,15 +382,24 @@ test("workflow runs packaged proof through the packaged smoke runner without sec
   assert.doesNotMatch(packaged, /environment:|secrets\.|OPENAI_API_KEY/);
 });
 
-test("checkpoint proof stays on the branch and is gated before credentials or deployment", async () => {
-  const checkpoint = "evals/specs/web-checkpoint-fork.e2e.test.ts";
-  const lanes = proofLanes([normalSpec, checkpoint], trustFixture());
+test("specs tagged checkpoints run in the protected lane; the tag is read from source, not the path", () => {
+  assert.equal(checkpointTagged('test("x", { timeout: 1, tags: ["checkpoints"] }, async () => {});'), true);
+  assert.equal(checkpointTagged("test('x', { tags: ['slow', 'checkpoints'] }, fn);"), true);
+  assert.equal(checkpointTagged('test("x", { tags: ["slow"] }, fn); // mentions checkpoints'), false);
+  assert.equal(checkpointTagged("const checkpoints = true;"), false);
+  const checkpoint = "evals/specs/any-tagged.e2e.test.ts";
+  const tagged = (spec) => spec === checkpoint;
+  const lanes = proofLanes([normalSpec, checkpoint], trustFixture(), tagged);
   assert.deepEqual(lanes.normalSpecs, [normalSpec]);
   assert.deepEqual(lanes.checkpointSpecs, [checkpoint]);
+  assert.deepEqual(proofLanes([normalSpec, checkpoint], trustFixture()).checkpointSpecs, []);
   for (const [, mutate] of untrusted) {
     const trust = trustFixture(); mutate(trust);
-    assert.throws(() => proofLanes([checkpoint], trust), /unsupported/);
+    assert.throws(() => proofLanes([checkpoint], trust, tagged), /unsupported/);
   }
+});
+
+test("checkpoint lane is gated before credentials and publishes only through the normal report", async () => {
   const workflow = await readFile(new URL("../workflows/pr-proof.yml", import.meta.url), "utf8");
   const job = workflow.split("\n  checkpoint-proof:\n")[1].split("\n  windows-proof:\n")[0];
   const gate = job.split("    steps:\n")[0];
@@ -400,17 +409,10 @@ test("checkpoint proof stays on the branch and is gated before credentials or de
     assert.ok(gate.includes(`github.event.pull_request.${side}.repo.fork == false`));
   }
   assert.match(job, /ref: \$\{\{ github.event.pull_request.head.sha \}\}/);
-  assert.match(job, /web-checkpoint-fork --local --engine v1 --surface web --checkpoints/);
-  assert.match(job, /node scripts\/publish-checkpoint-evidence.ts/);
-  assert.match(job, /pnpm dlx vercel@48 deploy --target preview/);
-  const authenticatedProbe = job.split("\n").find((line) => line.includes("pnpm dlx vercel@59.24.0 curl"));
-  assert.ok(authenticatedProbe);
-  assert.doesNotMatch(authenticatedProbe, /--token/);
-  assert.match(job, /VERCEL_TOKEN: \$\{\{ secrets.VERCEL_TOKEN \}\}/);
-  assert.match(job, /context='OpenWork Checkpoints'/);
-  assert.match(job, /state="\$PROOF_STATE"/);
+  assert.match(job, /evals\/bin\/evals.mjs "\$\{PROOF_SPEC#evals\/\}" --local --engine v1 --surface web --checkpoints/);
+  assert.match(job, /name: pr-proof-\$\{\{ github.run_attempt \}\}-\$\{\{ matrix.key \}\}/);
+  assert.doesNotMatch(job, /publish-checkpoint-evidence|vercel|OpenWork Checkpoints|gh pr comment|statuses: write|VERCEL_TOKEN|BLOB_READ_WRITE_TOKEN/);
   assert.doesNotMatch(job, /alias set|infisical|OPENAI_API_KEY|ANTHROPIC_API_KEY/);
-  assert.match(job, /https:\/\/vercel.com\/sso-api/);
 });
 
 test("native real-model parity is protected and cannot leak into ordinary proof", () => {

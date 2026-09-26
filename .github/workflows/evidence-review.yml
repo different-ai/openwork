@@ -75,6 +75,8 @@ jobs:
       REVIEW_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
       REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
       OPENWORK_REVIEW_URL: ${{ vars.OPENWORK_REVIEW_URL }}
+    outputs:
+      state: ${{ steps.receipt.outputs.state }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -104,6 +106,54 @@ jobs:
         env:
           EVIDENCE_RECEIPT_PATH: ${{ runner.temp }}/evidence-publication.json
         run: node .github/scripts/evidence-presentation.mjs complete
+      - name: Record whether a report was published
+        id: receipt
+        if: always()
+        env:
+          EVIDENCE_RECEIPT_PATH: ${{ runner.temp }}/evidence-publication.json
+        run: |
+          state="$(node -e 'try { const r = JSON.parse(require("fs").readFileSync(process.env.EVIDENCE_RECEIPT_PATH, "utf8")); process.stdout.write(typeof r.state === "string" ? r.state : "none"); } catch { process.stdout.write("none"); }')"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+
+  # Reviewers open a report within minutes, so build its sandboxes now and
+  # "Launch in Freestyle" is usually ready at the first click. Only commits that
+  # just got a report are built (not every push), and per-commit snapshots
+  # expire after a day unused. Default-branch controller; PR code only ever runs
+  # inside credential-free guest VMs.
+  prebuild:
+    needs: publish
+    if: >-
+      always() && needs.publish.outputs.state == 'published' &&
+      github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        world: [app-web, acme-web]
+    concurrency:
+      group: freestyle-prebuild-${{ github.event.workflow_run.head_sha }}-${{ matrix.world }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+      - name: Install the Freestyle controller only
+        run: pnpm --filter @openwork/freestyle... install --frozen-lockfile --ignore-scripts
+      - name: Build this commit's sandbox snapshot
+        env:
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
+          PREVIEW_SHA: ${{ github.event.workflow_run.head_sha }}
+          PREVIEW_WORLD: ${{ matrix.world }}
+        run: node scripts/prepare-freestyle-preview.ts "$PREVIEW_SHA" "$PREVIEW_WORLD"
 
   required-verification:
     if: github.event_name == 'workflow_run' && github.event.action == 'completed' && github.event.workflow_run.name == 'Product journeys' && github.event.workflow_run.event == 'workflow_run'

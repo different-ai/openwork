@@ -603,6 +603,14 @@ function parseWorkspaceOpencodeV2Mount(pathname: string): { workspaceId: string;
   return { workspaceId: decodeURIComponent(workspaceId), restPath };
 }
 
+/** Requests that read or select from the provider catalog. Other requests never wait on upkeep. */
+function needsV2ProviderCatalog(method: string, restPath: string): boolean {
+  let path = restPath;
+  try { path = decodeURIComponent(restPath); } catch { /* Malformed paths reach the engine unchanged. */ }
+  if (method === "GET" || method === "HEAD") return /^\/opencode2\/api\/(?:model|provider)(?:\/|$)/.test(path);
+  return method === "POST" && /^\/opencode2\/api\/session\/[^/]+\/model\/?$/.test(path);
+}
+
 function normalizeOpencodeProxyPath(proxyPath: string): string {
   const raw = (proxyPath ?? "").trim() || "/";
   const withoutPrefix = raw.startsWith("/opencode") ? raw.slice("/opencode".length) : raw;
@@ -954,14 +962,16 @@ export async function startServer(
           }
           proxyService = "opencode";
           proxyBaseUrl = connection.url;
-          const isSessionBrowseRead = request.method === "GET"
-            && (mount.restPath === "/opencode2/api/session"
-              || /^\/opencode2\/api\/session\/ses_[A-Za-z0-9_-]+(?:\/message(?:\/msg_[A-Za-z0-9_-]+)?)?$/.test(mount.restPath));
-          if (!isSessionBrowseRead) {
+          // As in v1, requests go straight to the engine: OpenWork upkeep
+          // (provider mirroring, MCP registration) runs when configuration
+          // changes, and never holds reads. A folder's upkeep starts in the
+          // background the first time it is seen.
+          engineV2Preview.warmWorkspace(workspace.id, workspace.path);
+          if (needsV2ProviderCatalog(request.method, mount.restPath)) {
+            // For ~200 ms a folder the engine has not loaded omits configured
+            // providers from its catalog; v1's engine waits for its own folder
+            // setup instead. Bounded and never fails the request.
             await engineV2Preview.ensureWorkspaceReady(workspace.path);
-            // Reconcile through v2's runtime MCP API before execution admission.
-            // The ordinary connection routes remain authoritative.
-            await engineV2Preview.syncWorkspaceMcp(workspace.id, workspace.path);
           }
           const send = () => proxyOpencodeV2Request({
             config,
@@ -970,8 +980,7 @@ export async function startServer(
             workspace,
             proxyPath: mount.restPath,
             connection,
-            syncWorkspaceSkills: engineV2Preview.syncWorkspaceSkills,
-            prepareSessionDirectory: async (directory) => {
+            prepareExecution: async (directory) => {
               await engineV2Preview.ensureWorkspaceReady(directory);
               await engineV2Preview.syncWorkspaceMcp(workspace.id, directory);
             },
@@ -1242,8 +1251,8 @@ export async function proxyOpencodeV2Request(input: {
   workspace: WorkspaceInfo;
   proxyPath: string;
   connection: { url: string; username: string; password: string };
-  syncWorkspaceSkills: EngineV2Preview["syncWorkspaceSkills"];
-  prepareSessionDirectory?: (directory: string) => Promise<void>;
+  /** Bounded upkeep for the folder a prompt runs in; throws only when execution must not proceed. */
+  prepareExecution?: (directory: string) => Promise<void>;
   recoverySignal?: AbortSignal;
 }): Promise<Response> {
   const method = input.request.method.toUpperCase();
@@ -1314,7 +1323,7 @@ export async function proxyOpencodeV2Request(input: {
   }
 
   if (method === "POST" && sessionId && /^\/api\/session\/[^/]+\/(?:prompt|command|generate)$/.test(forwardedPath)) {
-    if (executionDirectory !== input.workspace.path) await input.prepareSessionDirectory?.(executionDirectory);
+    await input.prepareExecution?.(executionDirectory);
     // Session ownership was verified above. Replace one native instruction
     // entry immediately before admission; never append to conversation text.
     const mcpUrl = new URL(target);
@@ -1326,7 +1335,6 @@ export async function proxyOpencodeV2Request(input: {
       isRecord(entry) && entry.name === "openwork-cloud" && isRecord(entry.status) && entry.status.status === "connected");
     // Keep organization skill discovery on demand through Connect. The full
     // catalog can exceed the engine's instruction-entry request limit.
-    await input.syncWorkspaceSkills(executionDirectory);
     const value = buildOpenWorkV2Instructions(connectReady);
     const instructionUrl = new URL(target);
     instructionUrl.pathname = `/api/session/${encodeURIComponent(sessionId)}/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`;
@@ -2789,6 +2797,9 @@ function createRoutes(
         action: "added",
       });
     }
+    if (imported.files.some((file) => file.objectType === "skill") && workspace.workspaceType !== "remote") {
+      await engineV2Preview.settleWorkspaceSkills(workspace.path);
+    }
 
     // Hot-register any bundled MCP servers with the running engine.
     await syncRuntimeMcpToOpencodeEngine(
@@ -2854,6 +2865,9 @@ function createRoutes(
         action: "added",
       });
     }
+    if (imported.files.some((file) => file.objectType === "skill") && workspace.workspaceType !== "remote") {
+      await engineV2Preview.settleWorkspaceSkills(workspace.path);
+    }
 
     // Hot-register any bundled MCP servers with the running engine.
     await syncRuntimeMcpToOpencodeEngine(
@@ -2903,6 +2917,9 @@ function createRoutes(
         name: file.title,
         action: "removed",
       });
+    }
+    if (removed.files.some((file) => file.objectType === "skill") && workspace.workspaceType !== "remote") {
+      await engineV2Preview.settleWorkspaceSkills(workspace.path);
     }
 
     return jsonResponse({ item: removed, warnings: [] });
@@ -3663,6 +3680,9 @@ function createRoutes(
       action: result.action,
       path: result.path,
     });
+    // The next v2 turn should see a skill OpenWork just wrote; the engine's
+    // own watcher normally catches up within ~200 ms.
+    if (workspace.workspaceType !== "remote") await engineV2Preview.settleWorkspaceSkills(workspace.path);
     return jsonResponse({ name, path: result.path, description: description ?? "", scope: "project" });
   });
 
@@ -3696,6 +3716,7 @@ function createRoutes(
       action: "removed",
       path: result.path,
     });
+    if (workspace.workspaceType !== "remote") await engineV2Preview.settleWorkspaceSkills(workspace.path);
     return jsonResponse({ ok: true, name, path: result.path });
   });
 

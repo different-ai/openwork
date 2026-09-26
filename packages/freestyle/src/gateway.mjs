@@ -35,12 +35,21 @@ async function target(req, auth) {
   if ((name === "app" || name === "den") && /^\/api\/den(?:\/|\?|$)/.test(path)) {
     name = "api";
     path = path.replace(/^\/api\/den(?=\/|\?|$)/, "") || "/";
-  } else if (name === "den" && /^(?:\/v1(?:\/|\?|$)|\/mcp(?:\/|\?|$)|\/health(?:\?|$))/.test(path)) {
+  } else if (name === "den" && /^(?:\/v1(?:\/|\?|$)|\/mcp(?:\/|\?|$)|\/health(?:\?|$)|\/oauth\/client-metadata\.json(?:\?|$))/.test(path)) {
     name = "api";
   }
   const url = new URL(services[name]);
   if (url.protocol !== "http:" || url.hostname !== "127.0.0.1") throw new Error("Invalid local service");
   return { hostname: "127.0.0.1", port: Number(url.port), path };
+}
+
+// An OAuth provider fetches Den's client metadata document from its client ID URL
+// itself, without this sandbox's cookie. The document is public by design and
+// names only this clone's callback.
+function clientMetadata(req, auth) {
+  if ((req.method !== "GET" && req.method !== "HEAD") || new URL(req.url, "http://localhost").pathname !== "/oauth/client-metadata.json") return false;
+  const origin = `https://${req.headers.host}`;
+  return origin === auth?.config.origins?.den || origin === auth?.config.origins?.api;
 }
 
 function headers(req, port = upstreamPort, pairs = []) {
@@ -87,7 +96,7 @@ export const server = createServer(async (req, res) => {
     res.end();
     return;
   }
-  if (!auth?.authorized) {
+  if (!auth?.authorized && !clientMetadata(req, auth)) {
     res.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
     res.end("Open this sandbox from your review launch link. If it has expired, launch a fresh sandbox.");
     return;

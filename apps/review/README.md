@@ -132,32 +132,28 @@ Anonymous report, JSON, and image requests must redirect to Vercel Authenticatio
 
 ## Interactive Freestyle previews
 
-The **Freestyle preview prewarm** workflow prepares `app-web`, `acme-web`, and
-`desktop` snapshots for each same-repository PR head targeting `dev`. Configure the repository
-secret `FREESTYLE_API_KEY` as well as the Vercel secret below. Fork and Dependabot
-PRs do not receive this credential. A manual workflow run prepares its selected ref.
-The CI runner checks out the reviewed controller pinned to an immutable commit, never
-the PR source. Only the guest VM fetches and executes PR code, without the provider
-credential. Update the controller pin after reviewing its code and dependencies.
-Each world/commit is serialized in CI; the provider snapshot cache and builder lock
-also deduplicate reruns and concurrent reviewer launches. Existing snapshots are
-reused until their seven-day expiry. Prewarming does not create a shared reviewer VM:
-each click still clones separately. ACME is fully seeded, its service chain verified, and browser entry points compiled
-before its memory snapshot is captured. Clones resume those processes; launch only
-assigns public access, renews expired demo sessions if needed, and checks readiness.
-
-After prewarming, CI measures two real ACME launches and verifies restored processes,
-independent databases/access, sign-in, and a fresh AI Gateway reply. The prewarm job
-summary and `freestyle-launch-proof` artifact contain sanitized measurements. These
-measure controller launch through first app HTML readiness, **not** reviewer HTTP overhead
-or browser rendering. The ACME selected-proof report verifies the world recipe;
-it does not benchmark Freestyle. Do not quote a direct launch timing as click-to-usable.
-The OpenWork web prewarm job also verifies a fresh clone's app HTML and engine,
-with separate ready-link and repeat-page timings in `freestyle-app-launch-proof`.
+When the evidence report for a PR push is published, the **Evidence review** workflow
+builds that commit's `app-web` and `acme-web` snapshots in the background, so
+**Launch in Freestyle** is usually ready at the first click. Otherwise the first
+launch of a commit and world builds its snapshot after the request returns (`202`),
+within the function's 800-second budget. The page polls `GET /r/<id>/launch?world=…`,
+which reports the build's current layer and finished service steps (read from the
+builder VM tagged with the commit), and shows them like `pnpm world up`: finished
+steps with their times, the running step, and what is left. It launches when the
+snapshot is ready. Typical first builds: about 2 minutes for OpenWork web and 6 for
+ACME with warm caches. The provider's builder lock deduplicates concurrent
+first launches. Only the guest VM fetches and executes PR code, without the
+provider credential. Clones resume the snapshot's processes; launch only assigns
+public access, renews expired demo sessions if needed, and checks readiness.
 Fresh clones write their private access file and wait for the first authorized
 app HTML response before returning a link, so an early gateway response cannot
 hide a still-starting app. ACME snapshots older than five days renew their demo session
 before use so a new sandbox does not outlive the session it inherited.
+
+Per-commit snapshots are deleted after two days, or after one day without a launch.
+The hourly **Freestyle cleanup** workflow (`scripts/cleanup-freestyle.ts`) reclaims
+old naming versions, superseded cache layers and expired checkpoints, and fails when
+too many OpenWork snapshots remain. Run it with `--dry-run` to see the plan.
 
 Set `FREESTYLE_API_KEY` in the protected Vercel Preview environment. Every report
 offers **Launch in Freestyle**. The server reads the commit from the stored report;
@@ -171,12 +167,12 @@ The snapshot contains an empty local workspace and no API keys, production login
 or connected accounts. Models can be connected inside each disposable sandbox.
 The first build may take several minutes. Failed builds and launches clean up
 their VMs; provider-enforced TTLs also bound interrupted operations. Preview VMs
-expire after two hours, and unused snapshots expire after seven days. Snapshot
+expire after two hours, and per-commit snapshots after two days (one day unused). Snapshot
 slugs and VM metadata are durable state in Freestyle, shared across app instances;
 a unique builder slug coordinates concurrent first launches. Public routes only
 expose the access-controlled gateway; the app and engine listen on loopback.
 
-Prewarm a commit before reviewers arrive:
+Build a commit's snapshot by hand (for example before a demo):
 
 ```sh
 node --env-file=.env.freestyle.local scripts/prepare-freestyle-preview.ts <full-pushed-sha>
@@ -235,9 +231,14 @@ Freestyle previews use the verified `preview.openwork.software` wildcard: `*.pre
 
 ## Developer review workspace
 
-Evidence is the default surface. The compact header keeps the selected-evidence
-verdict and commit visible; All, Failed, and Incomplete filter sections without
-changing the report verdict or hiding declared coverage gaps. Next failure returns
+Evidence is the default surface. A verdict banner is the focal element: a
+status icon, the selected-evidence verdict, one sentence saying where to look
+first, and test/check/screenshot counts. Each section shows its checks as
+"N of M checks passed" (open only when one is not passed) and its screenshots
+as a numbered gallery; commit, capture time, links and the raw record sit
+under "Source and diagnostics". Screenshots with a saved browser carry a
+"Saved browser" badge; the checkpoint controls live only in the viewer. All, Failed, and Incomplete filter sections
+without changing the report verdict or hiding declared coverage gaps. Next failure returns
 to all sections and focuses the next failed section. Narrow screens retain a
 native section selector.
 

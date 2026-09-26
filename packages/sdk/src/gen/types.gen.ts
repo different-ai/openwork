@@ -14305,6 +14305,10 @@ export type PostV1InferenceProvidersData = {
     allMembers?: boolean;
     memberIds?: Array<string>;
     teamIds?: Array<string>;
+    /**
+     * Amazon Bedrock only: copy the organization AWS keys of another Amazon Bedrock provider in this organization, server-side. Mutually exclusive with credential and apiKeys.
+     */
+    reuseCredentialFrom?: string;
   };
   path?: never;
   query?: never;

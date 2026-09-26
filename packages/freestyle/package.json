@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./builder": "./src/builder.ts",
+    "./progress": "./src/progress.ts",
     "./outputs": "./src/outputs.ts",
     "./checkpoints": "./src/checkpoints.ts",
     "./checkpoint-schema": "./src/checkpoint-schema.ts",

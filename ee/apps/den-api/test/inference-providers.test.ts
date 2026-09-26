@@ -95,6 +95,16 @@ const catalog = {
     config: { id: "amazon-bedrock", npm: "@ai-sdk/amazon-bedrock" },
     models: [{ id: "bedrock-model", name: "Bedrock Model", config: { id: "bedrock-model" } }],
   },
+  "amazon-bedrock-mantle": {
+    id: "amazon-bedrock-mantle",
+    name: "Amazon Bedrock (OpenAI)",
+    npm: "@ai-sdk/amazon-bedrock/mantle",
+    env: ["AWS_BEARER_TOKEN_BEDROCK"],
+    doc: null,
+    api: null,
+    config: { id: "amazon-bedrock-mantle", npm: "@ai-sdk/amazon-bedrock/mantle", env: ["AWS_BEARER_TOKEN_BEDROCK"] },
+    models: [{ id: "openai.gpt-oss-20b", name: "gpt-oss-20b", config: { id: "openai.gpt-oss-20b", provider: { npm: "@ai-sdk/amazon-bedrock/mantle", shape: "responses" } } }],
+  },
   azure: {
     id: "azure",
     name: "Azure",
@@ -175,6 +185,7 @@ beforeAll(async () => {
       if (catalogUnavailable) return null
       if (providerId === "anthropic") return catalog.anthropic
       if (providerId === "amazon-bedrock") return catalog["amazon-bedrock"]
+      if (providerId === "amazon-bedrock-mantle") return catalog["amazon-bedrock-mantle"]
       if (providerId === "azure") return catalog.azure
       if (providerId === "google-vertex") return catalog["google-vertex"]
       if (providerId === "google-vertex-anthropic") return catalog["google-vertex-anthropic"]
@@ -830,13 +841,74 @@ test("pending OAuth metadata filters cached out-of-universe and incompatible mod
   }
 })
 
-test("rejects unsupported SDKs, unknown models, malformed secrets, and missing Vertex settings", async () => {
+test("a new Amazon Bedrock provider can reuse another Bedrock provider's saved AWS keys without the secret leaving the server", async () => {
+  const keys = { accessKeyId: "AKIDREUSE", secretAccessKey: "REUSE_SECRET_MARKER", sessionToken: "REUSE_TOKEN_MARKER", region: "eu-west-1" }
+  const source = await request(ownerCookie, "/v1/inference-providers", {
+    method: "POST",
+    body: JSON.stringify({ name: "Bedrock", providerId: "amazon-bedrock", modelIds: ["bedrock-model"], settings: { region: "us-east-1" }, credential: { kind: "aws_keys", secret: JSON.stringify(keys) } }),
+  })
+  expect(source.status).toBe(201)
+  const sourceId = readProvider(await source.json()).id
+  const reused = await request(ownerCookie, "/v1/inference-providers", {
+    method: "POST",
+    body: JSON.stringify({ name: "Bedrock OpenAI", providerId: "amazon-bedrock-mantle", modelIds: ["openai.gpt-oss-20b"], settings: { region: "us-west-2" }, reuseCredentialFrom: sourceId, allMembers: true }),
+  })
+  const reusedText = await reused.text()
+  expect(reused.status).toBe(201)
+  expect(reusedText).not.toContain("REUSE_SECRET_MARKER")
+  expect(reusedText).not.toContain("REUSE_TOKEN_MARKER")
+  const reusedProvider = readProvider(JSON.parse(reusedText))
+  expect(reusedProvider).toMatchObject({ providerId: "amazon-bedrock-mantle", credentialStatus: "ready" })
+  if (typeof reusedProvider.id !== "string") throw new Error("expected provider id")
+  const [copied] = await db.select().from(schema.GatewayProviderCredentialTable).where(drizzle.eq(schema.GatewayProviderCredentialTable.gateway_provider_id, reusedProvider.id))
+  expect(copied?.kind).toBe("aws_keys")
+  // The source's region override is dropped so the new provider's own region applies.
+  expect(JSON.parse(copied?.secret ?? "{}")).toEqual({ accessKeyId: "AKIDREUSE", secretAccessKey: "REUSE_SECRET_MARKER", sessionToken: "REUSE_TOKEN_MARKER" })
+
+  const anthropic = await request(ownerCookie, "/v1/inference-providers", {
+    method: "POST",
+    body: JSON.stringify({ name: "Anthropic", providerId: "anthropic", modelIds: ["claude-haiku-4"], credential: { kind: "api_key", secret: "sk-ant" } }),
+  })
+  const anthropicId = readProvider(await anthropic.json()).id
+  for (const body of [
+    { name: "Bedrock OpenAI", providerId: "amazon-bedrock-mantle", modelIds: ["openai.gpt-oss-20b"], settings: { region: "us-west-2" }, reuseCredentialFrom: anthropicId },
+    { name: "Anthropic", providerId: "anthropic", modelIds: ["claude-haiku-4"], reuseCredentialFrom: sourceId },
+  ]) {
+    const rejected = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify(body) })
+    expect(rejected.status).toBe(400)
+    await expect(rejected.json()).resolves.toMatchObject({ error: "credential_source_unavailable" })
+  }
+  const both = await request(ownerCookie, "/v1/inference-providers", {
+    method: "POST",
+    body: JSON.stringify({ name: "Bedrock OpenAI", providerId: "amazon-bedrock-mantle", modelIds: ["openai.gpt-oss-20b"], settings: { region: "us-west-2" }, reuseCredentialFrom: sourceId, credential: { kind: "api_key", secret: "k" } }),
+  })
+  expect(both.status).toBe(400)
+})
+
+test("rejects invalid Bedrock settings/keys, unknown models, malformed secrets, and missing Vertex settings", async () => {
   const bedrock = await request(ownerCookie, "/v1/inference-providers", {
     method: "POST",
     body: JSON.stringify({ name: "Bedrock", providerId: "amazon-bedrock", modelIds: ["bedrock-model"] }),
   })
   expect(bedrock.status).toBe(400)
-  await expect(bedrock.json()).resolves.toMatchObject({ error: "unsupported_provider" })
+  await expect(bedrock.json()).resolves.toMatchObject({ error: "invalid_settings" })
+
+  const bedrockHost = await request(ownerCookie, "/v1/inference-providers", {
+    method: "POST",
+    body: JSON.stringify({ name: "Bedrock", providerId: "amazon-bedrock", modelIds: ["bedrock-model"], settings: { region: "us-east-1.evil.test" } }),
+  })
+  expect(bedrockHost.status).toBe(400)
+  await expect(bedrockHost.json()).resolves.toMatchObject({ error: "invalid_settings" })
+
+  const bedrockKeyRegion = await request(ownerCookie, "/v1/inference-providers", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Bedrock", providerId: "amazon-bedrock", modelIds: ["bedrock-model"], settings: { region: "us-east-1" },
+      credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "AKIDEXAMPLE", secretAccessKey: "secret", region: "evil.test" }) },
+    }),
+  })
+  expect(bedrockKeyRegion.status).toBe(400)
+  await expect(bedrockKeyRegion.json()).resolves.toMatchObject({ error: "invalid_credential" })
 
   const unknownModel = await request(ownerCookie, "/v1/inference-providers", {
     method: "POST",

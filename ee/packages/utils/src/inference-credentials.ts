@@ -25,6 +25,6 @@ export function pickInferenceApiKeyFromMap(apiKeys: Record<string, string>, trus
 export function isInferenceCredentialKindSupported(kind: string, providerId: string): boolean {
   const vertex = providerId === "google-vertex" || providerId === "google-vertex-anthropic"
   return !(((kind === "gcp_service_account" || kind === "oauth_google") && !vertex)
-    || (kind === "aws_keys" && providerId !== "amazon-bedrock")
+    || (kind === "aws_keys" && providerId !== "amazon-bedrock" && providerId !== "amazon-bedrock-mantle")
     || kind === "oauth_azure" || (kind === "api_key_map" && vertex))
 }

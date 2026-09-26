@@ -51,6 +51,8 @@ interface RuntimeContext<W> {
   agent: Agent;
   probe: Probe;
   step: Step;
+  /** Checkpoints the world's end state; the test wrapper calls it for tests tagged "checkpoints". */
+  checkpointEnd: () => Promise<void>;
 }
 
 function combinedNeeds(filepath: string, needs: TestNeeds | undefined): TestNeeds {
@@ -141,7 +143,7 @@ function world<W>(worldFn: WorldFn<W>, options: SpecWorldOptions = {}) {
       bodyRuntime.stage = "body";
       bodyRuntime.setPrimary(specWorldState.world);
       const bound = channels(bodyRuntime);
-      await use({ world: specWorldState.world, ...bound });
+      await use({ world: specWorldState.world, ...bound, checkpointEnd: () => bodyRuntime.checkpointEndState() });
     },
     world: async (
       { specRuntimeContext }: { specRuntimeContext: RuntimeContext<W> },

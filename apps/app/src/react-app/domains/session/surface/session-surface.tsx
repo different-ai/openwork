@@ -977,6 +977,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     (state) => state.statusesByWorkspaceId[props.workspaceId]?.[props.sessionId] ?? "idle",
   );
   const draft = useComposerStateStore((state) => getComposerDraft(state, props.sessionId));
+  const editing = useComposerStateStore((state) => Boolean(getComposerRevertMessageId(state, props.sessionId)));
   const attachments = useComposerStateStore((state) => getComposerAttachments(state, props.sessionId));
   // Preparation belongs to the submitted message, not the next composer draft.
   const [attachmentsUploading, setAttachmentsUploading] = useState(false);
@@ -2355,6 +2356,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Queue: hold the draft locally and clear the composer. The drain effect
   // sends it once the session reports idle.
   const handleQueue = useCallback(() => {
+    // Read the current store as well as the rendered composer state: an edit
+    // must never lose its original turn boundary through a stale queue callback.
+    if (getComposerRevertMessageId(useComposerStateStore.getState(), props.sessionId)) {
+      void handleSend();
+      return;
+    }
     if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
     const text = draft.trim();
@@ -2363,7 +2370,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!queuedDraft) return;
     appendQueuedDraft(props.sessionId, queuedDraft);
     clearComposer();
-  }, [archived, archiveStateKnown, appendQueuedDraft, attachments, buildDraft, clearComposer, draft, props.opencodeBaseUrl, props.sessionId, sessionOwner]);
+  }, [archived, archiveStateKnown, appendQueuedDraft, attachments, buildDraft, clearComposer, draft, handleSend, props.opencodeBaseUrl, props.sessionId, sessionOwner]);
 
   const removeQueuedDraft = useCallback((id: string) => {
     const target = queuedItems.find((item) => item.id === id);
@@ -3539,6 +3546,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onQueue={handleQueue}
         onStop={async () => { await handleAbort(); }}
         busy={chatStreaming}
+        editing={editing}
         stopping={stopping}
         steering={steering}
         submissionPreparing={preparingCloudTools || sending || autoSending}

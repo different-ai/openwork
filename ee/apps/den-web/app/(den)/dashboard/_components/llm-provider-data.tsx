@@ -310,6 +310,7 @@ const SIMPLE_ICON_SLUG_BY_PROVIDER_ID: Record<string, string> = {
   mistral: "mistralai",
   xai: "x",
   amazonbedrock: "amazonaws",
+  "amazon-bedrock-mantle": "amazon-bedrock",
   openrouter: "openrouter",
 };
 

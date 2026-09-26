@@ -5,7 +5,8 @@
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { GatewayProviderTable } from "@openwork-ee/den-db"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
-import { validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
+import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
+import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
 import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import { GATEWAY_REQUEST_MODEL_HEADER, GATEWAY_GRANT_HEADER, type GatewayRequestOutcome, type GatewayRequestProtocol } from "@openwork/types/den/gateway"
 import type { Context, Hono } from "hono"
@@ -13,7 +14,7 @@ import { sanitizeIncomingHeaders } from "./inference-reporting.js"
 import type { InferenceReporter } from "./inference-reporting.js"
 import type { InferenceAuthVariables } from "./middleware/inference-auth.js"
 import type { OrganizationVariables } from "./middleware/org-context.js"
-import { bedrockRuntimeHost, bedrockService, signAwsRequest } from "./credentials/aws-sigv4.js"
+import { bedrockMantleService, bedrockService, signAwsRequest } from "./credentials/aws-sigv4.js"
 import { createGcpServiceAccountTokenMinter } from "./credentials/gcp-service-account.js"
 import type { MintGcpAccessToken } from "./credentials/gcp-service-account.js"
 import { createDbGoogleOauthRefreshStore, createGoogleOauthRefresher } from "./credentials/google-oauth-refresh.js"
@@ -91,6 +92,8 @@ type ResolvedUpstream = {
   family: ProtocolFamily
   protocol: GatewayRequestProtocol
   url: URL
+  /** Host (and Mantle API path) derived from the region rather than an operator override. */
+  regionDerived: boolean
 }
 
 type PreparedRequest = {
@@ -160,9 +163,31 @@ function readBaseUrl(provider: GatewayProvider, catalog: CatalogProvider | null,
   return defaultBaseUrl(family, provider.settings)
 }
 
+function isAwsFamily(family: ProtocolFamily): family is "bedrock" | "bedrock_mantle" {
+  return family === "bedrock" || family === "bedrock_mantle"
+}
+
+// Bedrock egress is bedrock-runtime.<region>.amazonaws.com (Mantle:
+// bedrock-mantle.<region>.api.aws). Catalog URLs and admin-entered hosts never
+// choose it; only an operator-allowlisted origin (a private endpoint or proxy
+// the deployment owns) may replace it.
+function awsOperatorOverride(settings: Record<string, unknown>) {
+  const override = settings.upstreamBaseUrl
+  if (typeof override !== "string" || !override) return undefined
+  try {
+    return inferenceEgressAllowedOrigins().has(new URL(override).origin) ? override : null
+  } catch { return null }
+}
+
+function awsUpstreamBase(family: "bedrock" | "bedrock_mantle", settings: Record<string, unknown>) {
+  const override = awsOperatorOverride(settings)
+  return override === undefined ? defaultBaseUrl(family, settings) : override
+}
+
 function upstreamBase(provider: GatewayProvider, catalog: CatalogProvider | null, family: ProtocolFamily) {
   if (family === "google_vertex") return vertexPublisherBase(provider.settings, "google")
   if (family === "google_vertex_anthropic") return vertexPublisherBase(provider.settings, "anthropic")
+  if (isAwsFamily(family)) return awsUpstreamBase(family, provider.settings)
   return readBaseUrl(provider, catalog, family)
 }
 
@@ -177,7 +202,7 @@ function resolveUpstream(provider: GatewayProvider, catalog: CatalogProvider | n
         : `Provider ${provider.provider_id} has no upstream base URL.`,
     }
   }
-  const forwardedRest = family === "google_vertex" || family === "google_vertex_anthropic" ? stripApiVersionPrefix(rest) : rest
+  const forwardedRest = family === "google_vertex" || family === "google_vertex_anthropic" || family === "bedrock_mantle" ? stripApiVersionPrefix(rest) : rest
   // Check before URL normalization can move an operation to another path.
   if (rest.includes("\\") || rest.split("/").some((part) => /^(?:\.|%2e){1,2}$/i.test(part))) return { error: "Invalid upstream path." }
   const protocol = classifyRequestProtocol(family, forwardedRest)
@@ -190,7 +215,7 @@ function resolveUpstream(provider: GatewayProvider, catalog: CatalogProvider | n
   } catch {
     return { error: `Provider ${provider.provider_id} has an invalid upstream base URL.` }
   }
-  return { family, protocol, url }
+  return { family, protocol, url, regionDerived: isAwsFamily(family) && awsOperatorOverride(provider.settings) === undefined }
 }
 
 function requestedModelFromPath(pathname: string) {
@@ -205,21 +230,21 @@ function isStreamingPath(protocol: GatewayRequestProtocol, pathname: string) {
 }
 
 function materializeAuth(credential: UsableCredential, provider: GatewayProvider, family: ProtocolFamily, now: Date): UpstreamAuth | { error: string } {
-  if (family !== "bedrock") {
+  if (!isAwsFamily(family)) {
     if (credential.kind === "aws_keys") return { error: `AWS credentials are only supported for Amazon Bedrock providers, not ${provider.provider_id}.` }
     return { kind: "header", header: buildAuthHeader(family, credential.secret) }
   }
   const settingsRegion = typeof provider.settings.region === "string" && provider.settings.region ? provider.settings.region : null
   const region = (credential.kind === "aws_keys" ? credential.awsKeys.region : undefined) ?? settingsRegion
-  if (!region || !/^[a-z]{2}(?:-[a-z]+)+-\d+$/.test(region)) return { error: "Bedrock providers require a valid AWS region." }
+  if (!isAwsRegion(region)) return { error: "Bedrock providers require a valid AWS region." }
   // A static key (Bedrock API key) keeps the settings.region host resolved earlier.
   if (credential.kind === "secret") return { kind: "header", header: buildAuthHeader(family, credential.secret) }
   const credentials = credential.awsKeys
   return {
     kind: "signer",
-    host: bedrockRuntimeHost(region),
+    host: family === "bedrock_mantle" ? bedrockMantleHost(region) : bedrockRuntimeHost(region),
     sign(request) {
-      signAwsRequest({ ...request, credentials, region, service: bedrockService, now })
+      signAwsRequest({ ...request, credentials, region, service: family === "bedrock_mantle" ? bedrockMantleService : bedrockService, now })
     },
   }
 }
@@ -325,6 +350,8 @@ async function prepareRequest(request: Request, upstream: ResolvedUpstream, prov
         return operation === "messages"
       case "mistral":
         return /^(?:chat\/completions|embeddings)$/.test(operation)
+      case "bedrock_mantle":
+        return /^(?:chat\/completions|responses)$/.test(operation)
       case "openai":
       case "openai_compatible":
       case "azure":
@@ -720,6 +747,11 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }
     selection = selected.selection
     rewriteSelectedModel(prepared, resolved, selection.upstreamModel)
+    if (resolved.family === "bedrock_mantle" && resolved.regionDerived) {
+      // Mantle serves some models under /openai/v1; the path comes from the trusted catalog, never the request.
+      const apiPath = (selection.upstreamModel === null ? undefined : catalog?.modelApiPaths?.get(selection.upstreamModel)) ?? BEDROCK_MANTLE_DEFAULT_API_PATH
+      prepared.url.pathname = prepared.url.pathname.replace(/^\/v1(?=\/)/, apiPath)
+    }
 
     const credential = await resolveUpstreamCredential({
       provider,
@@ -890,6 +922,23 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       const response = gatewayError(upstream.status, errorCode, message, { provider_id: provider.id })
       response.headers.set("x-openwork-request-id", openworkRequestId)
       void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode })
+      lifetime.dispose()
+      await upstream.body?.cancel().catch(() => {})
+      return response
+    }
+
+    if (isAwsFamily(resolved.family) && (upstream.status === 401 || upstream.status === 403)) {
+      // AWS signature errors can echo the canonical request, including the
+      // session token header. Never relay them; keep a message both Bedrock SDKs read.
+      const errorType = upstream.headers.get("x-amzn-errortype")?.split(":")[0]
+      const denied = errorType === "AccessDeniedException" || (!errorType && upstream.status === 403)
+      const errorCode = denied ? "provider_permission_denied" : "provider_authentication_failed"
+      const message = denied
+        ? "AWS denied access to this Bedrock model. Ask your organization administrator to check the IAM policy and Bedrock model access in this region."
+        : "AWS rejected the Bedrock provider credential. Ask your organization administrator to check or replace the access keys."
+      const response = Response.json({ message, error: { message, type: "invalid_request_error", code: errorCode, provider_id: provider.id } }, { status: upstream.status })
+      response.headers.set("x-openwork-request-id", openworkRequestId)
+      void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode, upstreamRequestId: upstreamRequestId(upstream.headers) })
       lifetime.dispose()
       await upstream.body?.cancel().catch(() => {})
       return response

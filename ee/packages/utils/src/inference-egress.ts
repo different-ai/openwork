@@ -47,6 +47,23 @@ export function inferenceEgressAllowedOrigins(value = process.env.GATEWAY_EGRESS
   return origins
 }
 
+/** AWS region codes such as us-east-1, eu-central-2 or us-gov-west-1; never a hostname fragment. */
+export function isAwsRegion(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 32 && /^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/.test(value)
+}
+
+/** The only upstream host a Bedrock provider may reach; derived from a validated region. */
+export function bedrockRuntimeHost(region: string): string {
+  if (!isAwsRegion(region)) throw new InferenceEgressError()
+  return `bedrock-runtime.${region}.amazonaws.com`
+}
+
+/** The only upstream host a Bedrock Mantle (OpenAI-compatible) provider may reach. */
+export function bedrockMantleHost(region: string): string {
+  if (!isAwsRegion(region)) throw new InferenceEgressError()
+  return `bedrock-mantle.${region}.api.aws`
+}
+
 /** Structural check only. DNS safety requires createInferenceEgressFetch. */
 export function validateInferenceUrl(input: string | URL, options: { base?: boolean; allowedOrigins?: ReadonlySet<string> } = {}): URL {
   let url: URL

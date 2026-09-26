@@ -1,8 +1,8 @@
-import { spec, registerScreenshotCheckpoint } from "@openwork/testkit";
+import { spec } from "@openwork/testkit";
 import { expect } from "vitest";
 import { checkpointWorld } from "../worlds/web-checkpoint.ts";
 
-const test = spec.world(() => checkpointWorld(registerScreenshotCheckpoint), {
+const test = spec.world(() => checkpointWorld(), {
   resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
   needs: { placement: "local", env: ["FREESTYLE_API_KEY"], optIn: ["OPENWORK_EVIDENCE_CHECKPOINTS"] },
   timeout: 1_200_000,
@@ -11,12 +11,13 @@ const test = spec.world(() => checkpointWorld(registerScreenshotCheckpoint), {
 const partial = "This response is paused at the saved checkpoint.";
 const remaining = "The same response continued from the saved browser.";
 
-test("a reviewer enters a saved web browser with ten sessions and continues a paused response", { timeout: 1_200_000 }, async ({ world, user, agent, probe, step, evidence }) => {
+// Tagged "checkpoints": CI runs it with --checkpoints on a world that can capture.
+test("a reviewer enters a saved web browser with ten sessions and continues a paused response", { timeout: 1_200_000, tags: ["checkpoints"] }, async ({ world, user, agent, probe, step, evidence }) => {
   await step("before: an ordinary screenshot creates no interactive checkpoint", async () => {
     await user.see("composer", { editable: true });
-    const picture = await user.screenshot({ checkpoint: false });
+    const picture = await user.screenshot();
     expect(picture.checkpoint).toBeUndefined();
-    evidence.recordAssertionEvidence("Capture is explicitly optional", "The opt-out image has no checkpoint reference.", true);
+    evidence.recordAssertionEvidence("Plain screenshots save no checkpoint", "Only an explicit checkpoint saves the world; this image has no checkpoint reference.", true);
   });
 
   const sessions = await step("the owner creates ten named sessions and saves the browser", async () => {
@@ -24,9 +25,10 @@ test("a reviewer enters a saved web browser with ten sessions and continues a pa
     const list = await agent.list();
     expect(list.filter((entry) => entry.title.startsWith("Checkpoint session "))).toHaveLength(10);
     await user.see({ text: "Checkpoint session 10" });
-    const picture = await user.screenshot();
-    expect(picture.checkpoint?.sourceSha).toBe(world.sourceSha);
-    evidence.recordAssertionEvidence("Ten real OpenWork sessions are saved", "The product session list contains all ten named sessions; screenshot and checkpoint identify this source commit.", true);
+    const picture = await user.checkpoint("Ten saved sessions");
+    if (!picture?.checkpoint) throw new Error("This run did not save a checkpoint");
+    expect(picture.checkpoint.sourceSha).toBe(world.sourceSha);
+    evidence.recordAssertionEvidence("Ten real OpenWork sessions are saved", `The product session list contains all ten named sessions; screenshot and checkpoint identify this source commit (${picture.checkpointMatch} match).`, true);
     return world.publish(picture, "Ten saved sessions");
   });
 
@@ -35,9 +37,9 @@ test("a reviewer enters a saved web browser with ten sessions and continues a pa
     await user.see({ text: partial }, { timeoutMs: 120_000 });
     const state = await world.streamState();
     expect(state).toEqual({ held: true, complete: false, streamCount: 1 });
-    const picture = await user.screenshot();
-    expect(picture.checkpoint).toBeDefined();
-    evidence.recordAssertionEvidence("The risky condition occurred", "One real app-to-mock stream is held after partial text; it has not completed or reconnected.", true);
+    const picture = await user.checkpoint("Paused response");
+    if (!picture?.checkpoint) throw new Error("This run did not save a checkpoint");
+    evidence.recordAssertionEvidence("The risky condition occurred", `One real app-to-mock stream is held after partial text; it has not completed or reconnected (${picture.checkpointMatch} match).`, true);
     return world.publish(picture, "Paused response");
   });
 
@@ -45,6 +47,7 @@ test("a reviewer enters a saved web browser with ten sessions and continues a pa
     await world.continueStream();
     await user.see({ text: `${partial} ${remaining}` }, { timeoutMs: 60_000 });
     await user.screenshot();
+    // stop() waits for both checkpoints to finish saving before deleting the VM.
     await world.stop();
     evidence.recordAssertionEvidence("Forks cannot depend on the original VM", "The original response completed, then the owning VM was deleted before either review launch.", true);
   });

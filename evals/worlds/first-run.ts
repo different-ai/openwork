@@ -1507,8 +1507,8 @@ export async function backgroundUpdateWorld(seed: Seed) {
   };
 }
 
-/** A desktop signed in to a real Den with a saved version policy. Desktop
- * enforcement is suspended; the fake feed must not change the saved policy. */
+/** A desktop signed in to a real Den whose organization pins allowed desktop
+ * versions. The fake feed offers 9.9.9; the pin decides whether it installs. */
 export async function savedUpdatePolicyWorld(seed: Seed) {
   const den = await seed.den({
     org: { name: `Update policy ${Date.now()}`, admin: { name: "Update Policy Admin" } },

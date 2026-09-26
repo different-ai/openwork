@@ -56,7 +56,7 @@ type UseElectronUpdaterStateOptions = {
   updateAutoCheck: boolean;
   updateAutoDownload: boolean;
   /** False until the organization's update policy can be honoured (activation done, desktop config resolved). */
-  updatePolicyKnown: boolean;
+  allowedVersionsKnown: boolean;
   desktopConfig: DenDesktopConfig | null | undefined;
   refreshDesktopConfig: () => Promise<DenDesktopConfig>;
   setError: (message: string | null) => void;
@@ -162,7 +162,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     onReleaseChannelChange,
     updateAutoCheck,
     updateAutoDownload,
-    updatePolicyKnown,
+    allowedVersionsKnown,
     desktopConfig,
     refreshDesktopConfig,
     setError,
@@ -677,7 +677,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
   );
 
   useEffect(() => {
-    if (!updatePolicyKnown || !updateAutoCheck || updateEnv?.supported === false || !appVersion) return;
+    if (!allowedVersionsKnown || !updateAutoCheck || updateEnv?.supported === false || !appVersion) return;
     const key = `${policyReleaseChannel}:${appVersion}`;
     const interval = 15 * 60 * 1000;
     const check = () => {
@@ -709,16 +709,16 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       window.removeEventListener("online", check);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [appVersion, policyReleaseChannel, runCheckForUpdates, updateAutoCheck, updateEnv?.supported, updatePolicyKnown]);
+  }, [appVersion, policyReleaseChannel, runCheckForUpdates, updateAutoCheck, updateEnv?.supported, allowedVersionsKnown]);
 
   // Run a check when the native "Check for Updates..." menu item was used.
   // A request made before the policy is known stays queued until it is.
   const updateCheckRequestedAt = useUpdateCheckRequestStore((state) => state.requestedAt);
   useEffect(() => {
-    if (!updatePolicyKnown || updateCheckRequestedAt == null || updateEnv?.supported === false) return;
+    if (!allowedVersionsKnown || updateCheckRequestedAt == null || updateEnv?.supported === false) return;
     useUpdateCheckRequestStore.getState().clearUpdateCheckRequest();
     void checkForUpdates();
-  }, [checkForUpdates, updateCheckRequestedAt, updateEnv?.supported, updatePolicyKnown]);
+  }, [checkForUpdates, updateCheckRequestedAt, updateEnv?.supported, allowedVersionsKnown]);
 
   const installUpdateAndRestart = useCallback(async () => {
     const releaseChannelRequestId = releaseChannelRequestRef.current;

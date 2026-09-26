@@ -534,6 +534,18 @@ export function electronSurfaceEnv(
   };
 }
 
+/**
+ * Launch env for an isolated Electron surface. The launching shell's OPENCODE_*
+ * never reach the app: an OpenWork agent shell exports the host app's
+ * OPENCODE_DB, which points the eval app's engine at the person's real
+ * database. Values a caller sets on purpose arrive through `isolationEnv`
+ * (electronSurfaceEnv overrides), so they still apply.
+ */
+export function electronLaunchEnv(parent: NodeJS.ProcessEnv, isolationEnv: Record<string, string>): NodeJS.ProcessEnv {
+  const inherited = Object.fromEntries(Object.entries(parent).filter(([key]) => !key.startsWith("OPENCODE_")));
+  return { ...inherited, ...isolationEnv };
+}
+
 export function liveSharedProductionStateEnv(state: InstalledProductionDesktopState): Record<string, string> {
   return {
     HOME: state.homeDir,
@@ -870,7 +882,7 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
       const appName = `OpenWork Eval ${name}`;
       const appIdentifier = `com.differentai.openwork.eval.${sanitizeSlug(name)}`;
       const isolationEnv = electronSurfaceEnv(paths, { appName, appIdentifier, port, cdpPort }, opts.env);
-      const env: NodeJS.ProcessEnv = { ...process.env, ...isolationEnv };
+      const env = electronLaunchEnv(process.env, isolationEnv);
       const launchArgs = containerLaunchArgs(env.ELECTRON_EXTRA_LAUNCH_ARGS);
       if (launchArgs !== undefined) env.ELECTRON_EXTRA_LAUNCH_ARGS = launchArgs;
       // appendSwitch() in the main process runs too late for the SUID sandbox

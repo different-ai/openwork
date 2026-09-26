@@ -258,8 +258,6 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-      pull-requests: write
-      statuses: write
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -273,11 +271,6 @@ jobs:
       - uses: ./.github/actions/setup-browser
       - name: Build this branch's review app
         run: pnpm --filter @openwork/review-app build
-      - name: Prove live memory and internal stream restoration
-        env:
-          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
-          CHECKPOINT_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
-        run: node scripts/prove-freestyle-checkpoints.ts
       - name: Prepare this branch's isolated web world
         timeout-minutes: 35
         env:
@@ -285,25 +278,18 @@ jobs:
           OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
           OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/prepare-evidence-web.ts
-      - name: Prove screenshot to saved browser on this head
+      # Specs tagged "checkpoints" run here because the Freestyle credential is
+      # protected. Their records join this PR's normal evidence report; the shared
+      # review app opens the checkpoints. Checkpoint worlds are web worlds on v1.
+      - name: Run the tagged spec with checkpoints on this head
         id: proof
-        timeout-minutes: 15
+        timeout-minutes: 20
         env:
           FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
           OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
           OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
           PROOF_SPEC: ${{ matrix.spec }}
-        run: |
-          test "$PROOF_SPEC" = 'evals/specs/web-checkpoint-fork.e2e.test.ts'
-          xvfb-run -a pnpm evals:e2e web-checkpoint-fork --local --engine v1 --surface web --checkpoints
-      - name: Save the platform prerequisite receipt
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: checkpoint-memory-${{ github.run_attempt }}
-          path: results/checkpoint-probe/report.json
-          retention-days: 7
-          if-no-files-found: error
+        run: xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --engine v1 --surface web --checkpoints
       - name: Save selected native testkit and Vitest records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -315,63 +301,6 @@ jobs:
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: error
-      - name: Publish the branch-format report
-        if: always() && steps.proof.outcome != 'skipped'
-        id: report
-        env:
-          BLOB_READ_WRITE_TOKEN: ${{ secrets.OPENWORK_REVIEW_BLOB_TOKEN }}
-          OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
-        run: node scripts/publish-checkpoint-evidence.ts
-      - name: Deploy a separate protected review preview from this head
-        if: always() && steps.report.outcome == 'success'
-        id: preview
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ vars.OPENWORK_REVIEW_VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ vars.OPENWORK_REVIEW_VERCEL_PROJECT_ID }}
-          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
-          BLOB_READ_WRITE_TOKEN: ${{ secrets.OPENWORK_REVIEW_BLOB_TOKEN }}
-          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          test -n "$VERCEL_TOKEN" && test -n "$VERCEL_PROJECT_ID" && test -n "$VERCEL_ORG_ID"
-          url="$(pnpm dlx vercel@48 deploy --target preview --yes --scope "$VERCEL_ORG_ID" --token "$VERCEL_TOKEN" --meta githubCommitSha="$SOURCE_SHA" --env FREESTYLE_API_KEY="$FREESTYLE_API_KEY" --env BLOB_READ_WRITE_TOKEN="$BLOB_READ_WRITE_TOKEN")"
-          case "$url" in https://*.vercel.app) ;; *) echo 'Unexpected review deployment URL' >&2; exit 1;; esac
-          echo "url=$url" >> "$GITHUB_OUTPUT"
-          # Never move the shared review alias. This PR keeps its own deployment.
-      - name: Verify anonymous access is blocked and link the branch report
-        if: always() && steps.preview.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ vars.OPENWORK_REVIEW_VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ vars.OPENWORK_REVIEW_VERCEL_PROJECT_ID }}
-          PREVIEW_URL: ${{ steps.preview.outputs.url }}
-          REPORT_ID: ${{ steps.report.outputs.report_id }}
-          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
-          PROOF_STATE: ${{ steps.proof.outcome == 'success' && 'success' || 'failure' }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          for path in "/r/$REPORT_ID" "/r/$REPORT_ID/assets/report.json"; do
-            headers="$(curl -sS -o /dev/null -D - --max-time 30 "$PREVIEW_URL$path")"
-            status="$(printf '%s' "$headers" | head -n1 | awk '{print $2}')"
-            location="$(printf '%s' "$headers" | tr -d '\r' | awk 'tolower($1)=="location:" {print $2}')"
-            if [ "$status" != 401 ]; then
-              test "$status" = 302 && [[ "$location" == https://vercel.com/sso-api* ]]
-            fi
-          done
-          # vercel curl consumes VERCEL_TOKEN from env; --token is forwarded to curl.
-          pnpm dlx vercel@59.24.0 curl "/r/$REPORT_ID" --deployment "$PREVIEW_URL" --scope "$VERCEL_ORG_ID" -- --fail --silent --output /dev/null
-          printf '## Interactive checkpoint evidence\n\n[Open this branch’s report](%s/r/%s). This protected preview runs the PR code; nothing needs to merge first. Checkpoints expire after 24 hours.\n' "$PREVIEW_URL" "$REPORT_ID" >> "$GITHUB_STEP_SUMMARY"
-          # A distinct entry point avoids the shared reviewer's older, static-only UI.
-          gh api --silent --method POST "repos/$GITHUB_REPOSITORY/statuses/$SOURCE_SHA" \
-            -f state="$PROOF_STATE" -f context='OpenWork Checkpoints' \
-            -f target_url="$PREVIEW_URL/r/$REPORT_ID" \
-            -f description='Interactive browser checkpoints; see report for test verdict'
-          gh pr comment "$PR_NUMBER" --body "<!-- web-checkpoint-preview -->
-          **[Open saved browsers from this PR]($PREVIEW_URL/r/$REPORT_ID)**
-          Use the **OpenWork Checkpoints** check for this interactive report. Pictures with **Open from here** restore a private copy of the app; **New copy** restores that same checkpoint again. Review-page images and UI-state examples are screenshot-only. Checkpoints expire after 24 hours. The report records the actual test verdict."
 
   windows-proof:
     needs: select

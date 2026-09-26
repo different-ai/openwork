@@ -164,7 +164,6 @@ describe("proxyOpencodeRequest read-only guard", () => {
             actor: actor(scope), config: readOnlyConfig, workspace, proxyPath, url,
             request: new Request(url),
             connection: { url: `http://127.0.0.1:${engine.port}`, username: "opencode", password: "fixture-only" },
-            syncWorkspaceSkills: async () => { throw new Error("Catalog reads must not sync or alter Cloud skills"); },
           });
           expect(response.status).toBe(200);
           const payload = await response.json();

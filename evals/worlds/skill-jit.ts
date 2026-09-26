@@ -276,8 +276,9 @@ export async function skillJitWeb(seed: Seed, context: { place: Place }) {
       return agentMock.agentRequests({ promptMarker: prompt, ...opts });
     },
     /** Write a raw workspace SKILL.md at a directory the skills route would never choose. */
-    async writeWorkspaceSkillFile(directoryName: string, markdown: string): Promise<string> {
-      const directory = join(workspacePath, ".opencode", "skills", directoryName);
+    /** Write a skill file straight to disk, bypassing OpenWork, in any native skill folder. */
+    async writeWorkspaceSkillFile(directoryName: string, markdown: string, folder: ".opencode" | ".agents" | ".claude" = ".opencode"): Promise<string> {
+      const directory = join(workspacePath, folder, "skills", directoryName);
       await mkdir(directory, { recursive: true });
       const path = join(directory, "SKILL.md");
       await writeFile(path, markdown, "utf8");

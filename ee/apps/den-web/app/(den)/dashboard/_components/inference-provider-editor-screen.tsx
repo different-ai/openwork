@@ -17,10 +17,10 @@ import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource, saveInferenceProvider, useInferenceProvider } from "./inference-provider-data";
+import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource, saveInferenceProvider, useInferenceProvider, useOrgInferenceProviders } from "./inference-provider-data";
 import {
-  accessFromGrants, buildInferenceProviderRequestBody, getNewInferenceProviderSettings, getRequiredSettingKeys, getSettingLabel,
-  isGoogleVertexNpm, isSupportedGatewayNpm, supportsMemberCredentialMode,
+  accessFromGrants, buildInferenceProviderRequestBody, getAwsKeysError, getReusableAwsKeyProviders, getNewInferenceProviderSettings, getRequiredSettingKeys, getSettingLabel,
+  isAmazonBedrockNpm, isAwsRegion, isGoogleVertexNpm, isSupportedGatewayNpm, supportsMemberCredentialMode, type AwsKeysInput,
 } from "./inference-provider-request";
 import { formatProviderTimestamp, getProviderDocUrl, getProviderEnvNames, getProviderIconSlug, getProviderNpmPackage, requestLlmProviderCatalogDetail, type DenModelsDevProviderDetail } from "./llm-provider-data";
 import { normalizeAzureResourceNameInput } from "./llm-provider-guided";
@@ -30,6 +30,8 @@ const CARD = "rounded-[12px] border border-gray-100 bg-white p-4";
 const CARD_TITLE = "text-[13px] font-medium text-gray-900";
 const LABEL = "mt-3 block text-[12px] font-medium text-gray-700";
 const MONO_INPUT = "font-mono text-[12px]";
+const EMPTY_AWS_KEYS: AwsKeysInput = { accessKeyId: "", secretAccessKey: "", sessionToken: "" };
+const SETTING_PLACEHOLDERS: Record<string, string> = { region: "us-east-1" };
 
 function Radio({ testId, checked, label, onSelect }: { testId: string; checked: boolean; label: string; onSelect: () => void }) {
   return (
@@ -57,6 +59,9 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const [apiKey, setApiKey] = useState("");
   const [apiKeyValues, setApiKeyValues] = useState<Record<string, string>>({});
   const [serviceAccountJson, setServiceAccountJson] = useState("");
+  const [awsKeys, setAwsKeys] = useState<AwsKeysInput>(EMPTY_AWS_KEYS);
+  const [reuseKeysFrom, setReuseKeysFrom] = useState<string | null>(null);
+  const { inferenceProviders } = useOrgInferenceProviders(orgId);
   const [oauthClientId, setOauthClientId] = useState("");
   const [oauthClientSecret, setOauthClientSecret] = useState("");
   const [rotationAcknowledged, setRotationAcknowledged] = useState(false);
@@ -87,6 +92,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     setApiKey("");
     setApiKeyValues({});
     setServiceAccountJson("");
+    setAwsKeys(EMPTY_AWS_KEYS);
     setReplacingKey(false);
     setRotationAcknowledged(false);
     setCallbackCopied(false);
@@ -116,6 +122,9 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
 
   const npm = detail ? getProviderNpmPackage(detail.config) : null;
   const vertex = isGoogleVertexNpm(npm);
+  const bedrock = isAmazonBedrockNpm(npm);
+  const reusableKeyProviders = !inferenceProviderId && bedrock ? getReusableAwsKeyProviders(inferenceProviders) : [];
+  const reuseSource = reusableKeyProviders.find((entry) => entry.id === reuseKeysFrom) ?? null;
   const envNames = detail ? getProviderEnvNames(detail.config) : [];
   const memberSignInSupported = supportsMemberCredentialMode(providerId);
   const configuredSet = provider?.credentialSets[0] ?? null;
@@ -128,6 +137,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const formInput = {
     name, providerId, modelIds: allowAllModels ? [] : modelIds, credentialMode, status: "active" as const,
     settings, envNames, apiKey, apiKeyValues, serviceAccountJson, oauthClientId, oauthClientSecret, access,
+    ...(bedrock ? { awsKeys, reuseCredentialFrom: reuseSource?.id ?? null } : {}),
   };
   const models = detail?.models ?? [];
   const filteredModels = useMemo(() => {
@@ -145,6 +155,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     setApiKey("");
     setApiKeyValues({});
     setServiceAccountJson("");
+    setAwsKeys(EMPTY_AWS_KEYS);
+    setReuseKeysFrom(null);
     setRotationAcknowledged(false);
   }
 
@@ -187,9 +199,12 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     if (!isSupportedGatewayNpm(npm)) return setSaveError("This provider is not supported by AI Gateway.");
     if (!allowAllModels && !modelIds.length) return setSaveError("Pick at least one model, or choose all models.");
     for (const key of getRequiredSettingKeys(npm)) if (!settings[key]?.trim()) return setSaveError(`${getSettingLabel(key)} is required.`);
+    if (bedrock && !isAwsRegion(settings.region?.trim() ?? "")) return setSaveError("Enter an AWS region code such as us-east-1.");
+    const awsKeysError = bedrock && !reuseSource ? getAwsKeysError(awsKeys) : null;
+    if (awsKeysError) return setSaveError(awsKeysError);
     const granting = access.allMembers || access.teamIds.length > 0 || access.memberIds.length > 0;
     if (!provider && granting && credentialMode === "org") {
-      const hasKey = vertex ? Boolean(serviceAccountJson.trim()) : envNames.length > 1 ? Object.values(apiKeyValues).some((value) => value.trim()) : Boolean(apiKey.trim());
+      const hasKey = vertex ? Boolean(serviceAccountJson.trim()) : bedrock ? Boolean(reuseSource || (awsKeys.accessKeyId.trim() && awsKeys.secretAccessKey.trim())) : envNames.length > 1 ? Object.values(apiKeyValues).some((value) => value.trim()) : Boolean(apiKey.trim());
       if (!hasKey) return setSaveError("Paste a key before sharing these models.");
     }
     if (credentialMode === "member" && (!memberSignInSupported || !oauthClientId.trim() || (!oauthClientSecret.trim() && !configuredSet?.hasOauthClientSecret))) {
@@ -263,7 +278,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
         {getRequiredSettingKeys(npm).map((key) => (
           <label key={key} className={LABEL}>
             {getSettingLabel(key)}
-            <DenInput className={`mt-1.5 ${MONO_INPUT}`} readOnly={Boolean(provider)} value={settings[key] ?? ""}
+            <DenInput className={`mt-1.5 ${MONO_INPUT}`} readOnly={Boolean(provider)} value={settings[key] ?? ""} placeholder={SETTING_PLACEHOLDERS[key]} data-testid={`gateway-setting-${key}`}
               onChange={(event) => setSettings((current) => ({ ...current, [key]: key === "resourceName" ? normalizeAzureResourceNameInput(event.target.value) : event.target.value }))} />
           </label>
         ))}
@@ -285,6 +300,27 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
           </>
         ) : vertex ? (
           <label className={LABEL}>Service account JSON<DenTextarea className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-service-account" value={serviceAccountJson} onChange={(event) => setServiceAccountJson(event.target.value)} placeholder={configuredSet?.configured ? "Saved — paste a replacement to change it" : "Paste the key file"} /></label>
+        ) : bedrock ? (
+          <>
+            {reusableKeyProviders.length ? (
+              <div className="mt-3 flex items-center gap-3">
+                <span className="min-w-0 flex-1 text-[13px] text-gray-900">{reuseSource ? `Using the AWS keys saved for ${reuseSource.name}` : "Use AWS keys you already saved"}</span>
+                <DenSwitch checked={reuseSource !== null} aria-label="Use saved AWS keys" testId="gateway-aws-reuse-keys"
+                  onChange={(checked) => { setReuseKeysFrom(checked ? reusableKeyProviders[0]?.id ?? null : null); setAwsKeys(EMPTY_AWS_KEYS); }} />
+              </div>
+            ) : null}
+            {reuseSource && reusableKeyProviders.length > 1 ? (
+              <div className="mt-2 w-[280px]">
+                <DenCombobox ariaLabel="Saved AWS keys" value={reuseSource.id} options={reusableKeyProviders.map((entry) => ({ value: entry.id, label: entry.name }))}
+                  placeholder="Choose a provider…" searchPlaceholder="Search providers" emptyLabel="No saved keys" onChange={setReuseKeysFrom} />
+              </div>
+            ) : null}
+            {reuseSource ? null : <>
+            <label className={LABEL}>Access key ID<DenInput className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-aws-access-key-id" value={awsKeys.accessKeyId} autoComplete="off" onChange={(event) => setAwsKeys((current) => ({ ...current, accessKeyId: event.target.value }))} placeholder={configuredSet?.configured ? "Saved — enter replacement keys to change them" : "AKIA…"} /></label>
+            <label className={LABEL}>Secret access key<DenInput className={`mt-1.5 ${MONO_INPUT}`} type="password" data-testid="gateway-aws-secret-access-key" value={awsKeys.secretAccessKey} autoComplete="new-password" onChange={(event) => setAwsKeys((current) => ({ ...current, secretAccessKey: event.target.value }))} /></label>
+            <label className={LABEL}>Session token (optional)<DenInput className={`mt-1.5 ${MONO_INPUT}`} type="password" data-testid="gateway-aws-session-token" value={awsKeys.sessionToken} autoComplete="new-password" onChange={(event) => setAwsKeys((current) => ({ ...current, sessionToken: event.target.value }))} /></label>
+            </>}
+          </>
         ) : envNames.length > 1 ? (
           envNames.map((envName) => (
             <label key={envName} className={LABEL}>{envName}<DenInput className={`mt-1.5 ${MONO_INPUT}`} type="password" value={apiKeyValues[envName] ?? ""} onChange={(event) => setApiKeyValues((current) => ({ ...current, [envName]: event.target.value }))} /></label>

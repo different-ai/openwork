@@ -5,8 +5,10 @@ import { attachSurface } from "@openwork/cdp";
 import { trackResource } from "@openwork/world";
 import { ensureEvidenceSnapshot } from "@openwork/freestyle/evidence-builder";
 import { client, execChecked } from "@openwork/freestyle";
-import { captureEvidenceCheckpoint, deleteEvidenceVm, launchEvidenceWorld, continueEvidenceStream } from "@openwork/freestyle/checkpoints";
+import { setTimeout as delay } from "node:timers/promises";
+import { deleteEvidenceVm, launchEvidenceWorld, continueEvidenceStream, startEvidenceCheckpoint } from "@openwork/freestyle/checkpoints";
 import type { EvidenceSession } from "@openwork/freestyle/checkpoints";
+import { checkpointCapability, type CheckpointCapability } from "./checkpoint-capability.ts";
 
 /** Host-only relay: keeps the provider cookie out of CDP URLs and evidence logs. */
 export async function evidenceCdpRelay(session: Pick<EvidenceSession, "cdpOrigin" | "cookie">) {
@@ -57,6 +59,9 @@ export async function attachEvidenceBrowser(session: EvidenceSession) {
   } catch (error) { await relay[Symbol.asyncDispose](); throw error; }
 }
 
+/** Longest measured snapshot save was ~7 minutes; never wait longer than this. */
+const SAVE_WAIT_MS = 10 * 60_000;
+
 /** Explicit web-only world; the CI controller still uses its local Blacksmith host. */
 export async function freestyleEvidenceWeb(sourceSha: string) {
   const snapshot = await ensureEvidenceSnapshot(sourceSha);
@@ -64,10 +69,32 @@ export async function freestyleEvidenceWeb(sourceSha: string) {
   try {
     await trackResource({ kind: "freestyle-evidence", id: session.id, match: session.id, label: "evidence-web" });
     const app = await attachEvidenceBrowser(session);
+    // Snapshots are captured within seconds but saved for up to minutes; the VM
+    // must outlive every save it started.
+    const saves = new Set<Promise<void>>();
+    let stopping = false;
     let stopped = false;
-    const stop = async () => { if (stopped) return; try { await app.stop(); } finally { await deleteEvidenceVm(session.id); } stopped = true; };
+    const stop = async () => {
+      if (stopped) return;
+      stopping = true;
+      await Promise.race([Promise.allSettled([...saves]), delay(SAVE_WAIT_MS)]);
+      try { await app.stop(); } finally { await deleteEvidenceVm(session.id); }
+      stopped = true;
+    };
+    // Starts a checkpoint without waiting for it to be saved; `stop()` waits instead.
+    const capability: CheckpointCapability = {
+      surface: app,
+      available: () => !stopping,
+      async capture({ imageHash }) {
+        if (stopping) throw new Error("The evidence world is stopping");
+        const started = await startEvidenceCheckpoint({ vmId: session.id, sourceSha, imageHash });
+        saves.add(started.saved);
+        void started.saved.catch(() => undefined).finally(() => saves.delete(started.saved));
+        return started;
+      },
+    };
     return { app, session,
-      capture: ({ imageHash }: { imageHash: string }) => captureEvidenceCheckpoint({ vmId: session.id, sourceSha, imageHash }),
+      [checkpointCapability]: capability,
       continueStream: () => continueEvidenceStream(session.id),
       async streamState() {
         const text = await execChecked(client().vms.ref(session.id), "node /opt/openwork-preview/evidence-control.mjs state");

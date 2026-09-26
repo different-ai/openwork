@@ -222,6 +222,25 @@ function makeAzureProvider(apiKeys: Record<string, string>): CloudProviderMateri
   }
 }
 
+function makePerMemberProvider(apiKey: string | null): CloudProviderMaterializationProvider {
+  return {
+    id: "lpr_01kx4t3aqfendr688a4dedf2m6",
+    source: "custom",
+    providerId: "member-gateway",
+    name: "Member gateway",
+    credentialMode: "per_member",
+    providerConfig: {
+      id: "member-gateway",
+      name: "Member gateway",
+      npm: "@ai-sdk/openai-compatible",
+      env: ["MEMBER_GATEWAY_API_KEY"],
+      api: "https://gateway.example.test/v1",
+    },
+    apiKey,
+    models: [{ modelId: "team-model", name: "Team model", modelConfig: { id: "team-model", name: "Team model" } }],
+  }
+}
+
 function makeStore(providers: () => CloudProviderMaterializationProvider[]): Store {
   return {
     async listProviders() {
@@ -744,6 +763,59 @@ describe("Cloud provider materialization", () => {
       entries: [{ key: "OPENAI_API_KEY", value: "sk-gateway" }],
     })
     expect(instance.runtimeProvider(provider.id)).toMatchObject({ id: "gateway", env: ["OPENAI_API_KEY"] })
+  })
+
+  test("a per-member provider reaches the worker with the credential resolved for its owner", async () => {
+    // Organizations that provision one credential per member store no
+    // organization key; the store hands over the worker owner's own binding.
+    const provider = makePerMemberProvider("owner-member-token")
+    const instance = makeInstance()
+
+    const result = await materialize({ providers: () => [provider], fetchImpl: instance.fetchImpl, force: true })
+
+    expect(result).toMatchObject({ ok: true, status: "applied", providers: 1 })
+    expect(instance.calls.find((call) => call.method === "PUT" && call.path === "/env")?.body).toEqual({
+      entries: [{ key: "MEMBER_GATEWAY_API_KEY", value: "owner-member-token" }],
+    })
+    expect(instance.runtimeProvider(provider.id)).toMatchObject({
+      id: "member-gateway",
+      env: ["MEMBER_GATEWAY_API_KEY"],
+      api: "https://gateway.example.test/v1",
+    })
+  })
+
+  test("names a provider it leaves out for lack of a credential, once per change", async () => {
+    const provider = makePerMemberProvider(null)
+    const instance = makeInstance()
+    const workerId = createDenTypeId("worker")
+    const logs: Array<{ message: string; metadata?: Record<string, unknown> }> = []
+    const logger: Logger = {
+      warn(message, metadata) {
+        logs.push({ message, metadata })
+      },
+      error(message, metadata) {
+        logs.push({ message, metadata })
+      },
+    }
+
+    const first = await materialize({ workerId, providers: () => [provider], fetchImpl: instance.fetchImpl, logger })
+    const second = await materialize({ workerId, providers: () => [provider], fetchImpl: instance.fetchImpl, logger })
+
+    expect(first).toMatchObject({ ok: true, status: "noop", providers: 0 })
+    expect(second).toMatchObject({ ok: true, status: "cached", providers: 0 })
+    expect(writeCalls(instance.calls)).toEqual([])
+    expect(logs).toEqual([
+      {
+        message: "cloud provider skipped without a usable credential",
+        metadata: {
+          worker_id: workerId,
+          organization_id: organizationId,
+          provider_id: provider.id,
+          source: "custom",
+          credential_mode: "per_member",
+        },
+      },
+    ])
   })
 
   test("does not materialize Azure from a resource name without its API key", async () => {
