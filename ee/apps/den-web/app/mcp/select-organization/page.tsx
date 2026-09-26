@@ -11,6 +11,7 @@ import {
 } from "../../(den)/_lib/mcp-oauth-route";
 import { getRuntimeConfig } from "../../(den)/_lib/runtime-config";
 import { useOrgListWindow } from "../../(den)/_lib/use-org-list-window";
+import { McpClientIdentity } from "../client-identity";
 import { McpConsentPermissions } from "../consent-permissions";
 
 type Organization = {
@@ -345,6 +346,8 @@ export default function McpSelectOrganizationPage() {
               </h2>
               <p className="den-copy">{introCopy}</p>
             </div>
+
+            <McpClientIdentity clientId={params.get("client_id")} redirectUri={params.get("redirect_uri")} oauthQuery={oauthQuery} />
 
             <TemporaryAuthNotice />
 
