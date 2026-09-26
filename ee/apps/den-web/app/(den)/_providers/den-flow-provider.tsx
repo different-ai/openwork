@@ -64,7 +64,8 @@ import {
   workerNeedsConnectionResolution,
   trackPosthogEvent
 } from "../_lib/den-flow";
-import { EMPTY_RUNTIME_CONFIG, getRuntimeConfig, type DenWebRuntimeConfig } from "../_lib/runtime-config";
+import { EMPTY_RUNTIME_CONFIG, getRuntimeConfig, resetRuntimeConfig, type DenWebRuntimeConfig } from "../_lib/runtime-config";
+import { resolveMemberReturnTo, type MemberAuthCheckStatus } from "../_lib/member-auth-routing";
 import {
   getDesktopHandoffGrant,
   getDesktopHandoffOpenworkUrl,
@@ -131,6 +132,9 @@ type DenFlowContextValue = {
   signupPasswordFeedback: string[];
   user: AuthUser | null;
   sessionHydrated: boolean;
+  memberAuthCheckStatus: MemberAuthCheckStatus;
+  memberAuthCheckError: string | null;
+  retryMemberAuthCheck: () => void;
   desktopAuthRequested: boolean;
   desktopAuthScheme: string;
   setupPending: boolean;
@@ -272,6 +276,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   });
   const [hydratedSession, setHydratedSession] = useState<{ token: string | null } | null>(null);
   const sessionHydrated = hydratedSession !== null && hydratedSession.token === authToken;
+  const [memberAuthCheckStatus, setMemberAuthCheckStatus] = useState<MemberAuthCheckStatus>("checking");
+  const [memberAuthCheckError, setMemberAuthCheckError] = useState<string | null>(null);
+  const [memberAuthCheckAttempt, setMemberAuthCheckAttempt] = useState(0);
   const desktopAuthScheme = continuation?.desktopScheme ?? "openwork";
   const setupPending = Boolean(user && continuation?.userId === user.id && continuation.setup);
   const [webAuthRequested, setWebAuthRequested] = useState(false);
@@ -1011,22 +1018,22 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     if (!isCurrent() || epoch !== sessionEpochRef.current) return null;
 
     if (!response.ok) {
-      setUser(null);
-      if (response.status === 401 && authToken) {
-        setAuthToken(null);
+      if (response.status === 401) {
+        setUser(null);
+        if (authToken) {
+          setAuthToken(null);
+        }
+        if (!quiet) {
+          setAuthError("No active session found. Sign in first.");
+        }
+        return null;
       }
-      if (!quiet) {
-        setAuthError("No active session found. Sign in first.");
-      }
-      return null;
+      throw new Error(getErrorMessage(payload, `Could not check your sign-in status (${response.status}).`));
     }
 
     const sessionUser = getUser(payload);
     if (!sessionUser) {
-      if (!quiet) {
-        setAuthError("Session response did not include a user.");
-      }
-      return null;
+      throw new Error("Session response did not include a user.");
     }
 
     setUser(sessionUser);
@@ -1212,6 +1219,14 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
     if (continuationRef.current?.userId === user.id && continuationRef.current.setup) {
       return continuationRef.current.setup.route;
+    }
+
+    const returnTo = resolveMemberReturnTo(
+      new URLSearchParams(window.location.search).get("returnTo"),
+      desktopAuthRequested || webAuthRequested,
+    );
+    if (returnTo) {
+      return returnTo;
     }
     if (runtimeConfig === EMPTY_RUNTIME_CONFIG) {
       setAuthError("Could not load workspace configuration. Refresh to try again.");
@@ -1965,20 +1980,34 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     setWorker((current) => listItemToWorker(item, current));
   }
 
+  function retryMemberAuthCheck() {
+    resetRuntimeConfig();
+    setRuntimeConfig(EMPTY_RUNTIME_CONFIG);
+    setRuntimeConfigLoaded(false);
+    setHydratedSession(null);
+    setMemberAuthCheckError(null);
+    setMemberAuthCheckStatus("checking");
+    setMemberAuthCheckAttempt((current) => current + 1);
+  }
+
   useEffect(() => {
     let cancelled = false;
 
     void getRuntimeConfig().then((config) => {
-      if (!cancelled) {
-        setRuntimeConfig(config);
-        setRuntimeConfigLoaded(true);
+      if (cancelled) return;
+      if (config === EMPTY_RUNTIME_CONFIG) {
+        setMemberAuthCheckError("Could not load workspace configuration.");
+        setMemberAuthCheckStatus("error");
+        return;
       }
+      setRuntimeConfig(config);
+      setRuntimeConfigLoaded(true);
     });
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [memberAuthCheckAttempt]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2025,14 +2054,22 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     let cancelled = false;
+    setHydratedSession(null);
+    setMemberAuthCheckError(null);
+    setMemberAuthCheckStatus("checking");
 
     const hydrateSession = async () => {
       const epoch = sessionEpochRef.current;
       try {
         await refreshSession(true, () => !cancelled);
-      } finally {
         if (!cancelled && epoch === sessionEpochRef.current) {
           setHydratedSession({ token: authToken });
+          setMemberAuthCheckStatus("ready");
+        }
+      } catch {
+        if (!cancelled && epoch === sessionEpochRef.current) {
+          setMemberAuthCheckError("Could not check your sign-in status.");
+          setMemberAuthCheckStatus("error");
         }
       }
     };
@@ -2385,6 +2422,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     signupPasswordFeedback,
     user,
     sessionHydrated,
+    memberAuthCheckStatus,
+    memberAuthCheckError,
+    retryMemberAuthCheck,
     desktopAuthRequested,
     desktopAuthScheme,
     setupPending,
