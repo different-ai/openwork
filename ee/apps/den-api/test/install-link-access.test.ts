@@ -45,6 +45,7 @@ let organizationMetadata = defaultOrganizationMetadata()
 mock.module("../src/auth.js", () => ({
   DEN_MCP_FIRST_PARTY_CLIENT_ID: "openwork-desktop",
   DEN_MCP_FIRST_PARTY_RESOURCES: [],
+  DEN_MCP_GRANT_ID_CLAIM: "grant_id",
   DEN_MCP_LEGACY_PARENT_RESOURCES: [],
   DEN_MCP_OAUTH_RESOURCE: "http://127.0.0.1:8790/mcp/agent",
   DEN_MCP_OAUTH_VALID_AUDIENCES: [],
@@ -283,6 +284,24 @@ test("members can mint non-rotating install links without revoking earlier links
   expect(second.status).toBe(200)
   expect(insertedInstallLinks()).toHaveLength(2)
   expect(revokedRows).toHaveLength(0)
+})
+
+test("minting an install link also returns a desktop connect link for the same organization", async () => {
+  const response = await mint(createApp())
+
+  expect(response.status).toBe(200)
+  const body: unknown = await response.json()
+  if (!isRecord(body)) throw new Error("install link response was not an object")
+  expect(typeof body.installPageUrl).toBe("string")
+  expect(new URL(String(body.installPageUrl)).pathname).toBe("/install")
+  expect(String(body.connectUrl)).toStartWith("openwork://connect?code=")
+  expect(Date.parse(String(body.connectExpiresAt))).toBeGreaterThan(Date.now())
+  expect(body).not.toHaveProperty("installLinkId")
+  const grants = insertedRows.filter((row) => isRecord(row) && typeof row.codeHash === "string")
+  expect(grants).toHaveLength(1)
+  const [grant] = grants
+  const [installLinkRow] = insertedInstallLinks()
+  expect(isRecord(grant) ? grant.installLinkId : null).toBe(isRecord(installLinkRow) ? installLinkRow.id : undefined)
 })
 
 test("ordinary members cannot rotate organization install links", async () => {

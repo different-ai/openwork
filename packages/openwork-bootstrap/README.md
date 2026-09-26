@@ -23,5 +23,16 @@ Current scope:
 - `doctor` verifies the CLI install and, optionally, a Den API health endpoint.
 - `cloud onboard` drives the headless REST onboarding flow: sign up, sign in,
   create an org, invite a teammate, and create a starter skill.
+  Hosted OpenWork Cloud requires a 6-digit email code before the first
+  sign-in, so run it in two steps:
+
+  ```bash
+  OPENWORK_OWNER_PASSWORD='<generated-password>' openwork-bootstrap cloud onboard --request-code --base-url https://api.openworklabs.com --owner-email ada@example.com --json
+  # ask the person for the code from their inbox, then:
+  OPENWORK_OWNER_PASSWORD='<generated-password>' openwork-bootstrap cloud onboard --verification-code 123456 --base-url https://api.openworklabs.com --owner-email ada@example.com --org-name 'Ada Workspace' --invite-email teammate@example.com --json
+  ```
+
+  The code step verifies before it signs in (each new sign-in emails a new
+  code). Use `--verification-code-stdin` to keep the code out of shell history.
 
 This is a bootstrap layer for install and Cloud onboarding; runtime hosting uses the desktop app, OpenWork Cloud, or `openwork-server`.

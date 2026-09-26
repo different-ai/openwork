@@ -51,7 +51,9 @@ const createInstallLinkBodySchema = z.object({
 
 const createInstallLinkResponseSchema = z.object({
   token: z.string(),
-  installPageUrl: z.string().url(),
+  installPageUrl: z.string().url().describe("Share this page: it downloads the OpenWork desktop app for this organization."),
+  connectUrl: z.string().describe("Open on a computer that already has OpenWork installed to point the desktop app at this organization. Short-lived; mint a new link when it expires."),
+  connectExpiresAt: z.string().datetime(),
 }).meta({ ref: "CreateInstallLinkResponse" })
 
 const installLinkQuerySchema = z.object({
@@ -268,6 +270,26 @@ async function resolveInstallConfigForOrganization(input: {
   }
 }
 
+type InstallConfig = ReturnType<typeof buildInstallConfig>
+
+async function mintInstallHandoff(
+  installer: InstallExperienceDependencies,
+  input: { installLinkId: Parameters<InstallExperienceDependencies["mintConnectGrant"]>[0]["installLinkId"]; config: InstallConfig },
+) {
+  const connectInput = {
+    installLinkId: input.installLinkId,
+    organizationName: input.config.clientName,
+    appName: input.config.appName,
+    logoUrl: input.config.logoUrl,
+    iconUrl: input.config.iconUrl,
+    webUrl: input.config.webUrl,
+    apiUrl: input.config.apiUrl,
+  }
+  const exchangeHandoff = await installer.mintConnectGrant(connectInput)
+  const handoff = mintDesktopConnectLink(connectInput) ?? exchangeHandoff
+  return { handoff, exchangeHandoff }
+}
+
 async function resolveInstallConfigForToken(token: string, request: Request) {
   const tokenHash = hashInstallLinkToken(token)
   const now = new Date()
@@ -351,8 +373,8 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
     "/v1/orgs/:organizationId/install-links",
     describeRoute({
       tags: ["Organizations"],
-      summary: "Create organization install link",
-      description: "Mints a shareable OpenWork desktop install link for a signed-in organization member. Older active links remain valid unless an owner or admin explicitly requests rotation.",
+      summary: "Create organization install link (download desktop app, install OpenWork)",
+      description: "Download the desktop app and install OpenWork pointed at this organization. Returns installPageUrl, a shareable page that downloads OpenWork for this organization, and connectUrl, a short-lived link that opens an already-installed desktop app signed in to this organization. Any member can mint one. Older active links remain valid unless an owner or admin explicitly requests rotation.",
       responses: {
         200: jsonResponse("Install link created successfully.", createInstallLinkResponseSchema),
         400: jsonResponse("The install-link request was invalid.", invalidRequestSchema),
@@ -404,7 +426,17 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         return c.json({ error: "capability_disabled", capability: "installLinks" }, 403)
       }
 
-      return c.json(installLink)
+      const { handoff } = await mintInstallHandoff(installer, {
+        installLinkId: installLink.installLinkId,
+        config: buildInstallConfig({ organization: payload.organization, request: c.req.raw }),
+      })
+
+      return c.json({
+        token: installLink.token,
+        installPageUrl: installLink.installPageUrl,
+        connectUrl: handoff.connectUrl,
+        connectExpiresAt: handoff.connectExpiresAt,
+      })
     },
   )
 
@@ -502,17 +534,10 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         return c.json({ error: "install_link_not_found" }, 404)
       }
 
-      const connectInput = {
+      const { handoff, exchangeHandoff } = await mintInstallHandoff(installer, {
         installLinkId: resolved.installLinkId,
-        organizationName: resolved.config.clientName,
-        appName: resolved.config.appName,
-        logoUrl: resolved.config.logoUrl,
-        iconUrl: resolved.config.iconUrl,
-        webUrl: resolved.config.webUrl,
-        apiUrl: resolved.config.apiUrl,
-      }
-      const exchangeHandoff = await installer.mintConnectGrant(connectInput)
-      const handoff = mintDesktopConnectLink(connectInput) ?? exchangeHandoff
+        config: resolved.config,
+      })
 
       return c.json({
         ...resolved.config,
