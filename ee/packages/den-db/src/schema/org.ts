@@ -138,9 +138,17 @@ export const WorkspaceBootstrapTable = mysqlTable(
     expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
     claimedAt: timestamp("claimed_at", { fsp: 3 }),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    // Pre-claim agent identity: a sign-in-less user that is the setup member
+    // until a person claims the workspace. The assertion jti names the only
+    // live pre-claim assertion; credentialsRevokedAt ends every pre-claim
+    // credential at claim or expiry.
+    agentUserId: denTypeIdColumn("user", "agent_user_id"),
+    assertionJti: varchar("assertion_jti", { length: 64 }),
+    credentialsRevokedAt: timestamp("credentials_revoked_at", { fsp: 3 }),
   },
   (table) => [
     index("workspace_bootstrap_organization_id").on(table.organizationId),
+    index("workspace_bootstrap_agent_user_id").on(table.agentUserId),
     index("workspace_bootstrap_status").on(table.status),
     index("workspace_bootstrap_expires_at").on(table.expiresAt),
   ],
@@ -166,6 +174,29 @@ export const WorkspaceClaimTable = mysqlTable(
     index("workspace_claim_organization_id").on(table.organizationId),
     index("workspace_claim_status").on(table.status),
     index("workspace_claim_expires_at").on(table.expiresAt),
+  ],
+)
+
+// RFC 8628-style claim codes for a provisional workspace. Only a hash of the
+// user code is stored; each new code cancels the previous unused one.
+export const WorkspaceClaimCodeTable = mysqlTable(
+  "workspace_claim_code",
+  {
+    id: denTypeIdColumn("workspaceClaimCode", "id").notNull().primaryKey(),
+    bootstrapId: denTypeIdColumn("workspaceBootstrap", "bootstrap_id").notNull(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    userCodeHash: varchar("user_code_hash", { length: 128 }).notNull(),
+    state: varchar("state", { length: 32 }).notNull().default("pending"),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+    claimedByUserId: denTypeIdColumn("user", "claimed_by_user_id"),
+    acceptedAt: timestamp("accepted_at", { fsp: 3 }),
+    reconciledAt: timestamp("reconciled_at", { fsp: 3 }),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("workspace_claim_code_user_code_hash").on(table.userCodeHash),
+    index("workspace_claim_code_bootstrap_id").on(table.bootstrapId),
+    index("workspace_claim_code_state").on(table.state),
   ],
 )
 
