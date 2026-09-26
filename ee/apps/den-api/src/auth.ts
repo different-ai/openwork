@@ -109,7 +109,15 @@ import { APIError, createAuthMiddleware } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { deleteSessionCookie } from "better-auth/cookies";
 import { and, eq, gt, sql } from "@openwork-ee/den-db/drizzle";
-import { emailOTP, jwt, organization } from "better-auth/plugins";
+import { deviceAuthorization, emailOTP, jwt, organization } from "better-auth/plugins";
+import {
+  DEN_DEVICE_CODE_EXPIRES_IN,
+  DEN_DEVICE_CODE_POLL_INTERVAL,
+  clearDeviceSessionOrganization,
+  isDenDeviceClientId,
+  stageDeviceSessionOrganization,
+  takeDeviceSessionOrganization,
+} from "./device-authorization.js";
 
 const logger = appLogger.child({ component: "auth" });
 
@@ -744,9 +752,13 @@ export const auth = betterAuth({
     },
     session: {
       create: {
-        before: async (session) => {
+        before: async (session, context) => {
           const userId = normalizeDenTypeId("user", session.userId);
-          const activeOrganizationId = await getInitialActiveOrganizationIdForUser(userId);
+          const deviceCode = context?.path === "/device/token" ? readStringProperty(context.body, "device_code") : null;
+          const deviceOrganizationId = deviceCode
+            ? await takeDeviceSessionOrganization({ deviceCode, userId })
+            : null;
+          const activeOrganizationId = deviceOrganizationId ?? await getInitialActiveOrganizationIdForUser(userId);
           try {
             // SSO JIT creates the raw member row before the session row, so this
             // chokepoint can merge any matching pending invitation without blocking sign-in.
@@ -789,6 +801,13 @@ export const auth = betterAuth({
   },
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path === "/device/token") {
+        const deviceCode = readStringProperty(ctx.body, "device_code");
+        if (deviceCode) {
+          await stageDeviceSessionOrganization(deviceCode);
+        }
+      }
+
       await assertLiveMcpSessionForRefreshGrant(ctx);
 
       if (ctx.path === "/oauth2/authorize") {
@@ -938,6 +957,14 @@ export const auth = betterAuth({
       });
     }),
     after: createAuthMiddleware(async (ctx) => {
+      if (ctx.path === "/device/token") {
+        const deviceCode = readStringProperty(ctx.body, "device_code");
+        if (deviceCode) {
+          clearDeviceSessionOrganization(deviceCode);
+        }
+        return;
+      }
+
       if (ctx.path === "/organization/leave") {
         const member = removedMemberIdentity(ctx.context.returned);
         if (member) {
@@ -1047,6 +1074,8 @@ export const auth = betterAuth({
             return crypto.randomUUID();
           case "rateLimit":
             return createDenTypeId("rateLimit");
+          case "deviceCode":
+            return createDenTypeId("deviceCode");
           case "organization":
             return createDenTypeId("organization");
           case "member":
@@ -1530,6 +1559,15 @@ export const auth = betterAuth({
             },
           });
       },
+    }),
+    // RFC 8628 device authorization for `openwork-bootstrap login`: the CLI
+    // shows a code, the person approves it on Den web's /device page, and the
+    // CLI receives a Den session token. No password ever reaches the CLI.
+    deviceAuthorization({
+      expiresIn: DEN_DEVICE_CODE_EXPIRES_IN,
+      interval: DEN_DEVICE_CODE_POLL_INTERVAL,
+      verificationUri: `${env.betterAuthUrl}/device`,
+      validateClient: (clientId) => isDenDeviceClientId(clientId),
     }),
     apiKey({
       defaultPrefix: DEN_API_KEY_DEFAULT_PREFIX,

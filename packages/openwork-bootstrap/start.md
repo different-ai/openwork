@@ -87,10 +87,30 @@ If the user wants to attach a real account immediately, finish this provisional
 setup first, then use the `Claim this workspace` action in the desktop app. Do
 not create an email/password account from the CLI during agent-first install.
 
-If the user explicitly asks for a real account from the terminal instead, use
-the two-step `cloud onboard` flow: `--request-code` emails a 6-digit code, then
-rerun with `--verification-code <code>` (or `--verification-code-stdin`) plus
-`--org-name` and `--invite-email`. Ask the user for the code; never guess it.
+### Signing in as an existing user (no password)
+
+When the user already has an OpenWork account, or wants the CLI to act as them,
+sign in with a one-time code instead of a password:
+
+```bash
+openwork-bootstrap login --base-url https://api.openworklabs.com --json
+```
+
+The command prints a link (`verification_uri_complete`) and a code such as
+`ABCD-EFGH` on stderr. Show both to the user; they open the link, sign in or
+create an account, check that the code matches, choose the organization, and
+click `Sign in OpenWork CLI`. The command then saves the session to
+`~/.openwork/credentials.json` (owner-only) and prints who is signed in. If
+`OPENWORK_API_TOKEN` is set, it is used instead and no code is shown.
+
+After `login`, `openwork-bootstrap cloud onboard --base-url <url> --org-name
+"<name>" --invite-email <email> --json` creates the organization, invitation,
+and starter skill as that user. Never ask the user for their password.
+
+Only if `login` is unavailable, the deprecated password path remains: `cloud
+onboard --request-code` emails a 6-digit code, then rerun with
+`--verification-code <code>` (or `--verification-code-stdin`). Ask the user for
+the code; never guess it.
 
 ## 4. Launch the App
 
