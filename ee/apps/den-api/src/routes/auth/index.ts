@@ -45,6 +45,7 @@ import { authorizeOrganizationSsoCallback, failOrganizationSsoTestIntent } from 
 import { getRequestSession, readSignedSessionCookieToken, revokeBearerSession, type AuthContextVariables } from "../../session.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
+import { registerDeviceAuthRoutes } from "./device.js"
 import { normalizeOAuthAuthorizeRedirect } from "./oauth-redirect.js"
 import { registerScimAuthRoutes } from "./scim.js"
 
@@ -993,4 +994,5 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
     (c) => handleAuthRequest(c),
   )
   registerDesktopAuthRoutes(app)
+  registerDeviceAuthRoutes(app)
 }

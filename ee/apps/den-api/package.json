@@ -19,7 +19,7 @@
     "test:gateway-deployment": "bun test --conditions development test/gateway-deployment-routes.test.ts && bun test --conditions development test/org-deployment-capabilities.test.ts",
     "test:gateway-dashboard:db": "DATABASE_URL=${DEN_TEST_DATABASE_URL:?Set DEN_TEST_DATABASE_URL to an isolated prepared test database} bun test --conditions development test/admin-organization-capabilities.test.ts",
     "test:plugin-roles:db": "DATABASE_URL=${DEN_TEST_DATABASE_URL:?Set DEN_TEST_DATABASE_URL to an isolated prepared test database} bun test --conditions development test/plugin-system-plugin-role-batch.test.ts",
-    "test:db": "bun test --conditions development test/member-removal-rejoin.test.ts test/scim-provider-rotation.test.ts test/sso-provider-rotation.test.ts test/cloud-provider-member-credentials.test.ts",
+    "test:db": "bun test --conditions development test/device-authorization-db.test.ts test/member-removal-rejoin.test.ts test/scim-provider-rotation.test.ts test/sso-provider-rotation.test.ts test/cloud-provider-member-credentials.test.ts",
     "test:scim-diagnostics": "tsx --conditions=development --test test/scim-diagnostics.test.ts",
     "test:http-server": "tsx --test test/http-server.test.ts",
     "test:scim-existing-user-linking": "tsx --conditions=development --test test/scim-existing-user-linking.test.ts",
