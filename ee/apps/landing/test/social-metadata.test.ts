@@ -58,9 +58,9 @@ function expectImages(social: Awaited<ReturnType<typeof resolveSocial>>) {
 }
 
 describe("Landing social metadata", () => {
-  test("covers all 20 real HTML routes", () => {
+  test("covers all 21 real HTML routes", () => {
     expect(pages.map((path) => relative(appDirectory, path))).toEqual([
-      "alternatives/claude-cowork/page.tsx", "cloud/page.tsx", "connect/page.tsx", "contact/page.tsx", "dashboard/page.tsx",
+      "alternatives/claude-cowork-3p/page.tsx", "alternatives/claude-cowork/page.tsx", "cloud/page.tsx", "connect/page.tsx", "contact/page.tsx", "dashboard/page.tsx",
       "docs/roadmap/page.tsx", "docs/start-here/migrate-from-claude-cowork/page.tsx",
       "download/page.tsx", "enterprise/page.tsx", "feedback/page.tsx", "glm-5.2/page.tsx",
       "og/page.tsx", "page.tsx", "pricing/page.tsx", "privacy/page.tsx", "roadmap/page.tsx",

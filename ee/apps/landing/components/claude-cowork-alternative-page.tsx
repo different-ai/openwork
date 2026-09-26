@@ -1,3 +1,5 @@
+import { CLAUDE_COWORK_3P_PATH } from "../lib/claude-cowork-3p";
+import { CoworkCostCalculator } from "./cowork-cost-calculator";
 import { DownloadLink } from "./download-link";
 import { LandingFaq } from "./landing-faq";
 import { LpCta } from "./lp-cta";
@@ -106,6 +108,19 @@ export function ClaudeCoworkAlternativePage({ stars }: Props) {
             Check Anthropic&apos;s site for current plans.
           </p>
         </section>
+
+        <div className="border-t border-[var(--lp-border)] py-14 md:py-20">
+          <CoworkCostCalculator />
+          <p className="mt-6 text-[14px] text-[var(--lp-body)]">
+            Running Claude Desktop on Bedrock, Vertex, or Foundry?{" "}
+            <a
+              href={CLAUDE_COWORK_3P_PATH}
+              className="font-medium text-[var(--lp-ink)] underline decoration-[var(--lp-border)] underline-offset-4 hover:decoration-[var(--lp-ink)]"
+            >
+              Compare OpenWork with Claude on 3P
+            </a>
+          </p>
+        </div>
 
         <section
           aria-labelledby="why-heading"

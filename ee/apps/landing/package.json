@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 next dev --hostname 0.0.0.0",
     "test": "bun test --isolate test/",
+    "prices:update": "node scripts/update-model-prices.mjs",
     "plain:setup-fields": "node scripts/setup-plain-feedback-fields.mjs",
     "prebuild": "pnpm --dir ../../../packages/ui build && node ../../../scripts/check-connect-installer-parity.mjs && node scripts/copy-bootstrap-cli.mjs",
     "build": "next build",
