@@ -68,6 +68,12 @@ describe("openwork runtime config file", () => {
     expect(OPENWORK_AGENT_PROMPT).toContain("context.features.connectionQuestions === true");
   });
 
+  test("does not force sampling parameters on every model", () => {
+    const rendered = buildOpenworkRuntimeConfigObjectFromSnapshot({});
+    expect(rendered.agent).toMatchObject({ openwork: { mode: "primary" } });
+    expect(JSON.stringify(rendered.agent)).not.toContain('"temperature"');
+  });
+
   test("signed-in and signed-out runtime ignores cached org restrictions and preserves local models", async () => {
     const { config } = await setup();
     const provider = { ollama: { models: { "local-model": { name: "Local model" } } } };
