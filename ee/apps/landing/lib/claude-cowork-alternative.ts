@@ -1,163 +1,111 @@
+import type { CompareCard, CompareColumn, CompareRow, CompareSource } from "./compare";
+import { compareMarkdownTable, sourcesMarkdown } from "./compare";
 import type { FaqEntry } from "./faq";
 
 export const CLAUDE_COWORK_ALTERNATIVE_PATH = "/alternatives/claude-cowork";
 export const CLAUDE_COWORK_ALTERNATIVE_URL = `https://openworklabs.com${CLAUDE_COWORK_ALTERNATIVE_PATH}`;
 export const MIGRATION_GUIDE_PATH = "/docs/start-here/migrate-from-claude-cowork";
 
-export const claudeCoworkAlternativeAnswer =
-  "OpenWork is a free, open-source desktop app that does what Claude Cowork does — an AI agent that works on your files, uses skills, and connects to your tools — without tying you to one model vendor. It runs on macOS, Windows, and Linux, works with 50+ model providers including local models through Ollama or LM Studio, and uses your own API keys. Teams can share skills and MCP servers with everyone from one place.";
+export const claudeCoworkAlternativeHeading = "The free, open-source alternative to Claude Cowork";
 
-export type ComparisonRow = {
-  label: string;
-  openwork: string;
-  cowork: string;
-};
+/** Hero sub-line. Keep it under 20 words. */
+export const claudeCoworkAlternativeAnswer =
+  "Any model, your own keys, files that stay on your machine. Free for macOS, Windows, and Linux.";
+
+export type CoworkColumnKey = "openwork" | "cowork";
+
+export const comparisonColumns: CompareColumn<CoworkColumnKey>[] = [
+  { key: "openwork", label: "OpenWork" },
+  { key: "cowork", label: "Claude Cowork" }
+];
 
 // Keep the Claude Cowork column factual and neutral: describe what Anthropic
 // offers, never claim a limitation we cannot verify.
-export const comparisonRows: ComparisonRow[] = [
-  {
-    label: "Price",
-    openwork: "Free desktop app. Optional paid team plans.",
-    cowork: "Included with paid Claude plans"
-  },
-  {
-    label: "Source code",
-    openwork: "Open source on GitHub",
-    cowork: "Proprietary"
-  },
-  {
-    label: "Platforms",
-    openwork: "macOS, Windows, and Linux",
-    cowork: "Claude desktop app on macOS and Windows"
-  },
-  {
-    label: "Models",
-    openwork: "50+ providers: Anthropic, OpenAI, Google, Mistral, OpenRouter, and more",
-    cowork: "Anthropic Claude models"
-  },
-  {
-    label: "Local models",
-    openwork: "Ollama, LM Studio, or any OpenAI-compatible server",
-    cowork: "Runs on Anthropic's cloud"
-  },
-  {
-    label: "Billing and keys",
-    openwork: "Your own API keys or your company's AI gateway",
-    cowork: "Claude subscription"
-  },
-  {
-    label: "Skills and plugins",
-    openwork: "SKILL.md skills and Claude-compatible plugins",
-    cowork: "SKILL.md skills and plugins"
-  },
-  {
-    label: "Share skills and MCP servers",
-    openwork: "Publish once, every teammate gets them in one click",
-    cowork: "Managed within Claude team plans"
-  },
-  {
-    label: "Self-host",
-    openwork: "Files stay local; self-host the team control plane",
-    cowork: "Hosted by Anthropic"
-  }
+export const comparisonRows: CompareRow<CoworkColumnKey>[] = [
+  { label: "Free and open source", openwork: true, cowork: false },
+  { label: "Linux", openwork: true, cowork: false },
+  { label: "Any model, 50+ providers", openwork: true, cowork: "Claude only" },
+  { label: "Local models", openwork: true, cowork: false },
+  { label: "Your own API keys", openwork: true, cowork: "On 3P" },
+  { label: "Skills, plugins, MCP", openwork: true, cowork: true },
+  { label: "Share skills with your team", openwork: true, cowork: "Team plans" },
+  { label: "Self-host", openwork: true, cowork: false }
 ];
 
-export type AlternativeSection = {
-  title: string;
-  body: string;
-  link: { label: string; href: string };
-};
+export const comparisonSources: CompareSource[] = [
+  { label: "Claude Team plan", href: "https://support.claude.com/en/articles/9266767-what-is-the-team-plan" },
+  { label: "Claude Enterprise pricing", href: "https://claude.com/pricing/enterprise" },
+  { label: "Claude Desktop on 3P", href: "https://claude.com/docs/third-party/claude-desktop/overview" }
+];
 
-export const alternativeSections: AlternativeSection[] = [
+export const alternativeCards: CompareCard[] = [
   {
-    title: "Run with local models",
-    body: "Point OpenWork at Ollama, LM Studio, or any OpenAI-compatible server on your machine, so prompts and files stay on your computer.",
-    link: {
-      label: "Add a local or custom model",
-      href: "/docs/start-here/connect-your-stack/add-a-custom-llm"
-    }
+    icon: "cpu",
+    title: "Run local models with Ollama or LM Studio",
+    link: { label: "Add a local model", href: "/docs/start-here/connect-your-stack/add-a-custom-llm" }
   },
   {
+    icon: "key",
     title: "Bring your own key or AI gateway",
-    body: "Use API keys from Anthropic, OpenAI, Google Gemini and Vertex, Mistral, OpenRouter, Fireworks, Azure, and more — or route every request through your company's OpenAI-compatible gateway.",
-    link: {
-      label: "Share a custom provider with your team",
-      href: "/docs/cloud/share-with-your-team/custom-llm-provider"
-    }
+    link: { label: "Connect a provider", href: "/docs/cloud/share-with-your-team/custom-llm-provider" }
   },
   {
-    title: "macOS, Windows, and Linux",
-    body: "One desktop app for every operating system your team uses, with no terminal required. No account is needed to download.",
-    link: { label: "Download OpenWork", href: "/download" }
+    icon: "monitor",
+    title: "One app for macOS, Windows, and Linux",
+    link: { label: "Download", href: "/download" }
   },
   {
-    title: "Built for teams",
-    body: "Publish skills and MCP servers once and every teammate gets them. Set desktop policies for which models and extensions people can use, or self-host the whole stack.",
-    link: {
-      label: "Set desktop policies",
-      href: "/docs/cloud/share-with-your-team/desktop-policies"
-    }
+    icon: "users",
+    title: "Share skills and MCP servers with everyone",
+    link: { label: "Desktop policies", href: "/docs/cloud/share-with-your-team/desktop-policies" }
   }
 ];
 
 export const claudeCoworkAlternativeFaq: FaqEntry[] = [
   {
     question: "Is there a free alternative to Claude Cowork?",
-    answer:
-      "Yes. OpenWork is a free, open-source desktop app for macOS, Windows, and Linux. You bring your own model provider keys or run local models, so there is no subscription required to use it."
+    answer: "Yes. OpenWork is a free, open-source desktop app for macOS, Windows, and Linux."
   },
   {
-    question: "Can I use OpenWork with local models like Ollama or LM Studio?",
-    answer:
-      "Yes. OpenWork works with Ollama, LM Studio, and any OpenAI-compatible server running on your machine, so prompts and files stay on your computer."
+    question: "Does OpenWork work with local models?",
+    answer: "Yes. Use Ollama, LM Studio, or any OpenAI-compatible server, and nothing leaves your computer."
   },
   {
     question: "Can I use my own API key or AI gateway?",
-    answer:
-      "Yes. Connect keys from Anthropic, OpenAI, Google, Mistral, OpenRouter, Azure, and 50+ other providers, or add your company's OpenAI-compatible gateway as a custom provider. Requests go directly to the provider you choose."
+    answer: "Yes. Connect keys from 50+ providers, or add your company's OpenAI-compatible gateway as a custom provider."
   },
   {
-    question: "Does OpenWork run on Linux?",
-    answer:
-      "Yes. OpenWork has desktop builds for Linux, Windows, and macOS."
+    question: "Can I still use Claude models?",
+    answer: "Yes. Add an Anthropic key and switch to any other model at any time."
   },
   {
     question: "Do my files stay on my computer?",
-    answer:
-      "Yes. In desktop mode your files stay on your machine and prompts go straight to the model provider you pick. With a local model, nothing leaves your computer. Cloud features are optional."
+    answer: "Yes. In desktop mode files stay local and prompts go straight to the provider you pick."
   },
   {
-    question: "Can I use Claude models in OpenWork?",
+    question: "How do I migrate from Claude Cowork?",
     answer:
-      "Yes. Add an Anthropic API key to use Claude models, and switch to any other provider at any time."
-  },
-  {
-    question: "How do I migrate from Claude Cowork to OpenWork?",
-    answer:
-      "Open the same folder as an OpenWork workspace, connect a model, then bring over your SKILL.md skills, plugins, and MCP servers — they use the same formats. The migration guide at openworklabs.com/docs/start-here/migrate-from-claude-cowork walks through each step."
+      "Open the same folder in OpenWork and connect a model; SKILL.md skills, plugins, and MCP servers use the same formats. The migration guide covers each step."
   }
 ];
 
-export const claudeCoworkAlternativeMarkdown = `# The free, open-source alternative to Claude Cowork
+export const claudeCoworkAlternativeMarkdown = `# ${claudeCoworkAlternativeHeading}
 
 > ${claudeCoworkAlternativeAnswer}
 
 ## OpenWork vs Claude Cowork
 
-| | OpenWork | Claude Cowork |
-|---|---|---|
-${comparisonRows.map((row) => `| ${row.label} | ${row.openwork} | ${row.cowork} |`).join("\n")}
+${compareMarkdownTable(comparisonColumns, comparisonRows)}
 
-Claude Cowork details summarize Anthropic's public product information; check Anthropic's site for current plans.
+Sources: ${sourcesMarkdown(comparisonSources)}.
 
-${alternativeSections
-  .map((section) => `## ${section.title}\n\n${section.body}\n\n- [${section.link.label}](https://openworklabs.com${section.link.href})`)
-  .join("\n\n")}
+## Why people switch
+
+${alternativeCards.map((card) => `- ${card.title}: [${card.link.label}](https://openworklabs.com${card.link.href})`).join("\n")}
 
 ## Cost
 
-An interactive calculator on this page compares Claude Team, Claude Enterprise, Claude Desktop on 3P, OpenWork Team, and OpenWork Enterprise for your team size, usage, and models, using list API prices from models.dev. Teams running Claude Desktop on Bedrock, Vertex, or Foundry: see [OpenWork vs Claude Cowork on 3P](https://openworklabs.com/alternatives/claude-cowork-3p).
+The page includes a calculator comparing Claude Team, Claude Enterprise, Claude Desktop on 3P, and OpenWork plans for your team size, usage, and models, using list API prices from models.dev. On Bedrock, Vertex, or Foundry? See [OpenWork vs Claude Cowork on 3P](https://openworklabs.com/alternatives/claude-cowork-3p).
 
 ## FAQ
 
@@ -167,5 +115,4 @@ ${claudeCoworkAlternativeFaq.map((entry) => `### ${entry.question}\n${entry.answ
 
 - [Download OpenWork for free](https://openworklabs.com/download)
 - [Migration guide](https://openworklabs.com${MIGRATION_GUIDE_PATH})
-- [Docs](https://openworklabs.com/docs)
 `;

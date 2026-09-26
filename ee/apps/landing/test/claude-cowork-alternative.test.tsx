@@ -9,6 +9,7 @@ import {
   claudeCoworkAlternativeFaq,
   comparisonRows
 } from "../lib/claude-cowork-alternative";
+import { compareCellText } from "../lib/compare";
 import sitemap from "../app/sitemap";
 
 mock.module("next/navigation", () => ({ useRouter: () => ({ push: () => {} }) }));
@@ -31,10 +32,12 @@ describe("Claude Cowork alternative page", () => {
 
   test("renders every comparison row and FAQ entry as visible text", () => {
     expect(html).toContain("<table");
+    expect(comparisonRows.length).toBeLessThanOrEqual(8);
+    expect(claudeCoworkAlternativeFaq.length).toBeLessThanOrEqual(6);
     for (const row of comparisonRows) {
       expect(text).toContain(row.label);
-      expect(text).toContain(row.openwork);
-      expect(text).toContain(row.cowork);
+      expect(text).toContain(compareCellText(row.openwork));
+      expect(text).toContain(compareCellText(row.cowork));
     }
     for (const entry of claudeCoworkAlternativeFaq) {
       expect(text).toContain(entry.question);
@@ -45,6 +48,6 @@ describe("Claude Cowork alternative page", () => {
     expect(sitemap().map((entry) => entry.url)).toContain(`https://openworklabs.com${CLAUDE_COWORK_ALTERNATIVE_PATH}`);
     const markdown = agentMarkdown[CLAUDE_COWORK_ALTERNATIVE_PATH];
     expect(markdown).toStartWith("# The free, open-source alternative to Claude Cowork");
-    expect(markdown).toContain("| Local models |");
+    expect(markdown).toContain("| Local models | Yes | No |");
   });
 });
