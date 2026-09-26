@@ -4,6 +4,9 @@
  */
 
 export default {
+  "den.workspace_address_or_code": "Địa chỉ không gian làm việc hoặc mã đăng nhập",
+  "den.workspace_code_hint": "Để dùng mã đăng nhập, hãy dán toàn bộ liên kết OpenWork đã sao chép từ trình duyệt, bao gồm địa chỉ không gian làm việc.",
+  "den.signin_return_help": "Đăng nhập không quay lại ứng dụng? Dán mã từ trình duyệt",
   "app.compact_command_desc": "Tóm tắt phiên này để giảm kích thước ngữ cảnh.",
   "app.error_audit_load": "Tải nhật ký kiểm toán thất bại.",
   "app.error_auth_failed": "Xác thực thất bại",
