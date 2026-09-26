@@ -6,6 +6,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
 import { db } from "../../db.js"
+import { env } from "../../env.js"
 import { invitationHasAdminTeam, withOrganizationTeamMutation } from "../../organization-team-roles.js"
 import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
@@ -53,7 +54,13 @@ const invitePaymentRequiredSchema = z.object({
   currentCount: z.number(),
   freeSeatCount: z.number(),
   message: z.string(),
+  billingUrl: z.string().url().describe("Open in a browser to start seat billing; an owner can finish it there, then retry the invitation."),
 }).meta({ ref: "InvitePaymentRequiredError" })
+
+/** Where an owner starts seat billing. den-web resolves the active organization. */
+export function invitationBillingUrl() {
+  return new URL("/dashboard/billing", env.betterAuthUrl).toString()
+}
 
 const invitationNotPendingSchema = z.object({
   error: z.literal("invitation_not_pending"),
@@ -88,13 +95,13 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Invitations"],
       summary: "Create organization invitation",
-      description: "Creates or refreshes a pending organization invitation for an email address and sends the invite email. Returns 502 when the invitation row is persisted but the configured email provider failed to send; the client should surface the error and give the user a retry affordance.",
+      description: "Creates or refreshes a pending organization invitation for an email address and sends the invite email. Returns 502 when the invitation row is persisted but the configured email provider failed to send; the client should surface the error and give the user a retry affordance. Returns 402 with billingUrl when the workspace has used its free members: give the user billingUrl to start seat billing, then invite again.",
       responses: {
         200: jsonResponse("Existing invitation refreshed successfully.", invitationResponseSchema),
         201: jsonResponse("Invitation created successfully.", invitationResponseSchema),
         400: jsonResponse("The invitation request body or path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to invite organization members.", unauthorizedSchema),
-        402: jsonResponse("A seat subscription is required before inviting more members.", invitePaymentRequiredSchema),
+        402: jsonResponse("A seat subscription is required before inviting more members. The body includes billingUrl, where an owner starts seat billing.", invitePaymentRequiredSchema),
         403: jsonResponse("Only workspace owners and admins can create invitations. Admins can only invite members.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
         409: jsonResponse("The email address is outside this workspace's allowed domains.", inviteEmailDomainNotAllowedSchema),
@@ -298,7 +305,8 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         subscriptionType: "seat",
         currentCount: seatEligibility.currentCount,
         freeSeatCount: seatEligibility.freeSeatCount,
-        message: `This workspace includes ${seatEligibility.freeSeatCount} free members. Start seat billing before inviting another member.`,
+        message: `This workspace includes ${seatEligibility.freeSeatCount} free members. Start seat billing at ${invitationBillingUrl()} before inviting another member.`,
+        billingUrl: invitationBillingUrl(),
       }, 402)
     }
 

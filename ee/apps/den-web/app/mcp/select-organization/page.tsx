@@ -1,9 +1,14 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { TemporaryAuthNotice } from "../../(den)/_components/temporary-auth-notice";
+import { DenInput } from "../../(den)/_components/ui/input";
 import { denApiCredentials, denBrowserEndpoint } from "../../(den)/_lib/den-api-origin";
+import {
+  MCP_OAUTH_RESTART_MESSAGE,
+  describeMcpOAuthError,
+  isMcpOAuthQueryExpired,
+} from "../../(den)/_lib/mcp-oauth-route";
 import { getRuntimeConfig } from "../../(den)/_lib/runtime-config";
 import { useOrgListWindow } from "../../(den)/_lib/use-org-list-window";
 import { McpConsentPermissions } from "../consent-permissions";
@@ -20,6 +25,7 @@ type FlowState =
   | "loading"
   | "ready"
   | "empty"
+  | "expired"
   | "submitting"
   | "redirecting"
   | "error";
@@ -73,6 +79,19 @@ function formatRole(role: string | null | undefined) {
     .join(" ");
 }
 
+function parseCreatedOrg(payload: unknown): Organization | null {
+  if (!isRecord(payload) || !isRecord(payload.organization)) return null;
+  const organization = payload.organization;
+  if (typeof organization.id !== "string" || !organization.id) return null;
+  return {
+    id: organization.id,
+    slug: typeof organization.slug === "string" ? organization.slug : null,
+    name: typeof organization.name === "string" ? organization.name : null,
+    role: "owner",
+    isActive: true,
+  };
+}
+
 function parseOrgs(payload: unknown): Organization[] {
   if (!isRecord(payload) || !Array.isArray(payload.orgs)) {
     return [];
@@ -97,6 +116,7 @@ export default function McpSelectOrganizationPage() {
   const [selectedOrgId, setSelectedOrgId] = useState("");
   const [flowState, setFlowState] = useState<FlowState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [workspaceName, setWorkspaceName] = useState("");
 
   const oauthQuery = useMemo(() => {
     if (typeof window === "undefined") return "";
@@ -124,6 +144,11 @@ export default function McpSelectOrganizationPage() {
 
   useEffect(() => {
     let cancelled = false;
+    if (isMcpOAuthQueryExpired(oauthQuery)) {
+      setErrorMessage(MCP_OAUTH_RESTART_MESSAGE);
+      setFlowState("expired");
+      return;
+    }
     void (async () => {
       const { response, payload } = await requestJson("/v1/me/orgs", {
         method: "GET",
@@ -149,18 +174,18 @@ export default function McpSelectOrganizationPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [oauthQuery]);
 
-  async function continueFlow() {
-    if (!selectedOrgId) return;
+  async function continueFlow(org: Organization | null = selectedOrg) {
+    if (!org) return;
     setFlowState("submitting");
     setErrorMessage(null);
 
     const active = await requestJson("/api/auth/organization/set-active", {
       method: "POST",
       body: JSON.stringify({
-        organizationId: selectedOrgId,
-        organizationSlug: selectedOrg?.slug ?? null,
+        organizationId: org.id,
+        organizationSlug: org.slug ?? null,
       }),
     });
     if (!active.response.ok) {
@@ -181,12 +206,12 @@ export default function McpSelectOrganizationPage() {
     });
     if (!continued.response.ok) {
       setFlowState("ready");
-      setErrorMessage(
-        getErrorMessage(
-          continued.payload,
-          "Failed to continue OAuth authorization.",
-        ),
+      const message = describeMcpOAuthError(
+        continued.payload,
+        "Failed to continue OAuth authorization.",
       );
+      setFlowState(message === MCP_OAUTH_RESTART_MESSAGE ? "expired" : "ready");
+      setErrorMessage(message);
       return;
     }
 
@@ -197,6 +222,34 @@ export default function McpSelectOrganizationPage() {
       return;
     }
     window.location.reload();
+  }
+
+  // A brand-new person reaches this page with no workspace. Create it here
+  // and keep going with the same signed query, so their agent's
+  // authorization never has to restart.
+  async function createWorkspaceAndContinue(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = workspaceName.trim();
+    if (name.length < 2) return;
+    setFlowState("submitting");
+    setErrorMessage(null);
+
+    const created = await requestJson("/v1/org", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    const org = created.response.ok ? parseCreatedOrg(created.payload) : null;
+    if (!org) {
+      setFlowState("empty");
+      setErrorMessage(
+        getErrorMessage(created.payload, "Could not create the workspace. Try again."),
+      );
+      return;
+    }
+
+    setOrgs([org]);
+    setSelectedOrgId(org.id);
+    await continueFlow(org);
   }
 
   async function cancelFlow() {
@@ -227,8 +280,10 @@ export default function McpSelectOrganizationPage() {
     flowState === "loading"
       ? "Loading the workspaces you can access..."
       : flowState === "empty"
-        ? "You don't belong to any workspaces yet. Create one before authorizing the MCP client."
-        : flowState === "redirecting"
+        ? "Name your workspace. Your agent connects to it when you authorize."
+        : flowState === "expired"
+          ? "Nothing was authorized."
+          : flowState === "redirecting"
           ? "Finishing authorization and sending you back to the MCP client now."
           : flowState === "submitting"
             ? "Authorizing the MCP client..."
@@ -299,19 +354,33 @@ export default function McpSelectOrganizationPage() {
               </div>
             ) : null}
 
-            {flowState === "empty" ? (
-              <div className="grid gap-3">
-                <Link
-                  href="/organization"
-                  className="den-button-primary w-full sm:w-auto"
+            {flowState === "empty" ||
+            (flowState === "submitting" && orgs.length === 0) ? (
+              <form
+                id="mcp-create-workspace"
+                className="grid gap-2"
+                onSubmit={(event) => void createWorkspaceAndContinue(event)}
+              >
+                <label
+                  htmlFor="mcp-workspace-name"
+                  className="text-[13px] font-medium text-[var(--dls-text-primary)]"
                 >
-                  Create your first workspace
-                </Link>
-                <p className="text-[13px] text-[var(--dls-text-secondary)]">
-                  Once it is set up, run the MCP authorization again from your
-                  client.
-                </p>
-              </div>
+                  Workspace name
+                </label>
+                <DenInput
+                  id="mcp-workspace-name"
+                  name="workspaceName"
+                  value={workspaceName}
+                  onChange={(event) => setWorkspaceName(event.target.value)}
+                  placeholder="My work"
+                  minLength={2}
+                  maxLength={120}
+                  autoComplete="organization"
+                  autoFocus
+                  required
+                  disabled={isBusy}
+                />
+              </form>
             ) : null}
 
             {orgs.length > 0 &&
@@ -404,7 +473,7 @@ export default function McpSelectOrganizationPage() {
               </div>
             ) : null}
 
-            {orgs.length > 0 && flowState !== "loading" && flowState !== "error" ? (
+            {flowState !== "loading" && flowState !== "error" && flowState !== "expired" ? (
               <McpConsentPermissions scope={requestedScope} />
             ) : null}
 
@@ -412,7 +481,7 @@ export default function McpSelectOrganizationPage() {
               <div className="den-notice is-error">{errorMessage}</div>
             ) : null}
 
-            <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
+            {flowState === "expired" ? null : <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
               <button
                 type="button"
                 className="den-button-ghost w-full sm:w-auto"
@@ -421,21 +490,32 @@ export default function McpSelectOrganizationPage() {
               >
                 Cancel
               </button>
-              <button
-                type="button"
-                className="den-button-primary w-full sm:w-auto"
-                onClick={() => void continueFlow()}
-                disabled={
-                  isBusy ||
-                  flowState === "loading" ||
-                  flowState === "empty" ||
-                  flowState === "error" ||
-                  !selectedOrgId
-                }
-              >
-                {primaryLabel}
-              </button>
-            </div>
+              {flowState === "empty" ||
+              (flowState === "submitting" && orgs.length === 0) ? (
+                <button
+                  type="submit"
+                  form="mcp-create-workspace"
+                  className="den-button-primary w-full sm:w-auto"
+                  disabled={isBusy || workspaceName.trim().length < 2}
+                >
+                  {isBusy ? primaryLabel : "Create workspace and authorize"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="den-button-primary w-full sm:w-auto"
+                  onClick={() => void continueFlow()}
+                  disabled={
+                    isBusy ||
+                    flowState === "loading" ||
+                    flowState === "error" ||
+                    !selectedOrgId
+                  }
+                >
+                  {primaryLabel}
+                </button>
+              )}
+            </div>}
           </div>
         </div>
       </section>

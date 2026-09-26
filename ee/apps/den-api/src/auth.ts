@@ -26,6 +26,7 @@ import {
 } from "./mcp/scopes.js";
 import {
   DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
+  DEN_MCP_OAUTH_AUTHORIZATION_EXPIRES_IN_SECONDS,
   DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS,
 } from "./mcp/token-lifetime.js";
 import {
@@ -1317,6 +1318,7 @@ export const auth = betterAuth({
       allowPublicClientPrelogin: true,
       allowDynamicClientRegistration: true,
       allowUnauthenticatedClientRegistration: true,
+      codeExpiresIn: DEN_MCP_OAUTH_AUTHORIZATION_EXPIRES_IN_SECONDS,
       accessTokenExpiresIn: DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
       m2mAccessTokenExpiresIn: DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
       refreshTokenExpiresIn: DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS,

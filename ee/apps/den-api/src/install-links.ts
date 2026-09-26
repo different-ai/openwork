@@ -50,8 +50,9 @@ export async function mintOrganizationInstallLink(input: MintOrganizationInstall
       )
   }
 
+  const installLinkId = createDenTypeId("installLink")
   await db.insert(InstallLinkTable).values({
-    id: createDenTypeId("installLink"),
+    id: installLinkId,
     organizationId: input.organizationId,
     tokenHash: hashInstallLinkToken(token),
     createdByUserId: input.createdByUserId,
@@ -59,7 +60,7 @@ export async function mintOrganizationInstallLink(input: MintOrganizationInstall
     revokedAt: null,
   })
 
-  return { token, installPageUrl: installPageUrl(token) }
+  return { installLinkId, token, installPageUrl: installPageUrl(token) }
 }
 
 export async function resolveInvitationDownloadUrl(input: InvitationDownloadUrlInput) {

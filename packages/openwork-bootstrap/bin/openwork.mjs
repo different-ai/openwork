@@ -71,6 +71,8 @@ function printHelp() {
     "  openwork-bootstrap install app --manifest <url-or-file> [--app-dir <path>] [--json]",
     "  openwork-bootstrap doctor [--bin-dir <path>] [--install-dir <path>] [--base-url <url>] [--desktop-bootstrap] [--json]",
     "  OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--skill-name <name>] [--web-base-url <url>] [--prepare-desktop] [--json]",
+    "  OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --request-code --base-url <url> --owner-email <email> [--json]",
+    "  OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --verification-code <code> --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--json]",
     "  openwork-bootstrap cloud bootstrap-workspace --base-url <url> --workspace-name <name> [--skill-name <name>] [--owner-email <email>] [--teammate-emails a@x.com,b@y.com] [--claim-roles owner,member] [--web-base-url <url>] [--prepare-desktop] [--json]",
     "  openwork-bootstrap cloud claim-link [--role owner] [--desktop-bootstrap-path <path>] [--json]",
     "",
@@ -85,6 +87,13 @@ function printHelp() {
     "                   not print claim links preemptively.",
     "",
     "Options:",
+    "  --request-code   Create the account (or resend) and email a 6-digit",
+    "                   verification code, then stop. Hosted OpenWork Cloud",
+    "                   requires it before the first sign-in.",
+    "  --verification-code <code> | --verification-code-stdin",
+    "                   Verify the emailed code first, then sign in and finish",
+    "                   onboarding. Each new sign-up/sign-in attempt emails a",
+    "                   new code, so pass the latest one.",
     "  --web-base-url   Browser-facing origin written into --prepare-desktop's",
     "                   config (used for the app's Sign In button and claim",
     "                   links). Defaults to https://app.openworklabs.com when",
@@ -544,23 +553,82 @@ async function request(baseUrl, path, options = {}) {
   return { status: response.status, body }
 }
 
-async function signupAndSignin(baseUrl, input) {
+// Hosted OpenWork Cloud requires a 6-digit email code before the first
+// sign-in. Every sign-up or unverified sign-in emails a NEW code and
+// invalidates the previous one, so the code step must verify first and never
+// sign up or sign in before it.
+function isEmailNotVerified(response) {
+  const code = response.body?.code
+  return response.status === 403 && (code === "EMAIL_NOT_VERIFIED" || /not verified/i.test(String(response.body?.message ?? "")))
+}
+
+function verificationRequiredMessage(email) {
+  return `We emailed a 6-digit verification code to ${email}. Ask the person for it, then run the same command with --verification-code <code> (or --verification-code-stdin).`
+}
+
+async function verifyEmailCode(baseUrl, input) {
+  const verified = await request(baseUrl, "/api/auth/email-otp/verify-email", {
+    method: "POST",
+    body: JSON.stringify({ email: input.email, otp: input.verificationCode }),
+  })
+  if (verified.status !== 200) {
+    throw new Error(`email_verification_failed: ${verified.status} ${JSON.stringify(verified.body)}. The code may be wrong or expired; run with --request-code to email a new one.`)
+  }
+  return verified
+}
+
+async function requestVerificationCode(baseUrl, input) {
   const signup = await request(baseUrl, "/api/auth/sign-up/email", {
     method: "POST",
     body: JSON.stringify({ name: input.name, email: input.email, password: input.password }),
   })
-  if (signup.status !== 200 && signup.status !== 400) {
-    throw new Error(`signup_failed: ${signup.status} ${JSON.stringify(signup.body)}`)
+  if (signup.status === 200) {
+    // A fresh sign-up already emailed the code when verification is required;
+    // deployments without verification sign the person in immediately.
+    return { signup, verificationRequired: !signup.body?.token }
+  }
+  const sent = await request(baseUrl, "/api/auth/email-otp/send-verification-otp", {
+    method: "POST",
+    body: JSON.stringify({ email: input.email, type: "email-verification" }),
+  })
+  if (sent.status !== 200) {
+    throw new Error(`verification_code_request_failed: ${sent.status} ${JSON.stringify(sent.body)}`)
+  }
+  return { signup, verificationRequired: true }
+}
+
+async function signupAndSignin(baseUrl, input) {
+  let signup = null
+  if (input.verificationCode) {
+    await verifyEmailCode(baseUrl, input)
+  } else {
+    signup = await request(baseUrl, "/api/auth/sign-up/email", {
+      method: "POST",
+      body: JSON.stringify({ name: input.name, email: input.email, password: input.password }),
+    })
+    if (signup.status !== 200 && signup.status !== 400 && signup.status !== 422) {
+      throw new Error(`signup_failed: ${signup.status} ${JSON.stringify(signup.body)}`)
+    }
   }
 
   const signin = await request(baseUrl, "/api/auth/sign-in/email", {
     method: "POST",
     body: JSON.stringify({ email: input.email, password: input.password }),
   })
+  if (isEmailNotVerified(signin)) {
+    throw new Error(`email_verification_required: ${verificationRequiredMessage(input.email)}`)
+  }
   if (signin.status !== 200 || !signin.body?.token) {
     throw new Error(`signin_failed: ${signin.status} ${JSON.stringify(signin.body)}`)
   }
   return { signup, signin, token: signin.body.token, user: signin.body.user }
+}
+
+async function resolveVerificationCode(flags) {
+  const fromFlag = getFlag(flags, "verification-code")
+  if (fromFlag) return fromFlag.trim()
+  if (hasFlag(flags, "verification-code-stdin")) return (await readStdin()).trim()
+  return null
 }
 
 function skillText(name, output) {
@@ -794,8 +862,22 @@ async function runCloudOnboard(args) {
   const desktopBootstrapPath = getFlag(args.flags, "desktop-bootstrap-path", defaultDesktopBootstrapPath())
   const skillsDir = getFlag(args.flags, "skills-dir", defaultSkillsDir())
   const webBaseUrl = getFlag(args.flags, "web-base-url", deriveWebBaseUrl(baseUrl))?.replace(/\/$/, "")
+  const requestCodeOnly = hasFlag(args.flags, "request-code")
+  if (requestCodeOnly && (args.flags.has("verification-code") || hasFlag(args.flags, "verification-code-stdin"))) {
+    throw new Error("conflicting_flags: use --request-code first, then run again with --verification-code")
+  }
+  if (hasFlag(args.flags, "verification-code-stdin") && hasFlag(args.flags, "owner-password-stdin")) {
+    throw new Error("conflicting_flags: stdin can carry either the password or the verification code, not both")
+  }
+  const verificationCode = requestCodeOnly ? null : await resolveVerificationCode(args.flags)
+  if (verificationCode !== null && !/^\d{4,10}$/.test(verificationCode)) {
+    throw new Error("invalid_verification_code: expected the numeric code from the verification email")
+  }
 
-  for (const [name, value] of Object.entries({ baseUrl, ownerEmail, ownerPassword, orgName, inviteEmail })) {
+  const required = requestCodeOnly
+    ? { baseUrl, ownerEmail, ownerPassword }
+    : { baseUrl, ownerEmail, ownerPassword, orgName, inviteEmail }
+  for (const [name, value] of Object.entries(required)) {
     if (!value) throw new Error(`missing_required_flag: --${name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`)
   }
 
@@ -804,10 +886,28 @@ async function runCloudOnboard(args) {
     throw new Error(`den_api_unhealthy: ${health.status} ${JSON.stringify(health.body)}`)
   }
 
+  if (requestCodeOnly) {
+    const requested = await requestVerificationCode(baseUrl, {
+      name: "OpenWork Owner",
+      email: ownerEmail,
+      password: ownerPassword,
+    })
+    jsonOut({
+      ok: true,
+      step: requested.verificationRequired ? "verification_required" : "verified",
+      message: requested.verificationRequired
+        ? verificationRequiredMessage(ownerEmail)
+        : "This deployment does not require email verification. Run the command again without --request-code.",
+      email: ownerEmail,
+    }, json)
+    return
+  }
+
   const owner = await signupAndSignin(baseUrl, {
     name: "OpenWork Owner",
     email: ownerEmail,
     password: ownerPassword,
+    verificationCode,
   })
   const auth = { authorization: `Bearer ${owner.token}` }
 

@@ -87,6 +87,11 @@ If the user wants to attach a real account immediately, finish this provisional
 setup first, then use the `Claim this workspace` action in the desktop app. Do
 not create an email/password account from the CLI during agent-first install.
 
+If the user explicitly asks for a real account from the terminal instead, use
+the two-step `cloud onboard` flow: `--request-code` emails a 6-digit code, then
+rerun with `--verification-code <code>` (or `--verification-code-stdin`) plus
+`--org-name` and `--invite-email`. Ask the user for the code; never guess it.
+
 ## 4. Launch the App
 
 Open the desktop app so the user lands on the setup-complete screen with their
