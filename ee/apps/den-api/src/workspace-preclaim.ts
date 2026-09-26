@@ -236,6 +236,7 @@ export type RequiresClaimError = {
   message: string
   retryable: false
   claim_url: string
+  action_url: string
 }
 
 export function requiresClaimError(action: string): RequiresClaimError {
@@ -244,6 +245,7 @@ export function requiresClaimError(action: string): RequiresClaimError {
     message: `${action} needs a person to claim this workspace first. Create a claim code with POST /v1/bootstrap/workspace/{id}/claim and give the person the link.`,
     retryable: false,
     claim_url: claimVerificationUri(),
+    action_url: claimVerificationUri(),
   }
 }
 

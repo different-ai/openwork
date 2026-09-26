@@ -46,6 +46,7 @@ import { getRequestSession, readSignedSessionCookieToken, revokeBearerSession, t
 import { checkRateLimit } from "../../utils/rate-limit.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
 import { exchangePreclaimAssertion, JWT_BEARER_GRANT_TYPE } from "../../workspace-preclaim.js"
+import { withAgentAuthMetadata } from "../../agent-auth-metadata.js"
 import { registerDeviceAuthRoutes } from "./device.js"
 import { normalizeOAuthAuthorizeRedirect } from "./oauth-redirect.js"
 import { registerScimAuthRoutes } from "./scim.js"
@@ -450,7 +451,12 @@ async function makeAuthorizationResponseIssuerOptional(response: Response) {
 }
 
 async function getOAuthAuthorizationServerMetadata(request: Request) {
-  return makeAuthorizationResponseIssuerOptional(await oauthProviderAuthServerMetadata(auth)(request))
+  const response = await makeAuthorizationResponseIssuerOptional(await oauthProviderAuthServerMetadata(auth)(request))
+  const metadata: unknown = await response.clone().json().catch(() => null)
+  if (!isRecord(metadata)) return response
+  const headers = new Headers(response.headers)
+  headers.delete("content-length")
+  return new Response(JSON.stringify(withAgentAuthMetadata(metadata, env.apiPublicUrl ?? env.betterAuthUrl)), { status: response.status, headers })
 }
 
 async function getOAuthOpenIdConfiguration(request: Request) {

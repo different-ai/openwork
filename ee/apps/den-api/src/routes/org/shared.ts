@@ -1,4 +1,5 @@
 import { createDenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
+import { requiresAdminError } from "../../agent-error-envelope.js"
 import { customAlphabet } from "nanoid"
 import { z } from "zod"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "../../middleware/index.js"
@@ -183,7 +184,7 @@ export function ensureOrganizationAdminRole(c: OrganizationAdminRouteContext, me
     ok: false as const,
     response: {
       error: "forbidden",
-      message,
+      ...requiresAdminError(message),
     },
   }
 }
@@ -256,7 +257,7 @@ export function ensureInviteManager(c: PrivilegedOrgRouteContext) {
     ok: false as const,
     response: {
       error: "forbidden",
-      message: "Only workspace owners and admins can invite members.",
+      ...requiresAdminError("Only workspace owners and admins can invite members."),
     },
   }
 }

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto"
+import { requiresAdminError } from "../../agent-error-envelope.js"
 import { and, desc, eq, gt, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, LlmProviderAccessTable, LlmProviderMemberCredentialTable, LlmProviderModelTable, LlmProviderTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -111,7 +112,7 @@ async function liveMember(database: GatewayTx | typeof db, actor: Actor, lock: b
   const [member] = await (lock ? query.for("update") : query)
   if (!member?.userId) throw new GatewayWriteError(403, "forbidden")
   if (manage && !ensureOrganizationAdminRole({ get: () => ({ ...actor, currentMember: { ...actor.currentMember, role: member.role, isOwner: memberHasRole(member.role, "owner") } }) }, managementMessage).ok) {
-    throw new GatewayWriteError(403, "forbidden")
+    throw new GatewayWriteError(403, "forbidden", managementMessage)
   }
   return member
 }
@@ -123,7 +124,13 @@ async function getProvider(database: GatewayTx | typeof db, actor: Actor, id: st
   return provider
 }
 function respond(c: { json: (body: unknown, status: 400 | 403 | 404 | 409) => Response }, error: unknown) {
-  if (error instanceof GatewayWriteError) return c.json({ error: error.code, message: error.message }, error.status)
+  if (error instanceof GatewayWriteError) {
+    // Management needs an owner or admin: say so in the shared agent envelope.
+    if (error.status === 403 && error.message === managementMessage) {
+      return c.json({ error: error.code, ...requiresAdminError(managementMessage, "/dashboard/ai-gateway") }, error.status)
+    }
+    return c.json({ error: error.code, message: error.message }, error.status)
+  }
   throw error
 }
 function publicBase(request: Request) {
