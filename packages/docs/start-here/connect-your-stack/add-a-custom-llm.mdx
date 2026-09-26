@@ -1,59 +1,106 @@
 ---
-title: "Add a custom LLM"
-description: "How to connect a custom provider with OpenWork"
+title: "Add a custom LLM or AI gateway"
+description: "Bring your own API key or connect any OpenAI-compatible endpoint (OpenRouter, LiteLLM, Azure OpenAI, your own gateway) to OpenWork."
 ---
 
+OpenWork works with any model you have access to. If the provider is in OpenWork's catalog (OpenRouter, Mistral, Fireworks, Google, Anthropic, OpenAI, and many more), paste your API key under `Settings > AI Providers > Connect provider`. If it is not, or you run your own gateway, add it as a custom OpenAI-compatible provider in your workspace's `opencode.jsonc`.
+
 <Note>
-**Local provider setup.** A custom provider can stay entirely in your workspace. OpenWork remains free, and you do not need to sign in to OpenWork Cloud. For centrally managed team access, see [Adding a managed LLM provider](/cloud/share-with-your-team/managed-llm-provider).
+**Local provider setup.** A custom provider can stay entirely in your workspace. OpenWork remains free, and you do not need to sign in to OpenWork Cloud. To give a whole team the same provider without sharing keys by hand, see [Share a provider with your team](#share-a-provider-with-your-team).
 </Note>
 
-Because `OpenWork` is built on `OpenCode` primitives, we support everything that you could modify in `.opencode.json`, like adding a [model](https://opencode.ai/docs/models/). However, our recommendation is to add it to `/path-to-your-workspace/.config/opencode/opencode.json` instead of modifying `~/.config/opencode/opencode.json`.
+## Option 1: Bring your own API key for a catalog provider
 
-Inside `/path-to-your-workspace/.config/opencode/opencode.json`:
-```
-{
-  "provider": {
-    "my-api": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "My model",
-      "options": {
-        "baseURL": "https://your API address/v1"
-      },
-      "models": {
-        "model-name": {
-          "name": "Model name"
-        }
-      }
-    }
-  }
-}
-```
+OpenWork lists every provider in the OpenCode model catalog that accepts an API key.
 
-### Functional example: Ollama (Qwen3 8B)
+1. Create an API key in the provider's console. Copy it once and treat it like a password.
+2. In OpenWork, open `Settings` and choose `AI Providers`.
+3. Click `Connect provider`.
+4. Type the provider's name in `Filter providers by name or ID` (for example, `openrouter`, `mistral`, or `fireworks`) and select it.
+5. Paste the key into the `API key` field and save.
+6. Choose one of the provider's models in the chat model picker.
 
-This setup a local [Ollama](https://docs.ollama.com/api/openai-compatibility) instance running `qwen3:8b`. 
+For a step-by-step example with screenshots, see [Add an Anthropic API key](/start-here/connect-your-stack/add-anthropic-api-key).
 
-```
-{
-  "provider": {
-    "ollama": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "Ollama",
-      "options": {
-        "baseURL": "http://localhost:11434/v1"
-      },
-      "models": {
-        "qwen3:8b": {
-          "name": "Qwen3 8B"
-        }
-      }
-    }
-  }
-}
-```
+## Option 2: Add any OpenAI-compatible endpoint
 
-Pull the model first with `ollama pull qwen3:8b`, then make sure the Ollama server is reachable at `http://localhost:11434` with `ollama serve`
+Use this for an AI gateway (LiteLLM, a hosted router, or one you built), an Azure OpenAI or Azure AI Foundry deployment, a self-hosted model server, or any provider not in the catalog. The endpoint must speak the OpenAI Chat Completions API.
 
-Open your desktop, change the provider name and voila! You have an fully local LLM running in your machine.
+Because OpenWork is built on OpenCode, anything you can configure in an [OpenCode config file](https://opencode.ai/docs/models/) works here. Keep the setting with the workspace rather than in your global `~/.config/opencode/opencode.json`.
 
-For teams, manage the provider in OpenWork Cloud under [Models > Bring your Own Keys](/cloud/share-with-your-team/managed-llm-provider), then make it available from `Settings > Cloud Providers` in the desktop app.
+1. Collect the endpoint's base URL (usually ending in `/v1`), the model IDs it serves, and an API key if it needs one.
+2. Open your workspace folder and edit `opencode.jsonc` in its root. Create it if it does not exist.
+3. Add a provider entry:
+
+   ```jsonc
+   {
+     "provider": {
+       "my-gateway": {
+         "npm": "@ai-sdk/openai-compatible",
+         "name": "My gateway",
+         "options": {
+           "baseURL": "https://gateway.example.com/v1",
+           "apiKey": "{env:MY_GATEWAY_API_KEY}"
+         },
+         "models": {
+           "model-id-from-your-gateway": {
+             "name": "Friendly model name"
+           }
+         }
+       }
+     }
+   }
+   ```
+
+4. Make `MY_GATEWAY_API_KEY` available to OpenWork: open `Settings > Environment`, click `Add variable`, save the key, and apply the change. Secrets saved there stay on this device. You can also set the variable in your shell before starting OpenWork. Omit `apiKey` if the endpoint does not need one.
+5. Run `Reload OpenCode config` from the command palette, or restart OpenWork.
+6. Pick the new model in the chat model picker and send a short test prompt.
+
+Add one entry under `models` for every model ID the endpoint exposes.
+
+### Examples
+
+| Endpoint | `baseURL` | Model IDs |
+| --- | --- | --- |
+| LiteLLM proxy | Your proxy URL, for example `http://localhost:4000/v1` | The model names configured in LiteLLM |
+| Azure OpenAI / Azure AI Foundry | `https://<resource>.openai.azure.com/openai/v1` | Your deployment names |
+| Ollama | `http://localhost:11434/v1` | Pulled model names, such as `qwen3:8b` |
+| LM Studio | `http://localhost:1234/v1` | The loaded model identifier |
+
+For Ollama, the built-in `Settings > Ollama` screen writes this config for you. See [Use local models](/start-here/connect-your-stack/use-local-models).
+
+## Share a provider with your team
+
+If several people need the same provider, have an OpenWork Cloud admin add it once instead of passing keys around:
+
+- [Managed LLM provider](/cloud/share-with-your-team/managed-llm-provider): a catalog provider with one shared org key.
+- [Custom LLM provider](/cloud/share-with-your-team/custom-llm-provider): any OpenAI-compatible endpoint, including your own gateway, entered as a base URL plus model IDs.
+- [Per-member LLM credentials](/cloud/share-with-your-team/per-member-llm-credentials): one provider, a separate key per member (for example, LiteLLM virtual keys).
+
+Members then find the provider under `Settings > Cloud Providers`. Admins can also block locally added providers with [desktop policies](/cloud/share-with-your-team/desktop-policies) so everyone uses the approved setup.
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Can I use OpenRouter with OpenWork?">
+    Yes. OpenRouter is in the provider catalog: open `Settings > AI Providers > Connect provider`, search for OpenRouter, and paste your key.
+  </Accordion>
+  <Accordion title="Can I use my company's own AI gateway?">
+    Yes, if it exposes an OpenAI-compatible endpoint. Add it with Option 2 for yourself, or ask an admin to add it once as a [custom LLM provider](/cloud/share-with-your-team/custom-llm-provider) for the team.
+  </Accordion>
+  <Accordion title="Where does OpenWork store my API key?">
+    Keys entered in `Connect provider` are stored by the local OpenCode engine on your computer. Values saved in `Settings > Environment` stay on this device. Org-managed keys are stored in OpenWork Cloud and synced to the workspaces that are allowed to use them.
+  </Accordion>
+  <Accordion title="The model shows up but tool calls fail.">
+    Some models or gateways do not support tool calling. Try a model that advertises tool or function calling support, and check the gateway passes tool definitions through.
+  </Accordion>
+  <Accordion title="I see 'Custom providers are disabled by your organization'.">
+    Your admin has blocked locally added providers. Use the providers under `Settings > Cloud Providers`, or ask your admin to add the one you need.
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+- [Use local models (Ollama, LM Studio)](/start-here/connect-your-stack/use-local-models)
+- [Use Gemini and Google Vertex AI](/start-here/connect-your-stack/use-gemini-and-vertex-ai)
+- [Migrate from Claude Cowork](/start-here/migrate-from-claude-cowork)

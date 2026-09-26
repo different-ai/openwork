@@ -1,18 +1,67 @@
 ---
-title: "Share skills with your team"
-description: "Find personal and team skills in the Library, then share managed skills through Cloud Collections"
+title: "Share skills and MCP servers with your team"
+description: "Give non-technical teammates the same skills, plugins, and MCP connections without copying files or editing MCP JSON, using OpenWork Cloud."
 ---
 
+Set it up once in OpenWork Cloud and your teammates get it automatically. An admin publishes skills inside a plugin and adds MCP servers as connectors, then chooses who can use each one: everyone in the organization, selected teams, or individual people. Members see them in the desktop app without copying folders or editing MCP config files.
+
 <Note>
-**Local or managed.** Local workspace skills remain free and require no OpenWork Cloud sign-in; copy their files yourself when you only need an unmanaged handoff. For centrally assigned team skills and updates, publish a plugin through an OpenWork Cloud [Collection](/cloud/share-with-your-team/collections).
+**Local or managed.** Local workspace skills are free and need no OpenWork Cloud sign-in; you can copy their files yourself for a one-off handoff. Central assignment, access control, and updates use OpenWork Cloud (or a self-hosted deployment) and are part of the Team and Enterprise plans; see [Pricing and licensing](/start-here/pricing-and-licensing).
 </Note>
 
-OpenWork no longer shares skills from a `Workspace > Skills` screen. The desktop app shows what is already available to your agent.
+## Share skills
 
-## Find shared skills
+1. In the OpenWork Cloud dashboard, open `Plugins` and click `Create plugin` (or open an existing plugin).
+2. Add a skill: give it a clear name, describe when the agent should use it, and write the instructions. You can also bundle MCP servers, commands, and other components in the same plugin.
+3. In the plugin's `Share` section, open `Who can access this` and add teams, individual members, or `Everyone in the organization`.
+4. Ask a teammate to open `Settings > Library` in the desktop app and confirm the plugin and its skills are there. They can click `Refresh` if a change has not appeared yet.
 
-1. Open `Settings > Library` in the desktop app.
-2. Use the `Skills` filter or search to find skills from your workspace and organization.
-3. Click a skill and choose `View details` to read its description; local skills can be revealed or removed, while OpenWork Connect skills are read-only.
-4. Click `Refresh` if an admin just updated a Collection or changed your access.
-5. To publish or customize a skill for teammates, follow [Publish and copy a skill](/start-here/do-work-with-it/publish-and-copy-a-skill). For larger setups with several plugins or audiences, see [Collections](/cloud/share-with-your-team/collections).
+For several plugins that go to the same audience, group them in a [Collection](/cloud/share-with-your-team/collections) (under `Settings > Advanced` in the dashboard) so one access change covers the whole set. For step-by-step publishing and copying, see [Publish and copy a skill](/start-here/do-work-with-it/publish-and-copy-a-skill).
+
+## Share MCP servers
+
+1. In the OpenWork Cloud dashboard, open `Connectors` and click `Add connector`.
+2. Pick a preset or enter any remote MCP server URL.
+3. Choose how people sign in: `Each person signs in` (everyone uses their own account) or `One account for everyone` (an admin signs in once).
+4. Choose who can use it, then create the connector.
+5. Members open `Settings > OpenWork Connect` in the desktop app. If each person signs in, they connect their own account once.
+
+Nobody edits MCP JSON: the connection reaches each member through OpenWork Connect, so members never handle server URLs or tokens. For account modes, Slack, and troubleshooting, see [Sharing MCP connections](/cloud/share-with-your-team/shared-mcp-connections) and [MCP server compatibility](/cloud/share-with-your-team/mcp-server-compatibility).
+
+## Use the same setup in other AI tools
+
+The same assigned skills and connectors are available outside the desktop app through the [OpenWork MCP Gateway](/cloud/run-in-the-cloud/cloud-mcp): add one URL to Claude Code, Codex, Cursor, VS Code, or another MCP client.
+
+## Share models too
+
+To give the team the same models, an admin adds a [managed](/cloud/share-with-your-team/managed-llm-provider) or [custom LLM provider](/cloud/share-with-your-team/custom-llm-provider) once. Use [desktop policies](/cloud/share-with-your-team/desktop-policies) to lock down what members can change.
+
+## Share without OpenWork Cloud
+
+Skills are plain `SKILL.md` folders. A workspace keeps its skills in `.opencode/skills/`, so you can copy a skill folder into a teammate's workspace or commit it to a shared repository. You lose central access control and updates, and each person still has to connect MCP servers themselves.
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Do my teammates need to be technical?">
+    No. Once an admin assigns a plugin or connector, it shows up in the desktop app. At most, a member signs in to a service once.
+  </Accordion>
+  <Accordion title="Who can publish skills for other people?">
+    Owners and admins by default. Members can create personal skills for themselves.
+  </Accordion>
+  <Accordion title="If I update a shared skill, does everyone get the change?">
+    Yes. Everyone with access to the plugin gets the new version. To experiment without affecting others, copy the skill into a private plugin first.
+  </Accordion>
+  <Accordion title="Can I share a local (stdio) MCP server?">
+    Connectors are remote MCP servers reached by URL. For a server that only runs locally, add it per machine with [Add a custom MCP server](/start-here/connect-your-stack/add-an-mcp-server).
+  </Accordion>
+  <Accordion title="Can I run this on my own infrastructure?">
+    Yes. The organization control plane that manages plugins, connectors, and access can be [self-hosted](/start-here/self-host).
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+- [Connectors, skills, and plugins](/start-here/do-work-with-it/skills-plugins-and-mcp)
+- [Team quickstart](/cloud/team-quickstart)
+- [Migrate from Claude Cowork](/start-here/migrate-from-claude-cowork)
