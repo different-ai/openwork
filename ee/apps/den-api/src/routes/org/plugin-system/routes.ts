@@ -393,7 +393,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     async (c: OrgContext) => {
       try {
         const context = actorContext(c)
-        await requirePluginArchCapability(context, "config_object.create", false)
+        await requirePluginArchCapability(context, "config_object.create")
         const body = validJson<any>(c)
         const item = await createConfigObject({
           context,
@@ -728,12 +728,12 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       try {
         const context = actorContext(c)
         const body = validJson<PluginCreateBody>(c)
-        await requirePluginArchCapability(context, "plugin.create", body.orgWide === true || Boolean(body.marketplaceId))
+        await requirePluginArchCapability(context, "plugin.create")
         if (body.orgWide === true && !isPluginArchOrgAdmin(context)) {
           throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can create org-wide plugins.")
         }
         if ((body.components?.length ?? 0) > 0) {
-          await requirePluginArchCapability(context, "config_object.create", false)
+          await requirePluginArchCapability(context, "config_object.create")
         }
         const sessionId = c.get("session")?.id
         if (body.components?.some((component) => component.connection && isAgentPluginMcpSecretSetup({

@@ -2954,7 +2954,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Remove an External MCP Connection",
-      description: "Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. Workspace owners and super-admins can remove any connection; other members only the connections they created. Session callers must have signed in within the last 15 minutes (403 reauth); API-key callers are exempt.",
+      description: "Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. Workspace owners and super-admins can remove any connection; other members only the connections they created. Session callers must have signed in within the last 2 hours (403 reauth); API-key callers are exempt.",
       responses: {
         200: jsonResponse("The connection was removed.", okSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),

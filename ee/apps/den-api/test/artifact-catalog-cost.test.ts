@@ -131,7 +131,7 @@ test("catalog deduplicates workflow checks, batches revision metadata and saved 
     expect(query.limit).toBeUndefined() // Never apply a global limit across views.
   }
   expect(requiredRoles).toHaveLength(1)
-  expect(requiredRoles[0]).toMatchObject({ resourceKind: "config_object", resourceId: configObjectId, role: "viewer", requireFreshSession: false })
+  expect(requiredRoles[0]).toMatchObject({ resourceKind: "config_object", resourceId: configObjectId, role: "viewer" })
 })
 
 test("permission gate retains direct workflow grants without plugin access and exact management role", async () => {

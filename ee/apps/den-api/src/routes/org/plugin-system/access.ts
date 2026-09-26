@@ -13,7 +13,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import type { MemberTeamSummary, OrganizationContext } from "../../../orgs.js"
 import { db } from "../../../db.js"
-import { getFreshPrivilegedSessionRequiredResponse, hasFreshPrivilegedSession, memberHasRole } from "../shared.js"
+import { memberHasRole } from "../shared.js"
 
 export type PluginArchResourceKind = "config_object" | "connector_instance" | "marketplace" | "plugin"
 export type PluginArchRole = "viewer" | "editor" | "manager"
@@ -39,7 +39,6 @@ type MarketplaceGrantRow = Pick<typeof MarketplaceAccessGrantTable.$inferSelect,
 type PluginGrantRow = Pick<typeof PluginAccessGrantTable.$inferSelect, "orgMembershipId" | "orgWide" | "removedAt" | "role" | "teamId">
 type ConnectorInstanceGrantRow = Pick<typeof ConnectorInstanceAccessGrantTable.$inferSelect, "orgMembershipId" | "orgWide" | "removedAt" | "role" | "teamId">
 type GrantRow = ConfigObjectGrantRow | MarketplaceGrantRow | PluginGrantRow | ConnectorInstanceGrantRow
-type ExposureGrantRow = Pick<PluginGrantRow, "orgMembershipId" | "orgWide" | "teamId">
 
 type MarketplaceResourceLookupInput = {
   context: PluginArchActorContext
@@ -71,10 +70,7 @@ type ResourceLookupInput =
   | MarketplaceResourceLookupInput
   | ConfigObjectResourceLookupInput
 
-type ExposureResourceLookupInput = PluginResourceLookupInput | ConfigObjectResourceLookupInput
-
 type RequireResourceRoleInput = ResourceLookupInput & {
-  requireFreshSession?: boolean
   role: PluginArchRole
 }
 
@@ -111,20 +107,6 @@ export function hasPluginArchCapability(context: PluginArchActorContext, capabil
     return true
   }
   return isPluginArchOrgAdmin(context)
-}
-
-function ensureFreshPluginArchAdmin(context: PluginArchActorContext, sessionMaxAgeMs?: number) {
-  if (context.apiKey === true || context.automation === true) {
-    // Session freshness is a step-up check for interactive humans. API keys and connector automation
-    // are non-interactive principals authorized by their scoped organization membership.
-    return
-  }
-  if (!isPluginArchOrgAdmin(context) || hasFreshPrivilegedSession({ session: context.session }, new Date(), sessionMaxAgeMs)) {
-    return
-  }
-
-  const response = getFreshPrivilegedSessionRequiredResponse()
-  throw new PluginArchAuthorizationError(403, response.error, response.message, response.reason)
 }
 
 function roleSatisfies(role: PluginArchRole | null, required: PluginArchRole) {
@@ -212,74 +194,6 @@ export function resolvePluginArchGrantRole(input: {
   }
 
   return resolved
-}
-
-export function pluginArchGrantExpandsAudience(grant: ExposureGrantRow, memberId: MemberId) {
-  return grant.orgWide
-    || grant.teamId !== null
-    || (grant.orgMembershipId !== null && grant.orgMembershipId !== memberId)
-}
-
-async function pluginIdsHaveExpandedAudience(context: PluginArchActorContext, pluginIds: PluginId[]) {
-  if (pluginIds.length === 0) return false
-
-  const organizationId = context.organizationContext.organization.id
-  const memberId = context.organizationContext.currentMember.id
-  const grants = await db
-    .select({
-      orgMembershipId: PluginAccessGrantTable.orgMembershipId,
-      orgWide: PluginAccessGrantTable.orgWide,
-      teamId: PluginAccessGrantTable.teamId,
-    })
-    .from(PluginAccessGrantTable)
-    .where(and(
-      eq(PluginAccessGrantTable.organizationId, organizationId),
-      inArray(PluginAccessGrantTable.pluginId, pluginIds),
-      isNull(PluginAccessGrantTable.removedAt),
-    ))
-  if (grants.some((grant) => pluginArchGrantExpandsAudience(grant, memberId))) return true
-
-  const marketplaceMemberships = await db
-    .select({ id: MarketplacePluginTable.id })
-    .from(MarketplacePluginTable)
-    .where(and(
-      eq(MarketplacePluginTable.organizationId, organizationId),
-      inArray(MarketplacePluginTable.pluginId, pluginIds),
-      isNull(MarketplacePluginTable.removedAt),
-    ))
-  return marketplaceMemberships.length > 0
-}
-
-export async function pluginArchResourceHasExpandedAudience(input: ExposureResourceLookupInput) {
-  if (input.resourceKind === "plugin") {
-    return pluginIdsHaveExpandedAudience(input.context, [input.resourceId])
-  }
-
-  const organizationId = input.context.organizationContext.organization.id
-  const memberId = input.context.organizationContext.currentMember.id
-  const grants = await db
-    .select({
-      orgMembershipId: ConfigObjectAccessGrantTable.orgMembershipId,
-      orgWide: ConfigObjectAccessGrantTable.orgWide,
-      teamId: ConfigObjectAccessGrantTable.teamId,
-    })
-    .from(ConfigObjectAccessGrantTable)
-    .where(and(
-      eq(ConfigObjectAccessGrantTable.organizationId, organizationId),
-      eq(ConfigObjectAccessGrantTable.configObjectId, input.resourceId),
-      isNull(ConfigObjectAccessGrantTable.removedAt),
-    ))
-  if (grants.some((grant) => pluginArchGrantExpandsAudience(grant, memberId))) return true
-
-  const memberships = await db
-    .select({ pluginId: PluginConfigObjectTable.pluginId })
-    .from(PluginConfigObjectTable)
-    .where(and(
-      eq(PluginConfigObjectTable.organizationId, organizationId),
-      eq(PluginConfigObjectTable.configObjectId, input.resourceId),
-      isNull(PluginConfigObjectTable.removedAt),
-    ))
-  return pluginIdsHaveExpandedAudience(input.context, memberships.map((membership) => membership.pluginId))
 }
 
 async function resolveGrantRole(input: {
@@ -550,9 +464,8 @@ export async function resolvePluginArchResourceRole(input: ResourceLookupInput) 
   return resolved
 }
 
-export async function requirePluginArchCapability(context: PluginArchActorContext, capability: PluginArchCapability, requireFreshSession?: boolean) {
+export async function requirePluginArchCapability(context: PluginArchActorContext, capability: PluginArchCapability) {
   if (hasPluginArchCapability(context, capability)) {
-    if (requireFreshSession !== false) ensureFreshPluginArchAdmin(context)
     return
   }
 
@@ -561,16 +474,10 @@ export async function requirePluginArchCapability(context: PluginArchActorContex
 
 export async function requirePluginArchResourceRole(input: {
   context: PluginArchActorContext
-  requireFreshSession?: boolean
-  sessionMaxAgeMs?: number
   resourceId: ConfigObjectId | ConnectorInstanceId | MarketplaceId | PluginId
   resourceKind: PluginArchResourceKind
   role: PluginArchRole
 }) {
-  if (input.role !== "viewer" && input.requireFreshSession !== false) {
-    ensureFreshPluginArchAdmin(input.context, input.sessionMaxAgeMs)
-  }
-
   const resolved = await resolvePluginArchResourceRole(input as RequireResourceRoleInput)
   if (roleSatisfies(resolved, input.role)) {
     return resolved

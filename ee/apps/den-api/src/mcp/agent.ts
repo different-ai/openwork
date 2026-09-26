@@ -670,8 +670,8 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           }
         }
         try {
-          await requirePluginArchCapability(libraryContext, "plugin.create", false)
-          await requirePluginArchCapability(libraryContext, "config_object.create", false)
+          await requirePluginArchCapability(libraryContext, "plugin.create")
+          await requirePluginArchCapability(libraryContext, "config_object.create")
           const plugin = await createPluginBundle({
             context: libraryContext,
             name: pluginName,
@@ -743,7 +743,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             context: libraryContext,
             configObjectId,
             reason,
-            requireFreshSession: false,
             value: { rawSourceText: skillMarkdown },
           })
           const memberships = await listConfigObjectPlugins({ context: libraryContext, configObjectId })

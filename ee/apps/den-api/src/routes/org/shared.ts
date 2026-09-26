@@ -23,10 +23,11 @@ export type OrgRouteVariables =
   & Partial<OrganizationContextVariables>
   & Partial<MemberTeamsContext>
 
-export const PRIVILEGED_SESSION_MAX_AGE_MS = 15 * 60 * 1000
-// Reuse confirmation during content editing; access, credentials, publishing,
-// and destructive changes retain the shorter privileged window.
-export const CONTENT_EDIT_SESSION_MAX_AGE_MS = 60 * 60 * 1000
+// Step-up window for high-risk workspace actions (security settings, API keys,
+// roles, credentials, deletion). Verifying again starts a new session, so this
+// counts from the last sign-in or identity check. Routine plugin, marketplace,
+// and connector work does not step up; normal role checks still apply.
+export const PRIVILEGED_SESSION_MAX_AGE_MS = 2 * 60 * 60 * 1000
 export const CONNECTIONS_READ_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000
 export const WORKSPACE_REAUTH_SECURITY_MESSAGE = "For security, confirm it's you before changing workspace settings."
 

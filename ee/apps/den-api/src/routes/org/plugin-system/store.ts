@@ -30,8 +30,8 @@ import {
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
 import type { PluginArchActorContext, PluginArchResourceKind, PluginArchRole } from "./access.js"
-import { isPluginArchOrgAdmin, PluginArchAuthorizationError, pluginArchResourceHasExpandedAudience, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchPluginRoles, resolvePluginArchResourceRole } from "./access.js"
-import { CONTENT_EDIT_SESSION_MAX_AGE_MS, memberHasRole } from "../shared.js"
+import { isPluginArchOrgAdmin, PluginArchAuthorizationError, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchPluginRoles, resolvePluginArchResourceRole } from "./access.js"
+import { memberHasRole } from "../shared.js"
 import { clampCodePoints, clampUtf8Bytes, PROJECTION_TEXT_MAX_BYTES, PROJECTION_TITLE_MAX_CHARS } from "./projection-text.js"
 import {
   AGENT_PLUGIN_V1_VERSION,
@@ -1297,20 +1297,13 @@ async function ensureVisibleConfigObject(context: PluginArchActorContext, config
   return row
 }
 
-async function ensureEditablePlugin(
-  context: PluginArchActorContext,
-  pluginId: PluginId,
-  requireFreshSession?: boolean,
-  sessionMaxAgeMs?: number,
-) {
+async function ensureEditablePlugin(context: PluginArchActorContext, pluginId: PluginId) {
   const row = await getPluginRow(context.organizationContext.organization.id, pluginId)
   if (!row) {
     throw new PluginArchRouteFailure(404, "plugin_not_found", "Plugin not found.")
   }
   await requirePluginArchResourceRole({
     context,
-    requireFreshSession,
-    sessionMaxAgeMs,
     resourceId: row.id,
     resourceKind: "plugin",
     role: "editor",
@@ -1657,7 +1650,6 @@ export async function createConfigObject(input: {
   context: PluginArchActorContext
   objectType: ConfigObjectRow["objectType"]
   pluginIds?: PluginId[]
-  requireFreshSession?: boolean
   sourceMode: ConfigObjectRow["sourceMode"]
   value: ConfigObjectInput
 }) {
@@ -1665,12 +1657,8 @@ export async function createConfigObject(input: {
     throw new PluginArchRouteFailure(400, "invalid_request", "Connector-managed config objects must be created through connector sync.")
   }
 
-  const targetExposure = await Promise.all((input.pluginIds ?? []).map((pluginId) =>
-    pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: pluginId, resourceKind: "plugin" })))
-  const requireFreshSession = input.requireFreshSession ?? targetExposure.some(Boolean)
   for (const pluginId of input.pluginIds ?? []) {
-    await ensureEditablePlugin(input.context, pluginId, requireFreshSession,
-      input.objectType === "skill" ? CONTENT_EDIT_SESSION_MAX_AGE_MS : undefined)
+    await ensureEditablePlugin(input.context, pluginId)
   }
 
   const now = new Date()
@@ -1800,19 +1788,13 @@ export async function createConfigObjectVersion(input: {
   context: PluginArchActorContext
   configObjectId: ConfigObjectId
   reason?: string
-  requireFreshSession?: boolean
   value: ConfigObjectInput
 }) {
   const row = await getConfigObjectRow(input.context.organizationContext.organization.id, input.configObjectId)
   if (!row) {
     throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
   }
-  const requireFreshSession = input.requireFreshSession
-    ?? await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
-  await requirePluginArchResourceRole({
-    context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "config_object", role: "editor",
-    sessionMaxAgeMs: row.objectType === "skill" ? CONTENT_EDIT_SESSION_MAX_AGE_MS : undefined,
-  })
+  await requirePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "config_object", role: "editor" })
 
   const now = new Date()
   const projection = deriveProjection({ objectType: row.objectType, value: input.value })
@@ -1852,8 +1834,7 @@ export async function setConfigObjectLifecycle(input: { context: PluginArchActor
   if (!row) {
     throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
   }
-  const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
-  await requirePluginArchResourceRole({ context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "config_object", role: "manager" })
+  await requirePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "config_object", role: "manager" })
   const now = new Date()
   const patch = input.action === "archive"
     ? { deletedAt: null, status: "archived" as const, updatedAt: now }
@@ -1963,7 +1944,6 @@ export async function listResourceAccess(input: { context: PluginArchActorContex
   await ensureResourceInOrganization(input.context, input)
   await requirePluginArchResourceRole({
     context: input.context,
-    requireFreshSession: false,
     resourceId: input.resourceId,
     resourceKind: input.resourceKind,
     role: "manager",
@@ -2920,7 +2900,6 @@ export async function createPluginBundle(input: {
       context: input.context,
       objectType: component.type,
       pluginIds: [plugin.id],
-      requireFreshSession: false,
       sourceMode: "cloud",
       value: component.value,
     })
@@ -2993,8 +2972,7 @@ export async function createPluginBundle(input: {
 }
 
 export async function updatePlugin(input: { context: PluginArchActorContext; description?: string | null; name?: string; pluginId: PluginId }) {
-  const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: input.pluginId, resourceKind: "plugin" })
-  const row = await ensureEditablePlugin(input.context, input.pluginId, requireFreshSession, CONTENT_EDIT_SESSION_MAX_AGE_MS)
+  const row = await ensureEditablePlugin(input.context, input.pluginId)
   const updatedAt = new Date()
   await db.update(PluginTable).set({
     description: input.description === undefined ? row.description : normalizeOptionalString(input.description ?? undefined),
@@ -3006,8 +2984,7 @@ export async function updatePlugin(input: { context: PluginArchActorContext; des
 
 export async function setPluginLifecycle(input: { action: "archive" | "restore"; context: PluginArchActorContext; pluginId: PluginId }) {
   const row = await ensureVisiblePlugin(input.context, input.pluginId)
-  const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "plugin" })
-  await requirePluginArchResourceRole({ context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "plugin", role: "manager" })
+  await requirePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "plugin", role: "manager" })
   const updatedAt = new Date()
   await db.update(PluginTable).set({
     deletedAt: input.action === "archive" ? row.deletedAt : null,

@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs"
-import { fileURLToPath } from "node:url"
 import { expect, mock, test } from "bun:test"
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import {
@@ -21,69 +19,6 @@ import { Hono, type MiddlewareHandler } from "hono"
 import type { PluginArchActorContext } from "../src/routes/org/plugin-system/access.js"
 import type { OrgRouteVariables } from "../src/routes/org/shared.js"
 
-const accessSource = readFileSync(
-  fileURLToPath(new URL("../src/routes/org/plugin-system/access.ts", import.meta.url)),
-  "utf8",
-)
-const storeSource = readFileSync(
-  fileURLToPath(new URL("../src/routes/org/plugin-system/store.ts", import.meta.url)),
-  "utf8",
-)
-const agentSource = readFileSync(
-  fileURLToPath(new URL("../src/mcp/agent.ts", import.meta.url)),
-  "utf8",
-)
-
-test("access-list reads keep manager authorization without requiring a fresh session", () => {
-  const listAccess = storeSource.slice(
-    storeSource.indexOf("export async function listResourceAccess"),
-    storeSource.indexOf("type TeamPluginAccessEdge"),
-  )
-
-  expect(listAccess).toContain('requireFreshSession: false')
-  expect(listAccess).toContain('role: "manager"')
-  expect(accessSource).toContain('input.role !== "viewer" && input.requireFreshSession !== false')
-})
-
-test("MCP update_skill keeps editor authorization without a browser-session step-up", () => {
-  const start = agentSource.indexOf("update: async ({ skillId, skillMarkdown, reason })")
-  const end = agentSource.indexOf("listConfigObjectPlugins({ context: libraryContext, configObjectId })", start)
-  expect(start).toBeGreaterThan(-1)
-  expect(end).toBeGreaterThan(start)
-  const update = agentSource.slice(start, end)
-
-  expect(update).toContain("createConfigObjectVersion({")
-  expect(update).toContain("requireFreshSession: false")
-  expect(storeSource).toContain("input.requireFreshSession\n    ?? await pluginArchResourceHasExpandedAudience")
-})
-
-test("access mutations retain the default fresh-session requirement", () => {
-  const mutations = storeSource.slice(
-    storeSource.indexOf("export async function createResourceAccessGrant"),
-    storeSource.indexOf("async function collectPluginMarketplaces"),
-  )
-
-  expect(mutations).toContain("export async function createResourceAccessGrant")
-  expect(mutations).toContain("export async function deleteResourceAccessGrant")
-  expect(mutations).not.toContain("requireFreshSession: false")
-})
-
-test("routine plugin and config-object mutations derive freshness from audience exposure", () => {
-  for (const functionName of [
-    "createConfigObject",
-    "createConfigObjectVersion",
-    "setConfigObjectLifecycle",
-    "updatePlugin",
-    "setPluginLifecycle",
-  ]) {
-    const start = storeSource.indexOf(`export async function ${functionName}`)
-    expect(start).toBeGreaterThan(-1)
-    const nextExport = storeSource.indexOf("export async function ", start + 1)
-    const source = storeSource.slice(start, nextExport === -1 ? undefined : nextExport)
-    expect(source).toContain("pluginArchResourceHasExpandedAudience")
-  }
-})
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -93,7 +28,7 @@ function responseItem(value: unknown): Record<string, unknown> {
   return value.item
 }
 
-test("stale-session authoring follows the private versus exposed route matrix", async () => {
+test("admins with an old sign-in can do routine plugin work without a step-up", async () => {
   process.env.DATABASE_URL ??= "mysql://root:password@127.0.0.1:3306/openwork_test"
   process.env.DB_MODE ??= "mysql"
   process.env.DEN_DB_ENCRYPTION_KEY ??= "freshness-route-test-encryption-key-123456789"
@@ -128,7 +63,8 @@ test("stale-session authoring follows the private versus exposed route matrix", 
   const exposedVersionId = createDenTypeId("configObjectVersion")
   const marketplaceId = createDenTypeId("marketplace")
   const now = new Date()
-  const staleCreatedAt = new Date(now.getTime() - 65 * 60_000)
+  // Older than the 2-hour privileged window: routine plugin work must not step up.
+  const staleCreatedAt = new Date(now.getTime() - 3 * 60 * 60_000)
   const organizationContext: PluginArchActorContext["organizationContext"] = {
     organization: {
       id: organizationId,
@@ -306,205 +242,54 @@ test("stale-session authoring follows the private versus exposed route matrix", 
       { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
     )
 
-    const createdPluginResponse = await request("POST", "/v1/plugins", {
-      name: "Stale Private Plugin",
-      orgWide: false,
-    })
-    expect(createdPluginResponse.status).toBe(201)
-    const privatePluginId = String(responseItem(await createdPluginResponse.json()).id ?? "")
-    expect(privatePluginId).toMatch(/^plg_/)
-
-    const renamedPluginResponse = await request("PATCH", `/v1/plugins/${privatePluginId}`, {
-      name: "Renamed Stale Private Plugin",
-    })
-    expect(renamedPluginResponse.status).toBe(200)
-    expect(responseItem(await renamedPluginResponse.json()).name).toBe("Renamed Stale Private Plugin")
-
-    const initialSkillSource = "---\nname: stale-private-skill\ndescription: Private stale-session fixture.\n---\nInitial instructions."
-    const createdSkillResponse = await request("POST", "/v1/config-objects", {
-      type: "skill",
-      pluginIds: [privatePluginId],
-      sourceMode: "cloud",
-      input: { rawSourceText: initialSkillSource },
-    })
-    expect(createdSkillResponse.status).toBe(201)
-    const privateConfigObjectId = String(responseItem(await createdSkillResponse.json()).id ?? "")
-    expect(privateConfigObjectId).toMatch(/^cob_/)
-
-    const updatedSkillSource = `${initialSkillSource}\n\nUpdated instructions.`
-    const versionResponse = await request("POST", `/v1/config-objects/${privateConfigObjectId}/versions`, {
-      input: { rawSourceText: updatedSkillSource },
-      reason: "stale-session private edit",
-    })
-    expect(versionResponse.status).toBe(201)
-    const versions = await database.select().from(ConfigObjectVersionTable)
-      .where(eq(ConfigObjectVersionTable.configObjectId, privateConfigObjectId))
-    expect(versions).toHaveLength(2)
-    expect(versions.some((version) => version.rawSourceText === updatedSkillSource)).toBe(true)
-
-    const expectFreshAuthRequired = async (response: Response) => {
-      expect(response.status).toBe(403)
-      expect(await response.json()).toEqual({
-        error: "reauth",
-        reason: "fresh_auth_required",
-        message: "For security, confirm it's you before changing workspace settings.",
-      })
+    const expectOk = async (response: Response, status: number) => {
+      const text = await response.text()
+      expect({ status: response.status, text }).toMatchObject({ status })
+      expect(text).not.toContain("fresh_auth_required")
+      return text ? JSON.parse(text) : null
     }
-    // Content editing gets a longer window; extending it must not extend grants
-    // or deletion, or permit editing other config types such as MCP settings.
-    staleCreatedAt.setTime(Date.now() - 20 * 60_000)
-    expect((await request("PATCH", `/v1/plugins/${exposedPluginId}`, { name: "Exposed Plugin" })).status).toBe(200)
-    const sharedSkill = await request("POST", "/v1/config-objects", {
+
+    const privatePlugin = responseItem(await expectOk(await request("POST", "/v1/plugins", { name: "Private Plugin", orgWide: false }), 201))
+    const privatePluginId = String(privatePlugin.id ?? "")
+    expect(privatePluginId).toMatch(/^plg_/)
+    const privateSkill = responseItem(await expectOk(await request("POST", "/v1/config-objects", {
+      type: "skill", pluginIds: [privatePluginId], sourceMode: "cloud",
+      input: { rawSourceText: "---\nname: private-skill\ndescription: Private fixture.\n---\nInstructions." },
+    }), 201))
+    const privateConfigObjectId = String(privateSkill.id ?? "")
+
+    await expectOk(await request("POST", "/v1/plugins", { name: `Org-wide ${organizationId}`, orgWide: true }), 201)
+    await expectOk(await request("PATCH", `/v1/plugins/${exposedPluginId}`, { name: "Renamed Exposed Plugin" }), 200)
+    await expectOk(await request("POST", "/v1/config-objects", {
       type: "skill", pluginIds: [exposedPluginId], sourceMode: "cloud",
-      input: { rawSourceText: "---\nname: editing-window\ndescription: Editing window fixture.\n---\nInstructions." },
-    })
-    expect(sharedSkill.status).toBe(201)
-    const sharedSkillId = String(responseItem(await sharedSkill.json()).id)
-    expect((await request("POST", `/v1/config-objects/${sharedSkillId}/versions`, {
-      input: { rawSourceText: "---\nname: editing-window\ndescription: Editing window fixture.\n---\nUpdated instructions." },
-    })).status).toBe(201)
-    await expectFreshAuthRequired(await request("POST", `/v1/plugins/${privatePluginId}/access`, { orgWide: true, role: "viewer" }))
-    await expectFreshAuthRequired(await request("POST", `/v1/config-objects/${sharedSkillId}/delete`, {}))
-    await expectFreshAuthRequired(await request("POST", "/v1/config-objects", {
+      input: { rawSourceText: "---\nname: shared-skill\ndescription: Shared fixture.\n---\nInstructions." },
+    }), 201)
+    await expectOk(await request("POST", "/v1/config-objects", {
       type: "mcp", pluginIds: [exposedPluginId], sourceMode: "cloud",
       input: { rawSourceText: '{"mcpServers":{"fixture":{"url":"https://example.test/mcp"}}}' },
-    }))
-    const sharedVersions = await database.select().from(ConfigObjectVersionTable)
-      .where(eq(ConfigObjectVersionTable.configObjectId, sharedSkillId))
-    expect(sharedVersions).toHaveLength(2)
-    const sharedRows = await database.select().from(ConfigObjectTable).where(eq(ConfigObjectTable.id, sharedSkillId))
-    expect(sharedRows[0]?.deletedAt).toBeNull()
-    const privateGrants = await database.select().from(PluginAccessGrantTable).where(and(
+    }), 201)
+    await expectOk(await request("POST", `/v1/config-objects/${exposedConfigObjectId}/versions`, {
+      input: { rawSourceText: "---\nname: exposed-skill\ndescription: Exposed skill fixture.\n---\nRevised." },
+      reason: "routine edit",
+    }), 201)
+    await expectOk(await request("POST", `/v1/plugins/${privatePluginId}/access`, { orgWide: true, role: "viewer" }), 201)
+    await expectOk(await request("POST", `/v1/config-objects/${privateConfigObjectId}/access`, { orgWide: true, role: "viewer" }), 201)
+    await expectOk(await request("POST", `/v1/marketplaces/${marketplaceId}/plugins`, { pluginId: privatePluginId }), 201)
+    await expectOk(await request("POST", `/v1/plugins/${exposedPluginId}/archive`, {}), 200)
+    await expectOk(await request("POST", `/v1/plugins/${exposedPluginId}/restore`, {}), 200)
+
+    const exposedRows = await database.select().from(PluginTable).where(eq(PluginTable.id, exposedPluginId))
+    expect(exposedRows[0]?.status).toBe("active")
+    const orgWideGrants = await database.select().from(PluginAccessGrantTable).where(and(
       eq(PluginAccessGrantTable.pluginId, privatePluginId), eq(PluginAccessGrantTable.orgWide, true),
     ))
-    expect(privateGrants).toHaveLength(0)
-    staleCreatedAt.setTime(Date.now() - 65 * 60_000)
-    const blockedPluginName = `Blocked Org-wide ${organizationId}`
-    const blockedSkillName = `blocked-exposed-${organizationId.slice(-8)}`
-    const blockedCases = [
-      {
-        name: "create org-wide plugin",
-        request: () => request("POST", "/v1/plugins", { name: blockedPluginName, orgWide: true }),
-        verifyNoWrite: async () => {
-          const rows = await database.select().from(PluginTable).where(and(
-            eq(PluginTable.organizationId, organizationId),
-            eq(PluginTable.name, blockedPluginName),
-          ))
-          expect(rows).toHaveLength(0)
-        },
-      },
-      {
-        name: "patch org-wide plugin",
-        request: () => request("PATCH", `/v1/plugins/${exposedPluginId}`, { name: "Blocked Exposed Rename" }),
-        verifyNoWrite: async () => {
-          const rows = await database.select().from(PluginTable).where(eq(PluginTable.id, exposedPluginId))
-          expect(rows[0]?.name).toBe("Exposed Plugin")
-        },
-      },
-      {
-        name: "create skill in exposed plugin",
-        request: () => request("POST", "/v1/config-objects", {
-          type: "skill",
-          pluginIds: [exposedPluginId],
-          sourceMode: "cloud",
-          input: {
-            rawSourceText: `---\nname: ${blockedSkillName}\ndescription: Must not persist.\n---\nBlocked instructions.`,
-          },
-        }),
-        verifyNoWrite: async () => {
-          const rows = await database.select().from(ConfigObjectTable).where(and(
-            eq(ConfigObjectTable.organizationId, organizationId),
-            eq(ConfigObjectTable.title, blockedSkillName),
-          ))
-          expect(rows).toHaveLength(0)
-        },
-      },
-      {
-        name: "version exposed skill",
-        request: () => request("POST", `/v1/config-objects/${exposedConfigObjectId}/versions`, {
-          input: {
-            rawSourceText: "---\nname: exposed-skill\ndescription: Exposed skill fixture.\n---\nBlocked revision.",
-          },
-          reason: "must not persist",
-        }),
-        verifyNoWrite: async () => {
-          const rows = await database.select().from(ConfigObjectVersionTable)
-            .where(eq(ConfigObjectVersionTable.configObjectId, exposedConfigObjectId))
-          expect(rows).toHaveLength(1)
-        },
-      },
-      {
-        name: "grant plugin access",
-        request: () => request("POST", `/v1/plugins/${privatePluginId}/access`, {
-          orgWide: true,
-          role: "viewer",
-        }),
-        verifyNoWrite: async () => {
-          const rows = await database.select().from(PluginAccessGrantTable).where(and(
-            eq(PluginAccessGrantTable.pluginId, privatePluginId),
-            eq(PluginAccessGrantTable.orgWide, true),
-          ))
-          expect(rows).toHaveLength(0)
-        },
-      },
-      {
-        name: "grant skill access",
-        request: () => request("POST", `/v1/config-objects/${privateConfigObjectId}/access`, {
-          orgWide: true,
-          role: "viewer",
-        }),
-        verifyNoWrite: async () => {
-          const rows = await database.select().from(ConfigObjectAccessGrantTable).where(and(
-            eq(ConfigObjectAccessGrantTable.configObjectId, privateConfigObjectId),
-            eq(ConfigObjectAccessGrantTable.orgWide, true),
-          ))
-          expect(rows).toHaveLength(0)
-        },
-      },
-      {
-        name: "publish plugin",
-        request: () => request("POST", `/v1/marketplaces/${marketplaceId}/plugins`, {
-          pluginId: privatePluginId,
-        }),
-        verifyNoWrite: async () => {
-          const rows = await database.select().from(MarketplacePluginTable).where(and(
-            eq(MarketplacePluginTable.marketplaceId, marketplaceId),
-            eq(MarketplacePluginTable.pluginId, privatePluginId),
-          ))
-          expect(rows).toHaveLength(0)
-        },
-      },
-    ]
+    expect(orgWideGrants).toHaveLength(1)
 
-    for (const blockedCase of blockedCases) {
-      await expectFreshAuthRequired(await blockedCase.request())
-      await blockedCase.verifyNoWrite()
-    }
-
-    // MCP tool calls carry no browser session, so update_skill cannot step up;
-    // it opts out of freshness and editor access still decides who may write.
+    // Role checks still decide who may write.
     const { createConfigObjectVersion } = await import("../src/routes/org/plugin-system/store.js")
-    const mcpContext: PluginArchActorContext = { organizationContext, memberTeams: [], session: null }
-    const mcpSkillSource = "---\nname: exposed-skill\ndescription: Exposed skill fixture.\n---\nUpdated from an MCP client."
-    await expect(createConfigObjectVersion({
-      context: mcpContext,
-      configObjectId: exposedConfigObjectId,
-      value: { rawSourceText: mcpSkillSource },
-    })).rejects.toMatchObject({ error: "reauth" })
-    await createConfigObjectVersion({
-      context: mcpContext,
-      configObjectId: exposedConfigObjectId,
-      reason: "update_skill without a browser session",
-      requireFreshSession: false,
-      value: { rawSourceText: mcpSkillSource },
-    })
-    const mcpVersions = await database.select().from(ConfigObjectVersionTable)
-      .where(eq(ConfigObjectVersionTable.configObjectId, exposedConfigObjectId))
-    expect(mcpVersions).toHaveLength(2)
-    expect(mcpVersions.some((version) => version.rawSourceText === mcpSkillSource)).toBe(true)
-
     const viewerContext: PluginArchActorContext = {
-      ...mcpContext,
+      memberTeams: [],
+      session: null,
       organizationContext: {
         ...organizationContext,
         currentMember: { ...organizationContext.currentMember, id: viewerMemberId, userId: viewerUserId, role: "member", isOwner: false },
@@ -513,12 +298,8 @@ test("stale-session authoring follows the private versus exposed route matrix", 
     await expect(createConfigObjectVersion({
       context: viewerContext,
       configObjectId: exposedConfigObjectId,
-      requireFreshSession: false,
-      value: { rawSourceText: `${mcpSkillSource}\nViewer edit.` },
+      value: { rawSourceText: "---\nname: exposed-skill\ndescription: Exposed skill fixture.\n---\nViewer edit." },
     })).rejects.toMatchObject({ error: "forbidden" })
-    const viewerVersions = await database.select().from(ConfigObjectVersionTable)
-      .where(eq(ConfigObjectVersionTable.configObjectId, exposedConfigObjectId))
-    expect(viewerVersions).toHaveLength(2)
   } finally {
     await cleanup()
     mock.restore()

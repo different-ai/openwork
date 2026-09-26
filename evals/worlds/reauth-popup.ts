@@ -86,7 +86,7 @@ PY`);
       const result = await seed.api(den.admin, "/v1/sso/enable", { method: "POST", headers, body: "{}" });
       if (result.response.status !== 204) throw new Error(`SSO enable: ${result.response.status} ${result.text}`);
     },
-    async ageSession(minutes = 20) {
+    async ageSession(minutes = 180) {
       if (!Number.isSafeInteger(minutes) || minutes < 0) throw new Error("Invalid session age");
       await sql(`UPDATE session SET created_at=DATE_SUB(NOW(3), INTERVAL ${minutes} MINUTE) WHERE user_id IN (SELECT id FROM user WHERE email=${sqlString(den.admin.email)});`);
     },
@@ -96,11 +96,6 @@ PY`);
       const items = record(versions.body).items;
       if (!detail.response.ok || !versions.response.ok || !Array.isArray(items)) throw new Error("Could not read stored skill");
       return { source: text(record(record(record(detail.body).item).latestVersion).rawSourceText), versions: items.length };
-    },
-    async duplicateSkillSubmit() {
-      await evaluate(web.client, browserScript(() => {
-        document.querySelector("textarea")?.closest("form")?.requestSubmit();
-      }, []));
     },
     async storedName() {
       return (await sql(`SELECT name FROM organization WHERE id=${sqlString(organizationId)};`)).trim();

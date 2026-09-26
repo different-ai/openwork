@@ -432,7 +432,6 @@ export async function importRemoteMcpApp(input: {
   pluginId?: string
   sourceUrl: string
   activate?: boolean
-  requireFreshSession?: boolean
 }) {
   let pluginId: DenTypeId<"plugin"> | null = null
   if (input.pluginId) {
@@ -444,7 +443,6 @@ export async function importRemoteMcpApp(input: {
     // Reject an unavailable target before performing any outbound download.
     await requirePluginArchResourceRole({
       context: input.context,
-      requireFreshSession: input.requireFreshSession,
       resourceId: pluginId,
       resourceKind: "plugin",
       role: "editor",
@@ -464,7 +462,6 @@ export async function importRemoteMcpApp(input: {
     context: input.context,
     objectType: "app",
     pluginIds: [pluginId],
-    requireFreshSession: input.requireFreshSession,
     sourceMode: "import",
     value: {
       normalizedPayloadJson: payloadForFetchedApp(fetched) as unknown as Record<string, unknown>,
