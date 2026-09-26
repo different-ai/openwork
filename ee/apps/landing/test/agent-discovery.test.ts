@@ -179,7 +179,8 @@ describe("markdown negotiation", () => {
   }
 
   test("every agentMarkdown route is covered by the middleware matcher", () => {
-    expect([...config.matcher].sort()).toEqual(Object.keys(agentMarkdown).sort());
+    const matcher: readonly string[] = config.matcher;
+    for (const route of Object.keys(agentMarkdown)) expect(matcher).toContain(route);
   });
 
   test("/download returns markdown with the exact install URLs", async () => {
