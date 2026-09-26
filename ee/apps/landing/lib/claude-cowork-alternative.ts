@@ -155,6 +155,10 @@ ${alternativeSections
   .map((section) => `## ${section.title}\n\n${section.body}\n\n- [${section.link.label}](https://openworklabs.com${section.link.href})`)
   .join("\n\n")}
 
+## Cost
+
+An interactive calculator on this page compares Claude Team, Claude Enterprise, Claude Desktop on 3P, OpenWork Team, and OpenWork Enterprise for your team size, usage, and models, using list API prices from models.dev. Teams running Claude Desktop on Bedrock, Vertex, or Foundry: see [OpenWork vs Claude Cowork on 3P](https://openworklabs.com/alternatives/claude-cowork-3p).
+
 ## FAQ
 
 ${claudeCoworkAlternativeFaq.map((entry) => `### ${entry.question}\n${entry.answer}`).join("\n\n")}

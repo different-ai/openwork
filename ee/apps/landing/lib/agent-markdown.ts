@@ -1,3 +1,4 @@
+import { claudeCowork3pMarkdown } from "./claude-cowork-3p"
 import { claudeCoworkAlternativeMarkdown } from "./claude-cowork-alternative"
 
 const home = `# OpenWork
@@ -234,6 +235,7 @@ export const agentMarkdown: Record<string, string> = {
   "/trust": trust,
   "/glm-5.2": glm52,
   "/alternatives/claude-cowork": claudeCoworkAlternativeMarkdown,
+  "/alternatives/claude-cowork-3p": claudeCowork3pMarkdown,
 }
 
 export const agentMarkdownRoutes = Object.keys(agentMarkdown)
