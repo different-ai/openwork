@@ -19,7 +19,10 @@ function readAffordances(value: unknown): unknown {
       : readAffordances(entry)]));
 }
 
-/** A process-local, read-only capability endpoint, closed with its engine. */
+/** A process-local, read-only capability endpoint, closed with its engine.
+ * Build this host entry as one bundle: packaged desktops relocate engine plugin
+ * files, and the shared factory and its request-local transport must use the
+ * same AsyncLocalStorage instance rather than separately bundled copies. */
 export async function createV2ContextBridge(hostRequest: (path: string, init?: RequestInit) => Promise<unknown>) {
   const token = randomBytes(32).toString("base64url");
   const plugin = await OpenWorkExtensionsPreview();
