@@ -778,6 +778,13 @@
       "when": 1790405726705,
       "tag": "0111_device_authorization",
       "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "5",
+      "when": 1790407468548,
+      "tag": "0112_claimable_workspaces",
+      "breakpoints": true
     }
   ]
 }

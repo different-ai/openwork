@@ -45,6 +45,7 @@ import { authorizeOrganizationSsoCallback, failOrganizationSsoTestIntent } from 
 import { getRequestSession, readSignedSessionCookieToken, revokeBearerSession, type AuthContextVariables } from "../../session.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
+import { exchangePreclaimAssertion, JWT_BEARER_GRANT_TYPE } from "../../workspace-preclaim.js"
 import { registerDeviceAuthRoutes } from "./device.js"
 import { normalizeOAuthAuthorizeRedirect } from "./oauth-redirect.js"
 import { registerScimAuthRoutes } from "./scim.js"
@@ -633,6 +634,24 @@ async function getOrganizationSsoCallbackRequest(request: Request) {
   }
 }
 
+/**
+ * RFC 7523 JWT-bearer grant for pre-claim workspace assertions. Better Auth's
+ * token endpoint does not know this grant, so Den answers it before handing
+ * the request over. Returns null for every other grant type.
+ */
+async function handleJwtBearerGrant(request: Request): Promise<Response | null> {
+  if (!(request.headers.get("content-type") ?? "").includes("application/x-www-form-urlencoded")) return null
+  const form = new URLSearchParams(await request.text())
+  if (form.get("grant_type") !== JWT_BEARER_GRANT_TYPE) return null
+  const assertion = form.get("assertion")?.trim()
+  const headers = { "cache-control": "no-store", pragma: "no-cache" }
+  if (!assertion) {
+    return Response.json({ error: "invalid_request", error_description: "The assertion parameter is required." }, { status: 400, headers })
+  }
+  const result = await exchangePreclaimAssertion(assertion)
+  return Response.json(result.body, { status: result.ok ? 200 : result.status, headers })
+}
+
 async function handleAuthRequest(c: Context) {
   const request = c.req.raw
   const observabilityRequest = request.method === "POST"
@@ -648,6 +667,15 @@ async function handleAuthRequest(c: Context) {
       logger.warn("oauth token request rate limited", rateLimitFields)
     }
     return oauthTokenRateLimit.response
+  }
+  if (observabilityRequest) {
+    const jwtBearerResponse = await handleJwtBearerGrant(observabilityRequest.clone())
+    if (jwtBearerResponse) {
+      if (oauthTokenRateLimit && !jwtBearerResponse.ok) {
+        await recordOAuthTokenFailure(oauthTokenRateLimit.failureKey, jwtBearerResponse, checkRateLimit)
+      }
+      return jwtBearerResponse
+    }
   }
   const authRequest = await normalizeMcpOAuthRequest(request)
   if (authRequest instanceof Response) {

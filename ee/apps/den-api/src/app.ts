@@ -46,6 +46,7 @@ import { registerWorkerRoutes } from "./routes/workers/index.js"
 import { registerCloudWorkerCompatibilityPreflightRoute } from "./routes/workers/compatibility.js"
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
+import { preclaimScopeMiddleware } from "./middleware/preclaim-scope.js"
 import { isOperationalErrorPath, normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
 import { sanitizePublicResponseHeaders } from "./public-response-headers.js"
 
@@ -192,6 +193,7 @@ if (!env.corsHandledByEdge) {
 }
 
 app.use("*", sessionMiddleware)
+app.use("/v1/*", preclaimScopeMiddleware)
 
 app.get(
   "/",
