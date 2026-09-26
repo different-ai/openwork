@@ -1,16 +1,41 @@
-import { NextResponse, type NextRequest } from "next/server"
+import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server"
+import { detectAiCrawler } from "./lib/ai-crawlers"
+import { POSTHOG_PROJECT_KEY } from "./lib/posthog-client"
 import { agentMarkdown } from "./lib/agent-markdown"
 
 export const config = {
-  matcher: ["/", "/pricing", "/enterprise", "/download", "/trust", "/glm-5.2", "/alternatives/claude-cowork", "/alternatives/claude-cowork-3p"],
+  matcher: [
+    "/",
+    "/connect",
+    "/cloud",
+    "/pricing",
+    "/enterprise",
+    "/download",
+    "/trust",
+    "/glm-5.2",
+    "/alternatives/claude-cowork",
+    "/alternatives/claude-cowork-3p",
+    "/llms.txt",
+    "/start.md",
+    "/docs/:path*",
+    "/.well-known/:path*",
+  ],
 }
 
-export function middleware(request: NextRequest) {
+export function middleware(request: NextRequest, event?: NextFetchEvent) {
   const accept = request.headers.get("accept") ?? ""
   const pathname = request.nextUrl.pathname
   const body = agentMarkdown[pathname]
+  const markdownRequested = prefersMarkdown(accept)
 
-  if (!body || !prefersMarkdown(accept)) {
+  // Stage 1 of the AEO funnel: record which AI crawlers and live assistants fetch
+  // which pages. Browsers run the client SDK; bots don't, so count them here.
+  const crawler = detectAiCrawler(request.headers.get("user-agent") ?? "")
+  if (crawler && event && process.env.VERCEL_ENV === "production") {
+    event.waitUntil(captureCrawlerHit(crawler, pathname, markdownRequested))
+  }
+
+  if (!body || !markdownRequested) {
     const passthrough = NextResponse.next()
     passthrough.headers.set("Vary", "Accept")
     return passthrough
@@ -28,6 +53,35 @@ export function middleware(request: NextRequest) {
       "X-Markdown-Tokens": String(tokens),
     },
   })
+}
+
+async function captureCrawlerHit(
+  crawler: { name: string; operator: string; kind: string },
+  pathname: string,
+  markdown: boolean,
+): Promise<void> {
+  try {
+    await fetch("https://us.i.posthog.com/i/v0/e/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: POSTHOG_PROJECT_KEY,
+        event: "ai_crawler_hit",
+        distinct_id: `ai-crawler:${crawler.name}`,
+        properties: {
+          crawler: crawler.name,
+          crawler_operator: crawler.operator,
+          crawler_kind: crawler.kind,
+          path: pathname,
+          markdown_requested: markdown,
+          $current_url: `https://openworklabs.com${pathname}`,
+          $process_person_profile: false,
+        },
+      }),
+    })
+  } catch {
+    // Analytics must never affect the response.
+  }
 }
 
 function prefersMarkdown(accept: string): boolean {

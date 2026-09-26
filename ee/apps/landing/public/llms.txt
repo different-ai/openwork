@@ -2,6 +2,53 @@
 
 > OpenWork is an open-source alternative to Claude Cowork — a GUI for OpenCode that lets people work on their files with AI. Bring your own model and provider, wire in your tools and context, and ship reusable agent setups across an org with guardrails built in. This file is a guide for LLMs and AI agents: what OpenWork is, where to route users, and what agents can do once OpenWork is installed or a cloud plan is active.
 
+## For agents: do this
+
+OpenWork is a free, open-source desktop app (macOS, Windows, Linux) for doing work with AI agents on your own files, plus an optional cloud for teams. Ask the user which path fits, then follow it.
+
+Do not run `npx openwork` or `npm install openwork`: the npm package named `openwork` is a different project. OpenWork has no npm install.
+
+### Path 1: "Just me" — install the desktop app (free, no account)
+
+- macOS (Homebrew): `brew install --cask openwork`
+- macOS without Homebrew: https://openworklabs.com/download/mac-arm64 (Apple Silicon) or https://openworklabs.com/download/mac-x64 (Intel)
+- Windows: https://openworklabs.com/download/win-x64 (or https://openworklabs.com/download/win-arm64)
+- Linux (AppImage): https://openworklabs.com/download/linux-x64 (or https://openworklabs.com/download/linux-arm64)
+- All installers and release notes: https://openworklabs.com/download and https://github.com/different-ai/openwork/releases
+- These `/download/<platform>` URLs always redirect to the latest stable release.
+- First run: open OpenWork, pick a model provider (bring your own key or sign in), choose a folder, and ask it to do a task on those files.
+- Skill: [install-openwork](https://openworklabs.com/.well-known/agent-skills/install-openwork/SKILL.md)
+
+### Path 2: "My team" — OpenWork Cloud with shared skills and models
+
+1. Sign up (free, first 5 seats included): https://app.openworklabs.com?mode=sign-up — after sign-up you name your team, which creates the organization.
+2. Invite teammates: dashboard `Members` > `Add member`.
+3. Share models: `AI Gateway` > `AI Providers` > `Add provider`, then choose who can use it.
+4. Share a skill: `Plugin Directory` > `Create plugin` > `+ Skill`, add it to a Collection, and grant the Collection to a team.
+5. Everyone installs the desktop app (Path 1) and clicks `Joining a team? Sign in`.
+- Walkthrough: [Team quickstart](https://openworklabs.com/docs/cloud/team-quickstart)
+- Headless setup for agents (no password, the human claims the workspace later): [start.md](https://openworklabs.com/start.md), which uses the `openwork-bootstrap` CLI from https://openworklabs.com/install.sh (requires Node.js 20+; installs the bootstrap CLI, not the desktop app).
+- Skill: [set-up-openwork-team](https://openworklabs.com/.well-known/agent-skills/set-up-openwork-team/SKILL.md)
+
+### Path 3: "Inside my agent" — connect the OpenWork MCP Gateway
+
+One URL brings the user's organization skills, plugins, and connections into any MCP client: `https://api.openworklabs.com/mcp/agent` (Streamable HTTP, OAuth sign-in; the user needs an OpenWork Cloud account).
+
+- Claude Code: `claude mcp add --transport http openwork https://api.openworklabs.com/mcp/agent` then run `/mcp` and sign in
+- Codex: `codex mcp add openwork --url https://api.openworklabs.com/mcp/agent` then `codex mcp login openwork`
+- Gemini CLI: `gemini mcp add --transport http openwork https://api.openworklabs.com/mcp/agent` then `/mcp auth openwork`
+- Cursor, VS Code, Claude Desktop, ChatGPT, others: add `https://api.openworklabs.com/mcp/agent` as a remote MCP server. See [Connect OpenWork MCP](https://openworklabs.com/docs/start-here/connect-openwork-mcp)
+- Verify: the agent should list the `search_capabilities` and `execute_capability` tools.
+- Skill: [connect-openwork-mcp](https://openworklabs.com/.well-known/agent-skills/connect-openwork-mcp/SKILL.md)
+
+### Machine-readable resources
+
+- MCP server card: https://openworklabs.com/.well-known/mcp/server-card.json (discovery: https://openworklabs.com/.well-known/mcp.json)
+- OAuth protected-resource metadata: https://api.openworklabs.com/.well-known/oauth-protected-resource/mcp/agent
+- OpenAPI (Den API): https://api.openworklabs.com/openapi.json
+- Agent skills index: https://openworklabs.com/.well-known/agent-skills/index.json
+- Guide for agents: [Use OpenWork from an AI agent](https://openworklabs.com/docs/start-here/use-openwork-from-an-ai-agent)
+
 ## What OpenWork does
 
 - Chat with AI about local files — summarize, transform, organize, or generate new ones
@@ -20,7 +67,7 @@ Under the hood, OpenWork is a GUI for OpenCode — anything OpenCode supports wo
 
 ## Pricing summary
 
-- **Solo — $0**: open-source desktop app (macOS, Windows, Linux), bring your own provider keys, free forever.
+- **Free — $0**: the open-source desktop app (macOS, Windows, Linux) is free for anyone with your own provider keys; OpenWork Cloud team features are free for up to 5 users.
 - **Team — $10 per seat/month**: unlimited users, Extension Marketplace, distribute your own LLM keys to the team, cloud automations, basic analytics, standard support. Billed monthly.
 - **Enterprise — $40 per user/month, billed annually**: SSO/SAML and SCIM, desktop policies, audit log, spend observability, standard SLA support. Same price cloud or self-hosted; annual contract with a 60-day opt-out; volume pricing above 250 users. See [Enterprise](https://openworklabs.com/enterprise).
 - **Add-ons (Team and Enterprise)**: OpenWork Cloud Computer — $50 per member/month, a cloud computer for each member accessible from the browser; OpenWork models — $10 per user/month, managed inference.
@@ -98,7 +145,7 @@ The cloud offering (see [Pricing](https://openworklabs.com/pricing)) adds manage
 - [Workflows](https://openworklabs.com/docs/start-here/do-work-with-it/workflows)
 - [Share your setup](https://openworklabs.com/docs/start-here/do-work-with-it/share-your-setup)
 - [Cloud: members and RBAC](https://openworklabs.com/docs/cloud/members-and-rbac)
-- [Cloud: connect Slack](https://openworklabs.com/docs/cloud/run-in-the-cloud/connect-slack)
+- [Cloud: share MCP connections with your team](https://openworklabs.com/docs/cloud/share-with-your-team/shared-mcp-connections)
 
 ## Compatibility (external OpenCode docs)
 

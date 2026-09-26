@@ -1,0 +1,34 @@
+{
+  "name": "com.openworklabs/openwork",
+  "title": "OpenWork MCP Gateway",
+  "version": "1.0.0",
+  "description": "One MCP URL for your OpenWork organization: org-assigned skills, plugins, workflows, and connections (Google Workspace, Microsoft 365, and MCP servers), exposed through search_capabilities and execute_capability.",
+  "url": "https://api.openworklabs.com/mcp/agent",
+  "transport": "streamable-http",
+  "authentication": "oauth2",
+  "auth": {
+    "type": "oauth2",
+    "protectedResourceMetadata": "https://api.openworklabs.com/.well-known/oauth-protected-resource/mcp/agent",
+    "authorizationServer": "https://app.openworklabs.com/api/auth",
+    "scopes": ["mcp:read", "mcp:write", "offline_access"],
+    "dynamicClientRegistration": true
+  },
+  "capabilities": {
+    "tools": true,
+    "resources": true
+  },
+  "coreTools": ["search_capabilities", "execute_capability"],
+  "websiteUrl": "https://openworklabs.com/connect",
+  "documentationUrl": "https://openworklabs.com/docs/start-here/connect-openwork-mcp",
+  "signUpUrl": "https://app.openworklabs.com?mode=sign-up",
+  "repository": {
+    "url": "https://github.com/different-ai/openwork",
+    "source": "github",
+    "subfolder": "ee/apps/den-api"
+  },
+  "install": {
+    "claude-code": "claude mcp add --transport http openwork https://api.openworklabs.com/mcp/agent",
+    "codex": "codex mcp add openwork --url https://api.openworklabs.com/mcp/agent && codex mcp login openwork",
+    "gemini-cli": "gemini mcp add --transport http openwork https://api.openworklabs.com/mcp/agent"
+  }
+}

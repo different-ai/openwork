@@ -1,0 +1,63 @@
+---
+title: "Use OpenWork from an AI agent"
+sidebarTitle: "For AI agents"
+description: "Exact commands for Claude Code, Codex, Cursor, ChatGPT, and other agents to install OpenWork, set it up for a team, or connect the OpenWork MCP Gateway."
+---
+
+Point your agent at [openworklabs.com/llms.txt](https://openworklabs.com/llms.txt) and it can install OpenWork, set it up for a team, or connect OpenWork to itself. This page has the same steps.
+
+<Warning>
+Don't use `npx openwork` or `npm install openwork`. The npm package named `openwork` is a different project.
+</Warning>
+
+## Just me: install the desktop app
+
+Free, no account needed.
+
+| OS | Install |
+|---|---|
+| macOS (Homebrew) | `brew install --cask openwork` |
+| macOS | [Apple Silicon](https://openworklabs.com/download/mac-arm64) or [Intel](https://openworklabs.com/download/mac-x64) `.dmg` |
+| Windows | [x64](https://openworklabs.com/download/win-x64) or [ARM64](https://openworklabs.com/download/win-arm64) `.exe` |
+| Linux | [x64](https://openworklabs.com/download/linux-x64) or [ARM64](https://openworklabs.com/download/linux-arm64) `.AppImage` |
+
+These links always point to the latest stable release. Then [run your first task](/desktop-app/first-task).
+
+## My team: set up OpenWork Cloud
+
+1. [Sign up](https://app.openworklabs.com?mode=sign-up) and name your team. That creates your organization. The first 5 seats are free.
+2. Invite teammates in `Members` > `Add member`.
+3. Share models in `AI Gateway` > `AI Providers` > `Add provider`.
+4. Share a skill: `Plugin Directory` > `Create plugin` > `+ Skill`, add it to a Collection, and grant it to a team.
+5. Everyone installs the desktop app and clicks `Joining a team? Sign in`.
+
+Full walkthrough: [Team quickstart](/cloud/team-quickstart). For a headless, agent-run setup, follow [start.md](https://openworklabs.com/start.md). It uses the `openwork-bootstrap` CLI from `https://openworklabs.com/install.sh`, which needs Node.js 20+ and doesn't install the desktop app.
+
+## Inside my agent: connect the MCP Gateway
+
+Server URL: `https://api.openworklabs.com/mcp/agent`. Sign-in uses OAuth in the browser. You need an OpenWork Cloud account.
+
+```sh
+# Claude Code
+claude mcp add --transport http openwork https://api.openworklabs.com/mcp/agent
+
+# Codex
+codex mcp add openwork --url https://api.openworklabs.com/mcp/agent
+codex mcp login openwork
+
+# Gemini CLI
+gemini mcp add --transport http openwork https://api.openworklabs.com/mcp/agent
+```
+
+Other clients: [Connect OpenWork MCP](/start-here/connect-openwork-mcp). It's working when your agent lists the `search_capabilities` and `execute_capability` tools.
+
+## Agent skills and machine-readable files
+
+| Resource | URL |
+|---|---|
+| Install skill | [install-openwork](https://openworklabs.com/.well-known/agent-skills/install-openwork/SKILL.md) |
+| MCP skill | [connect-openwork-mcp](https://openworklabs.com/.well-known/agent-skills/connect-openwork-mcp/SKILL.md) |
+| Team skill | [set-up-openwork-team](https://openworklabs.com/.well-known/agent-skills/set-up-openwork-team/SKILL.md) |
+| Skills index | [agent-skills/index.json](https://openworklabs.com/.well-known/agent-skills/index.json) |
+| MCP server card | [mcp/server-card.json](https://openworklabs.com/.well-known/mcp/server-card.json) |
+| OpenAPI | [openapi.json](https://api.openworklabs.com/openapi.json) |
