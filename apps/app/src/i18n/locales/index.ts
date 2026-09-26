@@ -4,6 +4,7 @@
 export { default as en } from "./en";
 export { default as ja } from "./ja";
 export { default as zh } from "./zh";
+export { default as zhTW } from "./zh-TW";
 export { default as vi } from "./vi";
 export { default as ptBR } from "./pt-BR";
 export { default as fr } from "./fr";
