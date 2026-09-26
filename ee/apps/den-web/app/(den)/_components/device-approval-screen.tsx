@@ -20,6 +20,8 @@ type CodeState =
   | { kind: "approved" }
   | { kind: "denied" };
 
+const HEADING = "text-[20px] font-semibold leading-tight tracking-[-0.01em] text-[var(--dls-text-primary)]";
+
 const CLIENT_NAMES: Record<string, string> = {
   "openwork-cli": "OpenWork CLI",
 };
@@ -136,7 +138,7 @@ export function DeviceApprovalScreen({ initialUserCode }: { initialUserCode: str
     return (
       <section className="den-page py-6 lg:py-10">
         <div className="mx-auto grid w-full max-w-[32rem] gap-5">
-          <h1 className="den-title-lg text-center">Sign in to OpenWork CLI</h1>
+          <h1 className={`${HEADING} text-center`}>Sign in to OpenWork CLI</h1>
           {userCode ? (
             <p className="text-center font-mono text-[20px] font-semibold tracking-[0.12em] text-[var(--dls-text-primary)]" data-testid="device-user-code">
               {userCode}
@@ -164,7 +166,7 @@ export function DeviceApprovalScreen({ initialUserCode }: { initialUserCode: str
           if (draftCode.trim()) setUserCode(formatUserCode(draftCode));
         }}
       >
-        <h1 className="den-title-lg">Enter the code from your terminal</h1>
+        <h1 className={HEADING}>Enter the code from your terminal</h1>
         <DenInput
           aria-label="Code"
           value={draftCode}
@@ -186,8 +188,7 @@ export function DeviceApprovalScreen({ initialUserCode }: { initialUserCode: str
         <span className="flex size-10 items-center justify-center rounded-full bg-[var(--dls-hover)]">
           <Check className="size-5" aria-hidden />
         </span>
-        <h1 className="den-title-lg">{clientName} is signed in</h1>
-        <p className="den-copy">Return to your terminal. You can close this tab.</p>
+        <h1 className={HEADING}>{clientName} is signed in. Return to your terminal.</h1>
       </div>,
     );
   }
@@ -198,8 +199,7 @@ export function DeviceApprovalScreen({ initialUserCode }: { initialUserCode: str
         <span className="flex size-10 items-center justify-center rounded-full bg-[var(--dls-hover)]">
           <X className="size-5" aria-hidden />
         </span>
-        <h1 className="den-title-lg">Sign-in denied</h1>
-        <p className="den-copy">{clientName} did not get access. You can close this tab.</p>
+        <h1 className={HEADING}>Sign-in denied. {clientName} did not get access.</h1>
       </div>,
     );
   }
@@ -207,7 +207,7 @@ export function DeviceApprovalScreen({ initialUserCode }: { initialUserCode: str
   if (codeState.kind === "invalid") {
     return frame(
       <div className="grid gap-4">
-        <h1 className="den-title-lg">This code can&apos;t be used</h1>
+        <h1 className={HEADING}>This code can&apos;t be used</h1>
         <DenNotice message={codeState.message} />
         <div>
           <DenButton variant="secondary" onClick={() => { setUserCode(""); setCodeState({ kind: "idle" }); }}>
@@ -228,10 +228,10 @@ export function DeviceApprovalScreen({ initialUserCode }: { initialUserCode: str
           <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[var(--dls-hover)]">
             <Terminal className="size-4" aria-hidden />
           </span>
-          <h1 className="den-title-lg">Sign in {clientName}?</h1>
+          <h1 className={HEADING}>Sign in {clientName}?</h1>
         </div>
         <div className="grid gap-1">
-          <span className="den-label">Code</span>
+          <span className="text-[13px] text-[var(--dls-text-secondary)]">Code</span>
           <span className="font-mono text-[20px] font-semibold tracking-[0.12em] text-[var(--dls-text-primary)]" data-testid="device-user-code">
             {userCode}
           </span>
