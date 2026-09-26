@@ -2,6 +2,27 @@
   "$schema": "https://agentskills.io/schemas/v0.2.0/index.json",
   "skills": [
     {
+      "name": "install-openwork",
+      "type": "skill",
+      "description": "Install the free OpenWork desktop app on macOS, Windows, or Linux and get the user to a first task. Use when someone wants OpenWork, an open-source Claude Cowork alternative, on their own computer.",
+      "url": "https://openworklabs.com/.well-known/agent-skills/install-openwork/SKILL.md",
+      "sha256": "0f0c9fe405bf68f482187c55bea73e3e46b79a298a2977cd36c704798154114e"
+    },
+    {
+      "name": "connect-openwork-mcp",
+      "type": "skill",
+      "description": "Connect the OpenWork MCP Gateway (https://api.openworklabs.com/mcp/agent) to Claude Code, Codex, Gemini CLI, Cursor, VS Code, Claude Desktop, or ChatGPT so the agent can use the user's OpenWork organization skills, plugins, and connections.",
+      "url": "https://openworklabs.com/.well-known/agent-skills/connect-openwork-mcp/SKILL.md",
+      "sha256": "8dd930f519c53ba9b7b4c8af669d5763c7fe0e12ef343f079c8d1e4ce5107371"
+    },
+    {
+      "name": "set-up-openwork-team",
+      "type": "skill",
+      "description": "Set up OpenWork for a team - sign up for OpenWork Cloud, create the organization, invite teammates, share models through the AI Gateway, and share a skill. Use when a team or company wants OpenWork with shared skills, models, or policies.",
+      "url": "https://openworklabs.com/.well-known/agent-skills/set-up-openwork-team/SKILL.md",
+      "sha256": "f5ab438cf4f2fa4fe5ebe78c0135d651131a364e9f3d4ff8f5576974b44feed1"
+    },
+    {
       "name": "workspace-guide",
       "type": "skill",
       "description": "Workspace guide to introduce OpenWork and onboard new users.",

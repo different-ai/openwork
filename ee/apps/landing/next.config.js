@@ -56,12 +56,26 @@ const nextConfig = {
           {
             key: "Link",
             value:
-              '</docs>; rel="service-doc", </.well-known/agent-skills/index.json>; rel="https://agentskills.io/rel/index", </.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+json"',
+              '</docs>; rel="service-doc", </llms.txt>; rel="llms-txt", </.well-known/agent-skills/index.json>; rel="https://agentskills.io/rel/index", </.well-known/agent-skills/index.json>; rel="agent-skills", </.well-known/mcp/server-card.json>; rel="mcp-server-card", </.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+json"',
           },
         ],
       },
       {
         source: "/.well-known/agent-skills/index.json",
+        headers: [
+          { key: "Content-Type", value: "application/json" },
+          { key: "Access-Control-Allow-Origin", value: "*" },
+        ],
+      },
+      {
+        source: "/.well-known/mcp.json",
+        headers: [
+          { key: "Content-Type", value: "application/json" },
+          { key: "Access-Control-Allow-Origin", value: "*" },
+        ],
+      },
+      {
+        source: "/.well-known/mcp/server-card.json",
         headers: [
           { key: "Content-Type", value: "application/json" },
           { key: "Access-Control-Allow-Origin", value: "*" },
