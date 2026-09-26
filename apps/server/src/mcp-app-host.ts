@@ -195,10 +195,15 @@ function providerErrorExcerpt(error: unknown): string | null {
   return sanitized.length > MAX_PROVIDER_ERROR_CHARS ? `${sanitized.slice(0, MAX_PROVIDER_ERROR_CHARS)}…` : sanitized;
 }
 
-function stringHeaders(value: unknown): Record<string, string> {
+export function stringHeaders(value: unknown, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   if (!isRecord(value)) return {};
   return Object.fromEntries(
-    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    Object.entries(value)
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+      .map(([name, header]) => [
+        name,
+        header.replace(/\{env:([^}]+)\}/g, (_match, variable: string) => env[variable] || ""),
+      ]),
   );
 }
 
