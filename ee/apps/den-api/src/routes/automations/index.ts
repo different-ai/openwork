@@ -46,9 +46,20 @@ import {
   capRunnerNotificationPollDelayForKeepalive,
   nextRunnerNotificationPollDelay,
 } from "../../automations/runner-notification-poll.js"
+import { typeId } from "@openwork-ee/utils/typeid"
 
-const idParamsSchema = z.object({ id: z.string().min(1).max(160) })
-const automationRunParamsSchema = z.object({ id: z.string().min(1).max(160) })
+const idParamsSchema = z.object({
+  id: z.string().min(1).max(160).refine(
+    (val) => typeId.validator("automation", val),
+    { message: "Invalid automation ID: must be a valid TypeID with the 'atm_' prefix and a 26-character base32 suffix" },
+  ),
+})
+const automationRunParamsSchema = z.object({
+  id: z.string().min(1).max(160).refine(
+    (val) => typeId.validator("automationRun", val),
+    { message: "Invalid automation run ID: must be a valid TypeID with the 'atr_' prefix and a 26-character base32 suffix" },
+  ),
+})
 const paginationSchema = z.object({
   cursor: z.string().min(1).max(160).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
