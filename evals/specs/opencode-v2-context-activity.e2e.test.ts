@@ -88,9 +88,11 @@ test("V2-CONTEXT-ACTIVITY: query another chat and track a background child after
     const title = "Review the reference in background";
     const activityPrompt = `Check background activity ${randomUUID()}`;
     const activityReply = `Background activity checked ${randomUUID()}`;
+    const completionReply = "The background review is now complete.";
     const response = await fetch(`${world.mock.url}/admin/agent-workloads`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workloads: [
       { promptMarker: prompt, latestUserTurn: true, finalReply: parentReply, steps: [{ tool: "subagent", arguments: { description: title, prompt: childPrompt, agent: "general", background: true } }] },
       { promptMarker: activityPrompt, latestUserTurn: true, finalReply: activityReply, steps: [{ tool: "openwork_query", arguments: { id: "session.read", args: { sessionId: parentId, workspaceId, summary: true } } }] },
+      { promptMarker: "Background review finished.", latestUserTurn: true, steps: [], finalReply: completionReply },
       { promptMarker: childPrompt, latestUserTurn: true, steps: [], finalReply: "Background review started. Background review finished.", finalReplyChunks: ["Background review started. ", "Background review finished."], finalReplyInitiallyReleasedChunks: 1 },
     ] }) });
     expect(response.ok).toBe(true);
@@ -130,6 +132,8 @@ test("V2-CONTEXT-ACTIVITY: query another chat and track a background child after
     await probe.eventually(() => probe.eval(() => document.querySelector('[data-subagent-session-id]')?.getAttribute("data-subagent-activity")), {
       within: 30_000, label: "background row completes", until: value => value === "completed",
     });
+    await user.see({ text: completionReply }, { timeoutMs: 30_000 });
+    await user.notSee({ text: "expected one workload marker" });
     await user.notSee({ text: "1 agent running" });
     await user.screenshot();
     evidence.recordAssertionEvidence("Native context and background activity", "The model called real context/search/read tools and read another conversation. The parent became idle while its child stayed visibly working and could be opened.", true);
