@@ -12,6 +12,7 @@
     "artifacts:publish": "node packages/test-artifacts/bin/publish-pr.mjs",
     "dev:den": "node scripts/dev-den.ts",
     "docs:shots": "node docs-shots/run.ts",
+    "docs:tags": "node scripts/tag-docs.mjs",
     "evidence:judge": "node packages/test-evidence/bin/test-evidence-judge.mjs",
     "provision:org-connector-two-members": "node scripts/provision-org-connector-two-members.ts",
     "lint:layers": "depcruise --config .dependency-cruiser.cjs --ignore-known .dependency-cruiser-known-violations.json packages specs worlds bin docs-shots runner scripts ../scenarios",

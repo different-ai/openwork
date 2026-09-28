@@ -6,7 +6,7 @@ const test = spec.world(taskActivityWeb, {
   resources: { surfaces: ["appWeb"], services: ["mock"] },
 });
 
-test("ACT-01 delegated-task activity stays with its original message after a follow-up", async ({ world, user, probe, evidence }) => {
+test("ACT-01 delegated-task activity stays with its original message after a follow-up", { tags: ["engine-v1", "engine-v2"] }, async ({ world, user, probe, evidence }) => {
   await user.type("composer", world.prompt);
   await user.click("Run task");
   const native = await probe.eventually(() => world.native(), {

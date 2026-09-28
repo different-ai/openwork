@@ -407,7 +407,7 @@ const partialFifthPrefix = [...streamedContinuityBullets.slice(0, 4), streamedCo
 const partialSeventhPrefix = [...streamedContinuityBullets.slice(0, 6), streamedContinuityPartialSeventh].join("\n");
 const completeContinuityAnswer = streamedContinuityBullets.join("\n");
 
-continuityTest("CONT-01 restores the exact cumulative prefix while one answer streams across conversation switches", async ({ world, user, probe, step, evidence }) => {
+continuityTest("CONT-01 restores the exact cumulative prefix while one answer streams across conversation switches", { tags: ["engine-v1", "engine-v2"] }, async ({ world, user, probe, step, evidence }) => {
   const assistantText = async () => {
     const messages = await readTranscriptMessages(probe, "assistant");
     return { messages, text: normalizedLines(messages.join("\n")) };

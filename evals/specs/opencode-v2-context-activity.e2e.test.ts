@@ -22,7 +22,7 @@ function toolOutputs(value: unknown): string[] {
     .filter(part => part.type === "text" && typeof part.text === "string").map(part => String(part.text));
 }
 
-test("V2-CONTEXT-ACTIVITY: query another chat and track a background child after its parent finishes", async ({ world, user, probe, step, evidence }) => {
+test("V2-CONTEXT-ACTIVITY: query another chat and track a background child after its parent finishes", { tags: ["engine-v2"] }, async ({ world, user, probe, step, evidence }) => {
   expect(world.engine).toBe("v2");
   await probe.eventually(() => probe.composer(), { within: 60_000, label: "model ready", until: state => state.selectedModelLabel.includes("Big Pickle") && !state.modelUnavailable });
   await user.type("composer", world.prompt);

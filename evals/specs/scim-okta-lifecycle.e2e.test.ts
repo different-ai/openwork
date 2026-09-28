@@ -1,3 +1,10 @@
+/**
+ * Provision members from an Okta-shaped SCIM client
+ *
+ * Flips sso_connection directly in the testkit database; Daytona Den exposes no database.
+ *
+ * @module-tag local-only
+ */
 import { expect } from "vitest";
 import { denFetch, signIn } from "@openwork/behaviors";
 import { eventually, inviteMember, needs, server, test, unmetNeeds } from "@openwork/testkit";

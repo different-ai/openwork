@@ -1,3 +1,9 @@
+/**
+ * Set up a working two-person team
+ *
+ * @module-tag critical
+ * @module-tag live-model
+ */
 import { browserScript } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 import type { Surface } from "@openwork/cdp";

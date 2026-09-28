@@ -1,3 +1,8 @@
+/**
+ * Keep new tasks and sends instantly responsive
+ *
+ * @module-tag local-only
+ */
 import { browserScript } from "@openwork/testkit";
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";

@@ -31,5 +31,5 @@
 
 ## Evidence
 
-<!-- One line per proof, phrased before → after. Link the report. Say plainly if it is red. -->
+<!-- One line per proof, phrased before → after. User flow first ("User flow: `<spec>` — before: …; after: …"), then "Agent flow: …". Link the report. Say plainly if it is red. -->
 -

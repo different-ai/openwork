@@ -1,3 +1,8 @@
+/**
+ * @module-tag local-only
+ * @module-tag macos
+ */
+// Drives a real AppKit window through the native Computer Use helper; only a local macOS host can run it.
 import { screenshot } from "@openwork/test-evidence";
 import { reload } from "@openwork/cdp";
 import { browserScript } from "@openwork/testkit";

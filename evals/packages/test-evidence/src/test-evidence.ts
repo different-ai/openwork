@@ -58,6 +58,19 @@ export interface TestRunSummary {
 export type TraceStage = "world" | "body";
 export type TraceChannel = "seed" | "seed:raw" | "user" | "agent" | "probe" | "probe:raw" | "vision" | "step";
 export type TestOutcome = "passed" | "failed" | "skipped" | "unknown";
+/** Who acts in the proof: a person in the real UI, or an agent/MCP client/server. */
+export type ProofFlow = "user" | "agent";
+
+export const USER_FLOW_TAG = "user-flow";
+export const AGENT_FLOW_TAG = "agent-flow";
+
+/** Map Vitest tags to the proof flow; untagged (or contradictory) tests have none. */
+export function proofFlowFromTags(tags: readonly string[] | undefined): ProofFlow | undefined {
+  const user = tags?.includes(USER_FLOW_TAG) ?? false;
+  const agent = tags?.includes(AGENT_FLOW_TAG) ?? false;
+  if (user === agent) return undefined;
+  return user ? "user" : "agent";
+}
 
 export interface TraceEntry {
   seq: number;
@@ -90,6 +103,8 @@ export interface TestRunRecord {
   name: string;
   /** Repository-relative spec that produced this record. */
   specFile?: string;
+  /** From the test's `user-flow` / `agent-flow` tag; absent when untagged. */
+  flow?: ProofFlow;
   dir: string;
   createdAt: string;
   closedAt: string;
@@ -281,7 +296,7 @@ function renderIndex(record: TestRunRecord): string {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${html(record.name)} test evidence</title><style>
 body{font:15px/1.5 system-ui,sans-serif;max-width:1100px;margin:40px auto;padding:0 20px;background:#f6f7f9;color:#17191d}header,.artifact,details,.trace{background:white;border:1px solid #dfe2e8;border-radius:12px;padding:20px;margin:0 0 24px}.artifact.passed{border-left:6px solid #238636}.artifact.failed{border-left:6px solid #cf222e}.artifact.pending,.artifact.unvalidated,details.unvalidated{border-left:6px solid #9a6700}details .artifact{margin-top:20px}summary{cursor:pointer;font-weight:700}img{display:block;width:100%;height:auto;border:1px solid #dfe2e8;border-radius:8px}.meta{color:#636c76}.passed strong{color:#1a7f37}.failed strong{color:#cf222e}.pending strong{color:#9a6700}li{margin:8px 0}.trace div{margin:5px 0}
-</style></head><body><header><h1>${html(record.name)}</h1><p class="meta">SHA ${html(record.gitSha ?? "unknown")}${record.sandboxRef ? ` · sandbox ref ${html(record.sandboxRef)}` : ""} · engine ${record.engine}</p><p>${summary.passedArtifacts}/${summary.totalArtifacts} artifacts passed; ${summary.failedArtifacts} failed; ${summary.pendingArtifacts} pending; ${summary.unvalidatedArtifacts - summary.pendingArtifacts} unvalidated. ${summary.passedExpectations} expectations passed, ${summary.failedExpectations} failed, and ${summary.pendingJudgments} pending.</p></header>${traceMarkup}${validatedArtifacts}${unvalidatedMarkup}${jsonMarkup}</body></html>
+</style></head><body><header><h1>${html(record.name)}</h1><p class="meta">${record.flow ? `${record.flow === "user" ? "User flow" : "Agent flow"} · ` : ""}SHA ${html(record.gitSha ?? "unknown")}${record.sandboxRef ? ` · sandbox ref ${html(record.sandboxRef)}` : ""} · engine ${record.engine}</p><p>${summary.passedArtifacts}/${summary.totalArtifacts} artifacts passed; ${summary.failedArtifacts} failed; ${summary.pendingArtifacts} pending; ${summary.unvalidatedArtifacts - summary.pendingArtifacts} unvalidated. ${summary.passedExpectations} expectations passed, ${summary.failedExpectations} failed, and ${summary.pendingJudgments} pending.</p></header>${traceMarkup}${validatedArtifacts}${unvalidatedMarkup}${jsonMarkup}</body></html>
 `;
 }
 
@@ -459,6 +474,7 @@ function parseTestRun(value: unknown): TestRunRecord | null {
     artifacts.push(parsed);
   }
   const specFile = typeof value.specFile === "string" ? value.specFile : undefined;
+  const flow = value.flow === "user" || value.flow === "agent" ? value.flow : undefined;
   const gitSha = typeof value.gitSha === "string" ? value.gitSha : undefined;
   const sandboxRef = typeof value.sandboxRef === "string" ? value.sandboxRef : undefined;
   const engine: EvalEngine | null = value.engine === undefined || value.engine === "v1"
@@ -496,6 +512,7 @@ function parseTestRun(value: unknown): TestRunRecord | null {
   return {
     name: value.name,
     specFile,
+    ...(flow ? { flow } : {}),
     dir: value.dir,
     createdAt: value.createdAt,
     closedAt: value.closedAt,
@@ -593,8 +610,8 @@ export async function judgeTestRun(testRunDir: string, opts: JudgeTestRunOptions
   };
 }
 
-export function createTestEvidence(meta: { name: string; specFile?: string; outDir?: string }): TestEvidenceRecorder {
-  const { name, specFile } = meta;
+export function createTestEvidence(meta: { name: string; specFile?: string; flow?: ProofFlow; outDir?: string }): TestEvidenceRecorder {
+  const { name, specFile, flow } = meta;
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const dir = meta.outDir ?? join(REPO_ROOT, "evals", "results", "test-runs", `${stamp}-${process.pid}-${slug(name)}`);
   const artifacts: StoredTestArtifact[] = [];
@@ -636,6 +653,7 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
       const record: TestRunRecord = {
         name,
         specFile,
+        ...(flow ? { flow } : {}),
         dir,
         createdAt,
         closedAt: new Date().toISOString(),

@@ -82,6 +82,7 @@ h3 { font-size: 13px; margin: 20px 0 8px; }
 .section:target, .section:focus-visible { outline: none; }
 .section-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .section-heading .eyebrow { margin: 2px 0 0; }
+.flow-heading { font-size: 12px; font-weight: 600; color: var(--muted-foreground); margin: 0 0 12px; }
 .outcome { margin: 0 0 8px 28px; color: var(--muted-foreground); }
 .section.failed .outcome { color: var(--destructive); }
 .section-heading > div { flex: 1; min-width: 0; }

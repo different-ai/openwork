@@ -1,3 +1,11 @@
+/**
+ * Quit an enterprise install cleanly
+ *
+ * Boots the packaged enterprise artifact and asks it to quit (SIGTERM and Browser.close); only packaged-smoke provides that binary.
+ *
+ * @module-tag local-only
+ * @module-tag packaged
+ */
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import {

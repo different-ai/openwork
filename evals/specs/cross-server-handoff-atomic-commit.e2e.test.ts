@@ -1,3 +1,9 @@
+/**
+ * Switch servers and recover enrollment
+ *
+ * @module-tag critical
+ * @module-tag local-only
+ */
 import { chmod, mkdtemp, readFile, rm } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";

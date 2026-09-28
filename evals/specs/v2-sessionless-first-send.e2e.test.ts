@@ -1,3 +1,10 @@
+/**
+ * Send the first prompt from the New task route
+ *
+ * Serves the model mock from the spec process's 127.0.0.1; only the local lane can reach it.
+ *
+ * @module-tag local-only
+ */
 import { expect } from "vitest";
 import { browserScript, resolveEvalEngine, spec } from "@openwork/testkit";
 import { sessionlessFirstSendWorld } from "../worlds/first-run.ts";
@@ -18,7 +25,7 @@ const mobileTest = spec.world(mobileChatInteractionWorld, {
   needs: { env: ["OPENWORK_EVAL_ENGINE"] },
 });
 
-mobileTest("MOBILE-CHAT-01 keyboard geometry and new turns keep a stable chat layout", async ({ world, user, probe, step, evidence }) => {
+mobileTest("MOBILE-CHAT-01 keyboard geometry and new turns keep a stable chat layout", { tags: ["engine-v1", "engine-v2"] }, async ({ world, user, probe, step, evidence }) => {
   await world.app.client.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await world.app.client.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
   await world.openNewTask();
@@ -251,7 +258,7 @@ const outageTest = spec.world(localSendDenOutageWorld, {
   needs: { placement: "local", env: ["OPENWORK_EVAL_ENGINE"] },
 });
 
-outageTest("DEN-LOCAL-SEND configured v1 identity sends to inference while Den is unavailable", async ({ world, user, probe, evidence }) => {
+outageTest("DEN-LOCAL-SEND configured v1 identity sends to inference while Den is unavailable", { tags: ["engine-v1"] }, async ({ world, user, probe, evidence }) => {
   await world.openNewTask();
   expect(world.hostedServerIdentityInstalled).toBe(true);
   expect(world.rendererCloudSignedIn).toBe(false);

@@ -48,6 +48,8 @@ export type TraceStage = "world" | "body";
 export type TraceChannel = "seed" | "seed:raw" | "user" | "agent" | "probe" | "probe:raw" | "vision" | "step";
 export type TestOutcome = "passed" | "failed" | "skipped" | "unknown";
 export type EvalEngine = "v1" | "v2";
+/** Who acts in the proof: a person in the real UI, or an agent/MCP client/server. */
+export type ProofFlow = "user" | "agent";
 
 export interface TraceEntry {
   seq: number;
@@ -74,6 +76,8 @@ export interface StepRecord {
 export interface TestRunRecord {
   name: string;
   specFile?: string;
+  /** From the test's `user-flow` / `agent-flow` tag; absent on untagged and older records. */
+  flow?: ProofFlow;
   dir: string;
   createdAt: string;
   closedAt: string;
@@ -314,6 +318,7 @@ function parseRecord(value: unknown, legacy: boolean): TestRunRecord | null {
   const summary = legacy ? parseLegacySummary(value.summary, artifacts) : parseCurrentSummary(value.summary, artifacts);
   if (!summary) return null;
   const specFile = typeof value.specFile === "string" ? value.specFile : undefined;
+  const flow = value.flow === "user" || value.flow === "agent" ? value.flow : undefined;
   const gitSha = typeof value.gitSha === "string" ? value.gitSha : undefined;
   const sandboxRef = typeof value.sandboxRef === "string" ? value.sandboxRef : undefined;
   const engine: EvalEngine | null = value.engine === undefined || value.engine === "v1"
@@ -348,6 +353,7 @@ function parseRecord(value: unknown, legacy: boolean): TestRunRecord | null {
   return {
     name: value.name,
     specFile,
+    ...(flow ? { flow } : {}),
     dir: value.dir,
     createdAt: value.createdAt,
     closedAt: value.closedAt,
@@ -370,4 +376,14 @@ export function parseTestRunJson(value: unknown): TestRunRecord | null {
 
 export function parseLegacyTestRunJson(value: unknown): TestRunRecord | null {
   return parseRecord(value, true);
+}
+
+export const PROOF_FLOW_LABELS: Record<ProofFlow | "unlabelled", string> = {
+  user: "User flow",
+  agent: "Agent flow",
+  unlabelled: "Unlabelled",
+};
+
+export function proofFlowLabel(flow: ProofFlow | undefined): string {
+  return PROOF_FLOW_LABELS[flow ?? "unlabelled"];
 }

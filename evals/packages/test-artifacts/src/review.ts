@@ -68,6 +68,8 @@ export async function assembleReview(options: {
       asset: sourceAsset,
       outcome: run.outcome,
       ...(run.failure === undefined ? {} : { failure: run.failure }),
+      ...(run.flow === undefined ? {} : { flow: run.flow }),
+      ...(run.specFile === undefined ? {} : { specFile: run.specFile }),
     });
     const evidenceIds: string[] = [];
     for (const [index, artifact] of run.artifacts.entries()) {
@@ -162,6 +164,31 @@ export async function assembleReview(options: {
   return { report, assets: [...assets.values()] };
 }
 
+type TestRunSource = Extract<ReviewReport["sources"][number], { kind: "test-run" }>;
+
+function specList(sources: TestRunSource[]): string {
+  const specs = [...new Set(sources.map((source) => source.specFile ?? source.name))];
+  return specs.map((spec) => `\`${spec}\``).join(", ");
+}
+
+/** Rendered on GitHub, so the guide link must be absolute. */
+export const FLOW_GUIDE_URL = "https://github.com/different-ai/openwork/blob/dev/docs/testing.md#user-flow-vs-agent-flow";
+
+/** Who did the thing in each proof: user-flow proof first, so a reviewer sees whether a person could do it. */
+export function flowLines(report: Pick<ReviewReport, "sources">): string[] {
+  const runs = report.sources.filter((source): source is TestRunSource => source.kind === "test-run");
+  if (runs.length === 0) return [];
+  const user = runs.filter((source) => source.flow === "user");
+  const agent = runs.filter((source) => source.flow === "agent");
+  const unlabelled = runs.filter((source) => source.flow === undefined);
+  const lines = [""];
+  if (user.length > 0) lines.push(`- User flow: ${specList(user)}`);
+  else lines.push(`- No user-flow proof: nothing here shows a person doing this in the UI. [Add \`{ tags: ["user-flow"] }\` to a UI journey](${FLOW_GUIDE_URL}).`);
+  if (agent.length > 0) lines.push(`- Agent flow: ${specList(agent)}`);
+  if (unlabelled.length > 0) lines.push(`- Unlabelled (no flow tag): ${specList(unlabelled)}`);
+  return lines;
+}
+
 export function renderReviewComment(
   report: ReviewReport,
   url?: string,
@@ -174,6 +201,7 @@ export function renderReviewComment(
     `Commit \`${report.gitSha}\` · selected evidence`,
     "Required verification is reported separately by the current-head Required verification check.",
   ];
+  lines.push(...flowLines(report));
   if (url) lines.push("", `[Open review report](${url})`);
   if (report.gaps.length > 0)
     lines.push("", `Coverage gaps: ${report.gaps.join("; ")}`);

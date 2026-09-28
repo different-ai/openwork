@@ -1,3 +1,8 @@
+/**
+ * Replace a running message without queueing the edit
+ *
+ * @module-tag local-only
+ */
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 import { readTranscriptMessages, resolveEvalEngine, spec } from "@openwork/testkit";
@@ -15,7 +20,7 @@ function record(value: unknown): value is Record<string, unknown> {
 
 // Native engines own abort, revert and history. Only model transport is synthetic;
 // a held stream proves that the old turn cannot finish before the edit is sent.
-test(`EDIT-BUSY ${resolveEvalEngine()}: replace a running message instead of queueing the edit`, async ({ world, user, probe, step, evidence }) => {
+test(`EDIT-BUSY ${resolveEvalEngine()}: replace a running message instead of queueing the edit`, { tags: ["engine-v1", "engine-v2"] }, async ({ world, user, probe, step, evidence }) => {
   await probe.eventually(() => probe.composer(), {
     within: 60_000, label: "starter model ready", until: state => state.selectedModelLabel.includes("Big Pickle") && !state.modelUnavailable,
   });

@@ -1,3 +1,13 @@
+/**
+ * Open and update an activated enterprise install against its Den
+ *
+ * Boots a RELEASED enterprise binary already activated against a real Den. Only its update case also needs
+ * OPENWORK_EVAL_RELEASED_BASELINE_BINARY (its own `needs`); that case skips on its own and the lane that runs
+ * this journey must provide both binaries for it to pass (#4848).
+ *
+ * @module-tag local-only
+ * @module-tag packaged
+ */
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import type { Probe } from "@openwork/testkit";

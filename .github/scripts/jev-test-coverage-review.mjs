@@ -34,7 +34,7 @@ export function probabilities(result, questions) {
 // Only trusted base files are read; no subprocesses, imports, or execution of PR code.
 export async function context(changed) {
   const docs = [];
-  for (const path of ['evals/README.md', 'evals/scripts/journey-catalog.mjs']) {
+  for (const path of ['evals/README.md', 'evals/scripts/journeys.mjs']) {
     try {
       const text = await readFile(path, 'utf8');
       const excerpt = path.endsWith('README.md')

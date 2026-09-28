@@ -1,3 +1,9 @@
+/**
+ * Open an already-activated enterprise install
+ *
+ * @module-tag local-only
+ * @module-tag packaged
+ */
 import { expect } from "vitest";
 import { sleep, spec } from "@openwork/testkit";
 import {

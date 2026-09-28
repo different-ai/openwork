@@ -1,3 +1,11 @@
+/**
+ * Keep an unactivated enterprise install from updating itself
+ *
+ * Boots the packaged enterprise artifact twice (fresh and pre-activated); only packaged-smoke provides that binary.
+ *
+ * @module-tag local-only
+ * @module-tag packaged
+ */
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import type { Probe } from "@openwork/testkit";
@@ -23,8 +31,8 @@ const ACTIVATION_HEADING = "Link this app to your organization";
 /** The unfixed build checked and started a download within ~2 s of the renderer booting. */
 const QUIET_WINDOW_MS = 20_000;
 
-const preactivation = spec.world(packagedPreactivationUpdaterWorld, { timeout: 180_000 });
-const activated = spec.world(packagedActivatedUpdaterWorld, { timeout: 180_000 });
+const preactivationTest = spec.world(packagedPreactivationUpdaterWorld, { timeout: 180_000 });
+const activatedTest = spec.world(packagedActivatedUpdaterWorld, { timeout: 180_000 });
 
 async function requireEnterpriseFlavor(world: { flavor: () => Promise<string | null> }, probe: Probe) {
   const flavor = await probe.eventually(() => world.flavor(), {
@@ -37,7 +45,7 @@ async function requireEnterpriseFlavor(world: { flavor: () => Promise<string | n
   }
 }
 
-preactivation("an unactivated enterprise install does not check for or download updates", async ({ world, user, probe, evidence }) => {
+preactivationTest("an unactivated enterprise install does not check for or download updates", async ({ world, user, probe, evidence }) => {
   await requireEnterpriseFlavor(world, probe);
   await probe.eventually(() => world.rootText(), {
     within: 60_000,
@@ -69,7 +77,7 @@ preactivation("an unactivated enterprise install does not check for or download 
   );
 });
 
-activated("an activated enterprise install still checks for updates", async ({ world, user, probe, evidence }) => {
+activatedTest("an activated enterprise install still checks for updates", async ({ world, user, probe, evidence }) => {
   await requireEnterpriseFlavor(world, probe);
 
   // Same binary, same watch: once activated the check must appear. Its Den is

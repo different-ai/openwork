@@ -1,3 +1,10 @@
+/**
+ * Use workspace skills just in time
+ *
+ * Native workspace skill tests use local watcher and loopback model fixtures.
+ *
+ * @module-tag local-only
+ */
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 import { liveOpenAiEnabled } from "@openwork/behaviors";
@@ -127,7 +134,7 @@ const openSkillMenu = async (user: User, name: string) => {
   await user.click({ role: "option", label: new RegExp(name.replace(/-/g, " "), "i") });
 };
 
-selectedTest("SKILL-ATTACH explicitly selected skills reach the first native model request and survive reload", async ({ world, user, probe, evidence, step }) => {
+selectedTest("SKILL-ATTACH explicitly selected skills reach the first native model request and survive reload", { tags: ["engine-v1", "engine-v2"] }, async ({ world, user, probe, evidence, step }) => {
   const runtime = await world.runtimeFacts();
   expect(runtime.browser).toContain("HeadlessChrome");
   expect(runtime.electronBridge).toBe(false);
@@ -195,7 +202,7 @@ selectedTest("SKILL-ATTACH explicitly selected skills reach the first native mod
     `A skill chosen in the composer reached the first ${world.engine} model request exactly once, stayed out of the visible message, and the conversation survived a reload.`, true);
 });
 
-selectedTest("SKILL-MISSING a selected skill removed from the native registry fails visibly without a model request", async ({ world, user, probe, evidence }) => {
+selectedTest("SKILL-MISSING a selected skill removed from the native registry fails visibly without a model request", { tags: ["engine-v2"] }, async ({ world, user, probe, evidence }) => {
   expect(world.engine).toBe("v2");
   await openSkillMenu(user, world.skillName);
   await user.type("composer", ` ${world.prompt}`);
@@ -314,7 +321,7 @@ function jitConversation({ world, user, probe }: { world: JitWorld; user: User; 
   return { ask, mintCode, skillToolIds, firstModelRequestAt, expectNoCodes, codes, runtime: () => runtime };
 }
 
-jitTest("SKILL-NATIVE-01 a malformed workspace skill never blocks prompt admission while the workspace skill lifecycle still converges", async ({ world, user, probe, step, evidence }) => {
+jitTest("SKILL-NATIVE-01 a malformed workspace skill never blocks prompt admission while the workspace skill lifecycle still converges", { tags: ["engine-v2"] }, async ({ world, user, probe, step, evidence }) => {
   const talk = jitConversation({ world, user, probe });
   const catalogTurn: SkillJitTurnTarget = { kind: "catalog", skill: world.workspaceSkillName };
   const install = async (code: string, description: string) => {

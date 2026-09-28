@@ -1,3 +1,10 @@
+/**
+ * Keep a real OpenAI answer streaming across conversation switches
+ *
+ * @module-tag local-only
+ * @module-tag live-model
+ * @module-tag live-openai
+ */
 import { expect } from "vitest";
 import { spec, type SpecBodyContext } from "@openwork/testkit";
 import { normalizeContinuityText } from "../worlds/chat-continuity.ts";
@@ -13,11 +20,11 @@ const liveContinuityTest = spec.world(chatStreamContinuityLiveWeb, {
   resources: { surfaces: ["appWeb"], services: [] },
 });
 
-liveContinuityTest("CONT-01-live a member returns to an answer that keeps growing", async (context) => {
+liveContinuityTest("CONT-01-live a member returns to an answer that keeps growing", { tags: ["engine-v1"] }, async (context) => {
   await liveContinuityJourney(context, false);
 });
 
-liveContinuityTest("CONT-01-live-history a member returns to an answer that keeps growing even while history loads", async (context) => {
+liveContinuityTest("CONT-01-live-history a member returns to an answer that keeps growing even while history loads", { tags: ["engine-v1"] }, async (context) => {
   await liveContinuityJourney(context, true);
 });
 

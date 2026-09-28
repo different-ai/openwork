@@ -33,6 +33,10 @@ it decides the world you can build.
 | needs a reviewer to reopen the *running* browser at a screenshot | add `{ tags: ["checkpoints"] }` to the `test(...)` options | protected checkpoint lane on Freestyle |
 | needs Windows and a published installer | the existing `windows-published-preview` spec only | Daytona Windows, protected |
 
+Every test also carries `user-flow` or `agent-flow` (see
+[User flow vs agent flow](#user-flow-vs-agent-flow)). Those tags label the
+proof; they do not change the lane.
+
 Tag `checkpoints` only when a still image cannot show what the reviewer has to
 check: an open stream, a populated workspace to explore, a state that costs
 minutes to reach. The tag moves the spec to a protected lane that uses a
@@ -42,6 +46,21 @@ Plain `user.screenshot()` never saves one. Say why in a comment beside the
 tag. Checkpoints cost VM snapshots, so capture the one or two moments a
 reviewer would open, not every step. Run it locally with
 `pnpm evals:e2e <slug> --local --checkpoints` (needs `FREESTYLE_API_KEY`).
+
+### Journey tags
+
+A journey describes itself; there is no catalog to edit. Start from the
+scaffold, which already has the name line, flow tag and `resources`:
+
+```sh
+pnpm evals:new <kebab-name> --flow user    # or --flow agent; --engine v2, --critical
+```
+
+The header JSDoc's first line is the readable name; `@module-tag` lines tag
+the file; engine tags go on each case's `test(...)`, whose title starts with a
+unique case ID. Which tag to use, and what CI does with it:
+[docs/testing.md#journey-tags](../../../docs/testing.md#journey-tags) (generated
+from `evals/vitest.config.ts`; `pnpm --dir evals exec vitest --list-tags`).
 
 ## Do not write one when…
 
@@ -54,6 +73,22 @@ reviewer would open, not every step. Run it locally with
 No UI does not mean no spec. A server, proxy, or protocol bug gets a
 browser-less world (see `evals/specs/session-title-recovery.test.ts`); the
 steps still read as one person's before → after.
+
+## User flow vs agent flow
+
+Tag every test with who acts in it; the report groups them under "User flow"
+and "Agent flow". **If a person can see or click something that changed, the
+PR needs a user-flow spec.** Definitions and the rule:
+[docs/testing.md#user-flow-vs-agent-flow](../../../docs/testing.md#user-flow-vs-agent-flow).
+
+```ts
+test("a member shares a chat with a teammate", { tags: ["user-flow"] }, async ({ user, step }) => …);
+test("an MCP client lists the shared chat", { tags: ["agent-flow"] }, async ({ agent, evidence }) => …);
+```
+
+In a user flow every step is a `user.*` act (click, type, press) that ends
+with a screenshot, and before and after come from the same run; `seed.*` only
+arranges the world. An agent flow's proof is its requests and responses.
 
 ## The proof shape
 
@@ -91,7 +126,7 @@ internal names anywhere in those strings.
 Example title and steps:
 
 ```ts
-test("an owner enables Code Mode and a teammate turns one chat into a shared Workflow", async ({ user, probe, step }) => {
+test("an owner enables Code Mode and a teammate turns one chat into a shared Workflow", { tags: ["user-flow"] }, async ({ user, probe, step }) => {
   await step("before: the teammate's agent has no script tool", …);        // screenshot
   await step("the owner enables Code Mode with one switch", …);             // screenshot
   await step("after: the teammate's request runs as one script", …);        // screenshot
@@ -129,7 +164,7 @@ Report the reviewer reads (every line comes from the spec):
 Spec that produces it:
 
 ```ts
-test("a member's conversation stays readable while OpenWork is still checking who owns it", async ({ world, step, evidence }) => {
+test("a member's conversation stays readable while OpenWork is still checking who owns it", { tags: ["agent-flow"] }, async ({ world, step, evidence }) => {
   await step("given an engine where the ownership check is slow and the messages read is fast", async () => {
     evidence.recordAssertionEvidence("engine timings", `GET /session/:id ${world.ownershipMs} ms; GET /session/:id/message ${world.messagesMs} ms`, true);
   });
@@ -150,9 +185,9 @@ PR body line that names it (`open-a-pr`):
 
 ```markdown
 ## Evidence
-`evals/specs/conversation-stays-readable.e2e.test.ts` — before: the read fails
-with "Response body object should not be disturbed or locked"; after: all
-three reads return the conversation and the reclaim witness is true.
+Agent flow: `evals/specs/conversation-stays-readable.e2e.test.ts` — before: the
+read fails with "Response body object should not be disturbed or locked";
+after: all three reads return the conversation and the reclaim witness is true.
 ```
 
 Rules that make this parseable:

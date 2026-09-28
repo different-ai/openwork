@@ -1,3 +1,6 @@
+/**
+ * @module-tag raw-desktop
+ */
 import { browserScript } from "@openwork/testkit";
 import { execFile } from "node:child_process";
 import { writeFile, mkdir, mkdtemp, rm } from "node:fs/promises";

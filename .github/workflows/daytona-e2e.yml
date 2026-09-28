@@ -51,6 +51,13 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+      # Vitest discovers the journeys. Installed from this default-branch checkout's lockfile, without
+      # install scripts or a token; the controller then parses the PR's spec files as data only.
+      - name: Install trusted journey discovery
+        run: pnpm --dir evals install --frozen-lockfile --ignore-scripts
       - name: Bind required plan to the current PR head
         id: authorize
         env:
@@ -82,8 +89,29 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.authorize.outputs.sha || github.sha }}
-          fetch-depth: 0
           persist-credentials: false
+
+      # PR runs execute the plan the authorization job bound to the required check; they never install
+      # or load the PR's dependencies. Scheduled and manual runs discover journeys with Vitest.
+      - name: Download the authorized PR plan
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: required-verification-${{ github.run_attempt }}
+          path: required-verification
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        if: github.event_name != 'workflow_run'
+        with:
+          version: 11.4.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: github.event_name != 'workflow_run'
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: evals/pnpm-lock.yaml
+      - name: Install journey discovery
+        if: github.event_name != 'workflow_run'
+        run: pnpm --dir evals install --frozen-lockfile --ignore-scripts
 
       - name: Select user journeys
         id: matrix
@@ -91,13 +119,10 @@ jobs:
           ONLY_FILTER: ${{ inputs.only }}
           SUITE: ${{ inputs.suite }}
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ needs.authorize.outputs.base }}
-          HEAD_SHA: ${{ needs.authorize.outputs.sha }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "workflow_run" ]; then
-            git diff --name-only --diff-filter=ACMR "$BASE_SHA...$HEAD_SHA" | jq -Rsc 'split("\n") | map(select(length > 0))' > /tmp/journey-changes.json
-            export CHANGED_FILES=/tmp/journey-changes.json
+            export REQUIRED_VERIFICATION=required-verification/required-verification.json
           fi
           node evals/scripts/plan-journeys.mjs
       - name: Save selected coverage

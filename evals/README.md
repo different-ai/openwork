@@ -4,16 +4,16 @@ All executable coverage lives in [`specs/**/*.test.ts`](./specs) and imports
 `test` from `@openwork/testkit`. Tests that drive Electron, Den, or another app
 surface use `.e2e.test.ts`.
 
-## Paved path
+## Start here
 
-Use the skills in this order:
+- [`docs/testing.md`](../docs/testing.md): the guide to what blocks a merge,
+  user flow vs agent flow, adding a journey, the tag table, and how CI picks
+  journeys.
+- [`AGENTS.md`](./AGENTS.md): the paved path and hard rules on one page
+  (`pnpm evals:new <name>` scaffolds a spec that follows them).
 
-1. `write-a-spec`
-2. `run-tests`
-3. `diagnose-a-red-run` when the run fails
-4. `open-a-pr`; CI runs the changed specs on the PR head and publishes the evidence
-
-Demo-driven features start from a world script plus a spec in `evals/specs`.
+This README is the mechanics reference: vocabulary, the CLI, worlds and
+channels.
 
 ## Experimental verification dictionary
 
@@ -93,7 +93,9 @@ transport, engine, and surface selectors are never inferred as source opt-ins.
 
 Registered cases select a concrete world and can select their engine without
 raw environment variables. `CONT-01` and `SWITCH-10` are fixed headless app-web
-worlds. Use `pnpm evals:e2e --list` to see the registered cases. The legacy
+worlds. Use `pnpm evals:e2e --list` to see the registered cases: tests titled
+with their ID and tagged `engine-v1`/`engine-v2` in the spec (see
+[Journey tags](../docs/testing.md#journey-tags)). The legacy
 `--surface` selector is migration validation only: it cannot change a declared
 world's implementation, and selecting Electron for either case is rejected.
 
@@ -501,6 +503,11 @@ CI publishes. `PR change proof` runs every changed spec on the PR head and
 publisher by hand. `evals:e2e --publish` remains for that trusted CI path
 only. Custom screenshots and recordings are supplementary and never determine
 the pass/fail verdict.
+
+Tag each test `user-flow` (a person in the real UI, a screenshot per step) or
+`agent-flow` (an agent, MCP client or server; requests and responses). The
+tag is recorded as `flow` in `test-run.json`, and the report and comment list
+user-flow proof first, saying so when there is none (`write-a-spec`).
 
 ## Standalone isolated Den
 

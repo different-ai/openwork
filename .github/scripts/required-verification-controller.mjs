@@ -1,10 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { internalProofContributor } from './internal-proof-contributor.mjs';
-import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { catalog, selectJourneys, unmetLaneNeeds } from '../../evals/scripts/journey-catalog.mjs';
+// journeys.mjs loads Vitest only when discovering; `complete` and the status readers never need it.
+import { discoverJourneys, selectJourneys, unmetLaneNeeds, withTrustedMetadata } from '../../evals/scripts/journeys.mjs';
 import { CHECK, POLICY, digest, upstreamIdentity, validateRun, validateReceipt, reconcile, summaryText } from './required-verification.mjs';
 
 function command(program, args, input) {
@@ -131,9 +132,16 @@ export async function authorize(event, repo) {
     command('git', ['fetch', '--no-tags', 'origin', identity.sha]);
     const names = command('git', ['ls-tree', '-z', '--name-only', `${identity.sha}:evals/specs`]).split('\0').filter(name => name.endsWith('.e2e.test.ts'));
     if (names.some(name => !/^[a-zA-Z0-9_.-]+\.e2e\.test\.ts$/.test(name))) throw new Error('Unresolved spec filename; required plan is incomplete');
+    // Only the PR's spec files are copied, as data, into an otherwise empty root. Vitest (installed from this
+    // trusted checkout's lockfile) statically parses them with this checkout's vitest.config.ts; it never
+    // imports a spec, and no PR config, world, fixture or dependency is present to be loaded.
+    const specs = join(directory, 'pr', 'specs');
+    await mkdir(specs, { recursive: true });
     for (const name of names)
-      await writeFile(join(directory, name), command('git', ['show', `${identity.sha}:evals/specs/${name}`]));
-    const selected = selectJourneys(await catalog(pathToFileURL(`${directory}/`)), { critical: true,
+      await writeFile(join(specs, name), command('git', ['show', `${identity.sha}:evals/specs/${name}`]));
+    // Journey tags live in the specs; a spec already on the trusted default branch keeps that branch's disposition.
+    const journeys = withTrustedMetadata(await discoverJourneys(join(directory, 'pr')), await discoverJourneys());
+    const selected = selectJourneys(journeys, { critical: true,
       changed: files.filter(file => file.status !== 'removed').map(file => file.filename.replace(/^evals\/specs\//, '')) });
     const manual = selected.filter(entry => entry.placement === 'manual');
     const eligible = selected.filter(entry => entry.placement !== 'manual');

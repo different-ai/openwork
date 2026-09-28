@@ -1,3 +1,8 @@
+/**
+ * Recover from a render crash without leaking secrets
+ *
+ * Drives the real error boundary and web error monitor in a standalone Chrome; needs no Den or Electron.
+ */
 import { expect } from 'vitest';
 import { spec, createBriefRun, claim } from '@openwork/testkit';
 import type { User } from '@openwork/testkit';

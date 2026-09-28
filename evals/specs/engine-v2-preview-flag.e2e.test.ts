@@ -1,3 +1,6 @@
+/**
+ * @module-tag raw-desktop
+ */
 import { browserScript } from "@openwork/testkit";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

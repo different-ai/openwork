@@ -152,7 +152,17 @@ test('credentialed controllers use default-branch code; evidence publishing is i
   const contracts = await readFile(new URL('../workflows/required-verification.yml', import.meta.url), 'utf8');
   const authorization = producer.split('  authorize:')[1].split('  plan:')[0];
   assert.match(authorization, /ref: \$\{\{ github.event.repository.default_branch \}\}/);
-  assert.doesNotMatch(authorization, /pnpm|npm|environment:|secrets\./);
+  assert.doesNotMatch(authorization, /environment:|secrets\./);
+  // The only package step installs journey discovery (Vitest) from the default-branch lockfile: no scripts, no token.
+  const installs = authorization.split('\n').filter(line => /\b(pnpm|npm|npx|yarn)\b/.test(line) && !line.includes('pnpm/action-setup@'));
+  assert.deepEqual(installs.map(line => line.trim()), ['run: pnpm --dir evals install --frozen-lockfile --ignore-scripts']);
+  const install = authorization.split('- name: Install trusted journey discovery')[1].split('- name:')[0];
+  assert.doesNotMatch(install, /GH_TOKEN|github\.token|env:/);
+  // PR runs execute the authorized plan; the planner job never installs or loads the PR's dependencies.
+  const planner = producer.split('  plan:')[1].split('  e2e:')[0];
+  for (const step of planner.split('- ').filter(value => /pnpm --dir evals install|setup-node|action-setup/.test(value)))
+    assert.match(step, /if: github\.event_name != 'workflow_run'/);
+  assert.match(planner, /REQUIRED_VERIFICATION=required-verification\/required-verification\.json/);
   assert.doesNotMatch(producer, /pull_requests\[0\]/);
   assert.match(authorization, /internalContributor: \$\{\{ steps.authorize.outputs.internalContributor \}\}/);
   const journeyEnvironments = producer.split("\n").filter(line => line.trim().startsWith("environment:"));

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { judgeJourneys } from './judge-journeys.mjs';
 import assert from 'node:assert/strict';
-import { catalog, ciLane, registeredCases, selectJourneys, unmetLaneNeeds } from './journey-catalog.mjs';
+import { JOURNEY_DOCS, ciLane, collectSpecs, discoverJourneys, journeyName, registeredCases, selectJourneys, unmetLaneNeeds, withTrustedMetadata } from './journeys.mjs';
 import { EXCLUDED_LABEL, aggregate, classify, markdown } from './journey-report.mjs';
 import { notification, deliver, validateReport, findStateRun } from './notify-journeys.mjs';
 
@@ -13,6 +13,12 @@ const entry = { spec: 'permissions.e2e.test.ts', name: 'Apply permissions', crit
 const plan = { suite: 'Full regression', entries: [entry], manual: [] };
 const run = { name: 'Product journeys', run_number: 10, run_attempt: 1, html_url: 'https://github.com/different-ai/openwork/actions/runs/10' };
 const report = status => validateReport({ entries: [{ ...entry, status }] });
+// Vitest discovers the journeys once (static parse; no spec is imported).
+const specs = await collectSpecs();
+const journeys = await discoverJourneys();
+const cases = registeredCases(journeys);
+// Failure messages name the fix and the doc section (docs/testing.md), so a red run teaches the convention.
+const see = `See ${JOURNEY_DOCS}.`;
 
 test('incident state survives more than 100 newer unrelated alert runs', async () => {
   const pages = [];
@@ -30,16 +36,16 @@ test('incident state survives more than 100 newer unrelated alert runs', async (
 });
 
 test('critical PR selection includes existing critical journeys even when only product source changes', async () => {
-  const entries = await catalog();
+  const entries = journeys;
   const selected = selectJourneys(entries, { critical: true, changed: ['apps/app/src/view.tsx'] });
-  assert.equal(selected.length, 3);
+  assert.equal(selected.length, 3, `expected 3 critical journeys, found ${selected.map(value => value.spec).join(', ')}; when you add or drop @module-tag critical, update this count and docs/testing.md#how-ci-picks-journeys.`);
   assert(selected.some(value => value.placement === 'local'));
   assert(selected.some(value => value.model === 'live'));
   assert(selected.every(value => value.critical));
 });
 
 test('changed additional journey joins critical selection; manual filters work for either placement', async () => {
-  const entries = await catalog();
+  const entries = journeys;
   const extra = entries.find(value => !value.critical && value.placement === 'daytona');
   assert(selectJourneys(entries, { critical: true, changed: [extra.spec] }).includes(extra));
   const handoff = selectJourneys(entries, { only: 'cross-server-handoff-atomic-commit' });
@@ -60,7 +66,7 @@ test('changed additional journey joins critical selection; manual filters work f
 });
 
 test('journeys needing a packaged binary, macOS, or paid live consent are skipped in the CI lane', async () => {
-  const entries = await catalog();
+  const entries = journeys;
   const excluded = entries.filter(entry => entry.placement !== 'manual' && unmetLaneNeeds(entry).length > 0);
   assert.deepEqual(excluded.map(entry => [entry.spec, unmetLaneNeeds(entry).join(', ')]), [
     ['computer-use-window-scope.e2e.test.ts', 'run on darwin'],
@@ -71,7 +77,7 @@ test('journeys needing a packaged binary, macOS, or paid live consent are skippe
     ['packaged-preactivation-egress.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
     ['packaged-preactivation-updater.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
     ['released-enterprise-activated.e2e.test.ts', 'set OPENWORK_EVAL_ELECTRON_BINARY'],
-  ]);
+  ], `the journeys CI skips for unmet prerequisites changed; if you added or removed a packaged/macos/live-openai @module-tag on purpose, update this list. ${see}`);
   assert(excluded.every(entry => entry.placement === 'local'));
   assert(excluded.every(entry => !entry.critical));
   // A lane that packages the enterprise desktop would schedule the packaged journeys again; released-enterprise-activated's
@@ -114,12 +120,12 @@ async function guardedPrerequisites(spec, root = new URL('../specs/', import.met
   return wholeFileBlockers(source, await Promise.all(worlds.map(world => readFile(new URL(`../worlds/${world}`, root), 'utf8'))));
 }
 
-test('catalog needs match the whole-file prerequisites each spec and its worlds guard, in both directions', async () => {
-  const entries = await catalog();
+test('needs from journey tags match the whole-file prerequisites each spec and its worlds guard, in both directions', async () => {
+  const entries = journeys;
   const declared = entries.filter(entry => entry.needs);
-  assert.equal(declared.length, 8);
+  assert.equal(declared.length, 8, `expected 8 journeys with packaged/macos/live-openai needs, found ${declared.map(entry => entry.spec).join(', ')}; update this count when you add or remove one of those tags. ${see}`);
   for (const entry of declared) {
-    assert.deepEqual({ env: [...(entry.needs.env ?? [])].sort(), platform: entry.needs.platform }, await guardedPrerequisites(entry.spec), `${entry.spec}: catalog needs drifted from the spec/world guards`);
+    assert.deepEqual({ env: [...(entry.needs.env ?? [])].sort(), platform: entry.needs.platform }, await guardedPrerequisites(entry.spec), `${entry.spec}: its packaged/macos/live-openai @module-tags drifted from what the spec's needs and its worlds' skip guards check; add or remove the tag so both agree. ${see}`);
   }
   // The released spec's update case alone needs the baseline binary; that is not a whole-file blocker.
   assert.deepEqual(await guardedPrerequisites('released-enterprise-activated.e2e.test.ts'), { env: ['OPENWORK_EVAL_ELECTRON_BINARY'], platform: undefined });
@@ -140,86 +146,100 @@ test('mixed-world specs: a prerequisite one case declares is never promoted to t
   assert.deepEqual(wholeFileBlockers('', ['const v = process.env.OPENWORK_EVAL_OPTIONAL?.trim() || null;\nreturn v;']), { env: [], platform: undefined });
 });
 
-test('registered case metadata names exact files, supported execution axes, and defaults', async () => {
-  const entries = await catalog();
-  assert.deepEqual(registeredCases.map(({ spec, id, engines }) => ({ spec, id, engines })), [
-    { spec: 'opencode-v2-context-activity.e2e.test.ts', id: 'V2-CONTEXT-ACTIVITY', engines: ['v2'] },
-    { spec: 'edit-running-message.e2e.test.ts', id: 'EDIT-BUSY', engines: ['v1', 'v2'] },
-    { spec: 'opencode-v2-session-home.e2e.test.ts', id: 'HOME-01', engines: ['v2'] },
-    { spec: 'opencode-v2-session-home.e2e.test.ts', id: 'HOME-02', engines: ['v2'] },
-    { spec: 'opencode-v2-session-home.e2e.test.ts', id: 'HOME-03', engines: ['v2'] },
-    {
-      spec: 'composer-model-picker-no-subscribe-promo.e2e.test.ts',
-      id: 'MODEL-01',
-      engines: ['v2'],
-    },
-    {
-      spec: 'task-activity-shimmer.e2e.test.ts',
-      id: 'ACT-01',
-      engines: ['v1', 'v2'],
-    },
-    {
-      spec: 'v2-sessionless-first-send.e2e.test.ts',
-      id: 'DEN-LOCAL-SEND',
-      engines: ['v1'],
-    },
-    {
-      spec: 'v2-sessionless-first-send.e2e.test.ts',
-      id: 'MOBILE-CHAT-01',
-      engines: ['v1', 'v2'],
-    },
-    {
-      spec: 'streamed-markdown-answer.e2e.test.ts',
-      id: 'CONT-01',
-      engines: ['v1', 'v2'],
-    },
-    {
-      spec: 'live-stream-continuity.e2e.test.ts',
-      id: 'CONT-01-live',
-      engines: ['v1'],
-    },
-    {
-      spec: 'live-stream-continuity.e2e.test.ts',
-      id: 'CONT-01-live-history',
-      engines: ['v1'],
-    },
-    {
-      spec: 'live-tool-visible-after-session-switch.e2e.test.ts',
-      id: 'SWITCH-10',
-      engines: ['v1', 'v2'],
-    },
-    {
-      spec: 'unfinished-tool-lifecycle.e2e.test.ts',
-      id: 'STOP-01',
-      engines: ['v1', 'v2'],
-    },
-    {
-      spec: 'saved-app-creation.e2e.test.ts',
-      id: 'APP-ISOLATION',
-      engines: ['v1', 'v2'],
-    },
-    {
-      spec: 'saved-app-creation.e2e.test.ts',
-      id: 'APP-DRAFT-ROUTING',
-      engines: ['v1', 'v2'],
-    },
-    { spec: 'opencode-v2-skill-jit.e2e.test.ts', id: 'SKILL-ATTACH', engines: ['v1', 'v2'] },
-    { spec: 'opencode-v2-skill-jit.e2e.test.ts', id: 'SKILL-MISSING', engines: ['v2'] },
-    {
-      spec: 'opencode-v2-skill-jit.e2e.test.ts',
-      id: 'SKILL-NATIVE-01',
-      engines: ['v2'],
-    },
-    { spec: 'opencode-v2-reads-during-mcp-startup.e2e.test.ts', id: 'UPKEEP-01', engines: ['v2'] },
-  ]);
-  for (const registered of registeredCases) {
-    assert(entries.some(entry => entry.spec === registered.spec));
-    assert.equal('surfaces' in registered, false);
+const specsRoot = new URL('../specs/', import.meta.url);
+const JOURNEY_TAGS = ['critical', 'local-only', 'live-model', 'live-openai', 'packaged', 'macos', 'raw-desktop'];
+const ENGINE_TAGS = ['engine-v1', 'engine-v2'];
+
+test('journey tags are declared in vitest.config.ts and file-level, and engine tags mark ID-titled cases', async () => {
+  const config = await readFile(new URL('../vitest.config.ts', import.meta.url), 'utf8');
+  const declared = new Set([...config.matchAll(/\{\s*name:\s*"([^"]+)",\s*description:\s*"[^"]+"/g)].map(match => match[1]));
+  for (const tag of [...JOURNEY_TAGS, ...ENGINE_TAGS]) assert(declared.has(tag), `${tag} must be declared (with a description) in evals/vitest.config.ts, then run \`pnpm --dir evals docs:tags\`. ${see}`);
+  assert.equal(specs.length, journeys.length);
+  for (const { spec, tests } of specs) {
+    // A test's tags include its file's @module-tags, so a journey tag on only some tests was set per test.
+    for (const tag of JOURNEY_TAGS.filter(value => tests.some(test => test.tags.includes(value))))
+      assert(tests.every(test => test.tags.includes(tag)), `${spec}: ${tag} describes the whole journey; move it from the test's { tags } to a \` * @module-tag ${tag}\` line in the JSDoc block at the top of the file. ${see}`);
+    for (const { name, tags } of tests) {
+      if (tags.some(tag => ENGINE_TAGS.includes(tag))) assert.match(name, /^[A-Z][A-Z0-9]*(?:-[A-Za-z0-9]+)+[\s:]/, `${spec}: "${name}" carries an engine tag, so its title must start with a unique case ID, e.g. test("HOME-01 …", { tags: ["engine-v2"] }, …). ${see}`);
+    }
   }
 });
 
+test('raw-desktop marks exactly the specs that drive a raw desktop host, which no lane schedules', async () => {
+  for (const entry of journeys) {
+    const source = await readFile(new URL(entry.spec, specsRoot), 'utf8');
+    const rawDesktop = /import\s*\{[^}]*\bdesktop\b[^}]*\}\s*from\s*["']@openwork\/hosts["']/s.test(source);
+    assert.equal(entry.placement === 'manual', rawDesktop, `${entry.spec}: tag it @module-tag raw-desktop exactly when it imports desktop from @openwork/hosts (prefer seed.appWeb, which CI can run). ${see}`);
+  }
+});
+
+test('registered cases come from the specs: unique IDs, at least one engine, and the e2e opt-in', async () => {
+  assert(cases.length >= 20);
+  const duplicates = cases.filter((value, index) => cases.findIndex(other => other.id === value.id) !== index).map(value => `${value.id} (${value.spec})`);
+  assert.deepEqual(duplicates, [], `case IDs must be unique across specs; rename the later one (pnpm evals:new --engine picks a free ID). ${see}`);
+  for (const registered of cases) {
+    const entry = journeys.find(value => value.spec === registered.spec);
+    assert(entry.cases.some(value => value.id === registered.id));
+    assert(registered.engines.length > 0 && registered.engines.every(engine => ['v1', 'v2'].includes(engine)));
+    assert.equal(registered.optIns[0], 'OPENWORK_EVAL_E2E_TESTS');
+    assert.deepEqual(registered.example, { placement: '--local', engine: registered.engines.at(-1) });
+    assert.equal('surfaces' in registered, false);
+  }
+  assert.deepEqual(cases.filter(value => value.spec === 'opencode-v2-session-home.e2e.test.ts').map(({ id, engines }) => ({ id, engines })), [
+    { id: 'HOME-01', engines: ['v2'] }, { id: 'HOME-02', engines: ['v2'] }, { id: 'HOME-03', engines: ['v2'] },
+  ]);
+});
+
+test('Vitest discovers journeys from spec files as data: names, module tags, template titles and test tags, without running them', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'journey-discovery-'));
+  const marker = join(root, 'executed');
+  try {
+    await mkdir(join(root, 'specs', 'nested'), { recursive: true });
+    await writeFile(join(root, 'specs', 'thing.e2e.test.ts'), `/**\n * Keep a thing working\n *\n * @module-tag local-only\n * @module-tag packaged\n * @module-tag live-openai\n */\n` +
+      `import { writeFileSync } from "node:fs";\nimport { spec } from "@openwork/testkit";\nwriteFileSync(${JSON.stringify(marker)}, "spec code ran");\n` +
+      'const latencyTest = spec.world(w, { needs: { optIn: ["OPENWORK_EVAL_LIVE_OPENAI"] } });\n' +
+      'test(`EDIT-BUSY ${engine()}: edits`, { tags: ["engine-v1", "engine-v2"] }, async () => { regex.test("NOT-A-TEST x"); });\n' +
+      'latencyTest("SWITCH-10 measures", {\n  tags: ["engine-v2"],\n  timeout: 1,\n}, async () => {});\n' +
+      'test("PLAIN-01 no engines", async () => {});\ntest("an untitled flow", { tags: ["user-flow"] }, async () => {});\n');
+    await writeFile(join(root, 'specs', 'raw-host.e2e.test.ts'), '/**\n * @module-tag raw-desktop\n */\nimport { desktop } from "@openwork/hosts";\ntest("drives a desktop", async () => {});\n');
+    await writeFile(join(root, 'specs', 'nested', 'deep.e2e.test.ts'), 'test("not a journey", async () => {});\n');
+    await writeFile(join(root, 'vitest.config.ts'), `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "root config ran");\nexport default {};\n`);
+    const optIns = ['OPENWORK_EVAL_E2E_TESTS', 'OPENWORK_EVAL_LIVE_OPENAI'];
+    assert.deepEqual(await discoverJourneys(root), [
+      { spec: 'raw-host.e2e.test.ts', name: 'raw host', critical: false, model: 'mock', placement: 'manual' },
+      {
+        spec: 'thing.e2e.test.ts', name: 'Keep a thing working', critical: false, model: 'mock', placement: 'local',
+        needs: { env: ['OPENWORK_EVAL_ELECTRON_BINARY', 'OPENAI_API_KEY'], optIn: ['OPENWORK_EVAL_LIVE_OPENAI'] },
+        cases: [
+          { id: 'EDIT-BUSY', engines: ['v1', 'v2'], optIns, example: { placement: '--local', engine: 'v2' } },
+          { id: 'SWITCH-10', engines: ['v2'], optIns, example: { placement: '--local', engine: 'v2' } },
+        ],
+      },
+    ]);
+    // Neither the spec nor a config next to it was executed: only this checkout's config is loaded.
+    await assert.rejects(readFile(marker, 'utf8'), { code: 'ENOENT' });
+    await writeFile(join(root, 'specs', 'unknown-tag.e2e.test.ts'), 'test("SMUGGLE-01 x", { tags: ["not-declared"] }, async () => {});\n');
+    await assert.rejects(discoverJourneys(root), /Vitest could not read the journey specs[\s\S]*vitest --list-tags[\s\S]*docs\/testing\.md#journey-tags/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+  assert.equal(journeyName('/**\n * @module-tag critical\n */\n'), undefined);
+  assert.equal(journeyName('import x from "y";\n/** Not at the top */'), undefined);
+});
+
+test('untrusted spec sources cannot retag an existing journey or drop a critical one', () => {
+  const trusted = [
+    { spec: 'smoke.e2e.test.ts', name: 'Smoke', critical: true, model: 'mock', placement: 'daytona' },
+    { spec: 'old.e2e.test.ts', name: 'Old', critical: false, model: 'mock', placement: 'daytona' },
+  ];
+  const candidate = [
+    { spec: 'smoke.e2e.test.ts', name: 'Smoke', critical: false, model: 'mock', placement: 'local', needs: { env: ['OPENWORK_EVAL_ELECTRON_BINARY'] } },
+    { spec: 'new.e2e.test.ts', name: 'New', critical: false, model: 'mock', placement: 'local' },
+  ];
+  assert.deepEqual(withTrustedMetadata(candidate, trusted), [trusted[0], candidate[1]]);
+  assert.throws(() => withTrustedMetadata(candidate.slice(1), trusted), /Critical journey missing: smoke\.e2e\.test\.ts/);
+});
+
 test('live continuity is isolated, local, v1-only and never scheduled from a provider key alone', async () => {
-  const entries = await catalog();
+  const entries = journeys;
   const live = entries.find(entry => entry.spec === 'live-stream-continuity.e2e.test.ts');
   assert.equal(live.placement, 'local');
   assert.equal(live.model, 'live');

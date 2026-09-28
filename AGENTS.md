@@ -34,6 +34,7 @@ escalate any leak instead of rewriting history.
   100% necessary or instructed.
 * Prefer Tailwind, React, shadcn/ui (Base UI), TanStack Query, Zustand, Zod,
   Drizzle, Better-Auth. Reuse `@/components`; end users are non-technical.
+* Tests, E2E specs and PR proof: read `evals/AGENTS.md` first.
 * Any user-facing UI (desktop app, Den web, MCP Apps, artifact views) follows
   `DESIGN.md`: read it before designing, cite its rule ids in PRs, and attach
   screenshots of new UI. The optional

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { publishPr, publishReviewPr } from "../src/publish-pr.ts";
-import { assembleReview, renderReviewComment } from "../src/review.ts";
+import { assembleReview, FLOW_GUIDE_URL, flowLines, renderReviewComment } from "../src/review.ts";
 import { reviewSchema, summarizeReview } from "@openwork/review";
 import { uploadReview } from "@openwork/review/storage";
 import { readFile, readdir } from "node:fs/promises";
@@ -388,7 +388,8 @@ test("review publication validates before uploading and preserves the comment wh
     assert.equal(result.updated, true);
     assert.equal(uploads, 1);
     assert.match(result.markdown, /Open review report/);
-    assert.ok(result.markdown.length < 500);
+    // One short comment. This unlabelled fixture also carries the "No user-flow proof" fix and its guide link.
+    assert.ok(result.markdown.length < 700, `${result.markdown.length}: ${result.markdown}`);
     assert.equal(
       calls.some(
         (call) =>
@@ -468,4 +469,38 @@ test("native publication uploads immutable evidence without posting or editing a
     assert.equal(result.evidence?.verdict, "Passed");
     assert.ok(!calls.some(call => call.args.includes("PATCH") || call.args.includes("DELETE") || call.args.includes("comment")));
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("the review comment lists user-flow proof first and says plainly when there is none", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openwork-review-flow-"));
+  try {
+    const withFlow = async (name: string, flow: "user" | "agent" | undefined, specFile: string) => {
+      const directory = await reviewFixture(root, name);
+      const stored: unknown = JSON.parse(await readFile(join(directory, "test-run.json"), "utf8"));
+      assert.ok(typeof stored === "object" && stored !== null);
+      await writeFile(join(directory, "test-run.json"), JSON.stringify({ ...stored, specFile, ...(flow ? { flow } : {}) }));
+      return directory;
+    };
+    const member = await withFlow("Member invites", "user", "evals/specs/invite.e2e.test.ts");
+    const mcp = await withFlow("MCP invites", "agent", "evals/specs/invite-mcp.e2e.test.ts");
+    const old = await withFlow("Old proof", undefined, "evals/specs/old.e2e.test.ts");
+
+    const both = await assembleReview({ testRunDirs: [mcp, member, old] });
+    const memberSource = both.report.sources.find((source) => source.name === "Member invites");
+    assert.equal(memberSource?.kind === "test-run" ? memberSource.flow : undefined, "user");
+    const comment = renderReviewComment(both.report);
+    const userLine = comment.indexOf("- User flow: `evals/specs/invite.e2e.test.ts`");
+    const agentLine = comment.indexOf("- Agent flow: `evals/specs/invite-mcp.e2e.test.ts`");
+    assert.ok(userLine >= 0 && userLine < agentLine, comment);
+    assert.match(comment, /- Unlabelled \(no flow tag\): `evals\/specs\/old\.e2e\.test\.ts`/);
+    assert.doesNotMatch(comment, /No user-flow proof/);
+
+    const agentOnly = await assembleReview({ testRunDirs: [mcp] });
+    const agentComment = renderReviewComment(agentOnly.report);
+    assert.ok(agentComment.includes(`- No user-flow proof: nothing here shows a person doing this in the UI. [Add \`{ tags: ["user-flow"] }\` to a UI journey](${FLOW_GUIDE_URL}).`), agentComment);
+    assert.match(FLOW_GUIDE_URL, /^https:\/\/github\.com\/different-ai\/openwork\/blob\/dev\/docs\/testing\.md#user-flow-vs-agent-flow$/);
+    assert.deepEqual(flowLines({ sources: [] }), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

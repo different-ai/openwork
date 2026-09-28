@@ -1,3 +1,11 @@
+/**
+ * Keep an unactivated enterprise install off the network
+ *
+ * Boots the packaged enterprise artifact twice (fresh and pre-activated) behind a refusing proxy; only packaged-smoke provides that binary.
+ *
+ * @module-tag local-only
+ * @module-tag packaged
+ */
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import type { Probe } from "@openwork/testkit";
@@ -38,8 +46,8 @@ const SUBMISSION_WINDOW_MS = 20_000;
 const SUBMITTED_HOST = new URL(SUBMITTED_WORKSPACE_ADDRESS).hostname;
 const ANALYTICS_HOST = "us.i.posthog.com";
 
-const preactivation = spec.world(packagedPreactivationEgressWorld, { timeout: 180_000 });
-const activated = spec.world(packagedActivatedEgressWorld, { timeout: 180_000 });
+const preactivationTest = spec.world(packagedPreactivationEgressWorld, { timeout: 180_000 });
+const activatedTest = spec.world(packagedActivatedEgressWorld, { timeout: 180_000 });
 
 function describeEgress(requests: readonly EgressRequest[]): string {
   return JSON.stringify(requests.map((request) => `${request.method} ${request.target}`));
@@ -56,7 +64,7 @@ async function requireEnterpriseFlavor(world: { flavor: () => Promise<string | n
   }
 }
 
-preactivation("an unactivated enterprise install makes no request outside loopback until a workspace address is submitted", async ({ world, user, probe, evidence }) => {
+preactivationTest("an unactivated enterprise install makes no request outside loopback until a workspace address is submitted", async ({ world, user, probe, evidence }) => {
   await requireEnterpriseFlavor(world, probe);
   await probe.eventually(() => world.rootText(), {
     within: 60_000,
@@ -117,7 +125,7 @@ preactivation("an unactivated enterprise install makes no request outside loopba
   );
 });
 
-activated("an activated enterprise install still resolves its Den and reports analytics", async ({ world, user, probe, evidence }) => {
+activatedTest("an activated enterprise install still resolves its Den and reports analytics", async ({ world, user, probe, evidence }) => {
   await requireEnterpriseFlavor(world, probe);
 
   // Same binary, same witness. Activation is complete at boot, so the

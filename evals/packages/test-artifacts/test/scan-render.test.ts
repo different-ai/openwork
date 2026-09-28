@@ -175,3 +175,45 @@ test("scanTestRuns skips a symlinked test-run.json", async () => {
     await rm(resultsDir, { recursive: true, force: true });
   }
 });
+
+test("the index groups runs under User flow, Agent flow and Unlabelled, and old records without a flow still parse", async () => {
+  const resultsDir = await mkdtemp(join(tmpdir(), "openwork-test-artifacts-flow-"));
+  try {
+    const runs: Array<{ name: string; createdAt: string; flow?: unknown }> = [
+      { name: "Agent run", createdAt: "2026-07-04T10:00:00.000Z", flow: "agent" },
+      { name: "Member run", createdAt: "2026-07-03T10:00:00.000Z", flow: "user" },
+      { name: "Old run", createdAt: "2026-07-02T10:00:00.000Z" },
+      { name: "Odd run", createdAt: "2026-07-01T10:00:00.000Z", flow: "robot" },
+    ];
+    for (const run of runs) {
+      const directory = join(resultsDir, "test-runs", run.name.replaceAll(" ", "-"));
+      await mkdir(directory, { recursive: true });
+      const stored = { ...record(run.name, directory, run.createdAt, true), ...(run.flow === undefined ? {} : { flow: run.flow }) };
+      await writeFile(join(directory, "test-run.json"), JSON.stringify(stored));
+    }
+
+    const entries = await scanTestRuns(resultsDir);
+    const flows = Object.fromEntries(entries.map((entry) => [entry.name, entry.kind === "test-run" ? entry.testRun.flow : "legacy"]));
+    assert.deepEqual(flows, { "Agent run": "agent", "Member run": "user", "Old run": undefined, "Odd run": undefined });
+
+    const rendered = renderArtifactIndexHtml(entries);
+    const user = rendered.indexOf('aria-label="User flow"');
+    const agent = rendered.indexOf('aria-label="Agent flow"');
+    const unlabelled = rendered.indexOf('aria-label="Unlabelled"');
+    assert.ok(user >= 0 && user < agent && agent < unlabelled, "user flow leads, then agent flow, then unlabelled");
+    assert.ok(rendered.indexOf("Member run") > user && rendered.indexOf("Member run") < agent);
+    assert.ok(rendered.indexOf("Old run") > unlabelled && rendered.indexOf("Odd run") > unlabelled);
+    assert.match(rendered, /<span class="flow">User flow<\/span>/);
+  } finally {
+    await rm(resultsDir, { recursive: true, force: true });
+  }
+});
+
+test("renderPrMarkdown names the proof flow and spec", () => {
+  const testRun = record("flow proof", "/tmp/2026-flow-proof", "2026-07-02T10:00:00.000Z", true);
+  testRun.flow = "user";
+  testRun.specFile = "evals/specs/member-flow.e2e.test.ts";
+  assert.match(renderPrMarkdown(testRun, {}), /User flow · `evals\/specs\/member-flow\.e2e\.test\.ts` · SHA unknown/);
+  testRun.flow = undefined;
+  assert.match(renderPrMarkdown(testRun, {}), /Unlabelled · `evals/);
+});
