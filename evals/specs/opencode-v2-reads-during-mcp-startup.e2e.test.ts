@@ -1,3 +1,8 @@
+/**
+ * Keep the conversation responsive while a connection starts
+ *
+ * @module-tag local-only
+ */
 import { createServer } from "node:http";
 import { performance } from "node:perf_hooks";
 import { expect } from "vitest";
@@ -61,7 +66,7 @@ async function slowStartingMcp() {
 // Matches v1: provider mirroring and MCP registration run when configuration
 // changes; they never hold the engine's reads. Before this change every v2 read
 // except history waited for the in-flight connection setup.
-test("UPKEEP-01 v2: the conversation stays responsive while a new connection is still starting", async ({ world, user, probe, step, evidence }) => {
+test("UPKEEP-01 v2: the conversation stays responsive while a new connection is still starting", { tags: ["engine-v2"] }, async ({ world, user, probe, step, evidence }) => {
   expect(world.engine).toBe("v2");
   await probe.eventually(() => probe.composer(), { within: 60_000, label: "starter model ready", until: (state) => state.selectedModelLabel.includes("Big Pickle") && !state.modelUnavailable });
   const listed = await world.request("/workspaces");

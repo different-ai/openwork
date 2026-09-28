@@ -93,7 +93,9 @@ transport, engine, and surface selectors are never inferred as source opt-ins.
 
 Registered cases select a concrete world and can select their engine without
 raw environment variables. `CONT-01` and `SWITCH-10` are fixed headless app-web
-worlds. Use `pnpm evals:e2e --list` to see the registered cases. The legacy
+worlds. Use `pnpm evals:e2e --list` to see the registered cases: tests titled
+with their ID and tagged `engine-v1`/`engine-v2` in the spec (see "Journey tags"
+in `.opencode/skills/write-a-spec/SKILL.md` and `vitest --list-tags`). The legacy
 `--surface` selector is migration validation only: it cannot change a declared
 world's implementation, and selecting Electron for either case is rejected.
 

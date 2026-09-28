@@ -1,3 +1,6 @@
+/**
+ * @module-tag raw-desktop
+ */
 import { browserScript, screenshot } from "@openwork/testkit";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";

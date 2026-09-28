@@ -1,3 +1,8 @@
+/**
+ * Open a working desktop
+ *
+ * @module-tag critical
+ */
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { appSmokeWorld } from "../worlds/first-run.ts";

@@ -386,7 +386,7 @@ test("--list prints exact registered cases and commands without selecting placem
   assert.match(result.stdout, /pnpm evals:e2e streamed-markdown-answer --local --engine v2 --case CONT-01/);
   assert.match(result.stdout, /pnpm evals:e2e live-stream-continuity --local --engine v1 --case CONT-01-live/);
   assert.match(result.stdout, /pnpm evals:e2e live-stream-continuity --local --engine v1 --case CONT-01-live-history/);
-  assert.match(result.stdout, /pnpm evals:e2e live-tool-visible-after-session-switch --daytona --engine v1 --case SWITCH-10/);
+  assert.match(result.stdout, /pnpm evals:e2e live-tool-visible-after-session-switch --local --engine v2 --case SWITCH-10/);
   assert.doesNotMatch(result.stdout, /--surface/);
   assert.doesNotMatch(result.stderr, /placement:/);
 });

@@ -1,3 +1,11 @@
+/**
+ * Open a fresh cloud or enterprise install
+ *
+ * Boots the packaged cloud and enterprise artifacts; only packaged-smoke provides those binaries.
+ *
+ * @module-tag local-only
+ * @module-tag packaged
+ */
 import { expect } from "vitest";
 import { sleep, spec } from "@openwork/testkit";
 import {

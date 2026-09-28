@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { registeredCases } from "../scripts/journey-catalog.mjs";
+import { discoverJourneys, registeredCases as casesOf } from "../scripts/journeys.mjs";
 import { discoverWorlds, planWorlds, worldContract } from "../scripts/world-plan.ts";
 
 const evalsDir = fileURLToPath(new URL("..", import.meta.url));
@@ -15,6 +15,8 @@ function caseCommand(value) {
   return `pnpm evals:e2e ${value.spec.replace(".e2e.test.ts", "")} ${value.example.placement} --engine ${value.example.engine} --case ${value.id}`;
 }
 
+// Vitest reads the registered cases (ID-titled, engine-tagged tests) from the specs.
+const registeredCases = casesOf(await discoverJourneys());
 const caseExamples = registeredCases.map(caseCommand).join("\n");
 
 const usage = `Usage: node evals/bin/evals.mjs [test-names...] [flags]
@@ -423,8 +425,9 @@ export function buildChildEnvironment(options, resolved, sources, env = process.
   const placement = resolveRunEnvironment(options, selection.env, probe);
   const childEnv = { ...placement.env };
   const consented = new Set(["OPENWORK_EVAL_E2E_TESTS"]);
-  const requested = selection.optIns ?? sources.flatMap(consentVarsFromSource)
-    .filter(variable => variable !== "OPENWORK_EVAL_LIVE_OPENAI");
+  // Paid live consent is never inferred from source; a registered case carries it from its journey tags.
+  const requested = [...(selection.optIns ?? []), ...sources.flatMap(consentVarsFromSource)
+    .filter(variable => variable !== "OPENWORK_EVAL_LIVE_OPENAI")];
   for (const variable of requested) {
     if (TRANSPORT_SELECTOR_ENV.has(variable) || Object.hasOwn(env, variable)) continue;
     childEnv[variable] = "1";

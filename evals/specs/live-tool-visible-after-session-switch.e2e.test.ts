@@ -451,6 +451,7 @@ const latencyTest = spec.world(sessionSwitchLatencyWeb, {
 });
 
 latencyTest("SWITCH-10 opens ten persisted conversations within the normal and warm latency ceilings", {
+  tags: ["engine-v1", "engine-v2"],
   timeout: 12 * 60_000,
 }, async ({ world, user, probe, step, evidence }) => {
   const measurements: Awaited<ReturnType<typeof world.readMeasurement>>[] = [];

@@ -1,3 +1,10 @@
+/**
+ * Authorize a connected client once
+ *
+ * Its registered OAuth callback and synthetic client exchange run on owned loopback services.
+ *
+ * @module-tag local-only
+ */
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { consentCases, mcpConnectionConsent } from "../worlds/mcp-connection-consent.ts";

@@ -7,7 +7,7 @@ const test = spec.world(unfinishedToolsWeb, {
   resources: { surfaces: ["appWeb"], services: ["mock"] },
 });
 
-test("STOP-01 unfinished current-turn tools expose Stop feedback and active, waiting, and unknown outcomes", async ({ world, user, seed, probe, step, evidence }) => {
+test("STOP-01 unfinished current-turn tools expose Stop feedback and active, waiting, and unknown outcomes", { tags: ["engine-v1", "engine-v2"] }, async ({ world, user, seed, probe, step, evidence }) => {
   await step("a completed turn grounds later Stop errors in the native snapshot", async () => {
     await user.type("composer", world.warmup.prompt, { replace: true, verify: true });
     await user.press("Enter");

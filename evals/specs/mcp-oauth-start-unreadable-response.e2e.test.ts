@@ -1,3 +1,10 @@
+/**
+ * Read why a connection sign-in could not start
+ *
+ * Fixes a fault proxy in front of den-api before Den boots; only the local lane can do that.
+ *
+ * @module-tag local-only
+ */
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { oauthStartUnreadableWeb } from "../worlds/mcp-oauth-start-unreadable.ts";

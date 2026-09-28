@@ -10,7 +10,7 @@ const draftTest = spec.world(cloudDraftRouting, {
   needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 600_000,
 });
 
-draftTest("APP-DRAFT-ROUTING Cloud SDK draft allows automatic reads and one trusted Send without a second modal, replay, or cross-server dispatch", async ({ world, agent, user, probe, evidence }) => {
+draftTest("APP-DRAFT-ROUTING Cloud SDK draft allows automatic reads and one trusted Send without a second modal, replay, or cross-server dispatch", { tags: ["engine-v1", "engine-v2"] }, async ({ world, agent, user, probe, evidence }) => {
   const sinceIso = new Date().toISOString();
   expect(draftRoutingPrompt).not.toContain(world.connectionId);
   await agent.send(draftRoutingPrompt);
@@ -98,7 +98,7 @@ const isolationTest = spec.world(isolatedMcpApps, {
   needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 300_000,
 });
 
-isolationTest("APP-ISOLATION embedded MCP Apps isolate siblings while SDK initialization and helper calls work", async ({ world, agent, user, probe, evidence }) => {
+isolationTest("APP-ISOLATION embedded MCP Apps isolate siblings while SDK initialization and helper calls work", { tags: ["engine-v1", "engine-v2"] }, async ({ world, agent, user, probe, evidence }) => {
   const sinceIso = new Date().toISOString();
   await agent.send(isolationPrompt);
   await user.see({ text: isolationReply }, { timeoutMs: 120_000 });

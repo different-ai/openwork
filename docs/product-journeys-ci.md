@@ -16,12 +16,32 @@ consumers and branch rules; visible workflow names describe their purpose.
 
 ## Selection and coverage
 
-`evals/scripts/journey-catalog.mjs` owns readable names, critical membership,
-model requirements, and execution placement. New `evals/specs/*.e2e.test.ts`
-files automatically enter full regression. Existing raw-desktop specs remain
-manual-only unless explicitly supported in the catalog. Every plan lists those
-coverage gaps; “full regression passed” means all selected automatic coverage,
-not every possible scenario or every manual test.
+Each spec describes itself with [Vitest test tags](https://vitest.dev/guide/test-tags):
+the first line of a JSDoc block at the top of the file is its readable name, and
+`@module-tag` lines set critical membership (`critical`), placement
+(`local-only`, or `raw-desktop` for manual-only specs), model (`live-model`) and
+lane prerequisites (`packaged`, `macos`, `live-openai`). Registered `--case`s are
+tests titled with their ID and tagged `engine-v1`/`engine-v2`. The tag
+descriptions in `evals/vitest.config.ts` are the source of truth; list them with
+`pnpm --dir evals exec vitest --list-tags`. There is no journey list:
+`evals/scripts/journeys.mjs` asks Vitest to collect the specs with its static
+parser (`collect` with `staticParse`, which never imports spec code) and builds
+the plan from the tags, so adding a journey means editing only its spec. The
+planner and the required-verification authorization job therefore install the
+evals dependencies.
+Select a tag group with a `--tags-filter` expression, e.g.
+`pnpm --dir evals exec vitest list --project e2e --tags-filter 'critical && !live-model'`.
+
+New `evals/specs/*.e2e.test.ts` files automatically enter full regression.
+Raw-desktop specs (they import `desktop` from `@openwork/hosts` and carry
+`@module-tag raw-desktop`) stay manual-only.
+For PR required verification, the trusted controller copies only the PR's spec
+files into an empty directory and has Vitest (from the default-branch checkout
+and lockfile, with its `vitest.config.ts`) statically parse them as data; no PR
+config, world, dependency or spec code runs. A spec that already exists on the
+default branch keeps that branch's tags, and removing a critical spec blocks the plan. Every
+plan lists coverage gaps; “full regression passed” means all selected automatic
+coverage, not every possible scenario or every manual test.
 
 The four critical specs cover startup, the two-person team lifecycle (including
 real model/skill use), default/team permissions, and atomic enrollment recovery.

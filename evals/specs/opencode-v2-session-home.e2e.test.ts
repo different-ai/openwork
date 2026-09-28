@@ -17,7 +17,7 @@ function sessionInfo(value: unknown) {
   return record(info.info ?? info);
 }
 
-test("HOME-01 a working-directory move preserves the chat, Stop, draft, and next turn", async ({ world, user, agent, probe, step, evidence }) => {
+test("HOME-01 a working-directory move preserves the chat, Stop, draft, and next turn", { tags: ["engine-v2"] }, async ({ world, user, agent, probe, step, evidence }) => {
   await agent.run("session.open", { sessionId: world.session.sessionId });
   await user.see("composer", { editable: true });
   const route = await probe.hash();
@@ -67,7 +67,7 @@ const questionTest = spec.world(movedSessionQuestion, {
   timeout: 240_000, resources: { surfaces: ["appWeb"], services: ["mock"] },
 });
 
-questionTest("HOME-02 a moved task shows its question live and after reload, then resumes with the answer", async ({ world, user, agent, probe, step, evidence }) => {
+questionTest("HOME-02 a moved task shows its question live and after reload, then resumes with the answer", { tags: ["engine-v2"] }, async ({ world, user, agent, probe, step, evidence }) => {
   await agent.run("session.open", { sessionId: world.session.sessionId });
   await user.see("composer", { editable: true });
   const route = await probe.hash();
@@ -96,7 +96,7 @@ questionTest("HOME-02 a moved task shows its question live and after reload, the
     "A real v2 session_move is followed by a native question tool. Its answer controls appear in the original chat, survive a reload, and resume the waiting task. Only model decisions are synthetic.", true);
 });
 
-questionTest("HOME-03 an unavailable global question list cannot prevent answering the current question", async ({ world, user, agent, probe, step, evidence }) => {
+questionTest("HOME-03 an unavailable global question list cannot prevent answering the current question", { tags: ["engine-v2"] }, async ({ world, user, agent, probe, step, evidence }) => {
   await agent.run("session.open", { sessionId: world.session.sessionId });
   await user.see("composer", { editable: true });
   await user.type("composer", world.prompt, { replace: true, verify: true });
