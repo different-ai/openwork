@@ -588,7 +588,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       // 2. requires Vercel BotID verification before per-user method resolution,
       // 3. relies on Better Auth/routing rate limits,
       // 4. returns a uniform 200 response envelope for successful lookups.
-      const botProtection = await verifyBotProtection()
+      const botProtection = await verifyBotProtection(c)
       if (!botProtection.ok) {
         return c.json({
           error: "bot_verification_failed",

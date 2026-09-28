@@ -8,6 +8,7 @@ import { isSamePathname } from "../_lib/client-route";
 import { getDesktopGrant } from "../_lib/desktop-handoff";
 import { getErrorMessage, getSocialCallbackUrl, requestJson, type AuthMode } from "../_lib/den-flow";
 import { signsInInPlace } from "../_lib/auth-resume";
+import { loginAgentContextHeaders, type LoginAgentContext } from "../_lib/login-agent-context";
 import { getMcpOAuthSelectOrganizationRoute } from "../_lib/mcp-oauth-route";
 import { useDesktopHandoffStatus } from "../_lib/use-desktop-handoff-status";
 import { useDenFlow } from "../_providers/den-flow-provider";
@@ -229,6 +230,7 @@ export function AuthPanel({
   emailStepContent,
   socialFirst = false,
   socialProviders = ["google", "github"],
+  agentContext,
 }: {
   prefilledEmail?: string;
   prefillKey?: string;
@@ -259,6 +261,11 @@ export function AuthPanel({
   socialFirst?: boolean;
   /** Which providers a social-first panel offers. */
   socialProviders?: readonly ("google" | "github")[];
+  /**
+   * Proof that this sign-in is for an agent (signed MCP OAuth query, device
+   * or claim code). Den API verifies it and skips BotID for the lookup.
+   */
+  agentContext?: LoginAgentContext;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -310,6 +317,11 @@ export function AuthPanel({
   const singleOrgName = runtimeConfig.singleOrgName || "OpenWork";
   const singleOrgSlug = runtimeConfig.singleOrgSlug.trim();
   const emailFirstInvite = emailFirstInvitationId?.trim() ?? "";
+
+  function getLoginOptionsInit(): RequestInit {
+    const headers = loginAgentContextHeaders(agentContext);
+    return headers ? { method: "GET", headers } : { method: "GET" };
+  }
 
   function getLoginOptionsPath(targetEmail: string) {
     const params = new URLSearchParams({ email: targetEmail });
@@ -477,7 +489,7 @@ export function AuthPanel({
       setAuthName("");
 
       try {
-        const { response, payload } = await requestJson(getLoginOptionsPath(trimmedEmail), { method: "GET" }, 12000);
+        const { response, payload } = await requestJson(getLoginOptionsPath(trimmedEmail), getLoginOptionsInit(), 12000);
         if (superseded()) {
           return;
         }
@@ -563,7 +575,7 @@ export function AuthPanel({
     setAuthName("");
 
     try {
-      const { response, payload } = await requestJson(getLoginOptionsPath(trimmedEmail), { method: "GET" }, 12000);
+      const { response, payload } = await requestJson(getLoginOptionsPath(trimmedEmail), getLoginOptionsInit(), 12000);
       if (!response.ok) {
         setLoginOptionError(getErrorMessage(payload, response.status === 403 ? "We could not verify this sign-in attempt. Please refresh and try again." : `Could not check sign-in options (${response.status}).`));
         return;

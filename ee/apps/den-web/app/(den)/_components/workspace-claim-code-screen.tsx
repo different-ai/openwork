@@ -135,6 +135,7 @@ export function WorkspaceClaimCodeScreen({ initialUserCode }: { initialUserCode:
           socialProviders={["google"]}
           prefillKey={userCode}
           emailStepContent={{ title: "Sign in to OpenWork" }}
+          agentContext={userCode ? { kind: "claim", userCode } : undefined}
         />
       </SetupPanelBody>,
     );

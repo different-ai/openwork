@@ -186,6 +186,7 @@ export function DeviceApprovalScreen({ initialUserCode }: { initialUserCode: str
           socialProviders={["google"]}
           prefillKey={userCode}
           emailStepContent={{ title: "Sign in to OpenWork" }}
+          agentContext={userCode ? { kind: "device", userCode } : undefined}
         />
       </SetupPanelBody>,
     );

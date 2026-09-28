@@ -138,6 +138,7 @@ function AgentSignInScreen({ status }: { status: "checking" | "redirecting" | nu
                 emailFirstFlow
                 socialFirst
                 emailStepContent={{ title: "Create your account.", copy: "Already have an account? Enter your email and we\u2019ll find it." }}
+                agentContext={oauthQuery ? { kind: "mcp-oauth", oauthQuery } : undefined}
               />
             )}
           </SetupPanelBody>

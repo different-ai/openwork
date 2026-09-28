@@ -949,7 +949,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
       for (const cookie of buildLoginOptionsSessionCookieClearHeaders(env.betterAuthCookieDomain)) {
         c.header("Set-Cookie", cookie, { append: true })
       }
-      const botProtection = await verifyBotProtection()
+      const botProtection = await verifyBotProtection(c)
       if (!botProtection.ok) {
         return c.json({
           error: "bot_verification_failed",
