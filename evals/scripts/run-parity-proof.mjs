@@ -20,15 +20,12 @@ const specs = new Set([
   "evals/specs/engine-live-desktop.e2e.test.ts",
   "evals/specs/engine-live-launch.e2e.test.ts",
   "evals/specs/engine-live-parity.e2e.test.ts",
-  "evals/specs/agent-visibility-journey.e2e.test.ts",
-  "evals/specs/agent-background-journey.e2e.test.ts",
-  "evals/specs/agent-connection-journey.e2e.test.ts",
 ]);
 
 export function parityProofPlan(spec) {
   if (!specs.has(spec)) throw new Error(`Unsupported parity proof: ${spec}`);
   const engines = ["evals/specs/opencode-v2-context-activity.e2e.test.ts", "evals/specs/opencode-v2-session-home.e2e.test.ts", "evals/specs/opencode-v2-skill-jit.e2e.test.ts",
-    "evals/specs/engine-provider-filters.e2e.test.ts", "evals/specs/opencode-v2-reads-during-mcp-startup.e2e.test.ts", "evals/specs/agent-background-journey.e2e.test.ts"].includes(spec) ? ["v2"] : ["v1", "v2"];
+    "evals/specs/engine-provider-filters.e2e.test.ts", "evals/specs/opencode-v2-reads-during-mcp-startup.e2e.test.ts"].includes(spec) ? ["v2"] : ["v1", "v2"];
   return engines.map(engine => ({ engine, args: ["evals/bin/evals.mjs", spec.slice("evals/".length), "--local", "--engine", engine] }));
 }
 

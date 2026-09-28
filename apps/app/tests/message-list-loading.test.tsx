@@ -135,10 +135,9 @@ describe("message-list loading feedback", () => {
     expect(markup).not.toContain("PaperGrainGradient");
   });
 
-  test("keeps the turn's working line while a tool row shows its own live step", () => {
-    // The row says what is happening now; the line says the turn is still going.
-    expect(shouldShowMessageListLoading("streaming", 2)).toBe(true);
-    expect(shouldShowMessageListLoading("submitted", 2)).toBe(true);
+  test("does not duplicate working feedback when a tool row is visible", () => {
+    expect(shouldShowMessageListLoading("streaming", 2, true)).toBe(false);
+    expect(shouldShowMessageListLoading("submitted", 2, true)).toBe(false);
   });
 
   test.each<SessionActivityStatus>(["waiting", "compacting"])("does not mask %s with pending feedback", (activityStatus) => {
@@ -198,7 +197,7 @@ const delegated: UIMessage = { id: "assistant", role: "assistant", parts: [task]
 const followup: UIMessage = { id: "followup", role: "user", parts: [{ type: "text", text: "What is the update?" }] };
 
 describe("task-linked meaningful progress", () => {
-  test("keeps the working footer for current delegations and while ordinary tools run", () => {
+  test("keeps the working footer for current delegations without duplicating ordinary tool activity", () => {
     expect(renderList([userMessage, delegated], "streaming")).toContain('data-loading-message="working"');
     const ordinaryTool: UIMessage = {
       id: "ordinary-tool", role: "assistant", parts: [{
@@ -207,7 +206,7 @@ describe("task-linked meaningful progress", () => {
       }],
     };
     for (const messages of [[userMessage, ordinaryTool], [userMessage, delegated, ordinaryTool]]) {
-      expect(renderList(messages, "streaming")).toContain('data-loading-message="working"');
+      expect(renderList(messages, "streaming")).not.toContain('data-loading-message="working"');
     }
     expect(renderList([userMessage, delegated], "ready")).not.toContain('data-loading-message="working"');
     expect(renderList([userMessage, delegated], "streaming", { degraded: true, lastConfirmedAt: null }))

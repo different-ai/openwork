@@ -9,7 +9,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
-import { abortSession } from "@/app/lib/opencode-session";
 import { hasTerminalSessionReply, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, submitImmediateSessionTurn, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
 import { createClient, createPromptMessageID, isPromptAdmissionUnknown, promptAdmissionFailure, readPromptAdmission, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl, v2PromptText } from "@/app/lib/opencode-v2-adapter";
@@ -2421,16 +2420,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     sendingQueued,
   ]);
 
-  // Stop one helper without stopping the turn it belongs to. Uses the same
-  // directory-scoped client as the turn's own Stop, so the abort reaches the
-  // engine and project that actually run the child (#2014).
-  const handleStopSubagentSession = useCallback(async (childSessionId: string) => {
-    const stopClient = isOpencodeV2BaseUrl(props.opencodeBaseUrl) ? opencodeClient
-      : createClient(props.opencodeBaseUrl, props.workspaceRoot.trim() || undefined,
-        { token: props.openworkToken, mode: "openwork" }, { desktopTransport: "main" });
-    await abortSession(stopClient, childSessionId, props.workspaceRoot.trim() || undefined);
-  }, [opencodeClient, props.opencodeBaseUrl, props.openworkToken, props.workspaceRoot]);
-
   const handleAbort = useCallback(async () => {
     if (pendingStopsRef.current.has(sessionOwner)) return;
     const phase = getQueuedDrainState(props.sessionId).phase;
@@ -2439,29 +2428,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setPendingStopSessions([...pendingStopsRef.current]);
     try {
       setError(null);
-      // Stop means stop sending: take queued follow-ups out of the queue before
-      // aborting, otherwise the queue-drain effect below re-prompts the agent
-      // the moment the abort lands and the session reports idle (#2014). Their
-      // words go back into the composer so nothing the person typed is lost.
-      // Collapsed pastes are restored as their full text (their placeholders
-      // would point at nothing); attachments come back with their placeholders.
-      const composerState = useComposerStateStore.getState();
-      const stoppedQueue = getComposerQueuedDrafts(composerState, props.sessionId);
-      if (stoppedQueue.length > 0) {
-        const restoredText = [
-          getComposerDraft(composerState, props.sessionId),
-          ...stoppedQueue.map(({ draft: queued }) =>
-            /\[pasted text [^\]]+\]/.test(queued.text) ? queued.resolvedText ?? queued.text : queued.text),
-        ].filter((text) => text.trim().length > 0).join("\n\n");
-        const referenced = new Set([...restoredText.matchAll(/\[attachment ([^\]]+)\]/g)].map((match) => match[1]));
-        const restoredAttachments = stoppedQueue.flatMap((item) => item.draft.attachments);
-        restoredAttachments.filter((attachment) => !referenced.has(attachment.id)).forEach(revokeAttachmentPreview);
-        composerState.setDraft(props.sessionId, restoredText);
-        composerState.setAttachments(props.sessionId, [
-          ...getComposerAttachments(composerState, props.sessionId),
-          ...restoredAttachments.filter((attachment) => referenced.has(attachment.id)),
-        ]);
-      }
+      // Stop means stop: drop queued follow-ups before aborting, otherwise the
+      // queue-drain effect below re-prompts the agent the moment the abort
+      // lands and the session reports idle (#2014).
+      getComposerQueuedDrafts(useComposerStateStore.getState(), props.sessionId)
+        .forEach((item) => item.draft.attachments.forEach(revokeAttachmentPreview));
       clearQueuedDrafts(props.sessionId);
       dispatchQueuedDrain(props.sessionId, { type: "queue_cleared" });
       // The prompt was sent through a directory-scoped client (session-route
@@ -3466,7 +3437,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       forkingMessageId={forkingMessageId}
                       onEditUserMessage={handleEditUserMessage}
                       onOpenSubagentSession={props.onOpenSubagentSession}
-                      onStopSubagentSession={archived ? undefined : handleStopSubagentSession}
                       onResumeInterrupted={archived ? undefined : handleResumeInterrupted}
                       onMcpReconnect={handleMcpReconnect}
                       onMcpReopenAuthorization={handleMcpReopenAuthorization}
