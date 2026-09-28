@@ -56,7 +56,8 @@ jobs:
         with:
           context: .devcontainer
           file: .devcontainer/Dockerfile.daytona-vnc
-          platforms: linux/arm64
+          # Daytona's `us` target pulls linux/amd64; keep arm64 for existing ARM runners.
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ steps.image.outputs.name }}:dev
