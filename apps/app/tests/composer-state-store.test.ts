@@ -10,6 +10,7 @@ import {
 } from "../src/react-app/domains/session/surface/composer-auto-send";
 import {
   composerDraftNeedsHydration,
+  mergeConvertedComposerDraft,
   getComposerQueuedDrafts,
   getComposerRevertMessageId,
   type ComposerSessionState,
@@ -37,6 +38,13 @@ function queuedTexts(sessionId: string) {
 
 describe("composer state store", () => {
   beforeEach(reset);
+  test("conversion preserves both drafts and pasted context without keeping the v1 revert target", () => {
+    const source: ComposerSessionState = { draft: "Continue the old chat", attachments: [], mentions: {}, pasteParts: [{id:"paste",label:"context",text:"retained",lines:1}], revertMessageId:"msg_old" };
+    const existing: ComposerSessionState = { draft:"Unsent native draft",attachments:[],mentions:{},pasteParts:[],revertMessageId:null };
+    const converted=mergeConvertedComposerDraft(source,existing);
+    expect(converted.draft).toBe("Unsent native draft\n\nContinue the old chat");expect(converted.pasteParts).toEqual(source.pasteParts);expect(converted.revertMessageId).toBeNull();
+    expect(source.revertMessageId).toBe("msg_old");expect(mergeConvertedComposerDraft(source,{...source})).toEqual({...source,revertMessageId:null});
+  });
 
   test("scopes queued drafts by session", () => {
     const { appendQueuedDraft } = useComposerStateStore.getState();

@@ -1,4 +1,5 @@
 import { createV2SessionHomes, nativeSession, nativeSessionDirectory } from "./opencode-v2-session-home.js";
+import { createOpenworkLegacyHistory } from "./opencode-legacy-history.js";
 import { createNativeCloudMcpResolver, createRoutedCloudMcpRegistrar } from "./cloud-mcp-v2.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { createTaskRecovery, setTaskRecovery } from "./task-recovery.js";
@@ -1329,6 +1330,7 @@ export async function proxyOpencodeV2Request(input: {
   const expectedHome = await homes.canonical(input.workspace.path);
   const sessionMatch = forwardedPath.match(/^\/api\/session\/([^/]+)(?:\/|$)/);
   const sessionId = sessionMatch?.[1] ? decodeURIComponent(sessionMatch[1]) : null;
+  if (sessionId?.startsWith("v1:")) throw new ApiError(409, "legacy_conversion_required", "Convert this v1 chat before using the v2 engine.");
   let executionDirectory = input.workspace.path;
   // Authorization follows the persistent home, not the agent's mutable CWD.
   // The actual native location still controls execution and tool discovery.
@@ -2533,6 +2535,65 @@ function createRoutes(
   isReady: () => boolean,
 ): Route[] {
   const routes: Route[] = [];
+  const legacyHistory = createOpenworkLegacyHistory(config);
+  const legacyPage = (url: URL) => ({
+    limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : 100,
+    before: url.searchParams.get("before") ?? undefined,
+  });
+  addRoute(routes, "GET", "/workspace/:id/legacy-history/session", "client", async ctx => {
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const page = legacyPage(ctx.url);
+    try {
+      const result = await legacyHistory.list(workspace.path, page.limit, page.before, ctx.url.searchParams.get("search") ?? "");
+      const response = jsonResponse(result.data);
+      if (result.nextCursor) response.headers.set("X-Next-Cursor", result.nextCursor);
+      return response;
+    } catch (error) {
+      // A source discovery error must not break the native v2 list.
+      if (error instanceof ApiError && error.code === "legacy_missing") return jsonResponse([]);
+      throw error;
+    }
+  });
+  addRoute(routes, "GET", "/workspace/:id/legacy-history/session/:sessionId", "client", async ctx => {
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    return jsonResponse((await legacyHistory.read(workspace.path, ctx.params.sessionId, 1)).session);
+  });
+  addRoute(routes, "GET", "/workspace/:id/legacy-history/session/:sessionId/message", "client", async ctx => {
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const page = legacyPage(ctx.url);
+    const result = await legacyHistory.read(workspace.path, ctx.params.sessionId, page.limit, page.before);
+    const response = jsonResponse(result.data);
+    if (result.nextCursor) response.headers.set("X-Next-Cursor", result.nextCursor);
+    return response;
+  });
+  addRoute(routes, "GET", "/workspace/:id/legacy-history/session/:sessionId/children", "client", async ctx => {
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    return jsonResponse(await legacyHistory.children(workspace.path, ctx.params.sessionId));
+  });
+  addRoute(routes, "GET", "/workspace/:id/legacy-history/session/:sessionId/message/:messageId", "client", async ctx => {
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const result = await legacyHistory.read(workspace.path, ctx.params.sessionId, 1, undefined, ctx.params.messageId);
+    if (!result.data[0]) throw new ApiError(404, "message_not_found", "Message not found");
+    return jsonResponse(result.data[0]);
+  });
+  addRoute(routes, "GET", "/workspace/:id/legacy-history/session/:sessionId/prepare", "client", async ctx => {
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const plan = await legacyHistory.prepare(workspace.path, ctx.params.sessionId);
+    return jsonResponse({ warnings: plan.warnings, resets: plan.resets, converterVersion: plan.converterVersion, sessions: plan.sessions.length });
+  });
+  addRoute(routes, "POST", "/workspace/:id/legacy-history/session/:sessionId/continue", "client", async ctx => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    if (!isRecord(body) || body.confirm !== true || Object.keys(body).some(key => !["confirm", "allowOmissions"].includes(key))) {
+      throw new ApiError(400, "invalid_payload", "Confirm conversion of this chat before continuing.");
+    }
+    if (body.allowOmissions !== undefined && typeof body.allowOmissions !== "boolean") throw new ApiError(400, "invalid_payload", "allowOmissions must be a boolean");
+    const connection = engineV2Preview.connection();
+    if (!connection || !engineV2Preview.status().chatRouting) throw new ApiError(409, "engine_unavailable", "Switch to OpenCode v2 before converting this chat.");
+    return jsonResponse(await legacyHistory.continue(workspace.path, ctx.params.sessionId, connection, body.allowOmissions === true));
+  });
   // A rollover-capable pool can apply this immediately without disposing
   // the generation that owns live sessions. Legacy/external engines keep
   // the established busy deferral.

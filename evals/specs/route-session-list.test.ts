@@ -90,8 +90,11 @@ async function withWitness(
     const remote = directoryFor(request) === REMOTE;
     const mount = remote ? "/remote/workspace/remote%2Fid" : "/local/workspace/local%20workspace";
     const path = `${mount}/${engine === "v1" ? "opencode/session" : "opencode2/api/session"}`;
+    const legacyPath = `${mount}/legacy-history/session`;
     const result = request.auth !== `Bearer synthetic-${remote ? "remote" : "local"}`
       ? { status: 401, body: { code: "unauthorized" } }
+      : engine === "v2" && request.method === "GET" && request.url.pathname === legacyPath
+        ? { body: [] }
       : request.method !== "GET" || request.url.pathname !== path
         ? { status: 404, body: { code: "wrong_endpoint" } }
         : reply(request, requests.length - 1);
@@ -184,9 +187,10 @@ for (const engine of ["v1", "v2"] satisfies Engine[]) {
       for (const directory of [LOCAL, REMOTE]) {
         const own = requests.filter((request) => directoryFor(request) === directory);
         if (engine === "v2") {
-          expect(own).toHaveLength(7);
+          expect(own).toHaveLength(8);
           expect(own.every(({ url }) => url.searchParams.get("limit") === "200")).toBe(true);
-          expect(own.slice(1).every(({ url }) => url.searchParams.has("cursor"))).toBe(true);
+          expect(own.slice(1, -1).every(({ url }) => url.searchParams.has("cursor"))).toBe(true);
+          expect(own.at(-1)?.url.pathname).toContain("/legacy-history/session");
         } else {
           expect(own.map(({ url }) => url.searchParams.get("limit"))).toEqual(["200", "400", "800"]);
         }
@@ -194,7 +198,7 @@ for (const engine of ["v1", "v2"] satisfies Engine[]) {
     });
     currentTestEvidence()?.recordAssertionEvidence(
       `${engine} exposes old unarchived roots without leaking archives, children, or other workspaces`,
-      `HTTP witness loaded 251 active roots behind 230 archives and 230 children, including an old root with archived=0. Sidebar preview returned six roots in stable creation-time/ID order; expansion returned all 251 without another read, and pinning moved the last root to the top. Concurrent remote loading returned only its 401 sessions; directories and credentials stayed isolated. ${engine === "v2" ? "Each workspace traversed seven limit=200 requests, continuing through filtered-empty pages." : "Each workspace used limits 200, 400, 800."}`,
+      `HTTP witness loaded 251 active roots behind 230 archives and 230 children, including an old root with archived=0. Sidebar preview returned six roots in stable creation-time/ID order; expansion returned all 251 without another read, and pinning moved the last root to the top. Concurrent remote loading returned only its 401 sessions; directories and credentials stayed isolated. ${engine === "v2" ? "Each workspace traversed seven native limit=200 requests, continuing through filtered-empty pages, then checked its authenticated legacy-history endpoint." : "Each workspace used limits 200, 400, 800."}`,
       true,
     );
   });
@@ -227,7 +231,7 @@ for (const engine of ["v1", "v2"] satisfies Engine[]) {
           expect(waits).toEqual([1]);
           expect(requests[2].url.searchParams.get("limit")).toBe("200");
           expect(requests[2].url.searchParams.has("cursor")).toBe(false);
-          expect(requests).toHaveLength(engine === "v2" ? 5 : 4);
+          expect(requests).toHaveLength(engine === "v2" ? 6 : 4);
         } else {
           await expect(load).rejects.toMatchObject({ status, code });
           expect(waits).toEqual([]);
@@ -243,7 +247,7 @@ for (const engine of ["v1", "v2"] satisfies Engine[]) {
     });
     currentTestEvidence()?.recordAssertionEvidence(
       `${engine} rejects incomplete history and preserves identity during bounded recovery`,
-      `For 201 synthetic remote sessions, second-page 401, 403, 404, and 503 responses rejected the whole load with status and code intact. Authorization and not-found errors stopped after two requests without retry; 503 restarted at limit=200 without a cursor and recovered all sessions after one wait (${engine === "v2" ? 5 : 4} total requests). A second-page socket failure also rejected, never returning a partial list. Every request retained the remote mount and credential.`,
+      `For 201 synthetic remote sessions, second-page 401, 403, 404, and 503 responses rejected the whole load with status and code intact. Authorization and not-found errors stopped after two requests without retry; 503 restarted at limit=200 without a cursor and recovered all sessions after one wait (${engine === "v2" ? "six requests including legacy discovery" : "four requests"}). A second-page socket failure also rejected, never returning a partial list. Every request retained the remote mount and credential.`,
       true,
     );
   });
@@ -269,13 +273,14 @@ test("v2 follows terminal cursors at boundaries and preserves sessions with tied
     const source = sessions(count).map((session) => ({ ...session, time: { created: 1, updated: 1 } }));
     await withWitness("v2", pageReply("v2", source), async ({ local, requests }) => {
       expect((await listRouteSessions(local, v2RouteSessionList)).map((item) => item.id)).toEqual(source.map((item) => item.id));
-      expect(requests).toHaveLength(Math.ceil(count / 200) + 1);
+      expect(requests).toHaveLength(Math.ceil(count / 200) + 2);
       expect(requests.every(({ url }) => url.searchParams.get("limit") === "200")).toBe(true);
+      expect(requests.at(-1)?.url.pathname).toContain("/legacy-history/session");
     });
   }
   currentTestEvidence()?.recordAssertionEvidence(
     "v2 exhausts native cursors without losing tied-timestamp sessions",
-    "For 0, 199, 200, 201, 400, and 401 synthetic sessions sharing one updated timestamp, the HTTP loader returned every ID in order. Each load used exactly ceil(count/200)+1 authenticated requests at limit=200, including the terminal empty page rather than treating a short page as exhaustion.",
+    "For 0, 199, 200, 201, 400, and 401 synthetic sessions sharing one updated timestamp, the HTTP loader returned every ID in order. Each load used exactly ceil(count/200)+1 authenticated native requests at limit=200, including the terminal empty page, followed by one authenticated legacy-history request.",
     true,
   );
 });

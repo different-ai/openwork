@@ -10,6 +10,7 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { appendEngineOutputTail, createEngineStartupLineReader } from "./engine-output.js";
+import { buildOpenWorkV2Instructions } from "./opencode-v2-instructions.js";
 
 export { installOpencodeV2Binary } from "./opencode-v2-binary.js";
 
@@ -171,6 +172,10 @@ export function renderOpencodeV2Config(input: {
   return {
     $schema: "https://opencode.ai/config.json",
     providers: providerConfig,
+    // Native v1 migration retains the selected agent name. OpenWork's v1
+    // default is `openwork`, so keep that identity available for imported chats.
+    agents: { openwork: { description: "OpenWork default agent", mode: "primary",
+      system: buildOpenWorkV2Instructions(false).operatingInstructions } },
     ...(plugins.length ? { plugins } : {}),
     ...(input.permissions ? { permissions: input.permissions } : {}),
     ...(input.skills.length ? { skills: [...input.skills] } : {}),

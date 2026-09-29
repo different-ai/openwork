@@ -34,6 +34,18 @@ export function snapshotComposerSessionState(state: ComposerSessionState): Compo
   };
 }
 
+/** Keep both drafts when retrying conversion into a chat that already has one. */
+export function mergeConvertedComposerDraft(source: ComposerSessionState, existing?: ComposerSessionState): ComposerSessionState {
+  const unique = <T extends { id: string }>(items: T[]) => [...new Map(items.map(item => [item.id, item])).values()];
+  return snapshotComposerSessionState({
+    draft: existing?.draft && existing.draft !== source.draft ? [existing.draft, source.draft].filter(Boolean).join("\n\n") : source.draft,
+    attachments: unique([...(existing?.attachments ?? []), ...source.attachments]),
+    mentions: { ...existing?.mentions, ...source.mentions },
+    pasteParts: unique([...(existing?.pasteParts ?? []), ...source.pasteParts]),
+    revertMessageId: null,
+  });
+}
+
 export type ComposerStateStore = {
   failedDrafts: Record<string, ComposerSessionState[]>;
   pendingMessages: Record<string, {

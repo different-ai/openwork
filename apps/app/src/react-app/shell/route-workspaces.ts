@@ -18,6 +18,7 @@ import {
   safeStringify,
 } from "@/app/utils";
 import { t } from "@/i18n";
+import { toast } from "@/components/ui/sonner";
 
 export type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -28,6 +29,7 @@ export type RouteWorkspace = OpenworkWorkspaceInfo & {
  * fields that the sidebar probes defensively via getSessionStatus.
  */
 export type RouteSession = Session & {
+  openworkLegacyReference?: string;
   status?: unknown;
   state?: unknown;
   runStatus?: unknown;
@@ -52,10 +54,14 @@ const nativeRouteSessionList: RouteSessionListTransport = async ({ endpoint, lim
   return client.session.list({ limit });
 };
 
-export const v2RouteSessionList: RouteSessionListTransport = async ({ endpoint, limit, cursor }) =>
-  createClientV2(`${endpoint.mountedBaseUrl}/opencode2`, undefined, {
+export const v2RouteSessionList: RouteSessionListTransport = async ({ endpoint, limit, cursor }) => {
+  const result = await createClientV2(`${endpoint.mountedBaseUrl}/opencode2`, undefined, {
     token: endpoint.token,
   }).listSessionsPage({ limit, cursor });
+  const warning = result.response.headers.get("X-Openwork-Legacy-Error");
+  if (warning) toast.warning(warning, { id: `legacy-history:${endpoint.mountedBaseUrl}` });
+  return result;
+};
 
 /** Resolve the owning server's engine even when this workspace isn't selected. */
 async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint): Promise<ResolvedWorkspaceEndpoint> {
@@ -122,7 +128,10 @@ export async function listRouteSessions(
       for (const session of items) {
         if (!sessions.has(session.id)) sessions.set(session.id, session);
       }
-      if (result.nextCursor === null) return [...sessions.values()];
+      if (result.nextCursor === null) {
+        const imported = new Set([...sessions.values()].flatMap(session => session.openworkLegacyReference ? [session.openworkLegacyReference] : []));
+        return [...sessions.values()].filter(session => !imported.has(session.id));
+      }
       if (cursors.has(result.nextCursor)) throw new Error("Session list cursor did not advance.");
       cursors.add(result.nextCursor);
       cursor = result.nextCursor;

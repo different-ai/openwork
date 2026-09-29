@@ -30,6 +30,7 @@
     "pretest:core": "pnpm --filter @openwork/headless-threads build"
   },
   "dependencies": {
+    "@openwork/opencode-legacy-threads": "workspace:*",
     "@modelcontextprotocol/client": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.18.15",

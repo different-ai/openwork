@@ -325,8 +325,9 @@ async function sendAndWaitForNonce(
   model: string,
   notBefore: number,
   round: string,
+  draftAlreadyEntered = false,
 ): Promise<{ request: WitnessRequest; latencyMs: number }> {
-  await typeIntoComposer(app, prompt);
+  if (!draftAlreadyEntered) await typeIntoComposer(app, prompt);
   const sentAt = Date.now();
   await clickButton(app, "Run task", { timeoutMs: 30_000 });
   const request = await waitForWitnessRequest(
@@ -507,6 +508,7 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
     if (witnessBaseUrl === undefined) throw new Error("Local witness URL was unavailable");
 
     let runningStatus = harnessLaneStatus;
+    let legacyContinuation: { id: string; nonce: string } | undefined;
     if (runningStatus === undefined) {
       await selectModel(app, modelNameV1);
       const v2BeforeEnable = await engineSessionCount(app, workspaceId, "opencode2");
@@ -562,6 +564,13 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
       await screenshot(app, { caption: "Migration completes while OpenCode v1 remains selected" });
       await go(app, `/workspace/${workspaceId}/session`);
       await waitFor(app, () => Boolean(document.querySelector('[aria-label="Change model"]')), { label: "session route ready after migration" });
+      // This chat is created after the existing bulk-migration proof. Switching
+      // engines must discover it without invoking that command again.
+      const legacyId = await createNewSessionThroughControl(app);
+      await selectModel(app, modelNameV1);
+      const legacyTurn = await sendAndWaitForNonce(app, witnessRequests, "Remember this legacy conversation", `Bearer ${keyV1}`, modelIdV1, 0, "legacy fixture");
+      legacyContinuation = { id: legacyId, nonce: legacyTurn.request.nonce };
+      await screenshot(app, { caption: "before: a new v1 conversation has history that has never been bulk migrated" });
       await control(app, "command_palette.open", {});
       await fill(app, 'input[data-command-palette-input]', "Switch to OpenCode v2");
       await clickText(app, "Switch to OpenCode v2", { selector: "[data-slot=command-item]" });
@@ -613,6 +622,37 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
     await go(app, `/workspace/${workspaceId}/session`);
     await waitForModelInPicker(app, modelNameV2, 45_000);
     await closeModelPicker(app);
+    if (legacyContinuation) {
+      const legacyRows = await serverFetchJson(app, `/workspace/${encodeURIComponent(workspaceId)}/legacy-history/session`);
+      expect(legacyRows.status).toBe(200);
+      if (!Array.isArray(legacyRows.json)) throw new Error("Legacy history was not listed");
+      const legacy = legacyRows.json.find(row => isRecord(row) && isRecord(row.legacyReference) && row.legacyReference.sessionID === legacyContinuation.id);
+      if (!isRecord(legacy) || typeof legacy.id !== "string") throw new Error("The unconverted v1 chat is missing");
+      const reference = legacy.id;
+      const nativeBefore = await engineSessionCount(app, workspaceId, "opencode2");
+      await waitFor(app, browserScript(reference => Boolean(document.querySelector(`[data-sidebar-session-id="${reference}"] [data-testid="legacy-history-label"]`)), [reference]), { label: "unconverted v1 chat appears in the normal v2 thread list" });
+      await clickSessionRow(app, reference, workspaceId);
+      await waitForChatSurface(app, reference, workspaceId);
+      await waitFor(app, browserScript(nonce => document.body.innerText.includes(nonce) && Boolean(document.querySelector('[data-testid="legacy-conversion-notice"]')), [legacyContinuation.nonce]), { label: "original v1 transcript and composer warning" });
+      await typeIntoComposer(app, "Continue the legacy conversation");
+      await waitFor(app, () => document.querySelector<HTMLButtonElement>('button[aria-label="Run task"]')?.disabled === true, { label: "sending is blocked before conversion" });
+      expect(await engineSessionCount(app, workspaceId, "opencode2")).toBe(nativeBefore);
+      await screenshot(app, { caption: "before: v1 history is readable in v2, with a composer warning and sending disabled" });
+      await clickButton(app, "Convert to v2");
+      await waitForChatSurface(app, legacyContinuation.id, workspaceId);
+      await waitFor(app, () => !document.querySelector('[data-testid="legacy-conversion-notice"]'), { label: "conversion opens the native v2 conversation" });
+      await waitFor(app, () => document.querySelector<HTMLElement>('[contenteditable="true"][data-lexical-editor="true"]')?.innerText.trim() === "Continue the legacy conversation", { label: "conversion preserves the composer draft" });
+      await selectModel(app, modelNameV2);
+      await waitFor(app, () => !document.querySelector('[data-slot="popover-content"]'), { label: "model picker closes before conversion proof" });
+      await screenshot(app, { caption: "after: selective conversion preserves the transcript and composer draft, ready for a v2 turn" });
+      await sendAndWaitForNonce(app, witnessRequests, "Continue the legacy conversation", `Bearer ${keyV2}`, modelIdV2, routedOnAt, "legacy continuation in v2", true);
+      expect(await engineSessionCount(app, workspaceId, "opencode2")).toBe(nativeBefore + 1);
+      const original = await serverFetchJson(app, `/workspace/${encodeURIComponent(workspaceId)}/legacy-history/session/${encodeURIComponent(reference)}/message`);
+      expect(JSON.stringify(original.json)).toContain(legacyContinuation.nonce);
+      expect(JSON.stringify(original.json)).not.toContain("Continue the legacy conversation");
+      await waitFor(app, browserScript(reference => !document.querySelector(`[data-sidebar-session-id="${reference}"]`), [reference]), { label: "verified native import replaces its legacy row without a duplicate" });
+      evidence.recordAssertionEvidence("V1 history is listed and read without import, then selectively continued in v2", "Opening the v1 row left the native session count unchanged and disabled sending. Conversion retained the draft and historical reply, created exactly one native chat, and left the source transcript unchanged.", true);
+    }
     const v1BeforeR2 = await engineSessionCount(app, workspaceId, "opencode");
     const v2BeforeR2 = await engineSessionCount(app, workspaceId, "opencode2");
     expect(v2BeforeR2).toBeGreaterThanOrEqual(0);

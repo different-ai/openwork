@@ -1,5 +1,6 @@
 import type {
   ApiError,
+  AssistantMessage,
   FilePart,
   Model,
   Part,
@@ -22,6 +23,7 @@ import { isDesktopRuntime } from "./runtime-env";
 import type { McpStatusMap, OpencodeEvent } from "../types";
 import { normalizeDirectoryPath } from "../utils";
 import { dispatchProviderCatalogChanged } from "./provider-events";
+import { isLegacyThread, legacyHistoryBase } from "./legacy-thread";
 
 type RequestOptions = {
   signal?: AbortSignal;
@@ -160,7 +162,7 @@ export type V2MappedMessage = {
       created: number;
       completed?: number;
     };
-    error?: UnknownError | ApiError;
+    error?: AssistantMessage["error"];
   };
   parts: Part[];
 };
@@ -381,7 +383,12 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
   const parentID = readString(source, "parentID");
   const revert = readRecord(source, "revert");
   const revertMessageID = revert && readString(revert, "messageID");
-  const mapped: Session = {
+  const origin = readRecord(readRecord(source, "metadata"), "openworkLegacyHistory");
+  const sourceID = readString(origin, "sourceID");
+  const originalID = readString(origin, "sessionID");
+  const legacyReference = sourceID && originalID && readString(origin, "converterVersion") === "0.0.0-beta-19086"
+    ? `v1:${sourceID}:${originalID}` : null;
+  const mapped: Session & { openworkLegacyReference?: string } = {
     id,
     slug: readString(source, "slug") ?? id,
     projectID: readString(source, "projectID") ?? "v2",
@@ -396,6 +403,7 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
     },
     ...(parentID ? { parentID } : {}),
     ...(revertMessageID ? { revert: { messageID: revertMessageID } } : {}),
+    ...(legacyReference && isLegacyThread(legacyReference) ? { openworkLegacyReference: legacyReference } : {}),
   };
   return mapped;
 }
@@ -1724,6 +1732,9 @@ export function createClientV2(
   const baseUrl = opencode2BaseUrl.replace(/\/+$/, "");
   const fetchImpl = createV2Fetch(auth);
   const compatibilityClient = createClient(baseUrl, directory, { mode: "openwork", token: auth.token });
+  const originalChildren = compatibilityClient.session.children.bind(compatibilityClient.session);
+  const legacyClient = /\/opencode2$/.test(baseUrl)
+    ? createClient(legacyHistoryBase(baseUrl), directory, { mode: "openwork", token: auth.token }) : null;
   const taskSessions = taskSessionAssociations(baseUrl);
   const permissionSessionByRequestID = new Map<string, string>();
   const questionFormsByID = new Map<string, NonNullable<ReturnType<typeof mapV2Question>>>();
@@ -1734,10 +1745,16 @@ export function createClientV2(
     body?: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<TransportResult> => {
+    if (decodeURIComponent(path).startsWith("/api/session/v1:")) {
+      return { payload: { code: "legacy_conversion_required", message: "Convert this v1 chat to v2 before starting." },
+        request: new Request(`${baseUrl}${path}`), response: new Response(null, { status: 409 }) };
+    }
     const headers = new Headers();
     if (auth.token) headers.set("Authorization", `Bearer ${auth.token}`);
     if (body) headers.set("Content-Type", "application/json");
-    const transportRequest = new Request(`${baseUrl}${path}`, {
+    const requestUrl = path.startsWith("/legacy-history/")
+      ? `${legacyHistoryBase(baseUrl)}${path.slice("/legacy-history".length)}` : `${baseUrl}${path}`;
+    const transportRequest = new Request(requestUrl, {
       method,
       headers,
       ...(body ? { body: JSON.stringify(body) } : {}),
@@ -1751,6 +1768,7 @@ export function createClientV2(
     parameters: SessionParameters,
     options?: RequestOptions,
   ): Promise<FieldsResult<{ data: PermissionV2Request[] }>> => {
+    if (isLegacyThread(parameters.sessionID)) return localResult(baseUrl, "/legacy-history", { data: [] });
     const result = await request(
       "GET",
       `/api/session/${encodeURIComponent(parameters.sessionID)}/permission`,
@@ -1848,6 +1866,7 @@ export function createClientV2(
   const listQuestions = async (
     parameters: DirectoryParameters & { sessionID?: string } = {}, options?: RequestOptions,
   ): Promise<FieldsResult<QuestionRequest[]>> => {
+    if (isLegacyThread(parameters.sessionID)) return localResult(baseUrl, "/legacy-history", []);
     const path = parameters.sessionID
       ? `/api/session/${encodeURIComponent(parameters.sessionID)}/form` : "/api/form/request";
     const result = await request("GET", path, undefined, options?.signal);
@@ -1905,6 +1924,7 @@ export function createClientV2(
     parameters: SessionParameters,
     options?: RequestOptions,
   ): Promise<FieldsResult<Session>> => {
+    if (isLegacyThread(parameters.sessionID) && legacyClient) return legacyClient.session.get(parameters, options);
     const result = await request("GET", `/api/session/${encodeURIComponent(parameters.sessionID)}`, undefined, options?.signal);
     if (!result.response.ok) return failedResult(result);
     const session = mapV2Session(result.payload, directory);
@@ -1940,6 +1960,34 @@ export function createClientV2(
       parameters: DirectoryParameters & { limit?: number; cursor?: string } = {},
       options?: RequestOptions,
     ): Promise<FieldsResult<Session[]> & { nextCursor?: string | null }> => {
+      if (parameters.cursor?.startsWith("legacy:")) {
+        if (!legacyClient) return localResult(baseUrl, "/legacy-history", []);
+        const before = parameters.cursor.slice("legacy:".length);
+        const query = new URLSearchParams({ limit: String(parameters.limit ?? 200) });
+        if (before !== "start") query.set("before", before);
+        const req = new Request(`${legacyHistoryBase(baseUrl)}/session?${query}`, { headers: auth.token ? { Authorization: `Bearer ${auth.token}` } : {}, signal: options?.signal });
+        let response: Response;
+        try { response = await fetchImpl(req); }
+        catch {
+          options?.signal?.throwIfAborted();
+          return { data: [], nextCursor: null, request: req, response: new Response(null, { status: 200,
+            headers: { "X-Openwork-Legacy-Error": "V1 history is unavailable. Refresh to retry; native v2 chats remain available." } }) };
+        }
+        const payload = await readPayload(response);
+        if (!response.ok || !Array.isArray(payload)) {
+          // An unavailable optional legacy source never hides native v2 chats.
+          return { data: [], nextCursor: null, request: req, response: new Response(null, { status: 200,
+            headers: { "X-Openwork-Legacy-Error": readString(readRecord(payload, "error"), "message") ?? readString(payload, "message") ?? "V1 history is unavailable. Native v2 chats remain available." } }) };
+        }
+        // Let the v1 SDK supply its normal session types; this reader returns
+        // the same contract as that SDK, with explicit legacy IDs.
+        const result = await legacyClient.session.list({ limit: parameters.limit }, {
+          ...options, fetch: async () => new Response(JSON.stringify(payload), { headers: response.headers }),
+        });
+        if (!result.data) return { ...result, nextCursor: null };
+        const next = response.headers.get("X-Next-Cursor");
+        return { ...result, data: result.data, nextCursor: next ? `legacy:${next}` : null };
+      }
       const query = new URLSearchParams();
       if (parameters.limit !== undefined) query.set("limit", String(parameters.limit));
       if (parameters.cursor !== undefined) query.set("cursor", parameters.cursor);
@@ -1954,14 +2002,17 @@ export function createClientV2(
         const mapped = mapV2Session(item, directory);
         return mapped ? [mapped] : [];
       });
-      return { ...successfulResult(result, data), nextCursor: next ?? null };
+      return { ...successfulResult(result, data), nextCursor: next ?? (legacyClient ? "legacy:start" : null) };
     },
     create: createSession,
     get: getSession,
+    children: (parameters: SessionParameters, options?: RequestOptions) => isLegacyThread(parameters.sessionID) && legacyClient
+      ? legacyClient.session.children(parameters, options) : originalChildren(parameters, options),
     message: async (
       parameters: SessionParameters & { messageID: string },
       options?: RequestOptions,
     ): Promise<FieldsResult<V2MappedMessage>> => {
+      if (isLegacyThread(parameters.sessionID) && legacyClient) return legacyClient.session.message(parameters, options);
       const result = await request(
         "GET",
         `/api/session/${encodeURIComponent(parameters.sessionID)}/message/${encodeURIComponent(parameters.messageID)}`,
@@ -1977,6 +2028,21 @@ export function createClientV2(
       parameters: SessionParameters & { limit?: number; before?: string },
       options?: RequestOptions,
     ): Promise<FieldsResult<V2MappedMessage[]> & Pick<OpenworkSessionHistory, "pagination">> => {
+      if (isLegacyThread(parameters.sessionID) && legacyClient) {
+        const limit = parameters.limit ?? 200;
+        const data: V2MappedMessage[] = [];
+        let before = parameters.before;
+        const seen = new Set<string>();
+        for (;;) {
+          const result = await legacyClient.session.messages({ sessionID: parameters.sessionID, limit, before }, options);
+          if (!result.data) return result;
+          const next = result.response.headers.get("X-Next-Cursor");
+          if (next && seen.has(next)) throw new Error("Legacy history cursor did not advance.");
+          data.unshift(...result.data);
+          if (parameters.limit !== undefined || !next) return { ...result, data, pagination: { before: parameters.before, nextCursor: next, limit } };
+          seen.add(next); before = next;
+        }
+      }
       const limit = parameters.limit === undefined ? undefined : Math.min(parameters.limit, 200);
       if ((parameters.limit !== undefined && (!Number.isInteger(parameters.limit) || parameters.limit <= 0))
         || (parameters.before !== undefined && limit === undefined)) {
@@ -2050,6 +2116,7 @@ export function createClientV2(
       parameters: PromptParameters,
       options?: RequestOptions,
     ): Promise<FieldsResult<Record<string, never>>> => {
+      if (isLegacyThread(parameters.sessionID)) return unsupportedResult(baseUrl, "legacy_conversion_required", "Convert this v1 chat to v2 before starting. Nothing was sent.");
       if (!parameters.model) {
         return {
           error: { name: "ModelRequiredInV2Preview" },
@@ -2350,6 +2417,24 @@ export function createClientV2(
   v2Clients.add(compatibilityClient);
   return Object.assign(compatibilityClient, {
     listSessionsPage: session.list, listMessagesPage: session.messages,
+    prepareLegacyConversion: async (sessionID: string, signal?: AbortSignal) => {
+      const result = await request("GET", `/legacy-history/session/${encodeURIComponent(sessionID)}/prepare`, undefined, signal);
+      if (!result.response.ok) return failedResult<LegacyConversionReport>(result);
+      const value = result.payload;
+      if (!isRecord(value) || !Array.isArray(value.warnings) || !Array.isArray(value.resets)
+        || typeof value.converterVersion !== "string" || typeof value.sessions !== "number") {
+        throw new Error("V1 conversion preview could not be read. Refresh and try again.");
+      }
+      return successfulResult(result, { warnings: value.warnings.flatMap(item => isRecord(item) && typeof item.message === "string" ? [item.message] : []),
+        resets: value.resets.filter((item): item is string => typeof item === "string"), converterVersion: value.converterVersion, sessions: value.sessions });
+    },
+    continueLegacyConversion: async (sessionID: string, allowOmissions: boolean) => {
+      const result = await request("POST", `/legacy-history/session/${encodeURIComponent(sessionID)}/continue`, { confirm: true, allowOmissions });
+      if (!result.response.ok) return failedResult<{ sessionID: string }>(result);
+      const convertedID = readString(result.payload, "sessionID");
+      if (!convertedID || isLegacyThread(convertedID)) throw new Error("V2 did not return a converted chat. Retry conversion.");
+      return successfulResult(result, { sessionID: convertedID });
+    },
     listSessionQuestions: (parameters: SessionParameters, options?: RequestOptions) => listQuestions(parameters, options),
     replySessionQuestion: (parameters: SessionParameters & { requestID: string; answers: string[][] }, options?: RequestOptions) =>
       settleQuestion(parameters, options),
@@ -2357,3 +2442,5 @@ export function createClientV2(
 }
 
 export type OpencodeV2Client = ReturnType<typeof createClientV2>;
+
+export type LegacyConversionReport = { warnings: string[]; resets: string[]; converterVersion: string; sessions: number };

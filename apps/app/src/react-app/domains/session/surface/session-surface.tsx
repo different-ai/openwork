@@ -13,6 +13,8 @@ import { abortSession } from "@/app/lib/opencode-session";
 import { hasTerminalSessionReply, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, submitImmediateSessionTurn, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
 import { createClient, createPromptMessageID, isPromptAdmissionUnknown, promptAdmissionFailure, readPromptAdmission, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl, v2PromptText } from "@/app/lib/opencode-v2-adapter";
+import { isLegacyThread } from "@/app/lib/legacy-thread";
+import { LegacyConversionNotice } from "./legacy-conversion-notice";
 import * as opencodeSessionNative from "@/app/lib/opencode-session-native";
 import type { NativeSessionSnapshotTarget } from "@/app/lib/opencode-session-native";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
@@ -23,7 +25,7 @@ import type { ComposerSettingsSection } from "@/react-app/domains/settings/libra
 import { type CloudImportedPlugin } from "@/app/cloud/import-state";
 import { createDenClient, readDenSettings } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
-import { useSessionDraftState } from "@/react-app/domains/session/sync/draft-store";
+import { getSessionDraft, saveSessionDraft, sessionDraftScopeKey, useSessionDraftState } from "@/react-app/domains/session/sync/draft-store";
 import type {
   OpenworkServerClient,
   OpenworkSessionHistory,
@@ -134,6 +136,7 @@ import {
   getComposerRevertMessageId,
   getComposerSessionDraftScope,
   persistableComposerDraftText,
+  mergeConvertedComposerDraft,
   snapshotComposerSessionState,
   type ComposerSessionState,
   useComposerStateStore,
@@ -978,6 +981,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     (state) => state.statusesByWorkspaceId[props.workspaceId]?.[props.sessionId] ?? "idle",
   );
   const draft = useComposerStateStore((state) => getComposerDraft(state, props.sessionId));
+  const legacyThread = isLegacyThread(props.sessionId);
   const editing = useComposerStateStore((state) => Boolean(getComposerRevertMessageId(state, props.sessionId)));
   const attachments = useComposerStateStore((state) => getComposerAttachments(state, props.sessionId));
   // Preparation belongs to the submitted message, not the next composer draft.
@@ -1159,6 +1163,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [props.draftScope, props.opencodeBaseUrl, props.workspaceId, props.sessionId]);
   const activeSessionOwnerRef = useRef(sessionOwner);
   activeSessionOwnerRef.current = sessionOwner;
+  const handleLegacyConverted = (sessionID: string) => {
+    if (activeSessionOwnerRef.current !== sessionOwner) return;
+    const state = useComposerStateStore.getState();
+    const source = state.sessions[props.sessionId];
+    if (source) {
+      const stored = getSessionDraft(props.draftScope, props.workspaceId, sessionID);
+      const existing = state.sessions[sessionID] ?? (stored ? { draft: stored.text, attachments: [], mentions: {}, pasteParts: [], revertMessageId: null } : undefined);
+      const transferred = mergeConvertedComposerDraft(source, existing);
+      claimComposerSessionDraftScope(sessionID, sessionDraftScopeKey(props.draftScope, props.workspaceId, sessionID));
+      useComposerStateStore.setState({ sessions: { ...state.sessions, [sessionID]: transferred } });
+      saveSessionDraft(props.draftScope, props.workspaceId, sessionID, { text: persistableComposerDraftText(transferred.draft), mode: "prompt", queued: stored?.queued });
+    }
+    props.onOpenSubagentSession?.(sessionID);
+  };
   const snapshotTargetRef = useRef<NativeSessionSnapshotTarget>({
     owner: sessionOwner,
     endpoint: { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken },
@@ -2211,6 +2229,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
   // share the same immediate path.
   const handleSend = useCallback(async (sourceComposer?: ComposerSessionState) => {
+    if (isLegacyThread(props.sessionId)) return;
     if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
     const generation = getQueuedSendGeneration(props.sessionId);
@@ -2323,6 +2342,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // until then, leave both the scoped mark and continuation untouched.
   useEffect(() => {
     if (model.transitionState !== "idle") return;
+    if (legacyThread) return;
     if (archived || !archiveStateKnown || archiveHeld) return;
     if (chatStreaming) return;
     if (sessionModelUnavailable) return;
@@ -2337,12 +2357,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!draft.trim() && !attachments.length) return;
     if (!consumeComposerAutoSend(props.sessionId)) return;
     void handleSend();
-  }, [archived, archiveStateKnown, archiveHeld, attachments.length, autoSendPayload, chatStreaming, draft, handleSend, model.transitionState, sessionModelUnavailable, props.sessionId, sessionOwner]);
+  }, [archived, archiveStateKnown, archiveHeld, attachments.length, autoSendPayload, chatStreaming, draft, handleSend, legacyThread, model.transitionState, sessionModelUnavailable, props.sessionId, sessionOwner]);
 
   const handleSteer = useCallback(async () => {
+    if (legacyThread) return;
     setSteering(true);
     await handleSend();
-  }, [handleSend]);
+  }, [handleSend, legacyThread]);
 
   const handleRetryCloudSubmission = useCallback(() => {
     if (draft.trim() || attachments.length > 0) {
@@ -2357,6 +2378,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Queue: hold the draft locally and clear the composer. The drain effect
   // sends it once the session reports idle.
   const handleQueue = useCallback(() => {
+    if (isLegacyThread(props.sessionId)) return;
     // Read the current store as well as the rendered composer state: an edit
     // must never lose its original turn boundary through a stale queue callback.
     if (getComposerRevertMessageId(useComposerStateStore.getState(), props.sessionId)) {
@@ -2614,6 +2636,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   useEffect(() => {
     if (drainingQueueRef.current || sendingQueued) return;
+    if (legacyThread) return;
     if (archived || !archiveStateKnown) return;
     if (sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     if (cloudQueueBlockedRef.current) return;
@@ -2652,7 +2675,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         drainingQueueRef.current = false;
       }
     })();
-  }, [archived, archiveStateKnown, chatStreaming, cloudQueueRetryVersion, liveStatus.type, props.opencodeBaseUrl, props.sessionId, queuedDrainState, queuedItems, sendDraft, sendingQueued]);
+  }, [archived, archiveStateKnown, chatStreaming, cloudQueueRetryVersion, legacyThread, liveStatus.type, props.opencodeBaseUrl, props.sessionId, queuedDrainState, queuedItems, sendDraft, sendingQueued]);
 
   useEffect(() => {
     if (props.cloudMcpSubmissionState.status !== "failed") {
@@ -3449,7 +3472,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       uiStateOwner={props.draftScope ? sessionOwner : null}
                       client={props.client}
                       mcpAppEngine={isOpencodeV2BaseUrl(props.opencodeBaseUrl) ? "v2" : "v1"}
-                      readOnly={archived || !archiveStateKnown || archiveHeld}
+                      readOnly={legacyThread || archived || !archiveStateKnown || archiveHeld}
                       workspaceId={props.workspaceId}
                       sessionId={props.sessionId}
                       showThinking={showThinking}
@@ -3466,8 +3489,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       forkingMessageId={forkingMessageId}
                       onEditUserMessage={handleEditUserMessage}
                       onOpenSubagentSession={props.onOpenSubagentSession}
-                      onStopSubagentSession={archived ? undefined : handleStopSubagentSession}
-                      onResumeInterrupted={archived ? undefined : handleResumeInterrupted}
+                      onStopSubagentSession={legacyThread || archived ? undefined : handleStopSubagentSession}
+                      onResumeInterrupted={legacyThread || archived ? undefined : handleResumeInterrupted}
                       onMcpReconnect={handleMcpReconnect}
                       onMcpReopenAuthorization={handleMcpReopenAuthorization}
                       getConnectionDecision={getConnectionDecision}
@@ -3515,6 +3538,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
       </div>
 
       <div ref={composerShellRef} className="shrink-0 px-0 pb-2 pt-2 max-lg:pb-0">
+        {legacyThread ? <LegacyConversionNotice key={sessionOwner} baseUrl={props.opencodeBaseUrl} directory={props.workspaceRoot}
+          token={props.openworkToken} sessionId={props.sessionId} onConverted={handleLegacyConverted} /> : null}
         <GatewayUsageApprovalNotice />
         {gatewayNotice && gatewayUsage.data ? <GatewayUsageNotice key={`${gatewayUsage.scopeKey}:${sessionOwner}`} state={gatewayNotice} status={gatewayUsage.data} stale={gatewayUsage.query.isError} /> : null}
         {(props.providerConnectedCount ?? 0) === 0 ? (
@@ -3581,7 +3606,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         steering={steering}
         submissionPreparing={preparingCloudTools || sending || autoSending}
         queuedCount={queuedItems.length}
-        disabled={!archiveStateKnown || archiveHeld || model.transitionState !== "idle" || sessionModelUnavailable || queuedDrainState.phase.kind === "admission_unknown"}
+        disabled={legacyThread || !archiveStateKnown || archiveHeld || model.transitionState !== "idle" || sessionModelUnavailable || queuedDrainState.phase.kind === "admission_unknown"}
         disabledReasons={sessionComposerDiagnosticReasons({
           archiveStateKnown,
           archiveHeld,

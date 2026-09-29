@@ -149,6 +149,14 @@ describe("workspace route session inference", () => {
 });
 
 describe("workspace route session hydration", () => {
+  test("verified imports replace legacy rows during live hydration, while unknown conflicts stay visible", () => {
+    const legacy={id:"v1:0123456789abcdef01234567:ses_fixture",title:"Original"};
+    const native={id:"ses_fixture",title:"Converted",openworkLegacyReference:legacy.id};
+    expect(mergeWorkspaceRouteSession([legacy],native)).toEqual([native]);
+    expect(mergeWorkspaceRouteSession([native],legacy)).toEqual([native]);
+    expect(mergeWorkspaceRouteSession([legacy],{id:"ses_fixture",title:"Unknown conflict"})).toHaveLength(2);
+  });
+
   test("adds an out-of-window routed session without duplicating it", () => {
     const listed = [{ id: "session-200", title: "Recent" }];
     const hydrated = { id: "session-010", title: "Deep link" };

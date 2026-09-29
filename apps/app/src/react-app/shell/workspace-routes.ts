@@ -81,11 +81,16 @@ export function sessionIdForLegacyWorkspaceInference(
   return sessionId || null;
 }
 
-export function mergeWorkspaceRouteSession<T extends { id: string }>(sessions: T[], session: T): T[] {
-  const index = sessions.findIndex((item) => item.id === session.id);
-  if (index < 0) return [session, ...sessions];
-  if (sessions[index] === session) return sessions;
-  const next = [...sessions];
+export function mergeWorkspaceRouteSession<T extends { id: string; openworkLegacyReference?: string }>(sessions: T[], session: T): T[] {
+  // Imported metadata is projected by the v2 adapter only after checking its
+  // provenance. Apply the same replacement to live events and routed hydration.
+  if (sessions.some(item => item.openworkLegacyReference === session.id)) return sessions;
+  const retained = session.openworkLegacyReference
+    ? sessions.filter(item => item.id !== session.openworkLegacyReference) : sessions;
+  const index = retained.findIndex((item) => item.id === session.id);
+  if (index < 0) return [session, ...retained];
+  if (retained[index] === session) return retained;
+  const next = [...retained];
   next[index] = session;
   return next;
 }

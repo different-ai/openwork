@@ -22,7 +22,7 @@
     "start": "bun dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "pnpm build:npm-bundle",
-    "test:core": "bun --conditions=development test src/headless-threads.e2e.test.ts src/session-groups.e2e.test.ts src/opencode-proxy.e2e.test.ts src/authorized-folders.e2e.test.ts src/inbox-upload-approval.e2e.test.ts src/artifact-files.e2e.test.ts src/effective-permissions.e2e.test.ts src/cloud-mcp-reconcile.e2e.test.ts src/cloud-provider-sync.e2e.test.ts src/desktop-cloud-sync-preserves-imports.e2e.test.ts src/runtime-config-patch-reload.e2e.test.ts src/engine-instance-eviction.e2e.test.ts src/tokens.test.ts src/workspace-export-safety.test.ts src/serve-node.test.ts src/opencode-v2-migration.test.ts src/cloud-mcp-health.test.ts src/cloud-mcp-v2.test.ts"
+    "test:core": "bun --conditions=development test src/headless-threads.e2e.test.ts src/session-groups.e2e.test.ts src/opencode-proxy.e2e.test.ts src/authorized-folders.e2e.test.ts src/inbox-upload-approval.e2e.test.ts src/artifact-files.e2e.test.ts src/effective-permissions.e2e.test.ts src/cloud-mcp-reconcile.e2e.test.ts src/cloud-provider-sync.e2e.test.ts src/desktop-cloud-sync-preserves-imports.e2e.test.ts src/runtime-config-patch-reload.e2e.test.ts src/engine-instance-eviction.e2e.test.ts src/tokens.test.ts src/workspace-export-safety.test.ts src/serve-node.test.ts src/opencode-v2-migration.test.ts src/cloud-mcp-health.test.ts src/cloud-mcp-v2.test.ts src/opencode-legacy-history.test.ts"
   },
   "files": [
     "bin",
@@ -58,6 +58,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.18.15",
     "@openwork/enterprise-mcp-client": "workspace:*",
+    "@openwork/opencode-legacy-threads": "workspace:*",
     "@openwork/types": "workspace:*",
     "better-sqlite3": "^13.0.2",
     "drizzle-orm": "^0.45.2",

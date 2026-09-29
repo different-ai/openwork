@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import { useNewTaskDraftState } from "../sync/draft-store";
+import { isLegacyThread } from "@/app/lib/legacy-thread";
 import { newSessionDraftOwnerKey, newSessionDraftSlot } from "../chat/new-session-destination";
 import { persistableComposerDraftText, useComposerStateStore } from "../surface/composer-state-store";
 import * as React from "react";
@@ -2206,6 +2207,7 @@ export function SessionMenuItem({
           >
             {leading}
             <SessionTitle intent={titleIntent} title={displayTitle} tooltip={itemTitle} />
+            {isLegacyThread(session.id) ? <span className="shrink-0 text-[10px] text-muted-foreground" data-testid="legacy-history-label">v1 history</span> : null}
             <SessionNumberShortcutSlot digit={shortcutDigit} />
           </SidebarMenuSubButton>
           {trailing}
