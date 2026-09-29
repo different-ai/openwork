@@ -614,11 +614,11 @@ describe("Settings staged-update discovery", () => {
     const deferred = Promise.withResolvers<CheckResult>();
     checkResult = () => deferred.promise;
     await click("Check now");
-    installReason = "install failed";
+    installReason = "Copy or download the AppImage to ~/.local/bin, then run it from there.";
     await click("Install & restart");
-    expect(updater.updateStatus).toMatchObject({ state: "error", failedAction: "install" });
+    expect(updater.updateStatus).toMatchObject({ state: "error", message: installReason, failedAction: "install" });
     await act(async () => { deferred.resolve({ available: true, latestVersion: newerVersion, stagedVersion }); });
-    expect(updater.updateStatus).toMatchObject({ state: "error", failedAction: "install" });
+    expect(updater.updateStatus).toMatchObject({ state: "error", message: installReason, failedAction: "install" });
     expect(updater.updateStatus?.candidate).toBeUndefined();
   });
 

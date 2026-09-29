@@ -1,5 +1,5 @@
-import { readFile, mkdir, writeFile, rm } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { access as fsAccess, readFile, mkdir, writeFile, rm } from "node:fs/promises";
+import { constants as fsConstants, readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -306,11 +306,15 @@ export function registerUpdaterIpc({
   platform = process.platform,
   arch = process.arch,
   env = process.env,
+  checkPathAccess = fsAccess,
   // Throws while the installation still has to be activated. Until then no Den
   // is known, so the organization's allowed-versions policy cannot be honoured
   // and the renderer must not be able to check for, stage, or install updates.
   assertActivation = () => {},
 }) {
+  const isLinuxAppImage = platform === "linux"
+    && typeof env.APPIMAGE === "string"
+    && env.APPIMAGE.length > 0;
   let autoUpdaterInstance = null;
   let autoUpdaterLoadPromise = null;
   let checkedUpdateVersion = null;
@@ -358,6 +362,17 @@ export function registerUpdaterIpc({
     }
   }
 
+  async function appImageInstallLocationError() {
+    if (!isLinuxAppImage) return null;
+    const appImageDirectory = path.dirname(env.APPIMAGE);
+    try {
+      await checkPathAccess(appImageDirectory, fsConstants.W_OK | fsConstants.X_OK);
+      return null;
+    } catch {
+      return `OpenWork can't install this update because the AppImage folder is not writable: ${appImageDirectory}. Copy or download the AppImage to a user-writable folder such as ~/.local/bin, then run it from there. Administrator access may be required to remove the original.`;
+    }
+  }
+
   async function ensureAutoUpdater() {
     if (!app.isPackaged) return null;
     if (!autoUpdaterLoadPromise) {
@@ -367,7 +382,7 @@ export function registerUpdaterIpc({
           autoUpdaterInstance = mod.autoUpdater ?? mod.default?.autoUpdater ?? null;
           if (autoUpdaterInstance) {
             autoUpdaterInstance.autoDownload = false;
-            autoUpdaterInstance.autoInstallOnAppQuit = true;
+            autoUpdaterInstance.autoInstallOnAppQuit = !isLinuxAppImage;
             // Differential (blockmap) downloads reconstruct the update zip from the
             // installed app + a diff. On macOS that reconstructed bundle is what
             // feeds Squirrel's fragile move-based install, and is a common trigger
@@ -411,7 +426,7 @@ export function registerUpdaterIpc({
 
   async function downloadAndStageUpdate(updater, version) {
     if (platform !== "darwin") {
-      updater.autoInstallOnAppQuit = true;
+      updater.autoInstallOnAppQuit = !isLinuxAppImage;
       await updater.downloadUpdate();
       return;
     }
@@ -625,6 +640,11 @@ export function registerUpdaterIpc({
     const updater = await ensureAutoUpdater();
     if (updater && app.isPackaged) {
       try {
+        const installLocationError = await appImageInstallLocationError();
+        if (installLocationError) {
+          preventPendingUpdaterInstall(updater);
+          return { ok: false, reason: installLocationError };
+        }
         await applyElectronUpdaterFeed(app, updater, release.version, manifestChannel, true);
         const result = await updater.checkForUpdates();
         if (compareVersions(result?.updateInfo?.version ?? "", release.version) !== 0) {
@@ -634,6 +654,11 @@ export function registerUpdaterIpc({
           throw new Error("Installed version could not be validated.");
         }
         await downloadAndStageUpdate(updater, release.version);
+        const restartLocationError = await appImageInstallLocationError();
+        if (restartLocationError) {
+          preventPendingUpdaterInstall(updater);
+          return { ok: false, reason: restartLocationError };
+        }
         updater.quitAndInstall(false, true);
         return { ok: true, action: "install" };
       } catch (error) {
@@ -778,6 +803,11 @@ export function registerUpdaterIpc({
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };
     try {
+      const installLocationError = await appImageInstallLocationError();
+      if (installLocationError) {
+        preventPendingUpdaterInstall(updater);
+        return { ok: false, reason: installLocationError };
+      }
       const channelState = await applyElectronUpdaterFeed(
         app,
         updater,
@@ -825,6 +855,11 @@ export function registerUpdaterIpc({
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };
     try {
+      const installLocationError = await appImageInstallLocationError();
+      if (installLocationError) {
+        preventPendingUpdaterInstall(updater);
+        return { ok: false, reason: installLocationError };
+      }
       // Re-assert the in-place-write default right before the swap; the ShipIt
       // defaults domain may have been wiped when stale state was cleaned.
       await enableSquirrelDirectContentsWrite(shipItDefaultsDomain, writeDefaults);

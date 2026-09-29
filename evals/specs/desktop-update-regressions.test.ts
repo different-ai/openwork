@@ -11,7 +11,7 @@ const test = spec.world(desktopUpdateRegressionsWorld, {
 for (const suite of ["main", "renderer"] satisfies ("main" | "renderer")[]) {
   test(`app-less ${suite} updater regressions execute against the recorded checkout`, async ({ world, evidence }) => {
     const result = world.run(suite);
-    const passed = result.status === 0 && result.failed === 0 && result.passed === (suite === "main" ? 33 : 62) &&
+    const passed = result.status === 0 && result.failed === 0 && result.passed === (suite === "main" ? 37 : 62) &&
       result.passed === result.total && result.skipped === 0 && result.cancelled === 0 && result.todo === 0 &&
       JSON.stringify(result.before) === JSON.stringify(result.after);
     evidence.recordAssertionEvidence(
@@ -24,7 +24,7 @@ for (const suite of ["main", "renderer"] satisfies ("main" | "renderer")[]) {
     expect(result.status, result.output).toBe(0);
     expect(result.before.head).toMatch(/^[a-f0-9]{40}$/);
     expect(result.after).toEqual(result.before);
-    expect(result.passed, result.output).toBe(suite === "main" ? 33 : 62);
+    expect(result.passed, result.output).toBe(suite === "main" ? 37 : 62);
     expect(result.total, result.output).toBe(result.passed);
     expect(result.failed, result.output).toBe(0);
     expect(result.skipped, result.output).toBe(0);
