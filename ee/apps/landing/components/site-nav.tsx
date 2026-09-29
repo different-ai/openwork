@@ -52,7 +52,8 @@ export function SiteNav(props: Props) {
   const navItems: NavItem[] = [
     { href: "/enterprise", label: "Enterprise", key: "enterprise" },
     { href: "/pricing", label: "Pricing", key: "pricing" },
-    { href: "/docs", label: "Docs", key: "docs", newTab: true }
+    { href: "/docs", label: "Docs", key: "docs", newTab: true },
+    { href: "/roadmap", label: "Roadmap", key: "roadmap" }
   ];
   const productsActive =
     props.active === "connect" ||
