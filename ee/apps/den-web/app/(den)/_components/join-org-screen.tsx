@@ -200,9 +200,11 @@ function getJoinedOrgFromPayload(payload: unknown, preview: DenInvitationPreview
 
 function InviteAuthPanel({
   preview,
+  invitationId,
   initialMode,
 }: {
   preview: DenInvitationPreview;
+  invitationId: string;
   initialMode: "sign-in" | "sign-up";
 }) {
   return (
@@ -216,9 +218,8 @@ function InviteAuthPanel({
         lockEmail
         hideEmailField
         hideLockedEmailSummary
-        hideSocialAuth
         emailFirstFlow
-        emailFirstInvitationId={preview.invitation.id}
+        emailFirstInvitationId={invitationId}
         resolveEmailFirstOnPrefill
         signUpContent={{
           submitLabel: "Create account",
@@ -532,7 +533,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
             <InvitationDetails preview={preview} account={account} roleLabel={roleLabel} />
           </div>
 
-          <InviteAuthPanel preview={preview} initialMode="sign-in" />
+          <InviteAuthPanel preview={preview} invitationId={invitationId} initialMode="sign-in" />
 
           <ActionGroup>
             <NotNowButton onClick={handleNotNow} />
@@ -618,7 +619,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
             ) : null}
           </div>
 
-          <InviteAuthPanel preview={preview} initialMode="sign-up" />
+          <InviteAuthPanel preview={preview} invitationId={invitationId} initialMode="sign-up" />
 
           <ActionGroup>
             <NotNowButton onClick={handleNotNow} />

@@ -1,5 +1,6 @@
 import { beforeAll, expect, test } from "bun:test"
 import { Hono } from "hono"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { validateInvitationAcceptVerification } from "../src/organization-join-verification.js"
 
 function seedRequiredEnv() {
@@ -26,7 +27,7 @@ function createOrgAppWithUser(user: { id: string; email: string; emailVerified: 
   app.use("*", async (c, next) => {
     c.set("user", user)
     c.set("session", {
-      id: "session_test",
+      id: createDenTypeId("session"),
       token: "session_test",
       userId: user.id,
       activeOrganizationId: null,

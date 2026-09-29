@@ -469,6 +469,16 @@ export function getErrorMessage(payload: unknown, fallback: string): string {
     return message;
   }
 
+  // Validation responses carry actionable copy in details, with only a machine
+  // code (such as invalid_request) at the top level.
+  if (Array.isArray(payload.details)) {
+    for (const detail of payload.details) {
+      if (isRecord(detail) && typeof detail.message === "string" && detail.message.trim()) {
+        return detail.message;
+      }
+    }
+  }
+
   const error = payload.error;
   if (typeof error === "string" && error.trim().length > 0) {
     return error;

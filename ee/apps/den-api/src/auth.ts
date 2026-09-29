@@ -76,6 +76,7 @@ import {
   ORGANIZATION_SAML_REQUIRE_TIMESTAMPS,
 } from "./sso-saml-policy.js";
 import { SSO_DOMAIN_VERIFICATION_TOKEN_PREFIX } from "./sso-domain-verification.js";
+import { isSsoEmailDomainTrusted, type SsoEmailDomainProvider } from "./sso-email-domain-proof.js";
 import {
   authorizeOrganizationSsoSignIn,
   completeOrganizationSsoTestIntent,
@@ -86,6 +87,7 @@ import {
   getOrganizationContextForUser,
   listAssignableRoles,
   reconcilePendingInvitationsForUser,
+  reconcileSsoInvitationsForUser,
   seedDefaultOrganizationRoles,
   validateOrganizationMemberRemovalForHook,
   validateOrganizationMemberRoleUpdate,
@@ -403,7 +405,7 @@ async function hasPendingInvitationForEmail(input: { invitationIdOrToken: string
       sql`(${schema.InvitationTable.id} = ${input.invitationIdOrToken} or ${schema.InvitationTable.inviteToken} = ${input.invitationIdOrToken})`,
       eq(schema.InvitationTable.status, "pending"),
       gt(schema.InvitationTable.expiresAt, new Date()),
-      sql`lower(${schema.InvitationTable.email}) = ${input.email.trim().toLowerCase()}`,
+      sql`lower(${schema.InvitationTable.email}) = ${normalizeLoginEmail(input.email)}`,
     ))
     .limit(1);
 
@@ -621,6 +623,10 @@ function getEnterpriseAuthRedirectUrl(input: {
   return url.toString();
 }
 
+function isSsoCallbackPath(path: string | undefined) {
+  return path === "/sso/callback/:providerId" || path === "/sso/saml2/sp/acs/:providerId";
+}
+
 function removeSsoTestSessionCookie(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) {
   const headers = ctx.context.responseHeaders;
   if (!headers) return;
@@ -651,6 +657,8 @@ export const auth = betterAuth({
   database: drizzleAdapter(db, {
     provider: "mysql",
     schema,
+    // SSO must retain its provider-row lock through account/email-proof writes.
+    transaction: true,
   }),
   account: DEN_ACCOUNT_CONFIG,
   session: {
@@ -753,24 +761,23 @@ export const auth = betterAuth({
     session: {
       create: {
         before: async (session, context) => {
+          // Better Auth creates the session before SSO provisioning/JIT. Neither
+          // invitation reconciliation nor single-org bootstrap is safe here;
+          // even an administrator configuration test passes through this hook.
+          if (isSsoCallbackPath(context?.path)) {
+            return { data: { ...session, activeOrganizationId: null } };
+          }
+          // Other authentication flows can also create users inside a transaction.
+          // Membership writes use Den's connection, so defer them until commit.
           const userId = normalizeDenTypeId("user", session.userId);
           const deviceCode = context?.path === "/device/token" ? readStringProperty(context.body, "device_code") : null;
           const deviceOrganizationId = deviceCode
             ? await takeDeviceSessionOrganization({ deviceCode, userId })
             : null;
-          const activeOrganizationId = deviceOrganizationId ?? await getInitialActiveOrganizationIdForUser(userId);
-          try {
-            // SSO JIT creates the raw member row before the session row, so this
-            // chokepoint can merge any matching pending invitation without blocking sign-in.
-            await reconcilePendingInvitationsForUser(userId);
-          } catch (error) {
-            logger.error("invitation reconcile failed", { user_id: userId, error });
-          }
-
           return {
             data: {
               ...session,
-              activeOrganizationId,
+              activeOrganizationId: deviceOrganizationId,
             },
           };
         },
@@ -957,6 +964,35 @@ export const auth = betterAuth({
       });
     }),
     after: createAuthMiddleware(async (ctx) => {
+      const newSession = ctx.context.newSession;
+      if (ctx.path === "/callback/:id" && newSession) {
+        const requirement = await findEnterpriseAuthRequirementForUserId(newSession.user.id);
+        if (requirement) {
+          await ctx.context.internalAdapter.deleteSession(newSession.session.token);
+          await cache.auth.revokeSession(newSession.session.token);
+          deleteSessionCookie(ctx);
+          throw ctx.redirect(getEnterpriseAuthRedirectUrl({
+            signInPath: requirement.signInPath,
+            email: newSession.user.email,
+            callbackUrl: ctx.context.responseHeaders?.get("location") ?? null,
+          }));
+        }
+      }
+      if (!isSsoCallbackPath(ctx.path) && newSession
+        && !(ctx.context.returned instanceof APIError && ctx.context.returned.statusCode >= 400)) {
+        const userId = normalizeDenTypeId("user", newSession.user.id);
+        const activeOrganizationId = newSession.session.activeOrganizationId ?? await getInitialActiveOrganizationIdForUser(userId);
+        try {
+          await reconcilePendingInvitationsForUser(userId);
+        } catch (error) {
+          logger.error("invitation reconcile failed", { user_id: userId, error });
+        }
+        if (activeOrganizationId !== newSession.session.activeOrganizationId) {
+          await ctx.context.internalAdapter.updateSession(newSession.session.token, { activeOrganizationId });
+          newSession.session.activeOrganizationId = activeOrganizationId;
+        }
+      }
+
       if (ctx.path === "/device/token") {
         const deviceCode = readStringProperty(ctx.body, "device_code");
         if (deviceCode) {
@@ -976,15 +1012,33 @@ export const auth = betterAuth({
         return;
       }
 
-      if (ctx.path === "/sso/callback/:providerId" || ctx.path === "/sso/saml2/sp/acs/:providerId") {
+      if (isSsoCallbackPath(ctx.path)) {
         const callbackUrl = ctx.context.responseHeaders?.get("location") ?? null;
         const intentId = getSsoTestIntentIdFromCallbackUrl(callbackUrl);
         const providerId = readStringProperty(ctx.params, "providerId");
-        if (!intentId || !providerId) {
+        if (!providerId) {
           return;
         }
 
         const newSession = ctx.context.newSession;
+        if (!intentId) {
+          // setSessionCookie/newSession follows provisionUser and the raw JIT
+          // member insert. Session creation alone is not a successful callback.
+          if (!newSession || !callbackUrl || (ctx.context.returned instanceof APIError && ctx.context.returned.statusCode >= 400)) {
+            return;
+          }
+          try {
+            if (new URL(callbackUrl, env.betterAuthUrl).searchParams.has("error")) return;
+            await reconcileSsoInvitationsForUser({
+              userId: normalizeDenTypeId("user", newSession.user.id),
+              providerId,
+            });
+          } catch (error) {
+            logger.error("SSO invitation reconcile failed", { user_id: newSession.user.id, provider_id: providerId, error });
+          }
+          return;
+        }
+
         if (!newSession) {
           await failOrganizationSsoTestIntent(intentId, "authentication");
           return;
@@ -1001,29 +1055,6 @@ export const auth = betterAuth({
         return;
       }
 
-      if (ctx.path !== "/callback/:id") {
-        return;
-      }
-
-      const newSession = ctx.context.newSession;
-      if (!newSession) {
-        return;
-      }
-
-      const requirement = await findEnterpriseAuthRequirementForUserId(newSession.user.id);
-      if (!requirement) {
-        return;
-      }
-
-      await ctx.context.internalAdapter.deleteSession(newSession.session.token);
-      // Enterprise auth rejection deletes the just-created session outside hooks in some adapters.
-      await cache.auth.revokeSession(newSession.session.token);
-      deleteSessionCookie(ctx);
-      throw ctx.redirect(getEnterpriseAuthRedirectUrl({
-        signInPath: requirement.signInPath,
-        email: newSession.user.email,
-        callbackUrl: ctx.context.responseHeaders?.get("location") ?? null,
-      }));
     }),
   },
   advanced: {
@@ -1142,6 +1173,14 @@ export const auth = betterAuth({
   emailVerification: {
     sendOnSignUp: env.requireEmailVerification,
     sendOnSignIn: env.requireEmailVerification,
+    autoSignInAfterVerification: true,
+    beforeEmailVerification: async (user) => {
+      if (await findEnterpriseAuthRequirementForEmail(normalizeLoginEmail(user.email))) {
+        throw new APIError("FORBIDDEN", {
+          message: "This account is managed by an organization. Use SSO to sign in.",
+        });
+      }
+    },
     afterEmailVerification: async (user) => {
       await syncDenSignupContact({
         email: user.email,
@@ -1169,11 +1208,18 @@ export const auth = betterAuth({
       otpLength: 6,
       expiresIn: 600,
       allowedAttempts: 5,
-      async sendVerificationOTP({ email, otp, type }) {
+      async sendVerificationOTP({ email, otp, type }, context) {
+        if (type === "email-verification") {
+          const account = await context?.context.internalAdapter.findUserByEmail(email);
+          if (account?.user.emailVerified) return;
+        }
         await sendEmail({
           to: email,
           template: "verification",
-          props: { verificationCode: otp },
+          props: {
+            verificationCode: otp,
+            recoveryUrl: new URL(`/verify?email=${encodeURIComponent(normalizeLoginEmail(email))}`, env.webUrl).toString(),
+          },
         });
       },
     }),
@@ -1503,6 +1549,10 @@ export const auth = betterAuth({
       domainVerification: {
         enabled: true,
         tokenPrefix: SSO_DOMAIN_VERIFICATION_TOKEN_PREFIX,
+        isEmailDomainTrusted: ({ provider, email, protocol }: { provider: SsoEmailDomainProvider; email: string; protocol: "oidc" | "saml" }) => isSsoEmailDomainTrusted(provider, email, {
+          protocol,
+          allowDevelopment: env.devMode,
+        }),
       },
       organizationProvisioning: {
         disabled: false,

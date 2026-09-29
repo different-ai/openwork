@@ -61,6 +61,7 @@ import { ensureDefaultDesktopPolicyForOrganization } from "./desktop-policies.js
 import { isProtectedOrganizationRoleName, organizationRoleValueSatisfies, shouldRevokeSessionsForRoleChange } from "./organization-role-hierarchy.js"
 import { appLogger } from "./observability/logger.js"
 import { isSingleOrgOwnerEmailEligible, resolveSingleOrgMembershipRole } from "./single-org-policy.js"
+import { isSsoEmailDomainTrusted } from "./sso-email-domain-proof.js"
 
 const logger = appLogger.child({ component: "organizations" })
 
@@ -675,15 +676,72 @@ export async function reconcilePendingInvitationsForUser(userId: UserId) {
     .where(eq(AuthUserTable.id, userId))
     .limit(1)
   const email = userRows[0]?.email.trim().toLowerCase()
-  if (!email) {
+  return email ? reconcilePendingInvitations(userId, email) : 0
+}
+
+// Called only after a successful SSO callback has finished provisioning/JIT.
+// An invitation is never email proof or authority to create membership here.
+export async function reconcileSsoInvitationsForUser(input: { userId: UserId; providerId: string }) {
+  const [user] = await db
+    .select({ email: AuthUserTable.email, emailVerified: AuthUserTable.emailVerified })
+    .from(AuthUserTable)
+    .where(eq(AuthUserTable.id, input.userId))
+    .limit(1)
+  if (!user?.emailVerified) return 0
+
+  const email = user.email.trim().toLowerCase()
+  const emailDomain = getEmailDomain(email)
+  if (!emailDomain) return 0
+
+  const [connection] = await db
+    .select({
+      organizationId: SsoConnectionTable.organizationId,
+      kind: SsoConnectionTable.kind,
+      provider: SsoProviderTable,
+      domain: SsoProviderTable.domain,
+      allowedEmailDomains: OrganizationTable.allowedEmailDomains,
+    })
+    .from(SsoConnectionTable)
+    .innerJoin(SsoProviderTable, and(
+      eq(SsoConnectionTable.providerId, SsoProviderTable.providerId),
+      eq(SsoConnectionTable.organizationId, SsoProviderTable.organizationId),
+      eq(SsoProviderTable.domainVerified, true),
+    ))
+    .innerJoin(OrganizationTable, eq(SsoConnectionTable.organizationId, OrganizationTable.id))
+    .where(and(eq(SsoConnectionTable.providerId, input.providerId), eq(SsoConnectionTable.status, "enabled")))
+    .limit(1)
+  // Provider domains are exact, not wildcard/subdomain or comma-list matches.
+  if (!connection || connection.domain.trim().toLowerCase() !== emailDomain
+    || (connection.kind !== "oidc" && connection.kind !== "saml")
+    || !isSsoEmailDomainTrusted(connection.provider, email, { protocol: connection.kind, allowDevelopment: env.devMode })
+    || !isEmailAllowedForOrganization(normalizeStoredAllowedEmailDomains(connection.allowedEmailDomains), email)) {
     return 0
   }
 
+  const [member] = await db.select({ id: MemberTable.id }).from(MemberTable)
+    .where(and(eq(MemberTable.organizationId, connection.organizationId), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
+    .limit(1)
+  if (!member) return 0
+
+  try {
+    return await reconcilePendingInvitations(input.userId, email, connection.organizationId)
+  } finally {
+    // The SDK inserts JIT members without Den's member hooks. Refresh these
+    // reads even when no invitation exists (or a later reconciliation fails).
+    await Promise.all([
+      cache.org.deleteMemberList(connection.organizationId),
+      cache.org.deleteMembership({ organizationId: connection.organizationId, userId: input.userId }),
+    ])
+  }
+}
+
+async function reconcilePendingInvitations(userId: UserId, email: string, organizationId?: OrgId) {
   const now = new Date()
   const invitations = await db
     .select()
     .from(InvitationTable)
     .where(and(
+      organizationId ? eq(InvitationTable.organizationId, organizationId) : undefined,
       eq(InvitationTable.status, "pending"),
       gt(InvitationTable.expiresAt, now),
       sql`lower(${InvitationTable.email}) = ${email}`,
@@ -692,7 +750,8 @@ export async function reconcilePendingInvitationsForUser(userId: UserId) {
 
   let acceptedCount = 0
   for (const invitation of invitations) {
-    if (invitation.status !== "pending" || invitation.expiresAt <= now || invitation.email.trim().toLowerCase() !== email) {
+    if ((organizationId && invitation.organizationId !== organizationId)
+      || invitation.status !== "pending" || invitation.expiresAt <= now || invitation.email.trim().toLowerCase() !== email) {
       continue
     }
 
@@ -707,7 +766,7 @@ export async function reconcilePendingInvitationsForUser(userId: UserId) {
       continue
     }
 
-    const accepted = await acceptInvitation(invitation, userId)
+    const accepted = await acceptInvitation(invitation, userId, { requireExistingMember: true })
     if (accepted?.status === "accepted") {
       acceptedCount += 1
     }
@@ -716,7 +775,7 @@ export async function reconcilePendingInvitationsForUser(userId: UserId) {
   return acceptedCount
 }
 
-async function acceptInvitation(invitation: InvitationRow, userId: UserId, options?: { fallbackRole?: string }) {
+async function acceptInvitation(invitation: InvitationRow, userId: UserId, options?: { fallbackRole?: string; requireExistingMember?: boolean }) {
   const scimConnections = await db
     .select({ id: ScimProviderTable.id })
     .from(ScimProviderTable)
@@ -762,6 +821,9 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
       .limit(1)
       .for("update")
     const existingMember = existingMemberRows[0] ?? null
+    // Reconciliation may only merge membership that is still active under the
+    // organization lock; removal after its pre-read must not become a rejoin.
+    if (options?.requireExistingMember && !existingMember) return null
     const invitationStatus = getInvitationStatus(currentInvitation)
     if (invitationStatus !== "pending") {
       return invitationStatus === "accepted" && existingMember

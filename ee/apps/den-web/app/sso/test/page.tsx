@@ -1,7 +1,7 @@
 "use client";
 
 import { DenStatusScreen } from "../../../components/den-status-screen";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { getRuntimeConfig } from "../../(den)/_lib/runtime-config";
 import { denApiCredentials, denBrowserEndpoint } from "../../(den)/_lib/den-api-origin";
@@ -18,11 +18,8 @@ function SsoTestStartContent() {
   const intentId = searchParams.get("intentId")?.trim() ?? "";
   const organizationId = searchParams.get("organizationId")?.trim() ?? "";
   const [error, setError] = useState<string | null>(null);
-  const startedRef = useRef(false);
 
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
     if (!intentId || !organizationId) {
       setError("This SSO authentication test link is invalid. Return to SSO settings and start a new test.");
       return;
@@ -32,6 +29,7 @@ function SsoTestStartContent() {
     void (async () => {
       try {
         await getRuntimeConfig();
+        if (cancelled) return;
         const endpoint = denBrowserEndpoint(`/v1/sso/test/${encodeURIComponent(intentId)}/start`);
         const response = await fetch(endpoint, {
           method: "POST",

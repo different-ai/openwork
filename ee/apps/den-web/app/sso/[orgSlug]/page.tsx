@@ -5,6 +5,7 @@ import { DenStatusScreen } from "../../../components/den-status-screen";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { getSocialCallbackUrl, requestJson } from "../../(den)/_lib/den-flow";
+import { getRuntimeConfig } from "../../(den)/_lib/runtime-config";
 
 export default function OrganizationSsoSignInPage() {
   const params = useParams<{ orgSlug: string }>();
@@ -25,6 +26,8 @@ export default function OrganizationSsoSignInPage() {
 
     void (async () => {
       try {
+        await getRuntimeConfig();
+        if (cancelled) return;
         const { response, payload } = await requestJson("/api/auth/sign-in/sso", {
           method: "POST",
           headers: {

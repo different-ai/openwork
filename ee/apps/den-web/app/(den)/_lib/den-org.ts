@@ -175,6 +175,7 @@ export type DenOrgSsoConnection = {
   acsUrl: string | null;
   metadataUrl: string | null;
   domainVerified: boolean;
+  emailDomainVerified: boolean;
   domainVerificationHost: string;
   domainVerificationDnsName: string;
   oidc: {
@@ -1330,6 +1331,7 @@ export function parseOrgSsoPayload(payload: unknown): {
           acsUrl: asString(rawConnection.acsUrl),
           metadataUrl: asString(rawConnection.metadataUrl),
           domainVerified: asBoolean(rawConnection.domainVerified),
+          emailDomainVerified: rawConnection.emailDomainVerified === true,
           domainVerificationHost,
           domainVerificationDnsName,
           oidc: rawOidc

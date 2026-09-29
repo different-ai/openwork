@@ -17,7 +17,10 @@
     "build:mcp-apps": "pnpm --filter @openwork/mcp-apps build",
     "openapi:snapshot": "tsx scripts/generate-openapi-snapshot.ts",
     "smoke:config-object-payload-boundary": "tsx scripts/smoke-config-object-payload-boundary.ts",
-    "test": "pnpm run test:audit && pnpm run test:vertex-auth && pnpm run test:agent-signup && bun test --conditions development test/api-keys.test.ts test/bearer-session.test.ts test/cloud-provider-materialization-read-retry.test.ts test/remote-session-capability-wire.test.ts && bun test --conditions development test/organization-capabilities.test.ts test/auth-organization-metadata.test.ts && pnpm run test:web-origins && pnpm run test:gateway-deployment && pnpm run test:gateway-usage && pnpm run test:http-server",
+    "test": "pnpm run test:audit && pnpm run test:vertex-auth && pnpm run test:sso-verified-email && pnpm run test:sso-domain-proof && pnpm run test:agent-signup && bun test --conditions development test/api-keys.test.ts test/bearer-session.test.ts test/cloud-provider-materialization-read-retry.test.ts test/remote-session-capability-wire.test.ts && bun test --conditions development test/organization-capabilities.test.ts test/auth-organization-metadata.test.ts && pnpm run test:web-origins && pnpm run test:gateway-deployment && pnpm run test:gateway-usage && pnpm run test:http-server",
+    "test:sso-verified-email": "tsx --conditions=development --test test/sso-verified-email.test.ts && tsx --conditions=development --test test/sso-saml-verified-email.test.ts",
+    "test:sso-domain-proof": "tsx --conditions=development --test --test-concurrency=1 test/sso-email-domain-proof.test.ts test/sso-domain-verification.test.ts && bun test --conditions development test/sso-domain-proof-routes.test.ts && bun test --conditions development test/sso-config-revision.test.ts",
+    "test:sso-domain-proof:db": "DATABASE_URL=${DEN_TEST_DATABASE_URL:?Set an isolated prepared test database} bun test --conditions development test/sso-domain-proof-service.test.ts && DATABASE_URL=${DEN_TEST_DATABASE_URL:?Set an isolated prepared test database} bun test --conditions development test/sso-provider-rotation.test.ts && DATABASE_URL=${DEN_TEST_DATABASE_URL:?Set an isolated prepared test database} bun test --conditions development test/invite-duplicate-members.test.ts && DATABASE_URL=${DEN_TEST_DATABASE_URL:?Set an isolated prepared test database} bun test --conditions development test/sso-provider-transaction.test.ts",
     "test:agent-signup": "bun test --conditions development test/agent-signup-links.test.ts test/mcp-token-lifetime.test.ts && bun test --conditions development test/install-link-access.test.ts",
     "test:web-origins": "pnpm run build:mcp-apps && for spec in organization-web-origins organization-web-origins-routes desktop-handoff-public-url handoff-exchange-cors cors-handled-by-edge; do bun test --conditions development test/$spec.test.ts || exit $?; done",
     "test:gateway-deployment": "bun test --conditions development test/gateway-deployment-routes.test.ts && bun test --conditions development test/org-deployment-capabilities.test.ts",
@@ -117,6 +120,7 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "bun-types": "^1.3.6",
-    "tsx": "^4.23.1"
+    "tsx": "^4.23.1",
+    "xml-crypto": "6.1.2"
   }
 }

@@ -1014,6 +1014,42 @@ export function OrgDashboardProvider({
     };
   }, [router, sessionHydrated, user?.id, isSingleOrgMode, setupOrganizationId]);
 
+  useEffect(() => {
+    const isMembersPage = pathname === "/dashboard/members" || pathname === "/dashboard/manage-members";
+    const userId = user?.id;
+    const organizationId = activeOrgId;
+    if (!isMembersPage || !sessionHydrated || !userId || !organizationId || orgBusy || mutationBusy) return;
+
+    let cancelled = false;
+    let pending = false;
+    const refreshMembers = async () => {
+      const state = orgLoadRef.current;
+      const generation = state.generation;
+      const isCurrent = () => !cancelled && state.mounted && !state.switching
+        && state.generation === generation && state.userId === userId
+        && state.organizationId === organizationId && getRequestOrgScope() === organizationId;
+      if (pending || document.visibilityState !== "visible" || !isCurrent()) return;
+      pending = true;
+      try {
+        const context = await loadOrgContext(organizationId, false);
+        if (isCurrent() && document.visibilityState === "visible") setOrgContext(context);
+      } catch {
+      } finally {
+        pending = false;
+      }
+    };
+    const refresh = () => { void refreshMembers(); };
+    const interval = window.setInterval(refresh, 5000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [pathname, sessionHydrated, user?.id, activeOrgId, orgBusy, mutationBusy]);
+
   const value: OrgDashboardContextValue = {
     orgSlug: activeOrg?.slug ?? null,
     orgId: activeOrgId,

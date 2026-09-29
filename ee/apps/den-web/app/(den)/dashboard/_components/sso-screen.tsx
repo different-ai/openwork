@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, Copy, KeyRound, LoaderCircle, RefreshCw, Shield, ShieldAlert, Trash2, X } from "lucide-react";
+import { CheckCircle2, ChevronRight, Copy, KeyRound, LoaderCircle, LockKeyhole, RefreshCw, Shield, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
@@ -86,6 +86,9 @@ export function SsoScreen() {
       const parsed = parseOrgSsoPayload(payload);
       if (isCurrent()) {
         setConnection(parsed.connection);
+        if (parsed.connection?.emailDomainVerified) {
+          setDomainVerificationToken(null);
+        }
         if (!quiet) {
           syncFormFromConnection(parsed.connection);
           setEditing(false);
@@ -316,11 +319,9 @@ export function SsoScreen() {
             throw getRequestError(payload, response, `Failed to request domain verification (${response.status}).`);
           }
 
-          const token = typeof (payload as { domainVerificationToken?: unknown } | null)?.domainVerificationToken === "string"
-            ? (payload as { domainVerificationToken: string }).domainVerificationToken
-            : "";
+          const token = parseOrgSsoPayload(payload).domainVerificationToken;
           if (!token) {
-            throw new Error("SSO domain verification token was missing from the response.");
+            throw new Error("SSO domain verification token was missing. Request a new token.");
           }
           setDomainVerificationToken(token);
         } finally {
@@ -347,7 +348,6 @@ export function SsoScreen() {
           if (response.status !== 204 && !response.ok) {
             throw getRequestError(payload, response, `Failed to verify domain (${response.status}).`);
           }
-          setDomainVerificationToken(null);
           await loadSsoConfig();
         } finally {
           setVerifyingDomain(false);
@@ -478,15 +478,16 @@ export function SsoScreen() {
   return (
     <DashboardPageTemplate icon={Shield} title="SSO" description="Configure one enterprise SSO connection per workspace and share the generated sign-in URL with your team." colors={["#F5F3FF", "#4C1D95", "#8B5CF6", "#DDD6FE"]}>
       {!access.canViewSettings ? (
-        <div className="rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-6 py-5 text-[14px] text-[var(--dls-text-primary)]">Only workspace admins can view SSO.</div>
+        <p className="flex items-center gap-2 text-[14px] text-[var(--dls-text-secondary)]"><LockKeyhole size={16} strokeWidth={1.5} aria-hidden="true" />Only workspace admins can view SSO.</p>
       ) : (
         <>
           {!orgContext.entitlements.sso ? <EnterprisePlanNotice feature="SSO" /> : null}
           {error ? <DenNotice message={error} className="mb-6" /> : null}
           {!access.canManageSso ? (
-            <div className="mb-6 rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-4 text-[14px] text-[var(--dls-text-primary)]">
-              Read-only: owners and super-admins can create, edit, delete, or verify SSO connections.
-            </div>
+            <p id="sso-read-only" className="mb-4 flex items-center gap-2 text-[14px] text-[var(--dls-text-secondary)]">
+              <LockKeyhole size={16} strokeWidth={1.5} aria-hidden="true" />
+              Read-only: owners and super-admins can change SSO settings and verify domains.
+            </p>
           ) : null}
 
           {showConnectionForm ? (
@@ -589,7 +590,7 @@ export function SsoScreen() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">Current connection</p>
-                <p className="mt-1 text-[14px] leading-6 text-gray-500">Use the generated sign-in and provider setup URLs below.</p>
+                {connection ? <p data-testid="sso-connection-status" className="mt-1 text-[14px] leading-6 text-[var(--dls-text-secondary)]">{connection.status === "enabled" ? "Enabled" : "Saved · disabled"}</p> : null}
               </div>
               {connection && !editing ? (
                 <div className="flex flex-wrap gap-3">
@@ -610,66 +611,63 @@ export function SsoScreen() {
 
             {connection ? (
               <div className="mt-5 space-y-4">
-                {!connection.domainVerified ? (
-                  <section data-testid="sso-domain-verification" className="overflow-hidden rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-surface)] text-[14px] text-[var(--dls-text-primary)]">
-                    <div className="flex flex-col gap-4 border-b border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="flex items-start gap-3">
-                        <span className="mt-0.5 rounded-full bg-amber-900 p-2 text-amber-50"><ShieldAlert size={18} aria-hidden="true" /></span>
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-[16px] font-semibold tracking-[-0.02em]">Verify your domain first</p>
-                            <span className="rounded-full border border-amber-300 bg-white/80 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-800">Pending verification</span>
-                          </div>
-                          <p className="mt-1 max-w-2xl leading-6 text-[var(--dls-text-secondary)]">
-                            SSO remains inactive and is not offered to users until this DNS check proves that your workspace controls <strong>{connection.domain}</strong>.
-                          </p>
+                <section aria-label="Domain ownership" className="border-y border-[var(--dls-border)] text-[14px] text-[var(--dls-text-primary)]">
+                  <p data-testid="sso-domain-ownership" className="flex min-h-11 items-center justify-between gap-3 py-2">
+                    <span>Domain ownership: </span>
+                    <span>{connection.emailDomainVerified ? "Verified" : "Verification needed"}</span>
+                  </p>
+                  {!connection.emailDomainVerified ? (
+                    <details data-testid="sso-domain-verification" className="group border-t border-[var(--dls-border)]" open>
+                      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 py-2 [&::-webkit-details-marker]:hidden">
+                        <ChevronRight size={16} strokeWidth={1.5} aria-hidden="true" className="transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" />
+                        DNS TXT record
+                      </summary>
+                      <div className="flex flex-col gap-3 pb-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <span>{connection.domain}</span>
+                          <DenButton variant="secondary" size="sm" icon={KeyRound} onClick={() => void handleRequestDomainToken()} disabled={requestingDomainToken || verifyingDomain || !access.canManageSso} aria-describedby={!access.canManageSso ? "sso-read-only" : undefined}>
+                            {requestingDomainToken ? "Requesting..." : "Request token"}
+                          </DenButton>
                         </div>
-                      </div>
-                      <div className="flex shrink-0 flex-wrap gap-2">
-                        <DenButton variant="secondary" icon={KeyRound} onClick={() => void handleRequestDomainToken()} disabled={requestingDomainToken || !access.canManageSso}>
-                          {requestingDomainToken ? "Requesting..." : "Request token"}
-                        </DenButton>
-                        <DenButton variant="primary" icon={RefreshCw} onClick={() => void handleVerifyDomain()} disabled={verifyingDomain || !access.canManageSso || !domainVerificationToken}>
-                          {verifyingDomain ? "Verifying..." : "Verify domain"}
-                        </DenButton>
-                      </div>
-                    </div>
-
-                    <div className="grid gap-px bg-[var(--dls-border)] md:grid-cols-2">
-                      {[
-                        { label: "Record type", value: "TXT", key: "domain-record-type" },
-                        { label: "Host / name", value: connection.domainVerificationHost, key: "domain-record-host" },
-                        { label: "Full DNS name", value: connection.domainVerificationDnsName, key: "domain-record-name" },
-                        { label: "Value", value: domainVerificationToken, key: "domain-token" },
-                      ].map((record) => (
-                        <div key={record.key} className="bg-[var(--dls-surface)] px-5 py-4">
-                          <div className="mb-2 flex items-center justify-between gap-3">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--dls-text-secondary)]">{record.label}</p>
-                            {record.value ? (
-                              <button type="button" className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] font-medium text-[var(--dls-text-primary)] transition hover:bg-[var(--dls-active)]" onClick={() => void copyValue(record.value, record.key)}>
-                                <Copy size={13} aria-hidden="true" /> {copiedValue === record.key ? "Copied" : "Copy"}
-                              </button>
-                            ) : null}
-                          </div>
-                          <code className="block break-all text-[13px] leading-6 text-gray-800">{record.value ?? "Request a token to reveal the TXT value"}</code>
+                        <dl className="divide-y divide-[var(--dls-border)]">
+                          {[
+                            { label: "Record type", value: "TXT", key: "domain-record-type" },
+                            { label: "Host / name", value: connection.domainVerificationHost, key: "domain-record-host" },
+                            { label: "Full DNS name", value: connection.domainVerificationDnsName, key: "domain-record-name" },
+                            { label: "Value", value: domainVerificationToken, key: "domain-token" },
+                          ].map((record) => (
+                            <div key={record.key} className="flex min-h-11 items-center justify-between gap-3 py-2">
+                              <dt className="shrink-0 text-[var(--dls-text-secondary)]">{record.label}</dt>
+                              <dd className="flex min-w-0 items-center gap-3">
+                                <code className="break-all text-right text-[13px]">{record.value ?? "Request a token to get the TXT value"}</code>
+                                {record.value ? (
+                                  <DenButton variant="ghost" size="sm" icon={Copy} aria-label={`Copy ${record.label}`} onClick={() => void copyValue(record.value, record.key)}>
+                                    {copiedValue === record.key ? "Copied" : "Copy"}
+                                  </DenButton>
+                                ) : null}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                        <div className="flex justify-end">
+                          <DenButton variant="primary" size="sm" icon={RefreshCw} onClick={() => void handleVerifyDomain()} disabled={verifyingDomain || requestingDomainToken || !access.canManageSso || !domainVerificationToken} aria-describedby={!access.canManageSso ? "sso-read-only" : undefined}>
+                            {verifyingDomain ? "Verifying..." : "Verify domain"}
+                          </DenButton>
                         </div>
-                      ))}
-                    </div>
-
-                    <div className="grid gap-3 px-5 py-4 text-[13px] leading-5 text-[var(--dls-text-secondary)] sm:grid-cols-2">
-                      <p><strong className="text-[var(--dls-text-primary)]">DNS providers differ:</strong> use the host value when your provider appends the domain automatically; otherwise use the full DNS name.</p>
-                      <p><strong className="text-[var(--dls-text-primary)]">One-time proof:</strong> tokens expire after seven days. After verification succeeds, you may remove the TXT record. Changing the domain requires verification again.</p>
-                    </div>
-                  </section>
-                ) : (
-                  <div className="flex items-start gap-3 rounded-[20px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-900">
-                    <CheckCircle2 className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
-                    <div>
-                      <p className="font-semibold">Domain verified{connection.status === "enabled" ? " · SSO enabled" : ""}</p>
-                      <p className="mt-1 text-emerald-800">{connection.status === "enabled" ? "This tested configuration is active." : "The configuration is still disabled. Test it before enabling SSO."} The DNS TXT record was a one-time proof and may now be removed.</p>
-                    </div>
-                  </div>
-                )}
+                        <details className="group/help text-[13px] text-[var(--dls-text-secondary)]">
+                          <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
+                            <ChevronRight size={16} strokeWidth={1.5} aria-hidden="true" className="transition-transform duration-150 group-open/help:rotate-90 motion-reduce:transition-none" />
+                            DNS help
+                          </summary>
+                          <div className="flex flex-col gap-2 leading-5">
+                            <p>Use the host value when your DNS provider appends the domain; otherwise use the full DNS name.</p>
+                            <p>Tokens expire after seven days. After verification, you may remove the TXT record. A different domain needs a new verification.</p>
+                          </div>
+                        </details>
+                      </div>
+                    </details>
+                  ) : null}
+                </section>
 
                 <div data-testid="sso-provider-setup" className="space-y-4">
                   {[
@@ -693,7 +691,6 @@ export function SsoScreen() {
                     <p className="font-medium text-gray-900">Provider</p>
                     <p className="mt-2">{connection.providerId}</p>
                     <p className="mt-2">{connection.kind.toUpperCase()} · {connection.domain}</p>
-                    <p className="mt-2">Domain verified: {connection.domainVerified ? "Yes" : "No"}</p>
                   </div>
                   <div className="rounded-[20px] border border-gray-200 bg-gray-50 p-4 text-[14px] text-gray-700">
                     <p className="font-medium text-gray-900">Status</p>

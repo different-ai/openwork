@@ -1,5 +1,6 @@
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test"
+import { withSsoEmailDomainProof } from "../src/sso-email-domain-proof.js"
 
 const singleOrgSlug = "invite-duplicates-test"
 const future = new Date(Date.now() + 1000 * 60 * 60)
@@ -7,6 +8,7 @@ const past = new Date(Date.now() - 1000 * 60 * 60)
 
 const organizationId = createDenTypeId("organization")
 const otherOrganizationId = createDenTypeId("organization")
+const organizationIds = [organizationId, otherOrganizationId]
 const ownerUserId = createDenTypeId("user")
 const ownerMemberId = createDenTypeId("member")
 const otherOwnerMemberId = createDenTypeId("member")
@@ -52,15 +54,21 @@ let db: typeof import("../src/db.js").db | null = null
 let schema: typeof import("@openwork-ee/den-db/schema") | null = null
 let drizzle: typeof import("@openwork-ee/den-db/drizzle") | null = null
 let orgs: typeof import("../src/orgs.js") | null = null
+let cache: typeof import("../src/cache.js").cache | null = null
 let restoreCacheDependencies: (() => void) | null = null
 const cacheDeleteCalls: string[] = []
+const cachedValues = new Map<string, string>()
 
 const redis = {
-  get: (_key: string) => Promise.resolve(null),
-  set: (_key: string, _value: string, _mode: "EX", _ttl: number) => Promise.resolve("OK"),
-  del: (key: string) => {
-    cacheDeleteCalls.push(key)
-    return Promise.resolve(1)
+  get: (key: string) => Promise.resolve(cachedValues.get(key) ?? null),
+  set: (key: string, value: string, _mode: "EX", _ttl: number) => {
+    cachedValues.set(key, value)
+    return Promise.resolve("OK")
+  },
+  del: (...keys: string[]) => {
+    cacheDeleteCalls.push(...keys)
+    for (const key of keys) cachedValues.delete(key)
+    return Promise.resolve(keys.length)
   },
 }
 
@@ -80,11 +88,15 @@ const userIds = [
   otherOrgInviteUserId,
 ]
 
-async function deleteOrganizations(organizationIds: string[]) {
+async function deleteOrganizations(organizationIds: DenTypeId<"organization">[]) {
   if (!db || !schema || !drizzle || organizationIds.length === 0) {
     return
   }
 
+  await db.delete(schema.SsoConnectionTable).where(drizzle.inArray(schema.SsoConnectionTable.organizationId, organizationIds))
+  await db.delete(schema.SsoProviderTable).where(drizzle.inArray(schema.SsoProviderTable.organizationId, organizationIds))
+  await db.delete(schema.ScimUserTombstoneTable).where(drizzle.inArray(schema.ScimUserTombstoneTable.organizationId, organizationIds))
+  await db.delete(schema.ScimProviderTable).where(drizzle.inArray(schema.ScimProviderTable.organizationId, organizationIds))
   await db.delete(schema.DesktopPolicyMemberTable).where(drizzle.inArray(schema.DesktopPolicyMemberTable.organizationId, organizationIds))
   await db.delete(schema.DesktopPolicyTable).where(drizzle.inArray(schema.DesktopPolicyTable.organizationId, organizationIds))
   await db.delete(schema.MemberTable).where(drizzle.inArray(schema.MemberTable.organizationId, organizationIds))
@@ -102,18 +114,18 @@ async function cleanup() {
     .select({ id: schema.OrganizationTable.id })
     .from(schema.OrganizationTable)
     .where(drizzle.eq(schema.OrganizationTable.slug, singleOrgSlug))
-  await deleteOrganizations([...staleOrgs.map((row) => row.id), organizationId, otherOrganizationId])
+  await deleteOrganizations([...staleOrgs.map((row) => row.id), ...organizationIds])
   await db.delete(schema.AuthUserTable).where(drizzle.inArray(schema.AuthUserTable.id, userIds))
 }
 
 async function createInvitation(input: {
-  invitationId: string
-  memberId: string
-  organizationId: string
+  invitationId: DenTypeId<"invitation">
+  memberId: DenTypeId<"member">
+  organizationId: DenTypeId<"organization">
   email: string
   role: string
   expiresAt: Date
-  inviterMemberId: string
+  inviterMemberId: DenTypeId<"member">
 }) {
   if (!db || !schema) {
     throw new Error("test database not initialized")
@@ -141,7 +153,7 @@ async function createInvitation(input: {
   })
 }
 
-async function membersForOrganization(organizationIdToRead: string) {
+async function membersForOrganization(organizationIdToRead: DenTypeId<"organization">) {
   if (!db || !schema || !drizzle) {
     throw new Error("test database not initialized")
   }
@@ -152,7 +164,7 @@ async function membersForOrganization(organizationIdToRead: string) {
     .where(drizzle.eq(schema.MemberTable.organizationId, organizationIdToRead))
 }
 
-async function invitationStatus(invitationId: string) {
+async function invitationStatus(invitationId: DenTypeId<"invitation">) {
   if (!db || !schema || !drizzle) {
     throw new Error("test database not initialized")
   }
@@ -178,6 +190,7 @@ beforeAll(async () => {
   schema = schemaModule
   drizzle = drizzleModule
   orgs = orgsModule
+  cache = cacheModule.cache
   restoreCacheDependencies = cacheModule.setCacheDependenciesForTest({ redis })
 
   await cleanup()
@@ -205,10 +218,13 @@ beforeAll(async () => {
     { id: ownerMemberId, organizationId, userId: ownerUserId, role: "owner" },
     { id: otherOwnerMemberId, organizationId: otherOrganizationId, userId: ownerUserId, role: "owner" },
   ])
+  await orgs.seedDefaultOrganizationRoles(organizationId)
+  await orgs.seedDefaultOrganizationRoles(otherOrganizationId)
 })
 
 beforeEach(() => {
   cacheDeleteCalls.length = 0
+  cachedValues.clear()
 })
 
 afterAll(async () => {
@@ -251,7 +267,7 @@ test("single-org bootstrap adopts a pending invitation and invalidates the membe
   expect(relatedMembers[0]?.role).toBe("admin")
   expect(relatedMembers[0]?.joinedAt).toBeInstanceOf(Date)
   await expect(invitationStatus(invitationId)).resolves.toBe("accepted")
-  expect(cacheDeleteCalls).toEqual([`cache:org:members:${organizationId}`])
+  expect(cacheDeleteCalls).toEqual([`cache:org:members:${organizationId}`, `cache:org:member:${organizationId}:${invitedUserId}`])
 })
 
 test("single-org bootstrap invalidates the member cache after a default member insert", async () => {
@@ -274,7 +290,7 @@ test("single-org bootstrap invalidates the member cache after a default member i
   expect(rows).toHaveLength(1)
   expect(rows[0]?.role).toBe("member")
   expect(rows[0]?.inviteId).toBeNull()
-  expect(cacheDeleteCalls).toEqual([`cache:org:members:${organizationId}`])
+  expect(cacheDeleteCalls).toEqual([`cache:org:members:${organizationId}`, `cache:org:member:${organizationId}:${noInviteUserId}`])
 })
 
 test("reconcilePendingInvitationsForUser merges a raw SSO JIT membership with its pending invitation", async () => {
@@ -578,4 +594,225 @@ test("bootstrap ignores expired, non-matching, and other-org invitations", async
   await expect(invitationStatus(expiredInvitationId)).resolves.toBe("pending")
   await expect(invitationStatus(nonMatchingInvitationId)).resolves.toBe("pending")
   await expect(invitationStatus(otherOrgInvitationId)).resolves.toBe("pending")
+})
+
+async function createSsoFixture(input: {
+  emailVerified?: boolean
+  domainVerified?: boolean
+  emailDomainProof?: boolean
+  protocol?: "oidc" | "saml"
+  status?: string
+  emailDomain?: string
+  providerDomain?: string
+  allowedEmailDomains?: string[]
+  memberRole?: string
+  membership?: "active" | "removed" | "absent"
+  invitation?: "pending" | "expired" | "canceled" | "absent"
+} = {}) {
+  if (!db || !schema || !drizzle || !orgs) throw new Error("test modules not initialized")
+  const userId = createDenTypeId("user")
+  const organizationId = createDenTypeId("organization")
+  const ownerMemberId = createDenTypeId("member")
+  const memberId = createDenTypeId("member")
+  const invitationId = createDenTypeId("invitation")
+  const placeholderId = createDenTypeId("member")
+  const providerId = `sso-${organizationId}`
+  const domain = input.providerDomain ?? "sso-invites.test"
+  const email = `member+${userId}@${input.emailDomain ?? "sso-invites.test"}`
+  userIds.push(userId)
+  organizationIds.push(organizationId)
+  await db.insert(schema.AuthUserTable).values({ id: userId, name: "SSO Invite Member", email: email.toUpperCase(), emailVerified: input.emailVerified ?? true })
+  await db.insert(schema.OrganizationTable).values({ id: organizationId, name: "SSO Invite Workspace", slug: providerId, allowedEmailDomains: input.allowedEmailDomains ?? null })
+  await orgs.seedDefaultOrganizationRoles(organizationId)
+  await db.insert(schema.MemberTable).values({ id: ownerMemberId, organizationId, userId: ownerUserId, role: "owner" })
+  const protocol = input.protocol ?? "oidc"
+  const config = withSsoEmailDomainProof({}, input.emailDomainProof === false ? null : {
+    version: 1, organizationId, providerId, domain, method: "dns-txt", verifiedAt: new Date().toISOString(),
+  })
+  await db.insert(schema.SsoProviderTable).values({
+    id: createDenTypeId("ssoProvider"), providerId, organizationId, userId: ownerUserId,
+    issuer: "https://idp.sso-invites.test", domain, domainVerified: input.domainVerified ?? true,
+    oidcConfig: protocol === "oidc" ? config : null,
+    samlConfig: protocol === "saml" ? config : null,
+  })
+  await db.insert(schema.SsoConnectionTable).values({
+    id: createDenTypeId("ssoConnection"), providerId, organizationId, kind: protocol,
+    issuer: "https://idp.sso-invites.test", domain, status: input.status ?? "enabled", signInPath: `/sso/${providerId}`,
+  })
+  if (input.invitation !== "absent") {
+    await createInvitation({ invitationId, memberId: placeholderId, organizationId, email, role: "admin", expiresAt: input.invitation === "expired" ? past : future, inviterMemberId: ownerMemberId })
+    if (input.invitation === "canceled") {
+      await db.update(schema.InvitationTable).set({ status: "canceled" }).where(drizzle.eq(schema.InvitationTable.id, invitationId))
+    }
+  }
+  if (input.membership !== "absent") {
+    await db.insert(schema.MemberTable).values({
+      id: memberId, organizationId, userId, role: input.memberRole ?? "member", joinedAt: null,
+      removedAt: input.membership === "removed" ? past : null,
+    })
+  }
+  return { userId, organizationId, memberId, invitationId, placeholderId, providerId, email }
+}
+
+test("successful provider-scoped reconciliation merges JIT once, applies the invited role, and leaves another organization's invite untouched", async () => {
+  if (!db || !schema || !orgs || !cache) throw new Error("test modules not initialized")
+  const fixture = await createSsoFixture()
+  const otherInvitationId = createDenTypeId("invitation")
+  const otherPlaceholderId = createDenTypeId("member")
+  await createInvitation({
+    invitationId: otherInvitationId, memberId: otherPlaceholderId, organizationId: otherOrganizationId,
+    email: fixture.email, role: "admin", expiresAt: future, inviterMemberId: otherOwnerMemberId,
+  })
+  await db.insert(schema.MemberTable).values({ id: createDenTypeId("member"), organizationId: otherOrganizationId, userId: fixture.userId, role: "member" })
+  // Warm real read-through caches with the duplicate pending/JIT state and old
+  // role. A DB-only assertion would miss the stale /v1/org response regression.
+  expect((await cache.org.members(fixture.organizationId)).filter((member) => member.userId === fixture.userId || member.inviteId === fixture.invitationId)).toHaveLength(2)
+  expect(await cache.org.membership(fixture)).toMatchObject({ role: "member" })
+  await cache.org.members(otherOrganizationId)
+  const otherCachedMembers = cachedValues.get(`cache:org:members:${otherOrganizationId}`)
+
+  await expect(orgs.reconcileSsoInvitationsForUser(fixture)).resolves.toBe(1)
+  await expect(invitationStatus(fixture.invitationId)).resolves.toBe("accepted")
+  const members = (await membersForOrganization(fixture.organizationId)).filter((member) => member.userId === fixture.userId || member.inviteId === fixture.invitationId)
+  expect(members).toHaveLength(1)
+  expect(members[0]).toMatchObject({ id: fixture.memberId, userId: fixture.userId, role: "admin", removedAt: null })
+  expect(members[0]?.joinedAt).toBeInstanceOf(Date)
+  const visibleMembers = (await cache.org.members(fixture.organizationId)).filter((member) => member.userId === fixture.userId || member.inviteId === fixture.invitationId)
+  expect(visibleMembers).toHaveLength(1)
+  expect(visibleMembers[0]).toMatchObject({ id: fixture.memberId, role: "admin" })
+  expect(visibleMembers[0]?.joinedAt).toBeInstanceOf(Date)
+  expect(await cache.org.membership(fixture)).toMatchObject({ id: fixture.memberId, role: "admin" })
+  expect(cacheDeleteCalls).toContain(`cache:org:members:${fixture.organizationId}`)
+  expect(cacheDeleteCalls).toContain(`cache:org:member:${fixture.organizationId}:${fixture.userId}`)
+
+  await expect(orgs.reconcileSsoInvitationsForUser(fixture)).resolves.toBe(0)
+  await expect(invitationStatus(otherInvitationId)).resolves.toBe("pending")
+  expect((await membersForOrganization(otherOrganizationId)).find((member) => member.id === otherPlaceholderId)?.userId).toBeNull()
+  expect((await membersForOrganization(otherOrganizationId)).find((member) => member.userId === fixture.userId)?.role).toBe("member")
+  expect(cachedValues.get(`cache:org:members:${otherOrganizationId}`)).toBe(otherCachedMembers)
+  expect((await membersForOrganization(fixture.organizationId)).filter((member) => member.userId === fixture.userId || member.inviteId === fixture.invitationId)).toHaveLength(1)
+})
+
+test("SAML reconciliation uses the same genuine exact-domain proof and preserves the invited role", async () => {
+  if (!orgs) throw new Error("test modules not initialized")
+  const fixture = await createSsoFixture({ protocol: "saml" })
+  await expect(orgs.reconcileSsoInvitationsForUser(fixture)).resolves.toBe(1)
+  await expect(invitationStatus(fixture.invitationId)).resolves.toBe("accepted")
+  const members = (await membersForOrganization(fixture.organizationId)).filter((member) => member.userId === fixture.userId || member.inviteId === fixture.invitationId)
+  expect(members).toHaveLength(1)
+  expect(members[0]?.role).toBe("admin")
+})
+
+test("SSO reconciliation cannot borrow another organization's domain proof", async () => {
+  if (!db || !schema || !drizzle || !orgs) throw new Error("test modules not initialized")
+  const source = await createSsoFixture()
+  const target = await createSsoFixture()
+  const [provider] = await db.select({ config: schema.SsoProviderTable.oidcConfig }).from(schema.SsoProviderTable).where(drizzle.eq(schema.SsoProviderTable.providerId, source.providerId))
+  if (!provider?.config) throw new Error("source proof fixture missing")
+  await db.update(schema.SsoProviderTable).set({ oidcConfig: provider.config }).where(drizzle.eq(schema.SsoProviderTable.providerId, target.providerId))
+  await expect(orgs.reconcileSsoInvitationsForUser(target)).resolves.toBe(0)
+  await expect(invitationStatus(target.invitationId)).resolves.toBe("pending")
+  await expect(invitationStatus(source.invitationId)).resolves.toBe("pending")
+})
+
+const ssoDenialCases: Array<{ name: string; input: Parameters<typeof createSsoFixture>[0] }> = [
+  { name: "unverified email", input: { emailVerified: false } },
+  { name: "unverified provider domain", input: { domainVerified: false } },
+  { name: "legacy verification flag without genuine domain proof", input: { emailDomainProof: false } },
+  { name: "disabled provider", input: { status: "disabled" } },
+  { name: "different email domain", input: { emailDomain: "other.test" } },
+  { name: "email subdomain is not the provider domain", input: { emailDomain: "sub.sso-invites.test" } },
+  { name: "provider wildcard is not an exact domain", input: { providerDomain: "*.sso-invites.test" } },
+  { name: "provider domain list is not an exact domain", input: { providerDomain: "sso-invites.test,other.test" } },
+  { name: "organization disallows the email domain", input: { allowedEmailDomains: ["other.test"] } },
+  { name: "no JIT membership", input: { membership: "absent" } },
+  { name: "removed membership", input: { membership: "removed" } },
+]
+
+test.each(ssoDenialCases)("provider-scoped reconciliation fails closed: $name", async ({ input }) => {
+  if (!db || !schema || !drizzle || !orgs) throw new Error("test modules not initialized")
+  const fixture = await createSsoFixture(input)
+  await expect(orgs.reconcileSsoInvitationsForUser(fixture)).resolves.toBe(0)
+  await expect(invitationStatus(fixture.invitationId)).resolves.toBe("pending")
+  const members = await membersForOrganization(fixture.organizationId)
+  expect(members.find((member) => member.id === fixture.placeholderId)?.userId).toBeNull()
+  const joined = members.filter((member) => member.userId === fixture.userId && !member.removedAt)
+  expect(joined).toHaveLength(input?.membership === "absent" || input?.membership === "removed" ? 0 : 1)
+  if (joined[0]) expect(joined[0].role).toBe("member")
+  const [user] = await db.select({ emailVerified: schema.AuthUserTable.emailVerified }).from(schema.AuthUserTable).where(drizzle.eq(schema.AuthUserTable.id, fixture.userId))
+  expect(user?.emailVerified).toBe(input?.emailVerified ?? true)
+  expect(cacheDeleteCalls).toEqual([])
+})
+
+test.each(["missing provider", "missing connection", "different provider ID", "different organization", "unknown callback provider"])("provider-scoped reconciliation requires the connection and provider to be bound: %s", async (scenario) => {
+  if (!db || !schema || !drizzle || !orgs) throw new Error("test modules not initialized")
+  const fixture = await createSsoFixture()
+  if (scenario === "missing provider") {
+    await db.delete(schema.SsoProviderTable).where(drizzle.eq(schema.SsoProviderTable.providerId, fixture.providerId))
+  } else if (scenario === "missing connection") {
+    await db.delete(schema.SsoConnectionTable).where(drizzle.eq(schema.SsoConnectionTable.providerId, fixture.providerId))
+  } else if (scenario === "different provider ID") {
+    await db.update(schema.SsoProviderTable).set({ providerId: `different-${fixture.providerId}` }).where(drizzle.eq(schema.SsoProviderTable.providerId, fixture.providerId))
+  } else if (scenario === "different organization") {
+    await db.update(schema.SsoProviderTable).set({ organizationId: otherOrganizationId }).where(drizzle.eq(schema.SsoProviderTable.providerId, fixture.providerId))
+  }
+  await expect(orgs.reconcileSsoInvitationsForUser({ userId: fixture.userId, providerId: scenario === "unknown callback provider" ? "unknown-provider" : fixture.providerId })).resolves.toBe(0)
+  await expect(invitationStatus(fixture.invitationId)).resolves.toBe("pending")
+  expect((await membersForOrganization(fixture.organizationId)).find((member) => member.id === fixture.placeholderId)?.userId).toBeNull()
+  expect(cacheDeleteCalls).toEqual([])
+})
+
+test("SSO reconciliation reads current email proof from the database and never upgrades it from an invitation", async () => {
+  if (!db || !schema || !drizzle || !orgs) throw new Error("test modules not initialized")
+  const fixture = await createSsoFixture({ emailVerified: false, allowedEmailDomains: ["sso-invites.test"] })
+  await expect(orgs.reconcileSsoInvitationsForUser(fixture)).resolves.toBe(0)
+  await expect(invitationStatus(fixture.invitationId)).resolves.toBe("pending")
+  await db.update(schema.AuthUserTable).set({ emailVerified: true }).where(drizzle.eq(schema.AuthUserTable.id, fixture.userId))
+  await expect(orgs.reconcileSsoInvitationsForUser(fixture)).resolves.toBe(1)
+  await expect(invitationStatus(fixture.invitationId)).resolves.toBe("accepted")
+})
+
+test("successful JIT without an invitation refreshes the cached member list and membership immediately", async () => {
+  if (!db || !schema || !orgs || !cache) throw new Error("test modules not initialized")
+  const fixture = await createSsoFixture({ invitation: "absent", membership: "absent" })
+  expect((await cache.org.members(fixture.organizationId)).some((member) => member.userId === fixture.userId)).toBe(false)
+  await expect(cache.org.membership(fixture)).resolves.toBeNull()
+  await db.insert(schema.MemberTable).values({ id: fixture.memberId, organizationId: fixture.organizationId, userId: fixture.userId, role: "member" })
+  // Raw SDK JIT does not invalidate the previously loaded list.
+  expect((await cache.org.members(fixture.organizationId)).some((member) => member.userId === fixture.userId)).toBe(false)
+  await expect(orgs.reconcileSsoInvitationsForUser(fixture)).resolves.toBe(0)
+  expect(cacheDeleteCalls).toContain(`cache:org:members:${fixture.organizationId}`)
+  expect(cacheDeleteCalls).toContain(`cache:org:member:${fixture.organizationId}:${fixture.userId}`)
+  expect((await cache.org.members(fixture.organizationId)).find((member) => member.userId === fixture.userId)).toMatchObject({ id: fixture.memberId, role: "member" })
+  await expect(cache.org.membership(fixture)).resolves.toMatchObject({ id: fixture.memberId, role: "member" })
+})
+
+test.each(["expired", "canceled"])("SSO reconciliation preserves %s invitations", async (status) => {
+  if (!orgs) throw new Error("test modules not initialized")
+  const fixture = await createSsoFixture({ invitation: status === "expired" ? "expired" : "canceled" })
+  await expect(orgs.reconcileSsoInvitationsForUser(fixture)).resolves.toBe(0)
+  await expect(invitationStatus(fixture.invitationId)).resolves.toBe(status === "expired" ? "pending" : "canceled")
+  expect((await membersForOrganization(fixture.organizationId)).find((member) => member.userId === fixture.userId)?.role).toBe("member")
+  expect((await membersForOrganization(fixture.organizationId)).find((member) => member.id === fixture.placeholderId)?.userId).toBeNull()
+})
+
+test("SSO reconciliation preserves owner authority while removing the duplicate placeholder", async () => {
+  if (!orgs) throw new Error("test modules not initialized")
+  const fixture = await createSsoFixture({ memberRole: "owner" })
+  await expect(orgs.reconcileSsoInvitationsForUser(fixture)).resolves.toBe(1)
+  const members = (await membersForOrganization(fixture.organizationId)).filter((member) => member.userId === fixture.userId || member.inviteId === fixture.invitationId)
+  expect(members).toHaveLength(1)
+  expect(members[0]).toMatchObject({ id: fixture.memberId, role: "owner" })
+  await expect(invitationStatus(fixture.invitationId)).resolves.toBe("accepted")
+})
+
+test("SSO reconciliation cannot accept an invitation for a SCIM-deprovisioned email", async () => {
+  if (!db || !schema || !orgs) throw new Error("test modules not initialized")
+  const fixture = await createSsoFixture()
+  await db.insert(schema.ScimProviderTable).values({ id: createDenTypeId("scimProvider"), organizationId: fixture.organizationId, providerId: fixture.providerId, scimToken: "test-scim-token", userId: ownerUserId })
+  await db.insert(schema.ScimUserTombstoneTable).values({ id: createDenTypeId("scimUserTombstone"), organizationId: fixture.organizationId, providerId: fixture.providerId, deprovisionedUserId: fixture.userId, email: fixture.email })
+  await expect(orgs.reconcileSsoInvitationsForUser(fixture)).resolves.toBe(0)
+  await expect(invitationStatus(fixture.invitationId)).resolves.toBe("pending")
+  expect((await membersForOrganization(fixture.organizationId)).find((member) => member.userId === fixture.userId)?.role).toBe("member")
+  expect((await membersForOrganization(fixture.organizationId)).find((member) => member.id === fixture.placeholderId)?.userId).toBeNull()
 })

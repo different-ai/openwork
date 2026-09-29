@@ -34,7 +34,7 @@ export async function ssoInvite(seed: Seed, options: { mismatchedEmail?: boolean
   const idp = await startMockIdpLab({
     domain,
     defaultSubject: { email: invitee, name: "SSO Newcomer" },
-    knobs: { emailMismatch: options.mismatchedEmail ? mismatchedEmail : false },
+    knobs: { emailMismatch: false },
   });
   try {
     const den = await seed.den({
@@ -139,6 +139,10 @@ export async function ssoInvite(seed: Seed, options: { mismatchedEmail?: boolean
     });
     if (enabled.response.status !== 204) throw new Error(`Could not enable the tested SSO connection: HTTP ${enabled.response.status}.`);
 
+    // The administrator must prove their own identity during setup. Switch the
+    // IdP identity only for the later invitation sign-in, not the admin test.
+    idp.config.knobs.emailMismatch = options.mismatchedEmail ? mismatchedEmail : false;
+
     const invited = await seed.api(den.admin, "/v1/invitations", {
       method: "POST",
       body: JSON.stringify({ email: invitee, role: options.role ?? "member" }),
@@ -155,6 +159,7 @@ export async function ssoInvite(seed: Seed, options: { mismatchedEmail?: boolean
     });
     return {
       web,
+      adminWeb: configurationWeb,
       den,
       organizationId,
       inviteToken,

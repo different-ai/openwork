@@ -1,13 +1,13 @@
 import type { Hono } from "hono"
 import { describeRoute, resolver } from "hono-openapi"
 import { z } from "zod"
-import { eq } from "@openwork-ee/den-db/drizzle"
 import { SsoConnectionTable } from "@openwork-ee/den-db/schema"
 import { auth } from "../../auth.js"
 import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
-import { db } from "../../db.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { env } from "../../env.js"
+import { ssoDomainProofService } from "../../sso-domain-proof-service.js"
+import { canonicalSsoEmailDomain, readSsoEmailDomainProof } from "../../sso-email-domain-proof.js"
 import { enterprisePlanRequiredSchema, xmlResponse } from "../../openapi.js"
 import {
   deleteOrganizationSsoConnection,
@@ -60,7 +60,7 @@ const forbiddenSchema = z.object({
 
 const baseRegistrationSchema = z.object({
   issuer: z.string().url(),
-  domain: z.string().min(1),
+  domain: z.string().min(1).refine((value) => canonicalSsoEmailDomain(value) !== null, "Enter one exact domain, without a wildcard, URL, or domain list."),
 })
 
 const samlRegistrationSchema = baseRegistrationSchema.extend({
@@ -113,6 +113,7 @@ const ssoConnectionSchema = z.object({
   acsUrl: z.string().url().nullable(),
   metadataUrl: z.string().url().nullable(),
   domainVerified: z.boolean(),
+  emailDomainVerified: z.boolean(),
   domainVerificationHost: z.string(),
   domainVerificationDnsName: z.string(),
   oidc: oidcConnectionConfigSchema.nullable(),
@@ -184,20 +185,9 @@ function getWebOrigin() {
   return env.betterAuthUrl
 }
 
-async function requestDomainVerificationToken(providerId: string, headers: Headers) {
-  const body = await auth.api.requestDomainVerification({
-    body: { providerId },
-    headers,
-  })
-
-  const token = isRecord(body) ? maybeString(body.domainVerificationToken) : null
-  if (token) {
-    await db
-      .update(SsoConnectionTable)
-      .set({ domainVerificationToken: token })
-      .where(eq(SsoConnectionTable.providerId, providerId))
-  }
-  return token
+async function requestDomainVerificationToken(organizationId: typeof SsoConnectionTable.$inferSelect.organizationId) {
+  const result = await ssoDomainProofService.request(organizationId)
+  return result.domainVerificationToken
 }
 
 function serializeConnection(input: {
@@ -207,10 +197,11 @@ function serializeConnection(input: {
   acsUrl: string | null
   metadataUrl: string | null
   domainVerified: boolean
+  emailDomainVerified: boolean
   oidc: z.infer<typeof oidcConnectionConfigSchema> | null
   saml: z.infer<typeof samlConnectionConfigSchema> | null
 }) {
-  const { connection, signInUrl, redirectUrl, acsUrl, metadataUrl, domainVerified, oidc, saml } = input
+  const { connection, signInUrl, redirectUrl, acsUrl, metadataUrl, domainVerified, emailDomainVerified, oidc, saml } = input
   const test = getSsoTestPresentation(connection)
   return {
     id: connection.id,
@@ -227,6 +218,7 @@ function serializeConnection(input: {
     acsUrl,
     metadataUrl,
     domainVerified,
+    emailDomainVerified,
     domainVerificationHost: getSsoDomainVerificationHost(connection.providerId),
     domainVerificationDnsName: getSsoDomainVerificationDnsName(connection.providerId, connection.domain),
     oidc,
@@ -253,6 +245,9 @@ async function buildConnectionPayload(connection: NonNullable<Awaited<ReturnType
     acsUrl,
     metadataUrl,
     domainVerified: provider?.domainVerified ?? false,
+    emailDomainVerified: !!provider && (connection.kind === "oidc" || connection.kind === "saml")
+      && canonicalSsoEmailDomain(connection.domain) === canonicalSsoEmailDomain(provider.domain)
+      && readSsoEmailDomainProof(provider, { protocol: connection.kind, allowDevelopment: env.devMode }) !== null,
     oidc: connection.kind === "oidc" ? {
       clientId: maybeString(oidcConfig?.clientId),
       scopes: asStringArray(oidcConfig?.scopes),
@@ -350,7 +345,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         headers: c.req.raw.headers,
         ...parsed.data,
       })
-      const domainVerificationToken = await requestDomainVerificationToken(connection.providerId, c.req.raw.headers).catch(() => null)
+      const domainVerificationToken = await requestDomainVerificationToken(payload.organization.id).catch(() => null)
 
       await recordOrganizationAuditEvent({
         organizationId: payload.organization.id,
@@ -413,7 +408,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         headers: c.req.raw.headers,
         ...parsed.data,
       })
-      const domainVerificationToken = await requestDomainVerificationToken(connection.providerId, c.req.raw.headers).catch(() => null)
+      const domainVerificationToken = await requestDomainVerificationToken(payload.organization.id).catch(() => null)
 
       await recordOrganizationAuditEvent({
         organizationId: payload.organization.id,
@@ -737,31 +732,15 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         return c.json({ error: "organization_not_found" }, 404)
       }
 
-      if (connection.domainVerificationToken) {
-        return c.json({ domainVerificationToken: connection.domainVerificationToken }, 201)
-      }
-
-      let body: { domainVerificationToken?: string } | null = null
       try {
-        body = await auth.api.requestDomainVerification({
-          body: { providerId: connection.providerId },
-          headers: c.req.raw.headers,
-        })
+        const body = await ssoDomainProofService.request(payload.organization.id)
+        return c.json(body, 201)
       } catch (error) {
         return c.json({
           error: "invalid_request",
           details: [{ message: error instanceof Error ? error.message : "Could not request a domain verification token." }],
         }, 400)
       }
-
-      if (!body?.domainVerificationToken) {
-        return c.json({
-          error: "invalid_request",
-          details: [{ message: "Could not request a domain verification token." }],
-        }, 400)
-      }
-
-      return c.json({ domainVerificationToken: body.domainVerificationToken }, 201)
     },
   )
 
@@ -800,10 +779,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       }
 
       try {
-        await auth.api.verifyDomain({
-          body: { providerId: connection.providerId },
-          headers: c.req.raw.headers,
-        })
+        await ssoDomainProofService.verify(payload.organization.id)
       } catch (error) {
         return c.json({
           error: "invalid_request",

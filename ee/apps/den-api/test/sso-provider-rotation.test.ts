@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { seedDatabaseTestEnv } from "./database-test-env"
+import { isSsoEmailDomainTrusted, readSsoEmailDomainProof, withSsoEmailDomainProof } from "../src/sso-email-domain-proof.js"
+import type { OrganizationSsoRegistrationInput } from "../src/sso.js"
 
 const ownerUserId = createDenTypeId("user")
 const ssoOnlyUserId = createDenTypeId("user")
@@ -24,7 +26,7 @@ let registerOrganizationSsoConnection: typeof import("../src/sso.js").registerOr
 
 async function cleanup() {
   await db.delete(schema.ExternalIdentityTable).where(drizzle.inArray(schema.ExternalIdentityTable.organizationId, organizationIds))
-  await db.delete(schema.AuthAccountTable).where(drizzle.inArray(schema.AuthAccountTable.userId, [ssoOnlyUserId, ssoAndScimUserId]))
+  await db.delete(schema.AuthAccountTable).where(drizzle.inArray(schema.AuthAccountTable.userId, [ownerUserId, ssoOnlyUserId, ssoAndScimUserId]))
   await db.delete(schema.SsoConnectionTable).where(drizzle.inArray(schema.SsoConnectionTable.organizationId, organizationIds))
   await db.delete(schema.SsoProviderTable).where(drizzle.inArray(schema.SsoProviderTable.organizationId, organizationIds))
   await db.delete(schema.OrganizationTable).where(drizzle.inArray(schema.OrganizationTable.id, organizationIds))
@@ -60,7 +62,8 @@ beforeAll(async () => {
             domain: input.body.domain,
             organizationId: input.body.organizationId,
             userId: ownerUserId,
-            samlConfig: JSON.stringify(input.body.samlConfig ?? input.body.oidcConfig ?? {}),
+            samlConfig: input.body.samlConfig ? JSON.stringify(input.body.samlConfig) : null,
+            oidcConfig: input.body.oidcConfig ? JSON.stringify(input.body.oidcConfig) : null,
           })
         },
       },
@@ -276,4 +279,89 @@ test("legacy SSO connections move to the canonical provider and recover a strand
     attributesJson: null,
     lastSsoLoginAt: null,
   })
+})
+
+async function proofRotationFixture() {
+  const organizationId = createDenTypeId("organization")
+  organizationIds.push(organizationId)
+  await db.insert(schema.OrganizationTable).values({ id: organizationId, name: "SSO proof rotation", slug: organizationId })
+  const input: OrganizationSsoRegistrationInput = {
+    kind: "oidc", issuer: "https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/v2.0", domain: "administrator.example.test",
+    clientId: "synthetic-client", clientSecret: "synthetic-secret", skipDiscovery: true,
+    authorizationEndpoint: "https://manual-idp.example.test/authorize", tokenEndpoint: "https://manual-idp.example.test/token",
+    jwksEndpoint: "https://manual-idp.example.test/jwks", userInfoEndpoint: "https://manual-idp.example.test/userinfo",
+    organizationId, organizationSlug: organizationId, headers: new Headers(),
+  }
+  const connection = await registerOrganizationSsoConnection(input)
+  const current = async () => {
+    const [row] = await db.select().from(schema.SsoProviderTable).where(drizzle.eq(schema.SsoProviderTable.providerId, connection.providerId))
+    if (!row) throw new Error("Missing rotation provider")
+    return row
+  }
+  return { input, connection, current }
+}
+
+test("new Entra-shaped issuers with arbitrary manual endpoints receive neither eligibility nor email proof", async () => {
+  const f = await proofRotationFixture()
+  const provider = await f.current()
+  expect(provider.domainVerified).toBe(false)
+  expect(isSsoEmailDomainTrusted(provider, "member@administrator.example.test", { protocol: "oidc", allowDevelopment: false })).toBe(false)
+})
+
+test("legacy same-domain eligibility survives issuer rotation but cannot become provenance", async () => {
+  const f = await proofRotationFixture()
+  await db.update(schema.SsoProviderTable).set({ domainVerified: true }).where(drizzle.eq(schema.SsoProviderTable.providerId, f.connection.providerId))
+  await registerOrganizationSsoConnection({ ...f.input, issuer: "https://replacement.example.test" })
+  const provider = await f.current()
+  expect(provider.domainVerified).toBe(true)
+  expect(isSsoEmailDomainTrusted(provider, "member@administrator.example.test", { protocol: "oidc", allowDevelopment: false })).toBe(false)
+})
+
+test("the linked-administrator Entra domain-rotation chain cannot mint target-domain proof without DNS", async () => {
+  const f = await proofRotationFixture()
+  await db.update(schema.SsoProviderTable).set({ domainVerified: true }).where(drizzle.eq(schema.SsoProviderTable.providerId, f.connection.providerId))
+  const accountId = createDenTypeId("account")
+  await db.insert(schema.AuthAccountTable).values({ id: accountId, userId: ownerUserId, accountId: "existing-administrator-subject", providerId: f.connection.providerId })
+  await registerOrganizationSsoConnection({ ...f.input, domain: "target.example.test" })
+  const provider = await f.current()
+  expect(provider.domainVerified).toBe(false)
+  expect(isSsoEmailDomainTrusted(provider, "member@target.example.test", { protocol: "oidc", allowDevelopment: false })).toBe(false)
+  // Existing subjects are not silently unlinked by this fix. A new domain is
+  // nevertheless unable to start its configuration test until DNS succeeds.
+  expect(await db.select().from(schema.AuthAccountTable).where(drizzle.eq(schema.AuthAccountTable.id, accountId))).toHaveLength(1)
+})
+
+test("genuine DNS proof survives an authorized same-domain OIDC-to-SAML rotation, but never a different domain", async () => {
+  const f = await proofRotationFixture()
+  const provider = await f.current()
+  await db.update(schema.SsoProviderTable).set({ domainVerified: true, oidcConfig: withSsoEmailDomainProof(provider.oidcConfig, {
+    version: 1, organizationId: f.input.organizationId, providerId: provider.providerId, domain: f.input.domain,
+    method: "dns-txt", verifiedAt: new Date().toISOString(),
+  }) }).where(drizzle.eq(schema.SsoProviderTable.id, provider.id))
+  const saml: OrganizationSsoRegistrationInput = {
+    kind: "saml", organizationId: f.input.organizationId, organizationSlug: f.input.organizationSlug, headers: new Headers(),
+    issuer: "https://replacement-saml.example.test", domain: f.input.domain,
+    entryPoint: "https://replacement-saml.example.test/sso", cert: "synthetic-certificate",
+  }
+  await registerOrganizationSsoConnection(saml)
+  const switched = await f.current()
+  expect(switched.oidcConfig).toBeNull()
+  expect(isSsoEmailDomainTrusted(switched, "member@administrator.example.test", { protocol: "saml", allowDevelopment: false })).toBe(true)
+  await registerOrganizationSsoConnection({ ...saml, domain: "other.example.test" })
+  const replaced = await f.current()
+  expect(replaced.domainVerified).toBe(false)
+  expect(readSsoEmailDomainProof(replaced, { protocol: "saml", allowDevelopment: false })).toBeNull()
+})
+
+test("development proof is dropped on non-loopback replacement even when legacy eligibility is retained", async () => {
+  const f = await proofRotationFixture()
+  const provider = await f.current()
+  await db.update(schema.SsoProviderTable).set({ issuer: "http://127.0.0.1:3001", domainVerified: true, oidcConfig: withSsoEmailDomainProof(provider.oidcConfig, {
+    version: 1, organizationId: f.input.organizationId, providerId: provider.providerId, domain: f.input.domain,
+    method: "development", verifiedAt: new Date().toISOString(),
+  }) }).where(drizzle.eq(schema.SsoProviderTable.id, provider.id))
+  await registerOrganizationSsoConnection({ ...f.input, issuer: "https://replacement.example.test" })
+  const replaced = await f.current()
+  expect(replaced.domainVerified).toBe(true)
+  expect(readSsoEmailDomainProof(replaced, { protocol: "oidc", allowDevelopment: true })).toBeNull()
 })

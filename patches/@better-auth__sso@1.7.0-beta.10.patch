@@ -4,3 +4,74 @@ diff --git a/dist/index.mjs b/dist/index.mjs
 @@ -1436 +1436 @@
 -const ADMIN_ROLES = ["owner", "admin"];
 +const ADMIN_ROLES = ["owner", "super-admin", "admin"];
+@@ -1483,7 +1483,4 @@
+-	if (identityValueChanged(current.issuer, updated.issuer)) return true;
+-	const currentSamlConfig = parseConfigSnapshot(current.samlConfig, "SAML");
+-	const updatedSamlConfig = parseConfigSnapshot(updated.samlConfig, "SAML");
+-	if (currentSamlConfig && (!updatedSamlConfig || samlIdentityBoundaryChanged(currentSamlConfig, updatedSamlConfig))) return true;
+-	const currentOidcConfig = parseConfigSnapshot(current.oidcConfig, "OIDC");
+-	const updatedOidcConfig = parseConfigSnapshot(updated.oidcConfig, "OIDC");
+-	return Boolean(currentOidcConfig && (!updatedOidcConfig || oidcIdentityBoundaryChanged(currentOidcConfig, updatedOidcConfig)));
++	if (hasChangedField(current, updated, ["issuer", "domain", "organizationId", "domainVerified"])) return true;
++	// Compare complete configurations: claims, certificates and server-owned proof
++	// must not change between authentication and the locked account-link operation.
++	return identityValueChanged(parseConfigSnapshot(current.samlConfig, "SAML"), parseConfigSnapshot(updated.samlConfig, "SAML")) || identityValueChanged(parseConfigSnapshot(current.oidcConfig, "OIDC"), parseConfigSnapshot(updated.oidcConfig, "OIDC"));
+@@ -1504 +1501 @@
+-		if (provider.userId === "default") return;
++		if (provider.userId === "default") return provider;
+@@ -1513 +1510,6 @@
+-	});
++	});
++	return {
++		...lockedProvider,
++		oidcConfig: parseConfigSnapshot(lockedProvider.oidcConfig, "OIDC"),
++		samlConfig: parseConfigSnapshot(lockedProvider.samlConfig, "SAML")
++	};
+@@ -2433 +2434,0 @@
+-	const isTrustedProvider = "domainVerified" in provider && !!provider.domainVerified && validateEmailDomain(userInfo.email, provider.domain);
+@@ -2439 +2440,11 @@
+-			await lockSSOProviderForAccountLink(ctx, provider);
++			const lockedProvider = await lockSSOProviderForAccountLink(ctx, provider);
++			const emailDomainPolicy = options?.domainVerification?.isEmailDomainTrusted;
++			const isTrustedProvider = emailDomainPolicy ? options.domainVerification.enabled === true && await emailDomainPolicy({ provider: lockedProvider, email: userInfo.email, protocol: "saml" }) === true : "domainVerified" in lockedProvider && !!lockedProvider.domainVerified && validateEmailDomain(userInfo.email, lockedProvider.domain);
++			if (emailDomainPolicy) {
++				const verificationKey = mapping.emailVerified === void 0 ? "email_verified" : mapping.emailVerified;
++				const hasVerificationClaim = Object.prototype.hasOwnProperty.call(attributes, verificationKey);
++				const claim = attributes[verificationKey];
++				// This identity already passed the signature, issuer, binding, timing,
++				// correlation and replay checks above. An explicit claim takes priority.
++				userInfo.emailVerified = isTrustedProvider && (mapping.emailVerified === void 0 && !hasVerificationClaim || parseProviderEmailVerified(claim));
++			}
+@@ -3332 +3342,0 @@
+-	const isTrustedProvider = "domainVerified" in provider && provider.domainVerified === true && validateEmailDomain(userInfoEmail, provider.domain);
+@@ -3336 +3346,6 @@
+-			await lockSSOProviderForAccountLink(ctx, provider);
++			const lockedProvider = await lockSSOProviderForAccountLink(ctx, provider);
++			const emailDomainPolicy = options?.domainVerification?.isEmailDomainTrusted;
++			const isTrustedProvider = emailDomainPolicy ? options.domainVerification.enabled === true && await emailDomainPolicy({ provider: lockedProvider, email: userInfoEmail, protocol: "oidc" }) === true : "domainVerified" in lockedProvider && lockedProvider.domainVerified === true && validateEmailDomain(userInfoEmail, lockedProvider.domain);
++			// A configured server policy replaces legacy flags for both linking and
++			// email proof. Neither a false result nor a throw may fall back to them.
++			if (emailDomainPolicy) userInfo.emailVerified = isTrustedProvider && rawProfile[mapping.emailVerified || "email_verified"] === true;
+@@ -3343 +3358 @@
+-					emailVerified: options?.trustEmailVerified ? userInfo.emailVerified || false : false
++					emailVerified: userInfo.emailVerified || false
+diff --git a/dist/index-A_DJ_AqL.d.mts b/dist/index-A_DJ_AqL.d.mts
+--- a/dist/index-A_DJ_AqL.d.mts
++++ b/dist/index-A_DJ_AqL.d.mts
+@@ -389 +389,15 @@
+-    enabled?: boolean;
++    enabled?: boolean;
++    /**
++     * Server-only authority check for the exact authenticated email domain.
++     * Called inside the account-link transaction with the current locked provider,
++     * after protocol validation and before user/account writes or verification mail.
++     * When configured, only `enabled === true` and a literal `true` result permit
++     * trusted implicit linking or provider email proof. False fails closed and a
++     * thrown error aborts sign-in; neither falls back to `trustEmailVerified`.
++     * When omitted, existing legacy linking and explicit opt-in behavior is kept.
++     */
++    isEmailDomainTrusted?: (input: {
++      provider: SSOProvider<SSOOptions>;
++      email: string;
++      protocol: "oidc" | "saml";
++    }) => Awaitable<boolean>;

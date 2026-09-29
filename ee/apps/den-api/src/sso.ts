@@ -6,7 +6,7 @@ import { auth } from "./auth.js"
 import { db } from "./db.js"
 import { isOrganizationSsoReady } from "./sso-readiness.js"
 import { env } from "./env.js"
-import { isMicrosoftEntraManagedDomain } from "./sso-entra-domain.js"
+import { canonicalSsoEmailDomain, isSsoLoopbackIssuer, readSsoEmailDomainProof, withSsoEmailDomainProof, type SsoEmailDomainProof } from "./sso-email-domain-proof.js"
 import { SSO_IDENTITY_EXTRA_FIELDS } from "./sso-jit.js"
 import { ORGANIZATION_SAML_WANT_ASSERTIONS_SIGNED } from "./sso-saml-policy.js"
 import { createSsoConfigRevision } from "./sso-test-lifecycle.js"
@@ -83,12 +83,7 @@ export function getSsoOidcRedirectUrl(providerId: string) {
 
 function isDevLoopbackIssuer(issuer: string) {
   if (!env.devMode) return false
-  try {
-    const url = new URL(issuer)
-    return url.hostname === "127.0.0.1" || url.hostname === "localhost"
-  } catch {
-    return false
-  }
+  return isSsoLoopbackIssuer(issuer)
 }
 
 function getOidcDiscoveryUrl(issuer: string) {
@@ -321,117 +316,71 @@ export async function deleteOrganizationSsoConnection(organizationId: Organizati
 }
 
 export async function registerOrganizationSsoConnection(input: OrganizationSsoRegistrationInput) {
+  const domain = canonicalSsoEmailDomain(input.domain)
+  if (!domain) throw new Error("Enter one exact SSO domain, without a wildcard, URL, or domain list.")
+  input = { ...input, domain }
   const providerId = buildOrganizationSsoProviderId(input.organizationId)
-  const existing = await getOrganizationSsoConnection(input.organizationId)
-  const domainVerified = isDevLoopbackIssuer(input.issuer) || isMicrosoftEntraManagedDomain({
-    domain: input.domain,
-    issuer: input.issuer,
-    entryPoint: input.kind === "saml" ? input.entryPoint : null,
-  })
+  const existingProvider = await getSsoProviderByProviderId(providerId)
+  const draftProviderId = existingProvider ? `${providerId}-draft-${createDenTypeId("ssoConnection")}` : providerId
+  await registerBetterAuthSsoProvider(input, draftProviderId)
+  const draftProvider = await getSsoProviderByProviderId(draftProviderId)
+  if (!draftProvider) throw new Error("SSO provider was not created.")
 
-  if (existing) {
-    const existingProvider = await getSsoProviderByProviderId(providerId)
-    if (!existingProvider) {
-      await registerBetterAuthSsoProvider(input, providerId)
-      if (domainVerified) {
-        await db
-          .update(SsoProviderTable)
-          .set({ domainVerified: true })
-          .where(eq(SsoProviderTable.providerId, providerId))
+  await db.transaction(async (tx) => {
+    const [candidate] = await tx.select().from(SsoConnectionTable)
+      .where(eq(SsoConnectionTable.organizationId, input.organizationId)).limit(1)
+    const [canonicalProvider] = await tx.select().from(SsoProviderTable)
+      .where(and(eq(SsoProviderTable.providerId, providerId), eq(SsoProviderTable.organizationId, input.organizationId))).limit(1).for("update")
+    if (!canonicalProvider) throw new Error("The SSO provider changed while saving. Try again.")
+    const legacyProvider = candidate?.providerId && candidate.providerId !== providerId
+      ? (await tx.select().from(SsoProviderTable).where(and(
+        eq(SsoProviderTable.providerId, candidate.providerId), eq(SsoProviderTable.organizationId, input.organizationId),
+      )).limit(1).for("update"))[0]
+      : undefined
+    const [connection] = await tx.select().from(SsoConnectionTable)
+      .where(eq(SsoConnectionTable.organizationId, input.organizationId)).limit(1).for("update")
+    if (connection?.id !== candidate?.id || connection?.providerId !== candidate?.providerId) throw new Error("The SSO connection changed while saving. Try again.")
+    const previous = connection ? (connection.providerId === providerId ? canonicalProvider : legacyProvider) : undefined
+    const sameDomain = previous?.organizationId === input.organizationId && canonicalSsoEmailDomain(previous.domain) === domain
+    let proof = sameDomain && previous
+      ? readSsoEmailDomainProof(previous, { protocol: "oidc", allowDevelopment: env.devMode })
+        ?? readSsoEmailDomainProof(previous, { protocol: "saml", allowDevelopment: env.devMode })
+      : null
+    if (proof?.method === "development" && !isDevLoopbackIssuer(input.issuer)) proof = null
+    if (proof) proof = { ...proof, organizationId: input.organizationId, providerId, domain }
+    else if (isDevLoopbackIssuer(input.issuer)) {
+      const developmentProof: SsoEmailDomainProof = {
+        version: 1, organizationId: input.organizationId, providerId, domain,
+        method: "development", verifiedAt: new Date().toISOString(),
       }
-      const provider = await getSsoProviderByProviderId(providerId)
-      if (!provider) {
-        throw new Error("SSO provider was not created.")
-      }
-      await db.transaction(async (tx) => {
-        await cleanupLegacySsoProvider(tx, existing, providerId)
-        await tx
-          .update(SsoConnectionTable)
-          .set(disabledConnectionUpdate(input, providerId, getConfigRevision(input, provider)))
-          .where(eq(SsoConnectionTable.id, existing.id))
+      proof = developmentProof
+    }
+    // Existing flags keep their same-domain sign-in eligibility, never their
+    // provenance. New domains require DNS; an issuer's shape proves nothing.
+    const domainVerified = !!proof || (sameDomain && previous?.domainVerified === true)
+    const updated = {
+      issuer: draftProvider.issuer,
+      domain,
+      oidcConfig: draftProvider.oidcConfig ? withSsoEmailDomainProof(draftProvider.oidcConfig, input.kind === "oidc" ? proof : null) : null,
+      samlConfig: draftProvider.samlConfig ? withSsoEmailDomainProof(draftProvider.samlConfig, input.kind === "saml" ? proof : null) : null,
+      domainVerified,
+    }
+    await tx.update(SsoProviderTable).set(updated).where(eq(SsoProviderTable.id, canonicalProvider.id))
+    const revision = getConfigRevision(input, { ...canonicalProvider, ...updated })
+    if (connection) {
+      await cleanupLegacySsoProvider(tx, connection, providerId)
+      await tx.update(SsoConnectionTable).set(disabledConnectionUpdate(input, providerId, revision)).where(eq(SsoConnectionTable.id, connection.id))
+    } else {
+      await tx.insert(SsoConnectionTable).values({
+        id: createDenTypeId("ssoConnection"), organizationId: input.organizationId,
+        ...disabledConnectionUpdate(input, providerId, revision),
       })
-
-      const connection = await getOrganizationSsoConnection(input.organizationId)
-      if (!connection) {
-        throw new Error("SSO connection was updated, but could not be loaded.")
-      }
-
-      return connection
     }
-
-    const draftProviderId = `${providerId}-draft-${createDenTypeId("ssoConnection")}`
-    await registerBetterAuthSsoProvider(input, draftProviderId)
-
-    const draftProvider = await getSsoProviderByProviderId(draftProviderId)
-    if (!draftProvider) {
-      throw new Error("Draft SSO provider was not created.")
-    }
-
-    await db.transaction(async (tx) => {
-      await tx
-        .update(SsoProviderTable)
-        .set({
-          issuer: draftProvider.issuer,
-          domain: draftProvider.domain,
-          oidcConfig: draftProvider.oidcConfig,
-          samlConfig: draftProvider.samlConfig,
-          domainVerified,
-        })
-        .where(eq(SsoProviderTable.providerId, providerId))
-
-      await cleanupLegacySsoProvider(tx, existing, providerId)
-      await tx
-        .update(SsoConnectionTable)
-        .set(disabledConnectionUpdate(input, providerId, getConfigRevision(input, draftProvider)))
-        .where(eq(SsoConnectionTable.id, existing.id))
-
-      await tx
-        .delete(SsoProviderTable)
-        .where(eq(SsoProviderTable.providerId, draftProviderId))
-    })
-
-    const connection = await getOrganizationSsoConnection(input.organizationId)
-    if (!connection) {
-      throw new Error("SSO connection was updated, but could not be loaded.")
-    }
-
-    return connection
-  }
-
-  await registerBetterAuthSsoProvider(input, providerId)
-  if (domainVerified) {
-    await db
-      .update(SsoProviderTable)
-      .set({ domainVerified: true })
-      .where(eq(SsoProviderTable.providerId, providerId))
-  }
-
-  const provider = await getSsoProviderByProviderId(providerId)
-  if (!provider) {
-    throw new Error("SSO provider was not created.")
-  }
-
-  await db.insert(SsoConnectionTable).values({
-    id: createDenTypeId("ssoConnection"),
-    organizationId: input.organizationId,
-    providerId,
-    kind: input.kind,
-    issuer: input.issuer,
-    domain: input.domain,
-    status: "disabled",
-    signInPath: getOrganizationSsoSignInPath(input.organizationSlug),
-    configRevision: getConfigRevision(input, provider),
-    testStatus: "untested",
-    lastTestedAt: null,
-    lastTestedRevision: null,
-    lastError: null,
+    if (draftProviderId !== providerId) await tx.delete(SsoProviderTable).where(eq(SsoProviderTable.providerId, draftProviderId))
   })
 
   const connection = await getOrganizationSsoConnection(input.organizationId)
-  if (!connection) {
-    throw new Error("SSO connection was created, but could not be loaded.")
-  }
-
+  if (!connection) throw new Error("SSO connection was saved, but could not be loaded.")
   return connection
 }
 

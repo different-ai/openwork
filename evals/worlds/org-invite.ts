@@ -106,7 +106,7 @@ export async function orgInvite(seed: Seed, { place }: { place: { kind: "local" 
     method: "POST", body: JSON.stringify({ organizationId: text(organization.id) }),
   });
   if (!selected.response.ok) throw new Error(`Select organization: HTTP ${selected.response.status}`);
-  const other = owner;
+  const other = await signIn(den.ref, defaultReuseAdmin());
   const web = await seed.web({ den, startPath: "/", headless: true });
   return {
     den, web, owner, other, organization, otherOrg, identity, witnesses,

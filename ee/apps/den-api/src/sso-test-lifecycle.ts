@@ -10,6 +10,7 @@ import {
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { isOrganizationSsoReady } from "./sso-readiness.js"
+import { stripSsoEmailDomainProof } from "./sso-email-domain-proof.js"
 
 type SsoConnection = typeof SsoConnectionTable.$inferSelect
 type SsoTestUserId = NonNullable<SsoConnection["activeTestUserId"]>
@@ -362,7 +363,13 @@ export function createSsoConfigRevision(input: {
   oidcConfig: string | null
   samlConfig: string | null
 }) {
-  return createHmac("sha256", env.betterAuthSecret).update(JSON.stringify(input)).digest("hex")
+  return createHmac("sha256", env.betterAuthSecret).update(JSON.stringify({
+    kind: input.kind,
+    issuer: input.issuer,
+    domain: input.domain,
+    oidcConfig: stripSsoEmailDomainProof(input.oidcConfig),
+    samlConfig: stripSsoEmailDomainProof(input.samlConfig),
+  })).digest("hex")
 }
 
 export async function enableOrganizationSsoConnection(organizationId: SsoConnection["organizationId"]) {

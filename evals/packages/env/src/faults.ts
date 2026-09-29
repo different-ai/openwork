@@ -1,9 +1,10 @@
-import { createServer, request as httpRequest } from "node:http";
+import { createServer, request as httpRequest, STATUS_CODES } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { setTimeout as delay } from "node:timers/promises";
 import { allocateFreePort } from "@openwork/cdp";
 import { startFaultProxyOnSandbox } from "@openwork/hosts";
-import type { IncomingHttpHeaders, IncomingMessage, OutgoingHttpHeaders, Server, ServerResponse } from "node:http";
+import type { ClientRequest, IncomingHttpHeaders, IncomingMessage, OutgoingHttpHeaders, Server, ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
 import type { DenRef } from "@openwork/behaviors";
 import type { Place } from "./place.ts";
 
@@ -67,6 +68,12 @@ function forwardedHeaders(source: IncomingHttpHeaders, host?: string): OutgoingH
   }
   if (host) headers.host = host;
   return headers;
+}
+
+function writeSocketHead(socket: Duplex, status: number, message: string | undefined, headers: OutgoingHttpHeaders): void {
+  const lines = Object.entries(headers).flatMap(([name, value]) => value === undefined ? []
+    : (Array.isArray(value) ? value : [value]).map((entry) => `${name}: ${entry}`));
+  socket.write([`HTTP/1.1 ${status} ${message ?? STATUS_CODES[status] ?? ""}`, ...lines, "", ""].join("\r\n"));
 }
 
 function times(value: number | undefined): number {
@@ -165,6 +172,13 @@ async function localFaultProxy(ref: DenRef): Promise<FaultProxy> {
   const port = await allocateFreePort();
   const rules: FaultRule[] = [];
   const requests: FaultRequest[] = [];
+  const peers = new Set<Duplex>();
+  const pendingUpgrades = new Set<ClientRequest>();
+  let disposed = false;
+  const trackSocket = (socket: Duplex): void => {
+    peers.add(socket);
+    socket.on("close", () => peers.delete(socket));
+  };
   const server = createServer((incoming, response) => {
     void (async () => {
       const path = incoming.url ?? "/";
@@ -191,12 +205,80 @@ async function localFaultProxy(ref: DenRef): Promise<FaultProxy> {
       response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
     });
   });
+  server.on("connection", trackSocket);
+  server.on("upgrade", (incoming, socket, head) => {
+    socket.on("error", () => socket.destroy());
+    if (disposed) { socket.destroy(); return; }
+    const path = incoming.url ?? "/";
+    let responded = false;
+    const respond = (status: number, message: string | undefined, headers: OutgoingHttpHeaders): void => {
+      responded = true;
+      requests.push({ method: incoming.method ?? "GET", path, status, faulted: false, at: Date.now() });
+      writeSocketHead(socket, status, message, headers);
+    };
+    const reject = (status: number): void => {
+      respond(status, undefined, { connection: "close", "content-length": 0 });
+      socket.end();
+    };
+    if (incoming.method !== "GET" || incoming.headers.upgrade?.toLowerCase() !== "websocket") {
+      reject(400);
+      return;
+    }
+    let requested: URL;
+    try { requested = new URL(path, "http://request-target.invalid"); }
+    catch { reject(400); return; }
+    // HMR belongs to the fixed web upstream, never the split API or an origin
+    // supplied in an absolute-form target. Preserve Origin/cookies for its checks.
+    const options = {
+      protocol: upstream.protocol,
+      hostname: upstream.hostname,
+      port: upstream.port,
+      path: `${requested.pathname}${requested.search}`,
+      method: "GET",
+      headers: { ...forwardedHeaders(incoming.headers, upstream.host), connection: "Upgrade", upgrade: "websocket" },
+    };
+    const outbound = upstream.protocol === "https:" ? httpsRequest(options) : httpRequest(options);
+    pendingUpgrades.add(outbound);
+    outbound.on("close", () => pendingUpgrades.delete(outbound));
+    socket.on("close", () => outbound.destroy());
+    socket.on("end", () => socket.destroy());
+    outbound.on("error", () => {
+      if (socket.destroyed) return;
+      if (responded) socket.destroy();
+      else reject(502);
+    });
+    outbound.on("response", (response) => {
+      if (socket.destroyed) { response.destroy(); return; }
+      // Keep an upstream rejection (including origin checks) an HTTP response.
+      respond(response.statusCode ?? 502, response.statusMessage, { ...forwardedHeaders(response.headers), connection: "close" });
+      response.on("error", () => socket.destroy());
+      response.pipe(socket);
+    });
+    outbound.on("upgrade", (response, peer, upstreamHead) => {
+      pendingUpgrades.delete(outbound);
+      if (disposed || socket.destroyed) { peer.destroy(); return; }
+      if (response.headers.upgrade?.toLowerCase() !== "websocket") {
+        peer.destroy();
+        reject(502);
+        return;
+      }
+      trackSocket(peer);
+      peer.on("error", () => socket.destroy());
+      socket.on("error", () => peer.destroy());
+      peer.on("close", () => socket.destroy());
+      socket.on("close", () => peer.destroy());
+      respond(101, response.statusMessage, { ...forwardedHeaders(response.headers), connection: "Upgrade", upgrade: "websocket" });
+      if (head.length) peer.write(head);
+      if (upstreamHead.length) socket.write(upstreamHead);
+      socket.pipe(peer).pipe(socket);
+    });
+    outbound.end();
+  });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, "127.0.0.1", resolve);
   });
   const url = `http://127.0.0.1:${port}`;
-  let disposed = false;
   return {
     ref: { apiUrl: `${url}/api/den`, webUrl: url },
     faults: {
@@ -217,6 +299,9 @@ async function localFaultProxy(ref: DenRef): Promise<FaultProxy> {
     async [Symbol.asyncDispose](): Promise<void> {
       if (disposed) return;
       disposed = true;
+      for (const outbound of pendingUpgrades) outbound.destroy();
+      // closeAllConnections does not include sockets that completed an upgrade.
+      for (const peer of peers) peer.destroy();
       await closeServer(server);
     },
   };
