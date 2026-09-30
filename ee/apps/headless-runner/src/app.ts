@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
+import { timingSafeEqual } from "node:crypto"
 import { Hono } from "hono"
 import { z } from "zod"
 import { normalizePath } from "./files.js"
@@ -24,25 +24,21 @@ const readQuery = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(100),
 })
 
-/**
- * The service token is random, so this is not password storage: an HMAC with a
- * per-process key just gives equal-length inputs for a constant-time compare.
- */
-const compareKey = randomBytes(32)
-function digest(value: string) {
-  return createHmac("sha256", compareKey).update(value).digest()
-}
-
 export function createApp(input: { store: Store; runner: Runner; apiToken: string }) {
   const { store, runner } = input
-  const expected = digest(input.apiToken)
+  const expected = Buffer.from(input.apiToken)
+  /** Constant-time compare; only the length of the (random, 32+ char) token can leak. */
+  const tokenMatches = (candidate: string) => {
+    const actual = Buffer.from(candidate)
+    return actual.length === expected.length && timingSafeEqual(actual, expected)
+  }
   const app = new Hono()
 
   app.get("/health", (c) => c.json({ ok: true }))
 
   app.use("/v1/*", async (c, next) => {
     const match = /^Bearer\s+(\S+)$/i.exec(c.req.header("authorization") ?? "")
-    if (!match || !timingSafeEqual(digest(match[1]), expected)) return c.json({ error: "unauthorized" }, 401)
+    if (!match || !tokenMatches(match[1])) return c.json({ error: "unauthorized" }, 401)
     await next()
   })
 
