@@ -70,7 +70,7 @@ The model sees these tools:
 | `HEADLESS_MCP_TOOL_ALLOWLIST` | all | Comma-separated MCP tool names |
 | `HEADLESS_DB_PATH` | `./data/headless.sqlite` | Put it on a persistent volume |
 | `HEADLESS_PORT` | `8795` | |
-| `HEADLESS_MAX_CONCURRENT_TURNS` | `8` | Process-wide |
+| `HEADLESS_MAX_CONCURRENT_TURNS` | `32` | Process-wide. Turns mostly wait on the network, so this is bounded by memory and Gateway rate limits, not CPU |
 | `HEADLESS_MAX_STEPS` | `30` | Model calls per turn |
 | `HEADLESS_TURN_TIMEOUT_MS` | `900000` | |
 | `HEADLESS_MAX_OUTPUT_TOKENS` | `8192` | Anthropic `max_tokens` |

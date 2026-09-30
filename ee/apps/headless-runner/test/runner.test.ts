@@ -174,6 +174,54 @@ test("concurrency limit queues turns across sessions", async () => {
   assert.equal(peak, 2)
 })
 
+test("many members at once: each turn uses only its own credentials, transcript and files", async () => {
+  const members = Array.from({ length: 40 }, (_, i) => `member${i}`)
+  const seen: Array<{ token: string; input: Record<string, unknown> }> = []
+  const { store, runner } = makeRunner({
+    limits: { maxConcurrentTurns: 16, maxSteps: 4, turnTimeoutMs: 60_000, contextCharBudget: 100_000 },
+    // Every turn: one MCP call, one file write, then an answer — with random latency so turns interleave.
+    model: {
+      async complete(request) {
+        await new Promise((resolve) => setTimeout(resolve, Math.random() * 15))
+        const user = request.messages.find((message) => message.role === "user")
+        const who = user?.role === "user" ? user.text : "?"
+        const steps = request.messages.filter((message) => message.role === "assistant").length
+        if (steps === 0) return calls({ id: `${who}-1`, name: "whoami", input: { who } })
+        if (steps === 1) return calls({ id: `${who}-2`, name: "write_file", input: { path: "me.txt", content: who } })
+        return text(`done for ${who}`)
+      },
+    },
+    mcp: async ({ token }) => ({
+      tools: [{ name: "whoami", description: "", inputSchema: { type: "object" } }],
+      async call(_name, input) {
+        await new Promise((resolve) => setTimeout(resolve, Math.random() * 15))
+        seen.push({ token, input })
+        return { output: token, isError: false }
+      },
+      async close() {},
+    }),
+  })
+  const sessions = members.map((member) => ({ member, session: store.createSession({ title: member }) }))
+  for (const { member, session } of sessions) {
+    runner.send({
+      sessionId: session.id,
+      messageId: "msg_1",
+      prompt: member,
+      credentials: { modelApiKey: "k", mcpToken: `token-for-${member}` },
+    })
+  }
+  await runner.idle()
+
+  for (const { member, session } of sessions) {
+    assert.equal(store.getTurn(session.id, "msg_1")?.status, "completed")
+    assert.equal(store.readFile(session.id, "me.txt"), member)
+    const toolOutput = store.messages(session.id).find((entry) => entry.message.role === "tool")?.message
+    assert.equal(toolOutput?.role === "tool" && toolOutput.output, `token-for-${member}`)
+  }
+  assert.equal(seen.length, members.length)
+  for (const call of seen) assert.equal(call.token, `token-for-${String(call.input.who)}`)
+})
+
 test("context keeps whole recent turns within budget", () => {
   const entry = (seq: number, messageId: string, body: string) => ({
     seq,

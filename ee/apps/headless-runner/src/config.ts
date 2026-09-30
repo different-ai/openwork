@@ -26,7 +26,7 @@ const configSchema = z.object({
   HEADLESS_MODEL_API_KEY: z.string().min(1).optional(),
   HEADLESS_MCP_URL: safeUrl.optional(),
   HEADLESS_MCP_TOOL_ALLOWLIST: csv,
-  HEADLESS_MAX_CONCURRENT_TURNS: z.coerce.number().int().min(1).max(1_000).default(8),
+  HEADLESS_MAX_CONCURRENT_TURNS: z.coerce.number().int().min(1).max(1_000).default(32),
   HEADLESS_MAX_STEPS: z.coerce.number().int().min(1).max(200).default(30),
   HEADLESS_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(128_000).default(8192),
   HEADLESS_TURN_TIMEOUT_MS: z.coerce.number().int().min(10_000).default(15 * 60_000),
