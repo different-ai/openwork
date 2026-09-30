@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto"
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 import { Hono } from "hono"
 import { z } from "zod"
 import { normalizePath } from "./files.js"
@@ -24,8 +24,13 @@ const readQuery = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(100),
 })
 
+/**
+ * The service token is random, so this is not password storage: an HMAC with a
+ * per-process key just gives equal-length inputs for a constant-time compare.
+ */
+const compareKey = randomBytes(32)
 function digest(value: string) {
-  return createHash("sha256").update(value).digest()
+  return createHmac("sha256", compareKey).update(value).digest()
 }
 
 export function createApp(input: { store: Store; runner: Runner; apiToken: string }) {
