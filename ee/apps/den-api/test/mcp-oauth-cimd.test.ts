@@ -14,6 +14,8 @@ const CLIENT_ID = `${CLIENT_ORIGIN}/oauth/client-metadata.json`
 const MISMATCHED_CLIENT_ID = `${CLIENT_ORIGIN}/oauth/mismatched-client-metadata.json`
 const FOREIGN_REDIRECT_CLIENT_ID = `${CLIENT_ORIGIN}/oauth/foreign-redirect-client-metadata.json`
 const LOCALHOST_CLIENT_ID = `${CLIENT_ORIGIN}/oauth/localhost-client-metadata.json`
+const CLAUDE_CLIENT_ID = "https://claude.ai/oauth/mcp-oauth-client-metadata"
+const CLAUDE_REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback"
 const LOOPBACK_REDIRECT_URI = "http://127.0.0.1:33418/callback"
 const AGENT_RESOURCE = `${API_ORIGIN}/mcp/agent`
 
@@ -39,6 +41,17 @@ const documents: Record<string, Record<string, unknown>> = {
     client_name: "Ephemeral Port Client",
     redirect_uris: ["http://localhost/callback", "http://127.0.0.1/callback"],
     grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none",
+  },
+  [CLAUDE_CLIENT_ID]: {
+    // Verbatim copy of the document claude.ai publishes, including a grant type
+    // Den does not support.
+    client_id: CLAUDE_CLIENT_ID,
+    client_name: "Claude",
+    client_uri: "https://claude.ai",
+    redirect_uris: [CLAUDE_REDIRECT_URI],
+    grant_types: ["authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:jwt-bearer"],
     response_types: ["code"],
     token_endpoint_auth_method: "none",
   },
@@ -283,6 +296,22 @@ test("a URL client_id is recognised as an MCP client when refreshing without a r
   expect(requiredString(tokens, "access_token").length).toBeGreaterThan(0)
   // The cached document is reused within its refresh window.
   expect(documentFetches.filter((url) => url === CLIENT_ID)).toHaveLength(1)
+})
+
+test("Claude's metadata document is accepted and unsupported grant types are ignored", async () => {
+  const response = await authorize({ clientId: CLAUDE_CLIENT_ID, redirectUri: CLAUDE_REDIRECT_URI, verifier: "x".repeat(43), prompt: "consent" })
+  expect(response.status).toBe(302)
+  const location = response.headers.get("location")
+  if (!location) throw new Error("Authorize response did not redirect to consent")
+  expect(new URL(location).searchParams.get("error")).toBeNull()
+  expect(new URL(location).searchParams.get("client_id")).toBe(CLAUDE_CLIENT_ID)
+
+  const [client] = await db
+    .select({ grantTypes: schema.OAuthClientTable.grantTypes, redirectUris: schema.OAuthClientTable.redirectUris })
+    .from(schema.OAuthClientTable)
+    .where(drizzle.eq(schema.OAuthClientTable.clientId, CLAUDE_CLIENT_ID))
+  expect(JSON.parse(client?.grantTypes ?? "null")).toEqual(["authorization_code", "refresh_token"])
+  expect(client?.redirectUris).toContain(CLAUDE_REDIRECT_URI)
 })
 
 test("a redirect URI outside the metadata document is rejected", async () => {
