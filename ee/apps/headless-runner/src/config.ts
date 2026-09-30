@@ -11,10 +11,20 @@ const safeUrl = z
   .refine(isSafeUrl, "must be https (http is allowed only for loopback hosts)")
   .transform((value) => value.replace(/\/+$/, ""))
 
-const csv = z
+/**
+ * OpenWork MCP also serves builder tools (create_skill, update_app, …) meant for
+ * interactive clients. A headless run only needs to reach connected apps and
+ * skills, so that is the default; `*` opts into every tool the server offers.
+ */
+export const DEFAULT_MCP_TOOLS = ["search_capabilities", "execute_capability", "list_skills", "get_skill"]
+const toolAllowlist = z
   .string()
   .optional()
-  .transform((value) => (value ? value.split(",").map((item) => item.trim()).filter(Boolean) : []))
+  .transform((value) => {
+    if (value === undefined || value.trim() === "") return DEFAULT_MCP_TOOLS
+    if (value.trim() === "*") return []
+    return value.split(",").map((item) => item.trim()).filter(Boolean)
+  })
 
 const configSchema = z.object({
   HEADLESS_API_TOKEN: z.string().min(32, "HEADLESS_API_TOKEN must be at least 32 characters"),
@@ -25,7 +35,7 @@ const configSchema = z.object({
   HEADLESS_MODEL: z.string().min(1),
   HEADLESS_MODEL_API_KEY: z.string().min(1).optional(),
   HEADLESS_MCP_URL: safeUrl.optional(),
-  HEADLESS_MCP_TOOL_ALLOWLIST: csv,
+  HEADLESS_MCP_TOOL_ALLOWLIST: toolAllowlist,
   HEADLESS_MAX_CONCURRENT_TURNS: z.coerce.number().int().min(1).max(1_000).default(32),
   HEADLESS_MAX_STEPS: z.coerce.number().int().min(1).max(200).default(30),
   HEADLESS_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(128_000).default(8192),
@@ -45,6 +55,7 @@ export type Config = {
     defaultApiKey?: string
     maxOutputTokens: number
   }
+  /** An empty allowlist means every tool the server offers. */
   mcp?: { url: string; toolAllowlist: string[] }
   limits: {
     maxConcurrentTurns: number
