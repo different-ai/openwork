@@ -34,6 +34,7 @@ import {
 import { getExternalMcpConnection } from "../capability-sources/external-mcp-connections.js"
 import { getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
 import { getOpenWorkWebRuntimeAccess } from "../openwork-web-runtime-access.js"
+import { slackRuntimeForOrganization } from "./headless.js"
 import { organizationHasCapability } from "../organization-capabilities.js"
 import { publicRequestUrl } from "../request-url.js"
 import { getOrganizationContextForUser } from "../orgs.js"
@@ -150,7 +151,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
         rolloutEnabled: organizationHasCapability(org.organization.metadata, "slackAssistant"),
         hasSigningSecret: Boolean(installation?.signingSecret),
         eligible: isSlackConnection(connection),
-        webAccess: web.hasAccess,
+        webAccess: slackRuntimeForOrganization(org.organization.metadata) === "headless" || web.hasAccess,
         channelIds: installation?.channelIds ?? [],
         shadowMode: installation?.shadowMode ?? false,
         dailyLimit: installation?.dailyLimit ?? 100,
@@ -197,7 +198,11 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
           403,
         )
       }
-      if (body.enabled && !(await getOpenWorkWebRuntimeAccess(org.organization.id)).hasAccess)
+      if (
+        body.enabled &&
+        slackRuntimeForOrganization(org.organization.metadata) !== "headless" &&
+        !(await getOpenWorkWebRuntimeAccess(org.organization.id)).hasAccess
+      )
         return c.json({ error: "openwork_web_access_required" }, 403)
       const previous = await getInstallation(connectionId)
       const signingSecret = body.signingSecret ?? previous?.signingSecret

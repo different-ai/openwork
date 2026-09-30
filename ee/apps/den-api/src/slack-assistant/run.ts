@@ -20,6 +20,7 @@ export const checkpointSchema = z.object({
   wakeShown: z.boolean().default(false),
   finalStatus: z.enum(["active", "suspended"]).default("active"),
   titleSynced: z.boolean().default(false),
+  startedAt: z.number().optional(),
 })
 type Checkpoint = z.infer<typeof checkpointSchema>
 const readSchema = z.object({
@@ -45,6 +46,19 @@ export function webLink(sessionId: string) {
     process.env.DEN_WEB_OPENWORK_WEB_URL ?? "https://web.openworklabs.com",
   )
   return url.toString()
+}
+
+/** Runs longer than this get a separate "done" reply, because updating a streamed message does not notify anyone. */
+export const DONE_PING_AFTER_MS = 60_000
+
+/** First meaningful line of the answer, for the "done" reply. */
+export function doneSummary(text: string) {
+  const line = text
+    .split("\n")
+    .map((entry) => entry.replace(/\*\*|__/g, "").replace(/^[#>*\-\s]+/, "").trim())
+    .find((entry) => entry.length > 0)
+  if (!line) return "your answer is above."
+  return line.length > 140 ? `${line.slice(0, 139)}…` : line
 }
 
 export function currentReplyDelta(previous: string, current: string) {
@@ -115,8 +129,13 @@ export async function advanceSlackRun(input: {
   title: string
   needsAttention?: (sessionId: string) => Promise<boolean>
   persist?: (checkpoint: Checkpoint) => Promise<void>
+  /** False for the headless runner: there is no OpenWork Web session to hand off to. */
+  webHandoff?: boolean
+  now?: () => number
 }): Promise<{ checkpoint: Checkpoint; delayMs: number; done?: boolean }> {
   const cp = input.checkpoint
+  const webHandoff = input.webHandoff !== false
+  const now = input.now ?? Date.now
   if (cp.phase === "create") {
     if (!cp.sessionId) {
       // Persist the empty native session before submitting any user instruction.
@@ -188,7 +207,8 @@ export async function advanceSlackRun(input: {
         updates.set(tool.id, {
           type: "task_update",
           id: scopeKey(tool.id),
-          title: "Working with your connections",
+          // The headless runtime reports readable step labels; OpenCode tool ids stay generic.
+          title: tool.name.includes(" ") ? tool.name : "Working with your connections",
           status,
           rawStatus: tool.status ?? "pending",
         })
@@ -208,16 +228,20 @@ export async function advanceSlackRun(input: {
       await appendText(
         input.slack,
         cp,
-        `\n\nThis task needs attention. [Open in OpenWork Web](${webLink(cp.sessionId ?? "")}).`,
+        webHandoff
+          ? `\n\nThis task needs attention. [Open in OpenWork Web](${webLink(cp.sessionId ?? "")}).`
+          : "\n\nThis task couldn't finish. Try again, or ask in a different way.",
       )
       cp.finalStatus = "suspended"
       cp.phase = "finish"
     } else if (snapshot.status === "idle" && Boolean(snapshot.finalAssistantText)) cp.phase = "finish"
     return { checkpoint: cp, delayMs: 1_000 }
   }
-  cp.completedAt ??= Date.now()
+  cp.completedAt ??= now()
   await stopSlackStream(input.slack, cp, {
-    chunks: [{ type: "markdown_text", text: `\n\n[Open in OpenWork Web](${webLink(cp.sessionId ?? "")})` }],
+    ...(webHandoff
+      ? { chunks: [{ type: "markdown_text", text: `\n\n[Open in OpenWork Web](${webLink(cp.sessionId ?? "")})` }] }
+      : {}),
     blocks: [
       {
         type: "context_actions",
@@ -232,6 +256,17 @@ export async function advanceSlackRun(input: {
       },
     ],
   })
+  if (cp.startedAt !== undefined && cp.completedAt - cp.startedAt > DONE_PING_AFTER_MS && cp.recipientUserId) {
+    try {
+      await input.slack("chat.postMessage", {
+        channel: cp.channel,
+        thread_ts: cp.threadTs,
+        text: `<@${cp.recipientUserId}> Done: ${doneSummary(cp.sentText)}`,
+      })
+    } catch {
+      // The answer is already delivered; a missed ping must not fail the run.
+    }
+  }
   return { checkpoint: cp, delayMs: 0, done: true }
 }
 export class RemoteSessionUnavailableError extends Error {

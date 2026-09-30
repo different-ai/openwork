@@ -5,6 +5,7 @@ import { appLogger } from "../observability/logger.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import { executeRemoteSessionCapability, type RemoteSessionAction } from "../mcp/remote-session-capabilities.js"
 import { buildSlackPrompt, SlackApiError, slackClient, slackEventSchema } from "./protocol.js"
+import { HEADLESS_RUN_MAX_MS, headlessRemoteCall } from "./headless.js"
 import {
   slackAssistantEnabledForInstallation,
   admitSlackRun,
@@ -19,6 +20,7 @@ import {
   lockSlackThread,
   releaseSlackThread,
   resolveSlackActor,
+  slackRuntimeForInstallation,
   revokeSlackInstallation,
   saveSlackSession,
   type EventRow,
@@ -26,7 +28,12 @@ import {
 } from "./repository.js"
 import { pruneSlackEvents, renewSlackLease, SlackLeaseLostError } from "./repository.js"
 
+/** OpenWork Web runs stop after 15 minutes; headless runs get the runner's longer bound. */
+const WEB_RUN_MAX_MS = 15 * 60_000
+const OPENING_LINE = "On it. I'll reply here when it's done.\n\n"
+
 async function remoteCall(actor: SlackActor, action: RemoteSessionAction, body: Record<string, unknown>) {
+  if (actor.runtime === "headless") return headlessRemoteCall(actor, action, body)
   const result = await executeRemoteSessionCapability({
     action,
     body,
@@ -40,9 +47,15 @@ async function remoteCall(actor: SlackActor, action: RemoteSessionAction, body: 
 const defaultWorkerDeps = {
   slack: slackClient,
   remote: remoteCall,
-  organize: organizeSlackSession,
-  needsAttention: slackSessionNeedsAttention,
-  rename: renameSlackSession,
+  // Session groups, pending approvals and renames live in OpenWork Web; headless runs have none.
+  organize: async (actor: SlackActor, sessionId: string) => {
+    if (actor.runtime !== "headless") await organizeSlackSession(actor, sessionId)
+  },
+  needsAttention: async (actor: SlackActor, sessionId: string) =>
+    actor.runtime === "headless" ? false : slackSessionNeedsAttention(actor, sessionId),
+  rename: async (actor: SlackActor, sessionId: string, title: string) => {
+    if (actor.runtime !== "headless") await renameSlackSession(actor, sessionId, title)
+  },
 }
 export async function processSlackEvent(event: EventRow, suppliedDeps = defaultWorkerDeps) {
   await renewSlackLease(event)
@@ -147,17 +160,22 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
       await releaseSlackThread(event)
       return checkpointEvent(event, { status: "done" })
     }
+    const headless = (await slackRuntimeForInstallation(installation)) === "headless"
     await slack("chat.postEphemeral", {
       channel: event.channelId,
       user: event.slackUserId,
       thread_ts: event.threadTs,
-      text: "I run on your own OpenWork workspace. Connect once to get started.",
+      text: headless
+        ? "I work as you in OpenWork. Connect once to get started."
+        : "I run on your own OpenWork workspace. Connect once to get started.",
       blocks: [
         {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: "I run on your own OpenWork workspace. Connect your Slack account to continue. Your workspace must grant access to this connection and OpenWork Web.",
+            text: headless
+              ? "I work as you, with the apps and skills you have in OpenWork. Connect your Slack account once to continue. Your workspace must give you access to this connection."
+              : "I run on your own OpenWork workspace. Connect your Slack account to continue. Your workspace must grant access to this connection and OpenWork Web.",
           },
         },
         {
@@ -182,14 +200,16 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
   }
   const thread = await lockSlackThread(event, actor)
   if (!thread) return checkpointEvent(event, {}, 2_000)
-  if (event.cancelled || Date.now() - event.createdAt.getTime() > 15 * 60_000) {
+  const headless = actor.runtime === "headless"
+  const maxRunMs = headless ? HEADLESS_RUN_MAX_MS : WEB_RUN_MAX_MS
+  if (event.cancelled || Date.now() - event.createdAt.getTime() > maxRunMs) {
     if (cp.sessionId && cp.phase !== "create")
       await deps.remote(actor, "stop", { sessionId: cp.sessionId, messageId: `msg_${event.id}` })
     if (cp.streamTs)
       await stopSlackStream(
         slack,
         { ...cp, finalStatus: "suspended" },
-        { chunks: [{ type: "markdown_text", text: "\n\nStopped. Open OpenWork Web to continue." }] },
+        { chunks: [{ type: "markdown_text", text: headless ? "\n\nStopped." : "\n\nStopped. Open OpenWork Web to continue." }] },
       )
     await releaseSlackThread(event)
     return checkpointEvent(event, { status: "done" })
@@ -199,7 +219,9 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
       await slack("chat.postEphemeral", {
         channel: event.channelId,
         user: event.slackUserId,
-        text: "OpenWork Slack has paused new requests because of a usage limit or repeated service failures. Please use OpenWork Web or try again later.",
+        text: headless
+          ? "OpenWork Slack has paused new requests because of a usage limit or repeated service failures. Please try again later."
+          : "OpenWork Slack has paused new requests because of a usage limit or repeated service failures. Please use OpenWork Web or try again later.",
       })
       await releaseSlackThread(event)
       return checkpointEvent(event, { status: "done" })
@@ -208,6 +230,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
     const identity = await deps.slack(actor.userToken)("auth.test", {})
     if (identity.user_id !== event.slackUserId || identity.team_id !== event.teamId || identity.bot_id)
       throw new Error("slack_actor_mismatch")
+    cp.startedAt ??= Date.now()
     cp.recipientUserId = event.slackUserId
     cp.recipientTeamId = event.teamId
     cp.privateReply =
@@ -238,7 +261,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
           thread_ts: cp.threadTs,
           recipient_user_id: event.slackUserId,
           recipient_team_id: event.teamId,
-          chunks: [{ type: "markdown_text", text: "OpenWork task\n\n" }],
+          chunks: [{ type: "markdown_text", text: OPENING_LINE }],
           task_display_mode: "timeline",
         }),
       )
@@ -287,6 +310,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
     needsAttention: (sessionId) => deps.needsAttention(actor, sessionId),
     persist: (checkpoint) => persistSlackCheckpoint(event, checkpoint),
     title: `${event.channelId} · ${(payload.text ?? "Task").slice(0, 85)}`,
+    webHandoff: !headless,
   })
   if (result.done) await releaseSlackThread(event)
   await checkpointEvent(
@@ -334,7 +358,15 @@ export async function handleSlackEventFailure(event: EventRow, error: unknown, d
           deps.slack(installation.botToken),
           { ...cp, finalStatus: "suspended" },
           {
-            chunks: [{ type: "markdown_text", text: "\n\nThis task stopped. Open OpenWork Web to continue." }],
+            chunks: [
+              {
+                type: "markdown_text",
+                text:
+                  actor?.runtime === "headless"
+                    ? "\n\nThis task stopped. Try again in a moment."
+                    : "\n\nThis task stopped. Open OpenWork Web to continue.",
+              },
+            ],
           },
         )
       } catch {

@@ -24,6 +24,7 @@ import { organizationHasCapability } from "../organization-capabilities.js"
 import { getOpenWorkWebRuntimeAccess } from "../openwork-web-runtime-access.js"
 import { listTeamsForMember } from "../orgs.js"
 import { canUseSlackAssistant, scopeKey, slackClient, type SlackEvent } from "./protocol.js"
+import { slackRuntimeForOrganization, type SlackRuntime } from "./headless.js"
 
 export type InstallationRow = typeof Installation.$inferSelect
 export type EventRow = typeof Event.$inferSelect
@@ -38,6 +39,14 @@ export async function slackAssistantEnabledForInstallation(installation: Install
     .where(eq(OrganizationTable.id, installation.organizationId))
     .limit(1)
   return organizationHasCapability(organization?.metadata, "slackAssistant")
+}
+export async function slackRuntimeForInstallation(installation: InstallationRow): Promise<SlackRuntime> {
+  const [organization] = await db
+    .select({ metadata: OrganizationTable.metadata })
+    .from(OrganizationTable)
+    .where(eq(OrganizationTable.id, installation.organizationId))
+    .limit(1)
+  return slackRuntimeForOrganization(organization?.metadata)
 }
 export function isSlackConnection(connection: ExternalMcpConnectionRow) {
   return (
@@ -155,6 +164,8 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
     getOpenWorkWebRuntimeAccess(installation.organizationId),
   ])
   const organization = organizations[0]
+  // The headless runner needs no per-member OpenWork Web computer.
+  const runtime = slackRuntimeForOrganization(organization?.metadata)
   const granted = await memberCanUseExternalMcpConnection({
     connectionId: connection.id,
     orgMembershipId: member.id,
@@ -167,7 +178,7 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
       enabled: installation.enabled,
       individualAccounts: true,
       mcpEnabled: memberFacingMcpConnectionsEnabled(organization.metadata, { gatingEnabled: true }),
-      webAccess: access.hasAccess,
+      webAccess: runtime === "headless" || access.hasAccess,
       activeMember: true,
       granted,
       connected: account.current && Boolean(account.value?.accessToken),
@@ -182,6 +193,7 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
     organizationId: organization.id,
     connection,
     userToken: account.value.accessToken,
+    runtime,
   }
 }
 export type SlackActor = NonNullable<Awaited<ReturnType<typeof resolveSlackActor>>>

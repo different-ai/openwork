@@ -9,7 +9,7 @@ import {
   readOrganizationCapabilityOverrides,
 } from "../src/organization-capabilities.js"
 
-const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, auditLogs: false, orgManagedDashboards: false, appMcpServers: false, slackAssistant: false }
+const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, auditLogs: false, orgManagedDashboards: false, appMcpServers: false, slackAssistant: false, slackAssistantHeadless: false }
 
 test("auditLogs accepts only canonical literal booleans and defaults off even for Enterprise", () => {
   expect(organizationCapabilityKeySchema.parse("auditLogs")).toBe("auditLogs")
@@ -168,4 +168,14 @@ test("appMcpServers is default-off and enabled only by a literal true", () => {
   expect(organizationCapabilityKeySchema.parse("appMcpServers")).toBe("appMcpServers")
   expect(normalizeOrganizationCapabilities(enabled)).toEqual({ ...defaultCapabilities, appMcpServers: true })
   expect(readOrganizationCapabilityOverrides(enabled)).toEqual({ installLinks: false, appMcpServers: true })
+})
+
+test("the Slack headless runtime is its own default-off platform capability", () => {
+  expect(organizationCapabilityKeySchema.parse("slackAssistantHeadless")).toBe("slackAssistantHeadless")
+  for (const value of [undefined, null, false, "true", 1, {}, []]) {
+    expect(organizationHasCapability({ capabilities: { slackAssistant: true, slackAssistantHeadless: value } }, "slackAssistantHeadless")).toBe(false)
+  }
+  const enabled = { capabilities: { slackAssistant: true, slackAssistantHeadless: true } }
+  expect(normalizeOrganizationCapabilities(enabled)).toEqual({ ...defaultCapabilities, slackAssistant: true, slackAssistantHeadless: true })
+  expect(readOrganizationCapabilityOverrides(JSON.stringify(enabled))).toEqual({ slackAssistant: true, slackAssistantHeadless: true })
 })

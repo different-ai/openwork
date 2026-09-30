@@ -77,6 +77,7 @@ export type AdminOrganizationsPageResponse = {
       orgManagedDashboards: boolean;
       appMcpServers: boolean;
       slackAssistant: boolean;
+      slackAssistantHeadless: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -153,6 +154,7 @@ export type AdminOverviewResponse = {
       orgManagedDashboards: boolean;
       appMcpServers: boolean;
       slackAssistant: boolean;
+      slackAssistantHeadless: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -1292,7 +1294,8 @@ export type CapabilityDisabledError = {
     | "auditLogs"
     | "orgManagedDashboards"
     | "appMcpServers"
-    | "slackAssistant";
+    | "slackAssistant"
+    | "slackAssistantHeadless";
 };
 
 export type CreateInstallLinkRequest = {
@@ -5161,6 +5164,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       orgManagedDashboards: boolean;
       appMcpServers: boolean;
       slackAssistant: boolean;
+      slackAssistantHeadless: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -5225,6 +5229,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       orgManagedDashboards: boolean;
       appMcpServers: boolean;
       slackAssistant: boolean;
+      slackAssistantHeadless: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *

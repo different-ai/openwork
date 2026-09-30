@@ -1222,8 +1222,10 @@ export const auth = betterAuth({
           if (capabilities && typeof capabilities === "object" && "auditLogs" in capabilities) {
             throw new APIError("FORBIDDEN", { message: "capabilities.auditLogs is reserved for internal platform administration." });
           }
-          if (capabilities && typeof capabilities === "object" && "slackAssistant" in capabilities) {
-            throw new APIError("FORBIDDEN", { message: "capabilities.slackAssistant is reserved for internal platform administration." });
+          for (const key of ["slackAssistant", "slackAssistantHeadless"]) {
+            if (capabilities && typeof capabilities === "object" && key in capabilities) {
+              throw new APIError("FORBIDDEN", { message: `capabilities.${key} is reserved for internal platform administration.` });
+            }
           }
           if (capabilities && typeof capabilities === "object" && "gatewayDashboard" in capabilities) {
             const retainedCapabilities = { ...capabilities };

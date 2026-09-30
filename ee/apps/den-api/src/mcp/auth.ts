@@ -24,6 +24,7 @@ import { mcpProtectedResourceMetadataUrl, mcpRouteResource, resolveMcpResourceFr
 import { DEN_MCP_REQUESTED_SCOPE } from "./scopes.js"
 import { getMcpGrantLiveness } from "./grant-liveness.js"
 import { getMcpSessionLiveness } from "./session-liveness.js"
+import { DEN_MCP_HEADLESS_RUN_CLIENT_ID, isHeadlessRunMcpToken } from "./headless-run-token.js"
 export { hasActiveMcpSession } from "./session-liveness.js"
 
 export type McpPrincipal = {
@@ -173,13 +174,17 @@ function readTokenResource(payload: Record<string, unknown>, source: McpTokenSou
   return null
 }
 
+const FIRST_PARTY_OPAQUE_CLIENT_IDS: ReadonlySet<string> = new Set([DEN_MCP_FIRST_PARTY_CLIENT_ID, DEN_MCP_HEADLESS_RUN_CLIENT_ID])
+
 function isFirstPartyMcpToken(payload: Record<string, unknown>, source: McpTokenSource) {
   if (source !== "opaque") {
     return false
   }
 
-  return readStringClaim(payload, "client_id") === DEN_MCP_FIRST_PARTY_CLIENT_ID
+  const clientId = readStringClaim(payload, "client_id")
+  return clientId !== null && FIRST_PARTY_OPAQUE_CLIENT_IDS.has(clientId)
 }
+
 
 function bearerChallenge(input: {
   metadataUrl: string
@@ -304,7 +309,7 @@ async function verifyOpaqueMcpToken(token: string) {
   }
 
   const storedScopes = readStoredScopes(accessToken.scopes)
-  const resource = accessToken.clientId === DEN_MCP_FIRST_PARTY_CLIENT_ID ? DEN_MCP_RESOURCE : DEN_MCP_OAUTH_RESOURCE
+  const resource = FIRST_PARTY_OPAQUE_CLIENT_IDS.has(accessToken.clientId) ? DEN_MCP_RESOURCE : DEN_MCP_OAUTH_RESOURCE
   // Only first-party opaque tokens are accepted below. Those skip OAuth consent,
   // so they intentionally remain session-coupled through the compatibility path.
   return {
@@ -426,7 +431,7 @@ export async function verifyMcpRequest(headers: Headers, optionsInput?: string |
         referenceId,
       }, bearerChallenge({ metadataUrl: options.metadataUrl, error: "invalid_token", message }))
     }
-  } else {
+  } else if (!isHeadlessRunMcpToken(payload, source)) {
     const sessionId = readStringClaim(payload, "sid")
     if (!sessionId) {
       const message = "The MCP bearer token is not tied to an active session."

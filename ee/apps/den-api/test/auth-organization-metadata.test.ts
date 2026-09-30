@@ -65,6 +65,16 @@ test.each([true, false, null, "true", 1])("public creation cannot set platform-m
   }
 })
 
+test.each([true, false, null, "true", 1])("public creation cannot set platform-managed slackAssistantHeadless to %s", async (value) => {
+  const metadata = { capabilities: { slackAssistantHeadless: value } }
+  for (const input of [metadata, JSON.stringify(metadata)]) {
+    await expect(beforeCreate(input)).rejects.toMatchObject({
+      status: "FORBIDDEN",
+      body: { message: "capabilities.slackAssistantHeadless is reserved for internal platform administration." },
+    })
+  }
+})
+
 test("ordinary metadata and other capability overrides retain their existing behavior", async () => {
   for (const metadata of [undefined, null, {}, { label: "test" }, { capabilities: {} }, { capabilities: { inference: false, desktop: true } }]) {
     await expect(beforeCreate(metadata)).resolves.toBeUndefined()
