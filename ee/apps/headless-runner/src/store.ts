@@ -82,6 +82,7 @@ export class Store {
         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
         message_id TEXT NOT NULL,
         status TEXT NOT NULL,
+        prompt TEXT NOT NULL,
         model TEXT,
         error TEXT,
         input_tokens INTEGER NOT NULL DEFAULT 0,
@@ -174,20 +175,34 @@ export class Store {
     return this.listTurns(sessionId).find((turn) => ACTIVE.has(turn.status)) ?? null
   }
 
-  /** Inserts the turn and its user message atomically. */
+  /**
+   * Records the turn and its prompt. The user message joins the transcript only
+   * when the turn starts, so a follow-up queued behind a running turn is never
+   * interleaved into that turn's transcript.
+   */
   admitTurn(input: { sessionId: string; messageId: string; prompt: string; model: string | null }): Turn {
     const at = this.now()
-    this.transaction(() => {
-      this.db
-        .prepare(
-          "INSERT INTO turns (session_id, message_id, status, model, error, created_at, updated_at) VALUES (?, ?, 'queued', ?, NULL, ?, ?)",
-        )
-        .run(input.sessionId, input.messageId, input.model, at, at)
-      this.appendMessage(input.sessionId, input.messageId, { role: "user", text: input.prompt })
-    })
+    this.db
+      .prepare(
+        "INSERT INTO turns (session_id, message_id, status, prompt, model, error, created_at, updated_at) VALUES (?, ?, 'queued', ?, ?, NULL, ?, ?)",
+      )
+      .run(input.sessionId, input.messageId, input.prompt, input.model, at, at)
     const turn = this.getTurn(input.sessionId, input.messageId)
     if (!turn) throw new Error("turn_admission_failed")
     return turn
+  }
+
+  /** Appends the turn's user message the first time the turn starts. */
+  startTranscript(sessionId: string, messageId: string) {
+    this.transaction(() => {
+      const existing = this.db
+        .prepare("SELECT 1 AS n FROM messages WHERE session_id = ? AND message_id = ? LIMIT 1")
+        .get(sessionId, messageId)
+      if (existing) return
+      const row = this.db.prepare("SELECT prompt FROM turns WHERE session_id = ? AND message_id = ?").get(sessionId, messageId)
+      if (!row) throw new Error("unknown_turn")
+      this.appendMessage(sessionId, messageId, { role: "user", text: z.object({ prompt: z.string() }).parse(row).prompt })
+    })
   }
 
   setTurnStatus(sessionId: string, messageId: string, status: TurnStatus, error: string | null = null) {

@@ -49,22 +49,84 @@ test("never writes caller credentials to disk", async () => {
   assert.ok(!bytes.includes(creds.mcpToken))
 })
 
-test("sending the same messageId is idempotent; a second turn waits for the first", async () => {
-  let release: () => void = () => {}
-  const gate = new Promise<void>((resolve) => (release = resolve))
-  const { model, requests } = scriptedModel([async () => (await gate, text("one"))])
+test("sending the same messageId is idempotent", async () => {
+  const { model, requests } = scriptedModel([text("one")])
   const { store, runner } = makeRunner({ model })
   const session = store.createSession({})
-
   runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "first", credentials: creds })
   const again = runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "first", credentials: creds })
   assert.equal(again.ok && again.state, "already_present")
-  const busy = runner.send({ sessionId: session.id, messageId: "msg_2", prompt: "second", credentials: creds })
-  assert.deepEqual(busy, { ok: false, error: "session_busy" })
-  release()
   await runner.idle()
   assert.equal(requests.length, 1)
   assert.equal(store.listTurns(session.id).length, 1)
+})
+
+test("follow-ups sent while a turn runs are accepted, answered in order, and see earlier answers", async () => {
+  let release: () => void = () => {}
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  const { model, requests } = scriptedModel([
+    async () => (await gate, text("Digest for #launch.")),
+    text("Added links."),
+    text("Shortened."),
+  ])
+  const { store, runner } = makeRunner({ model })
+  const session = store.createSession({})
+
+  runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "summarize #launch", credentials: creds })
+  const second = runner.send({ sessionId: session.id, messageId: "msg_2", prompt: "and include links", credentials: creds })
+  const third = runner.send({ sessionId: session.id, messageId: "msg_3", prompt: "keep it short", credentials: creds })
+  assert.equal(second.ok && second.state, "accepted")
+  assert.equal(third.ok && third.turn.status, "queued")
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(requests.length, 1, "follow-ups wait for the running turn instead of racing it")
+  assert.ok(
+    !requests[0].messages.some((message) => message.role === "user" && message.text === "and include links"),
+    "a queued follow-up never leaks into the running turn",
+  )
+  release()
+  await runner.idle()
+
+  assert.deepEqual(store.listTurns(session.id).map((turn) => turn.status), ["completed", "completed", "completed"])
+  assert.deepEqual(
+    store.messages(session.id).map((entry) => (entry.message.role === "tool" ? "tool" : entry.message.text)),
+    ["summarize #launch", "Digest for #launch.", "and include links", "Added links.", "keep it short", "Shortened."],
+  )
+  const lastContext = requests[2].messages.map((message) => (message.role === "tool" ? "tool" : message.text))
+  assert.deepEqual(lastContext.slice(0, 4), ["summarize #launch", "Digest for #launch.", "and include links", "Added links."])
+})
+
+test("stop targets one message, or the whole conversation", async () => {
+  const { model } = scriptedModel([(request) => waitForAbort(request.signal), text("second answer")])
+  const { store, runner } = makeRunner({ model })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "slow", credentials: creds })
+  runner.send({ sessionId: session.id, messageId: "msg_2", prompt: "next", credentials: creds })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(runner.abort(session.id, "msg_1"), true)
+  await runner.idle()
+  assert.deepEqual(store.listTurns(session.id).map((turn) => turn.status), ["aborted", "completed"])
+
+  const other = store.createSession({})
+  const { model: slow } = scriptedModel([(request) => waitForAbort(request.signal)])
+  const second = makeRunner({ store, model: slow })
+  second.runner.send({ sessionId: other.id, messageId: "a", prompt: "x", credentials: creds })
+  second.runner.send({ sessionId: other.id, messageId: "b", prompt: "y", credentials: creds })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(second.runner.abort(other.id), true)
+  await second.runner.idle()
+  assert.deepEqual(store.listTurns(other.id).map((turn) => turn.status), ["aborted", "aborted"])
+})
+
+test("a runaway queue is capped per conversation", () => {
+  const { model } = scriptedModel([(request) => waitForAbort(request.signal)])
+  const { store, runner } = makeRunner({ model })
+  const session = store.createSession({})
+  const results = Array.from({ length: 23 }, (_, i) =>
+    runner.send({ sessionId: session.id, messageId: `m${i}`, prompt: "x", credentials: creds }),
+  )
+  assert.deepEqual(results.at(-1), { ok: false, error: "too_many_queued" })
+  assert.equal(results.filter((result) => result.ok).length, 21, "one running plus twenty queued")
+  runner.abort(session.id)
 })
 
 test("a crash mid-tool-call resumes without re-running the tool", async () => {
@@ -73,6 +135,7 @@ test("a crash mid-tool-call resumes without re-running the tool", async () => {
   const session = crashed.createSession({})
   crashed.admitTurn({ sessionId: session.id, messageId: "msg_1", prompt: "post the update", model: null })
   crashed.setTurnStatus(session.id, "msg_1", "running")
+  crashed.startTranscript(session.id, "msg_1")
   crashed.appendMessage(session.id, "msg_1", {
     role: "assistant",
     text: "",

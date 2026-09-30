@@ -24,7 +24,7 @@ headless-runner (one Node process, SQLite file)
 |---|---|
 | **Works with the AI Gateway** | It speaks Anthropic Messages (`{base}/messages`, `x-api-key`) or OpenAI Chat Completions (`{base}/chat/completions`, `Authorization: Bearer`). Point it at a Gateway provider route (`/api/v1/providers/<ipr>`, `ow_gw_` key) or OpenWork Models (`/api/v1`, `ow_inf_` key). Model ids are Gateway aliases (`gwm_…`), and the Gateway still enforces access, limits and usage. |
 | **Cheap** | One process serves many sessions, and an idle session is just rows. Anthropic prompt caching sits on the system prompt and the newest message, so each agent step reuses the previous prefix. In the smoke test, 123k of 167k input tokens were cache reads. Tool output, steps, file sizes and context are all capped. |
-| **Reliable** | Every step is written to SQLite (WAL) before the next one starts. Sends are idempotent on `messageId`. After a crash or restart, turns are marked `interrupted`; sending the same `messageId` again resumes them. A tool call whose result was never recorded is **not re-run**: it is recorded as an error so the model can check its effect instead of repeating a possible write. Model calls retry on 408/409/425/429/5xx with backoff. There is a turn timeout, a step cap, and a global concurrency limit. |
+| **Reliable** | Every step is written to SQLite (WAL) before the next one starts. Sends are idempotent on `messageId`. Follow-ups sent while a turn runs are queued per conversation and answered in order, each seeing the earlier answers; the caller never has to retry "busy". After a crash or restart, turns are marked `interrupted`; sending the same `messageId` again resumes them. A tool call whose result was never recorded is **not re-run**: it is recorded as an error so the model can check its effect instead of repeating a possible write. Model calls retry on 408/409/425/429/5xx with backoff. There is a turn timeout, a step cap, and a global concurrency limit. |
 | **Safe** | No shell, no host filesystem, no child processes. Network access goes only to the two operator-configured URLs (https, or http on loopback). Callers can't redirect it. Model keys and MCP tokens are supplied per turn, held in memory only, and never written to disk or logs (a test checks this). File paths are normalized so they can't escape the session. A service bearer token (≥32 chars) guards every `/v1` route. `HEADLESS_MCP_TOOL_ALLOWLIST` can narrow the MCP tools. The default system prompt asks the model to read and draft, and to change data only when explicitly asked. |
 | **Simple** | About 1,400 lines of source, four runtime deps (`hono`, `@hono/node-server`, `@modelcontextprotocol/client`, `zod`), and `node:sqlite`. No agent framework, no provider SDKs. |
 
@@ -36,9 +36,9 @@ All `/v1` routes require `Authorization: Bearer $HEADLESS_API_TOKEN`.
 |---|---|---|---|
 | `GET` | `/health` | | `{ ok: true }` |
 | `POST` | `/v1/sessions` | `{ title?, instructions? }` | session (`hs_…`) |
-| `POST` | `/v1/sessions/:id/turns` | `{ messageId, prompt, model?, credentials: { modelApiKey?, mcpToken? } }` | `202 { state: accepted \| resumed \| already_present, turn }`; `409 session_busy` while another turn runs |
+| `POST` | `/v1/sessions/:id/turns` | `{ messageId, prompt, model?, credentials: { modelApiKey?, mcpToken? } }` | `202 { state: accepted \| resumed \| already_present, turn }`. A message sent while another turn runs is accepted and answered next (`turn.status: queued`); only a runaway queue of 20+ returns `429 too_many_queued` |
 | `GET` | `/v1/sessions/:id` | `?messageId=&limit=` | `{ session, status: idle \| busy, turns, messages, finalAssistantText }` |
-| `POST` | `/v1/sessions/:id/abort` | | `{ accepted }` |
+| `POST` | `/v1/sessions/:id/abort` | `{ messageId? }` | `{ accepted }`. With a `messageId`, stops only that turn (running or queued); without one, stops the running turn and every follow-up queued behind it |
 | `GET` | `/v1/sessions/:id/files` | | `{ files: [{ path, size, updatedAt }] }` |
 | `GET` | `/v1/sessions/:id/files/content` | `?path=` | file text |
 | `DELETE` | `/v1/sessions/:id` | | `204` |

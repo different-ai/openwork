@@ -31,7 +31,10 @@ export type SendInput = {
 }
 export type SendResult =
   | { ok: true; state: "accepted" | "resumed" | "already_present"; turn: Turn }
-  | { ok: false; error: "unknown_session" | "session_busy" }
+  | { ok: false; error: "unknown_session" | "too_many_queued" }
+
+/** Follow-ups a person can stack behind a running turn in one conversation. */
+export const MAX_QUEUED_PER_SESSION = 20
 
 type Job = { sessionId: string; messageId: string }
 
@@ -65,7 +68,8 @@ function unansweredCalls(messages: Message[]) {
 }
 
 export class Runner {
-  private readonly controllers = new Map<string, AbortController>()
+  /** The one running turn per session. Other turns for that session wait in the queue, in order. */
+  private readonly controllers = new Map<string, { messageId: string; controller: AbortController }>()
   private readonly credentials = new Map<string, TurnCredentials>()
   private readonly queue: Job[] = []
   private readonly running = new Set<Promise<void>>()
@@ -77,9 +81,10 @@ export class Runner {
     const { store } = this.options
     if (!store.getSession(input.sessionId)) return { ok: false, error: "unknown_session" }
     const existing = store.getTurn(input.sessionId, input.messageId)
-    const active = store.activeTurn(input.sessionId)
     if (existing && !RESUMABLE.has(existing.status)) return { ok: true, state: "already_present", turn: existing }
-    if (active) return { ok: false, error: "session_busy" }
+    // A message sent while another turn runs is not an error: it is queued and answered next.
+    const queued = this.queue.filter((job) => job.sessionId === input.sessionId).length
+    if (queued >= MAX_QUEUED_PER_SESSION) return { ok: false, error: "too_many_queued" }
     let state: "accepted" | "resumed"
     if (existing) {
       store.setTurnStatus(input.sessionId, input.messageId, "queued")
@@ -96,19 +101,26 @@ export class Runner {
     return { ok: true, state, turn }
   }
 
-  /** Requests a stop of the session's active turn. */
-  abort(sessionId: string): boolean {
-    const controller = this.controllers.get(sessionId)
-    if (controller) {
-      controller.abort(new Error("aborted"))
-      return true
+  /**
+   * Stops one turn (by messageId) or, without a messageId, the running turn and
+   * every follow-up queued behind it.
+   */
+  abort(sessionId: string, messageId?: string): boolean {
+    let stopped = false
+    const running = this.controllers.get(sessionId)
+    if (running && (!messageId || running.messageId === messageId)) {
+      running.controller.abort(new Error("aborted"))
+      stopped = true
     }
-    const queuedIndex = this.queue.findIndex((job) => job.sessionId === sessionId)
-    if (queuedIndex < 0) return false
-    const [job] = this.queue.splice(queuedIndex, 1)
-    this.credentials.delete(`${job.sessionId}:${job.messageId}`)
-    this.options.store.setTurnStatus(job.sessionId, job.messageId, "aborted")
-    return true
+    for (let index = this.queue.length - 1; index >= 0; index -= 1) {
+      const job = this.queue[index]
+      if (job.sessionId !== sessionId || (messageId && job.messageId !== messageId)) continue
+      this.queue.splice(index, 1)
+      this.credentials.delete(`${job.sessionId}:${job.messageId}`)
+      this.options.store.setTurnStatus(job.sessionId, job.messageId, "aborted")
+      stopped = true
+    }
+    return stopped
   }
 
   /** Resolves when every queued and running turn has settled. */
@@ -121,17 +133,25 @@ export class Runner {
     for (const job of this.queue.splice(0)) {
       this.options.store.setTurnStatus(job.sessionId, job.messageId, "interrupted", "runner_shutdown")
     }
-    for (const controller of this.controllers.values()) controller.abort(new Error("shutdown"))
+    for (const { controller } of this.controllers.values()) controller.abort(new Error("shutdown"))
     await Promise.all([...this.running])
   }
 
+  /** Starts queued turns in order, at most one per session and maxConcurrentTurns overall. */
   private pump() {
-    while (this.activeCount < this.options.limits.maxConcurrentTurns && this.queue.length) {
-      const job = this.queue.shift()
-      if (!job) break
+    for (let index = 0; index < this.queue.length && this.activeCount < this.options.limits.maxConcurrentTurns; ) {
+      const job = this.queue[index]
+      if (this.controllers.has(job.sessionId)) {
+        index += 1
+        continue
+      }
+      this.queue.splice(index, 1)
       this.activeCount += 1
-      const promise = this.runTurn(job).finally(() => {
+      const controller = new AbortController()
+      this.controllers.set(job.sessionId, { messageId: job.messageId, controller })
+      const promise = this.runTurn(job, controller).finally(() => {
         this.activeCount -= 1
+        this.controllers.delete(job.sessionId)
         this.running.delete(promise)
         this.pump()
       })
@@ -139,13 +159,11 @@ export class Runner {
     }
   }
 
-  private async runTurn({ sessionId, messageId }: Job) {
+  private async runTurn({ sessionId, messageId }: Job, controller: AbortController) {
     const { store, limits } = this.options
     const key = `${sessionId}:${messageId}`
     const credentials = this.credentials.get(key) ?? {}
     this.credentials.delete(key)
-    const controller = new AbortController()
-    this.controllers.set(sessionId, controller)
     const timeout = setTimeout(() => controller.abort(new Error("turn_timeout")), limits.turnTimeoutMs)
     const signal = controller.signal
     let tools: ToolSession | null = null
@@ -160,6 +178,7 @@ export class Runner {
 
     try {
       store.setTurnStatus(sessionId, messageId, "running")
+      store.startTranscript(sessionId, messageId)
       // A resumed turn never re-runs a tool call whose outcome is unknown: it may have had side effects.
       closeUnanswered("This tool call was interrupted before it returned. It was not retried; check its effect before repeating it.")
       const last = turnMessages().at(-1)
@@ -239,7 +258,6 @@ export class Runner {
       }
     } finally {
       clearTimeout(timeout)
-      this.controllers.delete(sessionId)
       await tools?.close()
     }
   }

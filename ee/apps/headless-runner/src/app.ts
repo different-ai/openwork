@@ -18,6 +18,7 @@ const sendBody = z
     credentials: turnCredentialsSchema.default({}),
   })
   .strict()
+const abortBody = z.object({ messageId: messageIdSchema.optional() }).strict()
 const readQuery = z.object({
   messageId: messageIdSchema.optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
@@ -83,13 +84,15 @@ export function createApp(input: { store: Store; runner: Runner; apiToken: strin
     const body = sendBody.safeParse(await c.req.json().catch(() => null))
     if (!body.success) return c.json({ error: "invalid_request", issues: body.error.issues }, 400)
     const result = runner.send({ sessionId: c.req.param("id"), ...body.data })
-    if (!result.ok) return c.json({ error: result.error }, result.error === "unknown_session" ? 404 : 409)
+    if (!result.ok) return c.json({ error: result.error }, result.error === "unknown_session" ? 404 : 429)
     return c.json({ state: result.state, turn: result.turn }, 202)
   })
 
-  app.post("/v1/sessions/:id/abort", (c) => {
+  app.post("/v1/sessions/:id/abort", async (c) => {
     if (!store.getSession(c.req.param("id"))) return c.json({ error: "unknown_session" }, 404)
-    return c.json({ accepted: runner.abort(c.req.param("id")) })
+    const body = abortBody.safeParse(await c.req.json().catch(() => ({})))
+    if (!body.success) return c.json({ error: "invalid_request", issues: body.error.issues }, 400)
+    return c.json({ accepted: runner.abort(c.req.param("id"), body.data.messageId) })
   })
 
   app.get("/v1/sessions/:id/files", (c) => {
