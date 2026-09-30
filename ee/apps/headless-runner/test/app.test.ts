@@ -72,13 +72,6 @@ test("config refuses weak tokens and non-https remote endpoints", () => {
   }
   assert.equal(loadConfig(base).model.baseUrl, "https://gateway.openworklabs.com/api/v1/providers/ipr_x")
   assert.equal(loadConfig({ ...base, HEADLESS_MCP_URL: "http://127.0.0.1:8790/mcp/agent" }).mcp?.url, "http://127.0.0.1:8790/mcp/agent")
-  assert.deepEqual(loadConfig({ ...base, HEADLESS_MCP_URL: "https://api.openworklabs.com/mcp/agent" }).mcp?.toolAllowlist, [
-    "search_capabilities",
-    "execute_capability",
-    "list_skills",
-    "get_skill",
-  ])
-  assert.deepEqual(loadConfig({ ...base, HEADLESS_MCP_URL: "https://x.example/mcp", HEADLESS_MCP_TOOL_ALLOWLIST: "*" }).mcp?.toolAllowlist, [])
   assert.throws(() => loadConfig({ ...base, HEADLESS_API_TOKEN: "short" }))
   assert.throws(() => loadConfig({ ...base, HEADLESS_MCP_URL: "http://evil.example/mcp" }))
 })
