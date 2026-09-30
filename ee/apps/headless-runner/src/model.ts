@@ -285,7 +285,7 @@ const openAIResponse = z.object({
     .optional(),
 })
 
-export function openAIModel(options: { baseUrl: string; fetch?: Fetch; sleep?: Sleep }): ModelClient {
+export function openAIModel(options: { baseUrl: string; maxOutputTokens: number; fetch?: Fetch; sleep?: Sleep }): ModelClient {
   return {
     async complete(request) {
       const json = await postJson({
@@ -296,6 +296,8 @@ export function openAIModel(options: { baseUrl: string; fetch?: Fetch; sleep?: S
         signal: request.signal,
         body: {
           model: request.model,
+          // max_completion_tokens is OpenAI's current output cap (max_tokens is rejected by newer models).
+          max_completion_tokens: options.maxOutputTokens,
           messages: toOpenAIMessages(request.system, request.messages),
           ...(request.tools.length
             ? {

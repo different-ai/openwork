@@ -73,7 +73,7 @@ The model sees these tools:
 | `HEADLESS_MAX_CONCURRENT_TURNS` | `32` | Process-wide. Turns mostly wait on the network, so this is bounded by memory and Gateway rate limits, not CPU |
 | `HEADLESS_MAX_STEPS` | `30` | Model calls per turn |
 | `HEADLESS_TURN_TIMEOUT_MS` | `3600000` | Matches the 60-minute bound Den puts on headless Slack runs and their MCP tokens |
-| `HEADLESS_MAX_OUTPUT_TOKENS` | `8192` | Anthropic `max_tokens` |
+| `HEADLESS_MAX_OUTPUT_TOKENS` | `8192` | Output cap per model call: Anthropic `max_tokens`, OpenAI `max_completion_tokens` |
 | `HEADLESS_CONTEXT_CHAR_BUDGET` | `400000` | Older whole turns are dropped past this |
 | `HEADLESS_SYSTEM_PROMPT` | built-in | |
 

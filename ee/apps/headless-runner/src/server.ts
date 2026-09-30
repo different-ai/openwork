@@ -16,7 +16,7 @@ const runner = new Runner({
   model:
     config.model.protocol === "anthropic"
       ? anthropicModel({ baseUrl: config.model.baseUrl, maxOutputTokens: config.model.maxOutputTokens })
-      : openAIModel({ baseUrl: config.model.baseUrl }),
+      : openAIModel({ baseUrl: config.model.baseUrl, maxOutputTokens: config.model.maxOutputTokens }),
   defaultModel: config.model.model,
   defaultModelApiKey: config.model.defaultApiKey,
   mcp: config.mcp
