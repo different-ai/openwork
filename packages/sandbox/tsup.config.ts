@@ -6,7 +6,7 @@ export default defineConfig({
     "testing/index": "src/testing/index.ts",
   },
   format: ["esm"],
-  dts: true,
+  dts: false,
   clean: true,
   target: "es2022",
   platform: "node",

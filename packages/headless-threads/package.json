@@ -5,7 +5,10 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
       "bun": "./src/index.ts",
       "development": "./src/index.ts",
       "default": "./dist/index.js"
@@ -17,7 +20,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts --clean --external zod --target es2022",
+    "build": "tsup src/index.ts --format esm --clean --external zod --target es2022 && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
