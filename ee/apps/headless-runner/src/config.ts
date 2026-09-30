@@ -29,7 +29,7 @@ const configSchema = z.object({
   HEADLESS_MAX_CONCURRENT_TURNS: z.coerce.number().int().min(1).max(1_000).default(32),
   HEADLESS_MAX_STEPS: z.coerce.number().int().min(1).max(200).default(30),
   HEADLESS_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(128_000).default(8192),
-  HEADLESS_TURN_TIMEOUT_MS: z.coerce.number().int().min(10_000).default(15 * 60_000),
+  HEADLESS_TURN_TIMEOUT_MS: z.coerce.number().int().min(10_000).default(60 * 60_000),
   HEADLESS_CONTEXT_CHAR_BUDGET: z.coerce.number().int().min(10_000).default(400_000),
   HEADLESS_SYSTEM_PROMPT: z.string().optional(),
 })

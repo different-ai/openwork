@@ -72,7 +72,7 @@ The model sees these tools:
 | `HEADLESS_PORT` | `8795` | |
 | `HEADLESS_MAX_CONCURRENT_TURNS` | `32` | Process-wide. Turns mostly wait on the network, so this is bounded by memory and Gateway rate limits, not CPU |
 | `HEADLESS_MAX_STEPS` | `30` | Model calls per turn |
-| `HEADLESS_TURN_TIMEOUT_MS` | `900000` | |
+| `HEADLESS_TURN_TIMEOUT_MS` | `3600000` | Matches the 60-minute bound Den puts on headless Slack runs and their MCP tokens |
 | `HEADLESS_MAX_OUTPUT_TOKENS` | `8192` | Anthropic `max_tokens` |
 | `HEADLESS_CONTEXT_CHAR_BUDGET` | `400000` | Older whole turns are dropped past this |
 | `HEADLESS_SYSTEM_PROMPT` | built-in | |
@@ -88,8 +88,22 @@ HEADLESS_API_TOKEN=… HEADLESS_MODEL_PROTOCOL=anthropic HEADLESS_MODEL_BASE_URL
 
 `pnpm --filter @openwork-ee/headless-runner smoke "<prompt>"` runs one real turn through the HTTP API with a throwaway database. Pass credentials as `SMOKE_MODEL_API_KEY` and `SMOKE_MCP_TOKEN`. It prints the status, token usage (including cached tokens), tools used, files written, elapsed time and RSS. It never prints credentials.
 
+## Deploy on Render
+
+Create a **private service** so it has no public URL; only den-api reaches it. Use Node 22.13 or later.
+
+| Setting | Value |
+|---|---|
+| Build command | `corepack enable && pnpm install --frozen-lockfile --filter @openwork-ee/headless-runner... && pnpm --filter @openwork-ee/headless-runner build` |
+| Start command | `node ee/apps/headless-runner/dist/server.js` |
+| Disk | Mount at `/var/data`, then set `HEADLESS_DB_PATH=/var/data/headless.sqlite` |
+| Instances | 1. A service with a disk runs as a single instance, and a deploy restarts in-flight turns, which Den resumes |
+| Env | `HEADLESS_API_TOKEN`, `HEADLESS_MODEL_PROTOCOL`, `HEADLESS_MODEL_BASE_URL`, `HEADLESS_MODEL`, `HEADLESS_MODEL_API_KEY`, `HEADLESS_MCP_URL` |
+
+On den-api, set `DEN_HEADLESS_RUNNER_URL` to the private service address (for example `http://headless-runner:8795`) and `DEN_HEADLESS_RUNNER_TOKEN` to the same value as `HEADLESS_API_TOKEN`. Then turn on **Slack Assistant** and **Slack Assistant: headless runtime** for an organization in `/admin`.
+
 ## Limits and next steps
 
 - **Single instance.** State is one SQLite file. Scale by sharding sessions across instances, each with its own volume.
-- **Credentials come from the caller.** A runtime outside Den can't mint a member-scoped MCP token today: `/mcp/agent` requires a live grant or Den session. The next step is for Den to mint a short-lived, run-scoped token per turn, for the Slack assistant and automations.
-- **Not wired in yet.** Wiring it in means adding a `headless` backend to remote sessions and an `AutomationEngineAdapter` over this API. Those are follow-ups; this service is the runtime they plug into.
+- **Credentials come from the caller.** For Slack, Den mints a short-lived, run-scoped MCP token (client `openwork-headless-run`, at most 60 minutes) for the linked member on every admitted run.
+- **Slack is the first caller.** Automations would be next, as an `AutomationEngineAdapter` over this API.
