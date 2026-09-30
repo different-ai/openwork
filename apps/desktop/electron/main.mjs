@@ -39,6 +39,7 @@ import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserLoginSync } from "./browser-login-sync.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
+import { titleBarOverlayForTheme } from "./window-controls-overlay.mjs";
 import {
   buildNukeManifest,
   executeNukeFreshStart,
@@ -1808,6 +1809,7 @@ function applyNativeTheme(mode) {
   nativeTheme.themeSource = mode;
 
   if (process.platform !== "darwin") {
+    mainWindow?.setTitleBarOverlay(titleBarOverlayForTheme(nativeTheme));
     return true;
   }
 
@@ -2590,7 +2592,7 @@ async function createMainWindow() {
   } else {
     Object.assign(windowAppearanceOptions, {
       titleBarStyle: "hidden",
-      titleBarOverlay: { height: 40 },
+      titleBarOverlay: titleBarOverlayForTheme(nativeTheme),
     });
   }
 
