@@ -62,15 +62,26 @@ test("scratch MySQL: fenced leases persist rotation, reject stale/revoked writes
     assert.equal(await store.recordRefreshFailure({ lock, error: "invalid_grant", permanent: true, now }), false)
     await store.recordRefreshFailure({ lock: next, error: null, permanent: false, now })
     let calls = 0
-    const refresh = createGoogleOauthRefresher({ store, tokenFetch: async () => { calls++; return Response.json({ access_token: "new", refresh_token: "rt-2", expires_in: 3600 }) } })
-    const input = { credential, token: { accessToken: "old", refreshToken: "rt-1" }, provider, subject: memberId, now, authorization }
+    const currentTime = new Date(now.getTime() + 120_000)
+    const refresh = createGoogleOauthRefresher({ store, tokenFetch: async () => {
+      calls++
+      const leased = await store.reloadCredential(scope)
+      assert.equal(leased?.refreshing_until?.getTime(), currentTime.getTime() + 30_000)
+      const contender = await store.reloadCredential(scope)
+      assert.ok(contender)
+      assert.equal(await store.tryAcquireRefreshLock({ scope, credential: contender, now: currentTime, until: new Date(currentTime.getTime() + 30_000) }), null)
+      return Response.json({ access_token: "new", refresh_token: "rt-2", token_type: "Bearer", expires_in: 3600 })
+    } })
+    const input = { credential, token: { accessToken: "old", refreshToken: "rt-1" }, provider, subject: memberId, now, clock: () => currentTime, authorization }
     assert.equal((await refresh(input)).kind, "refreshed")
     assert.equal((await refresh(input)).kind, "refreshed")
     assert.equal(calls, 1)
     const saved = await store.reloadCredential(scope)
     assert.ok(saved)
-    assert.deepEqual(JSON.parse(saved.secret), { accessToken: "new", refreshToken: "rt-2" })
-    const revokeLock = await store.tryAcquireRefreshLock({ scope, credential: saved, now, until })
+    assert.deepEqual(JSON.parse(saved.secret), { accessToken: "new", refreshToken: "rt-2", tokenType: "Bearer" })
+    assert.equal(saved.expires_at?.getTime(), currentTime.getTime() + 3600_000)
+    assert.equal(saved.last_refreshed_at?.getTime(), currentTime.getTime())
+    const revokeLock = await store.tryAcquireRefreshLock({ scope, credential: saved, now: currentTime, until: new Date(currentTime.getTime() + 30_000) })
     assert.ok(revokeLock)
     // Preserve all timestamps and lock fields: a new ciphertext alone must fence
     // replacement, even when reauthorization returns identical plaintext.

@@ -23,6 +23,10 @@ import {
   scriptWorldSnapshotPath,
 } from "./script-world.ts";
 import { createWorldView, detectViewMode, type ViewSink, type WorldView } from "./view.ts";
+import { OS_ENV, PLACE_ENV, WORLD_PROVIDERS, formatTarget, isWorldProvider, resolveTarget, type WorldProvider } from "./target.ts";
+import { SOURCES_ENV, gitRefResolver, parseSourceFlag, resolveSources, type SourceRequest } from "./source.ts";
+import { SEEDS_ENV, parseSeedFlag, type WorldSeed } from "./seed.ts";
+import { assertWorldSupport, readWorldSupport, supportedTargetDescription } from "./support.ts";
 
 export type WorldCommand =
   | {
@@ -31,7 +35,10 @@ export type WorldCommand =
       detach?: boolean;
       timeoutMs?: number;
       stage?: string;
-      place?: "local" | "daytona";
+      place?: WorldProvider;
+      os?: string;
+      sources?: SourceRequest[];
+      seeds?: WorldSeed[];
       env?: string[];
       plain?: true;
       args: string[];
@@ -42,7 +49,7 @@ export type WorldCommand =
   | { kind: "plan"; source: string; stage?: string }
   | { kind: "list" }
   | { kind: "forget"; name: string }
-  | { kind: "help"; error?: string };
+  | { kind: "help"; error?: string; name?: string; json?: true };
 
 export interface WorldCliOptions {
   cwd: string;
@@ -77,10 +84,22 @@ function parseStageOptions(options: string[]): { stage?: string; error?: string 
   return stage === undefined ? {} : { stage };
 }
 
+const PREVIEW_COMPOSITION: Readonly<Record<string, { sources: string[]; seeds: string[] }>> = {
+  "preview-desktop": { sources: ["desktop"], seeds: ["fresh", "blank"] },
+  "preview-den": { sources: ["den"], seeds: ["fresh", "team", "restricted", "workspace"] },
+  "preview-full": { sources: ["den", "desktop"], seeds: ["fresh", "team", "restricted", "workspace"] },
+};
+const WEB_WORLDS: ReadonlySet<string> = new Set(["preview-app-web", "acme-web"]);
+
 export function parseWorldArgs(argv: string[]): WorldCommand {
   const [command, ...args] = argv;
   if (!command || command === "help") {
-    return args.length === 0 ? { kind: "help" } : helpError("The help command does not take arguments.");
+    if (args.length === 0) return { kind: "help" };
+    if (args.length === 1 && args[0] === "--json") return { kind: "help", json: true };
+    if (args[0] && !args[0].startsWith("--") && (args.length === 1 || (args.length === 2 && args[1] === "--json"))) {
+      return { kind: "help", name: args[0], ...(args.length === 2 ? { json: true } : {}) };
+    }
+    return helpError("Use world help [name] [--json].");
   }
   if (command === "up") {
     const [source, ...rest] = args;
@@ -93,9 +112,12 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
     let detach = false;
     let timeoutMs: number | undefined;
     let stage: string | undefined;
-    let place: "local" | "daytona" | undefined;
+    let place: WorldProvider | undefined;
+    let os: string | undefined;
     let plain = false;
     const env: string[] = [];
+    const sources: SourceRequest[] = [];
+    const seeds: WorldSeed[] = [];
     for (let index = 0; index < options.length; index += 1) {
       const option = options[index];
       if (option === "--env") {
@@ -133,10 +155,30 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
       }
       if (option === "--place" && place === undefined) {
         const value = options[index + 1];
-        if (value !== "local" && value !== "daytona") {
-          return helpError("Use --place followed by local or daytona.");
+        if (!isWorldProvider(value)) {
+          return helpError(`Use --place followed by ${WORLD_PROVIDERS.slice(0, -1).join(", ")}, or ${WORLD_PROVIDERS.at(-1)}.`);
         }
         place = value;
+        index += 1;
+        continue;
+      }
+      if (option === "--os" && os === undefined) {
+        os = options[index + 1];
+        if (!os) return helpError("Use --os followed by linux, macos, or windows.");
+        index += 1;
+        continue;
+      }
+      if (option === "--source") {
+        const value = options[index + 1];
+        if (!value) return helpError("Use --source followed by [component=]local|sha:<sha>|ref:<branch>|release:<version>/<distribution>.");
+        try { sources.push(parseSourceFlag(value)); } catch (error) { return helpError(messageText(error)); }
+        index += 1;
+        continue;
+      }
+      if (option === "--seed") {
+        const value = options[index + 1];
+        if (!value) return helpError("Use --seed followed by comma-separated seed names.");
+        try { seeds.push(...parseSeedFlag(value)); } catch (error) { return helpError(messageText(error)); }
         index += 1;
         continue;
       }
@@ -154,6 +196,9 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
       ...(stage === undefined ? {} : { stage }),
       ...(place === undefined ? {} : { place }),
+      ...(os === undefined ? {} : { os }),
+      ...(sources.length === 0 ? {} : { sources }),
+      ...(seeds.length === 0 ? {} : { seeds }),
       ...(env.length === 0 ? {} : { env }),
       ...(plain ? { plain: true } : {}),
       args: scriptArgs,
@@ -287,17 +332,19 @@ async function helpText(options: WorldCliOptions): Promise<string> {
   const discovered = await discoverWorlds(options.worldsDirectory);
   const sources = discovered.map((world) => displayWorldPath(world.path, options.cwd));
   return `Usage:
-  pnpm world up <script-path-or-name> [--detach] [--timeout <ms>] [--stage <value>] [--place <local|daytona>] [--env <KEY>]... [--plain] [-- <script args...>]
+  pnpm world up <script-path-or-name> [--detach] [--timeout <ms>] [--stage <value>] [--place <local|daytona|freestyle>] [--os <linux|macos|windows>] [--source <[component=]spec>]... [--seed <preset>] [--env <KEY>]... [--plain] [-- <script args...>]
   pnpm world attach <name> [--stage <value>] [--plain]
   pnpm world outputs <name> [--stage <value>] [--reveal] [--json]
   pnpm world plan <script-path-or-name> [--stage <value>]
   pnpm world down <name> [--stage <value>] [--purge]
   pnpm world list
   pnpm world forget <name>
-  pnpm world help
+  pnpm world help [name] [--json]
 
 World scripts run in the foreground by default; use --detach for background lifecycle receipts.
 Use --env KEY only for nonsecret configuration whose value must match before reusing a running world. Never select credentials.
+Desktop previews on local and Daytona also pass the selected keys to the app (for example OPENWORK_ENGINE_V2_PREVIEW=1 ... --env OPENWORK_ENGINE_V2_PREVIEW).
+--source composes preview-desktop, preview-den, preview-full, preview-app-web, and acme-web; --seed composes preview-desktop, preview-den and preview-full. Other worlds reject them.
 Available world scripts: ${sources.join(", ") || "(none)"}`;
 }
 
@@ -484,6 +531,29 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
   const command = parseWorldArgs(argv);
   if (command.kind === "help") {
     if (command.error) print(command.error);
+    if (command.name) {
+      try {
+        const script = await resolveWorldScript(command.name, options);
+        const targets = await readWorldSupport(script.path);
+        const info = {
+          name: script.name,
+          path: displayWorldPath(script.path, options.cwd),
+          supportedTargets: targets ?? null,
+          ...(PREVIEW_COMPOSITION[script.name] ?? (WEB_WORLDS.has(script.name) ? { sources: ["*"], seeds: [] } : {})),
+        };
+        if (command.json) print(JSON.stringify(info));
+        else print(`${info.name}: ${info.path}\nSupported targets: ${supportedTargetDescription(targets)}${"sources" in info ? `\nSources: ${info.sources?.join(", ")}\nSeeds: ${info.seeds?.join(", ")}` : ""}`);
+        return 0;
+      } catch (error) {
+        print(messageText(error));
+        return 1;
+      }
+    }
+    if (command.json) {
+      const scripts = await discoverWorlds(options.worldsDirectory);
+      print(JSON.stringify(await Promise.all(scripts.map(async (script) => ({ name: script.name, path: displayWorldPath(script.path, options.cwd), supportedTargets: await readWorldSupport(script.path) ?? null })))));
+      return 0;
+    }
     print(await helpText(options));
     return command.error ? 1 : 0;
   }
@@ -492,11 +562,82 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       const script = await resolveWorldScript(command.source, options);
       const stage = resolveStage(process.env, command.stage);
       const recipeHash = await computeRecipeHash(script.path);
-      const place = command.place ?? process.env.OPENWORK_WORLD_PLACE ?? "local";
-      if (place !== "local" && place !== "daytona") throw new Error("World placement must be local or daytona.");
+      const target = resolveTarget({
+        provider: command.place ?? process.env[PLACE_ENV],
+        os: command.os ?? process.env[OS_ENV],
+      });
+      const place = target.provider;
+      assertWorldSupport(script.name, await readWorldSupport(script.path), target);
+      if (target.os === "windows" && target.provider === "daytona" && script.name !== "preview-desktop") {
+        throw new Error(`World ${script.name} cannot run on daytona/windows. Only a blank published preview-desktop release is supported.`);
+      }
+      if (target.os === "windows" && script.name === "preview-desktop" && !(command.args.includes("--release") || command.sources?.some((source) => source.component === "desktop" && source.spec.kind === "release"))) {
+        throw new Error("Daytona Windows requires a blank published preview-desktop release; use --source desktop=release:<version>/<distribution> --seed blank.");
+      }
+      // These are opt-in for now: never silently accept inputs a recipe cannot apply.
+      const preview = script.name in PREVIEW_COMPOSITION;
+      const web = WEB_WORLDS.has(script.name);
+      // The evidence viewer reads one pushed app-web source and takes no seed.
+      const evidence = script.name === "evidence-web";
+      if (evidence && (command.seeds?.length ?? 0) > 0) throw new Error("evidence-web does not accept --seed.");
+      if (!preview && !web && !evidence && ((command.sources?.length ?? 0) > 0 || (command.seeds?.length ?? 0) > 0)) {
+        throw new Error(`World ${script.name} does not yet declare --source/--seed support. Use its existing script arguments after --.`);
+      }
+      const resolveRef = gitRefResolver(options.cwd);
+      const sources = { ...await resolveSources(command.sources ?? [], resolveRef) };
+      const seeds = command.seeds ?? [];
+      let scriptArgs = command.args;
+      if (web && ((command.sources?.length ?? 0) > 0 || seeds.length > 0)) {
+        const webSource = sources["*"];
+        if (seeds.length > 0 || Object.keys(sources).length !== 1 || !webSource || command.args.includes("--ref")
+          || (place === "local" ? webSource.kind !== "local" : webSource.kind !== "sha")) {
+          throw new Error(`${script.name} --source accepts local on this computer or one pushed SHA/ref on remote placements; do not combine it with -- --ref or --seed.`);
+        }
+        if (webSource.kind === "sha" && (script.name === "preview-app-web" || place === "freestyle")) {
+          scriptArgs = ["--ref", webSource.sha, ...command.args];
+        }
+      }
       const env: NodeJS.ProcessEnv = Object.fromEntries((command.env ?? []).map((key) => [key, process.env[key]]));
-       const sourceHash = place === "local" ? await computeLocalSourceHash(options.cwd) : undefined;
-       const invocationHash = computeInvocationHash(recipeHash, command.args, place, env, sourceHash);
+      // Existing previews use origin/dev by default. Resolve it before adoption,
+      // otherwise a moved branch silently reuses an older running world.
+      if (script.name === "preview-desktop" && place === "daytona" && !sources["*"]) {
+        // The app alone: pin its source commit, or for a published release the
+        // commit whose preview tooling installs and launches those bytes.
+        const sha = process.env.OPENWORK_EVAL_REF?.trim() || await resolveRef("dev");
+        if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Preview desktop source must be a full reviewed, pushed commit SHA.");
+        const release = command.args.includes("--release") || sources.desktop?.kind === "release";
+        if (release) env.OPENWORK_EVAL_REF = sha;
+        else if (!sources.desktop) sources.desktop = { kind: "sha", sha };
+      } else if ((preview || script.name === "acme-web") && place === "daytona" && !sources.den && !sources["*"]) {
+        const pinned = process.env.OPENWORK_EVAL_REF?.trim();
+        const sha = pinned ?? await resolveRef("dev");
+        if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Preview Den source must be a full reviewed, pushed commit SHA.");
+        sources.den = { kind: "sha", sha };
+      }
+      // A Freestyle snapshot is built from one pushed commit. Pin it before
+      // adoption, exactly as Daytona previews pin their Den source.
+      if (script.name === "preview-desktop" && place === "freestyle" && !sources.desktop && !sources["*"]) {
+        const sha = process.env.OPENWORK_EVAL_REF?.trim() || await resolveRef("dev");
+        if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Freestyle desktop source must be a full reviewed, pushed commit SHA.");
+        sources.desktop = { kind: "sha", sha };
+      }
+      if (script.name === "acme-web" && place === "daytona") {
+        if (command.args.length > 0) throw new Error("Daytona acme-web uses --source to select a ref; script arguments after -- are not supported.");
+        const acmeSource = sources["*"] ?? sources.den;
+        if (acmeSource?.kind !== "sha") throw new Error("Daytona acme-web requires a pinned commit SHA.");
+        env.OPENWORK_EVAL_REF = acmeSource.sha;
+      }
+      if (place === "daytona" && script.name !== "preview-app-web" && !preview && script.name !== "acme-web") {
+        const pinned = process.env.OPENWORK_EVAL_REF?.trim() || process.env.GITHUB_SHA?.trim() || await resolveRef("dev");
+        if (!/^[0-9a-f]{40}$/.test(pinned)) throw new Error("Daytona world source must be a full reviewed, pushed commit SHA.");
+        env.OPENWORK_EVAL_REF = pinned;
+      }
+      if ((preview || evidence) && Object.keys(sources).length > 0) env[SOURCES_ENV] = JSON.stringify(sources);
+      if (preview && seeds.length > 0) env[SEEDS_ENV] = JSON.stringify(seeds);
+      const sourceHash = place === "local" ? await computeLocalSourceHash(options.cwd) : undefined;
+      // Keep existing placement-only receipts adoptable when --os was omitted.
+      const targetIdentity = command.os === undefined && !process.env[OS_ENV] ? place : formatTarget(target);
+      const invocationHash = computeInvocationHash(recipeHash, scriptArgs, targetIdentity, env, sourceHash);
       const snapshotDirectory = scriptWorldSnapshotDirectory(options.cwd);
       const stagedName = receiptName(script.name, stage);
       const snapshotPath = scriptWorldSnapshotPath(snapshotDirectory, stagedName);
@@ -581,7 +722,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         code = await launchScriptWorld({
           path: script.path,
           name: script.name,
-          args: command.args,
+          args: scriptArgs,
           snapshotDirectory,
           detach: command.detach === true,
           ...(command.timeoutMs === undefined ? {} : { timeoutMs: command.timeoutMs }),
@@ -589,9 +730,12 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
           recipeHash,
           invocationHash,
           env,
+          selectedEnvKeys: command.env ?? [],
           place,
+          os: target.os,
           print,
           foregroundLog: !command.detach && mode === "tty",
+          quietReady: mode === "tty",
           onSpawn: (pid) => { childPid = pid; },
         });
       } catch (error) {
@@ -754,6 +898,8 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       print(JSON.stringify({
         name: candidate.stagedName,
         ...(snapshot.stage === undefined ? {} : { stage: snapshot.stage }),
+        ...(snapshot.place === undefined ? {} : { place: snapshot.place }),
+        ...(snapshot.os === undefined ? {} : { os: snapshot.os }),
         alive: isProcessAlive(snapshot.pid),
         outputs,
       }));
@@ -876,7 +1022,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
   }
   if (command.kind === "list") {
     const discovered = await discoverWorlds(options.worldsDirectory);
-    print(`World scripts: ${discovered.map((world) => `${world.name} (${displayWorldPath(world.path, options.cwd)}, script)`).join(", ") || "(none)"}`);
+    print(`World scripts: ${(await Promise.all(discovered.map(async (world) => `${world.name} (${displayWorldPath(world.path, options.cwd)}, script; ${supportedTargetDescription(await readWorldSupport(world.path))})`))).join(", ") || "(none)"}`);
     let count = 0;
     const receiptsDirectory = scriptWorldSnapshotDirectory(options.cwd);
     const receiptNames = new Set<string>();
@@ -890,7 +1036,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         const entries = await readLedger(ledgerPath(receiptsDirectory, receiptFileName));
         const leaked = entries.filter((entry) => entry.retain !== true).length;
         const retained = entries.filter((entry) => entry.retain === true).length;
-        let line = `${receipt.name}  ${receipt.createdAt}  script  ${alive ? "alive" : `dead(pid ${receipt.pid})`}`;
+        let line = `${receipt.name}  ${receipt.createdAt}  script  ${alive ? "alive" : `dead(pid ${receipt.pid})`}${receipt.place ? `  place ${receipt.place}${receipt.os ? `/${receipt.os}` : ""}` : ""}`;
         if (!alive && leaked > 0) line += `  leaked ${leaked}`;
         if (retained > 0) line += `  retained ${retained}`;
         print(line);

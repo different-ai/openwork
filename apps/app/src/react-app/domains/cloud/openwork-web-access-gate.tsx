@@ -11,7 +11,7 @@ import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { isOpenworkGatewayRuntime } from "@/app/lib/gateway-runtime";
 import { Button } from "@/components/ui/button";
 import { usePlatform } from "@/react-app/kernel/platform";
-import { OwDotTicker } from "@/react-app/shell/dot-ticker";
+import { WebStartupScreen } from "@/react-app/shell/workspace-startup-status";
 import { useDenAuth } from "./den-auth-provider";
 import {
   resolveOpenWorkWebAccessGateState,
@@ -60,6 +60,8 @@ export function OpenWorkWebAccessGateScreen(props: {
   const denied = props.state === "denied";
   const organizationName = props.organizationName || "this organization";
 
+  if (checking) return <WebStartupScreen message="Checking workspace access…" />;
+
   return (
     <main
       className="flex min-h-dvh items-center justify-center bg-background px-6 py-16 text-foreground"
@@ -69,25 +71,19 @@ export function OpenWorkWebAccessGateScreen(props: {
       <section className="w-full max-w-lg rounded-[24px] border border-border bg-background p-7 shadow-[var(--dls-card-shadow)] sm:p-9">
         <div className="flex items-start gap-4">
           <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-border bg-muted/40">
-            {checking
-              ? <OwDotTicker size="lg" />
-              : <AlertTriangle className="size-5 text-amber-11" aria-hidden="true" />}
+            <AlertTriangle className="size-5 text-amber-11" aria-hidden="true" />
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
               OpenWork Web
             </p>
             <h1 className="mt-2 text-[26px] font-semibold leading-tight tracking-[-0.03em]">
-              {checking
-                ? "Checking workspace access…"
-                : denied
+              {denied
                   ? "OpenWork Web access is required"
                   : "OpenWork Web remains locked"}
             </h1>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">
-              {checking
-                ? `Waiting for Den to confirm access for ${organizationName}.`
-                : denied
+              {denied
                   ? `${organizationName} does not have an active OpenWork Web subscription or complimentary admin grant.`
                   : `Den could not confirm OpenWork Web access for ${organizationName}. The workspace stays locked until it can.`}
             </p>

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
+import { withBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
 
 export type ModelPrice = {
   input: number
@@ -90,7 +91,7 @@ let fileCatalog: PricingCatalog | null = null
 export function loadPricingCatalogFromFile(): PricingCatalog {
   if (!fileCatalog) {
     const parsed: unknown = JSON.parse(readFileSync(baseJsonPath, "utf8"))
-    fileCatalog = createPricingCatalog(parsed)
+    fileCatalog = createPricingCatalog(isRecord(parsed) ? withBedrockMantleProvider(parsed) : parsed)
   }
   return fileCatalog
 }

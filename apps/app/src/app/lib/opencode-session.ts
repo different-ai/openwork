@@ -134,13 +134,14 @@ export async function setSessionArchived(
   sessionID: string,
   archived: boolean,
   directory?: string,
+  options?: { signal?: AbortSignal },
 ): Promise<void> {
   unwrap(
     await client.session.update({
       sessionID,
       directory,
       time: { archived: archived ? Date.now() : 0 },
-    }),
+    }, options),
   );
 }
 

@@ -4,7 +4,7 @@ import { expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import type { GeneratedArtifactView, WorkflowArtifactPayload } from "@openwork/types/workflows"
 import { artifactViewResourceUri } from "../src/artifact-view-resource.js"
-import { workflowArtifactAppServerCapabilities } from "../src/mcp/workflow-artifact-app.js"
+import { registerAgentWorkflowArtifactResource, workflowArtifactAppServerCapabilities } from "../src/mcp/workflow-artifact-app.js"
 import { registerAgentGeneratedArtifactViews } from "../src/mcp/generated-artifact-views.js"
 
 const viewId = "arv_01k28e8vz5e5svgkde54dgqy0c"
@@ -79,12 +79,14 @@ async function withClient<T>(
     save: () => Promise<GeneratedArtifactView>
     activate: (request: { artifactViewId: string; revisionId: string }) => Promise<GeneratedArtifactView>
     retire: () => Promise<GeneratedArtifactView>
+    legacyViewsWritable: boolean
   }> = {},
 ): Promise<T> {
   const server = new McpServer(
     { name: "generated-artifact-test", version: "1.0.0" },
-    { capabilities: workflowArtifactAppServerCapabilities },
+    { capabilities: { ...workflowArtifactAppServerCapabilities, tools: { listChanged: true }, resources: { listChanged: true } } },
   )
+  registerAgentWorkflowArtifactResource(server)
   registerAgentGeneratedArtifactViews({
     server,
     views: overrides.views ?? [view],
@@ -97,6 +99,7 @@ async function withClient<T>(
       server.sendToolListChanged()
       server.sendResourceListChanged()
     },
+    legacyViewsWritable: overrides.legacyViewsWritable ?? true,
   })
   const client = new Client({ name: "host", version: "1.0.0" }, { capabilities: {} })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -119,6 +122,9 @@ test("advertises exact immutable active and preview URIs in tool definitions", a
     expect(render?._meta).toMatchObject({ ui: { resourceUri: artifactViewResourceUri(viewId, activeRevisionId) } })
     expect(preview?._meta).toMatchObject({ ui: { resourceUri: artifactViewResourceUri(viewId, draftRevisionId) } })
     expect(save?._meta).toBeUndefined()
+    expect(save?.description).toContain("OpenWork offers Open preview")
+    expect(save?.description).toContain("choose Save in OpenWork")
+    expect(save?.description).not.toContain("automatically")
 
     const resources = await client.listResources()
     expect(resources.resources.map((resource) => resource.uri)).toEqual(expect.arrayContaining([
@@ -234,7 +240,7 @@ test("returns actionable tool errors for missing schemas and failed builds", asy
   await withClient(async (client) => {
     const missingSchema = await client.callTool({
       name: "save_artifact_view",
-      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
     })
     expect(missingSchema.isError).toBe(true)
     expect(JSON.stringify(missingSchema.content)).toContain("artifact_view_output_schema_required")
@@ -253,7 +259,7 @@ test("returns actionable tool errors for missing schemas and failed builds", asy
   await withClient(async (client) => {
     const failed = await client.callTool({
       name: "save_artifact_view",
-      arguments: { configObjectId, title: view.title, reactSource: "export default function View( {" },
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View( {" },
     })
     expect(failed.isError).toBe(true)
     expect(JSON.stringify(failed.content)).toContain("artifact_view_build_failed")
@@ -270,9 +276,28 @@ test.each(draftDataModes)("%s draft metadata preserves compatible desktop previe
   await withClient(async (client) => {
     const saved = await client.callTool({
       name: "save_artifact_view",
-      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
     })
     expect(saved.isError).not.toBe(true)
+    const text = JSON.stringify(saved.content)
+    expect(text).toContain(`preview_artifact_${viewId}`)
+    expect(text).toContain("Choose Open preview in OpenWork, then Save")
+    expect(text).not.toContain("automatically")
+    if (dataMode === "live") {
+      expect(text).toContain(`run_artifact_${viewId}`)
+      expect(text).toContain("optional timeZone")
+      expect(text).toContain("input.runtime")
+      expect(text).toContain("No other inputs or receipt overrides")
+      expect(text).toContain("choose Save")
+      expect(text).toContain("Do not activate")
+      const catalog = await client.listTools()
+      expect(catalog.tools.find((tool) => tool.name === `run_artifact_${viewId}`)?._meta)
+        .toMatchObject({ ui: { resourceUri: artifactViewResourceUri(viewId, activeRevisionId) } })
+    } else {
+      expect(text).not.toContain(`run_artifact_${viewId}`)
+      expect(saved.content).toEqual([{ type: "text", text: `Saved immutable view revision ${draftRevisionId} at ${artifactViewResourceUri(viewId, draftRevisionId)}. Choose Open preview in OpenWork, then Save to keep the app on your dashboard. In other MCP clients: Call preview_artifact_${viewId} to display that revision.` }])
+    }
+    expect(saved.structuredContent).toMatchObject({ view: { activeRevisionId } })
     expect(saved._meta?.["openwork/appDraft"]).toEqual({
       appId: viewId,
       revisionId: draftRevisionId,
@@ -280,7 +305,147 @@ test.each(draftDataModes)("%s draft metadata preserves compatible desktop previe
       ...(dataMode === "live" ? {} : { receiptId: payload.artifact.receiptId }),
     })
   }, {
+    views: [{ ...view, dataMode }],
     save: async () => ({ ...view, dataMode }),
+    activate: async () => { throw new Error("Saving a draft must not activate it") },
+  })
+})
+
+test.each(draftDataModes)("%s edits of existing drafts preserve explicit preview metadata without activation", async (dataMode) => {
+  let loads = 0
+  const draftView = { ...view, dataMode, activeRevisionId: null }
+  await withClient(async (client) => {
+    const saved = await client.callTool({
+      name: "save_artifact_view",
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+    })
+    expect(saved.isError, JSON.stringify(saved.content)).not.toBe(true)
+    expect(saved.structuredContent).toEqual({ view: draftView })
+    expect(saved._meta?.["openwork/appDraft"]).toEqual({
+      appId: viewId, revisionId: draftRevisionId, title: view.title,
+      ...(dataMode === "live" ? {} : { receiptId: payload.artifact.receiptId }),
+    })
+    expect(loads).toBe(1)
+    const tools = await client.listTools()
+    expect(tools.tools.some(tool => tool.name === `render_artifact_${viewId}`)).toBe(false)
+    expect(tools.tools.find(tool => tool.name === `preview_artifact_${viewId}`)?._meta)
+      .toMatchObject({ ui: { resourceUri: artifactViewResourceUri(viewId, draftRevisionId) } })
+    const preview = await client.callTool({ name: `preview_artifact_${viewId}`, arguments: {} })
+    expect(preview.structuredContent).toEqual(payload)
+    expect(preview._meta?.["openwork/appDraft"]).toEqual(dataMode === "live"
+      ? { appId: viewId, revisionId: draftRevisionId, title: view.title } : undefined)
+    expect(loads).toBe(2)
+  }, {
+    views: [],
+    save: async () => draftView,
+    loadData: async () => { loads += 1; return { ok: true, payload, markdown: "# Preview" } },
+    activate: async () => { throw new Error("Saving a draft must not activate it") },
+  })
+})
+
+test.each([null, activeRevisionId])("live preview recovery preserves the draft with active revision %s", async (activeId) => {
+  const savedView: GeneratedArtifactView = {
+    ...view,
+    dataMode: "live",
+    activeRevisionId: activeId,
+    revisions: [revision(savedRevisionId, "2026-08-12T13:00:00.000Z"), ...view.revisions],
+  }
+  const connectionStatus = { connectionName: "Test connection", action: "Connect your account" }
+  const connectionCard = {
+    schemaVersion: "1", connectionId: "emc_fixture", connectionName: "Test connection",
+    state: "needs_connection", actor: "member", message: "Connect your account",
+    action: { type: "connect", label: "Connect", surface: "openwork_your_connections" },
+  }
+  const requests: Array<Parameters<Parameters<typeof registerAgentGeneratedArtifactViews>[0]["loadData"]>[0]> = []
+  let saves = 0
+  let activations = 0
+  await withClient(async (client) => {
+    let changed = 0
+    client.setNotificationHandler("notifications/tools/list_changed", () => { changed += 1 })
+    const failed = await client.callTool({
+      name: "save_artifact_view",
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+    })
+    expect(failed.isError).toBe(true)
+    expect(failed._meta?.["openwork/appDraft"]).toBeUndefined()
+    expect(failed.structuredContent).toEqual(connectionCard)
+    expect(failed._meta?.["openwork/mcpApp"]).toEqual({
+      toolName: "connection_action", resourceUri: "ui://openwork/connection-action/v2/view.html", arguments: { connectionId: "emc_fixture" },
+    })
+    expect(JSON.stringify(failed)).not.toContain(payload.artifact.receiptId)
+    const content = failed.content?.[0]
+    expect(JSON.stringify(content)).toContain("artifact_view_preview_unavailable")
+    const error = JSON.parse(content?.type === "text" ? content.text : "{}")
+    expect(error).toMatchObject({
+      error: "artifact_view_preview_unavailable",
+      artifactViewId: viewId,
+      viewRevisionId: savedRevisionId,
+      configObjectId,
+      reason: "capability_unavailable",
+      detail: "Connect your account",
+      connectionStatus,
+      connectionCard,
+    })
+    expect(error.message).toContain(`preview_artifact_${viewId}`)
+    expect(error.message).toContain("optional timeZone")
+    expect(error.message).toContain("input.runtime")
+    expect(error.message).toContain("No other inputs or receipt overrides")
+    expect(error.message).not.toContain("example inputs")
+    expect(error.message).not.toContain("execute_capability")
+    expect(error.message).not.toContain("retry save_artifact_view")
+    expect(error.message).toContain("Do not rebuild")
+    expect(error.message).toContain("Do not schedule an Automation or report the preview ready yet")
+    expect(changed).toBeGreaterThan(0)
+    const catalog = await client.listTools()
+    expect(catalog.tools.find((tool) => tool.name === `preview_artifact_${viewId}`)?._meta)
+      .toMatchObject({ ui: { resourceUri: artifactViewResourceUri(viewId, savedRevisionId) } })
+    expect(catalog.tools.find((tool) => tool.name === `run_artifact_${viewId}`)?._meta)
+      .toMatchObject({ ui: { resourceUri: artifactViewResourceUri(viewId, activeId ?? savedRevisionId) } })
+    const recovered = await client.callTool({ name: `preview_artifact_${viewId}`, arguments: { timeZone: "Asia/Tokyo" } })
+    expect(recovered.isError).not.toBe(true)
+    expect(recovered.structuredContent).toEqual(payload)
+    expect(recovered._meta?.["openwork/appDraft"]).toEqual({ appId: viewId, revisionId: savedRevisionId, title: view.title })
+    expect(recovered._meta?.["openwork/mcpApp"]).toBeUndefined()
+    expect(requests).toEqual([
+      { configObjectId, expectedOutputSchemaDigest: digest, dataMode: "live" },
+      { configObjectId, expectedOutputSchemaDigest: digest, dataMode: "live", timeZone: "Asia/Tokyo" },
+    ])
+    expect(saves).toBe(1)
+    expect(activations).toBe(0)
+  }, {
+    views: activeId ? [{ ...view, dataMode: "live" }] : [],
+    save: async () => { saves += 1; return savedView },
+    activate: async () => { activations += 1; return savedView },
+    loadData: async (request) => {
+      requests.push(request)
+      return requests.length === 1
+        ? { ok: false, error: "capability_unavailable", message: "Connect your account", connectionStatus, connectionCard }
+        : { ok: true, payload, markdown: "# Current" }
+    },
+  })
+})
+
+test.each(draftDataModes.filter((mode) => mode !== "live"))("%s preview failure retains snapshot recovery guidance", async (dataMode) => {
+  await withClient(async (client) => {
+    const failed = await client.callTool({
+      name: "save_artifact_view",
+      arguments: { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+    })
+    expect(failed.isError).toBe(true)
+    const content = failed.content?.[0]
+    const error = JSON.parse(content?.type === "text" ? content.text : "{}")
+    expect(error.message).toBe("The app draft compiled, but its preview has no compatible readable Workflow result. Run the current saved Workflow version explicitly with its example inputs using execute_capability, then retry save_artifact_view with the artifactViewId below. An ad-hoc execute_capability_script run is not a saved Workflow result. Do not schedule an Automation or report the preview ready yet.")
+    expect(failed._meta?.["openwork/appDraft"]).toBeUndefined()
+    const catalog = await client.listTools()
+    expect(catalog.tools.some((tool) => tool.name.startsWith("run_artifact_"))).toBe(false)
+    expect(catalog.tools.some((tool) => tool.name.startsWith("preview_artifact_"))).toBe(false)
+  }, {
+    views: [],
+    save: async () => ({ ...view, dataMode }),
+    loadData: async (request) => {
+      expect(request.dataMode).toBe("snapshot")
+      return { ok: false, error: "workflow_artifact_not_found", message: "No saved result" }
+    },
   })
 })
 
@@ -322,6 +487,8 @@ test.each(draftDataModes)("%s render results preserve published desktop routing"
       expect(result.isError).not.toBe(true)
       expect(result.structuredContent).toEqual(payload)
       expect(result._meta).toMatchObject({ resourceDigest: digest, resultDigest: payload.artifact.resultDigest })
+      expect(result._meta?.["openwork/appDraft"]).toEqual(dataMode === "live" && prefix === "preview"
+        ? { appId: viewId, revisionId, title: view.title } : undefined)
       if (dataMode === "live") {
         expect(result._meta?.artifactViewId).toBeUndefined()
         expect(result._meta?.viewRevisionId).toBeUndefined()
@@ -334,17 +501,86 @@ test.each(draftDataModes)("%s render results preserve published desktop routing"
   }, { views: [{ ...view, dataMode }] })
 })
 
-test("live connection failures preserve structured cards and never return retained data", async () => {
-  const connectionCard = { state: "needs_connection", message: "Connect your account" }
+test.each(["run", "render", "preview"])("live %s connection failures launch the shared connection App without retained data", async prefix => {
+  const connectionCard = {
+    schemaVersion: "1", connectionId: "emc_fixture", connectionName: "Test connection",
+    state: "needs_connection", actor: "member", message: "Connect your account",
+    action: { type: "connect", label: "Connect", surface: "openwork_your_connections" },
+  }
   await withClient(async (client) => {
-    const result = await client.callTool({ name: `run_artifact_${view.id}`, arguments: {} })
+    const result = await client.callTool({ name: `${prefix}_artifact_${view.id}`, arguments: {} })
     expect(result.isError).toBe(true)
     expect(result.structuredContent).toEqual(connectionCard)
+    expect(result._meta?.["openwork/mcpApp"]).toEqual({
+      toolName: "connection_action", resourceUri: "ui://openwork/connection-action/v2/view.html", arguments: { connectionId: "emc_fixture" },
+    })
     expect(JSON.stringify(result)).not.toContain(payload.artifact.receiptId)
   }, {
     views: [{ ...view, dataMode: "live" }],
     loadData: async () => ({ ok: false, error: "capability_unavailable", message: "Connect your account", connectionCard }),
   })
+})
+
+test.each([undefined, { state: "needs_connection", message: "Connect your account" }])("does not invent a connection App for missing or incomplete connection data (%j)", async connectionCard => {
+  await withClient(async client => {
+    for (const name of [`run_artifact_${viewId}`, "save_artifact_view"]) {
+      const result = await client.callTool({
+        name,
+        arguments: name === "save_artifact_view"
+          ? { artifactViewId: viewId, configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" } : {},
+      })
+      expect(result.isError).toBe(true)
+      expect(result._meta?.["openwork/mcpApp"]).toBeUndefined()
+      expect(JSON.stringify(result.content)).toContain("capability_unavailable")
+    }
+  }, {
+    views: [{ ...view, dataMode: "live" }],
+    save: async () => ({ ...view, dataMode: "live" }),
+    loadData: async () => ({ ok: false, error: "capability_unavailable", message: "Data unavailable", connectionCard }),
+  })
+})
+
+test("where create_app is available, legacy views are read-only: they render, read, and retire but are never saved or re-activated", async () => {
+  const writes: string[] = []
+  let loads = 0
+  await withClient(async (client) => {
+    const reactSource = "export default function View() { return <div /> }"
+    for (const request of [
+      { name: "save_artifact_view", arguments: { configObjectId, title: view.title, reactSource } },
+      { name: "save_artifact_view", arguments: { artifactViewId: view.id, configObjectId, title: view.title, reactSource } },
+      { name: "activate_artifact_view_revision", arguments: { artifactViewId: view.id, revisionId: view.revisions[0]!.id } },
+    ]) {
+      const result = await client.callTool(request)
+      expect(result.isError).toBe(true)
+      expect(JSON.stringify(result.content)).toContain("legacy_view_read_only")
+      expect(JSON.stringify(result.content)).toContain("create_app")
+      expect(result._meta).toBeUndefined()
+    }
+    expect(writes).toEqual([])
+    expect(loads).toBe(0)
+    const rendered = await client.callTool({ name: `render_artifact_${view.id}`, arguments: {} })
+    expect(rendered.isError).not.toBe(true)
+    expect(loads).toBe(1)
+    expect((await client.readResource({ uri: view.revisions[0]!.resourceUri })).contents[0]).toMatchObject({ uri: view.revisions[0]!.resourceUri })
+    expect((await client.callTool({ name: "retire_artifact_view", arguments: { artifactViewId: view.id } })).isError).not.toBe(true)
+    expect(writes).toEqual(["retire"])
+  }, {
+    legacyViewsWritable: false,
+    save: async () => { writes.push("save"); return view },
+    activate: async () => { writes.push("activate"); return view },
+    retire: async () => { writes.push("retire"); return { ...view, status: "retired", activeRevisionId: null } },
+    loadData: async () => { loads += 1; return { ok: true, payload, markdown: "# Snapshot" } },
+  })
+})
+
+test("while legacy views are read-only, a live draft still previews but offers no Save that would fail", async () => {
+  await withClient(async (client) => {
+    const result = await client.callTool({ name: `preview_artifact_${viewId}`, arguments: {} })
+    expect(result.isError).not.toBe(true)
+    expect(result.structuredContent).toEqual(payload)
+    expect(result._meta).toMatchObject({ resourceDigest: digest })
+    expect(result._meta?.["openwork/appDraft"]).toBeUndefined()
+  }, { views: [{ ...view, dataMode: "live" }], legacyViewsWritable: false })
 })
 
 test("legacy views retain snapshot inputs and do not advertise live execution", async () => {
@@ -360,5 +596,20 @@ test("legacy views retain snapshot inputs and do not advertise live execution", 
       receiptId = request.receiptId
       return { ok: true, payload, markdown: "# Snapshot" }
     },
+  })
+})
+
+test("legacy creation keeps working where create_app is unavailable", async () => {
+  let saves = 0
+  await withClient(async (client) => {
+    const result = await client.callTool({
+      name: "save_artifact_view",
+      arguments: { configObjectId, title: view.title, reactSource: "export default function View() { return <div /> }" },
+    })
+    expect(JSON.stringify(result.content)).not.toContain("legacy_view_read_only")
+    expect(saves).toBe(1)
+  }, {
+    save: async () => { saves += 1; return view },
+    legacyViewsWritable: true,
   })
 })

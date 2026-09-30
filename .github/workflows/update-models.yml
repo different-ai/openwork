@@ -1,7 +1,7 @@
 # github-actions[bot] pushes the snapshot and authors the pull request.
 # The diff-warden GitHub App approves as a distinct identity for last-push approval.
-# GITHUB_TOKEN-created PRs do not trigger the downstream Warden Clearance workflow_run,
-# so this workflow mints the App token and grants the narrowly scoped approval directly.
+# This workflow mints the App token and grants its narrowly scoped approval
+# directly; the Warden security-report workflow does not grant approvals.
 name: Update Models
 
 on:

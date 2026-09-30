@@ -35,6 +35,45 @@ function absoluteGet(proxyUrl: string, target: string): Promise<string> {
   });
 }
 
+test("faultProxy sends /api/den straight to a split local Den API and keeps the original path in its log", async () => {
+  const seen: Array<{ server: string; path: string; authorization: string | undefined }> = [];
+  const web = createServer((request, response) => {
+    seen.push({ server: "web", path: request.url ?? "", authorization: request.headers.authorization });
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ server: "web" }));
+  });
+  const api = createServer((request, response) => {
+    seen.push({ server: "api", path: request.url ?? "", authorization: request.headers.authorization });
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ server: "api" }));
+  });
+  const webPort = await listen(web);
+  const apiPort = await listen(api);
+  try {
+    await using proxy = await faultProxy({
+      apiUrl: `http://127.0.0.1:${apiPort}`,
+      webUrl: `http://127.0.0.1:${webPort}`,
+    });
+    // den-web would answer this with a cross-origin 307 that drops the bearer;
+    // the proxy hands it to den-api directly, prefix stripped, header intact.
+    const handoff = await fetch(`${proxy.ref.webUrl}/api/den/v1/auth/desktop-handoff?scheme=openwork`, {
+      method: "POST",
+      headers: { authorization: "Bearer member-session" },
+    });
+    assert.deepEqual(await handoff.json(), { server: "api" });
+    const page = await fetch(`${proxy.ref.webUrl}/api/runtime-config`);
+    assert.deepEqual(await page.json(), { server: "web" });
+    assert.deepEqual(seen, [
+      { server: "api", path: "/v1/auth/desktop-handoff?scheme=openwork", authorization: "Bearer member-session" },
+      { server: "web", path: "/api/runtime-config", authorization: undefined },
+    ]);
+    assert.deepEqual(proxy.requests.map(({ path }) => path), ["/api/den/v1/auth/desktop-handoff?scheme=openwork", "/api/runtime-config"]);
+  } finally {
+    web.close();
+    api.close();
+  }
+});
+
 test("faultProxy consumes status and latency rules before passing through", async () => {
   const upstream = createServer((request, response) => {
     response.writeHead(200, { "content-type": "application/json", "x-upstream": "yes" });

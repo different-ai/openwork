@@ -11,6 +11,7 @@ export default defineConfig({
     "gateway-rollups": "src/gateway-rollups.ts",
     "inference-egress": "src/inference-egress.ts",
     "inference-credentials": "src/inference-credentials.ts",
+    "bedrock-mantle-catalog": "src/bedrock-mantle-catalog.ts",
     observability: "src/observability.ts",
     typeid: "src/typeid.ts",
   },

@@ -8,12 +8,17 @@ import { setTimeout as delay } from "node:timers/promises";
 import { assembleReview } from "@openwork/test-artifacts/review";
 import { uploadReview } from "@openwork/review/storage";
 import type { TestRunRecord } from "@openwork/test-artifacts";
+import { setViewport } from "@openwork/cdp";
+import type { Place, Seed } from "@openwork/env";
+import { chrome, localHost } from "@openwork/hosts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
 /** Synthetic report inputs exercise the real publisher and production HTTP app. */
 export async function reviewWorld(
   environment: "preview" | "production" = "preview",
+  sandboxFixture = false,
+  checkpointFixture = false,
 ) {
   const directory = await mkdtemp(join(tmpdir(), "openwork-review-world-"));
   const storage = join(directory, "reports");
@@ -133,6 +138,18 @@ export async function reviewWorld(
     docShots: [receipt],
     title: "Sharing a skill, from link to access",
   });
+  if (checkpointFixture) {
+    const image = bundle.report.evidence.find((entry) => entry.kind === "image");
+    const section = image && bundle.report.sections.find((entry) => entry.sourceId === image.sourceId);
+    if (!image || image.kind !== "image" || !section) throw new Error("Missing review image fixture");
+    for (const expired of [false, true]) {
+      const id = expired ? "expired-checkpoint" : "unconfigured-checkpoint";
+      bundle.report.evidence.push({ ...image, id, caption: expired ? "Expired checkpoint fixture" : "Unavailable checkpoint fixture",
+        checkpoint: { version: 1, provider: "freestyle", id: `ow-evidence-v1-${(expired ? "e" : "f").repeat(32)}`, sourceSha: gitSha, imageHash: image.asset.slice(0, -4),
+          capturedAt: new Date(Date.now() - 3600_000).toISOString(), expiresAt: new Date(Date.now() + (expired ? -1000 : 3600_000)).toISOString() } });
+      section.evidenceIds.push(id);
+    }
+  }
   const passed = await uploadReview(bundle.report, bundle.assets, {
     localDir: storage,
   });
@@ -198,6 +215,8 @@ export async function reviewWorld(
       cwd: join(root, "apps/review"),
       env: {
         ...process.env,
+        // This isolated HTTP fixture must never inherit live sandbox access.
+        FREESTYLE_API_KEY: sandboxFixture ? "synthetic-ui-fixture-not-a-provider-key" : "",
         OPENWORK_REVIEW_LOCAL_DIR: storage,
         VERCEL: "1",
         VERCEL_ENV: environment,
@@ -251,4 +270,40 @@ export async function reviewWorld(
     directory,
     [Symbol.asyncDispose]: dispose,
   };
+}
+
+export async function reviewBrowserWorld(_seed: Seed, { place }: { place: Place }, checkpointFixture = false) {
+  if (place.kind !== "local") {
+    throw new Error("The production review HTTP fixture requires --local; it never provisions a VM.");
+  }
+  const resources = new AsyncDisposableStack();
+  try {
+    const review = resources.use(await reviewWorld("preview", false, checkpointFixture));
+    const host = resources.use(localHost());
+    const app = resources.use(await chrome({
+      name: "freestyle-review",
+      host,
+      startUrl: "about:blank",
+      headless: true,
+    }));
+    await setViewport(app, { width: 1440, height: 1000, deviceScaleFactor: 1 });
+    return {
+      ...review,
+      app,
+      async [Symbol.asyncDispose]() {
+        await resources.disposeAsync();
+      },
+    };
+  } catch (error) {
+    await resources.disposeAsync();
+    throw error;
+  }
+}
+
+export async function reviewNarrowWorld(seed: Seed, context: { place: Place }) {
+  const world = await reviewBrowserWorld(seed, context);
+  try {
+    await setViewport(world.app, { width: 390, height: 844, deviceScaleFactor: 1 });
+    return world;
+  } catch (error) { await world[Symbol.asyncDispose](); throw error; }
 }

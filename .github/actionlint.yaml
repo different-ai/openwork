@@ -1,0 +1,5 @@
+self-hosted-runner:
+  labels:
+    - blacksmith-4vcpu-ubuntu-2404
+    - blacksmith-16vcpu-ubuntu-2204
+    - blacksmith-12vcpu-macos-15

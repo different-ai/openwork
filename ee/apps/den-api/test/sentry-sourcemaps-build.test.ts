@@ -9,6 +9,8 @@ import {
   requireSentrySourcemapUploadEnv,
   sentrySourcemapUploadFlag,
   shouldUploadSentrySourcemaps,
+  tscBuildEnv,
+  tscHeapEnvFlag,
 } from "../scripts/build.mjs"
 
 describe("den-api Sentry source-map build gating", () => {
@@ -64,5 +66,18 @@ describe("den-api Sentry source-map build gating", () => {
     } finally {
       rmSync(fixture, { recursive: true, force: true })
     }
+  })
+})
+
+describe("den-api tsc heap", () => {
+  test("raises the tsc heap above Node's default so the build fits", () => {
+    expect(tscBuildEnv({}).NODE_OPTIONS).toBe("--max-old-space-size=6144")
+    expect(tscBuildEnv({ NODE_OPTIONS: "--enable-source-maps" }).NODE_OPTIONS).toBe("--enable-source-maps --max-old-space-size=6144")
+  })
+
+  test("an explicit override or existing heap flag wins", () => {
+    expect(tscBuildEnv({ [tscHeapEnvFlag]: "3072" }).NODE_OPTIONS).toBe("--max-old-space-size=3072")
+    expect(tscBuildEnv({ [tscHeapEnvFlag]: "nope" }).NODE_OPTIONS).toBe("--max-old-space-size=6144")
+    expect(tscBuildEnv({ NODE_OPTIONS: "--max-old-space-size=2048" }).NODE_OPTIONS).toBe("--max-old-space-size=2048")
   })
 })

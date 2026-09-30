@@ -157,6 +157,26 @@ test("allows ordinary local variables whose names overlap browser globals", asyn
   expect(result.ok).toBe(true)
 })
 
+test("keeps building Workflow-bound view sources that built before Apps had stricter checks", async () => {
+  const view = (body: string) => `export default function View({ data }) {\n${body}\nreturn <p>{data.title}: {data.total}</p>\n}`
+  for (const [reactSource, cssSource] of [
+    [view("React.useEffect(() => { const id = requestAnimationFrame(() => {}); return () => cancelAnimationFrame(id) }, [])"), ""],
+    [view("React.useEffect(() => { const t = 0; return () => clearTimeout(t) }, [])"), ""],
+    [view("const preload = new Image(); const callable = preload instanceof Function;"), ""],
+    [view("React.useEffect(() => { addEventListener('resize', () => {}) }, [])"), ""],
+    [view("const summary = 'This step is important, so review it. 12 rows imported from Gmail.';"), ""],
+    [view(""), "/* Styles need no @import here. */ p { color: navy; }"],
+    [view(""), "p { background: URL(local.png); }"],
+    ["/** @jsx React.createElement */\n" + view(""), ""],
+    [view("const __openworkSafeReact = 1;"), ""],
+    [view("React.legacyMarker = true;"), ""],
+  ]) {
+    const result = await buildGeneratedArtifactView({ title: "Legacy view", description: null, outputSchema: schema, reactSource, cssSource })
+    expect(result.diagnostics).toEqual([])
+    expect(result.ok).toBe(true)
+  }
+})
+
 test("rejects unbound host globals even when a nested scope shadows their names", async () => {
   const result = await buildGeneratedArtifactView({
     title: "Nested shadow",

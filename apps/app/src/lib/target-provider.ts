@@ -15,6 +15,7 @@ type OpenTargetContextValue = {
   client?: OpenworkServerClient;
   workspaceId?: string;
   workspaceRoot?: string;
+  isLocalWorkspace?: boolean;
   openTargets: OpenTarget[];
   onOpenTarget: OpenTargetHandler | undefined;
 };
@@ -24,6 +25,7 @@ type OpenTargetProviderProps = {
   client?: OpenworkServerClient;
   workspaceId?: string;
   workspaceRoot?: string;
+  isLocalWorkspace?: boolean;
   openTargets?: OpenTarget[] | undefined;
   onOpenTarget?: OpenTargetHandler | undefined;
 };
@@ -40,6 +42,7 @@ export function OpenTargetProvider({
   client,
   workspaceId,
   workspaceRoot,
+  isLocalWorkspace = false,
   openTargets = EMPTY_OPEN_TARGETS,
   onOpenTarget,
 }: OpenTargetProviderProps) {
@@ -48,10 +51,11 @@ export function OpenTargetProvider({
       client,
       workspaceId,
       workspaceRoot,
+      isLocalWorkspace,
       openTargets,
       onOpenTarget,
     }),
-    [client, workspaceId, workspaceRoot, openTargets, onOpenTarget],
+    [client, workspaceId, workspaceRoot, isLocalWorkspace, openTargets, onOpenTarget],
   );
 
   return React.createElement(OpenTargetContext.Provider, { value }, children);

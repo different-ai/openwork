@@ -1,4 +1,5 @@
 import { createDenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
+import { requiresAdminError } from "../../agent-error-envelope.js"
 import { customAlphabet } from "nanoid"
 import { z } from "zod"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "../../middleware/index.js"
@@ -23,10 +24,11 @@ export type OrgRouteVariables =
   & Partial<OrganizationContextVariables>
   & Partial<MemberTeamsContext>
 
-export const PRIVILEGED_SESSION_MAX_AGE_MS = 15 * 60 * 1000
-// Reuse confirmation during content editing; access, credentials, publishing,
-// and destructive changes retain the shorter privileged window.
-export const CONTENT_EDIT_SESSION_MAX_AGE_MS = 60 * 60 * 1000
+// Step-up window for high-risk workspace actions (security settings, API keys,
+// roles, credentials, deletion). Verifying again starts a new session, so this
+// counts from the last sign-in or identity check. Routine plugin, marketplace,
+// and connector work does not step up; normal role checks still apply.
+export const PRIVILEGED_SESSION_MAX_AGE_MS = 2 * 60 * 60 * 1000
 export const CONNECTIONS_READ_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000
 export const WORKSPACE_REAUTH_SECURITY_MESSAGE = "For security, confirm it's you before changing workspace settings."
 
@@ -182,7 +184,7 @@ export function ensureOrganizationAdminRole(c: OrganizationAdminRouteContext, me
     ok: false as const,
     response: {
       error: "forbidden",
-      message,
+      ...requiresAdminError(message),
     },
   }
 }
@@ -255,7 +257,7 @@ export function ensureInviteManager(c: PrivilegedOrgRouteContext) {
     ok: false as const,
     response: {
       error: "forbidden",
-      message: "Only workspace owners and admins can invite members.",
+      ...requiresAdminError("Only workspace owners and admins can invite members."),
     },
   }
 }

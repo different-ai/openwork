@@ -64,10 +64,14 @@ Tailwind 4 requires Safari 16.4+, Chrome 111+, or Firefox 128+; see the
 - `DEN_WEB_OPENWORK_WEB_URL` (runtime): URL opened by the dashboard Web tab.
   - default: `https://web.openworklabs.com`
 - `DEN_WEB_OPENWORK_AUTH_CALLBACK_URL` (runtime): Canonical URL where the app returns after auth completes.
-- `DEN_WEB_POSTHOG_KEY` (server/runtime): PostHog project key used for Den analytics.
-- `DEN_WEB_POSTHOG_HOST` (server/runtime): PostHog ingest host or same-origin proxy path.
-  - default: `/ow`
-  - set it to `https://us.i.posthog.com` to bypass the local proxy
+- `NEXT_PUBLIC_POSTHOG_KEY` (public, build-time): the existing PostHog project key and primary setting. No new variable name is required. For rollout compatibility only, an unset key falls back to `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`, then `DEN_WEB_POSTHOG_KEY`. An explicitly blank key disables analytics rather than falling back. There is no hardcoded key. Supply it before `next build`; runtime-only changes require a rebuild.
+- Vercel variable scopes matter: Preview/Development values are not available to Production builds. Enable the existing `NEXT_PUBLIC_POSTHOG_KEY` for Production before removing the transitional `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN` entry, then rebuild. No hosting settings are changed by this code.
+- `NEXT_PUBLIC_POSTHOG_HOST` (public, build-time): the existing upstream setting. US/EU Cloud ingestion origins are supported; `app.posthog.com` and the US/EU UI origins are normalized to their region. Missing/blank values or `/ow` retain the US default. This controls server rewrite destinations and the SDK's UI links, never direct browser ingestion. Unsupported hosts fail enabled production builds with a value-free error; unused invalid values cannot prevent disabled preview/dev builds from starting.
+- The public key is emitted only when `NODE_ENV=production`, `VERCEL_ENV=production`, and no `OPENWORK_DEV_MODE` override is active. Client initialization also requires the exact origin `https://app.openworklabs.com`. Previews, local builds and self-hosted deployments remain disabled. Auth/API URL settings do not control analytics.
+- `instrumentation-client.ts` follows the [official Next.js SDK setup](https://posthog.com/docs/libraries/next-js): import the pinned `posthog-js` package and call `posthog.init` before hydration. The existing `window.posthog` analytics calls receive that same singleton. There is no inline CDN bootstrap, custom SDK queue, method replacement, or change to authentication helpers.
+- The SDK core is bundled with the app. Browser analytics requests always use `/ow`; ordered Next.js rewrites forward to the region selected by `NEXT_PUBLIC_POSTHOG_HOST`. Arbitrary upstream hosts and browser-side proxy bypass are unsupported. The `/ow` sanitizer strips outgoing Cookie, Authorization, and Referer headers and does not intercept auth routes or modify browser cookies.
+- SDK settings use localStorage persistence and route pageviews plus existing explicit events; autocapture, replay, surveys and automatic flags are disabled. The documented `before_send` hook removes query/fragment/userinfo from SDK URL properties and email/name from outbound event/person properties while preserving the public ingestion token. This is outbound filtering, not a guarantee that person properties never enter SDK memory or localStorage. Existing consent remains managed by the SDK; no forced opt-in or legacy-cookie cleanup is added.
+- Run `pnpm run test:posthog` for client/config tests, a real SDK smoke test with all transports blocked, and the real Next.js routing fixture with loopback-only upstreams. No test sends events to PostHog.
 - `GET /api/health` returns a shallow app health payload for container probes.
 
 ### Observability

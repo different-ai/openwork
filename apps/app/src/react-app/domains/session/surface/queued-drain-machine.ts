@@ -117,7 +117,7 @@ export function reduceQueuedDrain(state: QueuedDrainState, event: QueuedDrainEve
         if (!event.steer) return state;
         if (phase.kind === "running" || phase.kind === "awaiting_observation") {
           if (phase.itemId === event.itemId) return state;
-        } else if (phase.kind !== "halted" || phase.itemId !== event.itemId) return state;
+        } else if (phase.kind !== "halted" || (phase.reason !== "terminal_failure" && phase.itemId !== event.itemId)) return state;
       }
       const attempts = (state.attemptsByItemId[event.itemId] ?? 0) + 1;
       return {

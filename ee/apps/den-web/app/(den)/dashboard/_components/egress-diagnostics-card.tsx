@@ -225,7 +225,7 @@ export function EgressDiagnosticsCard({ canView, canManage }: { canView: boolean
         </div>
       ) : null}
       {!loading && canView && (!available || editingBearerToken) ? (
-        <div className="rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-4 text-[13px] text-amber-800" role="status">
+        <div className="rounded-[22px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-4 text-[13px] text-[var(--dls-text-primary)]" role="status">
           <p className="font-medium">{available ? "Replace the diagnostic token." : "Add a diagnostic token to run this test."}</p>
           <p className="mt-1">Den encrypts the token for this organization and never shows it again.</p>
           <div className="mt-3 flex flex-wrap items-end gap-2">

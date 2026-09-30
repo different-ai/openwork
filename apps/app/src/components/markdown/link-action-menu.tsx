@@ -1,12 +1,15 @@
 /** @jsxImportSource react */
 import { useEffect, useRef, useState } from "react";
-import { ExternalLink, Eye, FolderOpen, Loader2 } from "lucide-react";
+import { Copy, ExternalLink, Eye, FolderOpen, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 
 import type { DesktopApplication } from "@/app/lib/desktop";
 import { getDesktopApplicationsForFile, openDesktopWithApp } from "@/app/lib/desktop";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePlatform } from "@/react-app/kernel/platform";
-import type { OpenTargetOptions } from "@/lib/target-provider";
+import { useOpenTargets, type OpenTargetOptions } from "@/lib/target-provider";
+import { localArtifactPath, nativeFileAction } from "@/react-app/domains/session/artifacts/resolve-open-target";
 
 const SUPPORTED_PANEL_PREVIEWS = new Set(["markdown", "code", "sheet", "slides", "image", "pdf", "html", "text"]);
 
@@ -23,7 +26,21 @@ export function LinkActionMenu({ target, anchorRect, onOpenTarget, onClose }: Li
   const [apps, setApps] = useState<DesktopApplication[] | null>(null);
   const [appsLoading, setAppsLoading] = useState(false);
   const canOpenInPanel = target.kind === "file" && SUPPORTED_PANEL_PREVIEWS.has(target.preview);
-  const canOpenExternally = platform.capabilities.revealInFileManager && target.kind === "file";
+  const { workspaceRoot, isLocalWorkspace } = useOpenTargets();
+  const native = isLocalWorkspace && platform.capabilities.revealInFileManager && target.kind === "file"
+    ? nativeFileAction(workspaceRoot, target.value) : null;
+  const canOpenExternally = native !== null;
+  const canLaunch = native?.action === "open";
+  const nativePath = native?.path;
+  const copyPath = localArtifactPath(workspaceRoot, target.value) ?? target.value;
+
+  useEffect(() => {
+    const previous = document.activeElement;
+    menuRef.current?.querySelector("button")?.focus();
+    return () => {
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    };
+  }, []);
 
   useEffect(() => {
     function handleOutside(event: MouseEvent) {
@@ -43,12 +60,12 @@ export function LinkActionMenu({ target, anchorRect, onOpenTarget, onClose }: Li
   }, [onClose]);
 
   useEffect(() => {
-    if (!canOpenExternally) return;
+    if (!canLaunch || !nativePath) return;
     setAppsLoading(true);
     let cancelled = false;
     void (async () => {
       try {
-        const result = await getDesktopApplicationsForFile(target.value);
+        const result = await getDesktopApplicationsForFile(nativePath);
         if (!cancelled) {
           setApps(result.slice(0, 12));
         }
@@ -59,7 +76,7 @@ export function LinkActionMenu({ target, anchorRect, onOpenTarget, onClose }: Li
       }
     })();
     return () => { cancelled = true; };
-  }, [canOpenExternally, target.value]);
+  }, [canLaunch, nativePath]);
 
   const handleOpenDefault = () => {
     onOpenTarget(target, { external: true });
@@ -76,14 +93,23 @@ export function LinkActionMenu({ target, anchorRect, onOpenTarget, onClose }: Li
     onClose();
   };
 
-  const handleOpenWithApp = async (app: DesktopApplication) => {
+  const handleCopyPath = async () => {
     try {
-      await openDesktopWithApp(target.value, app.appPath);
+      await navigator.clipboard.writeText(copyPath);
+      onClose();
     } catch {
-      // fall back to default open
-      onOpenTarget(target, { external: true });
+      toast.error("Could not copy the path. Try again.");
     }
-    onClose();
+  };
+
+  const handleOpenWithApp = async (app: DesktopApplication) => {
+    if (!canLaunch || !nativePath || !workspaceRoot) return;
+    try {
+      await openDesktopWithApp(nativePath, app.appPath, workspaceRoot);
+      onClose();
+    } catch {
+      toast.error("Could not open this file. Try another app or reveal it in the file manager.");
+    }
   };
 
   const top = anchorRect.bottom + 4;
@@ -95,7 +121,17 @@ export function LinkActionMenu({ target, anchorRect, onOpenTarget, onClose }: Li
       className="fixed z-50 min-w-52 rounded-lg border border-border bg-popover/95 p-1 shadow-lg backdrop-blur-xl"
       style={{ top, left }}
     >
-      {canOpenExternally ? (
+      {target.kind === "file" ? (
+        <Button
+          variant="ghost"
+          onClick={() => void handleCopyPath()}
+          className="w-full justify-start gap-2.5 px-3 py-2 text-sm"
+        >
+          <Copy className="size-4 shrink-0" />
+          Copy path
+        </Button>
+      ) : null}
+      {canLaunch ? (
         <button
           type="button"
           onClick={handleOpenDefault}
@@ -122,10 +158,10 @@ export function LinkActionMenu({ target, anchorRect, onOpenTarget, onClose }: Li
           className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-foreground/10"
         >
           <FolderOpen className="size-4 shrink-0" />
-          Show in folder
+          {platform.os === "macos" ? "Reveal in Finder" : "Show in folder"}
         </button>
       ) : null}
-      {canOpenExternally && apps && apps.length > 0 ? (
+      {canLaunch && apps && apps.length > 0 ? (
         <>
           <div className="my-1 h-px bg-foreground/5" />
           <div className="max-h-48 overflow-y-auto">

@@ -693,6 +693,54 @@ latencyTest("SWITCH-10 opens ten persisted conversations within the normal and w
   expect(finalCounts.promptPosts).toBe(0);
   expect(nativeBodies(finalNative)).toEqual(nativeBodies(arranged.native));
 
+  const heldOpening = await step("a selected history completes while the previous opening is held, then that opening is reused", async () => {
+    await user.reload();
+    await user.see({ text: world.targets[0]!.lastLine }, { timeoutMs: 60_000 });
+    await exposeOldestSidebarRow("held history reload");
+    const source = world.targets[1]!;
+    const destination = world.targets[2]!;
+    await world.holdOpening(source.sessionId);
+    try {
+      await user.click({ text: source.title });
+      await probe.eventually(() => world.openingWitness(), {
+        within: 2_000, intervalMs: 10, label: "the source opening was dispatched and held",
+        until: (value) => value.held?.dispatched === true,
+      });
+      await world.armMeasurement(destination, "first");
+      await user.click({ text: destination.title });
+      const displayed = await probe.eventually(() => world.readMeasurement(), {
+        within: 2_000, intervalMs: 10, label: "the destination paints before releasing the source",
+        until: (value) => value.completed,
+      });
+      expect(displayed.violations).toEqual([]);
+      expect(displayed.ownerSessionId).toBe(destination.sessionId);
+      const beforeRelease = await world.openingWitness();
+      expect(beforeRelease.held).toEqual({ sessionId: source.sessionId, dispatched: true, delivered: false, aborted: false });
+      expect(beforeRelease.requests[source.sessionId]).toBe(1);
+      expect(beforeRelease.requests[destination.sessionId]).toBe(1);
+      expect(beforeRelease.abortPosts).toBe(0);
+      await world.releaseOpening();
+      const completed = await probe.eventually(() => world.openingWitness(), {
+        within: 1_000, intervalMs: 10, label: "the abandoned opening completes without transport cancellation",
+        until: (value) => value.held?.delivered === true,
+      });
+      expect(completed.held?.aborted).toBe(false);
+      const destinationRows = await probe.dom('[data-workbench-pane="primary"] [data-message-role]');
+      expect(JSON.stringify(destinationRows)).not.toContain(source.lastLine);
+      await user.see({ text: destination.lastLine }, { timeoutMs: 1_000 });
+      await user.click({ text: source.title });
+      await user.see({ text: source.lastLine }, { timeoutMs: 1_000 });
+      const reused = await world.openingWitness();
+      expect(reused.requests[source.sessionId]).toBe(1);
+      expect(reused.abortPosts).toBe(0);
+      const sourceRows = await probe.dom('[data-workbench-pane="primary"] [data-message-role]');
+      expect(JSON.stringify(sourceRows)).not.toContain(destination.lastLine);
+      evidence.recordAssertionEvidence("Held opening completion is isolated and reusable",
+        "The destination dispatched and painted while the source response was held; the released source was reused without another opening GET, foreign content, or an agent-abort POST.", true);
+      return { beforeRelease, completed, reused, displayed };
+    } finally { await world.releaseOpening(); }
+  });
+
   const coldSamples = firstSamples.filter((sample) => sample.targetSessionId !== arranged.current.sessionId);
   const summaries = {
     first: world.summary(firstSamples),
@@ -706,6 +754,7 @@ latencyTest("SWITCH-10 opens ten persisted conversations within the normal and w
     viewport: arranged.runtime.viewport,
     restoredSessionId: arranged.current.sessionId,
     sidebarExpansions,
+    heldOpening,
     samples: measurements,
     summaries,
     controllerCounts: { arranged: arranged.counts, afterFirst: countsAfterFirst, afterWarm: countsAfterWarm, final: finalCounts },

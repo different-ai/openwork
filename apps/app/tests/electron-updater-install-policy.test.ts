@@ -40,7 +40,7 @@ describe("install re-validates the organization's desktop version policy", () =>
       onReleaseChannelChange,
       updateAutoCheck: false,
       updateAutoDownload: true,
-      updatePolicyKnown: true,
+      allowedVersionsKnown: true,
       desktopConfig: props.desktopConfig,
       refreshDesktopConfig,
       setError,
@@ -64,7 +64,13 @@ describe("install re-validates the organization's desktop version policy", () =>
       updater: {
         getChannel: async () => ({ channel: "stable", currentVersion: installedVersion }),
         setChannel: async (channel: "stable" | "alpha") => ({ channel, currentVersion: installedVersion }),
-        check: async () => ({ available: true, channel: "stable", currentVersion: installedVersion, latestVersion: downloadedVersion }),
+        check: async (_channel: unknown, _targetVersion: unknown, options?: { preserveStaged?: boolean }) => ({
+          available: true,
+          channel: "stable",
+          currentVersion: installedVersion,
+          latestVersion: downloadedVersion,
+          ...(options?.preserveStaged ? { stagedVersion: downloadedVersion } : {}),
+        }),
         download: async () => ({ ok: true }),
         installAndRestart: async () => {
           installs += 1;
@@ -80,6 +86,10 @@ describe("install re-validates the organization's desktop version policy", () =>
     refreshes = 0;
   });
 
+  // Install first asks for a newer release (one refresh), then re-validates the
+  // policy for the build it is about to install (a second refresh).
+  const installRefreshes = 2;
+
   afterEach(async () => {
     await act(async () => root.unmount());
     if (originalDev === undefined) delete process.env.DEV;
@@ -90,7 +100,7 @@ describe("install re-validates the organization's desktop version policy", () =>
   test("installs a downloaded version the organization still allows", async () => {
     await act(async () => { await updater.installUpdateAndRestart(); });
 
-    expect(refreshes).toBe(1);
+    expect(refreshes).toBe(installRefreshes);
     expect(installs).toBe(1);
     expect(updater.updateStatus).toMatchObject({ state: "ready", version: downloadedVersion });
   });
@@ -100,7 +110,7 @@ describe("install re-validates the organization's desktop version policy", () =>
 
     await act(async () => { await updater.installUpdateAndRestart(); });
 
-    expect(refreshes).toBe(1);
+    expect(refreshes).toBe(installRefreshes);
     expect(installs).toBe(0);
     expect(updater.updateStatus).toMatchObject({
       state: "blocked",
@@ -124,7 +134,7 @@ describe("install re-validates the organization's desktop version policy", () =>
 
     await act(async () => { await updater.installUpdateAndRestart(); });
 
-    expect(refreshes).toBe(1);
+    expect(refreshes).toBe(installRefreshes);
     expect(installs).toBe(1);
     expect(updater.updateStatus).toMatchObject({ state: "ready", version: downloadedVersion });
   });

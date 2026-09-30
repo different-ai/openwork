@@ -7,6 +7,9 @@
     "dev": "pnpm run models:build && tsx watch src/server.ts",
     "dev:local": "OPENWORK_DEV_MODE=1 pnpm run models:build && OPENWORK_DEV_MODE=1 PORT=${GATEWAY_PORT-${INFERENCE_PORT:-8791}} tsx watch src/server.ts",
     "test": "NODE_OPTIONS=--conditions=development tsx --test test/*.test.ts",
+    "test:usage-limits": "NODE_OPTIONS=--conditions=development tsx --test --test-concurrency=1 test/gateway.test.ts test/request-log.test.ts test/pricing.test.ts test/usage-completeness.test.ts test/usage-openai-chat.test.ts test/usage-protocols.test.ts test/usage-bedrock-converse.test.ts test/usage-preflight.test.ts",
+    "test:usage-limits:db": "DEN_USAGE_TEST_DATABASE_URL=${DEN_USAGE_TEST_DATABASE_URL:?Set an isolated loopback usage_limits_test database URL} NODE_OPTIONS=--conditions=development tsx --test --test-concurrency=1 test/usage-limits-db.test.ts",
+    "typecheck:usage-limits": "tsc -p tsconfig.usage-limits-test.json --pretty false",
     "build": "pnpm run models:build && tsc -p tsconfig.json",
     "start": "node --import ./dist/instrumentation.js dist/server.js"
   },
@@ -24,6 +27,7 @@
     "@openwork-ee/telemetry": "workspace:*"
   },
   "devDependencies": {
+    "@ai-sdk/mistral": "3.0.51",
     "@types/node": "^20.11.30",
     "tsx": "^4.23.1",
     "typescript": "^5.5.4"

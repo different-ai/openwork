@@ -263,7 +263,7 @@ export function AddMcpModal(props: AddMcpModalProps) {
                       value={state.oauthScope}
                       onChange={(event) => dispatch({ oauthScope: event.currentTarget.value })}
                     />
-                    <div className="rounded-lg border border-amber-6 bg-amber-2 px-3 py-2 text-[11px] leading-relaxed text-amber-11">
+                    <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-[11px] leading-relaxed text-foreground">
                       {t("mcp.oauth_secret_warning")}
                     </div>
                   </div>

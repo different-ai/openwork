@@ -16,10 +16,9 @@ import type {
 
 function joinPartText(message: HeadlessThreadMessage, type: string): string {
   return message.parts
-    .filter((part) => part.type === type && typeof part.text === "string")
     // Synthetic and ignored parts are engine bookkeeping; the UI hides them
     // and a transcript comparison must not see them either.
-    .filter((part) => part.synthetic !== true && part.ignored !== true)
+    .filter((part) => part.type === type && typeof part.text === "string" && part.synthetic !== true && part.ignored !== true)
     .map((part) => part.text)
     .join("")
     .trim();

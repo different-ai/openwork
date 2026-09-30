@@ -608,6 +608,30 @@ describe("non-gateway connection modes", () => {
     }
   });
 
+  test("direct Den API build pin does not acquire a web proxy prefix during handoff", async () => {
+    const previous = process.env.VITE_DEN_API_BASE_URL;
+    const originalFetch = globalThis.fetch;
+    process.env.VITE_DEN_API_BASE_URL = "http://127.0.0.1:63033";
+    installWindow({ origin: "http://127.0.0.1:62997" });
+    try {
+      const settings = resolveDenBaseUrls({ baseUrl: "http://127.0.0.1:63034" });
+      expect(settings.apiBaseUrl).toBe("http://127.0.0.1:63033");
+      expect(settings.baseUrl).toBe("http://127.0.0.1:63034");
+      expect(createDenClient({ baseUrl: settings.baseUrl }).baseUrls.apiBaseUrl).toBe(settings.apiBaseUrl);
+      const requests: string[] = [];
+      globalThis.fetch = Object.assign(async (input: RequestInfo | URL) => {
+        requests.push(input instanceof Request ? input.url : String(input));
+        return Response.json({ token: "fixture-handoff-token" });
+      }, originalFetch);
+      const exchanged = await createDenClient({ baseUrl: settings.baseUrl }).exchangeDesktopHandoff("fixture-one-time-code");
+      expect(exchanged.token).toBe("fixture-handoff-token");
+      expect(requests).toEqual(["http://127.0.0.1:63033/v1/auth/desktop-handoff/exchange"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VITE_DEN_API_BASE_URL", previous);
+    }
+  });
+
   test("exact relative Den build pin follows the browser origin without relaxing input validation", () => {
     const previous = process.env.VITE_DEN_API_BASE_URL;
     try {

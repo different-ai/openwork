@@ -56,11 +56,11 @@ function ok<T>(data: T): FieldsResult<T> {
   return { data, request: new Request(v2BaseUrl), response: new Response(null, { status: 200 }) };
 }
 
-function notFound(): FieldsResult<never> {
+function unavailable(): FieldsResult<never> {
   return {
-    error: { code: "session_not_found" },
+    error: { code: "engine_reloading" },
     request: new Request(v1BaseUrl),
-    response: new Response(null, { status: 404 }),
+    response: new Response(null, { status: 503 }),
   };
 }
 
@@ -92,8 +92,9 @@ async function waitFor(predicate: () => boolean, label: string) {
 }
 
 // Reload of a v2 session: the surface mounts under the v1 URL before the chat
-// routing status resolves, the first owned read 404s on v1 and waits to retry,
-// and the routing flip changes the owner while that read is still in flight.
+// routing status resolves, the first owned read gets a transient 503 and waits
+// to retry, and routing changes the owner while that read is still in flight.
+// Permanent 404s now settle immediately; native/history tests cover that path.
 for (const outcome of ["preview", "complete", "empty", "error"]) test(`a session snapshot read that loses its owner mid-flight is re-read under the new owner (${outcome})`, async () => {
   const interruptFullRead = outcome !== "preview";
   const require = createRequire(import.meta.url);
@@ -168,10 +169,10 @@ for (const outcome of ["preview", "complete", "empty", "error"]) test(`a session
     const v2 = endpoint.opencodeBaseUrl === v2BaseUrl;
     const readable = v2 || (interruptFullRead && readLimits.at(-1) === 24);
     return {
-      get: async () => (readable ? ok(snapshot.session) : notFound()),
+      get: async () => (readable ? ok(snapshot.session) : unavailable()),
       messages: async (_sessionId, limit) => {
         historyWindows.push(limit);
-        if (!readable) return notFound();
+        if (!readable) return unavailable();
         if (v2 && limit === undefined) {
           await new Promise<void>((resolve) => { releaseFullRead = resolve; });
           if (failFullRead) {
@@ -181,7 +182,7 @@ for (const outcome of ["preview", "complete", "empty", "error"]) test(`a session
         }
         return ok(limit === undefined ? snapshot.messages : snapshot.messages.slice(-limit));
       },
-      todo: async () => (readable ? ok(snapshot.todos) : notFound()),
+      todo: async () => (readable ? ok(snapshot.todos) : unavailable()),
       status: async () => ok({}),
       delete: async () => ok(true),
     };
@@ -213,6 +214,9 @@ for (const outcome of ["preview", "complete", "empty", "error"]) test(`a session
         }),
       });
     },
+  }));
+  mock.module("../src/react-app/domains/cloud/den-auth-provider", () => ({
+    useDenAuth: () => ({ isSignedIn: false, verifiedIdentity: null }),
   }));
   const { SessionSurface } = await import("../src/react-app/domains/session/surface/session-surface");
   const { snapshotKey, statusKey } = await import("../src/react-app/domains/session/sync/session-sync");
@@ -274,7 +278,7 @@ for (const outcome of ["preview", "complete", "empty", "error"]) test(`a session
 
   try {
     await act(async () => root.render(surface(v1BaseUrl)));
-    await waitFor(() => releaseRetry !== null, "the v1 read to 404 and park before its retry");
+    await waitFor(() => releaseRetry !== null, "the v1 read to return 503 and park before its retry");
     expect(readEndpoints).toEqual(interruptFullRead ? [v1BaseUrl, v1BaseUrl] : [v1BaseUrl]);
     const previousStatus = container.querySelector("[data-thread-history-status]");
     if (interruptFullRead && outcome !== "empty") {

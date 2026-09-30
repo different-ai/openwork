@@ -29,6 +29,7 @@ export async function buildOpenworkEnvSystemContext(
     cacheKey?: string;
     runtimeKey?: string | null;
     readPendingChanges?: () => boolean;
+    desktopTransport?: "main";
   } = {},
 ): Promise<string | undefined> {
   if (!client) return undefined;
@@ -42,7 +43,7 @@ export async function buildOpenworkEnvSystemContext(
   }
 
   try {
-    const response = await client.listUserEnvKeys();
+    const response = await client.listUserEnvKeys(options.desktopTransport ? { desktopTransport: options.desktopTransport } : undefined);
     const keys = normalizeEnvKeys(response.keys ?? []);
     if (keys.length === 0) {
       rememberEnvSystemContext(cacheKey, undefined);
@@ -84,6 +85,7 @@ export async function buildOpenworkSessionSystemContext(
     cacheKey?: string;
     runtimeKey?: string | null;
     readPendingChanges?: () => boolean;
+    desktopTransport?: "main";
   } = {},
 ): Promise<string> {
   const envContext = await buildOpenworkEnvSystemContext(client, options);

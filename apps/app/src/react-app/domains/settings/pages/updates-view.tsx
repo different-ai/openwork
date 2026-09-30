@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CircleAlert, Info } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -28,7 +28,6 @@ import {
   LayoutStack,
 } from "../settings-layout";
 import { Separator } from "@/components/ui/separator";
-import { Spinner } from "../settings-section";
 
 const RELEASE_CHANNEL_OPTIONS: { label: string; value: ReleaseChannel }[] = [
   { label: "Stable", value: "stable" },
@@ -103,7 +102,48 @@ export function UpdatesView(props: UpdatesViewProps) {
     : props.updateStatus?.failedAction === "download"
       ? t("settings.update_download_failed")
       : t("settings.update_check_failed");
-  const updateNotes = props.updateStatus?.notes ?? null;
+  const checkingForNewer = updateState === "ready" && props.updateStatus?.checkingForNewer;
+  const checkError = props.updateStatus?.checkError;
+  const checkCooldown = updateState === "ready" && Boolean(props.updateStatus?.checkCooldownUntil);
+  const candidate = updateState === "ready" ? props.updateStatus?.candidate : undefined;
+  const releaseDate = candidate?.date ?? (updateState === "available" ? updateDate : null);
+  const candidateSize = candidate?.totalBytes != null && candidate.totalBytes > 0
+    ? formatBytes(candidate.totalBytes)
+    : null;
+  const installLabel = t("settings.update_install_button");
+  const checking = updateState === "checking" || Boolean(checkingForNewer);
+  const observedLatestVersion = checking || checkError || updateState === "error"
+    ? null
+    : candidate?.version ?? updateVersion;
+  const [lastKnownVersion, setLastKnownVersion] = useState<{
+    channel: ReleaseChannel | undefined;
+    version: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (observedLatestVersion) {
+      setLastKnownVersion({ channel: props.releaseChannel, version: observedLatestVersion });
+    }
+  }, [observedLatestVersion, props.releaseChannel]);
+
+  const latestVersion = observedLatestVersion ?? (
+    lastKnownVersion?.channel === props.releaseChannel ? lastKnownVersion?.version : null
+  );
+  const updatesSupported = !props.webDeployment && props.updateEnv?.supported !== false;
+  const canDownload = updateState === "available" || Boolean(candidate);
+  const statusLabel = checking
+    ? t("settings.update_checking")
+    : updateState === "available"
+      ? t("updates.available")
+      : updateState === "blocked"
+        ? t("settings.update_blocked_version", undefined, { version: updateVersion ?? "" })
+        : updateState === "downloading"
+          ? t("settings.update_downloading")
+          : updateState === "ready"
+            ? t(props.updateStatus?.newest ? "updates.ready_newest" : "settings.update_ready_version", undefined, { version: updateVersion ?? "" })
+            : updateState === "error"
+              ? updateErrorTitle
+              : latestVersion ? t("settings.update_uptodate") : null;
 
   const updateRestartActiveRunsMessage =
     updateState === "ready" && props.anyActiveRuns
@@ -112,124 +152,117 @@ export function UpdatesView(props: UpdatesViewProps) {
 
   return (
     <LayoutStack>
-      {props.appVersion ? (
-        <LayoutSectionItem>
-          <LayoutSectionItemHeader>
-            <LayoutSectionItemTitle>Current version</LayoutSectionItemTitle>
-            <LayoutSectionItemDescription className="font-mono">v{props.appVersion}</LayoutSectionItemDescription>
-          </LayoutSectionItemHeader>
-        </LayoutSectionItem>
-      ) : null}
       <LayoutSectionItem>
-              <LayoutSectionItemHeader>
-                <LayoutSectionItemTitle>
-                  {updateState === "checking"
-                    ? t("settings.update_checking")
-                    : updateState === "available"
-                      ? t("settings.update_available_version", undefined, { version: updateVersion ?? "" })
-                      : updateState === "blocked"
-                        ? t("settings.update_blocked_version", undefined, { version: updateVersion ?? "" })
-                      : updateState === "downloading"
-                        ? t("settings.update_downloading")
-                        : updateState === "ready"
-                          ? t("settings.update_ready_version", undefined, { version: updateVersion ?? "" })
-                          : updateState === "error"
-                            ? updateErrorTitle
-                            : t("settings.update_uptodate")}
-                </LayoutSectionItemTitle>
-                <LayoutSectionItemDescription>
-                  {(updateState === "idle" || updateState === "blocked") && updateLastCheckedAt
-                    ? t("settings.update_last_checked", undefined, {
-                        time: formatRelativeTime(updateLastCheckedAt),
-                      })
-                    : updateState === "available" && updateDate
-                      ? t("settings.update_published", undefined, { date: updateDate })
-                      : null}
-                </LayoutSectionItemDescription>
-                <LayoutSectionItemHeaderActions>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => void props.checkForUpdates()}
-                      disabled={props.busy || updateState === "checking" || updateState === "downloading"}
-                    >
-                      {updateState === "checking" ? <Spinner className="size-4" /> : null}
-                      {t("settings.update_check_button")}
-                    </Button>
+        <dl data-testid="updates-versions" className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-6 gap-y-3 text-sm">
+          <dt className="font-medium">{t("updates.current_version")}</dt>
+          <dd data-testid="updates-current-version" className="min-w-0 break-all text-right font-mono text-muted-foreground">
+            {props.appVersion ? `v${props.appVersion}` : "—"}
+          </dd>
+          <dt className="font-medium">{t("updates.latest_version")}</dt>
+          <dd data-testid="updates-latest-version" className="min-w-0 break-all text-right font-mono text-muted-foreground">
+            {latestVersion ? `v${latestVersion}` : t("updates.not_checked")}
+          </dd>
+        </dl>
 
-                    {updateState === "available" ? (
-                      <Button
-                        variant="secondary"
-                        onClick={() => void props.downloadUpdate()}
-                        disabled={props.busy}
-                      >
-                        {t("settings.update_download_button")}
-                      </Button>
-                    ) : null}
-
-                    {updateState === "ready" ? (
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          if (props.anyActiveRuns) {
-                            setConfirmRestartOpen(true);
-                            return;
-                          }
-                          void props.installUpdateAndRestart();
-                        }}
-                        disabled={props.busy}
-                      >
-                        {t("settings.update_install_button")}
-                      </Button>
-                    ) : null}
-                  </div>
-                </LayoutSectionItemHeaderActions>
-              </LayoutSectionItemHeader>
-
-              {updateState === "downloading" ? (
-                <UpdateDownloadProgress downloadedBytes={updateDownloadedBytes} totalBytes={updateTotalBytes} />
-              ) : null}
-
-              {updateState === "error" && updateErrorMessage ? (
-                <Alert variant="destructive">
-                  <CircleAlert />
-                  <AlertDescription>{updateErrorMessage}</AlertDescription>
-                </Alert>
-              ) : null}
-
-              {updateState === "blocked" && updateErrorMessage ? (
-                <Alert>
-                  <Info />
-                  <AlertDescription>{updateErrorMessage}</AlertDescription>
-                </Alert>
-              ) : null}
-
-              {updateRestartActiveRunsMessage ? (
-                <Alert>
-                  <Info />
-                  <AlertDescription>{updateRestartActiveRunsMessage}</AlertDescription>
-                </Alert>
-              ) : null}
-
-              <ConfirmModal
-                open={confirmRestartOpen}
-                title={t("settings.update_restart_confirm_title")}
-                message={t("settings.update_restart_confirm_message")}
-                confirmLabel={t("settings.update_install_button")}
-                cancelLabel={t("common.cancel")}
-                onConfirm={() => {
-                  setConfirmRestartOpen(false);
+        <LayoutSectionItemHeader>
+          <div data-testid="updates-status" role="status" className="min-h-9 min-w-0 wrap-anywhere pt-2 text-sm text-muted-foreground">
+            {checkingForNewer
+              ? t("settings.update_ready_version", undefined, { version: updateVersion ?? "" })
+              : statusLabel}
+            {checkingForNewer ? <p>{t("settings.update_checking")}</p> : null}
+          </div>
+          <LayoutSectionItemHeaderActions className="row-span-1">
+            <div data-testid="updates-actions" className="flex flex-wrap items-center justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => void props.checkForUpdates()}
+                disabled={!updatesSupported || props.busy || checking || updateState === "downloading" || checkCooldown}
+                aria-busy={checking}
+                title={checkCooldown ? t("updates.check_cooldown") : undefined}
+              >
+                {t("settings.update_check_button")}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => void props.downloadUpdate()}
+                disabled={!updatesSupported || props.busy || checking || !canDownload}
+              >
+                {t("settings.update_download_button")}
+              </Button>
+              <Button
+                onClick={() => {
+                  if (props.anyActiveRuns) {
+                    setConfirmRestartOpen(true);
+                    return;
+                  }
                   void props.installUpdateAndRestart();
                 }}
-                onCancel={() => setConfirmRestartOpen(false)}
-              />
-            </LayoutSectionItem>
+                disabled={!updatesSupported || props.busy || updateState !== "ready"}
+              >
+                {installLabel}
+              </Button>
+            </div>
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
 
-            {updateState === "available" && updateNotes ? (
-              <LayoutSectionItem className="max-h-40 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">
-                {updateNotes}
-              </LayoutSectionItem>
-            ) : null}
+        {(updateState === "idle" || updateState === "blocked") && updateLastCheckedAt ? (
+          <LayoutSectionItemDescription>
+            {t("settings.update_last_checked", undefined, { time: formatRelativeTime(updateLastCheckedAt) })}
+          </LayoutSectionItemDescription>
+        ) : null}
+
+        {releaseDate || candidateSize ? (
+          <LayoutSectionItemDescription className="flex flex-wrap gap-x-3">
+            {releaseDate ? <span>{t("settings.update_published", undefined, { date: releaseDate })}</span> : null}
+            {candidateSize ? <span>{candidateSize}</span> : null}
+          </LayoutSectionItemDescription>
+        ) : null}
+
+        {updateState === "downloading" ? (
+          <UpdateDownloadProgress downloadedBytes={updateDownloadedBytes} totalBytes={updateTotalBytes} />
+        ) : null}
+
+        {updateState === "ready" && checkError ? (
+          <Alert variant="destructive">
+            <CircleAlert />
+            <AlertDescription>{checkError}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {updateState === "error" && updateErrorMessage ? (
+          <Alert variant="destructive">
+            <CircleAlert />
+            <AlertDescription>{updateErrorMessage}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {updateState === "blocked" && updateErrorMessage ? (
+          <Alert>
+            <Info />
+            <AlertDescription>{updateErrorMessage}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {updateRestartActiveRunsMessage ? (
+          <Alert>
+            <Info />
+            <AlertDescription>{updateRestartActiveRunsMessage}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        <ConfirmModal
+          open={confirmRestartOpen}
+          title={t("settings.update_restart_confirm_title")}
+          message={`${t("settings.update_ready_version", undefined, { version: updateVersion ?? "" })}. ${t("settings.update_restart_confirm_message")}`}
+          confirmLabel={installLabel}
+          cancelLabel={t("common.cancel")}
+          onConfirm={() => {
+            setConfirmRestartOpen(false);
+            void props.installUpdateAndRestart();
+          }}
+          onCancel={() => setConfirmRestartOpen(false)}
+        />
+      </LayoutSectionItem>
 
       {props.webDeployment ? (
         <Alert>

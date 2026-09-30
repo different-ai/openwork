@@ -1,3 +1,4 @@
+import { peopleMemberCondition } from "./setup-agent-members.js"
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   InferenceKeyTable,
@@ -22,6 +23,7 @@ import {
   INFERENCE_RESET_STRATEGY_BY_WINDOW_TYPE,
   INFERENCE_TIER_LIMITS,
   INFERENCE_WINDOW_DURATIONS_MS,
+  INFERENCE_WINDOW_TYPES,
 } from "@openwork/types/den/inference"
 import type { InferenceOrganizationMetadata, InferenceTier, InferenceWindowType } from "@openwork/types/den/inference"
 import { assertManagedModelsAllowed, ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
@@ -110,12 +112,12 @@ async function activeMemberCount(organizationId: OrgId) {
   const [row] = await db
     .select({ count: sql<number>`count(*)` })
     .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt)))
+    .where(and(eq(MemberTable.organizationId, organizationId), peopleMemberCondition()))
   return Math.max(0, Number(row?.count ?? 0))
 }
 
 async function listOrgMembers(organizationId: OrgId) {
-  return db.select({ id: MemberTable.id }).from(MemberTable).where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt), isNotNull(MemberTable.userId)))
+  return db.select({ id: MemberTable.id }).from(MemberTable).where(and(eq(MemberTable.organizationId, organizationId), peopleMemberCondition(), isNotNull(MemberTable.userId)))
 }
 
 function addWindow(start: Date, windowType: InferenceWindowType) {
@@ -665,6 +667,8 @@ async function getActiveUsageBuckets(organizationId: OrgId) {
     )
     .where(eq(InferenceOrgUsageBucketTable.organization_id, organizationId))
 
+  // Row order is unspecified without ORDER BY; keep status responses stable.
+  rows.sort((left, right) => INFERENCE_WINDOW_TYPES.indexOf(left.windowType) - INFERENCE_WINDOW_TYPES.indexOf(right.windowType))
   return rows.map((row) => ({
     windowType: row.windowType,
     windowStartAt: row.windowStartAt.toISOString(),

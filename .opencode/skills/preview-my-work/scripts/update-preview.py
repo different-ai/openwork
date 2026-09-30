@@ -9,7 +9,7 @@ import shlex
 import subprocess
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("world", choices=["preview-den", "preview-desktop"])
+parser.add_argument("world", choices=["preview-den", "preview-desktop", "preview-full"])
 parser.add_argument("--stage", required=True)
 parser.add_argument("--ref", required=True, help="Reviewed, pushed full 40-character commit SHA")
 args = parser.parse_args()
@@ -73,8 +73,10 @@ if web:
         subprocess.Popen(["pnpm", "--filter", "@openwork-ee/den-web", "exec", "next", "start", "--hostname", "0.0.0.0", "--port", "3005"], cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
 print("Updated frontend; existing data preserved.")
 '''
-targets = [(outputs["denSandbox"], True)]
-if args.world == "preview-desktop":
+targets = []
+if args.world in ("preview-den", "preview-full"):
+    targets.append((outputs["denSandbox"], True))
+if args.world in ("preview-desktop", "preview-full"):
     targets.append((outputs["desktopSandbox"], False))
 for sandbox, web in targets:
     if not re.fullmatch(r"[a-zA-Z0-9_-]+", sandbox):

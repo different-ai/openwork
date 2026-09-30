@@ -8,6 +8,7 @@ declare const expect: (value: unknown) => {
 import {
   createWorkspaceServerClientCacheKey,
   createWorkspaceServerClientResolver,
+  createWorkspaceServerClientResolverState,
   type WorkspaceServerClientWorkspace,
 } from "./workspace-server-client";
 
@@ -25,6 +26,35 @@ const remoteWorkspace: WorkspaceServerClientWorkspace = {
 };
 
 describe("workspace server client primitive", () => {
+  test("equivalent route refreshes retain local and fallback endpoint identities", () => {
+    const server = { baseUrl: "http://127.0.0.1:4096", token: "local-token" };
+    const state = createWorkspaceServerClientResolverState(server);
+    const first = state.resolve(localWorkspace);
+    const fallback = state.resolve(remoteWorkspace);
+    if (!first || !fallback) throw new Error("Expected workspace endpoints.");
+    for (let index = 0; index < 3; index++) {
+      const refreshed = state.update({ baseUrl: ` ${server.baseUrl} `, token: ` ${server.token} ` });
+      expect(refreshed({ ...localWorkspace })).toBe(first);
+      expect(refreshed({ ...remoteWorkspace })).toBe(fallback);
+      expect(state.resolve(localWorkspace)?.client).toBe(first.client);
+    }
+  });
+
+  test("route refreshes still invalidate changed addresses and credentials", () => {
+    const server = { baseUrl: "http://127.0.0.1:4096", token: "local-token-a" };
+    const state = createWorkspaceServerClientResolverState(server);
+    const first = state.resolve(localWorkspace);
+    const changedToken = state.update({ ...server, token: "local-token-b" })(localWorkspace);
+    const changedAddress = state.update({ baseUrl: "http://127.0.0.1:5096", token: "local-token-b" })(localWorkspace);
+    if (!first || !changedToken || !changedAddress) throw new Error("Expected workspace endpoints.");
+    expect(changedToken.client).not.toBe(first.client);
+    expect(changedToken.token).toBe("local-token-b");
+    expect(changedAddress.client).not.toBe(changedToken.client);
+    expect(changedAddress.baseUrl).toBe("http://127.0.0.1:5096");
+    const otherState = createWorkspaceServerClientResolverState(server);
+    expect(otherState.resolve(localWorkspace)?.client).not.toBe(first.client);
+  });
+
   test("memoizes local workspace endpoints by selected local server credentials", () => {
     const resolver = createWorkspaceServerClientResolver({
       baseUrl: " http://127.0.0.1:4096 ",

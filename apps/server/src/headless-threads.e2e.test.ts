@@ -120,6 +120,7 @@ async function startOpenworkServer(input: { workspaceRoot: string; opencodeBaseU
     port: 0,
     token: "owt_test_token",
     hostToken: "owt_host_token",
+    configPath: join(input.workspaceRoot, "server.json"),
     approval: { mode: "auto", timeoutMs: 1000 },
     corsOrigins: ["*"],
     workspaces: [

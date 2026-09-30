@@ -1,14 +1,45 @@
 import { afterAll, beforeEach, expect, mock, test } from "bun:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { Hono, type MiddlewareHandler } from "hono"
+import { generateSpecs } from "hono-openapi"
 import * as validation from "../src/middleware/validation.js"
 import { buildGatewayProviderConfig } from "../src/llm/inference-provider-config.js"
 import { assertManagedModelsAllowed } from "@openwork/types/den/managed-models-policy"
 
-// No database client is created. Reaching storage is an explicit test sentinel.
+// No database client is created. Audit admission reads fresh organization
+// metadata before authorization; all other storage remains a throwing sentinel.
 let storageCalls = 0
+let organizationReads = 0
+let auditWrites = 0
+let organizationReadFails = false
+let auditLogs: boolean | undefined
+const organizationMetadata = () => ({
+  capabilities: { gatewayDashboard: legacyDashboard, ...(auditLogs === undefined ? {} : { auditLogs }) },
+  plan: { tier: "enterprise", source: "manual" },
+})
 const storageReached = () => { storageCalls++; throw new Error("fixture_storage_reached") }
-mock.module("../src/db.js", () => ({ db: { select: storageReached, transaction: storageReached } }))
+const auditWriteReached = () => { auditWrites++; return storageReached() }
+const fixtureTx = {
+  select: (fields?: unknown) => ({ from: (table: unknown) => {
+    if (table !== OrganizationTable) return storageReached()
+    expect(fields).toEqual({ metadata: OrganizationTable.metadata })
+    return { where: () => ({ limit: (limit: number) => ({ for: async (lock: string) => {
+      expect(limit).toBe(1)
+      expect(lock).toBe("share")
+      organizationReads++
+      if (organizationReadFails) return storageReached()
+      return [{ metadata: organizationMetadata() }]
+    } }) }) }
+  } }),
+  insert: auditWriteReached,
+  update: auditWriteReached,
+  delete: auditWriteReached,
+}
+mock.module("../src/db.js", () => ({ db: {
+  ...fixtureTx,
+  transaction: async <T>(run: (tx: typeof fixtureTx) => Promise<T>) => run(fixtureTx),
+} }))
 // This suite isolates deployment admission, not cookie authentication. Keep
 // Better Auth's startup seeding away from the deliberately throwing DB sentinel;
 // inference-provider-oauth.test.ts covers the real signed-cookie boundary.
@@ -29,14 +60,14 @@ const memberId = createDenTypeId("member")
 let authenticated = true
 let role = "owner"
 let fresh = true
-let dashboard = false
+let legacyDashboard: unknown = false
 const memberRoute: MiddlewareHandler = async (c, next) => {
   if (!authenticated) return c.json({ error: "unauthorized" }, 401)
   c.set("organizationContext", {
-    organization: { id: organizationId, metadata: { capabilities: { gatewayDashboard: dashboard } } },
+    organization: { id: organizationId, metadata: organizationMetadata() },
     currentMember: { id: memberId, role, isOwner: role === "owner" },
   })
-  c.set("session", { createdAt: new Date(Date.now() - (fresh ? 0 : 3_600_000)) })
+  c.set("session", { createdAt: new Date(Date.now() - (fresh ? 0 : 3 * 3_600_000)) })
   await next()
 }
 mock.module("../src/middleware/index.js", () => ({
@@ -59,11 +90,16 @@ registerOrgInferenceProviderRoutes(app)
 
 beforeEach(() => {
   env.gatewayEnabled = false
+  env.auditCaptureEnabled = true
   authenticated = true
   role = "owner"
   fresh = true
-  dashboard = false
+  legacyDashboard = false
   storageCalls = 0
+  organizationReads = 0
+  auditWrites = 0
+  organizationReadFails = false
+  auditLogs = undefined
 })
 afterAll(() => mock.restore())
 
@@ -84,16 +120,61 @@ const managementRoutes = [
 ]
 
 for (const [method, path] of managementRoutes) {
-  test(`disabled deployment blocks ${method} ${path} regardless of dashboard exposure`, async () => {
-    for (const gatewayDashboard of [false, true]) {
-      dashboard = gatewayDashboard
+  test(`disabled deployment blocks ${method} ${path} regardless of retired org rollout metadata`, async () => {
+    for (const gatewayDashboard of [undefined, null, false, true, "true", 1, {}, []]) {
+      legacyDashboard = gatewayDashboard
       const response = await app.request(path, { method })
       expect(response.status).toBe(403)
       expect(await response.json()).toMatchObject({ error: "gateway_not_enabled" })
       expect(storageCalls).toBe(0)
+      expect(auditWrites).toBe(0)
     }
   })
 }
+
+test("global audit capture checks unflagged Enterprise organizations without audit writes", async () => {
+  for (const flag of [undefined, false]) for (const enabled of [false, true]) {
+    auditLogs = flag
+    env.gatewayEnabled = enabled
+    const readsBefore = organizationReads
+    const response = await app.request("/v1/inference-providers", {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    })
+    expect(response.status).toBe(enabled ? 400 : 403)
+    if (!enabled) expect(await response.json()).toMatchObject({ error: "gateway_not_enabled" })
+    expect(organizationReads).toBe(readsBefore + 1)
+    expect(auditWrites).toBe(0)
+    expect(storageCalls).toBe(0)
+  }
+})
+
+test("audit availability storage failures still propagate before management denial", async () => {
+  organizationReadFails = true
+  const response = await app.request(resource, { method: "DELETE" })
+  expect(response.status).toBe(503)
+  expect(await response.json()).toEqual({ error: "fixture_storage_reached" })
+  expect(organizationReads).toBe(1)
+  expect(storageCalls).toBe(1)
+  expect(auditWrites).toBe(0)
+})
+
+test("OpenAPI authorization requests optionally carry the same model contract as ready models", async () => {
+  const spec = await generateSpecs(app)
+  const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
+  const record = (value: unknown) => {
+    if (!isRecord(value)) throw new Error("Expected schema object")
+    return value
+  }
+  for (const name of ["GatewayProviderSummary", "GatewayProviderDetails"]) {
+    const properties = record(record(spec.components?.schemas?.[name]).properties)
+    const authorizationRequest = record(record(properties.authorizationRequests).items)
+    const pendingModels = record(authorizationRequest.properties).models
+    expect(pendingModels).toEqual(properties.models)
+    expect(pendingModels).toMatchObject({ type: "array", items: { type: "object", properties: { id: { type: "string" }, config: { type: "object" } } } })
+    expect(authorizationRequest.required).toEqual(["credentialSetId", "name", "authUrl"])
+  }
+  expect(storageCalls).toBe(0)
+})
 
 test("deployment capability stays separate from dashboard metadata and storage health", () => {
   expect(deploymentCapabilities()).toEqual({ version: 1, aiGateway: false })
@@ -103,8 +184,9 @@ test("deployment capability stays separate from dashboard metadata and storage h
 })
 
 test("enabled management retains admin checks and privileged-session checks", async () => {
-  for (const enabled of [false, true]) {
+  for (const enabled of [false, true]) for (const gatewayDashboard of [undefined, null, false, true, "true", 1, {}, []]) {
     env.gatewayEnabled = enabled
+    legacyDashboard = gatewayDashboard
     role = "member"
     for (const path of [resource, "/v1/inference-providers?scope=manageable", "/v1/inference-providers/usage"]) {
       const response = await app.request(path)
@@ -120,16 +202,20 @@ test("enabled management retains admin checks and privileged-session checks", as
   }
 })
 
-test("enabled management reaches existing handlers even with dashboard exposure off", async () => {
+test("enabled management reaches existing handlers regardless of retired org rollout metadata", async () => {
   env.gatewayEnabled = true
-  for (const path of [resource, "/v1/inference-providers?scope=manageable", "/v1/inference-providers/usage"]) {
-    const response = await app.request(path)
-    expect(response.status).toBe(503)
-    expect(await response.json()).toMatchObject({ error: "fixture_storage_reached" })
+  for (const gatewayDashboard of [undefined, null, false, true, "true", 1, {}, []]) {
+    legacyDashboard = gatewayDashboard
+    storageCalls = 0
+    for (const path of [resource, "/v1/inference-providers?scope=manageable", "/v1/inference-providers/usage"]) {
+      const response = await app.request(path)
+      expect(response.status).toBe(503)
+      expect(await response.json()).toMatchObject({ error: "fixture_storage_reached" })
+    }
+    expect(storageCalls).toBe(3)
+    const write = await app.request("/v1/inference-providers", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
+    expect(write.status).toBe(400)
   }
-  expect(storageCalls).toBe(3)
-  const write = await app.request("/v1/inference-providers", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
-  expect(write.status).toBe(400)
 })
 
 test("member usable, connect, OAuth sign-in and revoke are not deployment-gated", async () => {
@@ -162,7 +248,7 @@ test("OAuth callback requires browser sign-in even without management enablement
   expect(storageCalls).toBe(0)
 })
 
-test("enabled deployment with a non-opted organization keeps Models and Gateway desktop destinations separate", () => {
+test("enabled deployment ignores retired false metadata and keeps Models and Gateway desktop destinations separate", () => {
   env.gatewayEnabled = true
   const metadata = { capabilities: { gatewayDashboard: false }, inference: { enabled: true, tier: "tier1" } }
   expect(() => assertManagedModelsAllowed(metadata)).not.toThrow()

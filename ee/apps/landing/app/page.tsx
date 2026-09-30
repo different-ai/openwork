@@ -3,24 +3,27 @@ import { getGithubData } from "../lib/github";
 import { headers } from "next/headers";
 import { StructuredData } from "../components/structured-data";
 import { homeFaq } from "../lib/faq";
-import { baseOpenGraph } from "../lib/seo";
+import { baseOpenGraph, withSocialMetadata } from "../lib/seo";
 
-export const metadata = {
+export const metadata = withSocialMetadata({
   alternates: {
     canonical: "/"
   },
   openGraph: {
     ...baseOpenGraph,
+    title: "OpenWork — Free, open-source Claude Cowork alternative",
+    description:
+      "Free, open-source desktop AI agent app for macOS, Windows, and Linux. Any model, local models, your own keys. Share skills and MCPs with your team.",
     url: "https://openworklabs.com"
   }
-};
+});
 
 const softwareApplicationSchema = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   name: "OpenWork",
   description:
-    "Open source Claude Cowork alternative. Desktop app that lets teams use 50+ LLMs, bring their own provider keys, and ship reusable agent setups with guardrails.",
+    "Free, open-source Claude Cowork alternative. Desktop app for macOS, Windows, and Linux that works with 50+ model providers, local models, and your own API keys, with shared skills and MCP servers for teams.",
   url: "https://openworklabs.com",
   applicationCategory: "BusinessApplication",
   operatingSystem: "macOS, Windows, Linux",

@@ -27,13 +27,25 @@ resource ID, including after a rename. `externalKey` is returned with the resour
 Keys match `^[a-z0-9][a-z0-9._-]{0,127}$` and are immutable while the resource exists.
 Choose keys independently from display names and keep them in version control.
 
-| Resource | Keyed write | Read response | Apply behavior |
-| --- | --- | --- | --- |
-| Teams | `PUT /v1/teams/by-key/{key}` | `{team: ...}` | Replaces name and membership; omitted members become an empty list. |
-| LLM providers | `PUT /v1/llm-providers/by-key/{key}` | `{llmProvider: ...}` | Replaces provider configuration, selected models, and access assignments. Omitted write-only credentials are preserved. The creator retains direct access. |
-| MCP connections | `PUT /v1/mcp-connections/by-key/{key}` | Resource object | Uses the existing MCP configuration and credential rules, including live connection validation. |
-| Desktop policies | `PUT /v1/desktop-policies/by-key/{key}` | `{desktopPolicy: ...}` | Replaces public policy settings and assignments; omitted priority becomes zero, enabled becomes true, and assignment lists become empty. |
-| Marketplaces | `PUT /v1/marketplaces/by-key/{key}` | `{item: ...}` | Replaces metadata; omitted description and logo become null. Memberships and grants use their existing APIs. |
+All five resource types accept **bare write bodies**. `{team: ...}`,
+`{llmProvider: ...}`, `{desktopPolicy: ...}`, and `{item: ...}` are **response
+envelopes only**; never wrap a PUT body in them. `apply.mjs` submits each manifest
+entry after environment expansion and team-reference resolution, without adding
+an envelope. The write fields below describe the released API shape; see the
+complete manifest for example values.
+
+| Resource | Keyed write | Write-body fields (no envelope) | Response shape | Apply behavior |
+| --- | --- | --- | --- | --- |
+| Teams | `PUT /v1/teams/by-key/{key}` | `name`, `memberIds` | `{team: ...}` | Replaces name and membership; omitted members become an empty list. |
+| Custom LLM providers | `PUT /v1/llm-providers/by-key/{key}` | `name`, `source:"custom"`, `credentialMode`, `customConfig` (including `models`), `apiKey`/`apiKeys`, top-level `allMembers`, `memberIds`, `teamIds` | `{llmProvider: ...}` | Replaces configuration, models, and assignments. Omitted write-only credentials are preserved where supported; creator access remains. |
+| MCP connections | `PUT /v1/mcp-connections/by-key/{key}` | `name`, `url`, `authType`, `credentialMode`, `exposeDirectly`, `access`; authentication fields as needed | Bare resource object | Live validation can fail with `502`; conditional writes can conflict with `409`. Omitted `access` widens direct access to the organization: always send it. |
+| Desktop policies | `PUT /v1/desktop-policies/by-key/{key}` | `policyName`, `policy` (including `access`/`execution`), `priority`, `isEnabled`, top-level `roles`, `memberIds`, `teamIds` | `{desktopPolicy: ...}` | Replaces settings and assignments with the retention exceptions below. |
+| Marketplaces | `PUT /v1/marketplaces/by-key/{key}` | `name`, `description`, `logoUrl` | `{item: ...}` | Replaces metadata; omitted description and logo become null. Memberships and grants use their existing APIs. |
+
+For a custom provider, models live in `customConfig.models`, not top-level
+`models`; its audience uses top-level `allMembers/memberIds/teamIds`, not an
+`access` object. Catalog providers instead use `source:"models_dev"`, `providerId`,
+and `modelIds`.
 
 Teams, providers, policies, and marketplaces support `GET` at the same keyed URL
 and at `/v1/{resource}/{id}`. For MCP connections, read the returned ID at
@@ -50,8 +62,8 @@ permissions; they do not grant extra privileges.
 
 The repository includes
 [an executable example](https://github.com/different-ai/openwork/tree/dev/examples/declarative-org)
-with teams, an inference provider, desktop policy assignments, and a marketplace.
-It also supports an optional `mcpConnections` section using the MCP request shape.
+with teams, an inference provider, two MCP connections (no-auth HTTP and per-member
+OAuth), desktop policy assignments, and a marketplace.
 Use Node.js 24 or later; no additional packages are needed.
 
 ```sh
@@ -59,31 +71,164 @@ export DEN_API_URL=https://your-den.example
 export DEN_API_KEY=den_...
 export INFERENCE_URL=https://your-inference.example/v1
 export COMPANY_INFERENCE_KEY=...
+export MCP_HTTP_URL=https://docs-mcp.example.com/mcp
+export MCP_OAUTH_URL=https://tools.example.com/mcp
+export MCP_CLIENT_ID=openwork-tools
+export MCP_CLIENT_SECRET=...
+export MCP_ISSUER=https://identity.example.com/realms/company
 node examples/declarative-org/apply.mjs examples/declarative-org/organization.json
 ```
 
-Adjust the provider endpoint, model ID, and context limits to match your deployment.
-The sample domain and model are placeholders. The script expands environment
-variables in JSON values without inserting secrets into the file or its logs.
+Adjust the endpoints, model ID, context limits, OAuth issuer, client registration,
+and requested scopes to match your deployment. All example domains are placeholders;
+Den must be able to reach the upstream MCP endpoints. Inject secrets from your
+secret manager into the Job environment, not literal shell commands or Git. The
+script already expands `${VAR}` in JSON string values after parsing (including
+OAuth secrets), and fails before writing if a variable is missing. No vault-side
+JSON templating is needed.
 
-The manifest's object keys are stable identities. A provider or policy can use
-`"teams": ["platform"]` to refer to a team in the manifest. The example creates
-teams first and uses their returned IDs for dependent assignments. Other resource
-fields follow the API reference. Put MCP access rules in its `access` object;
-marketplace access and plugin attachments use separate endpoints.
+The manifest's object keys are stable identities. Providers, policies, and MCP
+connections can use `"teams": ["platform"]` to refer to a team key in the manifest.
+The example creates teams first and resolves these references to IDs. For MCP,
+the IDs go into `access.teamIds`; do not also supply `access.teamIds` when using
+`teams`. Providers and policies instead receive top-level `teamIds`. Without
+symbolic references, resolve actual organization-specific member/team IDs from
+`GET /v1/org` and use the resource's write fields above. That is the member/team
+inventory endpoint; do not infer collection GET routes from the keyed PUT paths.
+Review membership: the sample Platform team starts empty. Populate
+`teams.platform.memberIds` with the intended organization member IDs before applying;
+otherwise ordinary members receive no access through that team. Marketplace access
+and plugin attachments use separate endpoints. Provider creator access remains even
+when the creator is not in Platform.
 
-Run the same command twice. The second run should update the existing resources.
-Rename a display label and remove an assignment, then run again: the ID stays the
-same and the assignment is removed. Resources absent from the file are untouched.
+Both MCP examples explicitly set `authType`, `credentialMode`, `exposeDirectly`,
+and `access`. The no-auth documentation connection intentionally grants org-wide
+access and has no OAuth client. The internal-tools connection restricts access to
+Platform and requires each member to sign in. Its `oauthClient` contains
+`clientId`, `clientSecret`, and `tokenEndpointAuthMethod`; the route accepts issuer
+and scopes as **top-level** `authorizationServerIssuer` and `requestedScopes`, not
+inside `oauthClient`. A successful configuration write does not complete OAuth
+consent or prove tool execution works.
+
+### Provider usability gate after apply
+
+A successful provider PUT proves configuration persistence, not usable credentials.
+After applying the custom provider, the deployment Job must perform this separate
+check; `apply.mjs` does not run it automatically:
+
+1. Resolve `llmProvider.id` with `GET /v1/llm-providers/by-key/{key}`, then read
+   `GET /v1/llm-providers/{id}/connect` using the authorized caller. Unlike ordinary
+   provider reads, its `llmProvider` response can contain the stored credential.
+   Keep this payload in memory; never print it or save it to Job logs.
+2. For the example's scalar-key, OpenAI-compatible custom provider, map
+   `llmProvider.providerConfig.api` to `api`, `llmProvider.apiKey` to `apiKey`, and
+   `llmProvider.models[].id` to `modelIds` in the **bare** body of
+   `POST /v1/llm-providers/test-connection`: `{api, apiKey, modelIds}`. Stop if the
+   endpoint or required stored credential is missing. Verify all configured models
+   in batches of at most eight. Do not wrap this probe in `{llmProvider: ...}` or
+   merely reuse the manifest's input secret: the gate must exercise what Den
+   actually stored and supplies to this caller.
+3. Check both HTTP success and **`result.ok === true`** in the response JSON.
+   When requesting model verification, also check the returned `verifications`
+   cover those model IDs without `status:"failed"`; review any `adjusted` results.
+   Exit nonzero when the body indicates failure, even if the HTTP status is `200`.
+
+The released 0.18.46 proof confirmed a missing-credential control returning
+**HTTP 200 with `result.ok:false`** (upstream `401`), while configured credentials
+passed endpoint and model verification. Treat `result.hint`/`result.status` as
+failure diagnostics, not evidence of success. This gate tests the custom endpoint,
+not a worker or Gateway inference session; real-provider access remains a separate
+operational check.
+
+### MCP conditional writes and validation
+
+The by-key route does **not** require body `expectedUpdatedAt`. It accepts an
+optional `If-Match` header containing the current ISO `updatedAt` timestamp; the
+server supplies `expectedUpdatedAt` internally for replacement. The example opts
+into this protection: it finds the key in
+`GET /v1/mcp-connections?scope=manageable`, reads that connection by ID, and sends
+its `updatedAt` as `If-Match` on the keyed PUT. MCP has no GET-by-key endpoint.
+On `409`, the client re-reads and retries the desired configuration **once**;
+a second conflict stops the apply. Serialize writers: this bounded retry does not
+merge concurrent edits. After a connection is bound to a marketplace plugin,
+resending `authorizationServerIssuer` or `requestedScopes` can return `409` even
+when their values have not changed. This includes the example's OAuth manifest.
+Review marketplace-owned identity conflicts rather than repeatedly applying; for
+name/direct-access changes only, use the same-ID recipe below without those fields.
+
+A `502` means the proposed connection could not be validated. The client stops
+with that message, rather than retrying or reporting success. Check upstream
+reachability and authentication before applying again. Network/5xx uncertainty
+also stops MCP writes; inspect current state before rerunning. The example rejects
+missing or malformed MCP `access` locally, before any manifest write (deletion
+needs only keys). This guard is essential: the server itself accepts omitted
+`access` and defaults it to org-wide.
+
+Run the same command twice. The second run sends PUTs again and should update the
+existing resources, not create duplicates: this is stable-identity reconciliation,
+**not zero writes**, and timestamps or assignment-row IDs may change.
+Rename a display label and remove a direct assignment, then run again: the resource
+ID stays the same. For MCP team access, keep `access.orgWide:false` and change
+`teams:["platform"]` to `teams:[]`; reapply that edited manifest twice. The team
+grant is removed without changing identity or widening direct access. Removing a
+direct assignment does not revoke access from other sources, such as provider
+creator access or marketplace grants. Resources absent from the file are untouched.
 This is resource-level convergence, not a transaction across the entire manifest.
 If a later resource fails, earlier writes remain; correct the request and rerun.
 
-## Existing resources and conflicts
+## Omission semantics per resource
 
-The API never adopts an existing resource by matching its display name. Existing
-unkeyed resources remain managed by their IDs. Moving them into keyed management
-requires a separate, deliberate migration; this API does not bind a key to an
-existing ID.
+PUT is not a universal JSON merge. Send the complete reviewed desired configuration,
+including credential mode and access, rather than relying on these defaults.
+
+| Resource | Write fields and omission behavior on keyed apply |
+| --- | --- |
+| Legacy providers | Custom providers use `source:"custom"`, explicit `credentialMode`, `customConfig.models`, and top-level `allMembers/memberIds/teamIds`; catalog providers use `source:"models_dev"`, `providerId`, and `modelIds`. Omitted credentials are retained; `apiKeys` merges individual entries and empty values clear them. A blank top-level `apiKey` (for example an unresolved secret placeholder) is rejected with `400 invalid_api_keys` on the by-key route rather than saved as "no credential". Models and audience assignments are replaced, not merged (creator access remains). Omitted `credentialMode` becomes `shared`; changing from `per_member` deletes stored member credentials. Omitted `allMembers/memberIds/teamIds` become `false`/empty lists. |
+| MCP connections | Omitted `access` becomes org-wide: **confirmed live on 0.18.46**, including replacement of team-only grants. By contrast, `access:{}` means no direct grants. Omitted `credentialMode` becomes `shared` and `exposeDirectly` becomes `false`; changing credential mode invalidates existing accounts/client registration. Omitted `oauthClient.clientSecret` is preserved when connection identity and client ID are unchanged; reads do not export it. |
+| Teams | Bare `name`/`memberIds` write; omitted `memberIds` becomes an empty list. Omitted `grantsOrganizationAdmin` preserves an existing team's designation (false on creation); send explicit `false` to revoke it, using owner/super-admin permissions. |
+| Desktop policies | Use `policyName`, `policy`, and top-level `roles/memberIds/teamIds`. Omitted `policy.access` and `policy.execution` are retained; omitted onboarding prompts/descriptions are not retained on keyed replacement. `priority`/`isEnabled` reset to zero/true and assignment lists become empty. |
+| Marketplaces | Bare `name`/`description`/`logoUrl` write; omitted `description`/`logoUrl` become null. Plugin attachments and access grants are not replaced. |
+
+OAuth client-secret retention on omission was confirmed on released 0.18.46 by a
+fresh authorization-code/PKCE exchange and tool call against a synthetic consent
+server after reapply. This establishes unchanged-identity retention, not permission to
+change URL, auth type, credential mode, issuer, or client ID while expecting the
+old credentials/grants to remain usable. Provisioning the OAuth client does not
+make initial consent unattended.
+
+## Existing unkeyed resources are not adopted: manage them by ID
+
+The API never adopts an existing resource by matching its display name or URL.
+Applying a new key for an unkeyed connection creates another connection; it does
+not bind the key to the existing ID. Preserve existing OAuth grants and plugin
+bindings by retaining the ID, not deleting and recreating the connection.
+
+For an existing external MCP connection, GET and PUT the **same ID**. Unlike the
+keyed route, PUT-by-ID requires `expectedUpdatedAt` in the bare request body.
+This Bash/curl/jq rename sequence preserves the fetched configuration/direct access
+and omits write-only secrets; use it only with unchanged connection/client identity:
+
+```bash
+set -euo pipefail
+row=$(curl --proto '=https' --fail-with-body -sS \
+  -H "x-api-key: $DEN_API_KEY" \
+  "$DEN_API_URL/v1/mcp-connections/$CONNECTION_ID")
+body=$(jq -ce --arg name "$MCP_NAME" '
+  if .nativeProviderKey == null and .access != null and (.updatedAt|type)=="string"
+  then {expectedUpdatedAt:.updatedAt,name:$name,url:.url,authType:.authType,
+    credentialMode:.credentialMode,exposeDirectly:.exposeDirectly,access:.access}
+  else error("Expected a manageable external MCP connection") end' <<<"$row")
+curl --proto '=https' --fail-with-body -sS -X PUT \
+  -H "x-api-key: $DEN_API_KEY" -H 'Content-Type: application/json' \
+  --data-binary "$body" "$DEN_API_URL/v1/mcp-connections/$CONNECTION_ID" \
+  | jq '{id,updatedAt,reconnectionRequired}'
+```
+
+Use a reviewed existing `CONNECTION_ID` and desired `MCP_NAME`; supply the API key
+securely without shell tracing. On `409`, GET again and review the latest state
+before another PUT. Do not copy a stale timestamp or invent an external key.
+
+### Other conflicts
 
 Teams retain their existing unique-name rule. If a keyed team would use another
 team's name, the API returns `409`; it does not overwrite that team. Providers,
@@ -91,11 +236,12 @@ policies, and marketplaces retain their existing duplicate-name behavior. An
 archived marketplace retains its key and must be explicitly restored through its
 lifecycle endpoint before applying metadata.
 
-A concurrent first apply can return `409`; retry the keyed request. The database
-prevents two resources from owning the same key. Serialize deployments that write
-the same resource: the new four-resource writes use last-write-wins and reject
-`If-Match` and `If-None-Match` on PUT rather than silently ignoring them. MCP's
-existing optional `If-Match` behavior remains available. This release does not
+A concurrent first apply can fail; the database prevents two resources from owning
+the same key. Serialize deployments that write the same resource, and inspect
+state after uncertain MCP creates rather than blindly retrying. The other four
+resource types use last-write-wins and reject `If-Match` and `If-None-Match` on PUT
+rather than silently ignoring them. MCP's optional `If-Match` behavior remains
+available. This release does not
 provide a universal compare-and-swap contract or guarantee that a no-op apply
 leaves timestamps and assignment-row IDs unchanged.
 
@@ -119,6 +265,30 @@ references and key syntax before writing, bounds retries, and stops on a failure
 It is a small provisioning client, not a general infrastructure state manager.
 
 ## Scope and compatibility
+
+The five keyed APIs are available in **v0.18.43+**. The behavioral release checks
+cited above used **v0.18.46**, not every earlier version; for example, failed MCP
+creation cleanup changed after v0.18.43. Inspect your deployed API schema rather
+than assuming a moving `dev` example matches an older deployment:
+
+```sh
+curl --fail-with-body -sS "${DEN_API_URL%/}/openapi.json" | jq '.paths | with_entries(select(.key | contains("/by-key/")))'
+```
+
+Check for PUT entries for `teams`, `llm-providers`, `mcp-connections`,
+`desktop-policies`, and `marketplaces`, and inspect their request schemas. Schema
+presence establishes route availability, not upstream connectivity or equivalent
+runtime behavior across releases.
+
+Keep SSO outside the repeated apply: saving organization OIDC configuration again
+resets it to disabled/untested; configure, verify, test, and enable it deliberately.
+
+**Legacy/Gateway migration warning:** `PUT /v1/llm-providers/by-key/{key}` manages
+legacy providers. Explicit conversion to Gateway deletes the legacy source and
+drops its actionable external key; Gateway has no by-key equivalent. Stop and
+revise the keyed writer before conversion, or its next apply creates another
+legacy provider instead of reconciling the Gateway provider. Installing a
+Gateway-capable build alone does not invoke that conversion.
 
 Existing create, update-by-ID, and delete-by-ID routes keep their request behavior.
 Responses add the nullable `externalKey` field. Existing rows remain unkeyed; the

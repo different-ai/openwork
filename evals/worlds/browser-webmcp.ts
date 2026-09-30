@@ -3,6 +3,7 @@ import type { Surface } from "@openwork/cdp";
 import { configureBrowserFixtureModel, startBrowserFixture } from "@openwork/env";
 import type { Den, Seed } from "@openwork/env";
 import { builtinBrowserWorld } from "./browser-panel.ts";
+import { selectModel } from "@openwork/behaviors";
 
 function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
 
@@ -48,6 +49,17 @@ export async function browserWebMcpWorld(seed: Seed) {
     // Leave the browser unmounted: the discovery turn must request its first tab.
     return { ...base, origin, enginePath, async [Symbol.asyncDispose]() { await stack.disposeAsync(); } };
   } catch (error) { await stack.disposeAsync(); throw error; }
+}
+
+export async function browserConsentSummaryWorld(seed: Seed) {
+  const world = await browserWebMcpWorld(seed);
+  try {
+    await selectModel(world.app, "fixture", { provider: "Browser fixture" });
+    return world;
+  } catch (error) {
+    await world[Symbol.asyncDispose]();
+    throw error;
+  }
 }
 
 /** Mid-flow fixture update uses the body's Seed and preserves every unrelated policy field. */

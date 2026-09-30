@@ -5,12 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0b0f19" media="(prefers-color-scheme: dark)" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="OpenWork" />
     <title>OpenWork</title>
 
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
     <link rel="icon" type="image/svg+xml" href="/openwork-mark.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
@@ -108,11 +109,19 @@
       <div style="min-height: 100dvh; display: flex; align-items: center; justify-content: center; font: 14px system-ui; text-align: center; padding: 24px; box-sizing: border-box">
         <div>
           <p role="status">Starting OpenWork</p>
-          <p>If startup does not finish, reload to try again.</p>
-          <button type="button" onclick="window.location.reload()" style="font: inherit; padding: 8px 16px; cursor: pointer">Reload</button>
+          <div id="startup-recovery" hidden>
+            <p>OpenWork is taking longer than usual to start.</p>
+            <button type="button" onclick="window.location.reload()" style="font: inherit; padding: 8px 16px; cursor: pointer">Reload</button>
+          </div>
         </div>
       </div>
     </div>
+    <script>
+      setTimeout(function () {
+        var recovery = document.getElementById("startup-recovery");
+        if (recovery) recovery.hidden = false;
+      }, 45000);
+    </script>
     <script type="module" src="/src/index.react.tsx"></script>
   </body>
 </html>

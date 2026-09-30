@@ -8,6 +8,8 @@ import {
 } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 
+import type { OpenworkServerClient } from "@/app/lib/openwork-server";
+import { useOpencodeEngineControls } from "./opencode-engine-controls";
 import { t } from "@/i18n";
 import {
   Command,
@@ -29,12 +31,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { ChevronLeftIcon } from "lucide-react";
 import type { ModelOption, ModelRef } from "@/app/types";
+import { useGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
 import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { usePlatform } from "../kernel/platform";
-import {
-  resolveSessionNumberShortcutOs,
-  sessionNumberShortcutHelp,
-} from "./session-number-shortcuts";
 import {
   buildCommandPaletteBehaviorItems,
   buildCommandPaletteModelItems,
@@ -89,6 +88,7 @@ export type SessionGroupOption = {
 };
 
 export type CommandPaletteProps = {
+  engineClient?: OpenworkServerClient | null;
   open: boolean;
   onClose: () => void;
   developerMode: boolean;
@@ -122,7 +122,7 @@ export type CommandPaletteProps = {
   accessibleTargets?: AccessibleTargetOption[];
   onOpenAccessibleTarget?: (target: AccessibleTargetOption) => void;
   onHideAccessibleTarget?: (target: AccessibleTargetOption) => void;
-  /** Optional: sessions for the second mode. */
+  /** Sessions available to the split-view picker. */
   sessions: SessionOption[];
   sessionGroups?: SessionGroupOption[];
   currentSessionForGroupMove?: { title: string } | null;
@@ -138,11 +138,11 @@ export type CommandPaletteProps = {
 /**
  * React command palette (Cmd/Ctrl+K).
  *
- * - Root mode: "New session", "Open settings", and a link into the Sessions submode.
- * - Sessions submode: fuzzy list of every session across workspaces.
+ * Root mode searches actions and settings, not conversations.
  */
 export function CommandPalette(props: CommandPaletteProps) {
   const platform = usePlatform();
+  const engine = useOpencodeEngineControls(props.engineClient, props.open);
   const [mode, setMode] = useState<CommandPaletteMode>("root");
   const [query, setQuery] = useState("");
   const [recents, setRecents] = useState(loadPaletteRecents);
@@ -198,14 +198,6 @@ export function CommandPalette(props: CommandPaletteProps) {
   const accessibleTargetCount = props.accessibleTargets?.length ?? 0;
   const sessionGroupCount = props.sessionGroups?.length ?? 0;
   const canMoveCurrentSessionToGroup = Boolean(props.currentSessionForGroupMove && props.onMoveCurrentSessionToGroup);
-  const sessionNumberOs = resolveSessionNumberShortcutOs(
-    platform.os,
-    typeof navigator === "undefined" ? "" : navigator.platform,
-  );
-  const sessionNumberHelp = useMemo(
-    () => sessionNumberShortcutHelp(sessionNumberOs),
-    [sessionNumberOs],
-  );
   const hasNestedModelPicker = props.modelOptions !== undefined && props.onSelectModel !== undefined;
   // Organization policy (`allowControlSettings`) can hide desktop settings;
   // the settings palette entries follow the same allow-list as the settings nav.
@@ -222,19 +214,6 @@ export function CommandPalette(props: CommandPaletteProps) {
       action: () => {
         props.onClose();
         props.onCreateNewSession();
-      },
-    },
-    {
-      id: "sessions",
-      title: t("session.cmd_sessions_title"),
-      detail: t("session.cmd_sessions_detail", undefined, {
-        count: props.sessions.length.toLocaleString(),
-      }),
-      meta: t("session.cmd_sessions_meta"),
-      keywords: ["tasks", "chats", "conversations", "history", "switch"],
-      group: ACTIONS_GROUP,
-      action: () => {
-        setMode("sessions");
       },
     },
     ...(props.onOpenSessionInSplit && props.currentSession
@@ -263,15 +242,6 @@ export function CommandPalette(props: CommandPaletteProps) {
           },
         }]
       : []),
-    {
-      id: "session-number-shortcuts",
-      ...sessionNumberHelp,
-      keywords: ["keyboard", "shortcut", "switch session", "number"],
-      group: ACTIONS_GROUP,
-      action: () => {
-        setMode("sessions");
-      },
-    },
     ...(hasNestedModelPicker || props.onOpenModelPicker
       ? [{
           id: "models",
@@ -356,27 +326,7 @@ export function CommandPalette(props: CommandPaletteProps) {
         openUrl("https://openwork.dev/feedback");
       },
     },
-  ], [accessibleTargetCount, canMoveCurrentSessionToGroup, hasNestedModelPicker, props, sessionGroupCount, sessionNumberHelp]);
-
-  const sessionItems = useMemo<PaletteItem[]>(
-    () =>
-      props.sessions.map((item) => ({
-        id: `session:${item.workspaceId}:${item.sessionId}`,
-        title: item.title,
-        detail: item.workspaceTitle,
-        meta: item.isActive
-          ? t("session.cmd_current_workspace")
-          : t("session.cmd_switch"),
-        searchText: item.searchText,
-        keywords: ["session", "task", "conversation", "workspace"],
-        group: "sessions",
-        action: () => {
-          props.onClose();
-          props.onOpenSession(item.workspaceId, item.sessionId);
-        },
-      })),
-    [props],
-  );
+  ], [accessibleTargetCount, canMoveCurrentSessionToGroup, hasNestedModelPicker, props, sessionGroupCount]);
 
   const settingsItems = useMemo(
     () => buildCommandPaletteSettingsItems({
@@ -468,10 +418,10 @@ export function CommandPalette(props: CommandPaletteProps) {
       ...rootItems,
       ...coreActionItems,
       ...settingsItems,
+      ...engine.items.map((item) => ({ ...item, action: () => { props.onClose(); item.action(); } })),
       ...(props.extraItems ?? []),
-      ...sessionItems,
     ],
-    [coreActionItems, props.extraItems, rootItems, sessionItems, settingsItems],
+    [coreActionItems, engine.items, props.extraItems, props.onClose, rootItems, settingsItems],
   );
 
   const rootGroups = useMemo(
@@ -559,28 +509,28 @@ export function CommandPalette(props: CommandPaletteProps) {
     }))
   ), [props]);
 
+  const gatewaySelection = useGatewayModelSelection(JSON.stringify([props.selectedModel, props.selectedModelBehavior]));
   const modelItems = useMemo<PaletteItem[]>(() => (
     buildCommandPaletteModelItems(props.modelOptions ?? [], props.selectedModel).map((item) => ({
       id: item.id,
       title: item.title,
       detail: item.detail,
-      meta: item.meta,
+      meta: item.option.gatewayAuthorization ? "Sign-in required" : item.meta,
       searchText: item.searchText,
       disabled: item.option.disabled,
       action: () => {
-        if ((item.option.behaviorOptions?.length ?? 0) > 0) {
+        if (!item.option.gatewayAuthorization && (item.option.behaviorOptions?.length ?? 0) > 0) {
           setBehaviorModel(item.option);
           setMode("model-behavior");
           return;
         }
-        props.onSelectModel?.(
-          { providerID: item.option.providerID, modelID: item.option.modelID },
-          null,
-        );
-        props.onClose();
+        gatewaySelection.select(item.option, () => {
+          props.onSelectModel?.({ providerID: item.option.providerID, modelID: item.option.modelID }, null);
+          props.onClose();
+        });
       },
     }))
-  ), [props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel]);
+  ), [gatewaySelection.select, props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel]);
 
   const behaviorItems = useMemo<PaletteItem[]>(() => {
     if (!behaviorModel) return [];
@@ -595,14 +545,15 @@ export function CommandPalette(props: CommandPaletteProps) {
       meta: item.meta,
       searchText: item.searchText,
       action: () => {
-        props.onSelectModel?.(
-          { providerID: behaviorModel.providerID, modelID: behaviorModel.modelID },
-          item.option.value,
-        );
-        props.onClose();
+        const currentOption = props.modelOptions?.find((option) => option.providerID === behaviorModel.providerID && option.modelID === behaviorModel.modelID);
+        if (!currentOption) return;
+        gatewaySelection.select(currentOption, () => {
+          props.onSelectModel?.({ providerID: behaviorModel.providerID, modelID: behaviorModel.modelID }, item.option.value);
+          props.onClose();
+        });
       },
     }));
-  }, [behaviorModel, props.onClose, props.onSelectModel, props.selectedModel, props.selectedModelBehavior]);
+  }, [behaviorModel, gatewaySelection.select, props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel, props.selectedModelBehavior]);
 
   const navigateBack = () => {
     const nextMode = commandPaletteBackMode(mode);
@@ -612,6 +563,7 @@ export function CommandPalette(props: CommandPaletteProps) {
   };
 
   const handleEscape = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (gatewaySelection.loginOpen) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -640,9 +592,7 @@ export function CommandPalette(props: CommandPaletteProps) {
     }
   };
 
-  const submodeItems = mode === "sessions"
-    ? sessionItems
-    : mode === "split-sessions"
+  const submodeItems = mode === "split-sessions"
       ? splitSessionItems
     : mode === "accessible-items"
       ? accessibleItems
@@ -690,12 +640,12 @@ export function CommandPalette(props: CommandPaletteProps) {
   );
 
   return (
+    <>
+    {engine.dialog}
     <CommandDialog open={props.open} onOpenChange={handleOpenChange}>
       <CommandDialogPopup onKeyDownCapture={handleEscape}>
         <CommandDialogTitle>
-          {mode === "sessions"
-            ? t("session.palette_title_sessions")
-            : mode === "split-sessions"
+          {mode === "split-sessions"
               ? t("session_management.open_in_split_view")
             : mode === "accessible-items"
               ? "Accessible items"
@@ -730,9 +680,7 @@ export function CommandPalette(props: CommandPaletteProps) {
               className="w-full"
               placeholder={
                 mode === "root"
-                  ? "Search actions, settings, and sessions…"
-                  : mode === "sessions"
-                  ? t("session.palette_placeholder_sessions")
+                  ? "Search actions and settings…"
                   : mode === "split-sessions"
                     ? "Search sessions and workspaces..."
                   : mode === "accessible-items"
@@ -776,5 +724,6 @@ export function CommandPalette(props: CommandPaletteProps) {
         </Command>
       </CommandDialogPopup>
     </CommandDialog>
+    </>
   );
 }

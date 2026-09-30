@@ -17,6 +17,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { z } from "zod"
 import { denTypeIdSchema } from "../../../openapi.js"
+import { keysetCursorQuerySchema } from "../../../list-pagination.js"
 import { idParamSchema } from "../shared.js"
 
 const cursorSchema = z.string().trim().min(1).max(255)
@@ -101,9 +102,17 @@ export const configObjectVersionListQuerySchema = pluginArchPaginationQuerySchem
 })
 
 export const pluginListQuerySchema = pluginArchPaginationQuerySchema.extend({
+  cursor: keysetCursorQuerySchema.optional(),
   status: pluginStatusSchema.optional(),
   q: z.string().trim().min(1).max(255).optional(),
-})
+  name: z.string().trim().min(1).max(255).optional().describe("Case-insensitive substring of the plugin name."),
+  teamId: teamIdSchema.optional().describe("Plugins effectively accessible to this team, including organization and collection access."),
+  memberId: memberIdSchema.optional().describe("Plugins effectively accessible to this member, including team, organization and collection access."),
+  includeAccess: queryBooleanSchema.optional().describe("When true, each plugin the caller manages includes its active access grants."),
+  includeTotal: queryBooleanSchema.optional().describe("When true, returns the total matching plugins before the cursor."),
+  ownerId: memberIdSchema.optional().describe("Plugins created by this organization member."),
+  includeFacets: queryBooleanSchema.optional().describe("Include team and owner counts across all matching pages. Each facet ignores its own current selection."),
+}).refine((query) => !query.teamId || !query.memberId, { message: "Choose a team or a member, not both." })
 
 export const marketplaceListQuerySchema = pluginArchPaginationQuerySchema.extend({
   status: marketplaceStatusSchema.optional(),
@@ -979,7 +988,14 @@ export const configObjectDetailResponseSchema = pluginArchDetailResponseSchema("
 export const configObjectMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchConfigObjectMutationResponse", configObjectSchema)
 export const configObjectVersionListResponseSchema = pluginArchListResponseSchema("PluginArchConfigObjectVersionListResponse", configObjectVersionSchema)
 export const configObjectVersionDetailResponseSchema = pluginArchDetailResponseSchema("PluginArchConfigObjectVersionDetailResponse", configObjectVersionSchema)
-export const pluginListResponseSchema = pluginArchListResponseSchema("PluginArchPluginListResponse", pluginSchema)
+export const pluginListItemSchema = pluginSchema.extend({
+  access: z.array(accessGrantSchema).optional().describe("Active access grants. Present only when includeAccess is true and the caller manages the plugin."),
+}).meta({ ref: "PluginArchPluginListItem" })
+export const pluginListResponseSchema = pluginArchListResponseSchema("PluginArchPluginListResponse", pluginListItemSchema).extend({
+  total: z.number().int().nonnegative().optional(),
+  teamCounts: z.array(z.object({ id: teamIdSchema, count: z.number().int().nonnegative() })).optional(),
+  ownerCounts: z.array(z.object({ id: memberIdSchema.nullable(), count: z.number().int().nonnegative() })).optional(),
+})
 export const pluginDetailResponseSchema = pluginArchDetailResponseSchema("PluginArchPluginDetailResponse", pluginSchema)
 export const pluginMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchPluginMutationResponse", pluginSchema)
 export const pluginMembershipListResponseSchema = pluginArchListResponseSchema("PluginArchPluginMembershipListResponse", pluginMembershipSchema)

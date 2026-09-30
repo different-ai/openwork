@@ -1,44 +1,86 @@
 ---
-title: "Get started"
-description: "Privacy-first, open-source alternative to Claude Cowork."
+title: "Open-source Claude Cowork alternative"
+sidebarTitle: "Get started"
+description: "OpenWork is the open-source Claude Cowork alternative: desktop app, web app, AI Gateway, and MCP Gateway to own your AI stack. Free, no sign-in."
 ---
 
-<Note>
-**OpenWork stays free when you use it locally.** Download the desktop app, connect your own model provider, and add custom MCP servers without signing in to OpenWork Cloud. Sign in only when you want organization-managed providers, skills, connections, or policies. See [OpenWork Cloud](/cloud/get-started) for those team features.
-</Note>
+<div className="docs-intro">
+  <p className="docs-eyebrow">OpenWork docs</p>
+  <p className="docs-hero-title">The open-source alternative to Claude Cowork.</p>
+  <p className="docs-lead">Own your AI stack: your files, models, skills, and who uses them. Free locally, no sign-in needed.</p>
+  <div className="docs-actions">
+    <a href="#pick-your-path">Pick your path</a>
+    <a href="https://openworklabs.com/download">Download free</a>
+  </div>
+</div>
 
-Most people should start with the [OpenWork app](https://openworklabs.com/download). It lets you use your own LLMs, skills, plugins, and MCP servers locally, then add Cloud when your team needs shared management.
+## The suite
 
-## Start
-
-Get started by connecting your LLM provider of choice and sending your first message:
-
-<CardGroup cols={3}>
-  <Card title="Connect a provider" icon="plug" href="/start-here/connect-your-stack/sign-in-with-chatgpt">
-    Sign in with ChatGPT or bring your own LLM key in a few clicks.
+<CardGroup cols={2}>
+  <Card title="Desktop app" icon="laptop" href="#get-started-in-four-steps">
+    Free, MIT-licensed, 50+ model providers or local models.
   </Card>
-  <Card title="Connect your services" icon="plug" href="/start-here/connect-your-stack/connect-services">
-    Join an OpenWork Cloud organization, then connect the managed services it makes available.
+  <Card title="Web app" icon="globe" href="/cloud/run-in-the-cloud/open-cloud-in-browser">
+    The full OpenWork workspace in your browser. Nothing to install.
   </Card>
-  <Card title="Control the browser" icon="globe" href="/start-here/do-work-with-it/control-the-browser">
-    Let OpenWork run and screenshot tasks in Chrome for you.
+  <Card title="AI Gateway" icon="route" href="/ai-gateway/overview">
+    Connect providers once. Control model access, limits, and spend.
+  </Card>
+  <Card title="MCP Gateway" icon="plug" href="/start-here/connect-openwork-mcp">
+    Your org's skills and connections in Claude Code, Codex, Cursor.
   </Card>
 </CardGroup>
 
-## Choose your setup
+{/* AI Gateway tour video goes here */}
+
+## Pick your path
 
 <CardGroup cols={3}>
-  <Card title="Download OpenWork" icon="download" href="https://openworklabs.com/download">
-    Start free with the desktop app, your own provider, and no OpenWork Cloud account.
+  <Card title="Just me" icon="user" href="#get-started-in-four-steps">
+    Download the app and run a first task.
   </Card>
-  <Card title="OpenWork Cloud" icon="users" href="/cloud/get-started">
-    For teams: Collections, managed connections and models, organization policies, and hosted workspaces.
+  <Card title="My team" icon="users" href="/cloud/team-quickstart">
+    Create an org, invite teammates, share a skill.
   </Card>
-  <Card title="Enterprise" icon="building" href="/cloud/enterprise">
-    Get support with an enterprise deployment if you need a private rollout or custom requirements.
+  <Card title="Claude Code or Codex" icon="terminal" href="/start-here/connect-openwork-mcp">
+    Add the MCP Gateway with one command.
+  </Card>
+</CardGroup>
+
+## Get started in four steps
+
+<Steps>
+  <Step title="Install">
+    [Download OpenWork](https://openworklabs.com/download) for macOS, Windows, or Linux.
+  </Step>
+  <Step title="Pick a folder">
+    OpenWork only works in folders you authorize.
+  </Step>
+  <Step title="Choose a model">
+    [Sign in with ChatGPT](/start-here/connect-your-stack/sign-in-with-chatgpt), [add an API key](/start-here/connect-your-stack/add-anthropic-api-key), or [run a local model](/start-here/connect-your-stack/use-local-models).
+  </Step>
+  <Step title="Run a task">
+    Start with "Summarize this folder."
+  </Step>
+</Steps>
+
+## Share it with your org
+
+<CardGroup cols={2}>
+  <Card title="Marketplaces" icon="store" href="/cloud/share-with-your-team/collections">
+    Publish skills, plugins, and MCPs once. Assign to anyone.
+  </Card>
+  <Card title="RBAC, SSO, SCIM" icon="shield" href="/cloud/members-and-rbac">
+    Roles, teams, Okta, Entra, and Google Workspace.
+  </Card>
+  <Card title="Desktop policies" icon="sliders" href="/cloud/share-with-your-team/desktop-policies">
+    Control what the app allows per org, team, or member.
+  </Card>
+  <Card title="Cloud or self-hosted" icon="server" href="/start-here/self-host">
+    Helm or Docker Compose. Same price either way.
   </Card>
 </CardGroup>
 
 ---
 
-[GitHub](https://github.com/different-ai/openwork) · [Changelog](/changelog) · [Product Roadmap](/roadmap) · [Missing docs](/start-here/missing-docs) · [Missing languages](/start-here/missing-languages)
+[GitHub](https://github.com/different-ai/openwork) · [Changelog](/changelog) · [Migrate from Claude Cowork](/start-here/migrate-from-claude-cowork) · [Pricing](/start-here/pricing-and-licensing) · [Enterprise](/cloud/enterprise) · [Missing docs](/start-here/missing-docs)

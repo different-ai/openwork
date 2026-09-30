@@ -57,6 +57,11 @@ export interface SessionSwitchMeasurement {
 interface TransportObservation {
   promptPosts: number;
   promptPaths: string[];
+  abortPosts: number;
+  openingRequests: Record<string, number>;
+  held: { sessionId: string; dispatched: boolean; delivered: boolean; aborted: boolean } | null;
+  hold(sessionId: string): void;
+  release(): void;
   restore(): void;
 }
 
@@ -70,17 +75,58 @@ declare global {
 function installTransportObservation(): void {
   if (window.__sessionSwitchLatencyTransport) return;
   const originalFetch = window.fetch.bind(window);
+  let pending: Promise<void> | null = null;
+  let release = () => {};
+  let deadline: ReturnType<typeof setTimeout> | undefined;
   const state: TransportObservation = {
     promptPosts: 0,
     promptPaths: [],
+    abortPosts: 0,
+    openingRequests: {},
+    held: null,
+    hold(sessionId) {
+      state.release();
+      state.held = { sessionId, dispatched: false, delivered: false, aborted: false };
+      pending = new Promise<void>((resolve) => { release = resolve; });
+      deadline = setTimeout(() => state.release(), 15_000);
+    },
+    release() {
+      clearTimeout(deadline);
+      release();
+      pending = null;
+    },
     restore() {
+      state.release();
       window.fetch = originalFetch;
       delete window.__sessionSwitchLatencyTransport;
     },
   };
   window.fetch = async (input, init) => {
     const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
-    const path = new URL(input instanceof Request ? input.url : String(input), location.href).pathname;
+    const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+    const path = url.pathname;
+    if (method === "POST" && /\/session\/[^/]+\/abort$/.test(path)) state.abortPosts += 1;
+    const opening = method === "GET" && url.searchParams.get("limit") === "24"
+      ? path.match(/\/(?:opencode|opencode2\/api)\/session\/([^/]+)\/message$/) : null;
+    if (opening) {
+      const sessionId = decodeURIComponent(opening[1]!);
+      state.openingRequests[sessionId] = (state.openingRequests[sessionId] ?? 0) + 1;
+      const held = state.held;
+      if (held?.sessionId === sessionId && !held.dispatched && pending) {
+        held.dispatched = true;
+        const gate = pending;
+        const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+        const aborted = () => { held.aborted = true; };
+        signal?.addEventListener("abort", aborted, { once: true });
+        try {
+          const response = await originalFetch(input, init);
+          await gate;
+          held.aborted ||= signal?.aborted ?? false;
+          held.delivered = true;
+          return response;
+        } finally { signal?.removeEventListener("abort", aborted); }
+      }
+    }
     if (method === "POST" && /\/(?:opencode|opencode2\/api)\/session\/[^/]+\/(?:prompt_async|prompt)$/.test(path)) {
       state.promptPosts += 1;
       if (state.promptPaths.length < 20) state.promptPaths.push(path);
@@ -405,6 +451,19 @@ export async function sessionSwitchLatencyWeb(seed: Seed, context: { place: Plac
     workspace,
     targets,
     expectedProviderFinalRequests: submissions.length,
+    holdOpening: (sessionId: string) => evaluate(app.client, browserScript((sessionId) => {
+      const transport = window.__sessionSwitchLatencyTransport;
+      if (!transport) throw new Error("The history transport witness is unavailable.");
+      transport.hold(sessionId);
+    }, [sessionId])),
+    releaseOpening: () => evaluate(app.client, () => {
+      window.__sessionSwitchLatencyTransport?.release();
+    }),
+    openingWitness: () => evaluate(app.client, () => {
+      const transport = window.__sessionSwitchLatencyTransport;
+      if (!transport) throw new Error("The history transport witness is unavailable.");
+      return { held: transport.held, requests: transport.openingRequests, abortPosts: transport.abortPosts };
+    }),
     firstVisitOrder: (restoredSessionId: string) => alternatingColdOrder(targets, restoredSessionId),
     warmVisitOrder: () => [...targets],
     summary,

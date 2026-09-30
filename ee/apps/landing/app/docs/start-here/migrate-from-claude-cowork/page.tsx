@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 
 import { MigrationGuidePage } from "../../../../components/migration-guide-page";
 import { getGithubData } from "../../../../lib/github";
-import { baseOpenGraph } from "../../../../lib/seo";
+import { baseOpenGraph, withSocialMetadata } from "../../../../lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = withSocialMetadata({
   title: "Migrate from Claude Cowork to OpenWork",
   description:
     "Move your files, skills, plugins, MCP servers, scheduled tasks, and team setup from Claude Cowork to OpenWork.",
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
       "A step-by-step guide to moving your Cowork setup to open-source OpenWork.",
     url: "https://openworklabs.com/docs/start-here/migrate-from-claude-cowork"
   }
-};
+});
 
 export default async function MigrateFromClaudeCoworkPage() {
   const github = await getGithubData();

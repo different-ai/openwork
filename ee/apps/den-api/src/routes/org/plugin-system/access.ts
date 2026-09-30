@@ -13,7 +13,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import type { MemberTeamSummary, OrganizationContext } from "../../../orgs.js"
 import { db } from "../../../db.js"
-import { getFreshPrivilegedSessionRequiredResponse, hasFreshPrivilegedSession, memberHasRole } from "../shared.js"
+import { memberHasRole } from "../shared.js"
 
 export type PluginArchResourceKind = "config_object" | "connector_instance" | "marketplace" | "plugin"
 export type PluginArchRole = "viewer" | "editor" | "manager"
@@ -39,7 +39,6 @@ type MarketplaceGrantRow = Pick<typeof MarketplaceAccessGrantTable.$inferSelect,
 type PluginGrantRow = Pick<typeof PluginAccessGrantTable.$inferSelect, "orgMembershipId" | "orgWide" | "removedAt" | "role" | "teamId">
 type ConnectorInstanceGrantRow = Pick<typeof ConnectorInstanceAccessGrantTable.$inferSelect, "orgMembershipId" | "orgWide" | "removedAt" | "role" | "teamId">
 type GrantRow = ConfigObjectGrantRow | MarketplaceGrantRow | PluginGrantRow | ConnectorInstanceGrantRow
-type ExposureGrantRow = Pick<PluginGrantRow, "orgMembershipId" | "orgWide" | "teamId">
 
 type MarketplaceResourceLookupInput = {
   context: PluginArchActorContext
@@ -71,10 +70,7 @@ type ResourceLookupInput =
   | MarketplaceResourceLookupInput
   | ConfigObjectResourceLookupInput
 
-type ExposureResourceLookupInput = PluginResourceLookupInput | ConfigObjectResourceLookupInput
-
 type RequireResourceRoleInput = ResourceLookupInput & {
-  requireFreshSession?: boolean
   role: PluginArchRole
 }
 
@@ -111,20 +107,6 @@ export function hasPluginArchCapability(context: PluginArchActorContext, capabil
     return true
   }
   return isPluginArchOrgAdmin(context)
-}
-
-function ensureFreshPluginArchAdmin(context: PluginArchActorContext, sessionMaxAgeMs?: number) {
-  if (context.apiKey === true || context.automation === true) {
-    // Session freshness is a step-up check for interactive humans. API keys and connector automation
-    // are non-interactive principals authorized by their scoped organization membership.
-    return
-  }
-  if (!isPluginArchOrgAdmin(context) || hasFreshPrivilegedSession({ session: context.session }, new Date(), sessionMaxAgeMs)) {
-    return
-  }
-
-  const response = getFreshPrivilegedSessionRequiredResponse()
-  throw new PluginArchAuthorizationError(403, response.error, response.message, response.reason)
 }
 
 function roleSatisfies(role: PluginArchRole | null, required: PluginArchRole) {
@@ -214,74 +196,6 @@ export function resolvePluginArchGrantRole(input: {
   return resolved
 }
 
-export function pluginArchGrantExpandsAudience(grant: ExposureGrantRow, memberId: MemberId) {
-  return grant.orgWide
-    || grant.teamId !== null
-    || (grant.orgMembershipId !== null && grant.orgMembershipId !== memberId)
-}
-
-async function pluginIdsHaveExpandedAudience(context: PluginArchActorContext, pluginIds: PluginId[]) {
-  if (pluginIds.length === 0) return false
-
-  const organizationId = context.organizationContext.organization.id
-  const memberId = context.organizationContext.currentMember.id
-  const grants = await db
-    .select({
-      orgMembershipId: PluginAccessGrantTable.orgMembershipId,
-      orgWide: PluginAccessGrantTable.orgWide,
-      teamId: PluginAccessGrantTable.teamId,
-    })
-    .from(PluginAccessGrantTable)
-    .where(and(
-      eq(PluginAccessGrantTable.organizationId, organizationId),
-      inArray(PluginAccessGrantTable.pluginId, pluginIds),
-      isNull(PluginAccessGrantTable.removedAt),
-    ))
-  if (grants.some((grant) => pluginArchGrantExpandsAudience(grant, memberId))) return true
-
-  const marketplaceMemberships = await db
-    .select({ id: MarketplacePluginTable.id })
-    .from(MarketplacePluginTable)
-    .where(and(
-      eq(MarketplacePluginTable.organizationId, organizationId),
-      inArray(MarketplacePluginTable.pluginId, pluginIds),
-      isNull(MarketplacePluginTable.removedAt),
-    ))
-  return marketplaceMemberships.length > 0
-}
-
-export async function pluginArchResourceHasExpandedAudience(input: ExposureResourceLookupInput) {
-  if (input.resourceKind === "plugin") {
-    return pluginIdsHaveExpandedAudience(input.context, [input.resourceId])
-  }
-
-  const organizationId = input.context.organizationContext.organization.id
-  const memberId = input.context.organizationContext.currentMember.id
-  const grants = await db
-    .select({
-      orgMembershipId: ConfigObjectAccessGrantTable.orgMembershipId,
-      orgWide: ConfigObjectAccessGrantTable.orgWide,
-      teamId: ConfigObjectAccessGrantTable.teamId,
-    })
-    .from(ConfigObjectAccessGrantTable)
-    .where(and(
-      eq(ConfigObjectAccessGrantTable.organizationId, organizationId),
-      eq(ConfigObjectAccessGrantTable.configObjectId, input.resourceId),
-      isNull(ConfigObjectAccessGrantTable.removedAt),
-    ))
-  if (grants.some((grant) => pluginArchGrantExpandsAudience(grant, memberId))) return true
-
-  const memberships = await db
-    .select({ pluginId: PluginConfigObjectTable.pluginId })
-    .from(PluginConfigObjectTable)
-    .where(and(
-      eq(PluginConfigObjectTable.organizationId, organizationId),
-      eq(PluginConfigObjectTable.configObjectId, input.resourceId),
-      isNull(PluginConfigObjectTable.removedAt),
-    ))
-  return pluginIdsHaveExpandedAudience(input.context, memberships.map((membership) => membership.pluginId))
-}
-
 async function resolveGrantRole(input: {
   grants: GrantRow[]
   context: PluginArchActorContext
@@ -302,6 +216,12 @@ async function resolvePluginRoleForIds(context: PluginArchActorContext, pluginId
   if (isPluginArchOrgAdmin(context)) {
     return "manager" satisfies PluginArchRole
   }
+
+  const [owned] = await db.select({ id: PluginTable.id }).from(PluginTable).where(and(
+    inArray(PluginTable.id, organizationPluginIds),
+    eq(PluginTable.createdByOrgMembershipId, context.organizationContext.currentMember.id),
+  )).limit(1)
+  if (owned) return "manager" satisfies PluginArchRole
 
   const grants = await db
     .select({
@@ -347,6 +267,98 @@ async function resolveMarketplaceRoleForIds(context: PluginArchActorContext, mar
   return resolveGrantRole({ context, grants })
 }
 
+function groupGrantsBy<TKey, TGrant>(grants: TGrant[], key: (grant: TGrant) => TKey) {
+  const grouped = new Map<TKey, TGrant[]>()
+  for (const grant of grants) {
+    const id = key(grant)
+    const existing = grouped.get(id)
+    if (existing) existing.push(grant)
+    else grouped.set(id, [grant])
+  }
+  return grouped
+}
+
+/** Resolves the caller's role for many plugins with the same rules as resolvePluginArchResourceRole. */
+export async function resolvePluginArchPluginRoles(context: PluginArchActorContext, pluginIds: PluginId[]) {
+  const roles = new Map<PluginId, PluginArchRole>()
+  const organizationId = context.organizationContext.organization.id
+  if (pluginIds.length === 0) return roles
+  const pluginRows = await db.select({ id: PluginTable.id, createdByOrgMembershipId: PluginTable.createdByOrgMembershipId })
+    .from(PluginTable)
+    .where(and(eq(PluginTable.organizationId, organizationId), inArray(PluginTable.id, pluginIds)))
+  const organizationPluginIds = pluginRows.map((plugin) => plugin.id)
+  if (organizationPluginIds.length === 0) return roles
+
+  if (isPluginArchOrgAdmin(context)) {
+    for (const pluginId of organizationPluginIds) roles.set(pluginId, "manager")
+    return roles
+  }
+
+  const memberId = context.organizationContext.currentMember.id
+  const teamIds = context.memberTeams.map((team) => team.id)
+  const grants = await db
+    .select({
+      orgMembershipId: PluginAccessGrantTable.orgMembershipId,
+      orgWide: PluginAccessGrantTable.orgWide,
+      pluginId: PluginAccessGrantTable.pluginId,
+      removedAt: PluginAccessGrantTable.removedAt,
+      role: PluginAccessGrantTable.role,
+      teamId: PluginAccessGrantTable.teamId,
+    })
+    .from(PluginAccessGrantTable)
+    .where(and(
+      inArray(PluginAccessGrantTable.pluginId, organizationPluginIds),
+      eq(PluginAccessGrantTable.organizationId, organizationId),
+    ))
+  const grantsByPlugin = groupGrantsBy(grants, (grant) => grant.pluginId)
+
+  const unresolvedPluginIds: PluginId[] = []
+  for (const plugin of pluginRows) {
+    const role = resolvePluginArchGrantRole({ grants: grantsByPlugin.get(plugin.id) ?? [], memberId, teamIds })
+    if (plugin.createdByOrgMembershipId === memberId) roles.set(plugin.id, "manager")
+    else if (role) roles.set(plugin.id, role)
+    else unresolvedPluginIds.push(plugin.id)
+  }
+  if (unresolvedPluginIds.length === 0) {
+    return roles
+  }
+
+  const memberships = await db
+    .select({ marketplaceId: MarketplacePluginTable.marketplaceId, pluginId: MarketplacePluginTable.pluginId })
+    .from(MarketplacePluginTable)
+    .where(and(inArray(MarketplacePluginTable.pluginId, unresolvedPluginIds), isNull(MarketplacePluginTable.removedAt)))
+  const organizationMarketplaceIds = await filterMarketplaceIdsInOrganization(
+    organizationId,
+    [...new Set(memberships.map((membership) => membership.marketplaceId))],
+  )
+  if (organizationMarketplaceIds.length === 0) {
+    return roles
+  }
+
+  const marketplaceGrants = await db
+    .select({
+      marketplaceId: MarketplaceAccessGrantTable.marketplaceId,
+      orgMembershipId: MarketplaceAccessGrantTable.orgMembershipId,
+      orgWide: MarketplaceAccessGrantTable.orgWide,
+      removedAt: MarketplaceAccessGrantTable.removedAt,
+      role: MarketplaceAccessGrantTable.role,
+      teamId: MarketplaceAccessGrantTable.teamId,
+    })
+    .from(MarketplaceAccessGrantTable)
+    .where(and(
+      inArray(MarketplaceAccessGrantTable.marketplaceId, organizationMarketplaceIds),
+      eq(MarketplaceAccessGrantTable.organizationId, organizationId),
+    ))
+  const grantsByMarketplace = groupGrantsBy(marketplaceGrants, (grant) => grant.marketplaceId)
+  const visibleMarketplaceIds = new Set(organizationMarketplaceIds.filter((marketplaceId) =>
+    resolvePluginArchGrantRole({ grants: grantsByMarketplace.get(marketplaceId) ?? [], memberId, teamIds }) !== null))
+
+  for (const membership of memberships) {
+    if (visibleMarketplaceIds.has(membership.marketplaceId)) roles.set(membership.pluginId, "viewer")
+  }
+  return roles
+}
+
 export async function resolvePluginArchResourceRole(input: ResourceLookupInput) {
   if (!(await resourceExistsInOrganization(input))) {
     return null
@@ -374,6 +386,11 @@ export async function resolvePluginArchResourceRole(input: ResourceLookupInput) 
   }
 
   if (input.resourceKind === "plugin") {
+    const [plugin] = await db.select({ createdByOrgMembershipId: PluginTable.createdByOrgMembershipId })
+      .from(PluginTable)
+      .where(and(eq(PluginTable.id, input.resourceId), eq(PluginTable.organizationId, input.context.organizationContext.organization.id)))
+      .limit(1)
+    if (plugin?.createdByOrgMembershipId === input.context.organizationContext.currentMember.id) return "manager"
     const grants = await db
       .select({
         orgMembershipId: PluginAccessGrantTable.orgMembershipId,
@@ -447,9 +464,8 @@ export async function resolvePluginArchResourceRole(input: ResourceLookupInput) 
   return resolved
 }
 
-export async function requirePluginArchCapability(context: PluginArchActorContext, capability: PluginArchCapability, requireFreshSession?: boolean) {
+export async function requirePluginArchCapability(context: PluginArchActorContext, capability: PluginArchCapability) {
   if (hasPluginArchCapability(context, capability)) {
-    if (requireFreshSession !== false) ensureFreshPluginArchAdmin(context)
     return
   }
 
@@ -458,16 +474,10 @@ export async function requirePluginArchCapability(context: PluginArchActorContex
 
 export async function requirePluginArchResourceRole(input: {
   context: PluginArchActorContext
-  requireFreshSession?: boolean
-  sessionMaxAgeMs?: number
   resourceId: ConfigObjectId | ConnectorInstanceId | MarketplaceId | PluginId
   resourceKind: PluginArchResourceKind
   role: PluginArchRole
 }) {
-  if (input.role !== "viewer" && input.requireFreshSession !== false) {
-    ensureFreshPluginArchAdmin(input.context, input.sessionMaxAgeMs)
-  }
-
   const resolved = await resolvePluginArchResourceRole(input as RequireResourceRoleInput)
   if (roleSatisfies(resolved, input.role)) {
     return resolved

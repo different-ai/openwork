@@ -86,3 +86,22 @@ test("release notes extraction fails loudly for an undocumented tag", () => {
     rmSync(join(docs, ".."), { recursive: true, force: true })
   }
 })
+
+test("a hand-written Known open fixes section survives regeneration", () => {
+  const { docs, existing } = fixture()
+  try {
+    writeFileSync(
+      existing,
+      `${staticBody}\n## Known open fixes\n\n- #5218 is not included.\n- Fork fixes remain deferred.\n`,
+    )
+    const notes = execFileSync(process.execPath, [script, "v0.18.38", "--docs", docs, "--existing-body", existing], {
+      encoding: "utf8",
+    })
+
+    assert(notes.includes("*Windows installers are signed using Microsoft Artifact Signing.*\n\n## Known open fixes"))
+    assert(notes.trimEnd().endsWith("- Fork fixes remain deferred."))
+    assert(!notes.includes("openwork-* naming convention"))
+  } finally {
+    rmSync(join(docs, ".."), { recursive: true, force: true })
+  }
+})

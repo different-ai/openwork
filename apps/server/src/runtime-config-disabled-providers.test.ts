@@ -80,6 +80,34 @@ describe("runtime-config disabled providers route", () => {
     expect((await readRuntimeOpencodeConfig(config, "ws_1")).disabled_providers).toBeUndefined();
   });
 
+  test("reads back the shared list so a disconnected OpenCode Zen can be enabled again", async () => {
+    const root = await createTempRoot();
+    const { base } = await startOpenworkServer(root);
+    const read = async () => {
+      const response = await fetch(`${base}/workspace/ws_1/runtime-config/disabled-providers`, { headers: clientAuth() });
+      expect(response.status).toBe(200);
+      const body: unknown = await response.json();
+      return isRecord(body) ? body.disabledProviders : null;
+    };
+
+    expect(await read()).toEqual([]);
+    await fetch(`${base}/workspace/ws_1/runtime-config/disabled-providers`, {
+      method: "POST",
+      headers: clientAuth(),
+      body: JSON.stringify({ providers: ["opencode"] }),
+    });
+    expect(await read()).toEqual(["opencode"]);
+    await fetch(`${base}/workspace/ws_1/runtime-config/disabled-providers`, {
+      method: "POST",
+      headers: clientAuth(),
+      body: JSON.stringify({ providers: [] }),
+    });
+    expect(await read()).toEqual([]);
+
+    const unauthorized = await fetch(`${base}/workspace/ws_1/runtime-config/disabled-providers`);
+    expect(unauthorized.status).toBe(401);
+  });
+
   test("preserves other runtime keys while updating disabled providers", async () => {
     const root = await createTempRoot();
     const { base, config } = await startOpenworkServer(root);
@@ -99,6 +127,28 @@ describe("runtime-config disabled providers route", () => {
     const runtime = await readRuntimeOpencodeConfig(config, "ws_1");
     expect(runtime.mcp?.notion?.url).toBe("https://notion.example/mcp");
     expect(runtime.provider?.local).toEqual({ npm: "@ai-sdk/openai-compatible" });
+  });
+
+  test("returns only provider ids and never mirrors stored credentials", async () => {
+    const root = await createTempRoot();
+    const { base, config } = await startOpenworkServer(root);
+    await writeRuntimeOpencodeConfig(config, "ws_1", () => ({
+      provider: { openai: { options: { apiKey: "runtime-secret-key-e2e" } } },
+    }));
+    await fetch(`${base}/workspace/ws_1/runtime-config/disabled-providers`, {
+      method: "POST",
+      headers: clientAuth(),
+      body: JSON.stringify({ providers: ["opencode"] }),
+    });
+
+    const response = await fetch(`${base}/workspace/ws_1/runtime-config/disabled-providers`, { headers: clientAuth() });
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    // The v2 engine config stays private (403 on /api/config), so this read is the app's only
+    // view of the disabled list: it must expose ids and nothing else.
+    expect(JSON.parse(text)).toEqual({ ok: true, disabledProviders: ["opencode"] });
+    expect(text).not.toContain("runtime-secret-key-e2e");
+    expect(text).not.toContain("apiKey");
   });
 
   test("rejects invalid payloads", async () => {

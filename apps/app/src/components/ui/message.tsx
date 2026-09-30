@@ -50,6 +50,7 @@ export type MessageContentProps = {
   children: React.ReactNode
   markdown?: boolean
   isStreaming?: boolean
+  sessionReferences?: boolean
   highlightQuery?: string
   className?: string
 } & React.ComponentProps<"div">
@@ -59,6 +60,7 @@ const MessageContent = ({
   markdown = false,
   className,
   isStreaming,
+  sessionReferences,
   highlightQuery,
   ...props
 }: MessageContentProps) => {
@@ -68,6 +70,7 @@ const MessageContent = ({
         className={cn(messageContentClassName, className)}
         text={children as string}
         streaming={isStreaming}
+        sessionReferences={sessionReferences}
         highlightQuery={highlightQuery}
         {...props}
       />

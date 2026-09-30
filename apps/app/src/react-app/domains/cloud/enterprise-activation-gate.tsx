@@ -14,6 +14,7 @@ import { readDesktopDistributionInfo } from "@/app/lib/desktop";
 import { parseManualAuthInput } from "@/app/lib/manual-auth-input";
 import { normalizeOrganizationServerInput } from "@/app/lib/organization-server-input";
 import { DitherBackdrop } from "@/components/dither-backdrop";
+import { PageTitlebarRegion } from "@/components/page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
@@ -164,7 +165,7 @@ function EnterpriseActivationPage() {
         <DitherBackdrop />
       </div>
 
-      <div className="absolute inset-x-0 top-0 z-20 h-10 mac:titlebar-drag" />
+      <PageTitlebarRegion />
 
       <div
         className="relative z-10 flex min-h-dvh items-center justify-center px-6 py-16"

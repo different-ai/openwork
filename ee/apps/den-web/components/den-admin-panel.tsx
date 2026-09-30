@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Pencil, Trash2 } from "lucide-react";
-import { denApiCredentials, denApiEndpoint } from "../app/(den)/_lib/den-api-origin";
-import { getRuntimeConfig } from "../app/(den)/_lib/runtime-config";
+import { denApiCredentials, denBrowserEndpoint } from "../app/(den)/_lib/den-api-origin";
 
 type AccessState = "loading" | "ready" | "signed-out" | "forbidden" | "error";
 type ViewMode = "users" | "companies" | "organizations";
@@ -130,7 +129,9 @@ type AdminUser = {
 };
 
 type AdminOrganizationCapabilities = {
-  gatewayDashboard: boolean;
+  auditLogs: boolean;
+  orgManagedDashboards: boolean;
+  appMcpServers: boolean;
   slackAssistant: boolean;
   modelsAnalytics: boolean;
   installLinks: boolean;
@@ -454,7 +455,9 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
           seatsFreeAdditional: toNumberValue(value.seatsFreeAdditional),
           billableSeatCount: toNumberValue(value.billableSeatCount),
           capabilities: {
-            gatewayDashboard: capabilities.gatewayDashboard === true,
+            auditLogs: capabilities.auditLogs === true,
+            orgManagedDashboards: capabilities.orgManagedDashboards === true,
+            appMcpServers: capabilities.appMcpServers === true,
             slackAssistant: capabilities.slackAssistant === true,
             modelsAnalytics: capabilities.modelsAnalytics === true,
             installLinks: capabilities.installLinks === true,
@@ -829,7 +832,7 @@ function buildFixtureOrganization(index: number): AdminOrganization {
     freeSeatCount: target ? 25 : DEFAULT_FREE_SEAT_COUNT,
     seatsFreeAdditional: target ? 20 : 0,
     billableSeatCount: target ? 103 : 0,
-    capabilities: { installLinks: target, mcpConnections: target, modelsAnalytics: false, gatewayDashboard: false, slackAssistant: false },
+    capabilities: { auditLogs: false, orgManagedDashboards: false, appMcpServers: false, slackAssistant: false, installLinks: target, mcpConnections: target, modelsAnalytics: false },
     openworkWebAccess: {
       hasAccess: target,
       accessSource: target ? "complimentary" : null,
@@ -1002,9 +1005,8 @@ function adminScaleFixturePayload(path: string): unknown | null {
 
 const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
 
-// Browser calls go straight to the api.* origin. Attach the stored bearer token
-// like den-flow's requestJson does; den-api accepts either bearer or cookie
-// credentials, so cookie-authenticated sessions keep working unchanged.
+// Preserve existing password-login bearer credentials alongside the web-host
+// session cookie. The same-origin browser proxy forwards both to Den API.
 function withStoredBearer(headers: Record<string, string>): Record<string, string> {
   if (typeof window === "undefined") {
     return headers;
@@ -1022,8 +1024,7 @@ async function requestJson(path: string, signal?: AbortSignal) {
     return { response: new Response(JSON.stringify(fixturePayload), { status: 200 }), payload: fixturePayload };
   }
 
-  await getRuntimeConfig();
-  const endpoint = denApiEndpoint(path);
+  const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
     method: "GET",
     credentials: denApiCredentials(endpoint),
@@ -1052,8 +1053,7 @@ function isAbortError(error: unknown): boolean {
 }
 
 async function patchJson(path: string, body: unknown) {
-  await getRuntimeConfig();
-  const endpoint = denApiEndpoint(path);
+  const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
     method: "PATCH",
     credentials: denApiCredentials(endpoint),
@@ -1079,8 +1079,7 @@ async function patchJson(path: string, body: unknown) {
 }
 
 async function postJson(path: string, body: unknown) {
-  await getRuntimeConfig();
-  const endpoint = denApiEndpoint(path);
+  const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
     method: "POST",
     credentials: denApiCredentials(endpoint),
@@ -1104,8 +1103,7 @@ async function postJson(path: string, body: unknown) {
 }
 
 async function putJson(path: string, body: unknown) {
-  await getRuntimeConfig();
-  const endpoint = denApiEndpoint(path);
+  const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
     method: "PUT",
     credentials: denApiCredentials(endpoint),
@@ -1131,8 +1129,7 @@ async function putJson(path: string, body: unknown) {
 }
 
 async function deleteJson(path: string) {
-  await getRuntimeConfig();
-  const endpoint = denApiEndpoint(path);
+  const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
     method: "DELETE",
     credentials: denApiCredentials(endpoint),
@@ -2756,15 +2753,35 @@ export function DenAdminPanel() {
                       <label className="inline-flex items-center gap-2 text-sm text-slate-700">
                         <input
                           type="checkbox"
-                          data-testid="admin-capability-gatewayDashboard"
-                          checked={org.capabilities.gatewayDashboard}
+                          data-testid="admin-capability-auditLogs"
+                          checked={org.capabilities.auditLogs}
                           disabled={savingCapabilityOrgId === org.id}
-                          onChange={(event) => {
-                            void saveOrganizationCapability(org, "gatewayDashboard", event.target.checked);
-                          }}
+                          onChange={(event) => void saveOrganizationCapability(org, "auditLogs", event.target.checked)}
                           className="h-4 w-4 rounded-sm border-slate-300"
                         />
-                        Gateway dashboard
+                        Audit logs
+                      </label>
+                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          data-testid="admin-capability-orgManagedDashboards"
+                          checked={org.capabilities.orgManagedDashboards}
+                          disabled={savingCapabilityOrgId === org.id}
+                          onChange={(event) => void saveOrganizationCapability(org, "orgManagedDashboards", event.target.checked)}
+                          className="h-4 w-4 rounded-sm border-slate-300"
+                        />
+                        Dashboards
+                      </label>
+                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          data-testid="admin-capability-appMcpServers"
+                          checked={org.capabilities.appMcpServers}
+                          disabled={savingCapabilityOrgId === org.id}
+                          onChange={(event) => void saveOrganizationCapability(org, "appMcpServers", event.target.checked)}
+                          className="h-4 w-4 rounded-sm border-slate-300"
+                        />
+                        Apps built in OpenWork
                       </label>
                       <label className="inline-flex items-center gap-2 text-sm text-slate-700">
                         <input
@@ -2793,7 +2810,6 @@ export function DenAdminPanel() {
                     <p className="mt-1 text-xs text-slate-400">On by default. Turn off to stop workspace admins from minting desktop install links for this organization.</p>
                     <p className="mt-1 text-xs text-slate-400">On by default. Turn off to hide member-facing org connections, marketplace capabilities on the agent rail, and the desktop Connect tab.</p>
                     <p className="mt-1 text-xs text-slate-400">Slack Assistant is off by default. Enables Slack mentions and DMs for this organization after Slack connector setup. Turn off to stop new requests and further replies; no redeploy is needed.</p>
-                    <p className="mt-1 text-xs text-slate-400">Gateway dashboard is off by default. Exposes dashboard views to organization admins and above; inference and provider sync are unaffected. Reload the dashboard after changes.</p>
                     <p className="mt-1 text-xs text-slate-400">Confined multi-tool scripts run server-side for this organization.</p>
                     <p className="mt-1 text-xs text-slate-400">Off by default. Requires the deployment master switch and exposes native provider MCP Apps and imported Apps for this organization.</p>
                   </div>

@@ -1,4 +1,5 @@
 import { processBlankSlateProfile, resolveBlankSlateLaunch } from "./blank-slate-profile.mjs";
+import { DESKTOP_POLICY_ENFORCEMENT_ENABLED } from "@openwork/types/den/desktop-policies-runtime";
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import net from "node:net";
@@ -35,7 +36,6 @@ import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { createNativeContextMenus } from "./context-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
-import { createBrowserLoginSync } from "./browser-login-sync.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import {
@@ -55,9 +55,11 @@ import {
 } from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
+import { resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
-import { downloadBinaryToPath, uploadMultipartFromBytes } from "./binary-transfer.mjs";
+import { fetchFiniteDesktopHttp } from "./finite-http-fetch.mjs";
+import { createDesktopTransferRegistry, downloadBinaryToPath, uploadMultipartFromBytes } from "./binary-transfer.mjs";
 import {
   createLinuxDesktopIntegration,
 } from "./linux-desktop-integration.mjs";
@@ -102,6 +104,7 @@ const desktopPackageMetadata = require("../package.json");
 const {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -1101,7 +1104,7 @@ const IDLE_ROUTER_INFO = Object.freeze({
 
 let mainWindow = null;
 const pendingDeepLinks = [];
-const nativeContextMenus = createNativeContextMenus({ Menu, getWindow: () => mainWindow });
+const nativeContextMenus = createNativeContextMenus({ Menu, clipboard, getWindow: () => mainWindow });
 
 browserPanel = createBrowserPanel({
   showNativeContextMenu: nativeContextMenus.show,
@@ -1110,6 +1113,7 @@ browserPanel = createBrowserPanel({
   getWindow: () => mainWindow,
   onDeepLink: (urls) => queueDeepLinks(urls),
   checkPolicy: async (input) => {
+    if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) return;
     let code = "policy_unavailable";
     try {
       const server = await runtimeManager.openworkServerInfo();
@@ -1137,24 +1141,10 @@ const workspaceStore = createWorkspaceStore({
   forceRequireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN,
 });
 
-const activeDesktopTransfers = new Map();
-
-function desktopTransferKey(event, transferId) {
-  const normalizedId = typeof transferId === "string" ? transferId.trim() : "";
-  if (!normalizedId || normalizedId.length > 128 || !/^[a-zA-Z0-9._-]+$/.test(normalizedId)) {
-    throw new Error("A valid transferId is required.");
-  }
-  return `${event.sender.id}:${normalizedId}`;
-}
+const desktopTransfers = createDesktopTransferRegistry();
 
 async function runDesktopTransfer(event, input, operation) {
-  const key = desktopTransferKey(event, input?.transferId);
-  if (activeDesktopTransfers.has(key)) throw new Error("transferId is already active.");
-  const controller = new AbortController();
-  const abort = () => controller.abort();
-  activeDesktopTransfers.set(key, controller);
-  event.sender.once("destroyed", abort);
-  try {
+  return desktopTransfers.run(event, input?.transferId, async (signal) => {
     // Both authorities come from app-owned state in userData; workspace-
     // writable configuration must never widen where a transfer may write.
     const [authorizedRoots, allowedUrlPrefixes] = await Promise.all([
@@ -1168,12 +1158,9 @@ async function runDesktopTransfer(event, input, operation) {
       // workspace root until they complete.
       stagingDir: path.join(app.getPath("userData"), "binary-transfers"),
       fetcher: electronNet.fetch,
-      signal: controller.signal,
+      signal,
     });
-  } finally {
-    event.sender.removeListener("destroyed", abort);
-    activeDesktopTransfers.delete(key);
-  }
+  });
 }
 
 const connectLinkReplayGuard = createConnectLinkReplayGuard({
@@ -1450,7 +1437,6 @@ const quitSequencer = createQuitSequencer({
   stop: async () => {
     showShutdownScreen();
     desktopAutomationRunner.stop();
-    browserLoginSync.shutdown();
     await Promise.all([
       disposeRuntimeBeforeQuit(),
       uiControlServer.stop(),
@@ -2252,6 +2238,23 @@ const desktopCommandHandlers = {
       if (!target) return "Path is required.";
       return shell.openPath(target);
   },
+  "__openWorkspaceFile": async (event, ...args) => {
+      // Chat links are renderer-derived text. Resolve them on disk here so only a real
+      // file inside the real workspace launches; anything else is revealed, never run.
+      const workspaceRoot = String(args[0] ?? "").trim();
+      const target = String(args[1] ?? "").trim();
+      const decision = await resolveWorkspaceFileLaunch(workspaceRoot, target);
+      if (decision.ok === true) {
+        const error = await shell.openPath(decision.path);
+        if (error && error.trim()) return { ok: false, error };
+        return { ok: true, action: "opened" };
+      }
+      if (decision.reason === "outside" && existsSync(target)) {
+        shell.showItemInFolder(target);
+        return { ok: true, action: "revealed" };
+      }
+      return { ok: false, error: decision.error };
+  },
   "__revealItemInDir": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();
       if (!target) return "Path is required.";
@@ -2373,9 +2376,13 @@ const desktopCommandHandlers = {
       return results;
   },
   "__openWithApp": async (event, ...args) => {
-      const target = String(args[0] ?? "").trim();
+      const requested = String(args[0] ?? "").trim();
       const appPath = String(args[1] ?? "").trim();
-      if (!target || !appPath) return "Target and app path are required.";
+      const workspaceRoot = String(args[2] ?? "").trim();
+      if (!requested || !appPath) return "Target and app path are required.";
+      const decision = await resolveWorkspaceFileLaunch(workspaceRoot, requested);
+      if (decision.ok === false) return decision.error;
+      const target = decision.path;
       const platform = process.platform;
       try {
         if (platform === "darwin") {
@@ -2411,16 +2418,23 @@ const desktopCommandHandlers = {
         );
       }
       const timeoutMs = Number(init.timeoutMs);
-      const response = await electronNet.fetch(url, {
-        ...requestInit,
-        signal: Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
-      });
-      return {
-        status: response.status,
-        statusText: response.statusText,
-        headers: Array.from(response.headers.entries()),
-        body: await response.text(),
+      const fetchResponse = async (callerSignal) => {
+        const deadline = Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
+        const signal = callerSignal && deadline ? AbortSignal.any([callerSignal, deadline]) : callerSignal ?? deadline;
+        const response = await fetchFiniteDesktopHttp(url, { ...requestInit, signal }, electronNet.fetch);
+        return {
+          status: response.status,
+          statusText: response.statusText,
+          headers: Array.from(response.headers.entries()),
+          body: await response.text(),
+        };
       };
+      const method = (requestInit.method ?? "GET").toUpperCase();
+      const cancellable = ["GET", "PATCH"].includes(method)
+        || (method === "POST" && /\/(?:session\/[^/]+\/abort|permission\/[A-Za-z0-9_-]+\/reply)$/.test(new URL(url).pathname));
+      return cancellable && init.transferId
+        ? desktopTransfers.run(event, init.transferId, fetchResponse)
+        : fetchResponse(undefined);
   },
   "__uploadMultipart": async (event, ...args) => {
       return runDesktopTransfer(event, args[0] ?? {}, uploadMultipartFromBytes);
@@ -2429,10 +2443,7 @@ const desktopCommandHandlers = {
       return runDesktopTransfer(event, args[0] ?? {}, downloadBinaryToPath);
   },
   "__cancelTransfer": async (event, ...args) => {
-      const controller = activeDesktopTransfers.get(desktopTransferKey(event, args[0]));
-      if (!controller) return false;
-      controller.abort();
-      return true;
+      return desktopTransfers.cancel(event, args[0]);
   },
   "__homeDir": async (event, ...args) => {
       return os.homedir();
@@ -2570,8 +2581,14 @@ async function createMainWindow() {
     Object.assign(windowAppearanceOptions, {
       backgroundColor: "#00000001",
       titleBarStyle: "hiddenInset",
+      trafficLightPosition: { x: 20, y: 18 },
       vibrancy: macosVibrancyForCurrentTheme(),
       visualEffectState: "active",
+    });
+  } else {
+    Object.assign(windowAppearanceOptions, {
+      titleBarStyle: "hidden",
+      titleBarOverlay: { height: 40 },
     });
   }
 
@@ -2619,6 +2636,15 @@ async function createMainWindow() {
   }
   applicationMenu.applyVisibility(mainWindow);
   browserPanel.registerWindowShortcuts(mainWindow);
+
+  // Native fullscreen is independent of the DOM Fullscreen API. The preload
+  // also reads the initial value, so reloading in fullscreen keeps its layout.
+  const publishFullscreen = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send("openwork:window-fullscreen", mainWindow.isFullScreen());
+  };
+  mainWindow.on("enter-full-screen", publishFullscreen);
+  mainWindow.on("leave-full-screen", publishFullscreen);
 
   mainWindow.webContents.on("context-menu", (_event, params) => {
     void nativeContextMenus.showEditing(params).catch((error) => {
@@ -2724,6 +2750,9 @@ ipcMain.on("openwork:desktop-bootstrap-sync", (event) => {
 ipcMain.on("openwork:desktop-distribution-sync", (event) => {
   event.returnValue = DESKTOP_DISTRIBUTION;
 });
+ipcMain.on("openwork:window-fullscreen-sync", (event) => {
+  event.returnValue = BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false;
+});
 ipcMain.handle("openwork:desktop", handleDesktopInvoke);
 ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {
   if (typeof url !== "string" || url.trim().length === 0) {
@@ -2813,41 +2842,6 @@ if (isDevMode && !app.isPackaged) {
     return open;
   });
 }
-const browserLoginEvalSeam = !app.isPackaged && process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC === "1";
-const browserLoginSync = createBrowserLoginSync({
-  statePath: path.join(app.getPath("userData"), "browser-login-sync.json"),
-  initialPolicyAllowed:
-    DESKTOP_DISTRIBUTION.flavor === "public"
-    && initialRunnerBootstrap.requireSignin !== true,
-  confirmUserAction: browserLoginEvalSeam
-    ? async () => true
-    : async ({ action, source, sites = [] }) => {
-      const sourceLabel = source ? `${source.label} · ${source.profile}` : "Supported browser profiles on this computer";
-      /** @type {import("electron").MessageBoxOptions} */
-      const options = {
-        type: "warning",
-        buttons: [action === "resume" ? "Resume sync" : action === "configure" ? "Enable sync" : action === "discover" ? "Look for browsers" : "Read sites", "Cancel"],
-        defaultId: 1,
-        cancelId: 1,
-        title: action === "resume" ? "Resume browser login sync?" : action === "configure" ? "Enable browser login sync?" : action === "discover" ? "Look for browser profiles?" : "Read logins from this browser?",
-        message: sourceLabel,
-        detail: action === "resume"
-          ? "OpenWork will resume reading the sites you selected from this profile. It never changes the source browser."
-          : action === "configure"
-            ? `OpenWork will keep reading login cookies for these sites until you pause or disconnect: ${sites.join(", ")}. It never changes the source browser.`
-            : action === "discover"
-              ? "OpenWork will look only for supported browser profile locations. It will not read cookie databases until you choose a profile and confirm again."
-              : "OpenWork will read login metadata from this profile so you can choose sites. Nothing syncs until you confirm those sites, and the source browser is never changed.",
-        noLink: true,
-      };
-      const result = mainWindow
-        ? await dialog.showMessageBox(mainWindow, options)
-        : await dialog.showMessageBox(options);
-      return result.response === 0;
-    },
-});
-browserLoginSync.registerIpc(ipcMain, { evalSeam: browserLoginEvalSeam });
-
 registerMigrationIpc({ app, ipcMain });
 const { ensureAutoUpdater } = registerUpdaterIpc({
   app,

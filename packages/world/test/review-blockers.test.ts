@@ -10,16 +10,16 @@ import { computeInvocationHash, computeLocalSourceHash } from "../src/script-wor
 
 test("env parser rejects likely secrets and preserves the script argument boundary", () => {
   for (const key of ["TOKEN", "my_secret", "PASSWORD", "API_KEY", "CREDENTIAL", "AUTHORIZATION", "COOKIE", "OPENWORK_WORLD_PLACE"]) {
-    assert.equal(parseWorldArgs(["up", "app-web", "--env", key]).kind, "help");
+    assert.equal(parseWorldArgs(["up", "preview-app-web", "--env", key]).kind, "help");
   }
-  assert.deepEqual(parseWorldArgs(["up", "app-web", "--env", "APP_MODE", "--place", "local", "--", "--env", "SCRIPT_ARG"]), {
-    kind: "up", source: "app-web", place: "local", env: ["APP_MODE"], args: ["--env", "SCRIPT_ARG"],
+  assert.deepEqual(parseWorldArgs(["up", "preview-app-web", "--env", "APP_MODE", "--place", "local", "--", "--env", "SCRIPT_ARG"]), {
+    kind: "up", source: "preview-app-web", place: "local", env: ["APP_MODE"], args: ["--env", "SCRIPT_ARG"],
   });
   for (const flags of [["--json", "--reveal", "--stage", "test"], ["--stage", "test", "--reveal", "--json"]]) {
-    assert.deepEqual(parseWorldArgs(["outputs", "app-web", ...flags]), { kind: "outputs", name: "app-web", stage: "test", json: true, reveal: true });
+    assert.deepEqual(parseWorldArgs(["outputs", "preview-app-web", ...flags]), { kind: "outputs", name: "preview-app-web", stage: "test", json: true, reveal: true });
   }
   for (const flags of [["--reveal", "--reveal"], ["--json", "--json"], ["--stage"], ["--unknown"]]) {
-    assert.equal(parseWorldArgs(["outputs", "app-web", ...flags]).kind, "help");
+    assert.equal(parseWorldArgs(["outputs", "preview-app-web", ...flags]).kind, "help");
   }
 });
 

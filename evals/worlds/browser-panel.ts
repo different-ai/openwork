@@ -3,6 +3,7 @@ import { control, readBrowserTabMetrics } from "@openwork/behaviors";
 import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets, navigate } from "@openwork/cdp";
 import type { AttachedSurface, CdpClient, Surface } from "@openwork/cdp";
 import { resolveEvalEngine, type Seed } from "@openwork/env";
+import { browserScriptValue, runBrowserHost } from "../packages/env/src/browser-task.ts";
 
 export const CAPTURE_VIEWPORT = { width: 1440, height: 900 };
 
@@ -109,10 +110,16 @@ function parseBrowserState(value: unknown): BrowserState {
     }),
     tabs: value.tabs.map((tab) => {
       if (!isRecord(tab)) throw new Error("Browser state listed a malformed tab.");
+      // A native tab can exist before its first navigation commits. Keep it in
+      // the snapshot; readiness belongs to the assertion about that page.
+      if (typeof tab.url !== "string") throw new Error("Browser state listed a malformed tab URL.");
       return {
         id: stringField(tab.id),
         label: stringField(tab.label),
-        url: stringField(tab.url),
+        // A native tab can exist before its first navigation commits. Keep it in
+        // the snapshot; readiness belongs to the assertion about that page.
+        // Electron can report an empty URL while a newly created page starts loading.
+        url: stringValue(tab.url),
         ownerSessionId: typeof tab.ownerSessionId === "string" ? tab.ownerSessionId : null,
       };
     }),
@@ -128,13 +135,24 @@ function stringField(value: unknown): string {
   return value;
 }
 
+function stringValue(value: unknown): string {
+  if (typeof value !== "string") throw new Error("Expected a string from the desktop bridge.");
+  return value;
+}
+
 /** Explicit human-created initial state, not an automation navigation or consent grant. */
 async function seedBrowserTab(seed: Seed, app: Surface, url: string, ownerSessionId: string | null) {
   const { tabId } = await seed.evalIn(app, browserScript((url, ownerSessionId) => window.__OPENWORK_ELECTRON__.browser.createTab(url, ownerSessionId), [url, ownerSessionId]));
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     const targets = (await listTargets(app.handle.cdpUrl)).filter((target) => target.type === "page" && target.url === url);
-    if (targets.length === 1) return { tabId, targetId: targets[0].id };
+    if (targets.length === 1) {
+      const state = await seed.evalIn(app, () => window.__OPENWORK_ELECTRON__.browser.getState(), { awaitPromise: true });
+      const nativeTab = parseBrowserState(state).tabs.find((tab) => tab.id === tabId);
+      // Target discovery can announce the destination before the native view
+      // commits it. Baselines must describe the loaded page, not that transition.
+      if (nativeTab?.url === url && nativeTab.label !== "New tab") return { tabId, targetId: targets[0].id };
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error("The seeded browser page did not finish opening.");
@@ -149,14 +167,6 @@ async function embeddedServerUrl(seed: Seed, app: Surface): Promise<string> {
   const info = await seed.evalIn(app, () => (window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo")), { awaitPromise: true });
   if (!isRecord(info) || info.running !== true) throw new Error("The embedded OpenWork server is not running.");
   return stringField(info.baseUrl).replace(/\/+$/, "");
-}
-
-async function loginWitnessUrl(seed: Seed, app: Surface): Promise<string> {
-  return stringField(await seed.evalIn(
-    app,
-    () => (window.__OPENWORK_ELECTRON__.browserLogins.testWitnessUrl()),
-    { awaitPromise: true },
-  ));
 }
 
 async function withTabClient<T>(app: Surface, targetId: string, run: (client: CdpClient) => Promise<T>): Promise<T> {
@@ -274,39 +284,6 @@ export async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string,
       return { ...await seedBrowserTab(seed, app, url, ownerSessionId), name };
     },
 
-    /** Open a page that reports only whether an HttpOnly session cookie arrived. */
-    async openLoginWitnessTab(name: string): Promise<BuiltinBrowserTab> {
-      const url = `${await loginWitnessUrl(seed, app)}/?login-probe=${encodeURIComponent(name)}`;
-      const result = await control(app, "browser.open_url", { url, provider: "builtin" });
-      if (!isRecord(result)) throw new Error("browser.openUrl returned no login witness handle.");
-      return { tabId: stringField(result.tab_id), targetId: stringField(result.target_id), name };
-    },
-
-    /** Open the value-free login witness from a conversation that is not on screen. */
-    async openLoginWitnessTabAs(name: string, ownerSessionId: string): Promise<OpenedTab> {
-      const url = `${await loginWitnessUrl(seed, app)}/?login-probe=${encodeURIComponent(name)}`;
-      const result = await seed.evalIn(
-        app,
-        browserScript((value) => (window.__openworkControl.command(value)), [{
-          id: "browser.open_url",
-          args: { url, provider: "builtin" },
-          origin: { sessionId: ownerSessionId },
-        }]),
-        { awaitPromise: true, timeoutMs: 30_000 },
-      );
-      if (!isRecord(result) || result.ok !== true || !isRecord(result.result)) {
-        throw new Error(`background login witness failed: ${isRecord(result) ? String(result.error ?? "unknown") : "no response"}`);
-      }
-      const handle = result.result;
-      return {
-        tabId: stringField(handle.tab_id),
-        targetId: stringField(handle.target_id),
-        name,
-        ownerSessionId: typeof handle.owner_session_id === "string" ? handle.owner_session_id : null,
-        visible: handle.visible === true,
-      };
-    },
-
     /**
      * Open a page the way an agent in a given conversation does: the request
      * reaches the UI command bus stamped with that conversation as its origin,
@@ -338,75 +315,9 @@ export async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string,
     /** The page origin the built-in browser can always reach: the embedded OpenWork server. */
     origin,
 
-    /**
-     * Seed a Firefox-shaped cookie store the import dialog can find, so the
-     * journey drives the real import against a known set of logins.
-     */
-    async seedLoginStore(name: string, cookies: Array<Record<string, unknown>>): Promise<{ id: string; label: string; path: string }> {
-      const directory = seed.tmpPath(`logins-${name}`);
-      const storePath = `${directory}/cookies.sqlite`;
-      const result = await seed.evalIn(
-        app,
-        browserScript((value) => (window.__OPENWORK_ELECTRON__.browserLogins.writeTestStore(value)), [{ path: storePath, cookies }]),
-        { awaitPromise: true, timeoutMs: 30_000 },
-      );
-      if (!isRecord(result)) throw new Error("The eval seam did not register a login store.");
-      return { id: stringField(result.id), label: stringField(result.label), path: storePath };
-    },
-
-    /** Replace the synthetic source store; the desktop watcher observes this write. */
-    async updateLoginStore(storePath: string, cookies: Array<Record<string, unknown>>): Promise<void> {
-      const result = await seed.evalIn(
-        app,
-        browserScript((value) => (window.__OPENWORK_ELECTRON__.browserLogins.writeTestStore(value)), [{ path: storePath, cookies }]),
-        { awaitPromise: true, timeoutMs: 30_000 },
-      );
-      if (!isRecord(result)) throw new Error("The eval seam did not update the login store.");
-    },
-
     /** Open a Settings panel the way the app's own navigation does. */
     async openSettingsPanel(panel: string): Promise<void> {
       await control(app, "settings.panel.open", { panel });
-    },
-
-    /** Which sites the import dialog currently has checked. */
-    async readCheckedSyncSites(): Promise<string[]> {
-      const result = await seed.evalIn(
-        app,
-        () => ([...document.querySelectorAll<HTMLElement>('[data-testid^="login-sync-site-"]')]
-          .filter((element) => element.getAttribute("aria-checked") === "true" || element.hasAttribute("data-checked"))
-          .map((element) => (element.getAttribute("data-testid") ?? "").slice("login-sync-site-".length))),
-      );
-      if (!Array.isArray(result)) throw new Error("The sync dialog did not report its checked sites.");
-      return result.map(String);
-    },
-
-    /** Sites the built-in browser is signed in to, as Settings shows them. */
-    async signedInSites(): Promise<string[]> {
-      const result = await seed.evalIn(app, () => (window.__OPENWORK_ELECTRON__.browserLogins.signedInSites()), { awaitPromise: true });
-      if (!Array.isArray(result)) throw new Error("The desktop bridge did not list signed-in sites.");
-      return result.map((site) => (isRecord(site) ? stringField(site.site) : "")).filter(Boolean);
-    },
-
-    /** Renderer-safe sync metadata, never cookie values. */
-    async loginSyncState(): Promise<Record<string, unknown>> {
-      const result = await seed.evalIn(app, () => (window.__OPENWORK_ELECTRON__.browserLogins.state()), { awaitPromise: true });
-      if (!isRecord(result)) throw new Error("The desktop bridge did not report browser login sync state.");
-      return result;
-    },
-
-    async pauseLoginSync(): Promise<void> {
-      await seed.evalIn(app, () => (window.__OPENWORK_ELECTRON__.browserLogins.pause()), { awaitPromise: true });
-    },
-
-    /** What the witness page observes without exposing an HttpOnly cookie value. */
-    async readLoginWitness(tab: BuiltinBrowserTab): Promise<string> {
-      return withTabClient(app, tab.targetId, async (client) => String(await evaluate(client, () => (document.body.dataset.loginState))));
-    },
-
-    /** What the page inside a tab can read from `document.cookie`. */
-    async readDocumentCookie(tab: BuiltinBrowserTab): Promise<string> {
-      return withTabClient(app, tab.targetId, async (client) => String(await evaluate(client, () => (document.cookie))));
     },
 
     /** Navigate the existing CDP page without opening a replacement tab. */
@@ -526,20 +437,12 @@ export async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string,
   };
 }
 
-export async function browserLoginSyncWorld(seed: Seed) {
-  const world = await createBuiltinBrowserWorld(seed, { OPENWORK_EVAL_BROWSER_LOGIN_SYNC: "1" });
-  const loginWitnessOrigin = await loginWitnessUrl(seed, world.app);
-  return {
-    ...world,
-    /** Host used by the value-free HttpOnly login witness. */
-    loginWitnessHost: new URL(loginWitnessOrigin).hostname,
-  };
-}
-
 /** Arrange a persisted transcript link and its neighboring conversation. */
 export async function transcriptLinkWorld(seed: Seed) {
-  const world = await createBuiltinBrowserWorld(seed);
+  const world = await createBuiltinBrowserWorld(seed, { OPENWORK_DEV_MODE: "1", OPENWORK_EVAL_CAPTURE_EXTERNAL_OPENS: "1" });
   const { app, workspace } = world;
+  const profileDir = app.handle.profileDir;
+  if (!profileDir) throw new Error("The link fixture desktop did not expose its isolated profile.");
   const reading = { ...world.session, title: "Reading a shared link" };
   await world.renameSession(reading.sessionId, reading.title);
   const neighbor = await world.openSession("Unrelated browser research");
@@ -572,6 +475,23 @@ export async function transcriptLinkWorld(seed: Seed) {
     neighborTab,
     linkUrl,
     note,
+
+    // Observe the shipping external-open boundary using its existing dev-only
+    // capture, so the test never opens a browser in the person's real profile.
+    async externalOpens(): Promise<string[]> {
+      const text = await runBrowserHost(app, `
+        const { readFile } = await import("node:fs/promises");
+        const { join } = await import("node:path");
+        try { return await readFile(join(${browserScriptValue(profileDir)}, "electron-userdata", "openwork-eval-external-opens.jsonl"), "utf8"); }
+        catch (error) { if (error.code === "ENOENT") return ""; throw error; }
+      `);
+      if (typeof text !== "string") throw new Error("External-open capture did not return text.");
+      return text.trim() ? text.trim().split("\n").map((line) => {
+        const value: unknown = JSON.parse(line);
+        if (typeof value !== "string") throw new Error("Invalid external-open capture.");
+        return value;
+      }) : [];
+    },
 
     async readLink() {
       return evaluate(app.client, browserScript((linkUrl) => {
@@ -666,12 +586,72 @@ export async function attachBuiltinTab(app: Surface, targetId: string): Promise<
 }
 
 export async function builtinBrowserWorld(seed: Seed, options: { workspacePath?: string } = {}) {
-  const app = await seed.desktop({ name: "builtin-browser" });
+  // Pixel witnesses use CSS sRGB colors, not the host display's ICC profile.
+  const app = await seed.desktop({ name: "builtin-browser", env: { ELECTRON_EXTRA_LAUNCH_ARGS: "--force-color-profile=srgb" } });
   const workspace = await seed.workspace(app, options.workspacePath ?? seed.tmpPath("builtin-browser"), { create: true });
   const session = await seed.session(app, { title: "Browser project" });
   const info = await seed.evalIn(app, () => window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo"), { awaitPromise: true });
   if (!info || typeof info !== "object" || !("baseUrl" in info) || typeof info.baseUrl !== "string") throw new Error("The embedded server is unavailable.");
   return { app, workspace, session, origin: info.baseUrl.replace(/\/+$/, "") };
+}
+
+/** A working native tab and a refused loopback destination on the same host. */
+export async function browserConnectionFailureWorld(seed: Seed) {
+  const world = await builtinBrowserWorld(seed);
+  const tab = await seedBrowserTab(seed, world.app, `${world.origin}/?connection-probe=working`, world.session.sessionId);
+  // Allocate and release a port on the desktop host so the navigation reaches
+  // a refused loopback connection, not DNS, an unsafe port, or a public site.
+  const port = await runBrowserHost(world.app, `
+    const { createServer } = await import('node:net');
+    const server = createServer();
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = server.address().port;
+    await new Promise(resolve => server.close(resolve));
+    return port;
+  `);
+  if (typeof port !== "number") throw new Error("The connection failure fixture returned no port.");
+  const failedUrl = `http://127.0.0.1:${port}/connection-probe`;
+  const page = await attachBuiltinTab(world.app, tab.targetId);
+  let recoveryPid: number | null = null;
+  return {
+    ...world, tab, page, failedUrl,
+    // Restoring this fixture's network fault changes only the local site;
+    // the person must still use the browser's Reload control to recover.
+    async restoreConnection() {
+      const source = `
+        const { createServer } = await import('node:http');
+        const server = createServer((request, response) => {
+          response.setHeader('Content-Type', 'text/html');
+          response.end('<!doctype html><title>Connection restored</title><h1>Connection restored</h1><p>The same address is available again.</p>');
+        });
+        server.listen(${port}, '127.0.0.1');
+        process.on('SIGTERM', () => server.close(() => process.exit(0)));
+      `;
+      const pid = await runBrowserHost(world.app, `
+        const { spawn } = await import('node:child_process');
+        const child = spawn(process.execPath, ['--input-type=module', '-e', ${browserScriptValue(source)}], { detached: true, stdio: 'ignore' });
+        child.unref();
+        return child.pid;
+      `);
+      if (typeof pid !== "number") throw new Error("The recovery site returned no process.");
+      recoveryPid = pid;
+      const ready = await runBrowserHost(world.app, `
+        for (let attempt = 0; attempt < 50; attempt++) {
+          try {
+            const response = await fetch(${browserScriptValue(failedUrl)}, { signal: AbortSignal.timeout(1000) });
+            if (response.ok && (await response.text()).includes('<title>Connection restored</title>')) return true;
+          } catch {}
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        return false;
+      `);
+      if (ready !== true) throw new Error("The recovery site did not become available.");
+    },
+    async [Symbol.asyncDispose]() {
+      await page.stop();
+      if (recoveryPid !== null) await runBrowserHost(world.app, `try { process.kill(${recoveryPid}, 'SIGTERM'); } catch {} return true;`);
+    },
+  };
 }
 
 /** Real native tab and deterministic document, with no viewport emulation. */

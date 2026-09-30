@@ -5,6 +5,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { createOpenworkServerClient, OpenworkServerError, type OpenworkMcpAppResource, type OpenworkServerClient } from "../src/app/lib/openwork-server";
 import { createMcpAppActions } from "../src/components/chat/mcp-app-origin";
+import { createMcpAppDiscoveryScheduler } from "../src/app/lib/mcp-app-discovery-scheduler";
 
 GlobalRegistrator.register({ url: "http://localhost/" });
 afterAll(() => GlobalRegistrator.unregister());
@@ -20,6 +21,69 @@ const result = { content: [{ type: "text", text: "ok" }] };
 const needsApproval = () => new OpenworkServerError(422, "tool_requires_approval", "Approval required");
 
 describe("App conversation ownership", () => {
+  test("cancelling a scheduled discovery retry clears its timer and frees admission", async () => {
+    const schedule = createMcpAppDiscoveryScheduler();
+    let calls = 0;
+    let retryTimer: number | undefined;
+    const setTimer = window.setTimeout.bind(window);
+    const timerSpy = spyOn(window, "setTimeout").mockImplementation((callback, delay, ...args) => {
+      if (delay === 1_000) {
+        retryTimer = setTimer(() => {}, 60_000);
+        return retryTimer;
+      }
+      return setTimer(callback, delay, ...args);
+    });
+    const clearSpy = spyOn(window, "clearTimeout");
+    const client = { ...createOpenworkServerClient({ baseUrl: "http://fixture.invalid" }),
+      resolveMcpApp: async () => { calls++; throw new OpenworkServerError(503, "mcp_unreachable", "Starting"); } };
+    try {
+      const cancel = schedule({ client, workspaceId: "w", sessionId: "s", readOnly: false }, "render", null, false, () => {}, () => {});
+      await Promise.resolve();
+      expect(retryTimer).toBeDefined();
+      cancel();
+      expect(clearSpy).toHaveBeenCalledWith(retryTimer);
+      await Promise.resolve();
+      expect(calls).toBe(1);
+    } finally {
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      timerSpy.mockRestore(); clearSpy.mockRestore();
+    }
+  });
+
+  test("many frames share auth failure, equivalent rerenders do not discover, changed launch scope does", async () => {
+    const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+    let calls = 0;
+    const client = { ...createOpenworkServerClient({ baseUrl: "http://fixture.invalid" }),
+      resolveMcpApp: async () => { calls++; throw new OpenworkServerError(403, "mcp_auth_required", "Sign in required"); } };
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const render = (id: number, reverse = false) => <MessageListProvider client={client} workspaceId="workspace" sessionId="session" readOnly={false}
+      showThinking={false} developerMode={false} displaySuggestions={false} providerConnectedCount={0}
+      dispatchAction={() => {}} setPrompt={() => {}} onRevertToUserMessage={() => {}} onForkAtMessage={() => {}}
+      onEditUserMessage={() => {}} onMcpReconnect={async () => { throw new Error("unused"); }}
+      onMcpReopenAuthorization={async () => {}}>
+      {Array.from({ length: 40 }, (_, index) => <McpAppFrame key={index} part={{ type: "dynamic-tool", toolName: "fixture_render", toolCallId: `call-${index}`, state: "output-available", input: {}, output: {},
+        callProviderMetadata: { openwork: { mcpResult: { content: [], _meta: { "openwork/mcpApp": {
+          toolName: "render", resourceUri: "ui://fixture/view", arguments: reverse ? { other: true, id } : { id, other: true },
+        } } } } } }} />)}
+    </MessageListProvider>;
+    try {
+      await act(async () => { root.render(render(1)); });
+      expect(calls).toBe(1);
+      expect(container.querySelectorAll("button").length).toBe(80);
+      await act(async () => { root.render(render(1, true)); });
+      expect(calls).toBe(1);
+      await act(async () => { root.render(render(2)); });
+      expect(calls).toBe(2);
+      await act(async () => { container.querySelector<HTMLButtonElement>("button")?.click(); });
+      expect(calls).toBe(3);
+    } finally {
+      await act(async () => { root.unmount(); });
+      Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct);
+    }
+  });
+
   test.each([false, true])("split message origin survives discovery recovery and archive changes (retry: %j)", async (retry) => {
     const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
     Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
@@ -54,7 +118,7 @@ describe("App conversation ownership", () => {
         showThinking={false} developerMode={false} displaySuggestions={false} providerConnectedCount={0}
         dispatchAction={() => {}} setPrompt={() => {}} onRevertToUserMessage={() => {}} onForkAtMessage={() => {}}
         onEditUserMessage={() => {}} onMcpReconnect={async () => { throw new Error("unused"); }}
-        onMcpReopenAuthorization={async () => {}} onMcpRetry={() => {}}>
+        onMcpReopenAuthorization={async () => {}}>
         <McpAppFrame part={{ type: "dynamic-tool", toolName: "fixture_render", toolCallId: "call-b", state: "output-available", input: {}, output: {},
           callProviderMetadata: { openwork: { mcpResult: { content: [] } } } }} />
       </MessageListProvider>

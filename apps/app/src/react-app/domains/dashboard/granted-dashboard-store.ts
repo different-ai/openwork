@@ -7,6 +7,7 @@
  * while approval-gated tools stay run-on-request. Consent is stored locally
  * per user and organization, never on the org dashboard.
  */
+import { mcpAppResourceIdentity } from "@openwork/types/mcp-app";
 import type { DenDashboardElement, DenGrantedDashboard } from "@/app/lib/den";
 
 export type DashboardMcpAppEntry = {
@@ -60,7 +61,10 @@ function canonicalize(value: unknown): string {
  * launch invokes or how it must be approved is part of the id — encoded
  * losslessly, not hashed, so no crafted admin edit can collide with a prior
  * identity — and an edit to any of them discards this user's stored approval
- * and auto-launch: the changed app must be run manually again.
+ * and auto-launch: the changed app must be run manually again. The one
+ * exception is the revision of an App built in OpenWork: each update is a new
+ * revision of the same App, so consent follows the App, whose id stays part of
+ * the identity.
  */
 export function grantedEntryId(dashboardId: string, element: DenDashboardElement): string {
   const material = canonicalize({
@@ -68,7 +72,7 @@ export function grantedEntryId(dashboardId: string, element: DenDashboardElement
     connectionId: element.connectionId ?? null,
     toolName: element.toolName,
     projectedToolName: element.projectedToolName,
-    resourceUri: element.resourceUri,
+    resourceUri: mcpAppResourceIdentity(element.resourceUri, element.connectionId),
     launchArguments: element.launchArguments ?? null,
     requiresApproval: element.requiresApproval === true,
     organizationAutoLaunch: element.organizationAutoLaunch === true,

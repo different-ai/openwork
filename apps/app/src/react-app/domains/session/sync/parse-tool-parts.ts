@@ -71,11 +71,12 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
   const childSessionId = part.tool === "task" && typeof stateMetadata.sessionId === "string" && stateMetadata.sessionId.trim()
     ? stateMetadata.sessionId.trim()
     : null;
-  const toolStartedAt = part.tool === "task" && "time" in part.state && typeof part.state.time?.start === "number"
+  const toolStartedAt = (part.tool === "task" || part.metadata?.openworkV2CodeMode === true) && "time" in part.state && typeof part.state.time?.start === "number"
     && Number.isFinite(part.state.time.start)
     ? part.state.time.start
     : null;
   const openwork = {
+    ...(part.id !== part.callID ? { sourcePartId: part.id } : {}),
     ...(mcpResult ? { mcpResult } : {}),
     ...(childSessionId ? { childSessionId } : {}),
     ...(toolStartedAt === null ? {} : { toolStartedAt }),

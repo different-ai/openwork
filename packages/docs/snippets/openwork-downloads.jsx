@@ -7,6 +7,17 @@ export const OpenWorkDownloads = () => {
     day: "numeric",
     year: "numeric",
   });
+  const buildTimeFormatter = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+    timeZone: "UTC",
+    timeZoneName: "short",
+  });
   const [activeChannel, setActiveChannel] = useState("stable");
   const [stableReleases, setStableReleases] = useState([]);
   const [stableLoading, setStableLoading] = useState(true);
@@ -20,6 +31,25 @@ export const OpenWorkDownloads = () => {
 
   const formatSize = (bytes) => `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
   const formatDate = (date) => dateFormatter.format(new Date(date));
+  const getAlphaMetadata = (asset) => {
+    // Written by alpha-macos-aarch64.yml at the start of the Electron build.
+    // The rolling tag and asset upload dates are not build provenance.
+    const prefix = `${asset.name} (commit `;
+    if (typeof asset.label !== "string" || !asset.label.startsWith(prefix)) return null;
+    const match = asset.label.slice(prefix.length).match(/^([a-f0-9]{40}); build started (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\)$/);
+    if (!match) return null;
+    const startedAt = new Date(match[2]);
+    if (!Number.isFinite(startedAt.getTime()) || startedAt.toISOString() !== match[2].replace("Z", ".000Z")) return null;
+    return { commit: match[1], startedAt: match[2] };
+  };
+  const getAlphaBuildMetadata = (build) => {
+    const dmg = getAlphaMetadata(build.dmg);
+    const zip = getAlphaMetadata(build.zip);
+    // An interrupted re-run can leave a pair from different build attempts.
+    if (!dmg || !zip || dmg.commit !== zip.commit || dmg.startedAt !== zip.startedAt) return null;
+    if (build.dmg.name.replace(/\.dmg$/, "") !== build.zip.name.replace(/\.zip$/, "")) return null;
+    return dmg;
+  };
   const githubError = (response, channel) => {
     const rateLimitMessage = response.status === 403
       ? " The unauthenticated GitHub API rate limit is 60 requests per hour per IP."
@@ -119,6 +149,7 @@ export const OpenWorkDownloads = () => {
           .map((build) => ({
             ...build,
             version: build.dmg.name.replace("openwork-mac-arm64-", "").replace(/\.dmg$/, ""),
+            metadata: getAlphaBuildMetadata(build),
           }))
           .sort((first, second) => second.run - first.run),
       );
@@ -249,8 +280,14 @@ export const OpenWorkDownloads = () => {
                     <h2 className="m-0 font-mono text-lg font-semibold text-gray-950 dark:text-white">{build.version}</h2>
                     {index === 0 ? <span className="rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-700 dark:border-green-800 dark:bg-green-950 dark:text-green-300">Latest</span> : null}
                   </div>
-                  <span className="text-sm text-gray-500 dark:text-gray-400">{formatDate(build.dmg.updated_at)}</span>
                 </div>
+
+                {build.metadata ? (
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500 dark:text-gray-400">
+                    <time dateTime={build.metadata.startedAt}>{buildTimeFormatter.format(new Date(build.metadata.startedAt))}</time>
+                    <a href={`https://github.com/different-ai/openwork/commit/${build.metadata.commit}`} title={build.metadata.commit} className="font-mono underline underline-offset-2 hover:text-gray-950 dark:hover:text-white">{build.metadata.commit.slice(0, 7)}</a>
+                  </div>
+                ) : null}
 
                 <div className="mt-5 grid grid-cols-2 gap-3">
                   {[

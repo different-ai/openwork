@@ -22,6 +22,7 @@ import {
   type ThinkingModeShortcutDirection,
 } from "./thinking-mode-shortcut";
 import { isFavoriteModelShortcut } from "./favorite-model-shortcut";
+import { isFastModeShortcut } from "./fast-mode-shortcut";
 
 export type UseShellShortcutsInput = {
   canCreateTask: boolean;
@@ -31,6 +32,7 @@ export type UseShellShortcutsInput = {
   onPrevSessionTab?: () => void;
   onCycleThinkingMode?: (direction: ThinkingModeShortcutDirection) => void;
   onCycleFavoriteModel?: () => void;
+  onToggleFastMode?: () => void;
 };
 
 export function useCommandPaletteShortcut(enabled = true) {
@@ -63,6 +65,7 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
     onPrevSessionTab,
     onCycleThinkingMode,
     onCycleFavoriteModel,
+    onToggleFastMode,
   } = input;
   const { commandPaletteOpen, setCommandPaletteOpen } = useCommandPaletteShortcut();
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
@@ -116,11 +119,17 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
   //   Ctrl+T / Ctrl+Shift+T (macOS) -> next / previous thinking mode
   //   Ctrl+Alt+T / Ctrl+Alt+Shift+T (Windows/Linux) -> next / previous thinking mode
   //   Ctrl+Shift+M      -> next favorite model
+  //   Ctrl+Shift+F (macOS) / Ctrl+Alt+F (Windows/Linux) -> toggle Fast
   //   Cmd/Ctrl+1–9      -> matching visible sidebar session
   const handleGlobalShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (isFavoriteModelShortcut(event)) {
       event.preventDefault();
       if (!event.repeat) onCycleFavoriteModel?.();
+      return;
+    }
+    if (isFastModeShortcut(event, thinkingModeShortcutOs)) {
+      event.preventDefault();
+      if (!event.repeat) onToggleFastMode?.();
       return;
     }
     const thinkingModeDirection = getThinkingModeShortcutDirection(event, thinkingModeShortcutOs);

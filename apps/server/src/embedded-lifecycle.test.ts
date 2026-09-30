@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { describe, expect, spyOn, test } from "bun:test";
 
 import { startEmbeddedServer, type EmbeddedServerHandle, type EmbeddedServerOptions } from "./embedded.js";
+import { resolveServerConfig } from "./config.js";
+import { EnvService } from "./env-file.js";
 import { readEngineRegistry } from "./engine-registry.js";
+import * as managedProviderAuthModule from "./managed-provider-auth.js";
 import * as managedOpencodeModule from "./managed-opencode.js";
 import { writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import { writeGlobalRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
@@ -43,7 +46,7 @@ function restoreProcessEnv(name: string, value: string | undefined): void {
   process.env[name] = value;
 }
 
-async function writeFakeOpencodeBin(root: string): Promise<string> {
+async function writeFakeOpencodeBin(root: string, authStatus = 200): Promise<string> {
   const binPath = join(root, "fake-opencode.mjs");
   await writeFile(binPath, [
     "#!/usr/bin/env bun",
@@ -57,7 +60,19 @@ async function writeFakeOpencodeBin(root: string): Promise<string> {
     "const server = Bun.serve({",
     "  hostname: '127.0.0.1',",
     "  port: requestedPort,",
-    "  fetch(request) { append(new URL(request.url).pathname); return Response.json({}); },",
+    "  async fetch(request) {",
+    "    const path = new URL(request.url).pathname;",
+    "    append(path);",
+    "    if (request.method === 'PUT' && path.startsWith('/auth/')) {",
+    "      append(`auth-body:${await request.text()}`);",
+    "      for (const healthPath of ['/health', '/w/startup/health']) {",
+    "        const health = await fetch(`${process.env.OPENWORK_SERVER_URL}${healthPath}`);",
+    "        append(`auth-health:${healthPath}:${health.status}:${(await health.json()).ok}`);",
+    "      }",
+    `      return Response.json({}, { status: ${authStatus} });`,
+    "    }",
+    "    return Response.json({});",
+    "  },",
     "});",
     "console.log(`opencode server listening on http://127.0.0.1:${server.port}`);",
     "process.on('SIGTERM', () => { append('SIGTERM'); server.stop(true); process.exit(0); });",
@@ -203,7 +218,173 @@ async function logLines(path: string): Promise<string[]> {
   return content.split("\n").filter(Boolean);
 }
 
+async function expectHealth(url: string, id: string, status: number): Promise<void> {
+  for (const path of ["/health", `/w/${id}/health`]) {
+    const response = await fetch(`${url}${path}`);
+    expect(response.status).toBe(status);
+    expect(await response.json()).toMatchObject({ ok: status === 200 });
+  }
+}
+
 describe("embedded server lifecycle", () => {
+  for (const authStatus of [200, 503]) {
+    test.serial(`managed startup waits for provider auth (${authStatus}) before readiness and cleans up`, async () => {
+      const fixture = await createFixture();
+      await writeFakeOpencodeBin(fixture.root, authStatus);
+      const originalStartServer = serverModule.startServer;
+      let boundServer: Awaited<ReturnType<typeof serverModule.startServer>> | undefined;
+      let startupConfig: ServerConfig | undefined;
+      let httpStopCalls = 0;
+      const authSpy = spyOn(managedProviderAuthModule, "syncManagedProviderAuth");
+      const managedSpy = spyOn(managedOpencodeModule, "createManagedOpencodeServer");
+      const startSpy = spyOn(serverModule, "startServer").mockImplementation(async (config, options) => {
+        startupConfig = config;
+        await writeGlobalRuntimeOpencodeConfig(config, () => ({ provider: { [PROVIDER_ID]: PROVIDER } }));
+        await new EnvService().upsertMany([{ key: "ANTHROPIC_API_KEY", value: "synthetic-startup-key" }]);
+        const server = await originalStartServer(config, options);
+        boundServer = server;
+        const url = `http://${HOST}:${server.port}`;
+        expect(managedSpy).not.toHaveBeenCalled();
+        expect(authSpy).not.toHaveBeenCalled();
+        await expectHealth(url, workspaceId(config), 503);
+        await expect(server.completeManagedEngineStartup()).rejects.toThrow("live registered primary");
+        await expectHealth(url, workspaceId(config), 503);
+        return {
+          ...server,
+          async stop() {
+            httpStopCalls += 1;
+            // Failure must not transiently publish readiness before cleanup.
+            await expectHealth(url, workspaceId(config), authStatus === 200 ? 200 : 503);
+            await server.stop();
+          },
+        };
+      });
+
+      try {
+        if (authStatus === 200) {
+          const handle = await startManaged(fixture, "auth-ready");
+          await expectHealth(handle.url, workspaceId(handle.config), 200);
+          const status = await fetch(`${handle.url}/cloud-provider-sync/status`, {
+            headers: { authorization: `Bearer ${SERVER_TOKEN}` },
+          });
+          expect(status.status).toBe(200);
+          expect(await status.json()).toMatchObject({ reloadPending: false });
+          await boundServer?.completeManagedEngineStartup();
+          expect(managedSpy).toHaveBeenCalledTimes(1);
+          await handle.stop();
+          expect(handle.managedOpencode?.isAlive()).toBe(false);
+        } else {
+          await expect(startManaged(fixture, "auth-failure")).rejects.toThrow("Managed provider auth delivery failed during startup");
+        }
+        if (!boundServer || !startupConfig) throw new Error("Expected a bound startup server");
+        expect(authSpy).toHaveBeenCalledTimes(1);
+        const env = serverModule.envServiceForConfig(startupConfig);
+        if (!env) throw new Error("Expected startup environment service");
+        expect(authSpy.mock.calls[0]?.[0].env).toBe(env);
+        const lines = await logLines(fixture.logPath);
+        expect(lines).toContain('auth-body:{"type":"api","key":"synthetic-startup-key"}');
+        expect(lines).toContain("auth-health:/health:503:false");
+        expect(lines).toContain("auth-health:/w/startup/health:503:false");
+        expect(lines.filter((line) => line === `/auth/${PROVIDER_ID}`)).toHaveLength(1);
+        expect(lines.filter((line) => line.startsWith("server-url:"))).toHaveLength(1);
+        expect(lines).not.toContain("/instance/dispose");
+        expect(lines.filter((line) => line === "SIGTERM")).toHaveLength(1);
+        expect(httpStopCalls).toBe(1);
+        expect(await readEngineRegistry(startupConfig)).toEqual([]);
+        await expect(fetch(`http://${HOST}:${boundServer.port}/health`)).rejects.toThrow();
+        await mutateGlobalRuntime(startupConfig, "after-auth-shutdown");
+        expect((await writeOpenworkRuntimeConfigFile(startupConfig)).changed).toBe(true);
+      } finally {
+        await boundServer?.stop();
+        startSpy.mockRestore();
+        managedSpy.mockRestore();
+        authSpy.mockRestore();
+        await fixture.restore();
+      }
+    });
+  }
+
+  test.serial("standalone and external-engine startup retain immediate healthy responses", async () => {
+    const fixture = await createFixture();
+    const managedSpy = spyOn(managedOpencodeModule, "createManagedOpencodeServer");
+    try {
+      const config = await resolveServerConfig(managedOptions(fixture, "standalone"));
+      const server = await serverModule.startServer(config);
+      try {
+        await expectHealth(`http://${HOST}:${server.port}`, workspaceId(config), 200);
+        await server.completeManagedEngineStartup();
+      } finally {
+        await server.stop();
+      }
+      for (const options of [
+        { ...managedOptions(fixture, "unmanaged"), manageOpencode: false },
+        { ...managedOptions(fixture, "external"), opencodeBaseUrl: "http://127.0.0.1:1" },
+      ]) {
+        const handle = await startEmbeddedServer(options);
+        fixture.handles.push(handle);
+        await expectHealth(handle.url, handle.config.workspaces[0]?.id ?? "empty", 200);
+        expect(handle.managedOpencode).toBeNull();
+      }
+      expect(managedSpy).not.toHaveBeenCalled();
+    } finally {
+      managedSpy.mockRestore();
+      await fixture.restore();
+    }
+  });
+
+  test.serial("boots the managed engine with no workspace, and the first workspace joins it without a second spawn", async () => {
+    const fixture = await createFixture();
+    const managedSpy = spyOn(managedOpencodeModule, "createManagedOpencodeServer");
+    try {
+      const engineRoot = join(fixture.root, "engine-root");
+      const handle = await startEmbeddedServer({
+        ...managedOptions(fixture, "no-workspace"),
+        workspaces: [],
+        opencodeCwd: engineRoot,
+      });
+      fixture.handles.push(handle);
+
+      // A member who signed in before creating a workspace has a live engine.
+      expect(handle.config.workspaces).toEqual([]);
+      expect(handle.managedOpencode).not.toBeNull();
+      expect(managedSpy).toHaveBeenCalledTimes(1);
+      expect(managedSpy.mock.calls[0]?.[0]?.cwd).toBe(engineRoot);
+      const health = await fetch(`${handle.url}/health`);
+      expect(health.status).toBe(200);
+      expect(handle.managedOpencode?.isAlive()).toBe(true);
+      expect(handle.config.opencodeBaseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+      const [registered] = await readEngineRegistry(handle.config);
+      expect(registered?.role).toBe("primary");
+      expect(registered?.pid).toBe(handle.managedOpencode?.pid ?? -1);
+
+      // The engine answers through the server's workspace-less proxy.
+      const proxied = await fetch(`${handle.url}/opencode/provider`, {
+        headers: { authorization: `Bearer ${SERVER_TOKEN}` },
+      });
+      expect(proxied.status).toBe(200);
+
+      // Creating the first workspace is the ordinary add-a-workspace path:
+      // it inherits the running engine instead of spawning another.
+      const enginePid = handle.managedOpencode?.pid;
+      const folderPath = join(fixture.root, "first-workspace");
+      const created = await fetch(`${handle.url}/workspaces/local`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-openwork-host-token": HOST_TOKEN },
+        body: JSON.stringify({ folderPath, name: "First", preset: "starter" }),
+      });
+      expect(created.status).toBe(201);
+      expect(managedSpy).toHaveBeenCalledTimes(1);
+      expect(handle.managedOpencode?.pid).toBe(enginePid);
+      expect(handle.config.workspaces).toHaveLength(1);
+      expect(handle.config.workspaces[0]?.path).toBe(folderPath);
+      expect(handle.config.workspaces[0]?.baseUrl).toBe(handle.config.opencodeBaseUrl);
+      await expectHealth(handle.url, workspaceId(handle.config), 200);
+    } finally {
+      managedSpy.mockRestore();
+      await fixture.restore();
+    }
+  });
+
   test.serial("spawns the engine against the actually bound server port and records it in the registry", async () => {
     const fixture = await createFixture();
     // Occupy a port so serve-node's EADDRINUSE fallback rebinds to an
@@ -342,8 +523,8 @@ describe("embedded server lifecycle", () => {
     const fixture = await createFixture();
     const originalStartServer = serverModule.startServer;
     let httpStopCalls = 0;
-    const startSpy = spyOn(serverModule, "startServer").mockImplementation(async (config) => {
-      const server = await originalStartServer(config);
+    const startSpy = spyOn(serverModule, "startServer").mockImplementation(async (config, options) => {
+      const server = await originalStartServer(config, options);
       return {
         ...server,
         async stop() {
@@ -404,9 +585,9 @@ describe("embedded server lifecycle", () => {
     let failedConfig: ServerConfig | null = null;
     let httpStopCalls = 0;
     const originalStartServer = serverModule.startServer;
-    const startSpy = spyOn(serverModule, "startServer").mockImplementation(async (config) => {
+    const startSpy = spyOn(serverModule, "startServer").mockImplementation(async (config, options) => {
       failedConfig = config;
-      const server = await originalStartServer(config);
+      const server = await originalStartServer(config, options);
       return {
         ...server,
         async stop() {
@@ -462,8 +643,8 @@ describe("embedded server lifecycle", () => {
         },
       };
     });
-    const startSpy = spyOn(serverModule, "startServer").mockImplementation(async (config) => {
-      const server = await originalStartServer(config);
+    const startSpy = spyOn(serverModule, "startServer").mockImplementation(async (config, options) => {
+      const server = await originalStartServer(config, options);
       return {
         ...server,
         async stop() {

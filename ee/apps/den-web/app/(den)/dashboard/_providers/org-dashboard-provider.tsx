@@ -328,7 +328,7 @@ export function OrgDashboardProvider({
 
       setOrgDirectory(directoryPayload.orgs.map((entry) => ({ ...entry, isActive: entry.id === context.organization.id })));
       setOrgContext(context);
-      await refreshWorkers({ keepSelection: false, quiet: workersLoadedOnce });
+      void refreshWorkers({ keepSelection: false, quiet: workersLoadedOnce });
     } catch (error) {
       if (!isCurrent()) return;
       setRequestOrgScope(null);

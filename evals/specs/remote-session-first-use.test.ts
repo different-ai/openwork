@@ -45,14 +45,19 @@ async function grantWebAccess(databaseUrl: string, orgId: string) {
   );
 }
 
-async function cloudRequest(session: DenSession, path = "/v1/cloud/instance") {
+async function cloudRequest(session: DenSession, path = "/v1/cloud/instance", init: { body?: unknown } = {}) {
   const result = await denFetch(session, path, {
     method: path.endsWith("/retry") || path.endsWith("/update") ? "POST" : "GET",
     headers: { authorization: `Bearer ${session.token}`, "X-OpenWork-Gateway-Key": "witness-gateway-key" },
+    ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
   });
   expect(result.response.status, result.text).toBe(200);
   return record(result.body);
 }
+
+// The current Web shell sends this body; an update request without it is what a
+// shell published before deferrals still sends.
+const deferralAwareUpdate = { body: { acceptsDeferral: true } };
 
 async function mint(session: DenSession, scopes: string[]) {
   const result = await denFetch(session, "/v1/mcp/token", {
@@ -716,5 +721,74 @@ test("Cloud APIs recover after wake and replacement failures and attempt every o
     await colleagueUnaffected();
     evidence.recordAssertionEvidence(rejectFirst ? "Orphan deletion continues after a provider failure" : "Orphan deletion continues when accepted resources remain visible", JSON.stringify(operations) + " Authenticated DELETE /v1/workers/:id returned 204 and removed the worker and token rows. All three SDK list pages were read before deletion; both owned resources were attempted despite the first remaining discoverable. The foreign-label colleague was untouched. A disposed helper erased only the owner's mounted checkpoint metadata. Provider deletion and storage erasure remain best effort; real files were not exercised.", true);
   }
+  expect(witness.unexpected).toEqual([]);
+});
+
+test("Cloud APIs keep a slow or busy sandbox running and update it only once it is idle", { timeout: 300_000 }, async ({ place, evidence, skip }) => {
+  needs({ placement: "local" });
+  if (!available) skip("needs: local MySQL and Redis");
+  await using witness = await startCloudRuntimeWitness();
+  await using den = await server({
+    place, web: false, env: runtimeEnv(witness.url),
+    org: { name: "Cloud Interruptibility" },
+  });
+  if (!den.database) throw new Error("This isolated HTTP journey requires its own database");
+  const databaseUrl = den.database.url;
+  await grantWebAccess(databaseUrl, await organizationId(den.admin));
+  witness.ready();
+
+  expect((await cloudRequest(den.admin)).status).toBe("provisioning");
+  const instance = await eventually(() => cloudRequest(den.admin), {
+    within: 60_000, label: "Cloud instance API provisions a healthy workspace", until: (value) => value.status === "ready",
+  });
+  const sandbox = witness.sandboxes.find((entry) => entry.id === instance.instanceName);
+  if (!sandbox) throw new Error("Ready API instance has no witness sandbox");
+  const workerRow = () => queryDenDatabase(databaseUrl, "SELECT status, cloud_failure_code FROM worker WHERE id = ?", [sandbox.workerId]);
+  const ownedEvents = (start: number) => witness.events.slice(start).filter((event) => event.sandboxId === sandbox.id).map((event) => event.operation);
+
+  // A sandbox whose health probe misses while its server still answers an
+  // authenticated activity probe is alive, not unreachable: no failure, no
+  // stop, no second bootstrap, and the member keeps a ready instance.
+  const slowStart = witness.events.length;
+  witness.slowHealth(sandbox.id, true);
+  const stillReady = await eventually(() => cloudRequest(den.admin), {
+    within: 45_000, label: "Den asks the slow instance before deciding it is gone",
+    until: (value) => value.status === "ready" && witness.activityProbes.some((probe) => probe.sandboxId === sandbox.id),
+  });
+  expect(stillReady).toMatchObject({ status: "ready", instanceName: sandbox.id });
+  expect(stillReady.failure).toBeUndefined();
+  expect(witness.activityProbes.filter((probe) => probe.sandboxId === sandbox.id).every((probe) => probe.authenticated)).toBe(true);
+  expect(ownedEvents(slowStart)).not.toContain("stop");
+  expect(ownedEvents(slowStart)).not.toContain("bootstrap");
+  expect(await workerRow()).toEqual([{ status: "healthy", cloud_failure_code: null }]);
+  witness.slowHealth(sandbox.id, false);
+  evidence.recordAssertionEvidence("A slow health probe does not restart a sandbox that still answers", JSON.stringify(ownedEvents(slowStart)) + " With /health failing on the signed preview, GET /v1/cloud/instance stayed ready after Den probed GET /runtime/activity with the instance host token. The worker row stayed healthy with no failure code and the witness saw no stop or bootstrap. No Linux runtime was exercised.", true);
+
+  // The tab asked for an update, but the instance is mid-task (a run, then a
+  // waiting permission): the update is deferred and nothing is flushed or stopped.
+  await queryDenDatabase(databaseUrl, "UPDATE worker SET image_version = 'witness-previous' WHERE id = ?", [sandbox.workerId]);
+  const busyStart = witness.events.length;
+  witness.load(sandbox.id, { busySessions: 1, waitingRequests: 0 });
+  expect(await cloudRequest(den.admin, "/v1/cloud/instance/update", deferralAwareUpdate)).toEqual({ ok: false, error: "busy" });
+  witness.load(sandbox.id, { busySessions: 0, waitingRequests: 1 });
+  expect(await cloudRequest(den.admin, "/v1/cloud/instance/update", deferralAwareUpdate)).toEqual({ ok: false, error: "busy" });
+  // A shell published before deferrals gets an answer it can parse and is not interrupted either.
+  expect(await cloudRequest(den.admin, "/v1/cloud/instance/update")).toEqual({ ok: false, error: "already_current" });
+  expect(ownedEvents(busyStart)).not.toContain("checkpoint-flush");
+  expect(ownedEvents(busyStart)).not.toContain("stop");
+  expect(sandbox.state).toBe("started");
+  expect(await cloudRequest(den.admin)).toMatchObject({ status: "ready", instanceName: sandbox.id, imageVersion: "witness-previous", latestVersion: "witness-snapshot" });
+  expect(await workerRow()).toEqual([{ status: "healthy", cloud_failure_code: null }]);
+
+  // Idle again: the same request flushes the checkpoint and then stops the
+  // sandbox so the next wake recycles it onto the pinned snapshot.
+  witness.load(sandbox.id, null);
+  const idleStart = witness.events.length;
+  expect(await cloudRequest(den.admin, "/v1/cloud/instance/update", deferralAwareUpdate)).toEqual({ ok: true, status: "update_requested" });
+  const updateOperations = ownedEvents(idleStart);
+  expect(updateOperations.indexOf("checkpoint-flush")).toBeGreaterThanOrEqual(0);
+  expect(updateOperations.indexOf("stop")).toBeGreaterThan(updateOperations.indexOf("checkpoint-flush"));
+  expect(sandbox.state).toBe("stopped");
+  evidence.recordAssertionEvidence("Updates wait for the instance to be idle", JSON.stringify({ busy: ownedEvents(busyStart), idle: updateOperations }) + " POST /v1/cloud/instance/update answered busy while the instance reported a running session and then a waiting request, without any flush or stop; a request without the acceptsDeferral body received already_current instead; once idle the same request flushed the checkpoint and stopped the sandbox. No browser UI or Linux execution was exercised.", true);
   expect(witness.unexpected).toEqual([]);
 });

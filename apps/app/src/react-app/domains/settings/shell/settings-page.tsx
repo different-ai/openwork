@@ -8,6 +8,8 @@ import {
   CloudCog,
   Cog,
   FolderLock,
+  Gauge,
+  Keyboard,
   Paintbrush,
   Puzzle,
   RefreshCcw,
@@ -70,6 +72,8 @@ export function getSettingsTabIcon(tab: SettingsTab) {
       return FolderLock;
     case "cloud-account":
       return UserCircle;
+    case "usage":
+      return Gauge;
     case "connect":
       return Cable;
     case "cloud-marketplaces":
@@ -86,6 +90,8 @@ export function getSettingsTabIcon(tab: SettingsTab) {
       return Wrench;
     case "appearance":
       return Paintbrush;
+    case "shortcuts":
+      return Keyboard;
     case "updates":
       return RefreshCcw;
     case "recovery":
@@ -109,6 +115,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return "Permissions";
     case "cloud-account":
       return t("settings.tab_cloud_account");
+    case "usage":
+      return "Usage";
     case "connect":
       return t("settings.tab_connect");
     case "cloud-marketplaces":
@@ -125,6 +133,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return t("settings.tab_advanced");
     case "appearance":
       return t("settings.tab_appearance");
+    case "shortcuts":
+      return "Keyboard shortcuts";
     case "updates":
       return t("settings.tab_updates");
     case "recovery":
@@ -150,6 +160,8 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return "Authorized folders and file access";
     case "cloud-account":
       return t("settings.tab_description_cloud_account");
+    case "usage":
+      return "How much of your limits is left";
     case "connect":
       return t("settings.tab_description_connect");
     case "cloud-marketplaces":
@@ -166,6 +178,8 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return t("settings.tab_description_advanced");
     case "appearance":
       return t("settings.tab_description_appearance");
+    case "shortcuts":
+      return "Keys that switch to the models you use most";
     case "updates":
       return t("settings.tab_description_updates");
     case "recovery":
@@ -187,7 +201,7 @@ export function getGlobalSettingsTabs(
   developerMode: boolean,
   capabilities: Pick<PlatformCapabilities, "autoUpdate">,
 ): SettingsTab[] {
-  const tabs: SettingsTab[] = ["ai", "ollama", "appearance", "environment"];
+  const tabs: SettingsTab[] = ["ai", "ollama", "appearance", "shortcuts", "environment"];
   if (capabilities.autoUpdate) tabs.push("updates");
   if (developerMode) tabs.push("debug");
   return tabs;
@@ -195,6 +209,7 @@ export function getGlobalSettingsTabs(
 
 export const CLOUD_SETTINGS_TABS: SettingsTab[] = [
   "cloud-account",
+  "usage",
 ];
 
 export function isSettingsTabBeta(_tab: SettingsTab) {

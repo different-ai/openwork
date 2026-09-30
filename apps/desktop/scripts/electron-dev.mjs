@@ -226,9 +226,11 @@ if (process.env.OPENWORK_ELECTRON_SKIP_SHARED_PREPARE !== "1") {
 }
 
 // Build workspace packages that Electron imports from their dist output.
-console.log("[electron-dev] Building Electron workspace dependencies...");
-runSync(pnpmCmd, ["--filter", "@openwork/headless-threads", "build"], { cwd: repoRoot });
-runSync(pnpmCmd, ["--filter", "openwork-server", "build"], { cwd: repoRoot });
+if (process.env.OPENWORK_ELECTRON_SKIP_WORKSPACE_BUILD !== "1") {
+  console.log("[electron-dev] Building Electron workspace dependencies...");
+  runSync(pnpmCmd, ["--filter", "@openwork/headless-threads", "build"], { cwd: repoRoot });
+  runSync(pnpmCmd, ["--filter", "openwork-server", "build"], { cwd: repoRoot });
+}
 
 const initialProbeUrls = [startUrl, ...viteProbeUrls].filter(Boolean);
 let viteReady = false;

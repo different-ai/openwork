@@ -22,6 +22,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function isExpectedRequestCancellation(error: unknown, requestSignal: AbortSignal | undefined): boolean {
   if (!requestSignal?.aborted) return false;
+  // Abort reasons may legally be null (including a canceled empty HEAD body).
+  if (error === requestSignal.reason) return true;
   const visited = new Set<object>();
   let current: unknown = error;
   for (let depth = 0; depth < 6 && current !== null && current !== undefined; depth += 1) {

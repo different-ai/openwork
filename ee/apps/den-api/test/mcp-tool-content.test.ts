@@ -92,7 +92,7 @@ test("buildRestToolContent bounds nested model-visible text", async () => {
   const text = content[0]?.type === "text" ? content[0].text : ""
   const parsed = JSON.parse(text) as { message: { body: string } }
   expect(parsed.message.body).toHaveLength(20_000)
-  expect(parsed.message.body.endsWith("\n[truncated]")).toBe(true)
+  expect(parsed.message.body).toMatch(/\n\[truncated: showing \d+ of 25000 characters\. Call this capability from execute_capability_script to read the full value and return the part you need\.\]$/)
   expect(text).not.toContain("x".repeat(20_001))
 })
 

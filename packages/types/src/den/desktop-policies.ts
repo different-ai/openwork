@@ -1,5 +1,49 @@
 import { z } from "zod";
 
+/** Desktop feature-policy enforcement is suspended pending redesign. This is
+ * not a Cloud authorization switch: schemas, assignments and resource
+ * entitlements remain authoritative in Den. Keep all desktop feature-policy
+ * entry points on this flag.
+ *
+ * Two controls are deliberately NOT behind this flag:
+ * - Required sign-in is a property of the build (enterprise and cloud always
+ *   require it; a public build can opt in through desktop-bootstrap.json).
+ * - `allowedDesktopVersions` is an organization setting, not a desktop policy,
+ *   so the projection below keeps it and the updater keeps honouring it.
+ * - Model access (below) is the AI Gateway's own setting; it only happens to
+ *   be stored in the default desktop policy. */
+export const DESKTOP_POLICY_ENFORCEMENT_ENABLED: boolean = false;
+
+/**
+ * Model access: the AI Gateway's "Who can use models" setting. "Only models
+ * you provide" is stored as `allowCustomProviders: false` in the
+ * organization's default desktop policy, and "Admins may still add their own
+ * keys" as a policy for the admin role. The desktop and web app enforce this
+ * key on its own; every other desktop policy, including `allowZenModel`,
+ * stays off with the flag above.
+ * Enforcement never blocks startup, sign-in or chat: callers apply the last
+ * known setting and allow when none is known (see #5131).
+ */
+export const MODEL_ACCESS_POLICY_KEYS = ["allowCustomProviders"] as const;
+
+export function isModelAccessPolicyKey(key: string): boolean {
+  return (MODEL_ACCESS_POLICY_KEYS as readonly string[]).includes(key);
+}
+
+export function desktopPolicyKeyEnforced(key: string): boolean {
+  return DESKTOP_POLICY_ENFORCEMENT_ENABLED || isModelAccessPolicyKey(key);
+}
+
+/** Runtime-only projection; never persist this over the control-plane config. */
+export function desktopCapabilityConfig(config: DesktopConfig): DesktopConfig {
+  if (DESKTOP_POLICY_ENFORCEMENT_ENABLED) return config;
+  const { execution: _execution, ...effective } = config;
+  for (const key of desktopPolicyKeys) {
+    if (key !== "showWelcomePage" && !desktopPolicyKeyEnforced(key)) delete effective[key];
+  }
+  return effective;
+}
+
 type DesktopPolicyDefinitionEntry = {
   id: string;
   name: string;

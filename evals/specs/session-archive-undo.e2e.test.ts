@@ -9,7 +9,7 @@ const archivedToast: Target = { text: "Session archived" };
 const undoButton: Target = { role: "button", label: "Undo" };
 const viewButton: Target = { role: "button", label: "View" };
 
-test("session archive is honest about availability and can be undone when supported", async ({ world, user, agent, probe, step }) => {
+test("session archive is honest about availability and can be undone when supported", async ({ world, user, agent, probe, step, evidence }) => {
   const candidateId = world.candidate.sessionId;
   const neighborId = world.neighbor.sessionId;
   const candidateRow = { testId: `sidebar-session-${candidateId}` };
@@ -58,14 +58,17 @@ test("session archive is honest about availability and can be undone when suppor
   if (world.engine === "v2") {
     await step("v2 archive is unavailable without changing either session or claiming success", async () => {
       await user.hover(candidateRow);
-      await user.see(archiveButton);
-      expect(await world.sidebar()).toMatchObject({
-        archiveButtonDisabled: true,
-        archiveButtonTitle: "Archiving and unarchiving are not available in the OpenCode v2 preview.",
+      await user.notSee(archiveButton);
+      expect((await probe.dom(`[data-testid="session-archive-${candidateId}"]`)).elements).toHaveLength(0);
+      await step("v2 session row without unsupported archive button", () => user.screenshot());
+      await user.rightClick(candidateRow);
+      const menu = await probe.eventually(() => world.nativeMenu(), {
+        within: 10_000, label: "native session menu opens",
+        until: value => typeof value === "object" && value !== null && "open" in value && value.open === true,
       });
-      await world.hoverArchiveButton();
-      // Reference only: the button, not a native tooltip or context menu.
-      await step("v2 disabled archive button", () => user.screenshot());
+      expect(menu).toMatchObject({ current: { items: expect.arrayContaining([expect.objectContaining({ id: "pin" })]) } });
+      expect(menu).not.toMatchObject({ current: { items: expect.arrayContaining([expect.objectContaining({ id: "archive" })]) } });
+      expect(await world.dismissMenu()).toBe(true);
       expect(await agent.actions()).toEqual(expect.arrayContaining([expect.objectContaining({ id: "session.archive", disabled: true })]));
       for (const archived of [true, false]) {
         await expect(agent.run("session.archive", { sessionId: candidateId, archived })).rejects.toThrow("Action is disabled");
@@ -82,6 +85,11 @@ test("session archive is honest about availability and can be undone when suppor
       await user.notSee(undoButton);
       await user.notSee({ text: "This session is still working" });
       expect(await world.mutationRequests()).toEqual([]);
+      evidence.recordAssertionEvidence(
+        "V2 hides unsupported archive controls and refuses archive mutations",
+        "The session row has no archive button, the native menu has Pin but no Archive action, archive and restore commands are disabled, and both sessions remain active without mutation requests or success toasts.",
+        true,
+      );
     });
     return;
   }
@@ -208,5 +216,10 @@ test("session archive is honest about availability and can be undone when suppor
     await user.notSee("composer");
     expect(await agent.actions()).toEqual(expect.arrayContaining([expect.objectContaining({ id: "composer.send", disabled: true })]));
     await user.screenshot();
+    evidence.recordAssertionEvidence(
+      "V1 archive, Undo, and View preserve the target session",
+      "Archiving moves only the selected session. Undo restores it for named, long, and blank titles. View opens the archived session read-only with Restore available and sending disabled; the neighboring session remains active.",
+      true,
+    );
   });
 });

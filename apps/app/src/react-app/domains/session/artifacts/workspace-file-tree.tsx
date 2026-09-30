@@ -169,7 +169,7 @@ export function WorkspaceFileTree({ client, workspaceId, workspaceName, selected
         </Button>
       </div>
       {query.isError ? (
-        <p className="p-3 text-xs text-destructive">Could not load workspace files.</p>
+        <p role="alert" className="p-3 text-xs text-dls-secondary">Could not load workspace files. Use Refresh to try again.</p>
       ) : (
         <FileTree
           model={model}
@@ -180,9 +180,6 @@ export function WorkspaceFileTree({ client, workspaceId, workspaceName, selected
       )}
       {query.data?.incomplete ? (
         <p role="status" className="border-t border-border px-2 py-1 text-[10px] text-muted-foreground">Some folders could not be read. Check their permissions and refresh.</p>
-      ) : null}
-      {query.data?.truncated ? (
-        <p className="border-t border-border px-2 py-1 text-[10px] text-muted-foreground">Showing the first 10,000 entries</p>
       ) : null}
     </aside>
   );

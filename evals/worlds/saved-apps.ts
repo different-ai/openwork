@@ -6,6 +6,7 @@ import type { MockMcpTool } from "@openwork/labs";
 import { go, runWorkflow, saveWorkflow, waitFor } from "@openwork/behaviors";
 import { connect, debuggerUrlFor, evaluate, listTargets } from "@openwork/cdp";
 import { configureProvider } from "./chat.ts";
+import { enableOrgManagedDashboards } from "./dashboards.ts";
 import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 import { reconcileDraftHost } from "../fixtures/cloud-draft-host.ts";
 
@@ -429,6 +430,7 @@ export async function savedAppCreation(seed: Seed) {
       tracker: seed.mock({ allowUnauthenticatedMcp: true, appToolName: "search_issues_using_jql" }),
     },
   });
+  await enableOrgManagedDashboards(seed, den.admin);
   const connection = await seed.orgConnection(den.admin, {
     name: "Issue tracker", url: den.mocks.tracker.mcpUrl,
     authType: "none", credentialMode: "shared", access: { orgWide: true },
@@ -472,7 +474,7 @@ export async function savedAppCreation(seed: Seed) {
     if (result.isError) throw new Error(JSON.stringify(result.content));
     return result;
   };
-  const code = 'const roster = await tools.den.getWorkers({}); return { topic: input.topic, total: roster.workers.length };';
+  const code = 'return { topic: input.topic, total: 7 };';
   const firstInput = { topic: "Launch briefing" };
   await rpc("execute_capability_script", { code, input: firstInput });
   const saved = await saveWorkflow(den.admin, {
@@ -493,7 +495,7 @@ export async function savedAppCreation(seed: Seed) {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ workloads: [{ promptMarker: creationPrompt, finalReply: creationReply, steps: [
       { tool: "save_artifact_view", arguments: {
-        configObjectId, title: "Briefing app", reactSource: source("Weekly overview"),
+        configObjectId, dataMode: "snapshot", title: "Briefing app", reactSource: source("Weekly overview"),
         cssSource: "body{font-family:system-ui,sans-serif;padding:24px;margin:0}button{padding:8px 12px}",
       } },
     ] }] }),
@@ -526,7 +528,7 @@ export async function savedAppCreation(seed: Seed) {
     async ageAdminSession() {
       if (den.placement?.kind !== "daytona") throw new Error("Session ageing requires the disposable Daytona database");
       const email = `CONVERT(0x${Buffer.from(den.admin.email).toString("hex")} USING utf8mb4)`;
-      const statement = `UPDATE session SET created_at=DATE_SUB(NOW(3), INTERVAL 20 MINUTE) WHERE user_id IN (SELECT id FROM user WHERE email=${email});`;
+      const statement = `UPDATE session SET created_at=DATE_SUB(NOW(3), INTERVAL 180 MINUTE) WHERE user_id IN (SELECT id FROM user WHERE email=${email});`;
       await execInSandbox(defaultDaytonaExec, den.placement.sandboxId,
         `echo ${Buffer.from(statement).toString("base64")} | base64 -d | mysql -h127.0.0.1 -uroot -ppassword -N openwork_den`,
         { timeoutMs: 30_000, context: "Age the synthetic sharing admin's session" });

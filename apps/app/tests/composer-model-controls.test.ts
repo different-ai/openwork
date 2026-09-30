@@ -19,6 +19,18 @@ const providerAuthModalPath = fileURLToPath(
 );
 
 describe("composer model controls", () => {
+  test("picker inputs keep mobile text readable without timer-driven keyboard reopening", () => {
+    const source = readFileSync(new URL("../src/components/model-select.tsx", import.meta.url), "utf8");
+    expect(source).toContain('autoFocus={false} placeholder="Search models..." className="h-9 text-base sm:text-base md:text-base lg:text-sm"');
+    expect(source).toContain("target?.focus({ preventScroll: true })");
+    expect(source).toContain("setPane(effortReturnPaneRef.current)");
+    expect(source).toContain('effortReturnPaneRef.current = pane === "favorites" ? "favorites" : "model"');
+    expect(source).not.toContain("requestAnimationFrame");
+    const fullPicker = readFileSync(new URL("../src/react-app/domains/session/modals/model-picker-modal.tsx", import.meta.url), "utf8");
+    expect(fullPicker).toContain("text-base lg:text-sm");
+    expect(fullPicker).toContain("initialFocus={() => isMobile ? titleRef.current : searchInputRef.current}");
+    expect(fullPicker).not.toContain("requestAnimationFrame");
+  });
   test("stay enabled during ordinary generation and disable during steering", () => {
     const composerSource = readFileSync(composerPath, "utf8");
     const modelSelectPath = fileURLToPath(

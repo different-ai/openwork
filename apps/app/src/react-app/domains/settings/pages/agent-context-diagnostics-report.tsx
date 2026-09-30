@@ -716,7 +716,7 @@ export function AgentContextDiagnosticsReportView(props: {
           </div>
         </div>
 
-        <div className="grid gap-2 rounded-xl border border-amber-7/20 bg-amber-2 p-3 text-xs text-amber-11 sm:grid-cols-2">
+        <div className="grid gap-2 rounded-xl border border-dls-border bg-dls-hover p-3 text-xs text-dls-text sm:grid-cols-2">
           <div>{t("connect.diagnostics_safety_workspace_runtime_read_only")}: {booleanLabel(props.report.safety.diagnosticsWorkspaceRuntimeConfigurationReadOnly)}</div>
           <div>{t("connect.diagnostics_safety_tools_list")}: {booleanLabel(props.report.safety.cloudCatalogToolsListPerformed)}</div>
           <div>{t("connect.diagnostics_safety_non_cloud_fetch")}: {booleanLabel(!props.report.safety.directNonCloudMcpFetchPerformed)}</div>

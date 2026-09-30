@@ -70,7 +70,11 @@ function printHelp() {
     "  openwork-bootstrap install [--bin-dir <path>] [--install-dir <path>] [--source <path>] [--json]",
     "  openwork-bootstrap install app --manifest <url-or-file> [--app-dir <path>] [--json]",
     "  openwork-bootstrap doctor [--bin-dir <path>] [--install-dir <path>] [--base-url <url>] [--desktop-bootstrap] [--json]",
-    "  OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--skill-name <name>] [--web-base-url <url>] [--prepare-desktop] [--json]",
+    "  openwork-bootstrap login [--base-url <url>] [--force] [--json]",
+    "  openwork-bootstrap logout [--json]",
+    "  openwork-bootstrap cloud onboard --base-url <url> --org-name <name> --invite-email <email> [--skill-name <name>] [--web-base-url <url>] [--prepare-desktop] [--json]",
+    "  (deprecated) OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --request-code --base-url <url> --owner-email <email> [--json]",
+    "  (deprecated) OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --verification-code <code> --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--json]",
     "  openwork-bootstrap cloud bootstrap-workspace --base-url <url> --workspace-name <name> [--skill-name <name>] [--owner-email <email>] [--teammate-emails a@x.com,b@y.com] [--claim-roles owner,member] [--web-base-url <url>] [--prepare-desktop] [--json]",
     "  openwork-bootstrap cloud claim-link [--role owner] [--desktop-bootstrap-path <path>] [--json]",
     "",
@@ -78,19 +82,35 @@ function printHelp() {
     "  install          Install the openwork-bootstrap CLI into a user bin dir",
     "  install app      Download and install the desktop app from a manifest",
     "  doctor           Check CLI installation and optional Den API health",
-    "  cloud onboard    Sign up, create an org, invite a teammate, and create a skill",
+    "  login            Sign in from the browser with a one-time code (no password)",
+    "  logout           Sign out and delete the saved credentials",
+    "  cloud onboard    Create an org, invite a teammate, and create a skill as the",
+    "                   signed-in person (OPENWORK_API_TOKEN, then `login`). The",
+    "                   --owner-email/--owner-password flags are deprecated.",
     "  cloud bootstrap-workspace  Create a provisional workspace without email/password auth",
     "  cloud claim-link Retrieve a claim link saved by --prepare-desktop. Only run",
     "                   this when you are ready to hand the link to a human; do",
     "                   not print claim links preemptively.",
     "",
     "Options:",
+    "  --request-code   Create the account (or resend) and email a 6-digit",
+    "                   verification code, then stop. Hosted OpenWork Cloud",
+    "                   requires it before the first sign-in.",
+    "  --verification-code <code> | --verification-code-stdin",
+    "                   Verify the emailed code first, then sign in and finish",
+    "                   onboarding. Each new sign-up/sign-in attempt emails a",
+    "                   new code, so pass the latest one.",
     "  --web-base-url   Browser-facing origin written into --prepare-desktop's",
     "                   config (used for the app's Sign In button and claim",
     "                   links). Defaults to https://app.openworklabs.com when",
     "                   --base-url is the hosted API (api.openworklabs.com);",
     "                   set explicitly for self-hosted/custom deployments.",
     "  --json           Print machine-readable JSON",
+    "",
+    "Environment:",
+    "  OPENWORK_API_TOKEN        Use this token instead of the saved login",
+    "  OPENWORK_CREDENTIALS_PATH Where `login` saves credentials",
+    "                            (default ~/.openwork/credentials.json)",
     "  --version        Print version",
     "  --help           Show help",
   ].join("\n"))
@@ -163,6 +183,157 @@ function deriveWebBaseUrl(apiBaseUrl) {
   } catch {
     return apiBaseUrl
   }
+}
+
+const DEVICE_CLIENT_ID = "openwork-cli"
+const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
+const DEFAULT_API_BASE_URL = "https://api.openworklabs.com"
+
+function defaultCredentialsPath() {
+  return process.env.OPENWORK_CREDENTIALS_PATH || join(process.env.HOME || process.env.USERPROFILE || process.cwd(), ".openwork", "credentials.json")
+}
+
+function normalizeBaseUrl(value) {
+  return String(value || "").replace(/\/$/, "")
+}
+
+// Saved credentials are a bearer secret: owner-only file, never printed.
+function readSavedCredentials(filePath = defaultCredentialsPath()) {
+  if (!existsSync(filePath)) return null
+  try {
+    const stored = JSON.parse(readFileSync(filePath, "utf8"))
+    if (typeof stored?.accessToken !== "string" || !stored.accessToken || typeof stored.baseUrl !== "string") return null
+    if (typeof stored.expiresAt === "string" && Date.parse(stored.expiresAt) <= Date.now()) return null
+    return stored
+  } catch {
+    return null
+  }
+}
+
+function writeSavedCredentials(value, filePath = defaultCredentialsPath()) {
+  mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 })
+  writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 })
+  try {
+    chmodSync(filePath, 0o600)
+  } catch {}
+  return filePath
+}
+
+/**
+ * The token to act with, in order: OPENWORK_API_TOKEN, then a saved `login`
+ * for the same API base URL. Returns null when neither exists.
+ */
+function resolveApiToken(baseUrl) {
+  const fromEnv = process.env.OPENWORK_API_TOKEN?.trim()
+  if (fromEnv) return { token: fromEnv, source: "env" }
+  const saved = readSavedCredentials()
+  if (saved && normalizeBaseUrl(saved.baseUrl) === normalizeBaseUrl(baseUrl)) {
+    return { token: saved.accessToken, source: "login" }
+  }
+  return null
+}
+
+async function fetchMe(baseUrl, token) {
+  const me = await request(baseUrl, "/v1/me", { method: "GET", headers: { authorization: `Bearer ${token}` } })
+  if (me.status !== 200 || !me.body?.user?.id) return null
+  return me.body.user
+}
+
+const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms))
+
+/**
+ * OAuth 2.0 Device Authorization Grant (RFC 8628). Shows the code and link on
+ * stderr so --json stdout stays machine-readable, then polls until the person
+ * approves, denies, or the code expires.
+ */
+async function deviceLogin(baseUrl, { json, log = (line) => console.error(line) } = {}) {
+  const started = await request(baseUrl, "/api/auth/device/code", {
+    method: "POST",
+    body: JSON.stringify({ client_id: DEVICE_CLIENT_ID }),
+  })
+  if (started.status !== 200 || typeof started.body?.device_code !== "string") {
+    throw new Error(`device_code_failed: ${started.status} ${JSON.stringify(started.body)}`)
+  }
+  const { device_code: deviceCode, user_code: userCode, verification_uri: verificationUri, verification_uri_complete: verificationUriComplete } = started.body
+  const displayCode = userCode.length === 8 ? `${userCode.slice(0, 4)}-${userCode.slice(4)}` : userCode
+  let intervalMs = Math.max(1, Number(started.body.interval) || 5) * 1000
+  const deadline = Date.now() + (Number(started.body.expires_in) || 900) * 1000
+
+  if (json) {
+    log(JSON.stringify({ event: "device_authorization", verification_uri: verificationUri, verification_uri_complete: verificationUriComplete, user_code: displayCode, expires_in: started.body.expires_in, interval: started.body.interval }))
+  } else {
+    log(`Open this link to sign in:\n\n  ${verificationUriComplete}\n\nand confirm the code ${displayCode}. Waiting for approval...`)
+  }
+
+  while (Date.now() < deadline) {
+    await sleep(intervalMs)
+    const polled = await request(baseUrl, "/api/auth/device/token", {
+      method: "POST",
+      body: JSON.stringify({ grant_type: DEVICE_CODE_GRANT, device_code: deviceCode, client_id: DEVICE_CLIENT_ID }),
+    })
+    if (polled.status === 200 && typeof polled.body?.access_token === "string") {
+      const expiresIn = Number(polled.body.expires_in)
+      return {
+        accessToken: polled.body.access_token,
+        expiresAt: Number.isFinite(expiresIn) && expiresIn > 0 ? new Date(Date.now() + expiresIn * 1000).toISOString() : null,
+      }
+    }
+    const error = polled.body?.error
+    if (error === "authorization_pending") continue
+    if (error === "slow_down") {
+      intervalMs += 5000
+      continue
+    }
+    if (error === "access_denied") throw new Error("login_denied: the sign-in request was denied in the browser")
+    if (error === "expired_token") break
+    throw new Error(`login_failed: ${polled.status} ${JSON.stringify(polled.body)}`)
+  }
+  throw new Error("login_expired: the code expired before it was approved; run login again")
+}
+
+async function runLogin(args) {
+  const json = hasFlag(args.flags, "json")
+  const baseUrl = normalizeBaseUrl(getFlag(args.flags, "base-url", DEFAULT_API_BASE_URL))
+  const force = hasFlag(args.flags, "force")
+
+  const existing = force ? null : resolveApiToken(baseUrl)
+  if (existing) {
+    const user = await fetchMe(baseUrl, existing.token)
+    if (user) {
+      jsonOut({ ok: true, message: `Already signed in as ${user.email}${existing.source === "env" ? " (OPENWORK_API_TOKEN)" : ""}`, source: existing.source, user: { id: user.id, email: user.email } }, json)
+      return
+    }
+    if (existing.source === "env") throw new Error("invalid_api_token: OPENWORK_API_TOKEN was rejected by /v1/me")
+  }
+
+  const granted = await deviceLogin(baseUrl, { json })
+  const user = await fetchMe(baseUrl, granted.accessToken)
+  if (!user) throw new Error("login_failed: the new session was rejected by /v1/me")
+  const credentialsPath = writeSavedCredentials({
+    baseUrl,
+    accessToken: granted.accessToken,
+    expiresAt: granted.expiresAt,
+    user: { id: user.id, email: user.email },
+    createdAt: new Date().toISOString(),
+  })
+  jsonOut({ ok: true, message: `Signed in as ${user.email}`, source: "login", user: { id: user.id, email: user.email }, credentialsPath }, json)
+}
+
+async function runLogout(args) {
+  const json = hasFlag(args.flags, "json")
+  const credentialsPath = defaultCredentialsPath()
+  const saved = readSavedCredentials(credentialsPath)
+  let revoked = false
+  if (saved) {
+    const signOut = await request(normalizeBaseUrl(saved.baseUrl), "/api/auth/sign-out", {
+      method: "POST",
+      headers: { authorization: `Bearer ${saved.accessToken}` },
+      body: "{}",
+    }).catch(() => null)
+    revoked = signOut?.status === 200
+  }
+  rmSync(credentialsPath, { force: true })
+  jsonOut({ ok: true, message: saved ? "Signed out" : "Not signed in", revoked, credentialsPath }, json)
 }
 
 function slugifySkillName(value) {
@@ -544,23 +715,82 @@ async function request(baseUrl, path, options = {}) {
   return { status: response.status, body }
 }
 
-async function signupAndSignin(baseUrl, input) {
+// Hosted OpenWork Cloud requires a 6-digit email code before the first
+// sign-in. Every sign-up or unverified sign-in emails a NEW code and
+// invalidates the previous one, so the code step must verify first and never
+// sign up or sign in before it.
+function isEmailNotVerified(response) {
+  const code = response.body?.code
+  return response.status === 403 && (code === "EMAIL_NOT_VERIFIED" || /not verified/i.test(String(response.body?.message ?? "")))
+}
+
+function verificationRequiredMessage(email) {
+  return `We emailed a 6-digit verification code to ${email}. Ask the person for it, then run the same command with --verification-code <code> (or --verification-code-stdin).`
+}
+
+async function verifyEmailCode(baseUrl, input) {
+  const verified = await request(baseUrl, "/api/auth/email-otp/verify-email", {
+    method: "POST",
+    body: JSON.stringify({ email: input.email, otp: input.verificationCode }),
+  })
+  if (verified.status !== 200) {
+    throw new Error(`email_verification_failed: ${verified.status} ${JSON.stringify(verified.body)}. The code may be wrong or expired; run with --request-code to email a new one.`)
+  }
+  return verified
+}
+
+async function requestVerificationCode(baseUrl, input) {
   const signup = await request(baseUrl, "/api/auth/sign-up/email", {
     method: "POST",
     body: JSON.stringify({ name: input.name, email: input.email, password: input.password }),
   })
-  if (signup.status !== 200 && signup.status !== 400) {
-    throw new Error(`signup_failed: ${signup.status} ${JSON.stringify(signup.body)}`)
+  if (signup.status === 200) {
+    // A fresh sign-up already emailed the code when verification is required;
+    // deployments without verification sign the person in immediately.
+    return { signup, verificationRequired: !signup.body?.token }
+  }
+  const sent = await request(baseUrl, "/api/auth/email-otp/send-verification-otp", {
+    method: "POST",
+    body: JSON.stringify({ email: input.email, type: "email-verification" }),
+  })
+  if (sent.status !== 200) {
+    throw new Error(`verification_code_request_failed: ${sent.status} ${JSON.stringify(sent.body)}`)
+  }
+  return { signup, verificationRequired: true }
+}
+
+async function signupAndSignin(baseUrl, input) {
+  let signup = null
+  if (input.verificationCode) {
+    await verifyEmailCode(baseUrl, input)
+  } else {
+    signup = await request(baseUrl, "/api/auth/sign-up/email", {
+      method: "POST",
+      body: JSON.stringify({ name: input.name, email: input.email, password: input.password }),
+    })
+    if (signup.status !== 200 && signup.status !== 400 && signup.status !== 422) {
+      throw new Error(`signup_failed: ${signup.status} ${JSON.stringify(signup.body)}`)
+    }
   }
 
   const signin = await request(baseUrl, "/api/auth/sign-in/email", {
     method: "POST",
     body: JSON.stringify({ email: input.email, password: input.password }),
   })
+  if (isEmailNotVerified(signin)) {
+    throw new Error(`email_verification_required: ${verificationRequiredMessage(input.email)}`)
+  }
   if (signin.status !== 200 || !signin.body?.token) {
     throw new Error(`signin_failed: ${signin.status} ${JSON.stringify(signin.body)}`)
   }
   return { signup, signin, token: signin.body.token, user: signin.body.user }
+}
+
+async function resolveVerificationCode(flags) {
+  const fromFlag = getFlag(flags, "verification-code")
+  if (fromFlag) return fromFlag.trim()
+  if (hasFlag(flags, "verification-code-stdin")) return (await readStdin()).trim()
+  return null
 }
 
 function skillText(name, output) {
@@ -785,7 +1015,10 @@ async function runCloudOnboard(args) {
   const json = hasFlag(args.flags, "json")
   const baseUrl = getFlag(args.flags, "base-url")?.replace(/\/$/, "")
   const ownerEmail = getFlag(args.flags, "owner-email")
-  const ownerPassword = await resolveOwnerPassword(args.flags)
+  // The deprecated password path stays available when explicitly requested.
+  const explicitPasswordPath = hasFlag(args.flags, "request-code") || args.flags.has("verification-code") || hasFlag(args.flags, "verification-code-stdin")
+  const signedIn = baseUrl && !explicitPasswordPath ? resolveApiToken(baseUrl) : null
+  const ownerPassword = signedIn ? null : await resolveOwnerPassword(args.flags)
   const orgName = getFlag(args.flags, "org-name")
   const inviteEmail = getFlag(args.flags, "invite-email")
   const skillName = getFlag(args.flags, "skill-name", "First OpenWork Skill")
@@ -794,9 +1027,26 @@ async function runCloudOnboard(args) {
   const desktopBootstrapPath = getFlag(args.flags, "desktop-bootstrap-path", defaultDesktopBootstrapPath())
   const skillsDir = getFlag(args.flags, "skills-dir", defaultSkillsDir())
   const webBaseUrl = getFlag(args.flags, "web-base-url", deriveWebBaseUrl(baseUrl))?.replace(/\/$/, "")
+  const requestCodeOnly = hasFlag(args.flags, "request-code")
+  if (requestCodeOnly && (args.flags.has("verification-code") || hasFlag(args.flags, "verification-code-stdin"))) {
+    throw new Error("conflicting_flags: use --request-code first, then run again with --verification-code")
+  }
+  if (hasFlag(args.flags, "verification-code-stdin") && hasFlag(args.flags, "owner-password-stdin")) {
+    throw new Error("conflicting_flags: stdin can carry either the password or the verification code, not both")
+  }
+  const verificationCode = requestCodeOnly ? null : await resolveVerificationCode(args.flags)
+  if (verificationCode !== null && !/^\d{4,10}$/.test(verificationCode)) {
+    throw new Error("invalid_verification_code: expected the numeric code from the verification email")
+  }
 
-  for (const [name, value] of Object.entries({ baseUrl, ownerEmail, ownerPassword, orgName, inviteEmail })) {
+  const required = requestCodeOnly
+    ? { baseUrl, ownerEmail, ownerPassword }
+    : { baseUrl, orgName, inviteEmail }
+  for (const [name, value] of Object.entries(required)) {
     if (!value) throw new Error(`missing_required_flag: --${name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`)
+  }
+  if (!signedIn && (!ownerEmail || !ownerPassword)) {
+    throw new Error(`not_signed_in: run "openwork-bootstrap login --base-url ${baseUrl}" first (or set OPENWORK_API_TOKEN)`)
   }
 
   const health = await request(baseUrl, "/health", { method: "GET" })
@@ -804,11 +1054,44 @@ async function runCloudOnboard(args) {
     throw new Error(`den_api_unhealthy: ${health.status} ${JSON.stringify(health.body)}`)
   }
 
-  const owner = await signupAndSignin(baseUrl, {
-    name: "OpenWork Owner",
-    email: ownerEmail,
-    password: ownerPassword,
-  })
+  if (requestCodeOnly) {
+    console.error("warning: --owner-email/--owner-password are deprecated; use `openwork-bootstrap login` instead")
+    const requested = await requestVerificationCode(baseUrl, {
+      name: "OpenWork Owner",
+      email: ownerEmail,
+      password: ownerPassword,
+    })
+    jsonOut({
+      ok: true,
+      step: requested.verificationRequired ? "verification_required" : "verified",
+      message: requested.verificationRequired
+        ? verificationRequiredMessage(ownerEmail)
+        : "This deployment does not require email verification. Run the command again without --request-code.",
+      email: ownerEmail,
+    }, json)
+    return
+  }
+
+  let owner
+  if (signedIn) {
+    const user = await fetchMe(baseUrl, signedIn.token)
+    if (!user) {
+      throw new Error(signedIn.source === "env"
+        ? "invalid_api_token: OPENWORK_API_TOKEN was rejected by /v1/me"
+        : `session_expired: run "openwork-bootstrap login --base-url ${baseUrl} --force" again`)
+    }
+    owner = { token: signedIn.token, user }
+  } else {
+    // Deprecated: passwords on the command line end up in shell history.
+    // Kept for existing scripts.
+    console.error("warning: --owner-email/--owner-password are deprecated; use `openwork-bootstrap login` instead")
+    owner = await signupAndSignin(baseUrl, {
+      name: "OpenWork Owner",
+      email: ownerEmail,
+      password: ownerPassword,
+      verificationCode,
+    })
+  }
   const auth = { authorization: `Bearer ${owner.token}` }
 
   const org = await request(baseUrl, "/v1/org", {
@@ -858,6 +1141,7 @@ async function runCloudOnboard(args) {
     ok: true,
     message: "OpenWork cloud onboarding complete",
     user: { id: owner.user.id, email: owner.user.email, emailVerified: owner.user.emailVerified },
+    signedInWith: signedIn ? signedIn.source : "password",
     organization: org.body.organization,
     invitation: invite.body,
     skill,
@@ -1023,6 +1307,14 @@ async function main() {
   }
   if (command === "cloud") {
     await runCloud(args)
+    return
+  }
+  if (command === "login") {
+    await runLogin(args)
+    return
+  }
+  if (command === "logout") {
+    await runLogout(args)
     return
   }
 

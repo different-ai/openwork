@@ -114,6 +114,7 @@ export interface GatewayAuthorizationRequest {
   credentialSetId: string;
   name: string;
   authUrl: string;
+  models?: GatewayUsableModel[];
 }
 
 /** Selection hints only. Reauthorize every referenced row on every request. */

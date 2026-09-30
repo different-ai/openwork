@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { createDenClient, DenApiError, readDenSettings } from "@/app/lib/den";
+import { createDenClient, DenApiError, isDenOrgAdminRole, readDenSettings } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { useDenAuth } from "../cloud/den-auth-provider";
+
+export const dashboardManagementReason = "Only organization owners and admins can manage dashboards and apps.";
 
 export function useAppsClient() {
   const auth = useDenAuth();
@@ -15,11 +17,22 @@ export function useAppsClient() {
   const token = settings.authToken;
   const client = useMemo(() => token ? createDenClient({ baseUrl: settings.baseUrl, apiBaseUrl: settings.apiBaseUrl, token }) : null,
     [settings.baseUrl, settings.apiBaseUrl, token]);
+  const identity = auth.verifiedIdentity;
+  const role = useQuery({
+    queryKey: ["apps-organization-role", settings.baseUrl, identity?.principalId, settings.activeOrgId, settings.apiBaseUrl],
+    enabled: auth.isSignedIn && Boolean(client && identity) && identity?.organizationId === settings.activeOrgId,
+    queryFn: async () => {
+      if (!client) return null;
+      const result = await client.listOrgs();
+      return result.orgs.find((org) => org.id === identity?.organizationId)?.role ?? null;
+    },
+  });
   return {
+    canManage: auth.isSignedIn && identity?.organizationId === settings.activeOrgId && !role.isError && isDenOrgAdminRole(role.data),
     client: auth.isSignedIn ? client : null,
     orgId: settings.activeOrgId,
     orgName: settings.activeOrgName,
-    scope: [settings.baseUrl, auth.user?.id, settings.activeOrgId],
+    scope: [settings.baseUrl, auth.user?.id, settings.activeOrgId, settings.apiBaseUrl],
   };
 }
 

@@ -53,6 +53,19 @@ pnpm evals:e2e <name>
 
 - The CLI owns placement and prints `placement: <daytona|local> (<reason>)`.
 
+## Match the runtime
+
+Check what runtime the changed code ships on before trusting a green run.
+`apps/server` tests run on Bun; Desktop runs that same code on Electron's
+Node (undici). If the change touches fetch, streams, signals, GC, or timers,
+run it on the shipping runtime too:
+
+```bash
+ELECTRON_RUN_AS_NODE=1 apps/desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron --expose-gc <script>
+```
+
+A green run on the wrong runtime is not evidence.
+
 ## Read the verdict
 
 - Record the exact command, exit code, and passed/failed/skipped counts.

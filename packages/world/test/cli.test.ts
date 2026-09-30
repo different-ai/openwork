@@ -10,7 +10,7 @@ test("world arguments expose only script lifecycle flags and forward arguments a
   assert.deepEqual(
     parseWorldArgs([
       "up",
-      "./worlds/dev-headless.ts",
+      "./worlds/dev-app-web.ts",
       "--detach",
       "--timeout",
       "5000",
@@ -24,7 +24,7 @@ test("world arguments expose only script lifecycle flags and forward arguments a
     ]),
     {
       kind: "up",
-      source: "./worlds/dev-headless.ts",
+      source: "./worlds/dev-app-web.ts",
       detach: true,
       timeoutMs: 5000,
       stage: "feature-one",
@@ -33,71 +33,71 @@ test("world arguments expose only script lifecycle flags and forward arguments a
     },
   );
 
-  const foregroundTimeout = parseWorldArgs(["up", "dev-headless", "--timeout", "5000"]);
+  const foregroundTimeout = parseWorldArgs(["up", "dev-app-web", "--timeout", "5000"]);
   assert.equal(foregroundTimeout.kind, "help");
   if (foregroundTimeout.kind !== "help") throw new Error("expected help");
   assert.match(foregroundTimeout.error ?? "", /only with --detach/);
 
-  const oldFlag = parseWorldArgs(["up", "dev-headless", "--keep"]);
+  const oldFlag = parseWorldArgs(["up", "dev-app-web", "--keep"]);
   assert.equal(oldFlag.kind, "help");
   if (oldFlag.kind !== "help") throw new Error("expected help");
   assert.match(oldFlag.error ?? "", /Unknown world CLI option "--keep"/);
 
-  const oldCommand = parseWorldArgs(["resume", "dev-headless"]);
+  const oldCommand = parseWorldArgs(["resume", "dev-app-web"]);
   assert.equal(oldCommand.kind, "help");
   if (oldCommand.kind !== "help") throw new Error("expected help");
   assert.match(oldCommand.error ?? "", /Unknown command "resume"/);
 
-  assert.deepEqual(parseWorldArgs(["plan", "dev-headless", "--stage", "preview"]), {
+  assert.deepEqual(parseWorldArgs(["plan", "dev-app-web", "--stage", "preview"]), {
     kind: "plan",
-    source: "dev-headless",
+    source: "dev-app-web",
     stage: "preview",
   });
-  assert.deepEqual(parseWorldArgs(["down", "dev-headless", "--stage", "preview"]), {
+  assert.deepEqual(parseWorldArgs(["down", "dev-app-web", "--stage", "preview"]), {
     kind: "down",
-    name: "dev-headless",
+    name: "dev-app-web",
     stage: "preview",
   });
-  assert.deepEqual(parseWorldArgs(["down", "dev-headless", "--purge"]), {
+  assert.deepEqual(parseWorldArgs(["down", "dev-app-web", "--purge"]), {
     kind: "down",
-    name: "dev-headless",
+    name: "dev-app-web",
     purge: true,
   });
-  assert.deepEqual(parseWorldArgs(["down", "dev-headless", "--stage", "preview", "--purge"]), {
+  assert.deepEqual(parseWorldArgs(["down", "dev-app-web", "--stage", "preview", "--purge"]), {
     kind: "down",
-    name: "dev-headless",
-    stage: "preview",
-    purge: true,
-  });
-  assert.deepEqual(parseWorldArgs(["down", "dev-headless", "--purge", "--stage", "preview"]), {
-    kind: "down",
-    name: "dev-headless",
+    name: "dev-app-web",
     stage: "preview",
     purge: true,
   });
-  assert.deepEqual(parseWorldArgs(["up", "dev-headless", "--plain"]), {
+  assert.deepEqual(parseWorldArgs(["down", "dev-app-web", "--purge", "--stage", "preview"]), {
+    kind: "down",
+    name: "dev-app-web",
+    stage: "preview",
+    purge: true,
+  });
+  assert.deepEqual(parseWorldArgs(["up", "dev-app-web", "--plain"]), {
     kind: "up",
-    source: "dev-headless",
+    source: "dev-app-web",
     plain: true,
     args: [],
   });
-  assert.deepEqual(parseWorldArgs(["attach", "dev-headless"]), {
+  assert.deepEqual(parseWorldArgs(["attach", "dev-app-web"]), {
     kind: "attach",
-    name: "dev-headless",
+    name: "dev-app-web",
   });
-  assert.deepEqual(parseWorldArgs(["attach", "dev-headless", "--stage", "preview", "--plain"]), {
+  assert.deepEqual(parseWorldArgs(["attach", "dev-app-web", "--stage", "preview", "--plain"]), {
     kind: "attach",
-    name: "dev-headless",
+    name: "dev-app-web",
     stage: "preview",
     plain: true,
   });
-  assert.deepEqual(parseWorldArgs(["outputs", "dev-headless"]), {
+  assert.deepEqual(parseWorldArgs(["outputs", "dev-app-web"]), {
     kind: "outputs",
-    name: "dev-headless",
+    name: "dev-app-web",
   });
-  assert.deepEqual(parseWorldArgs(["outputs", "dev-headless", "--stage", "preview", "--reveal", "--json"]), {
+  assert.deepEqual(parseWorldArgs(["outputs", "dev-app-web", "--stage", "preview", "--reveal", "--json"]), {
     kind: "outputs",
-    name: "dev-headless",
+    name: "dev-app-web",
     stage: "preview",
     reveal: true,
     json: true,
@@ -106,7 +106,7 @@ test("world arguments expose only script lifecycle flags and forward arguments a
   assert.equal(missingOutputsName.kind, "help");
   if (missingOutputsName.kind !== "help") throw new Error("expected help");
   assert.match(missingOutputsName.error ?? "", /needs exactly one world name/);
-  const outputsPurge = parseWorldArgs(["outputs", "dev-headless", "--purge"]);
+  const outputsPurge = parseWorldArgs(["outputs", "dev-app-web", "--purge"]);
   assert.equal(outputsPurge.kind, "help");
   if (outputsPurge.kind !== "help") throw new Error("expected help");
   assert.match(outputsPurge.error ?? "", /Unknown world CLI option "--purge"/);
@@ -115,22 +115,22 @@ test("world arguments expose only script lifecycle flags and forward arguments a
   if (missingAttachName.kind !== "help") throw new Error("expected help");
   assert.match(missingAttachName.error ?? "", /needs exactly one world name/);
 
-  const invalidPlace = parseWorldArgs(["up", "dev-headless", "--place", "remote"]);
+  const invalidPlace = parseWorldArgs(["up", "dev-app-web", "--place", "remote"]);
   assert.equal(invalidPlace.kind, "help");
   if (invalidPlace.kind !== "help") throw new Error("expected help");
-  assert.match(invalidPlace.error ?? "", /local or daytona/);
+  assert.match(invalidPlace.error ?? "", /local, daytona, or freestyle/);
 
-  const emptyStage = parseWorldArgs(["up", "dev-headless", "--stage", "---"]);
+  const emptyStage = parseWorldArgs(["up", "dev-app-web", "--stage", "---"]);
   assert.equal(emptyStage.kind, "help");
   if (emptyStage.kind !== "help") throw new Error("expected help");
   assert.match(emptyStage.error ?? "", /non-empty stage value/);
 
-  const unknownPlanFlag = parseWorldArgs(["plan", "dev-headless", "--detach"]);
+  const unknownPlanFlag = parseWorldArgs(["plan", "dev-app-web", "--detach"]);
   assert.equal(unknownPlanFlag.kind, "help");
   if (unknownPlanFlag.kind !== "help") throw new Error("expected help");
   assert.match(unknownPlanFlag.error ?? "", /Unknown world CLI option "--detach"/);
 
-  for (const args of [["up", "dev-headless", "--purge"], ["plan", "dev-headless", "--purge"]]) {
+  for (const args of [["up", "dev-app-web", "--purge"], ["plan", "dev-app-web", "--purge"]]) {
     const result = parseWorldArgs(args);
     assert.equal(result.kind, "help");
     if (result.kind !== "help") throw new Error("expected help");

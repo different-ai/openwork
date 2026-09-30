@@ -16,6 +16,7 @@ import { getBillingRoute, getCustomLlmProvidersRoute, getOrgAccessFlags } from "
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { getGatewayDashboardAccess } from "../_lib/gateway-dashboard-access";
+import { UsageLimitsCard } from "../_features/analytics/usage-limits-card";
 
 /**
  * Editorial detail per model: what a knowledge worker should reach for it for,
@@ -101,7 +102,7 @@ function ModelsLineup({ subscribed }: { subscribed: boolean }) {
   );
 }
 
-export function InferenceScreen() {
+export function InferenceScreen({ embedded = false }: { embedded?: boolean }) {
   const router = useRouter();
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const dashboard = useOrgDashboard();
@@ -128,10 +129,10 @@ export function InferenceScreen() {
   }
 
   // Do not mount data fetching or management actions until this workspace is verified.
-  return <InferenceContent key={dashboard.orgId} />;
+  return <InferenceContent key={dashboard.orgId} embedded={embedded} />;
 }
 
-function InferenceContent() {
+function InferenceContent({ embedded }: { embedded: boolean }) {
   const router = useRouter();
   const { activeOrg, orgContext, refreshOrgData, runReauthableAction } = useOrgDashboard();
   const [status, setStatus] = useState<InferenceStatus | null>(null);
@@ -255,15 +256,19 @@ function InferenceContent() {
     ? `${memberCount} active member${memberCount === 1 ? "" : "s"}`
     : "billed per active member";
 
+  const description = "Reliable, hand-picked models for knowledge work. No API keys to manage.";
+  const caption = `$10 / user / month · ${memberCaption}`;
+  const action = <DenButton type="button" onClick={subscribed ? toggleEnabled : () => void startSubscribeCheckout()}
+    loading={loading || saving || subscribeBusy} disabled={!canManageModels} variant={enabled ? "secondary" : "primary"}>
+    {actionLabel}
+  </DenButton>;
+
   return (
-    <div className="mx-auto grid w-full max-w-[960px] gap-6 px-4 pb-12 pt-5 sm:px-6 lg:px-8">
-      <DenPageHeader title="OpenWork Models"
-        description="Reliable, hand-picked models for knowledge work. No API keys to manage."
-        caption={`$10 / user / month · ${memberCaption}`}
-        action={<DenButton type="button" onClick={subscribed ? toggleEnabled : () => void startSubscribeCheckout()}
-          loading={loading || saving || subscribeBusy} disabled={!canManageModels} variant={enabled ? "secondary" : "primary"}>
-          {actionLabel}
-        </DenButton>} />
+    <div className={embedded ? "grid gap-6" : "mx-auto grid w-full max-w-[960px] gap-6 px-4 pb-12 pt-5 sm:px-6 lg:px-8"}>
+      {embedded ? <DenSectionHeader title="OpenWork Models"
+        description={<>{description}<span className="block">{caption}</span></>}
+        action={action} /> : <DenPageHeader title="OpenWork Models"
+        description={description} caption={caption} action={action} />}
 
       {error ? <DenNotice message={error} tone="error" /> : null}
 
@@ -277,6 +282,8 @@ function InferenceContent() {
       {showGettingStarted ? <DenCard>
         <p className="text-sm leading-6 text-[#637291]">One subscription activates models for everyone in your workspace. After subscribing, choose a model from the OpenWork group in the app and start a task.</p>
       </DenCard> : null}
+
+      {enabled && status ? <UsageLimitsCard buckets={status.buckets} /> : null}
 
       <ModelsLineup subscribed={subscribed} />
 

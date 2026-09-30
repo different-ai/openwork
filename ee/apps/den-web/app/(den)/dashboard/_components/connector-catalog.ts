@@ -4,6 +4,13 @@ import type { ExternalMcpConnection, ExternalMcpPreset } from "./mcp-connections
 export const GOOGLE_WORKSPACE_QUICK_ADD_ID = "google-workspace";
 export const MICROSOFT_365_QUICK_ADD_ID = "microsoft-365";
 
+export type NativeProviderKey = typeof GOOGLE_WORKSPACE_QUICK_ADD_ID | typeof MICROSOFT_365_QUICK_ADD_ID;
+
+/** Google Workspace and Microsoft 365 set up with an org OAuth app instead of a server address. */
+export function isNativeProviderCatalogId(id: string): id is NativeProviderKey {
+  return id === GOOGLE_WORKSPACE_QUICK_ADD_ID || id === MICROSOFT_365_QUICK_ADD_ID;
+}
+
 /**
  * Where a popular connector row lands when someone adds it. Gmail, Drive, and
  * Calendar are one Google Workspace connection in Den; Outlook is Microsoft

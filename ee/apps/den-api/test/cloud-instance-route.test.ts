@@ -58,11 +58,30 @@ function seedRequiredEnv() {
 }
 
 let routes: typeof import("../src/routes/cloud/index.js")
+let runtimeAccess: typeof import("../src/workers/worker-access.js")
+type CloudWorkerActivity = import("../src/workers/cloud-activity.js").CloudWorkerActivity
 
 beforeAll(async () => {
   seedRequiredEnv()
-  routes = await import("../src/routes/cloud/index.js")
+  ;[routes, runtimeAccess] = await Promise.all([
+    import("../src/routes/cloud/index.js"),
+    import("../src/workers/worker-access.js"),
+  ])
 })
+
+function idleActivity(): CloudWorkerActivity {
+  return { verdict: "idle", reason: "idle", alive: true, busySessions: 0, waitingRequests: 0, connectedClients: 0 }
+}
+
+// The current Web shell tells Den it understands a deferred update. Requests
+// without this body stand in for shells published before deferrals existed.
+function deferralAwareUpdateRequest(): RequestInit {
+  return {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ acceptsDeferral: true }),
+  }
+}
 
 function organizationContext(metadata: string | null, input: {
   orgId?: OrganizationContext["organization"]["id"]
@@ -1055,14 +1074,15 @@ describe("Cloud instance update route", () => {
     expect(stopCalls).toBe(0)
   })
 
-  test("flushes and stops a running stale sandbox", async () => {
+  test("flushes and stops a running stale sandbox once the instance says it is idle", async () => {
     const orgId = createDenTypeId("organization")
     const userId = createDenTypeId("user")
     const worker = { ...storedWorker({ orgId, userId, status: "healthy" }), image_version: "openwork-0.18.7" }
-    const store = makeCloudWorkerStore({ initialWorkers: [worker] })
+    const store = makeCloudWorkerStore({ initialWorkers: [worker], tokens: [makeToken(worker.id, "host")] })
     const app = new Hono<{ Variables: OrgRouteVariables }>()
     const flushCalls: StoredCloudWorker["id"][] = []
     const stopCalls: StoredCloudWorker["id"][] = []
+    const probes: Array<{ instanceUrl: string; hostToken: string }> = []
 
     routes.registerCloudRoutes(app, {
       memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }), { orgId, userId })),
@@ -1072,6 +1092,11 @@ describe("Cloud instance update route", () => {
       cloudWorkerStore: store.store,
       getSandboxRecord: async () => fakeSandbox(),
       inspectSandbox: async () => ({ state: "running" }),
+      hasActiveAutomationRun: async () => false,
+      probeActivity: async (input) => {
+        probes.push(input)
+        return idleActivity()
+      },
       flushWorkerCheckpoint: async (workerId) => {
         flushCalls.push(workerId)
         return true
@@ -1085,8 +1110,137 @@ describe("Cloud instance update route", () => {
 
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({ ok: true, status: "update_requested" })
+    expect(probes).toEqual([{ instanceUrl: "https://preview.example.test", hostToken: "host-token" }])
     expect(flushCalls).toEqual([worker.id])
     expect(stopCalls).toEqual([worker.id])
+  })
+
+  test("defers an update while the instance is busy, waiting on a person, or running an Automation", async () => {
+    const orgId = createDenTypeId("organization")
+    const userId = createDenTypeId("user")
+    const cases: Array<{
+      name: string
+      activity: CloudWorkerActivity
+      automationRun: boolean
+    }> = [
+      { name: "run in progress", activity: { ...idleActivity(), verdict: "busy", reason: "busy_sessions", busySessions: 1 }, automationRun: false },
+      { name: "permission waiting", activity: { ...idleActivity(), verdict: "busy", reason: "waiting_requests", waitingRequests: 1 }, automationRun: false },
+      { name: "automation run", activity: idleActivity(), automationRun: true },
+    ]
+    for (const entry of cases) {
+      const worker = { ...storedWorker({ orgId, userId, status: "healthy" }), image_version: "openwork-0.18.7" }
+      const store = makeCloudWorkerStore({ initialWorkers: [worker], tokens: [makeToken(worker.id, "host")] })
+      const app = new Hono<{ Variables: OrgRouteVariables }>()
+      let flushCalls = 0
+      let stopCalls = 0
+      routes.registerCloudRoutes(app, {
+        memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }), { orgId, userId })),
+        orgMode: "multi_org",
+        provisionerMode: "daytona",
+        daytonaApiKey: "daytona-test-key",
+        cloudWorkerStore: store.store,
+        getSandboxRecord: async () => fakeSandbox(),
+        inspectSandbox: async () => ({ state: "running" }),
+        hasActiveAutomationRun: async () => entry.automationRun,
+        probeActivity: async () => entry.activity,
+        flushWorkerCheckpoint: async () => {
+          flushCalls += 1
+          return true
+        },
+        stopCloudWorker: async () => {
+          stopCalls += 1
+        },
+      })
+
+      const response = await app.request("http://den.local/v1/cloud/instance/update", deferralAwareUpdateRequest())
+
+      expect(response.status, entry.name).toBe(200)
+      await expect(response.json(), entry.name).resolves.toEqual({ ok: false, error: "busy" })
+      expect(flushCalls, entry.name).toBe(0)
+      expect(stopCalls, entry.name).toBe(0)
+      expect(worker.status, entry.name).toBe("healthy")
+    }
+  })
+
+  test("defers an update it cannot verify and keeps updating instances that predate the activity route", async () => {
+    const orgId = createDenTypeId("organization")
+    const userId = createDenTypeId("user")
+    const cases: Array<{ activity: CloudWorkerActivity; expected: unknown; stops: number }> = [
+      { activity: { ...idleActivity(), verdict: "unknown", reason: "probe_failed", alive: false }, expected: { ok: false, error: "activity_unknown" }, stops: 0 },
+      { activity: { ...idleActivity(), verdict: "unknown", reason: "route_unsupported" }, expected: { ok: true, status: "update_requested" }, stops: 1 },
+    ]
+    for (const entry of cases) {
+      const worker = { ...storedWorker({ orgId, userId, status: "healthy" }), image_version: "openwork-0.18.7" }
+      const store = makeCloudWorkerStore({ initialWorkers: [worker], tokens: [makeToken(worker.id, "host")] })
+      const app = new Hono<{ Variables: OrgRouteVariables }>()
+      let stopCalls = 0
+      routes.registerCloudRoutes(app, {
+        memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }), { orgId, userId })),
+        orgMode: "multi_org",
+        provisionerMode: "daytona",
+        daytonaApiKey: "daytona-test-key",
+        cloudWorkerStore: store.store,
+        getSandboxRecord: async () => fakeSandbox(),
+        inspectSandbox: async () => ({ state: "running" }),
+        hasActiveAutomationRun: async () => false,
+        probeActivity: async () => entry.activity,
+        flushWorkerCheckpoint: async () => true,
+        stopCloudWorker: async () => {
+          stopCalls += 1
+        },
+      })
+
+      const response = await app.request("http://den.local/v1/cloud/instance/update", deferralAwareUpdateRequest())
+
+      expect(response.status).toBe(200)
+      await expect(response.json()).resolves.toEqual(entry.expected)
+      expect(stopCalls).toBe(entry.stops)
+    }
+  })
+
+  test("answers a shell without deferral support inside its older contract and still leaves the sandbox running", async () => {
+    const orgId = createDenTypeId("organization")
+    const userId = createDenTypeId("user")
+    const cases: Array<{ name: string; activity: CloudWorkerActivity; request: RequestInit }> = [
+      { name: "busy, no body", activity: { ...idleActivity(), verdict: "busy", reason: "busy_sessions", busySessions: 1 }, request: { method: "POST" } },
+      { name: "busy, empty body", activity: { ...idleActivity(), verdict: "busy", reason: "busy_sessions", busySessions: 1 }, request: { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" } },
+      { name: "unknown, no body", activity: { ...idleActivity(), verdict: "unknown", reason: "probe_failed", alive: false }, request: { method: "POST" } },
+    ]
+    for (const entry of cases) {
+      const worker = { ...storedWorker({ orgId, userId, status: "healthy" }), image_version: "openwork-0.18.7" }
+      const store = makeCloudWorkerStore({ initialWorkers: [worker], tokens: [makeToken(worker.id, "host")] })
+      const app = new Hono<{ Variables: OrgRouteVariables }>()
+      let flushCalls = 0
+      let stopCalls = 0
+      routes.registerCloudRoutes(app, {
+        memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }), { orgId, userId })),
+        orgMode: "multi_org",
+        provisionerMode: "daytona",
+        daytonaApiKey: "daytona-test-key",
+        cloudWorkerStore: store.store,
+        getSandboxRecord: async () => fakeSandbox(),
+        inspectSandbox: async () => ({ state: "running" }),
+        hasActiveAutomationRun: async () => false,
+        probeActivity: async () => entry.activity,
+        flushWorkerCheckpoint: async () => {
+          flushCalls += 1
+          return true
+        },
+        stopCloudWorker: async () => {
+          stopCalls += 1
+        },
+      })
+
+      const response = await app.request("http://den.local/v1/cloud/instance/update", entry.request)
+
+      expect(response.status, entry.name).toBe(200)
+      // Shells published before deferrals only parse already_current and flush_failed;
+      // already_current keeps the update pending without showing them a failure.
+      await expect(response.json(), entry.name).resolves.toEqual({ ok: false, error: "already_current" })
+      expect(flushCalls, entry.name).toBe(0)
+      expect(stopCalls, entry.name).toBe(0)
+      expect(worker.status, entry.name).toBe("healthy")
+    }
   })
 
   test("no-ops for a stopped stale sandbox", async () => {
@@ -1161,7 +1315,7 @@ describe("Cloud instance update route", () => {
     const orgId = createDenTypeId("organization")
     const userId = createDenTypeId("user")
     const worker = { ...storedWorker({ orgId, userId, status: "healthy" }), image_version: "openwork-0.18.7" }
-    const store = makeCloudWorkerStore({ initialWorkers: [worker] })
+    const store = makeCloudWorkerStore({ initialWorkers: [worker], tokens: [makeToken(worker.id, "host")] })
     const app = new Hono<{ Variables: OrgRouteVariables }>()
     let stopCalls = 0
 
@@ -1173,6 +1327,8 @@ describe("Cloud instance update route", () => {
       cloudWorkerStore: store.store,
       getSandboxRecord: async () => fakeSandbox(),
       inspectSandbox: async () => ({ state: "running" }),
+      hasActiveAutomationRun: async () => false,
+      probeActivity: async () => idleActivity(),
       flushWorkerCheckpoint: async () => false,
       stopCloudWorker: async () => {
         stopCalls += 1
@@ -1607,7 +1763,8 @@ describe("Cloud instance ready liveness", () => {
     expect(store.recycleClaimAttempts).toBe(1)
   })
 
-  test("persists a same-poll diagnostic before recovering an unreachable running sandbox", async () => {
+  test("restarts a silent running sandbox only after the grace window, persisting the diagnostic in that poll", async () => {
+    runtimeAccess.resetCloudRuntimeUnreachableWindows()
     const context = organizationContext(JSON.stringify({ capabilities: { cloud: true } }))
     const worker = storedWorker({
       orgId: context.organization.id,
@@ -1620,6 +1777,9 @@ describe("Cloud instance ready liveness", () => {
     })
     const app = new Hono<{ Variables: OrgRouteVariables }>()
     let recoveryCalls = 0
+    let activityProbes = 0
+    let now = Date.now()
+    const sandbox = { endpointUrl: "https://preview.example.test", endpointExpiresAt: new Date(now + 3_600_000) }
 
     routes.registerCloudRoutes(app, {
       memberRoute: contextMiddleware(context),
@@ -1628,19 +1788,36 @@ describe("Cloud instance ready liveness", () => {
       daytonaApiKey: "daytona-test-key",
       ensureCloudWorker: async () => worker,
       cloudWorkerStore: store.store,
-      getSandboxRecord: async () => fakeSandbox(),
+      getSandboxRecord: async () => sandbox,
       refreshSignedPreview: async () => null,
       probeSignedPreview: async () => false,
+      probeActivity: async () => {
+        activityProbes += 1
+        return { ...idleActivity(), verdict: "unknown", reason: "probe_failed", alive: false }
+      },
       inspectSandbox: async () => null,
+      now: () => now,
+      unreachableGraceMs: 60_000,
+      unreachableMisses: 3,
       recoverCloudWorker: async () => {
         recoveryCalls += 1
       },
     })
+    const poll = () => app.request("http://den.local/v1/cloud/instance").then((response) => response.json())
 
-    const response = await app.request("http://den.local/v1/cloud/instance")
+    // Two silent polls inside the window keep the last endpoint and change nothing durable.
+    for (const elapsedMs of [0, 20_000]) {
+      now += elapsedMs
+      await expect(poll()).resolves.toEqual(expectedCloudInstance({ status: "ready", url: "https://preview.example.test" }))
+    }
+    expect(store.healthyFailures).toBe(0)
+    expect(store.claimAttempts).toBe(0)
+    expect(recoveryCalls).toBe(0)
+    expect(activityProbes).toBe(2)
 
-    expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toEqual({
+    // Still silent after the window: now it is dead, recover it.
+    now += 45_000
+    await expect(poll()).resolves.toEqual({
       ...expectedCloudInstance({ status: "waking", url: null }),
       failure: {
         code: "runtime_unreachable",
@@ -1653,6 +1830,60 @@ describe("Cloud instance ready liveness", () => {
     expect(store.healthyFailures).toBe(1)
     expect(store.claimAttempts).toBe(1)
     expect(recoveryCalls).toBe(1)
+  })
+
+  test("keeps a running sandbox that answers an authenticated probe ready even when its health probe is slow", async () => {
+    runtimeAccess.resetCloudRuntimeUnreachableWindows()
+    const context = organizationContext(JSON.stringify({ capabilities: { cloud: true } }))
+    const worker = storedWorker({
+      orgId: context.organization.id,
+      userId: context.currentMember.userId,
+      status: "healthy",
+    })
+    const store = makeCloudWorkerStore({
+      initialWorkers: [worker],
+      tokens: [makeToken(worker.id, "host"), makeToken(worker.id, "client"), makeToken(worker.id, "activity")],
+    })
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    let recoveryCalls = 0
+    let healthProbes = 0
+    let now = Date.now()
+    const sandbox = { endpointUrl: "https://preview.example.test", endpointExpiresAt: new Date(now + 3_600_000) }
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(context),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      ensureCloudWorker: async () => worker,
+      cloudWorkerStore: store.store,
+      getSandboxRecord: async () => sandbox,
+      refreshSignedPreview: async () => null,
+      probeSignedPreview: async () => {
+        healthProbes += 1
+        return false
+      },
+      probeActivity: async () => ({ ...idleActivity(), verdict: "busy", reason: "busy_sessions", busySessions: 1 }),
+      inspectSandbox: async () => ({ state: "running" }),
+      now: () => now,
+      unreachableGraceMs: 0,
+      unreachableMisses: 1,
+      recoverCloudWorker: async () => {
+        recoveryCalls += 1
+      },
+    })
+    const poll = () => app.request("http://den.local/v1/cloud/instance").then((response) => response.json())
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      now += 120_000
+      await expect(poll()).resolves.toEqual(expectedCloudInstance({ status: "ready", url: "https://preview.example.test" }))
+    }
+    await flushMicrotasks()
+    expect(healthProbes).toBe(3)
+    expect(store.healthyFailures).toBe(0)
+    expect(store.claimAttempts).toBe(0)
+    expect(recoveryCalls).toBe(0)
+    expect(worker.status).toBe("healthy")
   })
 
   test("caches healthy preview probes for 15 seconds", async () => {

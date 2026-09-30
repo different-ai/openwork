@@ -1,6 +1,7 @@
 import { and, eq, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
 import { InvitationTable, MemberTable, OrganizationTable, ScimGroupMemberTable, ScimGroupTable, ScimProviderTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { db } from "./db.js"
+import { withGatewayUsageEntitlementMutation } from "@openwork-ee/den-db/gateway-usage-limits"
 import { organizationRoleValueSatisfies } from "./organization-role-hierarchy.js"
 
 export type OrganizationAdminTeam = { id: string; name: string }
@@ -18,6 +19,16 @@ export function withOrganizationTeamMutation<T>(
       .where(eq(OrganizationTable.id, organizationId)).for("update")
     return mutation(tx)
   })
+}
+
+export function withOrganizationMembershipUsageMutation<T>(
+  organizationId: typeof TeamTable.$inferSelect.organizationId,
+  mutation: (tx: TeamMutationTransaction) => Promise<T>,
+  memberIds: typeof MemberTable.$inferSelect.id[] | ((tx: TeamMutationTransaction) => Promise<typeof MemberTable.$inferSelect.id[]>),
+) {
+  return withOrganizationTeamMutation(organizationId, async (tx) =>
+    withGatewayUsageEntitlementMutation(tx, organizationId, () => mutation(tx), typeof memberIds === "function" ? await memberIds(tx) : memberIds),
+  )
 }
 
 export function effectiveOrganizationRole(directRole: string, adminTeams: readonly OrganizationAdminTeam[]) {
@@ -39,8 +50,8 @@ export async function invitationHasAdminTeam(tx: TeamMutationTransaction, invita
 }
 
 // Never cache authority: IdP removals and designation changes apply on the next check.
-export async function listOrganizationAdminTeamGrants(organizationId: typeof TeamTable.$inferSelect.organizationId) {
-  return db.select({ memberId: MemberTable.id, id: TeamTable.id, name: TeamTable.name })
+export async function listOrganizationAdminTeamGrants(organizationId: typeof TeamTable.$inferSelect.organizationId, database: typeof db | TeamMutationTransaction = db) {
+  return database.select({ memberId: MemberTable.id, id: TeamTable.id, name: TeamTable.name })
     .from(TeamTable)
     .innerJoin(TeamMemberTable, eq(TeamMemberTable.teamId, TeamTable.id))
     .innerJoin(MemberTable, and(

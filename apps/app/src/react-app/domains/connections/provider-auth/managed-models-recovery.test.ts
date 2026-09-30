@@ -150,7 +150,7 @@ describe("managed model recovery", () => {
       "preselectEntitledOrgDefaultModel(providerList)",
     )).toBe(true);
     expect(providerAuthStoreSource.includes(
-      "await refreshProvidersAfterCloudSync({ force: true });",
+      "await refreshProvidersAfterCloudSync({ force: true }, isCurrent);",
     )).toBe(true);
   });
 });

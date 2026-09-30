@@ -85,6 +85,29 @@ describe("first-line local file parts", () => {
 
     expect(parts.map((part) => part.filename)).toEqual(["notes.md", "shot.PNG", "paper.pdf", "Makefile"]);
   });
+
+  test("leaves paths containing spaces as text instead of attaching a truncated prefix", () => {
+    // Detection stops at whitespace; attaching "/Applications/Open" made Read
+    // fail with "File not found" before the turn started.
+    for (const prompt of [
+      "/Applications/Open Coworker.app",
+      "open /Applications/Visual Studio Code.app please",
+      "summarize ~/Documents/Q3 report.md",
+      "read /Users/ben/v1.2 notes.md",
+      "read /Users/ben/My\\ Notes/todo.md",
+    ]) {
+      expect(firstLineLocalFileParts(prompt, "/Users/ben/code")).toEqual([]);
+    }
+  });
+
+  test("still attaches complete paths followed by ordinary words or other paths", () => {
+    const parts = firstLineLocalFileParts(
+      "check /Users/ben/notes.md and /Users/ben/todo.txt, then /Users/ben/Makefile",
+      "/Users/ben/code",
+    );
+
+    expect(parts.map((part) => part.filename)).toEqual(["notes.md", "todo.txt", "Makefile"]);
+  });
 });
 
 describe("read-inlineable paths", () => {
@@ -248,9 +271,10 @@ describe("computer task mentions", () => {
 describe("generated mention instructions", () => {
   const connected = { type: "connect-skill", slug: "summarize", name: "Summarize", marketplace: "Team tools", capability: "skill:summarize" } satisfies ComposerPart;
   const cases: { part: ComposerPart; token: string; label: string; instruction: string }[] = [
-    { part: { type: "app", name: "Notes" }, token: "@Notes", label: "@Notes", instruction: "computer-use tools" },
+    { part: { type: "app", name: "Notes" }, token: "@Notes", label: "@Notes", instruction: "computer_discover" },
     { part: { type: "skill", name: "summarize" }, token: "[skill summarize]", label: "[skill summarize]", instruction: "follow its instructions" },
     { part: connected, token: encodeConnectSkillToken(connected), label: "/summarize", instruction: "skill:summarize" },
+    { part: { type: "connector", name: "GitHub" }, token: "[connector GitHub]", label: "[connector GitHub]", instruction: "\"GitHub\" connector" },
   ];
   for (const { part, token, label, instruction } of cases) {
     test(`${part.type} preserves its label and hides instructions in both send branches`, async () => {
@@ -263,7 +287,7 @@ describe("generated mention instructions", () => {
           .map((part) => part.type === "text" ? part.text : "").join(""))
           .toBe(`${label} Please summarize. `);
         expect(parts.filter((part) => part.type === "text" && part.synthetic)).toEqual([
-          { type: "text", synthetic: true, text: expect.stringContaining(instruction) },
+          expect.objectContaining({ type: "text", synthetic: true, text: expect.stringContaining(instruction) }),
         ]);
       }
     });

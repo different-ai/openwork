@@ -1,20 +1,7 @@
 name: Den DB Check
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/den-db-check.yml"
-      - ".github/workflows/den-db-migrate.yml"
-      - ".github/workflows/publish-ee-images.yml"
-      - "ee/apps/den-api/package.json"
-      - "ee/apps/den-api/scripts/build.mjs"
-      - "ee/apps/den-api/src/automations/**"
-      - "ee/apps/den-api/src/routes/automations/**"
-      - "ee/packages/den-db/**"
-      - "packages/automations/**"
-      - "packaging/docker/Dockerfile.den"
-      - "packaging/helm/openwork-ee/values.yaml"
-      - "packaging/helm/openwork-ee/templates/migration-job.yaml"
+  workflow_dispatch:
 
 permissions:
   contents: read

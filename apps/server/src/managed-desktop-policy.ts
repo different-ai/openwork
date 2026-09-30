@@ -1,15 +1,18 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { desktopConfigSchema, type DesktopConfig } from "@openwork/types/den/desktop-policies-runtime";
+import { DESKTOP_POLICY_ENFORCEMENT_ENABLED, desktopConfigSchema, type DesktopConfig } from "@openwork/types/den/desktop-policies-runtime";
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
 import type { ServerConfig } from "./types.js";
 import { isRecord } from "./workspace-kv-store.js";
 import { externalFetch } from "./server-fetch.js";
 import { ApiError } from "./errors.js";
-import { readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProviderMap } from "./runtime-opencode-config-store.js";
+import { clearManagedDesktopPolicy, readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProviderMap } from "./runtime-opencode-config-store.js";
 import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./managed-policy-rules.js";
 
 const services = new WeakMap<ServerConfig, ManagedDesktopPolicy>();
+/** Org-managed providers: Den-imported (lpr_), Gateway (ipr_) and hosted OpenWork Models. */
+const MANAGED_PROVIDER = /^(?:lpr_|ipr_)|^openwork$/i;
+function sessionKey(session: CloudProviderDenSession) { return `${session.baseUrl}\n${session.orgId}`; }
 // The first cold read previously had 10s; keep two reads under the 15s plugin budget and one read under the 10s session-install budget.
 const DEN_READ_DEADLINE_MS = 6_000;
 const DEN_READ_ATTEMPT_TIMEOUT_MS = 3_500;
@@ -64,7 +67,10 @@ class ManagedDesktopPolicy {
   readonly evaluationToken = randomBytes(32).toString("base64url");
   private session: CloudProviderDenSession | null = null;
   private generation = 0;
+  private installed: { generation: number; policy: DesktopConfig | null } | undefined;
   private fetching: { generation: number; promise: Promise<DesktopConfig | null> } | undefined;
+  /** The last policy verified for this sign-in, used while a fresh read is in flight or Den is unreachable. */
+  private lastKnown: { key: string; policy: DesktopConfig } | undefined;
   onChange: (() => void) | undefined;
   constructor(private readonly config: ServerConfig) {}
   authenticatesEvaluation(request: Request): boolean {
@@ -80,14 +86,20 @@ class ManagedDesktopPolicy {
     const current = this.session;
     if (!current || current.baseUrl !== session.baseUrl || current.token !== session.token || current.orgId !== session.orgId) {
       this.generation++;
+      this.installed = undefined;
     }
     this.session = session;
-    await this.current();
+    // Installing an identity never waits on Den while only model access is enforced.
+    if (DESKTOP_POLICY_ENFORCEMENT_ENABLED) await this.current();
+    else void this.current().catch(() => undefined);
   }
   async clearSession(): Promise<void> {
     this.session = null;
     this.generation++;
-    // Keep the last managed restrictions until a fresh identity is verified.
+    this.installed = undefined;
+    this.lastKnown = undefined;
+    const cleared = await clearManagedDesktopPolicy(this.config);
+    if (cleared.changed) this.onChange?.();
   }
   current(): Promise<DesktopConfig | null> {
     if (this.fetching?.generation === this.generation) return this.fetching.promise;
@@ -151,34 +163,60 @@ class ManagedDesktopPolicy {
   }
   private async fetchCurrent(): Promise<DesktopConfig | null> {
     const session = this.session;
+    const generation = this.generation;
     if (!session) {
-      const persisted = await readGlobalRuntimeOpencodeConfig(this.config);
-      if (persisted.managedPolicy) throw new ApiError(403, "policy_unavailable", "Sign in to verify your organization's policy before continuing.");
+      await readGlobalRuntimeOpencodeConfig(this.config);
+      // A local-only read cannot grant access after a managed identity arrives.
+      this.identityChanged(generation);
+      // A cached policy is not device enrollment: enforcement follows the session.
       return null;
     }
-    const generation = this.generation;
     let policy: DesktopConfig;
     try {
       policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation));
     } catch (error) {
       if (error instanceof ApiError && error.code === "policy_identity_changed") throw error;
+      if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) {
+        // Never block on Den: keep the last policy verified for this sign-in, or none.
+        console.warn("[openwork:model-access] Den unreachable; using the last known model access");
+        return this.lastKnown?.key === sessionKey(session) ? this.lastKnown.policy : null;
+      }
       throw new ApiError(403, "policy_unavailable", "Your organization's policy could not be verified. Try again when connected.");
     }
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
-    const result = await writeManagedDesktopPolicy(this.config, policy);
+    // While only model access is enforced, cache a policy only when it restricts models, so
+    // organizations without it keep exactly the engine config and reload behaviour they had.
+    const restrictsModelAccess = policy.allowCustomProviders === false;
+    const result = DESKTOP_POLICY_ENFORCEMENT_ENABLED || restrictsModelAccess
+      ? await writeManagedDesktopPolicy(this.config, policy)
+      : await clearManagedDesktopPolicy(this.config);
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
+    this.installed = { generation, policy };
+    this.lastKnown = { key: sessionKey(session), policy };
     if (result.changed) this.onChange?.();
     return policy;
   }
   async assertRequest(request: Request, path: string, engine = false): Promise<void> {
+    if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) return this.assertProviderUse(request, path, engine);
+    const generation = this.generation;
+    try { await this.assertInstalledRequest(request, path, engine, generation); }
+    finally { this.identityChanged(generation); }
+  }
+  private async assertInstalledRequest(request: Request, path: string, engine: boolean, generation: number): Promise<void> {
+    const assert = async (action: ManagedPolicyAction, input: Record<string, unknown> = {}) => {
+      this.identityChanged(generation);
+      try { await this.assert(action, input); }
+      finally { this.identityChanged(generation); }
+    };
     const decoded = decodeURIComponent(path);
     const terminal = engine && /\/(?:shell|pty|persistent-pty|terminal)(?:\/|$)/.test(decoded);
     if (["GET", "HEAD", "OPTIONS"].includes(request.method) && !terminal) return;
     if (!engine) {
-      for (const action of policyRequestActions(request.method, decoded)) await this.assert(action);
+      for (const action of policyRequestActions(request.method, decoded)) await assert(action);
       if (/\/files\/(?:raw|content|sessions\/[^/]+\/ops)$/.test(decoded)) {
         const body: unknown = await request.clone().json();
-        if (typeof body === "object" && body !== null) await this.assert("file_write", Object.fromEntries(Object.entries(body)));
+        this.identityChanged(generation);
+        if (typeof body === "object" && body !== null) await assert("file_write", Object.fromEntries(Object.entries(body)));
       }
       return;
     }
@@ -188,6 +226,7 @@ class ManagedDesktopPolicy {
       // The HTTP adapter exposes a stream even for a bodyless POST (session
       // creation and instance disposal both use one in the legacy engine).
       const text = await request.clone().text();
+      this.identityChanged(generation);
       if (text.trim()) {
         let value: unknown;
         try { value = JSON.parse(text); }
@@ -195,33 +234,81 @@ class ManagedDesktopPolicy {
         if (typeof value === "object" && value !== null && !Array.isArray(value)) input = Object.fromEntries(Object.entries(value));
       }
     }
-    await this.assert("sync");
-    if (terminal) await this.assert(/\/shell(?:\/|$)/.test(decoded) ? "shell" : "terminal", input);
+    await assert("sync");
+    if (terminal) await assert(/\/shell(?:\/|$)/.test(decoded) ? "shell" : "terminal", input);
     // Command templates can run shell substitutions before tool hooks fire.
-    if (/\/session\/[^/]+\/command(?:\/|$)/.test(enginePath)) await this.assert("saved_command");
-    if (/^\/(?:config|global\/config)(?:\/|$)/.test(enginePath)) await this.assert("engine_config");
-    if (/^\/(?:mcp|plugins?|skills?|agents?)(?:\/|$)/.test(enginePath)) await this.assert("extensions");
+    if (/\/session\/[^/]+\/command(?:\/|$)/.test(enginePath)) await assert("saved_command");
+    if (/^\/(?:config|global\/config)(?:\/|$)/.test(enginePath)) await assert("engine_config");
+    if (/^\/(?:mcp|plugins?|skills?|agents?)(?:\/|$)/.test(enginePath)) await assert("extensions");
     if (/^\/(?:auth|providers?)(?:\/|$)/.test(enginePath)) {
       const providerID = enginePath.match(/^\/auth\/([^/]+)(?:\/|$)/)?.[1]
         ?? enginePath.match(/^\/provider\/([^/]+)\/oauth\/(?:authorize|callback)$/)?.[1];
-      await this.assert("provider", providerID ? { providerID } : {});
+      await assert("provider", providerID ? { providerID } : {});
     }
     const model = typeof input.model === "object" && input.model !== null ? Object.fromEntries(Object.entries(input.model)) : input;
-    if ("providerID" in model) await this.assert("model", model);
+    if ("providerID" in model) await assert("model", model);
+  }
+  /**
+   * While the rest of desktop policy is suspended, only model access (the AI Gateway's "Who can use models") is enforced, on the two engine
+   * requests that can reach a personal provider: signing in to one and sending with one of its models. Bodies that
+   * are not JSON are left alone, and nothing here waits on Den.
+   */
+  private async assertProviderUse(request: Request, path: string, engine: boolean): Promise<void> {
+    if (!engine || ["GET", "HEAD", "OPTIONS"].includes(request.method)) return;
+    // Without a known restrictive policy there is nothing to check, so sends are never read or delayed.
+    const policy = this.knownPolicy();
+    if (policy?.allowCustomProviders !== false) return;
+    const enginePath = decodeURIComponent(path).replace(/^\/opencode2?/, "").replace(/^\/api/, "");
+    const providerID = enginePath.match(/^\/auth\/([^/]+)(?:\/|$)/)?.[1]
+      ?? enginePath.match(/^\/provider\/([^/]+)\/oauth\/(?:authorize|callback)$/)?.[1];
+    if (providerID) return this.assert("provider", { providerID });
+    if (!request.body || !/^\/session(?:\/|$)/.test(enginePath)) return;
+    let body: unknown;
+    try { body = JSON.parse(await request.clone().text()); } catch { return; }
+    if (!isRecord(body)) return;
+    const model = isRecord(body.model) ? body.model : body;
+    if (typeof model.providerID === "string") await this.assert("model", { providerID: model.providerID });
+  }
+  /** The policy to enforce now: verified for this sign-in, else the last one verified for it; never waits on Den. */
+  private knownPolicy(): DesktopConfig | null {
+    const session = this.session;
+    if (!session) return null;
+    if (this.installed?.generation === this.generation) return this.installed.policy;
+    if (!this.fetching) void this.current().catch(() => undefined);
+    return this.lastKnown?.key === sessionKey(session) ? this.lastKnown.policy : null;
+  }
+  private assertModelAccess(action: ManagedPolicyAction, input: Record<string, unknown>): void {
+    if (action !== "provider" && action !== "model") return;
+    const policy = this.knownPolicy();
+    if (policy?.allowCustomProviders !== false) return;
+    const ids = Array.isArray(input.providerIDs) ? input.providerIDs.filter((id): id is string => typeof id === "string")
+      : typeof input.providerID === "string" ? [input.providerID] : [];
+    for (const id of ids) {
+      // OpenCode Zen is not part of model access; it stays as it is today.
+      if (id.toLowerCase() === "opencode") continue;
+      if (!MANAGED_PROVIDER.test(id)) {
+        throw action === "model"
+          ? new ApiError(403, "organization_model_denied", "Choose an AI model assigned by your organization.")
+          : new ApiError(403, "organization_policy_denied", "Your organization only allows its assigned AI providers.");
+      }
+    }
   }
   async assert(action: ManagedPolicyAction, input: Record<string, unknown> = {}): Promise<void> {
-    const policy = await this.current();
+    if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) return this.assertModelAccess(action, input);
+    const generation = this.generation;
+    const policy = await this.installedPolicy(generation);
+    this.identityChanged(generation);
     if (!policy) return;
     const denial = policyDenial(policy, action, input);
     if (denial) throw new ApiError(403, "organization_policy_denied", denial);
     if (action === "model" && policy.allowCustomProviders === false && input.providerID !== "opencode") {
       const runtime = await readGlobalRuntimeOpencodeConfig(this.config);
+      this.identityChanged(generation);
       const providerID = typeof input.providerID === "string" ? input.providerID : "";
       const modelID = typeof input.id === "string" ? input.id : typeof input.modelID === "string" ? input.modelID : "";
       const provider = runtimeProviderMap(runtime)[providerID];
       const models = provider?.models;
       const session = this.session;
-      const generation = this.generation;
       if (!session) throw new ApiError(403, "policy_unavailable", "Sign in to verify assigned models.");
       let assigned = false;
       try {
@@ -251,5 +338,13 @@ class ManagedDesktopPolicy {
         throw new ApiError(403, "organization_model_denied", "Choose an AI model assigned by your organization.");
       }
     }
+  }
+  private async installedPolicy(generation: number): Promise<DesktopConfig | null> {
+    if (this.installed?.generation === generation) return this.installed.policy;
+    if (this.session) throw new ApiError(403, "policy_unavailable", "Your organization's policy could not be verified. Try again when connected.");
+    const persisted = await readGlobalRuntimeOpencodeConfig(this.config);
+    this.identityChanged(generation);
+    if (persisted.managedPolicy) throw new ApiError(403, "policy_unavailable", "Sign in to verify your organization's policy before continuing.");
+    return null;
   }
 }

@@ -216,6 +216,36 @@ describe("workspace run mode API", () => {
     const { put } = await startModeServer({ engine: false });
     expect(await (await put("approve")).json()).toMatchObject({ mode: "approve", changed: true, refresh: "deferred" });
   });
+});
+
+describe("runtime activity for the owning host", () => {
+  test("answers only the host token with busy, waiting, unknown, and idle verdicts", async () => {
+    const { origin, engineState } = await startModeServer();
+    const activity = () => fetch(`${origin}/runtime/activity`, { headers: hostHeaders });
+    expect((await fetch(`${origin}/runtime/activity`)).status).toBe(401);
+    expect((await fetch(`${origin}/runtime/activity`, { headers })).status).toBe(401);
+    const idle = await activity();
+    expect(idle.headers.get("cache-control")).toBe("no-store");
+    expect(await idle.json()).toMatchObject({ ok: true, verdict: "idle", busySessions: 0, waitingRequests: 0, connectedClients: 0, workspaces: 1 });
+
+    engineState.statuses = { current: { type: "idle" }, other: { type: "busy" }, child: { type: "retry", attempt: 1 } };
+    expect(await (await activity()).json()).toMatchObject({ verdict: "busy", busySessions: 2, waitingRequests: 0 });
+
+    engineState.statuses = {};
+    engineState.questions = [{ id: "question_1", sessionID: "other" }];
+    expect(await (await activity()).json()).toMatchObject({ verdict: "busy", busySessions: 0, waitingRequests: 1 });
+
+    // A definite busy answer stays busy even when another probe fails.
+    engineState.statusCode = 503;
+    expect(await (await activity()).json()).toMatchObject({ verdict: "busy", waitingRequests: 1 });
+
+    engineState.questions = [];
+    expect(await (await activity()).json()).toMatchObject({ verdict: "unknown", busySessions: 0, waitingRequests: 0 });
+    engineState.statusCode = 200;
+    engineState.statuses = [];
+    expect(await (await activity()).json()).toMatchObject({ verdict: "unknown" });
+    expect(engineState.probes.every((directory) => typeof directory === "string")).toBe(true);
+  });
 
   test("blocks unsupported configs and the live v2 chat-routing flag without touching the file", async () => {
     const { root, origin, base, put, engineState } = await startModeServer();

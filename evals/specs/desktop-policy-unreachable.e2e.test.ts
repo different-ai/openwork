@@ -173,21 +173,20 @@ test("an admitted signed-in desktop turn executes its next bash tool while Den r
     };
     expect(await probeOutage()).toBe(503);
     // Calibrate the actual desktop-server -> Den path, not just a synthetic proxy probe.
-    // Admission still fails closed; #4725 removes in-engine per-tool hooks, not this gate.
-    const admission = await evalIn(desktop, browserScript(async (workspaceId) => {
+    // Explicit refresh still reads Den; assertions use the installed snapshot.
+    const policyRefresh = await evalIn(desktop, async () => {
       const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
-    if (!info.baseUrl) throw new Error("The local desktop server is not running");
-      const response = await fetch(`${info.baseUrl.replace(/\/$/, "")}/workspace/${workspaceId}/opencode/session`, {
-        method: "POST", headers: { Authorization: `Bearer ${info.ownerToken}`, "Content-Type": "application/json" },
-        body: "{}", signal: AbortSignal.timeout(15_000),
+      if (!info.baseUrl) throw new Error("The local desktop server is not running");
+      const response = await fetch(`${info.baseUrl.replace(/\/$/, "")}/managed-policy`, {
+        headers: { Authorization: `Bearer ${info.ownerToken}` }, signal: AbortSignal.timeout(15_000),
       });
       const body: unknown = await response.json();
       // The desktop server formats ApiError as { code, message, details }.
       return { status: response.status, code: typeof body === "object" && body !== null && "code" in body ? body.code : null };
-    }, [desktop.workspaceId]), { awaitPromise: true, timeoutMs: 20_000 });
-    evidence.recordJsonArtifact("Den outage calibration", { admission, policyBaseline, requests: (await proxy.requestLog()).slice(logStart) });
-    expect(admission.status, "a separate new admission remains denied while Den is unreachable").toBe(403);
-    expect(admission.code).toBe("policy_unavailable");
+    }, { awaitPromise: true, timeoutMs: 20_000 });
+    evidence.recordJsonArtifact("Den outage calibration", { policyRefresh, policyBaseline, requests: (await proxy.requestLog()).slice(logStart) });
+    expect(policyRefresh.status, "explicit policy refresh maps the Den outage to policy_unavailable").toBe(403);
+    expect(policyRefresh.code).toBe("policy_unavailable");
     expect((await files()).output, "the next tool must not have run before outage verification").toBeNull();
     const pluginsDuring = await runtimePlugins(desktop, desktop.workspaceId);
     expect(pluginsDuring).toEqual(pluginsBefore);
@@ -222,7 +221,7 @@ test("an admitted signed-in desktop turn executes its next bash tool while Den r
     }
     await waitFor(desktop, browserScript((reply) => document.body.innerText.includes(reply), [finalReply]), { timeoutMs: 30_000, label: "outage completion reply visible in the desktop" });
     evidence.recordAssertionEvidence("An admitted signed-in turn executes the next real bash tool through a Den outage without managed-policy registration",
-      JSON.stringify({ pluginRegistrations: pluginsDuring, denFaultRequests: faulted, admissionStatus: admission.status, tools: completed.tools, output: resultText, unrelatedUnchanged: true, signedIn: true }), true);
+      JSON.stringify({ pluginRegistrations: pluginsDuring, denFaultRequests: faulted, policyRefreshStatus: policyRefresh.status, tools: completed.tools, output: resultText, unrelatedUnchanged: true, signedIn: true }), true);
   } finally {
     if (faultInstalled) await proxy.faults.clear();
   }

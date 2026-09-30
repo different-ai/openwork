@@ -88,12 +88,15 @@ const authorizationRequestSchema: z.ZodType<GatewayAuthorizationRequest> = z.obj
 export const SUPPORTED_GATEWAY_NPM_PACKAGES = [
   "@ai-sdk/anthropic",
   "@ai-sdk/openai",
+  "@ai-sdk/mistral",
   "@ai-sdk/azure",
   "@ai-sdk/openai-compatible",
   "@openrouter/ai-sdk-provider",
   "@ai-sdk/google",
   "@ai-sdk/google-vertex",
   "@ai-sdk/google-vertex/anthropic",
+  "@ai-sdk/amazon-bedrock",
+  "@ai-sdk/amazon-bedrock/mantle",
 ] as const;
 
 export function isSupportedGatewayNpm(npm: string | null): boolean {
@@ -104,8 +107,39 @@ export function isGoogleVertexNpm(npm: string | null): boolean {
   return npm === "@ai-sdk/google-vertex" || npm === "@ai-sdk/google-vertex/anthropic";
 }
 
+export function getNewInferenceProviderSettings(npm: string | null): Record<string, string> {
+  return isGoogleVertexNpm(npm) ? { location: "global" } : {};
+}
+
 export function isAzureNpm(npm: string | null): boolean {
   return npm === "@ai-sdk/azure";
+}
+
+/** Amazon Bedrock and Amazon Bedrock (OpenAI) share the region setting and AWS keys. */
+export function isAmazonBedrockNpm(npm: string | null): boolean {
+  return npm === "@ai-sdk/amazon-bedrock" || npm === "@ai-sdk/amazon-bedrock/mantle";
+}
+
+/** SDKs only reachable through AI Gateway; Bring your own keys hides them. */
+export function isGatewayOnlyNpm(npm: string | null): boolean {
+  return npm === "@ai-sdk/amazon-bedrock/mantle";
+}
+
+/** Mirrors `isAwsRegion` in @openwork-ee/utils/inference-egress. */
+export function isAwsRegion(value: string): boolean {
+  return value.length <= 32 && /^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/.test(value);
+}
+
+export type AwsKeysInput = { accessKeyId: string; secretAccessKey: string; sessionToken: string };
+
+/** Blank keys keep what is stored; a partial set is rejected rather than silently dropped. */
+export function getAwsKeysError(keys: AwsKeysInput): string | null {
+  const accessKeyId = keys.accessKeyId.trim();
+  const secretAccessKey = keys.secretAccessKey.trim();
+  if (!accessKeyId && !secretAccessKey && !keys.sessionToken.trim()) return null;
+  if (!accessKeyId || !secretAccessKey) return "Enter both the AWS access key ID and secret access key.";
+  if (/\s/.test(accessKeyId) || /\s/.test(secretAccessKey)) return "AWS access keys cannot contain spaces.";
+  return null;
 }
 
 /** Providers den-api allows in credentialMode "member" (`unsupported_credential_mode` otherwise). */
@@ -124,6 +158,7 @@ export function getOauthCallbackPath() {
 export function getRequiredSettingKeys(npm: string | null): string[] {
   if (isGoogleVertexNpm(npm)) return ["project", "location"];
   if (isAzureNpm(npm)) return ["resourceName"];
+  if (isAmazonBedrockNpm(npm)) return ["region"];
   return [];
 }
 
@@ -306,6 +341,42 @@ export function getProviderStatusLabel(status: InferenceProviderStatus) {
   return status === "active" ? "Active" : "Disabled";
 }
 
+export const GATEWAY_PAGE_DESCRIPTION =
+  "Your organization's provider keys stay on the server. People pick models in the app; you decide who can use which ones.";
+
+export type GatewayAudienceNames = {
+  organization: string | null;
+  teamName: (teamId: string) => string | undefined;
+  memberName: (memberId: string) => string | undefined;
+};
+
+/** One line for a list row: who this provider is shared with. */
+export function describeGatewayAccess(
+  provider: Pick<DenInferenceProvider, "accessGrants">,
+  names: GatewayAudienceNames,
+): string {
+  const { allMembers, teamIds, memberIds } = accessFromGrants(provider.accessGrants);
+  if (allMembers) return names.organization ? `Everyone in ${names.organization}` : "Everyone";
+  const labels = [
+    ...teamIds.map((id) => names.teamName(id) ?? "A team"),
+    ...memberIds.map((id) => names.memberName(id) ?? "A person"),
+  ];
+  return labels.length ? labels.join(", ") : "No one has access yet";
+}
+
+export function accessFromGrants(grants: GatewayAccessGrant[] | null | undefined): {
+  allMembers: boolean;
+  memberIds: string[];
+  teamIds: string[];
+} {
+  const list = grants ?? [];
+  return {
+    allMembers: list.some((grant) => grant.audience.type === "organization"),
+    teamIds: list.flatMap((grant) => (grant.audience.type === "team" ? [grant.audience.teamId] : [])),
+    memberIds: list.flatMap((grant) => (grant.audience.type === "member" ? [grant.audience.memberId] : [])),
+  };
+}
+
 // --- Request bodies ---
 
 export type InferenceProviderFormInput = {
@@ -325,6 +396,10 @@ export type InferenceProviderFormInput = {
   apiKeyValues: Record<string, string>;
   /** Pasted Google service-account JSON (Vertex org mode). */
   serviceAccountJson: string;
+  /** AWS access keys (Amazon Bedrock only); blank keeps the stored keys. */
+  awsKeys?: AwsKeysInput;
+  /** Amazon Bedrock only: copy another Bedrock provider's saved keys server-side instead of entering keys. */
+  reuseCredentialFrom?: string | null;
   /** Org-owned Google OAuth client (member mode). Blank secret keeps the stored one. */
   oauthClientId: string;
   oauthClientSecret: string;
@@ -340,6 +415,7 @@ export type InferenceProviderRequestBody = {
   settings?: Record<string, string>;
   credential?: { kind: InferenceProviderCredentialKind; secret: string };
   apiKeys?: Record<string, string>;
+  reuseCredentialFrom?: string;
   oauthClientId?: string;
   oauthClientSecret?: string;
   allMembers: boolean;
@@ -395,6 +471,21 @@ export function buildInferenceProviderRequestBody(input: InferenceProviderFormIn
     return body;
   }
 
+  if (input.reuseCredentialFrom) {
+    body.reuseCredentialFrom = input.reuseCredentialFrom;
+    return body;
+  }
+
+  if (input.awsKeys) {
+    const accessKeyId = input.awsKeys.accessKeyId.trim();
+    const secretAccessKey = input.awsKeys.secretAccessKey.trim();
+    const sessionToken = input.awsKeys.sessionToken.trim();
+    if (accessKeyId && secretAccessKey) {
+      body.credential = { kind: "aws_keys", secret: JSON.stringify({ accessKeyId, secretAccessKey, ...(sessionToken ? { sessionToken } : {}) }) };
+    }
+    return body;
+  }
+
   if (input.envNames.length > 1) {
     const entries = input.envNames
       .map((envName) => [envName, (input.apiKeyValues[envName] ?? "").trim()] as const)
@@ -428,6 +519,7 @@ export function validateInferenceProviderForm(input: {
   oauthClientSecret: string;
   /** True when den-api already stores a secret, so a blank field keeps it. */
   hasOauthClientSecret: boolean;
+  awsKeys?: AwsKeysInput;
 }): string | null {
   if (!input.providerId) return "Select a provider.";
   if (!isSupportedGatewayNpm(input.npm)) {
@@ -440,6 +532,11 @@ export function validateInferenceProviderForm(input: {
       return `${getSettingLabel(key)} is required for this provider.`;
     }
   }
+  if (isAmazonBedrockNpm(input.npm) && !isAwsRegion((input.settings.region ?? "").trim())) {
+    return "Enter an AWS region code such as us-east-1.";
+  }
+  const awsKeysError = input.awsKeys ? getAwsKeysError(input.awsKeys) : null;
+  if (awsKeysError) return awsKeysError;
   if (input.credentialMode === "member") {
     if (!supportsMemberCredentialMode(input.providerId)) {
       return "Each member signs in is only available for Google Vertex providers.";
@@ -462,6 +559,19 @@ export function validateInferenceProviderForm(input: {
   return null;
 }
 
+/**
+ * Other Amazon Bedrock providers whose saved organization keys a new Bedrock
+ * provider may reuse. den-api makes the final check and copies the keys itself.
+ */
+export function getReusableAwsKeyProviders(
+  providers: Pick<DenInferenceProvider, "id" | "name" | "status" | "credentialMode" | "credentialStatus" | "providerConfig">[],
+): Array<{ id: string; name: string }> {
+  return providers
+    .filter((provider) => provider.status === "active" && provider.credentialMode === "org" && provider.credentialStatus === "ready"
+      && isAmazonBedrockNpm(typeof provider.providerConfig.npm === "string" ? provider.providerConfig.npm : null))
+    .map((provider) => ({ id: provider.id, name: provider.name }));
+}
+
 export function getSettingLabel(key: string) {
   switch (key) {
     case "project":
@@ -470,6 +580,8 @@ export function getSettingLabel(key: string) {
       return "Region";
     case "resourceName":
       return "Azure resource name";
+    case "region":
+      return "AWS region";
     default:
       return key;
   }

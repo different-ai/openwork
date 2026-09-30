@@ -4,10 +4,13 @@ import { AuthUserTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, 
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { createGatewayModelAlias, gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
 import { inferenceCredentialEnvNames, isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
+import { isAwsRegion } from "@openwork-ee/utils/inference-egress"
 import { parseGatewayProviderSecret, type GatewayAccessGrant, type GatewayAccessGrantWrite, type GatewayCredentialSet, type GatewayCredentialSetPatch, type GatewayModelGroup, type GatewayModelGroupPatch, type GatewayProviderDetails, type GatewayProviderSummary, type GatewayUsableModel } from "@openwork/types/den/gateway"
+import { loadProviderAudit, providerAuditMutation, providerSystemAuditContext, recordProviderAttempt, type ProviderAuditCapture } from "../audit/provider.js"
+import { recheckAuditEntitlement } from "../audit/capture.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
-import { buildGatewayModelConfig, buildGatewayProviderConfig, buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "./inference-provider-config.js"
+import { bedrockSettingsError, isAwsGatewayNpm, buildGatewayModelConfig, buildGatewayProviderConfig, buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "./inference-provider-config.js"
 import { isGoogleOAuthInferenceProviderId } from "./inference-provider-google-oauth.js"
 import { effectiveGatewayGrants, memberGatewayTeams } from "./inference-provider-lifecycle.js"
 import { getModelsDevProvider, type ModelsDevProvider } from "./models-dev.js"
@@ -35,6 +38,8 @@ export function validateGatewaySettings(config: Record<string, unknown>, setting
       throw new GatewayWriteError(400, "invalid_settings", "Vertex requires a 6-63 character project ID or 6-20 digit project number, and global or a region ending in digits.")
     }
   }
+  const bedrockError = isAwsGatewayNpm(npm) ? bedrockSettingsError(settings) : null
+  if (bedrockError) throw new GatewayWriteError(400, "invalid_settings", bedrockError)
   if (npm === "@ai-sdk/azure" && (typeof settings.resourceName !== "string" || !/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/.test(settings.resourceName))) {
     throw new GatewayWriteError(400, "invalid_settings", "Azure requires a resourceName DNS label.")
   }
@@ -66,24 +71,36 @@ export function resolveGatewayCatalog(catalog: ModelsDevProvider, modelIds: stri
   return { catalog, config, models, ...(warnings.length ? { catalogWarning: warnings.join(" ") } : {}) }
 }
 
-export async function refreshGatewayCatalog(provider: GatewayProvider) {
+export async function refreshGatewayCatalog(provider: GatewayProvider, audit?: ProviderAuditCapture | null) {
+  const capture = audit === undefined
+    ? await loadProviderAudit(db, "auditCaptureEnabled" in env && env.auditCaptureEnabled === true, providerSystemAuditContext(provider.organization_id, provider.id), "catalog.refresh")
+    : audit ? { ...audit, step: "catalog.refresh" } : null
+  if (capture && (capture.context.scope !== provider.id || capture.context.organizationId !== provider.organization_id)) throw new Error("audit_provider_scope_mismatch")
   // Catalog I/O never holds a provider/OAuth lock. A failed load cannot prune rows.
   const catalog = await getModelsDevProvider(provider.provider_id).catch(() => null)
-  return db.transaction(async (tx) => {
-    const [current] = await tx.select().from(GatewayProviderTable)
-      .where(and(eq(GatewayProviderTable.id, provider.id), eq(GatewayProviderTable.organization_id, provider.organization_id))).for("update")
-    if (!current) throw new GatewayWriteError(404, "inference_provider_not_found")
-    if (!catalog) return { provider: current, catalogWarning: "Catalog refresh unavailable. Previously configured models are retained within the saved modelIds policy." }
-    if (catalog.id !== current.provider_id || !isSupportedGatewayNpm(catalog.npm) || catalog.npm !== readProviderConfigNpm(current.provider_config)) {
-      return { provider: current, catalogWarning: "The catalog provider SDK changed or is unsupported. Create a separate provider to use the new SDK; the saved provider configuration is retained." }
-    }
-    const resolved = resolveGatewayCatalog(catalog, current.model_ids, current.provider_config, false)
-    if (await writeGatewayModels(tx, current, resolved.models)) {
-      current.updated_at = new Date()
-      await tx.update(GatewayProviderTable).set({ updated_at: current.updated_at }).where(eq(GatewayProviderTable.id, current.id))
-    }
-    return { provider: current, catalogWarning: resolved.catalogWarning }
-  })
+  try {
+    return await db.transaction(async (tx) => {
+      if (capture) await recheckAuditEntitlement(tx, provider.organization_id)
+      const [current] = await tx.select().from(GatewayProviderTable)
+        .where(and(eq(GatewayProviderTable.id, provider.id), eq(GatewayProviderTable.organization_id, provider.organization_id))).for("update")
+      if (!current) throw new GatewayWriteError(404, "inference_provider_not_found")
+      if (!catalog) return { provider: current, catalogWarning: "Catalog refresh unavailable. Previously configured models are retained within the saved modelIds policy." }
+      if (catalog.id !== current.provider_id || !isSupportedGatewayNpm(catalog.npm) || catalog.npm !== readProviderConfigNpm(current.provider_config)) {
+        return { provider: current, catalogWarning: "The catalog provider SDK changed or is unsupported. Create a separate provider to use the new SDK; the saved provider configuration is retained." }
+      }
+      const resolved = resolveGatewayCatalog(catalog, current.model_ids, current.provider_config, false)
+      return providerAuditMutation(tx, capture, async () => {
+        if (await writeGatewayModels(tx, current, resolved.models)) {
+          current.updated_at = new Date()
+          await tx.update(GatewayProviderTable).set({ updated_at: current.updated_at }).where(eq(GatewayProviderTable.id, current.id))
+        }
+        return { provider: current, catalogWarning: resolved.catalogWarning }
+      })
+    })
+  } catch (error) {
+    await recordProviderAttempt(db, capture, error instanceof GatewayWriteError ? error.status : 500)
+    throw error
+  }
 }
 
 /** Keep model row IDs stable so existing wire aliases and overlapping links survive catalog edits. */
@@ -106,6 +123,45 @@ export async function writeGatewayModels(tx: GatewayTx, provider: GatewayProvide
   return changed
 }
 
+/** Add catalog models to one existing group without replacing its membership or narrowing an unrestricted provider. Caller holds the provider lock. */
+export async function enableGatewayGroupModels(tx: GatewayTx, provider: GatewayProvider, catalog: ModelsDevProvider, groupId: typeof GatewayModelGroupTable.$inferSelect.id, modelIds: string[]) {
+  if (provider.status !== "active") throw new GatewayWriteError(409, "provider_disabled")
+  if (catalog.id !== provider.provider_id || catalog.npm !== readProviderConfigNpm(provider.provider_config)) throw new GatewayWriteError(409, "provider_catalog_changed")
+  const [group] = await tx.select().from(GatewayModelGroupTable)
+    .where(and(eq(GatewayModelGroupTable.id, groupId), eq(GatewayModelGroupTable.gateway_provider_id, provider.id)))
+  if (!group) throw new GatewayWriteError(404, "model_group_not_found")
+  if (group.status !== "active") throw new GatewayWriteError(409, "model_group_disabled")
+  const requested = [...new Set(modelIds)]
+  const selected = resolveGatewayCatalog(catalog, requested, provider.provider_config).models
+  const existing = await tx.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
+  const links = await tx.select().from(GatewayModelGroupModelTable).where(eq(GatewayModelGroupModelTable.model_group_id, group.id))
+  const added: string[] = []
+  let changed = false
+  for (const model of selected) {
+    const row = existing.find((candidate) => candidate.model_id === model.id)
+    const rowId = row?.id ?? createDenTypeId("inferenceProviderModel")
+    if (!row) {
+      await tx.insert(GatewayProviderModelTable).values({ id: rowId, gateway_provider_id: provider.id, model_id: model.id, name: model.name, model_config: model.config })
+      changed = true
+    } else if (row.name !== model.name || !isDeepStrictEqual(row.model_config, model.config)) {
+      await tx.update(GatewayProviderModelTable).set({ name: model.name, model_config: model.config }).where(eq(GatewayProviderModelTable.id, rowId))
+      changed = true
+    }
+    if (!links.some((link) => link.gateway_provider_model_id === rowId)) {
+      await tx.insert(GatewayModelGroupModelTable).values({ id: createDenTypeId("gatewayModelGroupModel"), model_group_id: group.id, gateway_provider_model_id: rowId })
+      added.push(model.id)
+      changed = true
+    }
+  }
+  const policy = provider.model_ids.length ? [...new Set([...provider.model_ids, ...requested])] : provider.model_ids
+  const groupModelIds = [...new Set([...links.map((link) => existing.find((row) => row.id === link.gateway_provider_model_id)?.model_id).filter((id): id is string => Boolean(id)), ...requested])]
+  if (policy.length > 500 || groupModelIds.length > 500) throw new GatewayWriteError(400, "too_many_models")
+  if (changed || policy.length !== provider.model_ids.length) {
+    await tx.update(GatewayProviderTable).set({ model_ids: policy, updated_at: new Date() }).where(eq(GatewayProviderTable.id, provider.id))
+  }
+  return { inferenceProviderId: provider.id, modelGroupId: group.id, modelIds: policy, groupModelIds, addedModelIds: added }
+}
+
 export async function writeGatewayGroup(tx: GatewayTx, provider: GatewayProvider, input: GatewayModelGroupPatch, groupId?: typeof GatewayModelGroupTable.$inferSelect.id) {
   const [existing] = groupId ? await tx.select().from(GatewayModelGroupTable)
     .where(and(eq(GatewayModelGroupTable.id, groupId), eq(GatewayModelGroupTable.gateway_provider_id, provider.id))) : []
@@ -124,7 +180,7 @@ export async function writeGatewayGroup(tx: GatewayTx, provider: GatewayProvider
   if (existing) await tx.update(GatewayModelGroupTable).set(values).where(eq(GatewayModelGroupTable.id, id))
   else await tx.insert(GatewayModelGroupTable).values({ id, gateway_provider_id: provider.id, ...values })
   if (selected) {
-    await tx.delete(GatewayModelGroupModelTable).where(eq(GatewayModelGroupModelTable.model_group_id, id))
+    if (existing) await tx.delete(GatewayModelGroupModelTable).where(eq(GatewayModelGroupModelTable.model_group_id, id))
     if (selected.length) await tx.insert(GatewayModelGroupModelTable).values(selected.map((model) => ({ id: createDenTypeId("gatewayModelGroupModel"), model_group_id: id, gateway_provider_model_id: model.id })))
   }
   return id
@@ -152,9 +208,50 @@ function normalizeCredential(input: GatewayCredentialSetPatch, provider: Gateway
   try {
     const parsed = parseGatewayProviderSecret(credential.kind, credential.secret)
     if (!isInferenceCredentialKindSupported(parsed.kind, provider.provider_id)
-      || parsed.kind === "api_key_map" && !pickInferenceApiKeyFromMap(parsed.apiKeys, envNames)) throw new Error("invalid")
+      || parsed.kind === "api_key_map" && !pickInferenceApiKeyFromMap(parsed.apiKeys, envNames)
+      || parsed.kind === "aws_keys" && parsed.awsKeys.region !== undefined && !isAwsRegion(parsed.awsKeys.region)) throw new Error("invalid")
   } catch { throw new GatewayWriteError(400, "invalid_credential", "Credential kind and key fields must match the trusted provider catalog.") }
   return credential
+}
+
+/**
+ * Copies the org AWS credential of another Amazon Bedrock provider in the same
+ * organization, server-side, so an admin can reuse saved keys without the
+ * secret ever reaching the browser. Only an active org-mode set with exactly
+ * one active AWS keys or Bedrock API key credential qualifies. A region stored
+ * on the source keys is dropped so the new provider's own region applies.
+ */
+export async function reusableAwsCredential(tx: GatewayTx, target: GatewayProvider, sourceId: string): Promise<CredentialInput> {
+  const unavailable = () => new GatewayWriteError(400, "credential_source_unavailable", "Those saved AWS keys can't be reused. Enter the keys for this provider instead.")
+  if (!isAwsGatewayNpm(readProviderConfigNpm(target.provider_config))) throw unavailable()
+  const [source] = await tx.select().from(GatewayProviderTable)
+    .where(and(eq(GatewayProviderTable.id, normalizeDenTypeId("inferenceProvider", sourceId)), eq(GatewayProviderTable.organization_id, target.organization_id)))
+  if (!source || source.id === target.id || source.status !== "active" || !isAwsGatewayNpm(readProviderConfigNpm(source.provider_config))) throw unavailable()
+  const rows = await tx.select({ credential: GatewayProviderCredentialTable }).from(GatewayProviderCredentialTable)
+    .innerJoin(GatewayCredentialSetTable, eq(GatewayCredentialSetTable.id, GatewayProviderCredentialTable.credential_set_id))
+    .where(and(
+      eq(GatewayProviderCredentialTable.gateway_provider_id, source.id),
+      eq(GatewayProviderCredentialTable.organization_id, target.organization_id),
+      eq(GatewayProviderCredentialTable.subject, "org"),
+      isNull(GatewayProviderCredentialTable.org_membership_id),
+      eq(GatewayProviderCredentialTable.status, "active"),
+      eq(GatewayCredentialSetTable.gateway_provider_id, source.id),
+      eq(GatewayCredentialSetTable.credential_mode, "org"),
+      eq(GatewayCredentialSetTable.status, "active"),
+    ))
+  const usable = rows.map((row) => row.credential)
+    .filter((row) => (row.kind === "aws_keys" || row.kind === "api_key") && (!row.expires_at || row.expires_at.getTime() > Date.now()))
+  if (usable.length !== 1) throw unavailable()
+  const [credential] = usable
+  try {
+    const parsed = parseGatewayProviderSecret(credential.kind, credential.secret)
+    if (parsed.kind === "aws_keys") {
+      const { region: _region, ...keys } = parsed.awsKeys
+      return { kind: "aws_keys", secret: JSON.stringify(keys) }
+    }
+    if (parsed.kind === "api_key" && parsed.apiKey) return { kind: "api_key", secret: parsed.apiKey }
+  } catch { /* A malformed source is simply not reusable. */ }
+  throw unavailable()
 }
 
 export async function writeGatewaySet(tx: GatewayTx, provider: GatewayProvider, input: GatewayCredentialSetPatch, target: GatewaySet["id"] | { createdByOrgMembershipId: GatewayMemberId }) {
@@ -188,7 +285,9 @@ export async function writeGatewaySet(tx: GatewayTx, provider: GatewayProvider, 
   }
   // Lock exchanges before tokens, but defer cancellation until validation succeeds. Renames do neither.
   if (modeChanged || clientChanged || disabled) await tx.select({ id: GatewayProviderOauthStateTable.id }).from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.credential_set_id, id)).for("update")
-  const credentials = await tx.select().from(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.credential_set_id, id)).for("update")
+  // A newly allocated set cannot own credentials yet. Locking its absent index
+  // range would make otherwise independent concurrent creations deadlock.
+  const credentials = existing ? await tx.select().from(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.credential_set_id, id)).for("update") : []
   if (credentials.some((row) => row.organization_id !== provider.organization_id || row.gateway_provider_id !== provider.id)) throw new GatewayWriteError(409, "credential_set_inconsistent")
   const orgCredential = credentials.find((row) => row.subject === "org" && row.org_membership_id === null)
   const credential = normalizeCredential(input, provider, mode === existing?.credential_mode ? orgCredential : undefined)
@@ -197,7 +296,7 @@ export async function writeGatewaySet(tx: GatewayTx, provider: GatewayProvider, 
   }
   if (modeChanged || clientChanged || disabled) await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.credential_set_id, id))
   const revoked = credentials.filter((row) => row.status !== "revoked" && (modeChanged || input.status === "disabled" || clientChanged && row.kind === "oauth_google"))
-  if (revoked.length) await tx.update(GatewayProviderCredentialTable).set({ status: "revoked", refreshing_until: null, updated_at: new Date() }).where(inArray(GatewayProviderCredentialTable.id, revoked.map((row) => row.id)))
+  if (revoked.length) await tx.update(GatewayProviderCredentialTable).set({ status: "revoked", secret: "{}", expires_at: null, scopes: null, refreshing_until: null, last_error: null, updated_at: new Date() }).where(inArray(GatewayProviderCredentialTable.id, revoked.map((row) => row.id)))
   const values = { name, credential_mode: mode, oauth_client_id: clientId, oauth_client_secret: clientSecret, status: input.status ?? existing?.status ?? "active", updated_at: new Date() }
   if (existing) await tx.update(GatewayCredentialSetTable).set(values).where(eq(GatewayCredentialSetTable.id, id))
   else await tx.insert(GatewayCredentialSetTable).values({ id, gateway_provider_id: provider.id, created_by_org_membership_id: creatorId, ...values })
@@ -281,7 +380,9 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
       try {
         const parsed = parseGatewayProviderSecret(token.kind, token.secret)
         usable = isInferenceCredentialKindSupported(parsed.kind, provider.provider_id)
-          && (set.credential_mode !== "member" || parsed.kind === "oauth_google")
+          && (parsed.kind !== "oauth_google" || token.last_error !== "invalid_client")
+          && (set.credential_mode !== "member" || parsed.kind === "oauth_google" && Boolean(parsed.token.refreshToken))
+          && (parsed.kind !== "oauth_google" || Boolean(token.expires_at && Number.isFinite(token.expires_at.getTime())))
           && (parsed.kind !== "api_key_map" || Boolean(pickInferenceApiKeyFromMap(parsed.apiKeys, readProviderEnvNames(provider.provider_config))))
           && (!token.expires_at || token.expires_at.getTime() > Date.now() || parsed.kind === "oauth_google" && Boolean(parsed.token.refreshToken && set.oauth_client_id && set.oauth_client_secret))
       } catch { usable = false }
@@ -292,18 +393,24 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
       oauthClientId: set.oauth_client_id, hasOauthClientSecret: Boolean(set.oauth_client_secret) }
   })
   const authorizationRequests = setSummaries.filter((set) => set.credentialMode === "member" && set.credentialStatus === "member_auth_required" && grants.some((grant) => grant.credential_set_id === set.id))
-    .map((set) => ({ credentialSetId: set.id, name: set.name, authUrl: `${baseUrl}/v1/inference-providers/${provider.id}/oauth/start?credentialSetId=${encodeURIComponent(set.id)}` }))
+    .map((set) => {
+      const models: GatewayUsableModel[] = []
+      return { credentialSetId: set.id, name: set.name, authUrl: `${baseUrl}/v1/inference-providers/${provider.id}/oauth/start?credentialSetId=${encodeURIComponent(set.id)}`, models }
+    })
   const usableModels: GatewayUsableModel[] = []
   for (const grant of grants) {
     const group = groups.find((group) => group.id === grant.model_group_id)
     const set = setSummaries.find((set) => set.id === grant.credential_set_id)
-    if (!group || !set || set.credentialStatus !== "ready") continue
+    if (!group || !set) continue
+    const targetModels = set.credentialStatus === "ready" ? usableModels : authorizationRequests.find((request) => request.credentialSetId === set.id)?.models
+    if (!targetModels) continue
     for (const model of models.filter((model) => links.some((link) => link.model_group_id === group.id && link.gateway_provider_model_id === model.id))) {
       const id = createGatewayModelAlias({ modelGroupId: group.id, credentialSetId: grant.credential_set_id, gatewayProviderModelId: model.id })
       const name = model.name
-      usableModels.push({ id, name, config: buildGatewayModelConfig({ id, name, config: model.model_config }), upstreamModelId: model.model_id, modelGroupId: group.id, modelGroupName: group.name, credentialSetId: set.id, credentialSetName: set.name })
+      targetModels.push({ id, name, config: buildGatewayModelConfig({ id, name, config: model.model_config }), upstreamModelId: model.model_id, modelGroupId: group.id, modelGroupName: group.name, credentialSetId: set.id, credentialSetName: set.name })
     }
   }
+  for (const request of authorizationRequests) request.models.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
   const migration = provider.settings.migration
   const summary: GatewayProviderSummary = {
     modelIds: provider.model_ids, ...(refreshed.catalogWarning ? { catalogWarning: refreshed.catalogWarning } : {}),

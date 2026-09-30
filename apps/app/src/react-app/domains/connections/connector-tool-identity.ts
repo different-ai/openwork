@@ -1,4 +1,5 @@
 import type { DynamicToolUIPart } from "ai";
+import { getConnectionStatusProbeId } from "@/lib/capability-call";
 
 import { getMcpServerName, MCP_QUICK_CONNECT } from "@/app/constants";
 import type { DenExternalMcpConnection } from "@/app/lib/den";
@@ -154,6 +155,10 @@ export function resolveConnectorToolIdentity(
   part: DynamicToolUIPart,
   identities: ConnectorToolIdentity[],
 ): ConnectorToolIdentity | null {
+  const probeId = getConnectionStatusProbeId(part);
+  if (probeId) {
+    return identities.find((identity) => identity.connectionId === probeId) ?? null;
+  }
   const capability = capabilityName(part);
   if (capability) {
     if (capability.startsWith("mcp:")) {

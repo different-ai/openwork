@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { and, asc, count, desc, eq, inArray, isNull, notExists, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
   ConfigObjectAccessGrantTable,
@@ -25,12 +25,14 @@ import {
   PluginTable,
   RemoteMcpAppTable,
   TeamTable,
+  TeamMemberTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
+import { isAuthoredMcpAppVersion, redactMcpAppRevision } from "@openwork/types/mcp-app"
 import type { PluginArchActorContext, PluginArchResourceKind, PluginArchRole } from "./access.js"
-import { isPluginArchOrgAdmin, PluginArchAuthorizationError, pluginArchResourceHasExpandedAudience, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchResourceRole } from "./access.js"
-import { CONTENT_EDIT_SESSION_MAX_AGE_MS } from "../shared.js"
+import { isPluginArchOrgAdmin, PluginArchAuthorizationError, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchPluginRoles, resolvePluginArchResourceRole } from "./access.js"
+import { memberHasRole } from "../shared.js"
 import { clampCodePoints, clampUtf8Bytes, PROJECTION_TEXT_MAX_BYTES, PROJECTION_TITLE_MAX_CHARS } from "./projection-text.js"
 import {
   AGENT_PLUGIN_V1_VERSION,
@@ -62,16 +64,17 @@ import {
 } from "./github-discovery.js"
 import { planConnectorImportedResourceCleanup, uniqueIds } from "./connector-cleanup.js"
 import {
-  DEFAULT_ANTHROPIC_MARKETPLACE_DESCRIPTION,
-  DEFAULT_ANTHROPIC_MARKETPLACE_LOGO_URL,
-  DEFAULT_ANTHROPIC_MARKETPLACE_NAME,
-  DEFAULT_ANTHROPIC_STARTER_PLUGINS,
   DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
   DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
   DEFAULT_OPENWORK_MARKETPLACE_NAME,
   type DefaultMarketplacePluginEntry,
+  RETIRED_STARTER_MARKETPLACE_DESCRIPTION,
+  RETIRED_STARTER_MARKETPLACE_LOGO_URL,
+  RETIRED_STARTER_MARKETPLACE_NAME,
+  RETIRED_STARTER_PLUGIN_NAMES,
 } from "./default-marketplaces.js"
 import { db } from "../../../db.js"
+import { keysetAfter, keysetPage, type KeysetCursor } from "../../../list-pagination.js"
 import { resolveOrganizationMemberAuthority } from "../../../organization-team-roles.js"
 import { env } from "../../../env.js"
 import { appLogger } from "../../../observability/logger.js"
@@ -644,7 +647,21 @@ function deriveSkillProjection(value: ConfigObjectInput) {
   }
 }
 
+export const INTERNAL_MCP_APP_WRITE = Symbol("internal-mcp-app-write")
+
+function rejectAuthoredMcpAppWrite(value: Parameters<typeof isAuthoredMcpAppVersion>[0], internal?: typeof INTERNAL_MCP_APP_WRITE) {
+  if (isAuthoredMcpAppVersion(value) && internal !== INTERNAL_MCP_APP_WRITE) {
+    throw new PluginArchRouteFailure(400, "reserved_mcp_app_schema", "Authored MCP Apps must be compiled and published through create_app or update_app.")
+  }
+}
+
 function deriveProjection(input: { objectType: ConfigObjectRow["objectType"]; value: ConfigObjectInput }) {
+  if (input.objectType === "app" && isAuthoredMcpAppVersion(input.value)) {
+    const metadata = input.value.metadata ?? {}
+    const title = clampCodePoints(normalizeOptionalString(typeof metadata.title === "string" ? metadata.title : null) ?? "MCP App", PROJECTION_TITLE_MAX_CHARS)
+    const description = typeof metadata.description === "string" ? clampUtf8Bytes(metadata.description.trim(), PROJECTION_TEXT_MAX_BYTES) || null : null
+    return { title, description, searchText: clampUtf8Bytes([title, description].filter(Boolean).join("\n"), PROJECTION_TEXT_MAX_BYTES) }
+  }
   if (input.objectType === "skill") {
     return deriveSkillProjection(input.value)
   }
@@ -723,6 +740,7 @@ function serializeVersion(row: ConfigObjectVersionRow) {
   // Workflow authoring data belongs to the role-aware Workflow management API.
   // Generic config-object reads must not bypass that boundary for viewers.
   const isCodemodeWorkflowVersion = row.schemaVersion === "codemode-script-v1"
+  const isAuthoredApp = isAuthoredMcpAppVersion(row)
   return {
     configObjectId: row.configObjectId,
     connectorSyncEventId: row.connectorSyncEventId,
@@ -731,10 +749,12 @@ function serializeVersion(row: ConfigObjectVersionRow) {
     createdVia: row.createdVia,
     id: row.id,
     isDeletedVersion: row.isDeletedVersion,
-    normalizedPayloadJson: isCodemodeWorkflowVersion
-      ? redactWorkflowNormalizedPayloadAuthoringDetails(row.normalizedPayloadJson)
-      : row.normalizedPayloadJson,
-    rawSourceText: isCodemodeWorkflowVersion ? null : row.rawSourceText,
+    normalizedPayloadJson: isAuthoredApp
+      ? redactMcpAppRevision(row)
+      : isCodemodeWorkflowVersion
+        ? redactWorkflowNormalizedPayloadAuthoringDetails(row.normalizedPayloadJson)
+        : row.normalizedPayloadJson,
+    rawSourceText: isCodemodeWorkflowVersion || isAuthoredApp ? null : row.rawSourceText,
     schemaVersion: row.schemaVersion,
     sourceRevisionRef: row.sourceRevisionRef,
   }
@@ -1295,20 +1315,13 @@ async function ensureVisibleConfigObject(context: PluginArchActorContext, config
   return row
 }
 
-async function ensureEditablePlugin(
-  context: PluginArchActorContext,
-  pluginId: PluginId,
-  requireFreshSession?: boolean,
-  sessionMaxAgeMs?: number,
-) {
+async function ensureEditablePlugin(context: PluginArchActorContext, pluginId: PluginId) {
   const row = await getPluginRow(context.organizationContext.organization.id, pluginId)
   if (!row) {
     throw new PluginArchRouteFailure(404, "plugin_not_found", "Plugin not found.")
   }
   await requirePluginArchResourceRole({
     context,
-    requireFreshSession,
-    sessionMaxAgeMs,
     resourceId: row.id,
     resourceKind: "plugin",
     role: "editor",
@@ -1655,20 +1668,16 @@ export async function createConfigObject(input: {
   context: PluginArchActorContext
   objectType: ConfigObjectRow["objectType"]
   pluginIds?: PluginId[]
-  requireFreshSession?: boolean
   sourceMode: ConfigObjectRow["sourceMode"]
   value: ConfigObjectInput
-}) {
+}, internal?: typeof INTERNAL_MCP_APP_WRITE) {
+  rejectAuthoredMcpAppWrite(input.value, internal)
   if (input.sourceMode === "connector") {
     throw new PluginArchRouteFailure(400, "invalid_request", "Connector-managed config objects must be created through connector sync.")
   }
 
-  const targetExposure = await Promise.all((input.pluginIds ?? []).map((pluginId) =>
-    pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: pluginId, resourceKind: "plugin" })))
-  const requireFreshSession = input.requireFreshSession ?? targetExposure.some(Boolean)
   for (const pluginId of input.pluginIds ?? []) {
-    await ensureEditablePlugin(input.context, pluginId, requireFreshSession,
-      input.objectType === "skill" ? CONTENT_EDIT_SESSION_MAX_AGE_MS : undefined)
+    await ensureEditablePlugin(input.context, pluginId)
   }
 
   const now = new Date()
@@ -1794,16 +1803,22 @@ export async function getLatestConfigObjectVersion(input: { context: PluginArchA
   return serializeVersion(rows[0])
 }
 
-export async function createConfigObjectVersion(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; reason?: string; value: ConfigObjectInput }) {
+export async function createConfigObjectVersion(input: {
+  context: PluginArchActorContext
+  configObjectId: ConfigObjectId
+  reason?: string
+  value: ConfigObjectInput
+}) {
+  rejectAuthoredMcpAppWrite(input.value)
   const row = await getConfigObjectRow(input.context.organizationContext.organization.id, input.configObjectId)
   if (!row) {
     throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
   }
-  const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
-  await requirePluginArchResourceRole({
-    context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "config_object", role: "editor",
-    sessionMaxAgeMs: row.objectType === "skill" ? CONTENT_EDIT_SESSION_MAX_AGE_MS : undefined,
-  })
+  if (row.objectType === "app") {
+    const latest = (await getLatestVersions([row.id])).get(row.id)
+    if (latest) rejectAuthoredMcpAppWrite(latest)
+  }
+  await requirePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "config_object", role: "editor" })
 
   const now = new Date()
   const projection = deriveProjection({ objectType: row.objectType, value: input.value })
@@ -1843,8 +1858,7 @@ export async function setConfigObjectLifecycle(input: { context: PluginArchActor
   if (!row) {
     throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
   }
-  const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "config_object" })
-  await requirePluginArchResourceRole({ context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "config_object", role: "manager" })
+  await requirePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "config_object", role: "manager" })
   const now = new Date()
   const patch = input.action === "archive"
     ? { deletedAt: null, status: "archived" as const, updatedAt: now }
@@ -1882,10 +1896,12 @@ export async function listConfigObjectPlugins(input: { context: PluginArchActorC
 
 export async function attachConfigObjectToPlugin(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; membershipSource?: PluginMembershipRow["membershipSource"]; pluginId: PluginId }) {
   const configObject = await ensureVisibleConfigObject(input.context, input.configObjectId)
-  if (configObject.objectType === "workflow" || configObject.objectType === "script") {
-    // Adding a Workflow to a Plugin can expand its audience through Plugin and
-    // Marketplace grants, so only a Workflow manager may make that sharing
-    // decision. Other config-object membership behavior stays compatible.
+  const authoredApp = configObject.objectType === "app"
+    && isAuthoredMcpAppVersion((await getLatestVersions([configObject.id])).get(configObject.id) ?? {})
+  if (configObject.objectType === "workflow" || configObject.objectType === "script" || authoredApp) {
+    // Adding a Workflow or authored App to a Plugin can expand its audience
+    // through Plugin and Marketplace grants, so its manager makes that sharing
+    // decision. Legacy imported Apps keep their existing membership behavior.
     await requirePluginArchResourceRole({
       context: input.context,
       resourceId: configObject.id,
@@ -1954,7 +1970,6 @@ export async function listResourceAccess(input: { context: PluginArchActorContex
   await ensureResourceInOrganization(input.context, input)
   await requirePluginArchResourceRole({
     context: input.context,
-    requireFreshSession: false,
     resourceId: input.resourceId,
     resourceKind: input.resourceKind,
     role: "manager",
@@ -2594,41 +2609,136 @@ async function collectPluginMarketplaces(organizationId: PluginRow["organization
   return byPlugin
 }
 
-export async function listPlugins(input: { context: PluginArchActorContext; cursor?: string; limit?: number; q?: string; status?: PluginRow["status"] }) {
-  const rows = await db
-    .select()
-    .from(PluginTable)
-    .where(eq(PluginTable.organizationId, input.context.organizationContext.organization.id))
-    .orderBy(desc(PluginTable.updatedAt), desc(PluginTable.id))
-
-  const memberships = await db
-    .select({ pluginId: PluginConfigObjectTable.pluginId, count: PluginConfigObjectTable.id })
-    .from(PluginConfigObjectTable)
-    .where(isNull(PluginConfigObjectTable.removedAt))
-
-  const counts = memberships.reduce((accumulator, row) => {
-    accumulator.set(row.pluginId, (accumulator.get(row.pluginId) ?? 0) + 1)
-    return accumulator
-  }, new Map<string, number>())
-
-  const marketplaceMembers = await collectPluginMarketplaces(
-    input.context.organizationContext.organization.id,
-    rows.map((row) => row.id),
-  )
-
-  const visible: ReturnType<typeof serializePlugin>[] = []
-  for (const row of rows) {
-    const role = await resolvePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "plugin" })
-    if (!role) continue
-    if (input.status && row.status !== input.status) continue
-    if (input.q) {
-      const haystack = `${row.name}\n${row.description ?? ""}`.toLowerCase()
-      if (!haystack.includes(input.q.toLowerCase())) continue
-    }
-    visible.push(serializePlugin(row, counts.get(row.id) ?? 0, marketplaceMembers.get(row.id) ?? []))
+async function countPluginMemberships(pluginIds: PluginId[]) {
+  const counts = new Map<PluginId, number>()
+  if (pluginIds.length === 0) {
+    return counts
   }
 
-  return pageItems(visible, input.cursor, input.limit)
+  const rows = await db
+    .select({ pluginId: PluginConfigObjectTable.pluginId, count: count() })
+    .from(PluginConfigObjectTable)
+    .where(and(inArray(PluginConfigObjectTable.pluginId, pluginIds), isNull(PluginConfigObjectTable.removedAt)))
+    .groupBy(PluginConfigObjectTable.pluginId)
+  for (const row of rows) counts.set(row.pluginId, row.count)
+  return counts
+}
+
+async function listActivePluginAccessGrants(organizationId: PluginRow["organizationId"], pluginIds: PluginId[]) {
+  const byPlugin = new Map<PluginId, ReturnType<typeof serializeAccessGrant>[]>()
+  if (pluginIds.length === 0) {
+    return byPlugin
+  }
+
+  const rows = await db
+    .select()
+    .from(PluginAccessGrantTable)
+    .where(and(
+      eq(PluginAccessGrantTable.organizationId, organizationId),
+      inArray(PluginAccessGrantTable.pluginId, pluginIds),
+      isNull(PluginAccessGrantTable.removedAt),
+    ))
+    .orderBy(desc(PluginAccessGrantTable.createdAt))
+  for (const row of rows) {
+    const existing = byPlugin.get(row.pluginId) ?? []
+    existing.push(serializeAccessGrant(row))
+    byPlugin.set(row.pluginId, existing)
+  }
+  return byPlugin
+}
+
+function pluginAudienceCondition(organizationId: OrganizationId, memberId?: MemberId, teamId?: TeamId | SQL): SQL {
+  const grantAudience = (orgWide: typeof PluginAccessGrantTable.orgWide | typeof MarketplaceAccessGrantTable.orgWide, grantMember: typeof PluginAccessGrantTable.orgMembershipId | typeof MarketplaceAccessGrantTable.orgMembershipId, grantTeam: typeof PluginAccessGrantTable.teamId | typeof MarketplaceAccessGrantTable.teamId) => {
+    if (memberId) {
+      return sql`(${orgWide} = true OR ${grantMember} = ${memberId} OR ${grantTeam} IN (
+        SELECT ${TeamMemberTable.teamId} FROM ${TeamMemberTable}
+        INNER JOIN ${TeamTable} ON ${TeamTable.id} = ${TeamMemberTable.teamId}
+        WHERE ${TeamMemberTable.orgMembershipId} = ${memberId} AND ${TeamTable.organizationId} = ${organizationId}
+      ))`
+    }
+    return sql`(${orgWide} = true OR ${grantTeam} = ${teamId})`
+  }
+  return sql`(
+    ${memberId ? sql`${PluginTable.createdByOrgMembershipId} = ${memberId} OR` : sql``}
+    EXISTS (SELECT 1 FROM ${PluginAccessGrantTable}
+      WHERE ${PluginAccessGrantTable.pluginId} = ${PluginTable.id}
+        AND ${PluginAccessGrantTable.organizationId} = ${organizationId}
+        AND ${PluginAccessGrantTable.removedAt} IS NULL
+        AND ${grantAudience(PluginAccessGrantTable.orgWide, PluginAccessGrantTable.orgMembershipId, PluginAccessGrantTable.teamId)})
+    OR EXISTS (SELECT 1 FROM ${MarketplacePluginTable}
+      INNER JOIN ${MarketplaceTable} ON ${MarketplaceTable.id} = ${MarketplacePluginTable.marketplaceId}
+      INNER JOIN ${MarketplaceAccessGrantTable} ON ${MarketplaceAccessGrantTable.marketplaceId} = ${MarketplacePluginTable.marketplaceId}
+      WHERE ${MarketplacePluginTable.pluginId} = ${PluginTable.id}
+        AND ${MarketplacePluginTable.organizationId} = ${organizationId}
+        AND ${MarketplacePluginTable.removedAt} IS NULL
+        AND ${MarketplaceTable.organizationId} = ${organizationId}
+        AND ${MarketplaceAccessGrantTable.organizationId} = ${organizationId}
+        AND ${MarketplaceAccessGrantTable.removedAt} IS NULL
+        AND ${grantAudience(MarketplaceAccessGrantTable.orgWide, MarketplaceAccessGrantTable.orgMembershipId, MarketplaceAccessGrantTable.teamId)})
+  )`
+}
+
+export async function listPlugins(input: { context: PluginArchActorContext; cursor?: KeysetCursor; includeAccess?: boolean; includeTotal?: boolean; includeFacets?: boolean; limit?: number; q?: string; name?: string; status?: PluginRow["status"]; teamId?: TeamId; memberId?: MemberId; ownerId?: MemberId }) {
+  const organizationId = input.context.organizationContext.organization.id
+  const limit = input.limit ?? 50
+  const [targetMember] = input.memberId ? await db.select({ role: MemberTable.role, userId: MemberTable.userId }).from(MemberTable).where(and(
+    eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt),
+  )).limit(1) : []
+  const [targetTeam] = input.teamId ? await db.select({ id: TeamTable.id }).from(TeamTable).where(and(
+    eq(TeamTable.id, input.teamId), eq(TeamTable.organizationId, organizationId),
+  )).limit(1) : []
+  if ((input.memberId && !targetMember) || (input.teamId && !targetTeam)) return { items: [], nextCursor: null, ...(input.includeTotal ? { total: 0 } : {}) }
+  const effectiveMember = input.memberId && targetMember?.userId && !roleIncludesOwner(targetMember.role) && !memberHasRole(targetMember.role, "admin")
+    ? await resolveOrganizationMemberAuthority({ organizationId, memberId: input.memberId })
+    : null
+  const adminAudience = targetMember && (roleIncludesOwner(targetMember.role) || memberHasRole(targetMember.role, "admin") || (effectiveMember ? memberHasRole(effectiveMember.role, "admin") : false))
+  const audience = adminAudience ? undefined : input.memberId || input.teamId
+    ? pluginAudienceCondition(organizationId, input.memberId, input.teamId)
+    : undefined
+  const caller = isPluginArchOrgAdmin(input.context)
+    ? undefined
+    : pluginAudienceCondition(organizationId, input.context.organizationContext.currentMember.id)
+  const baseFilters = and(
+    eq(PluginTable.organizationId, organizationId),
+    input.status ? eq(PluginTable.status, input.status) : undefined,
+    input.q ? sql`(INSTR(LOWER(${PluginTable.name}), LOWER(${input.q})) > 0 OR INSTR(LOWER(COALESCE(${PluginTable.description}, '')), LOWER(${input.q})) > 0)` : undefined,
+    input.name ? sql`INSTR(LOWER(${PluginTable.name}), LOWER(${input.name})) > 0` : undefined,
+    caller,
+  )
+  const ownerFilter = input.ownerId ? eq(PluginTable.createdByOrgMembershipId, input.ownerId) : undefined
+  const filters = and(baseFilters, audience, ownerFilter)
+  const [rows, totalRows, teamCounts, ownerCounts] = await Promise.all([
+    db.select().from(PluginTable)
+      .where(and(filters, input.cursor ? keysetAfter({ at: PluginTable.updatedAt, id: PluginTable.id }, input.cursor) : undefined))
+      .orderBy(desc(PluginTable.updatedAt), desc(PluginTable.id))
+      .limit(limit + 1),
+    input.includeTotal ? db.select({ total: count() }).from(PluginTable).where(filters) : Promise.resolve([]),
+    input.includeFacets ? db.select({ id: TeamTable.id, count: count(PluginTable.id) }).from(TeamTable)
+      .leftJoin(PluginTable, and(baseFilters, ownerFilter, pluginAudienceCondition(organizationId, undefined, sql`${TeamTable.id}`)))
+      .where(eq(TeamTable.organizationId, organizationId)).groupBy(TeamTable.id) : Promise.resolve([]),
+    input.includeFacets ? db.select({ id: PluginTable.createdByOrgMembershipId, count: count() }).from(PluginTable)
+      .where(and(baseFilters, audience)).groupBy(PluginTable.createdByOrgMembershipId) : Promise.resolve([]),
+  ])
+  const page = keysetPage(rows, limit, (row) => ({ at: row.updatedAt, id: row.id }))
+  const pageIds = page.items.map((row) => row.id)
+  const roles = await resolvePluginArchPluginRoles(input.context, pageIds)
+  const managedIds = pageIds.filter((pluginId) => roles.get(pluginId) === "manager")
+
+  const [counts, marketplaceMembers, access] = await Promise.all([
+    countPluginMemberships(pageIds),
+    collectPluginMarketplaces(organizationId, pageIds),
+    input.includeAccess ? listActivePluginAccessGrants(organizationId, managedIds) : null,
+  ])
+
+  return {
+    items: page.items.map((row) => {
+      const plugin = serializePlugin(row, counts.get(row.id) ?? 0, marketplaceMembers.get(row.id) ?? [])
+      return access && roles.get(row.id) === "manager" ? { ...plugin, access: access.get(row.id) ?? [] } : plugin
+    }),
+    nextCursor: page.nextCursor,
+    ...(input.includeTotal ? { total: totalRows[0]?.total ?? 0 } : {}),
+    ...(input.includeFacets ? { teamCounts, ownerCounts } : {}),
+  }
 }
 
 export async function getPluginDetail(context: PluginArchActorContext, pluginId: PluginId) {
@@ -2745,10 +2855,8 @@ export async function createPluginBundle(input: {
     value: ConfigObjectInput
   }> = []
   for (const component of input.components ?? []) {
+    if (component.value) rejectAuthoredMcpAppWrite(component.value)
     if (component.connectionId !== undefined) {
-      if (!isPluginArchOrgAdmin(input.context)) {
-        throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can bind plugin MCP servers to organization connections.")
-      }
       if (component.type !== "mcp") {
         throw new PluginArchRouteFailure(400, "invalid_request", "connectionId is only allowed on mcp components.")
       }
@@ -2767,6 +2875,10 @@ export async function createPluginBundle(input: {
       })
       if (!connection || connection.kind !== "external_mcp") {
         throw new PluginArchRouteFailure(404, "mcp_connection_not_found", "That connector was not found in this organization.")
+      }
+      // Members bundle only connectors they added themselves from My Library.
+      if (!isPluginArchOrgAdmin(input.context) && connection.createdByOrgMembershipId !== input.context.organizationContext.currentMember.id) {
+        throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can bind plugin MCP servers to organization connections.")
       }
       const value: ConfigObjectInput = {
         normalizedPayloadJson: connectionBackedMcpPayload({
@@ -2815,7 +2927,6 @@ export async function createPluginBundle(input: {
       context: input.context,
       objectType: component.type,
       pluginIds: [plugin.id],
-      requireFreshSession: false,
       sourceMode: "cloud",
       value: component.value,
     })
@@ -2888,8 +2999,7 @@ export async function createPluginBundle(input: {
 }
 
 export async function updatePlugin(input: { context: PluginArchActorContext; description?: string | null; name?: string; pluginId: PluginId }) {
-  const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: input.pluginId, resourceKind: "plugin" })
-  const row = await ensureEditablePlugin(input.context, input.pluginId, requireFreshSession, CONTENT_EDIT_SESSION_MAX_AGE_MS)
+  const row = await ensureEditablePlugin(input.context, input.pluginId)
   const updatedAt = new Date()
   await db.update(PluginTable).set({
     description: input.description === undefined ? row.description : normalizeOptionalString(input.description ?? undefined),
@@ -2901,8 +3011,7 @@ export async function updatePlugin(input: { context: PluginArchActorContext; des
 
 export async function setPluginLifecycle(input: { action: "archive" | "restore"; context: PluginArchActorContext; pluginId: PluginId }) {
   const row = await ensureVisiblePlugin(input.context, input.pluginId)
-  const requireFreshSession = await pluginArchResourceHasExpandedAudience({ context: input.context, resourceId: row.id, resourceKind: "plugin" })
-  await requirePluginArchResourceRole({ context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "plugin", role: "manager" })
+  await requirePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "plugin", role: "manager" })
   const updatedAt = new Date()
   await db.update(PluginTable).set({
     deletedAt: input.action === "archive" ? row.deletedAt : null,
@@ -3010,21 +3119,7 @@ async function ensureDefaultOpenWorkMarketplace(context: PluginArchActorContext)
     if (!organization) throw new Error("Organization not found while provisioning default marketplaces.")
 
     const now = new Date()
-    const anthropicMarketplace = await ensureDefaultMarketplace({
-      context,
-      createdAt: now,
-      database: tx,
-      description: DEFAULT_ANTHROPIC_MARKETPLACE_DESCRIPTION,
-      logoUrl: DEFAULT_ANTHROPIC_MARKETPLACE_LOGO_URL,
-      name: DEFAULT_ANTHROPIC_MARKETPLACE_NAME,
-    })
-    await ensureDefaultMarketplacePlugins({
-      context,
-      createdAt: now,
-      database: tx,
-      entries: DEFAULT_ANTHROPIC_STARTER_PLUGINS,
-      marketplaceId: anthropicMarketplace.id,
-    })
+    await retireStarterPlaceholders({ database: tx, organizationId, retiredAt: now })
 
     const marketplace = await ensureDefaultMarketplace({
       context,
@@ -3045,29 +3140,26 @@ async function ensureDefaultOpenWorkMarketplace(context: PluginArchActorContext)
 }
 
 async function defaultOpenWorkMarketplaceSeedComplete(organizationId: OrganizationId) {
+  const retirable = await findRetirableStarterPlaceholders(db, organizationId)
+  if (retirable.memberships.length > 0 || retirable.emptyMarketplaceIds.length > 0) {
+    return false
+  }
+
   const defaultMarketplaces = await db
     .select({ id: MarketplaceTable.id, logoUrl: MarketplaceTable.logoUrl, name: MarketplaceTable.name })
     .from(MarketplaceTable)
     .where(and(
       eq(MarketplaceTable.organizationId, organizationId),
-      inArray(MarketplaceTable.name, [DEFAULT_ANTHROPIC_MARKETPLACE_NAME, DEFAULT_OPENWORK_MARKETPLACE_NAME]),
+      eq(MarketplaceTable.name, DEFAULT_OPENWORK_MARKETPLACE_NAME),
       eq(MarketplaceTable.status, "active"),
       isNull(MarketplaceTable.deletedAt),
     ))
-  const marketplaceIdByName = new Map(defaultMarketplaces.map((marketplace) => [marketplace.name, marketplace.id]))
-  const anthropicMarketplaceId = marketplaceIdByName.get(DEFAULT_ANTHROPIC_MARKETPLACE_NAME)
-  const openWorkMarketplaceId = marketplaceIdByName.get(DEFAULT_OPENWORK_MARKETPLACE_NAME)
-  if (!anthropicMarketplaceId || !openWorkMarketplaceId) {
-    return false
-  }
-  if (!defaultMarketplaces.some((marketplace) => marketplace.name === DEFAULT_ANTHROPIC_MARKETPLACE_NAME && marketplace.logoUrl === DEFAULT_ANTHROPIC_MARKETPLACE_LOGO_URL)) {
-    return false
-  }
-  if (!defaultMarketplaces.some((marketplace) => marketplace.name === DEFAULT_OPENWORK_MARKETPLACE_NAME && marketplace.logoUrl === DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL)) {
+  const openWorkMarketplaceId = defaultMarketplaces.find((marketplace) => marketplace.logoUrl === DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL)?.id
+  if (!openWorkMarketplaceId) {
     return false
   }
 
-  const marketplaceIds = [anthropicMarketplaceId, openWorkMarketplaceId]
+  const marketplaceIds = [openWorkMarketplaceId]
   const marketplaceGrantRows = await db
     .select({ marketplaceId: MarketplaceAccessGrantTable.marketplaceId, role: MarketplaceAccessGrantTable.role })
     .from(MarketplaceAccessGrantTable)
@@ -3083,9 +3175,7 @@ async function defaultOpenWorkMarketplaceSeedComplete(organizationId: Organizati
     return false
   }
 
-  const anthropicPluginEntries = DEFAULT_ANTHROPIC_STARTER_PLUGINS
-  const openWorkPluginEntries = DEFAULT_OPENWORK_EXTENSION_MANIFESTS.map((manifest) => ({ description: manifest.description, name: manifest.name }))
-  const defaultPluginEntries = [...anthropicPluginEntries, ...openWorkPluginEntries]
+  const defaultPluginEntries = DEFAULT_OPENWORK_EXTENSION_MANIFESTS.map((manifest) => ({ description: manifest.description, name: manifest.name }))
   const defaultPluginRows = await db
     .select({ id: PluginTable.id, name: PluginTable.name, description: PluginTable.description })
     .from(PluginTable)
@@ -3122,11 +3212,7 @@ async function defaultOpenWorkMarketplaceSeedComplete(organizationId: Organizati
   }
 
   const expectedMemberships = new Set<string>()
-  for (const entry of anthropicPluginEntries) {
-    const pluginId = pluginIdByEntry.get(defaultMarketplacePluginEntryKey(entry))
-    if (pluginId) expectedMemberships.add(defaultMarketplacePluginMembershipKey(anthropicMarketplaceId, pluginId))
-  }
-  for (const entry of openWorkPluginEntries) {
+  for (const entry of defaultPluginEntries) {
     const pluginId = pluginIdByEntry.get(defaultMarketplacePluginEntryKey(entry))
     if (pluginId) expectedMemberships.add(defaultMarketplacePluginMembershipKey(openWorkMarketplaceId, pluginId))
   }
@@ -3142,6 +3228,89 @@ async function defaultOpenWorkMarketplaceSeedComplete(organizationId: Organizati
     ))
   const memberships = new Set(membershipRows.map((membership) => defaultMarketplacePluginMembershipKey(membership.marketplaceId, membership.pluginId)))
   return Array.from(expectedMemberships).every((membership) => memberships.has(membership))
+}
+
+/**
+ * Starter placeholders are plugins the system put into the retired starter
+ * marketplace that never gained a source or any contents. Anything imported,
+ * filled in, or added by a person stays.
+ */
+async function findRetirableStarterPlaceholders(database: typeof db | DbTransaction, organizationId: OrganizationId) {
+  const starterMarketplaces = await database
+    .select({ description: MarketplaceTable.description, id: MarketplaceTable.id, logoUrl: MarketplaceTable.logoUrl })
+    .from(MarketplaceTable)
+    .where(and(
+      eq(MarketplaceTable.organizationId, organizationId),
+      eq(MarketplaceTable.name, RETIRED_STARTER_MARKETPLACE_NAME),
+      isNull(MarketplaceTable.deletedAt),
+    ))
+  if (starterMarketplaces.length === 0) {
+    return { emptyMarketplaceIds: [], memberships: [] }
+  }
+  const starterMarketplaceIds = starterMarketplaces.map((marketplace) => marketplace.id)
+
+  const memberships = await database
+    .select({ id: MarketplacePluginTable.id, pluginId: PluginTable.id })
+    .from(MarketplacePluginTable)
+    .innerJoin(PluginTable, eq(PluginTable.id, MarketplacePluginTable.pluginId))
+    .where(and(
+      eq(MarketplacePluginTable.organizationId, organizationId),
+      inArray(MarketplacePluginTable.marketplaceId, starterMarketplaceIds),
+      eq(MarketplacePluginTable.membershipSource, "system"),
+      isNull(MarketplacePluginTable.removedAt),
+      eq(PluginTable.organizationId, organizationId),
+      inArray(PluginTable.name, [...RETIRED_STARTER_PLUGIN_NAMES]),
+      isNull(PluginTable.sourceFormat),
+      isNull(PluginTable.sourceRepositoryUrl),
+      isNull(PluginTable.deletedAt),
+      notExists(database
+        .select({ id: PluginConfigObjectTable.id })
+        .from(PluginConfigObjectTable)
+        .where(and(
+          eq(PluginConfigObjectTable.pluginId, PluginTable.id),
+          isNull(PluginConfigObjectTable.removedAt),
+        ))),
+    ))
+
+  // Only the untouched starter marketplace goes, and only once nothing else is in it.
+  const untouchedMarketplaceIds = starterMarketplaces
+    .filter((marketplace) => marketplace.logoUrl === RETIRED_STARTER_MARKETPLACE_LOGO_URL && marketplace.description === RETIRED_STARTER_MARKETPLACE_DESCRIPTION)
+    .map((marketplace) => marketplace.id)
+  if (untouchedMarketplaceIds.length === 0) {
+    return { emptyMarketplaceIds: [], memberships }
+  }
+  const activeMemberships = await database
+    .select({ id: MarketplacePluginTable.id, marketplaceId: MarketplacePluginTable.marketplaceId })
+    .from(MarketplacePluginTable)
+    .where(and(
+      eq(MarketplacePluginTable.organizationId, organizationId),
+      inArray(MarketplacePluginTable.marketplaceId, untouchedMarketplaceIds),
+      isNull(MarketplacePluginTable.removedAt),
+    ))
+  const retiringMembershipIds = new Set(memberships.map((membership) => membership.id))
+  const keptMarketplaceIds = new Set(activeMemberships
+    .filter((membership) => !retiringMembershipIds.has(membership.id))
+    .map((membership) => membership.marketplaceId))
+  const emptyMarketplaceIds = untouchedMarketplaceIds.filter((marketplaceId) => !keptMarketplaceIds.has(marketplaceId))
+
+  return { emptyMarketplaceIds, memberships }
+}
+
+async function retireStarterPlaceholders(input: { database: DbTransaction; organizationId: OrganizationId; retiredAt: Date }) {
+  const { emptyMarketplaceIds, memberships } = await findRetirableStarterPlaceholders(input.database, input.organizationId)
+  if (memberships.length > 0) {
+    await input.database.update(MarketplacePluginTable)
+      .set({ removedAt: input.retiredAt })
+      .where(inArray(MarketplacePluginTable.id, memberships.map((membership) => membership.id)))
+    await input.database.update(PluginTable)
+      .set({ deletedAt: input.retiredAt, status: "deleted", updatedAt: input.retiredAt })
+      .where(inArray(PluginTable.id, uniqueIds(memberships.map((membership) => membership.pluginId))))
+  }
+  if (emptyMarketplaceIds.length > 0) {
+    await input.database.update(MarketplaceTable)
+      .set({ deletedAt: input.retiredAt, status: "deleted", updatedAt: input.retiredAt })
+      .where(inArray(MarketplaceTable.id, emptyMarketplaceIds))
+  }
 }
 
 function defaultMarketplacePluginEntryKey(entry: DefaultMarketplacePluginEntry) {

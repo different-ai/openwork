@@ -385,7 +385,7 @@ export function BackgroundAgentsScreen() {
       description="Run selected workflows in the background without asking each teammate to run them locally. Coming soon."
       colors={["#E9FFE0", "#3E9A1D", "#B3F750", "#51F0A3"]}
     >
-      <div className="mb-10 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-[13px] leading-6 text-amber-800">
+      <div className="mb-10 rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-[13px] leading-6 text-[var(--dls-text-primary)]">
         New cloud workspaces are no longer available from this page. Existing workspaces remain available below.
       </div>
 

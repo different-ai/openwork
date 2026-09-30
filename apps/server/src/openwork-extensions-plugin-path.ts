@@ -40,3 +40,8 @@ export const openworkOfficeAttachmentsPluginPath = () => openworkPluginPath("ope
 export const openworkSpreadsheetsPluginPath = () => openworkPluginPath("openwork-spreadsheets");
 export const openworkPdfAttachmentsPluginPath = () => openworkPluginPath("openwork-pdf-attachments");
 export const openworkTitleRecoveryPluginPath = () => openworkPluginPath("openwork-title-recovery");
+export const openworkGatewayQuotaPluginPath = () => openworkPluginPath("openwork-gateway-quota");
+export const openworkGatewayQuotaV2PluginPath = () => openworkPluginPath("openwork-gateway-quota-v2");
+export const openworkContextV2PluginPath = () => openworkPluginPath("openwork-context-v2");
+export const openworkProviderFiltersV2PluginPath = () => openworkPluginPath("openwork-provider-filters-v2");
+export const openworkMcpResultsV2PluginPath = () => openworkPluginPath("openwork-mcp-results-v2");

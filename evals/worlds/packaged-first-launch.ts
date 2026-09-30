@@ -99,6 +99,7 @@ export async function observeRendererExceptions(debuggerUrl: string | null | und
   if (!debuggerUrl) throw new Error("Renderer exception witness needs a page debugger URL");
   const socket = new WebSocket(debuggerUrl);
   const exceptions: RendererException[] = [];
+  const bootFailures: string[] = [];
   let disconnected = false;
   socket.addEventListener("close", () => { disconnected = true; });
   socket.addEventListener("error", () => { disconnected = true; });
@@ -117,6 +118,17 @@ export async function observeRendererExceptions(debuggerUrl: string | null | und
         if (message.error) reject(new Error("Runtime.enable failed for the exception witness"));
         else resolve();
       }
+      if (message.method === "Runtime.consoleAPICalled" && isRecord(message.params)
+        && Array.isArray(message.params.args) && bootFailures.length < 5) {
+        const args = message.params.args.filter(isRecord);
+        if (typeof args[0]?.value === "string" && args[0].value.startsWith("[desktop-boot]")) {
+          let detail = args.map(arg => readString(arg.description) || readString(arg.value)).join(" ");
+          for (const [name, value] of Object.entries(process.env)) {
+            if (/token|secret|password|api_?key|authorization/i.test(name) && value && value.length > 3) detail = detail.replaceAll(value, "[redacted]");
+          }
+          bootFailures.push(detail.replace(/https?:\/\/\S+/g, "[url]").slice(0, 8000));
+        }
+      }
       if (message.method !== "Runtime.exceptionThrown") return;
       const exception = exceptionFrom(message.params);
       if (exception) exceptions.push(exception);
@@ -124,6 +136,7 @@ export async function observeRendererExceptions(debuggerUrl: string | null | und
   });
   return {
     exceptions,
+    bootFailures,
     assertConnected() {
       if (disconnected || socket.readyState !== WebSocket.OPEN) {
         throw new Error("Renderer exception witness disconnected during startup");
@@ -149,6 +162,17 @@ async function packagedLaunchWorld(name: string, bootstrap: ElectronSurfaceOptio
   let app: AttachedSurface | null = null;
   let witness: Awaited<ReturnType<typeof observeRendererExceptions>> | null = null;
   const dispose = async () => {
+    // A caught runtime bootstrap error is not a Runtime.exceptionThrown event.
+    // Preserve the recovery screen's collapsed technical details before the
+    // isolated profile is removed, without reading credentials or retrying boot.
+    if (app) {
+      const recovery = await evaluateOnSurface(app, () => {
+        const root = document.getElementById("root");
+        if (!/OpenWork couldn't start|OpenWork hit an unexpected error/.test(root?.innerText ?? "")) return null;
+        return { text: root?.textContent, details: [...document.querySelectorAll("details")].map(element => element.textContent) };
+      }, { timeoutMs: 5_000, reattachAttempts: 0 }).catch(() => null);
+      if (recovery) console.error("[packaged-startup-recovery]", JSON.stringify({ ...recovery, failures: witness?.bootFailures }));
+    }
     witness?.close();
     try {
       await app?.stop();
@@ -180,6 +204,8 @@ async function packagedLaunchWorld(name: string, bootstrap: ElectronSurfaceOptio
     }),
     /** Text React actually mounted, as opposed to the body chrome. */
     rootText: () => evaluateOnSurface(attached, () => document.getElementById("root")?.innerText ?? ""),
+    /** The boot overlay's collapsed Technical details, which innerText skips. */
+    bootError: () => evaluateOnSurface(attached, () => document.querySelector('[data-testid="boot-error-detail"]')?.textContent?.trim() || null),
     /** One fresh final observation; never heal a lost observer into a green run. */
     async health() {
       observed.assertConnected();
@@ -189,10 +215,11 @@ async function packagedLaunchWorld(name: string, bootstrap: ElectronSurfaceOptio
         const root = document.getElementById("root");
         return {
           rootText: root?.innerText ?? "",
-          controls: Array.from(root?.querySelectorAll("input, button") ?? [], (control) => ({
+          controls: Array.from(root?.querySelectorAll("input, button, [contenteditable]") ?? [], (control) => ({
             tag: control.tagName.toLowerCase(),
             text: control.textContent?.trim() ?? "",
             testId: control.getAttribute("data-testid"),
+            editable: control instanceof HTMLElement && control.isContentEditable,
             visible: control.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
               && control.getBoundingClientRect().width > 0 && control.getBoundingClientRect().height > 0,
             enabled: !control.matches(":disabled") && control.getAttribute("aria-disabled") !== "true"

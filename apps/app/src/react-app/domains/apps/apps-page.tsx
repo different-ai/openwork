@@ -1,11 +1,12 @@
 import { useParams, useNavigate, useSearchParams, Navigate } from "react-router";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import type { DashboardLaunchEndpoint } from "../dashboard/mcp-app-tile";
 import { AppArtifact } from "./app-artifact";
 import { useAppsClient } from "./use-apps";
 
 /** Retain old app links, with Dashboard as the only library. */
-export function AppsPage({ onNewApp }: { onNewApp: (prompt: string) => Promise<void> }) {
+export function AppsPage({ onNewApp, fallbackEndpoints }: { onNewApp: (prompt: string) => Promise<void>; fallbackEndpoints?: DashboardLaunchEndpoint[] }) {
   const { appId } = useParams();
   const { scope } = useAppsClient();
   const navigate = useNavigate();
@@ -15,7 +16,7 @@ export function AppsPage({ onNewApp }: { onNewApp: (prompt: string) => Promise<v
     <div><Button variant="ghost" onClick={() => navigate("/dashboard")}><ArrowLeft className="size-4" />Dashboard</Button></div>
     <div className="min-h-0 flex-1 overflow-hidden rounded-xl border">
       <AppArtifact key={JSON.stringify([scope, appId, params.get("revisionId"), params.get("receiptId")])}
-        appId={appId} revisionId={params.get("revisionId") ?? undefined} receiptId={params.get("receiptId") ?? undefined} onAsk={onNewApp} />
+        appId={appId} fallbackEndpoints={fallbackEndpoints} revisionId={params.get("revisionId") ?? undefined} receiptId={params.get("receiptId") ?? undefined} onAsk={onNewApp} />
     </div>
   </div>;
 }

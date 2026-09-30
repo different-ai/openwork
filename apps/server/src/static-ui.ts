@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import { extname } from "node:path";
 import { ApiError, formatError } from "./errors.js";
 import { resolveWithinRoot } from "./paths.js";
+import { transferResponseBody } from "./server-fetch.js";
 import type { ServerConfig } from "./types.js";
 
 const WEB_ROOT_ENV = "OPENWORK_WEB_ROOT";
@@ -94,7 +95,11 @@ function textResponse(extension: string, body: string): Response {
 function withCacheControl(response: Response, cacheControl: string): Response {
   const headers = new Headers(response.headers);
   headers.set("Cache-Control", cacheControl);
-  return new Response(response.body, { status: response.status, headers });
+  return new Response(transferResponseBody(response), {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function responseHeaders(extension: string, cacheControl: string): Headers {

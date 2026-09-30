@@ -4,25 +4,36 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "@openwork/testkit";
-import { discoverWorlds, main } from "@openwork/world";
+import { discoverWorlds, main, RENAMED_WORLDS } from "@openwork/world";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const WORLDS_DIRECTORY = join(REPO_ROOT, "worlds");
 
 const worldImports: Record<string, () => Promise<unknown>> = {
-  "acme-demo.ts": () => import("../../worlds/acme-demo.ts"),
-  "acme-docs.ts": () => import("../../worlds/acme-docs.ts"),
-  "azure-byok.ts": () => import("../../worlds/azure-byok.ts"),
-  "cloud-model-infra-worker.ts": () => import("../../worlds/cloud-model-infra-worker.ts"),
-  "cloud-model-infra.ts": () => import("../../worlds/cloud-model-infra.ts"),
-  "cross-workspace-split-view.ts": () => import("../../worlds/cross-workspace-split-view.ts"),
-  "den-split-origin-kind.ts": () => import("../../worlds/den-split-origin-kind.ts"),
-  "desktop-prod-live.ts": () => import("../../worlds/desktop-prod-live.ts"),
-  "dev-headless.ts": () => import("../../worlds/dev-headless.ts"),
-  "headless-prod-live.ts": () => import("../../worlds/headless-prod-live.ts"),
-  "litellm-per-member.ts": () => import("../../worlds/litellm-per-member.ts"),
-  "remote-session.ts": () => import("../../worlds/remote-session.ts"),
-  "solo.ts": () => import("../../worlds/solo.ts"),
+  "acme-web.ts": () => import("../../worlds/acme-web.ts"),
+  "dev-app-web.ts": () => import("../../worlds/dev-app-web.ts"),
+  "live-app-web.ts": () => import("../../worlds/live-app-web.ts"),
+  "live-desktop.ts": () => import("../../worlds/live-desktop.ts"),
+  "preview-app-web.ts": () => import("../../worlds/preview-app-web.ts"),
+  "preview-den.ts": () => import("../../worlds/preview-den.ts"),
+  "preview-desktop.ts": () => import("../../worlds/preview-desktop.ts"),
+  "preview-full.ts": () => import("../../worlds/preview-full.ts"),
+};
+
+/**
+ * Script worlds that live next to the one test, doc, or example that uses
+ * them. They run by path (`pnpm world up ./path/to/world.ts`) and must stay
+ * import-safe like the root worlds.
+ */
+const colocatedWorldImports: Record<string, () => Promise<unknown>> = {
+  "ee/packages/den-db/test/mysql-0097-native.world.ts": () => import("../../ee/packages/den-db/test/mysql-0097-native.world.ts"),
+  "evals/docs-shots/world.ts": () => import("../docs-shots/world.ts"),
+  "evals/worlds/den-split-origin-kind.world.ts": () => import("../worlds/den-split-origin-kind.world.ts"),
+  "evals/worlds/infra/cloud-model-infra-worker.ts": () => import("../worlds/infra/cloud-model-infra-worker.ts"),
+  "evals/worlds/infra/cloud-model-infra.ts": () => import("../worlds/infra/cloud-model-infra.ts"),
+  "evals/worlds/infra/remote-session.ts": () => import("../worlds/infra/remote-session.ts"),
+  "examples/litellm-per-member-keys/world.ts": () => import("../../examples/litellm-per-member-keys/world.ts"),
+  "packages/freestyle/worlds/evidence-web.ts": () => import("../../packages/freestyle/worlds/evidence-web.ts"),
 };
 
 async function importPromptly(name: string, load: () => Promise<unknown>): Promise<unknown> {
@@ -119,6 +130,11 @@ test("every root world is an import-safe executable script module", async ({ evi
       const loaded = await importPromptly(name, load);
       assert.equal(typeof loaded, "object", `${name} must import as a module`);
     }
+    for (const [path, load] of Object.entries(colocatedWorldImports)) {
+      await access(join(REPO_ROOT, path));
+      const loaded = await importPromptly(path, load);
+      assert.equal(typeof loaded, "object", `${path} must import as a module`);
+    }
     assert.deepEqual(await readdir(root), [], "imports must not create lifecycle receipts");
     assert.equal(process.listenerCount("SIGINT"), signalListeners.sigint, "imports must not acquire SIGINT listeners");
     assert.equal(process.listenerCount("SIGTERM"), signalListeners.sigterm, "imports must not acquire SIGTERM listeners");
@@ -126,7 +142,7 @@ test("every root world is an import-safe executable script module", async ({ evi
 
     evidence.recordAssertionEvidence(
       "Every discovered world is an explicit import-safe script module",
-      `All ${worldFileNames.length} worlds/*.ts files imported within the deadline without receipts, signal listeners, child processes, or network resources.`,
+      `All ${worldFileNames.length} worlds/*.ts files and ${Object.keys(colocatedWorldImports).length} colocated world scripts imported within the deadline without receipts, signal listeners, child processes, or network resources.`,
       true,
     );
   } finally {
@@ -134,6 +150,21 @@ test("every root world is an import-safe executable script module", async ({ evi
     else process.env.OPENWORK_WORLD_SNAPSHOT_DIR = previousReceiptsDirectory;
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("renamed and moved worlds point at scripts that exist", async ({ evidence }) => {
+  const worlds = new Set((await discoverWorlds(WORLDS_DIRECTORY)).map((world) => world.name));
+  for (const [old, replacement] of Object.entries(RENAMED_WORLDS)) {
+    assert.equal(worlds.has(old), false, `${old} must not also exist in worlds/`);
+    const target = replacement.split(" ")[0];
+    if (target.startsWith("./")) await access(join(REPO_ROOT, target));
+    else assert.ok(worlds.has(target), `${old} points at missing world ${target}`);
+  }
+  evidence.recordAssertionEvidence(
+    "Old world names fail with a pointer to an existing replacement",
+    `All ${Object.keys(RENAMED_WORLDS).length} renamed, moved, or removed world names point at an existing root world or colocated script.`,
+    true,
+  );
 });
 
 test("the retired definition, topology, adapter, and preset APIs are absent", async ({ evidence }) => {

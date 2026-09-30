@@ -112,9 +112,9 @@ export function SettingsShell(props: SettingsShellProps) {
         />
         <SidebarInset className="min-h-0 overflow-hidden bg-background mac:bg-background/80 mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-16 [&_header]:pl-16 lg:[&_header]:pl-6">
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <header className="shrink-0 flex h-10 items-center justify-between border-b border-dls-border px-4 md:px-6 mac:titlebar-drag">
-              <div className="flex min-w-0 items-center gap-3">
-                <SidebarTrigger className="mac:titlebar-no-drag lg:hidden" />
+            <header data-settings-titlebar className="window-titlebar shrink-0 flex items-center justify-between border-b border-dls-border px-4 md:px-6 electron:titlebar-drag">
+              <div className="flex min-w-0 items-center gap-3 titlebar-no-drag">
+                <SidebarTrigger className="lg:hidden" />
                 {props.headerLeadingSlot}
                 <div className="truncate text-[15px] font-semibold text-dls-text">{title}</div>
                 <span className="hidden truncate text-[13px] text-dls-secondary lg:inline">
@@ -131,7 +131,7 @@ export function SettingsShell(props: SettingsShellProps) {
                   </span>
                 ) : null}
               </div>
-              <div className="flex shrink-0 items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
+              <div className="flex shrink-0 items-center gap-1.5 text-gray-10 titlebar-no-drag">
                 <DesktopUpdateButton />
                 <NotificationBell />
                 <Button

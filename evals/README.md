@@ -11,9 +11,16 @@ Use the skills in this order:
 1. `write-a-spec`
 2. `run-tests`
 3. `diagnose-a-red-run` when the run fails
-4. `publish-evidence` for the existing ambient test evidence
+4. `open-a-pr`; CI runs the changed specs on the PR head and publishes the evidence
 
 Demo-driven features start from a world script plus a spec in `evals/specs`.
+
+## Experimental verification dictionary
+
+See [Verification dictionary](./verification-dictionary.md) for closed-set Jev
+compilation, deterministic replay with zero model calls, the full 59-method
+channel inventory, privacy boundaries, and offline/live benchmark instructions.
+This opt-in compiler selects checked-in assertions; it is not an app-state judge.
 
 ## Glossary
 
@@ -47,7 +54,6 @@ Skills own mechanics; this README owns the map and vocabulary.
 | Author a spec | `write-a-spec` | Add executable coverage under `evals/specs`. |
 | Run tests | `run-tests` | Run a selected spec; the CLI chooses and reports placement. |
 | Failing or red run | `diagnose-a-red-run` | Classify a failure before changing code. |
-| Publish evidence or declare a PR verdict | `publish-evidence` | Judge and publish an existing ambient evidence run. |
 | Missing secret or environment variable | `get-env-var` | Load a required team secret into the shell. |
 | Drive local Electron via CDP | `browser-automation` | Explore or debug the local desktop surface. |
 | Daytona setup or sandbox debugging | `daytona` | Repair the CLI, snapshots, sandboxes, or secrets volume. |
@@ -358,7 +364,9 @@ endpoint without creating test evidence.
 
 ## Worlds
 
-A world is a plain executable TypeScript file under `worlds/`. Each script
+A world is a plain executable TypeScript file. Everyday ones live under
+`worlds/` (see `worlds/README.md` for the `preview-`/`dev-`/`live-` names);
+one used by a single test, doc, or example lives next to it and runs by path. Each script
 creates concrete async resources in dependency order, registers them with a
 native `AsyncDisposableStack`, and calls `hold()` after it is ready. Typical
 resources are `server`, `createAdmin`, `createOrg`, `inviteMember`, `app`,
@@ -369,9 +377,10 @@ therefore side-effect-free until a caller invokes an exported builder. Specs,
 docs tooling, and the script entry point use those same builders; there is no
 second lifecycle layer.
 
-Useful ready-made scripts include `worlds/solo.ts`, `worlds/acme-demo.ts`,
-`worlds/acme-docs.ts`, and `worlds/desktop-prod-live.ts`. `support-org` no
-longer exists. See `pnpm world list` for the complete current set.
+Everyday scripts are `preview-desktop` (app only), `preview-den` (Den only),
+`preview-full` (Den plus desktop), `preview-app-web`, `acme-web`, `dev-app-web`,
+and `live-desktop`/`live-app-web`. `pnpm world list` shows the current set.
+Colocated scripts include `evals/docs-shots/world.ts` and `evals/worlds/infra/`.
 
 Detached scripts write PID ownership receipts to
 `evals/results/.worlds/scripts/<name>.json`. A receipt records the script path,
@@ -383,22 +392,22 @@ recipe for recreating resources.
 The root `pnpm world` command requires Node 24+. Its interactive lifecycle is:
 
 ```bash
-pnpm world up solo                 # foreground; Ctrl-C disposes its stack
-pnpm world up acme-demo --detach   # background; waits for its receipt
-pnpm world up acme-docs --detach --timeout 600000
-pnpm world down acme-demo          # signal it and wait for native disposal
+pnpm world up preview-full -- --scenario workspace   # foreground; Ctrl-C disposes its stack
+pnpm world up preview-den --detach                   # background; waits for its receipt
+pnpm world up ./evals/docs-shots/world.ts --detach --timeout 600000
+pnpm world down preview-den                          # signal it and wait for native disposal
 pnpm world list
 pnpm world forget <name>
 pnpm world help
 
 # A path or the filename-derived name selects the same script.
-pnpm world up ./worlds/dev-headless.ts
-pnpm world up ./worlds/litellm-per-member.ts
+pnpm world up ./worlds/dev-app-web.ts
+pnpm world up ./examples/litellm-per-member-keys/world.ts
 
 # Script-specific arguments must follow the separator.
-pnpm world up dev-headless --detach -- --replace --keep-tokens
-pnpm world up headless-prod-live -- --allow-shared-state
-pnpm world up desktop-prod-live -- --allow-shared-state
+pnpm world up dev-app-web --detach -- --replace --keep-tokens
+pnpm world up live-app-web -- --allow-shared-state
+pnpm world up live-desktop -- --allow-shared-state
 ```
 
 The generic `up` options are only `--detach` and, with detached mode,
@@ -406,9 +415,9 @@ The generic `up` options are only `--detach` and, with detached mode,
 script. `down` sends the script a termination signal and waits while its
 `AsyncDisposableStack` releases owned resources. `forget` removes receipt
 metadata only; it does not stop the process. `help` and `list` discover
-`worlds/*.ts`.
+`worlds/*.ts`; old names fail with a pointer to their replacement.
 
-`desktop-prod-live` is a deliberately dangerous local-only mode. It launches
+`live-desktop` is a deliberately dangerous local-only mode. It launches
 source Electron through `pnpm dev` with isolated Electron userData, app
 identifier, Vite/CDP ports, and protocol registration, while resolving the
 installed production `OPENWORK_DATA_DIR` and channel-aware `OPENCODE_DB` only at
@@ -419,13 +428,13 @@ corrupt state. Its parser requires exactly `--allow-shared-state`, after the
 `world up` argument separator. Disposal stops only the source dev process and
 does not delete shared stores.
 
-`headless-prod-live` applies the same symbolic state selection to source Vite +
+`live-app-web` applies the same symbolic state selection to source Vite +
 `openwork-server` without Electron. Its production tokens, server state, config,
 OpenWork data, and OpenCode database are resolved in place and never copied into
 the receipt. It requires the same exact script argument and refuses remote
 access, public hosts, and non-loopback host bindings.
 
-`worlds/den-split-origin-kind.ts` attaches to the shared
+`evals/worlds/den-split-origin-kind.world.ts` attaches to the shared
 `openwork-kube-lab` kind substrate and owns only its local port-forwards. Run its
 opt-in proof on a machine with local Docker, kind, kubectl, and Helm:
 
@@ -446,7 +455,7 @@ Compose journeys from `@openwork/behaviors`; executable coverage belongs in
 `evals/specs`.
 
 ```ts
-import { bootAcmeDocs } from "../../worlds/acme-docs.ts";
+import { bootAcmeDocs } from "../docs-shots/world.ts";
 
 await using stack = new AsyncDisposableStack();
 const world = await bootAcmeDocs(stack, place);
@@ -490,16 +499,11 @@ A failed assertion is `Failed`; missing requirements, tooling failure, or
 missing test evidence is `Incomplete` or a named skip. A green suite containing
 skips is not proof.
 
-Publish an already completed test run with the `publish-evidence` skill:
-
-```bash
-pnpm evals:e2e --publish --pr <number> [--test-run <path|directory-id|latest|name>]
-```
-
-`evals:e2e --publish` judges and publishes test evidence without rerunning tests.
-Its optional `--test-run` argument selects an existing test run by path,
-directory ID, record name, or `latest` at publish time. Custom screenshots and
-recordings are supplementary and never determine the pass/fail verdict.
+CI publishes. `PR change proof` runs every changed spec on the PR head and
+`evidence-review` posts one sticky comment linking the report; nobody runs the
+publisher by hand. `evals:e2e --publish` remains for that trusted CI path
+only. Custom screenshots and recordings are supplementary and never determine
+the pass/fail verdict.
 
 ## Standalone isolated Den
 

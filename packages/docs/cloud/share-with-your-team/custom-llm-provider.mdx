@@ -1,31 +1,39 @@
 ---
 title: "Adding a custom LLM provider"
-description: "Create a custom provider definition in OpenWork Cloud and import it into the desktop app"
+description: "Share an OpenAI-compatible endpoint, such as Azure AI Foundry, LiteLLM, or vLLM, with your org from OpenWork Cloud."
 ---
 
-Use this when the provider is not in the catalog. The Cloud dashboard stores the shared credential once and then lets desktop workspaces import it.
+Use this when the provider isn't in the catalog: Azure AI Foundry, LiteLLM, vLLM, or an internal gateway. You add the endpoint and key once in OpenWork Cloud, and it syncs to members' desktop apps.
 
-<Frame>
-  ![Custom LLM provider detail in OpenWork Cloud](/images/cloud-custom-llm-provider-detail.png)
-</Frame>
+Custom endpoints are legacy providers, so the key is synced to members' apps and there's no usage tracking. If your provider is in the catalog, an [AI Gateway provider](/ai-gateway/overview) keeps the key on the server instead. See [Adding a managed LLM provider](/cloud/share-with-your-team/managed-llm-provider) for how the two compare.
 
 ## Create the custom provider
 
-1. Open `LLM Providers`.
-2. Click `Add Provider`.
+1. In OpenWork Cloud, open `AI Gateway` > `AI Providers`.
+2. Scroll to `Legacy Providers` and click `Add legacy provider`.
 3. Switch to `Custom provider`.
-4. Give it a `Name` (the `Provider ID` fills in automatically).
-5. Enter the `Base URL` of the OpenAI-compatible endpoint (for Azure AI Foundry this looks like `https://my-resource.openai.azure.com/openai/v1`).
-6. List the `Model IDs` the endpoint serves — on Azure AI Foundry these are your deployment names.
-7. Paste the shared `API key / credential`.
-8. Choose `People access` and/or `Team access`.
+4. Paste the shared key into `API key / credential`.
+5. Enter the `Base URL` of the OpenAI-compatible endpoint. It usually ends in `/v1`. For Azure AI Foundry it looks like `https://my-resource.openai.azure.com/openai/v1`.
+6. OpenWork checks the endpoint and lists the models it serves. Pick the ones to share. If a model is missing, click `My model isn't listed — enter IDs manually` and type the IDs in `Model IDs`, one per line. On Azure AI Foundry, these are your deployment names.
+7. Enter a short `Provider ID`, such as `azure-foundry`. Or click `Rename` next to `Name` and type a name, and the `Provider ID` fills in from it. If you don't rename it, the name is based on the endpoint, for example `my-resource.openai.azure.com — key 1`.
+8. Under `Who can use it`, keep `Everyone in <your org>`, or pick specific `Teams` and `People`.
 9. Click `Create Provider`.
 
-That's it — no JSON required for OpenAI-compatible endpoints.
+<Frame>
+  ![The Custom provider form: Provider ID, API key / credential, Base URL, and Model IDs](/images/cloud-custom-llm-provider-form.png)
+</Frame>
+
+You don't need to write JSON for an OpenAI-compatible endpoint.
+
+Once saved, the provider page shows its configuration, whether the key is saved, and the models you shared:
+
+<Frame>
+  ![Acme LLM Gateway provider detail: Credential saved, provider ID, API base, and two selected models](/images/cloud-custom-llm-provider-detail.png)
+</Frame>
 
 ### Advanced: raw JSON config
 
-If the provider needs more than the form covers (a different AI SDK package, per-model limits or modalities, custom options), click `Advanced: edit as JSON` and provide a models.dev-style definition. The JSON must include `id`, `name`, `npm`, `env`, and `models`; `api` is optional, but most OpenAI-compatible providers use it. The editor requires valid JSON, at least one environment variable, and at least one model.
+If the provider needs more than the form covers (a different AI SDK package, per-model limits or modalities, custom options), click `Advanced: edit as JSON` and paste a models.dev-style definition into `Custom provider JSON / JSONC`. Click `Use the guided form instead` to go back. The JSON must include `id`, `name`, `npm`, `env`, and `models`; `api` is optional, but most OpenAI-compatible providers use it. The editor requires valid JSON, at least one environment variable, and at least one model.
 
 ```json
 {
@@ -67,12 +75,9 @@ If the provider needs more than the form covers (a different AI SDK package, per
 }
 ```
 
-## Import it into the desktop app
+## What members see
 
-1. Open `Settings > Cloud Providers`.
-2. Choose the correct `Active org`.
-3. Under `Cloud providers`, click `Import`.
-4. Reload the workspace when OpenWork asks.
+Members don't import anything. Their desktop app syncs the provider automatically, and its models show up in the model picker. Members can check status in `Settings` > `AI Providers` > `Cloud providers`. See [What members see](/cloud/share-with-your-team/managed-llm-provider#what-members-see).
 
 ### Functional example: an LLM gateway (Infron)
 
@@ -80,7 +85,7 @@ An LLM gateway is one OpenAI-compatible endpoint that fans out to many model pro
 
 Grab a key from the [API Keys dashboard](https://infron.ai/dashboard/apiKeys). If you don't have an account yet, sign up at [infron.ai/login](https://infron.ai/login) and their [quickstart](https://infron.ai/docs/overview/quickstart/text) walks you through your first request.
 
-Paste the key into `API key / credential` and use this JSON:
+Add a legacy provider, switch to `Custom provider`, and paste the key into `API key / credential`. Then click `Advanced: edit as JSON` and use this JSON:
 
 ```json
 {
@@ -118,7 +123,7 @@ Paste the key into `API key / credential` and use this JSON:
 }
 ```
 
-Once imported, Infron models show up in the Chat model picker alongside everything else:
+Once synced, Infron models show up in the Chat model picker alongside everything else:
 
 <Frame>
   ![DeepSeek V3.2 via Infron in the OpenWork Chat model picker](/images/infron-model-picker.png)
@@ -134,4 +139,4 @@ Add more entries under `models` to expose other routes the gateway supports (e.g
 
 ## When to use a cloud provider
 
-Use a Cloud provider when the setup is meant to be shared across an org or team. For solo use, configuring it directly in the desktop app is simpler.
+Use a cloud provider when a whole org or team should share the setup. For your own computer only, [add the provider in the desktop app](/start-here/connect-your-stack/add-a-custom-llm) instead.

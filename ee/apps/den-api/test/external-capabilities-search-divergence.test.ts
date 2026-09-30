@@ -42,6 +42,14 @@ type MutableSchemaMcpServer = FakeMcpServer & {
   useSchema: (schema: "query" | "incidentId") => void
 }
 
+type ToolLabel = { readOnlyHint?: boolean; destructiveHint?: boolean }
+
+type LabelledMcpServer = FakeMcpServer & {
+  toolCalls: () => number
+  setLabel: (label: ToolLabel) => void
+  setLabelForToken: (token: string, label: ToolLabel) => void
+}
+
 type SeededOrganization = {
   organizationId: DenTypeId<"organization">
   memberId: DenTypeId<"member">
@@ -72,6 +80,7 @@ let refreshErrorServer: FakeMcpServer | undefined
 let providerErrorServer: FakeMcpServer | undefined
 let needleServer: FakeMcpServer | undefined
 let mutableSchemaServer: MutableSchemaMcpServer | undefined
+let labelledServer: LabelledMcpServer | undefined
 let mcpAppServer: FakeMcpServer | undefined
 
 const slackTools: FakeTool[] = [
@@ -380,6 +389,44 @@ function startMutableSchemaMcpServer(): MutableSchemaMcpServer {
   }
 }
 
+/** One lookup tool whose annotations can change, and can differ per bearer token. */
+function startLabelledMcpServer(): LabelledMcpServer {
+  let label: ToolLabel = { readOnlyHint: true }
+  const tokenLabels = new Map<string, ToolLabel>()
+  let toolCalls = 0
+  const app = new Hono()
+  app.all("/mcp", async (c) => {
+    const payload: unknown = await c.req.raw.clone().json().catch(() => null)
+    if (isRecord(payload) && payload.method === "tools/call") toolCalls += 1
+    const token = c.req.header("authorization")?.replace(/^Bearer /u, "")
+    const server = new McpServer({ name: "labelled-pricing", version: "1.0.0" })
+    server.registerTool(
+      "lookup_price",
+      {
+        description: "Look up the unit price for a SKU.",
+        inputSchema: z.object({ sku: z.string() }),
+        annotations: (token ? tokenLabels.get(token) : undefined) ?? label,
+      },
+      async ({ sku }) => ({ content: textContent(`Unit price for ${sku}: 7`) }),
+    )
+    const transport = new StreamableHTTPTransport()
+    await server.connect(transport)
+    return await transport.handleRequest(c) ?? new Response(null, { status: 204 })
+  })
+  const server = Bun.serve({ port: 0, fetch: app.fetch })
+  return {
+    url: `http://127.0.0.1:${server.port}/mcp`,
+    stop: () => server.stop(true),
+    toolCalls: () => toolCalls,
+    setLabel: (next) => {
+      label = next
+    },
+    setLabelForToken: (token, next) => {
+      tokenLabels.set(token, next)
+    },
+  }
+}
+
 function standaloneConnection(
   url: string,
   authType: "none" | "apikey" | "oauth" = "none",
@@ -430,6 +477,14 @@ async function seedOrganization(label: string): Promise<SeededOrganization> {
     role: "member",
   })
   return { organizationId, memberId }
+}
+
+async function addMember(seed: SeededOrganization, label: string): Promise<DenTypeId<"member">> {
+  const userId = createDenTypeId("user")
+  const memberId = createDenTypeId("member")
+  await db.insert(schema.AuthUserTable).values({ id: userId, name: `${label} User`, email: `${label}+${userId}@test.local` })
+  await db.insert(schema.MemberTable).values({ id: memberId, organizationId: seed.organizationId, userId, role: "member" })
+  return memberId
 }
 
 async function createGrantedConnection(seed: SeededOrganization, input: ConnectionInput) {
@@ -511,6 +566,7 @@ beforeAll(async () => {
     description: "The only catalog entry matching the coverage test keyword.",
   }])
   mutableSchemaServer = startMutableSchemaMcpServer()
+  labelledServer = startLabelledMcpServer()
   mcpAppServer = startFakeMcpServer("fake-mcp-app", [{
     name: "open_project_atlas",
     description: "Open the Project Atlas MCP App.",
@@ -526,6 +582,7 @@ afterAll(() => {
   providerErrorServer?.stop()
   needleServer?.stop()
   mutableSchemaServer?.stop()
+  labelledServer?.stop()
   mcpAppServer?.stop()
   mock.restore()
 })
@@ -806,6 +863,78 @@ test("external capability execution reports schema guidance but always attempts 
     },
   })
   expect(mutableSchemaServer.toolCalls()).toBe(5)
+})
+
+test("search labels a connection tool read-only only when its provider marks it read-only and not destructive", async () => {
+  if (!labelledServer) throw new Error("Labelled MCP server was not started")
+  const labels: Array<[ToolLabel, boolean]> = [
+    [{ readOnlyHint: true }, true],
+    [{ readOnlyHint: true, destructiveHint: true }, false],
+    [{ readOnlyHint: false }, false],
+    [{}, false],
+  ]
+  for (const [index, [label, readOnly]] of labels.entries()) {
+    labelledServer.setLabel(label)
+    // A fresh organization per label, so search never reuses another label's cached tool list.
+    const seed = await seedOrganization(`read-only-search-${index}`)
+    const connection = await createGrantedConnection(seed, { name: "Pricing", authType: "none", credentialMode: "shared", url: labelledServer.url })
+    const match = (await search(seed, "look up price")).find((candidate) => candidate.name === `mcp:${connection.id}:lookup_price`)
+    expect(match).toMatchObject({ readOnly })
+  }
+})
+
+test("a read-only requirement follows the provider's live label in the caller's own tool list", async () => {
+  if (!labelledServer) throw new Error("Labelled MCP server was not started")
+  labelledServer.setLabel({ readOnlyHint: true })
+  const seed = await seedOrganization("read-only-live-label")
+  const connection = await createGrantedConnection(seed, { name: "Pricing", authType: "none", credentialMode: "shared", url: labelledServer.url })
+  const callAs = (orgMembershipId: DenTypeId<"member">, connectionId: string = connection.id) => executeExternalCapability({
+    scopes: new Set(["mcp:read", "mcp:write"]),
+    organizationId: seed.organizationId,
+    member: { orgMembershipId, teamIds: [] },
+    connectionId,
+    toolName: "lookup_price",
+    args: { sku: "WIDGET-7" },
+    redirectUriBase,
+    requireReadOnly: true,
+  })
+  const refusal = {
+    ok: false,
+    error: "policy_blocked",
+    reason: "provider_not_read_only",
+    message: "lookup_price is no longer marked read-only by its provider, so OpenWork blocked the call.",
+  }
+  const before = labelledServer.toolCalls()
+  expect(await callAs(seed.memberId)).toMatchObject({ ok: true })
+  expect(labelledServer.toolCalls()).toBe(before + 1)
+
+  // The provider has since made the tool destructive, or dropped its read-only label.
+  for (const label of [{ readOnlyHint: true, destructiveHint: true }, { readOnlyHint: false }, {}]) {
+    labelledServer.setLabel(label)
+    expect(await callAs(seed.memberId)).toMatchObject(refusal)
+  }
+  expect(labelledServer.toolCalls()).toBe(before + 1)
+
+  // Per-member connections list tools with each member's own credential, so
+  // one member's list can mark the tool destructive while another's does not.
+  labelledServer.setLabel({ readOnlyHint: true })
+  labelledServer.setLabelForToken("writer-token", { readOnlyHint: true, destructiveHint: true })
+  const perMember = await createGrantedConnection(seed, { name: "Per-member pricing", authType: "oauth", credentialMode: "per_member", url: labelledServer.url })
+  const otherMemberId = await addMember(seed, "read-only-live-label-other")
+  for (const [orgMembershipId, accessToken] of [[seed.memberId, "reader-token"], [otherMemberId, "writer-token"]] as const) {
+    await db.insert(schema.ConnectedAccountTable).values({
+      id: createDenTypeId("connectedAccount"),
+      organizationId: seed.organizationId,
+      orgMembershipId,
+      providerId: perMember.id,
+      accessToken,
+      tokenType: "Bearer",
+      scopes: [],
+    })
+  }
+  expect(await callAs(seed.memberId, perMember.id)).toMatchObject({ ok: true })
+  expect(await callAs(otherMemberId, perMember.id)).toMatchObject(refusal)
+  expect(labelledServer.toolCalls()).toBe(before + 2)
 })
 
 test("shared-oauth-never-connected: Connections list sees Slack and search returns needs_connection", async () => {

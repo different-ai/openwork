@@ -38,12 +38,16 @@ import { emptyObjectSchema, emptyResponse, jsonResponse } from "../../openapi.js
 import { getSingletonSsoStatus } from "../../orgs.js"
 import { cache } from "../../cache.js"
 import { appLogger } from "../../observability/logger.js"
+import { timeScimDiagnosticStage } from "../../observability/scim-diagnostics.js"
 import { getAuthRequestEmail, getSingleOrgEmailSignupPolicyViolation, type SingleOrgEmailSignupPolicyViolation } from "../../single-org-signup-policy.js"
 import { samlResponsePolicyMiddleware } from "../../sso-saml-response-middleware.js"
 import { authorizeOrganizationSsoCallback, failOrganizationSsoTestIntent } from "../../sso-test-lifecycle.js"
 import { getRequestSession, readSignedSessionCookieToken, revokeBearerSession, type AuthContextVariables } from "../../session.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
+import { exchangePreclaimAssertion, JWT_BEARER_GRANT_TYPE } from "../../workspace-preclaim.js"
+import { withAgentAuthMetadata } from "../../agent-auth-metadata.js"
+import { registerDeviceAuthRoutes } from "./device.js"
 import { normalizeOAuthAuthorizeRedirect } from "./oauth-redirect.js"
 import { registerScimAuthRoutes } from "./scim.js"
 
@@ -447,7 +451,12 @@ async function makeAuthorizationResponseIssuerOptional(response: Response) {
 }
 
 async function getOAuthAuthorizationServerMetadata(request: Request) {
-  return makeAuthorizationResponseIssuerOptional(await oauthProviderAuthServerMetadata(auth)(request))
+  const response = await makeAuthorizationResponseIssuerOptional(await oauthProviderAuthServerMetadata(auth)(request))
+  const metadata: unknown = await response.clone().json().catch(() => null)
+  if (!isRecord(metadata)) return response
+  const headers = new Headers(response.headers)
+  headers.delete("content-length")
+  return new Response(JSON.stringify(withAgentAuthMetadata(metadata, env.apiPublicUrl ?? env.betterAuthUrl)), { status: response.status, headers })
 }
 
 async function getOAuthOpenIdConfiguration(request: Request) {
@@ -631,6 +640,24 @@ async function getOrganizationSsoCallbackRequest(request: Request) {
   }
 }
 
+/**
+ * RFC 7523 JWT-bearer grant for pre-claim workspace assertions. Better Auth's
+ * token endpoint does not know this grant, so Den answers it before handing
+ * the request over. Returns null for every other grant type.
+ */
+async function handleJwtBearerGrant(request: Request): Promise<Response | null> {
+  if (!(request.headers.get("content-type") ?? "").includes("application/x-www-form-urlencoded")) return null
+  const form = new URLSearchParams(await request.text())
+  if (form.get("grant_type") !== JWT_BEARER_GRANT_TYPE) return null
+  const assertion = form.get("assertion")?.trim()
+  const headers = { "cache-control": "no-store", pragma: "no-cache" }
+  if (!assertion) {
+    return Response.json({ error: "invalid_request", error_description: "The assertion parameter is required." }, { status: 400, headers })
+  }
+  const result = await exchangePreclaimAssertion(assertion)
+  return Response.json(result.body, { status: result.ok ? 200 : result.status, headers })
+}
+
 async function handleAuthRequest(c: Context) {
   const request = c.req.raw
   const observabilityRequest = request.method === "POST"
@@ -646,6 +673,15 @@ async function handleAuthRequest(c: Context) {
       logger.warn("oauth token request rate limited", rateLimitFields)
     }
     return oauthTokenRateLimit.response
+  }
+  if (observabilityRequest) {
+    const jwtBearerResponse = await handleJwtBearerGrant(observabilityRequest.clone())
+    if (jwtBearerResponse) {
+      if (oauthTokenRateLimit && !jwtBearerResponse.ok) {
+        await recordOAuthTokenFailure(oauthTokenRateLimit.failureKey, jwtBearerResponse, checkRateLimit)
+      }
+      return jwtBearerResponse
+    }
   }
   const authRequest = await normalizeMcpOAuthRequest(request)
   if (authRequest instanceof Response) {
@@ -725,7 +761,7 @@ async function handleAuthRequest(c: Context) {
 
   let response: Response
   try {
-    response = await auth.handler(authRequest)
+    response = await timeScimDiagnosticStage("better_auth_ms", () => auth.handler(authRequest))
   } catch (error) {
     if (ssoCallbackAuthorization?.ok && ssoCallbackAuthorization.mode === "test") {
       await failOrganizationSsoTestIntent(ssoCallbackAuthorization.intentId, "authentication")
@@ -992,4 +1028,5 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
     (c) => handleAuthRequest(c),
   )
   registerDesktopAuthRoutes(app)
+  registerDeviceAuthRoutes(app)
 }

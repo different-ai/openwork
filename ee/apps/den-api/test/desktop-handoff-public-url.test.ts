@@ -1,4 +1,12 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
+import { typeId } from "@openwork-ee/utils/typeid"
+
+const organizationId = typeId.generator("organization")
+const otherOrganizationId = typeId.generator("organization")
+const webOrigin = "https://web.selfhost.example.test"
+
+// No database in unit tests: the organization has no Cloud instance previews.
+const noSignedPreviews = () => Promise.resolve([])
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
@@ -14,11 +22,29 @@ async function loadDesktopHandoffRoutes() {
 
 async function configureDesktopHandoffEnv(input: {
   gatewayOrigin?: string
+  orgMode?: "multi_org" | "single_org"
 }) {
   const { env } = await import("../src/env.js")
-  env.orgMode = "multi_org"
+  env.orgMode = input.orgMode ?? "multi_org"
   env.gatewayOrigin = input.gatewayOrigin
 }
+
+const approvalLookups: Array<{ origin: string; organizationId?: string }> = []
+
+async function approveWebOriginForOrganization(approvedOrganizationId: string, approvedOrigin: string) {
+  const { setWebOriginApprovalLookupForTest } = await import("../src/organization-web-origins.js")
+  approvalLookups.length = 0
+  setWebOriginApprovalLookupForTest(async (input) => {
+    approvalLookups.push(input)
+    return input.organizationId === approvedOrganizationId && input.origin === approvedOrigin
+  })
+}
+
+afterEach(async () => {
+  const { setWebOriginApprovalLookupForTest } = await import("../src/organization-web-origins.js")
+  setWebOriginApprovalLookupForTest(null)
+  approvalLookups.length = 0
+})
 
 describe("desktop handoff public URL", () => {
   test("does not send 0.0.0.0 to desktop clients", async () => {
@@ -26,17 +52,26 @@ describe("desktop handoff public URL", () => {
     process.env.BETTER_AUTH_URL = "https://public.example.test"
 
     const { resolveDesktopDenBaseUrl } = await loadDesktopHandoffRoutes()
+    const { env } = await import("../src/env.js")
+    const originalWebUrl = env.webUrl
+    const originalDesktopDenBaseUrl = env.desktopDenBaseUrl
+    try {
+      env.webUrl = "https://public.example.test"
+      env.desktopDenBaseUrl = undefined
+      expect(resolveDesktopDenBaseUrl(new Request("http://0.0.0.0:8788/v1/auth/desktop-handoff", {
+        headers: { origin: "http://0.0.0.0:3005" },
+      }))).toBe("https://public.example.test/api/den")
 
-    expect(resolveDesktopDenBaseUrl(new Request("http://0.0.0.0:8788/v1/auth/desktop-handoff", {
-      headers: { origin: "http://0.0.0.0:3005" },
-    }))).toBe("https://public.example.test/api/den")
-
-    expect(resolveDesktopDenBaseUrl(new Request("http://127.0.0.1:8788/v1/auth/desktop-handoff", {
-      headers: {
-        "x-forwarded-host": "0.0.0.0:3005",
-        "x-forwarded-proto": "https",
-      },
-    }))).toBe("https://public.example.test/api/den")
+      expect(resolveDesktopDenBaseUrl(new Request("http://127.0.0.1:8788/v1/auth/desktop-handoff", {
+        headers: {
+          "x-forwarded-host": "0.0.0.0:3005",
+          "x-forwarded-proto": "https",
+        },
+      }))).toBe("https://public.example.test/api/den")
+    } finally {
+      env.webUrl = originalWebUrl
+      env.desktopDenBaseUrl = originalDesktopDenBaseUrl
+    }
   })
 
   test("approves a web returnUrl on the exact active Cloud instance origin", async () => {
@@ -205,5 +240,151 @@ describe("desktop handoff public URL", () => {
       signedPreviewUrl: "https://8787-active.daytonaproxy01.net/signed",
       returnUrl: "https://user@8787-active.daytonaproxy01.net/signin",
     })).toBeNull()
+  })
+
+  test("approves an origin the active organization approved in Org settings", async () => {
+    const { resolveApprovedWebHandoffReturnUrl } = await loadDesktopHandoffRoutes()
+    await configureDesktopHandoffEnv({})
+    await approveWebOriginForOrganization(organizationId, webOrigin)
+
+    for (const returnUrl of [`${webOrigin}/`, `${webOrigin}/signin`, webOrigin]) {
+      expect(await resolveApprovedWebHandoffReturnUrl({
+        activeOrganizationId: organizationId,
+        returnUrl,
+        loadSignedPreviewUrls: noSignedPreviews,
+      })).toBe(`${webOrigin}/signin`)
+    }
+    expect(approvalLookups).toEqual([
+      { origin: webOrigin, organizationId },
+      { origin: webOrigin, organizationId },
+      { origin: webOrigin, organizationId },
+    ])
+  })
+
+  test("org-approved origins reject the wrong organization, no organization, and single-org mode", async () => {
+    const { resolveApprovedWebHandoffReturnUrl } = await loadDesktopHandoffRoutes()
+    await configureDesktopHandoffEnv({})
+    await approveWebOriginForOrganization(organizationId, webOrigin)
+
+    expect(await resolveApprovedWebHandoffReturnUrl({ activeOrganizationId: otherOrganizationId, returnUrl: `${webOrigin}/signin`, loadSignedPreviewUrls: noSignedPreviews })).toBeNull()
+    expect(approvalLookups).toEqual([{ origin: webOrigin, organizationId: otherOrganizationId }])
+
+    approvalLookups.length = 0
+    expect(await resolveApprovedWebHandoffReturnUrl({ activeOrganizationId: null, returnUrl: `${webOrigin}/signin` })).toBeNull()
+    expect(await resolveApprovedWebHandoffReturnUrl({ activeOrganizationId: "not-an-org-id", returnUrl: `${webOrigin}/signin` })).toBeNull()
+
+    await configureDesktopHandoffEnv({ orgMode: "single_org" })
+    expect(await resolveApprovedWebHandoffReturnUrl({ activeOrganizationId: organizationId, returnUrl: `${webOrigin}/signin`, loadSignedPreviewUrls: noSignedPreviews })).toBeNull()
+    expect(approvalLookups).toEqual([])
+    await configureDesktopHandoffEnv({})
+  })
+
+  test("org-approved origins reject unlisted, lookalike, and unsafe return URLs", async () => {
+    const { resolveApprovedWebHandoffReturnUrl } = await loadDesktopHandoffRoutes()
+    await configureDesktopHandoffEnv({})
+    await approveWebOriginForOrganization(organizationId, webOrigin)
+
+    for (const returnUrl of [
+      "https://other.example.test/signin",
+      "https://web.selfhost.example.test.evil.test/signin",
+      "https://sub.web.selfhost.example.test/signin",
+      "https://web.selfhost.example.test:444/signin",
+    ]) {
+      expect(await resolveApprovedWebHandoffReturnUrl({ activeOrganizationId: organizationId, returnUrl, loadSignedPreviewUrls: noSignedPreviews })).toBeNull()
+    }
+    expect(approvalLookups.map((lookup) => lookup.origin)).toEqual([
+      "https://other.example.test",
+      "https://web.selfhost.example.test.evil.test",
+      "https://sub.web.selfhost.example.test",
+      "https://web.selfhost.example.test:444",
+    ])
+
+    approvalLookups.length = 0
+    for (const returnUrl of [
+      "http://web.selfhost.example.test/signin",
+      "https://user@web.selfhost.example.test/signin",
+      `${webOrigin}/dashboard/../signin`,
+      `${webOrigin}/%2e%2e/signin`,
+      `${webOrigin}/other`,
+      `${webOrigin}/signin#fragment`,
+      "not a url",
+    ]) {
+      expect(await resolveApprovedWebHandoffReturnUrl({ activeOrganizationId: organizationId, returnUrl, loadSignedPreviewUrls: noSignedPreviews })).toBeNull()
+    }
+    expect(approvalLookups).toEqual([])
+  })
+
+  describe("member organizations", () => {
+    const userId = typeId.generator("user")
+    const outsiderId = typeId.generator("user")
+    const memberLookups: Array<{ userId: string; origin: string }> = []
+
+    async function membersApprove(memberships: Record<string, string[]>) {
+      const { setMemberWebOriginLookupForTest } = await import("../src/organization-web-origins.js")
+      memberLookups.length = 0
+      setMemberWebOriginLookupForTest(async (input) => {
+        memberLookups.push(input)
+        return input.origin === webOrigin ? (memberships[input.userId] ?? []).map((id) => typeId.schema("organization").parse(id)) : []
+      })
+    }
+
+    afterEach(async () => {
+      const { setMemberWebOriginLookupForTest } = await import("../src/organization-web-origins.js")
+      setMemberWebOriginLookupForTest(null)
+    })
+
+    test("a fresh multi-organization session with no active organization is approved and lands in the approving organization", async () => {
+      const { resolveWebHandoffApproval } = await loadDesktopHandoffRoutes()
+      await configureDesktopHandoffEnv({})
+      await approveWebOriginForOrganization(organizationId, webOrigin)
+      await membersApprove({ [userId]: [organizationId] })
+
+      expect(await resolveWebHandoffApproval({ activeOrganizationId: null, userId, returnUrl: `${webOrigin}/` }))
+        .toEqual({ returnUrl: `${webOrigin}/signin`, organizationId })
+      expect(approvalLookups).toEqual([])
+      expect(memberLookups).toEqual([{ userId, origin: webOrigin }])
+    })
+
+    test("a member active in another organization is approved by an organization they belong to", async () => {
+      const { resolveWebHandoffApproval } = await loadDesktopHandoffRoutes()
+      await configureDesktopHandoffEnv({})
+      await approveWebOriginForOrganization(organizationId, webOrigin)
+      await membersApprove({ [userId]: [organizationId] })
+
+      expect(await resolveWebHandoffApproval({ activeOrganizationId: otherOrganizationId, userId, returnUrl: webOrigin, loadSignedPreviewUrls: noSignedPreviews }))
+        .toEqual({ returnUrl: `${webOrigin}/signin`, organizationId })
+      expect(approvalLookups).toEqual([{ origin: webOrigin, organizationId: otherOrganizationId }])
+    })
+
+    test("the active organization's own approval keeps the session where it is", async () => {
+      const { resolveWebHandoffApproval } = await loadDesktopHandoffRoutes()
+      await configureDesktopHandoffEnv({})
+      await approveWebOriginForOrganization(organizationId, webOrigin)
+      await membersApprove({ [userId]: [otherOrganizationId, organizationId] })
+
+      expect(await resolveWebHandoffApproval({ activeOrganizationId: organizationId, userId, returnUrl: webOrigin }))
+        .toEqual({ returnUrl: `${webOrigin}/signin`, organizationId })
+      expect(memberLookups).toEqual([])
+    })
+
+    test("people outside every approving organization, unsafe URLs, and single-org mode stay refused", async () => {
+      const { resolveWebHandoffApproval } = await loadDesktopHandoffRoutes()
+      await configureDesktopHandoffEnv({})
+      await approveWebOriginForOrganization(organizationId, webOrigin)
+      await membersApprove({ [userId]: [organizationId] })
+
+      expect(await resolveWebHandoffApproval({ activeOrganizationId: null, userId: outsiderId, returnUrl: webOrigin })).toBeNull()
+      expect(await resolveWebHandoffApproval({ activeOrganizationId: null, userId: "not-a-user-id", returnUrl: webOrigin })).toBeNull()
+      for (const returnUrl of ["https://web.selfhost.example.test.evil.test/", `${webOrigin}:444/`, `${webOrigin}/other`, `http://web.selfhost.example.test/`]) {
+        expect(await resolveWebHandoffApproval({ activeOrganizationId: null, userId, returnUrl })).toBeNull()
+      }
+      expect(memberLookups).toEqual([{ userId: outsiderId, origin: webOrigin }, ...["https://web.selfhost.example.test.evil.test", `${webOrigin}:444`].map((origin) => ({ userId, origin }))])
+
+      memberLookups.length = 0
+      await configureDesktopHandoffEnv({ orgMode: "single_org" })
+      expect(await resolveWebHandoffApproval({ activeOrganizationId: null, userId, returnUrl: webOrigin })).toBeNull()
+      expect(memberLookups).toEqual([])
+      await configureDesktopHandoffEnv({})
+    })
   })
 })

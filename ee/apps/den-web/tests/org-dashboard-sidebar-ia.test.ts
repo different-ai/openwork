@@ -32,41 +32,53 @@ describe("Den org sidebar information architecture", () => {
     expect(navigation).not.toContain('label: "Script runs"');
     expect(navigation).toContain("access.isAdmin && orgSlug");
     expect(navigation).toContain("manageItems.length > 0");
-    expect(navigation).toContain("observabilityItems.length > 0");
+    expect(navigation).not.toContain('label: "Dashboard"');
     expect(navigation).toContain("const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;");
     expect(navigation).not.toMatch(/const showWeb =[\s\S]{0,160}orgMode/);
     expect(navigation).not.toContain("capabilities.cloud");
     expect(navigation).not.toMatch(/label: "OpenWork Web"[\s\S]{0,120}badge:/);
   });
 
-  test("admins see the streamlined Manage section before Observability and Team", () => {
-    const pluginDirectory = indexOfNeedle('label: "Plugin Directory"');
+  test("admins see Manage, then Observability, then Team, with Advanced moved into Settings", () => {
+    const plugins = indexOfNeedle('label: "Plugins"');
     const connectors = indexOfNeedle('label: "Connectors"');
-    const toolTester = indexOfNeedle('label: "Tool Tester"');
+    expect(navigation).toContain('label: "Connectors", icon: Plug, badge: "MCPs"');
+    // Badges keep their own casing ("MCPs"), as a small hairline pill.
+    const badges = shell.match(/<span className="[^"]*" data-testid="nav-badge">/g) ?? [];
+    expect(badges.length).toBe(2);
+    for (const badge of badges) {
+      expect(badge).not.toContain("uppercase");
+      expect(badge).not.toContain("tracking-");
+      expect(badge).toContain("text-[10px] font-medium");
+      expect(badge).toContain("border border-gray-200 bg-white");
+      expect(badge).toContain("text-gray-600");
+    }
     const managedDashboards = indexOfNeedle('label: "Dashboards"');
-    const advanced = indexOfNeedle('label: "Advanced"');
-    const analytics = indexOfNeedle('label: "Analytics"');
+    const aiGateway = indexOfNeedle('label: "AI Gateway"');
+    const desktopPolicies = indexOfNeedle('label: "Desktop policies"');
     const workSection = indexOfNeedle('{ label: "Work", items: workItems }');
     const manageSection = indexOfNeedle('{ label: "Manage", items: manageItems }');
     const observabilitySection = indexOfNeedle('{ label: "Observability", items: observabilityItems }');
     const teamSection = indexOfNeedle('{ label: "Team", items: teamItems }');
 
-    expect(pluginDirectory).toBeLessThan(connectors);
-    expect(connectors).toBeLessThan(toolTester);
-    expect(toolTester).toBeLessThan(managedDashboards);
-    expect(managedDashboards).toBeLessThan(advanced);
-    expect(advanced).toBeLessThan(analytics);
-    expect(navigation).not.toContain('label: "Workflow Runs"');
+    expect(plugins).toBeLessThan(connectors);
+    expect(connectors).toBeLessThan(managedDashboards);
+    expect(managedDashboards).toBeLessThan(aiGateway);
+    expect(aiGateway).toBeLessThan(desktopPolicies);
     expect(workSection).toBeLessThan(manageSection);
     expect(manageSection).toBeLessThan(observabilitySection);
     expect(observabilitySection).toBeLessThan(teamSection);
-    expect(navigation).toContain('badge: "Providers"');
-    expect(navigation).toContain('badge: "MCPs"');
-    expect(navigation).toContain("capabilities.mcpConnections && access.isAdmin");
-    expect(navigation.slice(navigation.indexOf("const settingsChildren"), navigation.indexOf("const settingsGroup"))).not.toContain('label: "Tool Tester"');
-    expect(navigation).toMatch(
-      /matchHrefs:\s*\[\s*getDesktopPoliciesRoute\(orgSlug\),\s*getBrandAppearanceRoute\(orgSlug\),\s*\]/,
-    );
+    expect(navigation).not.toContain('label: "Models"');
+    expect(navigation).not.toContain('label: "Plugin Directory"');
+    expect(navigation).not.toContain('label: "Workflow Runs"');
+    expect(navigation).not.toContain('label: "Old Gateway"');
+    expect(navigation).not.toContain("getGatewayProvidersRoute");
+    expect(shell).not.toContain("getGatewayProvidersRoute");
+    expect(shell).toContain('return "AI Gateway";');
+    expect(navigation.slice(navigation.indexOf("const manageItems"), navigation.indexOf("const settingsChildren"))).not.toContain('label: "Tool Tester"');
+    const settings = navigation.slice(navigation.indexOf("const settingsChildren"), navigation.indexOf("const settingsGroup"));
+    expect(settings).toContain('label: "Tool Tester"');
+    expect(settings).toContain('label: "Advanced"');
     expect(navigation).not.toContain('label: "Collections"');
     expect(navigation).not.toContain('label: "Sources"');
     expect(navigation).not.toContain('label: "Brand appearance"');

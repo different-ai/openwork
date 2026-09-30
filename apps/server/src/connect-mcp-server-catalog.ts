@@ -1,3 +1,4 @@
+import { timeMcpApp } from "@openwork/types/mcp-app-timing";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
@@ -168,7 +169,7 @@ function isLoopbackHostname(hostname: string): boolean {
   return Boolean(match && Number(match[1]) === 127 && match.slice(1).every((part) => Number(part) <= 255));
 }
 
-async function trustedAppHostCloudEndpoint(cloudMcp: Record<string, unknown>): Promise<boolean> {
+export async function trustedAppHostCloudEndpoint(cloudMcp: Record<string, unknown>): Promise<boolean> {
   if (typeof cloudMcp.url !== "string") return false;
   let endpoint: URL;
   try {
@@ -237,7 +238,7 @@ export async function readOpenWorkConnectMcpAppHostCatalog(
   config: ServerConfig,
   workspaceId: string,
 ): Promise<OpenWorkConnectMcpServerIndex> {
-  return await appHostCatalogStore.get(config, workspaceId) ?? emptyIndex();
+  return await timeMcpApp("desktop.connect-catalog-read", () => appHostCatalogStore.get(config, workspaceId)) ?? emptyIndex();
 }
 
 export async function writeOpenWorkConnectMcpAppHostCatalog(
@@ -328,7 +329,7 @@ export async function readOpenWorkConnectMcpServerIndexWithDiagnostics(
   if (!await trustedAppHostCloudEndpoint(cloudMcp)) return { index: null, diagnostic: "untrusted_origin" };
   const authorization = privateAppHostAuthorization(appHostAuthorization);
   if (!authorization) return { index: null, diagnostic: "missing_app_host_auth" };
-  const text = await readMcpResourceText({
+  const text = await timeMcpApp("desktop.connect-index-read", () => readMcpResourceText({
     config: {
       ...cloudMcp,
       headers: {
@@ -339,7 +340,7 @@ export async function readOpenWorkConnectMcpServerIndexWithDiagnostics(
     uri: CONNECT_MCP_SERVER_INDEX_URI,
     fetcher,
     clientName: "openwork-server-connect-mcp-catalog",
-  }).catch(() => null);
+  })).catch(() => null);
   // Transport currently collapses HTTP and protocol failures. Do not guess
   // that an unavailable discovery response means expired auth or no apps.
   if (text === null) return { index: null, diagnostic: "discovery_unavailable" };

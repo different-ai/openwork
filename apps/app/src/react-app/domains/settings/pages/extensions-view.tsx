@@ -24,9 +24,8 @@ export function filterForSection(section: ExtensionsSection | undefined): Extens
     case "apps":
       return "app";
     case "connections":
-      return "mcp";
     case "mcps":
-      return "mcp";
+      return "connection";
     case "skills":
       return "skill";
     case "commands":
@@ -36,7 +35,7 @@ export function filterForSection(section: ExtensionsSection | undefined): Extens
     case "plugins":
       return "plugin";
     default:
-      return "mcp";
+      return "all";
   }
 }
 

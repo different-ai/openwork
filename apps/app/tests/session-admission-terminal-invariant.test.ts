@@ -75,6 +75,18 @@ test("every accepted admission terminates in a supported terminal state", () => 
 
 });
 
+test("a reply settles its parent even when the rendered reply precedes the user message", () => {
+  const user = { ...userMessage("u1", "question"), metadata: { opencode: { created: 100 } } };
+  const reply = { ...assistantMessage("a1", "answer"), metadata: { opencode: { parentID: "u1", created: 101, completed: 102 } } };
+  expect(outcome([reply, user])).toBe("settled");
+  expect(outcome([user, reply])).toBe("settled");
+  // A late reply for an older turn must not settle a newer unanswered task.
+  const newer = { ...userMessage("u2", "next question"), metadata: { opencode: { created: 200 } } };
+  expect(outcome([newer, reply, user])).toBe("unresolved");
+  expect(outcome([user, newer, reply])).toBe("unresolved");
+  expect(outcome([{ ...reply, parts: [] }, user])).toBe("unresolved");
+});
+
 test("the recovery state is a pure function of transcript and status, so it survives a reload", () => {
   const transcript: Messages = [
     assistantMessage("a0", "previous turn"),

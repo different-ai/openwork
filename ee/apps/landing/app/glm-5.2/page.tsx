@@ -2,7 +2,7 @@ import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
 import { StructuredData } from "../../components/structured-data";
 import { getGithubData } from "../../lib/github";
-import { baseOpenGraph } from "../../lib/seo";
+import { baseOpenGraph, withSocialMetadata } from "../../lib/seo";
 
 const CLOUD_SIGNUP_URL =
   "https://app.openworklabs.com?mode=sign-up&intent=models";
@@ -33,7 +33,7 @@ const glmSchema = {
   }
 };
 
-export const metadata = {
+export const metadata = withSocialMetadata({
   title: "GLM 5.2 is now in OpenWork — with 2x usage",
   description:
     "GLM 5.2 is available through OpenWork Models, and we're doubling your usage so you can run real agent work on an open model at a fraction of the cost.",
@@ -44,7 +44,7 @@ export const metadata = {
     ...baseOpenGraph,
     url: "https://openworklabs.com/glm-5.2"
   }
-};
+});
 
 const features = [
   {

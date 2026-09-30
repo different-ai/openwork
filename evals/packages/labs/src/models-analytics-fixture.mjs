@@ -68,7 +68,9 @@ async function arrange(command, orgId, inferenceUrl) {
             await db.update(schema.LlmProviderTable).set({ apiKey: key, providerConfig: {
                     ...provider.providerConfig, api: `${inferenceUrl}/api/v1`, options: { baseURL: `${inferenceUrl}/api/v1` },
                 } }).where(eq(schema.LlmProviderTable.id, provider.id));
-            await db.update(schema.InferenceKeyTable).set({ key_hash: createHash("sha256").update(key).digest("hex") }).where(and(eq(schema.InferenceKeyTable.organization_id, id), eq(schema.InferenceKeyTable.org_membership_id, provider.createdByOrgMembershipId), eq(schema.InferenceKeyTable.status, "active")));
+            // Keep the stored key in step with its hash; Den self-heals any member whose
+            // provider key differs from the stored key by rotating it.
+            await db.update(schema.InferenceKeyTable).set({ key_hash: createHash("sha256").update(key).digest("hex"), encrypted_key: key }).where(and(eq(schema.InferenceKeyTable.organization_id, id), eq(schema.InferenceKeyTable.org_membership_id, provider.createdByOrgMembershipId), eq(schema.InferenceKeyTable.status, "active")));
         }
     }
     else if (command === "cancel") {

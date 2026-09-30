@@ -1,10 +1,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Hono } from "hono"
+import { createMistral } from "@ai-sdk/mistral"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { GATEWAY_REQUEST_MODEL_HEADER } from "@openwork/types/den/gateway"
 import { createGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import type { GatewayCredential, GatewayProvider } from "../src/gateway.js"
+import type { CheckGatewayUsage } from "../src/usage-limits.js"
+import { gatewayUsageLimitResponse, gatewayAccountingUnavailableResponse, type GatewayUsageStatus } from "@openwork/types/den/gateway-usage-limits"
 import type { InferenceReporter } from "../src/inference-reporting.js"
 import type { MintGcpAccessToken } from "../src/credentials/gcp-service-account.js"
 import type { RefreshGoogleOauthToken } from "../src/credentials/google-oauth-refresh.js"
@@ -12,9 +15,10 @@ import { createGoogleOauthRefresher } from "../src/credentials/google-oauth-refr
 import type { LoadProviderCredential } from "../src/provider-credentials.js"
 import { matrixRow, memoryStore, row as oauthRow } from "./google-oauth-refresh-fixture.js"
 import type { GatewayAccessRow } from "../src/provider-access.js"
-import { createProviderCatalog } from "../src/provider-catalog.js"
+import { createProviderCatalog, getCatalogProvider } from "../src/provider-catalog.js"
 import type { GatewayRequestLogRow as InferenceRequestLogRow } from "../src/request-log.js"
-import { bedrockStreamFrames } from "./helpers/event-stream.js"
+import { bedrockStreamFrames, eventStreamFrame } from "./helpers/event-stream.js"
+import { loadPricingCatalogFromFile } from "../src/pricing.js"
 
 process.env.OPENWORK_DEV_MODE = "1"
 process.env.DATABASE_URL = "mysql://fixture:fixture@127.0.0.1:1/gateway_unit_fixture"
@@ -36,6 +40,7 @@ const vertexProvider = { provider_id: "google-vertex", provider_config: { npm: "
 const catalog = createProviderCatalog({
   anthropic: { npm: "@ai-sdk/anthropic", env: ["ANTHROPIC_API_KEY"] },
   openai: { npm: "@ai-sdk/openai", env: ["OPENAI_API_KEY"] },
+  mistral: getCatalogProvider("mistral"),
   azure: { npm: "@ai-sdk/azure", env: ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"] },
   "azure-cognitive-services": { npm: "@ai-sdk/openai-compatible", api: "https://fixture.example/v1", env: ["AZURE_RESOURCE_NAME", "AZURE_COGNITIVE_SERVICES_API_KEY"] },
   alibaba: { npm: "@ai-sdk/openai-compatible", api: "https://fixture.example/v1", env: ["DASHSCOPE_API_KEY"] },
@@ -45,8 +50,15 @@ const catalog = createProviderCatalog({
   "google-vertex-anthropic": { npm: "@ai-sdk/google-vertex/anthropic", env: ["GOOGLE_VERTEX_PROJECT"] },
   openrouter: { npm: "@openrouter/ai-sdk-provider", api: "https://openrouter.ai/api/v1", env: ["OPENROUTER_API_KEY"] },
   groq: { npm: "@ai-sdk/groq", api: "https://api.groq.com/openai/v1", env: ["GROQ_API_KEY"] },
-  "amazon-bedrock": { npm: "@ai-sdk/amazon-bedrock", env: ["AWS_ACCESS_KEY_ID"] },
+  "amazon-bedrock": {
+    npm: "@ai-sdk/amazon-bedrock", env: ["AWS_ACCESS_KEY_ID"],
+    models: {
+      "openai.gpt-5.5": { id: "openai.gpt-5.5", provider: { npm: "@ai-sdk/amazon-bedrock/mantle", api: "https://bedrock-mantle.${AWS_REGION}.api.aws/openai/v1", shape: "responses" } },
+      "openai.gpt-oss-20b": { id: "openai.gpt-oss-20b", provider: { npm: "@ai-sdk/amazon-bedrock/mantle", api: "https://bedrock-mantle.${AWS_REGION}.api.aws/v1", shape: "responses" } },
+    },
+  },
 })
+const mantleProvider = { provider_id: "amazon-bedrock-mantle", provider_config: { npm: "@ai-sdk/amazon-bedrock/mantle" }, settings: { region: "us-west-2" } }
 
 type UpstreamRequest = {
   url: string
@@ -56,6 +68,7 @@ type UpstreamRequest = {
 }
 
 type TestServerOptions = {
+  checkUsage?: CheckGatewayUsage
   provider?: Partial<GatewayProvider> | null
   credentialSet?: Partial<GatewayAccessRow["credentialSet"]>
   accessRows?: GatewayAccessRow[]
@@ -63,6 +76,7 @@ type TestServerOptions = {
   access?: boolean
   fetch?: typeof fetch
   now?: Date
+  clock?: () => Date
   refreshGoogleOauthToken?: RefreshGoogleOauthToken
   mintGcpAccessToken?: MintGcpAccessToken
   loadProviderCredential?: LoadProviderCredential
@@ -165,7 +179,7 @@ function createTestServer(options: TestServerOptions = {}) {
   const credentialRow = options.credential === null ? null : credential(options.credential)
   const base = matrixRow()
   const set: GatewayAccessRow["credentialSet"] = { ...base.credentialSet, id: credentialSetId, gateway_provider_id: providerId, credential_mode: "org", ...options.credentialSet }
-  const accessRows = options.accessRows ?? ["fixture", "gpt-4o", "gpt-5", "claude-sonnet-4-5", "llama-3", "x", "gemini-2.5-pro", "gemini", "claude", "anthropic.claude-3-5-sonnet-20241022-v2:0"].map((model): GatewayAccessRow => ({
+  const accessRows = options.accessRows ?? ["mistral-small-latest", "mistral-embed", "fixture", "gpt-4o", "gpt-5", "claude-sonnet-4-5", "llama-3", "x", "gemini-2.5-pro", "gemini", "claude", "anthropic.claude-3-5-sonnet-20241022-v2:0", "us.anthropic.claude-sonnet-4-6", "openai.gpt-5.5", "openai.gpt-oss-20b"].map((model): GatewayAccessRow => ({
     ...base, credentialSet: set,
     grant: { ...base.grant, gateway_provider_id: providerId, org_membership_id: null, audience_key: "organization" },
     group: { ...base.group, gateway_provider_id: providerId },
@@ -173,17 +187,19 @@ function createTestServer(options: TestServerOptions = {}) {
   }))
 
   registerProxyRoutes(app, {
+    async assertOrganizationManagedModelsAllowed() {},
     async findActiveGatewayKey(key) {
       return key.value === gatewayKey ? { id: "gky_test_key", organization_id: organizationId, org_membership_id: memberId } : null
     },
     async findActiveInferenceKey() {
-      return { id: "ik_test_key", organization_id: organizationId, org_membership_id: memberId }
+      return { id: createDenTypeId("inferenceKey"), organization_id: organizationId, org_membership_id: memberId,
+        name: null, key_hash: "fixture", key_prefix: null, encrypted_key: null, status: "active", revoked_at: null, created_at: new Date(), updated_at: new Date() }
     },
     async getOpenRouterProviderKey() {
       return null
     },
     async ensureUsableBuckets() {
-      return { ok: true, bucketIds: {}, bucketLimits: {} }
+      return { ok: true, bucketIds: {}, bucketLimits: {}, admittedAt: new Date() }
     },
     fetch: capturingFetch,
     async loadOrganization(id) {
@@ -200,8 +216,9 @@ function createTestServer(options: TestServerOptions = {}) {
     },
     reporter,
     gateway: {
+      checkUsage: options.checkUsage ?? (async () => null),
       catalog,
-      now: options.now ? () => options.now ?? new Date() : undefined,
+      now: options.clock ?? (options.now ? () => options.now ?? new Date() : undefined),
       refreshGoogleOauthToken: async (input) => {
         tokenCalls.refresh++
         if (options.refreshGoogleOauthToken) return options.refreshGoogleOauthToken(input)
@@ -239,6 +256,22 @@ function gatewayRequest(input: { path: string; method?: string; body?: unknown; 
     headers,
     body,
   })
+}
+
+function delayedBodyRequest(path: string, body: unknown, onRead: () => void) {
+  const init = {
+    method: "POST",
+    headers: { authorization: `Bearer ${gatewayKey}`, "content-type": "application/json" },
+    body: new ReadableStream<Uint8Array>({
+      pull(controller) {
+        onRead()
+        controller.enqueue(new TextEncoder().encode(JSON.stringify(body)))
+        controller.close()
+      },
+    }, { highWaterMark: 0 }),
+    duplex: "half",
+  }
+  return new Request(gatewayRequest({ path }).url, init)
 }
 
 async function assertRejectedBeforeCredentials(fixture: ReturnType<typeof createTestServer>, request: Request, code: string, status = 400) {
@@ -341,6 +374,158 @@ test("openai chat: forwards with bearer auth, strips incoming auth, injects incl
   assert.equal(row.openwork_request_id, response.headers.get("x-openwork-request-id"))
 })
 
+const mistralProvider = { provider_id: "mistral", provider_config: { npm: "@ai-sdk/mistral", env: ["MISTRAL_API_KEY"] } }
+
+function mistralClient(fixture: ReturnType<typeof createTestServer>, apiKey = gatewayKey) {
+  const requests: Request[] = []
+  const responses: Response[] = []
+  const client = createMistral({
+    baseURL: `http://openwork.test/api/v1/providers/${providerId}`,
+    apiKey,
+    fetch: async (input, init) => {
+      const request = new Request(input, init)
+      requests.push(request.clone())
+      const response = await fixture.app.fetch(request)
+      responses.push(response.clone())
+      return response
+    },
+  })
+  return { client, requests, responses }
+}
+
+for (const stream of [false, true]) {
+  test(`Mistral native SDK ${stream ? "SSE" : "JSON"}: aliases, bearer replacement, tools and usage without OpenAI stream options`, async () => {
+    const model = "mistral-small-latest"
+    const usage = { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 }
+    const content = [{ type: "thinking", thinking: [{ type: "text", text: "Reasoning" }] }, { type: "text", text: "Hello" }]
+    const toolCall = { id: "call12345", type: "function", function: { name: "lookup", arguments: '{"model":"client-data"}' } }
+    const json = { id: "mistral-response", object: "chat.completion", created: 1700000000, model, choices: [{ index: 0, message: { role: "assistant", content, tool_calls: [toolCall] }, finish_reason: "tool_calls" }], usage }
+    const events = [
+      `data: ${JSON.stringify({ id: json.id, model, choices: [{ index: 0, delta: { role: "assistant", content, tool_calls: [{ index: 0, ...toolCall }] }, finish_reason: null }] })}\n\n`,
+      `data: ${JSON.stringify({ id: json.id, model, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage })}\n\n`,
+      "data: [DONE]\n\n",
+    ]
+    const fixture = createTestServer({
+      provider: mistralProvider,
+      credential: { kind: "api_key_map", secret: JSON.stringify({ MISTRAL_API_KEY: "mistral-upstream-key" }) },
+      fetch: async (_input, init) => {
+        assert.equal(parseJsonObject(readInitBody(init?.body)).stream_options, undefined)
+        return stream ? sseResponse(events, { "x-request-id": "req_mistral" }) : Response.json(json, { headers: { "x-request-id": "req_mistral" } })
+      },
+    })
+    const row = fixture.accessRows.find((row) => row.model?.model_id === model)
+    assert.ok(row?.model)
+    const alias = createGatewayModelAlias({ modelGroupId: row.group.id, credentialSetId: row.credentialSet.id, gatewayProviderModelId: row.model.id })
+    const { client, requests, responses } = mistralClient(fixture)
+    const sdkModel = client(alias)
+    const options: Parameters<typeof sdkModel.doGenerate>[0] = {
+      prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+      tools: [{ type: "function", name: "lookup", inputSchema: { type: "object", properties: { model: { type: "string" } } } }],
+      toolChoice: { type: "tool", toolName: "lookup" },
+      providerOptions: { mistral: { safePrompt: true, parallelToolCalls: false } },
+      headers: { cookie: "private-cookie", "x-api-key": gatewayKey, "openai-beta": "caller-beta", [GATEWAY_REQUEST_MODEL_HEADER]: alias },
+    }
+    if (stream) {
+      const result = await sdkModel.doStream(options)
+      const reader = result.stream.getReader()
+      const chunks: Awaited<ReturnType<typeof reader.read>>["value"][] = []
+      while (true) {
+        const chunk = await reader.read()
+        if (chunk.done) break
+        chunks.push(chunk.value)
+      }
+      assert.equal(chunks.some((chunk) => chunk?.type === "error"), false)
+      assert.ok(chunks.some((chunk) => chunk?.type === "text-delta" && chunk.delta === "Hello"))
+      assert.ok(chunks.some((chunk) => chunk?.type === "reasoning-delta" && chunk.delta === "Reasoning"))
+      assert.ok(chunks.some((chunk) => chunk?.type === "tool-call" && chunk.toolName === "lookup" && chunk.input === toolCall.function.arguments))
+      const finish = chunks.find((chunk) => chunk?.type === "finish")
+      assert.equal(finish?.usage.inputTokens.total, 10)
+      assert.equal(finish?.usage.outputTokens.total, 20)
+      assert.equal(finish?.finishReason.unified, "tool-calls")
+      assert.equal(await responses[0].text(), events.join(""))
+    } else {
+      const result = await sdkModel.doGenerate(options)
+      assert.deepEqual(result.content, [
+        { type: "reasoning", text: "Reasoning" }, { type: "text", text: "Hello" },
+        { type: "tool-call", toolCallId: toolCall.id, toolName: "lookup", input: toolCall.function.arguments },
+      ])
+      assert.equal(result.usage.inputTokens.total, 10)
+      assert.equal(result.usage.outputTokens.total, 20)
+      assert.deepEqual(await responses[0].json(), json)
+    }
+    const incoming = requests[0]
+    assert.equal(incoming.url, `http://openwork.test/api/v1/providers/${providerId}/chat/completions`)
+    assert.equal(incoming.headers.get("authorization"), `Bearer ${gatewayKey}`)
+    const body = parseJsonObject(await incoming.text())
+    const upstream = fixture.upstreamRequests[0]
+    assert.equal(upstream.url, "https://api.mistral.ai/v1/chat/completions")
+    assert.equal(upstream.method, "POST")
+    assert.equal(upstream.headers.get("authorization"), "Bearer mistral-upstream-key")
+    assert.match(upstream.headers.get("user-agent") ?? "", /ai-sdk\/mistral\/3\.0\.51/)
+    for (const name of ["cookie", "x-api-key", "openai-beta", GATEWAY_REQUEST_MODEL_HEADER]) assert.equal(upstream.headers.get(name), null)
+    assert.deepEqual(parseJsonObject(upstream.body), { ...body, model })
+    assert.equal(body.safe_prompt, true)
+    assert.equal(body.parallel_tool_calls, false)
+    assert.equal(fixture.accessChecks.length, 2)
+    assert.equal(fixture.credentialLookups.length, 3)
+    const logged = await waitForRows(fixture.logRows)
+    assert.equal(logged.protocol, "openai_chat")
+    assert.equal(logged.upstream_provider_id, "mistral")
+    assert.equal(logged.requested_model, alias)
+    assert.equal(logged.upstream_model, model)
+    assert.equal(logged.credential_set_id, row.credentialSet.id)
+    assert.equal(logged.usage_source, stream ? "stream" : "json")
+    assert.equal(logged.input_tokens, 10)
+    assert.equal(logged.output_tokens, 20)
+    assert.equal(logged.total_tokens, 30)
+    assert.equal(logged.outcome, "ok")
+  })
+}
+
+test("Mistral native embeddings route to an explicit validated override and retain the SDK response", async () => {
+  const fixture = createTestServer({
+    provider: { ...mistralProvider, settings: { upstreamBaseUrl: "https://regional.example/v1" } },
+    fetch: async () => Response.json({ data: [{ embedding: [0.1, 0.2] }], usage: { prompt_tokens: 2 } }),
+  })
+  const { client } = mistralClient(fixture)
+  const result = await client.embedding("mistral-embed").doEmbed({ values: ["Hello"] })
+  assert.deepEqual(result.embeddings, [[0.1, 0.2]])
+  assert.equal(result.usage?.tokens, 2)
+  assert.equal(fixture.upstreamRequests[0].url, "https://regional.example/v1/embeddings")
+  assert.deepEqual(parseJsonObject(fixture.upstreamRequests[0].body), { model: "mistral-embed", input: ["Hello"], encoding_format: "float" })
+})
+
+test("Mistral rejects invalid gateway keys, unauthorized models/providers, alternate selection and unsupported operations before credentials", async () => {
+  const fixture = createTestServer({ provider: mistralProvider })
+  const { client, responses } = mistralClient(fixture, "invalid-gateway-key")
+  await assert.rejects(async () => client("mistral-small-latest").doGenerate({ prompt: [] }))
+  assert.equal(responses[0].status, 401)
+  assert.equal((await readError(responses[0])).code, "invalid_api_key")
+  assert.equal(fixture.credentialLookups.length, 0)
+  assert.equal(fixture.upstreamRequests.length, 0)
+  const body = { model: "mistral-small-latest", messages: [] }
+  await assertRejectedBeforeCredentials(createTestServer({ provider: mistralProvider, access: false }), gatewayRequest({ path: "/chat/completions", body }), "provider_access_denied", 403)
+  await assertRejectedBeforeCredentials(createTestServer({ provider: mistralProvider }), gatewayRequest({ path: "/chat/completions", body: { ...body, model: "ungranted-model" } }), "model_access_denied", 403)
+  await assertRejectedBeforeCredentials(createTestServer({ provider: mistralProvider }), gatewayRequest({ path: "/chat/completions?model=ungranted-model", body }), "unsupported_model_selection")
+  await assertRejectedBeforeCredentials(createTestServer({ provider: mistralProvider }), gatewayRequest({ path: "/chat/completions", body: { ...body, messages: [{ role: "user", model: "ungranted-model" }] } }), "unsupported_model_selection")
+  for (const path of ["/responses", "/fim/completions", "/agents/completions", "/conversations", "/files", "/audio/speech"]) {
+    await assertRejectedBeforeCredentials(createTestServer({ provider: mistralProvider }), gatewayRequest({ path, body }), "unsupported_gateway_operation")
+  }
+  await assertRejectedBeforeCredentials(createTestServer({ provider: mistralProvider }), gatewayRequest({ path: "/chat/completions", body: { ...body, messages: [{ role: "user", content: [{ type: "file", file_id: "RESOURCE_SECRET_MARKER" }] }] } }), "unsupported_gateway_resource")
+  await assertRejectedBeforeCredentials(createTestServer({ provider: { ...mistralProvider, settings: { upstreamBaseUrl: "https://169.254.169.254/v1" } } }), gatewayRequest({ path: "/chat/completions", body }), "provider_misconfigured", 502)
+})
+
+test("Mistral preserves upstream error status and payload for the native SDK", async () => {
+  const payload = { object: "error", message: "Rate limited", type: "rate_limit_error", param: null, code: "429" }
+  const fixture = createTestServer({ provider: mistralProvider, fetch: async () => Response.json(payload, { status: 429, headers: { "retry-after": "10" } }) })
+  const { client, responses } = mistralClient(fixture)
+  await assert.rejects(async () => client("mistral-small-latest").doGenerate({ prompt: [] }), /Rate limited/)
+  assert.equal(responses[0].status, 429)
+  assert.equal(responses[0].headers.get("retry-after"), "10")
+  assert.deepEqual(await responses[0].json(), payload)
+  assert.equal((await waitForRows(fixture.logRows)).outcome, "upstream_error")
+})
+
 test("openai responses: JSON usage is captured and the path selects the responses protocol", async () => {
   const { app, upstreamRequests, logRows } = createTestServer({
     fetch: async () => Response.json({ id: "resp_1", model: "gpt-5", usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7, output_tokens_details: { reasoning_tokens: 2 } } }),
@@ -421,6 +606,10 @@ test("adaptive thinking compatibility uses the granted model behind opaque alias
     { name: "nonmatching version suffix", model: "claude-opus-5preview", input: { thinking: enabled } },
     { name: "absent thinking", input: { output_config: { format } } },
     { name: "disabled thinking", input: { thinking: { type: "disabled" } } },
+    ...["low", "medium", "high", "xhigh", "max"].map(effort => ({
+      name: `Opus 5.5 selected ${effort} survives gateway routing`, model: "claude-opus-5-5",
+      input: { output_config: { effort } },
+    })),
     { name: "already adaptive", input: { thinking: adaptive, output_config: { effort: "medium", format } } },
   ]
   for (const providerName of ["anthropic", "google-vertex-anthropic", "openai"]) {
@@ -429,7 +618,7 @@ test("adaptive thinking compatibility uses the granted model behind opaque alias
         const vertex = providerName === "google-vertex-anthropic"
         const fixture = createTestServer({
           provider: { provider_id: providerName, settings: vertex ? { project: "test-project", location: "global" } : {} },
-          credential: vertex ? { kind: "oauth_google", secret: JSON.stringify({ accessToken: "ya29.token" }) } : undefined,
+          credential: vertex ? { kind: "oauth_google", secret: JSON.stringify({ accessToken: "ya29.token" }), expires_at: new Date(Date.now() + 600_000) } : undefined,
         })
         const selected = fixture.accessRows[0]
         assert.ok(selected?.model)
@@ -571,7 +760,7 @@ test("google vertex (gemini): path rewritten under the project/location publishe
       provider_config: { npm: "@ai-sdk/google-vertex" },
       settings: { project: "acme-proj", location: "us-central1" },
     },
-    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "ya29.token" }) },
+    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "ya29.token" }), expires_at: new Date(Date.now() + 600_000) },
   })
   const response = await app.fetch(gatewayRequest({
     path: "/v1beta/models/gemini-2.5-pro:generateContent",
@@ -597,7 +786,7 @@ test("google vertex (anthropic): rawPredict path, model removed, anthropic_versi
       provider_config: { npm: "@ai-sdk/google-vertex/anthropic" },
       settings: { project: "acme-proj", location: "global" },
     },
-    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "ya29.token" }) },
+    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "ya29.token" }), expires_at: new Date(Date.now() + 600_000) },
   })
   const response = await app.fetch(gatewayRequest({
     path: "/messages",
@@ -622,10 +811,130 @@ test("google vertex (anthropic): rawPredict path, model removed, anthropic_versi
   assert.equal(row.upstream_path, "/v1/projects/acme-proj/locations/global/publishers/anthropic/models/claude-sonnet-4-5:streamRawPredict")
 })
 
+for (const providerName of ["google-vertex", "google-vertex-anthropic"]) {
+  for (const location of ["global", "us-central1"]) {
+    for (const stream of [false, true]) test(`${providerName} ${location} stream=${stream} constrains routing, bearer, quota and protocol`, async () => {
+      const anthropic = providerName === "google-vertex-anthropic"
+      const model = anthropic ? "claude" : "gemini"
+      const operation = anthropic ? stream ? "streamRawPredict" : "rawPredict" : stream ? "streamGenerateContent" : "generateContent"
+      const content = stream ? 'data: {"fixture":true}\n\n' : '{"fixture":true}'
+      const fixture = createTestServer({
+        provider: { provider_id: providerName, provider_config: { api: "https://attacker.example", options: { baseURL: "https://attacker.example" } },
+          settings: { project: "test-project", location, upstreamBaseUrl: "https://attacker.example" } },
+        credentialSet: { credential_mode: "member" },
+        credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "MEMBER_TOKEN" }), expires_at: new Date(Date.now() + 600_000) },
+        fetch: async (_input, init) => {
+          assert.equal(init?.redirect, "error")
+          return new Response(content, { headers: { "content-type": stream ? "text/event-stream" : "application/json" } })
+        },
+      })
+      const path = anthropic ? "/v1/messages" : `/v1beta/models/${model}:${operation}`
+      const response = await fixture.app.fetch(gatewayRequest({
+        path: `${path}?alt=sse&userProject=CALLER_PROJECT&quotaUser=CALLER_USER&access_token=CALLER_TOKEN&key=${gatewayKey}`,
+        body: anthropic ? { model, messages: [], max_tokens: 32, stream, anthropic_version: "caller-version" } : { contents: [] },
+        headers: { "x-api-key": gatewayKey, "x-goog-api-key": gatewayKey, "api-key": gatewayKey, "x-goog-user-project": "CALLER_PROJECT",
+          "x-goog-request-params": "project=CALLER_PROJECT", "anthropic-version": "caller-version", "anthropic-beta": "fixture-beta" },
+      }))
+      assert.equal(response.status, 200)
+      assert.equal(await response.text(), content)
+      const upstream = fixture.upstreamRequests[0]
+      assert.ok(upstream)
+      const host = location === "global" ? "aiplatform.googleapis.com" : "us-central1-aiplatform.googleapis.com"
+      assert.equal(upstream.url, `https://${host}/v1/projects/test-project/locations/${location}/publishers/${anthropic ? "anthropic" : "google"}/models/${model}:${operation}?alt=sse`)
+      assert.equal(upstream.headers.get("authorization"), "Bearer MEMBER_TOKEN")
+      for (const name of ["x-api-key", "x-goog-api-key", "api-key", "x-goog-user-project", "x-goog-request-params", "anthropic-version"]) assert.equal(upstream.headers.get(name), null)
+      assert.doesNotMatch(JSON.stringify([...upstream.headers]), /CALLER_|ow_gw_/)
+      const body = parseJsonObject(upstream.body)
+      if (anthropic) {
+        assert.equal(body.model, undefined)
+        assert.equal(body.anthropic_version, "vertex-2023-10-16")
+        assert.equal(body.stream, stream)
+      } else assert.deepEqual(body, { contents: [] })
+      assert.equal(fixture.tokenCalls.refresh, 0)
+      const logged = await waitForRows(fixture.logRows)
+      assert.equal(logged.stream, stream)
+      assert.doesNotMatch(JSON.stringify([logged, fixture.handledErrors]), /MEMBER_TOKEN|CALLER_TOKEN|CALLER_KEY/)
+    })
+  }
+
+  for (const carrier of ["x-api-key", "x-goog-api-key", "api-key", "query"]) test(`${providerName} rejects conflicting ${carrier} credentials before upstream routing`, async () => {
+    const fixture = createTestServer({ provider: { ...vertexProvider, provider_id: providerName } })
+    const path = providerName === "google-vertex" ? "/models/gemini:generateContent" : "/messages"
+    const response = await fixture.app.fetch(gatewayRequest({
+      path: carrier === "query" ? `${path}?key=CALLER_KEY` : path,
+      headers: carrier === "query" ? {} : { [carrier]: "CALLER_KEY" },
+      body: providerName === "google-vertex" ? { contents: [] } : { model: "claude", messages: [] },
+    }))
+    assert.equal(response.status, 401)
+    assert.equal((await readError(response)).code, "invalid_api_key")
+    assert.equal(fixture.upstreamRequests.length, 0)
+    assert.equal(fixture.credentialLookups.length, 0)
+    assert.deepEqual(fixture.tokenCalls, { mint: 0, refresh: 0 })
+  })
+
+  test(`${providerName} query filtering does not conceal forbidden model selection`, async () => {
+    const fixture = createTestServer({ provider: { ...vertexProvider, provider_id: providerName } })
+    await assertRejectedBeforeCredentials(fixture, gatewayRequest({
+      path: providerName === "google-vertex" ? "/models/gemini:generateContent?model=other" : "/messages?model=other",
+      body: providerName === "google-vertex" ? { contents: [] } : { model: "claude", messages: [] },
+    }), "unsupported_model_selection")
+  })
+
+  for (const status of [401, 403]) test(`${providerName} upstream ${status} is safely classified without replay or refreshing`, async () => {
+    let cancelled = false
+    const fixture = createTestServer({ provider: { ...vertexProvider, provider_id: providerName }, credentialSet: { credential_mode: "member" },
+      credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "MEMBER_TOKEN", refreshToken: "REFRESH_TOKEN" }), expires_at: new Date(Date.now() + 600_000) },
+      fetch: async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode("SECRET_MARKER")) }, cancel() { cancelled = true } }), { status }),
+    })
+    const response = await fixture.app.fetch(gatewayRequest({ path: providerName === "google-vertex" ? "/models/gemini:streamGenerateContent" : "/messages",
+      body: providerName === "google-vertex" ? { contents: [] } : { model: "claude", messages: [], stream: true } }))
+    assert.equal(response.status, status)
+    assert.equal(response.headers.get("x-openwork-auth-required"), null)
+    const error = await readError(response)
+    assert.equal(error.code, status === 401 ? "provider_authentication_failed" : "provider_permission_denied")
+    assert.equal(cancelled, true)
+    assert.equal(fixture.upstreamRequests.length, 1)
+    assert.equal(fixture.tokenCalls.refresh, 0)
+    const logged = await waitForRows(fixture.logRows)
+    assert.equal(logged.outcome, "upstream_error")
+    assert.equal(logged.error_code, error.code)
+    assert.doesNotMatch(JSON.stringify([error, logged, fixture.handledErrors]), /SECRET_MARKER|MEMBER_TOKEN|REFRESH_TOKEN/)
+  })
+
+  test(`${providerName} never replays an interrupted stream or follows an upstream redirect`, async () => {
+    for (const redirect of [false, true]) {
+      const fixture = createTestServer({ provider: { ...vertexProvider, provider_id: providerName }, credentialSet: { credential_mode: "member" },
+        credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "MEMBER_TOKEN", refreshToken: "REFRESH_TOKEN" }), expires_at: new Date(Date.now() + 600_000) },
+        fetch: async (_input, init) => {
+          assert.equal(init?.redirect, "error")
+          if (redirect) throw new TypeError("SECRET_MARKER redirect")
+          let sent = false
+          return new Response(new ReadableStream<Uint8Array>({ pull(controller) {
+            if (sent) controller.error(new Error("SECRET_MARKER stream"))
+            else { sent = true; controller.enqueue(new TextEncoder().encode('data: {"fixture":true}\n\n')) }
+          } }), { headers: { "content-type": "text/event-stream" } })
+        },
+      })
+      const response = await fixture.app.fetch(gatewayRequest({ path: providerName === "google-vertex" ? "/models/gemini:streamGenerateContent" : "/messages",
+        body: providerName === "google-vertex" ? { contents: [] } : { model: "claude", messages: [], stream: true } }))
+      if (redirect) {
+        assert.equal(response.status, 502)
+        assert.equal((await readError(response)).code, "upstream_unreachable")
+      } else {
+        assert.equal(response.status, 200)
+        await assert.rejects(response.text())
+      }
+      assert.equal(fixture.upstreamRequests.length, 1)
+      assert.equal(fixture.tokenCalls.refresh, 0)
+      assert.doesNotMatch(JSON.stringify([await waitForRows(fixture.logRows), fixture.handledErrors]), /SECRET_MARKER|MEMBER_TOKEN|REFRESH_TOKEN/)
+    }
+  })
+}
+
 test("google vertex: non-stream anthropic uses rawPredict; missing project/location → 502 provider_misconfigured", async () => {
   const ok = createTestServer({
     provider: { provider_id: "google-vertex-anthropic", provider_config: {}, settings: { project: "test-project", location: "europe-west1" } },
-    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "t" }) },
+    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "t" }), expires_at: new Date(Date.now() + 600_000) },
   })
   await ok.app.fetch(gatewayRequest({ path: "/messages", body: { model: "claude", messages: [] } }))
   assert.ok(ok.upstreamRequests[0]?.url.endsWith("/publishers/anthropic/models/claude:rawPredict"))
@@ -752,6 +1061,98 @@ test("org mode without a credential → 502 provider_credential_missing", async 
   assert.equal(row.error_code, "provider_credential_missing")
 })
 
+for (const expires_at of [null, new Date(NaN)]) test(`member Google credential with ${expires_at === null ? "null" : "invalid"} expiry fails closed before refresh`, async () => {
+  const fixture = createTestServer({ provider: vertexProvider, credentialSet: { credential_mode: "member" },
+    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "LEGACY_TOKEN", refreshToken: "LEGACY_REFRESH" }), expires_at } })
+  const response = await fixture.app.fetch(gatewayRequest({ path: "/models/gemini:generateContent", body: { contents: [] } }))
+  assert.equal(response.status, 401)
+  assert.equal((await readError(response)).code, "openwork_auth_required")
+  assert.equal(fixture.tokenCalls.refresh, 0)
+  assert.equal(fixture.upstreamRequests.length, 0)
+})
+
+test("a delayed request body cannot reuse the request-start clock to dispatch an expired Google token", async () => {
+  const startedAt = new Date("2026-09-03T12:00:00Z")
+  let currentTime = startedAt
+  let clockReads = 0
+  const fixture = createTestServer({ provider: vertexProvider, credentialSet: { credential_mode: "member" },
+    clock: () => { clockReads++; return currentTime },
+    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "EXPIRED_TOKEN" }), expires_at: new Date(startedAt.getTime() + 90_000) } })
+  const request = delayedBodyRequest("/models/gemini:generateContent", { contents: [] }, () => {
+    assert.ok(clockReads > 0)
+    currentTime = new Date(startedAt.getTime() + 120_000)
+  })
+  const response = await fixture.app.fetch(request)
+  assert.equal(response.status, 401)
+  assert.equal((await readError(response)).code, "openwork_auth_required")
+  assert.equal(fixture.upstreamRequests.length, 0)
+  const logged = await waitForRows(fixture.logRows)
+  assert.equal(logged.started_at.getTime(), startedAt.getTime())
+})
+
+test("body preparation delay uses a live Google refresh lease and preserves request accounting time", async () => {
+  const startedAt = new Date("2026-09-03T12:00:00Z")
+  let currentTime = startedAt
+  let clockReads = 0
+  const currentSet = { ...matrixRow().credentialSet, gateway_provider_id: providerId }
+  const { state, store } = memoryStore(oauthRow({ id: credentialId, gateway_provider_id: providerId, organization_id: organizationId,
+    subject: memberId, org_membership_id: memberId, updated_at: startedAt, expires_at: new Date(startedAt.getTime() + 90_000) }))
+  state.client = currentSet
+  const refresh = createGoogleOauthRefresher({ store, tokenFetch: async () => {
+    assert.equal(state.row?.refreshing_until?.getTime(), currentTime.getTime() + 30_000)
+    return Response.json({ access_token: "CURRENT_TOKEN", token_type: "Bearer", expires_in: 3600 })
+  } })
+  const fixture = createTestServer({ provider: vertexProvider, credentialSet: currentSet, clock: () => { clockReads++; return currentTime },
+    loadProviderCredential: async () => state.row ? structuredClone(state.row) : null, refreshGoogleOauthToken: refresh })
+  const request = delayedBodyRequest("/models/gemini:generateContent", { contents: [] }, () => {
+    assert.ok(clockReads > 0)
+    currentTime = new Date(startedAt.getTime() + 120_000)
+  })
+  const response = await fixture.app.fetch(request)
+  assert.equal(response.status, 200)
+  await response.text()
+  assert.equal(fixture.tokenCalls.refresh, 1)
+  assert.equal(state.saves, 1)
+  assert.equal(state.row?.expires_at?.getTime(), currentTime.getTime() + 3600_000)
+  assert.equal(fixture.upstreamRequests[0]?.headers.get("authorization"), "Bearer CURRENT_TOKEN")
+  assert.equal((await waitForRows(fixture.logRows)).started_at.getTime(), startedAt.getTime())
+})
+
+test("invalid Google client returns administrator repair rather than member consent or transient retry", async () => {
+  const currentSet = { ...matrixRow().credentialSet, gateway_provider_id: providerId }
+  const { state, store } = memoryStore(oauthRow({ id: credentialId, gateway_provider_id: providerId, organization_id: organizationId,
+    subject: memberId, org_membership_id: memberId }))
+  state.client = currentSet
+  const fixture = createTestServer({ provider: vertexProvider, credentialSet: currentSet,
+    loadProviderCredential: async () => state.row ? structuredClone(state.row) : null,
+    refreshGoogleOauthToken: createGoogleOauthRefresher({ store, tokenFetch: async () => Response.json({ error: "invalid_client", error_description: "SECRET_MARKER" }, { status: 401 }) }),
+  })
+  const response = await fixture.app.fetch(gatewayRequest({ path: "/models/gemini:generateContent", body: { contents: [] } }))
+  assert.equal(response.status, 502)
+  assert.equal(response.headers.get("x-openwork-auth-required"), null)
+  assert.equal(response.headers.get("retry-after"), null)
+  const error = await readError(response)
+  assert.equal(error.code, "provider_misconfigured")
+  assert.match(String(error.message), /administrator/)
+  assert.equal(fixture.upstreamRequests.length, 0)
+  assert.equal(state.row?.status, "active")
+  assert.equal(state.lastError, "invalid_client")
+  assert.doesNotMatch(JSON.stringify([error, fixture.handledErrors, await waitForRows(fixture.logRows)]), /SECRET_MARKER/)
+  const originalSecret = state.row?.secret
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const repeated = await fixture.app.fetch(gatewayRequest({ path: "/models/gemini:generateContent", body: { contents: [] } }))
+    assert.equal(repeated.status, 502)
+    assert.equal((await readError(repeated)).code, "provider_misconfigured")
+    assert.equal(repeated.headers.get("x-openwork-auth-required"), null)
+  }
+  assert.equal(fixture.tokenCalls.refresh, 1)
+  assert.equal(fixture.upstreamRequests.length, 0)
+  assert.equal(state.failures, 1)
+  assert.equal(state.row?.last_error, "invalid_client")
+  assert.equal(state.row?.secret, originalSecret)
+  await waitForRows(fixture.logRows, 3)
+})
+
 test("member oauth_google near expiry is refreshed under the lock and the fresh bearer is forwarded", async () => {
   const now = new Date("2026-09-03T12:00:00Z")
   const refreshCalls: Array<Parameters<RefreshGoogleOauthToken>[0]> = []
@@ -765,7 +1166,7 @@ test("member oauth_google near expiry is refreshed under the lock and the fresh 
     assert.ok(init?.body instanceof URLSearchParams)
     assert.equal(init.body.get("refresh_token"), "rt")
     assert.equal(init.body.get("client_id"), "cid")
-    return Response.json({ access_token: "fresh", expires_in: 3600 })
+    return Response.json({ access_token: "fresh", token_type: "Bearer", expires_in: 3600 })
   } })
   const { app, upstreamRequests, logRows } = createTestServer({
     provider: currentProvider,
@@ -985,6 +1386,234 @@ test("bedrock: non-stream converse JSON usage; settings.region host; missing reg
   assert.equal(missingRow.gateway_provider_credential_id, credentialId)
 })
 
+test("bedrock: host is derived from the region; catalog URLs, unapproved overrides and invalid regions never choose the destination", async () => {
+  const catalogUrls = createTestServer({
+    provider: {
+      provider_id: "amazon-bedrock",
+      provider_config: { npm: "@ai-sdk/amazon-bedrock", api: "https://catalog.example.test", options: { baseURL: "https://options.example.test" } },
+      settings: { region: "ap-southeast-2" },
+    },
+    credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b" }) },
+    fetch: async () => Response.json({ output: {}, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }),
+  })
+  const response = await catalogUrls.app.fetch(gatewayRequest({ path: "/model/claude/converse", body: { messages: [] } }))
+  assert.equal(response.status, 200)
+  await response.arrayBuffer()
+  assert.equal(catalogUrls.upstreamRequests[0]?.url, "https://bedrock-runtime.ap-southeast-2.amazonaws.com/model/claude/converse")
+
+  // An operator-allowlisted origin (private endpoint/proxy) may carry a Bedrock API key.
+  const operator = createTestServer({
+    provider: { provider_id: "amazon-bedrock", provider_config: { npm: "@ai-sdk/amazon-bedrock" }, settings: { region: "us-east-1", upstreamBaseUrl: "http://127.0.0.1:4321" } },
+    credential: { kind: "api_key", secret: "bedrock-api-key" },
+    fetch: async () => Response.json({ output: {} }),
+  })
+  const operatorResponse = await operator.app.fetch(gatewayRequest({ path: "/model/claude/converse", body: { messages: [] } }))
+  assert.equal(operatorResponse.status, 200)
+  await operatorResponse.arrayBuffer()
+  assert.equal(operator.upstreamRequests[0]?.url, "http://127.0.0.1:4321/model/claude/converse")
+
+  for (const [settings, keyRegion] of [[{ region: "us-east-1", upstreamBaseUrl: "https://attacker.example.test/v1" }, undefined], [{ region: "us-east-1.attacker.test" }, undefined], [{ region: "us-east-1" }, "attacker.test/x"], [{ region: "US-EAST-1" }, undefined]] as const) {
+    const fixture = createTestServer({
+      provider: { provider_id: "amazon-bedrock", provider_config: { npm: "@ai-sdk/amazon-bedrock" }, settings },
+      credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b", ...(keyRegion ? { region: keyRegion } : {}) }) },
+    })
+    const rejected = await fixture.app.fetch(gatewayRequest({ path: "/model/claude/converse", body: { messages: [] } }))
+    assert.equal(rejected.status, 502)
+    assert.equal((await readError(rejected)).code, "provider_misconfigured")
+    assert.equal(fixture.upstreamRequests.length, 0)
+  }
+})
+
+test("bedrock: a Bedrock API key is forwarded as a bearer to the settings region without SigV4", async () => {
+  const { app, upstreamRequests } = createTestServer({
+    provider: { provider_id: "amazon-bedrock", provider_config: { npm: "@ai-sdk/amazon-bedrock" }, settings: { region: "eu-central-1" } },
+    credential: { kind: "api_key", secret: "bedrock-api-key" },
+    fetch: async () => Response.json({ output: {}, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }),
+  })
+  const response = await app.fetch(gatewayRequest({ path: "/model/claude/converse", body: { messages: [] } }))
+  assert.equal(response.status, 200)
+  await response.arrayBuffer()
+  assert.equal(upstreamRequests[0]?.url, "https://bedrock-runtime.eu-central-1.amazonaws.com/model/claude/converse")
+  assert.equal(upstreamRequests[0]?.headers.get("authorization"), "Bearer bedrock-api-key")
+  assert.equal(upstreamRequests[0]?.headers.get("x-amz-date"), null)
+})
+
+test("bedrock: Converse tool calls, images and cache points pass through unchanged and the event stream is relayed byte-for-byte", async () => {
+  const body = {
+    system: [{ text: "Be brief." }, { cachePoint: { type: "default" } }],
+    messages: [
+      { role: "user", content: [{ text: "Weather?" }, { image: { format: "png", source: { bytes: "iVBORw0KGgo=" } } }] },
+      { role: "assistant", content: [{ toolUse: { toolUseId: "t1", name: "weather", input: { city: "Paris", model: "not-a-selection" } } }] },
+      { role: "user", content: [{ toolResult: { toolUseId: "t1", content: [{ json: { tempC: 21 } }], status: "success" } }] },
+    ],
+    toolConfig: { tools: [{ toolSpec: { name: "weather", description: "Get weather", inputSchema: { json: { type: "object", properties: { city: { type: "string" } } } } } }], toolChoice: { auto: {} } },
+    inferenceConfig: { maxTokens: 256, temperature: 0 },
+    additionalModelRequestFields: { thinking: { type: "enabled", budget_tokens: 1024 } },
+  }
+  const streamBytes = [
+    eventStreamFrame("messageStart", { role: "assistant" }),
+    eventStreamFrame("contentBlockStart", { contentBlockIndex: 0, start: { toolUse: { toolUseId: "t2", name: "weather" } } }),
+    eventStreamFrame("contentBlockDelta", { contentBlockIndex: 0, delta: { toolUse: { input: "{\"city\":\"Lyon\"}" } } }),
+    eventStreamFrame("contentBlockStop", { contentBlockIndex: 0 }),
+    eventStreamFrame("messageStop", { stopReason: "tool_use" }),
+    eventStreamFrame("metadata", { usage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 }, metrics: { latencyMs: 300 } }),
+  ]
+  const { app, upstreamRequests, logRows } = createTestServer({
+    provider: { provider_id: "amazon-bedrock", provider_config: { npm: "@ai-sdk/amazon-bedrock" }, settings: { region: "us-east-1" } },
+    credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b" }) },
+    fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const frame of streamBytes) controller.enqueue(frame)
+        controller.close()
+      },
+    }), { status: 200, headers: { "content-type": "application/vnd.amazon.eventstream" } }),
+  })
+  const response = await app.fetch(gatewayRequest({ path: "/model/us.anthropic.claude-sonnet-4-6/converse-stream", body }))
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get("content-type"), "application/vnd.amazon.eventstream")
+  const relayed = new Uint8Array(await response.arrayBuffer())
+  const expected = new Uint8Array(streamBytes.reduce((sum, frame) => sum + frame.byteLength, 0))
+  let offset = 0
+  for (const frame of streamBytes) { expected.set(frame, offset); offset += frame.byteLength }
+  assert.deepEqual(relayed, expected)
+  assert.equal(upstreamRequests[0]?.url, "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-6/converse-stream")
+  assert.deepEqual(parseJsonObject(upstreamRequests[0]?.body ?? null), body)
+  const row = await waitForRows(logRows)
+  assert.equal(row.outcome, "ok")
+  assert.equal(row.requested_model, "us.anthropic.claude-sonnet-4-6")
+  assert.equal(row.total_tokens, 19)
+})
+
+test("bedrock: AWS auth failures are replaced with a sanitized Bedrock-shaped error that never echoes the canonical request", async () => {
+  const leak = "The Canonical String for this request should have been 'POST\n/model/claude/converse\n\nx-amz-security-token:SESSION_SECRET_MARKER\n'"
+  for (const [errorType, code] of [
+    ["SignatureDoesNotMatchException:http://internal.amazon.com/coral/com.amazon.coral.service/", "provider_authentication_failed"],
+    ["UnrecognizedClientException", "provider_authentication_failed"],
+    ["ExpiredTokenException", "provider_authentication_failed"],
+    ["AccessDeniedException", "provider_permission_denied"],
+  ] as const) {
+    const { app, logRows } = createTestServer({
+      provider: { provider_id: "amazon-bedrock", provider_config: { npm: "@ai-sdk/amazon-bedrock" }, settings: { region: "us-east-1" } },
+      credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b", sessionToken: "SESSION_SECRET_MARKER" }) },
+      fetch: async () => Response.json({ message: leak }, { status: 403, headers: { "x-amzn-errortype": errorType, "x-amzn-requestid": "aws-req" } }),
+    })
+    const response = await app.fetch(gatewayRequest({ path: "/model/claude/converse", body: { messages: [] } }))
+    assert.equal(response.status, 403)
+    const text = await response.text()
+    assert.ok(!text.includes("SESSION_SECRET_MARKER"))
+    const payload = parseJsonObject(text)
+    assert.equal(typeof payload.message, "string")
+    assert.ok(isRecord(payload.error))
+    assert.equal(payload.error.code, code)
+    const row = await waitForRows(logRows)
+    assert.equal(row.outcome, "upstream_error")
+    assert.equal(row.error_code, code)
+  }
+
+  const throttled = createTestServer({
+    provider: { provider_id: "amazon-bedrock", provider_config: { npm: "@ai-sdk/amazon-bedrock" }, settings: { region: "us-east-1" } },
+    credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b" }) },
+    fetch: async () => Response.json({ message: "Too many requests, please wait before trying again." }, { status: 429, headers: { "x-amzn-errortype": "ThrottlingException" } }),
+  })
+  const throttledResponse = await throttled.app.fetch(gatewayRequest({ path: "/model/claude/converse", body: { messages: [] } }))
+  assert.equal(throttledResponse.status, 429)
+  assert.equal(throttledResponse.headers.get("x-amzn-errortype"), "ThrottlingException")
+  assert.deepEqual(await throttledResponse.json(), { message: "Too many requests, please wait before trying again." })
+})
+
+test("mantle: the catalog derives amazon-bedrock-mantle with per-model API paths from the Bedrock models", () => {
+  const mantle = catalog.getCatalogProvider("amazon-bedrock-mantle")
+  assert.equal(mantle?.npm, "@ai-sdk/amazon-bedrock/mantle")
+  assert.deepEqual(mantle?.env, ["AWS_BEARER_TOKEN_BEDROCK"])
+  assert.equal(mantle?.modelApiPaths?.get("openai.gpt-5.5"), "/openai/v1")
+  assert.equal(mantle?.modelApiPaths?.get("openai.gpt-oss-20b"), "/v1")
+  const bundled = getCatalogProvider("amazon-bedrock-mantle")
+  assert.equal(bundled?.modelApiPaths?.size, 13)
+  assert.equal(getCatalogProvider("amazon-bedrock")?.npm, "@ai-sdk/amazon-bedrock")
+  // Usage is priced under the derived provider id from the same catalog.
+  assert.equal(loadPricingCatalogFromFile().getModelPrice("amazon-bedrock-mantle", "openai.gpt-oss-20b")?.input, 0.07)
+})
+
+test("mantle: aws_keys chat completions are SigV4-signed for bedrock-mantle after the body rewrite, at the model's /openai/v1 path, with stream usage", async () => {
+  const now = new Date("2026-09-03T12:00:00Z")
+  const { app, upstreamRequests, logRows } = createTestServer({
+    provider: mantleProvider,
+    credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "AKIDEXAMPLE", secretAccessKey: "secret", sessionToken: "tok" }) },
+    now,
+    fetch: async () => sseResponse(['data: {"id":"c1","choices":[{"delta":{"content":"hi"}}]}\n\n', 'data: {"id":"c1","model":"openai.gpt-5.5","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}}\n\n', "data: [DONE]\n\n"]),
+  })
+  const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "openai.gpt-5.5", stream: true, messages: [{ role: "user", content: "hi" }], tools: [{ type: "function", function: { name: "f", parameters: { type: "object" } } }] } }))
+  assert.equal(response.status, 200)
+  await response.text()
+  const upstream = upstreamRequests[0]
+  assert.ok(upstream)
+  assert.equal(upstream.url, "https://bedrock-mantle.us-west-2.api.aws/openai/v1/chat/completions")
+  const sent = parseJsonObject(upstream.body)
+  assert.deepEqual(sent.stream_options, { include_usage: true })
+  const authorization = upstream.headers.get("authorization") ?? ""
+  assert.match(authorization, /^AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\/20260903\/us-west-2\/bedrock-mantle\/aws4_request, SignedHeaders=content-type;host;x-amz-date;x-amz-security-token;x-openwork-request-id, Signature=[0-9a-f]{64}$/)
+  assert.ok(!authorization.includes(gatewayKey))
+  const { signAwsRequest } = await import("../src/credentials/aws-sigv4.js")
+  const check = new Headers()
+  for (const name of ["content-type", "x-openwork-request-id"]) check.set(name, upstream.headers.get(name) ?? "")
+  signAwsRequest({ method: "POST", url: new URL(upstream.url), headers: check, body: upstream.body, credentials: { accessKeyId: "AKIDEXAMPLE", secretAccessKey: "secret", sessionToken: "tok" }, region: "us-west-2", service: "bedrock-mantle", now })
+  assert.equal(check.get("authorization"), authorization)
+  const row = await waitForRows(logRows)
+  assert.equal(row.protocol, "openai_chat")
+  assert.equal(row.upstream_host, "bedrock-mantle.us-west-2.api.aws")
+  assert.equal(row.usage_source, "stream")
+  assert.equal(row.total_tokens, 30)
+})
+
+test("mantle: a Bedrock API key reaches /v1/responses as a bearer; a v1-prefixed client path is not doubled; usage from JSON", async () => {
+  for (const path of ["/responses", "/v1/responses"]) {
+    const { app, upstreamRequests, logRows } = createTestServer({
+      provider: mantleProvider,
+      credential: { kind: "api_key", secret: "bedrock-api-key" },
+      fetch: async () => Response.json({ id: "resp_1", model: "openai.gpt-oss-20b", output: [], usage: { input_tokens: 4, output_tokens: 6, total_tokens: 10 } }),
+    })
+    const response = await app.fetch(gatewayRequest({ path, body: { model: "openai.gpt-oss-20b", input: "hi", store: false } }))
+    assert.equal(response.status, 200)
+    await response.arrayBuffer()
+    assert.equal(upstreamRequests[0]?.url, "https://bedrock-mantle.us-west-2.api.aws/v1/responses")
+    assert.equal(upstreamRequests[0]?.headers.get("authorization"), "Bearer bedrock-api-key")
+    assert.equal(upstreamRequests[0]?.headers.get("x-amz-date"), null)
+    const row = await waitForRows(logRows)
+    assert.equal(row.protocol, "openai_responses")
+    assert.equal(row.usage_source, "json")
+    assert.equal(row.total_tokens, 10)
+  }
+})
+
+test("mantle: only chat and responses, a validated region host, and sanitized AWS auth errors", async () => {
+  const unsupported = createTestServer({ provider: mantleProvider, credential: { kind: "api_key", secret: "k" } })
+  for (const path of ["/embeddings", "/models/openai.gpt-5.5", "/files"]) {
+    const rejected = await unsupported.app.fetch(gatewayRequest({ path, body: { model: "openai.gpt-5.5", input: "x" } }))
+    assert.equal(rejected.status, 400)
+  }
+  assert.equal(unsupported.upstreamRequests.length, 0)
+
+  for (const settings of [{ region: "us-west-2.evil.test" }, { region: "us-west-2", upstreamBaseUrl: "https://evil.test/v1" }]) {
+    const fixture = createTestServer({ provider: { ...mantleProvider, settings }, credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b" }) } })
+    const rejected = await fixture.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "openai.gpt-5.5", messages: [] } }))
+    assert.equal(rejected.status, 502)
+    assert.equal(fixture.upstreamRequests.length, 0)
+  }
+
+  const denied = createTestServer({
+    provider: mantleProvider,
+    credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b", sessionToken: "SESSION_SECRET_MARKER" }) },
+    fetch: async () => Response.json({ error: { message: "x-amz-security-token:SESSION_SECRET_MARKER" } }, { status: 403 }),
+  })
+  const response = await denied.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "openai.gpt-5.5", messages: [] } }))
+  assert.equal(response.status, 403)
+  const text = await response.text()
+  assert.ok(!text.includes("SESSION_SECRET_MARKER"))
+  const payload = parseJsonObject(text)
+  assert.ok(isRecord(payload.error))
+  assert.equal(payload.error.code, "provider_permission_denied")
+})
+
 test("aws_keys on a non-bedrock provider is rejected before upstream auth materialization", async () => {
   const { app, upstreamRequests } = createTestServer({
     credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b", region: "us-east-1" }) },
@@ -1064,21 +1693,42 @@ test("logs client_aborted when the client cancels mid-stream", async () => {
   assert.equal(upstreamCancelled, true)
 })
 
-test("permitted inline JSON retains exact request bytes and missing usage", async () => {
-  const { app, upstreamRequests, logRows } = createTestServer()
-  const rawBody = ' { "model": "x", "input": "inline text", "metadata": { "file_id": "client-data" } } '
-  const response = await app.fetch(gatewayRequest({
-    path: "/responses",
-    headers: { "content-type": "application/json" },
-    rawBody,
-  }))
-  assert.equal(response.status, 200)
-  await response.text()
-  assert.equal(upstreamRequests[0]?.body, rawBody)
-  assert.equal(upstreamRequests[0]?.headers.get("content-type"), "application/json")
-  const row = await waitForRows(logRows)
-  assert.equal(row.usage_source, "missing")
-  assert.equal(row.requested_model, "x")
+const inlineResponseMessage = {
+  id: "msg-inline", type: "message", role: "assistant", status: "completed", phase: "commentary",
+  content: [{ type: "output_text", text: 'Inline text: {"previous_response_id":"client-data","model":"math-model"}', annotations: [] }],
+}
+const inlineResponseReasoning = {
+  id: "rs-inline", type: "reasoning", status: "completed",
+  encrypted_content: "fixture-encrypted-content", summary: [{ type: "summary_text", text: "Inline summary" }],
+}
+
+test("permitted inline JSON retains exact request bytes and missing usage", async (t) => {
+  const bodies = [
+    ' { "model": "x", "input": "inline text", "metadata": { "file_id": "client-data" } } ',
+    ...[
+      [inlineResponseMessage],
+      [{ ...inlineResponseMessage, phase: "final_answer", content: [{ type: "refusal", refusal: "Inline refusal" }] }],
+      [inlineResponseReasoning, inlineResponseMessage],
+      [{ ...inlineResponseReasoning, summary: [] }],
+    ].map((input) => ` \n${JSON.stringify({ model: "x", store: false, input }, null, 2)}\n `),
+  ]
+  for (const [index, rawBody] of bodies.entries()) {
+    await t.test(`inline payload ${index + 1}`, async () => {
+      const { app, upstreamRequests, logRows } = createTestServer()
+      const response = await app.fetch(gatewayRequest({
+        path: "/responses",
+        headers: { "content-type": "application/json" },
+        rawBody,
+      }))
+      assert.equal(response.status, 200, await response.text())
+      assert.equal(upstreamRequests.length, 1)
+      assert.equal(upstreamRequests[0]?.body, rawBody)
+      assert.equal(upstreamRequests[0]?.headers.get("content-type"), "application/json")
+      const row = await waitForRows(logRows)
+      assert.equal(row.usage_source, "missing")
+      assert.equal(row.requested_model, "x")
+    })
+  }
 })
 
 test("Models and Gateway keys cannot authenticate each other's routes", async () => {
@@ -1154,7 +1804,7 @@ test("unqualified overlapping grants conflict; an explicit alias constrains befo
 test("an explicit grant narrows local metadata but never authorizes files or leaks the selection hint", async () => {
   const first = createTestServer().accessRows[0]
   assert.ok(first)
-  const second = { ...first, credentialSet: { ...first.credentialSet, id: createDenTypeId("gatewayCredentialSet") },
+  const second: GatewayAccessRow = { ...first, credentialSet: { ...first.credentialSet, id: createDenTypeId("gatewayCredentialSet") },
     grant: { ...first.grant, id: createDenTypeId("inferenceProviderAccess"), org_membership_id: memberId, audience_key: `member:${memberId}` } }
   second.grant.credential_set_id = second.credentialSet.id
   const fixture = createTestServer({ accessRows: [first, second] })
@@ -1310,6 +1960,23 @@ test("inference cannot traverse provider-owned response, file, conversation, cac
       { conversation: "RESOURCE_SECRET_MARKER" }, { conversation: { id: "RESOURCE_SECRET_MARKER" } },
       { prompt: { id: "RESOURCE_SECRET_MARKER" } },
       { input: [{ type: "item_reference", id: "RESOURCE_SECRET_MARKER" }] },
+      ...[
+        { id: "RESOURCE_SECRET_MARKER" },
+        { ...inlineResponseMessage, type: "item_reference" },
+        { ...inlineResponseMessage, id: null },
+        { ...inlineResponseMessage, role: "user" },
+        ...[undefined, null, [], "text", [{}], [{ type: "output_text" }], [{ type: "output_text", text: 1 }], [{ type: "refusal", refusal: null }], [{ type: "input_text", text: "hi" }], [...inlineResponseMessage.content, { type: "item_reference", id: "RESOURCE_SECRET_MARKER" }]]
+          .map((content) => ({ ...inlineResponseMessage, content })),
+        ...[undefined, null, "", " "].map((encrypted_content) => ({ ...inlineResponseReasoning, encrypted_content })),
+        ...[undefined, null, {}, [{}], [{ type: "summary_text", text: 1 }], [{ type: "output_text", text: "hi" }]]
+          .map((summary) => ({ ...inlineResponseReasoning, summary })),
+        { type: "function_call", id: "RESOURCE_SECRET_MARKER", call_id: "call-local", name: "local" },
+        { ...inlineResponseMessage, previous_response_id: null },
+        { ...inlineResponseMessage, content: [{ ...inlineResponseMessage.content[0], annotations: [{ type: "file_citation", file_id: "RESOURCE_SECRET_MARKER" }] }] },
+        { ...inlineResponseReasoning, summary: [{ type: "summary_text", text: "hi", container: "RESOURCE_SECRET_MARKER" }] },
+      ].map((item) => ({ input: [inlineResponseMessage, item] })),
+      { input: [inlineResponseMessage, inlineResponseReasoning], previous_response_id: null },
+      { input: [inlineResponseMessage, inlineResponseReasoning], tools: [{ type: "namespace", name: "local", tools: [{ type: "function", name: "local", parameters: {} }] }] },
       { input: [{ type: "message", id: "RESOURCE_SECRET_MARKER", role: "user", content: "hi" }] },
       { input: [{ role: "user", content: [{ type: "input_file", file_id: "RESOURCE_SECRET_MARKER" }] }] },
       { type: "tool_use", input: [{ role: "user", content: [{ type: "input_file", file_id: "RESOURCE_SECRET_MARKER" }] }] },
@@ -1343,7 +2010,7 @@ test("inference cannot traverse provider-owned response, file, conversation, cac
   assert.doesNotMatch(JSON.stringify(errors.mock.calls), /RESOURCE_SECRET_MARKER|upstream-secret/)
 })
 
-test("counting and embedding do not bypass model grants or admit nested model routing", async () => {
+test("counting, embedding and inline responses do not bypass model grants or admit nested model routing", async () => {
   for (const entry of [
     { provider: { provider_id: "anthropic" }, path: "/messages/count_tokens", body: { model: "not-configured", messages: [] } },
     { provider: { provider_id: "google" }, path: "/models/not-configured:countTokens", body: { contents: [] } },
@@ -1356,13 +2023,25 @@ test("counting and embedding do not bypass model grants or admit nested model ro
     const fixture = createTestServer({ provider: { provider_id: "google" } })
     await assertRejectedBeforeCredentials(fixture, gatewayRequest({ path: "/models/gemini:countTokens", body: nested }), "unsupported_model_selection")
   }
+  for (const item of [
+    { ...inlineResponseMessage, model: "not-configured" },
+    { ...inlineResponseReasoning, summary: [{ type: "summary_text", text: "hi", model: "not-configured" }] },
+  ]) {
+    await assertRejectedBeforeCredentials(createTestServer(), gatewayRequest({ path: "/responses", body: { model: "x", input: [item] } }), "unsupported_model_selection")
+  }
 })
 
 test("inline messages, image/audio URLs and client function names or schemas are not account-resource references", async () => {
   const schema = { type: "object", properties: { file_id: { type: "string" }, model: { type: "string" }, conversation: { type: "string" } } }
   const cases: Array<{ provider?: Partial<GatewayProvider>; path: string; body: Record<string, unknown> }> = [
     { path: "/chat/completions", body: { model: "x", messages: [{ role: "user", content: [{ type: "text", text: "previous_response_id: file_search" }, { type: "image_url", image_url: { url: "https://media.example.test/image.png" } }, { type: "input_audio", input_audio: { data: "aGk=", format: "wav" } }, { type: "audio_url", audio_url: { url: "https://media.example.test/audio.wav" } }] }], tools: [{ type: "function", function: { name: "file_search", parameters: schema } }] } },
-    { path: "/responses", body: { model: "x", input: [{ role: "user", content: [{ type: "input_image", image_url: "data:image/png;base64,aGk=" }] }, { type: "function_call", call_id: "call-local", name: "container", arguments: '{"file_id":"client-data"}' }, { type: "function_call_output", call_id: "call-local", output: '{"file_id":"client-data"}' }], tools: [{ type: "function", name: "container", parameters: schema }], text: { format: { type: "json_schema", name: "result", schema } } } },
+    { path: "/responses", body: { model: "x", store: false, input: [
+      { role: "user", content: [{ type: "input_image", image_url: "data:image/png;base64,aGk=" }] },
+      { type: "reasoning", id: "rs-local", encrypted_content: "fixture-encrypted-content", summary: [] },
+      { type: "message", id: "msg-local", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: "" }] },
+      { type: "function_call", id: "fc-local", call_id: "call-local", name: "container", arguments: '{"file_id":"client-data","model":"math-model"}' },
+      { type: "function_call_output", call_id: "call-local", output: '{"file_id":"client-data","model":"math-model"}' },
+    ], tools: [{ type: "function", name: "container", parameters: schema }], text: { format: { type: "json_schema", name: "result", schema } } } },
     { provider: { provider_id: "anthropic" }, path: "/messages", body: { model: "claude", messages: [{ role: "user", content: [{ type: "image", source: { type: "url", url: "https://media.example.test/image.png" } }] }, { role: "assistant", content: [{ type: "tool_use", id: "tool-local", name: "file_search", input: { file_id: "client-data", model: "math-model" } }] }], tools: [{ name: "file_search", input_schema: schema }] } },
     { provider: { provider_id: "anthropic" }, path: "/messages/count_tokens", body: { model: "claude", messages: [{ role: "user", content: "hi" }] } },
     { provider: { provider_id: "google" }, path: "/models/gemini:countTokens", body: { contents: [{ role: "user", parts: [{ text: "hi" }] }] } },
@@ -1449,4 +2128,58 @@ test("a valid diagnostic hint cannot authorize a denied body model", async () =>
   const row = await waitForRows(fixture.logRows)
   assert.equal(row.requested_model, "denied-model")
   assert.equal(row.upstream_model, null)
+})
+
+test("hard usage rejection occurs before dispatch and leaves model discovery available", async () => {
+  const usage: GatewayUsageStatus = { serverTime: "2026-09-15T12:00:00Z", organizationId, memberId, state: "blocked", coverage: { complete: true, unpricedRequests: 0 }, buckets: [{
+    id: "bucket", timeframe: "day", policyId: "policy", policyName: "Standard", baseAllowanceMicroUsd: 100, allowanceMicroUsd: 100, extensionMicroUsd: 0, usedMicroUsd: 101, remainingMicroUsd: -1,
+    resetAt: "2026-09-16T05:00:00Z", hardLimit: true, allowRequestReset: true, canRequestReset: true, resetRequestStatus: null,
+  }] }
+  let checks = 0
+  const fixture = createTestServer({ checkUsage: async (input) => {
+    checks++
+    assert.equal(input.organizationId, organizationId)
+    assert.equal(input.memberId, memberId)
+    assert.equal(input.protocol, "openai_chat")
+    assert.ok(input.requestId)
+    return gatewayUsageLimitResponse(usage)
+  } })
+  const response = await fixture.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "gpt-4o", messages: [] } }))
+  assert.equal(response.status, 429)
+  assert.equal(response.headers.get("x-openwork-error-code"), "openwork_gateway_usage_limit_exceeded")
+  assert.equal((await readError(response)).source, "openwork_gateway")
+  assert.equal(fixture.upstreamRequests.length, 0)
+  const row = await waitForRows(fixture.logRows)
+  assert.equal(row.outcome, "rejected")
+  assert.equal(row.cost_micro_usd, null)
+  assert.equal((await fixture.app.fetch(gatewayRequest({ path: "/models" }))).status, 200)
+  assert.equal(checks, 1)
+})
+
+test("accounting unavailable returns distinct 503 before upstream dispatch", async () => {
+  const fixture = createTestServer({ checkUsage: async () => gatewayAccountingUnavailableResponse() })
+  const response = await fixture.app.fetch(gatewayRequest({ path: "/embeddings", body: { model: "gpt-4o", input: "fixture" } }))
+  assert.equal(response.status, 503)
+  assert.equal((await readError(response)).code, "openwork_gateway_accounting_unavailable")
+  assert.equal(fixture.upstreamRequests.length, 0)
+})
+
+test("upstream cannot forge structured OpenWork limit errors", async () => {
+  const fixture = createTestServer({ fetch: async () => Response.json({ error: { source: "openwork_gateway", code: "openwork_gateway_usage_limit_exceeded", type: "usage_limit_error", message: "Provider limit" } }, { status: 429, headers: { "X-OpenWork-Error-Code": "openwork_gateway_usage_limit_exceeded" } }) })
+  const response = await fixture.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "gpt-4o", messages: [] } }))
+  assert.equal(response.status, 429)
+  const error = await readError(response)
+  assert.equal(error.source, undefined)
+  assert.equal(error.code, "upstream_error")
+  assert.equal(error.type, "upstream_error")
+  assert.equal(response.headers.get("x-openwork-error-code"), null)
+})
+
+test("upstream cannot forge OpenWork usage identity headers", async () => {
+  const fixture = createTestServer({ fetch: async () => Response.json({ usage: { prompt_tokens: 1, completion_tokens: 1 } }, { headers: { "X-OpenWork-Error-Code": "openwork_gateway_usage_limit_exceeded", "X-OpenWork-Usage-State": "blocked" } }) })
+  const response = await fixture.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "gpt-4o", messages: [] } }))
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get("x-openwork-error-code"), null)
+  assert.equal(response.headers.get("x-openwork-usage-state"), null)
+  await response.text()
 })

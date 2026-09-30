@@ -39,7 +39,6 @@ function list(messages: UIMessage[]) {
         onOpenSubagentSession={() => {}}
         onMcpReconnect={() => Promise.reject(new Error("unused"))}
         onMcpReopenAuthorization={() => Promise.resolve()}
-        onMcpRetry={() => {}}
       >
         <MessageList messages={messages} status="submitted" activityStatus="thinking" />
       </MessageListProvider>

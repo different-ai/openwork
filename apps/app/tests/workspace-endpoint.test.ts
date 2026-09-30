@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { resolveWorkspaceEndpoint, workspaceServerId } from "../src/app/lib/workspace-endpoint";
+import { resolveEngineRootEndpoint, resolveWorkspaceEndpoint, workspaceServerId } from "../src/app/lib/workspace-endpoint";
 
 describe("workspace endpoint resolution", () => {
   test("local workspaces use the local server and local workspace id", () => {
@@ -55,5 +55,19 @@ describe("workspace endpoint resolution", () => {
       workspaceType: "remote",
       baseUrl: "https://worker.example.test",
     })).toBe("workspace-c");
+  });
+});
+
+describe("engine root endpoint", () => {
+  test("reaches the local server's managed engine without a workspace", () => {
+    expect(resolveEngineRootEndpoint({ baseUrl: "http://127.0.0.1:4321/", token: "client-token" })).toEqual({
+      opencodeBaseUrl: "http://127.0.0.1:4321/opencode",
+      token: "client-token",
+    });
+  });
+
+  test("is unavailable until the local server is connected", () => {
+    expect(resolveEngineRootEndpoint({ baseUrl: "", token: "client-token" })).toBeNull();
+    expect(resolveEngineRootEndpoint({ baseUrl: "http://127.0.0.1:4321", token: "" })).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 export { browserScript } from "@openwork/cdp";
 export { attachSurface, evaluateOnSurface } from "@openwork/cdp";
 export { denFetch, signIn as signInDen } from "@openwork/behaviors";
+// checkpointCapability and its types come from @openwork/env (re-exported below).
 export { screenshot } from "@openwork/test-evidence";
 export type { BrowserEvaluation, BrowserScript } from "@openwork/cdp";
 export { control, createDesktopHandoffGrant, evalIn, quitDesktop, signInDesktopAs } from "@openwork/behaviors";
@@ -14,7 +15,7 @@ export type { BrowserTaskInput, BrowserTaskReply } from "@openwork/behaviors";
 export { renderPrMarkdown } from "@openwork/test-artifacts";
 export type { TestRunRecord } from "@openwork/test-artifacts";
 export type { StepRecord, TestOutcome, TraceEntry } from "@openwork/test-evidence";
-export { test } from "./fixture.ts";
+export { test, CHECKPOINTS_TAG } from "./fixture.ts";
 export * from "@openwork/env";
 export * from "./brief.ts";
 export * from "./daytona-witness.ts";
@@ -27,3 +28,5 @@ export * from "./state.ts";
 
 export { observeTranscript, readTranscriptMessages } from "./transcript-observer.ts";
 export { readSidebarOverflow } from "@openwork/behaviors";
+export * from "./verification.ts";
+export * from "./verification-jev.ts";

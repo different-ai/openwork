@@ -25,11 +25,10 @@ export async function notificationCenter(seed: Seed) {
       }));
       return providers.length;
     }, [providers])),
-    /** The sidebar bell's accessible name carries the unread count; the badge is its visible twin. */
+    /** The accessible name carries the count; the visible indicator is a dot. */
     bell: () => seed.evalIn(world.app, () => {
-      const button = document.querySelector<HTMLButtonElement>('button[data-sidebar="menu-button"][aria-label^="Notifications"]');
-      const badge = button?.querySelector("span.rounded-full");
-      return { label: button?.getAttribute("aria-label") ?? null, badge: badge?.textContent?.trim() ?? null };
+      const button = document.querySelector<HTMLButtonElement>('[data-notification-bell]');
+      return { label: button?.getAttribute("aria-label") ?? null, unread: Boolean(button?.querySelector("[data-notification-unread]")) };
     }),
   };
 }

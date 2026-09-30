@@ -50,7 +50,7 @@ export async function assertOrganizationManagedModelsAllowed(organizationId: str
   }
 }
 
-export async function findActiveGatewayKey(key: GatewayBearerKey) {
+export async function findActiveGatewayKey(key: GatewayBearerKey): Promise<Pick<typeof GatewayKeyTable.$inferSelect, "id" | "organization_id" | "org_membership_id"> | null> {
   const digest = await gatewayBearerKeyLookupDigest(key)
   const [row] = await db.select({
     id: GatewayKeyTable.id,
@@ -64,7 +64,7 @@ export async function findActiveGatewayKey(key: GatewayBearerKey) {
   return row ?? null
 }
 
-export async function getOpenRouterProviderKey(organizationId: string) {
+export async function getOpenRouterProviderKey(organizationId: string): Promise<typeof InferenceOrgUpstreamProviderKeyTable.$inferSelect | null> {
   const rows = await db.select().from(InferenceOrgUpstreamProviderKeyTable)
     .where(and(
       eq(InferenceOrgUpstreamProviderKeyTable.organization_id, normalizeDenTypeId("organization", organizationId)),

@@ -14,6 +14,7 @@ import {
   openworkServerDataDir,
 } from "@openwork/paths";
 import { ensureDenStack } from "./den-stack.ts";
+import { selectedAppEnv } from "./app-env.ts";
 import { resolveEvalEngineValue } from "./eval-engine.ts";
 import type { ChildProcess } from "node:child_process";
 import type { DisposableHost, SurfaceHandle, ElectronSurfaceOptions, ChromeSurfaceOptions, DenServiceOptions, DenServiceHandle, ShareLinks } from "./types.ts";
@@ -97,6 +98,14 @@ interface KillLocalPidOptions {
 
 export interface FreePortOptions {
   log?: (message: string) => void;
+  /**
+   * Only stop listeners in this process group. Surface cleanup passes the
+   * spawned surface's pid (spawnDetached makes it a group leader). Without
+   * it, a port the surface allocated but never bound (a packaged binary's
+   * unused Vite port) can be taken by a concurrently booting app, and
+   * cleanup would kill that unrelated app.
+   */
+  ownerProcessGroup?: number;
 }
 
 const CDP_WAIT_TIMEOUT_MS = 120_000;
@@ -246,14 +255,24 @@ function processGroupId(pid: number): Promise<number | null> {
 }
 
 /** Ensure no process is listening on a local TCP port, killing stale owners. */
-export async function freePort(port: number, { log }: FreePortOptions = {}): Promise<void> {
+export async function freePort(port: number, { log, ownerProcessGroup }: FreePortOptions = {}): Promise<void> {
   if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
     throw new Error(`Port must be an integer from 1 to 65535, got ${port}.`);
   }
   if (process.platform !== "darwin" && process.platform !== "linux") return;
   const deadline = Date.now() + 10_000;
   const currentProcessGroup = await processGroupId(process.pid);
-  let pids = await listeningPids(port);
+  const owned = async (pids: number[]): Promise<number[]> => {
+    if (ownerProcessGroup === undefined) return pids;
+    const kept: number[] = [];
+    for (const pid of pids) {
+      const group = await processGroupId(pid);
+      if (group === ownerProcessGroup) kept.push(pid);
+      else log?.(`Port ${port} is held by pid ${pid} outside process group ${ownerProcessGroup}; leaving it alone.`);
+    }
+    return kept;
+  };
+  let pids = await owned(await listeningPids(port));
   while (pids.length > 0 && Date.now() < deadline) {
     for (const pid of pids) {
       if (pid === process.pid) throw new Error(`Refusing to kill the current process listening on port ${port}.`);
@@ -266,7 +285,7 @@ export async function freePort(port: number, { log }: FreePortOptions = {}): Pro
       await killLocalPid(killPid, { graceMs: 1_000, log });
     }
     await delay(100);
-    pids = await listeningPids(port);
+    pids = await owned(await listeningPids(port));
   }
   if (pids.length > 0) {
     throw new Error(`Port ${port} is still held by listener pid${pids.length === 1 ? "" : "s"} ${pids.join(", ")} after cleanup.`);
@@ -488,6 +507,9 @@ export function electronSurfaceEnv(
   // Give local eval Electron surfaces isolated app data, config, and identity so
   // they cannot affect the user's real desktop app.
   return {
+    // Explicit `pnpm world up --env KEY` app settings come first so the
+    // isolation keys below always win over a selected value.
+    ...selectedAppEnv(),
     ...(pnpmHome ? { PNPM_HOME: pnpmHome } : {}),
     APPDATA: paths.appDataDir,
     HOME: paths.homeDir,
@@ -514,6 +536,18 @@ export function electronSurfaceEnv(
     XDG_STATE_HOME: paths.stateHome,
     ...overrides,
   };
+}
+
+/**
+ * Launch env for an isolated Electron surface. The launching shell's OPENCODE_*
+ * never reach the app: an OpenWork agent shell exports the host app's
+ * OPENCODE_DB, which points the eval app's engine at the person's real
+ * database. Values a caller sets on purpose arrive through `isolationEnv`
+ * (electronSurfaceEnv overrides), so they still apply.
+ */
+export function electronLaunchEnv(parent: NodeJS.ProcessEnv, isolationEnv: Record<string, string>): NodeJS.ProcessEnv {
+  const inherited = Object.fromEntries(Object.entries(parent).filter(([key]) => !key.startsWith("OPENCODE_")));
+  return { ...inherited, ...isolationEnv };
 }
 
 export function liveSharedProductionStateEnv(state: InstalledProductionDesktopState): Record<string, string> {
@@ -750,7 +784,8 @@ export function createLocalHost(options: LocalHostOptions): DisposableHost {
   const denPorts = new Set<number>();
 
   async function disposeKnownPorts(handle: SurfaceHandle): Promise<void> {
-    for (const port of surfacePorts(handle)) await freePort(port, { log });
+    const ownerProcessGroup = handle.pid;
+    for (const port of surfacePorts(handle)) await freePort(port, { log, ownerProcessGroup });
   }
 
   async function disposeDenPorts(): Promise<void> {
@@ -851,7 +886,7 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
       const appName = `OpenWork Eval ${name}`;
       const appIdentifier = `com.differentai.openwork.eval.${sanitizeSlug(name)}`;
       const isolationEnv = electronSurfaceEnv(paths, { appName, appIdentifier, port, cdpPort }, opts.env);
-      const env: NodeJS.ProcessEnv = { ...process.env, ...isolationEnv };
+      const env = electronLaunchEnv(process.env, isolationEnv);
       const launchArgs = containerLaunchArgs(env.ELECTRON_EXTRA_LAUNCH_ARGS);
       if (launchArgs !== undefined) env.ELECTRON_EXTRA_LAUNCH_ARGS = launchArgs;
       // appendSwitch() in the main process runs too late for the SUID sandbox
@@ -884,8 +919,8 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
       } catch (error) {
         await killLocalPid(spawned.pid, { log });
         await Promise.all([
-          freePort(port, { log }),
-          freePort(cdpPort, { log }),
+          freePort(port, { log, ownerProcessGroup: spawned.pid }),
+          freePort(cdpPort, { log, ownerProcessGroup: spawned.pid }),
         ]).catch((cleanupError: unknown) => log(`Electron port cleanup failed: ${messageText(cleanupError)}`));
         throw error;
       }
@@ -922,7 +957,7 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
           await waitForCdpOrExit("Chrome", cdpUrl, spawned, logPath);
         } catch (error) {
           await killLocalPid(spawned.pid, { log });
-          await freePort(cdpPort, { log })
+          await freePort(cdpPort, { log, ownerProcessGroup: spawned.pid })
             .catch((cleanupError: unknown) => log(`Chrome port cleanup failed: ${messageText(cleanupError)}`));
           throw error;
         }

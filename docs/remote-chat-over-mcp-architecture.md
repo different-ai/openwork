@@ -352,7 +352,7 @@ pulls. Therefore:
    (cross-member 404).
 2. **Phase 2** — MCP App card + built-in skill. Proof: MCP App render spec
    (pattern: existing `mcp-app-render-test`), plus e2e where the session
-   created from desktop appears in headless web UI (`worlds/dev-headless.ts`).
+   created from desktop appears in headless web UI (`worlds/dev-app-web.ts`).
 3. **Phase 3** — `target: "desktop"`: generalize the runner seam server-first
    (generic `/v1/desktop-runner/*` endpoints with `/v1/automation-runner/*`
    aliases, dedicated `remote_session` task table), then add the

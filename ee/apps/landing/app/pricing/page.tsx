@@ -3,7 +3,7 @@ import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
 import { StructuredData } from "../../components/structured-data";
 import { getGithubData } from "../../lib/github";
-import { baseOpenGraph } from "../../lib/seo";
+import { baseOpenGraph, withSocialMetadata } from "../../lib/seo";
 
 const pricingSchema = {
   "@context": "https://schema.org",
@@ -21,7 +21,7 @@ const pricingSchema = {
       url: "https://app.openworklabs.com?mode=sign-up",
       availability: "https://schema.org/InStock",
       description:
-        "Free for up to 5 users. Open source desktop app with bring-your-own-keys; self-host the full platform."
+        "First 5 seats free on OpenWork Cloud. Open source desktop app with bring-your-own-keys; self-host the full platform free for organizations up to 5 users."
     },
     {
       "@type": "Offer",
@@ -37,31 +37,15 @@ const pricingSchema = {
         unitText: "seat per month"
       },
       description:
-        "$10 per seat per month, up to 100 users. Usage analytics, Extension Marketplace, distributed keys, standard support included."
-    },
-    {
-      "@type": "Offer",
-      name: "Enterprise",
-      price: "40",
-      priceCurrency: "USD",
-      url: "https://openworklabs.com/enterprise",
-      availability: "https://schema.org/InStock",
-      priceSpecification: {
-        "@type": "UnitPriceSpecification",
-        price: "40",
-        priceCurrency: "USD",
-        unitText: "user per month"
-      },
-      description:
-        "$40 per user per month, cloud or self-hosted. SSO/SAML and SCIM, desktop policies, OpenWork Web, spend observability, standard SLA support. Volume pricing above 100 users."
+        "$10 per seat per month, unlimited users. SSO/SAML, Extension Marketplace, distributed keys, cloud automations, basic analytics, standard support included."
     }
   ]
 };
 
-export const metadata = {
-  title: "OpenWork Pricing — Free up to 5 users, $10 Team, $40 Enterprise",
+export const metadata = withSocialMetadata({
+  title: "OpenWork Pricing — First 5 Cloud seats free, $10 Team with SSO",
   description:
-    "OpenWork is free for up to 5 users. Team is $10 per seat per month up to 100 users. Enterprise is $40 per user per month with SSO, desktop policies, and spend observability — same price cloud or self-hosted, volume pricing above 100 users.",
+    "First 5 seats free on OpenWork Cloud, then Team $10 per seat/month with SSO; self-hosting is free for organizations up to 5 users. Enterprise adds SCIM and desktop policies on an annual contract.",
   alternates: {
     canonical: "/pricing"
   },
@@ -69,7 +53,7 @@ export const metadata = {
     ...baseOpenGraph,
     url: "https://openworklabs.com/pricing"
   }
-};
+});
 
 export default async function PricingPage() {
   const github = await getGithubData();

@@ -10,6 +10,7 @@ import * as React from "react"
 import type { ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
 import type { OpenworkServerClient } from "@/app/lib/openwork-server"
 import type { McpAppOrigin } from "./mcp-app-origin"
+import type { ChatConnectionDecisionBinding } from "@/react-app/domains/session/surface/mcp-chat-reconnect"
 
 interface MessageListContextValue {
   mcpAppOrigin: McpAppOrigin | null
@@ -18,6 +19,8 @@ interface MessageListContextValue {
   sessionId: string
   /** Verified principal/org, endpoint, workspace and session; absent means no retention. */
   uiStateOwner?: string | null
+  getConnectionDecision?: (toolCallId: string) => ChatConnectionDecisionBinding | null
+  connectionQuestionToolCallId?: string | null
   showThinking: boolean
   highlightQuery?: string
   developerMode: boolean
@@ -37,14 +40,16 @@ interface MessageListContextValue {
   onEditUserMessage: (messageId: string, text: string) => void
   /** Open a sub-agent (child) session in the main chat surface. */
   onOpenSubagentSession?: (sessionId: string) => void
+  /** Stop one running sub-agent (child) session without stopping the parent turn. */
+  onStopSubagentSession?: (sessionId: string) => void | Promise<void>
   /** Re-submit an interrupted run by sending its recovery prompt. */
   onResumeInterrupted?: (recoveryPrompt: string) => void
   onMcpReconnect: (
     action: ChatToolReconnectAction,
     onProgress: (progress: ChatToolReconnectProgress) => void,
+    isCurrent?: () => boolean,
   ) => Promise<ChatToolReconnectResult>
-  onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string) => Promise<void>
-  onMcpRetry: (action: ChatToolReconnectAction) => void | Promise<void>
+  onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string, isCurrent?: () => boolean) => Promise<void>
 }
 
 const MessageListContext = React.createContext<MessageListContextValue | null>(null)
@@ -57,6 +62,8 @@ interface MessageListProviderProps {
   workspaceId: string
   sessionId: string
   uiStateOwner?: string | null
+  getConnectionDecision?: (toolCallId: string) => ChatConnectionDecisionBinding | null
+  connectionQuestionToolCallId?: string | null
   showThinking: boolean
   highlightQuery?: string
   developerMode: boolean
@@ -65,13 +72,14 @@ interface MessageListProviderProps {
   forkingMessageId?: string
   onEditUserMessage: (messageId: string, text: string) => void
   onOpenSubagentSession?: (sessionId: string) => void
+  onStopSubagentSession?: (sessionId: string) => void | Promise<void>
   onResumeInterrupted?: (recoveryPrompt: string) => void
   onMcpReconnect: (
     action: ChatToolReconnectAction,
     onProgress: (progress: ChatToolReconnectProgress) => void,
+    isCurrent?: () => boolean,
   ) => Promise<ChatToolReconnectResult>
-  onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string) => Promise<void>
-  onMcpRetry: (action: ChatToolReconnectAction) => void | Promise<void>
+  onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string, isCurrent?: () => boolean) => Promise<void>
   displaySuggestions: boolean
   providerConnectedCount: number
   connectorIdentities?: ConnectorToolIdentity[]
@@ -94,6 +102,8 @@ export function MessageListProvider({
   workspaceId,
   sessionId,
   uiStateOwner,
+  getConnectionDecision,
+  connectionQuestionToolCallId,
   showThinking,
   highlightQuery,
   developerMode,
@@ -108,10 +118,10 @@ export function MessageListProvider({
   forkingMessageId,
   onEditUserMessage,
   onOpenSubagentSession,
+  onStopSubagentSession,
   onResumeInterrupted,
   onMcpReconnect,
   onMcpReopenAuthorization,
-  onMcpRetry,
 }: MessageListProviderProps) {
   const handlersRef = React.useRef({
     dispatchAction,
@@ -120,10 +130,10 @@ export function MessageListProvider({
     onForkAtMessage,
     onEditUserMessage,
     onOpenSubagentSession,
+    onStopSubagentSession,
     onResumeInterrupted,
     onMcpReconnect,
     onMcpReopenAuthorization,
-    onMcpRetry,
   })
   React.useEffect(() => {
     handlersRef.current = {
@@ -133,10 +143,10 @@ export function MessageListProvider({
       onForkAtMessage,
       onEditUserMessage,
       onOpenSubagentSession,
+      onStopSubagentSession,
       onResumeInterrupted,
       onMcpReconnect,
       onMcpReopenAuthorization,
-      onMcpRetry,
     }
   }, [
     dispatchAction,
@@ -145,10 +155,10 @@ export function MessageListProvider({
     onForkAtMessage,
     onEditUserMessage,
     onOpenSubagentSession,
+    onStopSubagentSession,
     onResumeInterrupted,
     onMcpReconnect,
     onMcpReopenAuthorization,
-    onMcpRetry,
   ])
   const stableHandlers = React.useMemo(() => ({
     dispatchAction: (action: DispatchAction) => handlersRef.current.dispatchAction(action),
@@ -157,17 +167,19 @@ export function MessageListProvider({
     onForkAtMessage: (messageId: string) => handlersRef.current.onForkAtMessage(messageId),
     onEditUserMessage: (messageId: string, text: string) => handlersRef.current.onEditUserMessage(messageId, text),
     onOpenSubagentSession: (sessionId: string) => handlersRef.current.onOpenSubagentSession?.(sessionId),
+    onStopSubagentSession: (sessionId: string) => handlersRef.current.onStopSubagentSession?.(sessionId),
     onResumeInterrupted: (recoveryPrompt: string) => handlersRef.current.onResumeInterrupted?.(recoveryPrompt),
     onMcpReconnect: (
       action: ChatToolReconnectAction,
       onProgress: (progress: ChatToolReconnectProgress) => void,
-    ) => handlersRef.current.onMcpReconnect(action, onProgress),
-    onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string) => (
-      handlersRef.current.onMcpReopenAuthorization(action, authorizeUrl)
+      isCurrent?: () => boolean,
+    ) => handlersRef.current.onMcpReconnect(action, onProgress, isCurrent),
+    onMcpReopenAuthorization: (action: ChatToolReconnectAction, authorizeUrl: string, isCurrent?: () => boolean) => (
+      handlersRef.current.onMcpReopenAuthorization(action, authorizeUrl, isCurrent)
     ),
-    onMcpRetry: (action: ChatToolReconnectAction) => handlersRef.current.onMcpRetry(action),
   }), [])
   const canOpenSubagentSession = Boolean(onOpenSubagentSession)
+  const canStopSubagentSession = Boolean(onStopSubagentSession)
   const canResumeInterrupted = Boolean(onResumeInterrupted)
   const mcpAppOrigin = React.useMemo<McpAppOrigin | null>(
     () => client ? { client, workspaceId, sessionId, readOnly, ...(mcpAppEngine ? { engine: mcpAppEngine } : {}) } : null,
@@ -180,6 +192,8 @@ export function MessageListProvider({
       workspaceId,
       sessionId,
       uiStateOwner,
+      getConnectionDecision,
+      connectionQuestionToolCallId,
       showThinking,
       highlightQuery,
       forkingMessageId,
@@ -192,6 +206,9 @@ export function MessageListProvider({
       onOpenSubagentSession: canOpenSubagentSession
         ? stableHandlers.onOpenSubagentSession
         : undefined,
+      onStopSubagentSession: canStopSubagentSession
+        ? stableHandlers.onStopSubagentSession
+        : undefined,
       onResumeInterrupted: canResumeInterrupted
         ? stableHandlers.onResumeInterrupted
         : undefined,
@@ -202,6 +219,8 @@ export function MessageListProvider({
       workspaceId,
       sessionId,
       uiStateOwner,
+      getConnectionDecision,
+      connectionQuestionToolCallId,
       showThinking,
       highlightQuery,
       forkingMessageId,
@@ -212,6 +231,7 @@ export function MessageListProvider({
       syncDegraded,
       stableHandlers,
       canOpenSubagentSession,
+      canStopSubagentSession,
       canResumeInterrupted,
     ],
   )

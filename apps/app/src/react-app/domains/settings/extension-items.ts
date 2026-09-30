@@ -285,8 +285,8 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
     }];
   });
 
+  // The Library lists every connection the member can see, including a shared one an admin has not connected yet.
   const orgMcpConnectionItems = (input.orgMcpConnections ?? []).flatMap((connection): ExtensionItem[] => {
-    if (!orgConnectionCanRender(connection)) return [];
     const ready = isOrgMcpConnectionReady(connection);
     return [{
       id: `org-mcp:${connection.id}`,

@@ -79,6 +79,11 @@ export async function startCloudRuntimeWitness() {
   const listedExtras = new Set<string>();
   let recoveryFailure: { sandboxId: string; workerId: string; replacementAttempted: boolean } | null = null;
   const held = new Set<string>();
+  // Instances whose OpenWork server reports a running session or a waiting
+  // request, and instances whose `/health` misses while the server still answers.
+  const busy = new Map<string, { busySessions: number; waitingRequests: number }>();
+  const slowHealth = new Set<string>();
+  const activityProbes: Array<{ sandboxId: string; authenticated: boolean }> = [];
   const unexpected: string[] = [];
   let nextSession = 0;
   let healthy = false;
@@ -325,7 +330,18 @@ export async function startCloudRuntimeWitness() {
       const route = runtime[3];
       if (Number(runtime[2]) !== sandbox.endpoint) return json(response, 410, { message: "Preview expired" });
       if (!healthy || held.has(sandboxId) || sandbox.state !== "started") return json(response, 503, { ready: false });
-      if (route === "/health") return json(response, 200, { ready: true });
+      if (route === "/health") return json(response, slowHealth.has(sandboxId) ? 503 : 200, { ready: !slowHealth.has(sandboxId) });
+      if (method === "GET" && route === "/runtime/activity") {
+        const token = request.headers["x-openwork-host-token"];
+        const authenticated = typeof token === "string" && credentialValues.has(token);
+        activityProbes.push({ sandboxId, authenticated });
+        if (!authenticated) return json(response, 401, { error: "unauthorized" });
+        const load = busy.get(sandboxId) ?? { busySessions: 0, waitingRequests: 0 };
+        return json(response, 200, {
+          ok: true, verdict: load.busySessions > 0 || load.waitingRequests > 0 ? "busy" : "idle",
+          ...load, connectedClients: 0, workspaces: 1, checkedAt: new Date(0).toISOString(),
+        });
+      }
       if (route === "/workspaces") return json(response, 200, { activeId: "workspace_witness", items: [] });
       if (method === "POST" && route === "/workspace/workspace_witness/opencode/session") {
         if (sessionError) return json(response, 400, sessionError);
@@ -379,6 +395,19 @@ export async function startCloudRuntimeWitness() {
     },
     sessionFailure(error: { code: string; message: string } | null) { sessionError = error; },
     sleep(id: string) { sandboxById(id).state = "stopped"; held.add(id); },
+    activityProbes,
+    /** Make the instance report running sessions or waiting requests; `null` returns it to idle. */
+    load(id: string, value: { busySessions: number; waitingRequests: number } | null) {
+      sandboxById(id);
+      if (value) busy.set(id, value);
+      else busy.delete(id);
+    },
+    /** Make `/health` miss while every other route, including activity, still answers. */
+    slowHealth(id: string, on: boolean) {
+      sandboxById(id);
+      if (on) slowHealth.add(id);
+      else slowHealth.delete(id);
+    },
     expireEndpoint(id: string) { sandboxById(id).endpoint += 1; },
     seedImage(id: string, snapshot: string) {
       const sandbox = sandboxById(id);

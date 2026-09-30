@@ -34,7 +34,8 @@ async function stop(child) {
   await exited;
 }
 
-test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeout: 10_000 }, async (context) => {
+// Each synthetic answer streams on a timer; allow the expanded scenarios to finish.
+test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeout: 20_000 }, async (context) => {
   const port = await reservePort();
   const origin = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, [serverPath], {
@@ -250,6 +251,40 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
   assert.equal(final.status, 200);
   assert.equal(final.frames.map(frame => frame.choices[0].delta.content ?? "").join(""), "unique text returned by the real tool");
 
+  // The direct skill tools hand off the same way: list_skills narrows to one
+  // skill, and get_skill reads it by the capability that list returned.
+  assert.equal((await fetch(`${origin}/admin/agent-workloads`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workloads: [{ promptMarker: "Read the assigned skill", finalReply: "unused fixture reply",
+      finalReplyFrom: "last-tool-text", steps: [
+        { tool: "list_skills", arguments: { query: "Assigned skill", limit: 1 } },
+        { tool: "get_skill", arguments: {}, argumentsFrom: "skill-list" },
+      ],
+    }] }),
+  })).status, 200);
+  const skillRequest = async (toolResults) => {
+    const response = await fetch(`${origin}/v1/chat/completions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "discovery-model", messages: [
+        { role: "user", content: "Read the assigned skill" },
+        ...toolResults.map(content => ({ role: "tool", content })),
+      ], tools: ["list_skills", "get_skill"].map(name => ({ type: "function", function: { name } })) }),
+    });
+    const body = await response.text();
+    return { status: response.status, frames: body.split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6))) };
+  };
+  const listCall = (await skillRequest([])).frames.flatMap(frame => frame.choices[0].delta.tool_calls ?? [])[0];
+  assert.equal(listCall.function.name, "list_skills");
+  assert.deepEqual(JSON.parse(listCall.function.arguments), { query: "Assigned skill", limit: 1 });
+  const skillListed = await skillRequest([JSON.stringify({ skills: [{ name: "assigned-skill-1234abcd", capability: "plugin:first:skill" }], total: 1 })]);
+  assert.equal(skillListed.status, 200);
+  const getCall = skillListed.frames.flatMap(frame => frame.choices[0].delta.tool_calls ?? [])[0];
+  assert.equal(getCall.function.name, "get_skill");
+  assert.deepEqual(JSON.parse(getCall.function.arguments), { name: "plugin:first:skill" });
+  assert.equal((await skillRequest([JSON.stringify({ skills: [], total: 0 })])).status, 500);
+  const read = await skillRequest([JSON.stringify({ skills: [{ name: "assigned-skill-1234abcd", capability: "plugin:first:skill" }], total: 1 }), "---\nname: assigned-skill-1234abcd\n---\n\nReturn the proof phrase."]);
+  assert.equal(read.frames.map(frame => frame.choices[0].delta.content ?? "").join(""), "---\nname: assigned-skill-1234abcd\n---\n\nReturn the proof phrase.");
+
   // One workload must infer absence from the model's catalog, not from the
   // test stage. Old catalog entries and ordinary user text cannot resurrect it.
   assert.equal((await fetch(`${origin}/admin/agent-workloads`, {
@@ -263,6 +298,18 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
   const initial = { role: "system", content: `You are OpenWork.\n<available_skills>${skillEntry}</available_skills>` };
   const update = content => ({ role: "user", content: `<system-update>\n${content.replaceAll("<", "&lt;").replaceAll(">", "&gt;")}\n</system-update>` });
   const removed = update("The following skill IDs are no longer available and must not be used: release-current.");
+  // A watcher update can arrive after the human's prompt. It must not become
+  // the newest task or erase already completed tool calls in that task.
+  const afterPrompt = await fetch(`${origin}/v1/chat/completions`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "skill-model", messages: [initial,
+      { role: "user", content: "Read current instructions" },
+      { role: "tool", content: "Independent tool result" }, removed],
+      tools: [{ type: "function", function: { name: "skill" } }],
+    }),
+  });
+  assert.equal(afterPrompt.status, 200);
+  assert.match(await afterPrompt.text(), /Independent tool result/);
   for (const [history, available] of [
     [[initial], true], [[initial, removed], false],
     [[initial, removed, update(`New skills are available in addition to those previously listed:\n${skillEntry}`)], true],

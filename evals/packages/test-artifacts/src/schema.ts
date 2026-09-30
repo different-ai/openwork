@@ -1,3 +1,7 @@
+import { checkpointSchema } from "@openwork/review";
+import type { ReviewEvidence } from "@openwork/review";
+type ImageEvidence = Extract<ReviewEvidence, { kind: "image" }>;
+
 export interface ArtifactExpectationResult {
   expectation: string;
   passed: boolean;
@@ -23,6 +27,9 @@ export interface TestArtifact {
   ok: boolean | null;
   results: ArtifactExpectationResult[];
   judgments: ArtifactJudgment[];
+  checkpoint?: ImageEvidence["checkpoint"];
+  checkpointMatch?: ImageEvidence["checkpointMatch"];
+  checkpointError?: string;
 }
 
 export interface TestRunSummary {
@@ -66,6 +73,7 @@ export interface StepRecord {
 
 export interface TestRunRecord {
   name: string;
+  specFile?: string;
   dir: string;
   createdAt: string;
   closedAt: string;
@@ -158,7 +166,14 @@ function parseArtifact(value: unknown): TestArtifact | null {
       judgments.push(parsed);
     }
   }
+  const checkpoint = value.checkpoint === undefined ? undefined : checkpointSchema.safeParse(value.checkpoint);
+  if (checkpoint && (!checkpoint.success || checkpoint.data.imageHash !== value.hash)) return null;
+  if (value.checkpointError !== undefined && typeof value.checkpointError !== "string") return null;
+  if (value.checkpointMatch !== undefined && (!checkpoint?.success || (value.checkpointMatch !== "exact" && value.checkpointMatch !== "approximate"))) return null;
   return {
+    ...(checkpoint?.success ? { checkpoint: checkpoint.data } : {}),
+    ...(value.checkpointMatch === "exact" || value.checkpointMatch === "approximate" ? { checkpointMatch: value.checkpointMatch } : {}),
+    ...(typeof value.checkpointError === "string" ? { checkpointError: value.checkpointError } : {}),
     caption: value.caption,
     fileName: value.fileName,
     hash: value.hash,
@@ -298,6 +313,7 @@ function parseRecord(value: unknown, legacy: boolean): TestRunRecord | null {
   }
   const summary = legacy ? parseLegacySummary(value.summary, artifacts) : parseCurrentSummary(value.summary, artifacts);
   if (!summary) return null;
+  const specFile = typeof value.specFile === "string" ? value.specFile : undefined;
   const gitSha = typeof value.gitSha === "string" ? value.gitSha : undefined;
   const sandboxRef = typeof value.sandboxRef === "string" ? value.sandboxRef : undefined;
   const engine: EvalEngine | null = value.engine === undefined || value.engine === "v1"
@@ -331,6 +347,7 @@ function parseRecord(value: unknown, legacy: boolean): TestRunRecord | null {
   const failure = typeof value.failure === "string" ? value.failure : undefined;
   return {
     name: value.name,
+    specFile,
     dir: value.dir,
     createdAt: value.createdAt,
     closedAt: value.closedAt,

@@ -18,6 +18,23 @@ test("day bounds follow DST instead of assuming 24 hours", () => {
   expect(Date.parse(fall.dayEnd) - Date.parse(fall.dayStart)).toBe(25 * 60 * 60_000)
 })
 
+test("Los Angeles fall-back keeps both repeated hours in one 25-hour day and rolls over at midnight", () => {
+  const timeZone = "America/Los_Angeles"
+  for (const now of ["2026-11-01T07:00:00.000Z", "2026-11-01T08:30:00.000Z", "2026-11-01T09:30:00.000Z", "2026-11-02T07:59:59.999Z"]) {
+    expect(artifactRuntime(timeZone, new Date(now))).toEqual({
+      now, today: "2026-11-01", timeZone,
+      dayStart: "2026-11-01T07:00:00.000Z", dayEnd: "2026-11-02T08:00:00.000Z",
+    })
+  }
+  expect(artifactRuntime(timeZone, new Date("2026-11-01T06:59:59.999Z"))).toMatchObject({
+    today: "2026-10-31", dayEnd: "2026-11-01T07:00:00.000Z",
+  })
+  expect(artifactRuntime(timeZone, new Date("2026-11-02T08:00:00.000Z"))).toEqual({
+    now: "2026-11-02T08:00:00.000Z", today: "2026-11-02", timeZone,
+    dayStart: "2026-11-02T08:00:00.000Z", dayEnd: "2026-11-03T08:00:00.000Z",
+  })
+})
+
 test("fractional offsets and midnight transitions resolve to the actual day", () => {
   const kathmandu = artifactRuntime("Asia/Kathmandu", new Date("2026-09-14T12:00:00Z"))
   expect(kathmandu.dayStart).toBe("2026-09-13T18:15:00.000Z")

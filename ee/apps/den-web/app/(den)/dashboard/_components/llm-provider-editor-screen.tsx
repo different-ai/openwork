@@ -53,6 +53,7 @@ import {
     type DenModelsDevProviderDetail,
     type DenModelsDevProviderSummary,
 } from "./llm-provider-data";
+import { isGatewayOnlyNpm } from "./inference-provider-request";
 import { RuntimeEnvKeyChip, RuntimeEnvKeyNote, resolveRuntimeEnvKeys } from "./runtime-env-key";
 import {
     buildCatalogProviderOptions,
@@ -154,7 +155,7 @@ export function LlmProviderEditorScreen({
         void requestLlmProviderCatalog(orgId)
             .then((providers) => {
                 if (!canceled) {
-                    setCatalogProviders(providers);
+                    setCatalogProviders(providers.filter((provider) => !isGatewayOnlyNpm(provider.npm)));
                 }
             })
             .catch((loadError) => {

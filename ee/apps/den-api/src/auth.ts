@@ -26,6 +26,7 @@ import {
 } from "./mcp/scopes.js";
 import {
   DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
+  DEN_MCP_OAUTH_AUTHORIZATION_EXPIRES_IN_SECONDS,
   DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS,
 } from "./mcp/token-lifetime.js";
 import {
@@ -35,6 +36,9 @@ import {
 import { DEN_ACCOUNT_CONFIG } from "./account-linking-policy.js";
 import { cache } from "./cache.js";
 import { SCIM_TOKEN_STORAGE_STRATEGY } from "./scim-token-storage.js";
+import { createScimExistingUserLinkCheck } from "./scim-existing-user-linking.js";
+import { isCimdClientIdUrlAllowed } from "./mcp/cimd-policy.js";
+import { withLoopbackRedirectRelaxation } from "./mcp/cimd-loopback-redirects.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
 import {
@@ -96,7 +100,8 @@ import { readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstra
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
-import { oauthProvider } from "@better-auth/oauth-provider";
+import { cimdClientDiscovery } from "@better-auth/cimd";
+import { extendOAuthProvider, oauthProvider } from "@better-auth/oauth-provider";
 import { scim } from "@better-auth/scim";
 import { sso } from "@better-auth/sso";
 import { betterAuth } from "better-auth";
@@ -104,7 +109,15 @@ import { APIError, createAuthMiddleware } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { deleteSessionCookie } from "better-auth/cookies";
 import { and, eq, gt, sql } from "@openwork-ee/den-db/drizzle";
-import { emailOTP, jwt, organization } from "better-auth/plugins";
+import { deviceAuthorization, emailOTP, jwt, organization } from "better-auth/plugins";
+import {
+  DEN_DEVICE_CODE_EXPIRES_IN,
+  DEN_DEVICE_CODE_POLL_INTERVAL,
+  clearDeviceSessionOrganization,
+  isDenDeviceClientId,
+  stageDeviceSessionOrganization,
+  takeDeviceSessionOrganization,
+} from "./device-authorization.js";
 
 const logger = appLogger.child({ component: "auth" });
 
@@ -622,6 +635,13 @@ function removeSsoTestSessionCookie(ctx: Parameters<Parameters<typeof createAuth
 export const auth = betterAuth({
   baseURL: env.betterAuthUrl,
   secret: env.betterAuthSecret,
+  onAPIError: {
+    // OAuth authorization errors that cannot be returned to the client
+    // (unknown client, unregistered redirect URI, malformed request) and the
+    // other Better Auth error redirects land on Den web's branded page instead
+    // of Better Auth's built-in card (or, in production, a bare `/?error=`).
+    errorURL: `${env.betterAuthUrl}/connect/error`,
+  },
   trustedOrigins:
     env.betterAuthTrustedOrigins.length > 0
       ? env.betterAuthTrustedOrigins
@@ -732,9 +752,13 @@ export const auth = betterAuth({
     },
     session: {
       create: {
-        before: async (session) => {
+        before: async (session, context) => {
           const userId = normalizeDenTypeId("user", session.userId);
-          const activeOrganizationId = await getInitialActiveOrganizationIdForUser(userId);
+          const deviceCode = context?.path === "/device/token" ? readStringProperty(context.body, "device_code") : null;
+          const deviceOrganizationId = deviceCode
+            ? await takeDeviceSessionOrganization({ deviceCode, userId })
+            : null;
+          const activeOrganizationId = deviceOrganizationId ?? await getInitialActiveOrganizationIdForUser(userId);
           try {
             // SSO JIT creates the raw member row before the session row, so this
             // chokepoint can merge any matching pending invitation without blocking sign-in.
@@ -777,6 +801,13 @@ export const auth = betterAuth({
   },
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path === "/device/token") {
+        const deviceCode = readStringProperty(ctx.body, "device_code");
+        if (deviceCode) {
+          await stageDeviceSessionOrganization(deviceCode);
+        }
+      }
+
       await assertLiveMcpSessionForRefreshGrant(ctx);
 
       if (ctx.path === "/oauth2/authorize") {
@@ -926,6 +957,14 @@ export const auth = betterAuth({
       });
     }),
     after: createAuthMiddleware(async (ctx) => {
+      if (ctx.path === "/device/token") {
+        const deviceCode = readStringProperty(ctx.body, "device_code");
+        if (deviceCode) {
+          clearDeviceSessionOrganization(deviceCode);
+        }
+        return;
+      }
+
       if (ctx.path === "/organization/leave") {
         const member = removedMemberIdentity(ctx.context.returned);
         if (member) {
@@ -1035,6 +1074,8 @@ export const auth = betterAuth({
             return crypto.randomUUID();
           case "rateLimit":
             return createDenTypeId("rateLimit");
+          case "deviceCode":
+            return createDenTypeId("deviceCode");
           case "organization":
             return createDenTypeId("organization");
           case "member":
@@ -1174,11 +1215,20 @@ export const auth = betterAuth({
           if ("dpaSigned" in metadata) {
             throw new APIError("FORBIDDEN", { message: "dpaSigned is reserved for internal platform administration." });
           }
+          if ("plan" in metadata) {
+            throw new APIError("FORBIDDEN", { message: "plan is reserved for internal platform administration." });
+          }
           const capabilities = metadata.capabilities;
-          for (const key of ["gatewayDashboard", "slackAssistant"]) {
-            if (capabilities && typeof capabilities === "object" && key in capabilities) {
-              throw new APIError("FORBIDDEN", { message: `capabilities.${key} is reserved for internal platform administration.` });
-            }
+          if (capabilities && typeof capabilities === "object" && "auditLogs" in capabilities) {
+            throw new APIError("FORBIDDEN", { message: "capabilities.auditLogs is reserved for internal platform administration." });
+          }
+          if (capabilities && typeof capabilities === "object" && "slackAssistant" in capabilities) {
+            throw new APIError("FORBIDDEN", { message: "capabilities.slackAssistant is reserved for internal platform administration." });
+          }
+          if (capabilities && typeof capabilities === "object" && "gatewayDashboard" in capabilities) {
+            const retainedCapabilities = { ...capabilities };
+            delete retainedCapabilities.gatewayDashboard;
+            return { data: { metadata: { ...metadata, capabilities: retainedCapabilities } } };
           }
         },
         beforeUpdateOrganization: async ({ organization }) => {
@@ -1306,6 +1356,7 @@ export const auth = betterAuth({
       allowPublicClientPrelogin: true,
       allowDynamicClientRegistration: true,
       allowUnauthenticatedClientRegistration: true,
+      codeExpiresIn: DEN_MCP_OAUTH_AUTHORIZATION_EXPIRES_IN_SECONDS,
       accessTokenExpiresIn: DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
       m2mAccessTokenExpiresIn: DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
       refreshTokenExpiresIn: DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS,
@@ -1388,7 +1439,44 @@ export const auth = betterAuth({
         clientSecret: "ow_mcp_cs_",
       },
     }),
+    // Client ID Metadata Documents (MCP authorization spec): an MCP client may
+    // present the HTTPS URL of a JSON document it hosts as its client_id. The
+    // plugin fetches and validates the document, stores it as a public client,
+    // and advertises `client_id_metadata_document_supported` in discovery, so
+    // spec-following clients no longer need dynamic registration. DCR stays on
+    // as the fallback for clients that do not support this yet.
+    {
+      id: "cimd",
+      init(ctx) {
+        extendOAuthProvider(ctx, {
+          // Same discovery the @better-auth/cimd plugin installs, wrapped so a
+          // registered loopback redirect matches on any port (RFC 8252 §7.3),
+          // which native MCP clients such as Claude Code depend on.
+          clientDiscovery: withLoopbackRedirectRelaxation(cimdClientDiscovery({
+            // Redirect URIs are matched at authorize time and Den's MCP redirect
+            // policy still applies; native clients legitimately redirect to
+            // loopback or another origin than the one hosting their document.
+            originBoundFields: ["post_logout_redirect_uris", "client_uri"],
+            allowFetch: (url) => isCimdClientIdUrlAllowed(url),
+            onClientCreated: ({ client }) => {
+              logger.info("Registered MCP client from its client ID metadata document", {
+                clientId: client.clientId,
+                clientName: client.name ?? null,
+              });
+            },
+          })),
+        });
+      },
+    },
     scim({
+      linkExistingUsers: {
+        requireExistingOrgMembership: true,
+        shouldLinkUser: createScimExistingUserLinkCheck((where) => db
+          .select({ id: schema.MemberTable.id })
+          .from(schema.MemberTable)
+          .where(where)
+          .limit(1)),
+      },
       // Group names are metadata, never organization role assignments.
       mapGroupToRoles: () => [],
       storeSCIMToken: SCIM_TOKEN_STORAGE_STRATEGY,
@@ -1480,6 +1568,15 @@ export const auth = betterAuth({
             },
           });
       },
+    }),
+    // RFC 8628 device authorization for `openwork-bootstrap login`: the CLI
+    // shows a code, the person approves it on Den web's /device page, and the
+    // CLI receives a Den session token. No password ever reaches the CLI.
+    deviceAuthorization({
+      expiresIn: DEN_DEVICE_CODE_EXPIRES_IN,
+      interval: DEN_DEVICE_CODE_POLL_INTERVAL,
+      verificationUri: `${env.betterAuthUrl}/device`,
+      validateClient: (clientId) => isDenDeviceClientId(clientId),
     }),
     apiKey({
       defaultPrefix: DEN_API_KEY_DEFAULT_PREFIX,

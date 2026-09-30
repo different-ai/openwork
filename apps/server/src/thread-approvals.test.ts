@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -196,6 +196,34 @@ describe("thread approval replayer", () => {
     await Bun.sleep(100);
     expect(await listThreadApprovals(config, WORKSPACE_ID, "ses_a")).toEqual([{ permission: "bash", patterns: ["printf *"] }]);
     expect(await listThreadApprovals(config, WORKSPACE_ID, "ses_b")).toEqual([]);
+  });
+
+  test("decodes only frames that can carry a permission event", async () => {
+    const config = await serverConfig();
+    const engine = fakeEngine();
+    cleanups.push(engine.stop);
+    const replayer = startThreadApprovalReplayer({
+      config,
+      primary: () => engine.connection,
+      workspaceIdForDirectory: async (directory) => (directory === DIRECTORY ? WORKSPACE_ID : null),
+      reconnectMs: 50,
+    });
+    cleanups.push(replayer.stop);
+    // Attach the stream first so the spy only observes frame handling.
+    await engine.emit({ type: "session.updated", properties: { sessionID: "ses_a" } });
+    await Bun.sleep(50);
+    const parse = spyOn(JSON, "parse");
+    cleanups.push(() => parse.mockRestore());
+    for (let index = 0; index < 20; index++) {
+      await engine.emit({ type: "message.part.updated", properties: { part: { sessionID: "ses_a", messageID: "msg_1", id: `prt_${index}`, type: "text", text: "streaming" } } });
+    }
+    await Bun.sleep(100);
+    expect(parse).toHaveBeenCalledTimes(0);
+    await engine.emit(asked("perm_1", "ses_a", ["printf 'first'"], ["printf *"]));
+    await engine.emit(replied("perm_1", "ses_a", "always"));
+    expect(await settleAsync(async () => parse.mock.calls.length >= 2)).toBe(true);
+    parse.mockRestore();
+    expect(await settleAsync(async () => (await listThreadApprovals(config, WORKSPACE_ID, "ses_a")).length === 1)).toBe(true);
   });
 
   test("ignores directories OpenWork does not own and reconnects after the stream drops", async () => {

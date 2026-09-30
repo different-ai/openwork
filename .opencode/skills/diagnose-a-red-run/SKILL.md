@@ -52,5 +52,6 @@ git worktree remove /tmp/openwork-dev-control
 - Leaked state pollutes organizations; delete leftover connectors between runs.
 
 For a testkit failure, read the test run's last unvalidated artifacts before touching
-code. Publish useful red test evidence with `publish-evidence`; it remains human audit,
-not a passing verdict.
+code. Name the verdict as CI posted it: `Passed` only when every claim has an
+observable assertion; a skip or a pending `looks()` judgment is `Incomplete`,
+never `Passed`. Red evidence is useful evidence; never soften or omit it.

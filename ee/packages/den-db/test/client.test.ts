@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createDenDb } from "../src/client.js"
+import { createDenDb, rewriteShareLock } from "../src/client.js"
 import { createRetryingPlanetScaleFetch } from "../src/transient-retry.js"
 
 const fault = new TypeError("synthetic socket reset", { cause: { code: "UND_ERR_SOCKET" } })
@@ -171,4 +171,12 @@ test("a response body failure is preserved without replaying its query", async (
     await assert.rejects(client.execute("select 1"), (error) => error === fault)
     assert.equal(attempts, 1)
   } finally { globalThis.fetch = original }
+})
+
+test("locking reads use the share-mode spelling MariaDB and MySQL both parse", () => {
+  assert.equal(rewriteShareLock("select `id` from `member` where (`member`.`id` = ?) for share"), "select `id` from `member` where (`member`.`id` = ?) lock in share mode")
+  assert.equal(rewriteShareLock("select 1 FOR  SHARE ;"), "select 1 lock in share mode")
+  assert.equal(rewriteShareLock("select 1 for update"), "select 1 for update")
+  assert.equal(rewriteShareLock("select `for share` from t"), "select `for share` from t")
+  assert.equal(rewriteShareLock("select 1 for share skip locked"), "select 1 for share skip locked")
 })

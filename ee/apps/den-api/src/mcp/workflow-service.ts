@@ -159,6 +159,7 @@ export async function executeWorkflow(input: {
   const result = await runCodemodeScript({
     code: input.code,
     scriptInput,
+    readOnlyInput: input.readOnly,
     tools: restricted.tools,
     timeoutMs: Math.min(parsed.payload.limits?.timeoutMs ?? 120_000, 170_000),
     maxToolCalls: parsed.payload.limits?.maxToolCalls,

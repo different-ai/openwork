@@ -48,6 +48,7 @@ import {
   type PluginArchActorContext,
 } from "./routes/org/plugin-system/access.js"
 import { memberHasRole } from "./routes/org/shared.js"
+import { assertWorkflowSourceSafe, getWorkflowAuthoringSource } from "./workflow-authoring-receipts.js"
 
 const DEFAULT_WORKFLOWS_PLUGIN_NAME = "My Workflows"
 const LEGACY_WORKFLOW_PLUGIN_NAMES = ["My Programs", "Saved scripts"]
@@ -57,13 +58,15 @@ export type SaveWorkflowInput = {
   pluginId?: string
   name: string
   description?: string
-  code: string
+  code?: string
+  receiptId?: string
   currentInput?: unknown
   inputSchema?: unknown
   outputSchema?: unknown
 }
 
-export type WorkflowDraft = SaveWorkflowInput & {
+export type WorkflowDraft = Omit<SaveWorkflowInput, "receiptId" | "code"> & {
+  code: string
   exampleInput?: unknown
   requiredCapabilities: Array<{ capabilityName: string; scriptPath: string }>
 }
@@ -111,7 +114,6 @@ async function workflowResource(
   if (!rows[0]) throw new Error("workflow_not_found")
   await requirePluginArchResourceRole({
     context,
-    requireFreshSession: false,
     resourceId: configObjectId,
     resourceKind: "config_object",
     role,
@@ -282,6 +284,32 @@ export async function workflowSnapshotPage(
     }),
     nextCursor: page.nextCursor,
   }
+}
+
+/** The same resource/version gate as detail, without source, graphs, automations or receipts. */
+export async function getWorkflowAccess(input: {
+  context: PluginArchActorContext
+  configObjectId: string
+}) {
+  const resource = await workflowResource(input.context, input.configObjectId, "viewer")
+  const role = await resolvePluginArchResourceRole({
+    context: input.context,
+    resourceId: resource.configObject.id,
+    resourceKind: "config_object",
+  })
+  // A malformed newest version does not hide an older valid version. Do not
+  // replace this with an existence check or a latest-version-only check.
+  const versions = await db.select({ payload: ConfigObjectVersionTable.normalizedPayloadJson })
+    .from(ConfigObjectVersionTable).where(and(
+      eq(ConfigObjectVersionTable.organizationId, input.context.organizationContext.organization.id),
+      eq(ConfigObjectVersionTable.configObjectId, resource.configObject.id),
+      eq(ConfigObjectVersionTable.isDeletedVersion, false),
+    ))
+  if (!versions.some((version) => parseCodemodeScriptPayload(version.payload).ok)) {
+    throw new Error("workflow_version_not_found")
+  }
+  if (!input.context.organizationContext.currentMember.id) throw new Error("workflow_receipt_member_required")
+  return { configObjectId: resource.configObject.id, title: resource.configObject.title, canManage: role === "manager" }
 }
 
 export async function getWorkflowDetail(input: {
@@ -466,6 +494,7 @@ export async function createWorkflowVersion(input: {
   buildTools: () => Promise<BuiltCodemodeTools>
 }) {
   const resource = await workflowResource(input.context, input.configObjectId, "manager")
+  assertWorkflowSourceSafe(input.draft.code)
   const payload = normalizedPayload(input.draft)
   if (payload.parsed.inputSchema) {
     const validation = validateCodemodeScriptInput(payload.parsed.inputSchema, input.draft.exampleInput)
@@ -716,14 +745,63 @@ export async function saveWorkflow(input: {
       role: "editor",
     })
   }
+  const explicitReceipt = input.workflow.receiptId !== undefined
+  let receiptId: DenTypeId<"workflowRun"> | undefined
+  if (explicitReceipt) {
+    try {
+      receiptId = parseReceiptId(input.workflow.receiptId ?? "")
+    } catch {
+      throw new Error("workflow_authoring_receipt_required")
+    }
+  }
+  const retained = receiptId === undefined ? null : await getWorkflowAuthoringSource({
+    receiptId, organizationId, orgMembershipId: ownerMemberId,
+  })
+  if (explicitReceipt && !retained) throw new Error("workflow_authoring_receipt_required")
+  const code = retained?.code ?? input.workflow.code
+  if (!code) throw new Error("workflow_code_or_receipt_required")
+  if (retained && input.workflow.code !== undefined && input.workflow.code !== retained.code) {
+    throw new Error("workflow_authoring_receipt_required")
+  }
+  assertWorkflowSourceSafe(code)
+  if (retained?.mode === "live" && Object.hasOwn(input.workflow, "currentInput")) {
+    throw new Error("workflow_live_current_input_forbidden")
+  }
+  const validationInput = retained?.mode === "live"
+    ? { runtime: retained.runtime }
+    : input.workflow.currentInput
+  if (retained && (retained.inputDigest !== artifactDigest(validationInput ?? null)
+    || retained.inputSchemaDigest !== optionalArtifactDigest(input.workflow.inputSchema)
+    || retained.outputSchemaDigest !== optionalArtifactDigest(input.workflow.outputSchema))) {
+    throw new Error("workflow_authoring_receipt_required")
+  }
+  const codeDigest = codemodeCodeDigest(code)
   const receipts = await db.select().from(WorkflowRunTable).where(and(
     eq(WorkflowRunTable.organization_id, organizationId),
     eq(WorkflowRunTable.org_membership_id, ownerMemberId),
-    eq(WorkflowRunTable.code_digest, codemodeCodeDigest(input.workflow.code)),
+    eq(WorkflowRunTable.code_digest, codeDigest),
     eq(WorkflowRunTable.status, "succeeded"),
     gt(WorkflowRunTable.finished_at, new Date(Date.now() - RECENT_RUN_WINDOW_MS)),
+    receiptId === undefined ? undefined : eq(WorkflowRunTable.id, receiptId),
+    retained === null
+      ? sql`${WorkflowRunTable.source} <> ${"authoring:live"}`
+      : eq(WorkflowRunTable.source, retained.source),
   )).orderBy(desc(WorkflowRunTable.finished_at)).limit(1)
   const receipt = receipts[0]
+  if (!retained && receipt?.source === "authoring:live") throw new Error("workflow_authoring_receipt_required")
+  if (retained) {
+    if (!receipt || receipt.id !== retained.receiptId
+      || receipt.organization_id !== organizationId || receipt.org_membership_id !== ownerMemberId
+      || receipt.source !== retained.source || receipt.code_digest !== codeDigest || retained.codeDigest !== codeDigest
+      || receipt.status !== "succeeded" || receipt.finished_at.getTime() <= Date.now() - RECENT_RUN_WINDOW_MS
+      || receipt.finished_at.getTime() > Date.now()
+      || receipt.script_input_digest !== retained.inputDigest
+      || receipt.input_schema_digest !== retained.inputSchemaDigest || receipt.output_schema_digest !== retained.outputSchemaDigest
+      || receipt.script_input !== null || receipt.config_object_id !== null || receipt.config_object_version_id !== null
+      || receipt.plugin_id !== null || receipt.automation_run_id !== null || receipt.artifact_content_deleted_at !== null) {
+      throw new Error("workflow_authoring_receipt_required")
+    }
+  }
   if (!receipt) throw new Error("workflow_recent_receipt_required")
 
   // Saving does not authorize unattended execution; executeWorkflow checks that at run time.
@@ -747,16 +825,23 @@ export async function saveWorkflow(input: {
     language: "codemode-js",
     ...(input.workflow.inputSchema === undefined ? {} : { inputSchema: input.workflow.inputSchema }),
     ...(input.workflow.outputSchema === undefined ? {} : { outputSchema: input.workflow.outputSchema }),
-    ...(input.workflow.currentInput === undefined ? {} : { exampleInput: input.workflow.currentInput }),
+    ...(retained?.mode === "live" || input.workflow.currentInput === undefined ? {} : { exampleInput: input.workflow.currentInput }),
     requiredCapabilities,
   }
   const parsed = parseCodemodeScriptPayload(normalizedPayloadJson)
   if (!parsed.ok) throw new Error(`workflow_invalid_schema:${parsed.message}`)
   if (parsed.payload.inputSchema) {
-    const validation = validateCodemodeScriptInput(parsed.payload.inputSchema, input.workflow.currentInput)
+    const validation = validateCodemodeScriptInput(parsed.payload.inputSchema, retained ? validationInput ?? null : validationInput)
     if (!validation.ok) throw new Error("workflow_current_input_invalid")
   }
-  const graph = WorkflowGraph.analyze(input.workflow.code)
+  const graph = WorkflowGraph.analyze(code)
+  if (retained) {
+    const current = await getWorkflowAuthoringSource(retained)
+    if (!current || artifactDigest(current) !== artifactDigest(retained)
+      || receipt.finished_at.getTime() <= Date.now() - RECENT_RUN_WINDOW_MS) {
+      throw new Error("workflow_authoring_receipt_required")
+    }
+  }
 
   return db.transaction(async (tx) => {
     const plugins = requestedPluginId
@@ -872,7 +957,7 @@ export async function saveWorkflow(input: {
       organizationId,
       configObjectId,
       normalizedPayloadJson,
-      rawSourceText: input.workflow.code,
+      rawSourceText: code,
       schemaVersion: "codemode-script-v1",
       createdVia: "cloud",
       createdByOrgMembershipId: ownerMemberId,

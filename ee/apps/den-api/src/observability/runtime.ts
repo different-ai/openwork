@@ -3,6 +3,7 @@ import type { JsonObject, ObservabilityBackend, ObservabilityConfig, StructuredL
 import { observabilityConfig } from "./config.js"
 import { normalizedHonoRoute } from "./hono-route.js"
 import { sanitizeExceptionForTelemetry, sanitizeFields, sanitizeText, stripUrlQuery } from "./safe-fields.js"
+import { currentScimDiagnosticFields, sampleScimDiagnosticTrace, sanitizeScimDiagnosticEvent, sanitizeScimDiagnosticLog, SCIM_DIAGNOSTIC_OP } from "./scim-diagnostics.js"
 
 type RuntimeState = {
   initialized: boolean
@@ -547,10 +548,11 @@ async function startSentry(state: RuntimeState) {
   const environment = observabilityConfig.sentryBuild.values.SENTRY_ENVIRONMENT
   const dist = observabilityConfig.sentryBuild.values.SENTRY_DIST
   const sentryLogLevel = parseSentryLogLevel()
+  const baselineSampleRate = observabilityConfig.sentry.tracesSampleRate
 
   Sentry.init({
     dsn: observabilityConfig.sentry.dsn,
-    tracesSampleRate: observabilityConfig.sentry.tracesSampleRate,
+    tracesSampler: (context) => sampleScimDiagnosticTrace(context, baselineSampleRate),
     release,
     environment,
     dist,
@@ -571,9 +573,27 @@ async function startSentry(state: RuntimeState) {
       frameContextLines: 0,
     },
     beforeSend: sanitizeSentryEvent,
-    beforeSendTransaction: sanitizeSentryEvent,
+    beforeSendTransaction: (event, hint) => {
+      const sanitized = sanitizeScimDiagnosticEvent(sanitizeSentryEvent(event))
+      if (event.contexts?.trace?.op === SCIM_DIAGNOSTIC_OP) {
+        hint.attachments = []
+        if (sanitized) {
+          // Reattach only trusted deployment config, never inherited scope data.
+          sanitized.release = release
+          sanitized.environment = environment
+          sanitized.dist = dist
+        }
+      }
+      return sanitized
+    },
     beforeSendSpan: sanitizeSentrySpan,
-    beforeSendLog: sanitizeSentryLog,
+    beforeSendLog: (log) => {
+      const diagnostic = currentScimDiagnosticFields()
+      if (!diagnostic) return sanitizeSentryLog(log)
+      return sanitizeScimDiagnosticLog(sanitizeSentryLog(log),
+        [Sentry.getGlobalScope(), Sentry.getIsolationScope(), Sentry.getCurrentScope()]
+          .some((scope) => Object.keys(scope.getScopeData().attributes ?? {}).length > 0))
+    },
     beforeBreadcrumb: (breadcrumb) => sanitizeSentryBreadcrumb(breadcrumb),
     integrations(defaults) {
       return [

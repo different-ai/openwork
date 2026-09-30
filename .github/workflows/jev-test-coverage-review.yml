@@ -1,0 +1,69 @@
+name: Jev test coverage advisory
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: jev-coverage-${{ github.event_name }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  validation:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Secret-free focused tests
+        run: node --test .github/scripts/jev-test-coverage-review.test.mjs
+  review:
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Bootstrap trusted helper
+        id: bootstrap
+        run: |
+          if test -f .github/scripts/jev-test-coverage-review.mjs; then
+            echo 'present=true' >> "$GITHUB_OUTPUT"
+          else
+            echo '## Jev coverage advisory — skipped: helper absent from trusted base.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        if: steps.bootstrap.outputs.present == 'true' && vars.JEV_TEST_COVERAGE_REVIEW_ENABLED == 'true'
+        with:
+          version: 11.4.0
+          run_install: false
+      - name: Prepare isolated SDK (no repository install)
+        id: sdk
+        if: steps.bootstrap.outputs.present == 'true' && vars.JEV_TEST_COVERAGE_REVIEW_ENABLED == 'true'
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir -p jev-sdk
+          pnpm --dir "$RUNNER_TEMP/jev-sdk" add --ignore-scripts --save-exact ai@7.0.105
+      - name: Read-only advisory review
+        if: steps.bootstrap.outputs.present == 'true'
+        env:
+          JEV_TEST_COVERAGE_REVIEW_ENABLED: ${{ vars.JEV_TEST_COVERAGE_REVIEW_ENABLED }}
+          JEV_AI_GATEWAY_API_KEY: ${{ secrets.JEV_AI_GATEWAY_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node .github/scripts/jev-test-coverage-review.mjs

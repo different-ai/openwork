@@ -457,6 +457,6 @@ export function useSessionDraftState(
  * outlive the component to be recoverable; the sidebar reads the same slot to
  * offer a way back.
  */
-export function useNewTaskDraftState(scopeId: string | null | undefined, workspaceId: string | null | undefined) {
-  return useSessionDraftState(scopeId, workspaceId ?? "", NEW_TASK_DRAFT_SESSION_ID);
+export function useNewTaskDraftState(scopeId: string | null | undefined, workspaceId: string | null | undefined, draftSessionId = NEW_TASK_DRAFT_SESSION_ID) {
+  return useSessionDraftState(scopeId, workspaceId ?? "", draftSessionId);
 }

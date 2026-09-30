@@ -1,5 +1,8 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { browserScript, type Surface } from "@openwork/cdp";
-import { resolveEvalEngine, type Place, type Seed } from "@openwork/env";
+import { resolveEvalEngine, SkipError, type Place, type Seed } from "@openwork/env";
+import { assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel } from "@openwork/behaviors";
 import { chatContinuity } from "./chat-continuity.ts";
 import { configureProvider } from "./chat.ts";
 
@@ -29,6 +32,76 @@ export const streamedContinuityChunks = [
   `${streamedContinuityBullets[4].slice(streamedContinuityPartialFifth.length)}\n- ${streamedContinuityBullets[5]}\n- ${streamedContinuityPartialSeventh}`,
   `${streamedContinuityBullets[6].slice(streamedContinuityPartialSeventh.length)}\n- ${streamedContinuityBullets[7]}\n- ${streamedContinuityBullets[8]}\n- ${streamedContinuityBullets[9]}`,
 ];
+
+export const liveContinuityPrompt = "Write an original practical guide to observing seasonal changes in a public garden. "
+  + "Use 80 numbered paragraphs of 35 to 45 words each, without a preamble or conclusion. "
+  + "Give a different concrete observation in each paragraph. Write the entire guide in this one answer, "
+  + "not an outline or a sample. Do not use tools, files, or external research.";
+
+export async function chatStreamContinuityLiveWeb(seed: Seed, context: { place: Place }) {
+  if (!liveOpenAiEnabled() || !process.env.OPENAI_API_KEY?.trim()) throw new SkipError("Live continuity requires OPENWORK_EVAL_LIVE_OPENAI=1 and OPENAI_API_KEY");
+  if (context.place.kind !== "local" || resolveEvalEngine() !== "v1") throw new SkipError("Live continuity requires --engine v1 --surface web --local");
+  const modelId = liveOpenAiModel();
+  const providerId = "openai";
+  const workspacePath = seed.tmpPath("chat-stream-continuity-live");
+  const app = await seed.appWeb({ name: "chat-stream-continuity-live", workspacePath });
+  const manifest: unknown = JSON.parse(await readFile(resolve(import.meta.dirname, "../../tmp/worlds/runtime", app.handle.name, "runtime.json"), "utf8"));
+  if (!manifest || typeof manifest !== "object" || !("hostToken" in manifest) || typeof manifest.hostToken !== "string"
+    || !("token" in manifest) || typeof manifest.token !== "string"
+    || !("openworkUrl" in manifest) || manifest.openworkUrl !== app.openworkUrl) throw new Error("Owned app-web runtime receipt mismatch");
+  const clientToken = manifest.token;
+  const headers = { "x-openwork-host-token": manifest.hostToken, "content-type": "application/json" };
+  const provision = async (path: string, method: string, body: unknown) => {
+    let response: Response;
+    try {
+      response = await fetch(app.openworkUrl + path, {
+        method, headers, body: JSON.stringify(body), redirect: "error", signal: AbortSignal.timeout(60_000),
+      });
+    } catch { throw new Error(`Live provider provisioning failed at ${path} (details suppressed)`); }
+    if (!response.ok) throw new Error(`Live provider provisioning ${path}: HTTP ${response.status}`);
+    const result: unknown = await response.json().catch(() => {
+      throw new Error(`Live provider provisioning ${path}: invalid JSON (details suppressed)`);
+    });
+    assertNoLiveSecret(result);
+  };
+  await provision("/env", "PUT", { entries: [{ key: "OPENAI_API_KEY", value: process.env.OPENAI_API_KEY.trim() }] });
+  const provider = {
+    id: providerId, name: "OpenAI", npm: "@ai-sdk/openai", env: ["OPENAI_API_KEY"],
+    models: { [modelId]: { name: modelId, limit: { context: 128_000, output: 6_500 }, options: { reasoningEffort: "none" } } },
+  };
+  await provision("/runtime-config/providers", "PATCH", { provider: { [providerId]: provider } });
+  const workspace = await seed.workspace(app, workspacePath);
+  const continuity = chatContinuity(app, workspace.workspaceId);
+  const engineHttpEvents = await continuity.observeEngineHttpEvents();
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    default_agent: "build", provider: { [providerId]: provider }, tools: { "*": false },
+  }, "v1");
+  const neighbor = await createSession(seed, app, "Live unrelated control");
+  const session = await createSession(seed, app, "Live garden guide");
+  const nativePath = (id: string) => `/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode/session/${encodeURIComponent(id)}/message`;
+  return {
+    app, workspace, session, neighbor, modelId, providerId, continuity,
+    readNative: async (id: string) => {
+      const response = await fetch(app.openworkUrl + nativePath(id), {
+        headers: { Authorization: `Bearer ${clientToken}` }, redirect: "error", signal: AbortSignal.timeout(15_000),
+      });
+      const body: unknown = await response.json().catch(() => {
+        throw new Error("Live native observation returned invalid JSON (details suppressed)");
+      });
+      assertNoLiveSecret(body);
+      return { status: response.status, body };
+    },
+    engineHttpEvents: () => engineHttpEvents.read(),
+    runtimeFacts: async () => ({
+      actualSourceSha: app.actualSourceSha, hostKind: app.handle.hostKind, mockCount: Object.keys(app.mocks).length,
+      // Read-only renderer identity has no typed probe; this observes the browser/bridge without credentials or state changes.
+      ...(await seed.evalIn(app, () => ({
+        electronBridge: Boolean(window.__OPENWORK_ELECTRON__), browser: navigator.userAgent,
+      }))),
+    }),
+    [Symbol.asyncDispose]: () => engineHttpEvents[Symbol.asyncDispose](),
+  };
+}
 
 function requestedPlacement(place: Place): Place["kind"] {
   const value = process.env.OPENWORK_WORLD_PLACE?.trim();

@@ -244,6 +244,9 @@ export function startThreadApprovalReplayer(options: ThreadApprovalReplayerOptio
   };
 
   const handleFrame = async (connection: EnginePoolConnection, frame: string) => {
+    // Every engine event crosses this consumer. A frame whose text never names
+    // a permission event cannot decode into one, so skip the JSON parse.
+    if (!frame.includes("permission.asked") && !frame.includes("permission.replied")) return;
     const payload = sseFramePayload(frame);
     if (!isRecord(payload) || typeof payload.directory !== "string" || !isRecord(payload.payload)) return;
     const event = payload.payload;

@@ -14,6 +14,7 @@ export type CapabilityCallSentence = {
   present: string
   /** Past-tense line once the call completed. */
   past: string
+  failure?: string
 }
 
 const PAST_TENSE: Record<string, string> = {
@@ -135,16 +136,57 @@ function verbPhrase(action: string, tense: "present" | "past"): string {
   return `${prefix} ${humanize(action)}`
 }
 
-/**
- * Build the human sentence for a dynamic (MCP / capability) tool call.
- * Tool names follow "{connection}_{tool}", e.g.
- * "openwork-cloud_search_capabilities".
- */
+/** Skill slug from a get_skill call: the name asked for, else the one returned. */
+function skillReference(part: DynamicToolUIPart): string | null {
+  const input = parseRecord(part.input)
+  const asked = typeof input?.name === "string" ? input.name.trim() : ""
+  if (asked && !asked.includes(":")) return asked
+  const raw = "output" in part ? part.output : undefined
+  const output = parseRecord(raw)
+  if (typeof output?.name === "string" && output.name.trim()) return output.name.trim()
+  // The text result is the SKILL.md itself; its frontmatter carries the slug.
+  const frontmatter = typeof raw === "string" ? /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw)?.[1] : undefined
+  const name = frontmatter ? /^name:\s*(.+)$/m.exec(frontmatter)?.[1]?.trim() ?? "" : ""
+  // Den keeps marketplace skill names unique with an 8-character id suffix.
+  return (asked.startsWith("plugin:") ? name.replace(/-[a-z0-9]{8}$/, "") : name) || null
+}
+
+export function getConnectionStatusProbeId(part: DynamicToolUIPart): string | null {
+  if (part.toolName !== "openwork_execute_capability" && part.toolName !== "openwork-cloud_execute_capability") return null
+  const input = parseRecord(part.input)
+  return typeof input?.name === "string" ? /^mcp:([^:\s]+):\*$/.exec(input.name)?.[1] ?? null : null
+}
+
 export function getCapabilityCallSentence(
   part: DynamicToolUIPart,
-  options?: { includeQuery?: boolean },
+  options?: { includeQuery?: boolean; connectionName?: string | null },
 ): CapabilityCallSentence {
   const toolName = part.toolName
+  if (getConnectionStatusProbeId(part)) {
+    const service = options?.connectionName?.trim() || null
+    const target = service ? `${service} connection` : "connection"
+    return {
+      service,
+      present: `Checking ${target}…`,
+      past: `Checked ${target}`,
+      failure: `Couldn't check ${target}`,
+    }
+  }
+  if (toolName.endsWith("_get_skill")) {
+    const name = skillReference(part)
+    const target = name ? `your ${name} skill` : "a skill"
+    return {
+      service: null,
+      present: `Using ${target}…`,
+      past: `Used ${target}`,
+      failure: `Couldn't use ${target}`,
+    }
+  }
+
+  if (toolName.endsWith("_list_skills")) {
+    return { service: null, present: "Looking through your skills…", past: "Looked through your skills" }
+  }
+
   const query = options?.includeQuery === false ? null : extractQuery(part.input)
   const quoted = query ? ` “${query}”` : ""
 

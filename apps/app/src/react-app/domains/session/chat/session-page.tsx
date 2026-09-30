@@ -1,4 +1,7 @@
 /** @jsxImportSource react */
+import { newSessionDraftOwnerKey } from "./new-session-destination";
+import { usePendingConversationStore } from "./pending-conversation-store";
+import { PendingConversationView } from "./pending-conversation";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
@@ -12,7 +15,7 @@ import { markDesktopSignInInitiated } from "../../../../app/lib/den-sign-in-inte
 import { type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
-import { openDesktopPath, revealDesktopItemInDir, type WorkspaceInfo } from "../../../../app/lib/desktop";
+import { openDesktopUrl, openDesktopWorkspaceFile, revealDesktopItemInDir, type WorkspaceInfo } from "../../../../app/lib/desktop";
 import type {
   ComposerAttachment,
   PendingPermission,
@@ -24,8 +27,13 @@ import type {
 } from "../../../../app/types";
 import type { ShareWorkspaceModalProps } from "../../workspace/types";
 import { Button } from "@/components/ui/button";
+import { TaskRecovery } from "@/components/chat/task-recovery";
+import { toast } from "@/components/ui/sonner";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { SessionReferenceProvider } from "@/components/chat/session-reference-context";
+import type { SessionMetadataCallbacks, SessionMetadataRuntime, SessionReference, SessionReferenceIdentity, SessionReferenceInventory } from "@/components/chat/session-reference";
+import { openSessionReference } from "./session-reference-navigation";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -48,13 +56,14 @@ import { WorkbenchPanelGroup, PRIMARY_PANEL_ID, SECONDARY_PANEL_ID } from "./wor
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { AppSidebar } from "../sidebar/app-sidebar";
+import { MainSidebarControls } from "../sidebar/sidebar-chrome";
+import { MobileChatActions, MobileChatNavigation } from "./mobile-chat-navigation";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
 import { useSessionFindStore } from "../surface/find-store";
 import {
   SidebarInset,
   SidebarProvider,
-  SidebarTrigger,
 } from "@/components/ui/sidebar";
 import {
   ResizableHandle,
@@ -76,13 +85,13 @@ import {
   renameSessionIdFromEvent,
 } from "../../../shell/session-actions-bus";
 
-import { isElectronRuntime } from "../../../../app/utils";
+import { isElectronRuntime, isMacPlatform } from "../../../../app/utils";
 import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTarget, type OpenTarget } from "../artifacts/open-target";
-import { resolveCollectibleOpenTarget } from "../artifacts/resolve-open-target";
+import { nativeFileAction, resolveCollectibleOpenTarget } from "../artifacts/resolve-open-target";
 import type { OpenTargetOptions } from "@/lib/target-provider";
 import { SidePanel } from "../panel/side-panel";
 import { getSidePanelSessionKey } from "../panel/side-panel-session";
-import { useCreateTab, useSelectTab } from "../panel/use-side-panel-tabs";
+import { useCreateTab, useOpenBrowserRailPane } from "../panel/use-side-panel-tabs";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { useActivePanelTab, usePanelTabStore, useSessionPanelState } from "../panel/panel-tab-store";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
@@ -116,6 +125,7 @@ const STARTUP_SKELETON_ROWS = [
   { id: "final", titleWidth: "36%", bodyWidth: "74%" },
 ];
 const EMPTY_TRANSCRIPT_TARGETS: OpenTarget[] = [];
+const EMPTY_SESSION_REFERENCE_INVENTORIES: readonly SessionReferenceInventory[] = [];
 
 export type OpenSessionTab = WorkbenchSessionTab;
 
@@ -210,6 +220,9 @@ export type SessionPagePaneRuntime = {
 };
 
 export type SessionPageProps = {
+  sessionReferenceInventories?: readonly SessionReferenceInventory[];
+  createWorkspaceSessionMetadataCallbacks?: (runtime: SessionMetadataRuntime) => SessionMetadataCallbacks;
+  isSessionReferenceCurrent?: (reference: SessionReferenceIdentity) => boolean;
   sessionNumberShortcuts: SessionNumberShortcutsState;
   selectedSessionId: string | null;
   selectedWorkspaceId: string;
@@ -269,7 +282,7 @@ export type SessionPageProps = {
   extensionsActive?: boolean;
   onOpenProviderAuth?: () => void;
   /** Chat-first: create a default workspace and start a task from the empty-state composer. */
-  onChatFirstTask?: (prompt: string, attachments?: ComposerAttachment[]) => Promise<void>;
+  onChatFirstTask?: (prompt: string, attachments?: ComposerAttachment[], handoff?: NewTaskComposerHandoff) => Promise<void>;
   chatFirstBusy?: boolean;
   /** Workspace-scoped wiring for the empty-state hero's full composer. */
   newTaskComposer?: NewTaskComposerContext | null;
@@ -326,7 +339,7 @@ function WorkbenchPaneHeader(props: {
         {props.showWorkspace ? <span className="truncate text-muted-foreground">{props.workspaceTitle}</span> : null}
       </button>
       {props.pane === "secondary" ? <>
-        <Button variant="ghost" size="icon-xs" aria-label={t("session_management.expand_side_chat")} title={t("session_management.expand_side_chat")} onClick={props.onExpand}>
+        <Button variant="ghost" size="icon-xs" disabled={!props.onExpand} aria-label={t("session_management.expand_side_chat")} title={t("session_management.expand_side_chat")} onClick={props.onExpand}>
           <Maximize2 />
         </Button>
         <Button variant="ghost" size="icon-xs" aria-label={t("session_management.close_split_view")} title={t("session_management.close_split_view")} onClick={props.onClose}>
@@ -338,7 +351,7 @@ function WorkbenchPaneHeader(props: {
 }
 
 /** Every visible conversation owns its pending interactions, including the side pane. */
-function SplitSessionSurface(props: SessionSurfaceProps) {
+function SplitSessionSurface({ metadataCallbacks, ...props }: SessionSurfaceProps & { metadataCallbacks?: SessionMetadataCallbacks }) {
   const client = useMemo(() => isOpencodeV2BaseUrl(props.opencodeBaseUrl)
     ? createClientV2(props.opencodeBaseUrl, props.workspaceRoot, { token: props.openworkToken })
     : createClient(props.opencodeBaseUrl, props.workspaceRoot, { token: props.openworkToken, mode: "openwork" }),
@@ -347,7 +360,7 @@ function SplitSessionSurface(props: SessionSurfaceProps) {
     client, workspaceId: props.workspaceId, sessionId: props.sessionId, workspaceRoot: props.workspaceRoot ?? "",
   });
   return <>
-    <ReactSessionRuntime workspaceId={props.workspaceId} sessionId={props.sessionId}
+    <ReactSessionRuntime {...metadataCallbacks} workspaceId={props.workspaceId} sessionId={props.sessionId}
       opencodeBaseUrl={props.opencodeBaseUrl} openworkToken={props.openworkToken} />
     <SessionSurface {...props} {...interactions} />
   </>;
@@ -381,23 +394,6 @@ function UnavailableWorkbenchPane(props: {
 
 function isTrackableAccessibleTarget(target: OpenTarget) {
   return isOpenableFileTarget(target) || isLocalhostBrowserTarget(target);
-}
-
-function absoluteWorkspacePath(root: string | null | undefined, value: string) {
-  const target = value.trim();
-  if (!target) return "";
-  if (/^file:\/\//i.test(target)) {
-    try {
-      const pathname = new URL(target).pathname;
-      return /^\/[a-zA-Z]:/.test(pathname) ? pathname.slice(1) : pathname;
-    } catch {
-      return target.replace(/^file:\/\//i, "");
-    }
-  }
-  if (target.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(target)) return target;
-  const cleanRoot = root?.trim().replace(/[/\\]+$/, "") ?? "";
-  const cleanTarget = target.replace(/^[.][\\/]/, "");
-  return cleanRoot ? `${cleanRoot}/${cleanTarget}` : cleanTarget;
 }
 
 function hiddenAccessibleTargetsStorageKey(workspaceId: string | null | undefined, sessionId: string | null | undefined) {
@@ -482,7 +478,6 @@ export function SessionPage(props: SessionPageProps) {
   const panelRailActive = activeSidePanel === "panel";
   const browserRailActive = panelRailActive && activePanelTab?.type === "browser";
   const filesRailActive = panelRailActive && activePanelTab?.type !== "browser";
-  const selectBrowserTab = useSelectTab();
   const showCloudSignIn = shellConfig.cloudSignin && !denAuth.isSignedIn && denAuth.status !== "checking";
   const openCloudSignIn = useCallback(() => {
     const baseUrl = readDenBootstrapConfig().baseUrl;
@@ -534,6 +529,8 @@ export function SessionPage(props: SessionPageProps) {
     secondary: splitSession,
     focusedPane: focusedWorkbenchPane,
   } = useRouteWorkbench(workbenchInput);
+  const pendingConversations = usePendingConversationStore((state) => state.conversations);
+  const pendingSideConversation = splitSession?.pendingConversationId ? pendingConversations[splitSession.pendingConversationId] : undefined;
   const [narrowPane, setNarrowPane] = useState<NarrowSessionPane>("chat");
   const narrowPaneNavigationRef = useRef<HTMLElement>(null);
   const activeWorkbenchPane = isMobile
@@ -689,7 +686,18 @@ export function SessionPage(props: SessionPageProps) {
     if (target.kind === "url" || target.preview === "browser") {
       const url = browserUrlForTarget(target);
       if (isElectronRuntime()) {
+        if (options?.external) {
+          void openDesktopUrl(url).catch((error: unknown) => {
+            toast.error(error instanceof Error ? error.message : "Could not open this link.");
+          });
+          return;
+        }
         const ownerSessionId = sourceSessionId ?? props.selectedSessionId ?? null;
+        const openLink = window.__OPENWORK_ELECTRON__?.browser?.openLink;
+        if (!options?.auto && openLink) {
+          openLink(url, ownerSessionId);
+          return;
+        }
         openOwnerSidePanel(ownerSessionId);
         void createBrowserTab(url, ownerSessionId);
       } else {
@@ -698,25 +706,37 @@ export function SessionPage(props: SessionPageProps) {
       return;
     }
 
-    const openFileTarget = (fileTarget: OpenTarget) => {
-      if (options?.external && runtime.workspaceType !== "remote") {
-        const path = absoluteWorkspacePath(runtime.workspaceRoot, fileTarget.value);
-        if (path && isElectronRuntime()) {
-          void (async () => {
-            try {
-              if (options.reveal) {
-                await revealDesktopItemInDir(path);
-              } else {
-                await openDesktopPath(path);
-              }
-            } catch {
-              await revealDesktopItemInDir(path).catch(() => undefined);
-            }
-          })();
-        }
+    const reportOpenError = (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : "Could not open this file.");
+    };
+    const canOpenLocally = runtime.workspaceType !== "remote" && isElectronRuntime() && !options?.auto;
+    const openLocalFile = (fileTarget: OpenTarget) => {
+      // Files outside the workspace are revealed, never launched; see nativeFileAction.
+      // The desktop re-checks the resolved file on disk before launching anything.
+      const native = nativeFileAction(runtime.workspaceRoot, fileTarget.value, options);
+      if (!native) {
+        reportOpenError(new Error("This is not a local file path."));
         return;
       }
+      if (native.action === "reveal") {
+        void revealDesktopItemInDir(native.path).catch(reportOpenError);
+        return;
+      }
+      void openDesktopWorkspaceFile(runtime.workspaceRoot, native.path)
+        .then((action) => {
+          if (action === "revealed") toast.info("This file points outside the workspace, so it was shown in its folder instead.");
+        })
+        .catch(reportOpenError);
+    };
 
+    // A person's explicit native open is not a workspace preview request.
+    // Keep remote files on the server path; never open their paths on this device.
+    if (canOpenLocally && options?.external) {
+      openLocalFile(target);
+      return;
+    }
+
+    const openFileTarget = (fileTarget: OpenTarget) => {
       if (!isCollectibleArtifactTarget(fileTarget)) {
         if (isOpenableFileTarget(fileTarget)) {
           if (runtime.workspaceType === "remote" && runtime.client && runtime.runtimeWorkspaceId) {
@@ -731,9 +751,9 @@ export function SessionPage(props: SessionPageProps) {
                 anchor.click();
                 window.setTimeout(() => URL.revokeObjectURL(url), 1000);
               })
-              .catch(() => undefined);
-          } else if (isElectronRuntime()) {
-            void openDesktopPath(absoluteWorkspacePath(runtime.workspaceRoot, fileTarget.value)).catch(() => undefined);
+              .catch(reportOpenError);
+          } else if (canOpenLocally) {
+            openLocalFile(fileTarget);
           }
         }
         return;
@@ -753,12 +773,18 @@ export function SessionPage(props: SessionPageProps) {
     };
 
     if (target.exists !== true) {
-      if (!runtime.client || !runtime.runtimeWorkspaceId) return;
+      if (!runtime.client || !runtime.runtimeWorkspaceId) {
+        if (canOpenLocally) openLocalFile(target);
+        else reportOpenError(new Error("Connect to the workspace to open this file."));
+        return;
+      }
       void resolveCollectibleOpenTarget(runtime.client, runtime.runtimeWorkspaceId, target)
         .then((resolvedTarget) => {
           if (resolvedTarget) openFileTarget(resolvedTarget);
+          else if (canOpenLocally) openLocalFile(target);
+          else reportOpenError(new Error("This file is missing or outside the workspace."));
         })
-        .catch(() => undefined);
+        .catch(reportOpenError);
       return;
     }
 
@@ -784,25 +810,7 @@ export function SessionPage(props: SessionPageProps) {
   const openGeneralSidePanel = useCallback(() => {
     setCurrentSidePanel("panel");
   }, [setCurrentSidePanel]);
-  const openBrowserRailPane = useCallback(() => {
-    if (browserRailActive) {
-      closeRightPane();
-      return;
-    }
-    const browserTab = activePanelTab?.type === "browser"
-      ? activePanelTab
-      : sessionPanelState.tabs.find((tab) => tab.type === "browser");
-    if (!browserTab) {
-      // No page yet: the rail still opens the browser. The new tab is owned by
-      // this panel (same owner the panel's own "New tab" button uses), and the
-      // main process answers with panel-opened, which selects it here.
-      void createBrowserTab(undefined, sidePanelSessionKey);
-      setCurrentSidePanel("panel");
-      return;
-    }
-    selectBrowserTab(sidePanelSessionKey, browserTab.id);
-    setCurrentSidePanel("panel");
-  }, [activePanelTab, browserRailActive, closeRightPane, createBrowserTab, selectBrowserTab, sessionPanelState.tabs, setCurrentSidePanel, sidePanelSessionKey]);
+  const openBrowserRailPane = useOpenBrowserRailPane(sidePanelSessionKey, browserRailActive, setCurrentSidePanel);
   const openBrowserUrlControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "browser.open_url",
     label: "Open URL in built-in browser",
@@ -1003,7 +1011,7 @@ export function SessionPage(props: SessionPageProps) {
     return () => window.clearTimeout(id);
   }, [pendingConversationHistoryNavigation]);
   useEffect(() => {
-    props.onSessionTabsChange?.(sessionTabs);
+    props.onSessionTabsChange?.(sessionTabs.filter((tab) => !tab.draftDestination));
   }, [sessionTabs, props.onSessionTabsChange]);
   const sessionActionTitle = useMemo(
     () => sessionTitleForId(props.sidebar.workspaceSessionGroups, sessionActionId),
@@ -1012,6 +1020,7 @@ export function SessionPage(props: SessionPageProps) {
   const providerCount = props.hasUsableModel ? 1 : props.providerConnectedIds.length;
   const messageCountVisible = props.selectedSessionId ? 1 : 0;
   const hasMainContentTakeover = Boolean(props.mainContentTakeover);
+  const sidebarOnlyChrome = isMobile && !isElectronRuntime() && shellConfig.sidebar && !props.primarySlot && !hasMainContentTakeover && !props.mainContentHeaderActionsRef && !props.primaryTitle && !props.mainContentTitle;
   const showWorkspaceSetupEmptyState = props.workspaces.length === 0 && !props.selectedSessionId;
   const showStartupSkeleton =
     !bootOverlayVisible &&
@@ -1161,12 +1170,22 @@ export function SessionPage(props: SessionPageProps) {
     props.sidebar.onOpenSession(workspaceId, sessionId);
   }, [focusWorkbenchPane, openWorkbenchTab, props.sidebar]);
 
+  const handleOpenSessionReference = useCallback((reference: SessionReference) => {
+    const workbench = useWorkbenchStore.getState();
+    openSessionReference(reference, workbench, {
+      openTab: workbench.openTab,
+      focusPane: workbench.focusPane,
+      setSplit: workbench.setSplit,
+      onOpenSession: props.sidebar.onOpenSession,
+    });
+  }, [props.sidebar.onOpenSession]);
+
   const closeSecondaryWorkbenchPane = useCallback(() => {
     setWorkbenchSplit(null);
   }, [setWorkbenchSplit]);
 
   const closePrimaryWorkbenchPane = useCallback(() => {
-    if (!splitSession) return;
+    if (!splitSession || splitSession.draftDestination) return;
     setWorkbenchSplit(null);
     openSessionTab(splitSession.workspaceId, splitSession.sessionId);
   }, [openSessionTab, setWorkbenchSplit, splitSession]);
@@ -1350,7 +1369,12 @@ export function SessionPage(props: SessionPageProps) {
   ) : null;
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(74,111,255,0.12),transparent_42%),var(--app-bg,#0b1020)] text-dls-text max-lg:pt-[env(safe-area-inset-top)] mac:bg-transparent">
+    <SessionReferenceProvider
+      inventories={props.sessionReferenceInventories ?? EMPTY_SESSION_REFERENCE_INVENTORIES}
+      isReferenceCurrent={props.isSessionReferenceCurrent}
+      onOpenReference={handleOpenSessionReference}
+    >
+    <div data-chat-viewport className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(74,111,255,0.12),transparent_42%),var(--app-bg,#0b1020)] text-dls-text max-lg:fixed max-lg:inset-x-0 max-lg:top-[var(--chat-viewport-top,0px)] max-lg:h-[var(--chat-viewport-height,100dvh)] max-lg:overflow-hidden max-lg:pt-[env(safe-area-inset-top)] mac:bg-transparent">
       <SidebarProvider
         open={sidebarOpen}
         onOpenChange={setSidebarOpen}
@@ -1379,6 +1403,7 @@ export function SessionPage(props: SessionPageProps) {
           onOpenSession={openSessionTab}
           onPrefetchSession={props.sidebar.onPrefetchSession}
           onCreateTaskInWorkspace={props.sidebar.onCreateTaskInWorkspace}
+          draftScope={props.newTaskComposer?.draftScope}
           onCreateSplitTaskInWorkspace={props.sidebar.onCreateSplitTaskInWorkspace}
           onOpenRenameSession={props.onRenameSession ? openRenameModal : undefined}
           onOpenDeleteSession={props.onDeleteSession ? (sessionId) => {
@@ -1417,6 +1442,15 @@ export function SessionPage(props: SessionPageProps) {
           onStartResize={startLeftSidebarResize}
           onOpenAccountSettings={props.onOpenSettings}
           onOpenExtensions={props.onOpenExtensions}
+          mobileChatActions={sidebarOnlyChrome ? (
+            <MobileChatActions
+              onFind={findButtonSessionId ? () => useSessionFindStore.getState().openFind({ sessionId: findButtonSessionId }) : undefined}
+              onFiles={openArtifactRailPane}
+              fileCount={artifactTargetCount}
+              onSignIn={showCloudSignIn ? openCloudSignIn : undefined}
+              onParent={parentSessionLink ? () => openSessionTab(parentSessionLink.workspaceId, parentSessionLink.sessionId) : undefined}
+            />
+          ) : undefined}
           extensionsActive={props.extensionsActive}
           status={{
             clientConnected: props.clientConnected,
@@ -1433,33 +1467,19 @@ export function SessionPage(props: SessionPageProps) {
           }}
         />
         <SidebarInset
-          className={cn(
-            // Below `lg` the sidebar is a mobile sheet, not an inline `peer`, so
-            // the collapsed-peer rule never matches there and the header must
-            // reserve the titlebar clearance itself.
-            "min-h-0 overflow-hidden bg-sidebar mac:bg-transparent mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-34 mac:max-lg:[&_header]:pl-34",
-            !shellConfig.sidebar && "mac:[&_header]:pl-34",
-          )}
+          className="min-h-0 min-w-0 overflow-hidden bg-sidebar mac:bg-transparent"
         >
-          <div className={cn(
-            "flex min-h-0 flex-1 max-lg:p-0 lg:py-2 lg:pl-2",
-            !sidebarOpen && "mac:lg:pt-0 mac:lg:pl-0",
-          )}>
-          <ResizablePanelGroup
-            orientation="horizontal"
-            onLayoutChanged={sidePanelOpen ? commitBrowserPanelWidth : undefined}
-            className="min-h-0 flex-1 max-lg:rounded-none lg:rounded-[14px]"
+          {sidebarOnlyChrome ? <MobileChatNavigation /> : <header
+            data-session-header
+            data-sidebar-hidden={!shellConfig.sidebar || !sidebarOpen || isMobile}
+            className={cn(
+              "window-titlebar flex shrink-0 items-center justify-between gap-3 border-b border-border bg-dls-surface px-3 electron:titlebar-drag @container/titlebar lg:px-4 mac:bg-transparent",
+              props.mainContentHeaderActionsRef ? "min-h-13" : "lg:pr-1",
+              (!shellConfig.sidebar || !sidebarOpen || isMobile) && "mac:mac-window-controls-inset",
+            )}
           >
-            <ResizablePanel minSize={isMobile ? "0px" : "360px"} className="min-w-0">
-              <main data-session-pane className="flex h-full min-w-0 flex-col overflow-hidden bg-dls-surface max-lg:rounded-none max-lg:border-0 max-lg:shadow-none lg:rounded-[14px] lg:border lg:border-border lg:shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:lg:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
-          {/* The pane `<main>` above already carries the macOS vibrancy blur. A
-              second backdrop filter on the header (or on the transcript surface
-              below) is invisible — nothing scrolls beneath either — but each
-              one forces an extra full-pane blur pass every frame the transcript
-              repaints. Keep the pane as the only backdrop surface. */}
-          <header className={cn("z-10 flex shrink-0 items-center justify-between border-b border-border mac:titlebar-drag @container/titlebar", props.mainContentHeaderActionsRef ? "h-[52px] px-6" : "h-9 px-3 max-lg:h-12 lg:px-6")}>
             <div className="flex min-w-0 items-center gap-3">
-              {shellConfig.sidebar ? <SidebarTrigger className="mac:hidden" /> : null}
+              {shellConfig.sidebar ? <MainSidebarControls onOpenSessionSearch={props.sidebar.onOpenSessionSearch} /> : null}
               {parentSessionLink && !props.primarySlot && !hasMainContentTakeover ? (
                 <Tooltip>
                   <TooltipTrigger
@@ -1467,7 +1487,7 @@ export function SessionPage(props: SessionPageProps) {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-6 shrink-0 cursor-pointer gap-1 rounded-lg px-1.5 text-[12px] text-gray-10 transition-colors hover:bg-muted hover:text-foreground mac:titlebar-no-drag"
+                        className="h-6 shrink-0 cursor-pointer gap-1 rounded-lg px-1.5 text-[12px] text-gray-10 transition-colors hover:bg-muted hover:text-foreground titlebar-no-drag"
                         data-parent-session-back={parentSessionLink.sessionId}
                         aria-label={`Back to ${parentSessionLink.title || "parent chat"}`}
                         onClick={() => openSessionTab(parentSessionLink.workspaceId, parentSessionLink.sessionId)}
@@ -1482,7 +1502,7 @@ export function SessionPage(props: SessionPageProps) {
                   <TooltipContent>Back to parent chat</TooltipContent>
                 </Tooltip>
               ) : null}
-              <h1 className={cn("truncate font-medium text-dls-text", props.mainContentHeaderActionsRef ? "text-base leading-6" : "text-[13px]")}>
+              <h1 data-session-header-title className={cn("truncate font-medium text-dls-text", !isElectronRuntime() && !props.primaryTitle && !props.mainContentTitle && "max-lg:hidden", props.mainContentHeaderActionsRef ? "text-base leading-6" : "text-[13px]")}>
                 {props.primaryTitle
                   ? props.primaryTitle
                   : props.mainContentTitle
@@ -1495,7 +1515,7 @@ export function SessionPage(props: SessionPageProps) {
                 // Pinned and archived sessions are listed across workspaces, so
                 // the header names the workspace the open session belongs to.
                 <span
-                  className="flex min-w-0 shrink-0 items-center gap-1.5 text-[12px] text-dls-secondary"
+                  className="hidden min-w-0 shrink-0 items-center gap-1.5 text-[12px] text-dls-secondary lg:flex"
                   data-session-header-workspace={workspaceName}
                 >
                   <span aria-hidden="true">·</span>
@@ -1515,8 +1535,8 @@ export function SessionPage(props: SessionPageProps) {
             </div>
 
             {props.mainContentHeaderActionsRef ? (
-              <div ref={props.mainContentHeaderActionsRef} className="shrink-0 mac:titlebar-no-drag" />
-            ) : <div className="flex shrink-0 items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
+              <div ref={props.mainContentHeaderActionsRef} className="shrink-0 titlebar-no-drag" />
+            ) : <div className="flex shrink-0 items-center gap-1.5 text-gray-10 titlebar-no-drag">
               <DesktopUpdateButton />
               {!props.primarySlot && findButtonSessionId && !hasMainContentTakeover ? (
                 <Tooltip>
@@ -1533,35 +1553,9 @@ export function SessionPage(props: SessionPageProps) {
                       </Button>
                     }
                   />
-                  <TooltipContent>Find in conversation (⌘F)</TooltipContent>
+                  <TooltipContent>Find in conversation ({isMacPlatform() ? "⌘F" : "Ctrl+F"})</TooltipContent>
                 </Tooltip>
               ) : null}
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      className={cn(
-                        "hidden rounded-xl text-gray-10 transition-colors hover:bg-muted hover:text-foreground lg:inline-flex",
-                        sidePanelOpen && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
-                      )}
-                      aria-label={sidePanelOpen ? "Close side panel" : "Open side panel"}
-                      aria-pressed={sidePanelOpen}
-                      onClick={() => {
-                        if (sidePanelOpen) {
-                          closeRightPane();
-                        } else {
-                          openGeneralSidePanel();
-                        }
-                      }}
-                    >
-                      <PanelRight size={16} />
-                    </Button>
-                  }
-                />
-                <TooltipContent>{sidePanelOpen ? "Close side panel" : "Open side panel"}</TooltipContent>
-              </Tooltip>
               {showCloudSignIn ? (
                 <Button
                   variant="secondary"
@@ -1625,9 +1619,43 @@ export function SessionPage(props: SessionPageProps) {
                   Reset notifications
                 </Button>
               ) : null}
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className={cn(
+                        "hidden rounded-xl text-gray-10 transition-colors hover:bg-muted hover:text-foreground lg:inline-flex",
+                        sidePanelOpen && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+                      )}
+                      aria-label={sidePanelOpen ? "Close side panel" : "Open side panel"}
+                      aria-pressed={sidePanelOpen}
+                      onClick={() => {
+                        if (sidePanelOpen) {
+                          closeRightPane();
+                        } else {
+                          openGeneralSidePanel();
+                        }
+                      }}
+                    >
+                      <PanelRight size={16} />
+                    </Button>
+                  }
+                />
+                <TooltipContent>{sidePanelOpen ? "Close side panel" : "Open side panel"}</TooltipContent>
+              </Tooltip>
             </div>}
-          </header>
+          </header>}
 
+          <div className="flex min-h-0 flex-1 max-lg:p-0 lg:pb-2 lg:pl-2 lg:pt-2">
+          <ResizablePanelGroup
+            orientation="horizontal"
+            onLayoutChanged={sidePanelOpen ? commitBrowserPanelWidth : undefined}
+            className="min-h-0 flex-1 max-lg:rounded-none lg:rounded-[14px]"
+          >
+            <ResizablePanel minSize={isMobile ? "0px" : "360px"} className="min-w-0">
+              <main data-session-pane className="flex h-full min-w-0 flex-col overflow-hidden bg-dls-surface max-lg:rounded-none max-lg:border-0 max-lg:shadow-none lg:rounded-[14px] lg:border lg:border-border lg:shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:lg:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
           {showNarrowPaneSwitcher ? (
             <NarrowPaneSwitcher
               activePane={narrowPane}
@@ -1675,7 +1703,7 @@ export function SessionPage(props: SessionPageProps) {
               ) : null}
               {hasMainContentTakeover ? props.mainContentTakeover : null}
               {showStartupSkeleton ? (
-                <div className="px-6 py-14" role="status" aria-live="polite">
+                <div className="px-6 py-14" role="status" aria-live="polite" data-testid="session-startup-skeleton">
                   <div className="mx-auto max-w-2xl space-y-6">
                     <div className="space-y-2">
                       <div className="h-4 w-32 animate-pulse rounded-full bg-dls-hover/80" />
@@ -1817,12 +1845,35 @@ export function SessionPage(props: SessionPageProps) {
                               focused={activeWorkbenchPane === "secondary"}
                               onFocus={() => focusWorkbenchPane("secondary")}
                               onClose={closeSecondaryWorkbenchPane}
-                              onExpand={closePrimaryWorkbenchPane}
+                              onExpand={splitSession.draftDestination ? undefined : closePrimaryWorkbenchPane}
                             />
-                            {splitPaneRuntime.status === "ready" ? (
+                            {pendingSideConversation && pendingSideConversation.scope === props.newTaskComposer?.draftScope ? (
+                              <PendingConversationView conversation={pendingSideConversation} composer={props.newTaskComposer ?? null} />
+                            ) : splitSession.draftDestination && props.newTaskComposer ? (
+                              <div className="min-h-0 flex-1 overflow-y-auto py-6">
+                                <SessionEmptyHero
+                                  key={splitSession.sessionId}
+                                  providerCount={providerCount}
+                                  onRunTask={(prompt, attachments, handoff) => props.sidebar.onCreateTaskWithPrompt?.(splitSession.workspaceId, prompt, attachments, handoff)}
+                                  onOpenProviderAuth={props.onOpenProviderAuth}
+                                  composer={{
+                                    ...props.newTaskComposer,
+                                    draftOwnerKey: newSessionDraftOwnerKey(props.newTaskComposer.draftScope, splitSession.draftDestination),
+                                    draftSessionId: splitSession.sessionId,
+                                    destination: splitSession.draftDestination,
+                                  }}
+                                />
+                              </div>
+                            ) : splitPaneRuntime.status === "ready" ? (
                               <div className="min-h-0 flex-1">
                                 <SplitSessionSurface
                                   {...splitPaneRuntime.surface}
+                                  metadataCallbacks={props.createWorkspaceSessionMetadataCallbacks?.({
+                                    workspaceId: splitSession.workspaceId,
+                                    runtimeWorkspaceId: splitPaneRuntime.runtimeWorkspaceId,
+                                    opencodeBaseUrl: splitPaneRuntime.opencodeBaseUrl,
+                                    openworkToken: splitPaneRuntime.openworkToken,
+                                  })}
                                   client={splitPaneRuntime.client}
                                   environmentClient={splitPaneRuntime.environmentClient}
                                   workspaceId={splitPaneRuntime.runtimeWorkspaceId}
@@ -1862,7 +1913,7 @@ export function SessionPage(props: SessionPageProps) {
               ) : null}
 
               {!props.primarySlot && !hasMainContentTakeover && !showDelayedSessionLoadingState && !canRenderReactSurface && !showStartupSkeleton ? (
-                <div className={`mx-auto max-w-[800px] px-6 ${showWorkspaceSetupEmptyState ? "pt-20" : "pt-10"}`}>
+                <div className={`mx-auto max-w-[800px] px-6 max-lg:h-full max-lg:min-h-0 max-lg:w-full max-lg:px-0 max-lg:pt-0 ${showWorkspaceSetupEmptyState ? "pt-20" : "pt-10"}`}>
                   {props.notFoundMessage ? (
                     <div className="px-6 py-16 text-center">
                       <div className="mx-auto max-w-md rounded-2xl border border-dls-border bg-dls-card px-5 py-6 shadow-[var(--dls-card-shadow)]">
@@ -1876,57 +1927,47 @@ export function SessionPage(props: SessionPageProps) {
                     <SessionEmptyHero
                       providerCount={providerCount}
                       busy={props.chatFirstBusy}
-                      onRunTask={(prompt, attachments) => props.onChatFirstTask?.(prompt, attachments)}
+                      onRunTask={(prompt, attachments, handoff) => props.onChatFirstTask?.(prompt, attachments, handoff)}
                       onOpenProviderAuth={props.onOpenProviderAuth}
                       composer={props.newTaskComposer}
                     />
                   ) : showSelectedWorkspaceError ? (
                     <div className="px-6 py-16">
-                      <div className="mx-auto max-w-lg rounded-2xl border border-red-7/35 bg-red-1/40 p-5 text-left shadow-[var(--dls-card-shadow)]">
-                        <div className="text-sm font-medium text-red-11">{selectedWorkspaceErrorTitle}</div>
-                        <p className="mt-2 whitespace-pre-wrap wrap-anywhere text-sm leading-6 text-red-11/90">
-                          {selectedWorkspaceErrorMessage}
-                        </p>
-                        <div className="mt-4 flex flex-wrap gap-2">
+                      <TaskRecovery title={selectedWorkspaceErrorTitle}
+                        technicalDetails={selectedWorkspaceErrorMessage}
+                        onRetry={() => void Promise.resolve(props.sidebar.onTestWorkspaceConnection(props.selectedWorkspaceId))}
+                        actions={<>
                           <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => props.sidebar.onCreateTaskInWorkspace(props.selectedWorkspaceId)}
-                          >
-                            Retry
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
+                            variant="ghost"
+                            size="xs"
                             onClick={() => void Promise.resolve(props.sidebar.onTestWorkspaceConnection(props.selectedWorkspaceId))}
                           >
                             {t("workspace_list.test_connection")}
                           </Button>
                           <Button
-                            variant="outline"
-                            size="sm"
+                            variant="ghost"
+                            size="xs"
                             onClick={() => props.sidebar.onEditWorkspaceConnection(props.selectedWorkspaceId)}
                           >
                             {t("workspace_list.edit_connection")}
                           </Button>
                           {props.sidebar.workspaceConnectionStateById[props.selectedWorkspaceId]?.status === "error" ? (
                             <Button
-                              variant="outline"
-                              size="sm"
+                              variant="ghost"
+                              size="xs"
                               onClick={() => void Promise.resolve(props.sidebar.onRecoverWorkspace(props.selectedWorkspaceId))}
                             >
                               {t("workspace_list.recover")}
                             </Button>
                           ) : null}
-                        </div>
-                      </div>
+                        </>} />
                     </div>
                   ) : props.selectedSessionId ? (
                     <div className="px-6 py-16 text-center text-sm text-dls-secondary">
                       {t("session.loading_detail")}
                     </div>
                   ) : (
-                    <div className="flex flex-1 items-center justify-center py-16">
+                    <div className="flex flex-1 items-center justify-center py-16 max-lg:h-full max-lg:min-h-0 max-lg:py-0">
                       <SessionEmptyHero
                         // Remount per draft owner so the hero reads that
                         // workspace's persisted new-task draft instead of
@@ -2018,7 +2059,6 @@ export function SessionPage(props: SessionPageProps) {
           </aside>
           </div>
         </SidebarInset>
-        {shellConfig.sidebar ? <SidebarTrigger className="hidden mac:absolute mac:left-[88px] mac:size-8! top-[3px] z-50 mac:flex titlebar-no-drag" /> : null}
       </SidebarProvider>
 
       {props.providerAuthModal ? <ProviderAuthModal {...props.providerAuthModal} /> : null}
@@ -2093,5 +2133,6 @@ export function SessionPage(props: SessionPageProps) {
 
       {/* Cloud provider notifications are now handled globally by CloudProvidersToast in app-root.tsx */}
     </div>
+    </SessionReferenceProvider>
   );
 }

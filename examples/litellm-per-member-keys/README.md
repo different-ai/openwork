@@ -31,7 +31,7 @@ After metadata is synchronized, the script lists Den member credential states, m
 From the repository root, launch a signed-in Desktop, an isolated Den organization, and a database-backed LiteLLM gateway with the provider and member keys already reconciled:
 
 ```bash
-pnpm world up ./worlds/litellm-per-member.ts
+pnpm world up ./examples/litellm-per-member-keys/world.ts
 ```
 
 The command prints the Den URLs, LiteLLM URL, synchronized model limits, Den provider record ID, and Desktop CDP URL. Keep it running while testing and press Ctrl-C to tear down the world. Docker, local MySQL, and local Redis are required. The gateway uses a deterministic local OpenAI-compatible witness and does not read or require `OPENAI_API_KEY`.

@@ -2,9 +2,9 @@ import Link from "next/link";
 import { AppFeedbackForm, type AppFeedbackPrefill } from "../../components/app-feedback-form";
 import { OpenWorkMark } from "../../components/openwork-mark";
 import { SiteFooter } from "../../components/site-footer";
-import { baseOpenGraph } from "../../lib/seo";
+import { baseOpenGraph, withSocialMetadata } from "../../lib/seo";
 
-export const metadata = {
+export const metadata = withSocialMetadata({
   title: "OpenWork — Feedback",
   description: "Send app feedback to the OpenWork team with prefilled runtime context.",
   alternates: {
@@ -18,7 +18,7 @@ export const metadata = {
     ...baseOpenGraph,
     url: "https://openworklabs.com/feedback"
   }
-};
+});
 
 type SearchParams = Record<string, string | string[] | undefined>;
 

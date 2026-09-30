@@ -1,50 +1,71 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { backgroundUpdateWorld, revokedUpdateWorld } from "../worlds/first-run.ts";
+import { backgroundUpdateWorld, savedUpdatePolicyWorld } from "../worlds/first-run.ts";
 import { restartUpdateTaskWorld } from "../worlds/chat.ts";
 
 const test = spec.world(backgroundUpdateWorld);
-const revokedTest = spec.world(revokedUpdateWorld);
+const policyTest = spec.world(savedUpdatePolicyWorld);
 
-revokedTest("a downloaded update is not installed once the organization revokes its version", async ({ world, user, probe }) => {
+policyTest("a downloaded update is not installed once the organization revokes its version", async ({ world, user, probe, step, evidence }) => {
   const readyText = "Ready to install: v9.9.9";
   const blockedText = "OpenWork 9.9.9 is available, but this installation is not eligible for it yet.";
   const downloaded = (count: number) => (value: unknown) =>
     typeof value === "object" && value !== null && Reflect.get(value, "downloads") === count;
 
-  await world.openSettings();
-  await user.click({ role: "button", text: "Check now" });
-  await probe.eventually(world.snapshot, { within: 30_000, label: "the allowed version downloads", until: downloaded(1) });
-  await user.see({ text: readyText });
-  await user.see({ text: "Restart to update" });
-
-  // Negative half: the organization drops 9.9.9 after the download completed.
-  await world.allowVersions(["0.18.0"]);
-  await user.click("Restart to update");
-  await user.see({ text: "Restart OpenWork?" });
-  await user.click("Restart & update");
-  await user.see({ text: blockedText }, { timeoutMs: 30_000 });
-  await user.notSee({ text: readyText });
-  await user.notSee({ text: "Restart to update" });
-  await user.notSee({ text: "Install & restart" });
-  expect(await world.snapshot()).toMatchObject({ downloads: 1, installs: 0 });
-  await user.screenshot();
-
-  // Positive control: the same version approved again installs from Settings.
-  await world.allowVersions(["9.9.9"]);
-  await user.click({ role: "button", text: "Check now" });
-  await probe.eventually(world.snapshot, { within: 30_000, label: "the re-approved version downloads again", until: downloaded(2) });
-  await user.see({ text: readyText });
-  await user.notSee({ text: blockedText });
-  await user.click({ role: "button", text: "Install & restart" });
-  await probe.eventually(world.snapshot, {
-    within: 10_000, label: "install proceeds while the version stays allowed",
-    until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "installs") === 1,
+  await step("given an update is downloaded while the organization allows it", async () => {
+    const policy = await probe.api(world.den.admin, "/v1/me/desktop-config");
+    expect(policy.response.status).toBe(200);
+    expect(policy.body).toMatchObject({ allowedDesktopVersions: ["9.9.9"] });
+    await world.openSettings();
+    await user.click({ role: "button", text: "Check now" });
+    await probe.eventually(world.snapshot, { within: 30_000, label: "the allowed version downloads", until: downloaded(1) });
+    await user.see({ text: readyText });
+    await user.see({ text: "Restart to update" });
+    const ready = await world.snapshot();
+    expect(ready).toMatchObject({ downloads: 1, installs: 0, installEnabled: true });
+    evidence.recordAssertionEvidence("The update downloads once and waits for an install request", JSON.stringify(ready), true);
+    await user.screenshot();
   });
-  expect(await world.snapshot()).toMatchObject({ downloads: 2, installs: 1 });
+
+  // The allowed-versions list is an organization setting, not a suspended
+  // desktop policy: revoking the version must block the staged install.
+  await step("when the organization revokes that version, the restart does not install it", async () => {
+    await world.allowVersions(["0.18.0"]);
+    const policy = await probe.api(world.den.admin, "/v1/me/desktop-config");
+    expect(policy.response.status).toBe(200);
+    expect(policy.body).toMatchObject({ allowedDesktopVersions: ["0.18.0"] });
+    await user.click("Restart to update");
+    await user.see({ text: "Restart OpenWork?" });
+    await user.click("Restart & update");
+    await user.see({ text: blockedText }, { timeoutMs: 30_000 });
+    await user.notSee({ text: readyText });
+    await user.notSee({ text: "Restart to update" });
+    // Settings keeps the install button in place but disables it while blocked.
+    const blocked = await world.snapshot();
+    expect(blocked).toMatchObject({ downloads: 1, installs: 0, installEnabled: false });
+    evidence.recordAssertionEvidence("A revoked version is not installed after the restart confirmation", JSON.stringify({ blocked, savedPolicy: policy.body }), true);
+    await user.screenshot();
+  });
+
+  await step("when the organization approves it again, the update installs", async () => {
+    await world.allowVersions(["9.9.9"]);
+    await user.click({ role: "button", text: "Check now" });
+    await probe.eventually(world.snapshot, { within: 30_000, label: "the re-approved version downloads again", until: downloaded(2) });
+    await user.see({ text: readyText });
+    await user.notSee({ text: blockedText });
+    await user.click({ role: "button", text: "Install & restart" });
+    await probe.eventually(world.snapshot, {
+      within: 10_000, label: "install proceeds while the version stays allowed",
+      until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "installs") === 1,
+    });
+    const installed = await world.snapshot();
+    expect(installed).toMatchObject({ downloads: 2, installs: 1 });
+    evidence.recordAssertionEvidence("The re-approved version installs once", JSON.stringify(installed), true);
+    await user.screenshot();
+  });
 });
 
-test("updates download outside Settings and offer a persistent, optional restart", async ({ world, user, probe }) => {
+test("updates download outside Settings and offer a persistent, optional restart", async ({ world, user, probe, evidence }) => {
   await probe.eventually(world.snapshot, {
     within: 15_000, label: "initial background check finds no update",
     until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "checks") === 2,
@@ -64,6 +85,13 @@ test("updates download outside Settings and offer a persistent, optional restart
   await user.notSee({ text: "Restart to update" });
   await world.returnToApp();
   expect(await world.snapshot()).toMatchObject({ checks: 4, downloads: 1, installs: 0 });
+  // The pending-download guard above is tested with automatic checks enabled
+  // and an elapsed interval. Disable them through the UI for manual recovery:
+  // a focus event after the failure may otherwise legitimately retry by itself.
+  await world.openSettings();
+  await user.click({ role: "switch", label: "Check automatically" });
+  expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: false, checks: 4, downloads: 1 });
+  await world.openWorkspace();
   for (const [index, message] of [
     "Update native preparation failed.",
     "Update download connection failed.",
@@ -88,10 +116,24 @@ test("updates download outside Settings and offer a persistent, optional restart
   await user.notSee({ text: "Ready when you are." });
   await world.openSettings();
   await user.see({ text: "Restart to update" });
+  // Re-enabling automatic checks after the interval looks for a newer release
+  // than the ready one; the feed has none, so nothing downloads again.
+  await user.click({ role: "switch", label: "Check automatically" });
+  await probe.eventually(world.snapshot, {
+    within: 5_000, label: "an automatic check while ready finds nothing newer",
+    until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "checks") === 7,
+  });
+  expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: true, checks: 7, downloads: 3 });
   await world.openWorkspace();
   await world.returnToApp();
+  await probe.eventually(world.snapshot, {
+    within: 5_000, label: "returning after the interval checks again while ready",
+    until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "checks") === 8,
+  });
   await user.see({ text: "Restart to update" });
-  expect(await world.snapshot()).toMatchObject({ checks: 6, downloads: 3, installs: 0, installAttempts: 0, updateInTitlebar: true, updateInSidebar: false });
+  const ready = await world.snapshot();
+  expect(ready).toMatchObject({ checks: 8, downloads: 3, installs: 0, installAttempts: 0, updateInTitlebar: true, updateInSidebar: false });
+  evidence.recordAssertionEvidence("Manual download retries reach one ready update with automatic checks enabled again", JSON.stringify(ready), true);
   await user.looks([
     "A compact neutral Restart to update button sits in the titlebar with the app's other controls",
     "The OpenWork name remains above the sidebar navigation and no update card or banner covers the workspace",
@@ -142,10 +184,11 @@ test("updates download outside Settings and offer a persistent, optional restart
     await world.returnToApp();
     await world.openSettings();
     await user.see({ text: "Couldn't install the update" });
-    expect(await world.snapshot()).toMatchObject({ checks: index + 6, downloads: index + 3, installAttempts: index + 1, installs: 0 });
+    // Each restart looks for a newer release once before installing; Check now adds one more.
+    expect(await world.snapshot()).toMatchObject({ checks: index * 2 + 9, downloads: index + 3, installAttempts: index + 1, installs: 0 });
     if (index === 0) {
       await user.click({ role: "switch", label: "Check automatically" });
-      expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: false, checks: 6, downloads: 3 });
+      expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: false, checks: 9, downloads: 3 });
     }
     await user.click({ role: "button", text: "Check now" });
     await probe.eventually(world.snapshot, {
@@ -166,12 +209,14 @@ test("updates download outside Settings and offer a persistent, optional restart
     within: 5_000, label: "restart only after confirmation",
     until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "installs") === 1,
   });
-  expect(await world.snapshot()).toMatchObject({ installAttempts: 3, installs: 1 });
+  const installed = await world.snapshot();
+  expect(installed).toMatchObject({ installAttempts: 3, installs: 1 });
+  evidence.recordAssertionEvidence("Failed installs require explicit retries and one confirmation reaches the fake installer", JSON.stringify(installed), true);
 });
 
 const recoveryTest = spec.world(restartUpdateTaskWorld, { timeout: 600_000 });
 
-recoveryTest("a confirmed update relaunch resumes only the unfinished task on its original engine", async ({ world, user, agent, probe, step }) => {
+recoveryTest("a confirmed update relaunch resumes only the unfinished task on its original engine", async ({ world, user, agent, probe, step, evidence }) => {
   user = user.on(world.app);
   agent = agent.on(world.app);
   probe = probe.on(world.app);
@@ -243,9 +288,12 @@ recoveryTest("a confirmed update relaunch resumes only the unfinished task on it
     await probe.eventually(() => messages(world.active.sessionId), { within: 90_000, label: "startup produces the continuation reply on the original engine",
       until: (items) => items.some((message) => message.role === "assistant" && message.parts.some((part) => part.type === "text" && part.text === world.recovery.reply)) });
     const history = await messages(world.active.sessionId);
-    expect(history.filter((message) => message.role === "user" && message.parts.some((part) => typeof part.text === "string" && part.text.includes(world.recovery.marker)))).toHaveLength(1);
-    expect((await messages(world.stopped.sessionId)).map((message) => message.id)).toEqual(stoppedBefore.map((message) => message.id));
-    expect((await messages(world.completed.sessionId)).map((message) => message.id)).toEqual(completedBefore.map((message) => message.id));
+    const continuationCount = history.filter((message) => message.role === "user" && message.parts.some((part) => typeof part.text === "string" && part.text.includes(world.recovery.marker))).length;
+    expect(continuationCount).toBe(1);
+    const stoppedAfter = (await messages(world.stopped.sessionId)).map((message) => message.id);
+    const completedAfter = (await messages(world.completed.sessionId)).map((message) => message.id);
+    expect(stoppedAfter).toEqual(stoppedBefore.map((message) => message.id));
+    expect(completedAfter).toEqual(completedBefore.map((message) => message.id));
     expect((await world.mock.agentRequests({ promptMarker: world.active.prompt })).filter((call) => call.kind === "tool")).toHaveLength(1);
     expect((await world.mock.agentRequests({ promptMarker: world.recovery.marker })).filter((call) => call.kind === "final")).toHaveLength(1);
     const observeUntil = Date.now() + 6_000;
@@ -257,6 +305,11 @@ recoveryTest("a confirmed update relaunch resumes only the unfinished task on it
     }, { within: 10_000, label: "later recovery ticks do not duplicate work or restart excluded tasks", until: Boolean });
     await agent.run("session.open", { sessionId: world.active.sessionId });
     await user.see({ text: world.recovery.reply });
+    evidence.recordAssertionEvidence("A new renderer resumes the eligible task once and preserves stopped and completed histories", JSON.stringify({
+      originalTimeOrigin: restart.originalTimeOrigin, timeOrigin: restart.timeOrigin, continuationCount,
+      stoppedBefore: stoppedBefore.map((message) => message.id), stoppedAfter,
+      completedBefore: completedBefore.map((message) => message.id), completedAfter,
+    }), true);
     await user.screenshot();
   });
 });

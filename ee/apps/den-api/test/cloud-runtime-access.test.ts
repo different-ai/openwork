@@ -84,6 +84,10 @@ function options(input: {
   }
 }
 
+function silentActivity() {
+  return { verdict: "unknown" as const, reason: "probe_failed" as const, alive: false, busySessions: 0, waitingRequests: 0, connectedClients: 0 }
+}
+
 function listen(server: Server): Promise<void> {
   return new Promise((resolve, reject) => {
     server.once("error", reject)
@@ -222,12 +226,17 @@ describe("Cloud runtime access resolver", () => {
   })
 
   test("keeps transport failure classified unreachable while recovery is in progress", async () => {
+    runtimeAccess.resetCloudRuntimeUnreachableWindows()
     const organizationId = createDenTypeId("organization")
     const runtimeWorker = worker("healthy")
     const resolverOptions: ResolveCloudRuntimeAccessOptions = {
       ...options({ runtimeWorker }),
       probeSignedPreview: async () => false,
       refreshSignedPreview: async () => null,
+      probeActivity: async () => silentActivity(),
+      // The grace window is covered separately; here only the classification matters.
+      unreachableGraceMs: 0,
+      unreachableMisses: 1,
     }
     const first = await runtimeAccess.resolveCloudRuntimeAccess({
       organizationId,
@@ -246,6 +255,152 @@ describe("Cloud runtime access resolver", () => {
       failure: expect.objectContaining({ code: "runtime_unreachable", stage: "runtime" }),
     }))
     expect(recovering).toEqual({ status: "waking", workerId: runtimeWorker.id, reason: "unreachable" })
+  })
+
+  test("a running instance is restarted only after it has answered nothing for the grace window", async () => {
+    runtimeAccess.resetCloudRuntimeUnreachableWindows()
+    const organizationId = createDenTypeId("organization")
+    const runtimeWorker = worker("healthy")
+    let now = new Date("2026-08-27T10:00:00.000Z").getTime()
+    let healthyFailures = 0
+    let recoveries = 0
+    const resolverOptions: ResolveCloudRuntimeAccessOptions = {
+      ...options({ runtimeWorker, expiresAt: new Date("2026-08-27T12:00:00.000Z") }),
+      store: { ...store(), claimFailedWorker: async () => true, markHealthyWorkerFailed: async () => { healthyFailures += 1 } },
+      probeSignedPreview: async () => false,
+      refreshSignedPreview: async () => null,
+      probeActivity: async () => silentActivity(),
+      startRecovery: () => { recoveries += 1 },
+      now: () => now,
+      unreachableGraceMs: 60_000,
+      unreachableMisses: 3,
+    }
+    const resolve = () => runtimeAccess.resolveCloudRuntimeAccess({ organizationId, workerId: runtimeWorker.id }, resolverOptions)
+
+    // Silence inside the window keeps the last endpoint: a live stream through
+    // the gateway is not cut by a status poll.
+    expect(await resolve()).toEqual(expect.objectContaining({ status: "ready", url: "https://fresh.preview.example.test" }))
+    now += 30_000
+    expect(await resolve()).toEqual(expect.objectContaining({ status: "ready", url: "https://fresh.preview.example.test" }))
+    // Third miss, still inside the window.
+    now += 29_000
+    expect(await resolve()).toEqual(expect.objectContaining({ status: "ready" }))
+    expect(healthyFailures).toBe(0)
+    expect(recoveries).toBe(0)
+
+    now += 2_000
+    expect(await resolve()).toEqual(expect.objectContaining({
+      status: "waking",
+      reason: "unreachable",
+      failure: expect.objectContaining({ code: "runtime_unreachable", stage: "runtime" }),
+    }))
+    expect(healthyFailures).toBe(1)
+    expect(recoveries).toBe(1)
+  })
+
+  test("a healthy probe in the middle of a silent window starts the window over", async () => {
+    runtimeAccess.resetCloudRuntimeUnreachableWindows()
+    const organizationId = createDenTypeId("organization")
+    const runtimeWorker = worker("healthy")
+    let now = new Date("2026-08-27T10:00:00.000Z").getTime()
+    let healthy = false
+    let recoveries = 0
+    const resolverOptions: ResolveCloudRuntimeAccessOptions = {
+      ...options({ runtimeWorker, expiresAt: new Date("2026-08-27T12:00:00.000Z") }),
+      store: { ...store(), claimFailedWorker: async () => true },
+      probeSignedPreview: async () => healthy,
+      refreshSignedPreview: async () => null,
+      probeActivity: async () => silentActivity(),
+      startRecovery: () => { recoveries += 1 },
+      now: () => now,
+      unreachableGraceMs: 60_000,
+      unreachableMisses: 2,
+    }
+    const resolve = () => runtimeAccess.resolveCloudRuntimeAccess({ organizationId, workerId: runtimeWorker.id }, resolverOptions)
+
+    expect(await resolve()).toEqual(expect.objectContaining({ status: "ready" }))
+    now += 20_000
+    healthy = true
+    expect(await resolve()).toEqual(expect.objectContaining({ status: "ready" }))
+    // Silent again 50 seconds after the first miss: the healthy answer in
+    // between means this is a fresh window, not the second miss of the old one.
+    now += 30_000
+    healthy = false
+    expect(await resolve()).toEqual(expect.objectContaining({ status: "ready" }))
+    now += 30_000
+    expect(await resolve()).toEqual(expect.objectContaining({ status: "ready" }))
+    expect(recoveries).toBe(0)
+    now += 31_000
+    expect(await resolve()).toEqual(expect.objectContaining({ status: "waking", reason: "unreachable" }))
+    expect(recoveries).toBe(1)
+  })
+
+  test("one silent resolve after a long gap is not enough: the miss floor holds even past the window", async () => {
+    runtimeAccess.resetCloudRuntimeUnreachableWindows()
+    const organizationId = createDenTypeId("organization")
+    const runtimeWorker = worker("healthy")
+    let now = new Date("2026-08-27T10:00:00.000Z").getTime()
+    let recoveries = 0
+    const resolverOptions: ResolveCloudRuntimeAccessOptions = {
+      ...options({ runtimeWorker, expiresAt: new Date("2026-08-27T12:00:00.000Z") }),
+      store: { ...store(), claimFailedWorker: async () => true },
+      probeSignedPreview: async () => false,
+      refreshSignedPreview: async () => null,
+      probeActivity: async () => silentActivity(),
+      startRecovery: () => { recoveries += 1 },
+      now: () => now,
+      unreachableGraceMs: 60_000,
+      unreachableMisses: 3,
+    }
+    const resolve = () => runtimeAccess.resolveCloudRuntimeAccess({ organizationId, workerId: runtimeWorker.id }, resolverOptions)
+
+    expect(await resolve()).toEqual(expect.objectContaining({ status: "ready" }))
+    now += 10 * 60_000
+    expect(await resolve()).toEqual(expect.objectContaining({ status: "ready" }))
+    expect(recoveries).toBe(0)
+    now += 1_000
+    expect(await resolve()).toEqual(expect.objectContaining({ status: "waking", reason: "unreachable" }))
+    expect(recoveries).toBe(1)
+  })
+
+  test("an authenticated answer from the instance clears a missed health probe without any recovery", async () => {
+    runtimeAccess.resetCloudRuntimeUnreachableWindows()
+    const organizationId = createDenTypeId("organization")
+    const runtimeWorker = worker("healthy")
+    let now = new Date("2026-08-27T10:00:00.000Z").getTime()
+    let healthyFailures = 0
+    let recoveries = 0
+    let healthProbes = 0
+    const activityProbes: string[] = []
+    const resolverOptions: ResolveCloudRuntimeAccessOptions = {
+      ...options({ runtimeWorker, expiresAt: new Date("2026-08-27T12:00:00.000Z") }),
+      store: { ...store(), claimFailedWorker: async () => true, markHealthyWorkerFailed: async () => { healthyFailures += 1 } },
+      probeSignedPreview: async () => {
+        healthProbes += 1
+        return false
+      },
+      refreshSignedPreview: async () => null,
+      probeActivity: async ({ instanceUrl, hostToken }) => {
+        activityProbes.push(`${instanceUrl} ${hostToken}`)
+        return { verdict: "busy", reason: "busy_sessions", alive: true, busySessions: 2, waitingRequests: 0, connectedClients: 1 }
+      },
+      startRecovery: () => { recoveries += 1 },
+      now: () => now,
+      unreachableGraceMs: 0,
+      unreachableMisses: 1,
+    }
+    const resolve = () => runtimeAccess.resolveCloudRuntimeAccess({ organizationId, workerId: runtimeWorker.id }, resolverOptions)
+
+    expect(await resolve()).toEqual(expect.objectContaining({ status: "ready", url: "https://fresh.preview.example.test" }))
+    // The answer is cached like a healthy probe, so the next resolve in the
+    // 15 second window does not probe again.
+    now += 5_000
+    expect(await resolve()).toEqual(expect.objectContaining({ status: "ready" }))
+    expect(healthProbes).toBe(1)
+    expect(activityProbes).toEqual(["https://fresh.preview.example.test host-token"])
+    expect(healthyFailures).toBe(0)
+    expect(recoveries).toBe(0)
+    expect(runtimeWorker.status).toBe("healthy")
   })
 
   test("a failed-worker claim executes the production-shaped recovery primitive exactly once", async () => {

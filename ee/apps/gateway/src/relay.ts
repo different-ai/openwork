@@ -26,7 +26,7 @@ export function upstreamLifetime(signal: AbortSignal, timeoutMs = 30 * 60_000) {
 
 export class RequestBodyLimitError extends Error {}
 
-export async function readBoundedBody(request: Request, maxBytes = 32 * 1024 * 1024): Promise<Uint8Array<ArrayBuffer>> {
+export async function readBoundedBody(request: Pick<Request, "body" | "signal">, maxBytes = 32 * 1024 * 1024): Promise<Uint8Array<ArrayBuffer>> {
   if (!request.body) return new Uint8Array()
   const lifetime = upstreamLifetime(request.signal)
   const reader = request.body.getReader()

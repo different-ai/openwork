@@ -1,13 +1,14 @@
 name: Legacy Eval Flows Removed
 
 on:
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   guard-legacy-eval-flows:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout pull request head

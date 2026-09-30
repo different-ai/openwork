@@ -15,10 +15,15 @@ const ENV = {
   OPENWORK_ENGINE_MIN_SPAWN_INTERVAL_MS: "0",
 };
 
+type StatusMode = "ok" | "non-ok" | "malformed-map" | "malformed-status" | "invalid-json" | "timeout" | "disconnect";
+
 type FakeEngine = {
   handle: ManagedOpencodeServer;
   aborted: string[];
   setBusy: (sessionIds: string[]) => void;
+  setStatusMode: (mode: StatusMode, directory?: string) => void;
+  statusRequests: () => number;
+  closeCalls: () => number;
   emit: (sessionId: string) => void;
   globalEventSubscriptions: () => number;
   instanceEventSubscriptions: () => number;
@@ -33,10 +38,26 @@ async function startFakeEngine(): Promise<FakeEngine> {
   let globalEventSubscriptions = 0;
   let instanceEventSubscriptions = 0;
   let closed = false;
+  let statusMode: StatusMode = "ok";
+  let failedDirectory: string | undefined;
+  let statusRequests = 0;
+  let closeCalls = 0;
 
   const server: Server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (url.pathname === "/session/status") {
+      statusRequests += 1;
+      const mode = failedDirectory === undefined || url.searchParams.get("directory") === failedDirectory ? statusMode : "ok";
+      if (mode === "timeout") return;
+      if (mode === "disconnect") {
+        response.destroy();
+        return;
+      }
+      if (mode !== "ok") {
+        response.writeHead(mode === "non-ok" ? 503 : 200, { "content-type": "application/json" });
+        response.end(mode === "malformed-map" ? "[]" : mode === "malformed-status" ? '{"ses_invalid":null}' : "invalid");
+        return;
+      }
       response.setHeader("content-type", "application/json");
       response.end(JSON.stringify(Object.fromEntries([...busy].map((id) => [id, { type: "busy" }]))));
       return;
@@ -86,9 +107,18 @@ async function startFakeEngine(): Promise<FakeEngine> {
       pid: null,
       execution: { command: "fake-engine", args: [], cwd: "/", env: [] },
       isAlive: () => !closed,
-      close: stop,
+      close: async () => {
+        closeCalls += 1;
+        await stop();
+      },
     },
     aborted,
+    statusRequests: () => statusRequests,
+    closeCalls: () => closeCalls,
+    setStatusMode: (mode, directory) => {
+      statusMode = mode;
+      failedDirectory = directory;
+    },
     globalEventSubscriptions: () => globalEventSubscriptions,
     instanceEventSubscriptions: () => instanceEventSubscriptions,
     setBusy: (sessionIds) => {
@@ -111,11 +141,12 @@ type Scenario = {
   pool: EnginePool;
   old: FakeEngine;
   workspace: WorkspaceInfo;
+  logs: Array<{ message: string; attributes?: Record<string, unknown> }>;
   rollover: () => Promise<{ action: string }>;
   dispose: () => Promise<void>;
 };
 
-async function startScenario(root: string, name: string, workspaceCount = 1): Promise<Scenario> {
+async function startScenario(root: string, name: string, workspaceCount = 1, engineBusy = async () => true): Promise<Scenario> {
   const old = await startFakeEngine();
   const next = await startFakeEngine();
   const runtimeConfigPath = join(root, `${name}-runtime-config.json`);
@@ -150,6 +181,7 @@ async function startScenario(root: string, name: string, workspaceCount = 1): Pr
     opencodeBaseUrl: old.handle.url,
   };
 
+  const logs: Scenario["logs"] = [];
   const pool = new EnginePool({
     config,
     template: {
@@ -160,7 +192,8 @@ async function startScenario(root: string, name: string, workspaceCount = 1): Pr
     },
     hooks: {
       reloadInPlace: async () => undefined,
-      engineBusy: async () => true,
+      engineBusy,
+      logger: { log: (_level, message, attributes) => { logs.push({ message, attributes }); } },
       postRefreshSync: async () => undefined,
       writeRuntimeConfigFile: async () => ({ path: runtimeConfigPath }),
       registerTrusted: () => undefined,
@@ -180,6 +213,7 @@ async function startScenario(root: string, name: string, workspaceCount = 1): Pr
     pool,
     old,
     workspace,
+    logs,
     rollover: () => pool.requestRollover({ reason: `${name}_config_changed`, workspace }),
     dispose: async () => {
       await pool.disposeAll().catch(() => undefined);
@@ -235,6 +269,79 @@ test("drain grace bounds inactivity without aborting an active session", async (
       () => wedged.old.isClosed() && wedged.old.aborted.includes("ses_wedged"),
       5_000,
     )).toBe(true);
+
+    const failureModes: StatusMode[] = ["non-ok", "malformed-map", "malformed-status", "invalid-json", "disconnect"];
+    for (const mode of failureModes) {
+      const scenario = await startScenario(root, mode, 2);
+      scenarios.push(scenario);
+      scenario.old.setBusy(["ses_survivor"]);
+      expect((await scenario.rollover()).action).toBe("rolled_over");
+      scenario.old.setBusy([]);
+      scenario.old.setStatusMode(mode, scenario.workspace.path);
+      const heartbeat = setInterval(() => scenario.old.emit("ses_survivor"), 40);
+      try {
+        await sleep(650);
+        expect(scenario.old.isClosed()).toBe(false);
+        expect(scenario.old.aborted).toEqual([]);
+        expect(scenario.logs.some((entry) => entry.attributes?.["engine.drain.activity_complete"] === false)).toBe(true);
+        expect(scenario.pool.routeRequest("POST", "/session/ses_survivor/prompt_async")?.target.baseUrl).toBe(scenario.old.handle.url);
+        scenario.old.setBusy(["ses_survivor"]);
+        scenario.old.setStatusMode("ok");
+        await sleep(200);
+        expect(scenario.old.isClosed()).toBe(false);
+        scenario.old.setBusy([]);
+        expect(await waitUntil(() => scenario.old.isClosed(), 250)).toBe(true);
+        expect(scenario.old.aborted).toEqual([]);
+        expect(scenario.old.closeCalls()).toBe(1);
+      } finally {
+        clearInterval(heartbeat);
+      }
+    }
+
+    const timedOut = await startScenario(root, "timed-out");
+    scenarios.push(timedOut);
+    timedOut.old.setBusy(["ses_timeout"]);
+    expect((await timedOut.rollover()).action).toBe("rolled_over");
+    timedOut.old.setStatusMode("timeout");
+    const requestsBeforeTimeout = timedOut.old.statusRequests();
+    await sleep(250);
+    expect(timedOut.old.isClosed()).toBe(false);
+    expect(timedOut.pool.routeRequest("GET", "/session/ses_timeout")?.target.baseUrl).toBe(timedOut.old.handle.url);
+    expect(await waitUntil(() => timedOut.old.isClosed(), 6_000)).toBe(true);
+    expect(timedOut.old.statusRequests() - requestsBeforeTimeout).toBe(1);
+    expect(timedOut.old.aborted).toEqual(["ses_timeout"]);
+    expect(timedOut.old.closeCalls()).toBe(1);
+    expect(timedOut.logs.some((entry) => entry.attributes?.["engine.drain.cause"] === "forced")).toBe(true);
+    expect(timedOut.logs.some((entry) => entry.attributes?.["engine.drain.activity_complete"] === false
+      && entry.attributes?.["engine.drain.session_count"] === 1)).toBe(true);
+
+    const unknown = await startScenario(root, "unknown", 1, async () => { throw new Error("probe failed"); });
+    scenarios.push(unknown);
+    unknown.old.setStatusMode("non-ok");
+    expect((await unknown.rollover()).action).toBe("rolled_over");
+    await sleep(150);
+    expect(unknown.old.isClosed()).toBe(false);
+    expect(await waitUntil(() => unknown.old.isClosed(), 1_000)).toBe(true);
+    expect(unknown.logs.some((entry) => entry.attributes?.["engine.drain.cause"] === "forced")).toBe(true);
+
+    const initiallyUnknown = await startScenario(root, "initially-unknown");
+    scenarios.push(initiallyUnknown);
+    const primary = initiallyUnknown.pool.connections()[0];
+    if (!primary) throw new Error("missing primary");
+    initiallyUnknown.pool.observePendingRequests(primary.generationId, [{ id: "req_known", sessionID: "ses_known" }]);
+    initiallyUnknown.old.setStatusMode("non-ok");
+    expect((await initiallyUnknown.rollover()).action).toBe("rolled_over");
+    expect(initiallyUnknown.pool.routeRequest("POST", "/session/ses_known/prompt_async")?.target.baseUrl).toBe(initiallyUnknown.old.handle.url);
+    expect(await waitUntil(() => initiallyUnknown.old.isClosed(), 1_000)).toBe(true);
+    expect(initiallyUnknown.old.aborted).toEqual(["ses_known"]);
+
+    const dead = await startScenario(root, "dead");
+    scenarios.push(dead);
+    dead.old.setBusy(["ses_dead"]);
+    expect((await dead.rollover()).action).toBe("rolled_over");
+    await dead.old.stop();
+    expect(await waitUntil(() => dead.pool.connections().length === 1, 250)).toBe(true);
+    expect(dead.old.aborted).toEqual([]);
   } finally {
     for (const scenario of scenarios) await scenario.dispose();
     await rm(root, { recursive: true, force: true });
@@ -243,4 +350,4 @@ test("drain grace bounds inactivity without aborting an active session", async (
       else process.env[name] = value;
     }
   }
-});
+}, 20_000);

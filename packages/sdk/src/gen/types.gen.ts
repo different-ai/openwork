@@ -69,6 +69,21 @@ export type AdminUsersPageResponse = {
 
 export type AdminOrganizationsPageResponse = {
   organizations: Array<{
+    capabilities: {
+      installLinks: boolean;
+      mcpConnections: boolean;
+      modelsAnalytics: boolean;
+      auditLogs: boolean;
+      orgManagedDashboards: boolean;
+      appMcpServers: boolean;
+      slackAssistant: boolean;
+      /**
+       * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+       *
+       * @deprecated
+       */
+      gatewayDashboard: true;
+    };
     [key: string]: unknown;
   }>;
   page: AdminPageInfo;
@@ -130,6 +145,21 @@ export type AdminOverviewResponse = {
     [key: string]: unknown;
   }>;
   organizations: Array<{
+    capabilities: {
+      installLinks: boolean;
+      mcpConnections: boolean;
+      modelsAnalytics: boolean;
+      auditLogs: boolean;
+      orgManagedDashboards: boolean;
+      appMcpServers: boolean;
+      slackAssistant: boolean;
+      /**
+       * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+       *
+       * @deprecated
+       */
+      gatewayDashboard: true;
+    };
     [key: string]: unknown;
   }>;
   userPage: AdminPageInfo;
@@ -191,7 +221,7 @@ export type CloudInstanceUpdateResponse =
     }
   | {
       ok: false;
-      error: "already_current" | "flush_failed";
+      error: "already_current" | "flush_failed" | "busy" | "activity_unknown";
     };
 
 export type CloudGatewayInstanceResponse = {
@@ -662,12 +692,25 @@ export type OrganizationContextResponse = {
     [key: string]: unknown;
   }>;
   capabilities: {
-    gatewayDashboard: boolean;
+    auditLogs: boolean;
+    /**
+     * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+     *
+     * @deprecated
+     */
+    gatewayDashboard: true;
     [key: string]: unknown;
   };
   deploymentCapabilities: {
     version: 1;
     aiGateway: boolean;
+  };
+  entitlements: {
+    sso: boolean;
+    desktopPolicies: boolean;
+    orgControls: boolean;
+    analytics: boolean;
+    auditLogs: boolean;
   };
   [key: string]: unknown;
 };
@@ -927,6 +970,25 @@ export type MeDashboardListResponse = {
   items: Array<MeDashboard>;
 };
 
+export type BuiltMcpApp = {
+  serverName: string;
+  connectionId: string;
+  toolName: string;
+  projectedToolName: string;
+  resourceUri: string;
+  title: string;
+  description: string | null;
+  pluginId: string;
+  pluginName: string;
+  requiresInput: boolean;
+  requiredInputKeys: Array<string>;
+  requiresApproval: boolean;
+};
+
+export type BuiltMcpAppListResponse = {
+  apps: Array<BuiltMcpApp>;
+};
+
 export type DesktopPolicyResponse = {
   desktopPolicy: {
     [key: string]: unknown;
@@ -1175,6 +1237,10 @@ export type InvitePaymentRequiredError = {
   currentCount: number;
   freeSeatCount: number;
   message: string;
+  /**
+   * Open in a browser to start seat billing; an owner can finish it there, then retry the invitation.
+   */
+  billingUrl: string;
 };
 
 export type InviteEmailDomainNotAllowedError = {
@@ -1206,12 +1272,27 @@ export type InvitationNotPendingError = {
 
 export type CreateInstallLinkResponse = {
   token: string;
+  /**
+   * Share this page: it downloads the OpenWork desktop app for this organization.
+   */
   installPageUrl: string;
+  /**
+   * Open on a computer that already has OpenWork installed to point the desktop app at this organization. Short-lived; mint a new link when it expires.
+   */
+  connectUrl: string;
+  connectExpiresAt: string;
 };
 
 export type CapabilityDisabledError = {
   error: "capability_disabled";
-  capability: "installLinks" | "mcpConnections" | "modelsAnalytics" | "gatewayDashboard" | "slackAssistant";
+  capability:
+    | "installLinks"
+    | "mcpConnections"
+    | "modelsAnalytics"
+    | "auditLogs"
+    | "orgManagedDashboards"
+    | "appMcpServers"
+    | "slackAssistant";
 };
 
 export type CreateInstallLinkRequest = {
@@ -1426,6 +1507,25 @@ export type GatewayProviderDetails = {
     credentialSetId: string;
     name: string;
     authUrl: string;
+    models?: Array<{
+      id: string;
+      name: string;
+      config: {
+        id: string;
+        [key: string]: unknown;
+      };
+      upstreamModelId: string;
+      /**
+       * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+       */
+      modelGroupId: string;
+      modelGroupName: string;
+      /**
+       * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+       */
+      credentialSetId: string;
+      credentialSetName: string;
+    }>;
   }>;
   migration?: {
     /**
@@ -1568,6 +1668,25 @@ export type GatewayProviderSummary = {
     credentialSetId: string;
     name: string;
     authUrl: string;
+    models?: Array<{
+      id: string;
+      name: string;
+      config: {
+        id: string;
+        [key: string]: unknown;
+      };
+      upstreamModelId: string;
+      /**
+       * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+       */
+      modelGroupId: string;
+      modelGroupName: string;
+      /**
+       * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+       */
+      credentialSetId: string;
+      credentialSetName: string;
+    }>;
   }>;
   migration?: {
     /**
@@ -2267,6 +2386,7 @@ export type ExternalMcpPresetResponse = {
   authType: "oauth" | "apikey" | "none";
   supportedAuthTypes?: Array<"oauth" | "apikey" | "none">;
   requiresOAuthClient?: boolean;
+  defaultOAuthClientId?: string;
   authorizationServerIssuer?: string;
   defaultOAuthScopes?: Array<string>;
 };
@@ -2612,6 +2732,10 @@ export type ExternalMcpConnectionCreatedResponse = {
   requestedScopes?: Array<string>;
   links: {
     yourConnections: string;
+    /**
+     * Browser link where the person signs in to this connection. Give it to the user when you cannot show a sign-in card.
+     */
+    signIn: string;
     oauthCallback: string;
   };
 };
@@ -2985,6 +3109,51 @@ export type PluginArchExtensionProjection = {
   manifest: OpenWorkExtensionManifest | null;
 };
 
+export type PluginArchPluginListItem = {
+  /**
+   * Den TypeID with 'plg_' prefix and a 26-character base32 suffix.
+   */
+  id: string;
+  /**
+   * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
+   */
+  organizationId: string;
+  name: string;
+  description: string | null;
+  sourceRepositoryUrl: string | null;
+  sourceFormat:
+    | "agent-plugin"
+    | "openwork-builtin"
+    | "openwork-extension-manifest"
+    | "claude-plugin"
+    | "opencode-plugin"
+    | "mcp-directory"
+    | "manual"
+    | null;
+  sourceSchemaVersion: string | null;
+  status: "active" | "inactive" | "deleted" | "archived";
+  /**
+   * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+   */
+  createdByOrgMembershipId: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  memberCount?: number;
+  marketplaces?: Array<{
+    /**
+     * Den TypeID with 'mkt_' prefix and a 26-character base32 suffix.
+     */
+    id: string;
+    name: string;
+  }>;
+  extension?: PluginArchExtensionProjection | null;
+  /**
+   * Active access grants. Present only when includeAccess is true and the caller manages the plugin.
+   */
+  access?: Array<PluginArchAccessGrant>;
+};
+
 export type PluginArchPlugin = {
   /**
    * Den TypeID with 'plg_' prefix and a 26-character base32 suffix.
@@ -3024,11 +3193,6 @@ export type PluginArchPlugin = {
     name: string;
   }>;
   extension?: PluginArchExtensionProjection | null;
-};
-
-export type PluginArchPluginListResponse = {
-  items: Array<PluginArchPlugin>;
-  nextCursor: string | null;
 };
 
 export type PluginArchPluginMutationResponse = {
@@ -4131,6 +4295,52 @@ export type TeamResponse = {
   };
 };
 
+export type OrganizationWebOrigin = {
+  id: string;
+  origin: string;
+  createdAt: string;
+  createdByName: string | null;
+};
+
+export type OrganizationWebOriginList = {
+  origins: Array<OrganizationWebOrigin>;
+  limit: number;
+};
+
+export type WebOriginOrganizationNotFoundError = {
+  error: "organization_not_found";
+};
+
+export type InvalidWebOriginError = {
+  error: "invalid_web_origin";
+  message: string;
+};
+
+export type ApproveWebOriginBadRequest = InvalidRequestError | InvalidWebOriginError;
+
+export type WebOriginAlreadyApprovedError = {
+  error: "web_origin_already_approved";
+  message: string;
+};
+
+export type WebOriginLimitReachedError = {
+  error: "web_origin_limit_reached";
+  message: string;
+};
+
+export type ApproveWebOriginConflict = WebOriginAlreadyApprovedError | WebOriginLimitReachedError;
+
+export type OrganizationWebOriginApproveBody = {
+  origin: string;
+};
+
+export type WebOriginNotFoundError = {
+  error: "web_origin_not_found";
+  message: string;
+};
+
+export type RemoveWebOriginNotFound = WebOriginNotFoundError | WebOriginOrganizationNotFoundError;
+
 export type DenAppVersionResponse = {
   minAppVersion: string;
   latestAppVersion: string;
@@ -4944,7 +5154,19 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
    */
   200: {
     capabilities: {
-      [key: string]: unknown;
+      installLinks: boolean;
+      mcpConnections: boolean;
+      modelsAnalytics: boolean;
+      auditLogs: boolean;
+      orgManagedDashboards: boolean;
+      appMcpServers: boolean;
+      slackAssistant: boolean;
+      /**
+       * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+       *
+       * @deprecated
+       */
+      gatewayDashboard: true;
     };
   };
 };
@@ -4996,7 +5218,19 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       id: string;
     };
     capabilities: {
-      [key: string]: unknown;
+      installLinks: boolean;
+      mcpConnections: boolean;
+      modelsAnalytics: boolean;
+      auditLogs: boolean;
+      orgManagedDashboards: boolean;
+      appMcpServers: boolean;
+      slackAssistant: boolean;
+      /**
+       * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
+       *
+       * @deprecated
+       */
+      gatewayDashboard: true;
     };
   };
 };
@@ -5875,6 +6109,15 @@ export type PostV1BootstrapWorkspaceResponses = {
       url: string;
       expiresAt: string;
     }>;
+    identity: {
+      type: "anonymous";
+      assertion: string;
+      assertionType: "urn:ietf:params:oauth:grant-type:jwt-bearer";
+      tokenEndpoint: string;
+      scope: string;
+      expiresAt: string;
+      claimEndpoint: string;
+    };
   };
 };
 
@@ -5932,6 +6175,85 @@ export type PostV1BootstrapClaimsAcceptResponses = {
 
 export type PostV1BootstrapClaimsAcceptResponse =
   PostV1BootstrapClaimsAcceptResponses[keyof PostV1BootstrapClaimsAcceptResponses];
+
+export type GetV1BootstrapWorkspaceByBootstrapIdClaimData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'wbt_' prefix and a 26-character base32 suffix.
+     */
+    bootstrapId: string;
+  };
+  query?: never;
+  url: "/v1/bootstrap/workspace/{bootstrapId}/claim";
+};
+
+export type GetV1BootstrapWorkspaceByBootstrapIdClaimErrors = {
+  /**
+   * The pre-claim assertion is missing or invalid.
+   */
+  401: {
+    error: string;
+    error_description: string;
+  };
+};
+
+export type GetV1BootstrapWorkspaceByBootstrapIdClaimError =
+  GetV1BootstrapWorkspaceByBootstrapIdClaimErrors[keyof GetV1BootstrapWorkspaceByBootstrapIdClaimErrors];
+
+export type GetV1BootstrapWorkspaceByBootstrapIdClaimResponses = {
+  /**
+   * Current claim state.
+   */
+  200: {
+    state: "none" | "pending" | "expired" | "accepted" | "reconciled";
+    reconciled: boolean;
+  };
+};
+
+export type GetV1BootstrapWorkspaceByBootstrapIdClaimResponse =
+  GetV1BootstrapWorkspaceByBootstrapIdClaimResponses[keyof GetV1BootstrapWorkspaceByBootstrapIdClaimResponses];
+
+export type PostV1BootstrapWorkspaceByBootstrapIdClaimData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'wbt_' prefix and a 26-character base32 suffix.
+     */
+    bootstrapId: string;
+  };
+  query?: never;
+  url: "/v1/bootstrap/workspace/{bootstrapId}/claim";
+};
+
+export type PostV1BootstrapWorkspaceByBootstrapIdClaimErrors = {
+  /**
+   * The pre-claim assertion is missing, invalid, or revoked.
+   */
+  401: {
+    error: string;
+    error_description: string;
+  };
+};
+
+export type PostV1BootstrapWorkspaceByBootstrapIdClaimError =
+  PostV1BootstrapWorkspaceByBootstrapIdClaimErrors[keyof PostV1BootstrapWorkspaceByBootstrapIdClaimErrors];
+
+export type PostV1BootstrapWorkspaceByBootstrapIdClaimResponses = {
+  /**
+   * Claim code created.
+   */
+  200: {
+    user_code: string;
+    verification_uri: string;
+    verification_uri_complete: string;
+    expires_in: number;
+    interval: number;
+  };
+};
+
+export type PostV1BootstrapWorkspaceByBootstrapIdClaimResponse =
+  PostV1BootstrapWorkspaceByBootstrapIdClaimResponses[keyof PostV1BootstrapWorkspaceByBootstrapIdClaimResponses];
 
 export type GetV1CloudInstanceData = {
   body?: never;
@@ -7311,6 +7633,595 @@ export type PostV1ApiKeysResponses = {
 
 export type PostV1ApiKeysResponse = PostV1ApiKeysResponses[keyof PostV1ApiKeysResponses];
 
+export type UpdateAuditCaptureData = {
+  body: {
+    captureOn: boolean;
+    expectedRevision: number;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/audit/settings";
+};
+
+export type UpdateAuditCaptureErrors = {
+  /**
+   * Only captureOn and a nonnegative safe expectedRevision are accepted.
+   */
+  400: InvalidRequestError;
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Enabling capture requires audit availability.
+   */
+  402: EnterprisePlanRequiredError;
+  /**
+   * Administrator permission, fresh authentication, audit feature and visibility required.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "audit_feature_disabled" | "audit_visibility_disabled";
+      };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Refresh a changed policy or wait for capture rollout.
+   */
+  409: {
+    error: "audit_policy_changed" | "audit_policy_not_configured" | "audit_capture_unavailable";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type UpdateAuditCaptureError = UpdateAuditCaptureErrors[keyof UpdateAuditCaptureErrors];
+
+export type UpdateAuditCaptureResponses = {
+  /**
+   * Latest audit policy, entitlement and retained usage.
+   */
+  200: {
+    entitlement: {
+      enabled: boolean;
+      source: "enterprise_plan" | "self_hosted" | "none";
+    };
+    captureOn: boolean;
+    captureAvailable: boolean;
+    policy: {
+      organizationId: string;
+      revision: number;
+      source: "cloud" | "operator";
+      enabled: boolean;
+      categories: Array<"change" | "security" | "execution" | "access" | "read" | "request" | "lifecycle">;
+      allowance: number;
+      excessMode: "delete_oldest" | "paid_overage" | "keep_all";
+      effectiveAt: string;
+      captureStartedAt: string | null;
+      attachmentWindowSeconds: number;
+    } | null;
+    captureEnabled: boolean;
+    retainedOperations: number;
+    eventCount: number;
+    logicalBytes: number;
+    oldestAvailableAt: string | null;
+    measuredAt: string | null;
+    billing: "disabled";
+    cleanup: "dry_run";
+    drains: "not_configured";
+  };
+};
+
+export type UpdateAuditCaptureResponse = UpdateAuditCaptureResponses[keyof UpdateAuditCaptureResponses];
+
+export type GetAuditEventTypesData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/audit/event-types";
+};
+
+export type GetAuditEventTypesErrors = {
+  /**
+   * Malformed query, cursor, mismatched filters, operation scope or export format.
+   */
+  400: {
+    error: "audit_invalid_query" | "audit_invalid_cursor";
+  };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization administrator permission, audit feature and visibility required.
+   */
+  403: {
+    error: "forbidden" | "audit_feature_disabled" | "audit_visibility_disabled";
+    message?: string;
+  };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type GetAuditEventTypesError = GetAuditEventTypesErrors[keyof GetAuditEventTypesErrors];
+
+export type GetAuditEventTypesResponses = {
+  /**
+   * The full static supported action catalog, not observed tenant event counts.
+   */
+  200: {
+    eventTypes: Array<string>;
+  };
+};
+
+export type GetAuditEventTypesResponse = GetAuditEventTypesResponses[keyof GetAuditEventTypesResponses];
+
+export type GetAuditOperationsData = {
+  body?: never;
+  path?: never;
+  query?: {
+    /**
+     * Maximum rows in this page.
+     */
+    limit?: number;
+    /**
+     * Opaque nextCursor from the prior page of the same query and mode.
+     */
+    cursor?: string;
+    /**
+     * Inclusive operation-start bound; date-only is UTC midnight. from must not exceed to.
+     */
+    from?: string | string;
+    /**
+     * Inclusive operation-start bound; date-only is UTC midnight. from must not exceed to.
+     */
+    to?: string | string;
+    /**
+     * Initiating user ID, not a delegated event actor or membership ID.
+     */
+    actorId?: string;
+    /**
+     * Exact stable action of any child event within the snapshot watermark.
+     */
+    action?: string;
+    /**
+     * Current operation outcome; not an individual event outcome.
+     */
+    outcome?: "running" | "succeeded" | "failed" | "partial" | "unknown";
+    /**
+     * Stored operation origin.
+     */
+    origin?: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin";
+    /**
+     * Exact case-sensitive operation, child event, child request or stored child resource reference ID within the snapshot watermark; OR across ID kinds, AND with other filters. Not free-text or legacy payload search.
+     */
+    searchId?: string;
+    /**
+     * Exact case-sensitive stored reference ID from any child within the watermark.
+     */
+    resourceId?: string;
+    /**
+     * Optional stored reference type; requires resourceId.
+     */
+    resourceType?: string;
+  };
+  url: "/v1/audit/operations";
+};
+
+export type GetAuditOperationsErrors = {
+  /**
+   * Malformed query, cursor, mismatched filters, operation scope or export format.
+   */
+  400: {
+    error: "audit_invalid_query" | "audit_invalid_cursor";
+  };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization administrator permission, audit feature and visibility required.
+   */
+  403: {
+    error: "forbidden" | "audit_feature_disabled" | "audit_visibility_disabled";
+    message?: string;
+  };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type GetAuditOperationsError = GetAuditOperationsErrors[keyof GetAuditOperationsErrors];
+
+export type GetAuditOperationsResponses = {
+  /**
+   * One bounded summary per operation.
+   */
+  200: {
+    operations: Array<{
+      id: string;
+      kind: string;
+      scope: string;
+      action: string;
+      initiatingActor: {
+        type: "user" | "service" | "system" | "unknown";
+        id: string | null;
+        memberId?: string;
+        credentialId?: string;
+      };
+      origin: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin";
+      originTrust: "authenticated" | "reported";
+      startedAt: string;
+      outcome: "running" | "succeeded" | "failed" | "partial" | "unknown";
+      eventCount: number;
+      logicalBytes: number;
+      resources: Array<{
+        type: string;
+        id: string;
+        relationship: "target" | "parent" | "related";
+        label?: string;
+      }>;
+    }>;
+    nextCursor: string | null;
+    snapshotSequence: number;
+  };
+};
+
+export type GetAuditOperationsResponse = GetAuditOperationsResponses[keyof GetAuditOperationsResponses];
+
+export type GetAuditOperationEventsData = {
+  body?: never;
+  path: {
+    operationId: string;
+  };
+  query?: {
+    /**
+     * Maximum rows in this page.
+     */
+    limit?: number;
+    /**
+     * Opaque nextCursor from the prior page of the same query and mode.
+     */
+    cursor?: string;
+  };
+  url: "/v1/audit/operations/{operationId}/events";
+};
+
+export type GetAuditOperationEventsErrors = {
+  /**
+   * Malformed query, cursor, mismatched filters, operation scope or export format.
+   */
+  400: {
+    error: "audit_invalid_query" | "audit_invalid_cursor";
+  };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization administrator permission, audit feature and visibility required.
+   */
+  403: {
+    error: "forbidden" | "audit_feature_disabled" | "audit_visibility_disabled";
+    message?: string;
+  };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type GetAuditOperationEventsError = GetAuditOperationEventsErrors[keyof GetAuditOperationEventsErrors];
+
+export type GetAuditOperationEventsResponses = {
+  /**
+   * A bounded ascending page of event envelopes.
+   */
+  200: {
+    events: Array<{
+      schemaVersion: 1;
+      id: string;
+      organizationId: string;
+      operationId: string;
+      sequence: number;
+      operation: {
+        kind: string;
+        scope: string;
+        origin: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin";
+        originTrust: "authenticated" | "reported";
+        initiatingActor: {
+          type: "user" | "service" | "system" | "unknown";
+          id: string | null;
+          memberId?: string;
+          credentialId?: string;
+        };
+        startedAt: string;
+      };
+      actor: {
+        type: "user" | "service" | "system" | "unknown";
+        id: string | null;
+        memberId?: string;
+        credentialId?: string;
+      };
+      action: string;
+      category: "change" | "security" | "execution" | "access" | "read" | "request" | "lifecycle";
+      outcome: "succeeded" | "failed" | "denied" | "unknown";
+      occurredAt: string;
+      recordedAt: string;
+      requestId: string | null;
+      jobRunId?: string;
+      causedByEventId?: string;
+      resources: Array<{
+        type: string;
+        id: string;
+        relationship: "target" | "parent" | "related";
+        label?: string;
+      }>;
+      changes?: {
+        before: {
+          [key: string]: unknown;
+        } | null;
+        after: {
+          [key: string]: unknown;
+        } | null;
+        changedFields: Array<string>;
+      };
+      reasonCode?: string;
+      logicalBytes: number;
+    }>;
+    nextCursor: string | null;
+    snapshotSequence: number;
+  };
+};
+
+export type GetAuditOperationEventsResponse = GetAuditOperationEventsResponses[keyof GetAuditOperationEventsResponses];
+
+export type GetAuditUsageData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/audit/usage";
+};
+
+export type GetAuditUsageErrors = {
+  /**
+   * Malformed query, cursor, mismatched filters, operation scope or export format.
+   */
+  400: {
+    error: "audit_invalid_query" | "audit_invalid_cursor";
+  };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization administrator permission, audit feature and visibility required.
+   */
+  403: {
+    error: "forbidden" | "audit_feature_disabled" | "audit_visibility_disabled";
+    message?: string;
+  };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type GetAuditUsageError = GetAuditUsageErrors[keyof GetAuditUsageErrors];
+
+export type GetAuditUsageResponses = {
+  /**
+   * Current stored audit policy and usage, without a history scan.
+   */
+  200: {
+    entitlement: {
+      enabled: boolean;
+      source: "enterprise_plan" | "self_hosted" | "none";
+    };
+    captureOn: boolean;
+    captureAvailable: boolean;
+    policy: {
+      organizationId: string;
+      revision: number;
+      source: "cloud" | "operator";
+      enabled: boolean;
+      categories: Array<"change" | "security" | "execution" | "access" | "read" | "request" | "lifecycle">;
+      allowance: number;
+      excessMode: "delete_oldest" | "paid_overage" | "keep_all";
+      effectiveAt: string;
+      captureStartedAt: string | null;
+      attachmentWindowSeconds: number;
+    } | null;
+    captureEnabled: boolean;
+    retainedOperations: number;
+    eventCount: number;
+    logicalBytes: number;
+    oldestAvailableAt: string | null;
+    measuredAt: string | null;
+    billing: "disabled";
+    cleanup: "dry_run";
+    drains: "not_configured";
+  };
+};
+
+export type GetAuditUsageResponse = GetAuditUsageResponses[keyof GetAuditUsageResponses];
+
+export type GetAuditExportData = {
+  body?: never;
+  path?: never;
+  query?: {
+    /**
+     * Maximum rows in this page.
+     */
+    limit?: number;
+    /**
+     * Opaque nextCursor from the prior page of the same query and mode.
+     */
+    cursor?: string;
+    /**
+     * Inclusive operation-start bound; date-only is UTC midnight. from must not exceed to.
+     */
+    from?: string | string;
+    /**
+     * Inclusive operation-start bound; date-only is UTC midnight. from must not exceed to.
+     */
+    to?: string | string;
+    /**
+     * Initiating user ID, not a delegated event actor or membership ID.
+     */
+    actorId?: string;
+    /**
+     * Exact stable action of any child event within the snapshot watermark.
+     */
+    action?: string;
+    /**
+     * Current operation outcome; not an individual event outcome.
+     */
+    outcome?: "running" | "succeeded" | "failed" | "partial" | "unknown";
+    /**
+     * Stored operation origin.
+     */
+    origin?: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin";
+    /**
+     * Exact case-sensitive operation, child event, child request or stored child resource reference ID within the snapshot watermark; OR across ID kinds, AND with other filters. Not free-text or legacy payload search.
+     */
+    searchId?: string;
+    /**
+     * Exact case-sensitive stored reference ID from any child within the watermark.
+     */
+    resourceId?: string;
+    /**
+     * Optional stored reference type; requires resourceId.
+     */
+    resourceType?: string;
+    format?: "ndjson" | "csv";
+  };
+  url: "/v1/audit/export";
+};
+
+export type GetAuditExportErrors = {
+  /**
+   * Malformed query, cursor, mismatched filters, operation scope or export format.
+   */
+  400: {
+    error: "audit_invalid_query" | "audit_invalid_cursor";
+  };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization administrator permission, audit feature and visibility required.
+   */
+  403: {
+    error: "forbidden" | "audit_feature_disabled" | "audit_visibility_disabled";
+    message?: string;
+  };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type GetAuditExportError = GetAuditExportErrors[keyof GetAuditExportErrors];
+
+export type GetAuditExportResponses = {
+  /**
+   * A bounded attachment page. No next-cursor header means this snapshot is exhausted.
+   */
+  200: string;
+};
+
+export type GetAuditExportResponse = GetAuditExportResponses[keyof GetAuditExportResponses];
+
 export type GetV1BrandAssetsByOrganizationIdByKindByVersionData = {
   body?: never;
   path: {
@@ -7465,7 +8376,17 @@ export type SaveWorkflowData = {
     pluginId?: string;
     name: string;
     description?: string;
-    code: string;
+    /**
+     * Exact tested source. Required without receiptId; if both are supplied it must byte-match the retained source.
+     */
+    code?: string;
+    /**
+     * Successful authoring receipt from this caller within 15 minutes. Encrypted source retention is shared across replicas when Redis is configured, otherwise process-local. If unavailable, retest or omit receiptId and supply the exact source.
+     */
+    receiptId?: string;
+    /**
+     * Must match the tested input when receiptId is supplied. Forbidden for live authoring receipts.
+     */
     currentInput?: unknown;
     inputSchema?: unknown;
     /**
@@ -8956,6 +9877,8 @@ export type PostV1WorkflowsByConfigObjectIdRunData = {
     pluginId: string;
     configObjectVersionId: string;
     input?: unknown;
+    mode?: "adhoc" | "live";
+    timeZone?: string;
   };
   path: {
     configObjectId: string;
@@ -8980,6 +9903,10 @@ export type PostV1WorkflowsByConfigObjectIdRunResponses = {
    */
   200: {
     status: "succeeded";
+    executionType: "saved-workflow";
+    mode: "adhoc" | "live";
+    fetchedAt: string;
+    timeZone?: string;
     value: unknown;
     markdown: string;
     receiptId: string | null;
@@ -9409,6 +10336,35 @@ export type GetV1MeDashboardsResponses = {
 };
 
 export type GetV1MeDashboardsResponse = GetV1MeDashboardsResponses[keyof GetV1MeDashboardsResponses];
+
+export type GetV1McpAppsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/mcp-apps";
+};
+
+export type GetV1McpAppsErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and admins can list Apps for dashboards.
+   */
+  403: ForbiddenError;
+};
+
+export type GetV1McpAppsError = GetV1McpAppsErrors[keyof GetV1McpAppsErrors];
+
+export type GetV1McpAppsResponses = {
+  /**
+   * Apps built in OpenWork that can be added to a dashboard.
+   */
+  200: BuiltMcpAppListResponse;
+};
+
+export type GetV1McpAppsResponse = GetV1McpAppsResponses[keyof GetV1McpAppsResponses];
 
 export type DeleteV1DesktopPoliciesByKeyByExternalKeyData = {
   body?: never;
@@ -10640,7 +11596,7 @@ export type PostV1SsoSamlErrors = {
    */
   401: SsoUnauthorizedError;
   /**
-   * SSO management requires an Enterprise plan.
+   * SSO management requires a Team or Enterprise plan.
    */
   402: EnterprisePlanRequiredError;
   /**
@@ -10681,7 +11637,7 @@ export type PostV1SsoOidcErrors = {
    */
   401: SsoUnauthorizedError;
   /**
-   * SSO management requires an Enterprise plan.
+   * SSO management requires a Team or Enterprise plan.
    */
   402: EnterprisePlanRequiredError;
   /**
@@ -10908,7 +11864,7 @@ export type PostV1SsoRequestDomainVerificationErrors = {
    */
   401: SsoUnauthorizedError;
   /**
-   * SSO management requires an Enterprise plan.
+   * SSO management requires a Team or Enterprise plan.
    */
   402: EnterprisePlanRequiredError;
   /**
@@ -10951,7 +11907,7 @@ export type PostV1SsoVerifyDomainErrors = {
    */
   401: SsoUnauthorizedError;
   /**
-   * SSO management requires an Enterprise plan.
+   * SSO management requires a Team or Enterprise plan.
    */
   402: EnterprisePlanRequiredError;
   /**
@@ -10995,7 +11951,7 @@ export type PostV1InvitationsErrors = {
    */
   401: UnauthorizedError;
   /**
-   * A seat subscription is required before inviting more members.
+   * A seat subscription is required before inviting more members. The body includes billingUrl, where an owner starts seat billing.
    */
   402: InvitePaymentRequiredError;
   /**
@@ -12204,6 +13160,7 @@ export type GetV1InferenceProvidersUsageData = {
     groupBy?: "model" | "team" | "person";
     days?: string;
     filterIds?: string;
+    memberId?: string;
   };
   url: "/v1/inference-providers/usage";
 };
@@ -12287,6 +13244,1750 @@ export type GetV1InferenceProvidersUsageResponses = {
 
 export type GetV1InferenceProvidersUsageResponse =
   GetV1InferenceProvidersUsageResponses[keyof GetV1InferenceProvidersUsageResponses];
+
+export type GetV1GatewayUsageLimitPoliciesData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/gateway/usage-limit-policies";
+};
+
+export type GetV1GatewayUsageLimitPoliciesErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1GatewayUsageLimitPoliciesError =
+  GetV1GatewayUsageLimitPoliciesErrors[keyof GetV1GatewayUsageLimitPoliciesErrors];
+
+export type GetV1GatewayUsageLimitPoliciesResponses = {
+  /**
+   * List usage limit policies
+   */
+  200: {
+    policies: Array<{
+      id: string;
+      name: string;
+      hardLimit: boolean;
+      allowRequestReset: boolean;
+      revision: number;
+      limits: Array<{
+        timeframe: "day" | "week" | "month";
+        costLimitMicroUsd: number;
+      }>;
+      assignments: Array<{
+        id: string;
+        memberId: string | null;
+        teamId: string | null;
+        organization?: boolean;
+      }>;
+      archivedAt?: string | null;
+    }>;
+  };
+};
+
+export type GetV1GatewayUsageLimitPoliciesResponse =
+  GetV1GatewayUsageLimitPoliciesResponses[keyof GetV1GatewayUsageLimitPoliciesResponses];
+
+export type PostV1GatewayUsageLimitPoliciesData = {
+  body: {
+    name: string;
+    hardLimit?: boolean;
+    allowRequestReset?: boolean;
+    limits: Array<{
+      timeframe: "day" | "week" | "month";
+      costUsd: string;
+    }>;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/gateway/usage-limit-policies";
+};
+
+export type PostV1GatewayUsageLimitPoliciesErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1GatewayUsageLimitPoliciesError =
+  PostV1GatewayUsageLimitPoliciesErrors[keyof PostV1GatewayUsageLimitPoliciesErrors];
+
+export type PostV1GatewayUsageLimitPoliciesResponses = {
+  /**
+   * Create usage limit policy
+   */
+  200: {
+    id: string;
+    name: string;
+    hardLimit: boolean;
+    allowRequestReset: boolean;
+    revision: number;
+    limits: Array<{
+      timeframe: "day" | "week" | "month";
+      costLimitMicroUsd: number;
+    }>;
+    assignments: Array<{
+      id: string;
+      memberId: string | null;
+      teamId: string | null;
+      organization?: boolean;
+    }>;
+    archivedAt?: string | null;
+  };
+};
+
+export type PostV1GatewayUsageLimitPoliciesResponse =
+  PostV1GatewayUsageLimitPoliciesResponses[keyof PostV1GatewayUsageLimitPoliciesResponses];
+
+export type PatchV1GatewayUsageLimitPoliciesByPolicyIdData = {
+  body: {
+    name: string;
+    hardLimit?: boolean;
+    allowRequestReset?: boolean;
+    limits: Array<{
+      timeframe: "day" | "week" | "month";
+      costUsd: string;
+    }>;
+    revision: number;
+  };
+  path: {
+    policyId: string;
+  };
+  query?: never;
+  url: "/v1/gateway/usage-limit-policies/{policyId}";
+};
+
+export type PatchV1GatewayUsageLimitPoliciesByPolicyIdErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PatchV1GatewayUsageLimitPoliciesByPolicyIdError =
+  PatchV1GatewayUsageLimitPoliciesByPolicyIdErrors[keyof PatchV1GatewayUsageLimitPoliciesByPolicyIdErrors];
+
+export type PatchV1GatewayUsageLimitPoliciesByPolicyIdResponses = {
+  /**
+   * Update usage limit policy
+   */
+  200: {
+    id: string;
+    name: string;
+    hardLimit: boolean;
+    allowRequestReset: boolean;
+    revision: number;
+    limits: Array<{
+      timeframe: "day" | "week" | "month";
+      costLimitMicroUsd: number;
+    }>;
+    assignments: Array<{
+      id: string;
+      memberId: string | null;
+      teamId: string | null;
+      organization?: boolean;
+    }>;
+    archivedAt?: string | null;
+  };
+};
+
+export type PatchV1GatewayUsageLimitPoliciesByPolicyIdResponse =
+  PatchV1GatewayUsageLimitPoliciesByPolicyIdResponses[keyof PatchV1GatewayUsageLimitPoliciesByPolicyIdResponses];
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveData = {
+  body: {
+    revision: number;
+  };
+  path: {
+    policyId: string;
+  };
+  query?: never;
+  url: "/v1/gateway/usage-limit-policies/{policyId}/archive";
+};
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveError =
+  PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveErrors[keyof PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveErrors];
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponses = {
+  /**
+   * Archive usage limit policy
+   */
+  200: {
+    id: string;
+    name: string;
+    hardLimit: boolean;
+    allowRequestReset: boolean;
+    revision: number;
+    limits: Array<{
+      timeframe: "day" | "week" | "month";
+      costLimitMicroUsd: number;
+    }>;
+    assignments: Array<{
+      id: string;
+      memberId: string | null;
+      teamId: string | null;
+      organization?: boolean;
+    }>;
+    archivedAt?: string | null;
+  };
+};
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponse =
+  PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponses[keyof PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponses];
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreData = {
+  body: {
+    revision: number;
+  };
+  path: {
+    policyId: string;
+  };
+  query?: never;
+  url: "/v1/gateway/usage-limit-policies/{policyId}/restore";
+};
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreError =
+  PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreErrors[keyof PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreErrors];
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreResponses = {
+  /**
+   * Restore archived usage limit policy
+   */
+  200: {
+    id: string;
+    name: string;
+    hardLimit: boolean;
+    allowRequestReset: boolean;
+    revision: number;
+    limits: Array<{
+      timeframe: "day" | "week" | "month";
+      costLimitMicroUsd: number;
+    }>;
+    assignments: Array<{
+      id: string;
+      memberId: string | null;
+      teamId: string | null;
+      organization?: boolean;
+    }>;
+    archivedAt?: string | null;
+  };
+};
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreResponse =
+  PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreResponses[keyof PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreResponses];
+
+export type GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsData = {
+  body?: never;
+  path: {
+    policyId: string;
+  };
+  query?: never;
+  url: "/v1/gateway/usage-limit-policies/{policyId}/assignments";
+};
+
+export type GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsError =
+  GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsErrors[keyof GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsErrors];
+
+export type GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses = {
+  /**
+   * List policy assignments
+   */
+  200: {
+    assignments: Array<{
+      id: string;
+      memberId: string | null;
+      teamId: string | null;
+      organization: boolean;
+    }>;
+  };
+};
+
+export type GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponse =
+  GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses[keyof GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses];
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsData = {
+  body:
+    | {
+        organization: true;
+      }
+    | {
+        memberId: string;
+      }
+    | {
+        teamId: string;
+      };
+  path: {
+    policyId: string;
+  };
+  query?: never;
+  url: "/v1/gateway/usage-limit-policies/{policyId}/assignments";
+};
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsError =
+  PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsErrors[keyof PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsErrors];
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses = {
+  /**
+   * Assign usage limit policy
+   */
+  200: {
+    id: string;
+    name: string;
+    hardLimit: boolean;
+    allowRequestReset: boolean;
+    revision: number;
+    limits: Array<{
+      timeframe: "day" | "week" | "month";
+      costLimitMicroUsd: number;
+    }>;
+    assignments: Array<{
+      id: string;
+      memberId: string | null;
+      teamId: string | null;
+      organization?: boolean;
+    }>;
+    archivedAt?: string | null;
+  };
+};
+
+export type PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponse =
+  PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses[keyof PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses];
+
+export type DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentIdData = {
+  body?: never;
+  path: {
+    policyId: string;
+    assignmentId: string;
+  };
+  query?: never;
+  url: "/v1/gateway/usage-limit-policies/{policyId}/assignments/{assignmentId}";
+};
+
+export type DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentIdErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentIdError =
+  DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentIdErrors[keyof DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentIdErrors];
+
+export type DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentIdResponses = {
+  /**
+   * Remove policy assignment
+   */
+  200: {
+    id: string;
+    name: string;
+    hardLimit: boolean;
+    allowRequestReset: boolean;
+    revision: number;
+    limits: Array<{
+      timeframe: "day" | "week" | "month";
+      costLimitMicroUsd: number;
+    }>;
+    assignments: Array<{
+      id: string;
+      memberId: string | null;
+      teamId: string | null;
+      organization?: boolean;
+    }>;
+    archivedAt?: string | null;
+  };
+};
+
+export type DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentIdResponse =
+  DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentIdResponses[keyof DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentIdResponses];
+
+export type GetV1GatewayUsageLimitsMembersData = {
+  body?: never;
+  path?: never;
+  query?: {
+    query?: string;
+  };
+  url: "/v1/gateway/usage-limits/members";
+};
+
+export type GetV1GatewayUsageLimitsMembersErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1GatewayUsageLimitsMembersError =
+  GetV1GatewayUsageLimitsMembersErrors[keyof GetV1GatewayUsageLimitsMembersErrors];
+
+export type GetV1GatewayUsageLimitsMembersResponses = {
+  /**
+   * Search members for usage limits
+   */
+  200: {
+    members: Array<{
+      id: string;
+      name: string;
+      email: string;
+    }>;
+  };
+};
+
+export type GetV1GatewayUsageLimitsMembersResponse =
+  GetV1GatewayUsageLimitsMembersResponses[keyof GetV1GatewayUsageLimitsMembersResponses];
+
+export type GetV1GatewayUsageLimitsMeData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/gateway/usage-limits/me";
+};
+
+export type GetV1GatewayUsageLimitsMeErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1GatewayUsageLimitsMeError = GetV1GatewayUsageLimitsMeErrors[keyof GetV1GatewayUsageLimitsMeErrors];
+
+export type GetV1GatewayUsageLimitsMeResponses = {
+  /**
+   * Read own Gateway usage limits
+   */
+  200: {
+    serverTime: string;
+    organizationId: string;
+    memberId: string;
+    state: "unlimited" | "within_limit" | "over_limit" | "blocked";
+    coverage: {
+      complete: boolean;
+      unpricedRequests: number;
+      quarantinedRequests?: number;
+      historicalCoverage?: "unknown" | "tracked_since_epoch";
+      historicalUnknownReason?: "tracking_not_started" | "period_predates_tracking" | "legacy_counter" | null;
+      trackingStartedAt?: string | null;
+      trackingVersion?: number;
+      captureEnabled?: boolean;
+      pendingRequests?: number | null;
+      incompleteRequests?: number;
+      lastSettlementAt?: string | null;
+      lastSettlementRequestId?: string | null;
+      settlementReady?: boolean;
+    };
+    buckets: Array<{
+      id: string;
+      timeframe: "day" | "week" | "month";
+      policyId: string;
+      policyName: string;
+      policyRevision?: number;
+      provenance?: Array<
+        | {
+            kind: "organization";
+            assignmentId: string;
+            memberId: null;
+            teamId: null;
+          }
+        | {
+            kind: "direct";
+            assignmentId: string;
+            memberId: string;
+            teamId: null;
+          }
+        | {
+            kind: "team";
+            assignmentId: string;
+            memberId: null;
+            teamId: string;
+            teamName: string;
+          }
+      >;
+      baseAllowanceMicroUsd: number;
+      extensionMicroUsd: number;
+      allowanceMicroUsd: number;
+      usedMicroUsd: number;
+      remainingMicroUsd: number;
+      resetAt: string;
+      hardLimit: boolean;
+      allowRequestReset: boolean;
+      canRequestReset: boolean;
+      resetRequestStatus: "pending" | "approved" | "denied" | "expired" | null;
+    }>;
+  };
+};
+
+export type GetV1GatewayUsageLimitsMeResponse =
+  GetV1GatewayUsageLimitsMeResponses[keyof GetV1GatewayUsageLimitsMeResponses];
+
+export type GetV1GatewayUsageLimitsMembersByMemberIdData = {
+  body?: never;
+  path: {
+    memberId: string;
+  };
+  query?: never;
+  url: "/v1/gateway/usage-limits/members/{memberId}";
+};
+
+export type GetV1GatewayUsageLimitsMembersByMemberIdErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1GatewayUsageLimitsMembersByMemberIdError =
+  GetV1GatewayUsageLimitsMembersByMemberIdErrors[keyof GetV1GatewayUsageLimitsMembersByMemberIdErrors];
+
+export type GetV1GatewayUsageLimitsMembersByMemberIdResponses = {
+  /**
+   * Inspect member Gateway usage limits
+   */
+  200: {
+    serverTime: string;
+    organizationId: string;
+    memberId: string;
+    state: "unlimited" | "within_limit" | "over_limit" | "blocked";
+    coverage: {
+      complete: boolean;
+      unpricedRequests: number;
+      quarantinedRequests?: number;
+      historicalCoverage?: "unknown" | "tracked_since_epoch";
+      historicalUnknownReason?: "tracking_not_started" | "period_predates_tracking" | "legacy_counter" | null;
+      trackingStartedAt?: string | null;
+      trackingVersion?: number;
+      captureEnabled?: boolean;
+      pendingRequests?: number | null;
+      incompleteRequests?: number;
+      lastSettlementAt?: string | null;
+      lastSettlementRequestId?: string | null;
+      settlementReady?: boolean;
+    };
+    buckets: Array<{
+      id: string;
+      timeframe: "day" | "week" | "month";
+      policyId: string;
+      policyName: string;
+      policyRevision?: number;
+      provenance?: Array<
+        | {
+            kind: "organization";
+            assignmentId: string;
+            memberId: null;
+            teamId: null;
+          }
+        | {
+            kind: "direct";
+            assignmentId: string;
+            memberId: string;
+            teamId: null;
+          }
+        | {
+            kind: "team";
+            assignmentId: string;
+            memberId: null;
+            teamId: string;
+            teamName: string;
+          }
+      >;
+      baseAllowanceMicroUsd: number;
+      extensionMicroUsd: number;
+      allowanceMicroUsd: number;
+      usedMicroUsd: number;
+      remainingMicroUsd: number;
+      resetAt: string;
+      hardLimit: boolean;
+      allowRequestReset: boolean;
+      canRequestReset: boolean;
+      resetRequestStatus: "pending" | "approved" | "denied" | "expired" | null;
+    }>;
+  };
+};
+
+export type GetV1GatewayUsageLimitsMembersByMemberIdResponse =
+  GetV1GatewayUsageLimitsMembersByMemberIdResponses[keyof GetV1GatewayUsageLimitsMembersByMemberIdResponses];
+
+export type GetV1GatewayUsageLimitResetRequestsData = {
+  body?: never;
+  path?: never;
+  query?: {
+    view?: "pending" | "history";
+    limit?: string;
+    cursor?: string;
+  };
+  url: "/v1/gateway/usage-limit-reset-requests";
+};
+
+export type GetV1GatewayUsageLimitResetRequestsErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1GatewayUsageLimitResetRequestsError =
+  GetV1GatewayUsageLimitResetRequestsErrors[keyof GetV1GatewayUsageLimitResetRequestsErrors];
+
+export type GetV1GatewayUsageLimitResetRequestsResponses = {
+  /**
+   * List organization usage increase requests
+   */
+  200: {
+    requests: Array<{
+      id: string;
+      memberId: string;
+      memberName: string;
+      memberEmail: string;
+      bucketId: string;
+      timeframe: "day" | "week" | "month";
+      policyName: string;
+      reason: string;
+      status: "pending" | "approved" | "denied" | "expired";
+      createdAt: string;
+      reviewedBy: string | null;
+      reviewedAt: string | null;
+      baseAllowanceMicroUsd: number;
+      allowanceMicroUsd: number;
+      usedMicroUsd: number;
+      resetAt: string;
+    }>;
+    view: "pending" | "history";
+    limit: number;
+    pendingCount: number;
+    hasMore: boolean;
+    nextCursor: string | null;
+  };
+};
+
+export type GetV1GatewayUsageLimitResetRequestsResponse =
+  GetV1GatewayUsageLimitResetRequestsResponses[keyof GetV1GatewayUsageLimitResetRequestsResponses];
+
+export type PostV1GatewayUsageLimitResetRequestsData = {
+  body: {
+    bucketId: string;
+    reason: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/gateway/usage-limit-reset-requests";
+};
+
+export type PostV1GatewayUsageLimitResetRequestsErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1GatewayUsageLimitResetRequestsError =
+  PostV1GatewayUsageLimitResetRequestsErrors[keyof PostV1GatewayUsageLimitResetRequestsErrors];
+
+export type PostV1GatewayUsageLimitResetRequestsResponses = {
+  /**
+   * Request usage limit extension
+   */
+  200: {
+    id: string;
+    memberId: string;
+    memberName: string;
+    memberEmail: string;
+    bucketId: string;
+    timeframe: "day" | "week" | "month";
+    policyName: string;
+    reason: string;
+    status: "pending" | "approved" | "denied" | "expired";
+    createdAt: string;
+    reviewedBy: string | null;
+    reviewedAt: string | null;
+    baseAllowanceMicroUsd: number;
+    allowanceMicroUsd: number;
+    usedMicroUsd: number;
+    resetAt: string;
+  };
+};
+
+export type PostV1GatewayUsageLimitResetRequestsResponse =
+  PostV1GatewayUsageLimitResetRequestsResponses[keyof PostV1GatewayUsageLimitResetRequestsResponses];
+
+export type GetV1GatewayUsageLimitResetRequestsMeData = {
+  body?: never;
+  path?: never;
+  query?: {
+    view?: "pending" | "history";
+    limit?: string;
+    cursor?: string;
+  };
+  url: "/v1/gateway/usage-limit-reset-requests/me";
+};
+
+export type GetV1GatewayUsageLimitResetRequestsMeErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1GatewayUsageLimitResetRequestsMeError =
+  GetV1GatewayUsageLimitResetRequestsMeErrors[keyof GetV1GatewayUsageLimitResetRequestsMeErrors];
+
+export type GetV1GatewayUsageLimitResetRequestsMeResponses = {
+  /**
+   * List own usage increase requests
+   */
+  200: {
+    requests: Array<{
+      id: string;
+      memberId: string;
+      memberName: string;
+      memberEmail: string;
+      bucketId: string;
+      timeframe: "day" | "week" | "month";
+      policyName: string;
+      reason: string;
+      status: "pending" | "approved" | "denied" | "expired";
+      createdAt: string;
+      reviewedBy: string | null;
+      reviewedAt: string | null;
+      baseAllowanceMicroUsd: number;
+      allowanceMicroUsd: number;
+      usedMicroUsd: number;
+      resetAt: string;
+    }>;
+    view: "pending" | "history";
+    limit: number;
+    pendingCount: number;
+    hasMore: boolean;
+    nextCursor: string | null;
+  };
+};
+
+export type GetV1GatewayUsageLimitResetRequestsMeResponse =
+  GetV1GatewayUsageLimitResetRequestsMeResponses[keyof GetV1GatewayUsageLimitResetRequestsMeResponses];
+
+export type PostV1GatewayUsageLimitResetRequestsByIdApproveData = {
+  body: {
+    [key: string]: never;
+  };
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: "/v1/gateway/usage-limit-reset-requests/{id}/approve";
+};
+
+export type PostV1GatewayUsageLimitResetRequestsByIdApproveErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1GatewayUsageLimitResetRequestsByIdApproveError =
+  PostV1GatewayUsageLimitResetRequestsByIdApproveErrors[keyof PostV1GatewayUsageLimitResetRequestsByIdApproveErrors];
+
+export type PostV1GatewayUsageLimitResetRequestsByIdApproveResponses = {
+  /**
+   * Approve 25 percent usage extension
+   */
+  200: {
+    id: string;
+    memberId: string;
+    memberName: string;
+    memberEmail: string;
+    bucketId: string;
+    timeframe: "day" | "week" | "month";
+    policyName: string;
+    reason: string;
+    status: "pending" | "approved" | "denied" | "expired";
+    createdAt: string;
+    reviewedBy: string | null;
+    reviewedAt: string | null;
+    baseAllowanceMicroUsd: number;
+    allowanceMicroUsd: number;
+    usedMicroUsd: number;
+    resetAt: string;
+  };
+};
+
+export type PostV1GatewayUsageLimitResetRequestsByIdApproveResponse =
+  PostV1GatewayUsageLimitResetRequestsByIdApproveResponses[keyof PostV1GatewayUsageLimitResetRequestsByIdApproveResponses];
+
+export type PostV1GatewayUsageLimitResetRequestsByIdDenyData = {
+  body: {
+    note?: string;
+  };
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: "/v1/gateway/usage-limit-reset-requests/{id}/deny";
+};
+
+export type PostV1GatewayUsageLimitResetRequestsByIdDenyErrors = {
+  /**
+   * Invalid request
+   */
+  400: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Sign-in required
+   */
+  401: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Not authorized or Gateway disabled
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Organization resource not found
+   */
+  404: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Policy revision or eligibility conflict
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Accounting unavailable
+   */
+  503: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1GatewayUsageLimitResetRequestsByIdDenyError =
+  PostV1GatewayUsageLimitResetRequestsByIdDenyErrors[keyof PostV1GatewayUsageLimitResetRequestsByIdDenyErrors];
+
+export type PostV1GatewayUsageLimitResetRequestsByIdDenyResponses = {
+  /**
+   * Deny usage extension
+   */
+  200: {
+    id: string;
+    memberId: string;
+    memberName: string;
+    memberEmail: string;
+    bucketId: string;
+    timeframe: "day" | "week" | "month";
+    policyName: string;
+    reason: string;
+    status: "pending" | "approved" | "denied" | "expired";
+    createdAt: string;
+    reviewedBy: string | null;
+    reviewedAt: string | null;
+    baseAllowanceMicroUsd: number;
+    allowanceMicroUsd: number;
+    usedMicroUsd: number;
+    resetAt: string;
+  };
+};
+
+export type PostV1GatewayUsageLimitResetRequestsByIdDenyResponse =
+  PostV1GatewayUsageLimitResetRequestsByIdDenyResponses[keyof PostV1GatewayUsageLimitResetRequestsByIdDenyResponses];
+
+export type GetV1InferenceProvidersModelManagementData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers/model-management";
+};
+
+export type GetV1InferenceProvidersModelManagementErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersModelManagementError =
+  GetV1InferenceProvidersModelManagementErrors[keyof GetV1InferenceProvidersModelManagementErrors];
+
+export type GetV1InferenceProvidersModelManagementResponses = {
+  /**
+   * List inference gateway providers and model groups for model enablement
+   */
+  200: {
+    inferenceProviders: Array<{
+      /**
+       * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      name: string;
+      providerId: string;
+      status: "active" | "disabled";
+      modelIds: Array<string>;
+      modelGroups: Array<{
+        /**
+         * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+         */
+        id: string;
+        name: string;
+        status: "active" | "disabled";
+        modelIds: Array<string>;
+      }>;
+    }>;
+  };
+};
+
+export type GetV1InferenceProvidersModelManagementResponse =
+  GetV1InferenceProvidersModelManagementResponses[keyof GetV1InferenceProvidersModelManagementResponses];
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/available-models";
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsError =
+  GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors[keyof GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors];
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponses = {
+  /**
+   * List available upstream models for inference gateway provider
+   */
+  200: {
+    models: Array<{
+      id: string;
+      name: string;
+    }>;
+  };
+};
+
+export type GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponse =
+  GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponses[keyof GetV1InferenceProvidersByInferenceProviderIdAvailableModelsResponses];
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsData = {
+  body: {
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    modelGroupId: string;
+    modelIds: Array<string>;
+  };
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/enable-models";
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsError =
+  PostV1InferenceProvidersByInferenceProviderIdEnableModelsErrors[keyof PostV1InferenceProvidersByInferenceProviderIdEnableModelsErrors];
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses = {
+  /**
+   * Add models to inference gateway provider group
+   */
+  200: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    modelGroupId: string;
+    modelIds: Array<string>;
+    groupModelIds: Array<string>;
+    addedModelIds: Array<string>;
+  };
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponse =
+  PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses[keyof PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses];
+
+export type GetV1InferenceProvidersMemberConnectionsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers/member-connections";
+};
+
+export type GetV1InferenceProvidersMemberConnectionsErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersMemberConnectionsError =
+  GetV1InferenceProvidersMemberConnectionsErrors[keyof GetV1InferenceProvidersMemberConnectionsErrors];
+
+export type GetV1InferenceProvidersMemberConnectionsResponses = {
+  /**
+   * List the caller's member Google connections
+   */
+  200: {
+    connections: Array<{
+      providerId: string;
+      credentialSetId: string;
+      providerName: string;
+      name: string;
+      ready: boolean;
+      hasAccess: boolean;
+      hasCredential: boolean;
+      configurationRequired?: boolean;
+      authorizationRevision: string | null;
+      accountEmail: string | null;
+    }>;
+  };
+};
+
+export type GetV1InferenceProvidersMemberConnectionsResponse =
+  GetV1InferenceProvidersMemberConnectionsResponses[keyof GetV1InferenceProvidersMemberConnectionsResponses];
 
 export type GetV1InferenceProvidersData = {
   body?: never;
@@ -12376,6 +15077,10 @@ export type PostV1InferenceProvidersData = {
     allMembers?: boolean;
     memberIds?: Array<string>;
     teamIds?: Array<string>;
+    /**
+     * Amazon Bedrock only: copy the organization AWS keys of another Amazon Bedrock provider in this organization, server-side. Mutually exclusive with credential and apiKeys.
+     */
+    reuseCredentialFrom?: string;
   };
   path?: never;
   query?: never;
@@ -12751,6 +15456,25 @@ export type GetV1InferenceProvidersByInferenceProviderIdConnectResponses = {
         credentialSetId: string;
         name: string;
         authUrl: string;
+        models?: Array<{
+          id: string;
+          name: string;
+          config: {
+            id: string;
+            [key: string]: unknown;
+          };
+          upstreamModelId: string;
+          /**
+           * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+           */
+          modelGroupId: string;
+          modelGroupName: string;
+          /**
+           * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+           */
+          credentialSetId: string;
+          credentialSetName: string;
+        }>;
       }>;
       migration?: {
         /**
@@ -14024,6 +16748,124 @@ export type GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses = {
 
 export type GetV1InferenceProvidersByInferenceProviderIdOauthStartResponse =
   GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses[keyof GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses];
+
+export type GetV1InferenceProvidersOauthBrowserStatusData = {
+  body?: never;
+  path?: never;
+  query: {
+    attempt: string;
+  };
+  url: "/v1/inference-providers/oauth/browser-status";
+};
+
+export type GetV1InferenceProvidersOauthBrowserStatusErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Provider access or OAuth configuration changed.
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersOauthBrowserStatusError =
+  GetV1InferenceProvidersOauthBrowserStatusErrors[keyof GetV1InferenceProvidersOauthBrowserStatusErrors];
+
+export type GetV1InferenceProvidersOauthBrowserStatusResponses = {
+  /**
+   * Check browser readiness for member Google sign-in
+   */
+  200: {
+    status: "sign_in_required" | "account_mismatch" | "ready";
+  };
+};
+
+export type GetV1InferenceProvidersOauthBrowserStatusResponse =
+  GetV1InferenceProvidersOauthBrowserStatusResponses[keyof GetV1InferenceProvidersOauthBrowserStatusResponses];
+
+export type GetV1InferenceProvidersOauthBrowserStartData = {
+  body?: never;
+  path?: never;
+  query: {
+    attempt: string;
+  };
+  url: "/v1/inference-providers/oauth/browser-start";
+};
+
+export type GetV1InferenceProvidersOauthBrowserStartErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type GetV1InferenceProvidersOauthBrowserStartError =
+  GetV1InferenceProvidersOauthBrowserStartErrors[keyof GetV1InferenceProvidersOauthBrowserStartErrors];
+
+export type GetV1InferenceProvidersOauthBrowserStartResponses = {
+  /**
+   * Continue member Google sign-in in a signed-in browser
+   */
+  200: {
+    authUrl: string;
+  };
+};
+
+export type GetV1InferenceProvidersOauthBrowserStartResponse =
+  GetV1InferenceProvidersOauthBrowserStartResponses[keyof GetV1InferenceProvidersOauthBrowserStartResponses];
 
 export type GetV1InferenceProvidersOauthCallbackData = {
   body?: never;
@@ -17646,10 +20488,6 @@ export type PostV1McpConnectionsDiscoverErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can discover MCP requirements.
-   */
-  403: ForbiddenError;
-  /**
    * Requirements discovery failed.
    */
   502: ExternalMcpRequirementsDiscoveryFailedError;
@@ -17860,7 +20698,7 @@ export type PostV1McpConnectionsErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can add MCP connections.
+   * The caller cannot add this kind of connection.
    */
   403: ForbiddenError;
   /**
@@ -18382,7 +21220,7 @@ export type PutV1McpConnectionsByConnectionIdAccessErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can change connection access.
+   * Only workspace owners, admins, or the member who added the connection can change its access, and only admins can grant org-wide access.
    */
   403: ForbiddenError;
   /**
@@ -18918,6 +21756,46 @@ export type PostV1ConfigObjectsByConfigObjectIdVersionsResponses = {
 export type PostV1ConfigObjectsByConfigObjectIdVersionsResponse =
   PostV1ConfigObjectsByConfigObjectIdVersionsResponses[keyof PostV1ConfigObjectsByConfigObjectIdVersionsResponses];
 
+export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'cob_' prefix and a 26-character base32 suffix.
+     */
+    configObjectId: string;
+  };
+  query?: never;
+  url: "/v1/config-objects/{configObjectId}/versions/latest";
+};
+
+export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors = {
+  /**
+   * The latest-version path parameters were invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in to view config object versions.
+   */
+  401: UnauthorizedError;
+  /**
+   * The config object version could not be found.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestError =
+  GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors[keyof GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors];
+
+export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses = {
+  /**
+   * Latest config object version returned successfully.
+   */
+  200: PluginArchConfigObjectVersionDetailResponse;
+};
+
+export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponse =
+  GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses[keyof GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses];
+
 export type GetV1ConfigObjectsByConfigObjectIdVersionsByVersionIdData = {
   body?: never;
   path: {
@@ -18961,46 +21839,6 @@ export type GetV1ConfigObjectsByConfigObjectIdVersionsByVersionIdResponses = {
 
 export type GetV1ConfigObjectsByConfigObjectIdVersionsByVersionIdResponse =
   GetV1ConfigObjectsByConfigObjectIdVersionsByVersionIdResponses[keyof GetV1ConfigObjectsByConfigObjectIdVersionsByVersionIdResponses];
-
-export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestData = {
-  body?: never;
-  path: {
-    /**
-     * Den TypeID with 'cob_' prefix and a 26-character base32 suffix.
-     */
-    configObjectId: string;
-  };
-  query?: never;
-  url: "/v1/config-objects/{configObjectId}/versions/latest";
-};
-
-export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors = {
-  /**
-   * The latest-version path parameters were invalid.
-   */
-  400: InvalidRequestError;
-  /**
-   * The caller must be signed in to view config object versions.
-   */
-  401: UnauthorizedError;
-  /**
-   * The config object version could not be found.
-   */
-  404: NotFoundError;
-};
-
-export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestError =
-  GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors[keyof GetV1ConfigObjectsByConfigObjectIdVersionsLatestErrors];
-
-export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses = {
-  /**
-   * Latest config object version returned successfully.
-   */
-  200: PluginArchConfigObjectVersionDetailResponse;
-};
-
-export type GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponse =
-  GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses[keyof GetV1ConfigObjectsByConfigObjectIdVersionsLatestResponses];
 
 export type PostV1ConfigObjectsByConfigObjectIdArchiveData = {
   body?: never;
@@ -19423,10 +22261,41 @@ export type GetV1PluginsData = {
   body?: never;
   path?: never;
   query?: {
+    /**
+     * Opaque cursor returned as nextCursor by the previous page. Omit for the first page.
+     */
     cursor?: string;
     limit?: number;
     status?: "active" | "inactive" | "deleted" | "archived";
     q?: string;
+    /**
+     * Case-insensitive substring of the plugin name.
+     */
+    name?: string;
+    /**
+     * Plugins effectively accessible to this team, including organization and collection access.
+     */
+    teamId?: string;
+    /**
+     * Plugins effectively accessible to this member, including team, organization and collection access.
+     */
+    memberId?: string;
+    /**
+     * When true, each plugin the caller manages includes its active access grants.
+     */
+    includeAccess?: "true" | "false";
+    /**
+     * When true, returns the total matching plugins before the cursor.
+     */
+    includeTotal?: "true" | "false";
+    /**
+     * Plugins created by this organization member.
+     */
+    ownerId?: string;
+    /**
+     * Include team and owner counts across all matching pages. Each facet ignores its own current selection.
+     */
+    includeFacets?: "true" | "false";
   };
   url: "/v1/plugins";
 };
@@ -19448,7 +22317,22 @@ export type GetV1PluginsResponses = {
   /**
    * Plugins returned successfully.
    */
-  200: PluginArchPluginListResponse;
+  200: {
+    items: Array<PluginArchPluginListItem>;
+    nextCursor: string | null;
+    total?: number;
+    teamCounts?: Array<{
+      /**
+       * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      count: number;
+    }>;
+    ownerCounts?: Array<{
+      id: string | null;
+      count: number;
+    }>;
+  };
 };
 
 export type GetV1PluginsResponse = GetV1PluginsResponses[keyof GetV1PluginsResponses];
@@ -23164,6 +26048,124 @@ export type PostV1TeamsResponses = {
 
 export type PostV1TeamsResponse = PostV1TeamsResponses[keyof PostV1TeamsResponses];
 
+export type GetV1OrgWebOriginsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/org/web-origins";
+};
+
+export type GetV1OrgWebOriginsErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and admins can view approved web origins.
+   */
+  403: ForbiddenError;
+  /**
+   * The organization was not found.
+   */
+  404: WebOriginOrganizationNotFoundError;
+};
+
+export type GetV1OrgWebOriginsError = GetV1OrgWebOriginsErrors[keyof GetV1OrgWebOriginsErrors];
+
+export type GetV1OrgWebOriginsResponses = {
+  /**
+   * Approved web origins returned successfully.
+   */
+  200: OrganizationWebOriginList;
+};
+
+export type GetV1OrgWebOriginsResponse = GetV1OrgWebOriginsResponses[keyof GetV1OrgWebOriginsResponses];
+
+export type PostV1OrgWebOriginsData = {
+  body: OrganizationWebOriginApproveBody;
+  path?: never;
+  query?: never;
+  url: "/v1/org/web-origins";
+};
+
+export type PostV1OrgWebOriginsErrors = {
+  /**
+   * The origin was not an exact HTTPS origin.
+   */
+  400: ApproveWebOriginBadRequest;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and super-admins with a recent sign-in can approve web origins.
+   */
+  403: ForbiddenError;
+  /**
+   * The organization was not found.
+   */
+  404: WebOriginOrganizationNotFoundError;
+  /**
+   * The origin is already approved or the organization reached its approved origin limit.
+   */
+  409: ApproveWebOriginConflict;
+};
+
+export type PostV1OrgWebOriginsError = PostV1OrgWebOriginsErrors[keyof PostV1OrgWebOriginsErrors];
+
+export type PostV1OrgWebOriginsResponses = {
+  /**
+   * The web origin was approved.
+   */
+  201: OrganizationWebOrigin;
+};
+
+export type PostV1OrgWebOriginsResponse = PostV1OrgWebOriginsResponses[keyof PostV1OrgWebOriginsResponses];
+
+export type DeleteV1OrgWebOriginsByWebOriginIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'owo_' prefix and a 26-character base32 suffix.
+     */
+    webOriginId: string;
+  };
+  query?: never;
+  url: "/v1/org/web-origins/{webOriginId}";
+};
+
+export type DeleteV1OrgWebOriginsByWebOriginIdErrors = {
+  /**
+   * The web origin id was invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and super-admins with a recent sign-in can remove approved web origins.
+   */
+  403: ForbiddenError;
+  /**
+   * The approved web origin or organization was not found.
+   */
+  404: RemoveWebOriginNotFound;
+};
+
+export type DeleteV1OrgWebOriginsByWebOriginIdError =
+  DeleteV1OrgWebOriginsByWebOriginIdErrors[keyof DeleteV1OrgWebOriginsByWebOriginIdErrors];
+
+export type DeleteV1OrgWebOriginsByWebOriginIdResponses = {
+  /**
+   * The approved web origin was removed.
+   */
+  204: void;
+};
+
+export type DeleteV1OrgWebOriginsByWebOriginIdResponse =
+  DeleteV1OrgWebOriginsByWebOriginIdResponses[keyof DeleteV1OrgWebOriginsByWebOriginIdResponses];
+
 export type GetV1McpConnectionsByConnectionIdSlackAssistantData = {
   body?: never;
   path: {
@@ -23800,6 +26802,10 @@ export type DeleteV1WorkersByIdErrors = {
    */
   401: UnauthorizedError;
   /**
+   * Only the worker owner can delete this cloud worker.
+   */
+  403: ForbiddenError;
+  /**
    * The worker could not be found.
    */
   404: NotFoundError;
@@ -23920,9 +26926,9 @@ export type PostV1WorkersByIdTokensErrors = {
    */
   401: UnauthorizedError;
   /**
-   * OpenWork Web access is required to use cloud worker tokens.
+   * Cloud worker tokens require the worker owner and OpenWork Web access.
    */
-  403: WorkerOpenWorkWebAccessRequiredError;
+  403: ForbiddenError | WorkerOpenWorkWebAccessRequiredError;
   /**
    * The worker could not be found.
    */
@@ -23966,9 +26972,9 @@ export type GetV1WorkersByIdRuntimeErrors = {
    */
   401: UnauthorizedError;
   /**
-   * OpenWork Web access is required to use a cloud worker runtime.
+   * Cloud runtime access requires the worker owner and OpenWork Web access.
    */
-  403: WorkerRuntimeOpenWorkWebAccessRequiredError;
+  403: ForbiddenError | WorkerRuntimeOpenWorkWebAccessRequiredError;
   /**
    * The worker could not be found.
    */
@@ -24010,9 +27016,9 @@ export type PostV1WorkersByIdRuntimeUpgradeErrors = {
    */
   401: UnauthorizedError;
   /**
-   * OpenWork Web access is required to upgrade a cloud worker runtime.
+   * Cloud runtime upgrades require the worker owner and OpenWork Web access.
    */
-  403: WorkerRuntimeOpenWorkWebAccessRequiredError;
+  403: ForbiddenError | WorkerRuntimeOpenWorkWebAccessRequiredError;
   /**
    * The worker could not be found.
    */

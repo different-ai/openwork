@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
+import { TaskRecovery } from "@/components/chat/task-recovery";
 
 const sessionsSchema = z.array(z.object({
   connectionId: z.string(), id: z.string(), phase: z.enum(["approval", "working", "paused"]),
@@ -53,7 +54,8 @@ export function ComputerUseControls() {
 
           </div>
         </>}
-        {action.error ? <p role="alert" className="mt-2 text-sm text-destructive">{action.error.message}</p> : null}
+        {action.error && action.variables?.id === session.id && action.variables?.connectionId === session.connectionId
+          ? <TaskRecovery compact title="Couldn’t update computer control" description="Check the app’s current state before trying again." technicalDetails={action.error.message} /> : null}
       </section>;
     })}
   </aside>;

@@ -30,7 +30,6 @@ export type CodemodeScriptInputValidation =
   | { ok: false; error: "invalid_arguments"; issues: CodemodeScriptInputIssue[] }
   | { ok: false; error: "invalid_schema"; message: string }
 
-const validatorProvider = new AjvJsonSchemaValidator()
 const VALIDATION_MESSAGE_LIMIT = 1_000
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -44,6 +43,21 @@ function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): b
 
 function isJsonSchemaObject(value: unknown): value is JsonSchemaObject {
   return isRecord(value)
+}
+
+function hasAsyncSchema(schema: unknown): boolean {
+  if (!isRecord(schema)) return false
+  if (Object.hasOwn(schema, "$async")) return true
+  for (const key of ["$defs", "definitions", "properties", "patternProperties", "dependentSchemas", "dependencies"]) {
+    const children = schema[key]
+    if (isRecord(children) && Object.values(children).some(hasAsyncSchema)) return true
+  }
+  for (const key of ["allOf", "anyOf", "oneOf", "prefixItems", "items"]) {
+    const children = schema[key]
+    if (Array.isArray(children) ? children.some(hasAsyncSchema) : hasAsyncSchema(children)) return true
+  }
+  return ["additionalProperties", "additionalItems", "contains", "not", "if", "then", "else",
+    "propertyNames", "unevaluatedProperties", "unevaluatedItems", "contentSchema"].some((key) => hasAsyncSchema(schema[key]))
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -68,6 +82,9 @@ export function parseCodemodeScriptPayload(normalizedPayloadJson: unknown):
   }
   if (normalizedPayloadJson.outputSchema !== undefined && !isJsonSchemaObject(normalizedPayloadJson.outputSchema)) {
     return { ok: false, message: "The Workflow outputSchema must be a JSON Schema object." }
+  }
+  if (hasAsyncSchema(normalizedPayloadJson.inputSchema) || hasAsyncSchema(normalizedPayloadJson.outputSchema)) {
+    return { ok: false, message: "Asynchronous Workflow schemas are not supported." }
   }
   if (!Array.isArray(normalizedPayloadJson.requiredCapabilities)) {
     return { ok: false, message: "The Workflow requiredCapabilities must be an array." }
@@ -127,7 +144,10 @@ export function validateCodemodeScriptOutput(schema: JsonSchemaObject, value: un
 
 export function validateCodemodeScriptInput(schema: JsonSchemaObject, value: unknown): CodemodeScriptInputValidation {
   try {
-    const result = validatorProvider.getValidator<unknown>(schema)(value)
+    if (hasAsyncSchema(schema)) {
+      return { ok: false, error: "invalid_schema", message: "Asynchronous Workflow schemas are not supported." }
+    }
+    const result = new AjvJsonSchemaValidator().getValidator<unknown>(schema)(value)
     if (result.valid) return { ok: true }
     return {
       ok: false,

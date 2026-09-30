@@ -1,8 +1,15 @@
 import { eq, inArray } from "@openwork-ee/den-db/drizzle"
+import { deleteGatewayUsageForOrganization } from "@openwork-ee/den-db/gateway-usage-limits"
 import {
   AuthApiKeyTable,
   AuthSessionTable,
   AuditEventTable,
+  AuditEventResourceTable,
+  AuditOperationTable,
+  AuditOperationStepTable,
+  AuditPolicyTable,
+  AuditStateTable,
+  AuditUsageFactTable,
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
   ConfigObjectVersionTable,
@@ -55,6 +62,7 @@ import {
   OrganizationDiagnosticCredentialTable,
   OrganizationRoleTable,
   OrganizationTable,
+  OrganizationWebOriginTable,
   OrgSubscriptionTable,
   PluginAccessGrantTable,
   PluginConfigObjectTable,
@@ -89,6 +97,7 @@ import { completeLinearIssue, createLinearIssue, type LinearIssue } from "../../
 import { orgRoleRoute } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
+import { invalidateWebOriginApprovalCache } from "../../organization-web-origins.js"
 import { cancelOrganizationSubscriptions } from "../../stripe-billing.js"
 import { ensureOwner, orgAccessFailureStatus, type OrgRouteVariables } from "./shared.js"
 
@@ -370,6 +379,9 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
 
       let affectedSessions: Array<{ id: typeof AuthSessionTable.$inferSelect.id; token: typeof AuthSessionTable.$inferSelect.token }> = []
       await db.transaction(async (tx) => {
+        await tx.select({ id: OrganizationTable.id }).from(OrganizationTable)
+          .where(eq(OrganizationTable.id, organizationId)).for("update")
+        await deleteGatewayUsageForOrganization(tx, organizationId)
         await deleteModelsAnalyticsForOrganization(tx, organizationId)
         const memberRows = await tx
           .select({ id: MemberTable.id, userId: MemberTable.userId })
@@ -502,7 +514,17 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(SsoConnectionTable).where(eq(SsoConnectionTable.organizationId, organizationId))
         await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.organizationId, organizationId))
 
+        // Explicit owner-authorized organization erasure, not resource cleanup.
+        // No settlement is active for these pilot facts. Billing evidence needs
+        // a separate retention policy before commercial settlement is enabled.
+        await tx.select().from(AuditStateTable).where(eq(AuditStateTable.organization_id, organizationId)).for("update")
+        await tx.delete(AuditEventResourceTable).where(eq(AuditEventResourceTable.organization_id, organizationId))
         await tx.delete(AuditEventTable).where(eq(AuditEventTable.org_id, organizationId))
+        await tx.delete(AuditOperationStepTable).where(eq(AuditOperationStepTable.organization_id, organizationId))
+        await tx.delete(AuditOperationTable).where(eq(AuditOperationTable.organization_id, organizationId))
+        await tx.delete(AuditUsageFactTable).where(eq(AuditUsageFactTable.organization_id, organizationId))
+        await tx.delete(AuditPolicyTable).where(eq(AuditPolicyTable.organization_id, organizationId))
+        await tx.delete(AuditStateTable).where(eq(AuditStateTable.organization_id, organizationId))
         await tx.delete(WorkerTable).where(eq(WorkerTable.org_id, organizationId))
         await tx.delete(TelemetryEventTable).where(eq(TelemetryEventTable.org_id, organizationId))
         await tx.delete(TelemetrySessionDimensionTable).where(eq(TelemetrySessionDimensionTable.org_id, organizationId))
@@ -522,6 +544,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(DesktopPolicyTable).where(eq(DesktopPolicyTable.organizationId, organizationId))
 
         await tx.delete(OrganizationDiagnosticCredentialTable).where(eq(OrganizationDiagnosticCredentialTable.organizationId, organizationId))
+        await tx.delete(OrganizationWebOriginTable).where(eq(OrganizationWebOriginTable.organizationId, organizationId))
 
         await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.organizationId, organizationId))
         await tx.delete(ConnectedAccountTable).where(eq(ConnectedAccountTable.organizationId, organizationId))
@@ -557,6 +580,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
 
       // Org deletion removes every member row; clear aggregate and per-user membership cache keys.
       await cache.org.deleteMembers(organizationId)
+      invalidateWebOriginApprovalCache()
       await Promise.all(affectedSessions.flatMap((session) => [
         cache.auth.revokeSession(session.token),
         cache.auth.revokeSessionId(session.id),

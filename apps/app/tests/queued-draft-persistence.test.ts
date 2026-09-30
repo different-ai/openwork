@@ -6,6 +6,7 @@ import {
   getComposerQueuedDrafts,
   useComposerStateStore,
 } from "../src/react-app/domains/session/surface/composer-state-store";
+import { claimQueuedSend, dispatchQueuedDrain, getQueuedDrainState, resetQueuedDrainForTests } from "../src/react-app/domains/session/surface/queued-drain-machine";
 import { startQueuedDraftPersistence } from "../src/react-app/domains/session/sync/queued-draft-persistence";
 
 function draft(text: string): ComposerDraft {
@@ -52,6 +53,39 @@ describe("queued draft persistence", () => {
     store.clearQueuedDrafts("session-a");
     expect(writes.at(-1)).toEqual({ scopeKey: "local|ws|session-a", queued: [] });
     expect(writes.filter((write) => write.scopeKey === "local|ws|session-b")).toHaveLength(1);
+  });
+
+  test.each(["removed queued message", "composer message"])("promotes a queued follow-up after a failed %s without replaying it", (source) => {
+    resetQueuedDrainForTests();
+    const sessionId = `promotion-${source}`;
+    claimComposerSessionDraftScope(sessionId, `local|ws|${sessionId}`);
+    const store = useComposerStateStore.getState();
+    store.appendQueuedDraft(sessionId, draft("Failed queued A"));
+    store.appendQueuedDraft(sessionId, draft("Promote queued B"));
+    const [first, selected] = getComposerQueuedDrafts(useComposerStateStore.getState(), sessionId);
+    if (!first || !selected) throw new Error("Expected queued messages");
+    const failedId = source === "composer message" ? "msg_failed_composer" : first.id;
+    try {
+      expect(claimQueuedSend(sessionId, failedId, true)).toBe(true);
+      dispatchQueuedDrain(sessionId, { type: "send_error", itemId: failedId });
+      if (source === "removed queued message") store.removeQueuedDraft(sessionId, first.id);
+      expect(getQueuedDrainState(sessionId).phase).toMatchObject({ kind: "halted", itemId: failedId });
+      const queuedBefore = getComposerQueuedDrafts(useComposerStateStore.getState(), sessionId);
+      const writesBefore = writes.length;
+      expect(claimQueuedSend(sessionId, selected.id)).toBe(false);
+      expect(claimQueuedSend(sessionId, selected.id, true)).toBe(true);
+      expect(claimQueuedSend(sessionId, selected.id, true)).toBe(false);
+      expect(claimQueuedSend(sessionId, failedId, true)).toBe(false);
+      expect(getQueuedDrainState(sessionId).phase).toEqual({ kind: "sending", itemId: selected.id, busySeen: false });
+      expect(getComposerQueuedDrafts(useComposerStateStore.getState(), sessionId)).toBe(queuedBefore);
+      expect(writes).toHaveLength(writesBefore);
+      store.removeQueuedDraft(sessionId, selected.id);
+      dispatchQueuedDrain(sessionId, { type: "send_result", itemId: selected.id, outcome: "sent", at: Date.now() });
+      expect(getComposerQueuedDrafts(useComposerStateStore.getState(), sessionId).map((item) => item.id))
+        .toEqual(source === "removed queued message" ? [] : [first.id]);
+    } finally {
+      resetQueuedDrainForTests();
+    }
   });
 
   test("ignores composer edits and conversations whose draft scope is unknown", () => {

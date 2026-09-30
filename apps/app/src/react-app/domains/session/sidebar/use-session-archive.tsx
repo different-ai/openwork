@@ -37,10 +37,12 @@ type ArchiveTarget = {
 
 export type ArchiveSessionOutcome =
   | { kind: "done" | "cancelled" }
+  | { kind: "verification_failed" | "archive_outcome_unknown"; message: string }
   /** Agent path: the warning goes back through the agent's conversation, never a dialog. */
   | { kind: "target_working" | "self_archive_while_working"; sessionId: string; title: string };
 
 export type ArchiveSessionOptions = {
+  signal?: AbortSignal;
   requester?: { sessionId: string };
   /** Agent path: a working target (or the requester's own tree) is refused instead of asking the person. */
   refuseWorking?: boolean;
@@ -64,6 +66,7 @@ export function useSessionArchive(input: {
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
+  const activeController = useRef<AbortController | null>(null);
   const mounted = useRef(true);
   const pending = useRef<((outcome: ArchiveSessionOutcome) => void) | null>(null);
   const settle = (kind: "done" | "cancelled"): ArchiveSessionOutcome => ({ kind });
@@ -83,8 +86,11 @@ export function useSessionArchive(input: {
     return () => {
       mounted.current = false;
       undoNavigation.current = null;
-      pending.current?.(settle("cancelled"));
-      pending.current = null;
+      if (activeController.current) activeController.current.abort(new Error("Archive cancelled because the view closed."));
+      else {
+        pending.current?.(settle("cancelled"));
+        pending.current = null;
+      }
     };
   }, []);
 
@@ -97,7 +103,7 @@ export function useSessionArchive(input: {
   async function restore(target: ArchiveTarget, announce: boolean, undo?: typeof undoNavigation.current) {
     const { workspace, endpoint, sessionId } = target;
     try {
-      await setSessionArchived(createClient(endpoint.opencodeBaseUrl, workspace.path, { token: endpoint.token, mode: "openwork" }), sessionId, false, workspace.path);
+      await setSessionArchived(createClient(endpoint.opencodeBaseUrl, workspace.path, { token: endpoint.token, mode: "openwork" }, { desktopTransport: "main" }), sessionId, false, workspace.path);
       await Promise.all([...new Set([workspace.id, endpoint.workspaceId])].map(id => applySessionArchived(id, sessionId, false)));
       const now = current.current;
       if (mounted.current) now.input.onArchivedChange(workspace.id, sessionId, false);
@@ -146,12 +152,33 @@ export function useSessionArchive(input: {
     };
     const { workspace, endpoint, sessionId, draftScope } = target;
     const baseUrl = endpoint.opencodeBaseUrl;
-    const client = createClient(baseUrl, workspace.path, { token: endpoint.token, mode: "openwork" });
+    // Finite archive verification must not queue behind retained renderer SSEs.
+    // Keep the same safety checks; only the desktop HTTP transport changes.
+    const client = createClient(baseUrl, workspace.path, { token: endpoint.token, mode: "openwork" }, { desktopTransport: "main" });
     const releases = new Map<string, () => void>();
     const controller = new AbortController();
-    const deadline = Date.now() + 15_000;
-    const timer = setTimeout(() => controller.abort(new Error("Stopping could not be confirmed before the deadline.")), 15_000);
-    const options = { signal: controller.signal };
+    activeController.current = controller;
+    const budgetMs = request?.refuseWorking ? 3_500 : 15_000;
+    const deadline = Date.now() + budgetMs;
+    const timeout = () => controller.abort(new Error("Archive operation timed out before it could be confirmed."));
+    const timer = setTimeout(timeout, budgetMs);
+    const signal = request?.signal ? AbortSignal.any([controller.signal, request.signal]) : controller.signal;
+    const options = { signal };
+    const checkDeadline = () => {
+      if (Date.now() >= deadline) timeout();
+      signal.throwIfAborted();
+    };
+    let rejectAborted: () => void = () => {};
+    const aborted = new Promise<never>((_, reject) => {
+      rejectAborted = () => reject(signal.reason);
+      signal.addEventListener("abort", rejectAborted, { once: true });
+    });
+    void aborted.catch(() => {});
+    const bounded = async <T,>(operation: Promise<T>): Promise<T> => {
+      const result = await Promise.race([operation, aborted]);
+      checkDeadline();
+      return result;
+    };
     const scopes = (id: string) => [...new Set([workspace.id, endpoint.workspaceId])].map(workspaceId =>
       composerAutoSendScopeKey({ draftScope, opencodeBaseUrl: baseUrl, workspaceId, sessionId: id }));
     const localWork = (id: string) => getComposerQueuedDrafts(useComposerStateStore.getState(), id).length > 0
@@ -172,11 +199,13 @@ export function useSessionArchive(input: {
         timeoutMs: Math.max(1, deadline - Date.now()),
         admissionUnknown: phase.kind === "admission_unknown",
         admissionMessageID: phase.kind === "admission_unknown" ? phase.messageID : undefined,
-        onStopped: () => dispatchQueuedDrain(id, { type: "stop_confirmed" }),
+        onStopped: () => { if (!signal.aborted) dispatchQueuedDrain(id, { type: "stop_confirmed" }); },
       });
     };
     let archived = false;
+    let patchDispatched = false;
     try {
+      checkDeadline();
       if (isOpencodeV2BaseUrl(baseUrl)) throw new Error(V2_SESSION_ARCHIVE_UNAVAILABLE);
       const readTree = () => readSessionTree(client, sessionId, workspace.path, options);
       // Native Stop reaches the root immediately, concurrent with discovery.
@@ -189,7 +218,7 @@ export function useSessionArchive(input: {
         rootStop = stop(sessionId);
         void rootStop.catch(() => {});
       }
-      const ids = await readTree();
+      const ids = await bounded(readTree());
       // The requester is running by construction (it is issuing this call), so
       // archiving itself or an ancestor would stop its own turn mid-conclusion.
       if (!confirmed && request?.refuseWorking && target.requestedBy && ids.includes(target.requestedBy.sessionId)) {
@@ -197,20 +226,20 @@ export function useSessionArchive(input: {
         return;
       }
       const readWorking = async () => {
-        const [permissions, questions] = await Promise.all([
+        const [permissions, questions] = await bounded(Promise.all([
           client.permission.list({ directory: workspace.path }, options).then(unwrap),
           client.question.list({ directory: workspace.path }, options).then(unwrap),
-        ]);
-        const observations = await Promise.all(ids.map(async id => {
-          const [messages, permissionV2] = await Promise.all([
+        ]));
+        const observations = await bounded(Promise.all(ids.map(async id => {
+          const [messages, permissionV2] = await bounded(Promise.all([
             client.session.messages({ sessionID: id, directory: workspace.path }, options).then(unwrap),
             client.v2.session.permission.list({ sessionID: id }, options),
-          ]);
-          if (permissionV2.error && permissionV2.response.status !== 404) unwrap(permissionV2);
+          ]));
+          if (permissionV2.error && permissionV2.response?.status !== 404) unwrap(permissionV2);
           return { id, messages, permissionV2: !permissionV2.error && unwrap(permissionV2).data.length > 0 };
-        }));
+        })));
         const observedAt = Date.now();
-        const statuses = unwrap(await client.session.status({ directory: workspace.path }, options));
+        const statuses = unwrap(await bounded(client.session.status({ directory: workspace.path }, options)));
         return observations.filter(({ id, messages, permissionV2 }) => {
           const idle = !statuses[id] || statuses[id].type === "idle";
           const phase = getQueuedDrainState(id).phase;
@@ -232,7 +261,7 @@ export function useSessionArchive(input: {
               useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[id]?.compacting);
         });
       };
-      if (!confirmed && (await readWorking()).length > 0) {
+      if (!confirmed && (await bounded(readWorking())).length > 0) {
         askUser();
         return;
       }
@@ -244,20 +273,21 @@ export function useSessionArchive(input: {
       }
       if (confirmed) {
         for (const id of ids) if (id !== sessionId) cancelLocal(id);
-        const working = await readWorking();
-        await Promise.all([rootStop, ...working.filter(({ id }) => id !== sessionId).map(({ id }) => stop(id))]);
+        const working = await bounded(readWorking());
+        await bounded(Promise.all([rootStop, ...working.filter(({ id }) => id !== sessionId).map(({ id }) => stop(id))]));
       }
-      const remaining = await readWorking();
+      const remaining = await bounded(readWorking());
       if (remaining.length) {
         if (!confirmed) { askUser(); return; }
         throw new Error("A task, approval, or message acceptance is still unresolved. Retry Stop when it can be verified.");
       }
-      if ((await readTree()).some(id => !ids.includes(id))) throw new Error("A new subtask appeared. Try again to include it.");
-      controller.signal.throwIfAborted();
+      if ((await bounded(readTree())).some(id => !ids.includes(id))) throw new Error("A new subtask appeared. Try again to include it.");
+      checkDeadline();
       for (const id of ids) cancelLocal(id);
-      await setSessionArchived(client, sessionId, true, workspace.path);
+      checkDeadline();
+      patchDispatched = true;
+      await bounded(setSessionArchived(client, sessionId, true, workspace.path, options));
       archived = true;
-      await Promise.all([...new Set([workspace.id, endpoint.workspaceId])].map(id => applySessionArchived(id, sessionId, true)));
       if (mounted.current) current.current.input.onArchivedChange(workspace.id, sessionId, true);
       for (const id of ids) clearQueuedSendContext(id);
       if (readLastSessionFor(workspace.id) === sessionId) writeLastSessionFor(workspace.id, null);
@@ -267,19 +297,31 @@ export function useSessionArchive(input: {
       const undo = navigated ? { workspaceId: workspace.id, sessionId, fromKey: route.location.key, landingKey: null } : null;
       if (undo) undoNavigation.current = undo;
       if (navigated) route.input.navigateToWorkspaceSession(workspace.id, null, { replace: true });
+      await bounded(Promise.all([...new Set([workspace.id, endpoint.workspaceId])].map(id => applySessionArchived(id, sessionId, true))));
       closeDialog(settle("done"));
       showUndo(target, true, undo);
-      if (mounted.current) await current.current.input.reloadWorkspaceSessions(workspace.id);
+      if (mounted.current) await bounded(current.current.input.reloadWorkspaceSessions(workspace.id));
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (mounted.current && confirmed && !archived) setError(`The session has not been archived. ${message}`);
-      else {
-        toast.error(archived ? "Could not refresh sessions" : t("session_management.archive_failed"), { description: message });
-        closeDialog(settle(archived ? "done" : "cancelled"));
+      const cause = error instanceof Error ? error.message : String(error);
+      const message = patchDispatched && !archived
+        ? `Archive outcome is unknown. The request may have been applied; check the session before retrying. ${cause}`
+        : cause;
+      const outcome: ArchiveSessionOutcome = archived ? settle("done") : {
+        kind: patchDispatched ? "archive_outcome_unknown" : "verification_failed", message,
+      };
+      if (mounted.current && confirmed && !archived) {
+        setError(patchDispatched ? message : `The session has not been archived. ${message}`);
+        pending.current?.(outcome);
+        pending.current = null;
+      } else {
+        if (mounted.current) toast.error(archived ? "Could not refresh sessions" : t("session_management.archive_failed"), { description: message });
+        closeDialog(outcome);
       }
     } finally {
       clearTimeout(timer);
+      signal.removeEventListener("abort", rejectAborted);
       controller.abort();
+      activeController.current = null;
       for (const release of releases.values()) release();
       busy.current = false;
       if (mounted.current) setStopping(false);
@@ -311,7 +353,7 @@ export function useSessionArchive(input: {
     const target = resolveTarget(sessionId, options);
     if ("error" in target) {
       toast.error(target.error);
-      return settle("cancelled");
+      return { kind: "verification_failed", message: target.error };
     }
     if (!archived) return settle((await restore(target, true)) ? "done" : "cancelled");
     return new Promise<ArchiveSessionOutcome>(resolve => {

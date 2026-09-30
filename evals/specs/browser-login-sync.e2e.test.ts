@@ -1,177 +1,41 @@
 import { expect } from "vitest";
-import { eventually, spec } from "@openwork/testkit";
-import { browserLoginSyncWorld } from "../worlds/browser-panel.ts";
+import { spec } from "@openwork/testkit";
+import { createBuiltinBrowserWorld } from "../worlds/browser-panel.ts";
 
-const test = spec.world(browserLoginSyncWorld, {
-  needs: { optIn: ["OPENWORK_EVAL_BROWSER_LOGIN_SYNC"] },
+const test = spec.world((seed) => createBuiltinBrowserWorld(seed), {
+  resources: {
+    surfaces: ["desktop"],
+    services: [],
+    nativeReason: "The removed login-sync offer lived above Electron's native browser pane and used its preload bridge.",
+  },
 });
 
-test("selected browser logins stay synced until the user pauses or forgets them", async ({ world, user, step }) => {
-  const nowSeconds = Math.trunc(Date.now() / 1000);
-  const sourceCookies = (value: string | null) => [
-    ...(value === null ? [] : [{
-      host: world.loginWitnessHost,
-      name: "sid",
-      value,
-      path: "/",
-      secure: false,
-      httpOnly: true,
-      sameSite: 1,
-      expiresAt: nowSeconds + 3600,
-      lastAccessedAt: nowSeconds - 5,
-    }]),
-    {
-      host: ".bank.example",
-      name: "auth",
-      value: "bank-fixture",
-      path: "/",
-      secure: true,
-      httpOnly: true,
-      sameSite: 1,
-      expiresAt: nowSeconds + 3600,
-      lastAccessedAt: nowSeconds - 60,
-    },
-  ];
-  const store = await world.seedLoginStore("chosen", sourceCookies("login-v1-fixture"));
-  const opening = world.openLoginWitnessTab("sync");
-  await user.click({ role: "button", label: "Allow origin in this tab" });
-  const tab = await opening;
-  expect(await world.readLoginWitness(tab)).toBe("signed-out");
+test("a Desktop user browses without being offered browser login sync", async ({ world, user, step, evidence }) => {
+  const tab = await world.openTab("without-login-sync", world.session.sessionId);
 
-  await step("Personal Desktop offers setup but reads nothing until the user acts", async () => {
-    const available = await eventually(() => world.loginSyncState(), {
-      within: 15_000,
-      until: (value) => value.policyAllowed === true,
-      label: "the trusted personal Desktop gate is available",
-    });
-    expect(available.configured).toBe(false);
-    expect(available.active).toBe(false);
-    await user.see({ testId: "login-sync-card" }, { timeoutMs: 30_000 });
-  });
-
-  await step("The user chooses one profile and sites; finance stays unchecked", async () => {
-    await user.click({ testId: "login-sync-open" });
-    await user.click({ testId: `login-sync-source-${store.id}` });
-    await user.see({ testId: `login-sync-site-${world.loginWitnessHost}` }, { timeoutMs: 30_000 });
-    expect(await world.readCheckedSyncSites()).toEqual([world.loginWitnessHost]);
-    await user.click({ testId: "login-sync-confirm" });
-    await user.see({ testId: "login-sync-done" }, { timeoutMs: 30_000 });
-    await user.click({ text: "Done" });
+  await step("after: the browser opens without a login-sync setup prompt", async () => {
+    await user.see({ role: "button", label: /Select tab: .*viewport-probe=without-login-sync/ }, { timeoutMs: 30_000 });
+    await user.notSee({ role: "button", label: "Set up sync" });
     await user.notSee({ testId: "login-sync-card" });
+    expect((await world.readBrowserState()).activeTabId).toBe(tab.tabId);
+    evidence.recordAssertionEvidence("The browser opens without offering login sync", "The page is active; Set up sync and the login-sync banner are absent", true);
+    await user.screenshot();
   });
 
-  await step("The initial HttpOnly login reaches the shared built-in browser without exposing its value", async () => {
-    await world.reloadTab(tab);
-    await eventually(() => world.readLoginWitness(tab), {
-      within: 15_000,
-      until: (value) => value === "signed-in-v1",
-      label: "the selected login reaches the page",
-    });
-    expect(await world.signedInSites()).toEqual([world.loginWitnessHost]);
-    const state = await world.loginSyncState();
-    expect(state.active).toBe(true);
-    expect(state.selectedSites).toEqual([world.loginWitnessHost]);
-    expect(JSON.stringify(state)).not.toContain("login-v1-fixture");
-    expect(JSON.stringify(state)).not.toContain("bank-fixture");
-
-    const backgroundSession = await world.openSession("Background login work");
-    await world.showSession(world.session.sessionId);
-    const opening = world.openLoginWitnessTabAs("background-sync", backgroundSession.sessionId);
-    await user.click({ text: backgroundSession.title });
-    await user.click({ role: "button", label: "Allow origin in this tab" });
-    const backgroundTab = await opening;
-    expect(backgroundTab.visible).toBe(true);
-    await world.showSession(world.session.sessionId);
-    expect((await world.readBrowserState()).nativeViews.find((view) => view.tabId === backgroundTab.tabId))
-      .toMatchObject({ attached: false, aboveApp: false });
-    await eventually(() => world.readLoginWitness(backgroundTab), {
-      within: 15_000,
-      until: (value) => value === "signed-in-v1",
-      label: "a background conversation uses the shared synced login",
-    });
+  await step("the browser page still accepts clicks and typing", async () => {
+    await user.see({ role: "button", label: /Select tab: .*viewport-probe=without-login-sync/ });
+    await world.loadInputProbe(tab);
+    expect(await world.clickAndType(tab, "browser still works")).toEqual({ clicks: 1, value: "browser still works" });
+    evidence.recordAssertionEvidence("Browsing remains usable", "One page click was received and the field contains browser still works", true);
   });
 
-  await step("A source rotation and deletion propagate without another user action", async () => {
-    await world.updateLoginStore(store.path, sourceCookies("login-v2-fixture"));
-    await eventually(async () => {
-      await world.reloadTab(tab);
-      return world.readLoginWitness(tab);
-    }, {
-      within: 15_000,
-      until: (value) => value === "signed-in-v2",
-      label: "the source rotation reaches the built-in browser",
-    });
-
-    await world.updateLoginStore(store.path, sourceCookies(null));
-    await eventually(async () => {
-      await world.reloadTab(tab);
-      return world.readLoginWitness(tab);
-    }, {
-      within: 15_000,
-      until: (value) => value === "signed-out",
-      label: "source deletion signs the built-in browser out",
-    });
-    expect(await world.signedInSites()).toEqual([]);
-  });
-
-  await step("Pause stops continuing reads", async () => {
+  await step("after: permissions has no browser login-sync controls", async () => {
     await world.openSettingsPanel("permissions");
-    await user.see({ testId: "login-sync-configured" }, { timeoutMs: 30_000 });
-    await user.click({ testId: "login-sync-pause" });
-    await world.updateLoginStore(store.path, sourceCookies("login-v1-fixture"));
-    const pausedAt = Date.now();
-    const state = await eventually(async () => {
-      const candidate = await world.loginSyncState();
-      return { candidate, elapsed: Date.now() - pausedAt };
-    }, {
-      within: 10_000,
-      until: ({ candidate, elapsed }) => candidate.status === "paused" && elapsed >= 6_000,
-      label: "sync remains paused beyond its watcher and poll intervals",
-    }).then((result) => result.candidate);
-    await world.showSession(world.session.sessionId);
-    await world.reloadTab(tab);
-    expect(await world.readLoginWitness(tab)).toBe("signed-out");
-    expect(state.active).toBe(false);
-    expect(state.status).toBe("paused");
-  });
-
-  await step("Disconnect and forget signs out the page and source changes cannot restore its login", async () => {
-    await world.openSettingsPanel("permissions");
-    await user.click({ testId: "login-sync-resume" });
-    await world.showSession(world.session.sessionId);
-    await eventually(async () => {
-      await world.reloadTab(tab);
-      return world.readLoginWitness(tab);
-    }, {
-      within: 15_000,
-      until: (value) => value === "signed-in-v1",
-      label: "resuming restores the selected login before it is forgotten",
-    });
-    await world.openSettingsPanel("permissions");
-    await user.click({ testId: "login-sync-disconnect" });
-    await user.see({ testId: "login-sync-setup" });
-    expect(await world.loginSyncState()).toMatchObject({ configured: false, active: false, managedCookieCount: 0 });
-    await world.showSession(world.session.sessionId);
-    await eventually(async () => {
-      await world.reloadTab(tab);
-      return world.readLoginWitness(tab);
-    }, {
-      within: 15_000,
-      until: (value) => value === "signed-out",
-      label: "forgetting removes the login from the actual browser page",
-    });
-    await world.updateLoginStore(store.path, sourceCookies("login-v2-fixture"));
-    const changedAt = Date.now();
-    await eventually(async () => {
-      expect(await world.loginSyncState()).toMatchObject({ configured: false, active: false, managedCookieCount: 0 });
-      await world.reloadTab(tab);
-      expect(await world.readLoginWitness(tab)).toBe("signed-out");
-      expect(await world.signedInSites()).toEqual([]);
-      return Date.now() - changedAt;
-    }, {
-      within: 10_000,
-      until: (elapsed) => elapsed >= 6_000,
-      label: "the forgotten login stays absent beyond watcher and poll intervals",
-    });
+    await user.see({ text: "Authorized folders" });
+    await user.notSee({ text: "Browser login sync" });
+    await user.notSee({ testId: "login-sync-setup" });
+    await user.notSee({ testId: "login-sync-configured" });
+    evidence.recordAssertionEvidence("Permissions no longer offers login sync", "Authorized folders remain available; login-sync setup and configured controls are absent", true);
+    await user.screenshot();
   });
 });

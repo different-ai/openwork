@@ -1,58 +1,54 @@
-import { StrictMode, useState, type ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 import { createRoot } from "react-dom/client"
 import { useApp, useHostStyles } from "@modelcontextprotocol/ext-apps/react"
-import type { App } from "@modelcontextprotocol/ext-apps"
+import type { App, McpUiHostContext } from "@modelcontextprotocol/ext-apps"
 import type { z } from "zod"
-import { StatusCard } from "./ui"
+import { toolResultHandlers } from "./result"
+import "./theme.css"
 
-/**
- * Standard bootstrap for every first-party OpenWork MCP App: connect to the
- * host over the MCP Apps bridge, validate the tool's structuredContent
- * against the app's zod contract, and hand a typed payload to the view.
- */
-export function mountMcpApp<Schema extends z.ZodType>(config: {
+export type AppViewProps<Payload> = {
+  payload: Payload
+  app: App
+  hostContext: McpUiHostContext | undefined
+}
+
+type AppConfig<Schema extends z.ZodType> = {
   name: string
-  waitingLabel: string
   schema: Schema
-  render: (payload: z.infer<Schema>, app: App | null) => ReactNode
-}) {
-  function AppRoot() {
-    const [payload, setPayload] = useState<z.infer<Schema> | null>(null)
-    const [resultError, setResultError] = useState<string | null>(null)
-    const { app, error } = useApp({
-      appInfo: { name: config.name, version: "1.0.0" },
-      capabilities: {},
-      onAppCreated: (createdApp) => {
-        createdApp.ontoolresult = (result) => {
-          const parsed = config.schema.safeParse(result.structuredContent)
-          if (!parsed.success) {
-            setResultError("The result did not match the expected data contract.")
-            return
-          }
-          setResultError(null)
-          setPayload(parsed.data)
-        }
-        createdApp.ontoolcancelled = ({ reason }) => {
-          setResultError(reason ?? "The tool call was cancelled.")
-        }
-      },
-    })
-    useHostStyles(app, app?.getHostContext())
+  acceptError?: (payload: z.infer<Schema>) => boolean
+  render: (props: AppViewProps<z.infer<Schema>>) => ReactNode
+}
 
-    if (error || resultError) {
-      return <StatusCard>{error?.message ?? resultError}</StatusCard>
-    }
-    if (!payload) {
-      return <StatusCard>{config.waitingLabel}</StatusCard>
-    }
-    return <>{config.render(payload, app)}</>
-  }
+export function McpApp<Schema extends z.ZodType>(config: AppConfig<Schema>) {
+  const [received, setReceived] = useState<{ payload: z.infer<Schema>; revision: number } | null>(null)
+  const [failure, setFailure] = useState<string | null>(null)
+  const [hostContext, setHostContext] = useState<McpUiHostContext>()
+  const { app, error } = useApp({
+    appInfo: { name: config.name, version: "1.0.0" },
+    capabilities: {},
+    onAppCreated: created => {
+      const handlers = toolResultHandlers(config.schema, payload => {
+        setReceived(previous => ({ payload, revision: (previous?.revision ?? 0) + 1 }))
+        setFailure(null)
+      }, message => {
+        setReceived(null)
+        setFailure(message)
+      }, config.acceptError)
+      created.ontoolresult = handlers.ontoolresult
+      created.ontoolcancelled = handlers.ontoolcancelled
+      created.onerror = () => setFailure("The host connection failed. Reopen the App to continue.")
+      created.onhostcontextchanged = change => setHostContext({ ...created.getHostContext(), ...change })
+    },
+  })
+  const context = hostContext ?? app?.getHostContext()
+  useHostStyles(app, context)
+  if (error || failure) return <p role="status">{error ? "The host connection failed. Reopen the App to continue." : failure}</p>
+  if (!received || !app) return <div className="placeholder" role="status" aria-label="Waiting for result" />
+  return <div key={received.revision}>{config.render({ payload: received.payload, app, hostContext: context })}</div>
+}
 
+export function mountMcpApp<Schema extends z.ZodType>(config: AppConfig<Schema>) {
   const root = document.getElementById("root")
-  if (!root) throw new Error(`${config.name} root element is missing.`)
-  createRoot(root).render(
-    <StrictMode>
-      <AppRoot />
-    </StrictMode>,
-  )
+  if (!root) throw new Error("MCP App root is missing")
+  createRoot(root).render(<McpApp {...config} />)
 }

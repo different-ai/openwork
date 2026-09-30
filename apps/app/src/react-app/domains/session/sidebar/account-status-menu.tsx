@@ -29,6 +29,7 @@ import { t } from "@/i18n";
 import { usePlatform } from "../../../kernel/platform";
 import { isDenSessionRestoring, useDenAuth } from "../../cloud/den-auth-provider";
 import { useDesktopRestriction } from "../../cloud/desktop-config-provider";
+import { GatewayUsageMenuItem } from "../../cloud/gateway-usage-panel";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { useShellConfig } from "../../../shell/shell-config";
 import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
@@ -287,8 +288,10 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   const accountLabel = signedIn
     ? user.name?.trim() || user.email
     : restoringSession ? "OpenWork Cloud" : "Sign in";
+  // The sidebar row shows the name only; the email stays inside the account
+  // menu so it is not permanently on screen (matches Claude Code and Codex).
   const accountDetail = signedIn
-    ? (user.name ? user.email : "OpenWork Cloud")
+    ? "OpenWork Cloud"
     : restoringSession ? "Restoring your session" : "Sync with OpenWork Cloud";
 
   const runtimeStatus = props.showConnectionStatus
@@ -353,6 +356,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   };
 
   return (
+    <div className="flex w-full items-center gap-1">
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
@@ -363,8 +367,8 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
             data-runtime-state={runtimeStatus?.variant}
             data-connect-state={connectStatus?.state}
             /* ps-1.5 puts the 24px avatar 12px from the edge, so the name lands on the sidebar label lane. */
-            className="flex w-full items-center gap-2 rounded-lg ps-1.5 pe-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent max-lg:min-h-11"
-            aria-label={signedIn ? `${user.email} — account and status` : "Account and status"}
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-lg ps-1.5 pe-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent max-lg:min-h-11"
+            aria-label={signedIn ? `${accountLabel} — account and status` : "Account and status"}
             title={connectNeedsAttention
               ? openWorkConnectAttentionTitle(connectStatus.description)
               : connectStatus
@@ -393,13 +397,19 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
                   <StatusDot variant="disconnected" />
                 </span>
               ) : null}
-              <MoreHorizontal size={14} className="shrink-0 text-muted-foreground" />
           </button>
         }
       />
+      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Account menu"><MoreHorizontal size={14} /></Button>} />
       <DropdownMenuContent side="top" align="start" className="w-72">
         {signedIn ? (
           <div className="px-2 py-1.5 text-[11px] text-muted-foreground">{user.email}</div>
+        ) : null}
+        {signedIn ? (
+          <>
+            <GatewayUsageMenuItem key={`${denAuth.verifiedIdentity?.organizationId}:${user.id}`} />
+            <DropdownMenuSeparator />
+          </>
         ) : null}
 
         {showStatus ? (
@@ -586,5 +596,6 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+    </div>
   );
 }

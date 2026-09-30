@@ -1,0 +1,22 @@
+diff --git a/dist/index.mjs b/dist/index.mjs
+index f080b6fff0c6ed86b70f616d0f8d5fecab08f274..4c0e220ca8d8f19251ed67bedb21f65db3e54e75 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -459,6 +459,17 @@ async function fetchAndValidateMetadataDocument(ctx, clientIdUrl, cimdOptions) {
+ 			error_description: "Metadata document is not valid JSON"
+ 		});
+ 	}
++	// OpenWork patch: ignore grant types this server does not support instead of
++	// rejecting the whole document. Claude publishes
++	// "urn:ietf:params:oauth:grant-type:jwt-bearer" next to authorization_code and
++	// refresh_token; only the supported subset is stored for the client.
++	if (data !== null && typeof data === "object" && Array.isArray(data.grant_types) && data.grant_types.every((g) => typeof g === "string")) {
++		const supportedGrantTypes = data.grant_types.filter((g) => ALLOWED_GRANT_TYPES.has(g));
++		if (supportedGrantTypes.length > 0) data = {
++			...data,
++			grant_types: supportedGrantTypes
++		};
++	}
+ 	const validation = validateCimdMetadata(clientIdUrl, data, cimdOptions.originBoundFields);
+ 	if (!validation.valid) throw new APIError("BAD_REQUEST", {
+ 		error: "invalid_client",

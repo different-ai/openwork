@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { SUPPORTED_GATEWAY_NPM_PACKAGES as serverSupportedPackages } from "../../den-api/src/llm/inference-provider-config";
 
 import {
   asInferenceProvider,
@@ -7,8 +8,13 @@ import {
   getCredentialStatusLabel,
   getCredentialKindLabel,
   getOauthCallbackPath,
+  getNewInferenceProviderSettings,
   getRequiredSettingKeys,
+  getReusableAwsKeyProviders,
+  isAmazonBedrockNpm,
+  isGatewayOnlyNpm,
   isSupportedGatewayNpm,
+  SUPPORTED_GATEWAY_NPM_PACKAGES,
   readInferenceProvidersFromPayload,
   supportsMemberCredentialMode,
   validateInferenceProviderForm,
@@ -156,17 +162,141 @@ describe("buildMigrateFromLlmProviderBody", () => {
   });
 });
 
+describe("new gateway provider settings", () => {
+  test.each([
+    ["google-vertex", "@ai-sdk/google-vertex"],
+    ["google-vertex-anthropic", "@ai-sdk/google-vertex/anthropic"],
+  ])("%s starts with an actual global region in the create request", (providerId, npm) => {
+    const settings = getNewInferenceProviderSettings(npm);
+    expect(settings).toEqual({ location: "global" });
+    const body = buildInferenceProviderRequestBody({ ...baseInput, providerId, settings: { ...settings, project: "fixture" } });
+    expect(body.settings).toEqual({ project: "fixture", location: "global" });
+  });
+
+  test.each([
+    ["google-vertex", "@ai-sdk/google-vertex"],
+    ["google-vertex-anthropic", "@ai-sdk/google-vertex/anthropic"],
+  ])("%s keeps a user-entered region instead of reapplying the default", (providerId, npm) => {
+    const settings = getNewInferenceProviderSettings(npm);
+    settings.location = "europe-west1";
+    expect(buildInferenceProviderRequestBody({ ...baseInput, providerId, settings }).settings).toEqual({ location: "europe-west1" });
+    settings.location = "";
+    expect(buildInferenceProviderRequestBody({ ...baseInput, providerId, settings }).settings).toEqual({});
+    expect(getNewInferenceProviderSettings(npm)).toEqual({ location: "global" });
+  });
+
+  test.each(["google-vertex", "google-vertex-anthropic"])("%s preserves saved settings on edit without inserting defaults", (providerId) => {
+    const savedSettings: Record<string, string>[] = [{ project: "fixture", location: "us-central1" }, { project: "fixture", location: "global" }, { project: "fixture", location: "" }, { project: "fixture" }];
+    for (const settings of savedSettings) {
+      const provider = asInferenceProvider({ id: "ipr_fixture", providerId, name: "Vertex", credentialMode: "org", status: "active", settings });
+      if (!provider) throw new Error("Expected a saved provider");
+      expect(provider.settings).toEqual(settings);
+      const body = buildInferenceProviderRequestBody({ ...baseInput, providerId, settings: provider.settings, previousSettings: settings });
+      expect(body).not.toHaveProperty("settings");
+      expect(settings).toEqual(provider.settings);
+    }
+  });
+
+  test.each([null, "@ai-sdk/google", "@ai-sdk/azure", "@ai-sdk/anthropic"])("%s does not receive a Vertex region default", (npm) => {
+    expect(getNewInferenceProviderSettings(npm)).toEqual({});
+  });
+});
+
+describe("Amazon Bedrock provider form", () => {
+  const bedrockInput: InferenceProviderFormInput = {
+    ...baseInput,
+    name: "Bedrock",
+    providerId: "amazon-bedrock",
+    settings: { region: " us-east-1 " },
+    envNames: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION", "AWS_BEARER_TOKEN_BEDROCK"],
+    apiKey: "",
+    awsKeys: { accessKeyId: " AKIDEXAMPLE ", secretAccessKey: " wJalrXUtnFEMI ", sessionToken: "" },
+  };
+  const bedrockValidation = {
+    npm: "@ai-sdk/amazon-bedrock", name: "Bedrock", providerId: "amazon-bedrock", modelIds: ["m"],
+    settings: { region: "eu-west-1" }, serviceAccountJson: "", credentialMode: "org" as const,
+    oauthClientId: "", oauthClientSecret: "", hasOauthClientSecret: false,
+    awsKeys: { accessKeyId: "", secretAccessKey: "", sessionToken: "" },
+  };
+
+  test("sends AWS keys as an aws_keys credential with the region as a setting, never as multi-env API keys", () => {
+    const body = buildInferenceProviderRequestBody(bedrockInput);
+    expect(body.settings).toEqual({ region: "us-east-1" });
+    expect(body.apiKeys).toBeUndefined();
+    expect(body.credential).toEqual({ kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "AKIDEXAMPLE", secretAccessKey: "wJalrXUtnFEMI" }) });
+    const withToken = buildInferenceProviderRequestBody({ ...bedrockInput, awsKeys: { accessKeyId: "a", secretAccessKey: "b", sessionToken: " tok " } });
+    expect(withToken.credential).toEqual({ kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b", sessionToken: "tok" }) });
+  });
+
+  test("blank AWS keys keep the stored credential", () => {
+    const body = buildInferenceProviderRequestBody({ ...bedrockInput, awsKeys: { accessKeyId: " ", secretAccessKey: "", sessionToken: "" } });
+    expect(body.credential).toBeUndefined();
+    expect(body.apiKeys).toBeUndefined();
+  });
+
+  test("Amazon Bedrock (OpenAI) uses the same region setting and AWS key fields, and is hidden from Bring your own keys", () => {
+    expect(getRequiredSettingKeys("@ai-sdk/amazon-bedrock/mantle")).toEqual(["region"]);
+    expect(isAmazonBedrockNpm("@ai-sdk/amazon-bedrock/mantle")).toBe(true);
+    expect(isGatewayOnlyNpm("@ai-sdk/amazon-bedrock/mantle")).toBe(true);
+    expect(isGatewayOnlyNpm("@ai-sdk/amazon-bedrock")).toBe(false);
+    const mantle = { ...bedrockValidation, npm: "@ai-sdk/amazon-bedrock/mantle", providerId: "amazon-bedrock-mantle" };
+    expect(validateInferenceProviderForm(mantle)).toBeNull();
+    expect(validateInferenceProviderForm({ ...mantle, settings: { region: "bad" } })).toContain("AWS region code");
+    const body = buildInferenceProviderRequestBody({ ...bedrockInput, providerId: "amazon-bedrock-mantle" });
+    expect(body.credential?.kind).toBe("aws_keys");
+  });
+
+  test("reusing saved keys sends only the source provider id, never key material", () => {
+    const body = buildInferenceProviderRequestBody({ ...bedrockInput, providerId: "amazon-bedrock-mantle", reuseCredentialFrom: "ipr_source" });
+    expect(body.reuseCredentialFrom).toBe("ipr_source");
+    expect(body.credential).toBeUndefined();
+    expect(body.apiKeys).toBeUndefined();
+    expect(buildInferenceProviderRequestBody({ ...bedrockInput, reuseCredentialFrom: null }).reuseCredentialFrom).toBeUndefined();
+  });
+
+  test("only active, ready, organization-key Bedrock providers are offered for key reuse", () => {
+    const provider = (id: string, npm: string, overrides: Partial<{ status: "active" | "disabled"; credentialMode: "org" | "member"; credentialStatus: "ready" | "org_credential_missing" }> = {}) => ({
+      id, name: id, status: "active" as const, credentialMode: "org" as const, credentialStatus: "ready" as const, providerConfig: { npm }, ...overrides,
+    });
+    expect(getReusableAwsKeyProviders([
+      provider("bedrock", "@ai-sdk/amazon-bedrock"),
+      provider("mantle", "@ai-sdk/amazon-bedrock/mantle"),
+      provider("anthropic", "@ai-sdk/anthropic"),
+      provider("disabled", "@ai-sdk/amazon-bedrock", { status: "disabled" }),
+      provider("missing", "@ai-sdk/amazon-bedrock", { credentialStatus: "org_credential_missing" }),
+    ])).toEqual([{ id: "bedrock", name: "bedrock" }, { id: "mantle", name: "mantle" }]);
+  });
+
+  test("validation requires a region code and complete key pairs", () => {
+    expect(validateInferenceProviderForm(bedrockValidation)).toBeNull();
+    expect(validateInferenceProviderForm({ ...bedrockValidation, settings: {} })).toContain("AWS region is required");
+    for (const region of ["us-east", "US-EAST-1", "us-east-1.evil.test", "https://bedrock"]) {
+      expect(validateInferenceProviderForm({ ...bedrockValidation, settings: { region } })).toContain("AWS region code");
+    }
+    expect(validateInferenceProviderForm({ ...bedrockValidation, awsKeys: { accessKeyId: "a", secretAccessKey: "b", sessionToken: "" } })).toBeNull();
+    expect(validateInferenceProviderForm({ ...bedrockValidation, awsKeys: { accessKeyId: "a", secretAccessKey: "", sessionToken: "" } })).toContain("both the AWS access key ID");
+    expect(validateInferenceProviderForm({ ...bedrockValidation, awsKeys: { accessKeyId: "", secretAccessKey: "", sessionToken: "t" } })).toContain("both the AWS access key ID");
+    expect(validateInferenceProviderForm({ ...bedrockValidation, credentialMode: "member" })).toContain("only available for Google Vertex");
+  });
+});
+
 describe("gateway provider support + settings", () => {
   test("matches den-api's supported SDK list", () => {
+    expect(SUPPORTED_GATEWAY_NPM_PACKAGES).toEqual(serverSupportedPackages);
     expect(isSupportedGatewayNpm("@ai-sdk/anthropic")).toBe(true);
+    expect(isSupportedGatewayNpm("@ai-sdk/mistral")).toBe(true);
+    expect(isSupportedGatewayNpm("@ai-sdk/cohere")).toBe(false);
     expect(isSupportedGatewayNpm("@ai-sdk/google-vertex/anthropic")).toBe(true);
-    expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock")).toBe(false);
+    expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock")).toBe(true);
+    expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock/mantle")).toBe(true);
+    expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock/unknown")).toBe(false);
     expect(isSupportedGatewayNpm(null)).toBe(false);
   });
 
   test("requires vertex project+location and azure resourceName", () => {
     expect(getRequiredSettingKeys("@ai-sdk/google-vertex")).toEqual(["project", "location"]);
     expect(getRequiredSettingKeys("@ai-sdk/azure")).toEqual(["resourceName"]);
+    expect(getRequiredSettingKeys("@ai-sdk/amazon-bedrock")).toEqual(["region"]);
     expect(getRequiredSettingKeys("@ai-sdk/openai")).toEqual([]);
   });
 
@@ -184,8 +314,10 @@ describe("gateway provider support + settings", () => {
       hasOauthClientSecret: false,
     };
     expect(validateInferenceProviderForm(valid)).toBeNull();
+    expect(validateInferenceProviderForm({ ...valid, npm: "@ai-sdk/mistral", providerId: "mistral", settings: {} })).toBeNull();
+    expect(validateInferenceProviderForm({ ...valid, npm: "@ai-sdk/mistral", providerId: "mistral", credentialMode: "member" })).toContain("only available for Google Vertex");
     expect(validateInferenceProviderForm({ ...valid, settings: { project: "p" } })).toContain("Region is required");
-    expect(validateInferenceProviderForm({ ...valid, npm: "@ai-sdk/amazon-bedrock" })).toContain("cannot be routed");
+    expect(validateInferenceProviderForm({ ...valid, npm: "@ai-sdk/amazon-bedrock/unknown" })).toContain("cannot be routed");
     expect(validateInferenceProviderForm({ ...valid, serviceAccountJson: "{" })).toContain("could not be parsed");
     expect(validateInferenceProviderForm({ ...valid, serviceAccountJson: '{"type":"user"}' })).toContain("service_account");
   });

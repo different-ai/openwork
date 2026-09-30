@@ -12,6 +12,8 @@ Do not duplicate the list of policy IDs in app docs or feature code unless a fea
 
 `allowedDesktopVersions` is part of the desktop config response but is not a boolean policy item in `desktopPolicyDefinitions`.
 
+`execution.browserOrigins` is the canonical approved-site list. `desktopExecutionPolicySchema` validates exact HTTP(S) origins, and `resolveDesktopExecutionPolicy()` intersects matching lists; omission adds no restriction and `[]` denies every site. Enforcement is server-owned in `apps/server/src/managed-desktop-policy.ts` and `managed-policy-rules.ts`, called by the native request guard in `apps/desktop/electron/browser-panel.mjs`, not a renderer-pushed host list. See [Approved websites](../packages/docs/cloud/share-with-your-team/desktop-policies.mdx#approved-websites) for configuration and scope.
+
 For boolean policy keys, `false` means the feature is restricted or disabled. `true` or `undefined` means the app should not block the feature locally.
 
 ## Organization Prompt Suggestions

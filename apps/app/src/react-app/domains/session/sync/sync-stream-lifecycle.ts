@@ -12,12 +12,22 @@
  * This module is dependency-free on purpose so specs can drive it directly.
  */
 
+import { connectionDiagnosticHistory, type ConnectionDiagnosticReason } from "../../../../app/lib/connection-diagnostic-history";
+
 export type SyncStreamPhase =
   | "connecting"
   | "live"
   | "reconnecting"
   | "auth-blocked"
   | "stale";
+
+const phaseDiagnosticReasons: Record<SyncStreamPhase, ConnectionDiagnosticReason> = {
+  connecting: "engine_connecting",
+  live: "engine_live",
+  reconnecting: "engine_reconnecting",
+  "auth-blocked": "engine_auth_blocked",
+  stale: "engine_stale",
+};
 
 type SyncStreamLifecycleOptions = {
   subscribe: (signal: AbortSignal) => Promise<AsyncIterable<unknown>>;
@@ -59,6 +69,8 @@ export function startSyncStreamLifecycle(options: SyncStreamLifecycleOptions): S
   const watchdogIntervalMs = options.watchdogIntervalMs ?? 10_000;
   const isAuthError = options.isAuthError ?? (() => false);
 
+  const diagnostics = connectionDiagnosticHistory.createSource();
+  diagnostics.transition("engine_connecting");
   const controller = new AbortController();
   let disposed = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -72,12 +84,14 @@ export function startSyncStreamLifecycle(options: SyncStreamLifecycleOptions): S
   const setPhase = (next: SyncStreamPhase) => {
     if (phase === next) return;
     phase = next;
+    diagnostics.transition(phaseDiagnosticReasons[next]);
     options.onPhaseChange?.(next);
   };
 
   const scheduleRetry = (reason: "reconnecting" | "auth-blocked" | "stale") => {
     if (disposed || controller.signal.aborted || retryTimer) return;
     activeConnectionController = null;
+    diagnostics.failed();
     setPhase(reason);
     const delayMs = reason === "auth-blocked" ? authRetryDelayMs : retryDelayMs;
     retryTimer = setTimeout(() => {
@@ -95,12 +109,14 @@ export function startSyncStreamLifecycle(options: SyncStreamLifecycleOptions): S
     const connectionController = new AbortController();
     activeConnectionController = connectionController;
     const connectGeneration = generation;
+    diagnostics.attempt("engine_retry");
     setPhase("connecting");
     try {
       const stream = await options.subscribe(connectionController.signal);
       retryDelayMs = retryInitialDelayMs;
       authRetryDelayMs = authRetryInitialDelayMs;
       lastEventAt = Date.now();
+      diagnostics.recovered("engine_live");
       setPhase("live");
       options.onConnected?.(connectionController.signal);
       for await (const raw of stream) {
@@ -157,6 +173,7 @@ export function startSyncStreamLifecycle(options: SyncStreamLifecycleOptions): S
     notifyGenerationChanged,
     getPhase: () => phase,
     dispose: () => {
+      diagnostics.dispose();
       disposed = true;
       if (retryTimer) clearTimeout(retryTimer);
       clearInterval(watchdogTimer);

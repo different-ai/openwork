@@ -2,24 +2,28 @@
 // family comes from the models.dev `npm` package; the per-request protocol
 // (which usage parser to run) comes from the forwarded path.
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
-import { bedrockRuntimeHost } from "./credentials/aws-sigv4.js"
+import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
+import { bedrockMantleHost, bedrockRuntimeHost, isAwsRegion } from "@openwork-ee/utils/inference-egress"
 import type { CatalogProvider } from "./provider-catalog.js"
 
 export type ProtocolFamily =
   | "anthropic"
   | "openai"
+  | "mistral"
   | "azure"
   | "openai_compatible"
   | "google"
   | "google_vertex"
   | "google_vertex_anthropic"
   | "bedrock"
+  | "bedrock_mantle"
 
 export type AuthHeader = { name: string; value: string }
 
 const familyByNpm: Record<string, ProtocolFamily> = {
   "@ai-sdk/anthropic": "anthropic",
   "@ai-sdk/openai": "openai",
+  "@ai-sdk/mistral": "mistral",
   "@ai-sdk/azure": "azure",
   "@ai-sdk/openai-compatible": "openai_compatible",
   "@openrouter/ai-sdk-provider": "openai_compatible",
@@ -27,6 +31,7 @@ const familyByNpm: Record<string, ProtocolFamily> = {
   "@ai-sdk/google-vertex": "google_vertex",
   "@ai-sdk/google-vertex/anthropic": "google_vertex_anthropic",
   "@ai-sdk/amazon-bedrock": "bedrock",
+  "@ai-sdk/amazon-bedrock/mantle": "bedrock_mantle",
 }
 
 const commonHeaderAllowlist = ["content-type", "accept", "user-agent"]
@@ -34,6 +39,7 @@ const commonHeaderAllowlist = ["content-type", "accept", "user-agent"]
 const familyHeaderAllowlist: Record<ProtocolFamily, string[]> = {
   anthropic: ["anthropic-version", "anthropic-beta"],
   openai: ["openai-beta"],
+  mistral: [],
   azure: ["openai-beta"],
   openai_compatible: ["openai-beta"],
   google: [],
@@ -41,11 +47,13 @@ const familyHeaderAllowlist: Record<ProtocolFamily, string[]> = {
   // `anthropic-version` moves into the body (`anthropic_version`) on Vertex.
   google_vertex_anthropic: ["anthropic-beta"],
   bedrock: [],
+  bedrock_mantle: [],
 }
 
 const defaultBaseUrlByFamily: Partial<Record<ProtocolFamily, string>> = {
   anthropic: "https://api.anthropic.com/v1",
   openai: "https://api.openai.com/v1",
+  mistral: "https://api.mistral.ai/v1",
   google: "https://generativelanguage.googleapis.com/v1beta",
 }
 
@@ -63,6 +71,8 @@ export function classifyRequestProtocol(family: ProtocolFamily, restPath: string
     case "anthropic":
     case "google_vertex_anthropic":
       return /^\/(?:v1\/)?messages$/.test(pathname) ? "anthropic_messages" : "passthrough"
+    case "mistral":
+      return /^\/(?:v1\/)?chat\/completions$/.test(pathname) ? "openai_chat" : "passthrough"
     case "openai":
     case "azure":
     case "openai_compatible":
@@ -74,6 +84,10 @@ export function classifyRequestProtocol(family: ProtocolFamily, restPath: string
       return /^\/(?:v1(?:beta|alpha)?\/)?models\/[^/]+:(?:generateContent|streamGenerateContent)$/.test(pathname) ? "google_generate_content" : "passthrough"
     case "bedrock":
       return parseBedrockModelPath(pathname) ? "bedrock_converse" : "passthrough"
+    case "bedrock_mantle":
+      if (/^\/(?:v1\/)?chat\/completions$/.test(pathname)) return "openai_chat"
+      if (/^\/(?:v1\/)?responses$/.test(pathname)) return "openai_responses"
+      return "passthrough"
   }
 }
 
@@ -104,10 +118,12 @@ export function buildAuthHeader(family: ProtocolFamily, secret: string): AuthHea
     case "google":
       return { name: "x-goog-api-key", value: secret }
     case "openai":
+    case "mistral":
     case "openai_compatible":
     case "google_vertex":
     case "google_vertex_anthropic":
     case "bedrock":
+    case "bedrock_mantle":
       return { name: "authorization", value: `Bearer ${secret}` }
   }
 }
@@ -119,8 +135,9 @@ export function isAllowedRequestHeader(family: ProtocolFamily, name: string) {
   return familyHeaderAllowlist[family].includes(lower)
 }
 
-export function filterQuery(_family: ProtocolFamily, search: string) {
+export function filterQuery(family: ProtocolFamily, search: string) {
   const params = new URLSearchParams(search)
+  if (family === "google_vertex" || family === "google_vertex_anthropic") return params.get("alt") === "sse" ? "?alt=sse" : ""
   for (const name of [...params.keys()]) {
     if (["key", "api_key", "api-key", "apikey", "access_token", "token", "authorization"].includes(name.toLowerCase())) params.delete(name)
   }
@@ -140,8 +157,15 @@ export function defaultBaseUrl(family: ProtocolFamily, settings: Record<string, 
     // wins over settings.region, plan §5.3), so a missing region here must not
     // fail URL resolution: the region-less host is replaced before use.
     const region = settings.region
-    if (region !== undefined && (typeof region !== "string" || !/^[a-z]{2}(?:-[a-z]+)+-\d+$/.test(region))) return null
-    return `https://${typeof region === "string" && region ? bedrockRuntimeHost(region) : "bedrock-runtime.amazonaws.com"}`
+    if (region === undefined || region === "") return "https://bedrock-runtime.amazonaws.com"
+    return isAwsRegion(region) ? `https://${bedrockRuntimeHost(region)}` : null
+  }
+  if (family === "bedrock_mantle") {
+    // As for Bedrock; the model's API path (/v1 or /openai/v1) is applied once
+    // the grant has chosen the upstream model.
+    const region = settings.region
+    if (region === undefined || region === "") return `https://bedrock-mantle.api.aws${BEDROCK_MANTLE_DEFAULT_API_PATH}`
+    return isAwsRegion(region) ? `https://${bedrockMantleHost(region)}${BEDROCK_MANTLE_DEFAULT_API_PATH}` : null
   }
   return defaultBaseUrlByFamily[family] ?? null
 }

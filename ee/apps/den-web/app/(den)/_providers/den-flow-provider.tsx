@@ -2052,6 +2052,8 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    // The org dashboard refreshes workers once its org scope is set; an earlier unscoped fetch would be discarded.
+    if (pathname.startsWith("/dashboard")) return;
     void refreshWorkers();
   }, [user?.id, authToken]);
 

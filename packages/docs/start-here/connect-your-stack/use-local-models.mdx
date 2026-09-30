@@ -1,0 +1,87 @@
+---
+title: "Use local models (Ollama, LM Studio)"
+description: "Run OpenWork with a local model such as Qwen, Llama, or Gemma through Ollama or LM Studio, with no API key and no cloud account."
+---
+
+Yes, OpenWork can run on a model that lives entirely on your computer. For Ollama, open `Settings > Ollama`, pick a model, and click `Add to workspace`. For LM Studio or any other local server with an OpenAI-compatible API, add it as a provider in your workspace's `opencode.jsonc`.
+
+<Note>
+**Free and local.** Local models need no API key, no OpenWork Cloud account, and no internet connection once the model is downloaded. Your prompts and files stay on your machine.
+</Note>
+
+## Use Ollama
+
+OpenWork has a built-in Ollama setup screen. It talks to Ollama at `http://localhost:11434`.
+
+1. Install [Ollama](https://ollama.com/download) and start it.
+2. In OpenWork, open `Settings` and choose `Ollama`.
+3. Wait for the status to show `Ollama running`. If it shows `Ollama isn't installed or running`, start Ollama and click the refresh button.
+4. Under `Available models`, select a model you already downloaded. If you have none, click `Pull a model` (or `Add a custom model`), type a model name from the [Ollama library](https://ollama.com/library), such as `qwen2.5-coder:7b`, and wait for the download to finish.
+5. Leave `Use as default model in workspace` checked if new chats should use this model.
+6. Click `Add to workspace`. OpenWork saves the provider as `Ollama (local)` and reloads the workspace.
+7. Start a chat and confirm the model name in the model picker.
+
+OpenWork checks whether the model can read images. Models with vision support accept image attachments; text-only models do not.
+
+## Use LM Studio or another local server
+
+LM Studio, llama.cpp's server, vLLM, and similar tools expose an OpenAI-compatible API. OpenWork connects to them the same way it connects to any [custom LLM](/start-here/connect-your-stack/add-a-custom-llm).
+
+1. Start the local server in your tool and load a model. In LM Studio, start the local server from its developer view; by default it listens on `http://localhost:1234`.
+2. Copy the model identifier the server reports (for LM Studio, the name shown for the loaded model).
+3. Open your workspace folder and edit `opencode.jsonc` in its root (create it if it does not exist).
+4. Add a provider that points at the server's `/v1` endpoint:
+
+   ```jsonc
+   {
+     "provider": {
+       "lmstudio": {
+         "npm": "@ai-sdk/openai-compatible",
+         "name": "LM Studio (local)",
+         "options": {
+           "baseURL": "http://localhost:1234/v1"
+         },
+         "models": {
+           "qwen2.5-7b-instruct": {
+             "name": "Qwen 2.5 7B Instruct"
+           }
+         }
+       }
+     }
+   }
+   ```
+
+5. Replace `qwen2.5-7b-instruct` with the exact model identifier from step 2.
+6. Run `Reload OpenCode config` from the command palette (or restart OpenWork), then pick the model in the chat model picker.
+
+The same pattern works for any local server: change the provider key, `name`, `baseURL`, and model IDs.
+
+## Pick a model that can use tools
+
+OpenWork is an agent: it reads files, runs tools, and calls MCP servers. Small local models often chat well but struggle to call tools reliably. If a task stalls or the model ignores your files, try a larger model or one that is advertised for tool or function calling. Keep a cloud model connected as a fallback for long, multi-step tasks.
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Is OpenWork free with local models?">
+    Yes. OpenWork is free and open source, and running a local model adds no OpenWork cost. You only need hardware that can run the model.
+  </Accordion>
+  <Accordion title="Does OpenWork send my data anywhere when I use a local model?">
+    Model requests go to the local server you configured, such as `http://localhost:11434`. Connectors and MCP servers you add still talk to their own services.
+  </Accordion>
+  <Accordion title="The Ollama screen says Ollama is not reachable.">
+    Make sure Ollama is running on the same machine and listening on port `11434`. Then click the refresh button on the `Ollama` settings screen.
+  </Accordion>
+  <Accordion title="I can't add a local provider on my work computer.">
+    Your organization may block locally added providers or built-in extensions through [desktop policies](/cloud/share-with-your-team/desktop-policies). Ask your OpenWork admin.
+  </Accordion>
+  <Accordion title="Can my whole team share one self-hosted model?">
+    Yes. Run the model behind an OpenAI-compatible endpoint your team can reach, then add it once in OpenWork Cloud as a [custom LLM provider](/cloud/share-with-your-team/custom-llm-provider).
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+- [Add a custom LLM or AI gateway](/start-here/connect-your-stack/add-a-custom-llm)
+- [Use Gemini and Google Vertex AI](/start-here/connect-your-stack/use-gemini-and-vertex-ai)
+- [Migrate from Claude Cowork](/start-here/migrate-from-claude-cowork)

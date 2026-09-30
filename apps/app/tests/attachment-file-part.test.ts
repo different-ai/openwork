@@ -522,7 +522,7 @@ test("video upload preserves a display card without a model-facing binary part",
     filename: "recording.MOV",
     mediaType: "video/quicktime",
     url: "file:///workspace/.opencode/openwork/inbox/chat-attachments/ses_video/video-recording.MOV",
-    providerMetadata: { opencode: { partId: "note:attachment:0" } },
+    providerMetadata: { opencode: { partId: "note:attachment:0", bytes: 4 } },
   }]);
   expect(attachmentNoteToUIParts({ ...note, ignored: true })).toEqual([]);
   expect(attachmentNoteToUIParts({ ...note, synthetic: false })).toEqual([]);

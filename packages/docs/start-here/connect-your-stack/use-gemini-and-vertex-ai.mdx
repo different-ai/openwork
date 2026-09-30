@@ -1,0 +1,72 @@
+---
+title: "Use Gemini and Google Vertex AI"
+description: "Connect Google Gemini to OpenWork with a Gemini API key, or give your team Gemini and Claude through Google Vertex AI (Agent Platform)."
+---
+
+OpenWork works with Google's Gemini models. For yourself, paste a Gemini API key under `Settings > AI Providers > Connect provider` and choose `Google`. For a team on Google Cloud, an OpenWork admin connects Vertex AI (now called Gemini Enterprise Agent Platform) once through OpenWork AI Gateway, and each member signs in with their own Google account.
+
+## Choose your path
+
+| You want | Use |
+| --- | --- |
+| Gemini for yourself, billed to your own Google AI Studio key | [Option 1: Gemini API key](#option-1-gemini-api-key) |
+| Gemini or Claude for a team, billed to your Google Cloud project | [Option 2: Vertex AI through AI Gateway](#option-2-vertex-ai-for-a-team) |
+| Gemini through your own gateway in front of Vertex AI | [Option 3: Your own gateway](#option-3-your-own-gateway-in-front-of-vertex-ai) |
+
+## Option 1: Gemini API key
+
+1. Create an API key in [Google AI Studio](https://aistudio.google.com/apikey). Copy it once and keep it private.
+2. In OpenWork, open `Settings` and choose `AI Providers`.
+3. Click `Connect provider`.
+4. Type `google` in `Filter providers by name or ID` and select `Google`.
+5. Paste the key into the `API key` field and save.
+6. Open the chat model picker and choose a Gemini model.
+
+No OpenWork Cloud account is needed. Usage is billed by Google to the account that owns the key.
+
+## Option 2: Vertex AI for a team
+
+Use this when your organization already pays for Google Cloud and wants members to use Gemini (and Claude on Google Cloud) without handing out API keys.
+
+1. An OpenWork organization admin follows [Google Agent Platform (Vertex AI)](/ai-gateway/google-agent-platform) to enable the API, grant IAM access, and create a Google OAuth app.
+2. In OpenWork AI Gateway, the admin adds the `google-vertex` provider for Gemini (or `google-vertex-anthropic` for Claude), enters the Google Cloud project ID and region, and picks which models members can use.
+3. Each member signs in with their own Google account from the provider's connection page.
+4. Members pick the assigned models in the OpenWork model picker.
+
+Requests are billed to your Google Cloud project, and Google IAM decides who can run inference. Self-hosted deployments first need to [enable OpenWork Gateway](/self-host/gateway).
+
+## Option 3: Your own gateway in front of Vertex AI
+
+If your team already runs an OpenAI-compatible gateway (for example, LiteLLM) that forwards requests to Vertex AI, connect the gateway instead of Google directly:
+
+1. Get the gateway's base URL, the model names it exposes for Gemini, and a key.
+2. For yourself, add it as a custom provider in the workspace `opencode.jsonc`. For the team, an admin adds it once as a [custom LLM provider](/cloud/share-with-your-team/custom-llm-provider) in OpenWork Cloud.
+3. If the gateway issues a separate key per person, use [per-member LLM credentials](/cloud/share-with-your-team/per-member-llm-credentials).
+
+See [Add a custom LLM or AI gateway](/start-here/connect-your-stack/add-a-custom-llm) for the config format.
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Can I use Gemini in OpenWork for free?">
+    OpenWork itself is free. Gemini usage is billed, or rate-limited, by Google according to the plan on your API key or Google Cloud project.
+  </Accordion>
+  <Accordion title="Is Vertex AI the same as Gemini Enterprise Agent Platform?">
+    Yes. Google renamed Vertex AI to Gemini Enterprise Agent Platform. OpenWork still uses the provider IDs `google-vertex` and `google-vertex-anthropic`.
+  </Accordion>
+  <Accordion title="Do members need gcloud or a service-account key?">
+    Not with Option 2. Each member signs in with Google through OpenWork, and Google IAM controls access.
+  </Accordion>
+  <Accordion title="Can I use Claude through Google Cloud?">
+    Yes. Add `google-vertex-anthropic` in Option 2 after enabling the Claude model in Model Garden.
+  </Accordion>
+  <Accordion title="Does connecting Gemini also connect Gmail or Drive?">
+    No. Model access and Google Workspace data are separate. To let the agent read Gmail, Calendar, or Drive, follow [Connect your services](/start-here/connect-your-stack/connect-services).
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+- [Add a custom LLM or AI gateway](/start-here/connect-your-stack/add-a-custom-llm)
+- [Use local models (Ollama, LM Studio)](/start-here/connect-your-stack/use-local-models)
+- [Migrate from Claude Cowork](/start-here/migrate-from-claude-cowork)

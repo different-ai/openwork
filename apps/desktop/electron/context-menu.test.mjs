@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
-import { contextMenuTemplate, createNativeContextMenus, editingMenuTemplate } from "./context-menu.mjs";
+import { contentMenuTemplate, contextMenuTemplate, createNativeContextMenus, editingMenuTemplate } from "./context-menu.mjs";
 
 /** @typedef {import("@openwork/types/desktop-ipc").NativeContextMenuItem} NativeContextMenuItem */
 
@@ -9,6 +9,22 @@ import { contextMenuTemplate, createNativeContextMenus, editingMenuTemplate } fr
 const item = (id, overrides = {}) => ({ type: "item", id, label: id, ...overrides });
 /** @param {NativeContextMenuItem[]} [items] */
 const request = (items = [item("rename")]) => ({ requestId: "request", items, point: { x: 10.5, y: 20 } });
+
+test("image menus copy decoded pixels and addresses only after selection", () => {
+  const calls = [];
+  const contents = { copyImageAt: (x, y) => calls.push([x, y]) };
+  const clipboard = { writeText: (text) => calls.push(text) };
+  const params = { mediaType: "image", hasImageContents: true, x: 12, y: 34, srcURL: "blob:local-image", linkURL: "https://example.com/image" };
+  const items = contentMenuTemplate(contents, params, clipboard);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(items.map((item) => "label" in item ? item.label : undefined), ["Copy Image", "Copy Image Address", "Copy Link Address"]);
+  for (const item of items) {
+    assert.ok("click" in item && typeof item.click === "function");
+    item.click();
+  }
+  assert.deepEqual(calls, [[12, 34], params.srcURL, params.linkURL]);
+  assert.equal(contentMenuTemplate(contents, { ...params, hasImageContents: false }, clipboard).some((item) => "label" in item && item.label === "Copy Image"), false);
+});
 
 function fixture() {
   const menus = [];
@@ -21,7 +37,8 @@ function fixture() {
     menus.push(menu);
     return menu;
   } };
-  return { menus, contents, window, controller: createNativeContextMenus({ Menu, getWindow: () => window }) };
+  const clipboard = { writeText() { assert.fail("Unexpected clipboard write"); } };
+  return { menus, contents, window, controller: createNativeContextMenus({ Menu, clipboard, getWindow: () => window }) };
 }
 
 test("native templates whitelist fields and cannot execute disabled descendants", () => {

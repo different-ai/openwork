@@ -513,6 +513,9 @@ async function normalizeLlmProviderInput(
     if (!provider) {
       throw createFailure(404, "provider_not_found", "The selected provider was not found in models.dev.")
     }
+    if (provider.npm === "@ai-sdk/amazon-bedrock/mantle") {
+      throw createFailure(400, "gateway_only_provider", `${provider.name} is available through AI Gateway, not Bring your own keys.`)
+    }
 
     const requestedModelIds = [...new Set(input.modelIds ?? [])]
     const modelsById = new Map(provider.models.map((model) => [model.id, model]))
@@ -1145,6 +1148,18 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       }
       const { externalKey } = c.req.valid("param")
       const input = c.req.valid("json")
+      // A blank scalar credential from a provisioning client is almost always
+      // an unresolved secret, not intent: it would otherwise "succeed" and
+      // leave (or make) the provider unusable. Omit apiKey to keep the stored
+      // value; clear it explicitly with apiKeys. The dashboard's create form
+      // legitimately sends a blank key for keyless providers, so this check
+      // stays on the declarative route only.
+      if (input.apiKey === "") {
+        return c.json({
+          error: "invalid_api_keys",
+          message: "apiKey is blank. Omit apiKey to keep the stored credential, or clear it explicitly with apiKeys.",
+        }, 400)
+      }
       const [existing] = await db.select().from(LlmProviderTable).where(and(
         eq(LlmProviderTable.organizationId, payload.organization.id),
         eq(LlmProviderTable.externalKey, externalKey),

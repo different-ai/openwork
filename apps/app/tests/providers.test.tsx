@@ -6,7 +6,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { initializeDenBootstrapConfig, readDenSettings } from "../src/app/lib/den";
 import { dispatchDenSettingsChanged } from "../src/app/lib/den-session-events";
-import { usePersistedBrowserLoginsStore } from "../src/react-app/domains/browser-logins/browser-logins-store";
 import { DenAuthProvider } from "../src/react-app/domains/cloud/den-auth-provider";
 import { useDesktopConfig } from "../src/react-app/domains/cloud/desktop-config-provider";
 import { useEnterpriseActivationRequired } from "../src/react-app/domains/cloud/enterprise-activation-gate";
@@ -67,8 +66,6 @@ function installElectronBridge() {
       commands.push(command);
       return undefined;
     },
-    // Present so BrowserLoginSyncAccessBridge has a bridge to observe.
-    browserLogins: { disableForManagedContext: async () => undefined },
   });
   return {
     commands,
@@ -182,7 +179,6 @@ describe("EnterpriseAwareAppProviders", () => {
       expect(container.textContent).toContain("tree-contexts-ok activation=required boot=idle");
       expect(gatedCommands(bridge.commands)).toEqual([]);
       expect(startDrainer).toHaveBeenCalledTimes(0);
-      expect(usePersistedBrowserLoginsStore.getState().lastEffectiveAllowed).toBe(null);
       expect(probeMounts).toEqual(["mount"]);
 
       await act(async () => {
@@ -195,7 +191,6 @@ describe("EnterpriseAwareAppProviders", () => {
       expect(gatedCommands(bridge.commands)).toContain("workspaceBootstrap");
       expect(gatedCommands(bridge.commands)).toContain("automationRunnerConfigure");
       expect(startDrainer).toHaveBeenCalledTimes(1);
-      expect(usePersistedBrowserLoginsStore.getState().lastEffectiveAllowed).toBe(true);
       // The providers above the children never remounted across activation.
       expect(probeMounts).toEqual(["mount"]);
     } finally {

@@ -21,6 +21,12 @@ export function matchExternalMcpPresetForUrl(
   return presets.find((candidate) => normalizedRemoteMcpUrl(candidate.url) === normalizedUrl) ?? null
 }
 
+/** Public, pre-registered app identifiers only; never preset client secrets. */
+export function externalMcpPresetOAuthClient(url: string): { clientId: string; tokenEndpointAuthMethod: "none" } | undefined {
+  const clientId = matchExternalMcpPresetForUrl(url)?.defaultOAuthClientId
+  return clientId ? { clientId, tokenEndpointAuthMethod: "none" } : undefined
+}
+
 export function externalMcpOAuthConfigurationDefaults(input: {
   url: string
   authorizationServerIssuer?: string | null

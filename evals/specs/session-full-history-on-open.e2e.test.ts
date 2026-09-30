@@ -13,8 +13,8 @@ import {
 const test = spec.world((seed) => longHistory(seed, { holdAncillaryReads: true }), { timeout: 600_000 });
 const warmTest = spec.world(warmCachedLongHistory, { timeout: 600_000 });
 
-/** The page size the transcript read used to request; OpenCode returns the newest n. */
-const oldPageSize = 140;
+const pageSize = 24;
+const scrollStorageKey = "openwork:session-scroll:v1";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -50,6 +50,60 @@ function ancillaryReads(value: unknown) {
   });
 }
 
+function historyReads(value: unknown) {
+  if (!isRecord(value) || !Array.isArray(value.pageReads)) throw new Error("History request witness is missing");
+  const count = (value: unknown) => {
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0) throw new Error("Invalid history request count");
+    return value;
+  };
+  const pageReads = value.pageReads.map((read) => {
+    if (!isRecord(read) || (read.before !== null && typeof read.before !== "string")
+      || (read.limit !== null && typeof read.limit !== "string")
+      || (read.nextCursor !== null && typeof read.nextCursor !== "string")) throw new Error("Invalid history page read");
+    return { before: read.before, limit: read.limit, nextCursor: read.nextCursor };
+  });
+  return { limited: count(value.limited), full: count(value.full), fullSucceeded: count(value.fullSucceeded), single: count(value.single), pageReads };
+}
+
+function savedPagePosition(value: unknown, workspaceId: string, sessionId: string, endpoint: string) {
+  if (!isRecord(value)) return null;
+  const entries = Object.entries(value).filter(([key, state]) => {
+    if (!isRecord(state) || typeof state.owner !== "string" || !state.owner || state.owner.length > 1024) return false;
+    let owner: unknown;
+    try { owner = JSON.parse(state.owner); } catch { return false; }
+    return Array.isArray(owner) && owner.length === 4 && (owner[0] === null || typeof owner[0] === "string")
+      && owner[1] === endpoint && owner[2] === workspaceId && owner[3] === sessionId
+      && key === JSON.stringify(["session-scroll", state.owner, sessionId]);
+  });
+  if (entries.length > 1) throw new Error("Multiple scroll owners matched the native fixture");
+  const state = entries[0]?.[1];
+  if (!isRecord(state) || state.mode !== "manual" || typeof state.scrollTop !== "number" || !Number.isFinite(state.scrollTop)
+    || state.scrollTop < 0 || !isRecord(state.anchor) || typeof state.anchor.messageId !== "string" || !state.anchor.messageId
+    || state.anchor.messageId.length >= 256 || typeof state.anchor.offset !== "number" || !Number.isFinite(state.anchor.offset)
+    || !isRecord(state.geometry) || state.geometry.owner !== state.owner) return null;
+  const geometry = state.geometry;
+  if (typeof geometry.scrollHeight !== "number" || !Number.isFinite(geometry.scrollHeight) || geometry.scrollHeight <= 0 || geometry.scrollHeight > 30_000_000
+    || typeof geometry.viewportWidth !== "number" || !Number.isFinite(geometry.viewportWidth) || geometry.viewportWidth <= 0 || geometry.viewportWidth > 30_000
+    || typeof geometry.before !== "number" || !Number.isFinite(geometry.before) || geometry.before < 0 || geometry.before > geometry.scrollHeight
+    || typeof geometry.after !== "number" || !Number.isFinite(geometry.after) || geometry.after < 0 || geometry.after > geometry.scrollHeight
+    || !Array.isArray(geometry.messageIds) || geometry.messageIds.length > 24
+    || !geometry.messageIds.every((id): id is string => typeof id === "string" && id.length > 0 && id.length < 256)
+    || new Set(geometry.messageIds).size !== geometry.messageIds.length || !geometry.messageIds.includes(state.anchor.messageId)
+    || !isRecord(geometry.page)) return null;
+  const page = geometry.page;
+  const cursor = (value: unknown): value is string | null => value === null || typeof value === "string" && value.length > 0 && value.length <= 4096;
+  if (typeof page.limit !== "number" || !Number.isInteger(page.limit) || page.limit < 1 || page.limit > 100
+    || !cursor(page.before) || !Array.isArray(page.lineage) || page.lineage.length === 0 || page.lineage.length > 64
+    || !page.lineage.every(cursor) || page.lineage[0] !== null || page.lineage.at(-1) !== page.before
+    || new Set(page.lineage).size !== page.lineage.length) return null;
+  return {
+    owner: state.owner, mode: state.mode, scrollTop: state.scrollTop,
+    anchor: { messageId: state.anchor.messageId, offset: state.anchor.offset },
+    geometry: { scrollHeight: geometry.scrollHeight, viewportWidth: geometry.viewportWidth, before: geometry.before,
+      after: geometry.after, messageIds: geometry.messageIds, page: { before: page.before, limit: page.limit, lineage: page.lineage } },
+  };
+}
+
 function ancillaryFault(value: unknown) {
   if (!isRecord(value) || !isRecord(value.status) || !isRecord(value.todo) || !isRecord(value.history)
     || !isRecord(value.opening) || (value.opening.openedAt !== null && typeof value.opening.openedAt !== "number")) {
@@ -58,7 +112,7 @@ function ancillaryFault(value: unknown) {
   return {
     workspaceId: value.workspaceId, sessionId: value.sessionId, documentId: value.documentId,
     released: value.released, expired: value.expired,
-    status: value.status, todo: value.todo, history: value.history, reads: ancillaryReads(value.reads),
+    status: value.status, todo: value.todo, history: historyReads(value.history), reads: ancillaryReads(value.reads),
     opening: {
       openedAt: value.opening.openedAt, trusted: value.opening.trusted,
       first: value.opening.first, latest: value.opening.latest, full: value.opening.full,
@@ -67,7 +121,8 @@ function ancillaryFault(value: unknown) {
 }
 
 function openingPaint(value: unknown, openedAt: number | null, deadlineMs: number) {
-  if (!isRecord(value) || typeof value.at !== "number" || typeof value.elapsedMs !== "number" || openedAt === null) {
+  if (!isRecord(value) || typeof value.at !== "number" || typeof value.elapsedMs !== "number"
+    || typeof value.messageCount !== "number" || typeof value.historyComplete !== "boolean" || openedAt === null) {
     throw new Error(`The trusted opening did not produce a frame witness: ${JSON.stringify(value)}`);
   }
   expect(value.elapsedMs, JSON.stringify(value)).toBeLessThan(deadlineMs);
@@ -91,37 +146,73 @@ function openingPaint(value: unknown, openedAt: number | null, deadlineMs: numbe
     if (!original) throw new Error(`No original post-click ${kind} read was pending at the frame: ${JSON.stringify(value)}`);
     return original;
   });
-  return { ...value, at: value.at, elapsedMs: value.elapsedMs, originals };
+  return { ...value, at: value.at, elapsedMs: value.elapsedMs, messageCount: value.messageCount, historyComplete: value.historyComplete, originals };
 }
 
-test("opening a long conversation shows the latest and full history while ancillary reads remain pending", async ({ user, agent, probe, step, world, evidence }) => {
+test("a long conversation pages on demand, restores its saved page cold and loads full history only for explicit top navigation", async ({ user, agent, probe, step, world, evidence }) => {
   const messagesPath = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}/opencode/session/${encodeURIComponent(world.session.sessionId)}/message`;
   const surface = `[data-session-surface-id="${world.session.sessionId}"]`;
   const sidebarTarget = { testId: `sidebar-session-${world.session.sessionId}` };
-  const latestVisible = async () => {
+  const historyDom = async () => {
     const { elements } = await probe.dom(`${surface} [data-thread-scroll], ${surface} [data-message-id]`);
     const viewport = elements[0];
-    const latest = elements.slice(1).find((element) => element.text.includes(longHistoryLast));
-    return Boolean(viewport && latest && latest.rect.height > 0 && latest.rect.bottom > viewport.rect.top && latest.rect.top < viewport.rect.bottom);
+    if (!viewport) throw new Error("The long conversation has no transcript viewport");
+    return { viewport, rows: elements.slice(1) };
+  };
+  const latestVisible = async () => {
+    const { viewport, rows } = await historyDom();
+    const latest = rows.find((element) => element.text.includes(longHistoryLast));
+    return Boolean(latest && latest.rect.height > 0 && latest.rect.bottom > viewport.rect.top && latest.rect.top < viewport.rect.bottom);
+  };
+  const readingGeometry = async (messageId: string) => {
+    const { elements } = await probe.dom(`${surface} [data-thread-scroll], ${surface} [data-message-id=${JSON.stringify(messageId)}]`);
+    const [viewport, message] = elements;
+    if (elements.length !== 2 || !viewport || !message) return null;
+    return { text: message.text, offset: message.rect.top - viewport.rect.top,
+      visible: message.rect.height > 0 && message.rect.bottom > viewport.rect.top && message.rect.top < viewport.rect.bottom };
   };
   const readFault = () => probe.storage(world.ancillaryFaultKey, ancillaryFault);
+  const savedScroll = async () => {
+    const port = await probe.storage("openwork.server.port");
+    if ((typeof port !== "string" && typeof port !== "number") || !/^\d+$/.test(String(port))) throw new Error("Native server port is missing");
+    const endpoint = `http://127.0.0.1:${port}/workspace/${encodeURIComponent(world.workspace.workspaceId)}/opencode`;
+    return probe.storage(scrollStorageKey, (value) => savedPagePosition(value, world.workspace.workspaceId, world.session.sessionId, endpoint));
+  };
+  const expectReadingWindow = async (maximum: number) => {
+    const window = await probe.eventually(async () => {
+      const dom = await historyDom();
+      const placeholders = await probe.dom(`${surface} [data-thread-placeholder]:not([data-thread-placeholder="history-prefix"]):not([data-thread-placeholder="history-suffix"])`);
+      const visible = dom.rows.filter((row) => row.rect.height > 0 && row.rect.bottom > dom.viewport.rect.top && row.rect.top < dom.viewport.rect.bottom);
+      return { ...dom, visible, pending: placeholders.elements.some((gap) => gap.rect.bottom > dom.viewport.rect.top && gap.rect.top < dom.viewport.rect.bottom) };
+    }, { within: 5_000, label: "the reading window contains consecutive messages without visible virtual gaps",
+      until: ({ rows, visible, pending }) => rows.length <= maximum && visible.length >= 2 && !pending });
+    const indexes = window.visible.map((row) => persisted.findIndex((text) => row.text.includes(text)));
+    expect(indexes[0]).toBeGreaterThanOrEqual(0);
+    expect(indexes).toEqual(Array.from({ length: indexes.length }, (_, index) => indexes[0] + index));
+    return window;
+  };
+  const expectIdlePage = async (count: number, expected = persisted.slice(-Math.min(count, 30))) => {
+    const transcript = await agent.run("session.read_transcript", { count: 30 });
+    expect(renderedCount(transcript)).toBe(count);
+    expect(transcript).toMatchObject({ historyComplete: false, returned: expected.length,
+      messages: expected.map((text, index) => ({ index: count - expected.length + index, role: "user", text: `You\n${text}` })) });
+    await expectReadingWindow(Math.min(count, 40));
+    expect((await probe.dom(`${surface} [data-thread-loading], ${surface} [data-thread-history-status], ${surface} [data-testid="session-error-card"]`)).elements).toHaveLength(0);
+    expect((await readFault()).history).toMatchObject({ full: 0, fullSucceeded: 0, single: 0 });
+  };
 
-  await step("the engine stores more messages than one newest-first page holds", async () => {
+  const persisted = await step("the native engine stores 150 messages and its newest page holds only 24", async () => {
     const stored = await probe.desktopApi(messagesPath);
     expect(stored.status).toBe(200);
     const texts = messageTexts(stored.body);
     expect(texts).toHaveLength(longHistoryCount);
     expect(texts[0]).toBe(longHistoryFirst);
     expect(texts.at(-1)).toBe(longHistoryLast);
-
-    // Witness for the trap: a `limit` page is the NEWEST n messages, so the
-    // first message is outside it. The spec would be vacuous otherwise.
-    const page = await probe.desktopApi(`${messagesPath}?limit=${oldPageSize}`);
+    const page = await probe.desktopApi(`${messagesPath}?limit=${pageSize}`);
     expect(page.status).toBe(200);
     const pageTexts = messageTexts(page.body);
-    expect(pageTexts).toHaveLength(oldPageSize);
+    expect(pageTexts).toEqual(texts.slice(-pageSize));
     expect(pageTexts).not.toContain(longHistoryFirst);
-    expect(pageTexts.at(-1)).toBe(longHistoryLast);
     evidence.recordAssertionEvidence(
       "Stored history is read through the real native desktop",
       JSON.stringify({ kind: world.app.handle.kind, host: world.app.handle.hostKind, pid: world.app.handle.pid,
@@ -129,9 +220,10 @@ test("opening a long conversation shows the latest and full history while ancill
         storedMessages: texts.length, pageMessages: pageTexts.length }),
       true,
     );
+    return texts;
   });
 
-  await step("a cold start lands on the other session with no transcript cached for the long one", async () => {
+  await step("a cold start lands on the unrelated session without reading the long transcript", async () => {
     await user.reload();
     await user.see({ ...sidebarTarget, role: "button", label: new RegExp(`^${longHistoryTitle}`) }, { timeoutMs: 60_000 });
     await user.notSee({ text: longHistoryLast });
@@ -140,12 +232,12 @@ test("opening a long conversation shows the latest and full history while ancill
     const fault = await readFault();
     expect(fault).toMatchObject({
       released: false, expired: false, opening: { openedAt: null, trusted: false, first: null, latest: null, full: null },
-      todo: { attempts: 0 }, history: { limited: 0, full: 0, fullSucceeded: 0 },
+      todo: { attempts: 0 }, history: { limited: 0, full: 0, fullSucceeded: 0, single: 0, pageReads: [] },
     });
     expect(fault.reads.every((read) => read.openedAt === null)).toBe(true);
   });
 
-  await step("clicking the long conversation renders latest and full history before ancillary reads settle", async () => {
+  const initialPage = await step("the first paint shows the latest 24 within two seconds while ancillary reads remain pending", async () => {
     await user.click(sidebarTarget);
     await probe.eventually(readFault, {
       within: 2_000, label: "trusted click reaches the exact sidebar session",
@@ -155,63 +247,199 @@ test("opening a long conversation shows the latest and full history while ancill
       within: 15_000, label: "first transcript frame and latest message after the trusted click",
       until: (fault) => isRecord(fault.opening.first) && isRecord(fault.opening.latest),
     });
-    expect(visible.opening.trusted).toBe(true);
     const first = openingPaint(visible.opening.first, visible.opening.openedAt, 2_000);
     const latest = openingPaint(visible.opening.latest, visible.opening.openedAt, 2_000);
+    for (const frame of [first, latest]) {
+      expect(frame.historyComplete).toBe(false);
+      expect(frame.messageCount).toBeGreaterThan(0);
+      expect(frame.messageCount).toBeLessThanOrEqual(pageSize);
+    }
     const originalIds = first.originals.map((read) => read.id);
     expect(latest.originals.map((read) => read.id)).toEqual(originalIds);
     expect(await latestVisible()).toBe(true);
-    const rendered = await probe.eventually(async () => renderedCount(await agent.run("session.read_transcript", { count: 1 })), {
-      within: 60_000,
-      label: "rendered transcript length",
-      until: (count) => count >= longHistoryCount,
-    });
-    expect(rendered).toBe(longHistoryCount);
-    expect(rendered).not.toBe(oldPageSize);
-    await probe.eventually(async () => {
-      expect(await latestVisible()).toBe(true);
-      return (await probe.dom(`${surface} [data-thread-history-complete="true"]`)).elements.length;
-    }, { within: 30_000, label: "background history mounting preserves the latest viewport", until: (count) => count === 1 });
-    expect((await probe.dom(`${surface} [data-thread-loading]`)).elements).toHaveLength(0);
-    expect((await probe.dom(`${surface} [data-thread-history-status]`)).elements).toHaveLength(0);
-    expect((await probe.dom(`${surface} [data-message-id]`)).elements).toHaveLength(longHistoryCount);
-    const fault = await probe.eventually(readFault, {
-      within: 15_000, label: "full history frame recorded without replacing the original held reads",
-      until: (value) => isRecord(value.opening.full),
-    });
-    expect(fault).toMatchObject({ workspaceId: world.workspace.workspaceId, sessionId: world.session.sessionId, released: false, expired: false });
-    const full = openingPaint(fault.opening.full, fault.opening.openedAt, 5_000);
-    expect(full).toMatchObject({ messageCount: longHistoryCount, historyComplete: true });
-    expect(full.originals.map((read) => read.id)).toEqual(originalIds);
-    for (const original of full.originals) {
-      const current = fault.reads.find((read) => read.id === original.id);
-      expect(current?.startedAt).toBe(original.startedAt);
-      if (current?.settledAt !== null) expect(current?.settledAt).toBeGreaterThan(full.at);
-    }
-    expect(fault.history.full).toBeGreaterThan(0);
-    expect(fault.history.fullSucceeded).toBeGreaterThan(0);
-    expect((await probe.dom(`${surface} [data-testid="session-error-card"]`)).elements).toHaveLength(0);
+    await expectIdlePage(pageSize);
+    const { rows } = await historyDom();
+    rows.forEach((row) => expect(persisted.slice(-pageSize).some((text) => row.text.includes(text))).toBe(true));
+    expect(new Set(rows.map((row) => row.text)).size).toBe(rows.length);
+    expect(rows.some((row) => row.text.includes(longHistoryFirst))).toBe(false);
+    const fault = await readFault();
+    expect(fault).toMatchObject({ workspaceId: world.workspace.workspaceId, sessionId: world.session.sessionId,
+      released: false, expired: false, opening: { full: null } });
+    expect(fault.history.limited).toBeGreaterThan(0);
+    for (const read of fault.history.pageReads) expect(read).toMatchObject({ before: null, limit: String(pageSize) });
+    const page = fault.history.pageReads.find((read) => read.nextCursor !== null);
+    if (!page?.nextCursor) throw new Error("Native newest page did not expose its next cursor");
     evidence.recordAssertionEvidence(
-      "The cold transcript appears before the original post-click ancillary reads settle, not after a timeout and retry",
+      "The bounded cold transcript appears before the original ancillary reads settle, without an automatic full read",
       JSON.stringify({ documentId: fault.documentId, opening: fault.opening, reads: fault.reads, history: fault.history, originalIds }),
+      true,
+    );
+    return page;
+  });
+
+  await step("repeated returns keep a filled newest page visible without fetching earlier history", async () => {
+    for (let visit = 0; visit < 3; visit++) {
+      await user.click({ testId: `sidebar-session-${world.other.sessionId}` });
+      await probe.eventually(() => probe.dom(surface), {
+        within: 5_000, label: "the unrelated chat replaces the long conversation", until: (value) => value.elements.length === 0,
+      });
+      await user.notSee({ text: longHistoryLast });
+      await user.click(sidebarTarget);
+      await probe.eventually(latestVisible, {
+        within: 5_000, label: "the newest message returns without a scroll gesture", until: Boolean,
+      });
+      await expectIdlePage(pageSize);
+      expect((await readFault()).history.pageReads.every((read) => read.before === null)).toBe(true);
+    }
+    await user.screenshot();
+  });
+
+  const olderPage = await step("Home reaches the virtualized page boundary and prepends one cursor page with the first loaded message still visible", async () => {
+    await user.click({ text: longHistoryLast });
+    await user.press("Tab");
+    await user.press("Home");
+    expect((await probe.dom(`${surface} [data-thread-scroll] button:focus`)).elements).toHaveLength(1);
+    const prepended = await probe.eventually(async () => {
+      const dom = await historyDom();
+      const saved = await savedScroll();
+      const geometry = saved ? await readingGeometry(saved.anchor.messageId) : null;
+      return { ...dom, saved, geometry, fault: await readFault() };
+    }, { within: 10_000, label: "older page mounted with the original loaded boundary retained as the reading anchor",
+      until: ({ rows, saved, geometry, fault }) => rows.length > 0 && rows.length < pageSize * 2
+        && fault.history.pageReads.some((read) => read.before === initialPage.nextCursor)
+        && Boolean(saved && saved.scrollTop > 0 && saved.geometry.page.before === null && geometry?.visible
+          && geometry.text.includes(persisted[longHistoryCount - pageSize]) && Math.abs(geometry.offset - saved.anchor.offset) <= 2) });
+    prepended.rows.forEach((row) => expect(persisted.slice(-pageSize * 2).some((text) => row.text.includes(text))).toBe(true));
+    expect(new Set(prepended.rows.map((row) => row.text)).size).toBe(prepended.rows.length);
+    expect(prepended.geometry?.text).toContain(persisted[longHistoryCount - pageSize]);
+    const older = prepended.fault.history.pageReads.filter((read) => read.before !== null);
+    expect(older).toHaveLength(1);
+    expect(older[0]).toMatchObject({ before: initialPage.nextCursor, limit: String(pageSize) });
+    expect(older[0].nextCursor).toBeTruthy();
+    expect(older[0].nextCursor).not.toBe(initialPage.nextCursor);
+    await expectIdlePage(pageSize * 2);
+    return older[0];
+  });
+
+  const readingPosition = await step("ordinary PageUp saves the first visible message inside the older page, not the newest page", async () => {
+    await user.press("PageUp");
+    let previousOffset = Number.NaN;
+    let previousId = "";
+    let stable = 0;
+    const position = await probe.eventually(async () => {
+      const saved = await savedScroll();
+      if (!saved || saved.geometry.page.before !== olderPage.before) return null;
+      const geometry = await readingGeometry(saved.anchor.messageId);
+      const { viewport, rows } = await historyDom();
+      const firstVisible = rows.find((row) => row.rect.height > 0 && row.rect.bottom > viewport.rect.top && row.rect.top < viewport.rect.bottom);
+      if (!geometry?.visible || firstVisible?.text !== geometry.text
+        || !persisted.slice(-pageSize * 2, -pageSize).some((text) => geometry.text.includes(text))
+        || Math.abs(geometry.offset - saved.anchor.offset) > 2) return null;
+      stable = previousId === saved.anchor.messageId && Math.abs(geometry.offset - previousOffset) <= 1 ? stable + 1 : 0;
+      previousId = saved.anchor.messageId;
+      previousOffset = geometry.offset;
+      return { saved, geometry, stable };
+    }, { within: 10_000, intervalMs: 100, label: "persisted older-page identity and visible offset settle", until: (value) => value !== null && value.stable >= 3 });
+    if (!position) throw new Error("No older-page reading position was saved");
+    expect(position.saved.geometry.page).toEqual({ before: initialPage.nextCursor, limit: pageSize, lineage: [null, initialPage.nextCursor] });
+    expect(position.saved.geometry.messageIds.length).toBeGreaterThan(0);
+    expect(position.saved.geometry.messageIds.length).toBeLessThanOrEqual(pageSize);
+    expect(await latestVisible()).toBe(false);
+    await expectIdlePage(pageSize * 2);
+    return position;
+  });
+
+  await step("after navigating away and reloading cold, the first read reuses the saved opaque page and restores its exact message offset", async () => {
+    const previousDocument = (await readFault()).documentId;
+    await user.click({ testId: `sidebar-session-${world.other.sessionId}` });
+    await probe.eventually(() => probe.dom(surface), {
+      within: 5_000, label: "the unrelated conversation replaces the target surface", until: (value) => value.elements.length === 0,
+    });
+    expect(await savedScroll()).toEqual(readingPosition.saved);
+    expect((await readFault()).history).toMatchObject({ full: 0, fullSucceeded: 0, single: 0 });
+    await user.reload();
+    await user.see({ ...sidebarTarget, role: "button", label: new RegExp(`^${longHistoryTitle}`) }, { timeoutMs: 60_000 });
+    expect((await probe.dom(`[data-session-surface-id="${world.other.sessionId}"]`)).elements).toHaveLength(1);
+    expect((await probe.dom(surface)).elements).toHaveLength(0);
+    const cold = await readFault();
+    expect(cold.documentId).not.toBe(previousDocument);
+    expect(cold.history).toEqual({ limited: 0, full: 0, fullSucceeded: 0, single: 0, pageReads: [] });
+    expect(await savedScroll()).toEqual(readingPosition.saved);
+    await user.click(sidebarTarget);
+    let stable = 0;
+    const restored = await probe.eventually(async () => {
+      const geometry = await readingGeometry(readingPosition.saved.anchor.messageId);
+      const dom = await historyDom();
+      const firstVisible = dom.rows.find((row) => row.rect.height > 0 && row.rect.bottom > dom.viewport.rect.top && row.rect.top < dom.viewport.rect.bottom);
+      const matches = geometry?.visible && geometry.text === readingPosition.geometry.text && firstVisible?.text === geometry.text
+        && Math.abs(geometry.offset - readingPosition.geometry.offset) <= 2;
+      stable = matches ? stable + 1 : 0;
+      return { ...dom, geometry, stable, fault: await readFault() };
+    }, { within: 15_000, intervalMs: 100, label: "cold saved-page restoration without revealing or scrolling the anchor",
+      until: (value) => value.stable >= 3 && value.rows.length > 0 && value.rows.length <= pageSize });
+    const savedPage = readingPosition.saved.geometry.page;
+    expect(restored.fault.opening.trusted).toBe(true);
+    expect(restored.fault.history.pageReads.length).toBeGreaterThan(0);
+    expect(restored.fault.history.pageReads[0]).toEqual({ before: savedPage.before, limit: String(savedPage.limit), nextCursor: olderPage.nextCursor });
+    for (const read of restored.fault.history.pageReads) expect(read).toMatchObject({ before: savedPage.before, limit: String(savedPage.limit) });
+    restored.rows.forEach((row) => expect(persisted.slice(-pageSize * 2, -pageSize).some((text) => row.text.includes(text))).toBe(true));
+    expect(new Set(restored.rows.map((row) => row.text)).size).toBe(restored.rows.length);
+    expect(restored.rows.some((row) => row.text.includes(longHistoryFirst) || row.text.includes(longHistoryLast))).toBe(false);
+    await expectIdlePage(pageSize, persisted.slice(-pageSize * 2, -pageSize));
+    expect(await agent.run("session.read_transcript", { count: 1 })).toMatchObject({ includesNewest: false });
+    const saved = await savedScroll();
+    expect(saved?.anchor.messageId).toBe(readingPosition.saved.anchor.messageId);
+    expect(saved?.geometry.page).toEqual(savedPage);
+    evidence.recordAssertionEvidence(
+      "Cold reopening starts with the exact saved page, makes no single-message or uncapped read, and restores the same message and offset",
+      JSON.stringify({ page: savedPage, anchor: readingPosition.saved.anchor, restoredOffset: restored.geometry?.offset, history: restored.fault.history }),
       true,
     );
   });
 
-  await step("the first message is reachable at the top of the transcript", async () => {
-    await agent.run("session.scroll_top");
-    await user.see({ text: longHistoryFirst }, { timeoutMs: 30_000 });
-    expect((await probe.dom(`${surface} [data-thread-history-status]`)).elements).toHaveLength(0);
+  await step("explicit agent top navigation waits for all 150 messages and scrolls to the earliest one", async () => {
+    expect((await readFault()).history.full).toBe(0);
+    expect(await agent.run("session.scroll_top")).toMatchObject({ ok: true, position: "top" });
+    expect((await historyDom()).rows[0]?.text).toContain(longHistoryFirst);
+    await expectReadingWindow(40);
+    const complete = await probe.eventually(async () => {
+      const dom = await historyDom();
+      const markers = await probe.dom(`${surface} [data-thread-history-complete="true"]`);
+      return { ...dom, complete: markers.elements.length === 1, fault: await readFault() };
+    }, { within: 30_000, label: "explicit full-history demand mounts a bounded window at the top",
+      until: ({ rows, complete, viewport, fault }) => complete && rows.length > 0 && rows.length < 40 && fault.history.fullSucceeded > 0
+        && rows[0].rect.top >= viewport.rect.top && rows[0].rect.bottom <= viewport.rect.bottom });
+    expect(complete.fault.history.full).toBeGreaterThan(0);
+    expect(complete.fault.history.single).toBe(0);
+    expect(renderedCount(await agent.run("session.read_transcript", { count: 1 }))).toBe(longHistoryCount);
+    complete.rows.forEach((row) => expect(persisted.some((text) => row.text.includes(text))).toBe(true));
+    expect(new Set(complete.rows.map((row) => row.text)).size).toBe(complete.rows.length);
+    expect(complete.rows[0].text).toContain(longHistoryFirst);
+    expect((await probe.dom(`${surface} [data-thread-loading], ${surface} [data-thread-history-status], ${surface} [data-testid="session-error-card"]`)).elements).toHaveLength(0);
     await user.looks([
       `The conversation transcript visibly starts with a user message reading "${longHistoryFirst}"`,
       "The transcript shows no loading indicator, error card, or empty-conversation placeholder",
     ]);
   });
 
-  // Baseline branch coverage after full loading, not the delayed-preview race.
+  await step("reading deeper history unmounts earlier rows without growing the transcript DOM", async () => {
+    await user.click({ text: longHistoryFirst });
+    for (let page = 0; page < 8; page++) {
+      await user.press("PageDown");
+      await expectReadingWindow(40);
+    }
+    // The clicked first message keeps keyboard focus, so the transcript retains
+    // that one group on purpose; the unfocused rows after it must still unmount.
+    await probe.eventually(() => historyDom(), { within: 5_000, label: "the earlier unfocused messages leave the mounted window",
+      until: ({ rows }) => !rows.some((row) => persisted.slice(1, 10).some((text) => row.text.includes(text))) });
+    expect(renderedCount(await agent.run("session.read_transcript", { count: 1 }))).toBe(longHistoryCount);
+    await user.screenshot();
+    expect(await agent.run("session.scroll_top")).toMatchObject({ ok: true, position: "top" });
+    await user.see({ text: longHistoryFirst });
+  });
+
   await step("after full loading, branching at the first message excludes later history and leaves the source unchanged", async () => {
     await user.click({ role: "button", label: "Branch in new chat", nth: 0 });
-    // count limits returned messages; messageCount is the entire rendered transcript.
     await probe.eventually(async () => renderedCount(await agent.run("session.read_transcript", { count: 1 })), {
       within: 30_000,
       label: "branch contains only the clicked message",
@@ -221,7 +449,7 @@ test("opening a long conversation shows the latest and full history while ancill
     await user.notSee({ text: longHistoryLast });
     const source = await probe.desktopApi(messagesPath);
     expect(source.status).toBe(200);
-    expect(messageTexts(source.body)).toHaveLength(longHistoryCount);
+    expect(messageTexts(source.body)).toEqual(persisted);
   });
 });
 
@@ -249,8 +477,13 @@ warmTest("returning to a fully cached conversation refreshes its persisted tail 
   });
 
   await using fault = await world.startHistoryFault();
-  const cached = await step("an earlier uncapped response fills the full cache but omits the already persisted last message", async () => {
+  const cached = await step("explicit top navigation fills the full cache with an earlier snapshot omitting the persisted last message", async () => {
     await user.click({ role: "button", label: new RegExp(`^${longHistoryTitle}`) });
+    await probe.eventually(() => probe.dom(`${surface} [data-message-id]`), {
+      within: 30_000, label: "the bounded opening with its omitted tail is mounted before top navigation",
+      until: (value) => value.elements.length > 0 && value.elements.length <= pageSize - 1,
+    });
+    expect(await agent.run("session.scroll_top")).toMatchObject({ ok: true, position: "top" });
     const initial = await probe.eventually(() => fault.read(), {
       within: 60_000,
       label: "the earlier full snapshot is cached and idle",
@@ -263,15 +496,15 @@ warmTest("returning to a fully cached conversation refreshes its persisted tail 
     expect(initial).toMatchObject({ armed: false, released: false, expired: false, held: 0, mutations: 0 });
     expect(renderedCount(await agent.run("session.read_transcript", { count: 1 }))).toBe(longHistoryCount - 1);
     await probe.eventually(() => probe.dom(`${surface} [data-thread-history-complete="true"]`), {
-      within: 30_000, label: "all earlier history is mounted", until: (value) => value.elements.length === 1,
+      within: 30_000, label: "all earlier history is loaded", until: (value) => value.elements.length === 1,
     });
     const { rows } = await historyDom();
-    expect(rows).toHaveLength(longHistoryCount - 1);
-    rows.forEach((row, index) => expect(row.text).toContain(persisted[index]));
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.length).toBeLessThan(40);
+    rows.forEach((row) => expect(persisted.slice(0, -1).some((text) => row.text.includes(text))).toBe(true));
     expect(rows.some((row) => row.text.includes(longHistoryLast))).toBe(false);
     expect((await probe.dom(`${surface} [data-lexical-editor="true"]`)).elements.map((element) => element.text)).toEqual([""]);
 
-    await agent.run("session.scroll_top");
     let previous = Number.NaN;
     let stable = 0;
     const anchor = await probe.eventually(async () => {
@@ -284,7 +517,7 @@ warmTest("returning to a fully cached conversation refreshes its persisted tail 
       previous = offset;
       return { offset, stable };
     }, { within: 30_000, intervalMs: 100, label: "manual reading anchor settled at the first message", until: (value) => value.stable >= 3 });
-    return { texts: rows.map((row) => row.text), offset: anchor.offset };
+    return { offset: anchor.offset };
   });
 
   let maxAnchorDrift = 0;
@@ -294,7 +527,9 @@ warmTest("returning to a fully cached conversation refreshes its persisted tail 
     if (first && viewport && first.rect.height > 0) {
       maxAnchorDrift = Math.max(maxAnchorDrift, Math.abs(first.rect.top - viewport.rect.top - cached.offset));
     }
-    return { viewport, rows };
+    const anchorVisible = Boolean(first && viewport && first.rect.height > 0
+      && first.rect.bottom > viewport.rect.top && first.rect.top < viewport.rect.bottom);
+    return { viewport, rows, anchorVisible };
   };
   const refreshed = await step("the warm newest-24 read adds the missing tail while the uncapped response stays held", async () => {
     await user.click({ role: "button", label: new RegExp(`^${longHistoryOtherTitle}`) });
@@ -303,14 +538,20 @@ warmTest("returning to a fully cached conversation refreshes its persisted tail 
     });
     await fault.arm();
     await user.click({ role: "button", label: new RegExp(`^${longHistoryTitle}`) });
+    let previousWindow: string[] = [];
+    let stableWindow = 0;
     const returned = await probe.eventually(async () => {
       const dom = await observeReturn();
+      const texts = dom.rows.map((row) => row.text);
+      stableWindow = texts.length === previousWindow.length && texts.every((text, index) => text === previousWindow[index]) ? stableWindow + 1 : 0;
+      previousWindow = texts;
       const state = await fault.read();
-      return { ...dom, state };
+      return { ...dom, state, stableWindow };
     }, {
       within: 30_000,
       label: "persisted tail rendered before delivery of any warm uncapped response",
-      until: ({ rows, state }) => rows.length === longHistoryCount && rows.some((row) => row.text.includes(longHistoryLast)) && state.held > 0,
+      until: ({ rows, state, stableWindow, anchorVisible }) => anchorVisible && stableWindow >= 3 && rows.length > 0 && rows.length < 40
+        && rows.some((row) => row.text.includes(longHistoryLast)) && state.held > 0,
     });
     expect(returned.state).toMatchObject({
       armed: true, released: false, expired: false, mutations: 0,
@@ -320,9 +561,12 @@ warmTest("returning to a fully cached conversation refreshes its persisted tail 
     expect(returned.state.reads).toContainEqual({ warm: true, limit: null, nativeCount: longHistoryCount, count: longHistoryCount, hasTail: true, delivered: false });
     expect(returned.state.reads.filter((read) => read.warm && read.limit === null && read.delivered)).toHaveLength(0);
     expect(renderedCount(await agent.run("session.read_transcript", { count: 1 }))).toBe(longHistoryCount);
-    expect(returned.rows.slice(0, -1).map((row) => row.text)).toEqual(cached.texts);
+    returned.rows.forEach((row) => expect(persisted.some((text) => row.text.includes(text))).toBe(true));
+    expect(new Set(returned.rows.map((row) => row.text)).size).toBe(returned.rows.length);
     expect(returned.rows.filter((row) => row.text.includes(longHistoryLast))).toHaveLength(1);
     expect(returned.rows.at(-1)?.text).toContain(longHistoryLast);
+    expect(returned.rows[0].text).toContain(longHistoryFirst);
+    expect(returned.anchorVisible).toBe(true);
     expect(returned.rows[0].rect.top).toBeGreaterThanOrEqual(returned.viewport.rect.top);
     expect(returned.rows[0].rect.bottom).toBeLessThanOrEqual(returned.viewport.rect.bottom);
     expect(maxAnchorDrift).toBeLessThanOrEqual(1);
@@ -340,7 +584,7 @@ warmTest("returning to a fully cached conversation refreshes its persisted tail 
     }, {
       within: 30_000,
       label: "the released full snapshot is applied without losing the fresh tail",
-      until: ({ state }) => state.held === 0 && state.snapshot?.count === longHistoryCount && state.snapshot.fetchStatus === "idle",
+      until: ({ state, anchorVisible }) => anchorVisible && state.held === 0 && state.snapshot?.count === longHistoryCount && state.snapshot.fetchStatus === "idle",
     });
     expect(complete.state).toMatchObject({ released: true, expired: false, mutations: 0 });
     expect(complete.state.reads).toContainEqual({ warm: true, limit: null, nativeCount: longHistoryCount, count: longHistoryCount, hasTail: true, delivered: true });

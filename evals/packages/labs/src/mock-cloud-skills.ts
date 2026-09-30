@@ -159,6 +159,16 @@ const CONNECT_TOOLS = [
     description: "Call a capability found via search_capabilities, by its exact name.",
     inputSchema: { type: "object", properties: { name: { type: "string" }, body: {} }, required: ["name"] },
   },
+  {
+    name: "list_skills",
+    description: "List every skill available to the signed-in OpenWork member.",
+    inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } } },
+  },
+  {
+    name: "get_skill",
+    description: "Read one skill's authorized SKILL.md by its name or exact capability.",
+    inputSchema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+  },
 ];
 
 function assertSkillName(name: string): void {
@@ -224,6 +234,26 @@ export async function startMockCloudSkills(options: StartMockCloudSkillsOptions 
         const name = typeof params.name === "string" ? params.name : "";
         if (!CONNECT_TOOLS.some((tool) => tool.name === name)) {
           return { error: { code: -32602, message: `Unknown tool ${name}` } };
+        }
+        const args = isRecord(params.arguments) ? params.arguments : {};
+        if (name === "list_skills") {
+          // Same descriptors as the index, minus its discovery-schema envelope.
+          const skills = mockCloudSkillIndex([...requireIdentity(identity).values()]).skills
+            .map(({ type: _type, url, ...skill }) => ({ ...skill, location: url }));
+          const payload = { skills, total: skills.length };
+          return { result: { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload } };
+        }
+        if (name === "get_skill") {
+          const wanted = typeof args.name === "string" ? args.name : "";
+          const index = mockCloudSkillIndex([...requireIdentity(identity).values()]).skills;
+          const entry = index.find((skill) => skill.capability === wanted) ?? index.find((skill) => skill.name === wanted);
+          const skill = entry ? requireIdentity(identity).get(entry.name) : undefined;
+          if (!entry || !skill) {
+            return { result: { isError: true, content: [{ type: "text", text: JSON.stringify({ error: "unknown_skill", name: wanted }) }] } };
+          }
+          const { type: _type, url, ...descriptor } = entry;
+          const payload = { ...descriptor, location: url, content: mockCloudSkillMarkdown(skill) };
+          return { result: { content: [{ type: "text", text: payload.content }], structuredContent: payload } };
         }
         // Served, not rejected: a spec proves the zero-call contract from the log,
         // never from a tool failure the host could have swallowed.

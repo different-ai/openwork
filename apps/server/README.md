@@ -9,7 +9,37 @@ npm install -g openwork-server
 openwork-server --workspace /path/to/workspace --approval auto
 ```
 
-`openwork-server` ships as a compiled binary, so Bun is not required at runtime.
+The npm package runs on Node.js 22.13 or newer on macOS, Linux, and Windows (arm64 or x64); Bun is not required at runtime.
+
+### Self-hosted web UI
+
+```bash
+npm install -g openwork-server
+cd /path/to/workspace
+openwork-server web --open
+```
+
+`openwork-server web` serves the OpenWork web UI and API from one origin and
+runs a server-managed OpenCode engine. The npm package bundles the UI and the
+OpenCode plugins; on first run it downloads the exact OpenCode version this
+release was tested with into `~/.openwork/openwork-server/engines/` and reuses
+it afterwards. Updating is `npm i -g openwork-server@latest`; the server prints
+a hint on boot when a newer release exists (`OPENWORK_NO_UPDATE_CHECK=1` to
+silence).
+
+Defaults in `web` mode: bind `127.0.0.1`, approval `auto`, workspace = current
+directory, and the browser is signed in automatically via a bootstrap token
+(pass `--no-bootstrap-token` to require pasting the client token). Tokens are
+persisted in `~/.openwork/openwork-server/web-tokens.json` so they survive
+restarts; `--token`/`--host-token` or `OPENWORK_TOKEN`/`OPENWORK_HOST_TOKEN`
+override them.
+
+To reach it from other machines, keep the server on `127.0.0.1` and put a TLS
+proxy in front (e.g. `tailscale serve --bg --https=8787 http://127.0.0.1:8787`).
+Browsers require a secure context for the UI on any non-localhost origin.
+Set `OPENWORK_OPENCODE_BIN` to use your own OpenCode install instead of the
+managed download; `/health` reports both the pinned `opencodeVersion` and the
+`opencodeInstalledVersion` actually running.
 
 Or from source:
 

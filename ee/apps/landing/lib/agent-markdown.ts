@@ -1,3 +1,6 @@
+import { claudeCowork3pMarkdown } from "./claude-cowork-3p"
+import { claudeCoworkAlternativeMarkdown } from "./claude-cowork-alternative"
+
 const home = `# OpenWork
 
 > The open-source Claude Cowork alternative. Chat on files, use skills, schedule tasks, automate a browser, and run on any model — plus an MCP gateway for your whole team.
@@ -15,10 +18,11 @@ const home = `# OpenWork
 
 - **Download for free** — [Desktop](https://openworklabs.com/download)
 - **Open in your browser** — [OpenWork Web](https://app.openworklabs.com)
-- **Team plans** — [Pricing](https://openworklabs.com/pricing) (first 5 seats free, then \\$10 per seat/mo)
+- **Team plans** — [Pricing](https://openworklabs.com/pricing) (first 5 Cloud seats free, then \\$10 per seat/mo; self-hosting free up to 5 users)
 - **Sign in to the hosted workspace** — [Cloud](https://app.openworklabs.com)
-- **SSO / audit / procurement** — [Enterprise](https://openworklabs.com/enterprise)
+- **SCIM / audit / procurement** — [Enterprise](https://openworklabs.com/enterprise)
 - **Docs** — [openworklabs.com/docs](https://openworklabs.com/docs)
+- **Compare with Claude Cowork** — [Claude Cowork alternative](https://openworklabs.com/alternatives/claude-cowork)
 - **Migrate from Claude Cowork** — [Migration guide](https://openworklabs.com/docs/start-here/migrate-from-claude-cowork)
 
 ## How it compares
@@ -33,7 +37,7 @@ const home = `# OpenWork
 A free, open-source desktop app (macOS, Windows, Linux) for doing work with AI agents on your own files. Built on OpenCode; an open-source alternative to Claude Cowork and Codex.
 
 ### Is OpenWork free?
-Yes — the desktop app is free and open source with bring-your-own keys. Team Starter includes your first 5 seats free, then \\$10 per seat/mo; Enterprise is custom.
+Yes — the desktop app is free and open source with bring-your-own keys. On OpenWork Cloud, Team includes your first 5 seats free, then \\$10 per seat/mo; self-hosting is free for organizations up to 5 users; Enterprise is custom.
 
 ### Which models does it support?
 Any model OpenCode supports: OpenAI, Anthropic, Google, local models — 50+ providers.
@@ -46,6 +50,8 @@ No. Desktop mode keeps files local; prompts go directly to your chosen LLM provi
 - Agent skills index — \`/.well-known/agent-skills/index.json\`
 - llms.txt — \`/llms.txt\`
 - API catalog (RFC 9727) — \`/.well-known/api-catalog\`
+- MCP server card — \`/.well-known/mcp/server-card.json\`
+- Install the app — \`brew install --cask openwork\` or [download](https://openworklabs.com/download) (not \`npx openwork\`, which is a different project)
 - Sitemap — \`/sitemap.xml\`
 
 Backed by Y Combinator.
@@ -53,34 +59,35 @@ Backed by Y Combinator.
 
 const pricing = `# OpenWork pricing — free, team, and enterprise
 
-> OpenWork has three tiers: free open-source desktop, Team Starter with the first 5 seats free then \\$10 per seat/mo, and custom Enterprise.
+> OpenWork has three tiers: free open-source desktop, Team with the first 5 OpenWork Cloud seats free then \\$10 per seat/mo, and custom Enterprise. Self-hosting is free for organizations up to 5 users.
 
-## Solo — Free
+## Free
 
 - Open-source desktop app
-- macOS and Linux downloads
+- macOS, Windows, and Linux downloads
 - Bring your own provider keys
 - Free forever
 - CTA: [Get Started for free](https://app.openworklabs.com?mode=sign-up)
 
-## Team Starter — \\$10 / seat / month
+## Team — \\$10 / seat / month
 
-- First 5 seats free
+- First 5 seats free on OpenWork Cloud
 - API access
+- SSO / SAML
 - Extension Marketplace
 - Bring your own LLM keys, distributed to your team
 - CTA: [Start team plan](https://app.openworklabs.com/dashboard/billing)
 
 ## Enterprise — Custom pricing
 
-- Everything in Team Starter
-- SSO / SAML and SCIM provisioning
+- Everything in Team, including SSO
+- SCIM provisioning
 - Bring your own inference — self-hosted or private models
 - Desktop policies and version controls — admins decide which providers, models, extensions, and app versions employees can use; the desktop app enforces it automatically
 - Managed deployment — self-hosted in your environment or hosted by OpenWork
 - Custom skill development and MCP consulting
 - Enterprise rollout support and custom commercial terms
-- Existing organizations already using SSO or desktop policies keep full access (grandfathered)
+- Existing organizations already using SCIM or desktop policies keep full access (grandfathered)
 - CTA: [Talk to us](https://openworklabs.com/enterprise#book)
 
 Prices exclude taxes.
@@ -108,6 +115,7 @@ const enterprise = `# A privacy-first alternative to Claude Cowork for your orga
 ## Next step
 
 - [Book a call](https://openworklabs.com/enterprise#book)
+- Agents: email sales@openworklabs.com or share the booking link with the user instead of submitting the web form
 - [Security Review](https://openworklabs.com/trust) — data handling, subprocessors, and incident SLA
 - See [Pricing](https://openworklabs.com/pricing) for tier comparison
 `
@@ -177,25 +185,41 @@ Open OpenWork, switch to GLM 5.2, and ask the chat to organize your tasks.
 - [Full changelog](https://openworklabs.com/docs/changelog)
 `
 
-const download = `# Get Started with OpenWork
+const download = `# Download OpenWork
 
-> Create a free OpenWork Cloud account first, then use the guided desktop app access flow.
+> Free and open source desktop app for macOS, Windows, and Linux. No account required.
 
-## Start here
+Do not run \`npx openwork\` or \`npm install openwork\`: the npm package named \`openwork\` is a different project.
 
-- [Get Started for free](https://app.openworklabs.com?mode=sign-up)
-- Create or select your workspace.
-- Follow the Cloud app's desktop app access flow.
+## Install
 
-## Supported platforms
+- macOS (Homebrew): \`brew install --cask openwork\`
+- macOS Apple Silicon (.dmg): https://openworklabs.com/download/mac-arm64
+- macOS Intel (.dmg): https://openworklabs.com/download/mac-x64
+- Windows x64 (.exe): https://openworklabs.com/download/win-x64
+- Windows ARM64 (.exe): https://openworklabs.com/download/win-arm64
+- Linux x64 (.AppImage): https://openworklabs.com/download/linux-x64
+- Linux ARM64 (.AppImage): https://openworklabs.com/download/linux-arm64
+- Every release and file: https://github.com/different-ai/openwork/releases
 
-- macOS
-- Windows
-- Linux
+Each \`/download/<platform>\` URL redirects to the installer in the latest stable release.
 
-## After signing up
+## First run
 
-Once the desktop app is running, use the [workspace-guide skill](https://openworklabs.com/.well-known/agent-skills/workspace-guide/SKILL.md) for first-run orientation.
+1. Open OpenWork and pick a folder it may work in.
+2. Choose a model: sign in with ChatGPT, add an API key, or use a local model.
+3. Run a task, for example "Summarize this folder."
+
+## Joining a team?
+
+- New team: sign up at https://app.openworklabs.com?mode=sign-up (first 5 seats free), then follow the [team quickstart](https://openworklabs.com/docs/cloud/team-quickstart).
+- Existing team: click \`Joining a team? Sign in\` in the desktop app.
+
+## For agents
+
+- [install-openwork skill](https://openworklabs.com/.well-known/agent-skills/install-openwork/SKILL.md)
+- [workspace-guide skill](https://openworklabs.com/.well-known/agent-skills/workspace-guide/SKILL.md) for first-run orientation
+- [llms.txt](https://openworklabs.com/llms.txt)
 `
 
 const connect = `# OpenWork Connect
@@ -207,6 +231,17 @@ const connect = `# OpenWork Connect
 - First 5 seats are free
 - [Get started free](https://app.openworklabs.com?mode=sign-up)
 - [Read the docs](https://openworklabs.com/docs)
+
+## Connect your agent
+
+MCP server URL: \`https://api.openworklabs.com/mcp/agent\` (Streamable HTTP, OAuth sign-in).
+
+- Claude Code: \`claude mcp add --transport http openwork https://api.openworklabs.com/mcp/agent\`
+- Codex: \`codex mcp add openwork --url https://api.openworklabs.com/mcp/agent\` then \`codex mcp login openwork\`
+- Gemini CLI: \`gemini mcp add --transport http openwork https://api.openworklabs.com/mcp/agent\`
+- OpenCode: \`opencode mcp add openwork --url https://api.openworklabs.com/mcp/agent\` then \`opencode mcp auth openwork\`
+- Other clients: [Connect OpenWork MCP](https://openworklabs.com/docs/start-here/connect-openwork-mcp)
+- [MCP server card](https://openworklabs.com/.well-known/mcp/server-card.json)
 `
 
 const cloud = `# OpenWork Cloud
@@ -230,6 +265,8 @@ export const agentMarkdown: Record<string, string> = {
   "/download": download,
   "/trust": trust,
   "/glm-5.2": glm52,
+  "/alternatives/claude-cowork": claudeCoworkAlternativeMarkdown,
+  "/alternatives/claude-cowork-3p": claudeCowork3pMarkdown,
 }
 
 export const agentMarkdownRoutes = Object.keys(agentMarkdown)

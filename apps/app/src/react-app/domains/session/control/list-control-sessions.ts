@@ -1,4 +1,4 @@
-import type { OpenworkSessionActivityInventory, OpenworkSessionModel } from "@openwork/types/openwork-affordance";
+import { labelOpenworkSessionModel, type OpenworkCatalogModel, type OpenworkSessionActivityInventory, type OpenworkSessionModel } from "@openwork/types/openwork-affordance";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { SessionActivityStatus } from "../status/session-activity-store";
@@ -51,6 +51,7 @@ export type ListControlSessionsState = {
   workspaces: ControlSessionWorkspace[];
   sessionsByWorkspaceId: Record<string, ControlSessionLike[]>;
   pinnedIds: readonly string[];
+  modelCatalogByWorkspaceId?: Record<string, readonly OpenworkCatalogModel[]>;
   statusFor: (workspaceId: string, sessionId: string) => SessionActivityStatus;
   attentionFor?: (workspaceId: string, sessionId: string) => SessionAttention | undefined;
 };
@@ -122,7 +123,7 @@ export function listControlSessions(args: unknown, state: ListControlSessionsSta
         working: activity.working,
         descendantActivity: activity.descendantActivity,
         inventoryComplete: activity.inventoryComplete,
-        model: controlSessionModel(session),
+        model: labelOpenworkSessionModel(controlSessionModel(session), state.modelCatalogByWorkspaceId?.[workspace.id] ?? []),
       });
     }
   }

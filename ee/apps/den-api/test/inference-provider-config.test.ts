@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
+import path from "node:path"
+import { deriveBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
 import {
+  bedrockSettingsError,
+  isAwsGatewayNpm,
   buildGatewayModelConfig,
   buildGatewayProviderConfig,
   buildProviderConfigSnapshot,
@@ -127,6 +132,82 @@ test("buildGatewayProviderConfig swaps Vertex SDKs for their static-key equivale
   expect(vertexAnthropic.api).toBe("https://inference.example.test/api/v1/providers/ipr_01jvertexanthropic")
 })
 
+for (const fixture of [
+  { providerId: "google-vertex", sourceNpm: "@ai-sdk/google-vertex", clientNpm: "@ai-sdk/google", env: "GOOGLE_GENERATIVE_AI_API_KEY" },
+  { providerId: "google-vertex-anthropic", sourceNpm: "@ai-sdk/google-vertex/anthropic", clientNpm: "@ai-sdk/anthropic", env: "ANTHROPIC_API_KEY" },
+]) {
+  for (const override of ["none", "model", "provider", "both"]) {
+    test(`${fixture.providerId} maps ${override} SDK overrides without changing model routing or metadata`, () => {
+      const modelOverride = override === "model" || override === "both"
+      const providerOverride = override === "provider" || override === "both"
+      const storedProvider = {
+        id: fixture.providerId, npm: fixture.sourceNpm,
+        env: ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_VERTEX_PROJECT", "GOOGLE_VERTEX_LOCATION"],
+      }
+      const routing = { api: "https://catalog.example.test/v1", id: "catalog-route" }
+      const metadata = {
+        family: "fixture-family", tool_call: true, reasoning: true, attachment: true,
+        limit: { context: 128000, output: 8192 }, cost: { input: 1, output: 5 },
+        modalities: { input: ["text", "image"], output: ["text"] },
+        options: { temperature: 0.2 }, variants: { careful: { temperature: 0.1 } },
+      }
+      const sourceModel = {
+        id: "upstream-model", name: "Catalog name", ...metadata,
+        ...(modelOverride ? { npm: fixture.sourceNpm } : {}),
+        provider: { ...routing, ...(providerOverride ? { npm: fixture.sourceNpm } : {}) },
+        headers: { "anthropic-beta": "safe-beta" },
+      }
+      const original = structuredClone(sourceModel)
+      expect(gatewayModelConfigurationError(storedProvider, [sourceModel])).toBeNull()
+      const provider = buildGatewayProviderConfig({ id: "ipr_vertex", provider_config: storedProvider }, baseUrl)
+      const model = buildGatewayModelConfig({ id: "gwm_fixture", name: "Selected model", config: sourceModel })
+      expect(provider.npm).toBe(fixture.clientNpm)
+      expect(provider.env).toEqual([`IPR_VERTEX_${fixture.env}`])
+      expect(provider.options).toEqual({ baseURL: `${baseUrl}api/v1/providers/ipr_vertex` })
+      expect(model).toEqual({
+        id: "gwm_fixture", name: "Selected model", ...metadata,
+        ...(modelOverride ? { npm: fixture.clientNpm } : {}),
+        provider: { ...routing, ...(providerOverride ? { npm: fixture.clientNpm } : {}) },
+        headers: { "anthropic-beta": "safe-beta", "x-openwork-gateway-request-model": "gwm_fixture" },
+      })
+      expect(JSON.stringify(model)).not.toContain("@ai-sdk/google-vertex")
+      expect(sourceModel).toEqual(original)
+      expect(storedProvider.npm).toBe(fixture.sourceNpm)
+    })
+  }
+}
+
+test("gateway model SDK mapping preserves non-Vertex overrides and rejects mixed source SDKs", () => {
+  for (const npm of ["@ai-sdk/anthropic", "@ai-sdk/google", "@ai-sdk/openai-compatible"]) {
+    const sourceModel = { npm, provider: { npm, api: "https://catalog.example.test/v1" } }
+    expect(buildGatewayModelConfig({ id: "gwm_fixture", name: "Fixture", config: sourceModel })).toMatchObject(sourceModel)
+    expect(gatewayModelConfigurationError({ npm: "@ai-sdk/google-vertex" }, [sourceModel])).not.toBeNull()
+    expect(gatewayModelConfigurationError({ npm: "@ai-sdk/google-vertex/anthropic" }, [sourceModel])).not.toBeNull()
+  }
+  expect(gatewayModelConfigurationError({ npm: "@ai-sdk/google-vertex" }, [{ npm: "@ai-sdk/google-vertex/anthropic" }])).not.toBeNull()
+  expect(gatewayModelConfigurationError({ npm: "@ai-sdk/google-vertex/anthropic" }, [{ provider: { npm: "@ai-sdk/google-vertex" } }])).not.toBeNull()
+})
+
+test("Mistral without a catalog API URL keeps its native SDK and scoped gateway credential", () => {
+  const config = buildProviderConfigSnapshot({
+    id: "mistral", name: "Mistral", npm: "@ai-sdk/mistral", env: ["MISTRAL_API_KEY"],
+    api: null, doc: null, config: {}, models: [],
+  })
+  expect(config).not.toHaveProperty("api")
+  expect(gatewayConfigurationError(config, {})).toBeNull()
+  expect(buildGatewayProviderConfig({ id: "ipr_01jmistral", provider_config: config }, baseUrl)).toEqual({
+    id: "mistral", name: "Mistral", npm: "@ai-sdk/mistral", env: ["IPR_01JMISTRAL_MISTRAL_API_KEY"],
+    api: `${baseUrl}api/v1/providers/ipr_01jmistral`,
+    options: { baseURL: `${baseUrl}api/v1/providers/ipr_01jmistral` },
+  })
+  expect(pickInferenceApiKeyFromMap({ MISTRAL_API_KEY: "key" }, ["MISTRAL_API_KEY"])).toBe("key")
+  expect(gatewayModelConfigurationError(config, [{ id: "mistral-small-latest" }, { provider: { npm: "@ai-sdk/mistral" } }])).toBeNull()
+  for (const npm of ["@ai-sdk/openai", "@ai-sdk/openai-compatible", "@ai-sdk/cohere"]) {
+    expect(gatewayModelConfigurationError(config, [{ npm }])).not.toBeNull()
+    expect(gatewayModelConfigurationError(config, [{ provider: { npm } }])).not.toBeNull()
+  }
+})
+
 test("buildProviderConfigSnapshot keeps only the opencode block fields", () => {
   const snapshot = buildProviderConfigSnapshot({
     id: "openrouter",
@@ -148,21 +229,79 @@ test("buildProviderConfigSnapshot keeps only the opencode block fields", () => {
   })
 })
 
-test("isSupportedGatewayNpm accepts the proxied SDK families and rejects Bedrock and unknown packages", () => {
+test("Amazon Bedrock keeps its native SDK, sends the gateway key as the Bedrock bearer, and requires a region-derived host", () => {
+  const config = buildProviderConfigSnapshot({
+    id: "amazon-bedrock", name: "Amazon Bedrock", npm: "@ai-sdk/amazon-bedrock",
+    env: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION", "AWS_BEARER_TOKEN_BEDROCK"],
+    api: null, doc: null, config: {}, models: [],
+  })
+  expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock")).toBe(true)
+  expect(gatewayConfigurationError(config, { region: "us-east-1" })).toBeNull()
+  expect(buildGatewayProviderConfig({ id: "ipr_01jbedrock", provider_config: config, settings: { region: "us-east-1" } }, baseUrl)).toEqual({
+    id: "amazon-bedrock", name: "Amazon Bedrock", npm: "@ai-sdk/amazon-bedrock", env: ["IPR_01JBEDROCK_AWS_BEARER_TOKEN_BEDROCK"],
+    api: `${baseUrl}api/v1/providers/ipr_01jbedrock`,
+    options: { baseURL: `${baseUrl}api/v1/providers/ipr_01jbedrock` },
+  })
+
+  for (const region of ["us-east-1", "eu-central-2", "ap-southeast-1", "us-gov-west-1"]) expect(bedrockSettingsError({ region })).toBeNull()
+  for (const settings of [{}, { region: "" }, { region: "US-EAST-1" }, { region: "us-east" }, { region: "evil.com/x" }, { region: "us-east-1.evil.com" }, { region: "us-east-1#" }, { region: 1 }]) {
+    expect(bedrockSettingsError(settings)).not.toBeNull()
+  }
+  expect(bedrockSettingsError({ region: "us-east-1", upstreamBaseUrl: "https://bedrock.example/v1" }, new Set())).toContain("derived from the region")
+  expect(bedrockSettingsError({ region: "us-east-1", upstreamBaseUrl: "https://bedrock-proxy.internal.example" }, new Set(["https://bedrock-proxy.internal.example"]))).toBeNull()
+
+  // Cross-region inference profile ids use the provider SDK; mantle models do not and are excluded.
+  expect(gatewayModelConfigurationError(config, [{ id: "global.anthropic.claude-sonnet-4-6" }, { id: "us.amazon.nova-pro-v1:0" }])).toBeNull()
+  expect(gatewayModelConfigurationError(config, [{ provider: { npm: "@ai-sdk/amazon-bedrock/mantle", api: "https://bedrock-mantle.${AWS_REGION}.api.aws/openai/v1" } }])).not.toBeNull()
+})
+
+test("Amazon Bedrock (OpenAI) is a separate Mantle provider: bearer env for the desktop SDK, Bedrock region rules, derived models admissible", () => {
+  const catalog: unknown = JSON.parse(readFileSync(path.resolve(import.meta.dir, "../../gateway/src/models/base.json"), "utf8"))
+  if (!isRecord(catalog)) throw new Error("base.json must be an object")
+  const derived = deriveBedrockMantleProvider(catalog)
+  if (!derived || !isRecord(derived.models)) throw new Error("expected a derived Mantle provider")
+  const config = buildProviderConfigSnapshot({
+    id: "amazon-bedrock-mantle", name: "Amazon Bedrock (OpenAI)", npm: "@ai-sdk/amazon-bedrock/mantle", env: ["AWS_BEARER_TOKEN_BEDROCK"],
+    api: null, doc: null, config: {}, models: [],
+  })
+  expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock/mantle")).toBe(true)
+  expect(isAwsGatewayNpm("@ai-sdk/amazon-bedrock/mantle")).toBe(true)
+  expect(isAwsGatewayNpm("@ai-sdk/openai")).toBe(false)
+  expect(buildGatewayProviderConfig({ id: "ipr_01jmantle", provider_config: config, settings: { region: "us-west-2" } }, baseUrl)).toEqual({
+    id: "amazon-bedrock-mantle", name: "Amazon Bedrock (OpenAI)", npm: "@ai-sdk/amazon-bedrock/mantle", env: ["IPR_01JMANTLE_AWS_BEARER_TOKEN_BEDROCK"],
+    api: `${baseUrl}api/v1/providers/ipr_01jmantle`,
+    options: { baseURL: `${baseUrl}api/v1/providers/ipr_01jmantle` },
+  })
+  const models = Object.values(derived.models).filter(isRecord)
+  expect(models).toHaveLength(13)
+  // No derived model overrides the SDK or carries the region template, so all 13 are admitted and none point the desktop elsewhere.
+  expect(gatewayModelConfigurationError(config, models)).toBeNull()
+  for (const model of models) {
+    const desktop = buildGatewayModelConfig({ id: "gwm_fixture", name: "Fixture", config: model })
+    expect(JSON.stringify(desktop)).not.toContain("bedrock-mantle.")
+  }
+  // The Converse provider still excludes them.
+  expect(gatewayModelConfigurationError({ npm: "@ai-sdk/amazon-bedrock" }, models.slice(0, 1))).not.toBeNull()
+})
+
+test("isSupportedGatewayNpm accepts the proxied SDK families and rejects unknown packages", () => {
   for (const npm of [
     "@ai-sdk/anthropic",
     "@ai-sdk/openai",
+    "@ai-sdk/mistral",
     "@ai-sdk/azure",
     "@ai-sdk/openai-compatible",
     "@openrouter/ai-sdk-provider",
     "@ai-sdk/google",
     "@ai-sdk/google-vertex",
     "@ai-sdk/google-vertex/anthropic",
+    "@ai-sdk/amazon-bedrock",
+    "@ai-sdk/amazon-bedrock/mantle",
   ]) {
     expect(isSupportedGatewayNpm(npm)).toBe(true)
   }
-  expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock")).toBe(false)
-  expect(isSupportedGatewayNpm("@ai-sdk/mistral")).toBe(false)
+  expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock/unknown")).toBe(false)
+  expect(isSupportedGatewayNpm("@ai-sdk/cohere")).toBe(false)
   expect(isSupportedGatewayNpm(null)).toBe(false)
 })
 
@@ -241,3 +380,7 @@ test("gateway models carry diagnostic selection headers while preserving safe SD
     "anthropic-beta": "safe-beta", "x-openwork-gateway-request-model": "gwm_fixture",
   } })
 })
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}

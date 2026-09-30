@@ -8,27 +8,28 @@ it does not create a different website account for every conversation.
 ## User experience
 
 1. List the conversation's tabs and reuse a matching page, or open the requested
-   URL in a new owned tab. Before loading a new origin, review **Allow website
-   navigation?** in the panel. **Allow origin in this tab** authorizes exact
-   scheme, host and port for this tab and conversation, not reading or actions.
-   A new tab stays blank until acceptance. Localhost previews need the same
-   explicit approval; there is no blanket localhost exemption or private-network
-   ban. An ambiguous reference needs actual tab context.
-2. Review website access in the browser panel. This allows reading that origin
-   for this conversation during the current desktop process.
-3. Discover site tools. Prefer a relevant structured integration or site tool;
-   otherwise observe the page and use its visible controls. A fresh image can
-   support a coordinate action when a control has no useful DOM reference.
-4. Review each website action separately. A site's read-only annotation is
+   URL in a new owned tab. Review **Allow browser control for this thread?** in
+   the panel and choose **Allow for this thread** once. The grant covers allowed
+   website navigation, reading and scrolling across this thread's tabs, using
+   the built-in browser's signed-in account. A new thread's first tab stays blank
+   until acceptance; localhost has no exemption.
+2. Discover site tools. Prefer a relevant structured integration or site tool;
+   otherwise observe the page and use its visible controls. Scrolling needs no
+   further prompt. Every click, fill and key instead asks **Allow browser action?**
+   with its target, key or text before dispatch. Choose **Allow once** or **Deny**:
+   these inputs can submit information or change website data. A fresh image
+   supports a coordinate click without a useful DOM reference.
+3. Review each WebMCP invocation separately. A site's read-only annotation is
    advisory. Approvals bind the operation to its tab and current page.
    After a site callback returns, review its complete bounded result locally
    before choosing **Share result**. This separately authorizes disclosure to
    the conversation and its model provider. Denying keeps the payload private;
    it does not undo the action or permit an automatic retry.
-5. Choose **Take over** to pause the conversation's browser operations. Sign in
-   directly in the page, then choose **Resume browser**. The next action needs a
-   new observation. Opening another tab cannot bypass takeover.
-6. Observe the requested result. An input event being dispatched and a site
+4. Choose **Take over** to pause the conversation's browser operations and revoke
+   its grant. Sign in directly in the page, then choose **Resume browser**. The
+   next browser operation requests fresh thread consent, and actions need a new
+   observation. Opening another tab cannot bypass takeover.
+5. Observe the requested result. An input event being dispatched and a site
    callback returning are separate from the user's desired outcome being met.
 
 Background tabs keep their conversation ownership and cannot switch the visible
@@ -56,20 +57,34 @@ browser-tool boundary; it does not sandbox unrelated shell tools or user-added
 plugins with independent machine permissions.
 
 Each tab allows one operation at a time. There is no mutation queue. DOM
-observations carry random IDs and expire after 15 seconds, DOM changes or
-navigation, scrolling or viewport changes. Coordinate clicks require an image
-scaled to the page viewport and recheck its pixels before dispatch. Actions consume their observation before dispatch. A failure or
-cancellation clears it. Timeouts and uncertain outcomes prohibit automatic
-replay, including switching to another method to repeat the action.
+observations carry random IDs and must be no older than 15 seconds when an action
+starts. One action's approval wait is excluded from its remaining age budget,
+without renewing the stored observation or extending the operation timeout.
+After approval the host rechecks observation identity, document, URL, policy,
+DOM changes, viewport, scroll and target readiness. Key input also requires the
+same directly focused native input, textarea, select, button or link. Keyboard
+input to frames, shadow hosts and generic/custom editors is refused because their
+actual focused descendant cannot be verified; the person must take over. This
+includes closed shadow roots, which cannot be detected from a host's `shadowRoot`.
+Coordinate clicks require an image scaled to the page
+viewport and recheck its pixels before dispatch. The reviewed action payload is
+copied before waiting and never replaced silently. Actions consume their
+observation before dispatch; failure or cancellation clears it. Timeouts and
+uncertain outcomes prohibit automatic replay, including through another method.
 
-Navigation consent, browser read access, action approval and result disclosure
-are separate. Navigation grants are in-memory, tab-and-owner scoped, and are
-revoked on takeover, cancellation or closure. They are never inherited by a new
-tab or popup. Takeover stops pending task loads; only explicit address-bar, Back,
-Forward or Reload actions enable manual navigation without creating task grants.
-Webpage mouse and keyboard input do not enable navigation. Resume requires new
-navigation consent. None of these approvals can expand the organization's managed
-policy. The existing async `checkPolicy`
+Browser-control consent is one in-memory grant per trusted conversation ID.
+Same-thread tabs and popups reuse it; other conversations never do. Takeover,
+disabling control, cancellation or timeout of an in-flight browser request,
+closing the last owned tab, and desktop restart clear it. Closing one tab does
+not revoke its surviving siblings' grant. Concurrent consent requests share one
+review, and revocation fences pending requests and stale approval completions.
+WebMCP invocation and result disclosure remain separate approvals. Takeover
+stops pending task loads; only explicit address-bar, Back, Forward or Reload
+actions enable manual navigation without creating task grants. Webpage mouse
+and keyboard input do not enable navigation. Resume requires new thread consent.
+Browser permission is not task authorization for unrelated or consequential
+work. None of these approvals can expand the organization's managed policy.
+The existing async `checkPolicy`
 boundary checks task access, DOM actions, site-tool discovery and invocation,
 and result sharing. There is no renderer-managed website grant or parallel
 policy cache. `execution.browserOrigins` matches exact scheme, host and port
@@ -82,19 +97,25 @@ remains authoritative. User consent cannot bypass it, and a denied request
 never falls back to an external browser.
 
 The same request listener holds task-controlled main-frame requests, including
-cross-origin redirects, before dispatch until the target origin is approved.
+cross-origin redirects, until thread consent and managed policy permit dispatch.
 It rechecks managed policy after acceptance and checks cancellation, tab identity
 and ownership before releasing the request. A paused task cannot acquire grants
 or treat a late redirect as manual browsing. Legacy automation open also goes
 through the task host's pre-load consent gate.
 
-This is not a complete browser egress sandbox. The origin consent gate applies
-to main-frame navigation, not every subresource: frames, images, scripts, fetches
+This is not a complete browser egress sandbox. Frames, images, scripts, fetches
 and other subresources remain governed by the existing managed request policy.
-If that policy permits them, a loaded website can contact other origins without
-another navigation prompt. Exact URL origins are not a DNS/IP classification or
-DNS-rebinding defense, and the browser still shares its persistent signed-in
-profile across conversations.
+If that policy permits them, an approved thread can navigate between origins
+without another permission prompt. Exact managed URL origins are not a DNS/IP
+classification or DNS-rebinding defense, and the browser still shares its
+persistent signed-in profile across conversations.
+
+Scroll actions use viewport-relative CSS pixels with positive `deltaY` scrolling
+down and negative scrolling up, limited to 1,200 pixels per action. Clicks and
+wheel input use Chromium's input router so hit-testing also reaches embedded
+frames. Observations include the top document's `scroll: { x, y }`; this is not
+the position of a nested scrolling element. A dispatch receipt still requires
+fresh outcome verification.
 
 Tasks use the built-in browser's existing sign-in. Sign in directly in the page
 and resume the task; the persistent partition keeps that session available.

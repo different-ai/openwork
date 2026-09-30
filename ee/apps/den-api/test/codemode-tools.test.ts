@@ -1,8 +1,8 @@
-import { beforeAll, expect, mock, spyOn, test } from "bun:test"
+import { afterAll, beforeAll, expect, mock, spyOn, test } from "bun:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Tool as McpTool } from "@modelcontextprotocol/sdk/types.js"
 import type { ExternalMcpConnectionRow } from "../src/capability-sources/external-mcp-connections.js"
-import { Tool } from "@openwork/codemode"
+import { CodeMode, Tool } from "@openwork/codemode"
 import { Effect } from "effect"
 import { Hono } from "hono"
 import { buildMcpCatalog } from "../src/mcp/catalog.js"
@@ -29,6 +29,13 @@ let parseNativeCapabilityName: typeof import("../src/mcp/native-capabilities.js"
 
 beforeAll(async () => {
   seedRequiredEnv()
+  mock.module("../src/db.js", () => ({
+    db: {
+      select: () => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }),
+      insert: () => ({ values: () => ({ execute: async () => undefined }) }),
+      transaction: async () => null,
+    },
+  }))
   const codemodeTools = await import("../src/mcp/codemode-tools.js")
   const capabilityRegistry = await import("../src/mcp/capability-registry.js")
   const nativeCapabilities = await import("../src/mcp/native-capabilities.js")
@@ -45,6 +52,8 @@ beforeAll(async () => {
   stripUndefinedEntries = codemodeTools.stripUndefinedEntries
   parseNativeCapabilityName = nativeCapabilities.parseNativeCapabilityName
 })
+
+afterAll(() => mock.restore())
 
 test("sanitizes connection names into interpreter-safe namespaces", () => {
   expect(sanitizeNamespaceSegment("Acme Drive")).toBe("acme_drive")
@@ -227,6 +236,83 @@ test("native manifest capability names round-trip through the native parser", ()
     connectionId: "native-connection",
     toolName: "getCapabilitiesGoogleWorkspaceGmailMessages",
   })
+})
+
+test("Den Code Mode advertises source-derived output and keeps undocumented output unknown", () => {
+  const outputSchema = { type: "object", properties: { result: { type: "string" } }, required: ["result"] }
+  const catalog = buildMcpCatalog({ paths: {
+    "/v1/synthetic/result": { get: {
+      operationId: "getV1SyntheticResult", tags: ["Capability Sources"],
+      responses: { 200: { content: { "application/json": { schema: outputSchema } } } },
+    } },
+    "/v1/synthetic/unknown": { get: { operationId: "getV1SyntheticUnknown", tags: ["Capability Sources"] } },
+  } })
+  const built = buildDenCatalogToolTree({
+    app: new Hono(), env: undefined, catalog,
+    principal: { userId: "user", organizationId: "organization", scopes: new Set(["mcp:read"]), payload: {} },
+  })
+  expect(built.tools.den?.getSyntheticResult?.output).toEqual(outputSchema)
+  expect(built.tools.den?.getSyntheticUnknown?.output).toBeUndefined()
+  const descriptions = CodeMode.make({ tools: built.tools }).catalog()
+  expect(descriptions.find((entry) => entry.path === "den.getSyntheticResult")?.signature).toContain("result: string")
+  expect(descriptions.find((entry) => entry.path === "den.getSyntheticUnknown")?.signature).toContain("Promise<unknown>")
+})
+
+test("live OpenAPI Calendar discovery and Code Mode expose flattened event strings", async () => {
+  const { default: sourceApp } = await import("../src/app.js")
+  const app = new Hono().route("/", sourceApp)
+  const { loadOpenApiDocument } = await import("../src/mcp/catalog.js")
+  const { searchNativeCapabilities } = await import("../src/mcp/native-capabilities.js")
+  const { buildNativeProviderToolTree } = await import("../src/mcp/codemode-tools.js")
+  const { buildNativeProviderEntry } = await import("../src/capability-sources/native-provider-connections.js")
+  const { NATIVE_OAUTH_PROVIDERS } = await import("../src/capability-sources/provider-registry.js")
+  const catalog = buildMcpCatalog(await loadOpenApiDocument(app, undefined))
+  const operation = catalog.find((entry) => entry.path === "/v1/capabilities/google-workspace/calendar-events" && entry.method === "GET")
+  if (!operation) throw new Error("Missing Calendar list operation")
+  expect(operation.outputSchema).toMatchObject({
+    type: "object",
+    properties: {
+      events: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { start: { type: "string" }, end: { type: "string" }, attendees: { type: "array", items: { type: "string" } } },
+        },
+      },
+    },
+  })
+  expect(JSON.stringify(operation.outputSchema)).not.toContain('"$ref"')
+  expect(JSON.stringify(operation.outputSchema).length).toBeLessThan(4_000)
+  const connection = buildNativeProviderEntry(NATIVE_OAUTH_PROVIDERS["google-workspace"], {
+    clientConfigured: true, connectedForMe: true, name: "Synthetic Calendar", credentialProviderId: "synthetic-calendar",
+  })
+  if (!connection) throw new Error("Missing synthetic native connection")
+  const namespaceContext = {
+    nativeProviderEntries: [connection], codemodeNativeProviderEntries: [connection],
+    externalMcpConnections: [], codemodeExternalMcpConnections: [],
+    namespaces: buildCodemodeConnectionNamespaceMaps({ native: [connection], externalMcp: [] }),
+  }
+  const organizationId = createDenTypeId("organization")
+  const member = { orgMembershipId: createDenTypeId("member"), teamIds: [] }
+  const matches = await searchNativeCapabilities({ organizationId, member, catalog, query: "calendar events", limit: 20, namespaceContext })
+  const match = matches.find((entry) => entry.name === `native:${connection.id}:${operation.name}`)
+  expect(match?.outputSchema).toEqual(operation.outputSchema)
+  expect(match?.scriptPath).toBe(`tools.synthetic_calendar.${operation.name}`)
+  const built = await buildNativeProviderToolTree({
+    app, env: undefined, catalog: [operation], organizationId, member, namespaceContext,
+    principal: { userId: createDenTypeId("user"), organizationId, scopes: new Set(["mcp:read"]), payload: {} },
+  })
+  expect(built.tools.synthetic_calendar?.[operation.name]?.output).toEqual(operation.outputSchema)
+  const signature = CodeMode.make({ tools: built.tools }).catalog()[0]?.signature
+  expect(signature).toContain("start: string")
+  expect(signature).toContain("end: string")
+  expect(signature).toContain("attendees: Array<string>")
+  expect(signature).not.toContain("dateTime:")
+  connection.connectedForMe = false
+  const disconnected = await searchNativeCapabilities({ organizationId, member, catalog, query: "calendar events", limit: 20, namespaceContext })
+  expect(disconnected).toHaveLength(1)
+  expect(disconnected[0]?.kind).toBe("connection_status")
+  expect(disconnected[0]).not.toHaveProperty("outputSchema")
 })
 
 test("generic and Code Mode execution require write scope even for misleading read-only hints", async () => {

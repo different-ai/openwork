@@ -3331,6 +3331,12 @@ class Interpreter<R> {
   }
 }
 
+const freezeBinding = (value: unknown): void => {
+  if (value === null || typeof value !== "object") return
+  for (const child of Object.values(value)) freezeBinding(child)
+  Object.freeze(value)
+}
+
 /**
  * Executes one Effect-native CodeMode program without constructing a reusable runtime.
  *
@@ -3376,7 +3382,9 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
       if (!identifierSegment.test(name)) {
         throw new ToolRuntimeError("InvalidDataValue", `Binding name '${name}' must be a valid JavaScript identifier.`)
       }
-      return [name, copyIn(value, `Binding '${name}'`)] as const
+      const copied = copyIn(value, `Binding '${name}'`)
+      if (options.readonlyBindings) freezeBinding(copied)
+      return [name, copied] as const
     })
     const program = parseProgram(options.code)
     const interpreter = new Interpreter<Services<Tools>>(tools.invoke, tools.keys, bindings, logs)

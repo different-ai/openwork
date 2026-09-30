@@ -12,6 +12,7 @@ import {
   PluginTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { isAuthoredMcpAppVersion, MCP_APP_LAUNCH_TOOL_NAME, mcpAppServerPath } from "@openwork/types/mcp-app"
 import {
   listExternalMcpConnections,
   listUsableExternalMcpConnections,
@@ -27,11 +28,13 @@ import {
 import { EXTERNAL_MCP_PRESETS } from "../capability-sources/external-mcp-presets.js"
 import { getConnectedAccount, getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
 import { db } from "../db.js"
+import { organizationBuildsMcpApps } from "../mcp-app-rollout.js"
 import { resolvePluginArchGrantRole } from "../routes/org/plugin-system/access.js"
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
 import { parseCodemodeScriptPayload, type CodemodeScriptInputIssue } from "./codemode-script-object.js"
 import { type BuiltCodemodeTools } from "./codemode-tools.js"
 import { executeWorkflow } from "./workflow-service.js"
+import { artifactRunInputSchema, artifactRuntime } from "../artifact-runtime.js"
 import { listPluginMcpRequirementBindings, type PluginMcpRequirementBindingRow } from "./plugin-mcp-requirement-bindings.js"
 import { scoreText, tokenize } from "./search.js"
 import type { McpMemberIdentity } from "./external-capabilities.js"
@@ -1464,6 +1467,12 @@ export async function searchMarketplaceCapabilities(input: {
     if (input.objectTypes && !input.objectTypes.includes(objectType)) continue
     const score = scoreMarketplaceRow(row, queryTokens)
     if (score <= 0) continue
+    // Authored Apps are exposed only by the rollout-gated App search, never
+    // as generic Plugin capabilities (including after the rollout is disabled).
+    if (objectType === "app") {
+      const version = await latestVersion(row.configObject.id, organizationId)
+      if (version && isAuthoredMcpAppVersion(version)) continue
+    }
     const name = buildMarketplaceCapabilityName(row.plugin.id, row.configObject.id)
     if (matchesByName.has(name)) continue
     const match: MarketplaceCapabilityMatch = {
@@ -1507,6 +1516,8 @@ export async function searchMarketplaceCapabilities(input: {
 export async function listAccessibleWorkflows(input: {
   member: McpMemberIdentity
   organizationId: string
+  /** Only these Workflows, so a caller that needs a few skips loading the rest. */
+  configObjectIds?: ReadonlySet<string>
 }): Promise<AccessibleWorkflow[]> {
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
   if (!await getActiveMember(organizationId, input.member)) return []
@@ -1519,6 +1530,7 @@ export async function listAccessibleWorkflows(input: {
   const seen = new Set<string>()
   for (const row of rows) {
     if (canonicalConfigObjectType(row.configObject.objectType) !== "workflow" || seen.has(row.configObject.id)) continue
+    if (input.configObjectIds && !input.configObjectIds.has(row.configObject.id)) continue
     const version = await latestVersion(row.configObject.id, organizationId)
     if (!version) continue
     const parsed = parseCodemodeScriptPayload(version.normalizedPayloadJson)
@@ -1550,7 +1562,12 @@ export async function executeMarketplaceCapability(input: {
   pluginId: string
   redirectUriBase?: string
   validateScriptOutput?: boolean
+  liveRuntime?: { timeZone?: string }
 }): Promise<MarketplaceCapabilityExecuteResult> {
+  const liveRuntime = input.liveRuntime === undefined ? undefined : artifactRunInputSchema.safeParse(input.liveRuntime)
+  if (liveRuntime && (!liveRuntime.success || input.body !== undefined)) {
+    return { ok: false, error: "invalid_capability_arguments", message: "Live runs accept only timeZone, never caller input.", issues: [], sameArgumentsRetryable: false, retry: { action: "correct_arguments", searchRequired: false } }
+  }
   if (input.enabled === false) {
     return { ok: false, error: "unknown_capability", message: "No such capability." }
   }
@@ -1596,6 +1613,19 @@ export async function executeMarketplaceCapability(input: {
     }
   }
 
+  if (isAuthoredMcpAppVersion(version)) {
+    return {
+      ok: true,
+      result: {
+        ...basePayload(row),
+        status: "unsupported",
+        hint: await organizationBuildsMcpApps(input.organizationId)
+          ? `This App is its own MCP server at ${mcpAppServerPath(row.configObject.id)}; its ${MCP_APP_LAUNCH_TOOL_NAME} tool opens it. Code Mode and generic Plugin execution do not open Apps or return their source. Editors can use read_app to edit it. No App was opened.`
+          : "Apps built in OpenWork are turned off for this organization, so this App cannot be opened or edited here. No App was opened.",
+      },
+    }
+  }
+
   if (canonicalConfigObjectType(row.configObject.objectType) === "workflow") {
     const execution = await executeWorkflow({
       database: db,
@@ -1607,8 +1637,9 @@ export async function executeMarketplaceCapability(input: {
       automationRunId: input.automationRunId,
       normalizedPayloadJson: version.normalizedPayloadJson,
       code: version.rawSourceText ?? "",
-      scriptInput: input.body,
-      validateOutput: input.validateScriptOutput === true,
+      scriptInput: liveRuntime?.success ? { runtime: artifactRuntime(liveRuntime.data.timeZone) } : input.body,
+      readOnly: liveRuntime?.success === true,
+      validateOutput: liveRuntime?.success === true || input.validateScriptOutput === true,
       buildTools: input.buildTools ?? (async () => ({ tools: {}, manifest: [] })),
     })
     if (!execution.ok && execution.error === "unsupported") {

@@ -4,21 +4,42 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { denFetch } from "../../evals/packages/behaviors/src/den.ts";
-import { app, blankReleaseApp } from "../../evals/packages/env/src/desktop-app.ts";
+import { app, blankReleaseApp, standaloneApp } from "../../evals/packages/env/src/desktop-app.ts";
 import { server } from "../../evals/packages/env/src/den.ts";
 import type { Den } from "../../evals/packages/env/src/den.ts";
 import { resolvePlace } from "../../evals/packages/env/src/place.ts";
 import type { Place } from "../../evals/packages/env/src/place.ts";
+import { selectedEnvKeys } from "../../evals/packages/hosts/src/app-env.ts";
 import { daytonaSandbox } from "../../evals/packages/hosts/src/resolve.ts";
 import type { DesktopRelease, DesktopReleaseDistribution } from "../../evals/packages/hosts/src/types.ts";
 import { hold } from "../../packages/world/src/hold.ts";
 import { output, secret } from "../../packages/world/src/outputs.ts";
+import { targetFromEnv } from "../../packages/world/src/target.ts";
+import { trackResource } from "../../packages/world/src/ledger.ts";
+import { progress } from "../../packages/world/src/events.ts";
+
+const previewSteps = progress();
+import { provisionWindowsReleaseSandbox } from "../../evals/packages/hosts/src/windows-release.ts";
+import { sourceFor, sourcesFromEnv } from "../../packages/world/src/source.ts";
+import { seedsFromEnv } from "../../packages/world/src/seed.ts";
 import type { WorldOutput } from "../../packages/world/src/outputs.ts";
 
 export type PreviewScenario = "blank" | "fresh" | "team" | "restricted" | "workspace";
-export type PreviewSurface = "den" | "desktop";
+/**
+ * `desktop` is the app alone (no Den), `den` is Den alone (no desktop), and
+ * `full` is Den plus a desktop wired to it.
+ */
+export type PreviewSurface = "den" | "desktop" | "full";
 
-export function parsePreviewOptions(argv: readonly string[]) {
+const DEN_SCENARIOS: readonly PreviewScenario[] = ["fresh", "team", "restricted", "workspace"];
+/** Scenarios each preview accepts; `blank` is a published desktop release. */
+export const PREVIEW_SCENARIOS: Record<PreviewSurface, readonly PreviewScenario[]> = {
+  desktop: ["fresh", "blank"],
+  den: DEN_SCENARIOS,
+  full: DEN_SCENARIOS,
+};
+
+export function parsePreviewOptions(argv: readonly string[], allowExternalRelease = false) {
   let scenario: PreviewScenario = "fresh";
   let lifetimeMinutes = 120;
   let releaseVersion: string | undefined;
@@ -40,7 +61,7 @@ export function parsePreviewOptions(argv: readonly string[]) {
   if ((releaseVersion === undefined) !== (distribution === undefined)) {
     throw new Error("Published previews require both --release <x.y.z> and --distribution public|cloud|enterprise.");
   }
-  if (scenario === "blank" && releaseVersion === undefined) {
+  if (scenario === "blank" && releaseVersion === undefined && !allowExternalRelease) {
     throw new Error("The blank scenario requires an exact published --release and --distribution.");
   }
   if (releaseVersion !== undefined && scenario !== "blank") {
@@ -103,6 +124,14 @@ async function waitForNoVnc(viewerUrl: string): Promise<void> {
   throw new Error(`Desktop preview transport did not become ready: ${last}`);
 }
 
+async function localSourceRef(): Promise<string> {
+  const { stdout } = await promisify(execFile)("git", ["rev-parse", "HEAD"], {
+    cwd: fileURLToPath(new URL("../..", import.meta.url)),
+    timeout: 10_000,
+  });
+  return stdout.trim();
+}
+
 async function setupTeam(den: Den, restricted: boolean): Promise<void> {
   const headers = { authorization: `Bearer ${den.admin.token}` };
   // OAuth metadata only: no live provider call or account authorization.
@@ -133,56 +162,91 @@ async function setupTeam(den: Den, restricted: boolean): Promise<void> {
   if (!saved.response.ok) throw new Error(`Could not apply restricted preview policy: HTTP ${saved.response.status}`);
 }
 
-/** Owned, disposable infrastructure only. Never attach a preview to an existing test or production sandbox. */
-export async function bootPreview(stack: AsyncDisposableStack, place: Place, surface: PreviewSurface, scenario: PreviewScenario, release?: DesktopRelease) {
-  if (place.kind !== "daytona") throw new Error("Interactive previews require --place daytona.");
-  if (release && surface !== "desktop") throw new Error("Published releases are supported only by preview-desktop.");
-  const base = place.denBase();
-  if (base.kind !== "daytona" || !/^[0-9a-f]{40}$/.test(base.ref)) {
-    throw new Error("Set OPENWORK_EVAL_REF to the reviewed, pushed full 40-character commit SHA before booting a preview.");
-  }
+function assertIsolatedInfrastructure(): void {
   if (["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DAYTONA_DEN_SANDBOX", "OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX", "OPENWORK_EVAL_DAYTONA_SANDBOX"].some((key) => process.env[key]?.trim())) {
     throw new Error("Preview worlds require isolated infrastructure. Remove existing sandbox/reuse overrides before starting.");
   }
-  const fresh = scenario === "fresh" || scenario === "blank";
-  const den = stack.use(await server({
-    place, provision: !fresh, web: true,
-    daytonaAutoStopMinutes: 0,
-    ...(!fresh ? { org: { name: "Preview team", admin: { name: "Preview owner", email: `preview-${randomBytes(6).toString("hex")}@example.test` } } } : {}),
-    env: { OPENWORK_DEV_MODE: "1", DEN_REQUIRE_EMAIL_VERIFICATION: "false", RESEND_API_KEY: "", SMTP_HOST: "" },
-  }));
-  if (scenario === "team" || scenario === "restricted") await setupTeam(den, scenario === "restricted");
+}
+
+/** The placement's source ref: the pushed SHA on Daytona, this checkout's HEAD locally. */
+async function previewSourceRef(place: Place): Promise<{ ref: string; local: boolean }> {
+  const base = place.denBase();
+  if (base.kind === "daytona" && !/^[0-9a-f]{40}$/.test(base.ref)) {
+    throw new Error("Set OPENWORK_EVAL_REF to the reviewed, pushed full 40-character commit SHA before booting a preview.");
+  }
+  return base.kind === "daytona" ? { ref: base.ref, local: false } : { ref: await localSourceRef(), local: true };
+}
+
+type DesktopPreviewHandle = { cdpUrl: string; sandboxId?: string };
+
+/** Viewer and CDP outputs for a desktop this preview owns. */
+async function desktopOutputs(outputs: Record<string, WorldOutput>, place: Place, handle: DesktopPreviewHandle, cdpResponsive: boolean, localNote: string): Promise<void> {
+  if (place.kind === "local") {
+    outputs.preview = output("OpenWork desktop window", { group: "Preview", note: localNote });
+    outputs.cdp = secret(handle.cdpUrl, { group: "Services" });
+    return;
+  }
+  const sandbox = handle.sandboxId;
+  if (!sandbox) throw new Error("Desktop preview did not return its owned Daytona sandbox.");
+  const host = daytonaSandbox(sandbox);
+  if (!host.previewUrl) throw new Error("Daytona host cannot expose its viewer.");
+  const url = new URL(await host.previewUrl(6080));
+  url.search = "autoconnect=1&resize=scale&reconnect=1&reconnect_delay=2000";
+  await waitForNoVnc(url.href);
+  outputs.preview = output(url.href, { group: "Preview", note: "Real Linux Electron app · noVNC · clipboard in the side toolbar" });
+  outputs.desktopSandbox = output(sandbox, { group: "World" });
+  if (cdpResponsive) outputs.cdp = secret(handle.cdpUrl, { group: "Services" });
+}
+
+/**
+ * preview-desktop: the desktop app alone. No Den, organization, workspace, or
+ * sign-in is created; a source build starts as a fresh install and a published
+ * release starts from a completely blank profile.
+ */
+export async function bootDesktopPreview(stack: AsyncDisposableStack, place: Place, scenario: PreviewScenario, release?: DesktopRelease) {
+  const target = targetFromEnv();
+  if (target.os === "windows" && (!release || scenario !== "blank")) {
+    throw new Error("Daytona Windows supports only a blank exact published preview-desktop release.");
+  }
+  if (release && place.kind !== "daytona") throw new Error("Published release previews require --place daytona.");
+  assertIsolatedInfrastructure();
+  const source = await previewSourceRef(place);
   const outputs: Record<string, WorldOutput> = {
-    preview: output(fresh ? `${den.ref.webUrl}/?mode=sign-up` : `${den.ref.webUrl}/dashboard`, { group: "Preview" }),
-    denWeb: output(den.ref.webUrl, { group: "Services" }),
-    denApi: output(den.ref.apiUrl, { group: "Services" }),
-    emailOutbox: output(`${den.ref.apiUrl}/v1/dev/emails`, { group: "Services", note: "Test mail only; no messages leave this world" }),
     scenario: output(scenario, { group: "World" }),
-    ref: output(base.ref, { group: "World" }),
+    ref: output(source.ref, { group: "World", ...(release
+      ? { note: "Preview tooling source; independent from the published desktop bytes" }
+      : source.local ? { note: "Local checkout HEAD; uncommitted changes included" } : {}) }),
   };
-  if (den.placement?.kind === "daytona") outputs.denSandbox = output(den.placement.sandboxId, { group: "World" });
-  if (!fresh) {
-    outputs.email = output(den.admin.email, { group: "Test account" });
-    outputs.password = secret(den.admin.password, { group: "Test account" });
+  if (release && target.os === "windows") {
+    const windowsRelease = stack.use(await provisionWindowsReleaseSandbox({
+      release,
+      lifetimeMinutes: Number(process.env.OPENWORK_WORLD_PREVIEW_LIFETIME_MINUTES ?? "120"),
+      onCreated: (sandbox, name) => trackResource({ kind: "daytona-windows-preview", id: sandbox, match: name, label: "Windows published desktop" }),
+      step: (id, label) => previewSteps.step(id, label),
+      // Provisioning chatter belongs in the world log, not over the live step list.
+      log: (line) => console.log(line),
+    }));
+    await waitForNoVnc(windowsRelease.viewerUrl);
+    outputs.preview = secret(windowsRelease.viewerUrl, { group: "Preview", note: "Private Windows noVNC viewer; reveal only in your terminal" });
+    outputs.desktopSandbox = output(windowsRelease.sandbox, { group: "World" });
+    if (windowsRelease.cdpUrl) outputs.cdp = secret(windowsRelease.cdpUrl, { group: "Services" });
+    outputs.releaseVersion = output(windowsRelease.release.version, { group: "Release" });
+    outputs.distribution = output(windowsRelease.release.distribution, { group: "Release" });
+    outputs.platform = output("windows", { group: "Release" });
+    outputs.architecture = output("x64", { group: "Release" });
+    outputs.releaseAsset = output(windowsRelease.release.assetName, { group: "Release" });
+    outputs.releaseDigest = output(windowsRelease.release.digest, { group: "Release" });
+    outputs.releaseArchive = output(windowsRelease.installerPath, { group: "Release" });
+    outputs.releaseBinary = output(windowsRelease.installPath, { group: "Release" });
+    outputs.releaseInstall = output(windowsRelease.installPath.replace(/\\[^\\]+$/, ""), { group: "Release" });
+    outputs.startup = output(windowsRelease.startup.state, { group: "Desktop", note: windowsRelease.startup.detail });
+    outputs.desktopLog = output(windowsRelease.logPath, { group: "Desktop" });
+    outputs.profilePath = output(windowsRelease.profilePath, { group: "Desktop" });
+    return { desktop: windowsRelease, outputs };
   }
-  const releaseDesktop = release ? stack.use(await blankReleaseApp({ place, release })) : undefined;
-  const desktop = surface === "desktop" && !release ? stack.use(await app({ den, place, ...(fresh ? { signIn: false } : { as: "admin" }) })) : undefined;
-  const desktopHandle = releaseDesktop?.handle ?? desktop?.handle;
-  if (desktopHandle) {
-    const sandbox = desktopHandle.sandboxId;
-    if (!sandbox) throw new Error("Desktop preview did not return its owned Daytona sandbox.");
-    const host = daytonaSandbox(sandbox);
-    if (!host.previewUrl) throw new Error("Daytona host cannot expose its viewer.");
-    const url = new URL(await host.previewUrl(6080));
-    url.search = "autoconnect=1&resize=scale&reconnect=1&reconnect_delay=2000";
-    await waitForNoVnc(url.href);
-    outputs.preview = output(url.href, { group: "Preview", note: "Real Linux Electron app · noVNC · clipboard in the side toolbar" });
-    outputs.desktopSandbox = output(sandbox, { group: "World" });
-    if (!releaseDesktop || releaseDesktop.startup.state === "cdp-responsive") {
-      outputs.cdp = secret(desktopHandle.cdpUrl, { group: "Services" });
-    }
-  }
-  if (releaseDesktop) {
+  if (release) {
+    const releaseDesktop = stack.use(await blankReleaseApp({ place, release }));
+    await desktopOutputs(outputs, place, releaseDesktop.handle, releaseDesktop.startup.state === "cdp-responsive", "The published OpenWork desktop window is open on this machine");
     const meta = releaseDesktop.handle.meta ?? {};
     const profilePath = releaseDesktop.handle.profileDir;
     if (!profilePath) throw new Error("Published desktop preview is missing its profile path.");
@@ -203,14 +267,217 @@ export async function bootPreview(stack: AsyncDisposableStack, place: Place, sur
     outputs.protocolHandler = output(requiredString(meta, "protocolHandler"), { group: "Desktop" });
     outputs.relaunchShortcut = output(requiredString(meta, "relaunchShortcut"), { group: "Desktop" });
     outputs.browserShortcut = output(requiredString(meta, "browserShortcut"), { group: "Desktop" });
+    return { desktop: releaseDesktop, outputs };
   }
-  outputs.denRef = output(base.ref, { group: "World", ...(release ? { note: "Pinned Den/tooling source; independent from published desktop bytes" } : {}) });
-  return { den, desktop: releaseDesktop ?? desktop, outputs };
+  const desktop = stack.use(await standaloneApp({ place }));
+  await desktopOutputs(outputs, place, desktop.handle, true, "The OpenWork desktop window is open on this machine; no Den or account was created");
+  return { desktop, outputs };
 }
 
-export async function runPreview(surface: PreviewSurface, argv = process.argv.slice(2)): Promise<void> {
-  const { scenario, lifetimeMinutes, release } = parsePreviewOptions(argv);
-  if (resolvePlace().kind === "daytona" && !process.env.OPENWORK_EVAL_REF?.trim()) {
+/**
+ * preview-den (Den alone) and preview-full (Den plus a desktop wired to it).
+ * Owned, disposable infrastructure only. Never attach a preview to an existing
+ * test or production sandbox.
+ */
+export async function bootDenPreview(stack: AsyncDisposableStack, place: Place, surface: "den" | "full", scenario: PreviewScenario) {
+  if (targetFromEnv().os === "windows") throw new Error(`preview-${surface} does not run on Windows; use preview-desktop for a published Windows release.`);
+  assertIsolatedInfrastructure();
+  const source = await previewSourceRef(place);
+  const fresh = scenario === "fresh";
+  const den = stack.use(await server({
+    place, provision: !fresh, web: true,
+    daytonaAutoStopMinutes: 0,
+    ...(!fresh ? { org: { name: "Preview team", admin: { name: "Preview owner", email: `preview-${randomBytes(6).toString("hex")}@example.test` } } } : {}),
+    env: { OPENWORK_DEV_MODE: "1", DEN_REQUIRE_EMAIL_VERIFICATION: "false", RESEND_API_KEY: "", SMTP_HOST: "" },
+  }));
+  if (scenario === "team" || scenario === "restricted") await setupTeam(den, scenario === "restricted");
+  const outputs: Record<string, WorldOutput> = {
+    preview: output(fresh ? `${den.ref.webUrl}/?mode=sign-up` : `${den.ref.webUrl}/dashboard`, { group: "Preview" }),
+    denWeb: output(den.ref.webUrl, { group: "Services" }),
+    denApi: output(den.ref.apiUrl, { group: "Services" }),
+    emailOutbox: output(`${den.ref.apiUrl}/v1/dev/emails`, { group: "Services", note: "Test mail only; no messages leave this world" }),
+    scenario: output(scenario, { group: "World" }),
+    ref: output(source.ref, { group: "World", ...(source.local ? { note: "Local checkout HEAD; uncommitted changes included" } : {}) }),
+    denRef: output(source.ref, { group: "World" }),
+  };
+  if (den.placement?.kind === "daytona") outputs.denSandbox = output(den.placement.sandboxId, { group: "World" });
+  if (!fresh) {
+    outputs.email = output(den.admin.email, { group: "Test account" });
+    outputs.password = secret(den.admin.password, { group: "Test account" });
+  }
+  // Fresh stays a true first launch: only what the app itself creates, no harness workspace.
+  const desktop = surface === "full"
+    ? stack.use(await app({ den, place, ...(fresh ? { signIn: false, workspace: false } : { as: "admin" }) }))
+    : undefined;
+  if (desktop) {
+    await desktopOutputs(outputs, place, desktop.handle, true, "The OpenWork desktop window is open on this machine; Den web is linked in denWeb");
+    if (place.kind === "local") outputs.preview = output(den.ref.webUrl, { group: "Preview", note: "The OpenWork desktop window is open on this machine; Den web is linked here" });
+  }
+  return { den, desktop, outputs };
+}
+
+/** Deps are injectable so the Freestyle contract is unit-testable without a VM. */
+export interface FreestyleDesktopDeps {
+  ensureSnapshot(sha: string): Promise<unknown>;
+  launch(sha: string, lifetimeMinutes: number): Promise<{ id: string; snapshotId: string; url: string; expiresAt: string; outputs: Record<string, { value: string }> }>;
+  remove(id: string): Promise<void>;
+  track(id: string): Promise<void>;
+}
+
+async function defaultFreestyleDeps(): Promise<FreestyleDesktopDeps> {
+  const { ensureSnapshot } = await import("../../packages/freestyle/src/builder.ts");
+  const { launchPreview, deletePreview } = await import("../../packages/freestyle/src/index.ts");
+  return {
+    ensureSnapshot: (sha) => ensureSnapshot(sha, undefined, (message) => console.error(message), "desktop"),
+    launch: (sha, lifetimeMinutes) => launchPreview({ gitSha: sha, lifetimeMinutes, world: "desktop" }),
+    remove: (id) => deletePreview(id),
+    track: (id) => trackResource({ kind: "freestyle-preview", id, match: id, label: "Freestyle signed-out desktop" }),
+  };
+}
+
+/**
+ * The Freestyle desktop snapshot is a signed-out first launch with no Den, so
+ * only preview-desktop's `fresh` from a pushed commit maps onto it. Anything
+ * else is refused before a VM is created rather than quietly booting a
+ * different world.
+ */
+export function freestyleDesktopPlan(input: {
+  surface: PreviewSurface;
+  argv: readonly string[];
+  sources: ReturnType<typeof sourcesFromEnv>;
+  seeds: ReturnType<typeof seedsFromEnv>;
+  /** Keys selected with `pnpm world up --env`. */
+  selectedEnv?: readonly string[];
+}): { sha: string; lifetimeMinutes: number } {
+  if (input.surface !== "desktop") throw new Error(`preview-${input.surface} cannot run on Freestyle; use Daytona or local.`);
+  // The snapshot starts the app while it is built and launches resume it, so a
+  // launch-time app setting could not reach the running app.
+  if ((input.selectedEnv?.length ?? 0) > 0) {
+    throw new Error("Freestyle desktop snapshots start the app when they are built, so --env app settings cannot apply; use --place local or daytona.");
+  }
+  const parsed = parsePreviewOptions(input.argv);
+  if (parsed.release) throw new Error("Freestyle desktop runs a pushed commit, not a published release; use --place daytona for releases.");
+  if (input.argv.includes("--scenario") && parsed.scenario !== "fresh") {
+    throw new Error("Freestyle desktop supports only the signed-out fresh scenario.");
+  }
+  if (input.seeds.length > 1 || input.seeds.some((seed) => seed.name !== "fresh" || seed.arg !== undefined)) {
+    throw new Error("Freestyle desktop supports only --seed fresh.");
+  }
+  const unknown = Object.keys(input.sources).filter((key) => key !== "*" && key !== "desktop");
+  if (unknown.length > 0) throw new Error(`Freestyle desktop has no ${unknown.join(", ")} component; it runs without a Den.`);
+  const source = sourceFor(input.sources, "desktop");
+  if (source?.kind !== "sha") throw new Error("Freestyle desktop needs --source desktop=sha:<full-pushed-sha> or ref:<branch>.");
+  if (!input.argv.includes("--lifetime")) return { sha: source.sha, lifetimeMinutes: 120 };
+  if (parsed.lifetimeMinutes < 10 || parsed.lifetimeMinutes > 1430) {
+    throw new Error("Freestyle desktop lifetime must be 10-1430 minutes; Freestyle VMs always have a provider TTL.");
+  }
+  return { sha: source.sha, lifetimeMinutes: parsed.lifetimeMinutes };
+}
+
+export async function bootFreestyleDesktop(
+  stack: AsyncDisposableStack,
+  plan: { sha: string; lifetimeMinutes: number },
+  deps: FreestyleDesktopDeps,
+): Promise<Record<string, WorldOutput>> {
+  await deps.ensureSnapshot(plan.sha);
+  const preview = await deps.launch(plan.sha, plan.lifetimeMinutes);
+  stack.defer(() => deps.remove(preview.id));
+  await deps.track(preview.id);
+  const status = preview.outputs.desktopStatus?.value;
+  if (status !== "ready-signed-out") throw new Error("Freestyle desktop did not report a signed-out ready state.");
+  return {
+    preview: secret(preview.url, { group: "Preview", note: "Private signed-out Linux desktop (noVNC); reveal only in your terminal" }),
+    desktopStatus: output(status, { group: "Desktop" }),
+    scenario: output("fresh", { group: "World" }),
+    ref: output(plan.sha, { group: "World", note: "Pushed commit baked into the Freestyle snapshot" }),
+    placement: output("freestyle", { group: "World" }),
+    freestyleVm: output(preview.id, { group: "World" }),
+    snapshotId: output(preview.snapshotId, { group: "World" }),
+    expires: output(preview.expiresAt, { group: "World", note: "Freestyle provider TTL; the VM is deleted even if this driver stops" }),
+  };
+}
+
+function isPreviewScenario(value: string): value is PreviewScenario {
+  return value === "blank" || value === "fresh" || value === "team" || value === "restricted" || value === "workspace";
+}
+
+function pinSourceRef(sha: string, label: string): void {
+  if (process.env.OPENWORK_EVAL_REF?.trim() && process.env.OPENWORK_EVAL_REF !== sha) {
+    throw new Error(`${label} --source conflicts with OPENWORK_EVAL_REF.`);
+  }
+  process.env.OPENWORK_EVAL_REF = sha;
+}
+
+export async function runPreview(surface: PreviewSurface, argv = process.argv.slice(2), freestyleDeps?: FreestyleDesktopDeps): Promise<void> {
+  const target = targetFromEnv();
+  const name = `preview-${surface}`;
+  if (target.provider === "freestyle") {
+    const plan = freestyleDesktopPlan({ surface, argv, sources: sourcesFromEnv(), seeds: seedsFromEnv(), selectedEnv: selectedEnvKeys() });
+    await using stack = new AsyncDisposableStack();
+    const outputs = await bootFreestyleDesktop(stack, plan, freestyleDeps ?? await defaultFreestyleDeps());
+    const timer = setTimeout(() => process.kill(process.pid, "SIGTERM"), plan.lifetimeMinutes * 60_000);
+    try {
+      await hold({ name, outputs });
+    } finally {
+      clearTimeout(timer);
+    }
+    return;
+  }
+  if (target.os === "windows" && target.provider === "daytona" && surface === "desktop") process.env.OPENWORK_WORLD_PREVIEW_DAYTONA = "1";
+  const sources = sourcesFromEnv();
+  const parsed = parsePreviewOptions(argv, sourceFor(sources, "desktop")?.kind === "release");
+  const seeds = seedsFromEnv();
+  // Existing script arguments are still accepted, but never let two independent
+  // source/seed mechanisms disagree about what this world is going to boot.
+  const desktopSource = sourceFor(sources, "desktop");
+  const denSource = sourceFor(sources, "den");
+  const components = surface === "desktop" ? ["desktop"] : surface === "den" ? ["den"] : ["den", "desktop"];
+  const unsupportedSources = Object.keys(sources).filter((key) => key !== "*" && !components.includes(key));
+  if (unsupportedSources.length > 0) throw new Error(`${name} does not have components: ${unsupportedSources.join(", ")}.`);
+  if (surface === "desktop") {
+    if (desktopSource?.kind === "local" && target.provider !== "local") throw new Error("A remote desktop requires a pushed SHA or published release, not a local checkout.");
+    if (desktopSource?.kind === "sha" && target.provider === "local") {
+      throw new Error("Local previews use this working tree; --source desktop=sha:<sha> requires Daytona or Freestyle.");
+    }
+    if (desktopSource?.kind === "release" && target.provider === "local") {
+      throw new Error("Published release previews require Daytona; local desktop previews use this checkout.");
+    }
+    if (desktopSource?.kind === "sha") pinSourceRef(desktopSource.sha, "Desktop");
+  } else if (desktopSource && !(desktopSource.kind === "local" && target.provider === "local")) {
+    // preview-full wires the desktop to its own Den from the same checkout.
+    throw new Error(`${name} builds its desktop from the Den source; use preview-desktop for a published release or a separate desktop commit.`);
+  }
+  if (denSource?.kind === "release") throw new Error("Den source must be a reviewed commit SHA or local checkout, not a desktop release.");
+  if (target.provider === "local" && denSource?.kind === "sha") {
+    throw new Error("Local previews use this working tree for Den; --source den=sha:<sha> requires Daytona.");
+  }
+  if (parsed.release && desktopSource) throw new Error("Choose either --source desktop=release:... or -- --release, not both.");
+  if (parsed.release && surface !== "desktop") throw new Error("Published releases are supported only by preview-desktop.");
+  if (denSource?.kind === "sha") pinSourceRef(denSource.sha, "Den");
+  if (denSource?.kind === "local" && target.provider === "daytona") {
+    throw new Error("A remote Den requires a pushed SHA, not a local checkout.");
+  }
+  // Resolve Place only after the source has been pinned. DaytonaPlace
+  // captures its ref in the constructor; resolving earlier would boot `dev`.
+  const place = resolvePlace();
+  const allowed = PREVIEW_SCENARIOS[surface];
+  const seedNames = seeds.map((seed) => seed.name);
+  if (new Set(seedNames).size !== seedNames.length || seedNames.length > 1) throw new Error(`${name} accepts one scenario seed; choose ${allowed.join(", ")}.`);
+  const seed = seeds[0];
+  if (seed && (seed.arg !== undefined || !isPreviewScenario(seed.name) || !allowed.includes(seed.name))) {
+    throw new Error(`${name} --seed accepts exactly ${allowed.join(", ")} without arguments.`);
+  }
+  if (seed && argv.includes("--scenario")) throw new Error("Choose either --seed or -- --scenario, not both.");
+  const scenario: PreviewScenario = seed && isPreviewScenario(seed.name)
+    ? seed.name : desktopSource?.kind === "release" ? "blank" : parsed.scenario;
+  if (!allowed.includes(scenario)) throw new Error(`${name} supports --scenario ${allowed.join(", ")}.`);
+  const release = desktopSource?.kind === "release"
+    ? { version: desktopSource.version, distribution: desktopSource.distribution } : parsed.release;
+  if (release && scenario !== "blank") throw new Error("Published release previews support only --scenario blank.");
+  if (scenario === "blank" && !release) throw new Error("The blank scenario requires an exact published release.");
+  const { lifetimeMinutes } = parsed;
+  if (target.os === "windows" && lifetimeMinutes > 1410) throw new Error("Windows previews support --lifetime 0-1410 (30 minutes reserved for sandbox startup).");
+  if (place.kind === "daytona" && !process.env.OPENWORK_EVAL_REF?.trim()) {
     try {
       const { stdout } = await promisify(execFile)("git", ["ls-remote", "--exit-code", "origin", "refs/heads/dev"], {
         cwd: fileURLToPath(new URL("../..", import.meta.url)),
@@ -224,14 +491,19 @@ export async function runPreview(surface: PreviewSurface, argv = process.argv.sl
       throw new Error("Could not resolve remote dev for this preview. Check access to origin or set OPENWORK_EVAL_REF to a reviewed, pushed full 40-character commit SHA.", { cause });
     }
   }
-  process.env.OPENWORK_WORLD_PREVIEW_DAYTONA = "1";
+  if (place.kind === "daytona") process.env.OPENWORK_WORLD_PREVIEW_DAYTONA = "1";
+  process.env.OPENWORK_WORLD_PREVIEW_LIFETIME_MINUTES = String(lifetimeMinutes);
   await using stack = new AsyncDisposableStack();
-  const { outputs } = await bootPreview(stack, resolvePlace(), surface, scenario, release);
+  const { outputs } = surface === "desktop"
+    ? await bootDesktopPreview(stack, place, scenario, release)
+    : await bootDenPreview(stack, place, surface, scenario);
+  const selected = selectedEnvKeys();
+  if (selected.length > 0) outputs.appEnv = output(selected.join(", "), { group: "World", note: "App settings selected with --env" });
   const expires = lifetimeMinutes === 0 ? undefined : new Date(Date.now() + lifetimeMinutes * 60_000);
   outputs.expires = output(expires?.toISOString() ?? "Until stopped", { group: "World", note: "Session lifetime, not an idle timer" });
   const timer = expires ? setTimeout(() => process.kill(process.pid, "SIGTERM"), lifetimeMinutes * 60_000) : undefined;
   try {
-    await hold({ name: `preview-${surface}`, outputs });
+    await hold({ name, outputs });
   } finally {
     clearTimeout(timer);
   }

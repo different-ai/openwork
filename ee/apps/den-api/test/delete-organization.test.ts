@@ -234,7 +234,7 @@ test("organization delete denies non-owners", async () => {
   const response = await deleteOrganization()
 
   expect(response.status).toBe(403)
-  await expect(response.json()).resolves.toEqual({ error: "forbidden" })
+  await expect(response.json()).resolves.toMatchObject({ error: "forbidden", code: "requires_admin", retryable: false })
   expect(cancelledOrganizationIds).toEqual([])
   expect(callOrder).toEqual([])
   expect(linearCreatedIssues).toEqual([])
@@ -244,7 +244,7 @@ test("organization delete denies non-owners", async () => {
 test("organization delete requires a fresh owner session", async () => {
   role = "owner"
   isOwner = true
-  sessionCreatedAt = new Date(Date.now() - 16 * 60 * 1000)
+  sessionCreatedAt = new Date(Date.now() - 3 * 60 * 60 * 1000)
 
   const response = await deleteOrganization()
 

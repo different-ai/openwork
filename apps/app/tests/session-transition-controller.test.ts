@@ -18,6 +18,31 @@ describe("session render transitions", () => {
     });
   });
 
+  test("keeps an already-rendered current session interactive when its background refresh fails", () => {
+    expect(deriveSessionRenderModel({
+      intendedSessionId: "session-current",
+      renderedSessionId: "session-current",
+      hasSnapshot: true,
+      isFetching: false,
+      isError: true,
+    })).toEqual({
+      intendedSessionId: "session-current",
+      renderedSessionId: "session-current",
+      transitionState: "idle",
+      renderSource: "error",
+    });
+  });
+
+  test("still reports failed when the intended session never rendered", () => {
+    expect(deriveSessionRenderModel({
+      intendedSessionId: "session-next",
+      renderedSessionId: null,
+      hasSnapshot: false,
+      isFetching: false,
+      isError: true,
+    }).transitionState).toBe("failed");
+  });
+
   test("still reports switching while the intended session has no rendered snapshot", () => {
     expect(deriveSessionRenderModel({
       intendedSessionId: "session-next",

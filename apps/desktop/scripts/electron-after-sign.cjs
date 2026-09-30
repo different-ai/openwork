@@ -58,6 +58,17 @@ function verifyComputerUseHelper(appPath, requireDistributionSignature) {
   }
 }
 
+// Offline checks on the signed, notarized, stapled bundle. These read the
+// bundle itself, so they never guess the executable name (it follows each
+// flavor's productName) and never launch the app on the build machine.
+// Launch and render coverage belongs to the packaged-app journeys, which run
+// against the built artifacts rather than inside electron-builder.
+function verifySignedApp(appPath, { runCommand = run } = {}) {
+  runCommand("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]);
+  runCommand("spctl", ["--assess", "--type", "execute", "--verbose=2", appPath]);
+  runCommand("xcrun", ["stapler", "validate", appPath]);
+}
+
 async function afterSign(context) {
   if (context.electronPlatformName !== "darwin") return;
 
@@ -92,7 +103,7 @@ async function afterSign(context) {
     ]);
     // Notarization tickets can take minutes to propagate to Apple's CDN after acceptance; stapler can transiently fail with status 65 ("CloudKit query failed").
     await runWithRetry("xcrun", ["stapler", "staple", appPath], 5);
-    run("xcrun", ["stapler", "validate", appPath]);
+    verifySignedApp(appPath);
   } finally {
     rmSync(notaryTempDir, { recursive: true, force: true });
   }
@@ -101,3 +112,4 @@ async function afterSign(context) {
 module.exports = afterSign;
 module.exports.default = afterSign;
 module.exports.runWithRetry = runWithRetry;
+module.exports.verifySignedApp = verifySignedApp;

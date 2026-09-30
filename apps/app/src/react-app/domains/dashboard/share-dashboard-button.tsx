@@ -9,6 +9,7 @@ import { DenApiError, readDenSettings } from "@/app/lib/den";
 import { DenReauthNotice } from "../cloud/den-reauth-notice";
 
 export function ShareDashboardButton({ apps }: { apps: SavedAppSummary[] }) {
+  const { canManage } = useAppsClient();
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const commitSession = useRef<(() => void) | null>(null);
@@ -18,6 +19,7 @@ export function ShareDashboardButton({ apps }: { apps: SavedAppSummary[] }) {
     commitSession.current = null;
     commit?.();
   };
+  if (!canManage) return null;
   return <Dialog open={open} onOpenChange={(next) => { if (!pending) { if (next) setOpen(true); else close(); } }}>
     <Button variant="outline" onClick={() => setOpen(true)}><Share2 className="size-4" />Share</Button>
     {open ? <DialogContent className="max-h-[90dvh] overflow-y-auto">

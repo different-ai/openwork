@@ -6,8 +6,9 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
 import { Button } from "@/components/ui/button"
+import { TaskRecovery } from "@/components/chat/task-recovery"
 import {
-  attributeChatToolError,
+  describeChatToolFailure,
   type ChatToolReconnectAction,
   type ChatToolReconnectProgress,
   type ChatToolReconnectResult,
@@ -20,11 +21,9 @@ import {
   Bot,
   BookOpenCheck,
   Check,
-  CircleAlert,
   Copy,
   ExternalLink,
   FilePen,
-  KeyRound,
   ListTodo,
   LoaderCircle,
   MessageCircleQuestion,
@@ -54,9 +53,6 @@ function toolIcon(part: ToolPart) {
       return ListTodo
     case "question":
       return MessageCircleQuestion
-    case "request_env_var":
-    case "env_var_request":
-      return KeyRound
     case "task":
       return Bot
     default:
@@ -76,7 +72,6 @@ export type ToolProps = {
     onProgress: (progress: ChatToolReconnectProgress) => void,
   ) => Promise<ChatToolReconnectResult>
   onReopenAuthorization?: (action: ChatToolReconnectAction, authorizeUrl: string) => Promise<void>
-  onRetry?: (action: ChatToolReconnectAction) => void | Promise<void>
 }
 
 const formatValue = (value: unknown): string => {
@@ -152,18 +147,15 @@ const Tool = ({
   className,
   onReconnect,
   onReopenAuthorization,
-  onRetry,
 }: ToolProps) => {
   const { state, input } = toolPart
   const inFlight = isToolPartInFlight(toolPart)
   const isError = state === "output-error"
   const { reconnectAction, reconnectState, reconnectError, reconnectPresentation, handleReconnect } =
-    useChatToolReconnect(toolPart, { onReconnect, onReopenAuthorization, onRetry })
+    useChatToolReconnect(toolPart, { onReconnect, onReopenAuthorization })
   const errorAttribution = reconnectAction
     ? reconnectAttribution(reconnectAction, reconnectPresentation?.badgeLabel ?? "Reconnect required")
-    : isError && toolPart.errorText
-      ? attributeChatToolError(toolPart.errorText)
-      : null
+    : null
   const label = title ?? getToolActivityLabel(toolPart)
   const hasInput = input !== null && input !== undefined
   const hasOutput = "output" in toolPart && toolPart.output !== undefined
@@ -193,6 +185,18 @@ const Tool = ({
     }
   }, [resultText])
 
+  if (isError) return <div className={className}>
+    <TaskRecovery compact title={title ? `${title} failed` : "This action couldn’t finish"}
+      description={reconnectError ? describeChatToolFailure(reconnectError)
+        : reconnectAction ? reconnectState === "connected" ? `${reconnectAction.connectionName} is connected again. Check whether the action finished before retrying.` : `${reconnectAction.connectionName} needs attention. Check its sign-in.`
+        : describeChatToolFailure(toolPart.errorText ?? "")}
+      technicalDetails={[toolPart.type === "dynamic-tool" ? toolPart.toolName : toolPart.type, hasInput ? formatValue(input) : null, toolPart.errorText].filter(Boolean).join("\n")}
+      actions={reconnectAction && onReconnect ? <Button variant="ghost" size="xs"
+        data-testid="chat-mcp-reconnect-action" disabled={reconnectPresentation?.disabled}
+        aria-label={`${reconnectPresentation?.buttonLabel} ${reconnectAction.connectionName}`}
+        onClick={() => void handleReconnect()}>{reconnectPresentation?.buttonLabel}</Button> : null} />
+  </div>
+
   return (
     <Collapsible className={className} defaultOpen={defaultOpen}>
       <div className="flex min-w-0 items-center gap-2" aria-live="polite">
@@ -202,28 +206,14 @@ const Tool = ({
           <span className="inline-flex size-4 shrink-0 items-center justify-center">
             {inFlight ? (
               <LoaderCircle className="size-4 animate-spin" />
-            ) : isError ? (
-              <CircleAlert className="text-destructive size-4" />
             ) : (
               <Icon className={cn("size-3.5", isSkill && "text-violet-11")} />
             )}
           </span>
           <span className="min-w-0 truncate">{label}</span>
-          {isError && !errorAttribution ? (
-            <span className="text-destructive shrink-0 text-xs">failed</span>
-          ) : null}
           {errorAttribution ? (
             <span
-              className={cn(
-                "shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none transition-colors",
-                reconnectAction && reconnectState === "connected"
-                  ? "border-green-7/30 bg-green-3/50 text-green-11"
-                  : reconnectAction && reconnectState === "failed"
-                    ? "border-destructive/30 bg-destructive/5 text-destructive"
-                    : reconnectAction
-                      ? "border-amber-7/30 bg-amber-3/50 text-amber-11"
-                      : "border-border/70 text-muted-foreground",
-              )}
+              className="shrink-0 text-xs text-dls-secondary"
               title={`${errorAttribution.confidence}: ${errorAttribution.description}`}
               aria-label={`Error attribution: ${errorAttribution.label}. ${errorAttribution.confidence}.`}
             >
@@ -234,16 +224,8 @@ const Tool = ({
         {reconnectAction && onReconnect ? (
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
             size="xs"
-            className={cn(
-              "h-7 shrink-0 gap-1.5 rounded-lg px-2.5 font-semibold shadow-none before:shadow-none",
-              reconnectState === "connected"
-                ? "border-green-7/40 bg-green-3/60 text-green-11 hover:border-green-7/60 hover:bg-green-4/70"
-                : reconnectState === "failed"
-                  ? "border-destructive/30 bg-destructive/5 text-destructive hover:border-destructive/50 hover:bg-destructive/10"
-                  : "border-amber-7/40 bg-amber-3/60 text-amber-11 hover:border-amber-7/60 hover:bg-amber-4/70",
-            )}
             data-testid="chat-mcp-reconnect-action"
             disabled={reconnectPresentation?.disabled}
             title={`${reconnectPresentation?.buttonLabel} ${reconnectAction.connectionName}`}
@@ -260,7 +242,7 @@ const Tool = ({
         ) : null}
       </div>
       {reconnectError ? (
-        <p className="mt-1 text-xs text-destructive" role="alert">{reconnectError}</p>
+        <p className="mt-1 text-xs text-dls-secondary" role="alert">{describeChatToolFailure(reconnectError)}</p>
       ) : null}
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden text-sm transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
         <div className="bg-muted relative mt-2 flex flex-col gap-2 rounded-lg p-2 pr-10 text-xs">
@@ -295,11 +277,6 @@ const Tool = ({
                 {formatValue(toolPart.output)}
               </pre>
             )
-          ) : null}
-          {isError && toolPart.errorText ? (
-            <pre className="text-destructive max-h-60 overflow-auto whitespace-pre-wrap wrap-break-word">
-              {toolPart.errorText}
-            </pre>
           ) : null}
           {inFlight && !hasInput ? (
             <span className="text-muted-foreground">Waiting for input…</span>

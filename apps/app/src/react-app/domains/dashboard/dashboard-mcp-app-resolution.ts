@@ -1,3 +1,4 @@
+import { timeMcpApp } from "@openwork/types/mcp-app-timing";
 import { mcpAppResolutionRetryDelayMs } from "@/app/lib/mcp-app-resolution"
 import type {
   OpenworkMcpAppLaunchReference,
@@ -39,7 +40,7 @@ export async function resolveDashboardMcpApp<TEndpoint extends McpAppResolutionE
       try {
         // Discovery needs the binding, never the saved tool input or approval.
         const reference = launch ? { ...launch, arguments: {} } : undefined
-        const { app } = await endpoint.client.resolveMcpApp(endpoint.workspaceId, projectedToolName, reference, { sessionId: null, readOnly: false })
+        const { app } = await timeMcpApp("dashboard.discovery-resolve", () => endpoint.client.resolveMcpApp(endpoint.workspaceId, projectedToolName, reference, { sessionId: null, readOnly: false }))
         if (isActive(endpoint) && app && app.serverName === expected.serverName
           && app.toolName === expected.toolName && app.resourceUri === expected.resourceUri) return { endpoint, app }
         if (app?.launchId) await endpoint.client.releaseMcpApp(endpoint.workspaceId, app.launchId).catch(() => undefined)

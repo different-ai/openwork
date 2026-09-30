@@ -1,4 +1,4 @@
-import type { DenCloudInstance, DenCloudStartupFailure } from "@/app/lib/den";
+import type { DenCloudInstance, DenCloudInstanceUpdateDeferral, DenCloudStartupFailure } from "@/app/lib/den";
 
 export function cloudWorkspaceFailureLogFields(failure: DenCloudStartupFailure) {
   return {
@@ -36,49 +36,7 @@ export type CloudWorkspaceViewModel = {
 
 export type CloudWorkspaceMainContentDecision = "takeover" | "error" | "content";
 
-export type CloudWorkspaceBootStageState = "done" | "active" | "pending";
-
-export type CloudWorkspaceBootStage = {
-  id: string;
-  label: string;
-  state: CloudWorkspaceBootStageState;
-};
-
-/**
- * Boot progress is derived from the status we already poll rather than from a
- * timer, so the ladder can never claim more progress than we can prove. Each
- * variant tells us which checkpoint the sandbox is standing on: a provisioning
- * sandbox is still being reserved, while a waking or updating one demonstrably
- * exists already.
- */
-const BOOT_STAGES: Partial<
-  Record<CloudWorkspacePillVariant, { labels: readonly [string, string, string]; activeIndex: number }>
-> = {
-  provisioning: {
-    labels: ["Reserving your computer", "Restoring your files", "Connecting the app"],
-    activeIndex: 0,
-  },
-  waking: {
-    labels: ["Reserving your computer", "Restoring your files", "Connecting the app"],
-    activeIndex: 1,
-  },
-  updating: {
-    labels: ["Saving your session", "Applying the latest image", "Reconnecting the app"],
-    activeIndex: 1,
-  },
-};
-
-export function cloudWorkspaceBootStages(variant: CloudWorkspacePillVariant): CloudWorkspaceBootStage[] {
-  const stages = BOOT_STAGES[variant];
-  if (!stages) return [];
-  return stages.labels.map((label, index) => ({
-    id: `${variant}-${index}`,
-    label,
-    state: index < stages.activeIndex ? "done" : index === stages.activeIndex ? "active" : "pending",
-  }));
-}
-
-/** Past this point "usually under a minute" stops being true, so the copy and the actions change. */
+/** Long waits expose a status check without restarting a healthy boot. */
 export const CLOUD_WORKSPACE_SLOW_BOOT_MS = 45_000;
 
 export function cloudWorkspaceBootIsSlow(elapsedMs: number): boolean {
@@ -96,6 +54,8 @@ export function formatCloudWorkspaceElapsed(elapsedMs: number): string {
 export function cloudWorkspaceTakeoverCopy(input: {
   variant: CloudWorkspacePillVariant;
   slow: boolean;
+  connecting?: boolean;
+  checking?: boolean;
 }): { title: string; body: string } {
   if (input.variant === "access-required") {
     return {
@@ -117,25 +77,27 @@ export function cloudWorkspaceTakeoverCopy(input: {
   }
   if (input.slow) {
     return {
-      title: "Still working on it…",
+      title: "Your cloud workspace is taking longer than usual",
       body: "This is taking longer than usual. You can keep waiting or check again.",
     };
   }
+  if (input.checking) return { title: "Checking cloud workspace…", body: "" };
+  if (input.connecting) return { title: "Connecting to your workspace…", body: "" };
   if (input.variant === "provisioning") {
     return {
-      title: "Starting your workspace…",
-      body: "Usually under a minute. We’ll open it the moment it’s ready.",
+      title: "Creating your cloud workspace…",
+      body: "",
     };
   }
   if (input.variant === "updating") {
     return {
-      title: "Updating your workspace…",
-      body: "We’re applying the latest OpenWork image. Your files and sessions come along.",
+      title: "Updating your cloud workspace…",
+      body: "",
     };
   }
   return {
-    title: "Waking your workspace…",
-    body: "Your sandbox is coming back online. We’ll open it as soon as it’s ready.",
+    title: "Starting your cloud workspace…",
+    body: "",
   };
 }
 
@@ -153,12 +115,40 @@ export function cloudWorkspaceUpdateAvailable(instance: DenCloudInstance | null)
   return instance.imageVersion === null || instance.imageVersion !== instance.latestVersion;
 }
 
-// Stopped instances already recycle on wake; this only nudges running stale instances,
-// skips while any client-visible run is active, and attempts once per target version so
-// failed or already_current attempts cannot retry-loop.
+/** A tab hidden this long counts as the person having stepped away. */
+export const CLOUD_AUTO_UPDATE_HIDDEN_MS = 5 * 60_000;
+/** A visible tab with no pointer or keyboard input this long counts the same. */
+export const CLOUD_AUTO_UPDATE_INPUT_IDLE_MS = 10 * 60_000;
+/** After the server defers an update, wait at least this long before asking again. */
+export const CLOUD_AUTO_UPDATE_DEFERRED_RETRY_MS = 5 * 60_000;
+
+/**
+ * Whether the person is away from this tab: hidden long enough, or visible
+ * but untouched long enough. An update restarts the workspace, so it must
+ * never start the moment someone is reading or typing.
+ */
+export function isUserAway(input: {
+  hiddenSinceMs: number | null;
+  lastInputAtMs: number;
+  nowMs: number;
+  hiddenMs?: number;
+  idleMs?: number;
+}): boolean {
+  const hiddenMs = input.hiddenMs ?? CLOUD_AUTO_UPDATE_HIDDEN_MS;
+  const idleMs = input.idleMs ?? CLOUD_AUTO_UPDATE_INPUT_IDLE_MS;
+  if (input.hiddenSinceMs !== null && input.nowMs - input.hiddenSinceMs >= hiddenMs) return true;
+  return input.nowMs - input.lastInputAtMs >= idleMs;
+}
+
+// Stopped instances already recycle on wake; this only nudges running stale instances.
+// It waits until the person is away and no client-visible run is active, honors the
+// retry window after a server-side deferral, and otherwise attempts once per target
+// version so failed or already_current attempts cannot retry-loop. The server makes
+// the authoritative busy check for other tabs, devices, remote sessions, and Automations.
 export function shouldAutoUpdateCloudWorkspace(input: {
   gatewayMode: boolean;
   visible: boolean;
+  away: boolean;
   status: "provisioning" | "waking" | "ready" | "failed" | null;
   updateAvailable: boolean;
   updating: boolean;
@@ -166,16 +156,26 @@ export function shouldAutoUpdateCloudWorkspace(input: {
   hasActiveRun: boolean;
   latestVersion: string | null;
   lastAttemptedVersion: string | null;
+  nowMs?: number;
+  retryNotBeforeMs?: number | null;
 }): boolean {
   return input.gatewayMode
     && input.visible
+    && input.away
     && input.status === "ready"
     && input.updateAvailable
     && !input.updating
     && !input.requestFailed
     && !input.hasActiveRun
     && input.latestVersion !== null
-    && input.latestVersion !== input.lastAttemptedVersion;
+    && input.latestVersion !== input.lastAttemptedVersion
+    && (input.retryNotBeforeMs == null || (input.nowMs ?? Date.now()) >= input.retryNotBeforeMs);
+}
+
+export function cloudWorkspaceUpdateDeferredLine(deferral: DenCloudInstanceUpdateDeferral): string {
+  return deferral === "busy"
+    ? "Update ready · it applies when your current work finishes"
+    : "Update ready · we couldn’t confirm your workspace is idle yet and will try again";
 }
 
 export function cloudWorkspaceStatusHasReadyContent(variant: CloudWorkspacePillVariant): boolean {
@@ -191,7 +191,7 @@ export function shouldSuppressBootOverlayForGateway(input: {
   signedIn: boolean;
   variant: CloudWorkspacePillVariant;
 }): boolean {
-  return input.gatewayMode && input.signedIn && !cloudWorkspaceStatusHasReadyContent(input.variant);
+  return input.gatewayMode && input.signedIn;
 }
 
 export function shouldShowCloudWorkspaceStatusPill(input: {
@@ -210,9 +210,11 @@ export function mapCloudWorkspaceMainContentDecision(input: {
   status: CloudWorkspacePillVariant;
   hasWorkspaces: boolean;
   gatewayMode: boolean;
+  startupPending?: boolean;
 }): CloudWorkspaceMainContentDecision {
   if (!input.gatewayMode) return "content";
   if (input.status === "failed" || input.status === "access-required") return "takeover";
+  if (input.startupPending) return "takeover";
   if (!cloudWorkspaceStatusHasReadyContent(input.status)) {
     return input.hasWorkspaces ? "content" : "takeover";
   }
@@ -262,6 +264,7 @@ export function mapCloudWorkspaceState(input: {
   updating: boolean;
   accessRequired: boolean;
   requestFailed?: boolean;
+  updateDeferred?: DenCloudInstanceUpdateDeferral | null;
 }): CloudWorkspaceViewModel {
   const updateAvailable = cloudWorkspaceUpdateAvailable(input.instance);
   const lines = baseLines(input.instance, updateAvailable);
@@ -355,7 +358,9 @@ export function mapCloudWorkspaceState(input: {
       variant: "stale",
       label: "Update available",
       tone: "neutral",
-      statusLine: connectedStatusLine(input.instance, true),
+      statusLine: input.updateDeferred
+        ? cloudWorkspaceUpdateDeferredLine(input.updateDeferred)
+        : connectedStatusLine(input.instance, true),
       ...lines,
       updateAvailable,
       showUpdate: true,

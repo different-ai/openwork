@@ -7,11 +7,13 @@ import type { GatewayCredentialLookup } from "../provider-credentials.js"
 
 export const GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
 export const REFRESH_WINDOW_MS = 60_000
+export const GOOGLE_OAUTH_MAX_EXPIRES_IN_SECONDS = 86_400
+const GOOGLE_CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 const LOCK_MS = 30_000
 const TOKEN_REQUEST_TIMEOUT_MS = 15_000
 
 type CredentialRow = typeof GatewayProviderCredentialTable.$inferSelect
-type CredentialSnapshot = Pick<CredentialRow, "id" | "secret" | "expires_at" | "status"> & { kind: "oauth_google" | "oauth_azure" }
+type CredentialSnapshot = Pick<CredentialRow, "id" | "secret" | "expires_at" | "status"> & Partial<Pick<CredentialRow, "last_error">> & { kind: "oauth_google" | "oauth_azure" }
 export type OauthCredentialRow = CredentialSnapshot & Pick<CredentialRow,
   "gateway_provider_id" | "credential_set_id" | "organization_id" | "subject" | "org_membership_id" | "updated_at" | "last_refreshed_at" | "refreshing_until"> & { secret_revision: string }
 export type OauthClient = { id: string; oauth_client_id: string | null; oauth_client_secret: string | null }
@@ -28,6 +30,7 @@ export type GoogleOauthRefreshStore = {
 export type GoogleOauthRefreshOutcome =
   | { kind: "refreshed"; credential: OauthCredentialRow }
   | { kind: "auth_required" }
+  | { kind: "configuration_required" }
   | { kind: "retry"; reason: "refresh_busy" | "refresh_unavailable" | "credential_changed" }
 
 export type RefreshGoogleOauthToken = (input: {
@@ -37,7 +40,12 @@ export type RefreshGoogleOauthToken = (input: {
   authorization: GatewayCredentialLookup
   subject: string
   now: Date
+  clock?: () => Date
 }) => Promise<GoogleOauthRefreshOutcome>
+
+function isGoogleOauthTokenMaterial(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 16_384 && /^[\x21-\x7e]+$/.test(value)
+}
 
 export function needsGoogleOauthRefresh(credential: { expires_at: Date | null }, token: GatewayOauthTokenSecret, now: Date) {
   return credential.expires_at !== null && Boolean(token.refreshToken)
@@ -51,11 +59,21 @@ export function sameOauthVersion(a: OauthCredentialRow, b: OauthCredentialRow) {
     && a.organization_id === b.organization_id && a.subject === b.subject
     && a.org_membership_id === b.org_membership_id && a.kind === b.kind
     && a.status === "active" && b.status === "active" && a.secret === b.secret
+    && (a.last_error ?? null) === (b.last_error ?? null)
     && a.secret_revision === b.secret_revision
     && a.updated_at.getTime() === b.updated_at.getTime()
     && a.last_refreshed_at?.getTime() === b.last_refreshed_at?.getTime()
     && a.expires_at?.getTime() === b.expires_at?.getTime()
     && a.refreshing_until?.getTime() === b.refreshing_until?.getTime()
+}
+
+function canReuseGoogleOauthToken(credential: OauthCredentialRow, now: Date) {
+  const expiresAt = credential.expires_at?.getTime() ?? NaN
+  const refreshedAt = credential.last_refreshed_at?.getTime() ?? NaN
+  const usableLifetime = expiresAt - refreshedAt
+  const refreshWindow = refreshedAt <= now.getTime() && usableLifetime > 0
+    ? Math.min(REFRESH_WINDOW_MS, usableLifetime / 2) : REFRESH_WINDOW_MS
+  return Number.isFinite(expiresAt) && expiresAt - now.getTime() > refreshWindow
 }
 
 export function createGoogleOauthRefresher(deps: {
@@ -72,23 +90,31 @@ export function createGoogleOauthRefresher(deps: {
   const attempts = Math.ceil((deps.waitMs ?? 5_000) / pollMs)
 
   const refresh: RefreshGoogleOauthToken = async (input) => {
-    // Advance even when the caller supplied a deterministic starting clock.
     const started = performance.now()
-    const clock = () => new Date(input.now.getTime() + Math.floor(performance.now() - started))
+    const clock = input.clock ?? (() => new Date(input.now.getTime() + Math.floor(performance.now() - started)))
     const scope = { credentialId: input.credential.id, provider: input.provider, subject: input.subject, authorization: input.authorization }
-    const latest = async (reason: "refresh_busy" | "refresh_unavailable" | "credential_changed"): Promise<GoogleOauthRefreshOutcome> => {
-      const row = await deps.store.reloadCredential(scope)
-      if (!row || row.status !== "active") return { kind: "auth_required" }
-      if (row.expires_at && row.expires_at.getTime() - clock().getTime() > REFRESH_WINDOW_MS) return { kind: "refreshed", credential: row }
-      return { kind: "retry", reason }
-    }
     const row = await deps.store.reloadCredential(scope)
     if (!row || row.status !== "active") return { kind: "auth_required" }
-    if (row.expires_at && row.expires_at.getTime() - clock().getTime() > REFRESH_WINDOW_MS) return { kind: "refreshed", credential: row }
+    if (row.kind === "oauth_google" && row.last_error === "invalid_client") return { kind: "configuration_required" }
+    if (!row.expires_at || !Number.isFinite(row.expires_at.getTime())) return { kind: "auth_required" }
+    if (canReuseGoogleOauthToken(row, clock())) return { kind: "refreshed", credential: row }
+    const latest = async (reason: "refresh_busy" | "refresh_unavailable" | "credential_changed"): Promise<GoogleOauthRefreshOutcome> => {
+      const winner = await deps.store.reloadCredential(scope)
+      if (!winner || winner.status !== "active") return { kind: "auth_required" }
+      if (winner.kind === "oauth_google" && winner.last_error === "invalid_client") return { kind: "configuration_required" }
+      if (!winner.expires_at || !Number.isFinite(winner.expires_at.getTime())) return { kind: "auth_required" }
+      const now = clock()
+      const refreshed = winner.secret_revision !== row.secret_revision && winner.last_error == null
+        && winner.refreshing_until === null && winner.last_refreshed_at !== null
+        && Number.isFinite(winner.last_refreshed_at.getTime()) && winner.last_refreshed_at <= now
+      if (canReuseGoogleOauthToken(winner, now) || (refreshed && winner.expires_at > now)) return { kind: "refreshed", credential: winner }
+      return { kind: "retry", reason }
+    }
     // A delayed caller must not refresh a replacement using its old client.
     if (row.secret !== input.credential.secret) return { kind: "retry", reason: "credential_changed" }
-    if (!input.provider.oauth_client_id || !input.provider.oauth_client_secret) return { kind: "auth_required" }
-    const lock = await deps.store.tryAcquireRefreshLock({ scope, credential: row, now: clock(), until: new Date(clock().getTime() + LOCK_MS) })
+    if (!input.provider.oauth_client_id || !input.provider.oauth_client_secret) return { kind: "configuration_required" }
+    const acquiredAt = clock()
+    const lock = await deps.store.tryAcquireRefreshLock({ scope, credential: row, now: acquiredAt, until: new Date(acquiredAt.getTime() + LOCK_MS) })
     if (!lock) {
       for (let attempt = 0; attempt < attempts; attempt++) {
         const outcome = await latest("refresh_busy")
@@ -103,10 +129,14 @@ export function createGoogleOauthRefresher(deps: {
     const current = await deps.store.reloadCredential(scope)
     if (!current || !sameOauthVersion(current, lock.credential)) return latest("credential_changed")
     let token: GatewayOauthTokenSecret
+    let googleIdentity: unknown
     try {
       const parsed = parseGatewayProviderSecret(current.kind, current.secret)
       if (parsed.kind !== "oauth_google") throw new Error("Unsupported credential")
       token = parsed.token
+      if (token.refreshToken !== undefined && !isGoogleOauthTokenMaterial(token.refreshToken)) throw new Error("Invalid refresh token")
+      const stored: unknown = JSON.parse(current.secret)
+      if (typeof stored === "object" && stored !== null && "googleIdentity" in stored) googleIdentity = stored.googleIdentity
     } catch {
       await deps.store.recordRefreshFailure({ lock, error: "invalid_token_secret", permanent: true, now: clock() })
       return latest("credential_changed")
@@ -115,6 +145,8 @@ export function createGoogleOauthRefresher(deps: {
       await deps.store.recordRefreshFailure({ lock, error: null, permanent: false, now: clock() })
       return latest("credential_changed")
     }
+    const requestedAt = clock()
+    if (!current.refreshing_until || current.refreshing_until <= requestedAt) return latest("refresh_busy")
     let response: Response
     let body: unknown
     try {
@@ -130,21 +162,32 @@ export function createGoogleOauthRefresher(deps: {
       return latest("refresh_unavailable")
     }
     const record: Record<string, unknown> = typeof body === "object" && body !== null ? { ...body } : {}
-    if (!response.ok || typeof record.access_token !== "string" || !record.access_token
-      || typeof record.expires_in !== "number" || !Number.isFinite(record.expires_in) || record.expires_in <= 0 || record.expires_in > 3600) {
-      const permanent = !response.ok && record.error === "invalid_grant"
-      // Never persist provider descriptions or exception text containing tokens.
-      await deps.store.recordRefreshFailure({ lock, error: permanent ? "invalid_grant" : "token_endpoint_unavailable", permanent, now: clock() })
+    if (!response.ok) {
+      const transient = response.status === 429 || response.status >= 500
+      const invalidClient = !transient && record.error === "invalid_client"
+      const permanent = !transient && record.error === "invalid_grant"
+      const error = invalidClient ? "invalid_client" : permanent
+        ? record.error_subtype === "invalid_rapt" ? "invalid_rapt" : "invalid_grant"
+        : "token_endpoint_unavailable"
+      await deps.store.recordRefreshFailure({ lock, error, permanent, now: clock() })
       return latest("refresh_unavailable")
     }
-    const secret: GatewayOauthTokenSecret = {
-      accessToken: record.access_token,
-      refreshToken: typeof record.refresh_token === "string" && record.refresh_token ? record.refresh_token : token.refreshToken,
-      ...(typeof record.token_type === "string" ? { tokenType: record.token_type } : token.tokenType ? { tokenType: token.tokenType } : {}),
+    if (!isGoogleOauthTokenMaterial(record.access_token) || !/^[A-Za-z0-9._~+\/-]+=*$/.test(record.access_token)
+      || typeof record.token_type !== "string" || record.token_type.toLowerCase() !== "bearer"
+      || typeof record.expires_in !== "number" || !Number.isInteger(record.expires_in) || record.expires_in <= 0 || record.expires_in > GOOGLE_OAUTH_MAX_EXPIRES_IN_SECONDS
+      || (record.scope !== undefined && (typeof record.scope !== "string" || !record.scope.split(/\s+/).includes(GOOGLE_CLOUD_PLATFORM_SCOPE)))
+      || (record.refresh_token !== undefined && !isGoogleOauthTokenMaterial(record.refresh_token))) {
+      await deps.store.recordRefreshFailure({ lock, error: "invalid_token_response", permanent: false, now: clock() })
+      return latest("refresh_unavailable")
     }
-    // Start-time expiry is conservative about time spent at the token endpoint.
-    const expiresAt = new Date(input.now.getTime() + record.expires_in * 1000)
-    if (!Number.isFinite(expiresAt.getTime())) {
+    const secret = {
+      accessToken: record.access_token,
+      refreshToken: typeof record.refresh_token === "string" ? record.refresh_token : token.refreshToken,
+      tokenType: "Bearer",
+      ...(googleIdentity === undefined ? {} : { googleIdentity }),
+    }
+    const expiresAt = new Date(requestedAt.getTime() + record.expires_in * 1000)
+    if (!Number.isFinite(expiresAt.getTime()) || expiresAt <= clock()) {
       await deps.store.recordRefreshFailure({ lock, error: "invalid_token_expiry", permanent: false, now: clock() })
       return latest("refresh_unavailable")
     }
@@ -202,7 +245,7 @@ export function createDbGoogleOauthRefreshStore(db: Db): GoogleOauthRefreshStore
     async tryAcquireRefreshLock(input) {
       return db.transaction(async (tx) => {
         const row = await lockedRow(tx, input.scope)
-        if (!row || !sameOauthVersion(row, input.credential)
+        if (!row || row.last_error === "invalid_client" || !sameOauthVersion(row, input.credential)
           || (row.refreshing_until && row.refreshing_until.getTime() >= input.now.getTime())) return null
         const updated_at = nextVersion(row, input.now)
         await tx.update(table).set({ refreshing_until: input.until, updated_at }).where(where(input.scope))

@@ -12,7 +12,7 @@ import {
 import {
   test,
 } from "@openwork/testkit";
-import { desktopProductionLive } from "../../worlds/desktop-prod-live.ts";
+import { desktopProductionLive } from "../../worlds/live-desktop.ts";
 
 test("live shared production desktop state requires consent and selects state without mutating it", async ({ evidence }) => {
   let stateAcquisitions = 0;

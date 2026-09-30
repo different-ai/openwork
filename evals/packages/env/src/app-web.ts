@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { waitUntilInteractive } from "@openwork/behaviors";
-import { navigate } from "@openwork/cdp";
+import { addInitScript, evaluate, navigate } from "@openwork/cdp";
 import type { AttachedSurface } from "@openwork/cdp";
 import {
   chrome,
@@ -18,12 +18,21 @@ import { startLocalRuntime, startRemoteRuntime } from "./app-web-runtime.ts";
 import type { AppWebRuntime } from "./app-web-runtime.ts";
 import type { MockBoot, MockHandle } from "./mock.ts";
 import type { Place } from "./place.ts";
+import { observeAppWebNetwork } from "./app-web-network.ts";
+import { reloadOnceIfEntryFails } from "./app-web-entry.ts";
+
+declare global {
+  interface Window { __openworkEvalBootErrors?: string[] }
+}
 
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 const MOCK_SCRIPT_PATH = join(REPO_ROOT, "scripts", "mock-oauth-mcp-server.mjs");
 
 export interface SeedAppWebOptions {
   workspacePath: string;
+  emptyWorkspace?: boolean;
+  /** Explicit fixture runtime settings; the normal isolated environment is retained. */
+  env?: Record<string, string>;
   syntheticPreactivatedDenOrigin?: string;
   name?: string;
   mocks?: Record<string, MockBoot>;
@@ -236,8 +245,7 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
         sourcePreparedFingerprint: source.preparedFingerprint,
       };
       mocks = await bootRemoteMocks(sandbox, options.mocks ?? {});
-      runtime = await startRemoteRuntime(sandbox, worldName, workspaceRoot, source, { syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin });
-      await navigate(browser.client, runtime.webUrl);
+      runtime = await startRemoteRuntime(sandbox, worldName, workspaceRoot, source, { syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin, env: options.env, emptyWorkspace: options.emptyWorkspace });
     } else {
       // Capture only the commit identity, before mocks or app processes launch.
       // Do not expose git stderr, checkout paths, or environment in evidence.
@@ -255,17 +263,73 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
         throw new Error("Invalid local app-web source SHA receipt.");
       }
       mocks = await bootLocalMocks(options.place, options.mocks ?? {});
-      runtime = await startLocalRuntime(worldName, workspaceRoot, { syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin });
+      runtime = await startLocalRuntime(worldName, workspaceRoot, { syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin, env: options.env, emptyWorkspace: options.emptyWorkspace });
       browser = await chrome({
         name: worldName,
         host: options.place.host(),
-        startUrl: runtime.webUrl,
+        startUrl: "about:blank",
         headless: options.headless ?? true,
       });
       if (browser.handle.kind !== "chrome") throw new Error("App-web requires a chrome handle.");
       browser.handle.meta = { ...browser.handle.meta, actualSourceSha: localSourceSha };
     }
-    await waitUntilInteractive(browser, { timeoutMs: 60_000 });
+    // Observe entry-bundle failures before navigation. The static startup page
+    // survives a broken module load, so a DOM timeout alone hides the cause.
+    await addInitScript(browser.client, () => {
+      window.__openworkEvalBootErrors = [];
+      window.addEventListener("error", event => {
+        const target = event.target;
+        const source = target instanceof HTMLScriptElement ? new URL(target.src).pathname : event.filename?.split("?")[0];
+        if ((window.__openworkEvalBootErrors?.length ?? 0) < 10) window.__openworkEvalBootErrors?.push(`${event.message || "Resource failed"} (${source || "unknown"})`.slice(0, 1000));
+      }, true);
+      window.addEventListener("unhandledrejection", event => {
+        const reason = event.reason;
+        if ((window.__openworkEvalBootErrors?.length ?? 0) < 10) window.__openworkEvalBootErrors?.push(String(reason instanceof Error ? reason.message : reason).slice(0, 1000));
+      });
+    });
+    const network = await observeAppWebNetwork(browser.client.webSocketDebuggerUrl, runtime.webUrl);
+    const surface = browser;
+    const entry = reloadOnceIfEntryFails({
+      client: () => surface.client,
+      url: runtime.webUrl,
+      describe: () => `Network failures: ${JSON.stringify(network.failures)} Page timeline: ${JSON.stringify(network.summary())}`,
+    });
+    try {
+      await navigate(browser.client, runtime.webUrl);
+      try {
+        await waitUntilInteractive(browser, { timeoutMs: 60_000 });
+      } finally {
+        await entry.stop();
+      }
+    } catch (error) {
+      const boot = await evaluate(browser.client, () => ({
+        errors: (window.__openworkEvalBootErrors ?? []).slice(0, 10),
+        failedResources: performance.getEntriesByType("resource")
+          .filter(entry => entry instanceof PerformanceResourceTiming && entry.responseStatus >= 400)
+          .map(entry => ({ path: new URL(entry.name).pathname,
+            status: entry instanceof PerformanceResourceTiming ? entry.responseStatus : 0 })).slice(0, 20),
+      })).catch(() => null);
+      const logTail = async (path: string | undefined, lines: number) => path
+        ? (await readFile(path, "utf8").catch(() => "")).split("\n").filter(line => line.trim())
+          .slice(-lines).map(line => line.replace(/https?:\/\/\S+/g, "[url]").slice(0, 300))
+        : [];
+      const viteEvents = remote ? [] : await logTail(join(runtime.runtimeDirectory, "web.log"), 25);
+      const chromeLog = browser.handle.meta?.log;
+      const chromeEvents = remote ? [] : await logTail(typeof chromeLog === "string" ? chromeLog : undefined, 15);
+      const webUrl = runtime.webUrl;
+      const moduleProbes = remote ? [] : await Promise.all([...new Set(network.failures.map(failure => failure.path))].slice(0, 3).map(async path => {
+        try {
+          const response = await fetch(new URL(path, webUrl), { signal: AbortSignal.timeout(5_000) });
+          const bytes = (await response.arrayBuffer()).byteLength;
+          return { path, status: response.status, type: response.headers.get("content-type"), bytes };
+        } catch {
+          return { path, unavailable: true };
+        }
+      }));
+      throw new Error(`${error instanceof Error ? error.message : String(error)} Entry reloaded after a dropped module graph: ${entry.reloaded()}. Startup diagnostics: ${JSON.stringify(boot)} Network failures: ${JSON.stringify(network.failures)} Browser errors: ${JSON.stringify(network.browserErrors)} Page timeline: ${JSON.stringify(network.summary())} Vite events: ${JSON.stringify(viteEvents)} Chrome log: ${JSON.stringify(chromeEvents)} Module probes: ${JSON.stringify(moduleProbes)}`, { cause: error });
+    } finally {
+      network.close();
+    }
 
     const originalBrowserStop = browser.stop.bind(browser);
     let stopped = false;

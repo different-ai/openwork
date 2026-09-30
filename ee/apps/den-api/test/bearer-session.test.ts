@@ -784,7 +784,7 @@ test("desktop bearer sign-out deletes the exact server session", async () => {
   expect(cacheDeletes).toEqual([token, sessionId])
 })
 
-test("only the Better Auth POST sign-out bypasses session resolution", () => {
+test("sign-out and read-only browser readiness bypass session resolution", () => {
   expect(sessionModule.shouldSkipRequestSession(new Request("http://den.local/api/auth/sign-out", {
     method: "POST",
   }))).toBe(true)
@@ -794,4 +794,10 @@ test("only the Better Auth POST sign-out bypasses session resolution", () => {
   expect(sessionModule.shouldSkipRequestSession(new Request("http://den.local/v1/auth/sign-out", {
     method: "POST",
   }))).toBe(false)
+  expect(sessionModule.shouldSkipRequestSession(new Request("http://den.local/v1/inference-providers/oauth/browser-status?attempt=entry.fixture"))).toBe(true)
+  expect(sessionModule.shouldSkipRequestSession(new Request("http://den.local/v1/inference-providers/oauth/browser-status", {
+    method: "POST",
+  }))).toBe(false)
+  expect(sessionModule.shouldSkipRequestSession(new Request("http://den.local/v1/inference-providers/oauth/browser-start"))).toBe(false)
+  expect(sessionModule.shouldSkipRequestSession(new Request("http://den.local/v1/inference-providers/oauth/browser-status/"))).toBe(false)
 })

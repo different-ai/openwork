@@ -85,14 +85,26 @@ export function persistableComposerDraftText(text: string) {
   return text.replace(/\[attachment [^\]]+\]/g, "");
 }
 
+/**
+ * Decide whether the persisted draft snapshot should replace the in-memory
+ * composer. Crossing an account or organization boundary always rehydrates so
+ * the previous scope's text and attachments never survive into the next one.
+ * Inside one claimed scope the person's live composer is the newest source of
+ * truth: a snapshot that moved underneath it (another window, a queue mirror,
+ * a refused compare-and-swap) may only fill an empty composer, never replace
+ * text or attachments that are being edited here.
+ */
 export function composerDraftNeedsHydration(input: {
   claimedScopeKey: string | null;
   nextScopeKey: string;
   currentText: string;
   storedText: string;
+  currentHasAttachments?: boolean;
 }) {
-  return input.claimedScopeKey !== input.nextScopeKey
-    || persistableComposerDraftText(input.currentText) !== input.storedText;
+  if (input.claimedScopeKey !== input.nextScopeKey) return true;
+  const currentText = persistableComposerDraftText(input.currentText);
+  if (currentText.length > 0 || input.currentHasAttachments) return false;
+  return currentText !== input.storedText;
 }
 
 function createEmptyComposerSession(): ComposerSessionState {

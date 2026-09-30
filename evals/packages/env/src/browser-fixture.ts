@@ -4,7 +4,7 @@ import type { Surface } from "@openwork/cdp";
 import { browserScriptValue, runBrowserHost } from "./browser-task.ts";
 
 const page = `<!doctype html><meta charset="utf-8"><title>Browser task fixture</title>
-<style>body{font:16px sans-serif;margin:16px}input,button{display:block;margin:8px 0}#popup{background:rgb(18,238,193);width:110px;height:40px;border:0}</style>
+<style>html{scroll-behavior:auto}body{font:16px sans-serif;margin:16px;min-height:300vh}input,button{display:block;margin:8px 0}#popup{background:rgb(18,238,193);width:110px;height:40px;border:0}</style>
 <h1>Project status</h1><p id="auth">Signed out</p>
 <form id="signin"><label>Fixture user<input name="user" required></label><label>Fixture password<input name="password" type="password" required></label><button>Sign in to project</button></form>
 <p id="status">Nothing saved</p><input aria-label="Draft title" oninput="fetch('/input',{method:'POST',body:this.value})">
@@ -137,7 +137,9 @@ const providerHandler = `
 if(req.method==='POST'&&url.pathname.endsWith('/chat/completions')){
   let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw);
   const results=(body.messages||[]).filter(m=>m.role==='tool');
-  const saving=JSON.stringify((body.messages||[]).filter(m=>m.role==='user').at(-1)?.content).includes('Save the controlled draft');
+  const userContent=JSON.stringify((body.messages||[]).filter(m=>m.role==='user').at(-1)?.content);
+  const saving=userContent.includes('Save the controlled draft');
+  const summary=userContent.includes('Summarize the project briefing');
   model.requests++;model.toolNames=(body.tools||[]).map(t=>t.function?.name).filter(Boolean);
   if(saving&&results.length>=4)model.receivedSaveResult=true;
   if(saving&&results.length>=5)model.observedSaved=JSON.parse(results[4].content).text?.includes('Saved 1')===true;
@@ -149,7 +151,22 @@ if(req.method==='POST'&&url.pathname.endsWith('/chat/completions')){
   if(results.length===2){const opened=JSON.parse(results[1].content);call={name:'webmcp_list_tools',arguments:JSON.stringify({tabId:opened.tabId})};}
   if(saving&&results.length===3){const listed=JSON.parse(results[2].content);call={name:'webmcp_call_tool',arguments:JSON.stringify({tabId:listed.tabId,toolId:listed.tools.find(tool=>tool.name==='save_draft').toolId,input:{confirm:true}})};}
   if(saving&&results.length===4){const listed=JSON.parse(results[2].content);call={name:'browser_observe',arguments:JSON.stringify({tabId:listed.tabId})};}
-  const final=saving?(model.observedSaved?'Saved the draft and verified Saved 1 in the page.':'The save has not been verified.'):'The project page is open and its website tools have been discovered.';
+  let final=saving?(model.observedSaved?'Saved the draft and verified Saved 1 in the page.':'The save has not been verified.'):'The project page is open and its website tools have been discovered.';
+  if(summary){
+    call=undefined;
+    final='The project briefing could not be verified.';
+    if(results.length===0)call={name:'browser_tabs',arguments:'{}'};
+    if(results.length===1)call={name:'browser_open',arguments:JSON.stringify({url:'http://127.0.0.1:'+server.address().port+'/briefing'})};
+    const opened=results[1]?JSON.parse(results[1].content):null;
+    if(opened?.ok===false)final=opened.code==='user_denied'?'Browser access was denied; I did not read the project briefing.':'Browser access failed; I could not read the project briefing.';
+    if(results.length===2&&opened?.ok===true&&opened.tabId)call={name:'browser_observe',arguments:JSON.stringify({tabId:opened.tabId})};
+    const observed=results[2]?JSON.parse(results[2].content):null;
+    if(observed?.ok===true&&observed.tabId===opened?.tabId&&typeof observed.text==='string'){
+      const deadline=observed.text.match(/Launch date: ([^\\n]+)/)?.[1]?.trim();
+      const blocker=observed.text.match(/Blocker: ([^\\n]+)/)?.[1]?.trim();
+      if(deadline&&blocker)final='Project briefing: launch date '+deadline+'. Blocker: '+blocker+'.';
+    }
+  }
   const chunks=[chunk({role:'assistant'}),...(call?[chunk({tool_calls:[{index:0,id:'browser_call_'+results.length,type:'function',function:call}]}),chunk({},'tool_calls')]:[chunk({content:final}),chunk({},'stop')])];
   res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache'});for(const item of chunks)res.write('data: '+JSON.stringify(item)+'\\n\\n');res.end('data: [DONE]\\n\\n');return;
 }`;
@@ -244,6 +261,7 @@ export async function startBrowserFixture(app: Surface, { requireSignIn = true }
       pageRequests.push({path:url.pathname,signedIn});
       if(url.pathname==='/popup')popups.push(signedIn);
       res.setHeader('Content-Type','text/html');
+      if(url.pathname==='/briefing'){res.end('<!doctype html><title>Project briefing</title><h1>Project briefing</h1><p>Launch date: October 14</p><p>Blocker: accessibility review pending</p>');return;}
       const title=url.searchParams.get('viewport-probe')||(url.pathname==='/'?'home':url.pathname.slice(1));
       let document=page.replace('<title>Browser task fixture</title>','<title>Project '+title.replace(/[^a-z-]/g,'')+'</title>');
       if(url.pathname==='/'||url.pathname==='/allowed')document=document.replace('<style>','<link id="project-stylesheet" rel="stylesheet" data-document-id="'+pageRequests.length+'" href="http://localhost:'+server.address().port+'/project.css?documentId='+pageRequests.length+'"><style>');

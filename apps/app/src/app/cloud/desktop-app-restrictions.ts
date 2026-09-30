@@ -1,4 +1,5 @@
 import {
+  desktopPolicyKeyEnforced,
   desktopPolicyUserNotices,
   type DesktopPolicyKey,
 } from "@openwork/types/den/desktop-policies";
@@ -17,7 +18,7 @@ export function checkDesktopAppRestriction(input: {
   config: DenDesktopConfig | null | undefined;
   restriction: DesktopAppRestrictionKey;
 }) {
-  return input.config?.[input.restriction] === false;
+  return desktopPolicyKeyEnforced(input.restriction) && input.config?.[input.restriction] === false;
 }
 
 /** Catalog copy explaining why the organization blocked a capability. */
@@ -31,7 +32,7 @@ export function desktopRestrictionNotice(restriction: DesktopAppRestrictionKey) 
  * Cloud features that are not desktop settings; every other tab is hidden and
  * redirected.
  */
-const SETTINGS_TABS_WITHOUT_CONTROL = new Set<SettingsTab>(["cloud-account"]);
+const SETTINGS_TABS_WITHOUT_CONTROL = new Set<SettingsTab>(["cloud-account", "usage"]);
 
 export const SETTINGS_TAB_WITHOUT_CONTROL: SettingsTab = "cloud-account";
 

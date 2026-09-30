@@ -29,6 +29,7 @@ function isJsonSafe(value: unknown, seen = new Set<object>()): value is CodeMode
 export async function runCodemodeScript(input: {
   code: string
   scriptInput?: unknown
+  readOnlyInput?: boolean
   tools: CodemodeToolTree
   timeoutMs: number
   maxToolCalls?: number
@@ -49,6 +50,7 @@ export async function runCodemodeScript(input: {
     code: input.code,
     tools: input.tools,
     ...(bindings ? { bindings } : {}),
+    readonlyBindings: input.readOnlyInput,
     limits: {
       timeoutMs: input.timeoutMs,
       maxToolCalls: input.maxToolCalls ?? 50,

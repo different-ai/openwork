@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { openworkContextSnapshotSchema } from "@openwork/types/openwork-context";
 
 import {
   buildOpenworkContext,
@@ -49,6 +50,30 @@ const baseInput: ContextProjectorInput = {
 };
 
 describe("OpenWork context projector", () => {
+  test("publishes native connection question support without adding affordances", () => {
+    const root = { context: openworkContextSnapshotSchema.parse(buildOpenworkContext(baseInput)) };
+    expect(root.context.features?.connectionQuestions).toBe(true);
+    expect(root.context.availableAffordances).toEqual([]);
+  });
+
+  test("accepts legacy snapshots without advertising connection questions", () => {
+    const snapshot = buildOpenworkContext(baseInput);
+    delete snapshot.features;
+    const root = { context: openworkContextSnapshotSchema.parse(snapshot) };
+    expect(root.context.features).toBeUndefined();
+    expect(root.context.features?.connectionQuestions === true).toBe(false);
+  });
+
+  test("keeps connection question support optional and boolean", () => {
+    const snapshot = buildOpenworkContext(baseInput);
+    for (const features of [{}, { connectionQuestions: false }, { connectionQuestions: true }]) {
+      expect(openworkContextSnapshotSchema.parse({ ...snapshot, features }).features).toEqual(features);
+    }
+    expect(openworkContextSnapshotSchema.safeParse({
+      ...snapshot, features: { connectionQuestions: "true" },
+    }).success).toBe(false);
+  });
+
   test("projects the focused split session and its panel state", () => {
     const context = buildOpenworkContext(baseInput);
 

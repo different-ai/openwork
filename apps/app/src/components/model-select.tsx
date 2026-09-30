@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { FAST_DEFAULT_VARIANT } from "@openwork/types/cloud-model-fast";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, Settings2, Star } from "lucide-react";
 
@@ -30,8 +31,10 @@ import { filterEntitledModelOptions } from "@/react-app/domains/connections/prov
 import {
   filterCloudManagedModelOptions,
   mergeModelOptions,
+  markDisabledModelOptions,
 } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
 import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import { useGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
 import {
   Command,
   CommandCollection,
@@ -57,6 +60,9 @@ import {
   useModelCollectionsStore,
 } from "@/react-app/domains/session/models/model-collections-store";
 import { favoriteModelShortcutLabel } from "@/react-app/shell/favorite-model-shortcut";
+import { fastModeShortcutLabel } from "@/react-app/shell/fast-mode-shortcut";
+import { useModelShortcutsStore } from "@/react-app/domains/shortcuts/model-shortcuts-store";
+import { formatChord, resolveShortcutOs } from "@/react-app/domains/shortcuts/shortcut-keys";
 
 function getProviderDisplayName(providerId: string) {
   return providerId
@@ -70,6 +76,8 @@ function useModelOptions(
   open: boolean,
   fallbackOptions: readonly ModelOption[],
   cloudProvidersEnabled: boolean,
+  pendingOptions: readonly ModelOption[],
+  disabledProviders: readonly string[],
 ) {
   const { client, opencodeBaseUrl, selectedWorkspaceRoot } = useWorkspace();
   const checkDesktopRestriction = useCheckDesktopRestriction();
@@ -124,13 +132,13 @@ function useModelOptions(
       );
 
     return filterEntitledModelOptions(filterCloudManagedModelOptions(
-      mergeModelOptions(options, fallbackOptions),
+      markDisabledModelOptions(mergeModelOptions(pendingOptions, mergeModelOptions(options, fallbackOptions)), disabledProviders),
       cloudProvidersEnabled,
     ), {
       restrictToCloud,
       checkRestriction: checkDesktopRestriction,
     });
-  }, [checkDesktopRestriction, cloudProvidersEnabled, data, fallbackOptions]);
+  }, [checkDesktopRestriction, cloudProvidersEnabled, data, disabledProviders, fallbackOptions, pendingOptions]);
 }
 
 type ModelSelectItem = {
@@ -175,6 +183,7 @@ function isSameModel(a: ModelRef, b: ModelRef) {
 }
 
 function thinkingOptionsFor(option: ModelOption): ModelBehaviorOption[] {
+  if (option.gatewayAuthorization) return [];
   if (option.behaviorValue == null && !option.behaviorOptions?.some((item) => item.value !== null)) return [];
   return getModelBehaviorSelection(option.behaviorOptions ?? [], option.behaviorValue ?? null).options;
 }
@@ -245,7 +254,8 @@ export function ModelSelect({
   const denAuth = useDenAuth();
   const favorites = useModelCollectionsStore((state) => state.favorites);
   const recent = useModelCollectionsStore((state) => state.recent);
-  const catalogOptions = useModelOptions(open, fallbackOptions, denAuth.isSignedIn);
+  const gatewaySelection = useGatewayModelSelection(JSON.stringify([sessionId, value, behaviorValue, disabled]));
+  const catalogOptions = useModelOptions(open, fallbackOptions, denAuth.isSignedIn, gatewaySelection.options, gatewaySelection.disabledProviders);
   const modelOptions = React.useMemo(
     () => overlaySelectedBehavior(catalogOptions, value, {
       value: behaviorValue,
@@ -262,31 +272,34 @@ export function ModelSelect({
   const shortcutLabel = thinkingModeShortcutLabel(shortcutOs);
   const reverseShortcutLabel = thinkingModeShortcutLabel(shortcutOs, "reverse");
   const favoriteShortcutLabel = shortcutOs === "macos" ? "⌃⇧M" : favoriteModelShortcutLabel;
+  const fastShortcutLabel = fastModeShortcutLabel(shortcutOs);
+  const modelShortcuts = useModelShortcutsStore((state) => state.shortcuts);
+  const modelShortcutOs = resolveShortcutOs(platform.os, typeof navigator === "undefined" ? "" : navigator.platform);
+  const modelShortcutLabels = React.useMemo(() => new Map(modelShortcuts.map((shortcut) => [
+    modelRefKey({ providerID: shortcut.action.providerID, modelID: shortcut.action.modelID }),
+    formatChord(shortcut.keys, modelShortcutOs),
+  ])), [modelShortcutOs, modelShortcuts]);
 
-  const focusSearchInput = React.useCallback(() => {
-    window.requestAnimationFrame(() => {
-      const input = searchInputRef.current;
+  const isMobile = useIsMobile();
+  const modelButtonRef = React.useRef<HTMLButtonElement>(null);
+  const effortButtonRef = React.useRef<HTMLButtonElement>(null);
+  const favoritesButtonRef = React.useRef<HTMLButtonElement>(null);
+  const backButtonRef = React.useRef<HTMLButtonElement>(null);
+  const previousPaneRef = React.useRef(pane);
+  const effortReturnPaneRef = React.useRef<"root" | "model" | "favorites">("root");
 
-      if (!input) {
-        return;
-      }
-
-      input.focus();
-      input.select();
-    });
-  }, []);
-
-  React.useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    if (pane !== "model") {
-      return;
-    }
-
-    focusSearchInput();
-  }, [focusSearchInput, open, pane]);
+  // Base UI owns opening/closing focus. These are panes within one popup, so
+  // restore focus after their DOM commits without reopening the mobile keyboard.
+  React.useLayoutEffect(() => {
+    const previous = previousPaneRef.current;
+    previousPaneRef.current = pane;
+    if (!open || previous === pane) return;
+    const target = pane === "root"
+      ? (previous === "effort" ? effortButtonRef : previous === "favorites" ? favoritesButtonRef : modelButtonRef).current
+      : pane === "model" && !isMobile ? searchInputRef.current : backButtonRef.current;
+    target?.focus({ preventScroll: true });
+    if (target === searchInputRef.current) searchInputRef.current?.select();
+  }, [isMobile, open, pane]);
 
   const selectedOption = modelOptions?.find((option) =>
     isSameModel(value, {
@@ -333,29 +346,37 @@ export function ModelSelect({
   const selectedControls = getModelBehaviorControls(selectedThinkingOptions, behaviorValue);
   const effectiveBehaviorLabel = selectedOption?.behaviorLabel ?? behaviorLabel ?? "Default";
   const effortLabel = selectedControls.options.find((option) => option.value === behaviorValue)?.label ?? effectiveBehaviorLabel;
-  const triggerBehaviorLabel = selectedOption?.behaviorValue === FAST_DEFAULT_VARIANT ? "Fast" : effectiveBehaviorLabel;
+  // Fast is shown on its own as a quiet "Fast" next to the model name; the
+  // effort label beside it is the base level (High, not "High + Fast").
+  const fastOn = selectedControls.fast;
+  const triggerBehaviorLabel = fastOn
+    ? (behaviorValue === FAST_DEFAULT_VARIANT ? null : effortLabel)
+    : effectiveBehaviorLabel;
   const currentFavorite = favoriteOptions.find((option) => isSameModel(value, option)) ?? favoriteOptions[0] ?? null;
-  const nextFavorite = nextFavoriteModel(favorites, value);
+  const nextFavorite = nextFavoriteModel(favoriteOptions, value);
   const showBehavior = !hideValue
     && selectedThinkingOptions.length > 0
     && (selectedOption ? selectedOption.behaviorValue != null : behaviorValue != null)
     && Boolean(effectiveBehaviorLabel);
 
   const applyModel = (option: ModelOption, behavior?: string | null) => {
-    useModelCollectionsStore.getState().recordRecent(option);
-    onChange({ providerID: option.providerID, modelID: option.modelID }, behavior);
-    if (behavior !== undefined) {
-      onBehaviorChange?.(behavior);
-    }
-    setSearch("");
-    setThinkingFor(null);
-    setPane("root");
-    onOpenChange(false);
+    const currentOption = optionsByKey.get(modelRefKey(option));
+    if (!currentOption) return;
+    gatewaySelection.select(currentOption, () => {
+      useModelCollectionsStore.getState().recordRecent(option);
+      onChange({ providerID: option.providerID, modelID: option.modelID }, behavior);
+      if (behavior !== undefined) onBehaviorChange?.(behavior);
+      setSearch("");
+      setThinkingFor(null);
+      setPane("root");
+      onOpenChange(false);
+    });
   };
 
   const handleSelect = (option: ModelOption) => {
     const thinking = thinkingOptionsFor(option);
     if (thinking.length > 0 && onBehaviorChange) {
+      effortReturnPaneRef.current = pane === "favorites" ? "favorites" : "model";
       setThinkingFor(option);
       setPane("effort");
       return;
@@ -372,7 +393,7 @@ export function ModelSelect({
 
   const applyThinking = (option: ModelBehaviorOption) => {
     if (!thinkingFor) return;
-    if (isSameModel(value, thinkingFor)) {
+    if (isSameModel(value, thinkingFor) && !optionsByKey.get(modelRefKey(thinkingFor))?.gatewayAuthorization) {
       onBehaviorChange?.(option.value);
       setThinkingFor(null);
       setPane("root");
@@ -395,6 +416,7 @@ export function ModelSelect({
   const handleConnectProvider = React.useCallback(() => {
     onOpenChange(false);
     setSearch("");
+    setThinkingFor(null);
     setPane("root");
     window.dispatchEvent(new Event(openProviderAuthEvent));
   }, [onOpenChange]);
@@ -431,31 +453,36 @@ export function ModelSelect({
             <span className="truncate">
               {hideValue || (!denAuth.isSignedIn && isCloudManagedProviderKey(value.providerID))
                 ? "Select model"
-                : (selectedOption?.title ?? value.modelID ?? "Select model")}
+                : (selectedOption?.title || "Select model")}
             </span>
-            {showBehavior ? (
+            {showBehavior && triggerBehaviorLabel ? (
               <span className="shrink-0 text-gray-9">· {triggerBehaviorLabel}</span>
+            ) : null}
+            {!hideValue && fastOn ? (
+              <span data-testid="model-fast-indicator" className="shrink-0 text-xs font-medium text-gray-9">· Fast</span>
             ) : null}
           </span>
           <ChevronDown className="h-3 w-3" />
         </TooltipTrigger>
         <TooltipContent>
-          Change model · Cycle thinking ({shortcutLabel} forward, {reverseShortcutLabel} back)
+          Change model · Cycle thinking ({shortcutLabel} forward, {reverseShortcutLabel} back) · Fast ({fastShortcutLabel})
         </TooltipContent>
       </Tooltip>
       <PopoverContent
         className="w-80 overflow-hidden rounded-2xl bg-popover p-0 shadow-xl ring-1 ring-foreground/5 dark:ring-foreground/10"
         align="start"
-        initialFocus={false}
+        initialFocus={true}
       >
         {pane === "root" ? (
           <div data-slot="model-select-root" className="space-y-0.5 p-2">
             <button
+              ref={effortButtonRef}
               type="button"
               disabled={!selectedOption || selectedThinkingOptions.length === 0 || !onBehaviorChange}
               className="flex w-full cursor-pointer items-center gap-3 rounded-xl px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent disabled:cursor-default disabled:opacity-50"
               onClick={() => {
                 if (!selectedOption) return;
+                effortReturnPaneRef.current = "root";
                 setThinkingFor(selectedOption);
                 setPane("effort");
               }}
@@ -472,6 +499,9 @@ export function ModelSelect({
             {selectedControls.hasFast ? (
               <div className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-sm transition-colors hover:bg-accent" title={FAST_PRICING_WARNING}>
                 <label htmlFor={fastModeId} className="min-w-0 flex-1 cursor-pointer font-medium text-foreground">Fast mode</label>
+                <kbd className="hidden shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-sans text-[10px] leading-none text-muted-foreground sm:inline-flex">
+                  {fastShortcutLabel}
+                </kbd>
                 <Switch
                   id={fastModeId}
                   size="sm"
@@ -484,6 +514,7 @@ export function ModelSelect({
               </div>
             ) : null}
             <button
+              ref={favoritesButtonRef}
               type="button"
               disabled={favoriteOptions.length === 0}
               className="flex w-full cursor-pointer items-center gap-3 rounded-xl px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent disabled:cursor-default disabled:opacity-50"
@@ -502,6 +533,7 @@ export function ModelSelect({
               type="button"
               className="flex w-full cursor-pointer items-center gap-3 rounded-xl px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent"
               onClick={() => setPane("model")}
+              ref={modelButtonRef}
             >
               <span className="min-w-0 flex-1 font-medium text-foreground">Model</span>
               <span className="max-w-36 truncate text-muted-foreground">
@@ -517,6 +549,7 @@ export function ModelSelect({
                 type="button"
                 className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg px-1 py-1 text-left hover:bg-accent"
                 onClick={() => setPane("root")}
+                ref={backButtonRef}
               >
                 <ChevronLeft className="size-4 shrink-0 text-muted-foreground" />
                 <span className="text-sm font-medium">Favorites</span>
@@ -533,14 +566,20 @@ export function ModelSelect({
             <div className="min-h-0 flex-1 overflow-y-auto p-1">
               {favoriteOptions.map((option) => (
                 <button
-                  key={modelRefKey(option)}
-                  type="button"
+                   key={modelRefKey(option)}
+                   data-model-key={modelRefKey(option)}
+                   type="button"
                   className="flex w-full cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
                   onClick={() => handleSelect(option)}
                 >
                   <ProviderIcon providerId={option.providerID} providerName={option.description} className="size-3.5 opacity-70" size={14} />
                   <span className="min-w-0 flex-1 truncate text-foreground">{option.title}</span>
-                  {isSameModel(value, option) ? <Check className="size-3.5 shrink-0 text-muted-foreground" /> : null}
+                  {modelShortcutLabels.get(modelRefKey(option)) ? (
+                    <kbd data-testid="model-shortcut-key" className="shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground">
+                      {modelShortcutLabels.get(modelRefKey(option))}
+                    </kbd>
+                  ) : null}
+                   {option.gatewayAuthorization ? <span className="text-xs text-muted-foreground">Sign-in required</span> : isSameModel(value, option) ? <Check className="size-3.5 shrink-0 text-muted-foreground" /> : null}
                 </button>
               ))}
             </div>
@@ -552,8 +591,9 @@ export function ModelSelect({
               className="flex cursor-pointer items-center gap-2 border-b border-border px-3 py-2 text-left hover:bg-accent"
               onClick={() => {
                 setThinkingFor(null);
-                setPane(isSameModel(value, thinkingFor) ? "root" : "model");
+                setPane(effortReturnPaneRef.current);
               }}
+              ref={backButtonRef}
             >
               <ChevronLeft className="size-4 shrink-0 text-muted-foreground" />
               <span className="min-w-0">
@@ -591,6 +631,7 @@ export function ModelSelect({
                 setSearch("");
                 setPane("root");
               }}
+              ref={backButtonRef}
             >
               <ChevronLeft className="size-4 shrink-0 text-muted-foreground" />
               <span className="text-sm font-medium">Model</span>
@@ -598,10 +639,10 @@ export function ModelSelect({
             <Command items={groups} value={search} onValueChange={setSearch}>
               <div className="flex min-h-0 flex-1 flex-col">
               <CommandHeader className="p-1.5 pb-1">
-                <CommandInput ref={searchInputRef} placeholder="Search models..." className="h-9 text-sm" />
+                <CommandInput ref={searchInputRef} autoFocus={false} placeholder="Search models..." className="h-9 text-base sm:text-base md:text-base lg:text-sm" />
               </CommandHeader>
               {openWorkModelsSyncing ? (
-                <div className="mx-1 mb-1 flex items-center gap-2 rounded-md border border-amber-6/60 bg-amber-2/40 px-2 py-1.5">
+                <div className="mx-1 mb-1 flex items-center gap-2 rounded-md border border-border bg-muted/30 px-2 py-1.5">
                   <ProviderIcon providerId={OPENWORK_MODELS_PROVIDER_ID} providerName={OPENWORK_MODELS_PROVIDER_NAME} className="size-3.5 shrink-0 text-amber-11" size={14} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-xs font-medium text-foreground">{OPENWORK_MODELS_PROVIDER_NAME}</span>
@@ -624,6 +665,7 @@ export function ModelSelect({
                             <CommandItem
                               className="min-h-0 gap-2 rounded-lg px-2 py-1.5"
                               key={item.id}
+                              data-model-key={modelRefKey(option)}
                               value={`${option.providerID}:${option.modelID} ${option.title} ${option.description ?? ""}`}
                               onClick={() => handleSelect(option)}
                               data-checked={isSameModel(value, option)}
@@ -631,8 +673,13 @@ export function ModelSelect({
                               <ProviderIcon providerId={option.providerID} providerName={option.description} className="size-3.5 opacity-70" size={14} />
                               <span className="min-w-0 flex-1">
                                 <span className="block truncate text-foreground">{option.title}</span>
-                                <span className="block truncate text-xs text-muted-foreground">{option.description ?? getProviderDisplayName(option.providerID)}</span>
+                                <span className="block truncate text-xs text-muted-foreground">{option.gatewayAuthorization ? "Sign-in required" : option.description ?? getProviderDisplayName(option.providerID)}</span>
                               </span>
+                              {modelShortcutLabels.get(modelRefKey(option)) ? (
+                                <kbd data-testid="model-shortcut-key" className="shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground">
+                                  {modelShortcutLabels.get(modelRefKey(option))}
+                                </kbd>
+                              ) : null}
                               <button
                                 type="button"
                                 className="cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"

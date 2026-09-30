@@ -15,7 +15,6 @@ import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
 } from "../src/react-app/domains/session/sync/parse-tool-parts";
-import { parseOpenWorkSessionCreateResult } from "../src/components/tools/openwork-session-create";
 import { codeModeToolCalls } from "../src/lib/code-mode-tools";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
 
@@ -93,9 +92,12 @@ describe("tool part mapper", () => {
   test("forwards native tool start time without inventing pending timing", () => {
     expect(parseDynamicToolUIPart(writeToolPart("running", { description: "Review" }, { tool: "task" })))
       .toMatchObject({ callProviderMetadata: { openwork: { toolStartedAt: 1 } } });
+    expect(parseDynamicToolUIPart(writeToolPart("running", { code: "return 1" }, {
+      tool: "execute", metadata: { openworkV2CodeMode: true },
+    }))?.callProviderMetadata?.openwork?.toolStartedAt).toBe(1);
     expect(parseDynamicToolUIPart(writeToolPart("pending", { description: "Review" }, { tool: "task" })))
       .toMatchObject({ callProviderMetadata: { opencode: { partId: "part-write" } } });
-    expect(parseDynamicToolUIPart(writeToolPart("pending", { description: "Review" }, { tool: "task" }))?.callProviderMetadata?.openwork)
+    expect(parseDynamicToolUIPart(writeToolPart("pending", { description: "Review" }, { tool: "task" }))?.callProviderMetadata?.openwork?.toolStartedAt)
       .toBeUndefined();
   });
 
@@ -187,6 +189,7 @@ describe("tool part mapper", () => {
     expect(parseDynamicToolUIPart(part)?.callProviderMetadata).toEqual({
       opencode: { partId: "part-write" },
       openwork: {
+        sourcePartId: "part-write",
         mcpResult: {
           ...(isError === undefined ? {} : { isError }),
           content: [{ type: "text", text: "Fallback" }],
@@ -208,7 +211,7 @@ describe("tool part mapper", () => {
 
     expect(parseDynamicToolUIPart(running)?.callProviderMetadata).toEqual({
       opencode: { partId: "part-task" },
-      openwork: { childSessionId: "ses_child_1", toolStartedAt: 1 },
+      openwork: { sourcePartId: "part-task", childSessionId: "ses_child_1", toolStartedAt: 1 },
     });
 
     const completed = writeToolPart(
@@ -221,7 +224,7 @@ describe("tool part mapper", () => {
 
     expect(parseDynamicToolUIPart(completed)?.callProviderMetadata).toEqual({
       opencode: { partId: "part-task" },
-      openwork: { childSessionId: "ses_child_1", toolStartedAt: 1 },
+      openwork: { sourcePartId: "part-task", childSessionId: "ses_child_1", toolStartedAt: 1 },
     });
   });
 
@@ -232,6 +235,7 @@ describe("tool part mapper", () => {
 
     expect(parseDynamicToolUIPart(part)?.callProviderMetadata).toEqual({
       opencode: { partId: "part-write" },
+      openwork: { sourcePartId: "part-write" },
     });
   });
 
@@ -284,7 +288,7 @@ describe("tool part mapper", () => {
     expect(parsed.errorText.toLowerCase()).not.toContain("<!doctype");
   });
 
-  test("maps env var request tools for rich chat rendering", () => {
+  test("preserves historical env var request input for generic tool rendering", () => {
     const part = writeToolPart("running", { key: "NOTION_TOKEN" }, { tool: "request_env_var" });
     expect(parseDynamicToolUIPart(part)).toMatchObject({
       type: "dynamic-tool",
@@ -293,29 +297,19 @@ describe("tool part mapper", () => {
     });
   });
 
-  test("parses session creation output for rich chat rendering", () => {
-    expect(parseOpenWorkSessionCreateResult(JSON.stringify({
+  test("preserves session creation output without a UI-specific parser", () => {
+    const output = JSON.stringify({
       ok: true,
       workspaceId: "workspace-a",
       workspace: "Research",
-      created: [{
-        sessionId: "session-dolphins",
-        title: "Dolphin research",
-        started: true,
-        route: "/workspace/workspace-a/session/session-dolphins",
-      }],
+      created: [{ sessionId: "session-research", title: "Research", started: true }],
       failures: [],
-    }))).toEqual({
-      ok: true,
-      workspaceId: "workspace-a",
-      workspace: "Research",
-      created: [{
-        sessionId: "session-dolphins",
-        title: "Dolphin research",
-        started: true,
-        route: "/workspace/workspace-a/session/session-dolphins",
-      }],
-      failures: [],
+    });
+    const part = writeToolPart("completed", {}, { tool: "openwork_session_create" });
+    if (part.state.status !== "completed") throw new Error("Expected completed fixture");
+    part.state.output = output;
+    expect(parseDynamicToolUIPart(part)).toMatchObject({
+      type: "dynamic-tool", toolName: "openwork_session_create", state: "output-available", output,
     });
   });
 

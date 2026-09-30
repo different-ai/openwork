@@ -7,6 +7,7 @@ import {
   refreshOpenworkCloudMcpEngine,
   refreshOpenworkCloudMcpCatalog,
   type CloudMcpServerMetadata,
+  type CloudMcpNativeEngineResolver,
   type CloudMcpProviderModelContext,
   type CloudMcpRuntimeRegistrar,
   type CloudMcpLiveStatusObserver,
@@ -30,6 +31,7 @@ export type RegisterCloudMcpRoutesOptions = {
   resolveOpencodeDirectory: (workspace: WorkspaceInfo) => string | null;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   registerRuntimeMcp: CloudMcpRuntimeRegistrar;
+  nativeEngineForWorkspace?: CloudMcpNativeEngineResolver;
   refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
   serverMetadata?: CloudMcpServerMetadata;
 };
@@ -91,6 +93,7 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
     resolveOpencodeDirectory,
     createWorkspaceOpencodeClient,
     registerRuntimeMcp,
+    nativeEngineForWorkspace,
     refreshRegistrationFromLiveStatus,
     serverMetadata,
   } = options;
@@ -106,6 +109,7 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
       serverMetadata,
       probe: probeFromQuery(ctx.url),
       createWorkspaceOpencodeClient,
+      nativeEngineForWorkspace,
       refreshRegistrationFromLiveStatus,
     });
     return jsonResponse(health);
@@ -141,6 +145,7 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
       providerModel: providerModelFromBody(body),
       serverMetadata,
       createWorkspaceOpencodeClient,
+      nativeEngineForWorkspace,
       registerRuntimeMcp,
       refreshRegistrationFromLiveStatus,
       trigger: typeof body.trigger === "string" ? body.trigger : undefined,
@@ -169,6 +174,7 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
         providerModel: providerModelFromBody(body),
         serverMetadata,
         createWorkspaceOpencodeClient,
+        nativeEngineForWorkspace,
         registerRuntimeMcp,
         refreshRegistrationFromLiveStatus,
       }));
@@ -189,6 +195,7 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
       providerModel: providerModelFromBody(body),
       serverMetadata,
       createWorkspaceOpencodeClient,
+      nativeEngineForWorkspace,
       registerRuntimeMcp,
       refreshRegistrationFromLiveStatus,
     });

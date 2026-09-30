@@ -521,7 +521,10 @@ describe("MCP Apps sandbox proxy policy", () => {
     const response = await fetch(`${base}/mcp-apps/sandbox.html?csp=${encodeURIComponent(JSON.stringify({ connectDomains: ["https://api.example.com"] }))}`);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-security-policy")).toContain("connect-src https://api.example.com");
-    expect(await response.text()).toContain("/mcp-apps/sandbox.js");
+    const html = await response.text();
+    expect(html).toContain(MCP_APP_SANDBOX_PROXY_SCRIPT);
+    expect(html).not.toContain('src="/mcp-apps/sandbox.js"');
+    expect(html).not.toContain('href="/mcp-apps/sandbox.css"');
     expect((await fetch(`${base}/mcp-apps/sandbox.js`)).headers.get("content-type")).toContain("text/javascript");
   });
 });

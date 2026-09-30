@@ -51,7 +51,7 @@ permissions:
 
 concurrency:
   group: alpha-macos-aarch64-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   publish-alpha-macos-aarch64:
@@ -156,11 +156,18 @@ jobs:
           exit 1
 
       - name: Build Electron alpha app
+        id: alpha-build
         if: env.MACOS_NOTARIZE == 'true'
         shell: bash
         env:
           TARGET: aarch64-apple-darwin
-        run: pnpm --filter @openwork/desktop build:electron
+        run: |
+          set -euo pipefail
+          # Capture provenance at build start, not when the rolling release or
+          # its assets are uploaded. Labels travel with each versioned asset.
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "started_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+          pnpm --filter @openwork/desktop build:electron
 
       - name: Package Electron alpha (macOS, signed + notarized)
         if: env.MACOS_NOTARIZE == 'true'
@@ -185,6 +192,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CHANNEL_TAG: ${{ inputs.channel_tag || 'alpha-macos-latest' }}
+          ALPHA_COMMIT: ${{ steps.alpha-build.outputs.commit }}
+          ALPHA_BUILD_STARTED_AT: ${{ steps.alpha-build.outputs.started_at }}
         run: |
           set -euo pipefail
           # Alpha assets may only ever land on alpha channel releases. This
@@ -217,7 +226,13 @@ jobs:
             echo "No Electron alpha assets found in apps/desktop/dist-electron" >&2
             exit 1
           fi
-          gh release upload "$CHANNEL_TAG" "${assets[@]}" \
+          # Human-readable asset labels also supply per-build metadata to the
+          # docs in the existing release API response (no per-build requests).
+          labeled_assets=()
+          for asset in "${assets[@]}"; do
+            labeled_assets+=("$asset#${asset##*/} (commit $ALPHA_COMMIT; build started $ALPHA_BUILD_STARTED_AT)")
+          done
+          gh release upload "$CHANNEL_TAG" "${labeled_assets[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
 

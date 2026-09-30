@@ -37,6 +37,23 @@ import {
   workspaceSyncStreamKey,
 } from "../src/react-app/domains/session/sync/session-sync";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
+import { snapshotToUIMessages } from "../src/react-app/domains/session/sync/usechat-adapter";
+
+test("snapshot and live assistant projections preserve the reply parent", () => {
+  const message = createActiveHistory("text").messages[0];
+  expect(snapshotToUIMessages({ messages: [message] })[0]?.metadata).toMatchObject({
+    opencode: { parentID: "persisted-user", created: 1_000 },
+  });
+  const { input, cleanup, releaseSession } = createTestSync();
+  try {
+    __applySessionSyncEventForTest(input, { type: "message.updated", properties: { info: message.info } });
+    const transcript = getReactQueryClient().getQueryData<Array<{ metadata?: unknown }>>(transcriptKey(workspaceId, sessionId));
+    expect(transcript?.find((entry) => entry.metadata)?.metadata).toMatchObject({ opencode: { parentID: "persisted-user", created: 1_000 } });
+  } finally {
+    releaseSession();
+    cleanup();
+  }
+});
 
 type SyncInput = {
   workspaceId: string;
@@ -954,10 +971,12 @@ describe("active session status reconciliation", () => {
     jest.advanceTimersByTime(250);
     await flushMicrotasks();
 
-    for (const key of [statusKey, permissionKey, questionKey, todoKey]) {
+    // The transcript is GC-exempt like the other live caches (it must survive
+    // while a background run streams), so release owns its removal too.
+    expect(transcript).toBeDefined();
+    for (const key of [transcriptKey, statusKey, permissionKey, questionKey, todoKey]) {
       expect(queryClient.getQueryData(key(workspaceId, sessionId))).toBeUndefined();
     }
-    expect(queryClient.getQueryData(transcriptKey(workspaceId, sessionId))).toBe(transcript);
     expect(queryClient.getQueryData([...questionKey(workspaceId, sessionId), "settled"])).toEqual(["answered"]);
     expect(queryClient.getQueryData(statusKey(workspaceId, "background-live"))).toEqual({ type: "busy" });
   });

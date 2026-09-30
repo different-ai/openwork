@@ -3,6 +3,7 @@ import type { JsonObject, StructuredLogLevel } from "@openwork-ee/utils/observab
 import { observabilityConfig } from "./config.js"
 import { getRuntimeState } from "./runtime.js"
 import { sanitizeFields, sanitizeText } from "./safe-fields.js"
+import { currentScimDiagnosticFields, SCIM_DIAGNOSTIC_MESSAGE } from "./scim-diagnostics.js"
 
 type LogFields = Readonly<Record<string, unknown>>
 
@@ -57,8 +58,11 @@ export function createAppLogger(options: AppLoggerOptions = {}): AppLogger {
     const runtime = getRuntimeState()
     const getTraceContext = options.getTraceContext ?? runtime.getTraceContext
     const emitProviderLog = options.emitProviderLog ?? runtime.emitProviderLog
-    const safeFields = mergeJsonFields(mergeJsonFields(baseFields, sanitizeFields(fields)), getTraceContext?.())
-    const safeMessage = sanitizeText(message)
+    const diagnostic = currentScimDiagnosticFields()
+    const safeFields = mergeJsonFields(diagnostic ?? mergeJsonFields(baseFields, sanitizeFields(fields)), getTraceContext?.())
+    const safeMessage = diagnostic
+      ? message === SCIM_DIAGNOSTIC_MESSAGE ? message : "SCIM diagnostic request activity"
+      : sanitizeText(message)
 
     stdout.log(level, safeMessage, safeFields)
     emitProviderLog?.(level, safeMessage, safeFields)

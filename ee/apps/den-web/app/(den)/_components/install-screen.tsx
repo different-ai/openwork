@@ -7,7 +7,7 @@ import { useSearchParams } from "next/navigation";
 import { requestJson } from "../_lib/den-flow";
 import { getInstallConfigErrorMessage } from "../_lib/install-errors";
 import { LINK_STEP, parseGuideStep, type GuideStep } from "../_lib/install-guide";
-import { buildAuthenticatedInstallDownloadHref, buildInstallDownloadHref, type InstallPlatform, installerFileName } from "../_lib/install-download";
+import { buildBrowserInstallDownloadHref, type InstallPlatform, installerFileName } from "../_lib/install-download";
 import { isMobileUserAgent } from "../_lib/platform";
 import { InstallVisual } from "./install-visual";
 import { OnboardingShell } from "./onboarding-shell";
@@ -174,9 +174,7 @@ async function fetchInstallConfig(token: string | null) {
 }
 
 function installHref(config: InstallConfig, platform: InstallPlatform, token: string | null) {
-  return token
-    ? buildInstallDownloadHref(config.apiUrl, platform, token)
-    : buildAuthenticatedInstallDownloadHref(config.apiUrl, platform);
+  return buildBrowserInstallDownloadHref(config.apiUrl, platform, token);
 }
 
 type StepState = "complete" | "active" | "pending";

@@ -2,11 +2,13 @@
 
 import {
   ArrowUpRight,
+  Clock,
   Code2,
   Download,
   FileText,
   KeyRound,
   Library,
+  Monitor,
   Plug,
   Server,
   Shield,
@@ -110,18 +112,18 @@ export function PricingGrid(props: PricingGridProps) {
       id: "free",
       title: "Free",
       price: "$0",
-      priceSub: "up to 5 users",
+      priceSub: "first 5 Cloud seats",
       ctaLabel: "Get Started for free",
       href: CLOUD_SIGNUP_URL,
       external: true,
       features: [
         { text: "Open source desktop app (MIT)", icon: Code2 },
-        { text: "Self-host the full platform, including the org control plane", icon: Server },
+        { text: "Self-host the full platform, free for organizations up to 5 users", icon: Server },
         { text: "Bring your own keys", icon: KeyRound },
         { text: "macOS, Windows, and Linux downloads", icon: Download },
         { text: "Community support", icon: Plug },
       ],
-      footer: "Free forever for up to 5 users",
+      footer: "First 5 Cloud seats free, any team size",
     },
     {
       id: "team",
@@ -133,9 +135,12 @@ export function PricingGrid(props: PricingGridProps) {
       external: true,
       badge: "Recommended",
       features: [
-        { text: "Everything in Free, up to 100 users", icon: Users },
+        { text: "Everything in Free, unlimited users", icon: Users },
+        { text: "SSO / SAML", icon: Shield },
         { text: "Extension Marketplace", icon: Library },
         { text: "Bring your own LLM keys, distributed to your team", icon: KeyRound },
+        { text: "Cloud automations", icon: Clock },
+        { text: "Basic usage analytics", icon: SlidersHorizontal },
         { text: "Standard support included", icon: Plug },
       ],
       footer: "Billed monthly. Cancel anytime.",
@@ -143,23 +148,38 @@ export function PricingGrid(props: PricingGridProps) {
     {
       id: "enterprise",
       title: "Enterprise",
-      price: "$40",
-      priceSub: "per user / month",
+      price: "Custom pricing",
+      priceSub: "",
+      isCustomPricing: true,
       ctaLabel: "Talk to us",
       href: props.callUrl,
       external: /^https?:\/\//.test(props.callUrl),
       features: [
-        { text: "Everything in Team", icon: Users },
-        { text: "SSO / SAML and SCIM provisioning", icon: Shield },
+        { text: "Everything in Team, including SSO", icon: Users },
+        { text: "SCIM provisioning", icon: Shield },
         { text: "Usage and adoption analytics", icon: SlidersHorizontal },
         { text: "Desktop policies and version controls", icon: SlidersHorizontal },
+        { text: "Audit log and spend observability", icon: FileText },
         { text: "Internal white-labeling — your name, logo, and branding", icon: FileText },
-        { text: "OpenWork Web", icon: Code2 },
-        { text: "Spend observability", icon: FileText },
         { text: "Bring your own inference — self-hosted or private models", icon: Server },
         { text: "Standard SLA support included", icon: Plug },
       ],
-      footer: "Same price cloud or self-hosted. Volume pricing above 100 users.",
+      footer: "Annual contract with a 60-day opt-out. Same terms cloud or self-hosted.",
+    },
+  ];
+
+  const addOns: Array<{ name: string; price: string; description: string; icon: typeof Download }> = [
+    {
+      name: "OpenWork Cloud Computer",
+      price: "$50 per member / month",
+      description: "A cloud computer for each member, accessible from the browser.",
+      icon: Monitor,
+    },
+    {
+      name: "OpenWork models",
+      price: "$10 per user / month",
+      description: "Managed inference — no keys to bring.",
+      icon: Code2,
     },
   ];
 
@@ -181,12 +201,34 @@ export function PricingGrid(props: PricingGridProps) {
         ))}
       </div>
 
+      <div className="grid grid-cols-1 border-l border-t border-dotted border-gray-400/50 bg-[#f6f9fc]/75 backdrop-blur-sm md:grid-cols-2">
+        {addOns.map((addOn) => {
+          const Icon = addOn.icon;
+          return (
+            <div
+              key={addOn.name}
+              className="flex items-start gap-4 border-b border-r border-dotted border-gray-400/50 p-6"
+            >
+              <Icon className="mt-0.5 h-[18px] w-[18px] shrink-0 text-gray-500" strokeWidth={1.5} />
+              <div className="flex flex-col gap-1">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span className="text-[15px] font-medium tracking-tight text-gray-900">{addOn.name}</span>
+                  <span className="text-[12px] font-medium text-gray-500">{addOn.price}</span>
+                </div>
+                <p className="text-[13px] font-medium leading-snug text-gray-700">{addOn.description}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
       <p className="text-center text-[12px] font-medium text-gray-500">
-        Prices exclude taxes. Same pricing for OpenWork Cloud and self-hosted. No deployment fees.
+        Add-ons are available on Team and Enterprise. Prices exclude taxes. Team costs the same on OpenWork Cloud
+        and self-hosted. No deployment fees.
       </p>
       <p className="text-center text-[12px] font-medium text-gray-500">
-        Self-hosting the control plane is free for up to 5 users (excluding Enterprise Features such as
-        SSO, analytics, desktop policies, and white-labeling), free for development and testing, and
+        Self-hosting the control plane is free for organizations with up to 5 users (excluding Enterprise Features such as
+        SCIM, analytics, desktop policies, and white-labeling), free for development and testing, and
         free to evaluate for 30 days at any size with all features — see the{" "}
         <a
           href="https://github.com/different-ai/openwork/blob/dev/ee/LICENSE"

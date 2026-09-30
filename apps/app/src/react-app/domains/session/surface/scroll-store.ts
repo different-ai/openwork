@@ -5,6 +5,12 @@ const PERSIST_DELAY_MS = 250;
 
 export type SessionScrollAnchor = { messageId: string; offset: number };
 
+export type SessionHistoryPagePosition = {
+  before: string | null;
+  limit: number;
+  lineage: (string | null)[];
+};
+
 // Geometry and nearby IDs only: never persist transcript text or tool results.
 export type SessionScrollGeometry = {
   owner: string;
@@ -13,6 +19,7 @@ export type SessionScrollGeometry = {
   before: number;
   after: number;
   messageIds: string[];
+  page?: SessionHistoryPagePosition;
 };
 
 type StickyBottomSessionScrollState = {
@@ -87,7 +94,19 @@ function normalizeGeometry(value: unknown): SessionScrollGeometry | undefined {
     || typeof after !== "number" || !Number.isFinite(after) || after < 0 || after > scrollHeight
     || !Array.isArray(messageIds)) return;
   const ids = messageIds.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length < 256).slice(0, 24);
-  return { owner: value.owner, scrollHeight, viewportWidth, before, after, messageIds: [...new Set(ids)] };
+  const page = normalizePagePosition(value.page);
+  return { owner: value.owner, scrollHeight, viewportWidth, before, after, messageIds: [...new Set(ids)], ...(page ? { page } : {}) };
+}
+
+function normalizePagePosition(value: unknown): SessionHistoryPagePosition | undefined {
+  if (!isRecord(value) || !Array.isArray(value.lineage) || value.lineage.length === 0 || value.lineage.length > 64
+    || !Number.isInteger(value.limit) || typeof value.limit !== "number" || value.limit < 1 || value.limit > 100) return;
+  const validCursor = (cursor: unknown): cursor is string | null => cursor === null
+    || typeof cursor === "string" && cursor.length > 0 && cursor.length <= 4096;
+  if (!validCursor(value.before) || !value.lineage.every(validCursor)
+    || value.lineage[0] !== null || value.lineage.at(-1) !== value.before
+    || new Set(value.lineage).size !== value.lineage.length) return;
+  return { before: value.before, limit: value.limit, lineage: value.lineage };
 }
 
 export function readPersistedSessionScrollState(): SessionScrollStateById {

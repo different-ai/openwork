@@ -190,15 +190,26 @@ export async function sessionWorld(seed: Seed) {
  * and deliver the prompt through whichever engine (v1 or v2) is selected.
  */
 export async function sessionlessFirstSendWorld(seed: Seed) {
+  return sessionlessFirstSend(seed, { mobileLayout: false });
+}
+
+async function sessionlessFirstSend(seed: Seed, options: { mobileLayout: boolean }) {
   const engine = resolveEvalEngine();
   const providerId = "first-send-mock";
   const modelId = "first-send-model";
   const nonce = `${Date.now().toString(36)}-${process.pid}`;
   const prompt = `Summarize this workspace in one sentence. FIRST-SEND-${nonce}`;
-  const reply = `Workspace summary finished ${nonce}.`;
+  const reply = options.mobileLayout
+    ? Array.from({ length: 18 }, (_, index) => `Paragraph ${index + 1}: This is a deterministic response for checking conversation layout and reading position.`).join("\n\n")
+    : `Workspace summary finished ${nonce}.`;
+  const followupPrompt = `Give me a short follow-up. MOBILE-FOLLOWUP-${nonce}`;
+  const followupReply = `Follow-up complete ${nonce}.`;
   const mockBoot = seed.mock({
     isolatedProcessEnv: true,
-    agentWorkloads: [{ promptMarker: prompt, latestUserTurn: true, finalReply: reply, steps: [] }],
+    agentWorkloads: [
+      { promptMarker: prompt, latestUserTurn: true, finalReply: reply, steps: [] },
+      { promptMarker: followupPrompt, latestUserTurn: true, finalReply: followupReply, steps: [] },
+    ],
   });
   const workspacePath = seed.tmpPath("sessionless-first-send");
   const app = await seed.appWeb({ name: "sessionless-first-send", workspacePath, headless: true, mocks: { agent: mockBoot } });
@@ -228,6 +239,8 @@ export async function sessionlessFirstSendWorld(seed: Seed) {
     engine,
     prompt,
     reply,
+    followupPrompt,
+    followupReply,
     transition: (evidenceDirectory: string) => sessionlessTransition(seed, app, workspace.workspaceId, engine, evidenceDirectory),
     route: () => seed.evalIn(app, () => location.hash || `#${location.pathname}`),
     recovery: () => seed.evalIn(app, () => {
@@ -257,6 +270,10 @@ export async function sessionlessFirstSendWorld(seed: Seed) {
     sessionsPath: engine === "v2" ? `${mount}/opencode2/api/session` : `${mount}/opencode/session?limit=100`,
     openNewTask: () => go(app, `/workspace/${workspace.workspaceId}/session`),
   };
+}
+
+export async function mobileChatInteractionWorld(seed: Seed) {
+  return sessionlessFirstSend(seed, { mobileLayout: true });
 }
 
 export async function parentChildPermissionWorld(seed: Seed) {
@@ -490,6 +507,15 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
     return responses.every((response) => response.ok);
   }, [base.workspace.workspaceId, tableMarkdown]), { awaitPromise: true });
   if (wrote !== true) throw new Error("Could not seed artifact code files.");
+  await waitForBehavior(
+    base.app,
+    () => window.__openworkControl.listActions().some((action) => action.id === "eval.markdown_primitive.seed_chat" && !action.disabled),
+    { timeoutMs: 30_000, label: "chat markdown seed action enabled" },
+  );
+  const fileLinkPath = `${base.workspacePath}/docs/Unlisted Report.pdf`;
+  const fileLinkMarkdown = `[Unlisted report](file://${encodeURI(fileLinkPath)}) and [Relative report](docs/Unlisted-Relative.pdf)`;
+  const chat = await seed.evalIn(base.app, browserScript((text) => window.__openworkControl.execute("eval.markdown_primitive.seed_chat", { text }), [fileLinkMarkdown]), { awaitPromise: true });
+  if (!isRecord(chat) || chat.ok !== true) throw new Error("Could not seed chat file links.");
   // TODO(primitive): open an initial built-in browser artifact tab.
   await seed.evalIn(base.app, () => (window.__openworkControl.execute("browser.open_url", { url: "about:blank" })), { awaitPromise: true });
   await waitForBehavior(
@@ -503,6 +529,23 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
   return {
     ...base,
     tableMarkdown,
+    fileLinkPath,
+    // Native Electron menus are OS widgets without DOM/CDP targets. Use the
+    // existing development bridge to observe and dismiss the real popup.
+    nativeMenu: () => seed.evalIn(base.app, () => window.__OPENWORK_ELECTRON__.contextMenu.inspect(), { awaitPromise: true }),
+    dismissMenu: () => seed.evalIn(base.app, () => window.__OPENWORK_ELECTRON__.contextMenu.dismiss(), { awaitPromise: true }),
+    // Pierre's token styles and render errors live inside its shadow root.
+    async artifactCodePresentation() {
+      return seed.evalIn(base.app, () => {
+        const shadow = document.querySelector("[data-artifact-code-view] diffs-container")?.shadowRoot;
+        const tokens = [...(shadow?.querySelectorAll("[data-line] span") ?? [])]
+          .filter((node) => node.textContent?.trim() && node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));
+        return {
+          colors: [...new Set(tokens.map((node) => getComputedStyle(node).color))],
+          error: shadow?.querySelector("[data-error-message]")?.textContent ?? null,
+        };
+      });
+    },
     async visibleArtifactCode() {
       return seed.evalIn(base.app, () => {
         const root = document.querySelector<HTMLElement>("[data-artifact-code-view]");
@@ -1129,7 +1172,7 @@ export async function toolTesterWorld(seed: Seed) {
   const web = await seed.web({
     den,
     signedInAs: "admin",
-    startPath: "/dashboard/mcp-connections/configured",
+    startPath: `/dashboard/mcp-connections/${encodeURIComponent(connection.id)}`,
     headless: true,
     viewport: { width: 1440, height: 1000 },
   });
@@ -1163,10 +1206,21 @@ export async function toolTesterWorld(seed: Seed) {
     execute: (schemaDigest: string, text: string) => callTool("execute_capability", {
       name: `mcp:${connection.id}:mock_echo`, schemaDigest, body: { text },
     }),
+    /** Return to the connector page after the mock OAuth flow finishes. */
+    async closeSignInTab(): Promise<void> {
+      const targets = await listTargets(web.handle.cdpUrl);
+      for (const target of targets) {
+        if (target.type === "page" && target.id !== web.client.targetId
+          && target.url.startsWith(`${den.ref.webUrl}/connect/oauth`)) {
+          await web.client.send("Target.closeTarget", { targetId: target.id });
+        }
+      }
+      await web.client.send("Page.bringToFront");
+    },
     /** The Tool Tester link destination for this connection. */
     // TODO(primitive): read a visible link destination by test id.
     async testToolsHref(): Promise<string> {
-      const value = await seed.evalIn(web, browserScript((connectionId) => document.querySelector<HTMLElement>('[data-testid="test-mcp-tools-' + connectionId + '"]')?.getAttribute("href") ?? "", [connection.id]));
+      const value = await seed.evalIn(web, browserScript((connectionId) => document.querySelector<HTMLElement>('a[href*="/tool-tester?connectionId=' + encodeURIComponent(connectionId) + '"]')?.getAttribute("href") ?? "", [connection.id]));
       return typeof value === "string" ? value : "";
     },
     /** Whether Tool Tester appears in Manage rather than Settings. */
@@ -1396,22 +1450,31 @@ export async function backgroundUpdateWorld(seed: Seed) {
     });
     window.__openworkApplyDesktopConfig?.({});
     window.__openworkSetDesktopConfigRefreshResult?.({});
+    // Like the main process, report which build is staged to checks that must preserve it.
+    let stagedVersion: string | null = null;
     window.__openworkUpdaterEvalBridge = {
       getChannel: async () => ({ channel: "stable", currentVersion }),
       setChannel: async (channel) => ({ channel, currentVersion }),
-      check: async () => {
+      check: async (_channel?: string, _targetVersion?: string, options?: { preserveStaged?: boolean }) => {
         state.checks++;
-        return { available: state.checks >= 4, channel: "stable", currentVersion, latestVersion: state.checks >= 4 ? "9.9.9" : currentVersion };
+        return {
+          available: state.checks >= 4, channel: "stable", currentVersion, latestVersion: state.checks >= 4 ? "9.9.9" : currentVersion,
+          ...(options?.preserveStaged ? { stagedVersion } : {}),
+        };
       },
       download: async () => {
         state.downloads++;
         const attempt = state.downloads;
+        stagedVersion = null;
         return new Promise((resolve, reject) => {
           state.finishDownload = () => {
             state.finishDownload = null;
             if (attempt === 1) resolve({ ok: false, reason: "Update native preparation failed." });
             else if (attempt === 2) reject(new Error("Update download connection failed."));
-            else resolve({ ok: true });
+            else {
+              stagedVersion = "9.9.9";
+              resolve({ ok: true });
+            }
           };
         });
       },
@@ -1470,8 +1533,8 @@ export async function backgroundUpdateWorld(seed: Seed) {
 }
 
 /** A desktop signed in to a real Den whose organization pins allowed desktop
- * versions. The updater feed is faked; the version policy is Den's own. */
-export async function revokedUpdateWorld(seed: Seed) {
+ * versions. The fake feed offers 9.9.9; the pin decides whether it installs. */
+export async function savedUpdatePolicyWorld(seed: Seed) {
   const den = await seed.den({
     org: { name: `Update policy ${Date.now()}`, admin: { name: "Update Policy Admin" } },
   });
@@ -1517,7 +1580,9 @@ export async function revokedUpdateWorld(seed: Seed) {
     allowVersions,
     snapshot: () => evalIn(app, () => {
       const { downloads, installs } = window.__backgroundUpdateWitness;
-      return { downloads, installs };
+      const installButton = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent?.trim() === "Install & restart");
+      return { downloads, installs, installEnabled: installButton != null && !installButton.disabled };
     }),
     openSettings: () => go(app, `/workspace/${workspace.workspaceId}/settings/updates`),
     openWorkspace: () => go(app, `/workspace/${workspace.workspaceId}/session`),

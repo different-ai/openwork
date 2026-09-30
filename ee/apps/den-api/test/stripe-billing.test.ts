@@ -7,6 +7,7 @@ const insertedSubscriptions: Array<Record<string, unknown>> = []
 const customerCreates: RecordedCall[] = []
 const checkoutCreates: RecordedCall[] = []
 const subscriptionItemUpdates: RecordedCall[] = []
+const subscriptionCancels: RecordedCall[] = []
 const databaseUpdates: RecordedCall[] = []
 const inferenceEnableCalls: RecordedCall[] = []
 let customerSearchResults: Array<Record<string, unknown>> = []
@@ -56,6 +57,10 @@ class FakeStripe {
   subscriptions = {
     list: () => Promise.resolve({ data: subscriptionResults }),
     retrieve: (subscriptionId: string) => Promise.resolve(retrievedSubscriptions[subscriptionId] ?? retrievedSubscription),
+    cancel: (subscriptionId: string, params: RecordedCall) => {
+      subscriptionCancels.push({ subscriptionId, params })
+      return Promise.resolve({ id: subscriptionId, status: "canceled" })
+    },
   }
 
   invoices = {
@@ -144,6 +149,7 @@ const {
   OPENWORK_WEB_QUANTITY_DEFINITION,
   OPENWORK_WEB_UNIT_AMOUNT,
   calculateOpenWorkWebBilling,
+  createInferenceCheckoutSession,
   createOpenWorkWebCheckout,
   findOrCreateStripeCustomer,
   getOpenWorkWebBillingSummary,
@@ -152,6 +158,7 @@ const {
   isOngoingOpenWorkWebSubscriptionStatus,
   isOpenWorkWebBillableMember,
   openWorkWebCheckoutIdempotencyKey,
+  shouldReplaceTrackedSubscription,
   syncInferenceSubscriptionQuantityAfterMemberChange,
   syncSeatSubscriptionQuantityAfterMemberChange,
   syncStripeCheckoutSession,
@@ -245,6 +252,7 @@ beforeEach(() => {
   customerCreates.length = 0
   checkoutCreates.length = 0
   subscriptionItemUpdates.length = 0
+  subscriptionCancels.length = 0
   databaseUpdates.length = 0
   inferenceEnableCalls.length = 0
   customerSearchResults = []
@@ -717,7 +725,7 @@ test("an asynchronous Checkout failure expires inference without enabling access
     stripe_price_id: "price_inference_fake",
     stripe_subscription_item_id: "si_inference",
   }
-  selectResults.push([row])
+  selectResults.push([row], [row])
 
   await handleStripeWebhook({ payload: "{}", signature: "test_signature" })
 
@@ -726,6 +734,39 @@ test("an asynchronous Checkout failure expires inference without enabling access
     last_event_id: "evt_inference_checkout_async_failed",
   })
   expect(inferenceEnableCalls).toEqual([{ organizationId: "org_test", enabled: false }])
+})
+
+test("an asynchronous Checkout failure for an orphaned duplicate leaves the tracked subscription alone", async () => {
+  const duplicate = { ...inferenceSubscription(), id: "sub_duplicate" }
+  const tracked = { ...inferenceSubscription(), id: "sub_tracked" }
+  retrievedSubscriptions = { sub_duplicate: duplicate, sub_tracked: tracked }
+  webhookEvent = {
+    id: "evt_duplicate_async_failed",
+    type: "checkout.session.async_payment_failed",
+    data: {
+      object: {
+        id: "cs_duplicate_async_failed",
+        mode: "subscription",
+        payment_status: "unpaid",
+        subscription: "sub_duplicate",
+        metadata: { org_id: "org_test", subscription_type: "inference" },
+      },
+    },
+  }
+  const trackedRow = {
+    ...webSubscriptionRow(),
+    type: "inference",
+    stripe_subscription_id: "sub_tracked",
+    stripe_price_id: "price_inference_fake",
+    stripe_subscription_item_id: "si_inference",
+  }
+  selectResults.push([trackedRow])
+
+  await handleStripeWebhook({ payload: "{}", signature: "test_signature" })
+
+  expect(insertedSubscriptions).toHaveLength(0)
+  expect(databaseUpdates).toHaveLength(0)
+  expect(inferenceEnableCalls).toHaveLength(0)
 })
 
 test("an asynchronous Checkout success clears payment failure and reconciles Web quantity", async () => {
@@ -879,6 +920,8 @@ test("an unrelated active Web subscription update preserves the payment failure"
 test("a replacement active Web subscription starts locked until payment is confirmed", async () => {
   const replacement = webSubscription({ status: "active" })
   replacement.id = "sub_replacement"
+  // The prior subscription is already dead in Stripe; the stored row lags.
+  retrievedSubscriptions = { sub_prior: { ...webSubscription({ status: "canceled" }), id: "sub_prior" } }
   const failedPriorRow = webSubscriptionRow({ paymentFailed: true, subscriptionId: "sub_prior" })
   const replacementRow = webSubscriptionRow({ paymentFailed: true, subscriptionId: "sub_replacement" })
   selectResults.push([failedPriorRow], [replacementRow])
@@ -948,38 +991,226 @@ test("a paid inference invoice still synchronizes the existing non-Web billing p
   })
 })
 
-test("a failed inference invoice still records and expires a previously missing non-Web row", async () => {
-  const subscription = inferenceSubscription()
-  retrievedSubscriptions = { sub_inference: subscription }
-  webhookEvent = {
-    id: "evt_inference_failed",
-    type: "invoice.payment_failed",
-    data: {
-      object: {
-        id: "in_inference",
-        parent: { subscription_details: { subscription: "sub_inference" } },
-      },
-    },
-  }
-  const insertedRow = {
-    ...webSubscriptionRow(),
+function inferenceRow(input?: { status?: string; subscriptionId?: string }) {
+  return {
+    ...webSubscriptionRow({ status: input?.status }),
+    id: "orgSubscription_inference",
     type: "inference",
-    stripe_subscription_id: "sub_inference",
+    stripe_subscription_id: input?.subscriptionId ?? "sub_inference",
     stripe_price_id: "price_inference_fake",
     stripe_subscription_item_id: "si_inference",
   }
-  selectResults.push([], [insertedRow])
+}
+
+function failedInvoiceEvent(subscriptionId: string, eventId = "evt_inference_failed") {
+  return {
+    id: eventId,
+    type: "invoice.payment_failed",
+    data: {
+      object: {
+        id: `in_${subscriptionId}`,
+        parent: { subscription_details: { subscription: subscriptionId } },
+      },
+    },
+  }
+}
+
+test("a failed renewal keeps the inference row past due while Stripe retries instead of expiring it", async () => {
+  const subscription = { ...inferenceSubscription(), status: "past_due" }
+  retrievedSubscriptions = { sub_inference: subscription }
+  webhookEvent = failedInvoiceEvent("sub_inference")
+  selectResults.push([inferenceRow()], [inferenceRow({ status: "past_due" })])
 
   await handleStripeWebhook({ payload: "{}", signature: "test_signature" })
 
   expect(insertedSubscriptions.at(-1)).toMatchObject({
     type: "inference",
-    status: "active",
+    status: "past_due",
+    stripe_subscription_id: "sub_inference",
+    last_event_id: "evt_inference_failed",
+  })
+  expect(databaseUpdates).toHaveLength(0)
+  expect(inferenceEnableCalls).toHaveLength(0)
+})
+
+test("a failed renewal disables inference once Stripe gives up on the subscription", async () => {
+  const subscription = { ...inferenceSubscription(), status: "unpaid" }
+  retrievedSubscriptions = { sub_inference: subscription }
+  webhookEvent = failedInvoiceEvent("sub_inference")
+  selectResults.push([inferenceRow({ status: "past_due" })], [inferenceRow({ status: "unpaid" })])
+
+  await handleStripeWebhook({ payload: "{}", signature: "test_signature" })
+
+  expect(insertedSubscriptions.at(-1)).toMatchObject({ status: "unpaid", stripe_subscription_id: "sub_inference" })
+  expect(inferenceEnableCalls).toEqual([{ organizationId: "org_test", enabled: false }])
+})
+
+test("a failed renewal invoice still records a previously missing inference row without revoking access", async () => {
+  const subscription = { ...inferenceSubscription(), status: "past_due" }
+  retrievedSubscriptions = { sub_inference: subscription }
+  webhookEvent = failedInvoiceEvent("sub_inference")
+  selectResults.push([], [inferenceRow({ status: "past_due" })])
+
+  await handleStripeWebhook({ payload: "{}", signature: "test_signature" })
+
+  expect(insertedSubscriptions.at(-1)).toMatchObject({
+    type: "inference",
+    status: "past_due",
     stripe_subscription_id: "sub_inference",
   })
-  expect(databaseUpdates.at(-1)).toMatchObject({
-    status: "expired",
-    last_event_id: "evt_inference_failed",
+  expect(databaseUpdates).toHaveLength(0)
+  expect(inferenceEnableCalls).toHaveLength(0)
+})
+
+test("a recovered inference renewal re-enables access that an earlier failure removed", async () => {
+  const subscription = inferenceSubscription()
+  retrievedSubscriptions = { sub_inference: subscription }
+  webhookEvent = {
+    id: "evt_inference_recovered",
+    type: "customer.subscription.updated",
+    data: { object: subscription },
+  }
+  selectResults.push([inferenceRow({ status: "past_due" })], [inferenceRow()])
+
+  await handleStripeWebhook({ payload: "{}", signature: "test_signature" })
+
+  expect(insertedSubscriptions.at(-1)).toMatchObject({ status: "active", stripe_subscription_id: "sub_inference" })
+  expect(inferenceEnableCalls).toEqual([{ organizationId: "org_test", enabled: true }])
+})
+
+test("a paid replacement subscription takes over the row from a past-due one and restores access", async () => {
+  const oldSubscription = { ...inferenceSubscription(), id: "sub_old", status: "past_due" }
+  const newSubscription = { ...inferenceSubscription(), id: "sub_new" }
+  retrievedSubscriptions = { sub_old: oldSubscription, sub_new: newSubscription }
+  webhookEvent = {
+    id: "evt_replacement_checkout",
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: "cs_replacement",
+        mode: "subscription",
+        payment_status: "paid",
+        subscription: "sub_new",
+        metadata: { org_id: "org_test", subscription_type: "inference" },
+      },
+    },
+  }
+  selectResults.push([inferenceRow({ status: "past_due", subscriptionId: "sub_old" })], [inferenceRow({ subscriptionId: "sub_new" })])
+
+  await handleStripeWebhook({ payload: "{}", signature: "test_signature" })
+
+  expect(insertedSubscriptions.at(-1)).toMatchObject({
+    status: "active",
+    stripe_subscription_id: "sub_new",
+    last_event_id: "evt_replacement_checkout",
+  })
+  expect(inferenceEnableCalls.every((call) => call.enabled === true)).toBe(true)
+  expect(inferenceEnableCalls.length).toBeGreaterThan(0)
+})
+
+test("late webhooks for the superseded subscription cannot flip the row back or revoke access", async () => {
+  const oldSubscription = { ...inferenceSubscription(), id: "sub_old", status: "past_due" }
+  const newSubscription = { ...inferenceSubscription(), id: "sub_new" }
+  retrievedSubscriptions = { sub_old: oldSubscription, sub_new: newSubscription }
+
+  // Stripe retries the old card and fails again.
+  webhookEvent = failedInvoiceEvent("sub_old", "evt_old_retry_failed")
+  selectResults.push([inferenceRow({ subscriptionId: "sub_new" })])
+  await handleStripeWebhook({ payload: "{}", signature: "test_signature" })
+
+  // Dunning eventually cancels the old subscription.
+  retrievedSubscriptions.sub_old = { ...oldSubscription, status: "canceled" }
+  webhookEvent = {
+    id: "evt_old_deleted",
+    type: "customer.subscription.deleted",
+    data: { object: retrievedSubscriptions.sub_old },
+  }
+  selectResults.push([inferenceRow({ subscriptionId: "sub_new" })])
+  await handleStripeWebhook({ payload: "{}", signature: "test_signature" })
+
+  expect(insertedSubscriptions).toHaveLength(0)
+  expect(databaseUpdates).toHaveLength(0)
+  expect(inferenceEnableCalls).toHaveLength(0)
+})
+
+test("two active subscriptions of the same type keep the tracked one instead of alternating", async () => {
+  const tracked = { ...inferenceSubscription(), id: "sub_tracked" }
+  const duplicate = { ...inferenceSubscription(), id: "sub_duplicate" }
+  retrievedSubscriptions = { sub_tracked: tracked, sub_duplicate: duplicate }
+  webhookEvent = {
+    id: "evt_duplicate_created",
+    type: "customer.subscription.created",
+    data: { object: duplicate },
+  }
+  selectResults.push([inferenceRow({ subscriptionId: "sub_tracked" })])
+
+  await handleStripeWebhook({ payload: "{}", signature: "test_signature" })
+
+  expect(insertedSubscriptions).toHaveLength(0)
+  expect(inferenceEnableCalls).toHaveLength(0)
+})
+
+test("subscription precedence prefers access-granting statuses, then recoverable ones", () => {
+  expect(shouldReplaceTrackedSubscription({ incomingStatus: "active", trackedStatus: "past_due" })).toBe(true)
+  expect(shouldReplaceTrackedSubscription({ incomingStatus: "active", trackedStatus: "canceled" })).toBe(true)
+  expect(shouldReplaceTrackedSubscription({ incomingStatus: "past_due", trackedStatus: "canceled" })).toBe(true)
+  expect(shouldReplaceTrackedSubscription({ incomingStatus: "active", trackedStatus: "active" })).toBe(false)
+  expect(shouldReplaceTrackedSubscription({ incomingStatus: "past_due", trackedStatus: "active" })).toBe(false)
+  expect(shouldReplaceTrackedSubscription({ incomingStatus: "canceled", trackedStatus: "past_due" })).toBe(false)
+  expect(shouldReplaceTrackedSubscription({ incomingStatus: "canceled", trackedStatus: "canceled" })).toBe(false)
+})
+
+test("inference checkout refuses to create a second subscription while Stripe is still collecting on one", async () => {
+  subscriptionResults = [{ ...inferenceSubscription(), status: "past_due" }]
+  // managed-models policy read, stored customer lookup, then the upsert of the existing subscription
+  selectResults.push([{ metadata: {} }], [{ stripeCustomerId: "cus_test" }], [inferenceRow({ status: "past_due" })], [inferenceRow({ status: "past_due" })])
+
+  await expect(createInferenceCheckoutSession(checkoutInput())).rejects.toThrow("stripe_inference_subscription_exists")
+  expect(checkoutCreates).toHaveLength(0)
+})
+
+test("inference checkout retires an unpaid subscription instead of bouncing the customer to the portal", async () => {
+  subscriptionResults = [{ ...inferenceSubscription(), status: "unpaid" }]
+  selectResults.push([{ metadata: {} }], [{ stripeCustomerId: "cus_test" }], [{ count: 1 }], [{ metadata: {} }])
+
+  const session = await createInferenceCheckoutSession(checkoutInput())
+
+  expect(subscriptionCancels).toEqual([{
+    subscriptionId: "sub_inference",
+    params: expect.objectContaining({ prorate: false, invoice_now: false }),
+  }])
+  expect(session).toMatchObject({ id: "cs_created" })
+  expect(checkoutCreates).toHaveLength(1)
+})
+
+test("inference checkout proceeds once the previous subscription is terminal", async () => {
+  subscriptionResults = [{ ...inferenceSubscription(), status: "canceled" }]
+  selectResults.push([{ metadata: {} }], [{ stripeCustomerId: "cus_test" }], [{ count: 1 }], [{ metadata: {} }])
+
+  const session = await createInferenceCheckoutSession(checkoutInput())
+
+  expect(session).toMatchObject({ id: "cs_created" })
+  expect(checkoutCreates.at(-1)?.params).toMatchObject({
+    mode: "subscription",
+    customer: "cus_test",
+    line_items: [{ price: "price_inference_fake", quantity: 1 }],
+  })
+})
+
+test("billing periods are read from the subscription item when the subscription omits them", async () => {
+  const subscription = inferenceSubscription()
+  subscription.items.data[0] = {
+    ...subscription.items.data[0],
+    current_period_start: 1_789_981_804,
+    current_period_end: 1_792_573_804,
+  }
+  selectResults.push([], [inferenceRow()])
+
+  await upsertOrgSubscriptionFromStripe(subscription, "evt_period")
+
+  expect(insertedSubscriptions.at(-1)).toMatchObject({
+    current_period_start: new Date(1_789_981_804 * 1000),
+    current_period_end: new Date(1_792_573_804 * 1000),
   })
 })
 

@@ -11,7 +11,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
-import { withOrganizationTeamMutation, type TeamMutationTransaction } from "./organization-team-roles.js"
+import { withOrganizationTeamMutation, withOrganizationMembershipUsageMutation, type TeamMutationTransaction } from "./organization-team-roles.js"
 
 export const SCIM_GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group"
 export const SCIM_LIST_RESPONSE_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
@@ -449,11 +449,31 @@ export async function listScimGroups(provider: ScimProvider, database: Pick<type
     ))
 }
 
+async function scimUsageMembers(tx: TeamMutationTransaction, provider: ScimProvider, groups: ScimGroup[], added: ScimGroupMemberInput[] = []) {
+  const ids = new Set<typeof MemberTable.$inferSelect.id>()
+  const values = new Set(added.map((member) => member.value))
+  for (const group of groups) {
+    for (const member of await loadGroupMembers(group.id, tx)) {
+      if (member.orgMembershipId) ids.add(member.orgMembershipId)
+      if (member.remoteUserId) values.add(member.remoteUserId)
+    }
+    if (group.teamId) {
+      const rows = await tx.select({ id: TeamMemberTable.orgMembershipId }).from(TeamMemberTable).where(eq(TeamMemberTable.teamId, group.teamId))
+      for (const row of rows) if (row.id) ids.add(row.id)
+    }
+  }
+  for (const value of values) {
+    const member = await findActiveOrganizationMember(tx, { organizationId: provider.organizationId, remoteUserId: value })
+    if (member) ids.add(member.id)
+  }
+  return [...ids]
+}
+
 export async function updateScimGroup(input: {
   provider: ScimProvider
   groupId: string
 } & ({ value: ScimGroupInput } | { operations: ScimGroupPatchOperation[] })): Promise<ScimGroupMutationResult> {
-  return withOrganizationTeamMutation(input.provider.organizationId, async (tx): Promise<ScimGroupMutationResult> => {
+  return withOrganizationMembershipUsageMutation(input.provider.organizationId, async (tx): Promise<ScimGroupMutationResult> => {
     const provider = await loadScimProvider(tx, input.provider)
     if (!provider) return { ok: false, status: 404, detail: "Provider not found" }
     const group = await getScimGroup({ provider, groupId: input.groupId }, tx)
@@ -508,6 +528,12 @@ export async function updateScimGroup(input: {
       members: value.members ?? [],
     })
     return { ok: true, group: replaced }
+  }, async (tx) => {
+    const group = await getScimGroup({ provider: input.provider, groupId: input.groupId }, tx)
+    if (!group) return []
+    const current = await loadGroupMembers(group.id, tx)
+    const value = "value" in input ? input.value : applyScimGroupPatch({ current: { displayName: group.displayName, externalId: group.externalId, members: current.flatMap((member) => member.remoteUserId ? [{ value: member.remoteUserId }] : []) }, operations: input.operations })
+    return scimUsageMembers(tx, input.provider, [group], value.members ?? [])
   })
 }
 
@@ -515,7 +541,7 @@ export async function deleteScimGroup(input: {
   provider: ScimProvider
   groupId: string
 }): Promise<{ ok: true } | { ok: false; status: 404; detail: string }> {
-  return withOrganizationTeamMutation(input.provider.organizationId, async (tx): Promise<{ ok: true } | { ok: false; status: 404; detail: string }> => {
+  return withOrganizationMembershipUsageMutation(input.provider.organizationId, async (tx): Promise<{ ok: true } | { ok: false; status: 404; detail: string }> => {
     const provider = await loadScimProvider(tx, input.provider)
     const group = provider ? await getScimGroup({ provider, groupId: input.groupId }, tx) : null
     if (!provider || !group) return { ok: false, status: 404, detail: "Group not found" }
@@ -529,6 +555,9 @@ export async function deleteScimGroup(input: {
     await tx.delete(ScimGroupMemberTable).where(eq(ScimGroupMemberTable.groupId, group.id))
     await tx.delete(ScimGroupTable).where(eq(ScimGroupTable.id, group.id))
     return { ok: true }
+  }, async (tx) => {
+    const group = await getScimGroup({ provider: input.provider, groupId: input.groupId }, tx)
+    return group ? scimUsageMembers(tx, input.provider, [group]) : []
   })
 }
 
@@ -561,7 +590,7 @@ export async function setScimGroupMappingMode(input: {
   provider: ScimProvider
   mode: ScimGroupMappingMode
 }) {
-  await withOrganizationTeamMutation(input.provider.organizationId, async (tx) => {
+  await withOrganizationMembershipUsageMutation(input.provider.organizationId, async (tx) => {
     const provider = await loadScimProvider(tx, input.provider)
     if (!provider) return
     if (provider.groupMappingMode !== input.mode) {
@@ -599,14 +628,14 @@ export async function setScimGroupMappingMode(input: {
         })
       }
     }
-  })
+  }, async (tx) => scimUsageMembers(tx, input.provider, await listScimGroups(input.provider, tx)))
 }
 
 export async function reconcileScimGroupsForUser(input: {
   provider: ScimProvider
   userId: typeof AuthUserTable.$inferSelect.id
 }) {
-  return withOrganizationTeamMutation(input.provider.organizationId, async (tx) => {
+  return withOrganizationMembershipUsageMutation(input.provider.organizationId, async (tx) => {
     const provider = await loadScimProvider(tx, input.provider)
     if (!provider) return
     const memberships = await tx
@@ -638,7 +667,7 @@ export async function reconcileScimGroupsForUser(input: {
         await attachGroupMemberToTeam(tx, { provider, group, member })
       }
     }
-  })
+  }, async (tx) => (await tx.select({ id: MemberTable.id }).from(MemberTable).where(and(eq(MemberTable.organizationId, input.provider.organizationId), eq(MemberTable.userId, input.userId)))).map((row) => row.id))
 }
 
 export async function getScimManagedTeamIds(organizationId: ScimProvider["organizationId"], database: Pick<typeof db, "select"> = db) {

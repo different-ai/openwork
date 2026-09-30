@@ -11,7 +11,7 @@ import {
   resolveHeadlessWorldRuntimePaths,
   stopHeadlessRuntime,
 } from "../src/headless-web.ts";
-import { bootDevHeadless } from "../../../worlds/dev-headless.ts";
+import { bootDevHeadless } from "../../../worlds/dev-app-web.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -159,7 +159,7 @@ test("dev:headless-web stays foreground and Ctrl-C owns teardown", { timeout: 18
   const activeManifest = manifest;
   assert.equal(launcher.exitCode, null);
   await waitUntil(
-    () => output.join("").includes("Ctrl-C (or pnpm world down dev-headless) tears it down."),
+    () => output.join("").includes("Ctrl-C (or pnpm world down dev-app-web) tears it down."),
     { within: 15_000, label: `the foreground readiness message\n${output.join("")}` },
   );
 

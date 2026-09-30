@@ -279,6 +279,23 @@ test.skipIf(!mysqlOpen || !redisOpen)("an API-key client reapplies and changes a
   const policyInput = { policyName: "Managed desktop", policy: { allowZenModel: false }, teamIds: [teamId], priority: 10, isEnabled: true };
   const marketInput = { name: "Internal catalog", description: "First revision" };
   const provider1 = item(await put("llm-providers", providerInput, 201), "llmProvider");
+  const blankProviderCredential = await request(base("llm-providers"), "PUT", { ...providerInput, apiKey: " " });
+  expect(blankProviderCredential.response.status, blankProviderCredential.text).toBe(400);
+  expect(requireRecord(blankProviderCredential.body, "blank credential").error).toBe("invalid_api_keys");
+  const providerAfterBlankCredential = item(requireRecord((await request(base("llm-providers"))).body, "provider after blank credential"), "llmProvider");
+  expect(providerAfterBlankCredential.hasApiKey).toBe(true);
+  // The dashboard create form sends a blank key for keyless providers (per-member
+  // credentials, unauthenticated internal endpoints); that ordinary route must keep working.
+  const keylessInput = { ...providerInput, name: "Keyless", apiKey: "", teamIds: [], customConfig: { ...providerInput.customConfig, id: "keyless", name: "Keyless" } };
+  const keyless = await request("/v1/llm-providers", "POST", keylessInput);
+  expect(keyless.response.status, keyless.text).toBe(201);
+  const keylessProvider = item(requireRecord(keyless.body, "keyless provider"), "llmProvider");
+  expect(keylessProvider.hasApiKey).toBe(false);
+  evidence.recordAssertionEvidence(
+    "Blank declarative provider credentials fail before they can clear a saved credential, while keyless dashboard creates still succeed",
+    `Declarative PUT with a blank apiKey returned status=${blankProviderCredential.response.status} error=${String(requireRecord(blankProviderCredential.body, "blank").error)}; the keyed provider still reported hasApiKey=${String(providerAfterBlankCredential.hasApiKey)}; POST /v1/llm-providers with a blank apiKey returned status=${keyless.response.status} hasApiKey=${String(keylessProvider.hasApiKey)}.`,
+    blankProviderCredential.response.status === 400 && providerAfterBlankCredential.hasApiKey === true && keyless.response.status === 201 && keylessProvider.hasApiKey === false,
+  );
   const policy1 = item(await put("desktop-policies", policyInput, 201), "desktopPolicy");
   const marketplace1 = item(await put("marketplaces", marketInput, 201), "item");
   const resources = [

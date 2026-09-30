@@ -1,6 +1,7 @@
 import { afterAll, expect, mock, test } from "bun:test"
 import { Hono, type MiddlewareHandler } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { parseDeploymentCapabilities } from "@openwork/types/den/deployment-capabilities"
 import * as validation from "../src/middleware/validation.js"
 
@@ -12,16 +13,17 @@ process.env.OPENWORK_DEV_MODE = "1"
 process.env.GATEWAY_ENABLED = "false"
 process.env.DEN_ORG_MODE = "single_org"
 
-const rows = { from: () => rows, where: () => rows, limit: async () => [] }
+let databaseMetadata: unknown
+const rows = { from: (table: unknown) => ({ where: () => ({ limit: async () => table === OrganizationTable ? [{ metadata: databaseMetadata ?? metadata }] : [] }) }) }
 mock.module("../src/db.js", () => ({ db: { select: () => rows } }))
 mock.module("../src/auth.js", () => ({ auth: { api: {} } }))
 
 let authenticated = true
-let dashboard = false
+let metadata: unknown = {}
 const memberRoute: MiddlewareHandler = async (c, next) => {
   if (!authenticated) return c.json({ error: "unauthorized" }, 401)
   c.set("organizationContext", {
-    organization: { id: createDenTypeId("organization"), metadata: { capabilities: { gatewayDashboard: dashboard } } },
+    organization: { id: createDenTypeId("organization"), metadata },
     currentMember: { id: createDenTypeId("member"), role: "owner", isOwner: true },
     members: [], teams: [], roles: [],
   })
@@ -39,22 +41,64 @@ mock.module("../src/middleware/index.js", () => ({
 
 const { env } = await import("../src/env.js")
 const { registerOrgCoreRoutes } = await import("../src/routes/org/core.js")
-const app = new Hono()
+const app = new Hono<{ Variables: import("../src/routes/org/shared.js").OrgRouteVariables }>()
 registerOrgCoreRoutes(app)
 afterAll(() => mock.restore())
 
-test("authenticated GET /v1/org returns the versioned deployment capability independently of org dashboard flag", async () => {
-  for (const enabled of [false, true]) for (const exposed of [false, true]) {
+test("authenticated GET /v1/org always exposes gateway compatibility independently of deployment and retired metadata", async () => {
+  const legacyMetadata = [
+    // Retired flag values cannot gate access; the metadata document itself must remain valid.
+    undefined, null, {}, { capabilities: null }, { capabilities: "false" }, { capabilities: [] },
+    ...[undefined, null, false, true, "false", "true", 1, {}, []].flatMap((gatewayDashboard) => {
+      const value = { capabilities: { gatewayDashboard } }
+      return [value, JSON.stringify(value)]
+    }),
+  ]
+  for (const enabled of [false, true]) for (const stored of legacyMetadata) {
     env.gatewayEnabled = enabled
-    dashboard = exposed
+    metadata = stored
     const response = await app.request("/v1/org")
     expect(response.status).toBe(200)
     const payload = await response.json()
     expect(payload.deploymentCapabilities).toEqual({ version: 1, aiGateway: enabled })
     expect(parseDeploymentCapabilities(payload.deploymentCapabilities).aiGateway).toBe(enabled)
-    expect(payload.capabilities.gatewayDashboard).toBe(exposed)
+    expect(payload.capabilities.gatewayDashboard).toBe(true)
     expect(payload.organization.deploymentCapabilities).toBeUndefined()
   }
+})
+
+test("GET /v1/org exposes fresh audit entitlement, not cached metadata or single-org/legacy gating grants", async () => {
+  env.planGatingEnabled = false
+  env.auditSelfHostedEnabled = false
+  metadata = { plan: { tier: "enterprise" } }
+  databaseMetadata = { plan: { tier: "free" } }
+  expect((await (await app.request("/v1/org")).json()).entitlements.auditLogs).toBe(false)
+  metadata = {}
+  databaseMetadata = { plan: { tier: "enterprise", source: "manual" } }
+  expect((await (await app.request("/v1/org")).json()).entitlements.auditLogs).toBe(true)
+  env.auditSelfHostedEnabled = true
+  databaseMetadata = { plan: { tier: "team" } }
+  expect((await (await app.request("/v1/org")).json()).entitlements.auditLogs).toBe(true)
+  env.auditSelfHostedEnabled = false
+  databaseMetadata = undefined
+})
+
+test("GET /v1/org uses fresh literal audit flag AND visibility, separately from entitlement", async () => {
+  for (const visibility of [false, true]) for (const auditLogs of [undefined, false, null, "true", true]) {
+    env.auditVisibilityEnabled = visibility
+    metadata = { capabilities: { auditLogs: auditLogs !== true } }
+    databaseMetadata = { plan: { tier: "enterprise" }, capabilities: { auditLogs } }
+    const response = await app.request("/v1/org")
+    expect(response.status).toBe(200)
+    const payload = await response.json()
+    expect(payload.capabilities.auditLogs).toBe(visibility && auditLogs === true)
+    expect(payload.entitlements.auditLogs).toBe(true)
+  }
+  databaseMetadata = { plan: { tier: "free" }, capabilities: { auditLogs: true } }
+  const payload = await (await app.request("/v1/org")).json()
+  expect(payload.capabilities.auditLogs).toBe(true)
+  expect(payload.entitlements.auditLogs).toBe(false)
+  databaseMetadata = undefined
 })
 
 test("unauthenticated callers do not receive deployment capabilities", async () => {

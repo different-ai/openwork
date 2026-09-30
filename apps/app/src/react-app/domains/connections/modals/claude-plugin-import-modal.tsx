@@ -211,7 +211,7 @@ export function ClaudePluginImportModal(props: ClaudePluginImportModalProps) {
               </div>
 
               {state.preview.warnings.length > 0 ? (
-                <div className="rounded-lg border border-amber-6 bg-amber-2 px-3 py-2 text-xs text-amber-11">
+                <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-foreground">
                   {state.preview.warnings.map((warning) => (
                     <div key={warning}>{warning}</div>
                   ))}

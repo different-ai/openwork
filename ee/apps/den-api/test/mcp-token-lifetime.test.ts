@@ -100,3 +100,9 @@ test("first-party MCP bearer tokens retain a bounded seven-day lifetime", async 
   const { DEN_FIRST_PARTY_MCP_TOKEN_TTL_MS } = await import("../src/mcp/token-lifetime.js")
   expect(DEN_FIRST_PARTY_MCP_TOKEN_TTL_MS).toBe(7 * 24 * 60 * 60 * 1000)
 })
+
+test("MCP OAuth authorization outlives a first-time sign-up but stays bounded", async () => {
+  seedRequiredEnv()
+  const { DEN_MCP_OAUTH_AUTHORIZATION_EXPIRES_IN_SECONDS } = await import("../src/mcp/token-lifetime.js")
+  expect(DEN_MCP_OAUTH_AUTHORIZATION_EXPIRES_IN_SECONDS).toBe(30 * 60)
+})
