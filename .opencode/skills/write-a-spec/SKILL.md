@@ -36,8 +36,8 @@ it decides the world you can build.
 Tag `checkpoints` only when a still image cannot show what the reviewer has to
 check: an open stream, a populated workspace to explore, a state that costs
 minutes to reach. The tag moves the spec to a protected lane that uses a
-secret, where fork PRs cannot run. It saves the end state of each tagged test,
-plus every `user.checkpoint("caption")` and every `step(..., { checkpoint: true })`.
+secret, where fork PRs cannot run. It saves each tagged test's world as
+launched for the commit (before the body acts) and its end state, plus every `user.checkpoint("caption")` and every `step(..., { checkpoint: true })`.
 Plain `user.screenshot()` never saves one. Say why in a comment beside the
 tag. Checkpoints cost VM snapshots, so capture the one or two moments a
 reviewer would open, not every step. Run it locally with
