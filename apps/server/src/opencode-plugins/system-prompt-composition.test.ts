@@ -12,10 +12,8 @@ import {
 } from "./openwork-extensions-preview-steering.js";
 import { OpenWorkSpreadsheets } from "./openwork-spreadsheets.js";
 
-test.each(["v1", "v2-connected", "v2-disconnected"])("%s gates native connection questions on the current host contract", async (engine) => {
-  const prompt = engine === "v1"
-    ? (await composePrompt())[0]
-    : buildOpenWorkV2Instructions(engine === "v2-connected").operatingInstructions;
+test("legacy engines gate native connection questions on the current host contract", async () => {
+  const prompt = (await composePrompt())[0];
   for (const instruction of [
     "actually blocked on member OAuth",
     "explicitly requests connect/reconnect (never incidental discovery)",
@@ -42,6 +40,19 @@ test.each(["v1", "v2-connected", "v2-disconnected"])("%s gates native connection
   ]) expect(prompt).toContain(instruction);
   expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("connectionQuestions");
   expect(OPENWORK_GOOGLE_CONNECTION_INSTRUCTION).not.toContain("connectionQuestions");
+});
+
+test.each([true, false])("v2 leaves the connection pause to the host (Connect available: %s)", (connected) => {
+  const prompt = buildOpenWorkV2Instructions(connected).operatingInstructions;
+  expect(prompt).toContain("OpenWork handles connection decisions directly while a tool waits");
+  expect(prompt).toContain("Preserve useful work already completed");
+  expect(prompt).toContain("without replaying completed writes");
+  expect(prompt).toContain("On a skipped outcome, continue without that connection");
+  expect(prompt).toContain("Ordinary discovery stays informational");
+  expect(prompt).not.toContain("connectionQuestions");
+  expect(prompt).not.toContain("root.context");
+  expect(prompt).not.toContain('header exactly "Connection"');
+  expect(prompt).not.toContain("call openwork_context");
 });
 
 function occurrences(haystack: string, needle: string): number {

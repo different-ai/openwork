@@ -16,6 +16,7 @@ import type {
   UnknownError,
 } from "@opencode-ai/sdk/v2/client";
 
+import { connectionTargetFromResult, hostConnectionDecisionSchema, isMemberConnectionDecision } from "@openwork/types/connection-action-app";
 import { createClient, createDesktopFetch, type FieldsResult } from "./opencode";
 import type { OpenworkSessionHistory } from "./openwork-server";
 import { isDesktopRuntime } from "./runtime-env";
@@ -192,7 +193,14 @@ function mapV2Question(value: unknown): { request: QuestionRequest; fields: V2Qu
   const source = readRecord(value.metadata, "tool");
   const messageID = readString(source, "messageID");
   const callID = readString(source, "id");
-  return { request: { id, sessionID, questions, ...(messageID && callID ? { tool: { messageID, callID } } : {}) }, fields };
+  const decision = hostConnectionDecisionSchema.safeParse(readRecord(value.metadata, "openworkConnectionDecision"));
+  if (isRecord(value.metadata) && "openworkConnectionDecision" in value.metadata && !decision.success) return null;
+  const request = {
+    id, sessionID, questions,
+    ...(messageID && callID ? { tool: { messageID, callID } } : {}),
+    ...(decision.success ? { openworkConnectionDecision: decision.data } : {}),
+  };
+  return { request, fields };
 }
 
 type V2MessageRole = "user" | "assistant" | "system";
@@ -550,21 +558,38 @@ export function codeModeConnectionParts(part: ToolPart): ToolPart[] {
   const { metadata, time } = part.state;
   const entries = metadata?.openworkMcpResults;
   if (!Array.isArray(entries)) return [];
+  const decision = hostConnectionDecisionSchema.safeParse(metadata.openworkConnectionDecision);
   return entries.flatMap((entry, index): ToolPart[] => {
     if (!isRecord(entry)) return [];
+    const target = connectionTargetFromResult(entry.status === "error" ? entry.error : entry.output);
+    // This connection already has a durable card on the real outer call.
+    // Leave other results and legacy executions without a host decision alone.
+    if (decision.success && decision.data.outcome !== undefined
+      && target?.connection.connectionId === decision.data.connection.connectionId) return [];
     const tool = readString(entry, "tool");
     if (!tool) return [];
     const callID = `${part.callID}:mcp:${index}`;
     const base = { id: callID, messageID: part.messageID, sessionID: part.sessionID, type: "tool" as const, callID, tool };
     const input = readRecord(entry, "input") ?? {};
     const status = readString(entry, "status");
+    // The collector's entry metadata, never provider output, owns earlier
+    // choices when a later connection takes over the outer call's card.
+    const entryDecision = hostConnectionDecisionSchema.safeParse(entry.decision);
+    const decisionMetadata = entryDecision.success && entryDecision.data.outcome !== undefined
+      && /^(?:openwork|openwork-cloud)_(?:search_capabilities|execute_capability|connection_action)$/.test(tool)
+      && (!tool.endsWith("_search_capabilities") || input.intent === "connect")
+      && target?.memberOAuth && isMemberConnectionDecision(entryDecision.data.connection)
+      && connectionTargetFromResult({ connectionStatus: target.connection, connectionAction: entryDecision.data.connection })
+      && target.connection.action?.label === entryDecision.data.connection.action?.label
+      && target.connection.action?.url === entryDecision.data.connection.action?.url
+      ? { openworkConnectionDecision: entryDecision.data } : {};
     if (status === "completed") {
       const output = toolOutput(undefined, entry.output);
       return [{ ...base, state: { status, input, output, title: tool, time,
-        metadata: { openworkMcpResult: { content: [{ type: "text", text: output }], structuredContent: entry.output } } } }];
+        metadata: { ...decisionMetadata, openworkMcpResult: { content: [{ type: "text", text: output }], structuredContent: entry.output } } } }];
     }
     const error = readString(entry, "error");
-    return status === "error" && error ? [{ ...base, state: { status, input, error, metadata: {}, time } }] : [];
+    return status === "error" && error ? [{ ...base, state: { status, input, error, metadata: decisionMetadata, time } }] : [];
   });
 }
 

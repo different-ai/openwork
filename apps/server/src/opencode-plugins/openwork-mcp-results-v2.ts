@@ -1,20 +1,25 @@
+import { type HostConnectionDecision } from "@openwork/types/connection-action-app";
+import { waitForConnectionDecision, type ConnectionGateEndpoint } from "./openwork-connection-gate-v2.js";
+
 type Registration = { dispose(): Promise<void> };
-type CallEvent = { readonly tool: string; readonly messageID: string; readonly id: string };
+type CallEvent = { readonly tool: string; readonly sessionID?: string; readonly messageID: string; readonly id: string };
 type ExecuteAfter = CallEvent & { readonly input: unknown } & (
   | { readonly status: "completed"; result: { output?: unknown; metadata?: Record<string, unknown> } }
   | { readonly status: "error"; readonly error: unknown }
 );
 type Context = {
+  options?: { connectionGate?: ConnectionGateEndpoint };
   tool: {
     hook(name: "execute.before", callback: (event: CallEvent) => void): Promise<Registration>;
-    hook(name: "execute.after", callback: (event: ExecuteAfter) => void): Promise<Registration>;
+    hook(name: "execute.after", callback: (event: ExecuteAfter) => void | Promise<void>): Promise<Registration>;
   };
 };
 
 /** One OpenWork Cloud call made inside a Code Mode `execute`, kept because it reports a connection. */
-export type PreservedMcpResult =
+export type PreservedMcpResult = (
   | { tool: string; input: unknown; status: "completed"; output: unknown }
-  | { tool: string; input: unknown; status: "error"; error: string };
+  | { tool: string; input: unknown; status: "error"; error: string }
+) & { decision?: HostConnectionDecision };
 
 const OPENWORK_CLOUD_TOOL = /^(?:openwork|openwork-cloud)_/;
 const MAX_ENTRY_BYTES = 64 * 1_024;
@@ -59,16 +64,16 @@ function jsonCopy(value: unknown): unknown {
   }
 }
 
-export function preservedEntry(event: ExecuteAfter): PreservedMcpResult | null {
-  // Discovery results only become a card when a connection decision is bound to
-  // that exact call (v1), which Code Mode calls cannot have; keeping them would
-  // only duplicate the inner row.
-  if (!OPENWORK_CLOUD_TOOL.test(event.tool) || event.tool.endsWith("_search_capabilities")) return null;
+export function preservedEntry(event: ExecuteAfter, decision?: HostConnectionDecision | null): PreservedMcpResult | null {
+  // Informational discovery stays quiet; an explicit host decision is retained
+  // even when a later connection in this script becomes the outer call's card.
+  if (!OPENWORK_CLOUD_TOOL.test(event.tool) || (event.tool.endsWith("_search_capabilities") && !decision)) return null;
   const input = jsonCopy(event.input);
   const entry: PreservedMcpResult | null = event.status === "completed"
     ? reportsConnection(event.result.output) ? { tool: event.tool, input, status: "completed", output: jsonCopy(event.result.output) } : null
     : reportsConnection(parseRecord(errorText(event.error))) ? { tool: event.tool, input, status: "error", error: errorText(event.error) } : null;
   if (!entry) return null;
+  if (decision) entry.decision = decision;
   return new TextEncoder().encode(JSON.stringify(entry)).byteLength <= MAX_ENTRY_BYTES ? entry : null;
 }
 
@@ -81,7 +86,7 @@ export function preservedEntry(event: ExecuteAfter): PreservedMcpResult | null {
  * the engine persists with the tool part.
  */
 export function createMcpResultsCollector() {
-  const open = new Map<string, PreservedMcpResult[]>();
+  const open = new Map<string, { entries: PreservedMcpResult[]; decision?: HostConnectionDecision }>();
   const key = (event: CallEvent) => `${event.messageID}\u0000${event.id}`;
   return {
     before(event: CallEvent): void {
@@ -90,20 +95,26 @@ export function createMcpResultsCollector() {
         const oldest = open.keys().next().value;
         if (oldest !== undefined) open.delete(oldest);
       }
-      open.set(key(event), []);
+      open.set(key(event), { entries: [] });
     },
-    after(event: ExecuteAfter): void {
-      const list = open.get(key(event));
+    after(event: ExecuteAfter, decision?: HostConnectionDecision | null): void {
+      const pending = open.get(key(event));
       if (event.tool === "execute") {
         open.delete(key(event));
-        if (event.status === "completed" && list && list.length > 0) {
-          event.result.metadata = { ...(event.result.metadata ?? {}), openworkMcpResults: list };
+        if (event.status === "completed" && pending && (pending.entries.length > 0 || pending.decision)) {
+          event.result.metadata = {
+            ...(event.result.metadata ?? {}),
+            ...(pending.entries.length ? { openworkMcpResults: pending.entries } : {}),
+            ...(pending.decision ? { openworkConnectionDecision: pending.decision } : {}),
+          };
         }
         return;
       }
-      if (!list || list.length >= MAX_ENTRIES) return;
-      const entry = preservedEntry(event);
-      if (entry) list.push(entry);
+      if (!pending) return;
+      if (decision) pending.decision = decision;
+      if (pending.entries.length >= MAX_ENTRIES) return;
+      const entry = preservedEntry(event, decision);
+      if (entry) pending.entries.push(entry);
     },
   };
 }
@@ -112,9 +123,14 @@ export default {
   id: "openwork.mcp-results",
   async setup(context: Context) {
     const collector = createMcpResultsCollector();
+    const lifetime = new AbortController();
     const before = await context.tool.hook("execute.before", event => collector.before(event));
-    const after = await context.tool.hook("execute.after", event => collector.after(event));
+    const after = await context.tool.hook("execute.after", async event => {
+      const decision = await waitForConnectionDecision(event, context.options?.connectionGate, lifetime.signal);
+      collector.after(event, decision);
+    });
     return async () => {
+      lifetime.abort();
       await before.dispose();
       await after.dispose();
     };

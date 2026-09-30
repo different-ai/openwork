@@ -1,4 +1,5 @@
 import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
+import { createV2ConnectionGateBridge } from "./opencode-v2-connection-gate.js";
 import { migrateOpencodeV1History, opencodeV1DatabasePath, type EngineV2MigrationStatus } from "./opencode-v2-migration.js";
 import { executionRules } from "./managed-policy-rules.js";
 import { waitForEngineSkillChanges } from "./opencode-v2-skill-settle.js";
@@ -400,6 +401,7 @@ export function createEngineV2Preview(options: {
   const warn = (message: string) => { lastWarning = `${new Date().toISOString()} ${message}`; };
   let sidecar: ManagedOpencodeV2Server | undefined;
   let contextBridge: Awaited<ReturnType<typeof createV2ContextBridge>> | undefined;
+  let connectionGate: Awaited<ReturnType<typeof createV2ConnectionGateBridge>> | undefined;
   let unsubscribe: (() => void) | undefined;
   let startPromise: Promise<void> | undefined;
   let mirrorInFlight: Promise<void> | undefined;
@@ -636,6 +638,9 @@ export function createEngineV2Preview(options: {
   }
 
   async function closeSidecar(): Promise<void> {
+    const gate = connectionGate;
+    connectionGate = undefined;
+    await gate?.close();
     const active = sidecar;
     workspaceReadiness.clear();
     sidecar = undefined;
@@ -664,8 +669,16 @@ export function createEngineV2Preview(options: {
     await rm(join(rootDir, "cloud-skills"), { recursive: true, force: true });
     const opencodeModelsUrl = await resolveOpencodeModelsUrl();
     contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest) : undefined;
+    connectionGate = options.hostReadRequest ? await createV2ConnectionGateBridge({
+      hostRequest: options.hostReadRequest,
+      nativeRequest: (path, init) => {
+        if (!sidecar) return Promise.reject(new Error("OpenCode v2 is not running"));
+        return sidecar.fetchJson(path, init);
+      },
+    }) : undefined;
     const managed = await createManagedOpencodeV2Server({
       contextTools: contextBridge,
+      connectionGate,
       bin: resolved.bin,
       rootDir,
       env: { OPENCODE_MODELS_URL: opencodeModelsUrl },

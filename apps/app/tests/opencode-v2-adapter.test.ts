@@ -1460,6 +1460,123 @@ describe("OpenCode v2 client compatibility", () => {
     } finally { globalThis.fetch = originalFetch; }
   });
 
+  test.each(["connected", "skipped"])("host-owned %s Code Mode results settle the original call without duplicate synthetic cards", async outcome => {
+    const connection = {
+      schemaVersion: "1", connectionId: "conn_research", connectionName: "Research Vault", state: "needs_connection", actor: "member",
+      message: "Sign-in required", action: { type: "connect", label: "Connect", surface: "openwork_your_connections" },
+    };
+    const other = { ...connection, connectionId: "conn_calendar", connectionName: "Calendar" };
+    const metadata = {
+      openworkConnectionDecision: { connection, outcome },
+      toolCalls: [{ tool: "openwork-cloud.search_capabilities", status: "completed", input: { query: "Research Vault" } }],
+      openworkMcpResults: [
+        { tool: "openwork-cloud_search_capabilities", input: { query: "Research Vault" }, status: "completed", output: { connectionAction: connection } },
+        { tool: "openwork-cloud_execute_capability", input: { name: "research.list" }, status: "error", error: JSON.stringify({ connectionStatus: connection }) },
+        { tool: "openwork-cloud_execute_capability", input: { name: "calendar.list" }, status: "completed", output: other },
+      ],
+    };
+    const state = createV2EventTranslationState();
+    const data = { sessionID: "ses_host", assistantMessageID: "msg_host", id: "execute-host" };
+    translateV2Event({ type: "session.tool.input.started", data: { ...data, name: "execute" } }, state);
+    translateV2Event({ type: "session.tool.called", data: { ...data, input: { code: "recorded code" } } }, state);
+    const live = translateV2Event({ type: "session.tool.success", data: { ...data, metadata, content: [{ type: "text", text: "Original result" }] } }, state) ?? [];
+    const liveParts = live.map(event => typeof event.properties === "object" && event.properties !== null && "part" in event.properties ? event.properties.part : null).filter(isToolPart);
+    expect(liveParts.map(part => part.id)).toEqual(["execute-host", "execute-host:mcp:2"]);
+    expect(parseDynamicToolUIPart(liveParts[0])?.callProviderMetadata?.openwork?.connectionDecision).toEqual({ connection, outcome });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => jsonResponse({ data: [{
+      id: "msg_host", type: "assistant", time: { created: 1, completed: 2 },
+      content: [{ id: "execute-host", type: "tool", name: "execute", time: { created: 1, completed: 2 }, state: {
+        status: "completed", input: { code: "recorded code" }, metadata, content: [{ type: "text", text: "Original result" }],
+      } }],
+    }] });
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const history = await client.session.messages({ sessionID: "ses_host" });
+      const parts = history.data?.[0]?.parts.filter(isToolPart) ?? [];
+      expect(parts.map(part => part.id)).toEqual(["execute-host", "execute-host:mcp:2"]);
+      expect(parseDynamicToolUIPart(parts[0])?.callProviderMetadata?.openwork?.connectionDecision).toEqual({ connection, outcome });
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test.each(["completed", "error"])("a %s earlier Code Mode connection keeps its skipped decision after another connection completes", async status => {
+    const first = {
+      schemaVersion: "1", connectionId: "conn_research", connectionName: "Research Vault", state: "needs_connection", actor: "member",
+      message: "Sign-in required", action: { type: "connect", label: "Connect", surface: "openwork_your_connections" },
+    };
+    const second = { ...first, connectionId: "conn_calendar", connectionName: "Calendar" };
+    const firstDecision = { connection: first, outcome: "skipped" };
+    const secondDecision = { connection: second, outcome: "connected" };
+    const earlierEntry = status === "completed"
+      ? { tool: "openwork-cloud_search_capabilities", input: { query: "Research Vault", intent: "connect" }, status, output: { connectionAction: first }, decision: firstDecision }
+      : { tool: "openwork-cloud_execute_capability", input: { name: "research.list" }, status, error: JSON.stringify({ error: "needs_connection", connectionStatus: first }), decision: firstDecision };
+    const metadata = {
+      openworkConnectionDecision: secondDecision,
+      openworkMcpResults: [earlierEntry, {
+        tool: "openwork-cloud_connection_action", input: { connectionId: "conn_calendar" }, status: "completed", output: second, decision: secondDecision,
+      }],
+    };
+    const verify = (parts: ToolPart[]) => {
+      expect(parts.map(part => part.id)).toEqual(["execute-two", "execute-two:mcp:0"]);
+      expect(parts.map(part => parseDynamicToolUIPart(part)?.callProviderMetadata?.openwork?.connectionDecision))
+        .toEqual([secondDecision, firstDecision]);
+      expect(parts[1]?.state.status).toBe(status);
+      expect(parts[1]?.state).toMatchObject({ metadata: { openworkConnectionDecision: firstDecision } });
+    };
+    const state = createV2EventTranslationState();
+    const data = { sessionID: "ses_two", assistantMessageID: "msg_two", id: "execute-two" };
+    translateV2Event({ type: "session.tool.input.started", data: { ...data, name: "execute" } }, state);
+    translateV2Event({ type: "session.tool.called", data: { ...data, input: { code: "recorded two-connection execution" } } }, state);
+    const live = translateV2Event({ type: "session.tool.success", data: { ...data, metadata, content: [{ type: "text", text: "Original result" }] } }, state) ?? [];
+    verify(live.map(event => typeof event.properties === "object" && event.properties !== null && "part" in event.properties ? event.properties.part : null).filter(isToolPart));
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => jsonResponse({ data: [{
+      id: "msg_two", type: "assistant", time: { created: 1, completed: 2 },
+      content: [{ id: "execute-two", type: "tool", name: "execute", time: { created: 1, completed: 2 }, state: {
+        status: "completed", input: { code: "recorded two-connection execution" }, metadata, content: [{ type: "text", text: "Original result" }],
+      } }],
+    }] });
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const history = await client.session.messages({ sessionID: "ses_two" });
+      verify(history.data?.[0]?.parts.filter(isToolPart) ?? []);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("preserved Code Mode entries cannot promote malformed, conflicting or provider-owned decisions", () => {
+    const connection = {
+      schemaVersion: "1", connectionId: "conn_research", connectionName: "Research Vault", state: "needs_connection", actor: "member",
+      message: "Sign-in required", action: { type: "connect", label: "Connect", surface: "openwork_your_connections" },
+    };
+    const decision = { connection, outcome: "skipped" };
+    const entry = { tool: "openwork-cloud_execute_capability", input: { name: "research.list" }, status: "completed", output: { connectionAction: connection } };
+    const entries = [
+      { ...entry, decision: { connection } },
+      { ...entry, decision: { connection, outcome: "authenticated" } },
+      { ...entry, decision: { ...decision, connection: { ...connection, connectionId: "conn_other" } } },
+      { ...entry, decision: { ...decision, connection: { ...connection, state: "reauth_required", action: { ...connection.action, type: "reconnect" } } } },
+      { ...entry, decision: { ...decision, connection: { ...connection, action: { ...connection.action, surface: "provider_admin_console" } } } },
+      { ...entry, decision, output: { connectionAction: { ...connection, authType: "apikey", credentialMode: "shared" } } },
+      { ...entry, decision, tool: "provider_execute_capability" },
+      { ...entry, decision, tool: "openwork-cloud_search_capabilities", input: { query: "Research Vault" } },
+      { ...entry, output: { ...entry.output, decision, openworkConnectionDecision: decision } },
+      { ...entry, status: "error", error: JSON.stringify({ connectionStatus: connection }), decision: { ...decision, connection: { ...connection, connectionId: "conn_other" } } },
+    ];
+    const state = createV2EventTranslationState();
+    const data = { sessionID: "ses_untrusted", assistantMessageID: "msg_untrusted", id: "execute-untrusted" };
+    translateV2Event({ type: "session.tool.input.started", data: { ...data, name: "execute" } }, state);
+    translateV2Event({ type: "session.tool.called", data: { ...data, input: { code: "recorded execution" } } }, state);
+    const live = translateV2Event({ type: "session.tool.success", data: {
+      ...data, metadata: { openworkMcpResults: entries }, content: [{ type: "text", text: "Original result" }],
+    } }, state) ?? [];
+    const parts = live.map(event => typeof event.properties === "object" && event.properties !== null && "part" in event.properties ? event.properties.part : null).filter(isToolPart);
+    expect(parts).toHaveLength(entries.length + 1);
+    for (const part of parts) {
+      expect(part.state).not.toHaveProperty("metadata.openworkConnectionDecision");
+      expect(parseDynamicToolUIPart(part)?.callProviderMetadata?.openwork).not.toHaveProperty("connectionDecision");
+    }
+  });
+
   test("hydrates mixed native content with the same text and reasoning IDs as streaming", async () => {
     const originalFetch = globalThis.fetch;
     // beta19086 schema: each kind has its own ordinal; reasoning time is optional.
@@ -2614,6 +2731,43 @@ describe("v2 question forms", () => {
       expect(translateV2Event({ type: event, data: { id: form.id, sessionID: form.sessionID } }, state)).toEqual([
         { type: expected, properties: { requestID: form.id, sessionID: form.sessionID } },
       ]);
+    }
+  });
+
+  test("host connection forms preserve their validated descriptor and original running source", async () => {
+    const connection = {
+      schemaVersion: "1", connectionId: "emc_research", connectionName: "Research Vault",
+      state: "needs_connection", actor: "member", message: "Sign-in required",
+      action: { type: "connect", label: "Connect", surface: "openwork_your_connections" },
+    };
+    const hostForm = {
+      id: "frm_connection", sessionID: "ses_side", title: "Connection",
+      metadata: { kind: "question", tool: { messageID: "msg_side", id: "source_execute" }, openworkConnectionDecision: { connection } },
+      fields: [{ key: "connection", type: "string", title: "Connection", description: "Connect Research Vault to continue?", required: true, custom: false,
+        options: [{ label: "Authenticate", value: "authenticate" }, { label: "Skip", value: "skip" }] }],
+    };
+    const expected = {
+      id: "frm_connection", sessionID: "ses_side", tool: { messageID: "msg_side", callID: "source_execute" },
+      openworkConnectionDecision: { connection },
+      questions: [{ header: "Connection", question: "Connect Research Vault to continue?", custom: false, multiple: false,
+        options: [{ label: "Authenticate", description: "" }, { label: "Skip", description: "" }] }],
+    };
+    expect(translateV2Event({ type: "form.created", data: { form: hostForm } }, createV2EventTranslationState()))
+      .toEqual([{ type: "question.asked", properties: expected }]);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => Response.json({ data: [hostForm] });
+    try {
+      const client = createClientV2("http://owner.test/opencode2", "/workspace", {});
+      expect((await client.listSessionQuestions({ sessionID: "ses_side" })).data).toEqual([expected]);
+    } finally { globalThis.fetch = originalFetch; }
+    for (const descriptor of [null, {}, { connection: { ...connection, actor: "unknown" } }]) {
+      const malformed = { ...hostForm, metadata: { ...hostForm.metadata, openworkConnectionDecision: descriptor } };
+      expect(translateV2Event({ type: "form.created", data: { form: malformed } }, createV2EventTranslationState())).toBeNull();
+      globalThis.fetch = async () => Response.json({ data: [malformed] });
+      try {
+        const client = createClientV2("http://owner.test/opencode2", "/workspace", {});
+        expect((await client.listSessionQuestions({ sessionID: "ses_side" })).data).toEqual([]);
+      } finally { globalThis.fetch = originalFetch; }
     }
   });
 

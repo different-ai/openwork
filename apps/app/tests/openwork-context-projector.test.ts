@@ -50,9 +50,10 @@ const baseInput: ContextProjectorInput = {
 };
 
 describe("OpenWork context projector", () => {
-  test("publishes native connection question support without adding affordances", () => {
+  test("publishes host-owned connection decisions alongside legacy questions without adding affordances", () => {
     const root = { context: openworkContextSnapshotSchema.parse(buildOpenworkContext(baseInput)) };
     expect(root.context.features?.connectionQuestions).toBe(true);
+    expect(root.context.features?.connectionDecisions).toBe(true);
     expect(root.context.availableAffordances).toEqual([]);
   });
 

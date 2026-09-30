@@ -135,6 +135,54 @@ function bindQuestion(question: unknown = nativeQuestion, transcript = nativeMes
   return nativeChatConnectionDecision({ question, owner: request.owner, sessionId: request.sessionId, messages: transcript })
 }
 
+const hostQuestion = {
+  ...nativeQuestion,
+  tool: { messageID: "assistant-1", callID: "call-1" },
+  openworkConnectionDecision: { connection: blockedPayload },
+}
+
+test("host forms bind the actual running MCP or Code Mode call without a question tool or completed result", () => {
+  expect(bindQuestion(hostQuestion, messages)).toEqual({ ...request, requestId: "question-1", connection: blockedPayload })
+  const running = parseDynamicToolUIPart({
+    type: "tool", id: "source-execute", callID: "call-1", tool: "execute", sessionID: "session-1", messageID: "assistant-1",
+    metadata: { openworkV2CodeMode: true },
+    state: { status: "running", input: { code: "return tools.openwork.search_capabilities({query: 'Research Vault'})" }, time: { start: 1 } },
+  })
+  if (!running) throw new Error("Missing running execute")
+  const transcript: UIMessage[] = [messages[0], { id: "assistant-1", role: "assistant", parts: [running] }]
+  expect(bindQuestion({ ...hostQuestion, tool: { messageID: "assistant-1", callID: "source-execute" } }, transcript))
+    .toEqual({ ...request, requestId: "question-1", connection: blockedPayload })
+  const reconnect = { ...blockedPayload, state: "reauth_required", action: { ...blockedPayload.action, type: "reconnect" } }
+  expect(bindQuestion({ ...hostQuestion, openworkConnectionDecision: { connection: reconnect } }, messages))
+    .toMatchObject({ toolCallId: "call-1", connection: reconnect })
+})
+
+test("host forms reject another turn, session, source, finished call, or malformed descriptor", () => {
+  for (const question of [
+    { ...hostQuestion, sessionID: "other-session" },
+    { ...hostQuestion, sessionID: undefined },
+    { ...hostQuestion, tool: undefined },
+    { ...hostQuestion, tool: { callID: "call-1" } },
+    { ...hostQuestion, tool: { messageID: "other-message", callID: "call-1" } },
+    { ...hostQuestion, tool: { messageID: "assistant-1", callID: "other-call" } },
+    { ...hostQuestion, questions: [{ ...questionItem, question: "Connect Another to continue?" }] },
+    { ...hostQuestion, questions: [{ ...questionItem, custom: true }] },
+    { ...hostQuestion, openworkConnectionDecision: { connection: { ...blockedPayload, actor: "organization_admin" } } },
+    { ...hostQuestion, openworkConnectionDecision: { connection: { ...blockedPayload, state: "connected" } } },
+    { ...hostQuestion, openworkConnectionDecision: { connection: { ...blockedPayload, action: { ...blockedPayload.action, type: "inspect_connection" } } } },
+    { ...hostQuestion, openworkConnectionDecision: { connection: { ...blockedPayload, action: { ...blockedPayload.action, surface: "provider_admin_console" } } } },
+    { ...hostQuestion, openworkConnectionDecision: { connection: blockedPayload, outcome: "skipped" } },
+    { ...hostQuestion, openworkConnectionDecision: { connection: {} } },
+  ]) expect(bindQuestion(question, messages)).toBeNull()
+  expect(bindQuestion(hostQuestion, [...messages, { id: "user-2", role: "user", parts: [] }])).toBeNull()
+  expect(bindQuestion(hostQuestion, [messages[0], { id: "assistant-1", role: "assistant", parts: [{
+    type: "dynamic-tool", toolName: "openwork_execute_capability", toolCallId: "call-1", state: "output-available", input: {}, output: blockedPayload,
+  }] }])).toBeNull()
+  expect(bindQuestion({ ...nativeQuestion, openworkConnectionDecision: { connection: blockedPayload } })).toBeNull()
+  expect(bindQuestion({ ...nativeQuestion, openworkConnectionDecision: { connection: {} } })).toBeNull()
+  expect(bindQuestion(hostQuestion, [messages[0], { id: "assistant-1", role: "assistant", parts: [{ type: "text", text: JSON.stringify(hostQuestion) }] }])).toBeNull()
+})
+
 test("binds initial connect and reconnect to the exact native question", () => {
   expect(bindQuestion()).toEqual({ ...request, requestId: "question-1", questionToolCallId: "question-call" })
   expect(bindQuestion(nativeQuestion, nativeMessages({ ...blockedPayload, state: "reauth_required", action: { ...blockedPayload.action, type: "reconnect" } }))).toEqual({ ...request, requestId: "question-1", questionToolCallId: "question-call" })
@@ -272,7 +320,27 @@ test("with two blockers only the one named in the question binds", () => {
     .toMatchObject({ toolCallId: "call_notion", connectionId: "emc_notion", questionToolCallId: stripeQuestionCallId })
 })
 
-test("the composer keeps a reserved question unless a native card is bound to it", () => {
+test("host forms never expose ordinary Authenticate while their exact source is unavailable", () => {
+  const unbound = [
+    { question: hostQuestion, transcript: [messages[0]] },
+    { question: { ...hostQuestion, sessionID: "another-session" }, transcript: messages },
+    { question: { ...hostQuestion, tool: { messageID: "another-message", callID: "call-1" } }, transcript: messages },
+    { question: hostQuestion, transcript: [...messages, { id: "later-user", role: "user", parts: [] } satisfies UIMessage] },
+    { question: { ...hostQuestion, openworkConnectionDecision: { connection: {} } }, transcript: messages },
+  ]
+  for (const { question, transcript } of unbound) {
+    const decision = bindQuestion(question, transcript)
+    expect(decision).toBeNull()
+    expect(composerQuestionForConnectionDecision(question, decision)).toBeNull()
+  }
+  expect(composerQuestionForConnectionDecision(hostQuestion, null)).toBeNull()
+  const hydrated = bindQuestion(hostQuestion, messages)
+  expect(hydrated?.toolCallId).toBe("call-1")
+  expect(composerQuestionForConnectionDecision(hostQuestion, hydrated)).toBeNull()
+  expect(composerQuestionForConnectionDecision(nativeQuestion, null)).toBe(nativeQuestion)
+})
+
+test("the composer keeps a legacy reserved question unless a native card is bound to it", () => {
   const decision = nativeChatConnectionDecision({ question: stripeQuestion, owner: request.owner, sessionId: "session-1", messages: stripeTranscript() })
   expect(decision).not.toBeNull()
   expect(composerQuestionForConnectionDecision(stripeQuestion, null)).toBe(stripeQuestion)

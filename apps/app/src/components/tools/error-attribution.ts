@@ -1,6 +1,10 @@
 import type { DynamicToolUIPart } from "ai"
-import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-connection-action"
-import { connectionActionPayloadSchema, type ConnectionActionPayload } from "@openwork/types/connection-action-app"
+import {
+  connectionTargetFromResult,
+  hostConnectionDecisionSchema,
+  isMemberConnectionDecision,
+  type ConnectionActionPayload,
+} from "@openwork/types/connection-action-app"
 
 export type ToolErrorAttribution = {
   label: string
@@ -87,16 +91,6 @@ function confirmed(label: string, description: string): ToolErrorAttribution {
   return { label, confidence: "Confirmed", description }
 }
 
-const CONNECTION_ACTION_LABELS = {
-  connect: "Connect your account",
-  reconnect: "Reconnect your account",
-  update_credentials: "Update credentials",
-  inspect_connection: "Inspect the connection",
-  fix_provider: "Fix provider access",
-  fix_network: "Fix network access",
-  contact_openwork: "Contact OpenWork support",
-}
-
 function isConnectionTool(toolName: string): boolean {
   return OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName) || /^openwork(?:-cloud)?_run_artifact_[A-Za-z0-9_-]+$/.test(toolName)
 }
@@ -111,55 +105,7 @@ export type ChatConnectionTargetOptions = { allowDiscovery?: boolean }
 function chatConnectionTarget(toolName: string, result: unknown, input?: unknown, options?: ChatConnectionTargetOptions) {
   if (!isConnectionTool(toolName)) return null
   if (isConnectionDiscoveryTool(toolName) && !options?.allowDiscovery && (!isRecord(input) || input.intent !== "connect")) return null
-  const parsed = parseResultRecord(result)
-  if (!parsed) return null
-  const candidates = [
-    ...(typeof parsed.connectionId === "string" ? [parsed] : []),
-    parsed.connectionAction,
-    parsed.connectionStatus,
-    ...(Array.isArray(parsed.matches) ? parsed.matches.filter(isRecord).flatMap(match => [match.connectionAction, match.connectionStatus]) : []),
-  ].filter(candidate => candidate !== undefined && candidate !== null)
-  let target: ConnectionActionPayload | null = null
-  let memberOAuth = true
-  let authType: unknown
-  let credentialMode: unknown
-  for (const candidate of candidates) {
-    if (!isRecord(candidate)) return null
-    if (("source" in candidate && candidate.source !== "openwork-cloud")
-      || ("version" in candidate && candidate.version !== 1)
-      || ("kind" in candidate && candidate.kind !== "connection_action")) return null
-    const legacy = openworkCloudMcpConnectionActionSchema.safeParse(candidate)
-    const payload = connectionActionPayloadSchema.safeParse(legacy.success && !("schemaVersion" in candidate)
-      ? {
-        ...legacy.data,
-        schemaVersion: "1",
-        message: stringValue(candidate, "message") ?? CONNECTION_ACTION_LABELS[legacy.data.action.type],
-        action: {
-          ...legacy.data.action,
-          label: isRecord(candidate.action) ? stringValue(candidate.action, "label") ?? CONNECTION_ACTION_LABELS[legacy.data.action.type] : CONNECTION_ACTION_LABELS[legacy.data.action.type],
-        },
-      }
-      : candidate)
-    if (!payload.success) return null
-    if (target && (target.connectionId !== payload.data.connectionId || target.connectionName !== payload.data.connectionName
-      || target.state !== payload.data.state || target.actor !== payload.data.actor
-      || target.action?.type !== payload.data.action?.type || target.action?.surface !== payload.data.action?.surface)) return null
-    target = payload.data
-    if ("authType" in candidate) {
-      if (authType !== undefined && authType !== candidate.authType) return null
-      authType = candidate.authType
-    }
-    if ("credentialMode" in candidate) {
-      if (credentialMode !== undefined && credentialMode !== candidate.credentialMode) return null
-      credentialMode = candidate.credentialMode
-    }
-    if (("authType" in candidate && candidate.authType !== "oauth")
-      || ("credentialMode" in candidate && candidate.credentialMode !== "per_member")) memberOAuth = false
-  }
-  const targetId = target?.connectionId
-  if (targetId && Array.isArray(parsed.matches) && parsed.matches.some(match => isRecord(match)
-    && typeof match.connectionId === "string" && match.connectionId !== targetId)) return null
-  return target ? { connection: target, memberOAuth } : null
+  return connectionTargetFromResult(result)
 }
 
 export function connectionCardPayloadFromChatToolResult(
@@ -179,10 +125,12 @@ export function reconnectActionFromChatToolResult(
 ): ChatToolReconnectAction | null {
   const target = chatConnectionTarget(toolName, result, input, options)
   if (!target?.memberOAuth) return null
-  const { connection } = target
-  if (connection.actor !== "member" || connection.action?.surface !== "openwork_your_connections"
-    || !((connection.state === "needs_connection" && connection.action.type === "connect")
-      || (connection.state === "reauth_required" && connection.action.type === "reconnect"))) return null
+  return reconnectActionFromConnection(target.connection)
+}
+
+/** A host-validated member connection uses the same OAuth action as a tool result. */
+export function reconnectActionFromConnection(connection: ConnectionActionPayload): ChatToolReconnectAction | null {
+  if (!isMemberConnectionDecision(connection)) return null
   return {
     connectionId: connection.connectionId,
     connectionName: connection.connectionName,
@@ -220,6 +168,13 @@ export function connectionFromChatToolPart(part: DynamicToolUIPart, options?: Ch
   const connection = connectionCardPayloadFromChatToolResult(part.toolName, result, part.input, options)
   if (!connection) return null
   return { connection, action: reconnectActionFromChatToolResult(part.toolName, result, part.input, options) }
+}
+
+/** Only host metadata on the completed source call is evidence of a settled choice. */
+export function settledConnectionDecisionFromChatToolPart(part: DynamicToolUIPart) {
+  if (part.state !== "output-available" && part.state !== "output-error") return null
+  const decision = hostConnectionDecisionSchema.safeParse(part.callProviderMetadata?.openwork?.connectionDecision)
+  return decision.success && decision.data.outcome !== undefined ? decision.data : null
 }
 
 export function attributeChatToolError(errorText: string): ToolErrorAttribution | null {

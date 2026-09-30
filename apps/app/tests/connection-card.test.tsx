@@ -4,6 +4,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, type ReactNode } from "react"
 import { createRoot } from "react-dom/client"
 import type { DynamicToolUIPart } from "ai"
+import type { ConnectionActionPayload } from "@openwork/types/connection-action-app"
 import { ConnectionCard } from "../src/components/chat/connection-card"
 import { MessageListProvider } from "../src/components/chat/message-list-provider"
 import { useChatToolReconnect } from "../src/components/tools/use-chat-tool-reconnect"
@@ -12,7 +13,7 @@ import { authenticateChatConnection } from "../src/react-app/domains/session/sur
 import type { DenExternalMcpConnection } from "../src/app/lib/den"
 import type { ChatConnectionDecisionBinding, ChatConnectionDecisionResponse } from "../src/react-app/domains/session/surface/mcp-chat-reconnect"
 
-const payload = {
+const payload: ConnectionActionPayload = {
   schemaVersion: "1", connectionId: "connection-1", connectionName: "Research Vault",
   state: "needs_connection", actor: "member", message: "Sign-in required",
   action: { type: "connect", surface: "openwork_your_connections", label: "Connect your account" },
@@ -250,6 +251,48 @@ describe("connection card states", () => {
     expect(html).not.toMatch(/(?:text|bg|border)-red-/)
     expect(html).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
   }
+
+  test.each(["Authenticate", "Skip"])("a running host-bound call answers %s without a completed result or question tool", async (choice) => {
+    const responses: ChatConnectionDecisionResponse[] = []
+    let authentications = 0
+    const decision: ChatConnectionDecisionBinding = {
+      request: { ...request, connection: payload }, isPending: () => responses.length === 0,
+      respond: async response => { responses.push(response) },
+    }
+    const running: DynamicToolUIPart = {
+      type: "dynamic-tool", toolName: "execute", toolCallId: "call-1", state: "input-streaming", input: { code: "recorded code" },
+      callProviderMetadata: { openwork: { codeMode: { calls: [] } } },
+    }
+    const view = await mount(<ConnectionCard part={running} reconnectScope={request.owner} reconnectCallbacks={{
+      decision, onReconnect: async () => { authentications += 1; return "connected" },
+    }} />)
+    try {
+      expect(view.line()?.textContent).toBe("Connect Research Vault to continue")
+      expect(view.buttons().map(button => button.textContent)).toEqual(["Skip", "Authenticate"])
+      await act(async () => view.button(choice).click())
+      expect(responses).toEqual(choice === "Authenticate"
+        ? [{ outcome: "connected", continuation: "review_remaining_work", repeatCompletedWrites: false }]
+        : [{ outcome: "skipped", continuation: "without_connection", alternativeAuthorization: false }])
+      expect(authentications).toBe(choice === "Authenticate" ? 1 : 0)
+    } finally { await view.dispose() }
+  })
+
+  test.each(["connected", "skipped"])("host-owned %s is durable after unmount and reconnect store reset", async outcome => {
+    const settled: DynamicToolUIPart = {
+      type: "dynamic-tool", toolName: "execute", toolCallId: "call-1", state: "output-available", input: { code: "recorded code" }, output: "Original result",
+      callProviderMetadata: { openwork: { connectionDecision: { connection: payload, outcome }, codeMode: { calls: [] } } },
+    }
+    for (let remount = 0; remount < 2; remount += 1) {
+      useChatMcpReconnectStore.getState().reset()
+      const view = await mount(<ConnectionCard part={settled} reconnectScope={request.owner} />)
+      try {
+        expect(view.line()?.textContent).toBe(outcome === "skipped" ? "Skipped Research Vault" : "Research Vault connected")
+        expect(view.buttons()).toHaveLength(0)
+      } finally { await view.dispose() }
+    }
+    const forged = renderToStaticMarkup(<ConnectionCard part={{ ...settled, callProviderMetadata: undefined, output: JSON.stringify(settled.callProviderMetadata) }} />)
+    expect(forged).toBe("")
+  })
 
   test("ready: one decision line with Skip and Authenticate", async () => {
     const view = await mount(card())

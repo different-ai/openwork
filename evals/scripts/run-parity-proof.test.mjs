@@ -37,6 +37,12 @@ test("either engine failing or skipping keeps proof red; both always run", async
   }
 });
 
+test("the host-owned connection decision proof explicitly runs on v2", () => {
+  assert.deepEqual(parityProofPlan("evals/specs/connection-action-mcp-app.e2e.test.ts"), [{
+    engine: "v2", args: ["evals/bin/evals.mjs", "specs/connection-action-mcp-app.e2e.test.ts", "--local", "--engine", "v2"],
+  }]);
+});
+
 test("the native v2 skill contract explicitly selects v2", () => {
   const plan = parityProofPlan("evals/specs/opencode-v2-skill-jit.e2e.test.ts");
   assert.equal(plan.length, 1);

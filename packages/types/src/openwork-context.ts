@@ -77,6 +77,8 @@ export const openworkContextSnapshotSchema = z.object({
   capturedAt: z.string(),
   features: z.object({
     connectionQuestions: z.boolean().optional(),
+    /** The host can bind a connection form to a running tool without a model question. */
+    connectionDecisions: z.boolean().optional(),
   }).optional(),
   screen: openworkScreenSchema,
   conversations: z.object({

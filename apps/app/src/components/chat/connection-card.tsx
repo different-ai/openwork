@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { connectionFromChatToolPart } from "@/components/tools/error-attribution"
+import { connectionFromChatToolPart, reconnectActionFromConnection, settledConnectionDecisionFromChatToolPart } from "@/components/tools/error-attribution"
 import { useChatToolReconnect, type ChatToolReconnectCallbacks } from "@/components/tools/use-chat-tool-reconnect"
 import type { ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
 import { useOptionalMessageList } from "./message-list-provider"
@@ -64,11 +64,14 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   allowDiscovery?: boolean
 }) {
   const messageList = useOptionalMessageList()
+  const candidate = reconnectCallbacks?.decision ?? callbacks?.decision ?? messageList?.getConnectionDecision?.(part.toolCallId)
+  const pendingConnection = candidate?.request.toolCallId === part.toolCallId && candidate.isPending()
+    ? candidate.request.connection : undefined
+  const persistedDecision = settledConnectionDecisionFromChatToolPart(part)
   const found = connectionFromChatToolPart(part, { allowDiscovery })
-  const connection = found?.connection ?? null
-  const action = connection && connection.actor === "member" && (connection.action?.type === "connect" || connection.action?.type === "reconnect")
-    ? found?.action ?? null
-    : null
+  const connection = pendingConnection ?? persistedDecision?.connection ?? found?.connection ?? null
+  const action = pendingConnection ? reconnectActionFromConnection(pendingConnection)
+    : persistedDecision ? null : found?.action ?? null
   const {
     reconnectState, reconnectError, reconnectBlocked, decisionAvailable,
     responseSubmitted, handleReconnect, handleSkip, handleContinue, handleDismiss,
@@ -83,8 +86,8 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   const name = connection.connectionName
   const iconUrl = (connectorIdentities ?? messageList?.connectorIdentities ?? []).find(entry => entry.connectionId === connection.connectionId)?.iconUrl
   const readOnly = messageList?.readOnly ?? false
-  const skipped = reconnectState === "skipped"
-  const connected = connection.state === "connected" || reconnectState === "connected"
+  const skipped = persistedDecision ? persistedDecision.outcome === "skipped" : reconnectState === "skipped"
+  const connected = persistedDecision ? persistedDecision.outcome === "connected" : connection.state === "connected" || reconnectState === "connected"
   const settled = connected || skipped
   const opening = !settled && reconnectState === "opening"
   const waiting = !settled && reconnectState === "authorization_opened"
@@ -99,7 +102,7 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
     : failed ? `${name} sign-in didn't finish`
     : decisionAvailable ? `${verb} ${name} to continue` : `${verb} ${name}`
   const primaryLabel = waiting ? "Open sign-in again" : failed ? "Try again" : decisionAvailable ? "Authenticate" : verb
-  const actionable = !readOnly && (!settled || decisionAvailable)
+  const actionable = !readOnly && !persistedDecision && (!settled || decisionAvailable)
   const showDetails = actionable && Boolean(reconnectError)
 
   return (

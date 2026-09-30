@@ -92,7 +92,7 @@ import { Tool } from "@/components/ui/tool"
 import { CapabilityCallLine } from "@/components/chat/capability-call-line"
 import { CodeModeTool } from "@/components/chat/code-mode-tool"
 import { ConnectionCard } from "@/components/chat/connection-card"
-import { connectionFromChatToolPart } from "@/components/tools/error-attribution"
+import { connectionFromChatToolPart, settledConnectionDecisionFromChatToolPart } from "@/components/tools/error-attribution"
 import { isReservedConnectionQuestion, type ChatConnectionDecisionBinding } from "@/react-app/domains/session/surface/mcp-chat-reconnect"
 import { codeModeToolCalls } from "@/lib/code-mode-tools"
 import { builtMcpAppId, hasPreservedMcpAppResult, isNativeConnectionAppLaunch, McpAppFrame } from "@/components/chat/mcp-app-frame"
@@ -209,12 +209,15 @@ function connectionCardPartIds(
   for (const item of items) {
     if (item.message.role !== "assistant" || isSessionErrorMessage(item.message)) continue
     for (const part of item.message.parts) {
-      if (part.type !== "dynamic-tool" || (part.state !== "output-available" && part.state !== "output-error")) continue
-      const decision = getConnectionDecision?.(part.toolCallId) ?? null
-      const found = connectionFromChatToolPart(part, { allowDiscovery: decision !== null })
-      if (!found) continue
-      if (decision) bound.set(found.connection.connectionId, part.toolCallId)
-      else latest.set(found.connection.connectionId, part.toolCallId)
+      if (part.type !== "dynamic-tool") continue
+      const candidate = getConnectionDecision?.(part.toolCallId)
+      const decision = candidate?.isPending() ? candidate : null
+      const connection = decision?.request.connection
+        ?? settledConnectionDecisionFromChatToolPart(part)?.connection
+        ?? connectionFromChatToolPart(part, { allowDiscovery: decision !== null })?.connection
+      if (!connection) continue
+      if (decision) bound.set(connection.connectionId, part.toolCallId)
+      else latest.set(connection.connectionId, part.toolCallId)
     }
   }
   return new Set([...latest.entries()].map(([connectionId, toolCallId]) => bound.get(connectionId) ?? toolCallId).concat([...bound.values()]))
@@ -232,6 +235,18 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   const lifecycle = resolveLifecycle(part.toolCallId, isToolPartInFlight(part))
   const connectionCardParts = React.useContext(ConnectionCardPartsContext)
   if (part.toolCallId === connectionQuestionToolCallId || isReservedConnectionQuestionPart(part)) return null
+
+  // The card owns the decision, not the whole Code Mode execution. Keep the
+  // recorded work and script failures available beside it, including after
+  // settling; direct gateway calls still use the card instead of a generic row.
+  if (part.type === "dynamic-tool" && connectionCardParts.has(part.toolCallId)) {
+    const decision = getConnectionDecision?.(part.toolCallId)
+    const calls = codeModeToolCalls(part)
+    return <>
+      {calls ? <CodeModeTool part={part} calls={calls} lifecycle={decision?.isPending() ? "waiting" : lifecycle} connectors={connectorIdentities} /> : null}
+      <ConnectionCard part={part} allowDiscovery={Boolean(decision)} />
+    </>
+  }
 
   // Delegated work has its own lifecycle, even after a parent follow-up/error.
   if (isTaskToolPart(part)) return <SubagentRunLine part={part} parentActive={parentActive} />
@@ -322,12 +337,6 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
 
   if (part.type === "dynamic-tool" && isAutomationProposalToolPart(part)) {
     return <OpenWorkAutomationProposalTool part={part} />
-  }
-
-  // OpenWork's own connection reports render as the native card: the host is
-  // the presentation; the Den App remains for external hosts.
-  if (part.type === "dynamic-tool" && connectionCardParts.has(part.toolCallId)) {
-    return <ConnectionCard part={part} allowDiscovery={Boolean(getConnectionDecision?.(part.toolCallId))} />
   }
 
   // Failed calls use the same sentence line with the "failures are
@@ -1418,9 +1427,12 @@ function MessageGroup({
       : stepRowCount === 1
         ? "1 step"
         : `${stepRowCount} steps`
+  // Waiting on a connection is not a finished run. Keep the decision and all
+  // preceding prose visible, including useful findings before a long trace.
+  const hasPendingConnection = [...connectionCardParts].some(id => getConnectionDecision?.(id)?.isPending())
   // A short finished run reads fine as a list, so only long ones fold away.
   const collapseSteps =
-    !isLiveGroup && stepItems.length > 0 && stepRowCount > COLLAPSED_STEP_RUN_MIN_ROWS
+    !isLiveGroup && !hasPendingConnection && stepItems.length > 0 && stepRowCount > COLLAPSED_STEP_RUN_MIN_ROWS
   const foldedReasoning = collapseSteps
     ? proseReasoning.map((reasoning) => (
       <Message
