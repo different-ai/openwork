@@ -505,6 +505,11 @@ publisher by hand. `evals:e2e --publish` remains for that trusted CI path
 only. Custom screenshots and recordings are supplementary and never determine
 the pass/fail verdict.
 
+Tag each test `user-flow` (a person in the real UI, a screenshot per step) or
+`agent-flow` (an agent, MCP client or server; requests and responses). The
+tag is recorded as `flow` in `test-run.json`, and the report and comment list
+user-flow proof first, saying so when there is none (`write-a-spec`).
+
 ## Standalone isolated Den
 
 For an isolated Den API without Electron or Den Web, use the development helper:

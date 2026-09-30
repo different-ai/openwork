@@ -10,6 +10,15 @@ import { CheckpointProvider } from "./open-checkpoint";
 import { StatusIcon } from "./status-icon";
 
 type Verdict = ReturnType<typeof summarizeReview>["verdict"];
+type Source = ReviewReport["sources"][number];
+
+/** Who did the thing: user-flow proof leads so a reviewer sees first whether a person could do it. */
+function flowGroup(source: Source): { order: number; label: string } {
+  if (source.kind === "docshot") return { order: 3, label: "Documentation reference" };
+  if (source.flow === "user") return { order: 0, label: "User flow" };
+  if (source.flow === "agent") return { order: 1, label: "Agent flow" };
+  return { order: 2, label: "Unlabelled" };
+}
 
 /** One sentence of state per verdict: what is true, and where to look first (P1, C6). */
 function verdictLine(verdict: Verdict, failedSections: number, incompleteSections: number, gaps: number) {
@@ -52,8 +61,10 @@ export function Report({ report, id, connected }: { report: ReviewReport; id: st
     const source = report.sources.find((item) => item.id === section.sourceId);
     if (!source) return [];
     const items = section.evidenceIds.flatMap((key) => evidenceById.get(key) ?? []);
-    return [{ ...section, source, items, verdict: summarizeReview({ sources: [source], evidence: items, gaps: [] }).verdict }];
-  });
+    return [{ ...section, source, items, flow: flowGroup(source), verdict: summarizeReview({ sources: [source], evidence: items, gaps: [] }).verdict }];
+  }).sort((left, right) => left.flow.order - right.flow.order);
+  const testRuns = report.sources.filter((source) => source.kind === "test-run");
+  const missingUserFlow = testRuns.length > 0 && !testRuns.some((source) => source.flow === "user");
   const visibleSections = sections.filter((section) => filter === "All" || section.verdict === filter);
   const failures = sections.filter((section) => section.verdict === "Failed");
   const incompletes = sections.filter((section) => section.verdict === "Incomplete");
@@ -91,13 +102,14 @@ export function Report({ report, id, connected }: { report: ReviewReport; id: st
             <div><dt>Screenshots</dt><dd>{summary.images}</dd></div>
           </dl>
         </div>
-        {(report.gaps.length > 0 || summary.pendingVisual > 0) && (
+        {(report.gaps.length > 0 || summary.pendingVisual > 0 || missingUserFlow) && (
           <aside className="gaps">
             <strong>Still to verify</strong>
             <ul>
               {report.gaps.map((gap, index) => (
                 <li key={index}>{gap}</li>
               ))}
+              {missingUserFlow && <li>No user-flow proof: nothing here shows a person doing this in the UI.</li>}
               {summary.pendingVisual > 0 && (
                 <li>{`${summary.pendingVisual} visual ${summary.pendingVisual === 1 ? "judgment" : "judgments"} pending.`}</li>
               )}
@@ -133,8 +145,9 @@ export function Report({ report, id, connected }: { report: ReviewReport; id: st
         </nav>
         <div className="sections">
           {visibleSections.length === 0 && <p className="empty">No {filter.toLowerCase()} sections. <button type="button" onClick={() => setFilter("All")}>Show all evidence</button></p>}
-          {visibleSections.map((section) => {
+          {visibleSections.map((section, index) => {
             const { source, items, verdict } = section;
+            const startsGroup = visibleSections[index - 1]?.flow.label !== section.flow.label;
             const assertions = items
               .filter((item) => item.kind === "assertion")
               .flatMap((item) => item.judgments);
@@ -142,6 +155,7 @@ export function Report({ report, id, connected }: { report: ReviewReport; id: st
             const images = items.filter((item) => item.kind === "image");
             return (
               <section className={`section ${verdict.toLowerCase()}`} id={section.id} key={section.id} tabIndex={-1}>
+                {startsGroup && source.kind === "test-run" && <p className="flow-heading">{section.flow.label}</p>}
                 <div className="section-heading">
                   <StatusIcon state={verdict} size={18} />
                   <div>

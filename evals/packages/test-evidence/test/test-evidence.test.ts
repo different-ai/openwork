@@ -8,7 +8,7 @@ import type { CdpClient, Surface } from "@openwork/cdp";
 import { withTestEvidence } from "../src/ambient.ts";
 import { screenshot } from "../src/screenshot.ts";
 import type { ScreenshotArtifact } from "../src/screenshot.ts";
-import { createTestEvidence } from "../src/test-evidence.ts";
+import { createTestEvidence, proofFlowFromTags } from "../src/test-evidence.ts";
 import type { VisualEvidenceResult } from "../src/validate.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -169,6 +169,30 @@ test("test evidence records the selected engine in JSON and the HTML header", as
     if (previous === undefined) delete process.env.OPENWORK_EVAL_ENGINE;
     else process.env.OPENWORK_EVAL_ENGINE = previous;
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a test's user-flow or agent-flow tag becomes its proof flow; untagged or both is none", () => {
+  assert.equal(proofFlowFromTags(["user-flow"]), "user");
+  assert.equal(proofFlowFromTags(["checkpoints", "agent-flow"]), "agent");
+  assert.equal(proofFlowFromTags(["checkpoints"]), undefined);
+  assert.equal(proofFlowFromTags(undefined), undefined);
+  assert.equal(proofFlowFromTags(["user-flow", "agent-flow"]), undefined);
+});
+
+test("test evidence records the proof flow in JSON and the HTML header, and omits it when untagged", async () => {
+  const tagged = await mkdtemp(join(tmpdir(), "openwork-test-evidence-flow-"));
+  const untagged = await mkdtemp(join(tmpdir(), "openwork-test-evidence-noflow-"));
+  try {
+    await createTestEvidence({ name: "member flow", flow: "user", outDir: tagged }).close();
+    await createTestEvidence({ name: "unlabelled", outDir: untagged }).close();
+
+    assert.equal((await payload(tagged)).flow, "user");
+    assert.match(await readFile(join(tagged, "index.html"), "utf8"), /User flow · SHA/);
+    assert.equal("flow" in await payload(untagged), false);
+  } finally {
+    await rm(tagged, { recursive: true, force: true });
+    await rm(untagged, { recursive: true, force: true });
   }
 });
 

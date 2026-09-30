@@ -39,7 +39,8 @@ each, so the reviewer is not surprised by them. `none` if nothing.
 One sentence for people who use OpenWork, or `none`.
 
 ## Evidence
-The spec that proves it, and in one line what its before → after shows.
+User flow: the spec where a person does it in the UI, and its before → after.
+Agent flow: the spec where an agent, MCP client or server does it (if any).
 ```
 
 The release note feeds the changelog agent directly
@@ -62,9 +63,18 @@ links, which go stale.
 
 ```markdown
 ## Evidence
-`evals/specs/browser-tabs-owned-by-thread.e2e.test.ts` — before: the toolbar
-shows Suspend; after: it does not, and a page still opens and can be used.
+User flow: `evals/specs/browser-tabs-owned-by-thread.e2e.test.ts` — before: the
+toolbar shows Suspend; after: it does not, and a page still opens and can be used.
+Agent flow: `evals/specs/browser-tabs-mcp.e2e.test.ts` — the agent's tab list
+no longer offers suspend.
 ```
+
+- List the user-flow spec first, then the agent-flow spec. Each test is
+  tagged `user-flow` or `agent-flow` (`write-a-spec` → User flow vs agent
+  flow); the report groups them the same way.
+- If a person can see or click something that changed, a user-flow spec is
+  required. Agent-flow proof alone is fine only when nothing changes on
+  screen; the report says "No user-flow proof" otherwise.
 
 - The `before:` here and "What was the situation before?" are the same
   moment. If they disagree, fix one.

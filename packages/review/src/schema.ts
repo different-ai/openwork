@@ -39,6 +39,9 @@ export const reviewSchema = z
             kind: z.literal("test-run"),
             outcome: z.enum(["passed", "failed", "skipped", "unknown"]),
             failure: z.string().optional(),
+            // From the test's `user-flow` / `agent-flow` tag; absent when untagged or older.
+            flow: z.enum(["user", "agent"]).optional(),
+            specFile: z.string().optional(),
           }),
           source.extend({ kind: z.literal("docshot") }),
         ]),

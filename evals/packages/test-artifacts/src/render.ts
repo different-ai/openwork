@@ -1,4 +1,5 @@
-import type { TestArtifact, TestRunRecord } from "./schema.ts";
+import { proofFlowLabel } from "./schema.ts";
+import type { ProofFlow, TestArtifact, TestRunRecord } from "./schema.ts";
 import type { TestArtifactIndexEntry } from "./scan.ts";
 
 export interface RenderPrOptions {
@@ -133,9 +134,19 @@ function traceHtml(testRun: TestRunRecord): string {
   return `<div class="trace">${lines.join("")}</div>`;
 }
 
+const FLOW_GROUPS: { flow: ProofFlow | undefined; className: string; blurb: string }[] = [
+  { flow: "user", className: "user", blurb: "A person goes through the real UI; each step ends with a screenshot of what they see." },
+  { flow: "agent", className: "agent", blurb: "An agent, MCP client or server acts; the proof is the requests and responses." },
+  { flow: undefined, className: "unlabelled", blurb: "Not tagged user-flow or agent-flow." },
+];
+
+function entryFlow(entry: TestArtifactIndexEntry): ProofFlow | undefined {
+  return entry.kind === "test-run" ? entry.testRun.flow : undefined;
+}
+
 export function renderArtifactIndexHtml(entries: TestArtifactIndexEntry[]): string {
   const ordered = [...entries].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-  const cards = ordered.map((entry) => {
+  const card = (entry: TestArtifactIndexEntry): string => {
     const badge = artifactBadge(entry);
     const caption = entry.kind === "test-run" ? entry.testRun.artifacts[0]?.caption : undefined;
     const thumbnail = entry.thumbnailHref
@@ -145,18 +156,25 @@ export function renderArtifactIndexHtml(entries: TestArtifactIndexEntry[]): stri
     return `<article class="card ${badge.className}">
       <a class="thumb" href="${html(entry.href)}">${thumbnail}</a>
       <div class="copy">
-        <div class="topline"><span class="badge">${badge.label}</span><time datetime="${html(entry.createdAt)}">${html(entry.createdAt)}</time></div>
+        <div class="topline"><span class="badge">${badge.label}</span><span class="flow">${html(proofFlowLabel(entryFlow(entry)))}</span><time datetime="${html(entry.createdAt)}">${html(entry.createdAt)}</time></div>
         <h2><a href="${html(entry.href)}">${html(entry.name)}</a></h2>
         ${caption ? `<p class="caption">${html(caption)}</p>` : ""}
          <p class="summary">${html(badge.summary)}</p>
          ${provenance}
       </div>
     </article>`;
+  };
+  const cards = FLOW_GROUPS.flatMap((group) => {
+    const members = ordered.filter((entry) => entryFlow(entry) === group.flow);
+    if (members.length === 0) return [];
+    const label = proofFlowLabel(group.flow);
+    return [`<section class="flow-group ${group.className}" aria-label="${html(label)}"><h2 class="flow-heading">${html(label)} <span class="muted">(${members.length})</span></h2><p class="muted">${html(group.blurb)}</p>
+${members.map(card).join("\n")}</section>`];
   }).join("\n");
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OpenWork test artifacts</title><style>
-body{font:15px/1.5 system-ui,sans-serif;max-width:1100px;margin:40px auto;padding:0 20px;background:#f6f7f9;color:#17191d}header,.card{background:white;border:1px solid #dfe2e8;border-radius:12px;padding:20px;margin:0 0 24px}header h1{margin:0 0 6px}.muted,time,.summary{color:#636c76}.card{display:grid;grid-template-columns:minmax(220px,40%) 1fr;gap:20px}.card.passed{border-left:6px solid #238636}.card.failed{border-left:6px solid #cf222e}.card.pending,.card.unvalidated{border-left:6px solid #9a6700}.card.legacy{border-left:6px solid #656d76}.thumb img,.empty{display:block;width:100%;aspect-ratio:16/10;object-fit:cover;border:1px solid #dfe2e8;border-radius:8px;background:#f6f7f9}.empty{display:grid;place-items:center;color:#636c76}.topline{display:flex;align-items:center;gap:10px}.badge{font-size:12px;font-weight:700}.passed .badge{color:#1a7f37}.failed .badge{color:#cf222e}.pending .badge,.unvalidated .badge{color:#9a6700}.legacy .badge{color:#656d76}h2{margin:12px 0 6px}a{color:inherit}.caption{font-weight:600}.trace{font-size:13px}.trace div{margin:4px 0}.trace strong{display:inline-block;min-width:65px}@media(max-width:700px){.card{grid-template-columns:1fr}}
+body{font:15px/1.5 system-ui,sans-serif;max-width:1100px;margin:40px auto;padding:0 20px;background:#f6f7f9;color:#17191d}header,.card{background:white;border:1px solid #dfe2e8;border-radius:12px;padding:20px;margin:0 0 24px}header h1{margin:0 0 6px}.muted,time,.summary{color:#636c76}.card{display:grid;grid-template-columns:minmax(220px,40%) 1fr;gap:20px}.card.passed{border-left:6px solid #238636}.card.failed{border-left:6px solid #cf222e}.card.pending,.card.unvalidated{border-left:6px solid #9a6700}.card.legacy{border-left:6px solid #656d76}.thumb img,.empty{display:block;width:100%;aspect-ratio:16/10;object-fit:cover;border:1px solid #dfe2e8;border-radius:8px;background:#f6f7f9}.empty{display:grid;place-items:center;color:#636c76}.topline{display:flex;align-items:center;gap:10px}.badge{font-size:12px;font-weight:700}.passed .badge{color:#1a7f37}.failed .badge{color:#cf222e}.pending .badge,.unvalidated .badge{color:#9a6700}.legacy .badge{color:#656d76}h2{margin:12px 0 6px}a{color:inherit}.caption{font-weight:600}.trace{font-size:13px}.trace div{margin:4px 0}.trace strong{display:inline-block;min-width:65px}.flow{font-size:12px;font-weight:600;color:#636c76;border:1px solid #dfe2e8;border-radius:999px;padding:0 8px}.flow-heading{margin:32px 0 0}.flow-group>p.muted{margin:4px 0 16px}@media(max-width:700px){.card{grid-template-columns:1fr}}
 </style></head><body><header><h1>Test artifacts</h1><p class="muted">Test evidence captured as the user experienced it, newest first.</p></header>${cards || '<p class="muted">No test artifacts found.</p>'}</body></html>\n`;
 }
 
@@ -214,7 +232,7 @@ export function renderPrMarkdown(
     "<!-- test-evidence -->",
     `## ${html(title)} — ${outcomeHeading(testRun)}`,
     "",
-    `SHA ${html(testRun.gitSha ?? "unknown")}${testRun.sandboxRef ? ` · sandbox ref ${html(testRun.sandboxRef)}` : ""} · engine ${testRun.engine}`,
+    `${proofFlowLabel(testRun.flow)}${testRun.specFile ? ` · \`${html(testRun.specFile)}\`` : ""} · SHA ${html(testRun.gitSha ?? "unknown")}${testRun.sandboxRef ? ` · sandbox ref ${html(testRun.sandboxRef)}` : ""} · engine ${testRun.engine}`,
     "",
     summaryLine(testRun),
   ];
