@@ -6,9 +6,9 @@ and OpenWork member. Two members in one Slack thread get separate native session
 
 ## Installation
 
-1. Apply Den migration `0102_slack_assistant` before starting the updated API.
-2. In `/admin`, find the organization and enable **Capabilities → Slack Assistant**,
-   alongside **Gateway dashboard**. This platform capability defaults off and
+1. Apply Den migration `0115_slack_assistant` before starting the updated API.
+2. In `/admin`, find the organization and enable **Capabilities → Slack Assistant**.
+   This platform capability defaults off and
    takes effect without a redeploy. The old `DEN_SLACK_ASSISTANT_ENABLED` variable
    is no longer used; complimentary Web access does not bypass this switch.
    Connector opt-in and Web access remain required.
