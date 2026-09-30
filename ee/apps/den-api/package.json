@@ -12,7 +12,7 @@
     "dev": "pnpm run build:workspace-dependencies && OPENWORK_DEV_MODE=1 OPENWORK_DEN_DEVELOPMENT_CONDITIONS_REEXEC=1 NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx watch src/main.ts",
     "dev:local": "pnpm run build:workspace-dependencies && OPENWORK_DEV_MODE=1 OPENWORK_DEN_DEVELOPMENT_CONDITIONS_REEXEC=1 NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" PORT=${DEN_API_PORT:-8790} tsx watch src/main.ts",
     "build": "node ./scripts/build.mjs",
-    "build:workspace-dependencies": "pnpm --filter '@openwork-ee/den-api^...' --if-present run build",
+    "build:workspace-dependencies": "node ../../../scripts/build-workspace-dependencies.mjs @openwork-ee/den-api",
     "build:den-db": "pnpm --filter @openwork-ee/den-db build",
     "build:mcp-apps": "pnpm --filter @openwork/mcp-apps build",
     "openapi:snapshot": "tsx scripts/generate-openapi-snapshot.ts",
@@ -37,7 +37,8 @@
     "test:gateway-usage": "bun test --conditions development test/gateway-usage.test.ts",
     "test:usage-limits": "DEN_USAGE_TEST_DATABASE_URL=${DEN_USAGE_TEST_DATABASE_URL:?Set an isolated loopback usage_limits_test database URL} bun test --conditions development test/gateway-usage-limits.test.ts",
     "test:usage-limits:auth": "DEN_USAGE_TEST_DATABASE_URL=${DEN_USAGE_TEST_DATABASE_URL:?Set an isolated loopback usage_limits_test database URL} bun test --conditions development test/gateway-usage-auth-db.test.ts",
-    "typecheck:usage-limits": "tsc -p tsconfig.usage-limits-test.json --pretty false"
+    "typecheck:usage-limits": "tsc -p tsconfig.usage-limits-test.json --pretty false",
+    "test:build": "bun test test/sentry-sourcemaps-build.test.ts test/production-types-build.test.ts"
   },
   "dependencies": {
     "@better-auth/api-key": "1.7.0-beta.10",

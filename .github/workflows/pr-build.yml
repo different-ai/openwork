@@ -42,3 +42,5 @@ jobs:
         run: pnpm --filter @openwork/desktop typecheck:electron
       - name: Build app renderer
         run: pnpm --filter @openwork/app build
+      - name: Build Den API and check shared type boundaries
+        run: pnpm --filter @openwork-ee/den-api build && pnpm --filter @openwork-ee/den-api test:build

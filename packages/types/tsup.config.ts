@@ -1,34 +1,18 @@
 import { defineConfig } from "tsup"
 
 export default defineConfig({
+  // Source-only exports get declarations from tsc. Emit JavaScript only for
+  // exports whose production runtime target lives in dist.
   entry: {
-    index: "src/index.ts",
     "cloud-model-fast": "src/cloud-model-fast.ts",
-    "agent-context-diagnostics": "src/agent-context-diagnostics.ts",
-    "openwork-affordance": "src/openwork-affordance.ts",
-    "openwork-context": "src/openwork-context.ts",
-    "openwork-provider": "src/openwork-provider.ts",
-    "automations": "src/automations.ts",
-    workflows: "src/workflows.ts",
-    "mcp-app": "src/mcp-app.ts",
-    "skill-created-app": "src/skill-created-app.ts",
     "connection-action-app": "src/connection-action-app.ts",
-    "den/desktop-app-restrictions": "src/den/desktop-app-restrictions.ts",
     "den/desktop-policies": "src/den/desktop-policies.ts",
-    "den/connect-diagnostics": "src/den/connect-diagnostics.ts",
-    "den/egress-diagnostics": "src/den/egress-diagnostics.ts",
     "den/gateway": "src/den/gateway.ts",
     "den/gateway-usage-limits": "src/den/gateway-usage-limits.ts",
-    "den/inference": "src/den/inference.ts",
-    "den/managed-models-policy": "src/den/managed-models-policy.ts",
-    "den/mcp-connection-action": "src/den/mcp-connection-action.ts",
-    "den/microsoft-365": "src/den/microsoft-365.ts",
   },
   tsconfig: "./tsconfig.json",
   format: ["esm"],
-  dts: {
-    tsconfig: "./tsconfig.json",
-  },
+  dts: false,
   clean: true,
   target: "es2022",
   platform: "neutral",

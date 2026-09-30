@@ -1,4 +1,5 @@
 .turbo/
+*.tsbuildinfo
 node_modules/
 apps/desktop/dist-electron/
 apps/desktop/.electron-runtime/

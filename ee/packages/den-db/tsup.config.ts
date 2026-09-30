@@ -20,7 +20,7 @@ export default defineConfig({
     "audit-accounting": "src/audit-accounting.ts",
   },
   format: ["esm"],
-  dts: true,
+  dts: false,
   clean: true,
   target: "es2022",
   platform: "node",

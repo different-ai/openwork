@@ -4,12 +4,18 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
       "development": "./src/index.ts",
       "default": "./dist/index.js"
     },
     "./templates": {
-      "types": "./src/templates/index.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/templates/index.d.ts",
+        "default": "./src/templates/index.ts"
+      },
       "development": "./src/templates/index.ts",
       "default": "./dist/templates/index.js"
     }
@@ -20,7 +26,7 @@
     "emails"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && tsc -p tsconfig.build.json",
     "dev": "email dev --dir emails"
   },
   "dependencies": {

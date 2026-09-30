@@ -5,13 +5,19 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
       "bun": "./src/index.ts",
       "development": "./src/index.ts",
       "default": "./dist/index.js"
     },
     "./testing": {
-      "types": "./src/testing.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/testing.d.ts",
+        "default": "./src/testing.ts"
+      },
       "bun": "./src/testing.ts",
       "development": "./src/testing.ts",
       "default": "./dist/testing.js"
@@ -23,7 +29,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "bun test src"
   },

@@ -10,8 +10,9 @@
     "test:usage-limits": "NODE_OPTIONS=--conditions=development tsx --test --test-concurrency=1 test/gateway.test.ts test/request-log.test.ts test/pricing.test.ts test/usage-completeness.test.ts test/usage-openai-chat.test.ts test/usage-protocols.test.ts test/usage-bedrock-converse.test.ts test/usage-preflight.test.ts",
     "test:usage-limits:db": "DEN_USAGE_TEST_DATABASE_URL=${DEN_USAGE_TEST_DATABASE_URL:?Set an isolated loopback usage_limits_test database URL} NODE_OPTIONS=--conditions=development tsx --test --test-concurrency=1 test/usage-limits-db.test.ts",
     "typecheck:usage-limits": "tsc -p tsconfig.usage-limits-test.json --pretty false",
-    "build": "pnpm run models:build && tsc -p tsconfig.json",
-    "start": "node --import ./dist/instrumentation.js dist/server.js"
+    "build": "pnpm run build:workspace-dependencies && pnpm run models:build && tsc -p tsconfig.build.json",
+    "start": "node --import ./dist/instrumentation.js dist/server.js",
+    "build:workspace-dependencies": "node ../../../scripts/build-workspace-dependencies.mjs @openwork-ee/gateway"
   },
   "dependencies": {
     "@hono/node-server": "2.0.12",

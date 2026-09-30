@@ -157,9 +157,10 @@ for (const [path, script] of [
         name: "production-build-fixture", private: true, packageManager: rootManifest.packageManager,
       }));
       writeFixture(root, "pnpm-workspace.yaml", `${readFileSync(join(workspace, "pnpm-workspace.yaml"), "utf8")}\nverifyDepsBeforeRun: false\n`);
-      copyPackage(root, "packages/types", ["src", "tsconfig.json", "tsup.config.ts"]);
+      writeFixture(root, "tsconfig.declarations.json", readFileSync(join(workspace, "tsconfig.declarations.json"), "utf8"));
+      copyPackage(root, "packages/types", ["src", "tsconfig.json", "tsconfig.build.json", "tsup.config.ts"]);
       copyPackage(root, "packages/ui", ["src", "tsconfig.react.json", "tsup.config.react.ts"]);
-      copyPackage(root, "ee/packages/utils", ["src", "tsconfig.json", "tsup.config.ts"]);
+      copyPackage(root, "ee/packages/utils", ["src", "tsconfig.json", "tsconfig.build.json", "tsup.config.ts"]);
       const manifest = copyPackage(root, path);
       const app = join(root, path);
       const entry = `

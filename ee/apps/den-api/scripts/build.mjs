@@ -56,9 +56,8 @@ function run(command, args, env = process.env) {
   }
 }
 
-// Type-checking den-api needs ~2.8 GB of V8 heap, above Node's ~2 GB default
-// cap, so the emit OOMs on build hosts (Render's Starter pipeline has 8 GB RAM)
-// even though the machine has room. Raise only the tsc heap; an explicit
+// Even with shared declaration boundaries, den-api exceeds Node's default
+// heap cap. Raise only the tsc heap; an explicit
 // --max-old-space-size in NODE_OPTIONS, or DEN_API_TSC_MAX_OLD_SPACE_MB, wins.
 export const tscHeapEnvFlag = "DEN_API_TSC_MAX_OLD_SPACE_MB"
 export const defaultTscHeapMb = 6144
@@ -114,7 +113,7 @@ function productionExportTarget(value) {
   return undefined
 }
 
-export function missingProductionWorkspaceExports(packageDir = serviceDir) {
+function missingWorkspaceExports(packageDir, checkExport) {
   const visited = new Set()
   const missing = []
 
@@ -136,10 +135,8 @@ export function missingProductionWorkspaceExports(packageDir = serviceDir) {
         : [[".", exports]]
 
       for (const [subpath, value] of exportEntries) {
-        const target = productionExportTarget(value)
-        if (target && !existsSync(path.resolve(dependencyDir, target))) {
-          missing.push(`${dependency}${subpath === "." ? "" : subpath.slice(1)}: ${target}`)
-        }
+        const problem = checkExport(value, dependencyDir)
+        if (problem) missing.push(`${dependency}${subpath === "." ? "" : subpath.slice(1)}: ${problem}`)
       }
       visit(dependencyDir)
     }
@@ -149,8 +146,28 @@ export function missingProductionWorkspaceExports(packageDir = serviceDir) {
   return missing.sort()
 }
 
+export function missingProductionWorkspaceExports(packageDir = serviceDir) {
+  return missingWorkspaceExports(packageDir, (value, dependencyDir) => {
+    const target = productionExportTarget(value)
+    return target && !existsSync(path.resolve(dependencyDir, target)) ? target : undefined
+  })
+}
+
+export function missingProductionWorkspaceTypes(packageDir = serviceDir) {
+  return missingWorkspaceExports(packageDir, (value, dependencyDir) => {
+    const types = value?.types
+    if (!types) {
+      const target = productionExportTarget(value)
+      return /\.tsx?$/.test(target ?? "") ? "missing openwork-build declaration export" : undefined
+    }
+    const target = typeof types === "string" ? types : types["openwork-build"]
+    if (!target?.endsWith(".d.ts")) return "missing openwork-build declaration export"
+    return existsSync(path.resolve(dependencyDir, target)) ? undefined : target
+  })
+}
+
 function verifyProductionWorkspaceExports() {
-  const missing = missingProductionWorkspaceExports()
+  const missing = [...missingProductionWorkspaceExports(), ...missingProductionWorkspaceTypes()]
   if (missing.length > 0) {
     throw new Error(`Workspace production exports are missing:\n${missing.map((entry) => `- ${entry}`).join("\n")}`)
   }
@@ -188,7 +205,7 @@ function main() {
 
   run(pnpmCommand, ["run", "build:workspace-dependencies"])
   verifyProductionWorkspaceExports()
-  run(pnpmCommand, ["exec", "tsc", "-p", "tsconfig.json"], tscBuildEnv())
+  run(pnpmCommand, ["exec", "tsc", "-p", "tsconfig.build.json"], tscBuildEnv())
   maybeUploadSentrySourcemaps()
 }
 

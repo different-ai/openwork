@@ -4,12 +4,18 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
       "development": "./src/index.ts",
       "default": "./dist/index.js"
     },
     "./node": {
-      "types": "./src/node.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/node.d.ts",
+        "default": "./src/node.ts"
+      },
       "development": "./src/node.ts",
       "default": "./dist/node.js"
     }
@@ -19,7 +25,7 @@
     "src"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "bun test"
   },
