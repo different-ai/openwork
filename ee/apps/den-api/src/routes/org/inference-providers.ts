@@ -451,23 +451,38 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     let liteLlm: Promise<boolean> | null = null
     const liteLlmOn = () => (liteLlm ??= organizationFeatureEnabled(actor.organization.id, "litellm"))
     const providers = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, actor.organization.id)).orderBy(desc(GatewayProviderTable.updated_at))
-    const summaries: GatewayProviderSummary[] = []
-    for (const provider of providers) {
-      if (!manage && provider.status !== "active") continue
-      // An organization set may be unconfigured; keep its granted provider discoverable without leaking models.
-      if (!manage) {
-        const teams = await memberGatewayTeams(db, provider.organization_id, actor.currentMember.id)
-        const grants = await db.select({ grant: GatewayProviderAccessTable }).from(GatewayProviderAccessTable)
-          .innerJoin(GatewayModelGroupTable, and(eq(GatewayModelGroupTable.id, GatewayProviderAccessTable.model_group_id), eq(GatewayModelGroupTable.gateway_provider_id, provider.id), eq(GatewayModelGroupTable.status, "active")))
-          .innerJoin(GatewayCredentialSetTable, and(eq(GatewayCredentialSetTable.id, GatewayProviderAccessTable.credential_set_id), eq(GatewayCredentialSetTable.gateway_provider_id, provider.id), eq(GatewayCredentialSetTable.status, "active")))
-          .where(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id))
-        if (!effectiveGatewayGrants(grants.map((row) => row.grant), actor.currentMember.id, teams.map((team) => team.id)).length) continue
-        // Zero-touch LiteLLM keys: create this person's keys in the background on first use.
-        if (isLiteLlmProviderId(provider.provider_id) && await liteLlmOn()) scheduleLiteLlmProvisioning(provider, actor.currentMember.id)
+    const summaries: Array<GatewayProviderSummary | null> = providers.map(() => null)
+    let next = 0
+    let failure: { error: unknown } | undefined
+    // Each summary keeps its DB reads sequential; two workers bound connection
+    // use while avoiding a serial wait across every provider in the list.
+    await Promise.all(Array.from({ length: Math.min(2, providers.length) }, async () => {
+      while (!failure && next < providers.length) {
+        const index = next++
+        const provider = providers[index]
+        try {
+          if (!manage && provider.status !== "active") continue
+          // An organization set may be unconfigured; keep its granted provider discoverable without leaking models.
+          if (!manage) {
+            const teams = await memberGatewayTeams(db, provider.organization_id, actor.currentMember.id)
+            const grants = await db.select({ grant: GatewayProviderAccessTable }).from(GatewayProviderAccessTable)
+              .innerJoin(GatewayModelGroupTable, and(eq(GatewayModelGroupTable.id, GatewayProviderAccessTable.model_group_id), eq(GatewayModelGroupTable.gateway_provider_id, provider.id), eq(GatewayModelGroupTable.status, "active")))
+              .innerJoin(GatewayCredentialSetTable, and(eq(GatewayCredentialSetTable.id, GatewayProviderAccessTable.credential_set_id), eq(GatewayCredentialSetTable.gateway_provider_id, provider.id), eq(GatewayCredentialSetTable.status, "active")))
+              .where(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id))
+            if (!effectiveGatewayGrants(grants.map((row) => row.grant), actor.currentMember.id, teams.map((team) => team.id)).length) continue
+            // Zero-touch LiteLLM keys: create this person's keys in the background on first use.
+            if (isLiteLlmProviderId(provider.provider_id) && await liteLlmOn()) scheduleLiteLlmProvisioning(provider, actor.currentMember.id)
+          }
+          summaries[index] = await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), manage)
+        } catch (error) {
+          // Drain active workers and stop scheduling before returning a failure.
+          // Catalog mutations must not continue after the failed list response.
+          failure ??= { error }
+        }
       }
-      summaries.push(await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), manage))
-    }
-    return c.json({ inferenceProviders: summaries })
+    }))
+    if (failure) throw failure.error
+    return c.json({ inferenceProviders: summaries.filter((summary) => summary !== null) })
     } catch (error) { return respond(c, error) }
   })
 
