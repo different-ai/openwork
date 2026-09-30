@@ -45,8 +45,10 @@ have the new reporter on its base yet and cannot demonstrate a hosted run of
 the new reporter. Validate on a subsequent PR after enabling.
 
 To change the CI model without a PR, set the `WARDEN_MODEL` repository variable
-(`provider/model-id`, e.g. `openai/gpt-6-luna`). It replaces the `warden.toml`
-models for hosted runs; unset it to fall back to `warden.toml`.
+(`provider/model-id`, e.g. `openai/gpt-5.6-luna`). It replaces the `warden.toml`
+models for hosted runs; unset it to fall back to `warden.toml`. The model must
+be in the model catalog bundled with the pinned Warden action, or every chunk
+fails immediately with a misleading authentication error.
 
 The `warden-clearance` environment and App credentials are still used by
 release and other automation. Removing the Warden approval workflow does not
