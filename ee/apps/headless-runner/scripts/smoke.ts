@@ -30,7 +30,7 @@ const runner = new Runner({
   model:
     config.model.protocol === "anthropic"
       ? anthropicModel({ baseUrl: config.model.baseUrl, maxOutputTokens: config.model.maxOutputTokens })
-      : openAIModel({ baseUrl: config.model.baseUrl }),
+      : openAIModel({ baseUrl: config.model.baseUrl, maxOutputTokens: config.model.maxOutputTokens }),
   defaultModel: config.model.model,
   mcp: config.mcp ? remoteMcpConnector({ url: config.mcp.url, allowlist: config.mcp.toolAllowlist, reservedNames: FILE_TOOL_NAMES }) : undefined,
   limits: config.limits,

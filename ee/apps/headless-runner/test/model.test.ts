@@ -77,7 +77,7 @@ test("openai: chat completions, bearer auth, tool call arguments", async () => {
       usage: { prompt_tokens: 7, completion_tokens: 2 },
     }),
   ])
-  const model = openAIModel({ baseUrl: "https://gateway.example/api/v1", fetch: fetchImpl, sleep: noSleep })
+  const model = openAIModel({ baseUrl: "https://gateway.example/api/v1", maxOutputTokens: 1000, fetch: fetchImpl, sleep: noSleep })
   const step = await model.complete({ system: "sys", messages: history, tools: [], model: "gwm_o", apiKey: "ow_inf_key", signal: new AbortController().signal })
   assert.equal(captured[0].url, "https://gateway.example/api/v1/chat/completions")
   assert.equal(captured[0].headers.get("authorization"), "Bearer ow_inf_key")
@@ -85,25 +85,26 @@ test("openai: chat completions, bearer auth, tool call arguments", async () => {
   const body = captured[0].body
   assert.ok(typeof body === "object" && body !== null && "messages" in body && Array.isArray(body.messages))
   assert.deepEqual(body.messages.map((message: { role: string }) => message.role), ["system", "user", "assistant", "tool", "user"])
+  assert.ok("max_completion_tokens" in body && body.max_completion_tokens === 1000, "the output cap applies to OpenAI-format requests too")
 })
 
 test("retries transient gateway errors, not client errors", async () => {
   const ok = json({ choices: [{ message: { content: "fine" } }] })
   const retried = fakeFetch([json({}, 429), json({}, 503), ok])
-  const model = openAIModel({ baseUrl: "https://g.example", fetch: retried.fetchImpl, sleep: noSleep })
+  const model = openAIModel({ baseUrl: "https://g.example", maxOutputTokens: 1000, fetch: retried.fetchImpl, sleep: noSleep })
   const request = { system: "", messages: history, tools: [], model: "m", apiKey: "k", signal: new AbortController().signal }
   assert.equal((await model.complete(request)).text, "fine")
   assert.equal(retried.captured.length, 3)
 
   const rejected = fakeFetch([json({ error: "bad" }, 400)])
-  const strict = openAIModel({ baseUrl: "https://g.example", fetch: rejected.fetchImpl, sleep: noSleep })
+  const strict = openAIModel({ baseUrl: "https://g.example", maxOutputTokens: 1000, fetch: rejected.fetchImpl, sleep: noSleep })
   await assert.rejects(strict.complete(request), (error) => error instanceof ModelError && error.code === "model_http_400")
   assert.equal(rejected.captured.length, 1)
 })
 
 test("malformed tool arguments become a tool error instead of a crash", async () => {
   const { fetchImpl } = fakeFetch([json({ choices: [{ message: { tool_calls: [{ id: "t", function: { name: "x", arguments: "not json" } }] } }] })])
-  const model = openAIModel({ baseUrl: "https://g.example", fetch: fetchImpl, sleep: noSleep })
+  const model = openAIModel({ baseUrl: "https://g.example", maxOutputTokens: 1000, fetch: fetchImpl, sleep: noSleep })
   const step = await model.complete({ system: "", messages: history, tools: [], model: "m", apiKey: "k", signal: new AbortController().signal })
   assert.equal(step.toolCalls[0].inputError, "Tool arguments were not a JSON object.")
 })
