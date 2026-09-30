@@ -9,16 +9,15 @@ import {
 } from "@/components/descriptive-button"
 import { useMessageList } from "@/components/chat/message-list-provider"
 import { cn } from "@/lib/utils"
+import { t } from "@/i18n"
 import { useOrgRestrictions } from "@/react-app/domains/cloud/desktop-config-provider"
 import { BoltIcon, CubeIcon, DocumentChartBarIcon, GlobeAltIcon, SparklesIcon } from "@heroicons/react/24/solid"
 
-const CSV_PROMPT =
-  "Create a sample CSV file with 20 rows of fake customer data (name, email, company, revenue). Then show me a summary of the data."
+const CSV_PROMPT = () => t("ui.suggest_csv_prompt")
 
-const BROWSER_PROMPT =
-  "Open craigslist.org in the browser and search for couches for sale. Show me the top 5 results with prices."
+const BROWSER_PROMPT = () => t("ui.suggest_web_prompt")
 
-const ORGANIZATION_PROMPT_TITLES = ["Organization prompt 1", "Organization prompt 2", "Organization prompt 3"]
+const ORGANIZATION_PROMPT_TITLES = [() => t("ui.org_prompt_1"), () => t("ui.org_prompt_2"), () => t("ui.org_prompt_3")]
 
 export function resolveOrganizationPromptCardContent(input: {
   prompt: string
@@ -27,7 +26,7 @@ export function resolveOrganizationPromptCardContent(input: {
 }) {
   const title = input.description?.trim()
   return {
-    title: title || ORGANIZATION_PROMPT_TITLES[input.index] || "Organization prompt",
+    title: title || ORGANIZATION_PROMPT_TITLES[input.index]?.() || t("ui.org_prompt"),
     description: input.prompt,
     selectionPrompt: input.prompt,
   }
@@ -54,10 +53,10 @@ export function TaskSuggestions({ className }: TaskSuggestionsProps) {
     <div className={cn("@container flex flex-col gap-4 pt-1", className)}>
       <p className="text-muted-foreground font-medium select-none">
         {noProviders
-          ? "Connect a model provider to get started:"
+          ? t("ui.suggest_connect_provider_cta")
           : hasOrganizationPrompts
-            ? "Try one of your organization's prompts:"
-            : "Try one of these:"}
+            ? t("ui.suggest_org_prompts_cta")
+            : t("ui.suggest_try_these")}
       </p>
       <div className="grid min-w-0 gap-2 @lg:grid-cols-2 @2xl:grid-cols-3">
         {noProviders ? (
@@ -76,9 +75,9 @@ export function TaskSuggestions({ className }: TaskSuggestionsProps) {
               <BoltIcon className="size-6 text-blue-10" aria-hidden />
             </DescriptiveButtonIcon>
             <DescriptiveButtonContent>
-              <DescriptiveButtonTitle>Connect a model provider</DescriptiveButtonTitle>
+              <DescriptiveButtonTitle>{t("ui.suggest_connect_provider")}</DescriptiveButtonTitle>
               <DescriptiveButtonDescription>
-                Add an API key for Anthropic, OpenAI, Google, or others
+                {t("ui.suggest_connect_provider_desc")}
               </DescriptiveButtonDescription>
             </DescriptiveButtonContent>
           </DescriptiveButton>
@@ -105,23 +104,23 @@ export function TaskSuggestions({ className }: TaskSuggestionsProps) {
           })
         ) : (
           <>
-            <DescriptiveButton orientation="vertical" onClick={() => setPrompt(CSV_PROMPT)}>
+            <DescriptiveButton orientation="vertical" onClick={() => setPrompt(CSV_PROMPT())}>
               <DescriptiveButtonIcon>
                 <DocumentChartBarIcon className="size-6 text-green-10" aria-hidden />
               </DescriptiveButtonIcon>
               <DescriptiveButtonContent>
-                <DescriptiveButtonTitle>Edit a CSV</DescriptiveButtonTitle>
-                <DescriptiveButtonDescription>Create a sample spreadsheet</DescriptiveButtonDescription>
+                <DescriptiveButtonTitle>{t("ui.suggest_edit_csv")}</DescriptiveButtonTitle>
+                <DescriptiveButtonDescription>{t("ui.suggest_edit_csv_desc")}</DescriptiveButtonDescription>
               </DescriptiveButtonContent>
             </DescriptiveButton>
 
-            <DescriptiveButton orientation="vertical" onClick={() => setPrompt(BROWSER_PROMPT)}>
+            <DescriptiveButton orientation="vertical" onClick={() => setPrompt(BROWSER_PROMPT())}>
               <DescriptiveButtonIcon>
                 <GlobeAltIcon className="size-6 text-blue-10" aria-hidden />
               </DescriptiveButtonIcon>
               <DescriptiveButtonContent>
-                <DescriptiveButtonTitle>Browse the web</DescriptiveButtonTitle>
-                <DescriptiveButtonDescription>Search Craigslist for couches</DescriptiveButtonDescription>
+                <DescriptiveButtonTitle>{t("ui.suggest_browse_web")}</DescriptiveButtonTitle>
+                <DescriptiveButtonDescription>{t("ui.suggest_browse_web_desc")}</DescriptiveButtonDescription>
               </DescriptiveButtonContent>
             </DescriptiveButton>
 
@@ -139,8 +138,8 @@ export function TaskSuggestions({ className }: TaskSuggestionsProps) {
                 <CubeIcon className="size-6 text-amber-10" aria-hidden />
               </DescriptiveButtonIcon>
               <DescriptiveButtonContent>
-                <DescriptiveButtonTitle>Connect an extension</DescriptiveButtonTitle>
-                <DescriptiveButtonDescription>Add MCPs and integrations</DescriptiveButtonDescription>
+                <DescriptiveButtonTitle>{t("ui.suggest_connect_extension")}</DescriptiveButtonTitle>
+                <DescriptiveButtonDescription>{t("ui.suggest_connect_extension_desc")}</DescriptiveButtonDescription>
               </DescriptiveButtonContent>
             </DescriptiveButton>
           </>

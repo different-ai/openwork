@@ -82,10 +82,10 @@ function missingCloudMcpContextMessage(input: {
   client: OpenworkServerClient | null;
   workspaceId: string | null;
 }): string {
-  if (!input.workspaceId?.trim()) return "Select a workspace before running agent access diagnostics.";
-  if (!input.client?.baseUrl.trim()) return "Connect to the workspace server before running agent access diagnostics.";
-  if (!readDenSettings().activeOrgId?.trim()) return "Select an organization before running agent access diagnostics.";
-  return "Agent access diagnostics are unavailable for the current workspace.";
+  if (!input.workspaceId?.trim()) return t("ui.agent_diag_needs_workspace");
+  if (!input.client?.baseUrl.trim()) return t("ui.agent_diag_needs_server");
+  if (!readDenSettings().activeOrgId?.trim()) return t("ui.agent_diag_needs_org");
+  return t("ui.agent_diag_unavailable");
 }
 
 export function readyCloudMcpToolIds(health: OpenworkCloudMcpHealth | null): string[] {
@@ -456,7 +456,7 @@ function AgentAccessAdvanced(props: {
         onClick={props.onToggle}
       >
         {props.open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        Advanced diagnostics
+        {t("ui.advanced_diagnostics")}
       </button>
       {props.open ? (
         <div className="mt-3 space-y-3">
@@ -467,10 +467,10 @@ function AgentAccessAdvanced(props: {
               disabled={!props.canRun || props.busyLabel !== null}
               onClick={props.onRefreshEngine}
             >
-              {props.busyLabel === "refresh" ? "Refreshing engine…" : "Refresh engine connection"}
+              {props.busyLabel === "refresh" ? t("ui.refreshing_engine") : t("ui.refresh_engine_connection")}
             </Button>
             <Button variant="outline" size="sm" disabled={!props.health} onClick={props.onCopy}>
-              Copy sanitized diagnostic
+              {t("ui.copy_sanitized_diagnostic")}
             </Button>
           </div>
           <div className="text-xs text-dls-secondary">
@@ -498,7 +498,7 @@ function AgentAccessAdvanced(props: {
           )}
           {traceLines.length ? (
             <div>
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-dls-secondary">Direct probe steps</div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-dls-secondary">{t("ui.direct_probe_steps")}</div>
               <div className="mt-1 space-y-0.5 font-mono text-xs text-dls-text">
                 {traceLines.map((line, index) => <div key={`${index}-${line}`}>{line}</div>)}
               </div>
@@ -506,7 +506,7 @@ function AgentAccessAdvanced(props: {
           ) : null}
           {refreshLines.length ? (
             <div>
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-dls-secondary">Last engine refresh</div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-dls-secondary">{t("ui.last_engine_refresh")}</div>
               <div className="mt-1 space-y-0.5 font-mono text-xs text-dls-text">
                 {refreshLines.map((line, index) => <div key={`${index}-${line}`}>{line}</div>)}
               </div>
