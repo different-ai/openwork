@@ -688,6 +688,15 @@ function McpAppTileContent({
                 unavailableNotice="This artifact view is unavailable."
                 presentation="dashboard"
                 onRetry={run}
+                onAppToolResult={(result) => {
+                  // A failed call the App makes itself gets the same connection card as a failed launch.
+                  if (!currentDocument(state.lifetime) || !isRecord(result) || result.isError !== true) return;
+                  const connection = tileConnectionState(entry, result, launchArguments);
+                  if (!connection) return;
+                  clearDocument(connection);
+                  releaseLaunches();
+                  updateRefresh("idle");
+                }}
                 initialHeight={geometry.initialHeight ?? lastHeight.current}
                 onReady={() => { if (currentDocument(state.lifetime) && !state.lifetime.failed) setReadyDocument(state.lifetime); }}
                 onHeightChange={(height) => {

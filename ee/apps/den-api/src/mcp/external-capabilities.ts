@@ -576,6 +576,19 @@ export function buildExternalConnectionStatus(input: {
   }
 }
 
+/** The connection status for a set-up connection whose tools could not be listed. */
+function toolDiscoveryFailureStatus(connection: ConnectionStatusIdentity, error: unknown): ExternalConnectionStatus {
+  const message = upstreamErrorMessage(error)
+  const authErrorCode = externalMcpAuthErrorCode(error, message)
+  return buildExternalConnectionStatus({
+    connection,
+    state: authErrorCode ? "reauth_required" : "provider_error",
+    errorCode: authErrorCode ?? "provider_error",
+    message,
+    diagnostic: error instanceof ExternalMcpDiagnosticError ? error.diagnostic : undefined,
+  })
+}
+
 function statusMatch(input: {
   connection: ExternalMcpConnectionRow
   score: number
@@ -807,21 +820,13 @@ async function probeExternalMcpConnection(input: {
           ...externalMcpDiagnosticForLog(error, diagnostic.referenceId, "MCP_TOOL_DISCOVERY"),
         })
       }
-      const authErrorCode = externalMcpAuthErrorCode(error, message)
-      const state = authErrorCode ? "reauth_required" : "provider_error"
       add(statusMatch({
         connection,
         score,
         summary: `[${connection.name}] This connection is set up but returned an error (${message}).`,
         status: "error",
         hint: `${externalConnectionErrorHint(connection.name, error, message, connection.credentialMode)} ${CONNECTION_CARD_HINT}`,
-        connectionStatus: buildExternalConnectionStatus({
-          connection,
-          state,
-          errorCode: authErrorCode ?? "provider_error",
-          message,
-          diagnostic,
-        }),
+        connectionStatus: toolDiscoveryFailureStatus(connection, error),
       }))
     }
     return matches
@@ -1282,6 +1287,45 @@ export async function describeExternalCapability(input: {
     }
   }
   return { ok: true, inputSchema: tool.inputSchema, readOnly: providerMarksReadOnly(tool.annotations) }
+}
+
+/**
+ * Why a Workflow's required external tool is missing from the member's tool
+ * tree. Workflow tool discovery skips connections whose tools fail to list, so
+ * the same checks as a call plus one listing tell a broken connection apart
+ * from a tool the provider no longer offers. Null when neither explains it.
+ */
+export async function unavailableExternalCapabilityStatus(input: {
+  organizationId: string
+  member: McpMemberIdentity | null
+  connectionId: string
+  toolName: string
+  redirectUriBase: string
+}): Promise<ExternalConnectionStatus | null> {
+  const prepared = await prepareExternalCapability(input)
+  if (!prepared.ok) return "connectionStatus" in prepared ? prepared.connectionStatus ?? null : null
+  const { connection, member } = prepared
+  const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_SEARCH_LIFECYCLE_TIMEOUT_MS)
+  try {
+    const tools = await listExternalMcpTools(
+      connection,
+      redirectUriFor(input.redirectUriBase, connection.id),
+      member,
+      undefined,
+      deadline,
+      EXTERNAL_MCP_SEARCH_REQUEST_TIMEOUT_MS,
+    )
+    if (tools.some((tool) => tool.name === input.toolName)) return null
+    return buildExternalConnectionStatus({
+      connection,
+      state: "provider_error",
+      errorCode: "provider_error",
+      message: `"${connection.name}" no longer offers the ${input.toolName} tool.`,
+      actionOwner: "organization_admin",
+    })
+  } catch (error) {
+    return toolDiscoveryFailureStatus(connection, error)
+  }
 }
 
 /**

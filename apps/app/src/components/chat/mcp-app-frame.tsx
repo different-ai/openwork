@@ -333,6 +333,8 @@ export type McpAppSandboxViewProps = {
   /** Let the dashboard restore visible recovery controls if the sandbox fails. */
   onError?: () => void
   onRetry?: () => void
+  /** Sees each result of a call the App makes, so a host can swap in its own recovery UI. */
+  onAppToolResult?: (result: unknown) => void
 }
 
 /**
@@ -340,7 +342,7 @@ export type McpAppSandboxViewProps = {
  * bridges it to the workspace MCP App host. Chat messages and dashboard tiles
  * share this exact pipeline so rendering and diagnostics stay identical.
  */
-export function McpAppSandboxView({ origin, app, resolveLiveActions, toolName, inputArguments, result, connectionController, updateMode = "replace", onReady, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange, presentation = "inline", onError, onRetry }: McpAppSandboxViewProps) {
+export function McpAppSandboxView({ origin, app, resolveLiveActions, toolName, inputArguments, result, connectionController, updateMode = "replace", onReady, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange, presentation = "inline", onError, onRetry, onAppToolResult }: McpAppSandboxViewProps) {
   const openworkServerClient = origin.client
   const workspaceId = origin.workspaceId
   const readOnly = origin.readOnly
@@ -361,6 +363,8 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, toolName, i
   const signIn = useMcpAppSignIn(result)
   const reportToolResultRef = useRef(signIn.reportToolResult)
   reportToolResultRef.current = signIn.reportToolResult
+  const onAppToolResultRef = useRef(onAppToolResult)
+  onAppToolResultRef.current = onAppToolResult
   const toolDeliveryRef = useRef({ inputArguments, result })
   const deliverToolDataRef = useRef<(() => Promise<void>) | null>(null)
   const replacementInput = updateMode === "replace" ? inputArguments : null
@@ -533,7 +537,10 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, toolName, i
         const toolResult = connectionController
           ? await connectionController.callTool(actions, app, name, args, userInteraction)
           : standardMcpToolResult(await actions.callTool(name, args, userInteraction))
-        if (!disposed && !failed) reportToolResultRef.current(toolResult)
+        if (!disposed && !failed) {
+          reportToolResultRef.current(toolResult)
+          onAppToolResultRef.current?.(toolResult)
+        }
         return toolResult
       } catch (cause) {
         if (cause instanceof OpenworkServerError && ["missing_launch_context", "stale_launch_context", "inactive_session"].includes(cause.code)) {
