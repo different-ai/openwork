@@ -143,6 +143,8 @@ test('mixed-world specs: a prerequisite one case declares is never promoted to t
 test('registered case metadata names exact files, supported execution axes, and defaults', async () => {
   const entries = await catalog();
   assert.deepEqual(registeredCases.map(({ spec, id, engines }) => ({ spec, id, engines })), [
+    { spec: 'agent-child-messaging.e2e.test.ts', id: 'AGENT-CHILD-01', engines: ['v1', 'v2'] },
+    { spec: 'agent-child-messaging.e2e.test.ts', id: 'AGENT-CHILD-STOP', engines: ['v1', 'v2'] },
     { spec: 'opencode-v2-context-activity.e2e.test.ts', id: 'V2-CONTEXT-ACTIVITY', engines: ['v2'] },
     { spec: 'edit-running-message.e2e.test.ts', id: 'EDIT-BUSY', engines: ['v1', 'v2'] },
     { spec: 'opencode-v2-session-home.e2e.test.ts', id: 'HOME-01', engines: ['v2'] },

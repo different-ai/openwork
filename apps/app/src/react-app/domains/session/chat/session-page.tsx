@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { childOrigin, prepareChildReturn } from "@/lib/child-navigation";
 import { newSessionDraftOwnerKey } from "./new-session-destination";
 import { usePendingConversationStore } from "./pending-conversation-store";
 import { PendingConversationView } from "./pending-conversation";
@@ -1221,6 +1222,11 @@ export function SessionPage(props: SessionPageProps) {
     return null;
   }, [props.selectedSessionId, props.sidebar.workspaceSessionGroups]);
 
+  const returnFromChild = useCallback(() => {
+    if (!parentSessionLink) return;
+    prepareChildReturn(JSON.stringify([reactSessionBaseUrl, props.runtimeWorkspaceId, props.surface?.draftScope]), props.selectedSessionId!);
+    openSessionTab(parentSessionLink.workspaceId, parentSessionLink.sessionId);
+  }, [parentSessionLink, openSessionTab, reactSessionBaseUrl, props.runtimeWorkspaceId, props.surface?.draftScope, props.selectedSessionId]);
   const focusWorkbenchSessionControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "workbench.session.focus",
     label: "Focus an open session",
@@ -1450,7 +1456,7 @@ export function SessionPage(props: SessionPageProps) {
               onFiles={openArtifactRailPane}
               fileCount={artifactTargetCount}
               onSignIn={showCloudSignIn ? openCloudSignIn : undefined}
-              onParent={parentSessionLink ? () => openSessionTab(parentSessionLink.workspaceId, parentSessionLink.sessionId) : undefined}
+              onParent={parentSessionLink ? returnFromChild : undefined}
             />
           ) : undefined}
           extensionsActive={props.extensionsActive}
@@ -1492,7 +1498,7 @@ export function SessionPage(props: SessionPageProps) {
                         className="h-6 shrink-0 cursor-pointer gap-1 rounded-lg px-1.5 text-[12px] text-gray-10 transition-colors hover:bg-muted hover:text-foreground titlebar-no-drag"
                         data-parent-session-back={parentSessionLink.sessionId}
                         aria-label={`Back to ${parentSessionLink.title || "parent chat"}`}
-                        onClick={() => openSessionTab(parentSessionLink.workspaceId, parentSessionLink.sessionId)}
+                        onClick={returnFromChild}
                       >
                         <ArrowLeft size={14} />
                         <span className="max-w-40 truncate max-lg:hidden">
@@ -1819,6 +1825,9 @@ export function SessionPage(props: SessionPageProps) {
                             respondQuestion={props.respondQuestion}
                             safeStringify={props.safeStringify}
                             onOpenTarget={props.surface?.onOpenTarget ?? openTarget}
+                            sessionTitle={sessionTitleForId(props.sidebar.workspaceSessionGroups, props.selectedSessionId!, props.selectedWorkspaceId!)}
+                            parentSessionTitle={parentSessionLink?.title}
+                            onReturnToParent={parentSessionLink ? returnFromChild : undefined}
                             onOpenSubagentSession={openSubagentSession}
                           />
                         </div>
@@ -1893,7 +1902,23 @@ export function SessionPage(props: SessionPageProps) {
                                     workspaceRoot: splitPaneRuntime.workspaceRoot,
                                     workspaceType: splitPaneRuntime.workspaceType,
                                   }, target, options, sourceSessionId)}
-                                  onOpenSubagentSession={(sessionId) => openSessionTab(splitSession.workspaceId, sessionId)}
+                                  sessionTitle={splitSession.title}
+                                  onOpenSubagentSession={(sessionId) => {
+                                    openWorkbenchTab({ workspaceId: splitSession.workspaceId, sessionId,
+                                      title: sessionTitleForId(props.sidebar.workspaceSessionGroups, sessionId, splitSession.workspaceId) });
+                                    setWorkbenchSplit({ workspaceId: splitSession.workspaceId, sessionId });
+                                    focusWorkbenchPane("secondary");
+                                  }}
+                                  onReturnToParent={() => {
+                                    const scope = JSON.stringify([splitPaneRuntime.opencodeBaseUrl, splitPaneRuntime.runtimeWorkspaceId, splitPaneRuntime.surface.draftScope]);
+                                    const origin = childOrigin(scope, splitSession.sessionId);
+                                    const nativeParent = props.sidebar.workspaceSessionGroups.find(group => group.workspace.id === splitSession.workspaceId)?.sessions.find(session => session.id === splitSession.sessionId)?.parentID;
+                                    const parent = origin?.parentId ?? nativeParent;
+                                    if (parent) { openWorkbenchTab({ workspaceId: splitSession.workspaceId, sessionId: parent,
+                                      title: origin?.title ?? sessionTitleForId(props.sidebar.workspaceSessionGroups, parent, splitSession.workspaceId) });
+                                      setWorkbenchSplit({ workspaceId: splitSession.workspaceId, sessionId: parent });
+                                      focusWorkbenchPane("secondary"); }
+                                  }}
                                 />
                               </div>
                             ) : (

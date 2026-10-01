@@ -2287,7 +2287,7 @@ export function createClientV2(
       const promptResult = await request(
         "POST",
         `/api/session/${encodeURIComponent(parameters.sessionID)}/prompt`,
-        { text, ...(skills.length ? { skills } : {}) },
+        { text, ...(parameters.messageID ? { id: parameters.messageID } : {}), delivery: "steer", ...(skills.length ? { skills } : {}) },
         options?.signal,
       );
       return promptResult.response.ok ? successfulResult(promptResult, {}) : failedResult(promptResult);

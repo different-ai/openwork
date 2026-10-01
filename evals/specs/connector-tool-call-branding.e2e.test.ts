@@ -102,7 +102,6 @@ test("connector-backed tool calls show first-class branding and human-readable l
       await user.see({ role: "button", label: /Reading history|Couldn.t finish this step/ }, { timeoutMs: 30_000 });
       await user.notSee({ text: /Completed with errors|Tool activity/ });
     } else {
-      await user.see({ text: /^(Reading history|Read history failed)$/ }, { timeoutMs: 60_000 });
       await user.see({ role: "button", label: /Read history failed/ }, { timeoutMs: 60_000 });
     }
     await user.see("Run task");

@@ -60,6 +60,22 @@ describe("MCP status", () => {
 });
 
 describe("native conversation mutations", () => {
+  test("a busy child prompt forwards its stable admission identity with native steer delivery", async () => {
+    const originalFetch = globalThis.fetch;
+    let body: unknown;
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      if (request.url.endsWith("/prompt")) body = await request.json();
+      return new Response(null, { status: 204 });
+    };
+    try {
+      await createClientV2("http://localhost/opencode2", "/workspace", {}).session.promptAsync({
+        sessionID: "child", messageID: "stable-child-prompt", model: { providerID: "fixture", modelID: "model" }, parts: [{ type: "text", text: "Include version three." }],
+      });
+      expect(body).toEqual({ id: "stable-child-prompt", text: "Include version three.", delivery: "steer" });
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
   test("the first native assistant creation time replaces a local fallback and survives later steps", () => {
     const state = createV2EventTranslationState();
     const start = (timestamp?: number) => translateV2Event({ type: "session.text.started", data: {
@@ -198,7 +214,7 @@ describe("explicit native skill attachments", () => {
       const result = await createClientV2("http://localhost:4096/opencode2", "/workspace", {}).session.promptAsync({ sessionID: "ses_cloud", model: { providerID: "witness", modelID: "model" }, parts });
       expect(result.error).toBeUndefined();
       expect(requests.map(request => request.path)).toEqual(["/opencode2/api/session/ses_cloud/model", "/opencode2/api/session/ses_cloud/prompt"]);
-      expect(requests.at(-1)?.body).toEqual({ text: v2PromptText(parts) });
+      expect(requests.at(-1)?.body).toEqual({ text: v2PromptText(parts), delivery: "steer" });
       expect(v2PromptText(parts)).toContain(capability);
       expect(v2PromptText(parts)).toContain("openwork-cloud_");
     } finally { globalThis.fetch = originalFetch; }
@@ -221,7 +237,7 @@ describe("explicit native skill attachments", () => {
         sessionID: "ses_skills", model: { providerID: "witness", modelID: "model" }, parts,
       });
       expect(result.error).toBeUndefined();
-      expect(requests.at(-1)?.body).toEqual({ text: "Prepare a report [skill release]", skills: [{ id: "native-release" }] });
+      expect(requests.at(-1)?.body).toEqual({ text: "Prepare a report [skill release]", delivery: "steer", skills: [{ id: "native-release" }] });
     } finally { globalThis.fetch = originalFetch; }
   });
 
@@ -2040,7 +2056,7 @@ describe("OpenCode v2 client compatibility", () => {
       const request = await dispatched.promise;
       await delay(10);
       expect(settled).toBe(false);
-      expect(await request.clone().json()).toEqual({ text: "hello" });
+      expect(await request.clone().json()).toEqual({ text: "hello", delivery: "steer" });
       admission.resolve(response);
       const result = await pending;
       expect(result.error).toBeUndefined();
@@ -2611,7 +2627,7 @@ test("v2 prompts set the exact selected variant on the native model ref and omit
       { model: { providerID: "witness", id: "model" } },
     ]);
     expect(writes.filter((write) => write.path.endsWith("/prompt")).map((write) => write.body)).toEqual([
-      { text: "Hello" }, { text: "Hello" }, { text: "Hello" }, { text: "Hello" },
+      { text: "Hello", delivery: "steer" }, { text: "Hello", delivery: "steer" }, { text: "Hello", delivery: "steer" }, { text: "Hello", delivery: "steer" },
     ]);
   } finally { globalThis.fetch = originalFetch; }
 });
@@ -2789,7 +2805,7 @@ describe("v2 question forms", () => {
       expect((await client.session.promptAsync(parameters)).response.status).toBe(204);
       expect(requests.map((item) => item.method)).toEqual(["POST", "PUT", "POST"]);
       expect(requests[1]).toMatchObject({ path: "/opencode2/api/session/ses_side/instructions/entries/openwork-context", body: { value: parameters.system } });
-      expect(requests[2]?.body).toEqual({ text: "What is happening?" });
+      expect(requests[2]?.body).toEqual({ text: "What is happening?", delivery: "steer" });
       requests.length = 0; status = 503;
       expect((await client.session.promptAsync(parameters)).response.status).toBe(503);
       expect(requests.map((item) => item.method)).toEqual(["POST", "PUT"]);
