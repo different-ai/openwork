@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import { DashboardConnectionCard } from "./dashboard-connection-card";
-import { connectionCardPayloadFromChatToolResult } from "@/components/tools/error-attribution";
+import { appToolResultConnectionToolName, connectionCardFromMcpToolResult } from "@/components/tools/error-attribution";
 import type { ConnectionActionPayload } from "@openwork/types/connection-action-app";
 import { mcpAppResourceIdentity } from "@openwork/types/mcp-app";
 import { Play } from "lucide-react";
@@ -62,7 +62,7 @@ type TileState =
   | { phase: "idle"; revokeAutoLaunch?: boolean }
   | { phase: "loading" }
   | ReadyTileState
-  | { phase: "connection"; connection: ConnectionActionPayload; output: unknown }
+  | { phase: "connection"; connection: ConnectionActionPayload; output: unknown; toolName: string }
   | { phase: "closed" }
   | { phase: "error"; message: string; preservePrevious?: boolean };
 
@@ -136,20 +136,9 @@ function appMatchesEntry(app: OpenworkMcpAppResource, entry: DashboardMcpAppEntr
   return app.serverName === entry.serverName && app.toolName === entry.toolName && app.resourceUri === entry.resourceUri;
 }
 
-function tileConnectionState(entry: DashboardMcpAppEntry, value: unknown, args: Record<string, unknown>): Extract<TileState, { phase: "connection" }> | null {
-  const outputs: unknown[] = [value];
-  if (isRecord(value)) {
-    outputs.push(value.structuredContent, value._meta);
-    if (Array.isArray(value.content)) outputs.push(...value.content.filter(isRecord).filter(item => item.type === "text").map(item => item.text));
-  }
-  const matches = new Map<string, Extract<TileState, { phase: "connection" }>>();
-  for (const output of outputs) {
-    const connection = connectionCardPayloadFromChatToolResult(entry.projectedToolName, output, args);
-    if (connection) matches.set(connection.connectionId, {
-      phase: "connection", connection, output,
-    });
-  }
-  return matches.size === 1 ? matches.values().next().value ?? null : null;
+function tileConnectionState(entry: DashboardMcpAppEntry, value: unknown, args: Record<string, unknown>, toolName = entry.projectedToolName): Extract<TileState, { phase: "connection" }> | null {
+  const match = connectionCardFromMcpToolResult(toolName, value, args);
+  return match ? { phase: "connection", ...match, toolName } : null;
 }
 
 function invalidatesTileDocument(cause: unknown) {
@@ -663,7 +652,7 @@ function McpAppTileContent({
           </div>
         ) : null}
         {state.phase === "connection" ? <DashboardConnectionCard key={JSON.stringify([cacheScopeKey, state.connection.connectionId, nonce])}
-          toolName={entry.projectedToolName} toolCallId={`${entry.id}:${nonce}`} output={state.output}
+          toolName={state.toolName} toolCallId={`${entry.id}:${nonce}`} output={state.output}
           onConnected={run} /> : null}
         {state.phase === "error" ? (
           <p className="pt-3 text-xs text-muted-foreground" role="status">{state.message}</p>
@@ -691,7 +680,8 @@ function McpAppTileContent({
                 onAppToolResult={(result) => {
                   // A failed call the App makes itself gets the same connection card as a failed launch.
                   if (!currentDocument(state.lifetime) || !isRecord(result) || result.isError !== true) return;
-                  const connection = tileConnectionState(entry, result, launchArguments);
+                  const connection = tileConnectionState(entry, result, launchArguments,
+                    appToolResultConnectionToolName(state.app, entry.projectedToolName));
                   if (!connection) return;
                   clearDocument(connection);
                   releaseLaunches();

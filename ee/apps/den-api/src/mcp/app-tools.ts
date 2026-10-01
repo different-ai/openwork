@@ -9,6 +9,7 @@ import {
   CAPABILITY_SOURCE_KINDS,
   CAPABILITY_SOURCES,
   executeCapability,
+  liveArtifactConnectionFailure,
   type CapabilityLeaf,
   type CapabilityRegistryContext,
   type ExecuteCapabilityToolResult,
@@ -220,6 +221,7 @@ export async function callMcpAppTool(
       redirectUriBase: ctx.redirectUriBase,
       liveRuntime: timeZone ? { timeZone } : {},
       auditWorkflowExecution: workflowExecutionAudit(ctx),
+      describeUnavailable: (missing) => liveArtifactConnectionFailure(ctx, missing),
     })
     if (!result.ok) {
       const payload = Object.fromEntries(Object.entries(result).filter(([key]) => key !== "ok"))
