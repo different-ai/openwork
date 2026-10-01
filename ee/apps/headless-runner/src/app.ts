@@ -10,6 +10,8 @@ const createSessionBody = z
   .object({ title: z.string().max(200).optional(), instructions: z.string().max(20_000).optional() })
   .strict()
 const messageIdSchema = z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/)
+/** Caller-chosen session ids share the runner's `hs_` prefix so they can never collide with other ids. */
+const sessionIdSchema = z.string().regex(/^hs_[A-Za-z0-9_-]{8,96}$/)
 const sendBody = z
   .object({
     messageId: messageIdSchema,
@@ -61,6 +63,15 @@ export function createApp(input: {
     const body = createSessionBody.safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) return c.json({ error: "invalid_request", issues: body.error.issues }, 400)
     return c.json(store.createSession(body.data), 201)
+  })
+
+  app.put("/v1/sessions/:id", async (c) => {
+    const id = sessionIdSchema.safeParse(c.req.param("id"))
+    if (!id.success) return c.json({ error: "invalid_session_id" }, 400)
+    const body = createSessionBody.safeParse(await c.req.json().catch(() => ({})))
+    if (!body.success) return c.json({ error: "invalid_request", issues: body.error.issues }, 400)
+    const { session, created } = store.putSession(id.data, body.data)
+    return c.json(session, created ? 201 : 200)
   })
 
   app.get("/v1/sessions/:id", (c) => {

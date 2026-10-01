@@ -9,7 +9,7 @@ import {
   readOrganizationCapabilityOverrides,
 } from "../src/organization-capabilities.js"
 
-const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, auditLogs: false, orgManagedDashboards: false, appMcpServers: false, slackAssistant: false, slackAssistantHeadless: false, headlessAutomations: false, cloudBrowser: false }
+const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, auditLogs: false, orgManagedDashboards: false, appMcpServers: false, slackAssistant: false, slackAssistantHeadless: false, headlessAutomations: false, cloudBrowser: false, workbot: false }
 
 test("auditLogs accepts only canonical literal booleans and defaults off even for Enterprise", () => {
   expect(organizationCapabilityKeySchema.parse("auditLogs")).toBe("auditLogs")
@@ -198,4 +198,12 @@ test("the cloud browser is its own default-off platform capability", () => {
   const enabled = { capabilities: { cloudBrowser: true } }
   expect(normalizeOrganizationCapabilities(enabled)).toEqual({ ...defaultCapabilities, cloudBrowser: true })
   expect(readOrganizationCapabilityOverrides(JSON.stringify(enabled))).toEqual({ cloudBrowser: true })
+})
+
+test("Workbot is its own default-off platform capability", () => {
+  expect(organizationCapabilityKeySchema.parse("workbot")).toBe("workbot")
+  for (const value of [undefined, null, false, "true", 1, {}, []]) {
+    expect(organizationHasCapability({ capabilities: { workbot: value } }, "workbot")).toBe(false)
+  }
+  expect(normalizeOrganizationCapabilities({ capabilities: { workbot: true } })).toEqual({ ...defaultCapabilities, workbot: true })
 })

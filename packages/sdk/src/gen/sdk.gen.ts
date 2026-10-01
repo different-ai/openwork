@@ -495,6 +495,8 @@ import type {
   GetWellKnownOauthProtectedResourceResponses,
   GetWellKnownOpenidConfigurationApiAuthResponses,
   GetWellKnownOpenidConfigurationResponses,
+  GetWorkbotThreadErrors,
+  GetWorkbotThreadResponses,
   GoogleWorkspaceCreateCalendarEventBody,
   GoogleWorkspaceShareDriveFileBody,
   GoogleWorkspaceUpdateCalendarEventBody,
@@ -902,6 +904,8 @@ import type {
   PutV1McpConnectionsByKeyByExternalKeyResponses,
   PutV1TeamsByKeyByExternalKeyErrors,
   PutV1TeamsByKeyByExternalKeyResponses,
+  ReadWorkbotFileErrors,
+  ReadWorkbotFileResponses,
   RunAutomationNowErrors,
   RunAutomationNowResponses,
   SaveWorkflowErrors,
@@ -910,6 +914,10 @@ import type {
   SendGmailDraftResponses,
   SendMicrosoft365MailDraftErrors,
   SendMicrosoft365MailDraftResponses,
+  SendWorkbotMessageErrors,
+  SendWorkbotMessageResponses,
+  StopWorkbotErrors,
+  StopWorkbotResponses,
   TrashGmailMessageErrors,
   TrashGmailMessageResponses,
   UntrashGmailMessageErrors,
@@ -14284,6 +14292,86 @@ export class DenClient extends HeyApiClient {
       ThrowOnError
     >({
       url: "/v1/integrations/slack/{connectionId}/interactions",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Read my Workbot conversation
+   *
+   * The signed-in member's one Workbot conversation: their messages, answers, drafts and the schedules it set up.
+   */
+  public getWorkbotThread<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetWorkbotThreadResponses, GetWorkbotThreadErrors, ThrowOnError>({
+      url: "/v1/workbot",
+      ...options,
+    });
+  }
+
+  /**
+   * Send a message to Workbot
+   *
+   * Adds a message to the member's conversation. Messages sent while Workbot is working are answered in order.
+   */
+  public sendWorkbotMessage<ThrowOnError extends boolean = false>(
+    parameters: {
+      id: string;
+      text: string;
+      timeZone?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "id" },
+            { in: "body", key: "text" },
+            { in: "body", key: "timeZone" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<SendWorkbotMessageResponses, SendWorkbotMessageErrors, ThrowOnError>({
+      url: "/v1/workbot/messages",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Stop Workbot
+   *
+   * Stops the answer in progress and any messages waiting behind it.
+   */
+  public stopWorkbot<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).post<StopWorkbotResponses, StopWorkbotErrors, ThrowOnError>({
+      url: "/v1/workbot/stop",
+      ...options,
+    });
+  }
+
+  /**
+   * Open a Workbot draft
+   *
+   * The text of a draft Workbot wrote in the member's conversation.
+   */
+  public readWorkbotFile<ThrowOnError extends boolean = false>(
+    parameters: {
+      path: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "path" }] }]);
+    return (options?.client ?? this.client).get<ReadWorkbotFileResponses, ReadWorkbotFileErrors, ThrowOnError>({
+      url: "/v1/workbot/files/content",
       ...options,
       ...params,
     });

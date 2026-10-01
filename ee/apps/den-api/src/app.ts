@@ -1,6 +1,7 @@
 import "./load-env.js"
 import { registerSlackAssistantRoutes } from "./slack-assistant/routes.js"
 import { registerCloudBrowserRoutes } from "./cloud-browser/routes.js"
+import { registerWorkbotRoutes } from "./workbot/routes.js"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { swaggerUI } from "@hono/swagger-ui"
 import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
@@ -280,6 +281,7 @@ registerMeRoutes(app)
 registerAutomationRoutes(app, { enabled: env.automations.runtimeEnabled })
 registerOrgRoutes(app)
 registerSlackAssistantRoutes(app)
+registerWorkbotRoutes(app)
 registerVersionRoutes(app)
 registerWebhookRoutes(app)
 registerWorkerRoutes(app)
@@ -414,6 +416,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Worker Runtime", description: "Worker runtime inspection and upgrade routes." },
       { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },
       { name: "Automations", description: "Scheduled Automations, their runs, and desktop runner presence." },
+      { name: "Workbot", description: "The signed-in member's single Workbot conversation." },
       { name: "Workflows", description: "Saved Workflows (Code Mode scripts), their versions, snapshots, and views." },
       { name: "Workflow Runs", description: "Durable Workflow run history." },
       { name: "Codemode Runs", description: "Generated Artifact views produced by Code Mode runs." },

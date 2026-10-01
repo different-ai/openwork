@@ -142,6 +142,28 @@ export class Store {
     return session
   }
 
+  /**
+   * Creates the session under a caller-chosen id, or updates its title and
+   * instructions when it already exists. Lets a caller keep one durable
+   * conversation per person without storing the runner's id itself.
+   */
+  putSession(id: string, input: { title?: string; instructions?: string }): { session: Session; created: boolean } {
+    const existing = this.getSession(id)
+    const at = this.now()
+    if (!existing) {
+      this.db
+        .prepare("INSERT INTO sessions (id, title, instructions, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+        .run(id, input.title ?? "Untitled", input.instructions ?? "", at, at)
+    } else if ((input.title !== undefined && input.title !== existing.title) || (input.instructions !== undefined && input.instructions !== existing.instructions)) {
+      this.db
+        .prepare("UPDATE sessions SET title = ?, instructions = ?, updated_at = ? WHERE id = ?")
+        .run(input.title ?? existing.title, input.instructions ?? existing.instructions, at, id)
+    }
+    const session = this.getSession(id)
+    if (!session) throw new Error("session_missing_after_put")
+    return { session, created: !existing }
+  }
+
   getSession(id: string): Session | null {
     const row = this.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id)
     if (!row) return null

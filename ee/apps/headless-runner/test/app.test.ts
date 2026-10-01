@@ -85,6 +85,20 @@ test("lists the models a caller can pick", async () => {
   assert.equal((await app.request("/v1/models")).status, 401)
 })
 
+test("a caller-named session is created once, then updated in place", async () => {
+  const { call } = setup()
+  const id = "hs_wb_0123456789abcdef"
+  const created = await call("PUT", `/v1/sessions/${id}`, { title: "Workbot", instructions: "Be brief." })
+  assert.equal(created.status, 201)
+  assert.deepEqual(z.object({ id: z.string(), instructions: z.string() }).parse(await created.json()), { id, instructions: "Be brief." })
+  const updated = await call("PUT", `/v1/sessions/${id}`, { instructions: "Be very brief." })
+  assert.equal(updated.status, 200)
+  const read = z.object({ session: z.object({ title: z.string(), instructions: z.string() }) }).parse(await (await call("GET", `/v1/sessions/${id}`)).json())
+  assert.deepEqual(read.session, { title: "Workbot", instructions: "Be very brief." })
+  assert.equal((await call("PUT", "/v1/sessions/not-a-runner-id", {})).status, 400)
+  assert.equal((await call("PUT", "/v1/sessions/hs_short", {})).status, 400)
+})
+
 test("validates input and unknown sessions", async () => {
   const { call } = setup()
   assert.equal((await call("POST", "/v1/sessions/hs_missing/turns", { messageId: "m", prompt: "x" })).status, 404)

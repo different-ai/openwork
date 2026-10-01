@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   LibraryBig,
   LockKeyhole,
+  MessageCircle,
   ScrollText,
   Plug,
   SlidersHorizontal,
@@ -88,6 +89,9 @@ export function buildDashboardNavSections({
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
   const workItems: DashboardNavItem[] = [
+    ...(capabilities.workbot
+      ? [{ href: "/workbot", label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot" }]
+      : []),
     {
       href: orgSlug ? getLibraryRoute(orgSlug) : "#",
       label: "My Library",

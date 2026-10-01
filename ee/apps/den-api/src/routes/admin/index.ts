@@ -123,6 +123,7 @@ const updateOrganizationCapabilitiesSchema = z.object({
     slackAssistantHeadless: z.boolean().nullable().optional(),
     headlessAutomations: z.boolean().nullable().optional(),
     cloudBrowser: z.boolean().nullable().optional(),
+    workbot: z.boolean().nullable().optional(),
     gatewayDashboard: z.boolean().nullable().optional().meta({
       deprecated: true,
       description: "Accepted for compatibility only and ignored; AI Gateway no longer has an organization rollout override.",
@@ -141,6 +142,7 @@ const adminOrganizationCapabilitiesSchema = z.object({
   slackAssistantHeadless: z.boolean(),
   headlessAutomations: z.boolean(),
   cloudBrowser: z.boolean(),
+  workbot: z.boolean(),
   gatewayDashboard: z.literal(true).meta({
     deprecated: true,
     description: "Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.",
@@ -323,6 +325,7 @@ function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unkno
     slackAssistantHeadless: normalizeOrganizationCapabilities(metadata).slackAssistantHeadless,
     headlessAutomations: normalizeOrganizationCapabilities(metadata).headlessAutomations,
     cloudBrowser: normalizeOrganizationCapabilities(metadata).cloudBrowser,
+    workbot: normalizeOrganizationCapabilities(metadata).workbot,
     gatewayDashboard: true,
   }
 }
@@ -362,7 +365,7 @@ function readUnmanagedCapabilityMetadata(metadata: Record<string, unknown>): Rec
     // OpenWork Web access instead), so stale stored overrides stay managed
     // (dropped on the next capabilities write) instead of passing through as
     // unmanaged metadata.
-    if (key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "auditLogs" && key !== "orgManagedDashboards" && key !== "appMcpServers" && key !== "slackAssistant" && key !== "slackAssistantHeadless" && key !== "headlessAutomations" && key !== "cloudBrowser" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
+    if (key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "auditLogs" && key !== "orgManagedDashboards" && key !== "appMcpServers" && key !== "slackAssistant" && key !== "slackAssistantHeadless" && key !== "headlessAutomations" && key !== "cloudBrowser" && key !== "workbot" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
       capabilities[key] = value
     }
   }
@@ -2164,6 +2167,10 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         const cloudBrowser = body.data.capabilities.cloudBrowser
         if (cloudBrowser === null) delete capabilities.cloudBrowser
         else if (cloudBrowser !== undefined) capabilities.cloudBrowser = cloudBrowser
+
+        const workbot = body.data.capabilities.workbot
+        if (workbot === null) delete capabilities.workbot
+        else if (workbot !== undefined) capabilities.workbot = workbot
 
         return {
           ...current,

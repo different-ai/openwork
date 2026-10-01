@@ -183,6 +183,7 @@ export type AdminOrganizationsPageResponse = {
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
       cloudBrowser: boolean;
+      workbot: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -267,6 +268,7 @@ export type AdminOverviewResponse = {
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
       cloudBrowser: boolean;
+      workbot: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -1550,7 +1552,8 @@ export type CapabilityDisabledError = {
     | "slackAssistant"
     | "slackAssistantHeadless"
     | "headlessAutomations"
-    | "cloudBrowser";
+    | "cloudBrowser"
+    | "workbot";
 };
 
 export type CreateInstallLinkRequest = {
@@ -4603,6 +4606,59 @@ export type WebOriginNotFoundError = {
 
 export type RemoveWebOriginNotFound = WebOriginNotFoundError | WebOriginOrganizationNotFoundError;
 
+export type WorkbotTurn = {
+  id: string;
+  text: string;
+  sentAt: number | null;
+  finishedAt: number | null;
+  status: "queued" | "working" | "done" | "failed" | "stopped";
+  reply: string;
+  activity: string | null;
+  steps: Array<{
+    label: string;
+    status: "running" | "done" | "error";
+  }>;
+  files: Array<string>;
+  automationIds: Array<string>;
+  browser: {
+    used: boolean;
+    handedOff: boolean;
+    site: string | null;
+  };
+  error: string | null;
+};
+
+export type WorkbotAutomation = {
+  id: string;
+  name: string;
+  state: string;
+  schedule: {
+    [key: string]: unknown;
+  };
+  nextDueAt: number | null;
+  runs: Array<{
+    id: string;
+    status: string;
+    finishedAt: number | null;
+    resultSummary: string | null;
+    error: string | null;
+  }>;
+};
+
+export type WorkbotThread =
+  | {
+      available: false;
+      reason: "workbot_not_enabled" | "workbot_runner_unavailable";
+    }
+  | {
+      available: true;
+      name: string;
+      organizationName: string;
+      status: "idle" | "busy";
+      turns: Array<WorkbotTurn>;
+      automations: Array<WorkbotAutomation>;
+    };
+
 export type DenAppVersionResponse = {
   minAppVersion: string;
   latestAppVersion: string;
@@ -5527,6 +5583,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
       cloudBrowser: boolean;
+      workbot: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -5594,6 +5651,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
       cloudBrowser: boolean;
+      workbot: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -27382,6 +27440,145 @@ export type PostV1IntegrationsSlackByConnectionIdInteractionsResponses = {
 
 export type PostV1IntegrationsSlackByConnectionIdInteractionsResponse =
   PostV1IntegrationsSlackByConnectionIdInteractionsResponses[keyof PostV1IntegrationsSlackByConnectionIdInteractionsResponses];
+
+export type GetWorkbotThreadData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/workbot";
+};
+
+export type GetWorkbotThreadErrors = {
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+};
+
+export type GetWorkbotThreadError = GetWorkbotThreadErrors[keyof GetWorkbotThreadErrors];
+
+export type GetWorkbotThreadResponses = {
+  /**
+   * The conversation, or why Workbot is unavailable.
+   */
+  200: WorkbotThread;
+};
+
+export type GetWorkbotThreadResponse = GetWorkbotThreadResponses[keyof GetWorkbotThreadResponses];
+
+export type SendWorkbotMessageData = {
+  body: {
+    id: string;
+    text: string;
+    timeZone?: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/workbot/messages";
+};
+
+export type SendWorkbotMessageErrors = {
+  /**
+   * Invalid message.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Workbot is unavailable.
+   */
+  409: {
+    error: string;
+  };
+  /**
+   * Too many messages are waiting, or sent too quickly.
+   */
+  429: {
+    error: "too_many_queued" | "rate_limited";
+    retryAfter?: number;
+  };
+};
+
+export type SendWorkbotMessageError = SendWorkbotMessageErrors[keyof SendWorkbotMessageErrors];
+
+export type SendWorkbotMessageResponses = {
+  /**
+   * Accepted.
+   */
+  202: {
+    ok: true;
+  };
+};
+
+export type SendWorkbotMessageResponse = SendWorkbotMessageResponses[keyof SendWorkbotMessageResponses];
+
+export type StopWorkbotData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/workbot/stop";
+};
+
+export type StopWorkbotErrors = {
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Workbot is unavailable.
+   */
+  409: {
+    error: string;
+  };
+};
+
+export type StopWorkbotError = StopWorkbotErrors[keyof StopWorkbotErrors];
+
+export type StopWorkbotResponses = {
+  /**
+   * Stopped.
+   */
+  200: {
+    stopped: boolean;
+  };
+};
+
+export type StopWorkbotResponse = StopWorkbotResponses[keyof StopWorkbotResponses];
+
+export type ReadWorkbotFileData = {
+  body?: never;
+  path?: never;
+  query: {
+    path: string;
+  };
+  url: "/v1/workbot/files/content";
+};
+
+export type ReadWorkbotFileErrors = {
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * No such draft.
+   */
+  404: {
+    error: string;
+  };
+};
+
+export type ReadWorkbotFileError = ReadWorkbotFileErrors[keyof ReadWorkbotFileErrors];
+
+export type ReadWorkbotFileResponses = {
+  /**
+   * The draft.
+   */
+  200: string;
+};
+
+export type ReadWorkbotFileResponse = ReadWorkbotFileResponses[keyof ReadWorkbotFileResponses];
 
 export type GetV1AppVersionData = {
   body?: never;

@@ -22,6 +22,7 @@ import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalid
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { organizationHasCapability, organizationManagedDashboardsEnabled } from "../../organization-capabilities.js"
+import { workbotEnabled } from "../../workbot/service.js"
 import { appMcpServersEnabled } from "../../mcp-app-rollout.js"
 import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
 import { getOpenWorkWebAccess } from "../../stripe-billing.js"
@@ -747,6 +748,8 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           // while the platform-admin complimentary grant enables only this
           // organization when the deployment switch is off.
           openworkWeb: isOpenWorkWebAvailableForOrganization(payload.organization.metadata),
+          // Workbot is per-organization and default-off, and needs the headless runner.
+          workbot: workbotEnabled(payload.organization.metadata),
           ...(cloudEnabled ? { cloud: true } : {}),
         },
         authMethods: {

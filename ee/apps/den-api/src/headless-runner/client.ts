@@ -139,6 +139,31 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
     },
 
     /**
+     * Creates the session under a caller-chosen id (`hs_…`), or updates its
+     * title and instructions. One durable conversation per person needs no
+     * Den-side mapping: the caller derives the id.
+     */
+    async putSession(id: string, input: { title?: string; instructions?: string } = {}): Promise<RunnerResult<{ id: string; created: boolean }>> {
+      const { status, payload } = await request(deps, "PUT", sessionPath(id), {
+        ...(input.title ? { title: input.title.slice(0, 200) } : {}),
+        ...(input.instructions !== undefined ? { instructions: input.instructions.slice(0, 20_000) } : {}),
+      })
+      const saved = z.object({ id: z.string() }).safeParse(payload)
+      if ((status !== 200 && status !== 201) || !saved.success) return { ok: false, status, error: errorCode(payload, `headless_put_${status}`) }
+      return { ok: true, value: { id: saved.data.id, created: status === 201 } }
+    },
+
+    /** Reads one scratch file the agent wrote in the session. */
+    async readFile(sessionId: string, path: string): Promise<RunnerResult<{ content: string }>> {
+      const response = await deps.fetch(`${deps.config.url}${sessionPath(sessionId)}/files/content?path=${encodeURIComponent(path)}`, {
+        headers: { authorization: `Bearer ${deps.config.token}` },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+      if (response.status !== 200) return { ok: false, status: response.status, error: `headless_file_${response.status}` }
+      return { ok: true, value: { content: await response.text() } }
+    },
+
+    /**
      * Sends one turn with a fresh member-scoped MCP token. Re-sending the same
      * messageId never starts a second turn; it resumes an interrupted one.
      */

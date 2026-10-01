@@ -65,6 +65,16 @@ test.each([true, false, null, "true", 1])("public creation cannot set platform-m
   }
 })
 
+test.each([true, false, null, "true", 1])("public creation cannot set platform-managed workbot to %s", async (value) => {
+  const metadata = { capabilities: { workbot: value } }
+  for (const input of [metadata, JSON.stringify(metadata)]) {
+    await expect(beforeCreate(input)).rejects.toMatchObject({
+      status: "FORBIDDEN",
+      body: { message: "capabilities.workbot is reserved for internal platform administration." },
+    })
+  }
+})
+
 test.each([true, false, null, "true", 1])("public creation cannot set platform-managed headlessAutomations to %s", async (value) => {
   const metadata = { capabilities: { headlessAutomations: value } }
   for (const input of [metadata, JSON.stringify(metadata)]) {
