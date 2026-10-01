@@ -12,7 +12,7 @@
   "dependencies": {
     "@openwork/freestyle": "workspace:*",
     "@openwork/review": "workspace:*",
-    "next": "16.3.3",
+    "next": "16.3.6",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

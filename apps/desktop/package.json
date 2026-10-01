@@ -49,14 +49,14 @@
     "jsonc-parser": "^3.2.1",
     "minimatch": "^10.2.5",
     "node-pty": "npm:@lydell/node-pty@1.2.0-beta.12",
-    "undici": "6.28.0",
+    "undici": "6.28.1",
     "yaml": "^2.9.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@electron/asar": "^3.4.1",
     "@electron/rebuild": "^4.2.0",
-    "electron": "^43.2.0",
+    "electron": "^43.7.5",
     "electron-builder": "^26.15.3",
     "electron-devtools-installer": "^4.0.0"
   },
