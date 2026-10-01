@@ -7,6 +7,8 @@ import { resolveForkBoundaryId } from "../src/react-app/domains/session/sync/tra
 import {
   mergeSnapshotAndLiveMessages,
   mergeSnapshotIntoCachedMessages,
+  orderMessageParents,
+  upsertMessageByChronology,
 } from "../src/react-app/domains/session/sync/message-merge";
 
 function snapshotWithHistory(): OpenworkSessionSnapshot {
@@ -49,6 +51,26 @@ function message(id: string, role: "user" | "assistant", text: string, created: 
     parts: [{ type: "text", text, state: "done" }],
   };
 }
+
+test("a fast reply stays after its native prompt when the acknowledgement arrives last", () => {
+  const user = message("fast-prompt", "user", "Two words?", 10);
+  const reply = { ...message("fast-reply", "assistant", "Version three.", 10), metadata: { opencode: { created: 10, parentID: user.id } } };
+  const arrived = upsertMessageByChronology([reply], user);
+  expect(arrived.map(message => message.id)).toEqual([user.id, reply.id]);
+  const lateHeader = upsertMessageByChronology([reply, { ...user, metadata: undefined }], user);
+  expect(lateHeader).toEqual(arrived);
+  expect(mergeSnapshotAndLiveMessages([reply, user], [])).toEqual(arrived);
+  expect(mergeSnapshotIntoCachedMessages([reply, user], [])).toEqual(arrived);
+  expect(orderMessageParents(arrived)).toBe(arrived);
+});
+
+test("reply ancestry never invents a parent or changes native timestamps", () => {
+  const unrelated = message("other-prompt", "user", "Other prompt", 20);
+  const reply = { ...message("orphan-reply", "assistant", "Recorded answer", 10), metadata: { opencode: { created: 10, parentID: "missing" } } };
+  const original = [reply, unrelated];
+  expect(orderMessageParents(original)).toBe(original);
+  expect(reply.metadata.opencode.created).toBe(10);
+});
 
 for (const { name, merge } of [
   {

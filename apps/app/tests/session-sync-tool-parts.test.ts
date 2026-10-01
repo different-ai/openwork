@@ -190,6 +190,8 @@ describe("tool part mapper", () => {
       opencode: { partId: "part-write" },
       openwork: {
         sourcePartId: "part-write",
+        toolStartedAt: 1,
+        toolEndedAt: 2,
         mcpResult: {
           ...(isError === undefined ? {} : { isError }),
           content: [{ type: "text", text: "Fallback" }],
@@ -224,7 +226,7 @@ describe("tool part mapper", () => {
 
     expect(parseDynamicToolUIPart(completed)?.callProviderMetadata).toEqual({
       opencode: { partId: "part-task" },
-      openwork: { sourcePartId: "part-task", childSessionId: "ses_child_1", toolStartedAt: 1 },
+      openwork: { sourcePartId: "part-task", childSessionId: "ses_child_1", toolStartedAt: 1, toolEndedAt: 2 },
     });
   });
 
@@ -235,7 +237,7 @@ describe("tool part mapper", () => {
 
     expect(parseDynamicToolUIPart(part)?.callProviderMetadata).toEqual({
       opencode: { partId: "part-write" },
-      openwork: { sourcePartId: "part-write" },
+      openwork: { sourcePartId: "part-write", toolStartedAt: 1, toolEndedAt: 2 },
     });
   });
 

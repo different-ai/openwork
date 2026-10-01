@@ -14,6 +14,16 @@ function runningPart(toolCallId: string, callProviderMetadata?: DynamicToolUIPar
   };
 }
 
+test("unavailable native timing cannot inherit a cached duration from an earlier call identity", () => {
+  const id = "reused-unknown-timing";
+  getToolCallStartedAt(runningPart(id, { openwork: { toolStartedAt: 1_000 } }));
+  const completed: DynamicToolUIPart = { ...runningPart(id), state: "output-available", output: "Done" };
+  expect(trackToolCallDuration(completed)).not.toBeNull();
+  const unavailable = { openwork: { timingUnavailable: true } };
+  expect(getToolCallStartedAt(runningPart(id, unavailable))).toBeNull();
+  expect(trackToolCallDuration({ ...completed, callProviderMetadata: unavailable })).toBeNull();
+});
+
 describe("formatElapsedSeconds", () => {
   test("shows whole seconds below a minute", () => {
     expect(formatElapsedSeconds(0)).toBe("0s");

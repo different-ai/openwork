@@ -248,6 +248,9 @@ const V2_TERMINAL_SESSION_LIMIT = 256;
 
 export type V2EventTranslationState = {
   streams: Map<string, TextStream>;
+  messageStarts: Map<string, number>;
+  nativeMessageStarts: Set<string>;
+  modelsByMessage: Map<string, Record<string, unknown>>;
   // Null marks a completed call until its execution ends; late events are no-ops.
   tools: Map<string, ToolStream | null>;
   latestStreamKeyBySession: Map<string, string>;
@@ -593,6 +596,11 @@ function mapV2ToolPart(
   const end = readNumber(time, "completed") ?? start;
   const title = readString(state, "title") ?? tool;
   const metadata = toolMetadata(sourceTool, readRecord(state, "metadata") ?? {}, sessionID, messageID, callID, taskSessions);
+  // SDK compatibility requires a numeric time pair. Do not present its
+  // fallback as an observed duration when old history lacks native timing.
+  if (readNumber(time, "ran") === undefined || ((status === "completed" || status === "error") && readNumber(time, "completed") === undefined)) {
+    metadata.openworkToolTimingUnavailable = true;
+  }
   const base: Omit<ToolPart, "state"> = {
     id: callID,
     messageID,
@@ -1157,6 +1165,9 @@ function clearV2SessionTranslation(state: V2EventTranslationState, sessionID: st
 export function createV2EventTranslationState(): V2EventTranslationState {
   return {
     streams: new Map(),
+    messageStarts: new Map(),
+    nativeMessageStarts: new Set(),
+    modelsByMessage: new Map(),
     tools: new Map(),
     latestStreamKeyBySession: new Map(),
     nextOrdinalByMessage: new Map(),
@@ -1192,7 +1203,40 @@ function updateToolStreamMetadata(stream: ToolStream, properties: Record<string,
   }
 }
 
-export function translateV2Event(
+export function translateV2Event(value: unknown, state: V2EventTranslationState): OpencodeEvent[] | null {
+  if (isRecord(value)) {
+    const properties = eventProperties(value);
+    const sessionID = readSessionID(properties);
+    const model = readRecord(properties, "model");
+    const assistantID = readString(properties, "assistantMessageID");
+    if (sessionID && model && assistantID) state.modelsByMessage.set(`${sessionID}:${assistantID}`, model);
+  }
+  return translateV2EventInternal(value, state)?.map(event => {
+    if (event.type !== "message.updated") return event;
+    const info = readRecord(event.properties, "info");
+    const id = readString(info, "id");
+    const sessionID = readString(info, "sessionID");
+    const time = readRecord(info, "time");
+    const created = readNumber(time, "created");
+    if (!info || !id || !sessionID || created === undefined) return event;
+    const key = `${sessionID}:${id}`;
+    const nativeTime = isRecord(value) ? readNumber(eventProperties(value), "timestamp") ?? readNumber(value, "created") : undefined;
+    const first = !state.nativeMessageStarts.has(key) && nativeTime !== undefined ? nativeTime : state.messageStarts.get(key) ?? created;
+    state.messageStarts.set(key, first);
+    if (nativeTime !== undefined) state.nativeMessageStarts.add(key);
+    // Model selection belongs to a native assistant identity. A replayed
+    // historical reply must never inherit the session's current selection.
+    if (state.modelsByMessage.size > 2_000) state.modelsByMessage.delete(state.modelsByMessage.keys().next().value!);
+    if (state.messageStarts.size > 2_000) {
+      const oldest = state.messageStarts.keys().next().value!;
+      state.messageStarts.delete(oldest); state.nativeMessageStarts.delete(oldest);
+    }
+    return { ...event, properties: { ...readRecord(event, "properties"), info: { ...info, time: { ...time, created: first },
+      ...(info.role === "assistant" && state.modelsByMessage.has(key) ? { model: state.modelsByMessage.get(key) } : {}) } } } as OpencodeEvent;
+  }) ?? null;
+}
+
+function translateV2EventInternal(
   value: unknown,
   state: V2EventTranslationState,
 ): OpencodeEvent[] | null {

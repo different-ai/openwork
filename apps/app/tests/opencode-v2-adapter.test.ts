@@ -60,6 +60,26 @@ describe("MCP status", () => {
 });
 
 describe("native conversation mutations", () => {
+  test("the first native assistant creation time replaces a local fallback and survives later steps", () => {
+    const state = createV2EventTranslationState();
+    const start = (timestamp?: number) => translateV2Event({ type: "session.text.started", data: {
+      sessionID: "s", assistantMessageID: "m", ...(timestamp === undefined ? {} : { timestamp }),
+    } }, state)?.find(event => event.type === "message.updated");
+    start();
+    expect(start(1_000)).toMatchObject({ properties: { info: { time: { created: 1_000 } } } });
+    expect(start(3_000)).toMatchObject({ properties: { info: { time: { created: 1_000 } } } });
+  });
+
+  test("a session model switch does not assign the current model to an older unknown reply", () => {
+    const state = createV2EventTranslationState();
+    translateV2Event({ type: "session.model.selected", data: { sessionID: "s", model: { providerID: "p", modelID: "new" } } }, state);
+    const old = translateV2Event({ type: "session.text.started", data: { sessionID: "s", assistantMessageID: "old", timestamp: 1_000 } }, state);
+    const info = old?.find(event => event.type === "message.updated")?.properties.info;
+    expect(info).not.toHaveProperty("model");
+    const current = translateV2Event({ type: "session.text.started", data: { sessionID: "s", assistantMessageID: "current", timestamp: 2_000, model: { providerID: "p", modelID: "new" } } }, state);
+    expect(current?.find(event => event.type === "message.updated")).toMatchObject({ properties: { info: { model: { providerID: "p", modelID: "new" } } } });
+  });
+
   test("fork excludes the selected boundary and preserves a root conversation", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Request[] = [];
@@ -1536,7 +1556,7 @@ describe("OpenCode v2 client compatibility", () => {
       ] as const) {
         const data = { ...identity, ordinal };
         const started = translateV2Event({ type: `session.${kind}.started`, created: start, data }, state);
-        expect(started?.[0]).toMatchObject({ properties: { info: { time: { created: start } } } });
+        expect(started?.[0]).toMatchObject({ properties: { info: { time: { created: 10 } } } });
         expect(started?.[1]).toMatchObject({ properties: { part: { id: parts?.[index]?.id, type: kind, text: "" } } });
         translateV2Event({ type: `session.${kind}.delta`, data: { ...data, delta: "partial" } }, state);
         const ended = { type: `session.${kind}.ended`, created: end, data: { ...data, text } };

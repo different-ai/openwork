@@ -1,5 +1,7 @@
 /** @jsxImportSource react */
 import type { UIMessage } from "ai";
+import { projectedMessageMetadata, reasoningProviderMetadata } from "../../../../lib/session-run";
+import { orderMessageParents } from "./message-merge";
 import { replyModelFromInfo } from "./reply-model";
 import type { FilePart, Part, TextPart, ToolPart } from "@opencode-ai/sdk/v2/client";
 
@@ -181,12 +183,7 @@ export function snapshotToUIMessages(snapshot: Pick<OpenworkSessionSnapshot, "me
     const uiMessage = {
       id: message.info.id,
       role: message.info.role,
-      metadata: { opencode: {
-        ...(typeof created === "number" ? { created } : {}),
-        ...(typeof completed === "number" ? { completed } : {}),
-        ...(typeof parentID === "string" ? { parentID } : {}),
-        ...(replyModelFromInfo(message.info) ? { replyModel: replyModelFromInfo(message.info) } : {}),
-      } },
+      metadata: projectedMessageMetadata({ ...message.info, replyModel: replyModelFromInfo(message.info) }),
       parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
         if (part.type === "text") {
           const mapped = textPartToUIPart(part);
@@ -197,7 +194,7 @@ export function snapshotToUIMessages(snapshot: Pick<OpenworkSessionSnapshot, "me
             type: "reasoning",
             text: getTextPartValue(part),
             state: "done" as const,
-            providerMetadata: { opencode: { partId: part.id } },
+            providerMetadata: reasoningProviderMetadata(part),
           }];
         }
         if (part.type === "file") {
@@ -236,6 +233,7 @@ export function snapshotToUIMessages(snapshot: Pick<OpenworkSessionSnapshot, "me
     snapshotMessageCache.set(message, result);
     return result;
   });
-  snapshotMessagesCache.set(snapshot.messages, messages);
-  return messages;
+  const ordered = orderMessageParents(messages);
+  snapshotMessagesCache.set(snapshot.messages, ordered);
+  return ordered;
 }

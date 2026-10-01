@@ -14,6 +14,10 @@ const startedAtByCallId = new Map<string, number>()
 const durationByCallId = new Map<string, number>()
 
 export function trackToolCallDuration(part: AnyToolPart): string | null {
+  if (part.callProviderMetadata?.openwork?.timingUnavailable === true) return null
+  const start = part.callProviderMetadata?.openwork?.toolStartedAt
+  const end = part.callProviderMetadata?.openwork?.toolEndedAt
+  if (typeof start === "number" && typeof end === "number") return Number.isFinite(start) && Number.isFinite(end) && end >= start ? formatToolCallDuration(end - start) : null
   const callId = part.toolCallId
   const frozen = durationByCallId.get(callId)
   if (frozen !== undefined) return formatToolCallDuration(frozen)
@@ -37,6 +41,7 @@ export function trackToolCallDuration(part: AnyToolPart): string | null {
  * A restored engine part without timing stays explicitly unknown.
  */
 export function getToolCallStartedAt(part: AnyToolPart): number | null {
+  if (part.callProviderMetadata?.openwork?.timingUnavailable === true) return null
   if (!isToolPartInFlight(part)) return null
   const callId = part.toolCallId
   const persisted = part.callProviderMetadata?.openwork?.toolStartedAt

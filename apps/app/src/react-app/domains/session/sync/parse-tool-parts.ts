@@ -71,15 +71,17 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
   const childSessionId = part.tool === "task" && typeof stateMetadata.sessionId === "string" && stateMetadata.sessionId.trim()
     ? stateMetadata.sessionId.trim()
     : null;
-  const toolStartedAt = (part.tool === "task" || part.metadata?.openworkV2CodeMode === true) && "time" in part.state && typeof part.state.time?.start === "number"
+  const toolStartedAt = stateMetadata.openworkToolTimingUnavailable !== true && "time" in part.state && typeof part.state.time?.start === "number"
     && Number.isFinite(part.state.time.start)
     ? part.state.time.start
     : null;
   const openwork = {
+    ...(stateMetadata.openworkToolTimingUnavailable === true ? { timingUnavailable: true } : {}),
     ...(part.id !== part.callID ? { sourcePartId: part.id } : {}),
     ...(mcpResult ? { mcpResult } : {}),
     ...(childSessionId ? { childSessionId } : {}),
     ...(toolStartedAt === null ? {} : { toolStartedAt }),
+    ...(stateMetadata.openworkToolTimingUnavailable !== true && "time" in part.state && "end" in part.state.time && typeof part.state.time.end === "number" && Number.isFinite(part.state.time.end) ? { toolEndedAt: part.state.time.end } : {}),
     ...(part.metadata?.openworkV2CodeMode === true ? {
       codeMode: {
         calls: Array.isArray(stateMetadata.toolCalls) && isJsonValue(stateMetadata.toolCalls) ? stateMetadata.toolCalls : [],

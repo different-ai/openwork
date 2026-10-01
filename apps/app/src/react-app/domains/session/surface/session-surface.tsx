@@ -84,6 +84,7 @@ import { SessionDebugPanel } from "./debug-panel";
 import { runSessionBranchAction, useSessionBranchAction } from "./session-branch-action";
 import { deriveComposerHistory, deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
 import { pendingDraftTextParts, pendingMessageParts, useDisplayedMessages } from "./use-displayed-messages";
+import { orderMessageParents } from "../sync/message-merge";
 import {
   ADMISSION_OUTCOME_GRACE_MS,
   createSingleFlight,
@@ -1186,6 +1187,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
     runtimeWorkspaceId: props.workspaceId,
     sessionId: props.sessionId,
   }), [props.draftScope, props.opencodeBaseUrl, props.workspaceId, props.sessionId]);
+  useLayoutEffect(() => {
+    useSessionActivityStore.getState().bindRunTimingScope(props.workspaceId, props.sessionId, props.draftScope ? sessionOwner : null);
+  }, [props.workspaceId, props.sessionId, props.draftScope, sessionOwner]);
   const activeSessionOwnerRef = useRef(sessionOwner);
   activeSessionOwnerRef.current = sessionOwner;
   const autoSubmissionRef = useRef({ model: modelRefKey(sessionModel.selectedModel), client: props.client, mounted: true });
@@ -1573,7 +1577,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // A server turn can acknowledge only one pending send, even when two
     // consecutive prompts have identical text and v2 assigns its own IDs.
     const acknowledgedIds = new Map([...messageIdReplacements].map(([serverId, pendingId]) => [pendingId, serverId]));
-    return { messages: mergeRejectedTurns(messages, rejectedTurns, rejectedOwner), messageIdReplacements, remaining: remaining.map((item) => {
+    return { messages: orderMessageParents(mergeRejectedTurns(messages, rejectedTurns, rejectedOwner)), messageIdReplacements, remaining: remaining.map((item) => {
       const claimed = [...matchedIds].filter((id) => id !== item.serverMessageId && !item.previousMessageIds.includes(id));
       const submissionMessageIds = item.submissionMessageIds.some((id) => acknowledgedIds.has(id))
         ? item.submissionMessageIds.map((id) => acknowledgedIds.get(id) ?? id)
@@ -2353,6 +2357,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
     };
     if (sentAttachments.length) setAttachmentsUploading(true);
+    useSessionActivityStore.getState().beginRun(props.workspaceId, props.sessionId, nextDraft.messageId, Date.now());
     try {
       const result = await sendDraft(nextDraft, nextDraft.messageId, markPrepared);
       if ((result.outcome === "sent" || result.outcome === "accepted")
@@ -2364,11 +2369,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
         focusedComposer.blur();
       }
       if (result.outcome === "blocked" && "wall" in result) {
+        useSessionActivityStore.getState().cancelUnadmittedRun(props.workspaceId, props.sessionId, nextDraft.messageId);
         useComposerStateStore.getState().settleAutoAccessWall(sessionOwner, nextDraft.messageId, result.wall);
         setAwaitingAssistantBaseline(null);
         return;
       }
       if (result.outcome === "blocked" || result.outcome === "cancelled") {
+        useSessionActivityStore.getState().cancelUnadmittedRun(props.workspaceId, props.sessionId, nextDraft.messageId);
         restore();
         return;
       }
@@ -2382,11 +2389,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
         } }));
       }
     } catch {
+      useSessionActivityStore.getState().cancelUnadmittedRun(props.workspaceId, props.sessionId, nextDraft.messageId);
       restore();
     } finally {
       setAttachmentsUploading(false);
     }
-  }, [archived, archiveStateKnown, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, mentions, pasteParts, persistedDraftKey, props.onDraftChange, props.opencodeBaseUrl, props.sessionId, sendDraft, sessionOwner]);
+  }, [archived, archiveStateKnown, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, mentions, pasteParts, persistedDraftKey, props.onDraftChange, props.opencodeBaseUrl, props.sessionId, props.workspaceId, sendDraft, sessionOwner]);
 
   // One-step run from the empty-state hero: the route keeps the continuation
   // in this session's composer and marks the submitted snapshot for auto-send.
@@ -2546,7 +2554,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         props.workspaceRoot.trim() || undefined, {
           admissionUnknown: phase.kind === "admission_unknown",
           admissionMessageID: phase.kind === "admission_unknown" ? phase.messageID : undefined,
-          onStopped: () => dispatchQueuedDrain(props.sessionId, { type: "stop_confirmed" }),
+          onStopped: () => { useSessionActivityStore.getState().markRunStopped(props.workspaceId, props.sessionId); dispatchQueuedDrain(props.sessionId, { type: "stop_confirmed" }); },
         });
       captureAnalyticsEvent("task_run_stopped", {});
       // The surface survives navigation; refresh the stopped conversation, not

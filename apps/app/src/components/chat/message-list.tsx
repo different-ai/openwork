@@ -131,6 +131,7 @@ import { revalidateWorkspaceSessionSync } from "@/react-app/domains/session/sync
 import { useWorkspaceMaybe } from "@/react-app/shell/workspace-provider"
 import { formatElapsedSeconds, formatToolCallDuration } from "@/lib/tool-call-duration"
 import { collectLatestAssistantToolParts } from "@/lib/latest-assistant-tool-parts"
+import { runElapsed } from "@/lib/session-run"
 import { isToolPartInFlight } from "@/lib/tool-activity"
 import { faviconUrlForHref } from "@/lib/favicon"
 import { useOpenArtifactPath } from "@/lib/artifacts"
@@ -1660,6 +1661,10 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
   const runActive = status === "streaming" || status === "retrying"
   const syncDegraded = syncHealth?.degraded === true
   const activityActive = runActive || tasks.length > 0
+  const currentRun = useSessionActivityStore(state => {
+    const record = state.recordsByWorkspaceId[workspaceId]?.[sessionId]
+    return record?.currentRunId ? record.runs[record.currentRunId] : undefined
+  })
   const runStartedAtRef = React.useRef<number | null>(null)
   const [runElapsedSeconds, setRunElapsedSeconds] = React.useState(0)
   // Anchor the counter to the user message that started the run (server
@@ -1668,12 +1673,13 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
   // wall clock.
   const runStartedAt = React.useMemo(() => {
     if (!runActive) return null
+    if (currentRun && !currentRun.endedAt) return currentRun.startedAt
     for (let index = messages.length - 1; index >= 0; index--) {
       const message = messages[index]
       if (message && message.role === "user") return getMessageCreated(message)
     }
     return null
-  }, [messages, runActive])
+  }, [messages, runActive, currentRun])
   React.useEffect(() => {
     if (!activityActive) {
       runStartedAtRef.current = null
@@ -1689,12 +1695,12 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     if (syncDegraded) return
     const updateElapsed = () => {
       const startedAt = runStartedAtRef.current
-      if (startedAt !== null) setRunElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)))
+      if (startedAt !== null) setRunElapsedSeconds(Math.max(0, Math.floor((currentRun ? runElapsed(currentRun, Date.now()) : Date.now() - startedAt) / 1000)))
     }
     updateElapsed()
     const interval = window.setInterval(updateElapsed, 1000)
     return () => window.clearInterval(interval)
-  }, [activityActive, runStartedAt, syncDegraded])
+  }, [activityActive, runStartedAt, syncDegraded, currentRun])
   const latestUserMessageId = React.useMemo(() => messages.findLast((message) => message.role === "user")?.id, [messages])
   const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
   const error = useSessionErrorMessage();
