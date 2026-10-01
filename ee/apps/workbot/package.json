@@ -18,7 +18,7 @@
     "@openwork-ee/workbot-server": "workspace:*",
     "@openwork-ee/workbot-ui": "workspace:*",
     "@tanstack/react-query": "^5.96.2",
-    "hono": "4.13.5",
+    "hono": "4.13.9",
     "react": "catalog:",
     "react-dom": "catalog:",
     "zod": "^4.3.6"
