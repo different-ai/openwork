@@ -1169,7 +1169,27 @@ export function createV2EventTranslationState(): V2EventTranslationState {
 
 function updateToolStreamMetadata(stream: ToolStream, properties: Record<string, unknown>): void {
   const metadata = readRecord(properties, "metadata") ?? readRecord(properties, "structured");
-  if (metadata) stream.metadata = metadata;
+  if (!metadata) return;
+  const previous = stream.metadata;
+  if (stream.tool !== "execute") { stream.metadata = metadata; return; }
+  stream.metadata = { ...previous, ...metadata };
+  // Native progress reports call lists as invocation-ordered prefixes. A
+  // later partial update must not erase retained results or regress a call.
+  for (const key of ["toolCalls", "openworkToolDetails"]) {
+    const oldCalls = previous[key];
+    const newCalls = metadata[key];
+    if (!Array.isArray(oldCalls) || !Array.isArray(newCalls)) continue;
+    stream.metadata[key] = Array.from({ length: Math.max(oldCalls.length, newCalls.length) }, (_, ordinal) => {
+      const old = oldCalls[ordinal];
+      const next = newCalls[ordinal];
+      if (!isRecord(old)) return next;
+      if (!isRecord(next)) return old;
+      if (old.tool !== next.tool || (key === "openworkToolDetails"
+        && (old.invocationId !== next.invocationId || old.ordinal !== next.ordinal))) return old;
+      if ((old.status === "completed" || old.status === "error") && next.status === "running") return old;
+      return { ...old, ...next };
+    });
+  }
 }
 
 export function translateV2Event(

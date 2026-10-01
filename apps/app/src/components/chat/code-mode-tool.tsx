@@ -82,7 +82,7 @@ export function CodeModeTool({ part, calls, lifecycle, connectors }: {
               key={call.toolCallId}
               part={call}
               connector={resolveConnectorToolIdentity(call, connectors)}
-              resultUnavailable={call.state === "output-available"}
+              resultUnavailable={call.state === "output-available" && call.output === undefined}
               statusUnknown={isToolPartInFlight(call) && (!running || !inFlight)}
               quietFailure
               shimmer={running && call.toolCallId === current?.toolCallId}

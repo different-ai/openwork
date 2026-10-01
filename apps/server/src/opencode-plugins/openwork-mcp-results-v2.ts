@@ -1,11 +1,15 @@
 type Registration = { dispose(): Promise<void> };
-type CallEvent = { readonly tool: string; readonly messageID: string; readonly id: string };
+type CallEvent = { readonly tool: string; readonly messageID: string; readonly id: string; readonly input?: unknown; readonly invocationId?: string };
 type ExecuteAfter = CallEvent & { readonly input: unknown } & (
   | { readonly status: "completed"; result: { output?: unknown; metadata?: Record<string, unknown> } }
   | { readonly status: "error"; readonly error: unknown }
 );
 type Context = {
   tool: {
+    transform?(callback: (editor: {
+      list(): readonly { id: string; name: string }[];
+      update(id: string, update: (tool: { execute(input: unknown, call: CallEvent & { progress(metadata: Record<string, unknown>): Promise<void> }): Promise<{ output?: unknown; content?: unknown; metadata?: Record<string, unknown> }> }) => void): void;
+    }) => void): Promise<Registration>;
     hook(name: "execute.before", callback: (event: CallEvent) => void): Promise<Registration>;
     hook(name: "execute.after", callback: (event: ExecuteAfter) => void): Promise<Registration>;
   };
@@ -53,9 +57,9 @@ function errorText(error: unknown): string {
 
 function jsonCopy(value: unknown): unknown {
   try {
-    return value === undefined ? {} : JSON.parse(JSON.stringify(value));
+    return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
   } catch {
-    return {};
+    return undefined;
   }
 }
 
@@ -80,30 +84,111 @@ export function preservedEntry(event: ExecuteAfter): PreservedMcpResult | null {
  * that report a connection and attach them to the outer call's metadata, which
  * the engine persists with the tool part.
  */
+export type ToolDetail = {
+  invocationId: string; ordinal: number; tool: string; input: unknown;
+  status: "running" | "completed" | "error"; startedAt: number; endedAt?: number;
+  output?: unknown; error?: string; truncated?: boolean;
+};
+const MAX_EXECUTION_BYTES = 1_024 * 1_024;
+const MAX_DETAIL_CALLS = 256;
+const encoder = new TextEncoder();
+
+/** Bounds payloads, preserving identities and explicit unavailable/truncated detail. */
+function bounded(value: unknown, budget: number): { value: unknown; bytes: number; truncated: boolean } {
+  if (value === undefined) return { value: undefined, bytes: 0, truncated: false };
+  if (budget < 128) return { value: undefined, bytes: 0, truncated: true };
+  const copy = jsonCopy(value);
+  if (copy === undefined) return { value: undefined, bytes: 0, truncated: true };
+  const serialized = JSON.stringify(copy);
+  const bytes = encoder.encode(serialized).byteLength;
+  if (bytes <= budget) return { value: copy, bytes, truncated: false };
+  const marker = "[Result truncated by OpenWork]";
+  // Three UTF-8 bytes per code unit is a conservative bound, including JSON escaping.
+  const preview = serialized.slice(0, Math.max(0, Math.floor((budget - 128) / 6)));
+  const valuePreview = `${preview}\n${marker}`;
+  return { value: valuePreview, bytes: encoder.encode(JSON.stringify(valuePreview)).byteLength, truncated: true };
+}
+
 export function createMcpResultsCollector() {
-  const open = new Map<string, PreservedMcpResult[]>();
-  const key = (event: CallEvent) => `${event.messageID}\u0000${event.id}`;
+  const open = new Map<string, { connections: PreservedMcpResult[]; calls: ToolDetail[]; remaining: number; nextOrdinal: number; truncated: boolean; allowance: WeakMap<ToolDetail, number>; inputs: WeakMap<object, ToolDetail[]>; claimed: Set<string>; connectionsSeen: WeakSet<object> }>();
+  const key = (event: Pick<CallEvent, "messageID" | "id">) => `${event.messageID}\u0000${event.id}`;
   return {
     before(event: CallEvent): void {
-      if (event.tool !== "execute") return;
-      if (open.size >= MAX_OPEN_CALLS) {
-        const oldest = open.keys().next().value;
-        if (oldest !== undefined) open.delete(oldest);
+      if (event.tool === "execute") {
+        if (open.size >= MAX_OPEN_CALLS) {
+          const oldest = open.keys().next().value;
+          if (oldest !== undefined) open.delete(oldest);
+        }
+        // Reserve the surrounding metadata keys and arrays as well as values.
+        open.set(key(event), { connections: [], calls: [], remaining: MAX_EXECUTION_BYTES - 256, nextOrdinal: 0, truncated: false, allowance: new WeakMap(), inputs: new WeakMap(), claimed: new Set(), connectionsSeen: new WeakSet() });
+        return;
       }
-      open.set(key(event), []);
+      const execution = open.get(key(event));
+      if (!execution) return;
+      const ordinal = execution.nextOrdinal++;
+      // Keep the native list as the source of every call's identity. Detailed
+      // payload collection is bounded independently, including empty calls.
+      if (execution.calls.length >= MAX_DETAIL_CALLS) { execution.truncated = true; return; }
+      const detail: ToolDetail = { invocationId: `${event.id}:${ordinal}`, ordinal, tool: event.tool,
+        input: undefined, status: "running", startedAt: Date.now() };
+      // Count each entry's envelope, separators and terminal fields. Bounding
+      // only input/output permits arbitrarily many small calls to exceed 1 MiB.
+      const envelopeBytes = encoder.encode(JSON.stringify(detail)).byteLength + 128;
+      if (envelopeBytes > execution.remaining || envelopeBytes > MAX_ENTRY_BYTES) { execution.truncated = true; return; }
+      execution.remaining -= envelopeBytes;
+      const input = bounded(event.input, Math.min(MAX_ENTRY_BYTES / 2, MAX_ENTRY_BYTES - envelopeBytes, execution.remaining));
+      execution.remaining -= input.bytes;
+      detail.input = input.value;
+      if (input.truncated) detail.truncated = true;
+      execution.allowance.set(detail, MAX_ENTRY_BYTES - envelopeBytes - input.bytes);
+      execution.calls.push(detail);
+      if (event.input && typeof event.input === "object") execution.inputs.set(event.input, [...(execution.inputs.get(event.input) ?? []), detail]);
     },
     after(event: ExecuteAfter): void {
-      const list = open.get(key(event));
+      const execution = open.get(key(event));
       if (event.tool === "execute") {
         open.delete(key(event));
-        if (event.status === "completed" && list && list.length > 0) {
-          event.result.metadata = { ...(event.result.metadata ?? {}), openworkMcpResults: list };
+        if (event.status === "completed" && execution && (execution.connections.length || execution.calls.length || execution.truncated)) {
+          event.result.metadata = { ...(event.result.metadata ?? {}),
+            ...(execution.connections.length ? { openworkMcpResults: execution.connections } : {}),
+            ...(execution.calls.length ? { openworkToolDetails: execution.calls } : {}),
+            ...(execution.truncated ? { openworkToolDetailsTruncated: true } : {}) };
         }
         return;
       }
-      if (!list || list.length >= MAX_ENTRIES) return;
-      const entry = preservedEntry(event);
-      if (entry) list.push(entry);
+      if (!execution) return;
+      // Matching by tool name alone would cross-wire parallel repeated calls.
+      const candidates = event.input && typeof event.input === "object" ? execution.inputs.get(event.input) ?? [] : [];
+      const detail = event.invocationId
+        ? execution.calls.find(call => call.invocationId === event.invocationId)
+        : candidates.length === 1 ? candidates[0] : undefined;
+      if (detail && detail.status === "running" && detail.tool === event.tool) {
+        const result = bounded(event.status === "completed" ? event.result.output : errorText(event.error),
+          Math.min(MAX_ENTRY_BYTES / 2, execution.allowance.get(detail) ?? 0, execution.remaining));
+        execution.remaining -= result.bytes;
+        Object.assign(detail, { status: event.status, endedAt: Date.now(), truncated: detail.truncated || result.truncated,
+          ...(result.value === undefined ? {} : event.status === "completed" ? { output: result.value } : { error: String(result.value) }) });
+      }
+      if (execution.connections.length < MAX_ENTRIES && !(event.input && typeof event.input === "object" && execution.connectionsSeen.has(event.input))) {
+        if (event.input && typeof event.input === "object") execution.connectionsSeen.add(event.input);
+        const entry = preservedEntry(event);
+        if (entry) {
+          const bytes = encoder.encode(JSON.stringify(entry)).byteLength + 1;
+          if (bytes <= execution.remaining) { execution.connections.push(entry); execution.remaining -= bytes; }
+        }
+      }
+    },
+    claim(event: CallEvent): string | undefined {
+      const execution = open.get(key(event));
+      if (!execution || !event.input || typeof event.input !== "object") return undefined;
+      const candidates = (execution.inputs.get(event.input) ?? []).filter(call =>
+        call.tool === event.tool && call.status === "running" && !execution.claimed.has(call.invocationId));
+      if (candidates.length !== 1) return undefined;
+      execution.claimed.add(candidates[0]!.invocationId);
+      return candidates[0]!.invocationId;
+    },
+    details(event: Pick<CallEvent, "messageID" | "id">): ToolDetail[] {
+      return open.get(key(event))?.calls.map(call => ({ ...call })) ?? [];
     },
   };
 }
@@ -114,9 +199,38 @@ export default {
     const collector = createMcpResultsCollector();
     const before = await context.tool.hook("execute.before", event => collector.before(event));
     const after = await context.tool.hook("execute.after", event => collector.after(event));
+    const transform = await context.tool.transform?.(editor => {
+      for (const info of editor.list()) {
+        if (info.name === "execute") continue;
+        editor.update(info.id, tool => {
+          const execute = tool.execute;
+          tool.execute = async (input, call) => {
+            const start = { ...call, tool: info.id, input };
+            const event = { ...start, invocationId: collector.claim(start) };
+            // Publish the native start while the connected call is still held.
+            // Waiting until completion loses its live clock on history reload.
+            const started = collector.details(event);
+            if (started.length) await call.progress({ openworkToolDetails: started }).catch(() => {});
+            try {
+              const result = await execute(input, call);
+              collector.after({ ...event, status: "completed", result: { output: result.output ?? result.content } });
+              const details = collector.details(event);
+              if (details.length) await call.progress({ openworkToolDetails: details }).catch(() => {});
+              return result;
+            } catch (error) {
+              collector.after({ ...event, status: "error", error });
+              const details = collector.details(event);
+              if (details.length) await call.progress({ openworkToolDetails: details }).catch(() => {});
+              throw error;
+            }
+          };
+        });
+      }
+    });
     return async () => {
       await before.dispose();
       await after.dispose();
+      await transform?.dispose();
     };
   },
 };
