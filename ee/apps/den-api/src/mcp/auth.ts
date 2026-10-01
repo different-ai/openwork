@@ -32,6 +32,8 @@ export type McpPrincipal = {
   organizationId: string
   scopes: Set<string>
   payload: Record<string, unknown>
+  /** A short-lived token Den minted for one headless run (Slack, cloud Automations, Workbot). */
+  headlessRun?: boolean
 }
 
 type McpJwtVerifyOptions = Parameters<typeof verifyJwsAccessToken>[1]["verifyOptions"]
@@ -471,5 +473,5 @@ export async function verifyMcpRequest(headers: Headers, optionsInput?: string |
     })
   }
 
-  return { userId, organizationId, scopes, payload }
+  return { userId, organizationId, scopes, payload, headlessRun: isHeadlessRunMcpToken(payload, source) }
 }

@@ -75,6 +75,16 @@ test.each([true, false, null, "true", 1])("public creation cannot set platform-m
   }
 })
 
+test.each([true, false, null, "true", 1])("public creation cannot set platform-managed cloudBrowser to %s", async (value) => {
+  const metadata = { capabilities: { cloudBrowser: value } }
+  for (const input of [metadata, JSON.stringify(metadata)]) {
+    await expect(beforeCreate(input)).rejects.toMatchObject({
+      status: "FORBIDDEN",
+      body: { message: "capabilities.cloudBrowser is reserved for internal platform administration." },
+    })
+  }
+})
+
 test.each([true, false, null, "true", 1])("public creation cannot set platform-managed slackAssistantHeadless to %s", async (value) => {
   const metadata = { capabilities: { slackAssistantHeadless: value } }
   for (const input of [metadata, JSON.stringify(metadata)]) {

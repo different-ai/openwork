@@ -42,6 +42,8 @@ export type DaytonaSandboxClient = {
   readonly target: string | null
   readonly labels?: Readonly<Record<string, string>>
   refreshData(): Promise<unknown>
+  /** Resets the idle auto-stop timer; preview traffic does not. */
+  refreshActivity?(): Promise<unknown>
   start(timeoutSeconds?: number): Promise<unknown>
   stop(timeoutSeconds?: number): Promise<unknown>
   delete(timeoutSeconds?: number): Promise<unknown>
@@ -143,6 +145,7 @@ function toSandboxClient(sandbox: Sandbox): DaytonaSandboxClient {
       return sandbox.labels
     },
     refreshData: () => sandbox.refreshData(),
+    refreshActivity: () => sandbox.refreshActivity(),
     start: (timeout) => sandbox.start(timeout),
     stop: (timeout) => sandbox.stop(timeout),
     delete: (timeout) => sandbox.delete(timeout),
@@ -643,6 +646,11 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
         kind: "signed-expiring",
       }
       return endpoint
+    },
+    async touch(handle) {
+      const sandbox = await resolve(handle)
+      const refreshActivity = sandbox.refreshActivity
+      if (refreshActivity) await wrap(() => refreshActivity.call(sandbox))
     },
     storage,
   }

@@ -631,6 +631,9 @@ importers:
       '@opentelemetry/semantic-conventions':
         specifier: 1.42.0
         version: 1.42.0
+      '@openwork-ee/cloud-browser':
+        specifier: workspace:*
+        version: link:../../packages/cloud-browser
       '@openwork-ee/cloud-runtime':
         specifier: workspace:*
         version: link:../../packages/cloud-runtime
@@ -1119,6 +1122,37 @@ importers:
       typescript:
         specifier: 5.4.5
         version: 5.4.5
+
+  ee/packages/cloud-browser:
+    dependencies:
+      '@openwork-ee/cloud-runtime':
+        specifier: workspace:*
+        version: link:../cloud-runtime
+      ws:
+        specifier: 8.21.1
+        version: 8.21.1
+    devDependencies:
+      '@daytonaio/sdk':
+        specifier: ^0.201.0
+        version: 0.201.0
+      '@openwork-ee/cloud-runtime-daytona':
+        specifier: workspace:*
+        version: link:../cloud-runtime-daytona
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
+      tsx:
+        specifier: ^4.23.1
+        version: 4.23.1
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
 
   ee/packages/cloud-runtime:
     devDependencies:

@@ -103,6 +103,8 @@ import { AppBuilderError, mcpAppLaunchResult, registerAppBuilderTools, searchMcp
 import { appMcpServersEnabled } from "../mcp-app-rollout.js"
 import { resolveMcpAppTools } from "./app-tools.js"
 import { createMcpApp, isActiveMcpApp, listAccessibleMcpApps, loadMcpAppServerDefinition, McpAppError, readMcpApp, updateMcpApp, type McpAppEntry } from "../mcp-apps.js"
+import { cloudBrowserToolsAvailable, registerCloudBrowserTools, withCloudBrowserInstructions } from "../cloud-browser/mcp-tools.js"
+import { cloudBrowserEnabledFor, cloudBrowserPageUrl, getCloudBrowser } from "../cloud-browser/service.js"
 import {
   createConfigObjectVersion,
   createPluginBundle,
@@ -348,7 +350,8 @@ export async function executeCapabilityWithBudget<T extends ExecuteCapabilityToo
   }
 }
 
-export function createAgentMcpServer(options: { appServers?: boolean } = {}): McpServer {
+export function createAgentMcpServer(options: { appServers?: boolean; cloudBrowser?: boolean } = {}): McpServer {
+  const instructions = options.appServers === false ? LEGACY_AGENT_MCP_INSTRUCTIONS : AGENT_MCP_INSTRUCTIONS
   return new McpServer({
     name: "openwork-den-api-agent",
     version: "1.0.0",
@@ -358,7 +361,7 @@ export function createAgentMcpServer(options: { appServers?: boolean } = {}): Mc
       tools: { listChanged: true },
       resources: { listChanged: true },
     },
-    instructions: options.appServers === false ? LEGACY_AGENT_MCP_INSTRUCTIONS : AGENT_MCP_INSTRUCTIONS,
+    instructions: withCloudBrowserInstructions(instructions, options.cloudBrowser === true),
   })
 }
 
@@ -559,7 +562,17 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       // Without the connection count, offer every App rather than call them all past the limit.
       return connections ? apps.slice(0, connectMcpServerIndexAppCapacity(connections.length)) : apps
     })()
-    const server = createAgentMcpServer({ appServers: appServersEnabled })
+    // Headless runs (Slack, cloud Automations, Workbot) may get the member's
+    // cloud browser; every other client keeps its own browser tools.
+    const cloudBrowser = getCloudBrowser()
+    const cloudBrowserMemberId = memberIdentity?.orgMembershipId
+    const cloudBrowserTools = cloudBrowserToolsAvailable({
+      headlessRun: principal.headlessRun === true,
+      capabilityEnabled: cloudBrowserEnabledFor(organizationMetadata),
+      configured: cloudBrowser !== null,
+      memberId: cloudBrowserMemberId,
+    })
+    const server = createAgentMcpServer({ appServers: appServersEnabled, cloudBrowser: cloudBrowserTools })
     registerAgentConnectionActionApp(server, { organizationId: principal.organizationId, member: memberIdentity })
     if (appServersEnabled) {
       const appActor = (): PluginArchActorContext => {
@@ -1098,6 +1111,16 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         }),
       }),
     )
+
+    if (cloudBrowserTools && cloudBrowser && cloudBrowserMemberId) {
+      registerCloudBrowserTools({
+        server,
+        browser: cloudBrowser,
+        key: { organizationId, memberId: cloudBrowserMemberId },
+        browserUrl: cloudBrowserPageUrl,
+        onError: (error) => agentMcpLogger.warn("Cloud browser tool failed", { error }),
+      })
+    }
 
     return await handlers.fetch(notificationScope, c.req.raw, server)
   })

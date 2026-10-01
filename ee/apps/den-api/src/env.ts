@@ -194,6 +194,12 @@ const EnvSchema = z.object({
   DAYTONA_DELETE_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_STOP_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
+  // Cloud browser for headless runs (unset = unavailable everywhere).
+  DEN_CLOUD_BROWSER_PROVIDER: z.enum(["daytona", "local"]).optional(),
+  DEN_CLOUD_BROWSER_DAYTONA_SNAPSHOT: z.string().optional(),
+  DEN_CLOUD_BROWSER_DAYTONA_NAME_PREFIX: z.string().regex(/^[a-z][a-z0-9-]{0,30}$/).optional(),
+  DEN_CLOUD_BROWSER_CHROME_PATH: z.string().optional(),
+  DEN_CLOUD_BROWSER_PROFILE_DIR: z.string().optional(),
   DEN_CKPT_INTERVAL_SECONDS: z.string().optional(),
   DEN_CKPT_KEEP: z.string().optional(),
   GATEWAY_PROXY_BASE_URL: z.string().optional(),
@@ -231,6 +237,18 @@ const EnvSchema = z.object({
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: `${key} is required when using planetscale mode`,
+          path: [key],
+        })
+      }
+    }
+  }
+
+  if (value.DEN_CLOUD_BROWSER_PROVIDER === "daytona") {
+    for (const key of ["DAYTONA_API_KEY", "DEN_CLOUD_BROWSER_DAYTONA_SNAPSHOT"] as const) {
+      if (!value[key]?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${key} is required when DEN_CLOUD_BROWSER_PROVIDER=daytona`,
           path: [key],
         })
       }
@@ -911,6 +929,16 @@ export const env = {
     successUrl: parsed.POLAR_SUCCESS_URL,
     returnUrl: parsed.POLAR_RETURN_URL,
   },
+  cloudBrowser: parsed.DEN_CLOUD_BROWSER_PROVIDER
+    ? {
+        provider: parsed.DEN_CLOUD_BROWSER_PROVIDER,
+        daytonaSnapshot: optionalString(parsed.DEN_CLOUD_BROWSER_DAYTONA_SNAPSHOT) ?? null,
+        // Keeps sandboxes apart when several Den deployments share one Daytona organization.
+        daytonaNamePrefix: optionalString(parsed.DEN_CLOUD_BROWSER_DAYTONA_NAME_PREFIX) ?? "owb",
+        chromePath: optionalString(parsed.DEN_CLOUD_BROWSER_CHROME_PATH) ?? null,
+        profileDir: optionalString(parsed.DEN_CLOUD_BROWSER_PROFILE_DIR) ?? null,
+      }
+    : null,
   daytona: {
     envPath: optionalString(parsed.OPENWORK_DAYTONA_ENV_PATH),
     apiUrl: optionalString(parsed.DAYTONA_API_URL) ?? "https://app.daytona.io/api",

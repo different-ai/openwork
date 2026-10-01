@@ -1248,9 +1248,9 @@ export async function resolveOpenworkWorkspaceUrl(instanceUrl: string, accessTok
   };
 }
 
-export async function requestJson(path: string, init: RequestInit = {}, timeoutMs = 30000) {
+function denRequestHeaders(path: string, init: RequestInit, accept: string): Headers {
   const headers = new Headers(init.headers);
-  headers.set("Accept", "application/json");
+  headers.set("Accept", accept);
 
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
@@ -1265,6 +1265,30 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
   if (orgScope && !headers.has(ORG_SCOPE_HEADER) && shouldPinOrgScopePath(path)) {
     headers.set(ORG_SCOPE_HEADER, orgScope);
   }
+  return headers;
+}
+
+/** A binary Den API read (for example an image) with the same auth and org scope as requestJson. */
+export async function requestBlob(path: string, init: RequestInit = {}): Promise<{ response: Response; blob: Blob | null }> {
+  const headers = denRequestHeaders(path, init, "image/*");
+  if (typeof window !== "undefined") {
+    await getRuntimeConfig();
+  }
+  const endpoint = denBrowserEndpoint(path);
+  const response = await fetch(endpoint, {
+    ...init,
+    headers,
+    credentials: init.credentials ?? denApiCredentials(endpoint, path),
+  });
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    return { response, blob: null };
+  }
+  return { response, blob: await response.blob() };
+}
+
+export async function requestJson(path: string, init: RequestInit = {}, timeoutMs = 30000) {
+  const headers = denRequestHeaders(path, init, "application/json");
 
   const shouldAttachTimeout = !init.signal && timeoutMs > 0;
   const timeoutController = shouldAttachTimeout ? new AbortController() : null;

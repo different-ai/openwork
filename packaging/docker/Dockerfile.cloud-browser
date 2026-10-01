@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1.7
+#
+# The box behind OpenWork's cloud browser: one persistent, private Daytona
+# sandbox per member (ee/packages/cloud-browser/src/hosts/daytona.ts).
+# Den launches Chromium itself, with DevTools on port 9222 and the profile
+# (the member's remembered sign-ins) under /home/daytona/.openwork.
+#
+# Build and push as a Daytona snapshot with
+#   scripts/create-daytona-cloud-browser-snapshot.sh
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive \
+  LANG=C.UTF-8
+
+# curl and procps back the idempotent launch script (DevTools probe, pgrep).
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    chromium \
+    curl \
+    procps \
+    fonts-dejavu-core \
+    fonts-liberation \
+    fonts-noto-cjk \
+    fonts-noto-color-emoji \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --create-home --home-dir /home/daytona --shell /bin/bash --uid 1000 daytona \
+  && mkdir -p /home/daytona/.openwork/browser-profile \
+  && chown -R daytona:daytona /home/daytona/.openwork
+
+ARG RUNTIME_ASSERTS=1
+RUN if [ "$RUNTIME_ASSERTS" = "1" ]; then chromium --version; fi
+
+USER daytona
+WORKDIR /home/daytona
+EXPOSE 9222
+
+# Daytona runs its own daemon; plain Docker just keeps the box alive.
+CMD ["sleep", "infinity"]

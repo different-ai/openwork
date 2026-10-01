@@ -182,6 +182,7 @@ export type AdminOrganizationsPageResponse = {
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
+      cloudBrowser: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -265,6 +266,7 @@ export type AdminOverviewResponse = {
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
+      cloudBrowser: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -357,6 +359,89 @@ export type CloudGatewayInstanceResponse = {
     status: "degraded";
     reason?: "unsupported";
   };
+};
+
+export type CloudBrowserStatus = {
+  /**
+   * The cloud browser is on for this workspace.
+   */
+  available: boolean;
+  running: boolean;
+  /**
+   * Origin and path of the active tab; never its query or fragment.
+   */
+  url: string | null;
+  title: string | null;
+};
+
+export type CloudBrowserUnavailableError = {
+  error: "cloud_browser_unavailable";
+  message: string;
+};
+
+export type CloudBrowserNotRunningError = {
+  error: "cloud_browser_not_running";
+  message: string;
+};
+
+export type OkResponse = {
+  ok: true;
+};
+
+export type CloudBrowserBusyError = {
+  error: "cloud_browser_busy";
+};
+
+export type CloudBrowserInputRequest = {
+  events: Array<
+    | {
+        type: "click";
+        /**
+         * Viewport CSS pixels.
+         */
+        x: number;
+        /**
+         * Viewport CSS pixels.
+         */
+        y: number;
+        clickCount?: number;
+      }
+    | {
+        type: "wheel";
+        /**
+         * Viewport CSS pixels.
+         */
+        x: number;
+        /**
+         * Viewport CSS pixels.
+         */
+        y: number;
+        deltaX?: number;
+        deltaY: number;
+      }
+    | {
+        type: "text";
+        text: string;
+      }
+    | {
+        type: "key";
+        key:
+          | "Enter"
+          | "Tab"
+          | "Escape"
+          | "ArrowUp"
+          | "ArrowDown"
+          | "ArrowLeft"
+          | "ArrowRight"
+          | "Backspace"
+          | "Space"
+          | "Delete"
+          | "Home"
+          | "End"
+          | "PageUp"
+          | "PageDown";
+      }
+  >;
 };
 
 export type RemovedMemoryList = {
@@ -1464,7 +1549,8 @@ export type CapabilityDisabledError = {
     | "appMcpServers"
     | "slackAssistant"
     | "slackAssistantHeadless"
-    | "headlessAutomations";
+    | "headlessAutomations"
+    | "cloudBrowser";
 };
 
 export type CreateInstallLinkRequest = {
@@ -1919,10 +2005,6 @@ export type OAuthProviderStatusResponse = {
   connected: boolean;
   externalAccountId: string | null;
   scopes: Array<string> | null;
-};
-
-export type OkResponse = {
-  ok: true;
 };
 
 export type GoogleWorkspaceDriveFileSummary = {
@@ -5444,6 +5526,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
+      cloudBrowser: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -5510,6 +5593,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
+      cloudBrowser: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -6674,6 +6758,158 @@ export type GetV1CloudGatewayResolveResponses = {
 
 export type GetV1CloudGatewayResolveResponse =
   GetV1CloudGatewayResolveResponses[keyof GetV1CloudGatewayResolveResponses];
+
+export type GetCloudBrowserData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/cloud-browser";
+};
+
+export type GetCloudBrowserErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The organization was not found.
+   */
+  404: NotFoundError;
+};
+
+export type GetCloudBrowserError = GetCloudBrowserErrors[keyof GetCloudBrowserErrors];
+
+export type GetCloudBrowserResponses = {
+  /**
+   * Cloud browser status.
+   */
+  200: CloudBrowserStatus;
+};
+
+export type GetCloudBrowserResponse = GetCloudBrowserResponses[keyof GetCloudBrowserResponses];
+
+export type GetCloudBrowserScreenData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/cloud-browser/screen";
+};
+
+export type GetCloudBrowserScreenErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The cloud browser is not on for this workspace.
+   */
+  404: CloudBrowserUnavailableError;
+  /**
+   * The cloud browser is not running.
+   */
+  409: CloudBrowserNotRunningError;
+  /**
+   * The cloud browser did not respond.
+   */
+  503: CloudBrowserUnavailableError;
+};
+
+export type GetCloudBrowserScreenError = GetCloudBrowserScreenErrors[keyof GetCloudBrowserScreenErrors];
+
+export type GetCloudBrowserScreenResponses = {
+  /**
+   * The active tab as a JPEG image.
+   */
+  200: Blob | File;
+};
+
+export type GetCloudBrowserScreenResponse = GetCloudBrowserScreenResponses[keyof GetCloudBrowserScreenResponses];
+
+export type PostCloudBrowserInputData = {
+  body: CloudBrowserInputRequest;
+  path?: never;
+  query?: never;
+  url: "/v1/cloud-browser/input";
+};
+
+export type PostCloudBrowserInputErrors = {
+  /**
+   * The input events were invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The cloud browser is not on for this workspace.
+   */
+  404: CloudBrowserUnavailableError;
+  /**
+   * The cloud browser is not running.
+   */
+  409: CloudBrowserNotRunningError;
+  /**
+   * The request body is too large.
+   */
+  413: InvalidRequestError;
+  /**
+   * Too much input at once; send it in order.
+   */
+  429: CloudBrowserBusyError;
+  /**
+   * The cloud browser did not respond.
+   */
+  503: CloudBrowserUnavailableError;
+};
+
+export type PostCloudBrowserInputError = PostCloudBrowserInputErrors[keyof PostCloudBrowserInputErrors];
+
+export type PostCloudBrowserInputResponses = {
+  /**
+   * The input was delivered.
+   */
+  200: OkResponse;
+};
+
+export type PostCloudBrowserInputResponse = PostCloudBrowserInputResponses[keyof PostCloudBrowserInputResponses];
+
+export type PostCloudBrowserDoneData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/cloud-browser/done";
+};
+
+export type PostCloudBrowserDoneErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The cloud browser is not on for this workspace.
+   */
+  404: CloudBrowserUnavailableError;
+  /**
+   * The cloud browser is not running.
+   */
+  409: CloudBrowserNotRunningError;
+  /**
+   * The cloud browser did not respond.
+   */
+  503: CloudBrowserUnavailableError;
+};
+
+export type PostCloudBrowserDoneError = PostCloudBrowserDoneErrors[keyof PostCloudBrowserDoneErrors];
+
+export type PostCloudBrowserDoneResponses = {
+  /**
+   * Sign-ins are kept for next time.
+   */
+  200: OkResponse;
+};
+
+export type PostCloudBrowserDoneResponse = PostCloudBrowserDoneResponses[keyof PostCloudBrowserDoneResponses];
 
 export type GetV1MemoryData = {
   body?: never;

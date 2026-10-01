@@ -1,5 +1,6 @@
 import "./load-env.js"
 import { registerSlackAssistantRoutes } from "./slack-assistant/routes.js"
+import { registerCloudBrowserRoutes } from "./cloud-browser/routes.js"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { swaggerUI } from "@hono/swagger-ui"
 import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
@@ -271,6 +272,7 @@ registerAdminRoutes(app)
 registerAuthRoutes(app)
 registerBootstrapRoutes(app)
 registerCloudRoutes(app)
+registerCloudBrowserRoutes(app)
 registerDeprecatedMemoryRoutes(app)
 registerDeprecatedSkillHubRoutes(app)
 registerDevRoutes(app)
@@ -407,6 +409,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Inference Providers", description: "Organization inference Gateway providers, model groups, credential sets, access grants, member connections, and usage." },
       { name: "Gateway Usage Limits", description: "Estimated-cost policies, independent member calendar buckets, assignments, and audited usage-extension requests." },
       { name: "Cloud", description: "Organization Cloud instance lifecycle and browser gateway resolution." },
+      { name: "Cloud Browser", description: "The caller's own cloud browser: live view, take-over input, and kept sign-ins for agent hand-offs." },
       { name: "Workers", description: "Worker lifecycle, billing, and runtime routes." },
       { name: "Worker Runtime", description: "Worker runtime inspection and upgrade routes." },
       { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },

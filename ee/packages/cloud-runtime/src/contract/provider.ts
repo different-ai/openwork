@@ -176,5 +176,10 @@ export interface SandboxProvider {
   destroy(handle: SandboxHandle, opts: ProviderTimeout): Promise<void>
   exec(handle: SandboxHandle, spec: ExecSpec): Promise<ExecHandle>
   endpoint(handle: SandboxHandle, port: number, opts?: { ttlSeconds?: number }): Promise<Endpoint>
+  /**
+   * Optional: count as activity for the host's idle auto-stop. Traffic through
+   * an endpoint may not count (Daytona previews do not).
+   */
+  touch?(handle: SandboxHandle): Promise<void>
   readonly storage: SandboxStorage
 }

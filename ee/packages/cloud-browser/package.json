@@ -1,0 +1,50 @@
+{
+  "name": "@openwork-ee/cloud-browser",
+  "private": true,
+  "type": "module",
+  "description": "Provider-neutral cloud browser for headless agent runs: a per-member Chrome reached over stateless CDP calls, with Daytona and local hosts.",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "source": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./daytona": {
+      "types": "./src/hosts/daytona.ts",
+      "development": "./src/hosts/daytona.ts",
+      "default": "./dist/hosts/daytona.js"
+    },
+    "./local": {
+      "types": "./src/hosts/local.ts",
+      "development": "./src/hosts/local.ts",
+      "default": "./dist/hosts/local.js"
+    },
+    "./testing": {
+      "types": "./src/testing.ts",
+      "development": "./src/testing.ts",
+      "default": "./dist/testing.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
+    "test": "bun test src",
+    "smoke:daytona": "tsx scripts/smoke-daytona.ts"
+  },
+  "dependencies": {
+    "@openwork-ee/cloud-runtime": "workspace:*",
+    "ws": "8.21.1"
+  },
+  "devDependencies": {
+    "@daytonaio/sdk": "^0.201.0",
+    "@openwork-ee/cloud-runtime-daytona": "workspace:*",
+    "@types/node": "^20.11.30",
+    "@types/ws": "8.18.1",
+    "tsup": "^8.5.0",
+    "tsx": "^4.23.1",
+    "typescript": "^5.5.4"
+  }
+}

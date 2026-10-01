@@ -17,7 +17,7 @@ type SelectedRow =
     token: string
     clientId: string
     userId: string
-    sessionId: string
+    sessionId: string | null
     referenceId: string
     expiresAt: Date
     createdAt: Date
@@ -396,6 +396,27 @@ test("first-party opaque desktop tokens remain accepted on parent and admin MCP 
   }), adminResourceContext("req_admin_opaque"))
 
   expect(adminPrincipal).not.toBeInstanceOf(Response)
+})
+
+test("only Den-minted headless-run tokens are marked as headless runs", async () => {
+  const now = Date.now()
+  selectedRows = []
+  selectedRowBatches = [
+    [{ ...validFirstPartyOpaqueTokenRow(), clientId: "openwork-headless-run", sessionId: null, createdAt: new Date(now - 1_000), expiresAt: new Date(now + 30 * 60_000) }],
+    [{ id: createDenTypeId("member"), role: "member" }],
+  ]
+  const headless = await mcpAuth.verifyMcpRequest(new Headers({ authorization: `Bearer ${OPAQUE_TOKEN}` }), agentResourceContext("req_headless_run"))
+  expect(headless instanceof Response ? null : headless.headlessRun).toBe(true)
+
+  selectActiveOpaqueTokenSessionAndMembership()
+  const desktop = await mcpAuth.verifyMcpRequest(new Headers({ authorization: `Bearer ${OPAQUE_TOKEN}` }), agentResourceContext("req_desktop"))
+  expect(desktop instanceof Response ? null : desktop.headlessRun).toBe(false)
+
+  // A JWT naming the headless-run client is an ordinary OAuth token.
+  jwtPayload = validMcpJwtPayload({ resource: "http://127.0.0.1:8790/mcp/agent", clientId: "openwork-headless-run" })
+  selectActiveSessionAndMembership()
+  const jwt = await mcpAuth.verifyMcpRequest(new Headers({ authorization: "Bearer header.payload.signature" }), agentResourceContext("req_jwt_headless_claim"))
+  expect(jwt instanceof Response ? null : jwt.headlessRun).toBe(false)
 })
 
 test("JWT client_id cannot make external tokens use first-party resource aliases", async () => {

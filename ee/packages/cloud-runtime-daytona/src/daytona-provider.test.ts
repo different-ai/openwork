@@ -444,6 +444,19 @@ describe("Daytona provider", () => {
     expect(stuck.calls).toContain("start:300")
   })
 
+  test("touch counts as activity for the idle auto-stop, and is a no-op without SDK support", async () => {
+    const active = fakeSandbox({ id: "sbx_active" })
+    let refreshed = 0
+    const withActivity: DaytonaSandboxClient = { ...active.sandbox, refreshActivity: async () => { refreshed += 1 } }
+    const provider = createDaytonaProvider(config(), { client: fakeClient({ sandboxes: { sbx_active: withActivity, sbx_plain: fakeSandbox({ id: "sbx_plain" }).sandbox } }).client })
+    const handle = (await provider.get({ providerId: "daytona", ref: { sandboxId: "sbx_active" } }))!
+    await provider.touch?.(handle)
+    expect(refreshed).toBe(1)
+    const plain = (await provider.get({ providerId: "daytona", ref: { sandboxId: "sbx_plain" } }))!
+    await provider.touch?.(plain)
+    expect(refreshed).toBe(1)
+  })
+
   test("inspect reports a destroyed instance as missing instead of throwing", async () => {
     const provider = createDaytonaProvider(config(), { client: fakeClient({}).client })
     const inspected = await provider.inspect({ ref: { providerId: "daytona", ref: { sandboxId: "gone" } }, state: "running", region: null, observedAt: 0 })

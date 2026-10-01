@@ -13,6 +13,7 @@ import type {
   CancelAutomationRunResponses,
   CancelMicrosoft365CalendarEventErrors,
   CancelMicrosoft365CalendarEventResponses,
+  CloudBrowserInputRequest,
   CreateAutomationErrors,
   CreateAutomationResponses,
   CreateCloudAutomationErrors,
@@ -157,6 +158,10 @@ import type {
   GetAutomationResponses,
   GetAutomationRunErrors,
   GetAutomationRunResponses,
+  GetCloudBrowserErrors,
+  GetCloudBrowserResponses,
+  GetCloudBrowserScreenErrors,
+  GetCloudBrowserScreenResponses,
   GetGmailDraftErrors,
   GetGmailDraftResponses,
   GetGoogleCalendarEventErrors,
@@ -585,6 +590,10 @@ import type {
   PostApiAuthScimV2GroupsResponses,
   PostApiAuthScimV2UsersErrors,
   PostApiAuthScimV2UsersResponses,
+  PostCloudBrowserDoneErrors,
+  PostCloudBrowserDoneResponses,
+  PostCloudBrowserInputErrors,
+  PostCloudBrowserInputResponses,
   PostRegisterErrors,
   PostRegisterResponses,
   PostV1AdminAdminsErrors,
@@ -2001,6 +2010,72 @@ export class DenClient extends HeyApiClient {
       GetV1CloudGatewayResolveErrors,
       ThrowOnError
     >({ url: "/v1/cloud/gateway/resolve", ...options });
+  }
+
+  /**
+   * Read my cloud browser
+   *
+   * Reports whether the caller's cloud browser is available and running, and the active tab's address and title. Never starts the browser.
+   */
+  public getCloudBrowser<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetCloudBrowserResponses, GetCloudBrowserErrors, ThrowOnError>({
+      url: "/v1/cloud-browser",
+      ...options,
+    });
+  }
+
+  /**
+   * Read my cloud browser's screen
+   *
+   * Returns the active tab of the caller's running cloud browser as a JPEG for the live view. Never starts the browser.
+   */
+  public getCloudBrowserScreen<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetCloudBrowserScreenResponses,
+      GetCloudBrowserScreenErrors,
+      ThrowOnError
+    >({ url: "/v1/cloud-browser/screen", ...options });
+  }
+
+  /**
+   * Send take-over input to my cloud browser
+   *
+   * Forwards the caller's own clicks, scrolling, typing and keys to the active tab of their running cloud browser, in order. This is how a person signs in themselves; the input goes to the website and is not stored.
+   */
+  public postCloudBrowserInput<ThrowOnError extends boolean = false>(
+    parameters: {
+      cloudBrowserInputRequest: CloudBrowserInputRequest;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ key: "cloudBrowserInputRequest", map: "body" }] }]);
+    return (options?.client ?? this.client).post<
+      PostCloudBrowserInputResponses,
+      PostCloudBrowserInputErrors,
+      ThrowOnError
+    >({
+      url: "/v1/cloud-browser/input",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Finish taking over my cloud browser
+   *
+   * Called when the person is done in their cloud browser. Keeps the sign-ins they just made for next time by making the site's session cookies persistent.
+   */
+  public postCloudBrowserDone<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).post<
+      PostCloudBrowserDoneResponses,
+      PostCloudBrowserDoneErrors,
+      ThrowOnError
+    >({ url: "/v1/cloud-browser/done", ...options });
   }
 
   /**
