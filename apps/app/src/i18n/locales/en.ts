@@ -105,6 +105,7 @@ export default {
   "composer.inserted_links_unsupported": "Inserted links for unsupported files.",
   "composer.loading_commands": "Loading commands...",
   "composer.mcps_label": "MCPs",
+  "composer.mentions_label": "Mentions",
   "composer.connections_mcps_label": "Connections (MCPs)",
   "composer.source_local": "Local",
   "composer.no_commands": "No commands found.",

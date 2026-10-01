@@ -688,12 +688,11 @@ test.each([
       const picker = container.querySelector<HTMLButtonElement>('[data-composer-settings] button[title="Agent"]');
       expect(picker?.disabled).toBe(false);
       await act(async () => picker?.click());
-      const option = () => [...container.querySelectorAll<HTMLButtonElement>("button")]
-        .find((button) => button.textContent === next && button !== picker);
+      // The agent menu is a portaled menu, outside the composer container.
+      const option = () => [...document.querySelectorAll<HTMLElement>("[role='menuitem']")]
+        .find((item) => item.textContent === next);
       await waitFor(() => option() !== undefined, `the ${next} option`);
-      await act(async () => {
-        option()?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-      });
+      await act(async () => option()?.click());
       expect(picker?.textContent).toBe(next);
       expect(picker?.getAttribute("aria-expanded")).toBe("false");
       expect(container.querySelector('button[aria-label="Stop"]')).not.toBeNull();

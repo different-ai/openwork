@@ -99,7 +99,7 @@ function MarkdownBlockInner({
     videoCleanups.current.forEach((cleanup) => cleanup());
     videoCleanups.current.clear();
   }, [client, workspaceId, workspaceRoot]);
-  const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; rect: DOMRect } | null>(null);
+  const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; anchor: HTMLElement } | null>(null);
   useEffect(() => setLinkMenu(null), [client, workspaceId, workspaceRoot]);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
   const references = useSessionReferencesMaybe();
@@ -347,7 +347,7 @@ function MarkdownBlockInner({
         const href = chevron.dataset.openworkLinkChevron ?? "";
         const target = openTargetForHref(href, openTargets, workspaceRoot);
         if (target) {
-          setLinkMenu({ target, rect: chevron.getBoundingClientRect() });
+          setLinkMenu({ target, anchor: chevron });
         }
         return;
       }
@@ -383,7 +383,7 @@ function MarkdownBlockInner({
       if (target?.kind !== "file") return;
       event.preventDefault();
       event.stopPropagation();
-      setLinkMenu({ target, rect: link.getBoundingClientRect() });
+      setLinkMenu({ target, anchor: link });
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -456,7 +456,7 @@ function MarkdownBlockInner({
         <LinkActionMenu
           key={linkMenu.target.value}
           target={linkMenu.target}
-          anchorRect={linkMenu.rect}
+          anchor={linkMenu.anchor}
           onOpenTarget={onOpenTarget}
           onClose={() => setLinkMenu(null)}
         />

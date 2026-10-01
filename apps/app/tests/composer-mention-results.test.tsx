@@ -37,7 +37,8 @@ mock.module("@/components/chat/image-lightbox", () => ({ ImageLightbox: () => nu
 mock.module("@/react-app/domains/connections/use-org-mcp-connections", () => ({ useOrgMcpConnections: () => connections }));
 mock.module("@/react-app/domains/session/surface/composer/workspace-run-mode-menu", () => ({ WorkspaceRunModeMenu: () => null }));
 mock.module("@/react-app/shell/dev-profiler", () => ({ DevProfiler: ({ children }: { children: ReactNode }) => children }));
-mock.module("../src/react-app/domains/session/surface/composer/app-mentions", () => ({ listRunningAppsForMention: async () => runningApps }));
+const appMentions = await import("../src/react-app/domains/session/surface/composer/app-mentions");
+mock.module("../src/react-app/domains/session/surface/composer/app-mentions", () => ({ ...appMentions, listRunningAppsForMention: async () => runningApps }));
 
 const { ReactSessionComposer } = await import("../src/react-app/domains/session/surface/composer/composer");
 const { NewTaskComposer } = await import("../src/react-app/domains/session/chat/new-task-composer");
@@ -136,7 +137,8 @@ async function mounted(options: {
   const editor = getNearestEditorFromDOMNode(element);
   if (!editor) throw new Error("Lexical editor is unavailable");
   await act(async () => editor.update(() => { $getRoot().selectEnd(); }, { discrete: true }));
-  const buttons = () => Array.from(container.querySelectorAll("button")).filter((button) => button.textContent?.startsWith("@"));
+  // Suggestions float in a portal above the composer, outside its container.
+  const buttons = () => Array.from(document.querySelectorAll("[data-composer-suggestions] [role='option']")).filter((button) => button.textContent?.startsWith("@"));
   return {
     queries, selectedAgent, sent,
     draft: () => currentDraft,

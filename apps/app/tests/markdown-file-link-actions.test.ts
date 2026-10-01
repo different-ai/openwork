@@ -43,12 +43,18 @@ async function render(isLocalWorkspace = true, workspaceRoot = "/workspace", hre
     if (!(found instanceof HTMLElement)) throw new Error(`Missing ${selector}: ${host.innerHTML}`);
     return found;
   };
+  // The menu is portaled out of the message, like every floating surface.
+  const menuText = () => {
+    const menu = document.querySelector("[data-slot='popover-content']");
+    if (!menu) throw new Error(`Missing link menu: ${document.body.innerHTML}`);
+    return menu.textContent ?? "";
+  };
   const button = (text: string) => {
-    const found = [...host.querySelectorAll("button")].find((node) => node.textContent?.trim() === text);
-    if (!found) throw new Error(`Missing button ${text}: ${host.innerHTML}`);
+    const found = [...document.body.querySelectorAll("button")].find((node) => node.textContent?.trim() === text);
+    if (!found) throw new Error(`Missing button ${text}: ${document.body.innerHTML}`);
     return found;
   };
-  return { host, opened, element, button };
+  return { host, opened, element, button, menuText };
 }
 
 async function context(target: HTMLElement) {
@@ -64,7 +70,7 @@ test("file URL chevrons open an inventory-independent menu, copy the decoded pat
   chevron.focus();
   await act(async () => chevron.click());
   expect(document.activeElement).toBe(view.button("Copy path"));
-  expect(view.host.textContent).not.toContain("Open with default app");
+  expect(view.menuText()).not.toContain("Open with default app");
   await act(async () => view.button("Copy path").click());
   expect(await navigator.clipboard.readText()).toBe("/tmp/Report Final.pdf");
   expect(document.activeElement).toBe(chevron);
@@ -76,7 +82,7 @@ test("file URL chevrons open an inventory-independent menu, copy the decoded pat
 test("relative paths use the owning workspace and web context menus remain native", async () => {
   const view = await render(true, "/secondary", "./reports/Report.pdf");
   expect((await context(view.element("a"))).defaultPrevented).toBe(true);
-  expect(view.host.textContent).toContain("Open with default app");
+  expect(view.menuText()).toContain("Open with default app");
   await act(async () => view.button("Copy path").click());
   expect(await navigator.clipboard.readText()).toBe("/secondary/reports/Report.pdf");
   const web = view.element('a[data-openwork-link-href^="https:"]');
@@ -89,8 +95,8 @@ test("relative paths use the owning workspace and web context menus remain nativ
 test("remote paths offer copy and preview but never local application or reveal actions", async () => {
   const view = await render(false, "/remote", "reports/Report.pdf");
   expect((await context(view.element("a"))).defaultPrevented).toBe(true);
-  expect(view.host.textContent).not.toContain("Reveal in Finder");
-  expect(view.host.textContent).not.toContain("Open with default app");
+  expect(view.menuText()).not.toContain("Reveal in Finder");
+  expect(view.menuText()).not.toContain("Open with default app");
   await act(async () => view.button("Copy path").click());
   expect(await navigator.clipboard.readText()).toBe("/remote/reports/Report.pdf");
   await context(view.element("a"));
@@ -126,7 +132,7 @@ test("opening with a chosen application hands the desktop the workspace root for
   try {
     const view = await render(true, "/secondary", "./reports/Report.pdf");
     await context(view.element("a"));
-    for (let attempt = 0; attempt < 10 && !view.host.textContent?.includes("Preview"); attempt += 1) {
+    for (let attempt = 0; attempt < 10 && !view.menuText().includes("Preview"); attempt += 1) {
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
     }
     await act(async () => view.button("Preview").click());
