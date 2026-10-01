@@ -913,7 +913,10 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
 }
 
 function toUIParts(part: Part): UIMessage["parts"] {
-  if (part.type === "text" && part.synthetic) return attachmentNoteToUIParts(part);
+  if (part.type === "text" && part.synthetic) {
+    const notice = textPartToUIPart(part);
+    return notice ? [notice] : attachmentNoteToUIParts(part);
+  }
   if (part.type === "file") return toFileUIParts(part);
   const mapped = toUIPart(part);
   if (!mapped) return [];

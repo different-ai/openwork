@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import type { UIMessage } from "ai";
-import { projectedMessageMetadata, reasoningProviderMetadata } from "../../../../lib/session-run";
+import { projectedMessageMetadata, reasoningProviderMetadata, sessionNotice } from "../../../../lib/session-run";
 import { orderMessageParents } from "./message-merge";
 import { replyModelFromInfo } from "./reply-model";
 import type { FilePart, Part, TextPart, ToolPart } from "@opencode-ai/sdk/v2/client";
@@ -147,7 +147,8 @@ export function attachmentNoteToUIParts(part: TextPart): UIMessage["parts"] {
 }
 
 export function textPartToUIPart(part: TextPart): UIMessage["parts"][number] | null {
-  if (part.synthetic || part.ignored) return null;
+  const notice = part.synthetic ? sessionNotice(part.metadata, part.messageID, typeof part.metadata?.openworkNoticeTimestamp === "number" ? part.metadata.openworkNoticeTimestamp : part.time?.start ?? 0) : null;
+  if ((part.synthetic && !notice) || part.ignored) return null;
   const composerToken = part.metadata?.openworkComposerToken;
   const composerPill = readComposerPill(part.metadata?.openworkComposerPill);
   return {
@@ -156,6 +157,7 @@ export function textPartToUIPart(part: TextPart): UIMessage["parts"][number] | n
     state: "done",
     providerMetadata: { opencode: {
       partId: part.id,
+      ...(notice ? { notice } : {}),
       ...(typeof composerToken === "string" ? { composerToken } : {}),
       ...(composerPill ? { composerPill } : {}),
       ...(part.metadata?.openworkPastedText === true ? { pastedText: true } : {}),

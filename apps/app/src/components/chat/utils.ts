@@ -1,3 +1,4 @@
+import { messageNotice } from "@/lib/session-run";
 import { isReasoningUIPart, isToolUIPart, type DynamicToolUIPart, type FileUIPart, type ToolUIPart, type UIMessage } from "ai"
 import type { ThreadStatus } from "@/lib/messages"
 // Relative so the pure grouping contract stays importable from alias-free
@@ -148,7 +149,7 @@ export function groupMessages(messages: UIMessage[], status: ThreadStatus): Mess
   while (index < messages.length) {
     const message = messages[index]
 
-    if (message.role !== "assistant") {
+    if (message.role !== "assistant" || messageNotice(message)) {
       items.push({ index, message })
       index++
       continue
@@ -156,7 +157,7 @@ export function groupMessages(messages: UIMessage[], status: ThreadStatus): Mess
 
     const assistantMessages: UIMessageWithIndex[] = []
 
-    while (index < messages.length && messages[index].role === "assistant") {
+    while (index < messages.length && messages[index].role === "assistant" && !messageNotice(messages[index])) {
       assistantMessages.push({ message: messages[index], index });
       index++
     }

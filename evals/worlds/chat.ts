@@ -310,7 +310,7 @@ export async function paletteSessionActions(seed: Seed) {
   return { app, workspace, session };
 }
 
-async function splitPaneQuestions(
+export async function splitPaneQuestions(
   seed: Seed,
   name: string,
   agentWorkloads: MockAgentWorkload[],
@@ -378,7 +378,7 @@ async function splitPaneQuestions(
   return { app, workspace, mock: agentMock };
 }
 
-export async function delegatedQuestionHandoff(seed: Seed) {
+export async function delegatedQuestionHandoff(seed: Seed, surface: AppSurface = "electron") {
   const engine = resolveEvalEngine();
   const delegationTool = engine === "v2" ? "subagent" : "task";
   const rootPrompt = "Delegate choosing the task format, then report the result.";
@@ -421,7 +421,7 @@ export async function delegatedQuestionHandoff(seed: Seed) {
     permission: { question: "allow", task: "allow" },
     // Both engines deny questions for general by default; v2 migrates task to subagent.
     agent: { general: { permission: { question: "allow" } } },
-  });
+  }, surface);
   const root = await seedSessionRetry(seed, base.app, { title: "Delegated question parent" });
   const other = await seedSessionRetry(seed, base.app, { title: "Unrelated question root" });
   return { ...base, engine, delegationTool, followup, root: { ...root, prompt: rootPrompt }, child, unrelated: { ...other, ...unrelated } };

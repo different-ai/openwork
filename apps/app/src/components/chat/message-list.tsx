@@ -131,7 +131,7 @@ import { revalidateWorkspaceSessionSync } from "@/react-app/domains/session/sync
 import { useWorkspaceMaybe } from "@/react-app/shell/workspace-provider"
 import { formatElapsedSeconds, formatToolCallDuration } from "@/lib/tool-call-duration"
 import { collectLatestAssistantToolParts } from "@/lib/latest-assistant-tool-parts"
-import { runElapsed } from "@/lib/session-run"
+import { messageNotice, runElapsed } from "@/lib/session-run"
 import { isToolPartInFlight } from "@/lib/tool-activity"
 import { faviconUrlForHref } from "@/lib/favicon"
 import { useOpenArtifactPath } from "@/lib/artifacts"
@@ -1035,6 +1035,8 @@ const MessageComponent = React.memo(
       )
     }
 
+    const notice = messageNotice(message);
+    if (notice) return <SessionNoticeLine notice={notice} />;
     if (isEmptyMessage(message)) {
       return null
     }
@@ -1605,6 +1607,14 @@ const StandaloneMessage = React.memo(function StandaloneMessage(props: Standalon
 export interface RunSyncHealth {
   degraded: boolean
   lastConfirmedAt: number | null
+}
+
+function SessionNoticeLine({ notice }: { notice: NonNullable<ReturnType<typeof messageNotice>> }) {
+  const { onOpenSubagentSession } = useMessageList();
+  const label = `${notice.description} ${notice.outcome === "completed" ? "completed" : notice.outcome === "cancelled" ? "stopped" : "reported an error"}`;
+  return <div data-session-notice={notice.id} className="mx-auto w-full max-w-3xl px-2 text-xs text-muted-foreground md:px-10">
+    {notice.source === "subagent" && onOpenSubagentSession ? <button type="button" onClick={() => onOpenSubagentSession(notice.subjectId)}>{label} ↗</button> : label}
+  </div>;
 }
 
 interface MessageListProps {

@@ -17,9 +17,29 @@ import {
 } from "../src/react-app/domains/session/sync/parse-tool-parts";
 import { codeModeToolCalls } from "../src/lib/code-mode-tools";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
+import { snapshotToUIMessages } from "../src/react-app/domains/session/sync/usechat-adapter";
 
 afterEach(() => {
   getReactQueryClient().clear();
+});
+
+test("native completion notices project identically live and from history without replay duplicates", () => {
+  const input = { workspaceId: "notice-workspace", baseUrl: "http://127.0.0.1:1234", openworkToken: "fixture-token" };
+  const cleanup = __createWorkspaceSessionSyncForTest(input);
+  const release = trackWorkspaceSessionSync(input, "parent");
+  const info = { id: "native-notice", role: "assistant" as const, sessionID: "parent", time: { created: 2_000 } };
+  const part = { id: "native-notice:0", messageID: info.id, sessionID: "parent", type: "text" as const, text: "Fixture helper completed.", synthetic: true,
+    metadata: { source: "subagent", childID: "fixture-child", state: "completed", description: "Fixture helper", openworkNoticeTimestamp: 2_000 } };
+  try {
+    __applySessionSyncEventForTest(input, { type: "message.updated", properties: { info } });
+    __applySessionSyncEventForTest(input, { type: "message.part.updated", properties: { part } });
+    __applySessionSyncEventForTest(input, { type: "message.part.updated", properties: { part } });
+    const live = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, "parent"))!;
+    expect(live).toHaveLength(1);
+    expect(live[0]?.parts).toEqual(snapshotToUIMessages({ messages: [{ info, parts: [part] }] })[0]?.parts);
+    expect(live[0]?.parts).toHaveLength(1);
+    expect(live[0]?.parts[0]).toMatchObject({ providerMetadata: { opencode: { notice: { id: info.id, subjectId: "fixture-child" } } } });
+  } finally { release(); cleanup(); }
 });
 
 function writeToolPart(
