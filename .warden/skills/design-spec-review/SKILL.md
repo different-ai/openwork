@@ -42,7 +42,7 @@ Copy and structure (P1, P2, P3, C1–C7):
 - ALL-CAPS eyebrow labels, `→` appended to button text, middle-dot meta
   strings used as decoration — C7.
 
-Components and reuse (P5, S1–S6):
+Components and reuse (P5, S1–S7):
 
 - A hand-rolled button/input/select/dialog/popover/tooltip/menu where a
   `@/components` primitive exists (`<div onClick>` acting as a button, custom
@@ -53,6 +53,11 @@ Components and reuse (P5, S1–S6):
 - Code that opens a side panel, tab, dialog, or moves focus in response to a
   tool result, background event, or fetch completion rather than a user
   action — S5.
+- A menu, picker, suggestion list, or popover positioned by hand
+  (`absolute top-full`/`bottom-full`, fixed coordinates from
+  `getBoundingClientRect()`), closed by a `document`/`window` listener, or
+  without a cap to `--available-height` so it can be clipped or scroll
+  sideways — S7.
 
 Visual system (V1–V7):
 
