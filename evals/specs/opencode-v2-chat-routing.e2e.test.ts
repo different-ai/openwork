@@ -181,6 +181,7 @@ async function closeModelPicker(app: Surface): Promise<void> {
   });
 }
 
+// Control run for #5506: unchanged behaviour on dev.
 async function waitForModelInPicker(app: Surface, expected: string, timeoutMs = 45_000): Promise<void> {
   await waitFor(app, () => (Boolean(document.querySelector<HTMLButtonElement>('button[aria-label="Change model"]'))), {
     timeoutMs: 30_000,
