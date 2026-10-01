@@ -69,7 +69,7 @@ export function CodeModeTool({ part, calls, lifecycle, connectors }: {
         aria-label={`${label}. ${open ? "Hide steps" : "Show steps"}`}
       >
         <ChevronRight aria-hidden="true" className={cn("size-4 shrink-0 transition-transform duration-150 ease-out motion-reduce:transition-none", open && "rotate-90")} />
-        <span className={cn("min-w-0 truncate", running && !current && "ow-text-shimmer")}>{label}</span>
+        <span className={cn("min-w-0 truncate", running && (!open || !current) && "ow-text-shimmer motion-reduce:animate-none")}>{label}</span>
         {calls.length > 0 ? <span className="shrink-0 text-xs">{calls.length} {calls.length === 1 ? "step" : "steps"}</span> : null}
         {waitingOn ? <span className="shrink-0 text-xs">Waiting on {waitingOn}</span> : null}
         {failedCalls.length > 0 ? <span className="shrink-0 text-xs">{failedCalls.length} {failedCalls.length === 1 ? "failed call" : "failed calls"}</span> : null}

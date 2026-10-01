@@ -1,8 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import type { DynamicToolUIPart } from "ai"
-import { Ellipsis, ExternalLink, LoaderCircle, RefreshCcw } from "lucide-react"
+import { Check, Copy, Ellipsis, ExternalLink, LoaderCircle, RefreshCcw } from "lucide-react"
 
 import { describeChatToolFailure } from "@/components/tools/error-attribution"
 import {
@@ -16,7 +16,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
 import { getCapabilityCallQuote, getCapabilityCallSentence } from "@/lib/capability-call"
-import { trackToolCallDuration } from "@/lib/tool-call-duration"
+import { formatElapsedSeconds, getToolCallStartedAt, trackToolCallDuration } from "@/lib/tool-call-duration"
 import { isToolPartInFlight } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
 import type { ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
@@ -82,11 +82,38 @@ function failureInstruction(part: DynamicToolUIPart, reconnectName: string | nul
 }
 
 export function TechnicalDetailsPanel({ part, resultUnavailable = false }: { part: DynamicToolUIPart; resultUnavailable?: boolean }) {
+  const [copyState, setCopyState] = useState<"idle" | "copying" | "copied" | "error">("idle")
+  const copyDetails = async () => {
+    setCopyState("copying")
+    try {
+      await navigator.clipboard.writeText(formatTechnicalValue({
+        toolName: part.toolName,
+        toolCallId: part.toolCallId,
+        input: part.input,
+        ...("output" in part ? { output: part.output } : {}),
+        ...(part.state === "output-error" ? { error: part.errorText } : {}),
+        ...(resultUnavailable ? { resultUnavailable: true } : {}),
+        ...(part.callProviderMetadata?.openwork?.resultTruncated === true ? { resultTruncated: true } : {}),
+      }))
+      setCopyState("copied")
+    } catch {
+      setCopyState("error")
+    }
+  }
   return (
     <div className="mt-2 flex flex-col gap-2 rounded-lg bg-muted p-2 text-xs">
-      <div className="font-mono text-[11px] text-muted-foreground">
-        {part.toolName} · {part.toolCallId}
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="min-w-0 wrap-break-word font-mono text-[11px] text-muted-foreground">
+          {part.toolName} · {part.toolCallId}
+        </span>
+        <Button type="button" variant="ghost" size="xs" className="ms-auto shrink-0"
+          aria-label="Copy technical details" disabled={copyState === "copying"}
+          onClick={() => void copyDetails()}>
+          {copyState === "copied" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+          <span aria-live="polite">{copyState === "copied" ? "Copied" : "Copy details"}</span>
+        </Button>
       </div>
+      {copyState === "error" ? <p role="alert">Couldn’t copy details. Try again.</p> : null}
       {part.input !== undefined && part.input !== null ? (
         <pre className="max-h-40 overflow-auto whitespace-pre-wrap wrap-break-word">
           {formatTechnicalValue(part.input)}
@@ -132,9 +159,19 @@ export function CapabilityCallLine({
 }: CapabilityCallLineProps) {
   const [open, setOpen] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const [now, setNow] = useState(Date.now)
   const inFlight = !statusUnknown && isToolPartInFlight(part)
   const isFailed = part.state === "output-error"
-  const duration = statusUnknown ? null : trackToolCallDuration(part)
+  const startedAt = inFlight ? getToolCallStartedAt(part) : null
+  useEffect(() => {
+    if (!inFlight || startedAt === null) return
+    setNow(Date.now())
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(interval)
+  }, [inFlight, startedAt])
+  const duration = statusUnknown ? null : inFlight && startedAt !== null
+    ? formatElapsedSeconds(Math.max(0, Math.floor((now - startedAt) / 1_000)))
+    : trackToolCallDuration(part)
   const { reconnectAction, reconnectState, reconnectError, reconnectPresentation, handleReconnect } =
     useChatToolReconnect(part, { onReconnect, onReopenAuthorization })
   const ReconnectIcon = reconnectState === "opening"

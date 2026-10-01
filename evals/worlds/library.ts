@@ -346,7 +346,7 @@ export async function connectorBranding(seed: Seed) {
       allowUnauthenticatedMcp: true,
       tools: [
         { name: "list_channels", description: "List Slack channels", inputSchema,
-          delayMs: 4_000, result: { content: [{ type: "text", text: proof }] } },
+          delayMs: 30_000, result: { content: [{ type: "text", text: proof }] } },
         { name: "read_history", description: "Read Slack history", inputSchema,
           delayMs: 4_000, result: { isError: true, content: [{ type: "text", text: "History lookup failed." }] } },
         { name: "create_note", description: "Create a Slack note", inputSchema,
@@ -371,14 +371,50 @@ export async function connectorBranding(seed: Seed) {
   const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
   const workspace = await seed.workspace(app, seed.tmpPath("connector-tool-call-branding"));
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    ...(engine === "v1" ? { model: `${providerId}/${modelId}` } : {}),
     provider: { [providerId]: {
       npm: "@ai-sdk/openai-compatible", name: "Connector display model",
       options: { baseURL: `${den.mocks.connector.url}/v1`, apiKey: "sk-connector-display-fixture" },
       models: { [modelId]: { name: "Connector display model" } },
     } },
   });
+  const connected = await seed.evalIn(app, browserScript(async (workspaceId, engine) => {
+    const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/workspace/" + encodeURIComponent(workspaceId)
+      + (engine === "v2" ? "/opencode2/api" : "/opencode");
+    const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") };
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch(base + "/mcp", { headers, signal: AbortSignal.timeout(5_000) });
+        const raw = await response.json();
+        const data = raw.data ?? raw;
+        const cloud = Array.isArray(data) ? data.find((entry: { name: string }) => entry.name === "openwork-cloud") : data["openwork-cloud"];
+        const status = typeof cloud?.status === "object" ? cloud.status.status : cloud?.status;
+        if (status === "connected") return true;
+      } catch {}
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    return false;
+  }, [workspace.workspaceId, engine]), { awaitPromise: true, timeoutMs: 70_000 });
+  if (!connected) throw new Error("Native connected tools did not become ready before the fixture prompt");
   await seed.session(app);
-  return { app, den, engine, prompt, failurePrompt, mutationPrompt, mutationProof, proof };
+  return { app, den, engine, prompt, failurePrompt, mutationPrompt, mutationProof, proof,
+    nativeToolHistory: () => seed.evalIn(app, browserScript(async (workspaceId, engine) => {
+      const sessionId = document.querySelector('[data-session-surface-id]')?.getAttribute("data-session-surface-id");
+      const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/workspace/" + encodeURIComponent(workspaceId)
+        + (engine === "v2" ? "/opencode2/api" : "/opencode");
+      const response = await fetch(base + "/session/" + encodeURIComponent(sessionId ?? "") + "/message?limit=50", {
+        headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") }, signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) return { status: response.status };
+      const raw = await response.json();
+      const messages = Array.isArray(raw) ? raw : raw.data ?? [];
+      return messages.map((message: { id?: string; type?: string; info?: unknown; content?: { type: string }[]; parts?: { type: string }[] }) => ({
+        id: message.id, type: message.type, info: message.info,
+        tools: (message.content ?? message.parts ?? []).filter(part => part.type === "tool"),
+      }));
+    }, [workspace.workspaceId, engine]), { awaitPromise: true }),
+  };
 }
 
 export async function connectorCatalogManagement(seed: Seed) {

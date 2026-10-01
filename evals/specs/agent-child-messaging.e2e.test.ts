@@ -12,7 +12,13 @@ test(`a member messages a busy helper and returns without losing its draft (AGEN
     await user.type("composer", world.prompt, { verify: true });
     await probe.eventually(() => probe.composer(), { within: 30_000, label: "the configured engine admits the first prompt", until: state => state.runTaskEnabled });
     await user.click("Run task");
-    await user.see({ text: "Review fixture" }, { timeoutMs: 60_000 });
+    await user.see({ text: "Review fixture" }, { timeoutMs: 60_000 }).catch(async error => {
+      evidence.recordJsonArtifact("Delegation startup diagnostics", { screen: await probe.text(), commands: await commands.read(),
+        modelRequests: await world.mock.agentRequests({ atLeast: 0 }), nativeSession: await world.nativeSession(world.session.sessionId),
+        nativeTools: await world.delegatedTools() });
+      await user.screenshot();
+      throw error;
+    });
     evidence.recordAssertionEvidence("Delegation is visible in its original turn", "The admitted parent prompt exposes the Review fixture child in the existing live rail.", true);
     await user.screenshot();
   });
@@ -74,7 +80,13 @@ test(`a member stops one helper from its parent chat (AGENT-CHILD-STOP ${resolve
   await step("before: delegated work is running and the parent still owns its own chat", async () => {
     await user.type("composer", world.prompt, { verify: true });
     await user.click("Run task");
-    await user.see({ role: "button", label: "Review fixture. Open sub-agent chat" }, { timeoutMs: 60_000 });
+    await user.see({ role: "button", label: "Review fixture. Open sub-agent chat" }, { timeoutMs: 60_000 }).catch(async error => {
+      evidence.recordJsonArtifact("Delegation startup diagnostics", { screen: await probe.text(), commands: await commands.read(),
+        modelRequests: await world.mock.agentRequests({ atLeast: 0 }), nativeSession: await world.nativeSession(world.session.sessionId),
+        nativeTools: await world.delegatedTools() });
+      await user.screenshot();
+      throw error;
+    });
     await user.click({ role: "button", label: "Review fixture. Open sub-agent chat" });
     // Opening a split pane leaves keyboard focus on the parent's opener.
     // Interact with the helper's own brief before observing its focused scope.

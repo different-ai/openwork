@@ -1478,6 +1478,50 @@ describe("OpenCode v2 client compatibility", () => {
       expect(ui).toMatchObject({ output: "Combined result" });
     } finally { globalThis.fetch = originalFetch; }
   });
+  test("observed v2 progress survives a new client only for the exact native running invocation", async () => {
+    const ownedDom = typeof window === "undefined";
+    if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
+    const key = "openwork.v2.live-tool-progress.v1";
+    const previous = sessionStorage.getItem(key);
+    const originalFetch = globalThis.fetch;
+    const scope = "http://reload-progress.test/opencode2";
+    const state = createV2EventTranslationState(); state.taskSessions.scope = scope;
+    const identity = { sessionID: "ses_live", assistantMessageID: "msg_live", id: "execute-live" };
+    const input = { name: "mcp:connection:list_channels", body: { limit: 3 } };
+    const toolCalls = [{ tool: "openwork-cloud.execute_capability", input, status: "running" }];
+    const details = [{ tool: "openwork-cloud_execute_capability", input, ordinal: 0,
+      invocationId: "execute-live:0", status: "running", startedAt: 100 }];
+    const message = (status: string, id = "msg_live") => ({ id, type: "assistant", time: { created: 1 }, content: [{
+      id: "execute-live", type: "tool", name: "execute", time: { created: 1, ran: 10 },
+      state: { status, input: { code: "recorded code" }, metadata: {}, content: [] },
+    }] });
+    let status = "running";
+    globalThis.fetch = async () => jsonResponse({ data: [message(status), message("running", "another_reply")] });
+    try {
+      translateV2Event({ type: "session.tool.input.started", data: { ...identity, name: "execute" } }, state);
+      translateV2Event({ type: "session.tool.called", data: { ...identity, input: { code: "recorded code" } } }, state);
+      translateV2Event({ type: "session.tool.progress", data: { ...identity, metadata: { toolCalls, openworkToolDetails: details } } }, state);
+      const readCalls = async (base = scope) => {
+        const messages = (await createClientV2(base, "/workspace", {}).session.messages({ sessionID: "ses_live" })).data;
+        return messages?.map(message => { const part = message.parts[0];
+          if (part?.type !== "tool") throw new Error("Missing native execution");
+          return codeModeToolCalls(parseDynamicToolUIPart(part)!); });
+      };
+      expect((await readCalls())?.[0]).toMatchObject([{ toolCallId: "execute-live:call:0",
+        state: "input-streaming", callProviderMetadata: { openwork: { toolStartedAt: 100 } } }]);
+      expect((await readCalls())?.[1]).toEqual([]);
+      expect((await readCalls("http://another-server.test/opencode2"))?.[0]).toEqual([]);
+      status = "completed";
+      expect((await readCalls())?.[0]).toEqual([]);
+      status = "running";
+      expect((await readCalls())?.[0]).toEqual([]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previous === null) sessionStorage.removeItem(key); else sessionStorage.setItem(key, previous);
+      if (ownedDom) await GlobalRegistrator.unregister();
+    }
+  });
+
   test("Code Mode connection reports become the tool parts v1 saves, so the connection card finds them", async () => {
     // Shapes recorded from opencode2 beta-19086 with the openwork-mcp-results-v2 plugin: a
     // connection_action result keeps its structuredContent; an isError call keeps its text.

@@ -9,6 +9,45 @@ test("connector-backed tool calls show first-class branding and human-readable l
   await user.type("composer", world.prompt);
   await user.click("Run task");
 
+  // TODO(primitive): observe the elapsed label on this individual connected action.
+  const readRunning = () => probe.eval(() => {
+    const row = [...document.querySelectorAll<HTMLElement>('[data-capability-call]')]
+      .find(node => node.getAttribute('data-capability-call')?.endsWith('execute_capability'));
+    return { duration: row?.querySelector('.tabular-nums')?.textContent ?? null,
+      rawVisible: Boolean(row?.querySelector('pre')), text: row?.innerText ?? "" };
+  });
+  const first = await probe.eventually(readRunning, { within: 90_000, intervalMs: 100,
+    label: "individual lookup has its own running duration", until: value => value.duration !== null }).catch(async error => {
+    evidence.recordJsonArtifact("Connected action startup diagnostics", { screen: await probe.text(),
+      calls: await world.den.mocks.connector.toolCalls({ name: "list_channels", sinceIso, atLeast: 0 }) });
+    await user.screenshot();
+    throw error;
+  });
+  const advanced = await probe.eventually(readRunning, { within: 5_000, intervalMs: 100,
+    label: "individual lookup elapsed time advances", until: value => value.duration !== null && value.duration !== first.duration });
+  expect(first.rawVisible).toBe(false);
+  expect(advanced.rawVisible).toBe(false);
+  if (world.engine === "v2") {
+    evidence.recordJsonArtifact("Running v2 native history before reload", await world.nativeToolHistory());
+    await user.reload();
+    const restored = await probe.eventually(readRunning, { within: 15_000, intervalMs: 100,
+      label: "the same live connected action restores its elapsed time", until: value => value.duration !== null }).catch(async error => {
+      evidence.recordJsonArtifact("Running v2 reload diagnostics", { screen: await probe.text(), nativeHistory: await world.nativeToolHistory() });
+      await user.screenshot();
+      throw error;
+    });
+    const seconds = (duration: string | null) => [...(duration ?? "").matchAll(/(\d+)\s*(m|s)/g)]
+      .reduce((total, match) => total + Number(match[1]) * (match[2] === "m" ? 60 : 1), 0);
+    expect(seconds(restored.duration)).toBeGreaterThanOrEqual(seconds(advanced.duration));
+    expect(restored.rawVisible).toBe(false);
+    evidence.recordJsonArtifact("Restored running v2 connected action", restored);
+    evidence.recordAssertionEvidence("V2 call starts survive reload while the action is still running",
+      `Listing channels continued from ${advanced.duration} to ${restored.duration} after a real page reload before its result arrived`, true);
+  }
+  evidence.recordJsonArtifact("Connected action live elapsed time", { first, advanced });
+  evidence.recordAssertionEvidence("Each running connected action shows advancing elapsed time",
+    `${first.duration} advanced to ${advanced.duration} on Listing channels, with raw output still disclosed`, true);
+
   await step("before: a member sees the running lookup without raw tool output", async () => {
     await user.see({ text: /Searched your connections for.*Slack list_channels/ }, { timeoutMs: 60_000 });
     await user.see({ text: /^(Listing|Listed) channels$/ }, { timeoutMs: 30_000 });
@@ -45,6 +84,10 @@ test("connector-backed tool calls show first-class branding and human-readable l
       expect(await savedResult()).toContain(world.proof);
       expect(await savedResult()).not.toContain("The result was not recorded");
     }
+    await user.click({ role: "button", label: "Copy technical details" });
+    await user.see({ text: "Copied" });
+    evidence.recordAssertionEvidence("The disclosed action can copy its technical details",
+      "Opening Listed channels exposes the Copy technical details action; its real clipboard write is acknowledged as Copied", true);
     await user.screenshot();
     await user.reload();
     if (world.engine === "v2") await user.click({ role: "button", label: /Looked up.*Show steps/ });
