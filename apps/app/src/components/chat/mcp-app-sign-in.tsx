@@ -3,6 +3,7 @@ import { connectionActionPayloadSchema, type ConnectionActionPayload } from "@op
 import { createDenClient, readDenSettings, type DenExternalMcpConnection } from "@/app/lib/den"
 import { cn } from "@/lib/utils"
 import { DashboardConnectionCard } from "@/react-app/domains/dashboard/dashboard-connection-card"
+import { useOptionalMessageList } from "./message-list-provider"
 
 // The native connection card reads a connection report from this tool's results.
 const CONNECTION_TOOL_NAME = "openwork-cloud_connection_action"
@@ -119,12 +120,18 @@ export function McpAppSignInPrompts({ prompts, appTitle, scope, className, onSig
   scope: string
   onSignedIn: (connectionId: string) => void
 }) {
+  const cachedIdentities = useOptionalMessageList()?.connectorIdentities
   if (prompts.length === 0) return null
+  // These prompts come from a fresher check than the chat's cached connector
+  // list, which keeps only its logos here: it can still call a person connected.
+  const connectorIdentities = (cachedIdentities ?? []).map(identity => prompts.some(prompt => prompt.connectionId === identity.connectionId)
+    ? { ...identity, connectedForMe: false }
+    : identity)
   return (
     <div data-testid="mcp-app-sign-in" className={cn("flex flex-col", className)}>
       {prompts.map(prompt => (
         <DashboardConnectionCard key={prompt.connectionId} toolName={CONNECTION_TOOL_NAME}
-          toolCallId={`mcp-app-sign-in:${scope}:${prompt.connectionId}`} output={prompt} subject={appTitle ?? "this App"}
+          toolCallId={`mcp-app-sign-in:${scope}:${prompt.connectionId}`} output={prompt} subject={appTitle ?? "this App"} connectorIdentities={connectorIdentities}
           onConnected={() => onSignedIn(prompt.connectionId)} />
       ))}
     </div>

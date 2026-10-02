@@ -1,12 +1,14 @@
 import { ConnectionCard } from "@/components/chat/connection-card";
+import type { ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity";
 import type { ChatToolReconnectCallbacks } from "@/components/tools/use-chat-tool-reconnect";
 import { createDenClient, readDenSettings } from "@/app/lib/den";
 import { openDesktopUrl } from "@/app/lib/desktop";
 import { isChatMcpReconnectScopeCurrent, waitForFreshMcpAuthorization } from "../session/surface/mcp-chat-reconnect";
 
-export function DashboardConnectionCard({ toolName, toolCallId, output, onConnected, subject }: {
+export function DashboardConnectionCard({ toolName, toolCallId, output, onConnected, subject, connectorIdentities }: {
   toolName: string;
   subject?: string;
+  connectorIdentities?: ConnectorToolIdentity[];
   toolCallId: string;
   output: unknown;
   onConnected: () => void;
@@ -50,5 +52,5 @@ export function DashboardConnectionCard({ toolName, toolCallId, output, onConnec
     onReopenAuthorization: async (_target, url) => { await openDesktopUrl(url); },
   };
   return <ConnectionCard part={{ type: "dynamic-tool", toolName, toolCallId, state: "output-available", input: {}, output }}
-    callbacks={callbacks} subject={subject} />;
+    callbacks={callbacks} subject={subject} connectorIdentities={connectorIdentities} />;
 }

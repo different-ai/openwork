@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import type { DenExternalMcpConnection } from "../src/app/lib/den"
+import { MessageListProvider } from "../src/components/chat/message-list-provider"
 import {
   connectionIdsUsedByApp,
   McpAppSignInPrompts,
@@ -84,4 +85,18 @@ test("the prompt names the connection and the App, with one sign-in action", () 
   expect(blocked).not.toContain(">Sign in</button>")
 
   expect(renderToStaticMarkup(<McpAppSignInPrompts prompts={[]} appTitle={null} scope="ui://app" onSignedIn={() => {}} />)).toBe("")
+})
+
+test("a chat's cached connector list cannot turn a fresh sign-in prompt into \"connected\"", () => {
+  const html = renderToStaticMarkup(<MessageListProvider workspaceId="workspace-1" sessionId="session-1"
+    showThinking={false} developerMode={false} displaySuggestions={false} providerConnectedCount={1}
+    onRevertToUserMessage={() => {}} onForkAtMessage={() => {}} onEditUserMessage={() => {}}
+    onMcpReconnect={async () => "connected"} onMcpReopenAuthorization={async () => {}}
+    dispatchAction={() => {}} setPrompt={() => {}}
+    connectorIdentities={[{ id: "linear", name: "Linear", iconUrl: "https://linear.app/icon.png", serviceUrl: null, toolNamespace: null, connectionId: "emc_linear", connectedForMe: true }]}>
+    <McpAppSignInPrompts prompts={[needsSignIn]} appTitle="Inventory board" scope="ui://app" onSignedIn={() => {}} />
+  </MessageListProvider>)
+  expect(html).toContain("Sign in to Linear to use Inventory board")
+  expect(html).not.toContain("Linear connected")
+  expect(html).toContain('src="https://linear.app/icon.png"')
 })
