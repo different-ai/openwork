@@ -57,6 +57,10 @@ describe("composer model controls", () => {
     const behaviorCallback = fullPicker.slice(fullPicker.indexOf("onBehaviorChange="), fullPicker.indexOf("onToggleProvider="));
     expect(behaviorCallback).toContain("changeNewTaskModel(model, value)");
     expect(behaviorCallback).not.toContain("defaultModel:");
+    const sessionControlSource = readFileSync(new URL("../src/react-app/domains/session/control/session-control-actions.ts", import.meta.url), "utf8");
+    expect(sessionControlSource).toContain('id: "session.set_model"');
+    expect(sessionControlSource).toContain("await setSessionModel(client, sessionId");
+    expect(sessionControlSource).toContain("Rebind one existing session to an exact available providerId/modelId without opening it or starting inference.");
     const favoriteCycle = sessionRouteSource.slice(sessionRouteSource.indexOf("const cycleFavoriteModel ="), sessionRouteSource.indexOf("const cycleFavoriteModelControlAction"));
     const paletteModels = readFileSync(new URL("../src/react-app/shell/command-palette-models.ts", import.meta.url), "utf8");
     expect(paletteModels).toContain("option.behaviorOptions?.some((choice) => choice.value === input.behavior)");

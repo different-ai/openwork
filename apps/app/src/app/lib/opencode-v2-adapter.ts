@@ -430,6 +430,10 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
   const updated = readNumber(time, "updated") ?? readNumber(source, "updated") ?? created;
   const archived = readNumber(time, "archived");
   const parentID = readString(source, "parentID");
+  const model = readRecord(source, "model");
+  const modelID = readString(model, "id") ?? readString(model, "modelID");
+  const providerID = readString(model, "providerID");
+  const variant = readString(model, "variant");
   const revert = readRecord(source, "revert");
   const revertMessageID = revert && readString(revert, "messageID");
   const mapped: Session = {
@@ -446,6 +450,9 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
       ...(archived === undefined ? {} : { archived }),
     },
     ...(parentID ? { parentID } : {}),
+    ...(providerID && modelID ? {
+      model: { providerID, id: modelID, ...(variant ? { variant } : {}) },
+    } : {}),
     ...(revertMessageID ? { revert: { messageID: revertMessageID } } : {}),
   };
   return mapped;
@@ -1895,6 +1902,12 @@ export function isOpencodeV2Client(client: ReturnType<typeof createClient>): cli
   return v2Clients.has(client);
 }
 
+export type SetSessionModelParameters = {
+  sessionID: string;
+  model: { providerID: string; modelID: string };
+  variant?: string | null;
+};
+
 export function createClientV2(
   opencode2BaseUrl: string,
   directory: string | undefined,
@@ -2225,6 +2238,22 @@ export function createClientV2(
       }
       return successfulResult(result, statuses);
     },
+    setModel: async (
+      parameters: SetSessionModelParameters,
+      options?: RequestOptions,
+    ): Promise<FieldsResult<Record<string, never>>> => {
+      const modelResult = await request(
+        "POST",
+        `/api/session/${encodeURIComponent(parameters.sessionID)}/model`,
+        { model: {
+          providerID: parameters.model.providerID,
+          id: parameters.model.modelID,
+          ...(parameters.variant === undefined ? {} : { variant: parameters.variant }),
+        } },
+        options?.signal,
+      );
+      return modelResult.response.ok ? successfulResult(modelResult, {}) : failedResult(modelResult);
+    },
     promptAsync: async (
       parameters: PromptParameters,
       options?: RequestOptions,
@@ -2273,17 +2302,21 @@ export function createClientV2(
           return unsupportedResult(baseUrl, "skill.attachment", message);
         }
       }
-      const modelResult = await request(
-        "POST",
-        `/api/session/${encodeURIComponent(parameters.sessionID)}/model`,
-        { model: {
+      const modelResult = await adapter.session.setModel({
+        sessionID: parameters.sessionID,
+        model: {
           providerID: parameters.model.providerID,
-          id: parameters.model.modelID,
-          ...(parameters.variant === undefined ? {} : { variant: parameters.variant }),
-        } },
-        options?.signal,
-      );
-      if (!modelResult.response.ok) return failedResult(modelResult);
+          modelID: parameters.model.modelID,
+        },
+        ...(parameters.variant === undefined ? {} : { variant: parameters.variant }),
+      }, options);
+      if (!modelResult.response.ok) {
+        return {
+          error: modelResult.error,
+          request: modelResult.request,
+          response: modelResult.response,
+        };
+      }
       if (parameters.system !== undefined) {
         const instructions = await request("PUT",
           `/api/session/${encodeURIComponent(parameters.sessionID)}/instructions/entries/openwork-context`,
@@ -2538,13 +2571,18 @@ export function createClientV2(
   Object.assign(compatibilityClient.find, adapter.find);
   Object.assign(compatibilityClient.mcp, adapter.mcp);
   Object.assign(compatibilityClient.event, adapter.event);
-  v2Clients.add(compatibilityClient);
-  return Object.assign(compatibilityClient, {
+  const client = Object.assign(compatibilityClient, {
     listSessionsPage: session.list, listMessagesPage: session.messages,
     listSessionQuestions: (parameters: SessionParameters, options?: RequestOptions) => listQuestions(parameters, options),
     replySessionQuestion: (parameters: SessionParameters & { requestID: string; answers: string[][] }, options?: RequestOptions) =>
       settleQuestion(parameters, options),
   });
+  v2Clients.add(client);
+  // Object.assign above installs the v2-only method on the SDK's readonly
+  // session object; reflect that runtime augmentation in the returned type.
+  return client as typeof client & {
+    session: typeof client.session & Pick<typeof adapter.session, "setModel">;
+  };
 }
 
 export type OpencodeV2Client = ReturnType<typeof createClientV2>;

@@ -2297,7 +2297,8 @@ describe("OpenCode v2 client compatibility", () => {
         return new Promise<Response>(() => {});
       };
       try {
-        const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+
         const subscription = await client.event.subscribe({}, { signal: controller.signal });
         source.send(nativeForkEvent);
         source.send(capturedPermissionAsked);
@@ -2437,6 +2438,80 @@ describe("OpenCode v2 client compatibility", () => {
       expect(result.error).toEqual(error);
       expect(result.data).toBeUndefined();
       expect(paths).toEqual(["/opencode2/api/session/ses_failure/model"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("updates the canonical model binding before a later prompt succeeds", async () => {
+    const originalFetch = globalThis.fetch;
+    const bodies: Array<{ path: string; body: unknown }> = [];
+    let currentModel = { providerID: "openai", id: "gpt-6-astra", variant: null as string | null };
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const path = new URL(request.url).pathname;
+      if (request.method === "POST" && path.endsWith("/model")) {
+        const payload = await request.json();
+        bodies.push({ path, body: payload });
+        currentModel = payload.model;
+        return jsonResponse({ data: {} });
+      }
+      if (request.method === "POST" && path.endsWith("/prompt")) {
+        bodies.push({ path, body: await request.json() });
+        if (currentModel.providerID === "openai" && currentModel.id === "gpt-6-astra") {
+          return jsonResponse({ name: "ProviderModelNotFoundError", message: "stale binding" }, 404);
+        }
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+    };
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const stale = await client.session.promptAsync({
+        sessionID: "ses_recover",
+        model: { providerID: "openai", modelID: "gpt-6-astra" },
+        parts: [{ type: "text", text: "resume" }],
+      });
+      expect(stale.response.status).toBe(404);
+      expect(stale.error).toEqual({ name: "ProviderModelNotFoundError", message: "stale binding" });
+      expect(bodies.map((entry) => entry.path)).toEqual([
+        "/opencode2/api/session/ses_recover/model",
+        "/opencode2/api/session/ses_recover/prompt",
+      ]);
+
+      const rebound = await client.session.setModel({
+        sessionID: "ses_recover",
+        model: {
+          providerID: "ipr_01m292tsaxe9h96437sf8rag7c",
+          modelID: "gwm_01m292tscteantqy79spgyvbcs_01m292tsbxehmvrpjxfn7m4n86_01m292tsbgey6s6q4hbnvd6a8h",
+        },
+      });
+      expect(rebound.response.status).toBe(200);
+      expect(rebound.error).toBeUndefined();
+
+      const resumed = await client.session.promptAsync({
+        sessionID: "ses_recover",
+        model: {
+          providerID: "ipr_01m292tsaxe9h96437sf8rag7c",
+          modelID: "gwm_01m292tscteantqy79spgyvbcs_01m292tsbxehmvrpjxfn7m4n86_01m292tsbgey6s6q4hbnvd6a8h",
+        },
+        parts: [{ type: "text", text: "resume" }],
+      });
+      expect(resumed.response.status).toBe(204);
+      expect(resumed.error).toBeUndefined();
+      expect(bodies.map((entry) => entry.path)).toEqual([
+        "/opencode2/api/session/ses_recover/model",
+        "/opencode2/api/session/ses_recover/prompt",
+        "/opencode2/api/session/ses_recover/model",
+        "/opencode2/api/session/ses_recover/model",
+        "/opencode2/api/session/ses_recover/prompt",
+      ]);
+      expect(bodies[2]?.body).toEqual({
+        model: {
+          providerID: "ipr_01m292tsaxe9h96437sf8rag7c",
+          id: "gwm_01m292tscteantqy79spgyvbcs_01m292tsbxehmvrpjxfn7m4n86_01m292tsbgey6s6q4hbnvd6a8h",
+        },
+      });
     } finally {
       globalThis.fetch = originalFetch;
     }

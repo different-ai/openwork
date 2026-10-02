@@ -2,6 +2,7 @@
 import { useCallback, useMemo } from "react";
 
 import { createClient, unwrap } from "../../../../app/lib/opencode";
+import { setSessionModel } from "../../../../app/lib/opencode-session";
 import { openworkCatalogModels, openworkModelsListArgsSchema, type OpenworkCatalogModel } from "@openwork/types/openwork-affordance";
 import type { OpenworkServerClient, OpenworkWorkspaceInfo } from "../../../../app/lib/openwork-server";
 import { deleteRouteSession } from "../../../shell/route-workspaces";
@@ -290,6 +291,67 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     execute: openModelPicker,
   }), [openModelPicker, selectedWorkspaceId]);
   useControlAction(modelPickerControlAction);
+
+  const sessionSetModelControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.set_model",
+    label: "Set a session model",
+    description: "Rebind one existing session to an exact available providerId/modelId without opening it or starting inference. Requires an idle, unarchived session in the selected workspace runtime. Returns the verified new binding.",
+    sideEffect: "mutation",
+    requiresArgs: true,
+    args: [
+      { name: "sessionId", type: "string", required: true, description: "Session ID from session.list_sessions." },
+      { name: "workspaceId", type: "string", required: false, description: "Workspace ID or display name. Required when the session is not in the loaded inventory." },
+      { name: "providerId", type: "string", required: true, description: "Exact providerId from models.list." },
+      { name: "modelId", type: "string", required: true, description: "Exact modelId from models.list." },
+      { name: "variant", type: "string", required: false, description: "Optional reasoning / effort variant. Omit or pass null for the provider default." },
+    ],
+    execute: async (args) => {
+      const sessionId = stringArg(args, "sessionId");
+      const workspaceQuery = stringArg(args, "workspaceId");
+      const providerId = stringArg(args, "providerId");
+      const modelId = stringArg(args, "modelId");
+      const rawVariant = objectArgs(args).variant;
+      const variant = rawVariant === null ? null : typeof rawVariant === "string" ? rawVariant.trim() || null : undefined;
+      if (!sessionId) return { ok: false, error: "sessionId is required" };
+      if (!providerId) return { ok: false, error: "providerId is required" };
+      if (!modelId) return { ok: false, error: "modelId is required" };
+
+      const targetWorkspace = workspaceQuery
+        ? workspaces.find((workspace) => workspace.id === workspaceQuery || workspaceLabel(workspace).toLowerCase() === workspaceQuery.toLowerCase())
+        : findSessionWorkspace(workspaces, sessionsByWorkspaceId, sessionId);
+      if (!targetWorkspace) return { ok: false, error: workspaceQuery ? "Workspace was not found; pass its exact id." : "Session was not found in the current session list; pass workspaceId." };
+      const endpoint = endpointForWorkspace(targetWorkspace);
+      if (!endpoint) return { ok: false, error: "Workspace runtime is not connected" };
+      const client = opencodeClient && targetWorkspace.id === selectedWorkspaceId
+        ? opencodeClient
+        : createClient(endpoint.opencodeBaseUrl, targetWorkspace.path, { mode: "openwork", token: endpoint.token });
+      const session = unwrap(await client.session.get({ sessionID: sessionId, directory: targetWorkspace.path }));
+      if ((session.time?.archived ?? 0) > 0) return { ok: false, error: "Archived sessions cannot be reassigned." };
+      const status = unwrap(await client.session.status({ directory: targetWorkspace.path }));
+      if (status[sessionId]?.type === "busy") return { ok: false, error: "Working sessions cannot be reassigned. Wait until the session is idle." };
+
+      const catalog = await workspaceModels(targetWorkspace);
+      const match = catalog.find((model) => model.providerId === providerId && model.modelId === modelId);
+      if (!match) return { ok: false, error: `Unavailable model: ${providerId}/${modelId}. Use models.list for this workspace.` };
+      await setSessionModel(client, sessionId, { providerID: providerId, modelID: modelId }, variant);
+      const rebound = unwrap(await client.session.get({ sessionID: sessionId, directory: targetWorkspace.path }));
+      return {
+        ok: true,
+        sessionId,
+        workspaceId: targetWorkspace.id,
+        model: rebound.model
+          ? {
+              providerId: rebound.model.providerID,
+              modelId: rebound.model.id,
+              variant: rebound.model.variant ?? null,
+              displayName: match.displayName,
+              providerName: match.providerName,
+            }
+          : null,
+      };
+    },
+  }), [endpointForWorkspace, opencodeClient, selectedWorkspaceId, sessionsByWorkspaceId, workspaceModels, workspaces]);
+  useControlAction(sessionSetModelControlAction);
 
   // ---------------------------------------------------------------------------
   // Session management control actions (pin, archive, groups)
