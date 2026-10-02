@@ -374,7 +374,7 @@ importers:
         version: 13.0.2
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@13.0.2)(bun-types@1.3.14)(kysely@0.28.17)(mysql2@3.24.2(@types/node@24.13.3))
+        version: 0.45.2(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@13.0.2)(bun-types@1.3.14)(kysely@0.28.17)(mysql2@3.24.2(@types/node@24.19.0))
       electron-updater:
         specifier: ^6.3.9
         version: 6.8.3
@@ -391,8 +391,8 @@ importers:
         specifier: npm:@lydell/node-pty@1.2.0-beta.12
         version: '@lydell/node-pty@1.2.0-beta.12'
       undici:
-        specifier: 6.28.0
-        version: 6.28.0
+        specifier: 6.28.1
+        version: 6.28.1
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -486,8 +486,8 @@ importers:
         specifier: ^10.2.5
         version: 10.2.5
       undici:
-        specifier: 6.28.0
-        version: 6.28.0
+        specifier: 6.28.1
+        version: 6.28.1
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -764,8 +764,8 @@ importers:
         specifier: ^5.5.4
         version: 5.9.3
       undici:
-        specifier: 7.29.0
-        version: 7.29.0
+        specifier: 6.28.1
+        version: 6.28.1
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -810,8 +810,8 @@ importers:
         specifier: 4.13.5
         version: 4.13.5
       undici:
-        specifier: 7.29.0
-        version: 7.29.0
+        specifier: 6.28.1
+        version: 6.28.1
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -1164,7 +1164,7 @@ importers:
         version: 1.29.0(patch_hash=b9b29e6a319e94ea968476aa440eb8586b5da9db6b8011ce749c384d186f8a10)(zod@3.25.76)
       mysql2:
         specifier: ^3.23.1
-        version: 3.24.2(@types/node@24.13.3)
+        version: 3.24.2(@types/node@24.19.0)
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -5380,6 +5380,9 @@ packages:
   '@types/node@24.13.3':
     resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
 
+  '@types/node@24.19.0':
+    resolution: {integrity: sha512-zY+5tKxXdhGh1PYI0ac+7juvEu4OI6vWtVVoj5i2m42jxAY1U+zHGt6QCyOFwykdP62sM3MJ9stoYYUw5aCWew==}
+
   '@types/node@25.6.0':
     resolution: {integrity: sha512-+qIYRKdNYJwY3vRCZMdJbPLJAtGjQBudzZzdzwQYkEPQd+PJGixUL5QfvCLDaULoLv+RhT3LDkwEfKaAkgSmNQ==}
 
@@ -6755,8 +6758,8 @@ packages:
     resolution: {integrity: sha512-rpsZEGT1jFuve6QlpyRp9ckQ+kN61hvF9BzCPyMdaKTm8UJce96KBn3sorXOFXlzjPrs3Vc4T1NsSroZ3PxlFw==}
     engines: {node: '>=10.13.0'}
 
-  enhanced-resolve@5.24.5:
-    resolution: {integrity: sha512-L1l8TNvomm6UVW5B253AGxQagSQr+vGwhMlrrfRS2qmhx46AMpMVJKQYLvWYbysTMY8VoicOvzHzoHMbyzB+4A==}
+  enhanced-resolve@5.25.1:
+    resolution: {integrity: sha512-nGXts5znJzmWPu+mIE9izCOzdg63oJca2mDzGWWTth7sr4aCToKcoyFVBQwN75Ij5Pf6p510EwkTqViTRzDV+w==}
     engines: {node: '>=10.13.0'}
 
   entities@4.5.0:
@@ -7127,8 +7130,8 @@ packages:
     resolution: {integrity: sha512-CTXd6rk/M3/ULNQj8FBqBWHYBVYybQ3VPBw0xGKFe3tuH7ytT6ACnvzpIQ3UZtB8yvUKC2cXn1a+x+5EVQLovA==}
     engines: {node: '>=14.14'}
 
-  fs-extra@11.4.0:
-    resolution: {integrity: sha512-EQsFzMUJkCKGr1ePqlYADkIUmHW1s3ZXr5Yqy6wbGrfUCphpl2maM/kyOIRA2HpP3AaFQTZXD4ldjek+nccddA==}
+  fs-extra@11.4.1:
+    resolution: {integrity: sha512-KYAb4c9BJQI6QqGKthV68OHe0badztdXJWKo0WtBA9IuCFPTKvE5ZdUBglP833aMjhaSPNO4A5j/EkzZtGlKjA==}
     engines: {node: '>=14.14'}
 
   fs-extra@7.0.1:
@@ -7830,8 +7833,8 @@ packages:
   lexical@0.35.0:
     resolution: {integrity: sha512-3VuV8xXhh5xJA6tzvfDvE0YBCMkIZUmxtRilJQDDdCgJCc+eut6qAv2qbN+pbqvarqcQqPN1UF+8YvsjmyOZpw==}
 
-  lib0@0.2.117:
-    resolution: {integrity: sha512-DeXj9X5xDCjgKLU/7RR+/HQEVzuuEUiwldwOGsHK/sfAfELGWEyTcf0x+uOvCvK3O2zPmZePXWL85vtia6GyZw==}
+  lib0@0.2.119:
+    resolution: {integrity: sha512-vh+TiejVy8Xm+hCdnRfn9BthGNvNUZdEXltNjVZL3TzRIKP3s1lnQh8pWd/Q0wCgY0FPAGVVjFF4ZiHUV3LFgA==}
     engines: {node: '>=16'}
     hasBin: true
 
@@ -8256,11 +8259,12 @@ packages:
   minimist@1.2.8:
     resolution: {integrity: sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA==}
 
-  minimizer-webpack-plugin@5.8.0:
-    resolution: {integrity: sha512-2cT9+goJfBhtMz+gJqejSf09ClgmYhPhccRb/fb0ztVbixt0BkO8mRuI26FoPPuUNkRk6iEDryWAIouc5W8eJA==}
+  minimizer-webpack-plugin@5.12.0:
+    resolution: {integrity: sha512-PCN1x1OzFeFB2GlP91s46q7Gz8Jf16Z7M45bzpoqrYZlh12QeY6tYVM5h299wbwy1DxnQ69VFmmh8Hb2Ff8mbw==}
     engines: {node: '>= 10.13.0'}
     peerDependencies:
       '@minify-html/node': '*'
+      '@napi-rs/image': '*'
       '@swc/core': '*'
       '@swc/css': '*'
       '@swc/html': '*'
@@ -8269,12 +8273,17 @@ packages:
       csso: '*'
       esbuild: '*'
       html-minifier-terser: '*'
+      imagemin: '*'
       lightningcss: '*'
       postcss: '*'
+      sharp: '*'
+      svgo: '*'
       uglify-js: '*'
       webpack: ^5.1.0
     peerDependenciesMeta:
       '@minify-html/node':
+        optional: true
+      '@napi-rs/image':
         optional: true
       '@swc/core':
         optional: true
@@ -8292,9 +8301,15 @@ packages:
         optional: true
       html-minifier-terser:
         optional: true
+      imagemin:
+        optional: true
       lightningcss:
         optional: true
       postcss:
+        optional: true
+      sharp:
+        optional: true
+      svgo:
         optional: true
       uglify-js:
         optional: true
@@ -9269,8 +9284,8 @@ packages:
   scheduler@0.27.0:
     resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
 
-  schema-utils@4.3.3:
-    resolution: {integrity: sha512-eflK8wEtyOE6+hsaRVPxvUKYCpRgzLqDTb8krvAsRIwOGlHoSgYLgBXoubGgLd2fT41/OUYdb48v4k4WWHQurA==}
+  schema-utils@4.5.0:
+    resolution: {integrity: sha512-zJlMCZ0cAR5p/Y4oVpRoqioDMJcGxaXRrQ/4rP4WyR84vc5z/DolXdbvXeDpTwbtocDFr2rhPqHPErDCUtz2kA==}
     engines: {node: '>= 10.13.0'}
 
   selderee@0.11.0:
@@ -9854,13 +9869,24 @@ packages:
   undici-types@7.19.2:
     resolution: {integrity: sha512-qYVnV5OEm2AW8cJMCpdV20CDyaN3g0AjDlOGf1OW4iaDEx8MwdtChUp4zu4H0VP3nDRF/8RKWH+IPp9uW0YGZg==}
 
+  undici-types@7.24.6:
+    resolution: {integrity: sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg==}
+
   undici@6.28.0:
     resolution: {integrity: sha512-LIY910g9TI13YS95lrMFrs8Rm/u/irgHeTWoKCoteeJ04CUJ92eEfj0rVn+7VKMPBpUPiUoBKfhNyLI23EE/KA==}
     engines: {node: '>=18.17'}
 
-  undici@7.29.0:
-    resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
+  undici@6.28.1:
+    resolution: {integrity: sha512-zWpdTVD54H48CIybL0rWQ3ukpb9d23wM7eH5RtfdmeP70cWHNjtfo7P4vZX+5CoDcO53J4Pu5uXp7lNfjc6DRA==}
+    engines: {node: '>=18.17'}
+
+  undici@7.30.0:
+    resolution: {integrity: sha512-dkrQXeHSaoamnItlYbmzG0wFYrM0ZwDxCIg0A7aKjTyyhh9svRzCNFEzV+Vm05/yehjCzjDZ31KXfGEjYSztDQ==}
     engines: {node: '>=20.18.1'}
+
+  undici@8.11.2:
+    resolution: {integrity: sha512-u4UB2/IrKdU6lFxumHmmo1a3fCQO5tzQllRorfoRS63txhrB7xTpSn1PftwC4qEHkOaqP95fCWW4lJzwErwzhQ==}
+    engines: {node: '>=22.19.0'}
 
   unicorn-magic@0.3.0:
     resolution: {integrity: sha512-+QBBXBCvifc56fsbuxZQ6Sic3wqqc3WWaqxs58gvJrcOuN83HGTCwz3oS5phzU9LthRNE9VrJCFCLUgHeeFnfA==}
@@ -10084,8 +10110,8 @@ packages:
   webidl-conversions@3.0.1:
     resolution: {integrity: sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==}
 
-  webpack-sources@3.5.1:
-    resolution: {integrity: sha512-jyuiGJdtvY434z5bUZrjz67v76/ePNvFZTp9Mdz29IlH4+GPsgyGjiv0fKI+M7BdkU6ADjulUcKAd3tUK3WlEw==}
+  webpack-sources@3.6.0:
+    resolution: {integrity: sha512-EIMmPVvNI0CYXyRPp34F2Qk7W37/BZVZIofS6LAUnrNjCVahS+hO4mxwFJDjQjODTGZDtVzLYoN2+1dYkhk9qA==}
     engines: {node: '>=10.13.0'}
 
   webpack@5.108.4:
@@ -11427,7 +11453,7 @@ snapshots:
       semver: 7.8.5
       sumchecker: 3.0.1
     optionalDependencies:
-      undici: 7.29.0
+      undici: 7.30.0
     transitivePeerDependencies:
       - supports-color
 
@@ -11477,7 +11503,7 @@ snapshots:
     dependencies:
       cross-dirname: 0.1.0
       debug: 4.4.3
-      fs-extra: 11.4.0
+      fs-extra: 11.4.1
       minimist: 1.2.8
       postject: 1.0.0-alpha.6
     transitivePeerDependencies:
@@ -14643,6 +14669,10 @@ snapshots:
     dependencies:
       undici-types: 7.18.2
 
+  '@types/node@24.19.0':
+    dependencies:
+      undici-types: 7.24.6
+
   '@types/node@25.6.0':
     dependencies:
       undici-types: 7.19.2
@@ -15902,7 +15932,7 @@ snapshots:
       kysely: 0.28.17
       mysql2: 3.24.2(@types/node@20.12.12)
 
-  drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@13.0.2)(bun-types@1.3.14)(kysely@0.28.17)(mysql2@3.24.2(@types/node@24.13.3)):
+  drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@13.0.2)(bun-types@1.3.14)(kysely@0.28.17)(mysql2@3.24.2(@types/node@24.19.0)):
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
       '@planetscale/database': 1.19.0
@@ -15910,7 +15940,7 @@ snapshots:
       better-sqlite3: 13.0.2
       bun-types: 1.3.14
       kysely: 0.28.17
-      mysql2: 3.24.2(@types/node@24.13.3)
+      mysql2: 3.24.2(@types/node@24.19.0)
 
   drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@13.0.2)(bun-types@1.3.6)(kysely@0.28.17)(mysql2@3.24.2(@types/node@22.19.7)):
     optionalDependencies:
@@ -16084,7 +16114,7 @@ snapshots:
       graceful-fs: 4.2.11
       tapable: 2.3.3
 
-  enhanced-resolve@5.24.5:
+  enhanced-resolve@5.25.1:
     dependencies:
       graceful-fs: 4.2.11
       tapable: 2.3.3
@@ -16546,7 +16576,7 @@ snapshots:
       ws: 8.21.0
       yargs: 17.7.2
     optionalDependencies:
-      undici: 7.29.0
+      undici: 8.11.2
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -16571,7 +16601,7 @@ snapshots:
       jsonfile: 6.2.1
       universalify: 2.0.1
 
-  fs-extra@11.4.0:
+  fs-extra@11.4.1:
     dependencies:
       graceful-fs: 4.2.11
       jsonfile: 6.2.1
@@ -17264,7 +17294,7 @@ snapshots:
 
   lexical@0.35.0: {}
 
-  lib0@0.2.117:
+  lib0@0.2.119:
     dependencies:
       isomorphic.js: 0.2.5
 
@@ -17817,11 +17847,11 @@ snapshots:
 
   minimist@1.2.8: {}
 
-  minimizer-webpack-plugin@5.8.0(postcss@8.5.23)(webpack@5.108.4(postcss@8.5.23)):
+  minimizer-webpack-plugin@5.12.0(postcss@8.5.23)(webpack@5.108.4(postcss@8.5.23)):
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
       jest-worker: 27.5.1
-      schema-utils: 4.3.3
+      schema-utils: 4.5.0
       terser: 5.51.2
       webpack: 5.108.4(postcss@8.5.23)
     optionalDependencies:
@@ -17936,9 +17966,9 @@ snapshots:
       sql-escaper: 1.5.1
     optional: true
 
-  mysql2@3.24.2(@types/node@24.13.3):
+  mysql2@3.24.2(@types/node@24.19.0):
     dependencies:
-      '@types/node': 24.13.3
+      '@types/node': 24.19.0
       aws-ssl-profiles: 1.1.2
       generate-function: 2.3.1
       iconv-lite: 0.7.3
@@ -18950,11 +18980,11 @@ snapshots:
 
   scheduler@0.27.0: {}
 
-  schema-utils@4.3.3:
+  schema-utils@4.5.0:
     dependencies:
       '@types/json-schema': 7.0.15
       ajv: 8.20.0
-      ajv-formats: 2.1.1(ajv@8.20.0)
+      ajv-formats: 3.0.1(ajv@8.20.0)
       ajv-keywords: 5.1.0(ajv@8.20.0)
 
   selderee@0.11.0:
@@ -19714,9 +19744,17 @@ snapshots:
 
   undici-types@7.19.2: {}
 
+  undici-types@7.24.6: {}
+
   undici@6.28.0: {}
 
-  undici@7.29.0: {}
+  undici@6.28.1: {}
+
+  undici@7.30.0:
+    optional: true
+
+  undici@8.11.2:
+    optional: true
 
   unicorn-magic@0.3.0: {}
 
@@ -19891,7 +19929,7 @@ snapshots:
 
   webidl-conversions@3.0.1: {}
 
-  webpack-sources@3.5.1: {}
+  webpack-sources@3.6.0: {}
 
   webpack@5.108.4(postcss@8.5.23):
     dependencies:
@@ -19904,21 +19942,22 @@ snapshots:
       acorn-import-phases: 1.0.4(acorn@8.16.0)
       browserslist: 4.28.7
       chrome-trace-event: 1.0.4
-      enhanced-resolve: 5.24.5
+      enhanced-resolve: 5.25.1
       es-module-lexer: 2.3.2
       eslint-scope: 5.1.1
       events: 3.3.0
       graceful-fs: 4.2.11
       loader-runner: 4.3.2
       mime-db: 1.54.0
-      minimizer-webpack-plugin: 5.8.0(postcss@8.5.23)(webpack@5.108.4(postcss@8.5.23))
+      minimizer-webpack-plugin: 5.12.0(postcss@8.5.23)(webpack@5.108.4(postcss@8.5.23))
       neo-async: 2.6.2
-      schema-utils: 4.3.3
+      schema-utils: 4.5.0
       tapable: 2.3.3
       watchpack: 2.5.2
-      webpack-sources: 3.5.1
+      webpack-sources: 3.6.0
     transitivePeerDependencies:
       - '@minify-html/node'
+      - '@napi-rs/image'
       - '@swc/core'
       - '@swc/css'
       - '@swc/html'
@@ -19927,8 +19966,11 @@ snapshots:
       - csso
       - esbuild
       - html-minifier-terser
+      - imagemin
       - lightningcss
       - postcss
+      - sharp
+      - svgo
       - uglify-js
 
   whatwg-mimetype@3.0.0: {}
@@ -20071,7 +20113,7 @@ snapshots:
 
   yjs@13.6.30:
     dependencies:
-      lib0: 0.2.117
+      lib0: 0.2.119
 
   yocto-queue@0.1.0: {}
 
