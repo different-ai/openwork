@@ -152,6 +152,16 @@ export function resolveAssignmentWorkspace(listed, pinnedWorkspaceId) {
   return workspace
 }
 
+function disabledAutomationModelError(model, workspaceId) {
+  const identity = `${model.providerId}/${model.modelId}`
+  const error = new Error(
+    `The selected model ${identity} is not available on this desktop runner because provider ${model.providerId} is disabled. Choose a supported model to resume this Automation.`,
+  )
+  Object.defineProperty(error, "code", { value: "model_access_lost" })
+  Object.defineProperty(error, "workspaceId", { value: workspaceId })
+  return error
+}
+
 /** Runs the assignment as a normal visible local OpenWork thread. */
 export async function executeDesktopAutomation(assignment, options) {
   const local = await options.getLocalRuntime()
@@ -166,6 +176,15 @@ export async function executeDesktopAutomation(assignment, options) {
   const listed = await localRequest("/workspaces")
   const workspace = resolveAssignmentWorkspace(listed, assignment.workspaceId ?? null)
   const workspaceId = String(workspace.id)
+  const config = await localRequest(
+    `/workspace/${encodeURIComponent(workspaceId)}/opencode/config`,
+  ).catch(() => null)
+  const disabledProviders = Array.isArray(config?.disabled_providers)
+    ? config.disabled_providers.filter((providerId) => typeof providerId === "string")
+    : []
+  if (disabledProviders.includes(assignment.model.providerId)) {
+    throw disabledAutomationModelError(assignment.model, workspaceId)
+  }
   const client = createWorkspaceSessionClient(local, workspaceId, options.fetchImpl ?? fetch)
   const created = await client.createThread({
     title: `Automation: ${assignment.automationName}`.slice(0, 120),
