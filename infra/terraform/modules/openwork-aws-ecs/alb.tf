@@ -1,6 +1,19 @@
 # Security groups ------------------------------------------------------------
 
+locals {
+  create_alb      = var.load_balancer_arn == "" && var.alb_listener_arn == ""
+  create_listener = var.alb_listener_arn == ""
+  create_alb_sg   = var.alb_security_group_id == "" && (local.create_alb || local.create_listener)
+  alb_security_group_id = var.alb_security_group_id != "" ? var.alb_security_group_id : (
+    length(aws_security_group.alb) > 0 ? aws_security_group.alb[0].id : ""
+  )
+  load_balancer_arn = local.create_alb ? (length(aws_lb.this) > 0 ? aws_lb.this[0].arn : "") : var.load_balancer_arn
+  listener_arn      = local.create_listener ? (length(aws_lb_listener.https) > 0 ? aws_lb_listener.https[0].arn : "") : var.alb_listener_arn
+}
+
 resource "aws_security_group" "alb" {
+  count = local.create_alb_sg ? 1 : 0
+
   name_prefix = "${var.name}-alb-"
   description = "OpenWork ALB"
   vpc_id      = var.vpc_id
@@ -12,9 +25,9 @@ resource "aws_security_group" "alb" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "alb" {
-  for_each = { for pair in setproduct([80, 443], var.allowed_ingress_cidrs) : "${pair[0]}-${pair[1]}" => pair }
+  for_each = local.create_alb_sg ? { for pair in setproduct([80, 443], var.allowed_ingress_cidrs) : "${pair[0]}-${pair[1]}" => pair } : {}
 
-  security_group_id = aws_security_group.alb.id
+  security_group_id = aws_security_group.alb[0].id
   from_port         = each.value[0]
   to_port           = each.value[0]
   ip_protocol       = "tcp"
@@ -22,7 +35,9 @@ resource "aws_vpc_security_group_ingress_rule" "alb" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "alb" {
-  security_group_id = aws_security_group.alb.id
+  count = local.create_alb_sg ? 1 : 0
+
+  security_group_id = aws_security_group.alb[0].id
   ip_protocol       = "-1"
   cidr_ipv4         = "0.0.0.0/0"
 }
@@ -39,13 +54,13 @@ resource "aws_security_group" "tasks" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "tasks_from_alb" {
-  for_each = toset(["8788", "3005"])
+  for_each = local.alb_security_group_id != "" ? toset(["8788", "3005"]) : toset([])
 
   security_group_id            = aws_security_group.tasks.id
   from_port                    = tonumber(each.value)
   to_port                      = tonumber(each.value)
   ip_protocol                  = "tcp"
-  referenced_security_group_id = aws_security_group.alb.id
+  referenced_security_group_id = local.alb_security_group_id
 }
 
 # den-web -> den-api over Cloud Map.
@@ -64,18 +79,28 @@ resource "aws_vpc_security_group_egress_rule" "tasks" {
   cidr_ipv4         = "0.0.0.0/0"
 }
 
-# Load balancer --------------------------------------------------------------
+# Load balancer -------------------------------------------------------------
 
 resource "aws_lb" "this" {
+  count                      = local.create_alb ? 1 : 0
   name                       = "${var.name}-den"
   internal                   = var.internal_alb
   load_balancer_type         = "application"
-  security_groups            = [aws_security_group.alb.id]
+  security_groups            = local.alb_security_group_id != "" ? [local.alb_security_group_id] : []
   subnets                    = var.alb_subnet_ids
   idle_timeout               = 300 # chat and MCP responses stream
   drop_invalid_header_fields = true
   tags                       = var.tags
+
+  lifecycle {
+    precondition {
+      condition     = !local.create_alb || length(var.alb_subnet_ids) >= 2
+      error_message = "alb_subnet_ids must contain at least two subnet IDs in different availability zones when creating an ALB."
+    }
+  }
 }
+
+# Target groups --------------------------------------------------------------
 
 resource "aws_lb_target_group" "api" {
   name                 = "${var.name}-den-api"
@@ -113,9 +138,13 @@ resource "aws_lb_target_group" "web" {
   }
 }
 
+# Listeners -----------------------------------------------------------------
+
 # HTTPS on 443: den-web by default, den-api by host. HTTP redirects.
 resource "aws_lb_listener" "https" {
-  load_balancer_arn = aws_lb.this.arn
+  count = local.create_listener ? 1 : 0
+
+  load_balancer_arn = local.load_balancer_arn
   port              = 443
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
@@ -129,8 +158,8 @@ resource "aws_lb_listener" "https" {
 }
 
 resource "aws_lb_listener_rule" "api_host" {
-  listener_arn = aws_lb_listener.https.arn
-  priority     = 10
+  listener_arn = local.listener_arn
+  priority     = var.api_listener_rule_priority
   tags         = var.tags
 
   action {
@@ -145,8 +174,29 @@ resource "aws_lb_listener_rule" "api_host" {
   }
 }
 
+resource "aws_lb_listener_rule" "web_host" {
+  count = local.create_listener ? 0 : 1
+
+  listener_arn = local.listener_arn
+  priority     = var.web_listener_rule_priority
+  tags         = var.tags
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.web.arn
+  }
+
+  condition {
+    host_header {
+      values = [var.domain_name]
+    }
+  }
+}
+
 resource "aws_lb_listener" "http" {
-  load_balancer_arn = aws_lb.this.arn
+  count = local.create_listener ? 1 : 0
+
+  load_balancer_arn = local.load_balancer_arn
   port              = 80
   protocol          = "HTTP"
   tags              = var.tags
@@ -161,18 +211,25 @@ resource "aws_lb_listener" "http" {
   }
 }
 
+resource "aws_lb_listener_certificate" "this" {
+  count = !local.create_listener && var.attach_listener_certificate ? 1 : 0
+
+  listener_arn    = local.listener_arn
+  certificate_arn = local.certificate_arn
+}
+
 # DNS ------------------------------------------------------------------------
 
 resource "aws_route53_record" "this" {
-  for_each = var.route53_zone_id != "" ? toset([var.domain_name, local.api_host]) : toset([])
+  for_each = local.create_alb && var.route53_zone_id != "" ? toset([var.domain_name, local.api_host]) : toset([])
 
   zone_id = var.route53_zone_id
   name    = each.value
   type    = "A"
 
   alias {
-    name                   = aws_lb.this.dns_name
-    zone_id                = aws_lb.this.zone_id
+    name                   = aws_lb.this[0].dns_name
+    zone_id                = aws_lb.this[0].zone_id
     evaluate_target_health = true
   }
 }
