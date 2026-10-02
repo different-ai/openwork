@@ -38,6 +38,8 @@
     "seed:demo-org": "pnpm run build:den-db && OPENWORK_DEV_MODE=${OPENWORK_DEV_MODE:-1} DATABASE_URL=${DATABASE_URL:-mysql://root:password@127.0.0.1:3306/openwork_den} DEN_DB_ENCRYPTION_KEY=${DEN_DB_ENCRYPTION_KEY:-local-dev-db-encryption-key-please-change-1234567890} BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-local-dev-secret-not-for-production-use!!} BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:${DEN_WEB_PORT:-3005}} tsx --conditions=development scripts/seed-demo-org.ts",
     "start": "node dist/main.js",
     "test:gateway-usage": "bun test --conditions development test/gateway-usage.test.ts",
+    "test:provider-loading": "bun test --conditions development test/models-dev-cache.test.ts",
+    "test:provider-loading:db": "DEN_TEST_DATABASE_URL=${DEN_TEST_DATABASE_URL:?Set an isolated prepared test database} bun test --conditions development test/inference-providers.test.ts",
     "test:usage-limits": "DEN_USAGE_TEST_DATABASE_URL=${DEN_USAGE_TEST_DATABASE_URL:?Set an isolated loopback usage_limits_test database URL} bun test --conditions development test/gateway-usage-limits.test.ts",
     "test:usage-limits:auth": "DEN_USAGE_TEST_DATABASE_URL=${DEN_USAGE_TEST_DATABASE_URL:?Set an isolated loopback usage_limits_test database URL} bun test --conditions development test/gateway-usage-auth-db.test.ts",
     "typecheck:usage-limits": "tsc -p tsconfig.usage-limits-test.json --pretty false"
