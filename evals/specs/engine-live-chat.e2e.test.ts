@@ -1,3 +1,9 @@
+/**
+ * Use real models for conversations, skills and connections
+ *
+ * @module-tag local-only
+ * @module-tag live-model
+ */
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 import { browserScript, spec, resolveEvalEngine, type SpecBodyContext } from "@openwork/testkit";

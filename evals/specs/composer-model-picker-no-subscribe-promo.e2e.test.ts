@@ -244,7 +244,7 @@ const effortTest = spec.world(modelPickerEffortWeb, {
   timeout: 420_000, resources: { surfaces: ["appWeb"], services: ["mock"] },
 });
 
-effortTest("MODEL-01 selected reasoning effort survives reload and reaches the native provider", async ({ world, user, probe, step, evidence }) => {
+effortTest("MODEL-01 selected reasoning effort survives reload and reaches the native provider", { tags: ["engine-v2"] }, async ({ world, user, probe, step, evidence }) => {
   expect(world.engine).toBe("v2");
   const runtime = await world.runtimeFacts();
   expect(runtime.browser).toContain("HeadlessChrome");

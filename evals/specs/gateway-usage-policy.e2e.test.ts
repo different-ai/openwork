@@ -1,3 +1,8 @@
+/**
+ * Request and approve a Gateway usage extension
+ *
+ * @module-tag local-only
+ */
 import { expect } from "vitest";
 import { browserScript, spec, type User, type Probe } from "@openwork/testkit";
 import { gatewayUsageLimitPolicySchema, gatewayUsagePeriod, gatewayUsageResetPageSchema, gatewayUsageStatusSchema, gatewayUsageTimeframes, type GatewayUsageStatus } from "@openwork/types/den/gateway-usage-limits";

@@ -223,6 +223,61 @@ test('registered case metadata names exact files, supported execution axes, and 
   }
 });
 
+// The catalog still plans CI. Specs are gaining Vitest tags (`@module-tag` journey tags in a top JSDoc
+// block whose first line is the readable name, and `engine-v1`/`engine-v2` on registered case tests)
+// that will replace it; until then every tagged spec must say exactly what its catalog entry says.
+const CASE_ID = /^[A-Z][A-Z0-9]*(?:-[A-Za-z0-9]+)+(?=[\s:]|$)/;
+
+function journeyTags(source) {
+  const header = source.match(/^\/\*\*([\s\S]*?)\*\//)?.[1];
+  const lines = (header ?? '').split('\n').map(line => line.replace(/^\s*\*?\s?/, '').trim()).filter(line => line !== '');
+  const moduleTags = lines.flatMap(line => line.match(/^@module-tag\s+(\S+)$/)?.[1] ?? []);
+  const name = lines[0] && !lines[0].startsWith('@') ? lines[0] : undefined;
+  const cases = [...source.matchAll(/\(\s*(["'`])((?:(?!\1)[^\n])*)\1\s*,\s*\{[^{}]*?\btags:\s*\[([^\]]*)\]/g)].flatMap(match => {
+    const id = match[2].match(CASE_ID)?.[0];
+    const tags = [...match[3].matchAll(/["']([\w-]+)["']/g)].map(tag => tag[1]);
+    const engines = ['v1', 'v2'].filter(engine => tags.includes(`engine-${engine}`));
+    return id && engines.length ? [{ id, engines }] : [];
+  });
+  return { tagged: header !== undefined || cases.length > 0, moduleTags, name, cases };
+}
+
+test('every spec that carries journey tags agrees with its catalog definition', async () => {
+  const checked = [];
+  for (const entry of await catalog()) {
+    const tags = journeyTags(await readFile(new URL(`../specs/${entry.spec}`, import.meta.url), 'utf8'));
+    if (!tags.tagged) continue;
+    checked.push(entry.spec);
+    const expected = [
+      entry.critical && 'critical',
+      entry.placement === 'local' && 'local-only',
+      entry.placement === 'manual' && 'raw-desktop',
+      entry.model === 'live' && 'live-model',
+      entry.needs?.env?.includes('OPENAI_API_KEY') && 'live-openai',
+      entry.needs?.env?.includes('OPENWORK_EVAL_ELECTRON_BINARY') && 'packaged',
+      entry.needs?.platform === 'darwin' && 'macos',
+    ].filter(Boolean);
+    assert.deepEqual([...tags.moduleTags].sort(), expected.sort(), `${entry.spec}: @module-tag lines drifted from the catalog`);
+    const byId = (left, right) => left.id.localeCompare(right.id);
+    assert.deepEqual([...tags.cases].sort(byId), (entry.cases ?? []).map(({ id, engines }) => ({ id, engines })).sort(byId), `${entry.spec}: case IDs or engine tags drifted from the catalog`);
+    assert.equal(tags.name ?? entry.spec.replace('.e2e.test.ts', '').replaceAll('-', ' '), entry.name, `${entry.spec}: JSDoc name drifted from the catalog`);
+  }
+  assert(checked.includes('app-smoke.e2e.test.ts'), 'the parity check found no tagged spec');
+});
+
+test('journey tag parsing reads the header block, template titles, and multi-line test options', () => {
+  const source = '/**\n * Do a thing\n *\n * Why it is local.\n *\n * @module-tag local-only\n * @module-tag live-model\n */\n'
+    + 'test(`EDIT-BUSY ${engine()}: edits`, { tags: ["engine-v1", "engine-v2"] }, async () => {});\n'
+    + 'other("CONT-01-live a member\'s answer", {\n  tags: ["engine-v1"],\n  timeout: 1,\n}, async () => {});\n'
+    + 'plain("no case id here", { tags: ["engine-v2"] }, async () => {});\n';
+  assert.deepEqual(journeyTags(source), {
+    tagged: true, moduleTags: ['local-only', 'live-model'], name: 'Do a thing',
+    cases: [{ id: 'EDIT-BUSY', engines: ['v1', 'v2'] }, { id: 'CONT-01-live', engines: ['v1'] }],
+  });
+  assert.deepEqual(journeyTags('/**\n * @module-tag raw-desktop\n */\nimport x from "y";').name, undefined);
+  assert.equal(journeyTags('import x from "y";\ntest("A-1 x", async () => {});').tagged, false);
+});
+
 test('live continuity is isolated, local, v1-only and never scheduled from a provider key alone', async () => {
   const entries = await catalog();
   const live = entries.find(entry => entry.spec === 'live-stream-continuity.e2e.test.ts');
