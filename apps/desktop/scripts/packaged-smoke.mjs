@@ -55,6 +55,7 @@ async function bootPackagedDesktop(name, journey, binary, timeout, display) {
       ...process.env,
       OPENWORK_EVAL_ELECTRON_BINARY: binary,
       OPENWORK_EVAL_ELECTRON_RESOURCES_PREPARED: "1",
+      OPENWORK_EVAL_ELECTRON_LOGS_DIR: join(output, "profiles", "retained"),
       OPENWORK_EVAL_ENGINE: "v1",
       OPENWORK_EVAL_SURFACES_DIR: join(output, "profiles", name),
       ELECTRON_RUN_AS_NODE: "",
