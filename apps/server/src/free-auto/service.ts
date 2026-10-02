@@ -442,7 +442,7 @@ export class AnonymousInferenceService {
       return this.mintGuestSession(signal, asked, false);
     }
     // The next session's work starts once this one is granted, so it is ready long before this session expires.
-    this.powPool.warm(machineId, params);
+    this.powPool.warm(machineId, params).ready.catch(() => undefined);
     return parseGuestSession(await readJson(response.body, ERROR_BODY_LIMIT, timed()));
   }
 
