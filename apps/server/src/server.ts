@@ -105,6 +105,7 @@ import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
 import { registerSessionGroupRoutes } from "./routes/session-groups.js";
+import { registerWorkspaceDefaultModelRoutes } from "./routes/workspace-default-model.js";
 import { registerUiControlRoutes } from "./routes/ui-control.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
@@ -2694,6 +2695,16 @@ function createRoutes(
     ensureWritable,
     requireClientScope,
     resolveWorkspace,
+    resolveWorkspaceWithoutBootstrap,
+  });
+
+  registerWorkspaceDefaultModelRoutes({
+    routes,
+    config,
+    jsonResponse,
+    readJsonBody,
+    ensureWritable,
+    requireClientScope,
     resolveWorkspaceWithoutBootstrap,
   });
 

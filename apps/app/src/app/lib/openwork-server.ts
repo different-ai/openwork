@@ -151,6 +151,27 @@ export interface EngineV2PreviewStatus {
   lastError?: string;
 }
 
+const workspaceDefaultModelRefSchema = z.object({
+  providerID: z.string(),
+  modelID: z.string(),
+  variant: z.string().optional(),
+});
+
+const workspaceDefaultModelStateSchema = z.object({
+  model: workspaceDefaultModelRefSchema.nullable(),
+  updatedAt: z.number().nullable(),
+});
+
+/** The model a new chat in a workspace uses, as remembered by its OpenWork server. */
+export type WorkspaceDefaultModelRef = z.infer<typeof workspaceDefaultModelRefSchema>;
+export type WorkspaceDefaultModelState = z.infer<typeof workspaceDefaultModelStateSchema>;
+
+function parseWorkspaceDefaultModelState(value: unknown): WorkspaceDefaultModelState {
+  const parsed = workspaceDefaultModelStateSchema.safeParse(value);
+  if (!parsed.success) throw new OpenworkServerError(502, "invalid_response", "Invalid workspace default model response");
+  return parsed.data;
+}
+
 function parseEngineV2PreviewStatus(value: unknown): EngineV2PreviewStatus {
   if (
     !value || typeof value !== "object" ||
@@ -1751,6 +1772,18 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         token,
         timeoutMs: timeouts.config,
       })),
+    getWorkspaceDefaultModel: async (workspaceId: string): Promise<WorkspaceDefaultModelState> =>
+      parseWorkspaceDefaultModelState(await requestJson<unknown>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/default-model`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      )),
+    setWorkspaceDefaultModel: async (workspaceId: string, model: WorkspaceDefaultModelRef | null): Promise<WorkspaceDefaultModelState> =>
+      parseWorkspaceDefaultModelState(await requestJson<unknown>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/default-model`,
+        { token, hostToken, method: "PUT", body: { model }, timeoutMs: timeouts.config },
+      )),
     switchOpencodeEngine: async (engine: "v1" | "v2"): Promise<EngineV2PreviewStatus> =>
       parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {
         token, method: "PUT", body: { enabled: engine === "v2", chatRouting: engine === "v2" }, timeoutMs: timeouts.config,

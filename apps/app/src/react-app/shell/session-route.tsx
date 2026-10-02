@@ -296,6 +296,7 @@ import { WorkspaceProvider } from "./workspace-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { SettingsSurface } from "./settings-route";
 import { resolveNewTaskModel, setWorkspaceDefaultModel, useWorkspaceDefaultModel, workspaceModelScope, writeStoredDefaultModel } from "@/react-app/kernel/model-config";
+import { useWorkspaceDefaultModelSync } from "@/react-app/kernel/workspace-default-model-sync";
 import { useWorkspaceModelProfile } from "@/react-app/kernel/use-workspace-model-default";
 import {
   ensureProviderListQuery,
@@ -573,6 +574,9 @@ export function SessionRoute() {
   const autoChecking = isDesktopRuntime() && observedAutoSnapshot?.status !== "error" && !observedAutoStatus;
   const newTaskModel = modelForNewTask(configuredNewTaskModel, observedAutoStatus, autoChecking);
   const newTaskVariant = workspaceDefault ? workspaceDefault.variant : local.prefs.modelVariant ?? null;
+  // Background callers (automations, remote sessions) read this from the workspace's server.
+  useWorkspaceDefaultModelSync({ endpoint: selectedWorkspaceEndpoint, connected: !selectedWorkspaceError,
+    model: newTaskModel, variant: newTaskVariant, pending: autoChecking });
   const changeNewTaskModel = useCallback((model: ModelRef, variant: string | null = null) => {
     const scope = workspaceModelScope({ profileId: modelProfileId,
       workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId, opencodeBaseUrl, localRuntime: isDesktopRuntime() });
