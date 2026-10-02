@@ -179,6 +179,14 @@ export async function reviewWorld(
   const pending = incompleteReport.evidence.find(
     (item) => item.kind === "image",
   );
+  // A record from a harness that measured nothing beyond the caption.
+  if (pending?.kind === "image") {
+    delete pending.step;
+    delete pending.size;
+    delete pending.change;
+    delete pending.focus;
+    delete pending.settled;
+  }
   pending?.judgments.push({
     expectation: "Dialog is readable",
     state: "pending",
@@ -193,6 +201,8 @@ export async function reviewWorld(
   );
   if (!assertion?.judgments[0]) throw new Error("Missing fixture assertion.");
   assertion.judgments[0].state = "failed";
+  const failureFrame = failedReport.evidence.find((item) => item.kind === "image");
+  if (failureFrame?.kind === "image") failureFrame.failure = true;
   const failed = await uploadReview(failedReport, bundle.assets, {
     localDir: storage,
   });
