@@ -1,6 +1,7 @@
 import type { DynamicToolUIPart } from "ai"
 import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-connection-action"
 import { connectionActionPayloadSchema, type ConnectionActionPayload } from "@openwork/types/connection-action-app"
+import { parseMcpAppResourceUri } from "@openwork/types/mcp-app"
 
 export type ToolErrorAttribution = {
   label: string
@@ -31,6 +32,18 @@ const OPENWORK_CLOUD_CAPABILITY_TOOLS = new Set([
   "openwork_get_skill",
   "openwork_connection_action",
 ])
+
+/**
+ * The tool name an App's own call result is read as. An App built in OpenWork is
+ * served by the desktop's private OpenWork Connect host, and each of its tools
+ * runs one OpenWork Cloud capability, so its failures carry the same connection
+ * cards as execute_capability. Any other App's results stay its own.
+ */
+export function appToolResultConnectionToolName(app: { serverName: string; resourceUri: string }, toolName: string): string {
+  return parseMcpAppResourceUri(app.resourceUri) && app.serverName.startsWith("openwork-app-host-connect-")
+    ? "openwork-cloud_execute_capability"
+    : toolName
+}
 
 export function isConnectionDiscoveryTool(toolName: string): boolean {
   return toolName === "openwork_search_capabilities" || toolName === "openwork-cloud_search_capabilities"
@@ -169,6 +182,29 @@ export function connectionCardPayloadFromChatToolResult(
   options?: ChatConnectionTargetOptions,
 ): ConnectionActionPayload | null {
   return chatConnectionTarget(toolName, result, input, options)?.connection ?? null
+}
+
+/**
+ * The one connection an MCP tool result reports, read from the result itself,
+ * its structured content, its metadata, or the JSON in its text parts, with
+ * the part it was found in for the card to render.
+ */
+export function connectionCardFromMcpToolResult(
+  toolName: string,
+  value: unknown,
+  input?: unknown,
+): { connection: ConnectionActionPayload; output: unknown } | null {
+  const outputs: unknown[] = [value]
+  if (isRecord(value)) {
+    outputs.push(value.structuredContent, value._meta)
+    if (Array.isArray(value.content)) outputs.push(...value.content.filter(isRecord).filter(item => item.type === "text").map(item => item.text))
+  }
+  const matches = new Map<string, { connection: ConnectionActionPayload; output: unknown }>()
+  for (const output of outputs) {
+    const connection = connectionCardPayloadFromChatToolResult(toolName, output, input)
+    if (connection) matches.set(connection.connectionId, { connection, output })
+  }
+  return matches.size === 1 ? matches.values().next().value ?? null : null
 }
 
 export function reconnectActionFromChatToolResult(

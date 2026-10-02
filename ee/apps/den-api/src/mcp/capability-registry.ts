@@ -44,6 +44,7 @@ import {
   parseExternalCapabilityName,
   probeExternalConnectionStatus,
   searchExternalCapabilities,
+  unavailableExternalCapabilityStatus,
   type ExternalCapabilityExecuteResult,
   type McpMemberIdentity,
 } from "./external-capabilities.js"
@@ -424,6 +425,7 @@ async function executeMarketplaceSource(
     validateScriptOutput: true,
     enabled: ctx.externalMcpConnectionsEnabled,
     redirectUriBase: ctx.redirectUriBase,
+    describeUnavailable: (missing) => liveArtifactConnectionFailure(ctx, missing),
   })
 }
 
@@ -854,6 +856,17 @@ export async function liveArtifactConnectionFailure(
   context: CapabilityRegistryContext,
   missing: readonly { capabilityName: string }[],
 ) {
+  const status = await nativeConnectionFailure(context, missing) ?? await externalConnectionFailure(context, missing)
+  return status ? {
+    connectionStatus: status,
+    connectionCard: connectionActionPayloadFromStatus(status),
+  } : null
+}
+
+async function nativeConnectionFailure(
+  context: CapabilityRegistryContext,
+  missing: readonly { capabilityName: string }[],
+) {
   const ids = new Set(missing.flatMap((entry) => {
     const parsed = parseNativeCapabilityName(entry.capabilityName)
     return parsed ? [parsed.connectionId] : []
@@ -861,10 +874,25 @@ export async function liveArtifactConnectionFailure(
   if (!ids.size) return null
   const namespace = await context.resolveNamespaceContext()
   const connection = namespace.nativeProviderEntries.find((entry) => ids.has(entry.id) && !entry.connectedForMe)
-  if (!connection) return null
-  const status = connectionStatusMatch(connection, 1).connectionStatus
-  return status ? {
-    connectionStatus: status,
-    connectionCard: connectionActionPayloadFromStatus(status),
-  } : null
+  return connection ? connectionStatusMatch(connection, 1).connectionStatus ?? null : null
+}
+
+async function externalConnectionFailure(
+  context: CapabilityRegistryContext,
+  missing: readonly { capabilityName: string }[],
+) {
+  if (!context.externalMcpConnectionsEnabled) return null
+  for (const entry of missing) {
+    const parsed = parseExternalCapabilityName(entry.capabilityName)
+    if (!parsed) continue
+    const status = await unavailableExternalCapabilityStatus({
+      organizationId: context.organizationId,
+      member: context.member,
+      connectionId: parsed.connectionId,
+      toolName: parsed.toolName,
+      redirectUriBase: context.redirectUriBase,
+    })
+    if (status) return status
+  }
+  return null
 }

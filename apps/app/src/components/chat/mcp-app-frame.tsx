@@ -8,7 +8,8 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 
 import { connectionActionAppResourceUri, legacyConnectionActionAppResourceUri } from "@openwork/types/connection-action-app"
 import { parseMcpAppResourceUri } from "@openwork/types/mcp-app"
-import { isConnectionDiscoveryTool } from "@/components/tools/error-attribution"
+import { appToolResultConnectionToolName, connectionCardFromMcpToolResult, isConnectionDiscoveryTool } from "@/components/tools/error-attribution"
+import { DashboardConnectionCard } from "@/react-app/domains/dashboard/dashboard-connection-card"
 import { AppChatArtifact } from "@/react-app/domains/apps/app-chat-artifact"
 import { createConnectionActionController, hasHostConnectionActions, standardMcpToolResult } from "./mcp-connection-action"
 import { openDesktopUrl } from "@/app/lib/desktop"
@@ -332,6 +333,8 @@ export type McpAppSandboxViewProps = {
   /** Let the dashboard restore visible recovery controls if the sandbox fails. */
   onError?: () => void
   onRetry?: () => void
+  /** Sees each result of a call the App makes, so a host can swap in its own recovery UI. */
+  onAppToolResult?: (result: unknown) => void
 }
 
 /**
@@ -339,7 +342,7 @@ export type McpAppSandboxViewProps = {
  * bridges it to the workspace MCP App host. Chat messages and dashboard tiles
  * share this exact pipeline so rendering and diagnostics stay identical.
  */
-export function McpAppSandboxView({ origin, app, resolveLiveActions, toolName, inputArguments, result, connectionController, updateMode = "replace", onReady, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange, presentation = "inline", onError, onRetry }: McpAppSandboxViewProps) {
+export function McpAppSandboxView({ origin, app, resolveLiveActions, toolName, inputArguments, result, connectionController, updateMode = "replace", onReady, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange, presentation = "inline", onError, onRetry, onAppToolResult }: McpAppSandboxViewProps) {
   const openworkServerClient = origin.client
   const workspaceId = origin.workspaceId
   const readOnly = origin.readOnly
@@ -357,6 +360,8 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, toolName, i
   onErrorRef.current = onError
   const onReadyRef = useRef(onReady)
   onReadyRef.current = onReady
+  const onAppToolResultRef = useRef(onAppToolResult)
+  onAppToolResultRef.current = onAppToolResult
   const toolDeliveryRef = useRef({ inputArguments, result })
   const deliverToolDataRef = useRef<(() => Promise<void>) | null>(null)
   const replacementInput = updateMode === "replace" ? inputArguments : null
@@ -526,8 +531,11 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, toolName, i
           if (disposed || failed) throw new Error("This App view has closed or changed.")
         }
         const userInteraction = _meta?.["openwork/userInteraction"] === true
-        if (connectionController) return await connectionController.callTool(actions, app, name, args, userInteraction)
-        return standardMcpToolResult(await actions.callTool(name, args, userInteraction))
+        const result = connectionController
+          ? await connectionController.callTool(actions, app, name, args, userInteraction)
+          : standardMcpToolResult(await actions.callTool(name, args, userInteraction))
+        onAppToolResultRef.current?.(result)
+        return result
       } catch (cause) {
         if (cause instanceof OpenworkServerError && ["missing_launch_context", "stale_launch_context", "inactive_session"].includes(cause.code)) {
           fail("MCP_APP_LAUNCH_CONTEXT_STALE", "resource-resolution", cause, "Reopen the App in its original conversation before trying again.")
@@ -851,6 +859,8 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
   // preview origin stable across unrelated re-renders.
   const previewOrigin = useMemo(() => origin ? { ...origin, readOnly: true } : origin, [origin])
   const [error, setError] = useState<McpAppDiagnostic | null>(null)
+  // A connection failure from the App's own call, shown as OpenWork's card in place of the App.
+  const [appConnection, setAppConnection] = useState<{ toolName: string; output: unknown } | null>(null)
   const [resolveToken, setResolveToken] = useState(0)
   const consumedRetryToken = useRef(0)
   // The sandbox view unmounts on every preserved-result change; keep the last
@@ -953,6 +963,8 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
   if (error) return <McpAppDiagnosticNotice error={error} notice={CHAT_MCP_APP_UNAVAILABLE_NOTICE} onRetry={() => setResolveToken((token) => token + 1)} />
   if (!app || resolvedFor.current !== resolution) return launch && resolvedFor.current !== resolution
     ? <p role="status">Opening App…</p> : null
+  if (appConnection) return <DashboardConnectionCard toolName={appConnection.toolName} toolCallId={`${part.toolCallId}:app`}
+    output={appConnection.output} onConnected={() => { setAppConnection(null); setResolveToken((token) => token + 1) }} />
   return (
     <McpAppSandboxView
       origin={previewActions && previewOrigin ? previewOrigin : origin}
@@ -969,6 +981,12 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
       }}
       initialHeight={heightRef.current}
       onHeightChange={(next) => { heightRef.current = next }}
+      onAppToolResult={(appResult) => {
+        if (!isRecord(appResult) || appResult.isError !== true) return
+        const toolName = appToolResultConnectionToolName(app, part.toolName)
+        const match = connectionCardFromMcpToolResult(toolName, appResult)
+        if (match) setAppConnection({ toolName, output: match.output })
+      }}
     />
   )
 }

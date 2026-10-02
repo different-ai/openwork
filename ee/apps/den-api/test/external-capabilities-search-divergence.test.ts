@@ -72,6 +72,7 @@ let listUsableExternalMcpConnections: typeof import("../src/capability-sources/e
 let saveExternalMcpTokens: typeof import("../src/capability-sources/external-mcp-connections.js").saveExternalMcpTokens
 let searchExternalCapabilities: typeof import("../src/mcp/external-capabilities.js").searchExternalCapabilities
 let executeExternalCapability: typeof import("../src/mcp/external-capabilities.js").executeExternalCapability
+let unavailableExternalCapabilityStatus: typeof import("../src/mcp/external-capabilities.js").unavailableExternalCapabilityStatus
 let externalCapabilitySuccessToolResult: typeof import("../src/mcp/capability-registry.js").externalCapabilitySuccessToolResult
 let slackServer: FakeMcpServer | undefined
 let authedSlackServer: FakeMcpServer | undefined
@@ -555,6 +556,7 @@ beforeAll(async () => {
   saveExternalMcpTokens = connectionsMod.saveExternalMcpTokens
   searchExternalCapabilities = capabilitiesMod.searchExternalCapabilities
   executeExternalCapability = capabilitiesMod.executeExternalCapability
+  unavailableExternalCapabilityStatus = capabilitiesMod.unavailableExternalCapabilityStatus
   externalCapabilitySuccessToolResult = registryMod.externalCapabilitySuccessToolResult
   slackServer = startFakeMcpServer("fake-slack", slackTools)
   authedSlackServer = startFakeMcpServer("fake-authed-slack", slackTools, "valid-key")
@@ -1613,4 +1615,46 @@ test("user-transcript-repro: Slack connection status ranks above Notion's summar
   expect(matches[0]?.score).toBeGreaterThanOrEqual(7)
   expect(matches[1]?.name).toBe(`mcp:${notionConnection.id}:notion-search`)
   expect(matches[1]?.score).toBe(2)
+})
+
+test("a Workflow tool missing from discovery is explained by its connection, not reported as disabled", async () => {
+  if (!slackServer || !authedSlackServer) throw new Error("Slack MCP servers were not started")
+  const seed = await seedOrganization("workflow-missing-external-tool")
+  const explain = (connectionId: string, toolName: string) => unavailableExternalCapabilityStatus({
+    organizationId: seed.organizationId,
+    member: { orgMembershipId: seed.memberId, teamIds: [] },
+    connectionId,
+    toolName,
+    redirectUriBase,
+  })
+
+  const revoked = await createGrantedConnection(seed, {
+    name: "Slack",
+    authType: "apikey",
+    credentialMode: "shared",
+    url: authedSlackServer.url,
+    apiKey: "revoked-key",
+  })
+  expect(await explain(revoked.id, "slack-search-messages")).toMatchObject({
+    connectionId: revoked.id,
+    state: "reauth_required",
+    errorCode: "unauthorized",
+    actor: "organization_admin",
+    action: { type: "update_credentials", surface: "openwork_organization_connections" },
+  })
+
+  const healthy = await createGrantedConnection(seed, {
+    name: "Slack Open",
+    authType: "none",
+    credentialMode: "shared",
+    url: slackServer.url,
+  })
+  expect(await explain(healthy.id, "slack-search-messages")).toBeNull()
+  expect(await explain(healthy.id, "slack-archive-channel")).toMatchObject({
+    connectionId: healthy.id,
+    state: "provider_error",
+    actor: "organization_admin",
+    message: '"Slack Open" no longer offers the slack-archive-channel tool.',
+    action: { type: "inspect_connection", surface: "openwork_organization_connections" },
+  })
 })

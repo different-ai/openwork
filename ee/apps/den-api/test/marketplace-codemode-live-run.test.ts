@@ -360,6 +360,20 @@ test("live denies writes and external read-only hints; adhoc retains explicit wr
   expect(rows(WorkflowRunTable).at(-1)?.source).toBe(`plugin:${saved.pluginId}:${saved.configObjectId}`)
 })
 
+test("a Workflow whose connection tool is missing names the connection to fix, and the provider is never called", async () => {
+  const required = { capabilityName: "mcp:emc_posthog:query_dau", scriptPath: "tools.posthog.query_dau" }
+  const saved = seed("return await tools.posthog.query_dau({})", { requiredCapabilities: [required] })
+  manifest = []
+  const connection = { connectionStatus: { connectionId: "emc_posthog", state: "provider_error" }, connectionCard: { connectionId: "emc_posthog", connectionName: "PostHog" } }
+  const asked: unknown[] = []
+  const result = await execute(saved, { body: {}, describeUnavailable: async (missing) => { asked.push(missing); return connection } })
+  expect(result).toMatchObject({ ok: false, error: "capability_unavailable", providerCallAttempted: false, missing: [required], ...connection })
+  expect(asked).toEqual([[required]])
+  expect(calls).toEqual([])
+  // Without an explanation the failure is unchanged.
+  expect(await execute(saved, { body: {}, describeUnavailable: async () => null })).not.toHaveProperty("connectionCard")
+})
+
 test("forged live body and invalid time zones fail before storage, tool construction, or provider calls", async () => {
   const saved = seed()
   for (const body of [null, {}, "{}", "", 0, false, [], { runtime: { now: "forged", timeZone: "UTC" } }]) {

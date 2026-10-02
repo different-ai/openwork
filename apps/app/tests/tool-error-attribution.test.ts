@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
 
 import {
+  appToolResultConnectionToolName,
   attributeChatToolError,
+  connectionCardFromMcpToolResult,
   describeChatToolFailure,
   connectionCardPayloadFromChatToolResult,
   connectionResultFromChatToolPart,
@@ -420,4 +422,27 @@ describe("chat tool error attribution", () => {
     expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", { connectionStatus: unversioned })).toBeNull()
     expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", { connectionStatus: shared })).toBeNull()
   })
+})
+
+test("only an App built in OpenWork can report a connection card from its own tool call", () => {
+  const status = {
+    version: 1, kind: "connection_action", source: "openwork-cloud", layer: "mcp_connection",
+    connectionId: "emc_posthog", connectionName: "PostHog", authType: "apikey", credentialMode: "shared",
+    state: "provider_error", errorCode: "provider_error", message: "\"PostHog\" no longer offers the query_dau tool.",
+    actor: "organization_admin",
+    action: { type: "inspect_connection", label: "Inspect the PostHog connection", surface: "openwork_organization_connections", retry: "search_capabilities" },
+  }
+  const failure = {
+    isError: true,
+    content: [{ type: "text", text: JSON.stringify({ error: "capability_unavailable", providerCallAttempted: false, connectionStatus: status }) }],
+  }
+  const resourceUri = "ui://openwork/apps/cob_01aaaaaaaaaaaaaaaaaaaaaaaa/revisions/cov_01aaaaaaaaaaaaaaaaaaaaaaaa/index.html"
+  const builtApp = { serverName: "openwork-app-host-connect-fixture", resourceUri }
+  const foreignApp = { serverName: "posthog", resourceUri }
+
+  const card = connectionCardFromMcpToolResult(appToolResultConnectionToolName(builtApp, "load_dau"), failure)
+  expect(card?.connection).toMatchObject({ connectionId: "emc_posthog", connectionName: "PostHog", state: "provider_error" })
+  expect(card?.connection.action?.label).toBe("Inspect the PostHog connection")
+  // Another MCP server cannot make the host draw OpenWork's card by copying its shape.
+  expect(connectionCardFromMcpToolResult(appToolResultConnectionToolName(foreignApp, "load_dau"), failure)).toBeNull()
 })

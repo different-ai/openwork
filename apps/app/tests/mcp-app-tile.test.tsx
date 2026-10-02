@@ -734,6 +734,47 @@ test.each(["result", "transport", "metadata", "text"])("live setup failures rend
   }
 });
 
+test("a connection failure from the App's own call replaces the App with a native connection card", async () => {
+  const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+  Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+  const liveResource = { ...resource, serverName: "openwork-cloud", toolName: "run_artifact_arv_fixture" };
+  const connection = {
+    schemaVersion: "1", connectionId: "emc_posthog", connectionName: "PostHog", state: "reauth_required",
+    actor: "organization_admin", message: "PostHog rejected the saved API key.",
+    action: { type: "update_credentials", label: "Update credentials for PostHog", surface: "openwork_organization_connections" },
+  };
+  const client: OpenworkServerClient = { ...createOpenworkServerClient({ baseUrl: "http://fixture.invalid" }),
+    resolveMcpApp: async () => ({ app: { ...liveResource, launchId: "live-lease" } }),
+    callMcpAppTool: async () => ({ content: [] }),
+    releaseMcpApp: async () => ({ released: true }),
+  };
+  const entry: DashboardMcpAppEntry = { kind: "mcp", id: "app-call-setup", title: "PostHog DAU", serverName: liveResource.serverName,
+    toolName: liveResource.toolName, projectedToolName: `openwork-cloud_${liveResource.toolName}`, resourceUri: liveResource.resourceUri,
+    autoLaunch: true };
+  const container = document.body.appendChild(document.createElement("div"));
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<WorkspaceProvider client={null} openworkServerClient={client} workspaceId="fixture" selectedWorkspaceRoot="/fixture">
+      <McpAppTile entry={entry} cacheScopeKey="app-call-setup-scope" />
+    </WorkspaceProvider>));
+    expect(container.querySelector("[data-sandbox-view]")).not.toBeNull();
+
+    // An ordinary App error stays the App's to present.
+    await act(async () => sandboxView?.onAppToolResult?.({ isError: true, content: [{ type: "text", text: "Query failed" }] }));
+    expect(container.querySelector("[data-sandbox-view]")).not.toBeNull();
+
+    await act(async () => sandboxView?.onAppToolResult?.({ isError: true, content: [], structuredContent: connection }));
+    expect(container.querySelector("[data-sandbox-view]")).toBeNull();
+    const connectionCard = container.querySelector('[data-testid="desktop-connection-card"]');
+    expect(connectionCard?.getAttribute("aria-label")).toBe("PostHog connection");
+    expect(readDashboardTileCache("app-call-setup-scope", entry.id)).toBeNull();
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct);
+  }
+});
+
 test.each(["result", "connection"])("switching viewers never exposes the prior viewer %s", async (initialState) => {
   const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
