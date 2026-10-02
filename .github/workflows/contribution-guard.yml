@@ -1,0 +1,71 @@
+# Contribution guard for every pull request.
+#
+# Enforces CONTRIBUTING.md §1 and §2:
+#   1. DCO (all pull requests, forks and same-repository alike): every non-merge
+#      commit carries a `Signed-off-by:` trailer whose email matches the commit
+#      author email or the PR author's GitHub noreply address. Commits by the
+#      allow-listed bots that cannot sign (sentry[bot], dependabot[bot]) on
+#      their own PRs are exempt. Same-repository commits authored before
+#      DCO_ENFORCED_FROM (scripts/ci/contribution-guard.mjs) are grandfathered
+#      so in-flight internal branches are not blocked by the rollout.
+#   2. ee/ (fork pull requests only): any change under ee/ requires the
+#      `cla-signed` label (a maintainer applies it once the CLA under legal/ is
+#      on file). Same-repository authors are covered by their agreements.
+#
+# Security model (same as revert-fastlane.yml): this runs on
+# pull_request_target, so the workflow definition AND
+# scripts/ci/contribution-guard.mjs execute from the trusted base branch
+# (github.sha), never from the PR. The job never checks out, fetches, or runs
+# PR code; it only reads PR metadata (commits, files, labels) through the REST
+# API with a read-only token. actions/checkout and actions/setup-node are pinned
+# to immutable commits. PR-controlled strings never reach a `run:` script via
+# expression interpolation; only the numeric PR number is passed, via env.
+#
+# Status name `contribution-guard` is meant to be added to the dev ruleset's
+# required status checks (repository settings step, not done by this file).
+
+name: Contribution Guard
+
+on:
+  pull_request_target:
+    # labeled/unlabeled re-run the ee/ check when a maintainer adds `cla-signed`.
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: contribution-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  contribution-guard:
+    name: contribution-guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # github.sha is the base-branch revision this workflow file was read from,
+      # so the script below is the trusted copy that ships with this workflow.
+      - name: Checkout trusted guard script (base branch, not the PR)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: scripts/ci
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Unit-test the guard logic
+        run: node --test scripts/ci/contribution-guard.test.mjs
+
+      - name: Check DCO sign-off and ee/ CLA label
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node scripts/ci/contribution-guard.mjs

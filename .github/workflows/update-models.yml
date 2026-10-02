@@ -179,7 +179,7 @@ jobs:
           git config --local user.signingkey "$signing_key"
           git switch -c "$BRANCH_NAME"
           git add "$MODELS_PATH"
-          git commit -S -m "chore: update models snapshot"
+          git commit -S -s -m "chore: update models snapshot"
 
       - name: Open pull request
         if: steps.changes.outputs.changed == 'true'
