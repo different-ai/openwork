@@ -95,3 +95,56 @@ export async function getSingleOrgEmailSignupPolicyViolation(email: string | nul
     getSingletonOrganization,
   })
 }
+
+// SSO sign-in creates users under the organization's identity-provider policy
+// (authorizeOrganizationSsoSignIn), not the self-service signup policy.
+const SSO_USER_CREATION_PATH_PREFIXES = ["/sso/", "/sign-in/sso"]
+
+export function isSsoUserCreationPath(path: string | null | undefined) {
+  return typeof path === "string" && SSO_USER_CREATION_PATH_PREFIXES.some((prefix) => path.startsWith(prefix))
+}
+
+export type UserCreationSignupGuardInput = {
+  /** Better Auth endpoint path that is creating the user; null for programmatic creation. */
+  path: string | null | undefined
+  email: string | null
+  /** True only after validating the bootstrap grant's signature, email, expiry, and availability. */
+  hasBootstrapGrant: boolean
+  hasPendingInvitation: (email: string) => Promise<boolean>
+  getViolation: (email: string | null) => Promise<SingleOrgEmailSignupPolicyViolation | null>
+}
+
+/**
+ * Signup policy for every Better Auth path that creates a user (email signup,
+ * email OTP sign-in, social callbacks, ...). Enforced from the user-creation
+ * database hook so a single route cannot bypass it. Pending invitations and
+ * the initial-admin bootstrap grant are the only self-service exceptions.
+ */
+export async function resolveUserCreationSignupPolicyViolation(
+  input: UserCreationSignupGuardInput,
+): Promise<SingleOrgEmailSignupPolicyViolation | null> {
+  // Programmatic creation (SCIM provisioning, seeds, admin tooling) carries no
+  // request path and is authorized by its own caller.
+  if (!input.path) {
+    return null
+  }
+
+  if (isSsoUserCreationPath(input.path)) {
+    return null
+  }
+
+  if (input.path === "/sign-up/email" && input.hasBootstrapGrant) {
+    return null
+  }
+
+  const violation = await input.getViolation(input.email)
+  if (!violation) {
+    return null
+  }
+
+  if (input.email && (await input.hasPendingInvitation(input.email))) {
+    return null
+  }
+
+  return violation
+}
