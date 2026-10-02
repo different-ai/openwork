@@ -23,6 +23,8 @@ export type ShortcutModelOption = {
 export type ModelShortcutDecision =
   | { kind: "unavailable"; reason: ModelUnavailableReason }
   | { kind: "pending" }
+  /** Listed but not runnable right now (Auto while its access syncs); never a policy block. */
+  | { kind: "not_ready" }
   | { kind: "already_active" }
   | {
       kind: "switch";
@@ -68,7 +70,7 @@ export function decideModelShortcut(input: {
   if (availability.status === "unavailable") return { kind: "unavailable", reason: availability.reason };
   if (availability.status === "pending") return { kind: "pending" };
   if (!option) return { kind: "unavailable", reason: "model_missing" };
-  if (option.disabled) return { kind: "unavailable", reason: "provider_blocked" };
+  if (option.disabled) return { kind: "not_ready" };
 
   const values = (option.behaviorOptions ?? []).map((entry) => entry.value);
   const resolved = resolveShortcutVariant(values, action.effort, action.fast);

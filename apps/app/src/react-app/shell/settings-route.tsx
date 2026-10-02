@@ -102,6 +102,7 @@ import { SettingsStack } from "@/react-app/domains/settings/settings-section";
 import { AdvancedView } from "@/react-app/domains/settings/pages/advanced-view";
 import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
 import { KeyboardShortcutsView } from "@/react-app/domains/settings/pages/keyboard-shortcuts-view";
+import { pendingGatewayModelOptions } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { CloudAccountView } from "@/react-app/domains/settings/pages/cloud-account-view";
 import {
   connectPluginsForComposer,
@@ -1238,6 +1239,18 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     cloudProvidersEnabled: cloudSession.isSignedIn,
     importedProviders: providerAuthSnapshot.importedCloudProviders,
   });
+  // Keyboard shortcuts read the same catalog the "All models" dialog does.
+  const shortcutCatalogPending = useMemo(() => pendingGatewayModelOptions(gatewayConnectProviders ?? []), [gatewayConnectProviders]);
+  const shortcutCatalog = useMemo(() => ({
+    client: opencodeClient,
+    baseUrl: opencodeBaseUrl,
+    directory: selectedWorkspaceRoot,
+    pendingOptions: shortcutCatalogPending,
+    disabledProviders,
+    gatewayProviderIds,
+    cloudProvidersEnabled: cloudSession.isSignedIn,
+    importedProviders: providerAuthSnapshot.importedCloudProviders,
+  }), [opencodeClient, opencodeBaseUrl, selectedWorkspaceRoot, shortcutCatalogPending, disabledProviders, gatewayProviderIds, cloudSession.isSignedIn, providerAuthSnapshot.importedCloudProviders]);
   const currentCloudMcpModel = useMemo<OpenworkCloudMcpProviderModelContext | null>(() => {
     const provider = local.prefs.defaultModel?.providerID.trim() ?? "";
     const model = local.prefs.defaultModel?.modelID.trim() ?? "";
@@ -2786,10 +2799,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       case "shortcuts":
         return (
           <KeyboardShortcutsView
-            client={opencodeClient}
-            baseUrl={opencodeBaseUrl}
-            directory={selectedWorkspaceRoot}
+            catalog={shortcutCatalog}
             onOpenProviders={() => navigateSettingsPath("ai")}
+            onReconnectProvider={(providerId) => {
+              void providerAuthStore.openProviderAuthModal({ preferredProviderId: providerId }).catch(() => navigateSettingsPath("ai"));
+            }}
           />
         );
       case "updates":

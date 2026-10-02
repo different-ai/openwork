@@ -15,7 +15,8 @@ import {
   type Shortcut,
 } from "../src/react-app/domains/shortcuts/model-shortcuts-store";
 import { decideModelShortcut, resolveShortcutVariant } from "../src/react-app/domains/shortcuts/resolve-model-shortcut";
-import { shortcutRowState } from "../src/react-app/domains/shortcuts/shortcut-row-state";
+import { resolveShortcutTarget, shortcutFailure, shortcutTargetCopy, type ShortcutTargetInput } from "../src/react-app/domains/shortcuts/shortcut-target";
+import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, retainedModelCopy, type ModelCatalogOption } from "../src/react-app/domains/models/model-catalog";
 import { decideFastToggle } from "../src/react-app/domains/shortcuts/fast-toggle";
 import { fastModeShortcutLabel, isFastModeShortcut } from "../src/react-app/shell/fast-mode-shortcut";
 
@@ -108,6 +109,15 @@ describe("shortcut store", () => {
   });
 });
 
+describe("replacing a model that went away", () => {
+  test("choosing a replacement rebinds the same key and id to the new model", () => {
+    const retired = shortcut({ id: "sc_retired", keys: "Mod+Alt+9", action: { providerID: "google", modelID: "gemini-1.5-pro", modelTitle: "Gemini 1.5 Pro" } });
+    const other = shortcut({ id: "sc_2", keys: "Mod+Alt+2", action: { modelID: "gpt-5-mini" } });
+    const replaced = upsertShortcut([retired, other], { ...retired, action: { ...retired.action, modelID: "gemini-2.5-pro", modelTitle: "Gemini 2.5 Pro" } });
+    expect(replaced.map((entry) => `${entry.id}:${entry.keys}:${entry.action.modelID}`)).toEqual(["sc_retired:Mod+Alt+9:gemini-2.5-pro", "sc_2:Mod+Alt+2:gpt-5-mini"]);
+  });
+});
+
 describe("pressing a model shortcut", () => {
   const fastModel = { behaviorOptions: [
     { value: null }, { value: "high" }, { value: FAST_DEFAULT_VARIANT }, { value: fastVariantId("high") },
@@ -140,8 +150,9 @@ describe("pressing a model shortcut", () => {
   });
 
   test("an option the picker shows as disabled, such as blocked Auto, never switches", () => {
+    // A listed but disabled option is Auto syncing or not ready: never reported as a policy block.
     expect(decideModelShortcut({ action: shortcut().action, option: { ...fastModel, disabled: true }, availability: available, current }))
-      .toEqual({ kind: "unavailable", reason: "provider_blocked" });
+      .toEqual({ kind: "not_ready" });
   });
 
   test("a catalog that is still loading is pending, never unavailable", () => {
@@ -158,18 +169,75 @@ describe("pressing a model shortcut", () => {
   });
 });
 
-describe("settings row state", () => {
-  const catalog = {
-    all: [{ id: "openai", name: "OpenAI" }, { id: "google", name: "Google" }],
-    connected: [{ id: "openai", models: { "gpt-5": { name: "GPT-5" } } }],
-  };
+describe("shortcut target state", () => {
+  const option = (providerID: string, modelID: string, extra: Partial<ModelCatalogOption> = {}): ModelCatalogOption => ({
+    providerID, modelID, title: modelID, description: providerID, behaviorTitle: "", behaviorLabel: "", behaviorDescription: "",
+    behaviorValue: null, isFree: false, ...extra,
+  });
+  const gpt = option("openai", "gpt-5", { title: "GPT-5", description: "OpenAI" });
+  const auto = option(AUTO_PROVIDER_ID, AUTO_MODEL_ID, { title: "Auto" });
+  const base = (overrides: Partial<ShortcutTargetInput> = {}): ShortcutTargetInput => ({
+    model: { providerID: "openai", modelID: "gpt-5" },
+    actionOptions: [gpt],
+    knownOptions: [gpt],
+    catalogState: "ready",
+    signedIn: true,
+    restrictToCloud: false,
+    checkRestriction: () => false,
+    disconnectedProviderIds: new Set(),
+    ...overrides,
+  });
 
-  test("rows report the same reasons as the key press", () => {
-    expect(shortcutRowState({ providerID: "openai", modelID: "gpt-5", blocked: false, catalog })).toEqual({ kind: "available" });
-    expect(shortcutRowState({ providerID: "openai", modelID: "gone", blocked: false, catalog })).toEqual({ kind: "model_missing", providerName: "OpenAI" });
-    expect(shortcutRowState({ providerID: "google", modelID: "gemini", blocked: false, catalog })).toEqual({ kind: "provider_disconnected", providerName: "Google" });
-    expect(shortcutRowState({ providerID: "openai", modelID: "gpt-5", blocked: true, catalog })).toEqual({ kind: "blocked" });
-    expect(shortcutRowState({ providerID: "openai", modelID: "gpt-5", blocked: false, catalog: null })).toEqual({ kind: "pending" });
+  test("a listed model is available and an unsettled catalog is pending, never unavailable", () => {
+    expect(resolveShortcutTarget(base())).toEqual({ kind: "available", option: gpt });
+    expect(resolveShortcutTarget(base({ actionOptions: [], knownOptions: [], catalogState: "loading" }))).toEqual({ kind: "pending" });
+  });
+
+  test("Auto that is syncing or not ready is not ready, not blocked", () => {
+    const disabledAuto = { ...auto, disabled: true };
+    expect(resolveShortcutTarget(base({ model: auto, actionOptions: [disabledAuto], knownOptions: [disabledAuto] }))).toEqual({ kind: "not_ready" });
+  });
+
+  test("each reason a model can't run matches the picker's saved-selection reason", () => {
+    const google = { providerID: "google", modelID: "gemini-2.5-pro" };
+    expect(resolveShortcutTarget(base({ model: google, disconnectedProviderIds: new Set(["google"]) }))).toEqual({ kind: "disconnected" });
+    expect(resolveShortcutTarget(base({ model: { providerID: "openai", modelID: "retired" } }))).toEqual({ kind: "retained", reason: "unavailable" });
+    const disabled = { ...gpt, disabled: true };
+    expect(resolveShortcutTarget(base({ actionOptions: [], knownOptions: [disabled] }))).toEqual({ kind: "retained", reason: "disabled" });
+    const zen = { providerID: "opencode", modelID: "big-pickle-pro" };
+    expect(resolveShortcutTarget(base({ model: zen, checkRestriction: ({ restriction }) => restriction === "allowZenModel" })))
+      .toEqual({ kind: "retained", reason: "policy" });
+    expect(resolveShortcutTarget(base({ model: { providerID: "lpr_team", modelID: "m" }, signedIn: false, actionOptions: [], knownOptions: [] })))
+      .toEqual({ kind: "retained", reason: "signed-out" });
+  });
+
+  test("the availability verdict always yields a reason, even when the catalog has not caught up", () => {
+    const none = new Set<string>();
+    expect(shortcutFailure("provider_blocked", { kind: "pending" }, "openai", none)).toEqual({ kind: "retained", reason: "policy" });
+    expect(shortcutFailure("provider_not_connected", { kind: "pending" }, "openai", none)).toEqual({ kind: "disconnected" });
+    expect(shortcutFailure("model_missing", { kind: "pending" }, "google", new Set(["google"]))).toEqual({ kind: "disconnected" });
+    expect(shortcutFailure("model_missing", { kind: "pending" }, "openai", none)).toEqual({ kind: "retained", reason: "unavailable" });
+    expect(shortcutFailure("model_missing", { kind: "retained", reason: "disabled" }, "openai", none)).toEqual({ kind: "retained", reason: "disabled" });
+  });
+
+  test("copy: one fix per reason, policy is neutral with no fix, and the picker's words are reused", () => {
+    const names = { model: "Gemini 2.5 Pro", provider: "Google" };
+    expect(shortcutTargetCopy({ kind: "disconnected" }, names)).toEqual({
+      tone: "warning", title: "Gemini 2.5 Pro isn’t available", reason: "Google disconnected", fix: { kind: "reconnect", label: "Reconnect Google" },
+    });
+    expect(shortcutTargetCopy({ kind: "retained", reason: "policy" }, names)).toEqual({
+      tone: "blocked", title: "Gemini 2.5 Pro is blocked", reason: "Blocked by your organization", fix: null,
+    });
+    expect(shortcutTargetCopy({ kind: "retained", reason: "unavailable" }, names).fix).toEqual({ kind: "replace", label: "Choose a replacement" });
+    expect(shortcutTargetCopy({ kind: "retained", reason: "unavailable" }, names).tone).toBe("error");
+    expect(shortcutTargetCopy({ kind: "retained", reason: "disabled" }, names).fix?.kind).toBe("providers");
+    expect(shortcutTargetCopy({ kind: "retained", reason: "signed-out" }, names).fix).toBeNull();
+    expect(shortcutTargetCopy({ kind: "not_ready" }, { model: "Auto", provider: null }).title).toBe("Auto isn’t ready yet");
+    for (const reason of ["policy", "disabled", "signed-out", "unavailable"] as const) {
+      const reasonCopy = shortcutTargetCopy({ kind: "retained", reason }, names).reason;
+      expect(reasonCopy.toLowerCase()).toBe(retainedModelCopy(reason).subtitle.toLowerCase());
+      expect(reasonCopy[0]).toBe(reasonCopy[0]?.toUpperCase());
+    }
   });
 });
 

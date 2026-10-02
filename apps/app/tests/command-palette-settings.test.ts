@@ -34,6 +34,7 @@ describe("command palette settings", () => {
       "settings:ai",
       "settings:ollama",
       "settings:appearance",
+      "settings:shortcuts",
       "settings:environment",
       "settings:updates",
       "settings:cloud-account",

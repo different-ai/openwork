@@ -113,6 +113,9 @@ type ModelShortcutsStore = {
   shortcuts: Shortcut[];
   save: (shortcut: Shortcut) => void;
   remove: (id: string) => void;
+  /** A shortcut Settings should open for editing, e.g. "Choose a replacement" from the notice. Not persisted. */
+  editRequest: string | null;
+  requestEdit: (id: string | null) => void;
 };
 
 export const useModelShortcutsStore = create<ModelShortcutsStore>((set) => ({
@@ -127,6 +130,8 @@ export const useModelShortcutsStore = create<ModelShortcutsStore>((set) => ({
     writeStoredShortcuts(shortcuts);
     return { shortcuts };
   }),
+  editRequest: null,
+  requestEdit: (id) => set({ editRequest: id }),
 }));
 
 // Keep windows in sync: settings and chat can live in different renderer
