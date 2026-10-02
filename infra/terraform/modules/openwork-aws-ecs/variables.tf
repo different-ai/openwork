@@ -12,20 +12,9 @@ variable "vpc_id" {
   type        = string
 }
 
-variable "alb_subnet_ids" {
-  description = "Subnets for the load balancer (public subnets for an internet-facing ALB). At least two AZs."
-  type        = list(string)
-}
-
 variable "service_subnet_ids" {
   description = "Subnets for the Fargate tasks. Private subnets need a NAT gateway or VPC endpoints to pull images from ghcr.io; public subnets need assign_public_ip = true."
   type        = list(string)
-}
-
-variable "database_subnet_ids" {
-  description = "Subnets for RDS and ElastiCache. At least two AZs. Ignored when create_database = false and create_redis = false."
-  type        = list(string)
-  default     = []
 }
 
 variable "owner_emails" {
@@ -36,6 +25,58 @@ variable "owner_emails" {
     condition     = length(var.owner_emails) > 0
     error_message = "Set at least one owner email so the first administrator can be created."
   }
+}
+
+# ---------------------------------------------------------------------------
+# Load Balancer
+# ---------------------------------------------------------------------------
+
+variable "load_balancer_arn" {
+  description = "The ARN of an existing Application Load Balancer to deploy to. Empty creates an ALB (<name>-den) in alb_subnet_ids."
+  type        = string
+  default     = ""
+}
+
+variable "alb_subnet_ids" {
+  description = "Subnets for the load balancer (public subnets for an internet-facing ALB). At least two AZs. Required when creating an ALB (load_balancer_arn is empty)."
+  type        = list(string)
+  default     = []
+}
+
+variable "internal_alb" {
+  description = "Create an internal ALB, reachable only inside the VPC (VPN/private network deployments). Used when creating an ALB."
+  type        = bool
+  default     = false
+}
+
+variable "alb_listener_arn" {
+  description = "The ARN of an existing ALB HTTPS listener. If set, listener rules are attached to this listener instead of creating new listeners on load_balancer_arn."
+  type        = string
+  default     = ""
+}
+
+variable "alb_security_group_id" {
+  description = "The security group ID of the ALB. If omitted, a security group is created when provisioning a new ALB, or auto-discovered when using an existing ALB or listener. Set this to override auto-discovery or pass a custom security group."
+  type        = string
+  default     = ""
+}
+
+variable "api_listener_rule_priority" {
+  description = "Priority for the API listener rule."
+  type        = number
+  default     = 10
+}
+
+variable "web_listener_rule_priority" {
+  description = "Priority for the Web listener rule when using an existing listener."
+  type        = number
+  default     = 20
+}
+
+variable "attach_listener_certificate" {
+  description = "Whether to attach certificate_arn to the existing listener using aws_lb_listener_certificate."
+  type        = bool
+  default     = false
 }
 
 # ---------------------------------------------------------------------------
@@ -123,12 +164,6 @@ variable "route53_zone_id" {
   description = "Route 53 hosted zone for both hostnames. When set, the module creates alias records and, if certificate_arn is empty, the ACM certificate. Leave empty when DNS is elsewhere; point both names at the alb_dns_name output."
   type        = string
   default     = ""
-}
-
-variable "internal_alb" {
-  description = "Create an internal ALB, reachable only inside the VPC (VPN/private network deployments)."
-  type        = bool
-  default     = false
 }
 
 variable "allowed_ingress_cidrs" {
@@ -258,6 +293,12 @@ variable "create_database" {
   description = "Create an RDS MySQL 8.4 instance. Set false and pass database_url to use an existing database."
   type        = bool
   default     = true
+}
+
+variable "database_subnet_ids" {
+  description = "Subnets for RDS and ElastiCache. At least two AZs. Ignored when create_database = false and create_redis = false."
+  type        = list(string)
+  default     = []
 }
 
 variable "database_url" {

@@ -4,6 +4,16 @@ mock_provider "aws" {
   mock_data "aws_iam_policy_document" {
     defaults = { json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}" }
   }
+  mock_data "aws_lb" {
+    defaults = {
+      security_groups = ["sg-alb123"]
+    }
+  }
+  mock_data "aws_lb_listener" {
+    defaults = {
+      load_balancer_arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/openwork/abc"
+    }
+  }
   mock_resource "aws_cloudwatch_log_group" {
     defaults = { arn = "arn:aws:logs:us-east-1:123456789012:log-group:openwork" }
   }

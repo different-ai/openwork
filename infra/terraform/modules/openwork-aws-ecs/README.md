@@ -11,7 +11,7 @@ Runs a private, single-organization OpenWork control plane (Den) on AWS
 | Database migrations | Init container in each den-api task; den-api starts only if it succeeds |
 | MySQL 8.4 | RDS, encrypted, private (or bring your own `database_url`) |
 | Cache (optional) | ElastiCache Redis with TLS (`create_redis = true`) |
-| HTTPS | ALB: `domain_name` → den-web, `api.<domain_name>` → den-api, HTTP redirects |
+| HTTPS | ALB: `domain_name` → den-web, `api.<domain_name>` → den-api, HTTP redirects (or your existing ALB / listener) |
 | Certificate | Your ACM ARN, or created and DNS-validated in a Route 53 zone |
 | Secrets | One Secrets Manager secret, injected as ECS `secrets` |
 | Logs | CloudWatch `/ecs/<name>/den-api` and `/ecs/<name>/den-web` |
@@ -29,7 +29,7 @@ document every setting you can add through `extra_environment`.
 ## Before you start
 
 - A VPC with subnets in at least two AZs.
-  - **ALB**: public subnets (or private with `internal_alb = true`).
+  - **ALB**: public subnets (`alb_subnet_ids`, or private with `internal_alb = true`), or bring your own ALB / listener (`load_balancer_arn` or `alb_listener_arn`).
   - **Tasks**: private subnets with a NAT gateway (they pull images from
     `ghcr.io` and call model providers), or public subnets with
     `assign_public_ip = true`. To avoid `ghcr.io`, mirror the images to ECR
@@ -95,7 +95,15 @@ After `terraform apply`:
   which overrides the cluster's default capacity provider strategy. The
   module still creates its own Cloud Map namespace (`<name>.internal`), ALB,
   security groups and IAM roles.
-
+- **ALB and security groups.** By default, the module creates an Application
+  Load Balancer (`<name>-den`) in `alb_subnet_ids` and creates a dedicated security
+  group allowing HTTP (80) and HTTPS (443). If `alb_security_group_id` is omitted,
+  that security group is created and attached to the ALB. To deploy behind an
+  existing ALB, pass `load_balancer_arn` (or `alb_listener_arn` to attach rules
+  to an existing listener). The module automatically discovers the existing ALB's
+  security groups so ECS tasks permit ingress from your load balancer. You can
+  also pass `alb_security_group_id` to override auto-discovery or attach a custom
+  security group when creating an ALB.
 - **Migrations** run in each den-api task before the app starts, like the Helm
   chart's pre-upgrade Job. They are idempotent but not locked, so keep
   `den_api.desired_count = 1` until you need more, and scale after a deploy

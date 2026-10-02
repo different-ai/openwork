@@ -266,5 +266,5 @@ resource "aws_ecs_service" "web" {
     rollback = true
   }
 
-  depends_on = [aws_lb_listener.https]
+  depends_on = [aws_lb_listener.https, aws_lb_listener_rule.web_host]
 }
