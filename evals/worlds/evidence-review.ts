@@ -92,6 +92,7 @@ export async function reviewWorld(
             reasoning: "Synthetic assertion used to verify report rendering.",
           },
         ],
+        step: name,
       },
       ...(index === 0
         ? [
@@ -107,6 +108,20 @@ export async function reviewWorld(
               ok: null,
               results: [],
               judgments: [],
+              // What the harness records about a screenshot, placed on this image's dialog and button.
+              step: name,
+              change: {
+                since: "00-skill.png",
+                actions: ["click(text=Share)"],
+                ratio: 0.27,
+                boxes: [{ x: 0.2416, y: 0.251, width: 0.5593, height: 0.479 }],
+                added: ["Share link", "Publish a public link. Anyone with the URL can install this skill."],
+                addedCount: 4,
+                removed: [],
+                removedCount: 0,
+              },
+              focus: [{ label: "Create link", box: { x: 0.6367, y: 0.6103, width: 0.133, height: 0.0722 } }],
+              settle: { ms: 210, settled: true },
             },
           ]
         : []),
