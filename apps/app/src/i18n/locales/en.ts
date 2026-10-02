@@ -4,6 +4,9 @@
  */
 
 export default {
+  "den.workspace_address_or_code": "Workspace address or sign-in code",
+  "den.workspace_code_hint": "For a sign-in code, paste the full OpenWork link copied from your browser, including the workspace address.",
+  "den.signin_return_help": "Sign-in didn’t come back? Paste the code from the browser",
   "account.mcp_connected_one": "{count} MCP server",
   "account.mcp_connected_other": "{count} MCP servers",
   "account.providers_connected_one": "{count} model provider",

@@ -7,6 +7,9 @@
  */
 
 export default {
+  "den.workspace_address_or_code": "工作区地址或登录代码",
+  "den.workspace_code_hint": "使用登录代码时，请粘贴从浏览器复制的完整 OpenWork 链接，其中应包含工作区地址。",
+  "den.signin_return_help": "登录后没有返回？请粘贴浏览器中的代码",
   "app.compact_command_desc": "压缩此会话以减少上下文大小。",
   "app.error_audit_load": "加载审计日志失败。",
   "app.error_auth_failed": "认证失败",

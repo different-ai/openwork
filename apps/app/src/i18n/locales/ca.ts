@@ -4,6 +4,9 @@
  */
 
 export default {
+  "den.workspace_address_or_code": "Adreça de l’espai de treball o codi d’inici de sessió",
+  "den.workspace_code_hint": "Per a un codi d’inici de sessió, enganxa l’enllaç complet d’OpenWork copiat del navegador, amb l’adreça de l’espai de treball.",
+  "den.signin_return_help": "L’inici de sessió no ha tornat? Enganxa el codi del navegador",
   "app.compact_command_desc": "Resumeix aquesta sessió per reduir la mida del context.",
   "app.error_audit_load": "No s'ha pogut carregar el registre d'auditoria.",
   "app.error_auth_failed": "L'autenticació ha fallat",
