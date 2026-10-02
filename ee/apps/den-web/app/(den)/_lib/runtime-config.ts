@@ -30,6 +30,10 @@ export const EMPTY_RUNTIME_CONFIG: DenWebRuntimeConfig = {
 
 let runtimeConfigPromise: Promise<DenWebRuntimeConfig> | null = null;
 
+export function resetRuntimeConfig(): void {
+  runtimeConfigPromise = null;
+}
+
 function normalizeOrgMode(value: unknown): DenOrgMode {
   return value === "multi_org" ? "multi_org" : "single_org";
 }
