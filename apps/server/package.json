@@ -65,7 +65,7 @@
     "htmlparser2": "8.0.2",
     "jsonc-parser": "^3.2.1",
     "minimatch": "^10.2.5",
-    "undici": "6.28.0",
+    "undici": "6.28.1",
     "yaml": "^2.9.0",
     "zod": "^4.3.6"
   },

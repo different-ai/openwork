@@ -18,7 +18,7 @@
     "@hono/node-server": "2.0.12",
     "@modelcontextprotocol/client": "^2.0.0",
     "@openwork/workbook": "workspace:*",
-    "hono": "4.13.5",
+    "hono": "4.13.9",
     "zod": "^4.3.6"
   },
   "devDependencies": {
