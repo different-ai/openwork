@@ -11,6 +11,8 @@ export interface ScreenshotArtifact {
   hash: string;
   route: string;
   visibleText: string;
+  /** Only the text inside the captured window, so "shows …" never names a line scrolled out of the image. */
+  viewportText?: string;
   at: string;
   /** Text boxes on screen when the image was taken; absent when the page could not report them. */
   layout?: LayoutSnapshot;
@@ -57,12 +59,70 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export async function captureFrame(app: Surface): Promise<ScreenshotArtifact> {
   const at = new Date().toISOString();
   const png = await captureScreenshot(app.client);
-  const page = await evaluate(app.client, () => (({
-    route: window.location.hash,
-    visibleText: document.body.innerText,
-    width: window.innerWidth,
-    height: window.innerHeight,
-  })));
+  const page = await evaluate(app.client, () => {
+    // The lines a reader can see in the image: text inside the window and inside
+    // every scrolling or clipping container around it, one line per block.
+    const viewportText = (): string | null => {
+      try {
+        const clips = new Map<Element, { left: number; top: number; right: number; bottom: number } | null>();
+        const clipOf = (element: Element | null): { left: number; top: number; right: number; bottom: number } | null => {
+          if (!element) return { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+          const cached = clips.get(element);
+          if (cached !== undefined) return cached;
+          const outer = clipOf(element.parentElement);
+          let clip = outer;
+          const style = getComputedStyle(element);
+          if (outer && (style.overflowX !== "visible" || style.overflowY !== "visible")) {
+            const rect = element.getBoundingClientRect();
+            const left = Math.max(outer.left, rect.left);
+            const top = Math.max(outer.top, rect.top);
+            const right = Math.min(outer.right, rect.right);
+            const bottom = Math.min(outer.bottom, rect.bottom);
+            clip = right > left && bottom > top ? { left, top, right, bottom } : null;
+          }
+          clips.set(element, clip);
+          return clip;
+        };
+        const blocks = new Map<Element, Element>();
+        const blockOf = (element: Element): Element => {
+          const cached = blocks.get(element);
+          if (cached) return cached;
+          const display = getComputedStyle(element).display;
+          const block = (display.startsWith("inline") || display === "contents") && element.parentElement ? blockOf(element.parentElement) : element;
+          blocks.set(element, block);
+          return block;
+        };
+        const lines = new Map<Element, string[]>();
+        const range = document.createRange();
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const text = (node.textContent ?? "").replace(/\s+/g, " ").trim();
+          const parent = node.parentElement;
+          if (!text || !parent || !parent.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue;
+          const clip = clipOf(parent);
+          if (!clip) continue;
+          range.selectNodeContents(node);
+          const seen = [...range.getClientRects()].some((rect) => rect.width > 0 && rect.height > 0
+            && rect.right > clip.left && rect.left < clip.right && rect.bottom > clip.top && rect.top < clip.bottom);
+          if (!seen) continue;
+          const block = blockOf(parent);
+          const parts = lines.get(block);
+          if (parts) parts.push(text);
+          else lines.set(block, [text]);
+        }
+        return [...lines.values()].map((parts) => parts.join(" ")).join("\n");
+      } catch {
+        return null;
+      }
+    };
+    return {
+      route: window.location.hash,
+      visibleText: document.body.innerText,
+      viewportText: viewportText(),
+      width: window.innerWidth,
+      height: window.innerHeight,
+    };
+  });
   if (!isRecord(page) || typeof page.route !== "string" || typeof page.visibleText !== "string") {
     throw new Error("CDP did not return the current route and visible text for the screenshot.");
   }
@@ -72,6 +132,7 @@ export async function captureFrame(app: Surface): Promise<ScreenshotArtifact> {
     hash: createHash("sha256").update(png).digest("hex"),
     route: page.route,
     visibleText: page.visibleText,
+    ...(typeof page.viewportText === "string" ? { viewportText: page.viewportText } : {}),
     at,
     ...(layout ? { layout } : {}),
     ...(typeof page.width === "number" && typeof page.height === "number" && page.width > 0 && page.height > 0

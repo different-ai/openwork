@@ -133,3 +133,23 @@ test("each screenshot records its step, what the person did since the last one, 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("a screenshot only says it shows lines inside the captured window, with secrets redacted", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openwork-screen-change-"));
+  try {
+    const evidence = createTestEvidence({ name: "scrolled list", outDir: dir });
+    evidence.recordScreenshot(frame(blank, "Inbox", "2026-10-02T10:00:01.000Z"), { caption: "before: the inbox" });
+    evidence.recordScreenshot({
+      ...frame(panel, "Inbox\nNew draft\napi_token=abc123\nOlder message below the fold", "2026-10-02T10:00:02.000Z"),
+      viewportText: "Inbox\nNew draft\napi_token=abc123",
+    }, { caption: "after: a draft appears" });
+    await evidence.close();
+    const record: unknown = JSON.parse(await readFile(join(dir, "test-run.json"), "utf8"));
+    assert.ok(typeof record === "object" && record !== null && "artifacts" in record && Array.isArray(record.artifacts));
+    const after = record.artifacts[1];
+    assert.deepEqual(after.change.added, ["New draft", "api_token=<redacted>"]);
+    assert.equal(after.viewportText, undefined, "the window's text is used to compare, not stored");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

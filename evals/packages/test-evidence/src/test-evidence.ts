@@ -8,6 +8,7 @@ import { resolveSandboxRef } from "@openwork/env/eval-ref";
 import { layoutFileName, type LayoutSnapshot } from "@openwork/design-review";
 import type { EvidenceFocus, RecordScreenshotOptions, ScreenshotArtifact } from "./screenshot.ts";
 import { decodePng, diffPixels, diffText } from "./screen-change.ts";
+import { redactText } from "./redact.ts";
 import type { EvidenceBox, ScreenChange } from "./screen-change.ts";
 import { parseEvidenceCheckpoint } from "@openwork/freestyle/checkpoint-schema";
 import { judgeVision } from "./validate.ts";
@@ -124,6 +125,7 @@ interface StoredTestArtifact extends TestArtifact {
   /** Written beside the PNG as `NN-caption.layout.json` for design checks. */
   layout: LayoutSnapshot | null;
   visibleText: string;
+  viewportText?: string;
   validationKey: string | null;
 }
 
@@ -227,12 +229,6 @@ function gitValue(args: string[]): string {
 /** Trace verbs that change what the person sees; looking (`see`, probes) does not. */
 const SCREEN_ACTIONS = new Set(["click", "dblclick", "rightClick", "type", "press", "hover", "reload", "navigate", "send", "run", "browserTask", "createSession"]);
 
-function redactLine(line: string): string {
-  return line
-    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "<email>")
-    .replace(/Bearer\s+[^\s,;]+/gi, "Bearer <redacted>");
-}
-
 /**
  * Each screenshot against the one before it in this test: what the person did
  * in between (from the trace), where the image changed, and which visible
@@ -260,7 +256,7 @@ function describeChanges(artifacts: StoredTestArtifact[], trace: TraceEntry[]): 
         since: previous?.fileName ?? null,
         actions,
         ...pixelChange,
-        ...(previous ? diffText(previous.visibleText, artifact.visibleText, redactLine) : { added: [], addedCount: 0, removed: [], removedCount: 0 }),
+        ...(previous ? diffText(previous.viewportText ?? previous.visibleText, artifact.viewportText ?? artifact.visibleText, redactText) : { added: [], addedCount: 0, removed: [], removedCount: 0 }),
       };
     }
     previous = artifact;
@@ -828,6 +824,7 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
         png: screenshotArtifact.png,
         layout: screenshotArtifact.layout ?? null,
         visibleText: screenshotArtifact.visibleText,
+        viewportText: screenshotArtifact.viewportText,
         validationKey: null,
         checkpoint: screenshotArtifact.checkpoint,
         checkpointMatch: screenshotArtifact.checkpointMatch,

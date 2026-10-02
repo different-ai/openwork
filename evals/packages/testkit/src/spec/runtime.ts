@@ -50,7 +50,7 @@ import {
 import type { App, Den, EvalEngine, Place, WorldResources } from "@openwork/env";
 import { chrome, desktop } from "@openwork/hosts";
 import type { DesktopHandle } from "@openwork/hosts";
-import { findCheckpointCapability, screenshot, takeCheckpoint, validate } from "@openwork/test-evidence";
+import { findCheckpointCapability, redactText, screenshot, takeCheckpoint, validate } from "@openwork/test-evidence";
 import type { CheckpointCapability, ScreenshotArtifact } from "@openwork/test-evidence";
 import type {
   StepRecord,
@@ -157,11 +157,7 @@ function messageText(error: unknown): string {
 }
 
 function redacted(value: string): string {
-  return value
-    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "<email>")
-    .replace(/Bearer\s+[^\s,;]+/gi, "Bearer <redacted>")
-    .replace(/((?:["']?[\w.-]*(?:token|secret|password)[\w.-]*["']?)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}&]+)/gi, "$1<redacted>")
-    .slice(0, 240);
+  return redactText(value).slice(0, 240);
 }
 
 function isSurface(value: unknown): value is Surface {
