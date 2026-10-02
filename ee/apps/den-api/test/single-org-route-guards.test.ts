@@ -177,6 +177,20 @@ test("single_org SSO-only guard recognizes email/password auth requests", () => 
   }))).toBe(false)
 })
 
+test("single_org SSO-only guard recognizes email OTP sign-in requests", () => {
+  expect(authRoutesModule.isBetterAuthEmailOtpSignInRequest(new Request("http://den.local/api/auth/sign-in/email-otp", {
+    method: "POST",
+  }))).toBe(true)
+
+  expect(authRoutesModule.isBetterAuthEmailOtpSignInRequest(new Request("http://den.local/api/auth/sign-in/email", {
+    method: "POST",
+  }))).toBe(false)
+
+  expect(authRoutesModule.isBetterAuthEmailOtpSignInRequest(new Request("http://den.local/api/auth/sign-in/email-otp", {
+    method: "GET",
+  }))).toBe(false)
+})
+
 test("single_org SSO-only guard still recognizes invited email signup requests", () => {
   expect(authRoutesModule.isBetterAuthEmailPasswordRequest(new Request("http://den.local/api/auth/sign-up/email?invite=inv_example", {
     method: "POST",
