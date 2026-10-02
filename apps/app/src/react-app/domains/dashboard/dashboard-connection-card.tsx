@@ -4,8 +4,9 @@ import { createDenClient, readDenSettings } from "@/app/lib/den";
 import { openDesktopUrl } from "@/app/lib/desktop";
 import { isChatMcpReconnectScopeCurrent, waitForFreshMcpAuthorization } from "../session/surface/mcp-chat-reconnect";
 
-export function DashboardConnectionCard({ toolName, toolCallId, output, onConnected }: {
+export function DashboardConnectionCard({ toolName, toolCallId, output, onConnected, subject }: {
   toolName: string;
+  subject?: string;
   toolCallId: string;
   output: unknown;
   onConnected: () => void;
@@ -49,5 +50,5 @@ export function DashboardConnectionCard({ toolName, toolCallId, output, onConnec
     onReopenAuthorization: async (_target, url) => { await openDesktopUrl(url); },
   };
   return <ConnectionCard part={{ type: "dynamic-tool", toolName, toolCallId, state: "output-available", input: {}, output }}
-    callbacks={callbacks} />;
+    callbacks={callbacks} subject={subject} />;
 }
