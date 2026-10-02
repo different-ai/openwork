@@ -2,7 +2,7 @@ import { callFunctionOnSurface, evaluateOnSurface } from "./surface.ts";
 import type { Surface } from "./surface.ts";
 import type { CdpClient } from "./cdp.ts";
 
-export type TargetRole = "button" | "link" | "textbox" | "checkbox" | "switch" | "menuitem" | "tab" | "option" | "separator" | "combobox" | "listbox" | "alert" | "heading" | "progressbar";
+export type TargetRole = "button" | "link" | "textbox" | "checkbox" | "switch" | "menuitem" | "tab" | "option" | "separator" | "combobox" | "listbox" | "alert" | "heading" | "progressbar" | "radio";
 export type TargetMatcher = string | RegExp;
 
 export type Target = string | {
@@ -345,7 +345,8 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       if (tag === "input") {
         const type = (element.getAttribute("type") ?? "text").toLowerCase();
         if (type === "checkbox") return "checkbox";
-        if (!["button", "submit", "reset", "hidden", "radio"].includes(type)) return "textbox";
+        if (type === "radio") return "radio";
+        if (!["button", "submit", "reset", "hidden"].includes(type)) return "textbox";
       }
       return "";
     };
@@ -381,7 +382,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
         ? 'h1, h2, h3, h4, h5, h6, [role="heading"]'
         : target.text && !target.role && !target.label && !target.placeholder && !target.testId
           ? 'body *'
-          : 'button, a[href], input, textarea, select, [role="combobox"], [role="listbox"], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="switch"], [role="menuitem"], [role="tab"], [role="option"], [role="separator"], [role="alert"], [role="progressbar"], [data-testid]';
+          : 'button, a[href], input, textarea, select, [role="combobox"], [role="listbox"], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="switch"], [role="menuitem"], [role="tab"], [role="option"], [role="separator"], [role="alert"], [role="progressbar"], [role="radio"], [data-testid]';
     const candidates = [...document.querySelectorAll<HTMLElement>(selector)].filter((element: Element) => {
       if (target.role && implicitRole(element) !== target.role) return false;
       if (target.placeholder !== undefined && (element.getAttribute("placeholder") ?? element.getAttribute("aria-placeholder")) !== target.placeholder) return false;
@@ -435,7 +436,18 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
         },
       };
     }
-    element.scrollIntoView({ block: "center", inline: "center" });
+    // Re-centering a reachable hover action can move its parent away from the
+    // pointer and hide the action before the click. Keep reachable controls
+    // still; scroll only when their click point is outside or covered.
+    const initial = element.getBoundingClientRect();
+    const initialX = initial.left + initial.width / 2;
+    const initialY = initial.top + initial.height / 2;
+    const initialHit = initialX >= 0 && initialY >= 0 && initialX <= innerWidth && initialY <= innerHeight
+      ? document.elementFromPoint(initialX, initialY) : null;
+    const isButton = element instanceof HTMLButtonElement || element.getAttribute("role") === "button";
+    if (!isButton || !initialHit || (initialHit !== element && !element.contains(initialHit))) {
+      element.scrollIntoView({ block: "center", inline: "center" });
+    }
     const rect = element.getBoundingClientRect();
     const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     let current: Element | null = element;
@@ -535,6 +547,8 @@ export async function typeText(surface: Surface, text: string): Promise<void> {
 const EDITING_COMMANDS: Record<string, string[]> = {
   "Meta+A": ["selectAll"],
   "Control+A": ["selectAll"],
+  "Meta+V": ["paste"],
+  "Control+V": ["paste"],
   "Meta+ArrowDown": ["moveToEndOfDocument"],
   "Control+End": ["moveToEndOfDocument"],
   // macOS standard key bindings: bare Home/End scroll the document and only
@@ -556,7 +570,14 @@ export async function pressKey(surface: Surface, key: string): Promise<void> {
     modifiers: descriptor.modifiers,
   };
   const commands = EDITING_COMMANDS[key];
-  await surface.client.send("Input.dispatchKeyEvent", { type: "keyDown", ...params, ...(commands ? { commands } : {}) });
+  // Enter needs a text event for native HTML button activation. Keydown alone
+  // reaches JS handlers but does not produce the browser's default click.
+  // CDP does not derive character insertion from the virtual key code. Native
+  // segmented inputs (date/time) need text on plain printable key presses.
+  const text = descriptor.key === "Enter" && (descriptor.modifiers & (1 | 2 | 4)) === 0
+    ? "\r"
+    : descriptor.key.length === 1 && descriptor.modifiers === 0 ? descriptor.key : undefined;
+  await surface.client.send("Input.dispatchKeyEvent", { type: "keyDown", ...params, ...(text === undefined ? {} : { text }), ...(commands ? { commands } : {}) });
   await surface.client.send("Input.dispatchKeyEvent", { type: "keyUp", ...params });
 }
 

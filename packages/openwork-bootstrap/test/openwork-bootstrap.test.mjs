@@ -226,6 +226,76 @@ try {
     },
   )
 
+  // cloud onboard on a deployment that requires email verification:
+  // --request-code emails a code and stops; --verification-code verifies
+  // BEFORE any sign-up/sign-in (either would email a new code and invalidate
+  // the one the person typed), then onboarding finishes.
+  {
+    const calls = []
+    let verified = false
+    const server = createServer((req, res) => {
+      const chunks = []
+      req.on("data", (chunk) => chunks.push(chunk))
+      req.on("end", () => {
+        const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : null
+        calls.push({ method: req.method, url: req.url, body })
+        const reply = (status, payload) => {
+          res.writeHead(status, { "content-type": "application/json" })
+          res.end(JSON.stringify(payload))
+        }
+        if (req.url === "/health") return reply(200, { ok: true })
+        if (req.url === "/api/auth/sign-up/email") return reply(200, { token: null, user: { id: "user_1", email: body.email } })
+        if (req.url === "/api/auth/email-otp/send-verification-otp") return reply(200, { success: true })
+        if (req.url === "/api/auth/email-otp/verify-email") {
+          if (body.otp !== "246810") return reply(400, { code: "INVALID_OTP", message: "Invalid OTP" })
+          verified = true
+          return reply(200, { status: true })
+        }
+        if (req.url === "/api/auth/sign-in/email") {
+          if (!verified) return reply(403, { code: "EMAIL_NOT_VERIFIED", message: "Email not verified" })
+          return reply(200, { token: "session-token", user: { id: "user_1", email: body.email, emailVerified: true } })
+        }
+        if (req.url === "/v1/org") return reply(201, { organization: { id: "org_1", name: body.name, slug: "org-1" } })
+        if (req.url === "/v1/invitations") return reply(201, { invitationId: "inv_1", email: body.email })
+        if (req.url === "/v1/marketplaces") return reply(200, { items: [{ id: "mkt_1", name: "OpenWork" }] })
+        if (req.url === "/v1/plugins") return reply(201, { item: { id: "plg_1" } })
+        if (req.url === "/v1/plugins/plg_1/config-objects") return reply(200, { items: [{ configObject: { id: "cob_1", objectType: "skill", title: "First OpenWork Skill" } }] })
+        return reply(404, { error: "not_found" })
+      })
+    })
+    await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen))
+    const baseUrl = `http://127.0.0.1:${server.address().port}`
+    const env = { ...process.env, OPENWORK_OWNER_PASSWORD: "correct-horse-battery" }
+    try {
+      const unverified = await spawnAsync(process.execPath, [cli, "cloud", "onboard", "--base-url", baseUrl, "--owner-email", "ada@example.com", "--org-name", "Ada", "--invite-email", "team@example.com", "--json"], { env })
+      assert.notEqual(unverified.status, 0)
+      assert.match(unverified.stderr, /email_verification_required/)
+      assert.match(unverified.stderr, /--verification-code/)
+
+      calls.length = 0
+      const requested = await spawnAsync(process.execPath, [cli, "cloud", "onboard", "--request-code", "--base-url", baseUrl, "--owner-email", "ada@example.com", "--json"], { env })
+      assert.equal(requested.status, 0, requested.stderr)
+      const requestedJson = JSON.parse(requested.stdout)
+      assert.equal(requestedJson.step, "verification_required")
+      assert.equal(calls.some((call) => call.url === "/api/auth/sign-in/email"), false, "--request-code must not sign in (that would email a second code)")
+
+      const wrongCode = await spawnAsync(process.execPath, [cli, "cloud", "onboard", "--verification-code", "111111", "--base-url", baseUrl, "--owner-email", "ada@example.com", "--org-name", "Ada", "--invite-email", "team@example.com", "--json"], { env })
+      assert.notEqual(wrongCode.status, 0)
+      assert.match(wrongCode.stderr, /email_verification_failed/)
+
+      calls.length = 0
+      const onboarded = await spawnAsync(process.execPath, [cli, "cloud", "onboard", "--verification-code", "246810", "--base-url", baseUrl, "--owner-email", "ada@example.com", "--org-name", "Ada", "--invite-email", "team@example.com", "--json"], { env })
+      assert.equal(onboarded.status, 0, onboarded.stderr)
+      const onboardedJson = JSON.parse(onboarded.stdout)
+      assert.equal(onboardedJson.ok, true)
+      assert.equal(onboardedJson.user.emailVerified, true)
+      const authCalls = calls.map((call) => call.url).filter((url) => url.startsWith("/api/auth/"))
+      assert.deepEqual(authCalls, ["/api/auth/email-otp/verify-email", "/api/auth/sign-in/email"], "the code must be verified before any sign-up or sign-in")
+    } finally {
+      await new Promise((resolveClose) => server.close(resolveClose))
+    }
+  }
+
   // The main bootstrap-workspace JSON output must never echo a real claim URL
   // — that string only exists in this test fixture, not in stdout redaction code.
   const helpOutput = spawnSync(process.execPath, [cli, "--help"], { encoding: "utf8" })
@@ -233,6 +303,8 @@ try {
   assert.match(helpOutput.stdout, /--owner-email/)
   assert.match(helpOutput.stdout, /--teammate-emails/)
   assert.match(helpOutput.stdout, /--web-base-url/)
+  assert.match(helpOutput.stdout, /--request-code/)
+  assert.match(helpOutput.stdout, /--verification-code/)
 } finally {
   rmSync(temp, { recursive: true, force: true })
 }

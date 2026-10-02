@@ -10,6 +10,7 @@ import {
   createRuntimeManager,
   embeddedServerImportUrl,
   migrateOpenworkServerTokenStore,
+  orphanedPackagedSidecarPids,
   prepareRuntimeWorkspaceRoot,
   prioritizeWorkspacePaths,
   resetRuntimeStatesAfterFailedServerStart,
@@ -281,6 +282,39 @@ describe("commandMatchesPackagedSidecar", () => {
       ),
       false,
     );
+  });
+});
+
+describe("orphanedPackagedSidecarPids", () => {
+  const app = "/opt/smoke/linux-unpacked/openwork-enterprise";
+  const sidecars = "/opt/smoke/linux-unpacked/resources/sidecars";
+  const engine = `${sidecars}/opencode serve --hostname 127.0.0.1 --port 49174`;
+
+  it("keeps the engine of another live instance of the same bundle", () => {
+    const rows = [
+      { pid: 100, ppid: 1, command: `${app} --user-data-dir=/tmp/a` },
+      { pid: 101, ppid: 100, command: engine },
+      { pid: 200, ppid: 1, command: `${app} --user-data-dir=/tmp/b` },
+    ];
+    assert.deepEqual(orphanedPackagedSidecarPids(rows, { sidecarDirs: [sidecars], appExecutables: [app], selfPid: 200 }), []);
+  });
+
+  it("reaps sidecars left behind by a quit instance and this instance's own", () => {
+    const rows = [
+      { pid: 101, ppid: 1, command: engine },
+      { pid: 200, ppid: 1, command: app },
+      { pid: 201, ppid: 200, command: engine },
+      { pid: 301, ppid: 300, command: "/usr/local/bin/opencode serve --port 4096" },
+    ];
+    assert.deepEqual(orphanedPackagedSidecarPids(rows, { sidecarDirs: [sidecars], appExecutables: [app], selfPid: 200 }), [101, 201]);
+  });
+
+  it("does not treat a different executable sharing a path prefix as a live instance", () => {
+    const rows = [
+      { pid: 100, ppid: 1, command: `${app}-beta --flag` },
+      { pid: 101, ppid: 100, command: engine },
+    ];
+    assert.deepEqual(orphanedPackagedSidecarPids(rows, { sidecarDirs: [sidecars], appExecutables: [app], selfPid: 200 }), [101]);
   });
 });
 

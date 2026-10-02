@@ -1,5 +1,4 @@
 import { ComputerUseControls } from "../domains/session/surface/computer-use-controls";
-import { desktopSigninRequired } from "@openwork/types/den/desktop-policies";
 /** @jsxImportSource react */
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
@@ -22,6 +21,7 @@ import { isDesktopRuntime } from "../../app/lib/runtime-env";
 import { Button } from "../../components/ui/button";
 import { t } from "../../i18n";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
+import { useMemberActivitySync } from "../domains/cloud/use-member-activity-sync";
 import { useDesktopConfig } from "../domains/cloud/desktop-config-provider";
 import {
   clearCloudInventoryCache,
@@ -39,6 +39,7 @@ import { useVisualViewportInset } from "../../hooks/use-visual-viewport-inset";
 import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
 import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
 import { CloudWorkspaceOverlay, CloudWorkspaceStatusProvider } from "./cloud-workspace-overlay";
+import { EngineMigrationOverlay } from "./engine-migration";
 import { AppMenuProvider } from "./app-menu";
 import {
   OpenworkControlProvider,
@@ -76,8 +77,11 @@ const subscribeToDenBootstrap = (onStoreChange: () => void) => {
 /**
  * Forced-signin gate ported from the Solid shell.
  *
- * Desktop policy enforcement is suspended, so persisted bootstrap sign-in
- * requirements cannot hold local work at `/signin`. Web sign-in still applies.
+ * When the desktop bootstrap config has `requireSignin: true` (always the case
+ * for enterprise and cloud builds, and opt-in for public builds through
+ * `desktop-bootstrap.json`), the UI is held at `/signin` until the user
+ * authenticates with Den. This is a build property, not a desktop policy, so
+ * it is independent of DESKTOP_POLICY_ENFORCEMENT_ENABLED.
  * When sign-in is NOT required, we
  * never let users land on `/signin` — redirect them to `/session` instead.
  *
@@ -95,11 +99,13 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     readDenBootstrapSnapshot,
     readDenBootstrapSnapshot,
   );
-  const requireSignin = desktopSigninRequired(bootstrap.requireSignin, isDesktopRuntime());
+  // Enterprise and cloud builds always persist requireSignin: true; the
+  // bootstrap file can only raise it (apps/desktop/electron/workspace-store.mjs).
+  const requireSignin = bootstrap.requireSignin;
   const path = location.pathname.toLowerCase();
   const onSignin = path === "/signin" || path.startsWith("/signin/");
   const onOnboarding = path === "/onboarding" || path.startsWith("/onboarding/");
-  const hasPreparedBootstrap = Boolean(bootstrap.prepared) && (!isDesktopRuntime() || requireSignin);
+  const hasPreparedBootstrap = Boolean(bootstrap.prepared);
   const redirectingPreparedWorkspace =
     denAuth.status !== "checking" &&
     !requireSignin &&
@@ -407,6 +413,7 @@ export function AppRoot() {
   useDesktopFontZoomBehavior();
   useVisualViewportInset();
   const egressAllowed = useOutboundEgressAllowed();
+  useMemberActivitySync(egressAllowed);
 
   // Module-level dedupe keeps StrictMode double-mounts from double-counting.
   useEffect(() => {
@@ -513,6 +520,7 @@ export function AppRoot() {
                   </DevProfiler>
                 }
               />
+              <Route path="/activity" element={<DevProfiler id="ActivityRoute"><SessionRoute /></DevProfiler>} />
               <Route path="/apps" element={<DevProfiler id="AppsRoute"><SessionRoute /></DevProfiler>} />
               <Route path="/dashboard/apps/:appId" element={<DevProfiler id="DashboardAppRoute"><SessionRoute /></DevProfiler>} />
               <Route path="/apps/:appId" element={<DevProfiler id="AppPreviewRoute"><SessionRoute /></DevProfiler>} />
@@ -563,6 +571,7 @@ export function AppRoot() {
                   </Routes>
                   <LoadingOverlay />
                   <CloudWorkspaceOverlay />
+                  <EngineMigrationOverlay />
                 </CloudWorkspaceStatusProvider>
               </OpenWorkWebAccessGate>
             </DenSigninGate>

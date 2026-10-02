@@ -1,3 +1,4 @@
+import { peopleMemberCondition } from "./setup-agent-members.js"
 import { asc, and, eq, gt, isNull, lt, lte } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, AuthUserTable, InvitationTable, MemberTable, OAuthConsentTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
@@ -417,7 +418,7 @@ async function loadOrgMembers(organizationId: OrgId): Promise<CachedOrgMember[]>
     .from(MemberTable)
     .leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
     .leftJoin(InvitationTable, eq(MemberTable.inviteId, InvitationTable.id))
-    .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt)))
+    .where(and(eq(MemberTable.organizationId, organizationId), peopleMemberCondition()))
     .orderBy(asc(MemberTable.createdAt))
 
   return members.map((member) => {

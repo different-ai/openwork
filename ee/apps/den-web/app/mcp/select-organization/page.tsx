@@ -1,12 +1,34 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { TemporaryAuthNotice } from "../../(den)/_components/temporary-auth-notice";
+import { Check, X } from "lucide-react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { OnboardingTexture } from "../../(den)/_components/onboarding-texture";
+import { SetupFrame } from "../../(den)/_components/setup-frame";
+import {
+  SetupErrorLine,
+  SetupFacts,
+  SetupLetterTile,
+  SetupLine,
+  SetupPanelBody,
+  SetupPanelTitle,
+  SetupQuietButton,
+  SetupSkeletonRows,
+  SetupStatus,
+} from "../../(den)/_components/setup-frame-parts";
 import { denApiCredentials, denBrowserEndpoint } from "../../(den)/_lib/den-api-origin";
+import {
+  MCP_OAUTH_RESTART_MESSAGE,
+  describeMcpOAuthError,
+  isMcpOAuthQueryExpired,
+} from "../../(den)/_lib/mcp-oauth-route";
 import { getRuntimeConfig } from "../../(den)/_lib/runtime-config";
 import { useOrgListWindow } from "../../(den)/_lib/use-org-list-window";
-import { McpConsentPermissions } from "../consent-permissions";
+import { FilterInput } from "../../(den)/dashboard/_components/item-list";
+import { McpReturnLine, McpUnverifiedAppWarning, mcpIdentityFacts, useMcpRedirect } from "../client-identity";
+import { McpConsentPermissions, McpTechnicalDetails } from "../consent-permissions";
+import { McpStoryTiles, mcpStoryCopy } from "../mcp-story";
+import { useLocationQuery } from "../use-location-query";
+import { useMcpClient } from "../use-mcp-client";
 
 type Organization = {
   id: string;
@@ -20,27 +42,26 @@ type FlowState =
   | "loading"
   | "ready"
   | "empty"
+  | "expired"
+  | "signed_out"
+  | "cancelled"
   | "submitting"
-  | "redirecting"
-  | "error";
+  | "redirecting";
+
+const ORG_PAGE_SIZE = 4;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 function readPayloadString(payload: unknown, key: "message" | "error" | "url") {
-  if (isRecord(payload) && typeof payload[key] === "string") {
-    return payload[key] as string;
-  }
-  return null;
+  if (!isRecord(payload)) return null;
+  const value = payload[key];
+  return typeof value === "string" ? value : null;
 }
 
 function getErrorMessage(payload: unknown, fallback: string) {
-  return (
-    readPayloadString(payload, "message") ??
-    readPayloadString(payload, "error") ??
-    fallback
-  );
+  return readPayloadString(payload, "message") ?? readPayloadString(payload, "error") ?? fallback;
 }
 
 async function requestJson(path: string, init?: RequestInit) {
@@ -51,17 +72,8 @@ async function requestJson(path: string, init?: RequestInit) {
     headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
     ...init,
   });
-  const payload = (await response.json().catch(() => null)) as unknown;
+  const payload: unknown = await response.json().catch(() => null);
   return { response, payload };
-}
-
-function getInitials(value: string) {
-  const cleaned = value.trim();
-  if (!cleaned) return "OW";
-  const parts = cleaned.split(/\s+/).filter(Boolean);
-  const initials =
-    (parts[0]?.slice(0, 1) ?? "") + (parts[1]?.slice(0, 1) ?? "");
-  return initials.toUpperCase() || cleaned.slice(0, 2).toUpperCase();
 }
 
 function formatRole(role: string | null | undefined) {
@@ -73,11 +85,25 @@ function formatRole(role: string | null | undefined) {
     .join(" ");
 }
 
-function parseOrgs(payload: unknown): Organization[] {
-  if (!isRecord(payload) || !Array.isArray(payload.orgs)) {
-    return [];
-  }
+function orgDisplayName(org: Organization) {
+  return org.name || org.slug || org.id;
+}
 
+function parseCreatedOrg(payload: unknown): Organization | null {
+  if (!isRecord(payload) || !isRecord(payload.organization)) return null;
+  const organization = payload.organization;
+  if (typeof organization.id !== "string" || !organization.id) return null;
+  return {
+    id: organization.id,
+    slug: typeof organization.slug === "string" ? organization.slug : null,
+    name: typeof organization.name === "string" ? organization.name : null,
+    role: "owner",
+    isActive: true,
+  };
+}
+
+function parseOrgs(payload: unknown): Organization[] {
+  if (!isRecord(payload) || !Array.isArray(payload.orgs)) return [];
   const result: Organization[] = [];
   for (const entry of payload.orgs) {
     if (!isRecord(entry) || typeof entry.id !== "string") continue;
@@ -92,101 +118,85 @@ function parseOrgs(payload: unknown): Organization[] {
   return result;
 }
 
+function parseEmail(payload: unknown) {
+  if (!isRecord(payload) || !isRecord(payload.user)) return null;
+  return typeof payload.user.email === "string" ? payload.user.email : null;
+}
+
 export default function McpSelectOrganizationPage() {
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [selectedOrgId, setSelectedOrgId] = useState("");
   const [flowState, setFlowState] = useState<FlowState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [workspaceName, setWorkspaceName] = useState("");
+  const [email, setEmail] = useState<string | null>(null);
 
-  const oauthQuery = useMemo(() => {
-    if (typeof window === "undefined") return "";
-    return window.location.search.replace(/^\?/, "");
-  }, []);
+  const locationQuery = useLocationQuery();
+  const oauthQuery = locationQuery ?? "";
   const params = useMemo(() => new URLSearchParams(oauthQuery), [oauthQuery]);
-  const requestedScope = useMemo(
-    () => params.get("scope") ?? "openid profile email mcp:read",
-    [params],
-  );
-  const selectedOrg = useMemo(
-    () => orgs.find((org) => org.id === selectedOrgId) ?? null,
-    [orgs, selectedOrgId],
-  );
+  const requestedScope = params.get("scope") ?? "openid profile email mcp:read";
+  const client = useMcpClient(oauthQuery);
+  const redirect = useMcpRedirect(oauthQuery);
+  const appName = client.name ?? "this app";
+  const actor = client.name ?? "This app";
+  const story = mcpStoryCopy(client);
+  const selectedOrg = useMemo(() => orgs.find((org) => org.id === selectedOrgId) ?? null, [orgs, selectedOrgId]);
   const isBusy = flowState === "submitting" || flowState === "redirecting";
-  const {
-    query: orgQuery,
-    setQuery: setOrgQuery,
-    visible: visibleOrgs,
-    filteredCount: orgFilteredCount,
-    hasMore: orgHasMore,
-    showMore: showMoreOrgs,
-    showSearch: showOrgSearch,
-  } = useOrgListWindow(orgs);
+  const creating = orgs.length === 0 && (flowState === "empty" || isBusy);
+  const orgWindow = useOrgListWindow(orgs, ORG_PAGE_SIZE);
 
   useEffect(() => {
+    if (locationQuery === null) return;
     let cancelled = false;
+    if (isMcpOAuthQueryExpired(oauthQuery)) {
+      setFlowState("expired");
+      return;
+    }
     void (async () => {
-      const { response, payload } = await requestJson("/v1/me/orgs", {
-        method: "GET",
-      });
+      const [me, directory] = await Promise.all([
+        requestJson("/v1/me", { method: "GET" }),
+        requestJson("/v1/me/orgs", { method: "GET" }),
+      ]);
       if (cancelled) return;
-
-      if (!response.ok) {
-        setErrorMessage(
-          getErrorMessage(payload, "Sign in before authorizing MCP access."),
-        );
-        setFlowState("error");
+      setEmail(me.response.ok ? parseEmail(me.payload) : null);
+      if (!directory.response.ok) {
+        setFlowState("signed_out");
         return;
       }
-
-      const list = parseOrgs(payload);
+      const list = parseOrgs(directory.payload);
       setOrgs(list);
-      setSelectedOrgId(
-        list.find((org) => org.isActive)?.id ?? list[0]?.id ?? "",
-      );
+      setSelectedOrgId(list.find((org) => org.isActive)?.id ?? list[0]?.id ?? "");
       setFlowState(list.length ? "ready" : "empty");
     })();
-
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [locationQuery, oauthQuery]);
 
-  async function continueFlow() {
-    if (!selectedOrgId) return;
+  async function continueFlow(org: Organization | null = selectedOrg) {
+    if (!org) return;
     setFlowState("submitting");
     setErrorMessage(null);
 
     const active = await requestJson("/api/auth/organization/set-active", {
       method: "POST",
-      body: JSON.stringify({
-        organizationId: selectedOrgId,
-        organizationSlug: selectedOrg?.slug ?? null,
-      }),
+      body: JSON.stringify({ organizationId: org.id, organizationSlug: org.slug ?? null }),
     });
     if (!active.response.ok) {
       setFlowState("ready");
-      setErrorMessage(
-        getErrorMessage(active.payload, "Failed to select organization."),
-      );
+      setErrorMessage(getErrorMessage(active.payload, "Could not choose this workspace. Try again."));
       return;
     }
 
     const continued = await requestJson("/api/auth/oauth2/consent", {
       method: "POST",
-      body: JSON.stringify({
-        accept: true,
-        scope: requestedScope,
-        oauth_query: oauthQuery,
-      }),
+      body: JSON.stringify({ accept: true, scope: requestedScope, oauth_query: oauthQuery }),
     });
     if (!continued.response.ok) {
-      setFlowState("ready");
-      setErrorMessage(
-        getErrorMessage(
-          continued.payload,
-          "Failed to continue OAuth authorization.",
-        ),
-      );
+      const message = describeMcpOAuthError(continued.payload, `Could not authorize ${appName}. Try again.`);
+      setFlowState(message === MCP_OAUTH_RESTART_MESSAGE ? "expired" : "ready");
+      setErrorMessage(message);
       return;
     }
 
@@ -199,246 +209,197 @@ export default function McpSelectOrganizationPage() {
     window.location.reload();
   }
 
+  // A brand-new person reaches this page with no workspace. Create it here
+  // and keep going with the same signed query, so their agent's
+  // authorization never has to restart.
+  async function createWorkspaceAndContinue(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = workspaceName.trim();
+    if (name.length < 2) return;
+    setFlowState("submitting");
+    setCreateError(null);
+    setErrorMessage(null);
+
+    const created = await requestJson("/v1/org", { method: "POST", body: JSON.stringify({ name }) });
+    const org = created.response.ok ? parseCreatedOrg(created.payload) : null;
+    if (!org) {
+      setFlowState("empty");
+      setCreateError("Could not create the workspace. Try again.");
+      return;
+    }
+
+    setOrgs([org]);
+    setSelectedOrgId(org.id);
+    await continueFlow(org);
+  }
+
   async function cancelFlow() {
     setFlowState("submitting");
     setErrorMessage(null);
-
     const denied = await requestJson("/api/auth/oauth2/consent", {
       method: "POST",
-      body: JSON.stringify({
-        accept: false,
-        scope: requestedScope,
-        oauth_query: oauthQuery,
-      }),
+      body: JSON.stringify({ accept: false, scope: requestedScope, oauth_query: oauthQuery }),
     });
-
     const redirectUrl = readPayloadString(denied.payload, "url");
     if (redirectUrl) {
       setFlowState("redirecting");
       window.location.href = redirectUrl;
       return;
     }
-
-    setFlowState(orgs.length ? "ready" : "empty");
-    setErrorMessage("Authorization cancelled. You can close this tab.");
+    setFlowState("cancelled");
   }
 
-  const introCopy =
-    flowState === "loading"
-      ? "Loading the workspaces you can access..."
-      : flowState === "empty"
-        ? "You don't belong to any workspaces yet. Create one before authorizing the MCP client."
-        : flowState === "redirecting"
-          ? "Finishing authorization and sending you back to the MCP client now."
-          : flowState === "submitting"
-            ? "Authorizing the MCP client..."
-            : "Choose the workspace for this connection, then review the access you're authorizing below.";
+  const storyWorkspace = selectedOrg ? orgDisplayName(selectedOrg) : workspaceName.trim() || null;
 
-  const primaryLabel =
-    flowState === "submitting"
-      ? "Authorizing..."
-      : flowState === "redirecting"
-        ? "Redirecting..."
-        : "Authorize and continue";
+  const frame = (children: ReactNode) => (
+    <SetupFrame
+      title={story.title}
+      description={story.description}
+      aside={<McpStoryTiles client={client} workspaceName={storyWorkspace} appHost={redirect?.host ?? null} />}
+      panelVisual={<OnboardingTexture />}
+    >
+      <div data-testid="mcp-select-organization">{children}</div>
+    </SetupFrame>
+  );
 
-  return (
-    <main className="den-page flex min-h-screen w-full items-center py-6">
-      <section className="grid w-full items-stretch gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)]">
-        <aside className="order-2 lg:order-1">
-          <div className="den-frame relative h-full min-h-[300px] overflow-hidden bg-[#011627] px-7 py-8 text-white md:px-10 md:py-10">
-            <div
-              aria-hidden
-              className="absolute inset-0 z-0 opacity-95"
-              style={{
-                backgroundImage:
-                  "radial-gradient(circle at 18% 28%, rgba(99, 102, 241, 0.55), transparent 55%), radial-gradient(circle at 82% 62%, rgba(34, 211, 238, 0.4), transparent 55%), linear-gradient(160deg, #0F172A 0%, #1E1B4B 55%, #0F766E 100%)",
-              }}
-            />
-            <div className="relative z-10 flex h-full flex-col justify-between gap-10">
-              <div className="flex items-center gap-3">
-                <img
-                  src="/openwork-logo-transparent.svg"
-                  alt="OpenWork"
-                  className="h-9 w-auto"
-                />
-                <span className="text-[13px] font-medium text-white/80">
-                  OpenWork Cloud
-                </span>
-              </div>
-              <div className="grid gap-4">
-                <span className="inline-flex w-fit rounded-full border border-white/20 bg-white/15 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-white backdrop-blur-md">
-                  MCP authorization
-                </span>
-                <h1 className="max-w-[14ch] text-[2rem] font-semibold leading-[0.97] tracking-[-0.05em] md:text-[2.6rem]">
-                  Pick the workspace this client can use.
-                </h1>
-                <p className="max-w-[34rem] text-[14px] leading-7 text-white/80">
-                  This connection can only use the access you authorize for the
-                  workspace you select here.
-                </p>
-              </div>
-            </div>
-          </div>
-        </aside>
-
-        <div className="order-1 lg:order-2">
-          <div className="den-frame grid h-full gap-6 p-6 md:p-7">
-            <div className="grid gap-3">
-              <p className="den-eyebrow">Choose workspace</p>
-              <h2 className="den-title-lg">
-                Where should this client work?
-              </h2>
-              <p className="den-copy">{introCopy}</p>
-            </div>
-
-            <TemporaryAuthNotice />
-
-            {flowState === "loading" ? (
-              <div className="h-2 overflow-hidden rounded-full bg-[var(--dls-hover)]">
-                <div className="h-full w-1/3 animate-pulse rounded-full bg-[var(--dls-accent)]" />
-              </div>
-            ) : null}
-
-            {flowState === "empty" ? (
-              <div className="grid gap-3">
-                <Link
-                  href="/organization"
-                  className="den-button-primary w-full sm:w-auto"
-                >
-                  Create your first workspace
-                </Link>
-                <p className="text-[13px] text-[var(--dls-text-secondary)]">
-                  Once it is set up, run the MCP authorization again from your
-                  client.
-                </p>
-              </div>
-            ) : null}
-
-            {orgs.length > 0 &&
-            (flowState === "ready" ||
-              flowState === "submitting" ||
-              flowState === "redirecting") ? (
-              <div className="grid gap-3">
-                {showOrgSearch ? (
-                  <input
-                    type="search"
-                    value={orgQuery}
-                    onChange={(event) => setOrgQuery(event.target.value)}
-                    placeholder="Search organizations"
-                    className="rounded-2xl border border-[var(--dls-border)] px-4 py-3 text-[14px] text-[var(--dls-text-primary)] outline-hidden transition focus:border-[var(--dls-accent)]"
-                  />
-                ) : null}
-
-                <ul className="grid gap-2">
-                  {visibleOrgs.map((org) => {
-                    const display = org.name || org.slug || org.id;
-                    const isSelected = selectedOrgId === org.id;
-                    return (
-                      <li key={org.id}>
-                        <label
-                          className={`flex cursor-pointer items-center gap-3 rounded-2xl border bg-white px-4 py-3 transition-colors ${
-                            isSelected
-                              ? "border-[var(--dls-border)] bg-[var(--dls-active)]"
-                              : "border-[var(--dls-border)] hover:bg-[var(--dls-hover)]"
-                          } ${isBusy ? "pointer-events-none opacity-70" : ""}`}
-                        >
-                          <input
-                            type="radio"
-                            name="mcp-organization"
-                            checked={isSelected}
-                            onChange={() => setSelectedOrgId(org.id)}
-                            className="sr-only"
-                            disabled={isBusy}
-                          />
-                          <span
-                            aria-hidden
-                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#011627] text-[12px] font-semibold uppercase tracking-[0.08em] text-white"
-                          >
-                            {getInitials(display)}
-                          </span>
-                          <span className="grid flex-1 gap-0.5">
-                            <span className="text-[15px] font-medium text-[var(--dls-text-primary)]">
-                              {display}
-                            </span>
-                            <span className="text-[12px] text-[var(--dls-text-secondary)]">
-                              {formatRole(org.role)}
-                              {org.isActive ? " · Current workspace" : ""}
-                            </span>
-                          </span>
-                          <span
-                            aria-hidden
-                            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
-                              isSelected
-                                ? "border-[var(--dls-accent)] bg-[var(--dls-accent)]"
-                                : "border-[var(--dls-border)] bg-white"
-                            }`}
-                          >
-                            {isSelected ? (
-                              <span className="h-2 w-2 rounded-full bg-white" />
-                            ) : null}
-                          </span>
-                        </label>
-                      </li>
-                    );
-                  })}
-                </ul>
-
-                {orgFilteredCount === 0 && orgQuery ? (
-                  <p className="text-[13px] text-[var(--dls-text-secondary)]">No organizations match your search.</p>
-                ) : null}
-
-                {orgHasMore ? (
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-[13px] text-[var(--dls-text-secondary)]">
-                      Showing {visibleOrgs.length} of {orgFilteredCount} organizations
-                    </p>
-                    <button
-                      type="button"
-                      onClick={showMoreOrgs}
-                      className="den-button-ghost w-full sm:w-auto"
-                    >
-                      Show more
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {orgs.length > 0 && flowState !== "loading" && flowState !== "error" ? (
-              <McpConsentPermissions scope={requestedScope} />
-            ) : null}
-
-            {errorMessage ? (
-              <div className="den-notice is-error">{errorMessage}</div>
-            ) : null}
-
-            <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
-              <button
-                type="button"
-                className="den-button-ghost w-full sm:w-auto"
-                onClick={() => void cancelFlow()}
-                disabled={isBusy || flowState === "loading"}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="den-button-primary w-full sm:w-auto"
-                onClick={() => void continueFlow()}
-                disabled={
-                  isBusy ||
-                  flowState === "loading" ||
-                  flowState === "empty" ||
-                  flowState === "error" ||
-                  !selectedOrgId
-                }
-              >
-                {primaryLabel}
-              </button>
-            </div>
-          </div>
+  if (flowState === "expired") {
+    return frame(
+      <SetupPanelBody gap="md">
+        <SetupPanelTitle>This sign-in link expired</SetupPanelTitle>
+        <div className="flex flex-col gap-1.5">
+          <SetupLine>Start sign-in again from your agent.</SetupLine>
+          <SetupLine muted>Nothing was authorized.</SetupLine>
         </div>
-      </section>
-    </main>
+      </SetupPanelBody>,
+    );
+  }
+
+  if (flowState === "cancelled") {
+    return frame(<SetupStatus icon={<X className="size-5" strokeWidth={1.5} />} title="Nothing was authorized" line="You can close this tab." />);
+  }
+
+  if (flowState === "signed_out") {
+    return frame(
+      <SetupPanelBody gap="md">
+        <SetupPanelTitle>Sign in to continue</SetupPanelTitle>
+        <SetupLine>Sign in to OpenWork, then {appName} can finish connecting.</SetupLine>
+        <a className="den-button-primary w-full" href={`/?${oauthQuery}`}>Sign in to OpenWork</a>
+      </SetupPanelBody>,
+    );
+  }
+
+  const identity = mcpIdentityFacts(client, redirect);
+  const facts = [
+    identity.app,
+    identity.returnsTo,
+    { label: "Account", value: email ?? "…", testId: "mcp-account-email" },
+  ];
+
+  return frame(
+    <SetupPanelBody>
+      <SetupPanelTitle>{creating ? "Name your workspace" : "Choose a workspace"}</SetupPanelTitle>
+
+      {flowState === "loading" ? <SetupSkeletonRows /> : null}
+
+      {creating ? (
+        <form id="mcp-create-workspace" className="flex flex-col gap-2" onSubmit={(event) => void createWorkspaceAndContinue(event)}>
+          <label htmlFor="mcp-workspace-name" className="den-label">Workspace name</label>
+          <input
+            id="mcp-workspace-name"
+            className="den-input"
+            name="workspaceName"
+            value={workspaceName}
+            onChange={(event) => setWorkspaceName(event.target.value)}
+            placeholder="My work"
+            minLength={2}
+            maxLength={120}
+            autoComplete="organization"
+            autoFocus
+            required
+            disabled={isBusy}
+          />
+          {createError ? <SetupErrorLine>{createError}</SetupErrorLine> : null}
+        </form>
+      ) : null}
+
+      {!creating && orgs.length > 0 ? (
+        <div className="flex flex-col gap-3">
+          {orgWindow.showSearch ? (
+            <FilterInput size="md" value={orgWindow.query} onChange={orgWindow.setQuery} placeholder="Filter by name" />
+          ) : null}
+          <div role="radiogroup" aria-label="Workspace" className="flex flex-col border-t border-[var(--setup-hairline)]">
+            {orgWindow.visible.map((org) => {
+              const display = orgDisplayName(org);
+              const isSelected = selectedOrgId === org.id;
+              return (
+                <label
+                  key={org.id}
+                  className={`flex min-h-13 cursor-pointer items-center gap-3 border-b border-[var(--setup-hairline)] py-2 ${isBusy ? "pointer-events-none opacity-70" : ""}`}
+                >
+                  <input
+                    type="radio"
+                    name="mcp-organization"
+                    checked={isSelected}
+                    onChange={() => setSelectedOrgId(org.id)}
+                    className="sr-only"
+                    disabled={isBusy}
+                  />
+                  <SetupLetterTile name={display} />
+                  <span className="flex min-w-0 grow flex-col">
+                    <span className="truncate text-sm font-medium leading-5 text-[var(--dls-text-primary)]">{display}</span>
+                    <span className="text-[13px] leading-[18px] text-[var(--dls-text-secondary)]">{formatRole(org.role)}</span>
+                  </span>
+                  <span className="flex w-24 shrink-0 items-center justify-end gap-2.5 text-[13px] text-[var(--dls-text-secondary)]">
+                    {org.isActive ? <span>Current</span> : null}
+                    {isSelected ? <Check aria-hidden="true" className="size-4 text-[var(--dls-text-primary)]" strokeWidth={1.5} /> : null}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          {orgWindow.filteredCount === 0 && orgWindow.query ? <SetupLine muted>No workspaces match.</SetupLine> : null}
+          {orgWindow.hasMore ? (
+            <SetupQuietButton className="self-start text-[var(--setup-ink-soft)]" onClick={orgWindow.showAll}>
+              Show {orgWindow.hiddenCount} more
+            </SetupQuietButton>
+          ) : null}
+        </div>
+      ) : null}
+
+      <SetupFacts rows={facts} />
+
+      <McpConsentPermissions scope={requestedScope} actor={actor} />
+
+      <div className="flex flex-col gap-3.5">
+        <McpUnverifiedAppWarning redirect={redirect} client={client} />
+        <McpReturnLine client={client} redirect={redirect} short />
+        {errorMessage ? <SetupErrorLine>{errorMessage}</SetupErrorLine> : null}
+        {creating ? (
+          <button
+            type="submit"
+            form="mcp-create-workspace"
+            className="den-button-primary w-full"
+            disabled={isBusy || workspaceName.trim().length < 2}
+          >
+            {isBusy ? "Authorizing…" : "Create workspace and authorize"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="den-button-primary w-full"
+            onClick={() => void continueFlow()}
+            disabled={isBusy || flowState === "loading" || !selectedOrgId}
+          >
+            {isBusy ? "Authorizing…" : client.name ? `Authorize ${client.name}` : "Authorize this app"}
+          </button>
+        )}
+        <div className="flex items-start justify-between gap-4">
+          <McpTechnicalDetails scope={requestedScope} clientId={client.clientId} redirect={redirect} />
+          <SetupQuietButton onClick={() => void cancelFlow()} disabled={isBusy || flowState === "loading"}>
+            Cancel
+          </SetupQuietButton>
+        </div>
+      </div>
+    </SetupPanelBody>,
   );
 }

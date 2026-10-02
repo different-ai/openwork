@@ -42,6 +42,12 @@ export interface SignedInAppOptions extends SharedAppOptions {
 export interface FreshAppOptions extends SharedAppOptions {
   as?: never;
   signIn: false;
+  /**
+   * `false` leaves the first launch exactly as a person sees it: no harness
+   * workspace is added next to whatever the app arranges itself, and
+   * `workspacePath` is ignored. `workspaceId` is then "".
+   */
+  workspace?: false;
 }
 
 export type AppOptions = SignedInAppOptions | FreshAppOptions;
@@ -78,6 +84,39 @@ export async function blankReleaseApp(options: {
     await electronStep.fail(error instanceof Error ? error.message : String(error));
     throw error;
   }
+}
+
+/**
+ * The desktop app alone, built from source: an isolated profile with no
+ * bootstrap, Den, workspace, or sign-in, so it starts exactly like a fresh
+ * install pointed at its built-in defaults.
+ */
+export async function standaloneApp(options: { place: Place; env?: Record<string, string> }): Promise<App> {
+  const electronStep = steps.step("electron-standalone", "Electron (app only)");
+  let surface: Awaited<ReturnType<typeof desktop>>;
+  try {
+    surface = await desktop({ name: "preview-desktop", host: options.place.host(), ...(options.env ? { env: options.env } : {}) });
+  } catch (error) {
+    await electronStep.fail(error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+  await electronStep.note(`log ${surface.handle.meta?.log}`);
+  await electronStep.ok(surface.handle.cdpUrl);
+  if (surface.handle.pid !== undefined) {
+    await trackResource({ kind: "process", id: String(surface.handle.pid), label: "electron", match: process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim() || "dev:electron" });
+  }
+  if (surface.handle.meta?.profileOwner !== "caller" && typeof surface.handle.profileDir === "string") {
+    await trackResource({ kind: "tmpdir", id: surface.handle.profileDir, label: "electron-profile" });
+  }
+  return {
+    handle: surface.handle,
+    client: surface.client,
+    readiness: surface.readiness,
+    workspaceRoot: surface.workspaceRoot,
+    workspaceId: "",
+    stop: () => surface.stop(),
+    [Symbol.asyncDispose]: () => surface[Symbol.asyncDispose](),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -203,6 +242,23 @@ export async function app(options: AppOptions): Promise<App> {
     }
     if (surface.handle.meta?.profileOwner !== "caller" && typeof surface.handle.profileDir === "string") {
       await trackResource({ kind: "tmpdir", id: surface.handle.profileDir, label: "electron-profile" });
+    }
+    if (options.workspace === false) {
+      try {
+        await options.beforeSignIn?.(surface);
+        return {
+          handle: surface.handle,
+          client: surface.client,
+          readiness: surface.readiness,
+          workspaceRoot: surface.workspaceRoot,
+          workspaceId: "",
+          stop: () => surface.stop(),
+          [Symbol.asyncDispose]: () => surface[Symbol.asyncDispose](),
+        };
+      } catch (error) {
+        await surface[Symbol.asyncDispose]();
+        throw error;
+      }
     }
     try {
       const path = options.workspacePath ?? `/tmp/openwork-fresh-${Date.now()}`;

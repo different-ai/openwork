@@ -10,6 +10,13 @@ import type {
 
 export type { StoredOAuthClientInformation, StoredOAuthTokens } from "@modelcontextprotocol/client"
 
+/**
+ * Most OAuth scopes one connection may request. Without a required scope, MCP
+ * clients request every scope the resource advertises, and some servers list
+ * well over a hundred (PostHog advertises 155).
+ */
+export const ENTERPRISE_MCP_REQUESTED_SCOPES_LIMIT = 512
+
 /** Epoch milliseconds. The package never reads a database or environment clock. */
 export type EnterpriseMcpEpochMs = number
 

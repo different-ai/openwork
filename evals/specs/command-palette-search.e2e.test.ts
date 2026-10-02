@@ -7,7 +7,7 @@ const test = spec.world(commandPaletteSearch, {
   timeout: 420_000,
   resources: { surfaces: ["appWeb"], services: [] },
 });
-const paletteInput = { placeholder: "Search actions, settings, and sessions…" };
+const paletteInput = { placeholder: "Search actions and settings…" };
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)
@@ -55,7 +55,9 @@ test("command palette searches settings by alias, navigates, records recents, an
     const metadata = await probe.dom('[data-command-palette-item="models"] > [data-slot="command-shortcut"]');
     expect(row.elements).toHaveLength(1);
     expect(label.elements).toHaveLength(1);
-    expect(metadata.elements).toHaveLength(0);
+    // The row may show the current model's public name on the right, never an internal id.
+    expect(metadata.elements.length).toBeLessThanOrEqual(1);
+    for (const value of metadata.elements) expect(value.text.toLowerCase()).not.toContain(world.longModelId);
     expect(label.elements[0]!.text).toContain("Models");
     expect(label.elements[0]!.rect.width).toBeGreaterThan(80);
     expect(row.elements[0]!.text.toLowerCase()).not.toContain(world.longModelId);
@@ -70,7 +72,7 @@ test("command palette searches settings by alias, navigates, records recents, an
       "No internal selected-model identifier or garbled model metadata is displayed in the Models row.",
     ]);
     await user.press("Enter");
-    await user.see({ placeholder: "Search models..." });
+    await user.see({ placeholder: "Search models…" });
     await user.press("Escape");
     await user.see(paletteInput);
     await user.press("Escape");

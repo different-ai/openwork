@@ -10,6 +10,7 @@ import {
   resetOpenWorkConnectSkillCatalogCacheForTests,
   type OpenWorkConnectSkill,
 } from "./connect-skill-catalog.js";
+import { buildOpenWorkV2Instructions } from "./opencode-v2-instructions.js";
 import { readConnectCloudMcp, writeConnectCloudMcp } from "./connect-state.js";
 import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
@@ -286,6 +287,35 @@ describe("OpenWork Connect skill catalog", () => {
     const skills = await readOpenWorkConnectSkillCatalog(config, skillIndexFetcher());
     expect(skills).toHaveLength(1);
     expect(skills[0]?.name).toBe("customer-briefing");
+  });
+
+  test("v1 exposes cached metadata while v2 keeps a 95-skill catalog out of send instructions", async () => {
+    const config = await serverConfig();
+    const cloud = { type: "remote", url: "https://catalog.example/mcp/agent", enabled: true, headers: { Authorization: "Bearer first" } };
+    await writeConnectCloudMcp(config, cloud);
+    const calls: unknown[] = [];
+    const skills = Array.from({ length: 95 }, (_, index) => ({ name: `release-${index}`, type: "skill-md", description: "Read the release code.",
+      url: `skill://release-${index}/SKILL.md`, capability: `plugin:plg_release:cob_${index}` }));
+    const fetcher = async (_url: string, init?: RequestInit) => {
+      const request: unknown = JSON.parse(String(init?.body));
+      calls.push(request);
+      if (typeof request !== "object" || !request) throw new Error("Invalid MCP request");
+      if (Reflect.get(request, "method") === "initialize") return Response.json({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18", capabilities: {} } });
+      if (Reflect.get(request, "method") === "notifications/initialized") return new Response(null, { status: 202 });
+      expect(Reflect.get(request, "method")).toBe("resources/read");
+      expect(Reflect.get(request, "params")).toEqual({ uri: "skill://index.json" });
+      return Response.json({ jsonrpc: "2.0", id: 2, result: { contents: [{ uri: "skill://index.json", mimeType: "application/json",
+        text: JSON.stringify({ $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json", skills }) }] } });
+    };
+    const v1 = renderOpenWorkConnectSkillInstruction(await readOpenWorkConnectSkillCatalog(config, fetcher));
+    const v2 = buildOpenWorkV2Instructions(true);
+    expect(v1.match(/^  <skill /gm)).toHaveLength(95);
+    expect(JSON.stringify(v2)).not.toContain("<available_remote_skills>");
+    expect(calls).toHaveLength(3);
+    // Switching identity must not reuse the previous principal's metadata.
+    await writeConnectCloudMcp(config, { ...cloud, headers: { Authorization: "Bearer second" } });
+    await readOpenWorkConnectSkillCatalog(config, fetcher);
+    expect(calls).toHaveLength(6);
   });
 
   test("promotes legacy workspace openwork-cloud config into server scope", async () => {

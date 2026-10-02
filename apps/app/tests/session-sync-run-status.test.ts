@@ -17,6 +17,7 @@ import {
   __setWorkspaceSessionSyncPermissionFetcherForTest,
   __setWorkspaceSessionSyncStatusFetcherForTest,
   __setWorkspaceSessionSyncSubscriptionFactoryForTest,
+  activeSessionStatusReconcileDelayMs,
   ensureWorkspaceSessionSync,
   getWorkspaceSessionSyncStreamPhase,
   markSessionSnapshotFetchStart,
@@ -1501,7 +1502,8 @@ describe("run status reconcile liveness health", () => {
 
     statusUnreachable = false;
     subscribeBlocked = false;
-    jest.advanceTimersByTime(250);
+    // Degraded reads back off; the first read after recovery still reconnects.
+    jest.advanceTimersByTime(activeSessionStatusReconcileDelayMs(reconcileFailureDegradedThreshold));
     await flushMicrotasks();
 
     expect(subscriptions).toHaveLength(2);

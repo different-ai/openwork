@@ -162,7 +162,7 @@ describe("POST /v1/org/web-origins", () => {
   })
 
   test("a stale session must confirm identity before approving", async () => {
-    sessionCreatedAt = new Date(Date.now() - 60 * 60 * 1000)
+    sessionCreatedAt = new Date(Date.now() - 3 * 60 * 60 * 1000)
     const response = await approve("https://workspace.example.test")
     expect(response.status).toBe(403)
     expect(await response.json()).toMatchObject({ error: "reauth", reason: "fresh_auth_required" })
@@ -251,7 +251,7 @@ describe("DELETE /v1/org/web-origins/:webOriginId", () => {
 
     role = "owner"
     isOwner = true
-    sessionCreatedAt = new Date(Date.now() - 60 * 60 * 1000)
+    sessionCreatedAt = new Date(Date.now() - 3 * 60 * 60 * 1000)
     const stale = await remove(existingOriginId)
     expect(stale.status).toBe(403)
     expect(await stale.json()).toMatchObject({ error: "reauth" })

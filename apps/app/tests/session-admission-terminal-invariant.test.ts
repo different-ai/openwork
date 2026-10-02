@@ -126,3 +126,11 @@ test("resume single-flight guard admits exactly one recovery prompt for rapid re
   expect(executions).toBe(2);
 
 });
+
+test("a turn the app kept but never sent (a refused Auto send) awaits no result", () => {
+  const refused: Messages[number] = { id: "not-sent", role: "user", metadata: { unprocessed: true, autoAccessWall: { state: "limit" } }, parts: [{ type: "text", text: "Summarize" }] };
+  expect(outcome([refused])).toBe("settled");
+  expect(outcome([userMessage("u1", "hi"), assistantMessage("a1", "hello"), refused])).toBe("settled");
+  // An earlier admitted turn that never got its result is still unresolved.
+  expect(outcome([userMessage("u1", "hi"), refused])).toBe("unresolved");
+});

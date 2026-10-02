@@ -44,6 +44,16 @@ never installed or executed by the workflow. The first rollout PR does not
 have the new reporter on its base yet and cannot demonstrate a hosted run of
 the new reporter. Validate on a subsequent PR after enabling.
 
+To change the CI model without a PR, set the `WARDEN_MODEL` repository variable
+(`provider/model-id`, e.g. `openai/gpt-6-luna`). It replaces the `warden.toml`
+models for hosted runs; unset it to fall back to `warden.toml`.
+
+Warden's Pi runtime only knows the models in the catalog bundled with the
+pinned action. `.warden/pi/models.json` registers newer OpenAI models (such as
+`gpt-6-luna`) for CI and `pnpm warden:check`; add a model there before pointing
+`WARDEN_MODEL` or `warden.toml` at it. Otherwise every chunk fails immediately
+with a misleading authentication error.
+
 The `warden-clearance` environment and App credentials are still used by
 release and other automation. Removing the Warden approval workflow does not
 remove those shared credentials or change existing reviews and threads.

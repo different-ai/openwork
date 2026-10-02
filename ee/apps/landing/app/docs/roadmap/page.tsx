@@ -11,9 +11,9 @@ export const metadata = withSocialMetadata({
   },
   openGraph: {
     ...baseOpenGraph,
-    title: "OpenWork Roadmap | Your workspace, on every surface",
+    title: "OpenWork Roadmap | A workspace for everyone, on any platform",
     description:
-      "The roadmap for the OpenWork desktop app, portable agent capabilities, hosted workspaces, and every surface where work happens.",
+      "What is ready, being built, and coming soon across every OpenWork product.",
     url: "https://openworklabs.com/roadmap"
   }
 });

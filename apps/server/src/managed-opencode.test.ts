@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -145,7 +146,9 @@ describe("managed OpenCode startup", () => {
     });
     try {
       const config = JSON.parse(await readFile(join(root, "config", "opencode.json"), "utf8"));
-      expect(config.plugins).toBeUndefined();
+      // The stale managed-policy registration is gone; only the always-on
+      // Code Mode connection-report plugin remains.
+      expect(config.plugins).toEqual([{ package: pathToFileURL(join(root, "mcp-results-plugin")).href }]);
       expect(config.permissions).toEqual([{ action: "shell", resource: "*", effect: "deny" }]);
       expect(await readFile(join(policyDir, "server.js"), "utf8")).toBe(oldEntrypoint);
       expect(await managed.fetchJson("/env")).toEqual({ status: 200, json: { policy: null, client: null, ipc: false } });

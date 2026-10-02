@@ -23,7 +23,7 @@ export type GatewayProvider = Pick<
 export type GatewayCredential = Pick<
   typeof GatewayProviderCredentialTable.$inferSelect,
   "id" | "kind" | "secret" | "expires_at" | "status"
->
+> & Partial<Pick<typeof GatewayProviderCredentialTable.$inferSelect, "last_error">>
 
 export type GatewayCredentialLookup = {
   scope: GatewayAccessScope
@@ -38,6 +38,7 @@ type MaterializedCredential =
   | { kind: "secret"; credentialId: CredentialId; credentialKind: GatewayProviderCredentialKind; secret: string }
   | { kind: "aws_keys"; credentialId: CredentialId; credentialKind: "aws_keys"; awsKeys: GatewayAwsKeysSecret }
   | { kind: "auth_required"; credentialId: CredentialId | null; reason: "missing" | "expired" | "inactive" | "refresh_failed" }
+  | { kind: "configuration_required"; credentialId: CredentialId }
   | { kind: "org_credential_missing" }
   | { kind: "org_credential_expired"; credentialId: CredentialId }
   | { kind: "invalid_secret"; credentialId: CredentialId; message: string }
@@ -51,7 +52,8 @@ export type ResolvedUpstreamCredential =
 export const ORG_CREDENTIAL_SUBJECT = "org"
 
 function isExpired(credential: GatewayCredential, now: Date) {
-  return credential.expires_at !== null && credential.expires_at.getTime() <= now.getTime()
+  if (credential.expires_at === null) return credential.kind === "oauth_google"
+  return !Number.isFinite(credential.expires_at.getTime()) || credential.expires_at.getTime() <= now.getTime()
 }
 
 function parseSecret(credential: GatewayCredential) {
@@ -105,10 +107,11 @@ export async function resolveUpstreamCredential(input: {
   refreshGoogleOauthToken?: RefreshGoogleOauthToken
   mintGcpAccessToken?: MintGcpAccessToken
   now?: Date
+  clock?: () => Date
 }): Promise<ResolvedUpstreamCredential> {
-  const now = input.now ?? new Date()
   const started = performance.now()
-  const materializeInput = { envNames: input.envNames, now, mintGcpAccessToken: input.mintGcpAccessToken }
+  const initialTime = input.now?.getTime()
+  const clock = input.clock ?? (() => initialTime === undefined ? new Date() : new Date(initialTime + Math.floor(performance.now() - started)))
   const set = input.selection.row.credentialSet
   const subject = set.credential_mode === "member" ? input.scope.orgMembershipId : ORG_CREDENTIAL_SUBJECT
   const inactive = (credentialId: CredentialId | null): ResolvedUpstreamCredential => set.credential_mode === "member"
@@ -118,6 +121,7 @@ export async function resolveUpstreamCredential(input: {
   let credential = await input.loadProviderCredential(lookup)
   if (!credential) return set.credential_mode === "member" ? { kind: "auth_required", credentialId: null, reason: "missing" } : { kind: "org_credential_missing" }
   if (credential.status !== "active") return inactive(credential.id)
+  if (credential.kind === "oauth_google" && credential.last_error === "invalid_client") return { kind: "configuration_required", credentialId: credential.id }
   let parsed = parseSecret(credential)
   if (parsed.kind === "invalid_secret") return parsed
 
@@ -125,8 +129,14 @@ export async function resolveUpstreamCredential(input: {
     return { kind: "invalid_secret", credentialId: credential.id, message: "Credential kind is not supported by this provider" }
   }
 
-  if (set.credential_mode === "member" && parsed.kind === "oauth_google" && credential.kind === "oauth_google" && input.refreshGoogleOauthToken && needsGoogleOauthRefresh(credential, parsed.token, now)) {
-    const outcome = await input.refreshGoogleOauthToken({ credential: { ...credential, kind: "oauth_google" }, token: parsed.token, provider: set, authorization: lookup, subject, now })
+  if (credential.kind === "oauth_google" && (credential.expires_at === null || !Number.isFinite(credential.expires_at.getTime()))) {
+    return set.credential_mode === "member"
+      ? { kind: "auth_required", credentialId: credential.id, reason: "expired" }
+      : { kind: "org_credential_expired", credentialId: credential.id }
+  }
+
+  if (set.credential_mode === "member" && parsed.kind === "oauth_google" && credential.kind === "oauth_google" && input.refreshGoogleOauthToken && needsGoogleOauthRefresh(credential, parsed.token, clock())) {
+    const outcome = await input.refreshGoogleOauthToken({ credential: { ...credential, kind: "oauth_google" }, token: parsed.token, provider: set, authorization: lookup, subject, now: clock(), clock })
     if (outcome.kind === "auth_required") return { kind: "auth_required", credentialId: credential.id, reason: "refresh_failed" }
     if (outcome.kind === "refreshed") {
       credential = outcome.credential
@@ -137,10 +147,10 @@ export async function resolveUpstreamCredential(input: {
     }
   }
 
-  if (isExpired(credential, now)) return set.credential_mode === "member"
+  if (isExpired(credential, clock())) return set.credential_mode === "member"
     ? { kind: "auth_required", credentialId: credential.id, reason: "expired" }
     : { kind: "org_credential_expired", credentialId: credential.id }
-  const result = await materialize(credential, parsed, materializeInput)
+  const result = await materialize(credential, parsed, { envNames: input.envNames, now: clock(), mintGcpAccessToken: input.mintGcpAccessToken })
   // The minter's cache is not authorization. Recheck after mint/refresh/cache
   // awaits so concurrent revocation or replacement never returns that token.
   const snapshot = credential
@@ -148,7 +158,9 @@ export async function resolveUpstreamCredential(input: {
     const current = await input.loadProviderCredential(lookup)
     return current !== null && current.status === "active" && current.id === snapshot.id && current.kind === snapshot.kind
       && current.secret === snapshot.secret && current.expires_at?.getTime() === snapshot.expires_at?.getTime()
-      && !isExpired(current, new Date(now.getTime() + Math.floor(performance.now() - started)))
+      && (current.last_error ?? null) === (snapshot.last_error ?? null)
+      && (current.kind !== "oauth_google" || current.last_error !== "invalid_client")
+      && !isExpired(current, clock())
   }
   if (!await isCurrent()) {
     return { kind: "retry", credentialId: credential.id, reason: "credential_changed" }
@@ -172,6 +184,7 @@ export const loadProviderCredentialFromDb: LoadProviderCredential = async (input
       secret: table.secret,
       expires_at: table.expires_at,
       status: table.status,
+      last_error: table.last_error,
     })
     .from(table)
     .where(and(

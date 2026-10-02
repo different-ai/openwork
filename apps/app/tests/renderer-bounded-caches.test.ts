@@ -46,10 +46,10 @@ test("session activity message-role tracking stays bounded per session", () => {
 
 test("connected provider snapshot cache evicts the oldest workspace keys", async () => {
   const emptyProviderList: ProviderListResponse = { all: [], connected: [], default: {} };
-  // Only provider.list is exercised by fetchProviderList; a full Client cannot
-  // be constructed in a unit spec.
+  // Only config.providers is exercised by fetchProviderList; a full Client
+  // cannot be constructed in a unit spec.
   const client = {
-    provider: { list: async () => ({ data: emptyProviderList }) },
+    config: { providers: async () => ({ data: { providers: emptyProviderList.all, default: emptyProviderList.default } }) },
   } as unknown as Client;
 
   for (let index = 0; index < 20; index += 1) {

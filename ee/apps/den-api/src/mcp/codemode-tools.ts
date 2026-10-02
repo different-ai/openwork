@@ -20,6 +20,7 @@ import {
   buildExternalCapabilityName,
   executeExternalCapability,
   EXTERNAL_MCP_SEARCH_CONCURRENCY,
+  providerMarksReadOnly,
   type McpMemberIdentity,
 } from "./external-capabilities.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
@@ -393,7 +394,7 @@ export async function buildExternalMcpToolTree(input: {
           scriptPath: codemodeScriptPath(namespace, tool.name),
           capabilityName: buildExternalCapabilityName(connection.id, tool.name),
           // Descriptive only: external dispatch always requires the caller's write scope.
-          readOnly: tool.annotations?.readOnlyHint === true && tool.annotations?.destructiveHint !== true,
+          readOnly: providerMarksReadOnly(tool.annotations),
           authority: "external" as const,
         }))
     }),

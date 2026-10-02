@@ -57,6 +57,12 @@ export interface ServerOptions {
   reuse?: { apiUrl: string; webUrl?: string };
   reuseMembers?: Record<string, PersonShape>;
   ports?: { api: number; web: number };
+  /**
+   * Where den-web's server-side /api/den proxy sends API calls; defaults to
+   * den-api itself. A fault proxy fixed in front of den-api before boot puts
+   * its origin here so browser traffic can be shaped.
+   */
+  webApiBase?: string;
   seedProfile?: "demo-org";
   /** Daytona idle shutdown in minutes. Preview worlds pass 0 so their lifetime owns teardown. */
   daytonaAutoStopMinutes?: number;
@@ -700,15 +706,28 @@ export async function server(options: ServerOptions): Promise<Den> {
     const orgShape = options.org ?? {};
     const isolatePreparedTest = Boolean(preparedSandbox && options.provision !== false);
     const bootstrapAdmin = options.seedProfile === "demo-org" ? defaultReuseAdmin() : personDefaults("admin", orgShape.admin, runId);
-    const provisioned = await provisionDenSandbox({
-      ref: base.ref,
-      reuse: preparedSandbox,
-      reuseUrls,
-      bootstrapAdminEmail: bootstrapAdmin.email,
-      env: denEnv,
-      ...(options.daytonaAutoStopMinutes === undefined ? {} : { autoStopMinutes: options.daytonaAutoStopMinutes }),
-      log: (line) => console.error(`[openwork/testkit] ${line}`),
-    });
+    const denStep = steps.step("den-daytona", preparedSandbox ? "Den (prepared Daytona sandbox)" : `Den on Daytona @ ${base.ref.slice(0, 9)}`);
+    let provisioned: Awaited<ReturnType<typeof provisionDenSandbox>>;
+    try {
+      provisioned = await provisionDenSandbox({
+        ref: base.ref,
+        reuse: preparedSandbox,
+        reuseUrls,
+        bootstrapAdminEmail: bootstrapAdmin.email,
+        env: denEnv,
+        ...(options.daytonaAutoStopMinutes === undefined ? {} : { autoStopMinutes: options.daytonaAutoStopMinutes }),
+        log: (line) => {
+          console.error(`[openwork/testkit] ${line}`);
+          // Surface the provisioner's own phase markers ("==> sandbox gate...") live.
+          const phase = /^==> (.+?)\.\.\.$/.exec(line.trim());
+          if (phase?.[1]) void denStep.progress(phase[1]);
+        },
+      });
+      await denStep.ok(provisioned.sandbox);
+    } catch (error) {
+      await denStep.fail(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
     let bootedMocks: { handles: Record<string, MockHandle>; env: Record<string, string> } = { handles: {}, env: {} };
     try {
       bootedMocks = await bootDaytonaMocks(provisioned.sandbox, options.mocks ?? {});
@@ -877,7 +896,7 @@ export async function server(options: ServerOptions): Promise<Den> {
       : spawnService("den-web", "dev:den:web", webPort, {
           DEN_WEB_HOST: "127.0.0.1",
           ...commonEnv,
-          DEN_API_BASE: `http://127.0.0.1:${apiPort}`,
+          DEN_API_BASE: options.webApiBase ?? `http://127.0.0.1:${apiPort}`,
           DEN_BASE_URL: options.publicOrigins?.web ?? ref.webUrl,
           DEN_AUTH_ORIGIN: options.publicOrigins?.web ?? ref.webUrl,
           DEN_AUTH_FALLBACK_BASE: `http://127.0.0.1:${apiPort}`,

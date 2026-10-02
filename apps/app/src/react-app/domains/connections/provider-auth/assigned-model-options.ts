@@ -54,11 +54,17 @@ export function assignedModelOptions(
         behaviorDescription: "",
         behaviorValue: null,
         isFree: false,
-        source: "cloud",
+        source: providerID.startsWith("ipr_") ? "gateway" : "cloud",
+        organizationPinOrder: provider.pinnedModelIds?.includes(modelID) ? provider.pinnedModelIds.indexOf(modelID) : undefined,
       };
       return [option];
     });
   });
+}
+
+export function markDisabledModelOptions(options: readonly ModelOption[], disabledProviderIds: readonly string[]): ModelOption[] {
+  const disabled = new Set(disabledProviderIds);
+  return options.map((option) => disabled.has(option.providerID) ? { ...option, disabled: true } : option);
 }
 
 export function mergeModelOptions(
@@ -70,7 +76,12 @@ export function mergeModelOptions(
     merged.set(`${option.providerID}:${option.modelID}`, option);
   }
   for (const option of primary) {
-    merged.set(`${option.providerID}:${option.modelID}`, option);
+    const key = `${option.providerID}:${option.modelID}`;
+    const assigned = merged.get(key);
+    merged.set(key, { ...assigned, ...option,
+      source: option.source ?? assigned?.source,
+      organizationPinOrder: assigned?.organizationPinOrder ?? option.organizationPinOrder,
+    });
   }
   return [...merged.values()];
 }

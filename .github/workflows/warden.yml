@@ -44,6 +44,21 @@ jobs:
             .github/scripts
             .warden
 
+      # The WARDEN_MODEL repository variable swaps the model without a PR.
+      # warden.toml models outrank the WARDEN_MODEL env var, so rewrite the
+      # trusted policy copy; the committed model stays the fallback.
+      - name: Apply model variable
+        if: vars.WARDEN_MODEL != ''
+        env:
+          MODEL: ${{ vars.WARDEN_MODEL }}
+        run: |
+          if ! printf '%s' "$MODEL" | grep -Eq '^[a-z0-9-]+/[A-Za-z0-9._-]+$'; then
+            echo "::error::WARDEN_MODEL must be provider/model-id, got: $MODEL"
+            exit 1
+          fi
+          sed -i -E "s|^model = \".*\"$|model = \"$MODEL\"|" .warden-policy/warden.toml
+          grep -n '^model = ' .warden-policy/warden.toml
+
       - name: Start analysis timing
         id: analysis-timing
         run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
@@ -52,7 +67,8 @@ jobs:
         id: analyze
         uses: getsentry/warden@8759014a14130cd2b82e59d3fb450a7385721221 # v0 (CLI 0.43.0)
         env:
-          WARDEN_MODEL: ${{ secrets.WARDEN_MODEL }}
+          # Registers models newer than the pinned Warden's Pi catalog.
+          PI_CODING_AGENT_DIR: ${{ github.workspace }}/.warden-policy/.warden/pi
           WARDEN_OPENAI_API_KEY: ${{ secrets.WARDEN_OPENAI_API_KEY }}
         with:
           mode: analyze

@@ -123,8 +123,19 @@ if (!force && existsSync(join(appPath, "Contents", "MacOS", helperExecutableName
   process.exit(0);
 }
 
-run("swift", ["build", "--package-path", packagePath, "-c", "release", "--product", productName], { stdio: "inherit" });
-const binPathResult = run("swift", ["build", "--package-path", packagePath, "-c", "release", "--show-bin-path"]);
+const baseBuildArgs = ["build", "--package-path", packagePath, "-c", "release"];
+let buildArgs = baseBuildArgs;
+const defaultBuild = spawnSync("swift", [...buildArgs, "--product", productName], { encoding: "utf8", stdio: ["inherit", "inherit", "pipe"] });
+if (defaultBuild.error) throw defaultBuild.error;
+if (defaultBuild.status !== 0) {
+  // SwiftPM 6.4+ defaults to the swiftbuild system, which fails to initialise
+  // on Command Line Tools-only machines ("Unknown error parsing property list").
+  // The native build system still works there, so retry with it once.
+  process.stderr.write(`${defaultBuild.stderr ?? ""}\nswift build failed with the default build system; retrying with --build-system native.\n`);
+  buildArgs = [...baseBuildArgs, "--build-system", "native"];
+  run("swift", [...buildArgs, "--product", productName], { stdio: "inherit" });
+}
+const binPathResult = run("swift", [...buildArgs, "--show-bin-path"]);
 const binDir = binPathResult.stdout.trim();
 const builtExecutable = join(binDir, productName);
 if (!existsSync(builtExecutable)) {

@@ -6,16 +6,16 @@ import { mobileChatGeometry, simulateKeyboardViewport } from "../worlds/mobile-c
 import { setViewport } from "@openwork/cdp";
 import { localSendDenOutageWorld } from "../worlds/local-send-den-outage.ts";
 
-const test = spec.world(sessionlessFirstSendWorld, {
+const engine = resolveEvalEngine({ OPENWORK_EVAL_ENGINE: process.env.OPENWORK_EVAL_ENGINE?.trim() || "v2" });
+
+const test = spec.world((seed) => sessionlessFirstSendWorld(seed, { engine }), {
   timeout: 420_000,
   resources: { surfaces: ["appWeb"], services: ["mock"] },
-  needs: { env: ["OPENWORK_EVAL_ENGINE"] },
 });
 
-const mobileTest = spec.world(mobileChatInteractionWorld, {
+const mobileTest = spec.world((seed) => mobileChatInteractionWorld(seed, { engine }), {
   timeout: 600_000,
   resources: { surfaces: ["appWeb"], services: ["mock"] },
-  needs: { env: ["OPENWORK_EVAL_ENGINE"] },
 });
 
 mobileTest("MOBILE-CHAT-01 keyboard geometry and new turns keep a stable chat layout", async ({ world, user, probe, step, evidence }) => {
@@ -64,9 +64,9 @@ mobileTest("MOBILE-CHAT-01 keyboard geometry and new turns keep a stable chat la
     const routeBefore = await world.route();
     await user.click({ role: "button", label: "Change model" });
     await user.click({ role: "button", label: /^Model\s+First send model/ });
-    await user.see({ placeholder: "Search models..." });
+    await user.see({ placeholder: "Search models…" });
     const modelSearch = await pickerFocus();
-    expect(modelSearch.inputs.some((input) => input.placeholder === "Search models..." && input.fontSize >= 16)).toBe(true);
+    expect(modelSearch.inputs.some((input) => input.placeholder === "Search models…" && input.fontSize >= 16)).toBe(true);
     expect(modelSearch.activeTag).toBe("BUTTON");
     expect(modelSearch.activeText).toBe("Model");
     expect(modelSearch.inputs.some((input) => input.focused)).toBe(false);
@@ -232,9 +232,9 @@ mobileTest("MOBILE-CHAT-01 keyboard geometry and new turns keep a stable chat la
     await user.click({ role: "button", label: /^Model\s+First send model/ });
     const desktopSearch = await probe.eventually(pickerFocus, {
       within: 10_000, label: "desktop model search retains keyboard focus",
-      until: (value) => value.activePlaceholder === "Search models...",
+      until: (value) => value.activePlaceholder === "Search models…",
     });
-    expect(desktopSearch.inputs.find((input) => input.placeholder === "Search models...")?.fontSize).toBe(13);
+    expect(desktopSearch.inputs.find((input) => input.placeholder === "Search models…")?.fontSize).toBe(13);
     evidence.recordJsonArtifact("Desktop picker retains 13px focused search", desktopSearch);
     await user.looks(["At desktop width, the model picker shows its compact search field, model options and provider actions."]);
     await user.press("Escape");
@@ -248,7 +248,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const outageTest = spec.world(localSendDenOutageWorld, {
   timeout: 420_000,
   resources: { surfaces: ["appWeb"], services: ["mock"] },
-  needs: { placement: "local", env: ["OPENWORK_EVAL_ENGINE"] },
+  needs: { placement: "local" },
 });
 
 outageTest("DEN-LOCAL-SEND configured v1 identity sends to inference while Den is unavailable", async ({ world, user, probe, evidence }) => {
@@ -350,7 +350,7 @@ function nativeSessionIds(body: unknown): string[] {
   return nativeItems(body).flatMap((session) => isRecord(session) && typeof session.id === "string" ? [session.id] : []).sort();
 }
 
-test(`${resolveEvalEngine()}: Run task on the sessionless New task route creates the session and delivers the first prompt`, async ({ world, user, probe, step, evidence }) => {
+test(`${engine}: Run task on the sessionless New task route creates the session and delivers the first prompt`, async ({ world, user, probe, step, evidence }) => {
   const { prompt, engine } = world;
   const persistedPrefix = `${world.sessionlessRoute}/`;
   const readSessions = async () => {
@@ -445,7 +445,7 @@ test(`${resolveEvalEngine()}: Run task on the sessionless New task route creates
   await using transition = await world.transition(evidence.dir);
   evidence.recordJsonArtifact("Sessionless transition recording", { engine, path: transition.filmPath });
   await user.looks([
-    "The 'What do you need done?' hero heading is visible above a composer containing the prompt beginning 'Summarize this workspace in one sentence.'.",
+    "The 'What should we work on?' hero heading is visible above a composer containing the prompt beginning 'Summarize this workspace in one sentence.'.",
     "There is no creation error, Starting indicator, or submitted user-message bubble above the populated composer.",
   ]);
   await user.press("Enter");
@@ -464,7 +464,7 @@ test(`${resolveEvalEngine()}: Run task on the sessionless New task route creates
       evidence.recordJsonArtifact("Immediate sessionless RAF and mutation observations", await transition.samples());
     });
     await user.looks([
-      "The 'What do you need done?' hero remains visible above the stationary empty composer showing 'Describe your task...', with a visible busy spinner in its send control.",
+      "The 'What should we work on?' hero remains visible above the stationary empty composer showing 'Describe your task...', with a visible busy spinner in its send control.",
       "There is no submitted user-message bubble, Starting indicator, or Working indicator between the hero heading and the composer.",
     ]);
     expect(transition.read()).toMatchObject({ creation: 1, prompt: 0, held: 1, expired: false });
@@ -564,7 +564,7 @@ test(`${resolveEvalEngine()}: Run task on the sessionless New task route creates
       "The created thread has exactly one user row, first in transcript order, followed by the engine reply; the prompt is neither duplicated nor rendered below its answer.", true);
     await user.looks([
       `The conversation transcript shows exactly one user-message bubble containing the prompt beginning 'Summarize this workspace in one sentence.' and an assistant reply reading '${world.reply}'.`,
-      "An empty composer is visible below the transcript; the 'What do you need done?' hero and Starting indicator are absent.",
+      "An empty composer is visible below the transcript; the 'What should we work on?' hero and Starting indicator are absent.",
     ]);
     const handoff = await transition.samples();
     evidence.recordJsonArtifact("Hero to persisted session DOM ownership", handoff);

@@ -15,6 +15,31 @@ Install the Daytona CLI with `brew install daytonaio/cli/daytona`, then authenti
 daytona login
 ```
 
+### Which identity the CLI uses
+
+- **Environment key.** The CLI uses `DAYTONA_API_KEY` only when
+  `DAYTONA_API_URL=https://app.daytona.io/api` is also set; with the key alone
+  it silently falls back to the saved profile. Scope the team key (Infisical
+  `dev`, `/openwork-ops`) to one command:
+  `DAYTONA_API_URL=https://app.daytona.io/api DAYTONA_API_KEY="$(infisical secrets get DAYTONA_API_KEY --env dev --path /openwork-ops --plain --silent)" <command>`.
+- **Saved profile.** Otherwise the active profile in
+  `$DAYTONA_CONFIG_DIR/config.json` (default: macOS
+  `~/Library/Application Support/daytona/`, Linux `~/.config/daytona/`,
+  Windows `%APPDATA%\daytona\`). Point `DAYTONA_CONFIG_DIR` at an empty
+  directory to test the not-logged-in path without touching the real profile.
+- **Never run `daytona login --api-key` on someone's machine for a one-off
+  task.** It overwrites their profile, and with it their browser login, for
+  every tool. A key printed as `*not found*` (Infisical CLI 0.28.x exits 0 on a
+  missing secret) is not a key.
+- **Personal-organization trap.** A browser login may default to the person's
+  personal organization: a 10 GiB total memory cap and none of the team's warm
+  snapshots, so multi-sandbox previews fail with a memory-limit error.
+  `pnpm world plan <world> --place daytona` prints the identity and
+  organization in use and warns on a personal one.
+- **Version warning.** "Daytona CLI is on vX and API is on vY" on every call is
+  a warning, usually not the cause of a failure; fix it with
+  `brew upgrade daytonaio/cli/daytona`.
+
 To run tests, just use `pnpm evals:e2e <slug>` — it picks Daytona automatically
 when the CLI is authenticated. `--local` forces local; `--daytona` requires
 Daytona and fails when it is unavailable.

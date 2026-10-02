@@ -1,3 +1,5 @@
+import type { DynamicToolUIPart } from "ai";
+import type { McpAppOrigin } from "@/components/chat/mcp-app-origin";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -5,7 +7,7 @@ import { isCollectibleArtifactTarget, type OpenTarget, type OpenTargetPreview } 
 
 export const PERSISTED_PANEL_TAB_STORE_KEY = "openwork:panel-tabs:v1";
 
-export type PanelTabType = "artifact" | "browser" | "app";
+export type PanelTabType = "artifact" | "browser" | "app" | "mcp-app";
 
 export type { BrowserPanelTab } from "../../../../app/lib/desktop-types";
 import type { BrowserPanelTab } from "../../../../app/lib/desktop-types";
@@ -20,7 +22,9 @@ export type ArtifactPanelTab = {
 
 export type AppPanelTab = { id: string; type: "app"; label: string; appId: string; revisionId?: string; receiptId?: string };
 
-export type PanelTab = BrowserPanelTab | ArtifactPanelTab | AppPanelTab;
+export type McpAppPanelTab = { id: string; type: "mcp-app"; label: string; appId: string; updating?: boolean; part: DynamicToolUIPart; origin: McpAppOrigin };
+
+export type PanelTab = BrowserPanelTab | ArtifactPanelTab | AppPanelTab | McpAppPanelTab;
 
 export type SessionPanelState = {
   tabs: PanelTab[];
@@ -144,6 +148,10 @@ function isSameTab(left: PanelTab, right: PanelTab) {
       && left.target?.id === right.target?.id
       && left.target?.updatedAt === right.target?.updatedAt
     );
+  }
+
+  if (left.type === "mcp-app" && right.type === "mcp-app") {
+    return left.label === right.label && left.part === right.part && left.origin === right.origin;
   }
 
   if (left.type === "app" && right.type === "app") {

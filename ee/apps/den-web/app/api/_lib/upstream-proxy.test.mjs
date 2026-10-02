@@ -58,6 +58,17 @@ describe("Den upstream proxy", () => {
           return new Response("upstream unavailable", { status: 502 });
         }
 
+        if (url.pathname === "/v1/audit/export") {
+          return new Response('{"schemaVersion":1}\n', { headers: {
+            "content-type": "application/x-ndjson",
+            "x-audit-next-cursor": "signed-next-page",
+            "x-audit-snapshot-sequence": "42",
+            "x-audit-resource-scope": "first_event",
+            "x-request-id": "internal-request",
+            "access-control-expose-headers": "X-Audit-Next-Cursor, X-Audit-Snapshot-Sequence, X-Request-Id",
+          } });
+        }
+
         if (url.pathname === "/v1/internal-headers") {
           const upstreamOrigin = new URL(request.url).origin;
           return new Response("sanitized", {
@@ -586,6 +597,19 @@ describe("Den upstream proxy", () => {
     expect(serializedLog).not.toContain("tok_test");
     expect(serializedLog).not.toContain("sess_test");
     expect(serializedLog).not.toContain(JSON.stringify({ ok: true }));
+  });
+
+  test("preserves audit export continuation through the browser proxy", async () => {
+    const { proxyUpstream } = await import("./upstream-proxy.ts");
+    const request = new NextRequest("https://app.example.com/api/browser/v1/audit/export");
+    const response = await proxyUpstream(request, [], { routePrefix: "/api/browser/v1", upstreamPathPrefix: "/v1" });
+    expect(response.headers.get("x-audit-next-cursor")).toBe("signed-next-page");
+    expect(response.headers.get("x-audit-snapshot-sequence")).toBe("42");
+    expect(response.headers.get("x-audit-resource-scope")).toBe("first_event");
+    expect(response.headers.get("x-request-id")).toBeNull();
+    expect(response.headers.get("access-control-expose-headers")).toBe("X-Audit-Next-Cursor, X-Audit-Snapshot-Sequence");
+    expect(response.headers.get("content-type")).toBe("application/x-ndjson");
+    await response.text();
   });
 
   test("strips internal upstream response headers and rewrites upstream URLs", async () => {

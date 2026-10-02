@@ -8,6 +8,7 @@ import * as requests from "../app/(den)/_lib/den-flow";
 import { parseOrgContextPayload } from "../app/(den)/_lib/den-org";
 import * as organization from "../app/(den)/dashboard/_providers/org-dashboard-provider";
 import { OrgDashboardDetailScreen } from "../app/(den)/dashboard/_components/org-dashboard-detail-screen";
+import { mcpConnectionQueryKeys } from "../app/(den)/dashboard/_components/mcp-connections-data";
 import { orgDashboardsQueryKeys, useManagedDashboards, type ManagedDashboard } from "../app/(den)/dashboard/_components/org-dashboards-data";
 
 function deferred<T>() {
@@ -29,6 +30,9 @@ const initial: ManagedDashboard = {
 
 type Reply = { payload: unknown; status?: number };
 
+/** Options for one rendered dashboard: org capabilities and immediate replies by request path. */
+type DashboardOptions = { appMcpServers?: boolean; replies?: Record<string, Reply> };
+
 async function withDashboard(check: (fixture: {
   container: HTMLDivElement;
   client: QueryClient;
@@ -38,7 +42,7 @@ async function withDashboard(check: (fixture: {
   detail: ReturnType<typeof deferred<Reply>>;
   list: ReturnType<typeof deferred<Reply>>;
   calls: { path: string; method: string | undefined; body: unknown }[];
-}) => Promise<void>) {
+}) => Promise<void>, options: DashboardOptions = {}) {
   GlobalRegistrator.register({ url: "https://app.example.test/dashboard" });
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
   const container = document.createElement("div");
@@ -48,6 +52,7 @@ async function withDashboard(check: (fixture: {
   client.setQueryData(orgDashboardsQueryKeys.detail("org-one", initial.id), initial);
   client.setQueryData(orgDashboardsQueryKeys.list("org-one"), [initial]);
   client.setQueryData(orgDashboardsQueryKeys.access("org-one", initial.id), []);
+  client.setQueryData(mcpConnectionQueryKeys.list("org-one", "manageable"), []);
   const patch = deferred<Reply>();
   const detail = deferred<Reply>();
   const list = deferred<Reply>();
@@ -58,6 +63,7 @@ async function withDashboard(check: (fixture: {
     orgContext: parseOrgContextPayload({
       organization: { id: "org-one", name: "Workspace", slug: "workspace" },
       currentMember: { id: "member-one", userId: "user-one", role: "owner", isOwner: true },
+      capabilities: { appMcpServers: options.appMcpServers === true },
     }),
     orgSelectionOpen: false, orgBusy: false, orgError: null, mutationBusy: null,
     reauthDialogOpen: false, orgSettingsCompletion: null,
@@ -73,7 +79,8 @@ async function withDashboard(check: (fixture: {
   });
   const request = spyOn(requests, "requestJson").mockImplementation(async (path, init) => {
     calls.push({ path, method: init?.method, body: typeof init?.body === "string" ? JSON.parse(init.body) : null });
-    const reply = await (init?.method === "PATCH" ? patch.promise
+    const immediate = options.replies?.[path];
+    const reply = await (immediate ? Promise.resolve(immediate) : init?.method === "PATCH" ? patch.promise
       : path === `/v1/dashboards/${initial.id}` ? detail.promise
       : path === "/v1/dashboards" ? list.promise
       : Promise.reject(new Error(`Unexpected request: ${init?.method} ${path}`)));
@@ -189,5 +196,51 @@ test("a failed move leaves the saved order intact and restores the controls", as
       path: `/v1/dashboards/${initial.id}`, method: "PATCH",
       body: { elements: [initial.elements[1], initial.elements[0], initial.elements[2]] },
     }]);
+  });
+});
+
+const builtApp = {
+  serverName: "openwork-app-host-connect-abcdef012345", connectionId: "cob_01builtapp000000000000000000",
+  toolName: "open_app", projectedToolName: "openwork-app-host-connect-abcdef012345_open_app",
+  resourceUri: "ui://openwork/apps/cob_01builtapp000000000000000000/revisions/cov_01revision00000000000000000/index.html",
+  title: "Order calculator", description: "Price an order.", pluginId: "plg_01pricing000000000000000000", pluginName: "Pricing tools",
+  requiresInput: false, requiredInputKeys: [], requiresApproval: false,
+};
+
+function buttonNamed(container: HTMLElement, text: string) {
+  const button = [...container.querySelectorAll("button")].find((candidate) => candidate.textContent?.trim() === text);
+  if (!button) throw new Error(`Missing ${text} button`);
+  return button;
+}
+
+test("the Add app picker offers Apps built in OpenWork and adds one as a tile that opens the App", async () => {
+  await withDashboard(async ({ container, patch, detail, calls }) => {
+    await act(async () => buttonNamed(container, "Add app").click());
+    await settle(() => expect(container.textContent).toContain("Order calculator"));
+    expect(container.textContent).toContain("Apps built in OpenWork");
+    expect(container.querySelector('[data-testid="built-app-sharing-note"]')?.textContent).toBe("Members see an App only when its Plugin is shared with them.");
+    expect(container.textContent).toContain("Price an order. · Pricing tools");
+
+    await act(async () => buttonNamed(container, "Add").click());
+    await settle(() => expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(1));
+    // The tile opens the App through its own server; catalog-only fields are not stored.
+    const tile = {
+      serverName: builtApp.serverName, connectionId: builtApp.connectionId, toolName: "open_app",
+      projectedToolName: builtApp.projectedToolName, resourceUri: builtApp.resourceUri, title: builtApp.title,
+    };
+    expect(calls.find((call) => call.method === "PATCH")?.body).toEqual({ elements: [...initial.elements, tile] });
+
+    const updated = { ...initial, elements: [...initial.elements, tile] };
+    await act(async () => { patch.resolve({ payload: { item: updated } }); detail.resolve({ payload: { item: updated } }); });
+    await settle(() => expect(container.textContent).toContain("App built in OpenWork"));
+  }, { appMcpServers: true, replies: { "/v1/mcp-apps": { payload: { apps: [builtApp] } } } });
+});
+
+test("without App servers, the picker asks for no built Apps and offers only MCPs", async () => {
+  await withDashboard(async ({ container, calls }) => {
+    await act(async () => buttonNamed(container, "Add app").click());
+    await settle(() => expect(container.textContent).toContain("No MCPs with Apps available"));
+    expect(container.textContent).not.toContain("Apps built in OpenWork");
+    expect(calls.map((call) => call.path)).not.toContain("/v1/mcp-apps");
   });
 });

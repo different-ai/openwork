@@ -811,3 +811,62 @@ describe("cloud MCP health foundation", () => {
     expect(initializeStep?.ok).toBe(false);
   });
 });
+
+describe("Connect health on the active v2 engine", () => {
+  async function nativeHealth(options: { model?: "missing" | "no-tools"; mcp?: "failed" | "pending"; unavailable?: boolean } = {}) {
+    const harness = await setupDirectProbeHarness("ok");
+    const paths: string[] = [];
+    const health = await readOpenworkCloudMcpHealth({
+      config: harness.config, workspace: harness.primary, directory: harness.primary.path,
+      providerModel: { provider: "native-provider", model: "native-model" },
+      createWorkspaceOpencodeClient: () => createOpencodeClient({
+        baseUrl: "http://v1.invalid",
+        fetch: Object.assign(async () => { throw new Error("V2 health must never query v1"); }, { preconnect: globalThis.fetch.preconnect }),
+      }),
+      nativeEngineForWorkspace: () => ({ version: "v2-fixture", request: async (path, directory) => {
+        expect(directory).toBe(harness.primary.path);
+        paths.push(path);
+        if (options.unavailable) throw new Error("Native engine unavailable");
+        if (path === "/api/mcp") return { data: [{ name: "openwork-cloud", status: options.mcp ? { status: options.mcp, error: "Connection refused" } : { status: "connected" } }] };
+        if (path === "/api/model") return { data: options.model === "missing" ? [] : [{ id: "native-model", providerID: "native-provider", capabilities: { tools: options.model !== "no-tools" } }] };
+        throw new Error(`Unexpected native path: ${path}`);
+      } }),
+    });
+    return { health, paths };
+  }
+
+  test("a v2-only model is usable without querying v1 or requiring v1 plugin canaries", async () => {
+    const { health, paths } = await nativeHealth();
+    expect(paths).toEqual(["/api/mcp", "/api/model"]);
+    expect(health.firstFailure).toBeNull();
+    expect(health.usable).toBe(true);
+    expect(health.usableByCurrentModel).toBe(true);
+    expect(health.compatibility.supportedFeatures.pluginCanaries).toBe(false);
+    expect(health.compatibility.supportedFeatures.toolIds).toBe(false);
+    expect(health.tools.providerProjection).toMatchObject({ modelExists: true, toolCalling: true });
+  });
+
+  test("missing and non-tool native models still report a real failure", async () => {
+    for (const model of ["missing", "no-tools"] satisfies Array<"missing" | "no-tools">) {
+      const { health } = await nativeHealth({ model });
+      expect(health.usableByCurrentModel).toBe(false);
+      expect(health.firstFailure?.code).toBe("provider_tool_projection_missing");
+      expect(health.tools.providerProjection.modelExists).toBe(model !== "missing");
+    }
+  });
+
+  test("native MCP errors and engine outages cannot be masked by a healthy v1 engine", async () => {
+    for (const options of [{ mcp: "failed" }, { unavailable: true }] satisfies Array<{ mcp?: "failed"; unavailable?: boolean }>) {
+      const { health, paths } = await nativeHealth(options);
+      expect(health.usable).toBe(false);
+      expect(health.firstFailure).not.toBeNull();
+      expect(paths).toEqual(["/api/mcp"]);
+    }
+  });
+
+  test("a native connection still starting remains retryable", async () => {
+    const { health } = await nativeHealth({ mcp: "pending" });
+    expect(health.usable).toBe(false);
+    expect(health.firstFailure).toMatchObject({ stage: "engine_delivery", retryable: true });
+  });
+});

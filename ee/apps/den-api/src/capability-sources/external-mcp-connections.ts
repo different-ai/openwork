@@ -1,6 +1,11 @@
 import { isDeepStrictEqual } from "node:util"
 import { and, asc, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
+  SlackAssistantInstallationTable,
+  SlackAssistantIdentityTable,
+  SlackAssistantThreadTable,
+  SlackAssistantEventTable,
+  SlackAssistantOAuthStateTable,
   ConnectedAccountTable,
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
@@ -1455,14 +1460,32 @@ export async function listUsableExternalMcpConnections(input: {
 }): Promise<ExternalMcpConnectionRow[]> {
   const directConnections = await directlyUsableExternalMcpConnections(input)
   const sourcedConnections = await sourcedUsableExternalMcpConnections(input)
-  const byId = new Map<string, ExternalMcpConnectionRow>()
-  for (const connection of directConnections) {
-    if (connection.kind === "external_mcp") byId.set(connection.id, connection)
+  return withoutRetiredPluginOwnedConnections(input.organizationId, directConnections, sourcedConnections)
+}
+
+/**
+ * Merge direct and plugin-sourced rows, then drop connections whose owning
+ * plugins are all archived or deleted. Archiving a plugin only removes the
+ * grants its binding created; a direct grant (org-wide, member, team) on a
+ * plugin-created connection would otherwise keep it usable, and published to
+ * desktops as a direct MCP server, after admins stopped seeing it in the
+ * Connections list. Restoring the plugin brings it back.
+ */
+async function withoutRetiredPluginOwnedConnections(
+  organizationId: OrganizationId,
+  ...groups: ExternalMcpConnectionRow[][]
+): Promise<ExternalMcpConnectionRow[]> {
+  const byId = new Map<ExternalMcpConnectionId, ExternalMcpConnectionRow>()
+  for (const group of groups) {
+    for (const connection of group) {
+      if (connection.kind === "external_mcp") byId.set(connection.id, connection)
+    }
   }
-  for (const connection of sourcedConnections) {
-    if (connection.kind === "external_mcp") byId.set(connection.id, connection)
-  }
-  return [...byId.values()]
+  const retired = await listRetiredPluginOwnedExternalMcpConnectionIds({
+    organizationId,
+    connectionIds: [...byId.keys()],
+  })
+  return [...byId.values()].filter((connection) => !retired.has(connection.id))
 }
 
 export async function externalMcpConnectionReadyForMember(
@@ -1531,14 +1554,7 @@ export async function listVisibleExternalMcpConnections(input: {
 }): Promise<ExternalMcpConnectionRow[]> {
   const directConnections = await directlyUsableExternalMcpConnections(input)
   const sourcedConnections = await sourcedUsableExternalMcpConnections({ ...input, includeAuthMismatches: true })
-  const byId = new Map<string, ExternalMcpConnectionRow>()
-  for (const connection of directConnections) {
-    if (connection.kind === "external_mcp") byId.set(connection.id, connection)
-  }
-  for (const connection of sourcedConnections) {
-    if (connection.kind === "external_mcp") byId.set(connection.id, connection)
-  }
-  return [...byId.values()]
+  return withoutRetiredPluginOwnedConnections(input.organizationId, directConnections, sourcedConnections)
 }
 
 export async function memberCanUseExternalMcpConnection(input: {
@@ -1609,6 +1625,15 @@ export async function deleteExternalMcpConnection(input: {
       eq(PluginMcpRequirementBindingTable.organizationId, input.organizationId),
       eq(PluginMcpRequirementBindingTable.externalMcpConnectionId, existing.id),
     ))
+    for (const table of [
+      SlackAssistantIdentityTable,
+      SlackAssistantThreadTable,
+      SlackAssistantEventTable,
+      SlackAssistantOAuthStateTable,
+      SlackAssistantInstallationTable,
+    ]) {
+      await tx.delete(table).where(eq(table.connectionId, existing.id))
+    }
     await tx.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, existing.id))
     return true
   })
@@ -1659,6 +1684,15 @@ export async function deleteExternalMcpConnectionIfUnreferenced(input: {
       eq(OrgOAuthClientTable.organizationId, input.organizationId),
       eq(OrgOAuthClientTable.providerId, existing.id),
     ))
+    for (const table of [
+      SlackAssistantIdentityTable,
+      SlackAssistantThreadTable,
+      SlackAssistantEventTable,
+      SlackAssistantOAuthStateTable,
+      SlackAssistantInstallationTable,
+    ]) {
+      await tx.delete(table).where(eq(table.connectionId, existing.id))
+    }
     await tx.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, existing.id))
     return true
   })

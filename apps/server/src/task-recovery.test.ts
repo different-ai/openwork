@@ -2,7 +2,7 @@ import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createTaskRecovery, RECOVERY_INTERVAL_MS } from "./task-recovery.js";
+import { createTaskRecovery, RECOVERY_FAILURES_BEFORE_BACKOFF, RECOVERY_INTERVAL_MS } from "./task-recovery.js";
 import type { ServerConfig } from "./types.js";
 import { createWorkspaceKvStore } from "./workspace-kv-store.js";
 
@@ -12,7 +12,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function fixture(engine: "v1" | "v2") {
+async function fixture(engine: "v1" | "v2", options: { engineAvailable?: () => boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "task-recovery-"));
   const previousDb = process.env.OPENWORK_RUNTIME_DB;
   process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
@@ -28,6 +28,8 @@ async function fixture(engine: "v1" | "v2") {
   let loseAcknowledgement = false;
   let beforeRead: (() => Promise<void>) | undefined;
   let policyReady = true;
+  let unreadable = false;
+  let reads = 0;
   const beforeResume = async () => { if (!policyReady) throw new Error("Policy unavailable"); };
   let recovery: Awaited<ReturnType<typeof createTaskRecovery>>;
   const prefix = engine === "v2" ? "/opencode2/api" : "/opencode";
@@ -54,6 +56,8 @@ async function fixture(engine: "v1" | "v2") {
       return new Response(null, { status: 204 });
     }
     await beforeRead?.();
+    reads++;
+    if (unreadable) return Response.json({ message: "Conversation could not be read" }, { status: 500 });
     if (path === "/session/status" || path === "/session/active") return respond(Object.fromEntries(
       [...tasks].filter(([, task]) => task.active).map(([id]) => [id, { type: engine === "v2" ? "running" : "busy" }]),
     ));
@@ -62,6 +66,7 @@ async function fixture(engine: "v1" | "v2") {
     );
     const task = tasks.get(id);
     if (!task) return new Response(null, { status: 404 });
+    if (path.endsWith("/form")) return respond([]);
     if (path.endsWith("/permission")) {
       const data = task.blocked ? [{ id: `p-${id}`, sessionID: id }] : [];
       return engine === "v1" ? Response.json({ data }) : respond(data);
@@ -80,7 +85,7 @@ async function fixture(engine: "v1" | "v2") {
   };
   const request = (req: Request): Promise<Response> => recovery.forward(workspace, engine,
     new URL(req.url).pathname.replace("/workspace/ws", ""), req, () => handle(req));
-  recovery = await createTaskRecovery(config, request, beforeResume);
+  recovery = await createTaskRecovery(config, request, beforeResume, { engineAvailable: options.engineAvailable });
   cleanups.push(async () => {
     await recovery.stop();
     if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
@@ -91,6 +96,8 @@ async function fixture(engine: "v1" | "v2") {
   const tick = async () => { now += RECOVERY_INTERVAL_MS; setSystemTime(now); await recovery.tick(); };
   return {
     tasks, resumes, tick, config,
+    get reads() { return reads; },
+    unreadable(value: boolean) { unreadable = value; },
     readHook(hook?: () => Promise<void>) { beforeRead = hook; },
     policy(ready: boolean) { policyReady = ready; },
     loseAck() { loseAcknowledgement = true; },
@@ -102,7 +109,7 @@ async function fixture(engine: "v1" | "v2") {
     async restart(aborted = false) {
       await recovery.stop();
       for (const task of tasks.values()) { task.active = false; if (aborted) task.aborted = true; }
-      recovery = await createTaskRecovery(config, request, beforeResume);
+      recovery = await createTaskRecovery(config, request, beforeResume, { engineAvailable: options.engineAvailable });
     },
     async crash(aborted = false) {
       const journal = createWorkspaceKvStore<unknown[]>({ tableName: "desktop_task_recovery", valueColumn: "state_json", parse: JSON.parse, serialize: JSON.stringify });
@@ -110,7 +117,7 @@ async function fixture(engine: "v1" | "v2") {
       await recovery.stop();
       if (saved) await journal.setSerialized(config, "desktop", saved.valueJson, Date.now());
       for (const task of tasks.values()) { task.active = false; task.aborted = aborted; }
-      recovery = await createTaskRecovery(config, request, beforeResume);
+      recovery = await createTaskRecovery(config, request, beforeResume, { engineAvailable: options.engineAvailable });
     },
   };
 }
@@ -232,5 +239,41 @@ for (const engine of ["v1", "v2"] as const) {
     f.config.workspaces[0].path += "-different";
     await f.tick();
     expect(f.resumes).toEqual([]);
+  });
+
+  test(`${engine}: an unreadable watch backs off and is dropped once its window has passed`, async () => {
+    const f = await fixture(engine);
+    await f.send("ses_work");
+    f.unreadable(true);
+    const readsPerTick: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      const before = f.reads;
+      await f.tick();
+      readsPerTick.push(f.reads - before);
+    }
+    // This used to read the engine five or six times on every tick, forever.
+    expect(readsPerTick.slice(0, RECOVERY_FAILURES_BEFORE_BACKOFF).every((reads) => reads > 0)).toBe(true);
+    expect(readsPerTick.filter((reads) => reads > 0).length).toBeLessThan(10);
+    expect(readsPerTick.slice(-3)).toEqual([0, 0, 0]);
+    f.unreadable(false);
+    const settled = f.reads;
+    for (let i = 0; i < 3; i++) await f.tick();
+    expect(f.reads).toBe(settled);
+    expect(f.resumes).toEqual([]);
+  });
+
+  test(`${engine}: a durable task waits without reads while its engine is stopped`, async () => {
+    let available = true;
+    const f = await fixture(engine, { engineAvailable: () => available });
+    await f.send("ses_work"); await f.tick();
+    await f.restart(true);
+    available = false;
+    const before = f.reads;
+    for (let i = 0; i < 5; i++) await f.tick();
+    expect(f.reads).toBe(before);
+    expect(f.resumes).toEqual([]);
+    available = true;
+    await f.tick();
+    expect(f.resumes).toHaveLength(1);
   });
 }

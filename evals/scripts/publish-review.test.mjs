@@ -158,3 +158,28 @@ test("candidate checks are PR-only and credentialed publication checks out trust
   assert.match(publisher, /ref: \$\{\{ github.event.repository.default_branch \}\}/);
   assert.doesNotMatch(publisher, /ref:.*head.sha/);
 });
+
+test("publication emits a trusted native receipt rather than relying on comment text", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const directory = await mkdtemp(join(tmpdir(), "evidence-receipt-"));
+  const path = join(directory, "receipt.json");
+  try {
+    const evidence = { gitSha: sha, verdict: "Passed", tests: 1, passedTests: 1, assertions: 1, passedAssertions: 1 };
+    await publicationJob({ ...jobEnv, EVIDENCE_RECEIPT_PATH: path }, {
+      publish: async () => ({ posted: true, evidence, urls: { report: `https://review.example.test/r/${"a".repeat(32)}` } }), summary: async () => {},
+    });
+    const receipt = JSON.parse(await readFile(path, "utf8"));
+    assert.equal(receipt.state, "published"); assert.deepEqual(receipt.evidence, evidence);
+    assert.match(receipt.reportUrl, /\/r\/a{32}$/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("native workflow writes use only trusted code and require completion before publishing", async () => {
+  const workflow = await readFile(new URL("../../.github/workflows/evidence-review.yml", import.meta.url), "utf8");
+  assert.match(workflow, /types: \[requested, in_progress, completed\]/);
+  assert.match(workflow, /github.event.action == 'completed'/);
+  assert.match(workflow, /checks: write/); assert.match(workflow, /deployments: write/);
+  assert.match(workflow, /if: always\(\)\n        env:[\s\S]*?run: node .github\/scripts\/evidence-presentation.mjs complete/);
+  assert.doesNotMatch(workflow, /ref:.*head.sha|pull_request_target/);
+});

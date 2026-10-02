@@ -659,6 +659,19 @@ async function loadPreload(t) {
   return exposed.__OPENWORK_ELECTRON__.browser;
 }
 
+test("preload keeps browsing available without exposing browser login sync, even with the legacy eval flag", async (t) => {
+  const previous = process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC;
+  process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC = "1";
+  t.after(() => {
+    if (previous === undefined) delete process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC;
+    else process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC = previous;
+  });
+  const browser = await loadPreload(t);
+  assert.equal(Object.hasOwn(exposed.__OPENWORK_ELECTRON__, "browserLogins"), false);
+  await browser.createTab("https://example.test", "A");
+  assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:createTab", args: ["https://example.test", "A"] }]);
+});
+
 test("preload routes only trusted unmodified primary anchor clicks, never scripts or middle clicks", async (t) => {
   const descriptors = new Map(["HTMLAnchorElement", "location"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const mainFrame = Object.getOwnPropertyDescriptor(process, "isMainFrame");
@@ -691,7 +704,7 @@ test("preload routes only trusted unmodified primary anchor clicks, never script
     return event.defaultPrevented;
   };
   assert.equal(click(), true);
-  assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "A", external: false }] }]);
+  assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "A", external: false, ask: true }] }]);
   assert.equal(exposed.__OPENWORK_ELECTRON__.browser.linkClick, undefined);
   for (const overrides of [{ isTrusted: false }, { button: 1 }, { button: 2 }, { metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }]) {
     assert.equal(click(overrides), false);
@@ -702,20 +715,27 @@ test("preload routes only trusted unmodified primary anchor clicks, never script
   assert.equal(preloadCalls.length, 1);
   // The same listener reads a saved setting at each activation, including an
   // Enter-generated click (detail: 0). Missing/invalid storage keeps OpenWork.
-  for (const [stored, external] of [
+  for (const [stored, external, ask = true] of [
     [null, false], ["{}", false], ['{"linkOpenDestination":"external"}', true],
     ['{"linkOpenDestination":"openwork"}', false], ['{"linkOpenDestination":"chrome"}', false],
     ["invalid JSON", false], ["null", false],
+    ['{"linkOpenDestination":"external","askBeforeOpeningLinks":false}', true, false],
+    ['{"linkOpenDestination":"openwork","askBeforeOpeningLinks":false}', false, false],
+    ['{"linkOpenDestination":"external","askBeforeOpeningLinks":"false"}', true, true],
   ]) {
     Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem(key) { assert.equal(key, "openwork.preferences"); return stored; } } });
     preloadCalls.length = 0;
     assert.equal(click({ detail: 0 }), true);
-    assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "A", external }] }]);
+    assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "A", external, ask }] }]);
   }
   Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem() { throw new Error("Storage unavailable"); } } });
   preloadCalls.length = 0;
   assert.equal(click(), true);
   assert.equal(preloadCalls[0].args[0].external, false);
+  assert.equal(preloadCalls[0].args[0].ask, true);
+  preloadCalls.length = 0;
+  exposed.__OPENWORK_ELECTRON__.browser.openLink(LINK.url, "B");
+  assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:linkClick", args: [{ url: LINK.url, sessionId: "B", external: false, ask: true }] }]);
 });
 
 test("browser manager construction before app readiness defers session hooks until the first tab", async (t) => {
@@ -1966,6 +1986,73 @@ test("human external link clicks open exactly once, respect policy, and leave ow
   }
 });
 
+test("the link chooser waits without opening and consumes only one trusted choice for the captured link", async () => {
+  for (const destination of ["openwork", "external", null]) {
+    const { invoke, emit, mainContents, messages, policies, views } = createPanel();
+    invoke("openwork:browser:linkClick", { ...LINK, ask: true });
+    const request = messages("openwork:browser:link-open-request")[0];
+    assert.equal(request.url, LINK.url);
+    assert.deepEqual(policies, []);
+    assert.deepEqual(views(), []);
+    assert.deepEqual(effects, []);
+    invoke("openwork:browser:linkClick", { ...LINK, url: "https://second.example/", ask: true });
+    assert.equal(messages("openwork:browser:link-open-request").length, 1, "rapid clicks do not retarget the popup");
+    for (const event of [{ sender: {}, senderFrame: mainContents.mainFrame }, { sender: mainContents, senderFrame: {} }]) {
+      assert.equal(emit("openwork:browser:chooseLinkDestination", event, request.id, "external"), false);
+    }
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", "forged", "external"), false);
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", request.id, "chrome"), false);
+    invoke("openwork:browser:setVisibleSession", "B");
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", request.id, destination), destination !== null);
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", request.id, destination), false);
+    await flush();
+    assert.equal(messages("openwork:browser:link-open-request").at(-1), null);
+    if (destination === "openwork") {
+      assert.equal(views().length, 1);
+      assert.deepEqual(views()[0].webContents.destinations, [LINK.url]);
+      assert.equal(invoke("openwork:browser:state").tabs[0].ownerSessionId, "A");
+    } else {
+      assert.deepEqual(views(), []);
+      assert.deepEqual(policies, destination === null ? [] : [{ url: LINK.url, external: true }]);
+    }
+    assert.deepEqual(effects, destination === "external" ? [{ type: "external", url: LINK.url }] : []);
+    assert.equal(mainContents.listenerCount("destroyed"), 0);
+  }
+});
+
+test("cancelled or stale chooser requests cannot be revived, including while policy is pending", async () => {
+  for (const ending of ["navigate", "destroyed", "frame", "close"]) {
+    const { invoke, mainContents, messages, views, policies } = createPanel();
+    invoke("openwork:browser:linkClick", { ...LINK, ask: true });
+    const request = messages("openwork:browser:link-open-request")[0];
+    if (ending === "navigate") mainContents.emit("did-start-navigation", null, "http://localhost/next", false, true);
+    if (ending === "destroyed") { mainContents.destroyed = true; mainContents.emit("destroyed"); }
+    if (ending === "frame") mainContents.mainFrame = {};
+    if (ending === "close") invoke("openwork:browser:destroy");
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", request.id, "external"), false);
+    await flush();
+    assert.deepEqual(policies, []);
+    assert.deepEqual(views(), []);
+    assert.deepEqual(effects, []);
+  }
+  for (const denied of [true, false]) {
+    const held = gate();
+    const { invoke, mainContents, messages, views, policies } = createPanel(async () => {
+      if (denied) throw new Error("managed denial");
+      await held.promise;
+    });
+    invoke("openwork:browser:linkClick", { ...LINK, ask: true });
+    const request = messages("openwork:browser:link-open-request")[0];
+    assert.equal(invoke("openwork:browser:chooseLinkDestination", request.id, "external"), true);
+    if (!denied) mainContents.emit("did-start-navigation", null, "http://localhost/next", false, true);
+    held.finish();
+    await flush();
+    assert.deepEqual(policies, [{ url: LINK.url, external: true }]);
+    assert.deepEqual(views(), []);
+    assert.deepEqual(effects, denied ? [{ type: "dialog" }] : []);
+  }
+});
+
 test("human link routing rejects other senders, unsafe URLs, denied policy and stale source documents", async () => {
   const held = gate();
   const { invoke, emit, mainContents, views, policies } = createPanel(async ({ url }) => {
@@ -2121,6 +2208,84 @@ test("managed policy denial precedes loading and is rechecked after navigation a
   assert.deepEqual(contents.destinations, ["http://localhost:4173/"]);
 });
 
+test("a main-frame connection failure exposes recovery and retries the failed URL until it commits", async () => {
+  const { invoke, views, messages } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  const { tabId } = invoke("openwork:browser:createTab", "about:blank", "A");
+  await flush();
+  const view = views()[0];
+  const contents = view.webContents;
+  const failedUrl = "http://localhost:18780/connection-probe";
+  const failure = {
+    code: "page_load_failed",
+    message: "This site refused the connection. Check that it is running, then reload.",
+    url: failedUrl, errorCode: -102, errorDescription: "ERR_CONNECTION_REFUSED",
+  };
+  contents.emit("did-fail-load", -102, "ERR_CONNECTION_REFUSED", failedUrl, true);
+  contents.emit("did-stop-loading");
+  assert.equal(contents.getURL(), "about:blank", "a failed first navigation can leave no committed URL");
+  assert.deepEqual(messages("openwork:browser:state").at(-1).tabs[0].loadError, failure);
+  assert.equal(invoke("openwork:browser:state").tabs[0].url, failedUrl);
+  assert.equal(invoke("openwork:browser:state").tabs[0].label, failedUrl);
+  assert.equal(view.getVisible(), false, "the native blank page must not cover the recovery controls");
+  invoke("openwork:browser:hide");
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  assert.equal(view.getVisible(), false, "layout updates must not cover recovery");
+
+  navigation.load = async (url, page) => {
+    page.emit("did-fail-load", -102, "ERR_CONNECTION_REFUSED", url, true);
+    throw new Error("ERR_CONNECTION_REFUSED");
+  };
+  try {
+    invoke("openwork:browser:reload");
+    await flush();
+    assert.equal(contents.loads.at(-1), failedUrl, "retry uses the failed destination, not about:blank");
+    assert.deepEqual(invoke("openwork:browser:state").tabs[0].loadError, failure);
+    assert.equal(view.getVisible(), false);
+  } finally { navigation.load = async () => {}; }
+
+  invoke("openwork:browser:reload");
+  await flush();
+  assert.equal(invoke("openwork:browser:state").activeTabId, tabId);
+  assert.equal(invoke("openwork:browser:state").tabs[0].loadError, null);
+  assert.equal(contents.getURL(), failedUrl);
+  assert.equal(view.getVisible(), true, "a successful retry restores the native page");
+});
+
+test("iframe failures and aborted main-frame navigation leave the existing page visible", async () => {
+  const { invoke, views } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  invoke("openwork:browser:createTab", "about:blank", "A");
+  await flush();
+  const view = views()[0];
+  for (const [code, description, mainFrame] of [[-102, "ERR_CONNECTION_REFUSED", false], [-3, "ERR_ABORTED", true]]) {
+    view.webContents.emit("did-fail-load", code, description, "https://page.example/", mainFrame);
+    assert.equal(invoke("openwork:browser:state").tabs[0].loadError, null);
+    assert.equal(view.getVisible(), true);
+  }
+});
+
+test("a background page failure stays with its tab and clears after another destination commits", async () => {
+  const { invoke, views } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  const first = invoke("openwork:browser:createTab", "about:blank", "A");
+  const second = invoke("openwork:browser:createTab", "about:blank", "A");
+  await flush();
+  views()[0].webContents.emit("did-fail-load", -106, "ERR_INTERNET_DISCONNECTED", "https://page.example/", true);
+  const state = invoke("openwork:browser:state");
+  assert.equal(state.activeTabId, second.tabId);
+  assert.equal(state.tabs[0].loadError.code, "page_load_failed");
+  assert.equal(state.tabs[1].loadError, null);
+  assert.equal(views()[1].getVisible(), true);
+  invoke("openwork:browser:selectTab", first.tabId);
+  assert.equal(views()[0].getVisible(), false);
+  invoke("openwork:browser:navigate", "https://working.example/");
+  await flush();
+  assert.equal(invoke("openwork:browser:state").tabs[0].url, "https://working.example/");
+  assert.equal(invoke("openwork:browser:state").tabs[0].loadError, null);
+  assert.equal(views()[0].getVisible(), true);
+});
+
 test("managed subresource warnings survive aborted navigation and persist until a document commits", async () => {
   let failureCode = "policy_unavailable";
   const { invoke, views, policies } = createPanel(async ({ url }) => {
@@ -2148,6 +2313,7 @@ test("managed subresource warnings survive aborted navigation and persist until 
     ["did-navigate-in-page", "https://page.example/#section", true],
     ["did-start-navigation", "https://page.example/aborted", false, true],
     ["did-fail-provisional-load", -3, "ERR_ABORTED", "https://page.example/aborted", true],
+    ["did-fail-load", -20, "ERR_BLOCKED_BY_CLIENT", "https://page.example/blocked", true],
     ["did-stop-loading"],
   ]) {
     contents.emit(event, ...args);

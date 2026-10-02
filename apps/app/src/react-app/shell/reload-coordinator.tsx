@@ -129,6 +129,9 @@ function hasLiveSessionActivity(
 type ReloadSession = { id: string; title: string };
 
 export type WorkspaceReloadControls = {
+  workspaceId: string;
+  /** Return true when the selected engine observes these changes live. */
+  applyLiveChanges?: () => Promise<boolean>;
   canReloadWorkspaceEngine: () => boolean;
   reloadWorkspaceEngine: () => Promise<boolean>;
   activeSessions?: () => ReloadSession[];
@@ -140,6 +143,7 @@ type ReloadCoordinatorContextValue = {
   markReloadRequired: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
   clearReloadRequired: () => void;
   reloadWorkspaceEngine: () => Promise<void>;
+  withEngineReady: <T>(workspaceId: string, send: () => Promise<T>) => Promise<T>;
   canReloadWorkspaceEngine: boolean;
   reloadPending: boolean;
   reloadBusy: boolean;
@@ -153,6 +157,9 @@ const ReloadCoordinatorContext = createContext<ReloadCoordinatorContextValue | n
 
 export function ReloadCoordinatorProvider({ children }: { children: ReactNode }) {
   const controlsRef = useRef<WorkspaceReloadControls | null>(null);
+  const inFlightReloadRef = useRef<{ workspaceId: string; promise: Promise<boolean> } | null>(null);
+  const pendingAdmissionsRef = useRef(0);
+  const [pendingAdmissions, setPendingAdmissions] = useState(0);
   const [activeSessions, setActiveSessions] = useState<ReloadSession[]>([]);
   const [allowsBusyReload, setAllowsBusyReload] = useState(false);
   const [orgOnboardingVisible, setOrgOnboardingVisible] = useState(false);
@@ -182,7 +189,26 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   const reloadWorkspaceEngine = useCallback(async () => {
     const controls = controlsRef.current;
     if (!controls?.reloadWorkspaceEngine) return false;
-    return controls.reloadWorkspaceEngine();
+    const pending = { workspaceId: controls.workspaceId, promise: controls.reloadWorkspaceEngine() };
+    inFlightReloadRef.current = pending;
+    try {
+      return await pending.promise;
+    } finally {
+      if (inFlightReloadRef.current === pending) inFlightReloadRef.current = null;
+    }
+  }, []);
+  const withEngineReady = useCallback(async function<T>(workspaceId: string, send: () => Promise<T>): Promise<T> {
+    pendingAdmissionsRef.current++;
+    setPendingAdmissions(pendingAdmissionsRef.current);
+    try {
+      while (inFlightReloadRef.current?.workspaceId === workspaceId) {
+        await inFlightReloadRef.current.promise;
+      }
+      return await send();
+    } finally {
+      pendingAdmissionsRef.current--;
+      setPendingAdmissions(pendingAdmissionsRef.current);
+    }
   }, []);
   const ignoreError = useCallback(() => {}, []);
 
@@ -215,6 +241,18 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   );
 
   const systemState = useSystemState(systemStateOptions);
+  const markReloadRequired = useCallback((reason: ReloadReason, trigger?: ReloadTrigger) => {
+    const controls = controlsRef.current;
+    if (controls?.applyLiveChanges && ["skills", "mcp", "config"].includes(reason)) {
+      void controls.applyLiveChanges().then(applied => {
+        if (!applied && controlsRef.current?.workspaceId === controls.workspaceId) systemState.markReloadRequired(reason, trigger);
+      }).catch(() => {
+        if (controlsRef.current?.workspaceId === controls.workspaceId) systemState.markReloadRequired(reason, trigger);
+      });
+      return;
+    }
+    systemState.markReloadRequired(reason, trigger);
+  }, [systemState.markReloadRequired]);
 
   useEffect(() => {
     const update = (event: Event) => {
@@ -231,13 +269,13 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ reason?: ReloadReason; trigger?: ReloadTrigger }>).detail;
-      systemState.markReloadRequired(detail?.reason ?? "config", detail?.trigger);
+      markReloadRequired(detail?.reason ?? "config", detail?.trigger);
     };
 
     window.addEventListener("openwork-reload-required", handler);
 
     return () => window.removeEventListener("openwork-reload-required", handler);
-  }, [systemState.markReloadRequired]);
+  }, [markReloadRequired]);
 
   // Track what is pending so the post-reload receipt can describe it.
   useEffect(() => {
@@ -253,7 +291,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
 
   const reloadIdle =
     systemState.reload.reloadPending &&
-    (allowsBusyReload || (activeSessions.length === 0 && !activityBlocked)) &&
+    activeSessions.length === 0 && !activityBlocked && pendingAdmissions === 0 &&
     !orgOnboardingVisible;
 
   // Auto-reload when idle. Reloading is a cheap in-process engine rebuild
@@ -290,14 +328,18 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
     const timer = window.setTimeout(() => {
       // Re-check at fire time: a task may have started during the debounce
       // window. The effect re-runs when activity ends and reschedules.
-      if (!allowsBusyReload && hasLiveSessionActivity(useSessionActivityStore.getState().statusesByWorkspaceId)) {
+      // A newly submitted task is already busy in the app before OpenCode's
+      // status endpoint reports it. Even a rollover-capable server can see
+      // that gap as idle and dispose the instance. Automatic reloads wait;
+      // explicit reloads can still use the server's busy-session rollover.
+      if (pendingAdmissionsRef.current > 0 || hasLiveSessionActivity(useSessionActivityStore.getState().statusesByWorkspaceId)) {
         return;
       }
       lastAutoReloadAtRef.current = Date.now();
       void systemState.reloadWorkspaceEngine();
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [allowsBusyReload, reloadIdle, systemState]);
+  }, [reloadIdle, systemState]);
 
   // Changes pending while tasks are running: quiet center entry instead of
   // a toast. The same dedupe key means the eventual "applied" receipt
@@ -346,9 +388,10 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
 
   const value = useMemo<ReloadCoordinatorContextValue>(
     () => ({
-      markReloadRequired: systemState.markReloadRequired,
+      markReloadRequired,
       clearReloadRequired: systemState.clearReloadRequired,
       reloadWorkspaceEngine: systemState.reloadWorkspaceEngine,
+      withEngineReady,
       canReloadWorkspaceEngine: systemState.canReloadWorkspaceEngine,
       reloadPending: systemState.reload.reloadPending,
       reloadBusy: systemState.reload.reloadBusy,
@@ -357,9 +400,10 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
     }),
     [
       registerWorkspaceReloadControls,
+      withEngineReady,
       systemState.canReloadWorkspaceEngine,
       systemState.clearReloadRequired,
-      systemState.markReloadRequired,
+      markReloadRequired,
       systemState.reload.reloadPending,
       systemState.reload.reloadBusy,
       systemState.reload.reloadError,

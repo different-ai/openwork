@@ -143,6 +143,13 @@ non-blocking channels:
 gh workflow run "Release App" --repo different-ai/openwork -f tag=vX.Y.Z
 ```
 
+If the release is already **published**, a recovery run skips every desktop
+build leg and the updater-manifest merge; it replays only npm, AUR, and
+Daytona. Rebuilding re-signs the installers, and a run that fails before
+`publish-release` would leave `latest*.yml` pointing at bytes that no longer
+exist. Every auto-update then fails with `sha512 checksum mismatch` (v0.18.52).
+Ship new desktop bytes as the next patch.
+
 Recovery runs skip tag creation and monotonicity, build source pinned to the
 tag, and pick up workflow-file fixes from `dev` automatically (the workflow
 definition runs from the dispatched ref; only the checked-out sources are

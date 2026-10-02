@@ -4,6 +4,7 @@ import { Loader2, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import { t } from "../../../../i18n";
 import type { LibraryAddKind } from "../library";
 import type { LibraryConnectorCue } from "../library-connector-cues";
@@ -27,6 +28,14 @@ export function libraryAddKindLabel(kind: LibraryAddKind) {
       return t("extensions.add_connector");
   }
 }
+
+/**
+ * `focusableWhenDisabled` keeps the reason tooltip reachable, but it renders
+ * aria-disabled instead of the `disabled` attribute, so the Button's
+ * `disabled:` styles never apply. Without this the control looked fully
+ * enabled and silently ignored clicks.
+ */
+const unavailableClassName = "data-disabled:cursor-not-allowed data-disabled:opacity-50 data-disabled:active:translate-y-0";
 
 export function LibraryAddControl(props: {
   kinds: LibraryAddKind[];
@@ -55,7 +64,7 @@ export function LibraryAddControl(props: {
           <Button
             variant={variant}
             size={props.iconOnly ? "icon-sm" : size}
-            className={props.iconOnly ? "shrink-0 rounded-lg text-dls-secondary hover:bg-dls-hover hover:text-foreground" : "shrink-0 rounded-lg"}
+            className={cn(props.iconOnly ? "shrink-0 rounded-lg text-dls-secondary hover:bg-dls-hover hover:text-foreground" : "shrink-0 rounded-lg", unavailableClassName)}
             disabled={props.pending || Boolean(props.disabledReason)}
             focusableWhenDisabled
             aria-busy={props.pending}
@@ -78,7 +87,7 @@ export function LibraryAddControl(props: {
           <Button
             variant={variant}
             size={props.iconOnly ? "icon-sm" : size}
-            className="shrink-0 gap-1 rounded-lg"
+            className={cn("shrink-0 gap-1 rounded-lg", unavailableClassName)}
             aria-label={props.label ?? t("common.add")}
             aria-busy={props.pending}
             disabled={props.pending || Boolean(props.disabledReason)}

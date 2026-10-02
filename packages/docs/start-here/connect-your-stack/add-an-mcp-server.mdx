@@ -1,10 +1,11 @@
 ---
 title: "Add a custom MCP server"
 description: "Connect a custom or local MCP server that is not available through OpenWork Connect"
+keywords: ["custom MCP", "local MCP", "add MCP server", "workspace MCP", "Add workspace MCP", "OAuth on this device", "MCP URL"]
 ---
 
 <Note>
-**Local workspace setup.** Custom MCP servers are supported without an OpenWork Cloud account, so this path stays free and local to the current workspace. For a connection managed and assigned by your organization, use [OpenWork Cloud Connectors](/cloud/share-with-your-team/shared-mcp-connections).
+**Local workspace setup.** Custom MCP servers are supported without an OpenWork Cloud account, so this path stays free and local to the current workspace. For a connection managed and assigned by your organization, use [OpenWork Cloud connectors](/cloud/share-with-your-team/shared-mcp-connections) under **Manage › Connectors**.
 </Note>
 
 Use this guide only when you need a custom or local MCP server that is not available through OpenWork Connect.
@@ -14,18 +15,18 @@ managed services, follow [Connect your services](/start-here/connect-your-stack/
 
 Connecting a custom app with OpenWork takes four clicks.
 
-- In the desktop app, open `Settings` \> `Library`, expand `Advanced settings`, then click `Add workspace MCP`
+- In the desktop app, open **Settings › Library**, expand **Advanced settings**, then click **Add workspace MCP**.
 
 <Frame>
   ![Library page with Advanced settings expanded, showing the Add workspace MCP button](/images/library-advanced-settings.png)
 </Frame>
 
-The MCP is added to the current workspace.
+Enter an **App name** and a **Server URL**, then click **Add App**. The MCP is added to the current workspace.
 
 <Frame>
   ![Add workspace MCP dialog with app name, server URL, and OAuth options](/images/library-add-mcp-modal.png)
 
-  Indicate whether the server requires OAuth.
+  If the server requires OAuth, expand **OAuth on this device** before adding it.
 </Frame>
 
 This setup is intended for servers that support dynamic OAuth client registration.
@@ -40,10 +41,10 @@ back to OpenWork. If a custom MCP needs behavior OpenWork does not support,
 
 ### Troubleshooting
 
-Some MCP servers do not support dynamic client registration. If the server gives you a pre-registered OAuth client ID and client secret, add it through `Add workspace MCP` > `OAuth on this device`.
+Some MCP servers do not support dynamic client registration. If the server gives you a pre-registered OAuth client ID and client secret, add it in **Add workspace MCP** under **OAuth on this device** (**OAuth client ID** and **OAuth client secret**).
 
 <Note>
-Workspace MCPs are local to you. To share an MCP App with the organization as a dashboard, add it in OpenWork Cloud **Connectors** and see [Dashboards](/cloud/share-with-your-team/dashboards).
+Workspace MCPs are local to you. To share an MCP App with the organization as a dashboard, add it in OpenWork Cloud under **Manage › Connectors** and see [Dashboards](/cloud/share-with-your-team/dashboards).
 </Note>
 
 <Frame>

@@ -29,7 +29,7 @@ import { t } from "@/i18n";
 import { usePlatform } from "../../../kernel/platform";
 import { isDenSessionRestoring, useDenAuth } from "../../cloud/den-auth-provider";
 import { useDesktopRestriction } from "../../cloud/desktop-config-provider";
-import { GatewayUsageTrigger } from "../../cloud/gateway-usage-panel";
+import { GatewayUsageMenuItem } from "../../cloud/gateway-usage-panel";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { useShellConfig } from "../../../shell/shell-config";
 import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
@@ -400,11 +400,16 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
           </button>
         }
       />
-      {signedIn ? <GatewayUsageTrigger key={`${denAuth.verifiedIdentity?.organizationId}:${user.id}`} /> : null}
       <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Account menu"><MoreHorizontal size={14} /></Button>} />
       <DropdownMenuContent side="top" align="start" className="w-72">
         {signedIn ? (
           <div className="px-2 py-1.5 text-[11px] text-muted-foreground">{user.email}</div>
+        ) : null}
+        {signedIn ? (
+          <>
+            <GatewayUsageMenuItem key={`${denAuth.verifiedIdentity?.organizationId}:${user.id}`} />
+            <DropdownMenuSeparator />
+          </>
         ) : null}
 
         {showStatus ? (

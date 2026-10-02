@@ -39,6 +39,7 @@ jobs:
       checks: write
     outputs:
       authorized: ${{ steps.authorize.outputs.authorized }}
+      internalContributor: ${{ steps.authorize.outputs.internalContributor }}
       pr: ${{ steps.authorize.outputs.pr }}
       sha: ${{ steps.authorize.outputs.sha }}
       base: ${{ steps.authorize.outputs.base }}
@@ -112,7 +113,7 @@ jobs:
     # The authorization job is intentionally skipped for schedules/manual runs.
     if: always() && needs.plan.result == 'success' && needs.plan.outputs.has_daytona == 'true'
     name: Journey — ${{ matrix.journey.name }}
-    environment: ${{ github.event_name == 'workflow_run' && 'pr-slow-specs' || 'scheduled-e2e-regression' }}
+    environment: ${{ github.event_name == 'workflow_run' && (needs.authorize.outputs.internalContributor == 'true' && 'pr-internal-specs' || 'pr-slow-specs') || 'scheduled-e2e-regression' }}
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -221,7 +222,7 @@ jobs:
     needs: [authorize, plan]
     if: always() && needs.plan.result == 'success' && needs.plan.outputs.has_local == 'true'
     name: Journey — ${{ matrix.journey.name }}
-    environment: ${{ github.event_name == 'workflow_run' && 'pr-slow-specs' || 'scheduled-e2e-regression' }}
+    environment: ${{ github.event_name == 'workflow_run' && (needs.authorize.outputs.internalContributor == 'true' && 'pr-internal-specs' || 'pr-slow-specs') || 'scheduled-e2e-regression' }}
     strategy:
       fail-fast: false
       max-parallel: 2

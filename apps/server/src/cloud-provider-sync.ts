@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { GatewayAuthorizationRequest, GatewayDesktopOauthStartResponse, GatewayUsableModel } from "@openwork/types/den/gateway";
-import { catalogFastVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
+import { catalogModelVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 
 import { enginePoolForConfig, rolloverOutcomeApplied, type RolloverOutcome } from "./engine-pool.js";
 import type { EnvService } from "./env-file.js";
@@ -27,6 +27,26 @@ import { findManagedEngineWorkspace } from "./workspaces.js";
 
 type JsonRecord = Record<string, unknown>;
 
+export function gatewayAuthorizationUrl(raw: unknown, session: CloudProviderDenSession): string {
+  if (typeof raw !== "string" || !raw.trim()) throw new ApiError(502, "invalid_authorization_url", "Den returned an invalid authorization URL");
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new ApiError(502, "invalid_authorization_url", "Den returned an invalid authorization URL");
+  }
+  const api = new URL(session.baseUrl);
+  const loopbackHosts = ["localhost", "127.0.0.1", "[::1]"];
+  const localBridge = url.protocol === "http:" && api.protocol === "http:" && loopbackHosts.includes(url.hostname) && loopbackHosts.includes(api.hostname);
+  const bridge = url.pathname === "/gateway/connect" && (url.protocol === "https:" || localBridge);
+  const google = url.origin === "https://accounts.google.com" && url.pathname === "/o/oauth2/v2/auth";
+  if ((!bridge && !google) || url.username || url.password || url.hash || raw.includes(session.token)
+    || [...url.searchParams.values()].some((value) => value.includes(session.token))) {
+    throw new ApiError(502, "invalid_authorization_url", "Den returned an invalid authorization URL");
+  }
+  return raw;
+}
+
 export type CloudProviderDenSession = {
   /** Resolved Den API base URL, including any required `/api/den` prefix. */
   baseUrl: string;
@@ -47,6 +67,7 @@ export type CloudProviderSyncStatusProvider = {
   source: string | null;
   updatedAt: string | null;
   modelIds: string[];
+  pinnedModelIds: string[];
   importedAt: number;
   modelConfigVersion: number;
 };
@@ -68,6 +89,7 @@ export type CloudProviderSyncSkippedProvider = {
    */
   reason: "missing_credentials" | "needs_key" | "member_auth_required" | "org_credential_missing" | "no_accessible_models";
   credentialSetId?: string;
+  models?: GatewayUsableModel[];
   /**
    * Legacy Den OAuth URL, kept for older readers. Current clients must start
    * OAuth using the host-authenticated provider-ID action, not this URL.
@@ -121,6 +143,7 @@ type DenProvider = {
   updatedAt: string | null;
   providerConfig: JsonRecord;
   models: DenProviderModel[];
+  pinnedModelIds: string[];
 };
 
 type DenProviderConnection = DenProvider & {
@@ -315,6 +338,7 @@ function parseProvider(value: unknown, idPattern: RegExp = /^lpr_/i): DenProvide
     updatedAt: readOptionalString(value.updatedAt),
     providerConfig: parseJsonRecord(value.providerConfig),
     models,
+    pinnedModelIds: [...new Set(readStringList(value.pinnedModelIds))].filter((id) => models.some((model) => model.id === id)),
   };
 }
 
@@ -396,7 +420,24 @@ function parseInferenceProvider(value: unknown): DenInferenceProviderSummary | n
       const name = readRequiredString(request.name);
       const authUrl = readRequiredString(request.authUrl);
       if (!credentialSetId || !/^gcs_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(credentialSetId) || !name || !authUrl) return null;
-      authorizationRequests.push({ credentialSetId, name, authUrl });
+      const models: GatewayUsableModel[] = [];
+      if (request.models !== undefined) {
+        if (!Array.isArray(request.models)) return null;
+        for (const value of request.models) {
+          const model = parseModel(value);
+          if (!model || !/^gwm_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(model.id)
+            || model.config.id !== model.id || !model.upstreamModelId || !model.modelGroupId || !model.modelGroupName
+            || model.credentialSetId !== credentialSetId || !model.credentialSetName
+            || model.id.split("_")[2] !== credentialSetId.slice(4)
+            || model.id.split("_")[1] !== model.modelGroupId.slice(4)) return null;
+          models.push({
+            id: model.id, name: model.name, config: { ...model.config, id: model.id },
+            upstreamModelId: model.upstreamModelId, modelGroupId: model.modelGroupId, modelGroupName: model.modelGroupName,
+            credentialSetId, credentialSetName: model.credentialSetName,
+          });
+        }
+      }
+      authorizationRequests.push({ credentialSetId, name, authUrl, ...(request.models === undefined ? {} : { models }) });
     }
   }
   // Tolerant: older Den servers omit authUrl; a non-string is treated as absent.
@@ -634,7 +675,7 @@ function buildModelConfig(model: DenProviderModel, providerNpm: unknown): JsonRe
     const value = model.config[key];
     if (value !== undefined) next[key] = value;
   }
-  const variants = catalogFastVariants(model.config, providerNpm);
+  const variants = catalogModelVariants(model.config, providerNpm);
   if (variants) next.variants = variants;
   return next;
 }
@@ -676,6 +717,7 @@ function prepareMaterialization(
         cloudProviderId: provider.id, providerId: runtimeProviderId(provider),
         credentialSetId: request.credentialSetId, name: `${provider.name} / ${request.name}`,
         reason: "member_auth_required",
+        ...(request.models === undefined ? {} : { models: request.models }),
       });
     }
     if (provider.memberCredentialState && provider.memberCredentialState !== "active") {
@@ -981,7 +1023,7 @@ export class CloudProviderSync {
     return {
       hasSession: this.session !== null,
       lastRun: this.lastRun ? { ...this.lastRun } : null,
-      providers: this.providers.map((provider) => ({ ...provider, modelIds: [...provider.modelIds] })),
+      providers: this.providers.map((provider) => ({ ...provider, modelIds: [...provider.modelIds], pinnedModelIds: [...provider.pinnedModelIds] })),
       reloadPending: this.reloadPending,
       skippedProviders: this.skippedProviders.map((provider) => ({ ...provider })),
     };
@@ -999,21 +1041,7 @@ export class CloudProviderSync {
     if (generation !== this.contextGeneration || this.session !== session) {
       throw new ApiError(409, "session_changed", "The active account changed; try again");
     }
-    const rawUrl = isRecord(payload) ? readRequiredString(payload.authUrl) : null;
-    let url: URL;
-    try {
-      url = new URL(rawUrl ?? "");
-    } catch {
-      throw new ApiError(502, "invalid_authorization_url", "Den returned an invalid authorization URL");
-    }
-    // Vertex is the only supported member OAuth provider. Never open a Den
-    // session URL, arbitrary upstream URL, or a URL carrying our bearer.
-    if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth"
-      || url.username || url.password || url.hash || url.href.includes(session.token)
-      || [...url.searchParams.values()].some((value) => value.includes(session.token))) {
-      throw new ApiError(502, "invalid_authorization_url", "Den returned an invalid authorization URL");
-    }
-    return { authorizationUrl: url.href };
+    return { authorizationUrl: gatewayAuthorizationUrl(isRecord(payload) ? payload.authUrl : null, session) };
   }
 
   stop(): void {
@@ -1439,6 +1467,7 @@ export class CloudProviderSync {
         source: entry.provider.source,
         updatedAt: entry.provider.updatedAt,
         modelIds: entry.provider.models.map((model) => model.id).sort(),
+        pinnedModelIds: entry.provider.pinnedModelIds,
         modelConfigVersion: CLOUD_MODEL_CONFIG_VERSION,
         importedAt,
       };

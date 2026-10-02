@@ -24,6 +24,30 @@ describe("Landing display copy", () => {
     expect(html.match(/<h1\b/g)).toHaveLength(1);
   });
 
+  test("lists the four products with their pages and keeps the SOC 2 headline", () => {
+    const html = renderToStaticMarkup(createElement(LandingHome, props));
+    const text = textContent(html);
+    for (const name of ["MCP Gateway", "AI Gateway", "Desktop App", "Cloud App"]) {
+      expect(text).toContain(name);
+    }
+    expect(html).toContain('href="/connect"');
+    expect(html).toContain('href="/docs/ai-gateway/overview"');
+    expect(html).toContain('href="/cloud"');
+    expect(text).toContain("SOC 2 Type II");
+    expect(html).toContain('href="/trust"');
+    expect(text).not.toContain("SOVEREIGN AI");
+    expect(text).not.toContain("Where to next");
+  });
+
+  test("header replaces Product, Connect and Cloud links with a Products menu", () => {
+    const html = renderToStaticMarkup(createElement(LandingHome, props));
+    const header = html.slice(html.indexOf("<header"), html.indexOf("</header>"));
+    expect(header).toMatch(/<button[^>]*aria-expanded="false"[^>]*>Products/);
+    expect(header).not.toContain('href="/#product"');
+    expect(textContent(header)).toContain("Enterprise");
+    expect(textContent(header)).toContain("Pricing");
+  });
+
   test("uses the download action on desktop and browser action on mobile", () => {
     const desktop = renderToStaticMarkup(createElement(LandingHome, props));
     const mobile = renderToStaticMarkup(createElement(LandingHome, { ...props, isMobileVisitor: true }));

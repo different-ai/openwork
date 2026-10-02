@@ -1,0 +1,28 @@
+{
+  "name": "@openwork-ee/headless-runner",
+  "private": true,
+  "type": "module",
+  "description": "Cheap headless agent sessions: OpenWork AI Gateway for the model, OpenWork MCP for tools, a small scratch filesystem, no VM.",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "smoke": "tsx scripts/smoke.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.0.12",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "hono": "4.13.5",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.1",
+    "typescript": "^5.5.4"
+  }
+}

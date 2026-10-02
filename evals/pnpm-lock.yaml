@@ -129,6 +129,9 @@ importers:
 
   packages/env:
     dependencies:
+      '@openwork/freestyle':
+        specifier: link:../../../packages/freestyle
+        version: link:../../../packages/freestyle
       '@openwork/behaviors':
         specifier: workspace:*
         version: link:../behaviors
@@ -172,6 +175,9 @@ importers:
 
   packages/test-evidence:
     dependencies:
+      '@openwork/freestyle':
+        specifier: link:../../../packages/freestyle
+        version: link:../../../packages/freestyle
       '@openwork/cdp':
         specifier: workspace:*
         version: link:../cdp

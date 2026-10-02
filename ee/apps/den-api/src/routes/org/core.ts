@@ -21,6 +21,8 @@ import { jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidato
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
+import { organizationHasCapability, organizationManagedDashboardsEnabled } from "../../organization-capabilities.js"
+import { appMcpServersEnabled } from "../../mcp-app-rollout.js"
 import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
 import { getOpenWorkWebAccess } from "../../stripe-billing.js"
 import {
@@ -172,12 +174,14 @@ const organizationContextResponseSchema = z.object({
   currentMember: z.object({}).passthrough(),
   currentMemberTeams: z.array(z.object({}).passthrough()),
   capabilities: z.object({
+    auditLogs: z.boolean(),
     gatewayDashboard: z.literal(true).meta({
       deprecated: true,
       description: "Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.",
     }),
   }).passthrough(),
   deploymentCapabilities: deploymentCapabilitiesSchema,
+  entitlements: z.object({ sso: z.boolean(), desktopPolicies: z.boolean(), orgControls: z.boolean(), analytics: z.boolean(), auditLogs: z.boolean() }),
 }).passthrough().meta({ ref: "OrganizationContextResponse" })
 
 const userEmailRequiredSchema = z.object({
@@ -675,6 +679,8 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         c.set("organizationContext", payload)
       }
 
+      const [currentOrganization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, payload.organization.id)).limit(1)
+      if (!currentOrganization) return c.json({ error: "organization_not_found" }, 404)
       const owner = payload.members.find((member: typeof payload.members[number]) => member.isOwner) ?? null
       // Cloud is entitled by OpenWork Web access (paid subscription or the
       // platform-admin complimentary grant) on hosted deployments; there is no
@@ -711,20 +717,26 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         },
         currentMemberTeams: c.get("memberTeams") ?? [],
         deploymentCapabilities: deploymentCapabilities(),
-        plan: parseOrganizationPlan(payload.organization.metadata),
-        entitlements: getOrganizationEntitlements(payload.organization.metadata),
+        plan: parseOrganizationPlan(currentOrganization.metadata),
+        entitlements: getOrganizationEntitlements(currentOrganization.metadata),
         capabilities: {
+          auditLogs: organizationHasCapability(currentOrganization.metadata, "auditLogs") && env.auditVisibilityEnabled,
           gatewayDashboard: true,
           // Protocol capability: clients must see this explicit signal before
           // calling the dashboard routes. Older Den versions omit the field,
           // allowing newer Desktop builds to fail closed during a staggered
           // rollout instead of calling an endpoint that does not exist yet.
-          orgManagedDashboards: true,
+          // Per-organization and default-off: platform admins enable it with
+          // metadata.capabilities.orgManagedDashboards = true.
+          orgManagedDashboards: organizationManagedDashboardsEnabled(payload.organization.metadata),
           // Expose the effective value, not the raw stored flag: Connect is
           // member-facing default-on unless an explicit org kill switch says no.
           mcpConnections: memberFacingMcpConnectionsEnabled(payload.organization.metadata, {
             gatingEnabled: env.mcpConnectionsGatingEnabled,
           }),
+          // Building your own Apps is per-organization and default-off:
+          // platform admins enable metadata.capabilities.appMcpServers in /admin.
+          appMcpServers: appMcpServersEnabled(payload.organization.metadata),
           // Workflows/Code Mode are enabled for every organization; the field
           // remains for published clients that still read it.
           workflows: true,

@@ -125,7 +125,4 @@ export function signAwsRequest(input: SignAwsRequestInput) {
 }
 
 export const bedrockService = "bedrock"
-
-export function bedrockRuntimeHost(region: string) {
-  return `bedrock-runtime.${region}.amazonaws.com`
-}
+export const bedrockMantleService = "bedrock-mantle"

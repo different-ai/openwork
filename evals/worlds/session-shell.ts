@@ -2236,11 +2236,9 @@ async function archiveWorld(seed: Seed, app: Surface, workspacePath: string, tit
         })),
       };
     }),
-    hoverArchiveButton: async () => {
-      // Disabled buttons reject pointer hits; hover their visible bounds without clicking.
-      const button = await waitForLocated(app, { testId: `session-archive-${candidate.sessionId}` }, { timeoutMs: 10_000 });
-      await hoverAt(app, button.center);
-    },
+    // Native desktop menus are OS widgets, observed through the development bridge.
+    nativeMenu: () => seed.evalIn(app, () => window.__OPENWORK_ELECTRON__.contextMenu.inspect(), { awaitPromise: true }),
+    dismissMenu: () => seed.evalIn(app, () => window.__OPENWORK_ELECTRON__.contextMenu.dismiss(), { awaitPromise: true }),
     mutationRequests: () => seed.evalIn(app, () => window.__archiveAvailabilityRequests),
   };
 }
@@ -2663,7 +2661,18 @@ export async function settingsRuntime(seed: Seed) {
 
 export async function macSidebar(seed: Seed) {
   const world = await oneWorkspace(seed, "mac-sidebar-toggle-clearance", ["Mac sidebar clearance"]);
-  return world;
+  return {
+    ...world,
+    clearViewport: () => world.app.client.send("Emulation.clearDeviceMetricsOverride"),
+    // TODO(primitive): user.setWindowFullscreen. Called immediately after trusted
+    // user input, a Chromium fullscreen request enters the real Electron window
+    // and exercises its native events, rather than changing CSS markers.
+    async fullscreen(enabled: boolean) {
+      await evaluate(world.app.client, enabled
+        ? () => document.documentElement.requestFullscreen()
+        : () => document.exitFullscreen());
+    },
+  };
 }
 
 export async function rendererCrash(seed: Seed) {

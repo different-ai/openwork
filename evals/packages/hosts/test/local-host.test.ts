@@ -8,7 +8,7 @@ import test from "node:test";
 
 import type { SurfaceHandle } from "@openwork/cdp";
 import { allocateFreePort } from "@openwork/cdp";
-import { electronProfilePaths, electronSurfaceEnv, freePort, pruneStaleSurfaceProfiles, registerLiveProfileRoot, resolveChromeBinary, retainOwnedElectronLog, removeOwnedSurfaceFiles, stopOwnedElectronSurface, unregisterLiveProfileRoot } from "../src/local.ts";
+import { electronLaunchEnv, electronProfilePaths, electronSurfaceEnv, freePort, pruneStaleSurfaceProfiles, registerLiveProfileRoot, resolveChromeBinary, retainOwnedElectronLog, removeOwnedSurfaceFiles, stopOwnedElectronSurface, unregisterLiveProfileRoot } from "../src/local.ts";
 
 const ENV_KEYS = [
   "APPDATA",
@@ -120,6 +120,33 @@ test("electronSurfaceEnv maps the v2 eval lane before caller overrides", () => {
   }
 });
 
+test("electronLaunchEnv keeps the launching shell's OPENCODE_* out of the app", () => {
+  const paths = electronProfilePaths(join(tmpdir(), "openwork-local-host-launch-env"));
+  const options = {
+    appName: "OpenWork Eval launch",
+    appIdentifier: "com.differentai.openwork.eval.launch",
+    port: 5125,
+    cdpPort: 9125,
+  };
+  // What an OpenWork agent shell exports for the host app's own engine.
+  const shell = {
+    PATH: "/usr/bin:/bin",
+    OPENCODE_DB: "/host/opencode.db",
+    OPENCODE_CONFIG: "/host/opencode.json",
+    OPENCODE_PASSWORD: "host-password",
+  };
+
+  const env = electronLaunchEnv(shell, electronSurfaceEnv(paths, options));
+  assert.equal(env.PATH, "/usr/bin:/bin");
+  assert.equal(env.OPENCODE_DB, undefined);
+  assert.equal(env.OPENCODE_CONFIG, undefined);
+  assert.equal(env.OPENCODE_PASSWORD, undefined);
+  assert.equal(env.OPENCODE_CONFIG_DIR, paths.opencodeConfigDir);
+
+  const explicit = electronLaunchEnv(shell, electronSurfaceEnv(paths, options, { OPENCODE_DB: "/profile/opencode.db" }));
+  assert.equal(explicit.OPENCODE_DB, "/profile/opencode.db");
+});
+
 test("stopOwnedElectronSurface verifies profile ownership before removing it", async () => {
   const profileDir = await mkdtemp(join(tmpdir(), "openwork-owned-electron-"));
   const userDataDir = join(profileDir, "electron-userdata");
@@ -196,6 +223,73 @@ test("freePort kills a real child listener and releases its port", {
     });
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  }
+});
+
+test("surface cleanup leaves a listener from another process group alone", {
+  skip: process.platform !== "darwin" && process.platform !== "linux",
+}, async () => {
+  // A packaged surface allocates a Vite port it never binds; a concurrently
+  // booting app can take that port. Disposing the first surface must not kill it.
+  const port = await allocateFreePort();
+  const bystander = spawn(process.execPath, [
+    "-e",
+    "require('node:net').createServer().listen(Number(process.argv[1]), '127.0.0.1', () => process.stdout.write('ready\\n'))",
+    String(port),
+  ], { detached: true, stdio: ["ignore", "pipe", "inherit"] });
+  const logs: string[] = [];
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Listener child did not bind port ${port}.`)), 5_000);
+      bystander.once("error", reject);
+      bystander.stdout?.once("data", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    assert(bystander.pid);
+    const unrelatedGroup = bystander.pid + 1_000_000;
+
+    await freePort(port, { log: (message) => logs.push(message), ownerProcessGroup: unrelatedGroup });
+
+    assert.equal(bystander.exitCode, null);
+    assert.equal(bystander.signalCode, null);
+    process.kill(bystander.pid, 0);
+    assert(logs.some((message) => message.includes("leaving it alone")));
+  } finally {
+    if (bystander.exitCode === null && bystander.signalCode === null) bystander.kill("SIGKILL");
+  }
+});
+
+test("surface cleanup still stops a listener in the surface's own process group", {
+  skip: process.platform !== "darwin" && process.platform !== "linux",
+}, async () => {
+  const port = await allocateFreePort();
+  const owned = spawn(process.execPath, [
+    "-e",
+    "require('node:net').createServer().listen(Number(process.argv[1]), '127.0.0.1', () => process.stdout.write('ready\\n'))",
+    String(port),
+  ], { detached: true, stdio: ["ignore", "pipe", "inherit"] });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Listener child did not bind port ${port}.`)), 5_000);
+      owned.once("error", reject);
+      owned.stdout?.once("data", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    assert(owned.pid);
+
+    await freePort(port, { ownerProcessGroup: owned.pid });
+
+    await new Promise<void>((resolve, reject) => {
+      const probe = createServer();
+      probe.once("error", reject);
+      probe.listen(port, "127.0.0.1", () => probe.close((error) => error ? reject(error) : resolve()));
+    });
+  } finally {
+    if (owned.exitCode === null && owned.signalCode === null) owned.kill("SIGKILL");
   }
 });
 

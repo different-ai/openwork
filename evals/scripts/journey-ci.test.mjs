@@ -143,11 +143,21 @@ test('mixed-world specs: a prerequisite one case declares is never promoted to t
 test('registered case metadata names exact files, supported execution axes, and defaults', async () => {
   const entries = await catalog();
   assert.deepEqual(registeredCases.map(({ spec, id, engines }) => ({ spec, id, engines })), [
+    { spec: 'opencode-v2-context-activity.e2e.test.ts', id: 'V2-CONTEXT-ACTIVITY', engines: ['v2'] },
+    { spec: 'edit-running-message.e2e.test.ts', id: 'EDIT-BUSY', engines: ['v1', 'v2'] },
+    { spec: 'opencode-v2-session-home.e2e.test.ts', id: 'HOME-01', engines: ['v2'] },
+    { spec: 'opencode-v2-session-home.e2e.test.ts', id: 'HOME-02', engines: ['v2'] },
+    { spec: 'opencode-v2-session-home.e2e.test.ts', id: 'HOME-03', engines: ['v2'] },
     {
       spec: 'composer-model-picker-no-subscribe-promo.e2e.test.ts',
       id: 'MODEL-01',
       engines: ['v2'],
     },
+    { spec: 'agent-background-journey.e2e.test.ts', id: 'AGENT-VIS-03', engines: ['v2'] },
+    { spec: 'agent-connection-journey.e2e.test.ts', id: 'AGENT-VIS-04', engines: ['v1', 'v2'] },
+    { spec: 'agent-connection-sign-in-journey.e2e.test.ts', id: 'AGENT-VIS-06', engines: ['v1', 'v2'] },
+    { spec: 'agent-visibility-journey.e2e.test.ts', id: 'AGENT-VIS-01', engines: ['v1', 'v2'] },
+    { spec: 'agent-visibility-journey.e2e.test.ts', id: 'AGENT-VIS-02', engines: ['v1', 'v2'] },
     {
       spec: 'task-activity-shimmer.e2e.test.ts',
       id: 'ACT-01',
@@ -202,19 +212,10 @@ test('registered case metadata names exact files, supported execution axes, and 
     { spec: 'opencode-v2-skill-jit.e2e.test.ts', id: 'SKILL-MISSING', engines: ['v2'] },
     {
       spec: 'opencode-v2-skill-jit.e2e.test.ts',
-      id: 'SKILL-CLOUD-01',
-      engines: ['v2'],
-    },
-    {
-      spec: 'opencode-v2-skill-jit.e2e.test.ts',
-      id: 'SKILL-CLOUD-02',
-      engines: ['v2'],
-    },
-    {
-      spec: 'opencode-v2-skill-jit.e2e.test.ts',
       id: 'SKILL-NATIVE-01',
       engines: ['v2'],
     },
+    { spec: 'opencode-v2-reads-during-mcp-startup.e2e.test.ts', id: 'UPKEEP-01', engines: ['v2'] },
   ]);
   for (const registered of registeredCases) {
     assert(entries.some(entry => entry.spec === registered.spec));

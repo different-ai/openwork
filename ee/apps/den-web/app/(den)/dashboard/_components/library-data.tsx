@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { queryOptions, useQuery } from "@tanstack/react-query";
 
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
 import type { PluginAccessRole } from "./plugin-access-data";
@@ -271,8 +271,8 @@ export function parseLibraryPayload(payload: unknown): LibraryItem[] {
   return items;
 }
 
-export function useLibrary() {
-  return useQuery({
+export function libraryQueryOptions() {
+  return queryOptions({
     queryKey: libraryQueryKeys.items,
     queryFn: async (): Promise<LibraryItem[]> => {
       const { response, payload } = await requestJson(
@@ -286,4 +286,8 @@ export function useLibrary() {
       return parseLibraryPayload(payload);
     },
   });
+}
+
+export function useLibrary() {
+  return useQuery(libraryQueryOptions());
 }

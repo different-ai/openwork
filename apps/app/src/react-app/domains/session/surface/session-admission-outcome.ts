@@ -26,10 +26,16 @@ export function messageHasVisibleAssistantOutput(message: UIMessage): boolean {
   });
 }
 
+/** A turn the app kept but never sent (for example a send Auto refused): it was never admitted, so it awaits no result. */
+function neverAdmitted(message: UIMessage): boolean {
+  const metadata = message.metadata;
+  return Boolean(metadata && typeof metadata === "object" && "unprocessed" in metadata && metadata.unprocessed === true);
+}
+
 export function findLastUserMessageIndex(messages: readonly UIMessage[]): number {
   let latest = -1;
   for (let index = 0; index < messages.length; index += 1) {
-    if (messages[index]?.role !== "user") continue;
+    if (messages[index]?.role !== "user" || neverAdmitted(messages[index]!)) continue;
     const created = messageIdentity(messages[index]).created;
     const previous = latest < 0 ? undefined : messageIdentity(messages[latest]).created;
     if (created === undefined || previous === undefined || created >= previous) latest = index;

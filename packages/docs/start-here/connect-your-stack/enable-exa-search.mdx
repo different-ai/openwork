@@ -1,11 +1,66 @@
 ---
 title: "Enable Exa search"
-"og:description": "Enable Exa web search in OpenWork to bring search results into your AI workspace."
+description: "Give your AI Exa web search in OpenWork, either as a connector for your whole organization or as an MCP server in your own workspace."
+"og:description": "Give your AI Exa web search in OpenWork, either as a connector for your whole organization or as an MCP server in your own workspace."
+keywords: ["Exa", "web search", "search the web", "Exa API key", "Exa MCP", "connector", "internet search"]
 ---
 
-[Exa](https://exa.ai) is a very fast search engine for AI. We support it as part of a global setting that is currently in  `Settings` -> `Advanced`.
+[Exa](https://exa.ai) is a search engine built for AI. Add it to OpenWork and
+your AI can search the web and read pages.
 
-<Frame>
-  ![Enable Exa web search toggle in Settings > Advanced](/images/exa-search-toggle.png)
-</Frame>
+There are two ways to add Exa:
 
+- **For your organization.** An admin adds the Exa connector in OpenWork Cloud
+  with one Exa API key. Everyone the admin picks can use it.
+- **For yourself.** Add Exa as an MCP server in your own workspace. This works
+  without an OpenWork Cloud account.
+
+The desktop app no longer has an Exa switch in **Settings › Advanced**.
+
+## Add Exa for your organization
+
+You need to be an owner or admin in OpenWork Cloud, and you need an API key from
+your Exa account. Exa's usage limits and billing apply to that key.
+
+1. In OpenWork Cloud, open **Manage › Connectors**.
+2. Click **Add connector**, then pick **Exa**.
+3. When OpenWork asks for a key, paste your Exa API key and click **Save key**.
+4. Wait for the checks to finish.
+5. Under **Who can use it**, turn on **Everyone in the organization**, or click
+   **Add person** or **Add team**.
+6. Click **Add Exa**.
+
+Everyone uses the key you added, so nobody else has to sign in. People you gave
+access to find Exa in **Settings › Library** in the desktop app.
+
+To replace the key later, open Exa in **Manage › Connectors**, open
+**Settings**, and enter a **New API key**.
+
+See [Sharing MCP connections with your team](/cloud/share-with-your-team/shared-mcp-connections)
+for more about connectors.
+
+## Add Exa for yourself
+
+1. In the desktop app, open **Settings › Library**.
+2. Expand **Advanced settings** and click **Add workspace MCP**.
+3. Enter an **App name**, for example `exa`.
+4. Keep **Remote server (URL)** as the type and enter this **Server URL**:
+
+   ```text
+   https://mcp.exa.ai/mcp
+   ```
+
+5. Click **Add App**.
+
+Exa is added to the current workspace only. The **Add workspace MCP** dialog
+has no API key field. Exa lets you use this address without a key, with free
+rate limits. See [Exa MCP](https://docs.exa.ai/reference/exa-mcp) for details.
+
+For more about workspace MCP servers, see
+[Add a custom MCP server](/start-here/connect-your-stack/add-an-mcp-server).
+
+## Try it
+
+Ask your AI for something that needs current information:
+
+> Search the web for this week's news about electric trucks and summarize the top three stories.

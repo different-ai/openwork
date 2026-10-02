@@ -1,15 +1,19 @@
-import { afterAll, beforeAll, expect, mock, test } from "bun:test"
+import { afterAll, beforeAll, expect, mock, spyOn, test } from "bun:test"
 import { eq, inArray } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
+  ConfigObjectTable,
+  ConfigObjectVersionTable,
   DashboardAccessGrantTable,
   DashboardTable,
   MemberTable,
   OrganizationTable,
+  PluginTable,
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { MCP_APP_CONFIG_SCHEMA_VERSION, mcpAppResourceUri, mcpAppServerPath } from "@openwork/types/mcp-app"
 import { Hono, type MiddlewareHandler } from "hono"
 import type { OrgRouteVariables } from "../src/routes/org/shared.js"
 
@@ -24,6 +28,8 @@ process.env.CORS_ORIGINS ??= API_ORIGIN
 
 let app: Hono<{ Variables: OrgRouteVariables }>
 let db: typeof import("../src/db.js").db
+let mcpApps: typeof import("../src/mcp-apps.js")
+let env: typeof import("../src/env.js").env
 
 const organizationId = createDenTypeId("organization")
 const otherOrganizationId = createDenTypeId("organization")
@@ -36,6 +42,10 @@ const caseyMemberId = createDenTypeId("member")
 const novaMemberId = createDenTypeId("member")
 const foreignUserId = createDenTypeId("user")
 const foreignMemberId = createDenTypeId("member")
+const builtAppId = createDenTypeId("configObject")
+const firstRevisionId = createDenTypeId("configObjectVersion")
+const secondRevisionId = createDenTypeId("configObjectVersion")
+const appPluginId = createDenTypeId("plugin")
 
 const readOnlyElement = {
   serverName: "openwork-app-host-connect-0123456789ab",
@@ -62,7 +72,29 @@ const organizationAutoLaunchElement = {
   organizationAutoLaunch: true,
 }
 
+/** An element that opens the built App through its own server, pinned to a revision. */
+function builtAppElement(revisionId: string, toolName = "open_app") {
+  return {
+    serverName: "openwork-app-host-connect-abcdef012345",
+    connectionId: builtAppId,
+    toolName,
+    projectedToolName: `openwork-app-host-connect-abcdef012345_${toolName}`,
+    resourceUri: mcpAppResourceUri(builtAppId, revisionId),
+    title: "Order calculator",
+  }
+}
+
+async function addAppRevision(id: string, createdAt: Date) {
+  await db.insert(ConfigObjectVersionTable).values({
+    id, organizationId, configObjectId: builtAppId, normalizedPayloadJson: null, rawSourceText: null,
+    schemaVersion: MCP_APP_CONFIG_SCHEMA_VERSION, createdVia: "cloud", createdByOrgMembershipId: adminMemberId, createdAt,
+  })
+}
+
 async function cleanup() {
+  await db.delete(ConfigObjectVersionTable).where(eq(ConfigObjectVersionTable.organizationId, organizationId))
+  await db.delete(ConfigObjectTable).where(eq(ConfigObjectTable.organizationId, organizationId))
+  await db.delete(PluginTable).where(eq(PluginTable.organizationId, organizationId))
   await db.delete(DashboardAccessGrantTable).where(inArray(DashboardAccessGrantTable.organizationId, [organizationId, otherOrganizationId]))
   await db.delete(DashboardTable).where(inArray(DashboardTable.organizationId, [organizationId, otherOrganizationId]))
   await db.delete(TeamMemberTable).where(eq(TeamMemberTable.teamId, teamId))
@@ -74,7 +106,7 @@ async function cleanup() {
 
 type Actor = "admin" | "casey" | "nova"
 
-function organizationContext(actor: Actor) {
+function organizationContext(actor: Actor, dashboardsEnabled: boolean, appsEnabled: boolean) {
   const now = new Date()
   const member = actor === "admin"
     ? { id: adminMemberId, userId: adminUserId, role: "admin" }
@@ -88,7 +120,7 @@ function organizationContext(actor: Actor) {
       slug: `dashboards-${organizationId}`,
       logo: null,
       allowedEmailDomains: null,
-      metadata: null,
+      metadata: dashboardsEnabled || appsEnabled ? { capabilities: { orgManagedDashboards: dashboardsEnabled, appMcpServers: appsEnabled } } : null,
       createdAt: now,
       updatedAt: now,
     },
@@ -113,10 +145,12 @@ function memberTeams(actor: Actor) {
   return [{ id: teamId, organizationId, name: "Product", createdAt: now, updatedAt: now }]
 }
 
-function request(path: string, init: RequestInit & { actor?: Actor } = {}) {
-  const { actor, ...rest } = init
+function request(path: string, init: RequestInit & { actor?: Actor; dashboardsEnabled?: boolean; appsEnabled?: boolean } = {}) {
+  const { actor, dashboardsEnabled, appsEnabled, ...rest } = init
   const headers = new Headers(rest.headers)
   headers.set("x-test-actor", actor ?? "admin")
+  if (dashboardsEnabled === false) headers.set("x-test-dashboards", "off")
+  if (appsEnabled === false) headers.set("x-test-apps", "off")
   if (rest.body) headers.set("content-type", "application/json")
   return app.request(path, { ...rest, headers })
 }
@@ -152,15 +186,19 @@ beforeAll(async () => {
     resolveMemberTeamsMiddleware: passThroughMiddleware,
   }))
   const { registerOrgDashboardRoutes } = await import("../src/routes/org/dashboards.js")
+  const { registerOrgMcpAppCatalogRoutes } = await import("../src/routes/org/mcp-app-catalog.js")
+  mcpApps = await import("../src/mcp-apps.js")
+  env = (await import("../src/env.js")).env
   app = new Hono<{ Variables: OrgRouteVariables }>()
   app.use("*", async (c, next) => {
     const header = c.req.header("x-test-actor")
     const actor: Actor = header === "casey" ? "casey" : header === "nova" ? "nova" : "admin"
-    c.set("organizationContext", organizationContext(actor))
+    c.set("organizationContext", organizationContext(actor, c.req.header("x-test-dashboards") !== "off", c.req.header("x-test-apps") !== "off"))
     c.set("memberTeams", memberTeams(actor))
     await next()
   })
   registerOrgDashboardRoutes(app)
+  registerOrgMcpAppCatalogRoutes(app)
 
   await cleanup()
   await db.insert(AuthUserTable).values([
@@ -341,4 +379,117 @@ test("members see granted dashboards through direct, team, and org-wide grants o
   expect(novaIds).toContain(orgBoard.id)
   expect(novaIds).not.toContain(teamBoard.id)
   expect(novaIds).not.toContain(privateBoard.id)
+})
+
+test("a dashboard element that opens an App built in OpenWork follows the App to its current revision", async () => {
+  await db.insert(ConfigObjectTable).values({
+    id: builtAppId, organizationId, objectType: "app", sourceMode: "cloud", title: "Order calculator", status: "active",
+    createdByOrgMembershipId: adminMemberId,
+  })
+  await addAppRevision(firstRevisionId, new Date(Date.now() - 60_000))
+  const notALaunch = builtAppElement(firstRevisionId, "price_total")
+  const board = await createDashboard("Pricing board", [readOnlyElement, builtAppElement(firstRevisionId), notALaunch])
+  await grantAccess(board.id, { orgMembershipId: caseyMemberId, role: "viewer" })
+
+  // update_app publishes a newer revision; open_app now advertises only that one.
+  await addAppRevision(secondRevisionId, new Date())
+  const current = [readOnlyElement, builtAppElement(secondRevisionId), notALaunch]
+  const detail = await request(`/v1/dashboards/${board.id}`)
+  expect((await detail.json() as { item: { elements: unknown[] } }).item.elements).toEqual(current)
+  const list = await request("/v1/dashboards")
+  expect((await list.json() as { items: Array<{ id: string; elements: unknown[] }> }).items.find((item) => item.id === board.id)?.elements).toEqual(current)
+  // The desktop reads its tiles here, so a member's tile opens the current revision too.
+  const mine = await request("/v1/me/dashboards", { actor: "casey" })
+  expect((await mine.json() as { items: Array<{ id: string; elements: unknown[] }> }).items.find((item) => item.id === board.id)?.elements).toEqual(current)
+  const patched = await request(`/v1/dashboards/${board.id}`, { method: "PATCH", body: JSON.stringify({ name: "Pricing board v2" }) })
+  expect((await patched.json() as { item: { elements: unknown[] } }).item.elements).toEqual(current)
+
+  const disabled = await request(`/v1/dashboards/${board.id}`, { appsEnabled: false })
+  expect((await disabled.json() as { item: { elements: unknown[] } }).item.elements).toEqual([readOnlyElement, builtAppElement(firstRevisionId), notALaunch])
+
+  // An archived App keeps its stored element, which the desktop then shows as unavailable.
+  await db.update(ConfigObjectTable).set({ status: "archived" }).where(eq(ConfigObjectTable.id, builtAppId))
+  const archived = await request(`/v1/dashboards/${board.id}`)
+  expect((await archived.json() as { item: { elements: unknown[] } }).item.elements).toEqual([readOnlyElement, builtAppElement(firstRevisionId), notALaunch])
+  await db.update(ConfigObjectTable).set({ status: "active" }).where(eq(ConfigObjectTable.id, builtAppId))
+})
+
+test("members list only the Apps they can access, in dashboard element shape", async () => {
+  await db.insert(PluginTable).values({ id: appPluginId, organizationId, name: "Pricing tools", status: "active", createdByOrgMembershipId: adminMemberId })
+  const listed = spyOn(mcpApps, "listAccessibleMcpApps").mockImplementation(async () => [{
+    appId: builtAppId, pluginId: appPluginId, revisionId: secondRevisionId, title: "Order calculator", description: "Price an order.",
+    serverPath: mcpAppServerPath(builtAppId),
+  }])
+  try {
+    const response = await request("/v1/mcp-apps")
+    expect(response.status).toBe(200)
+    const { apps } = await response.json() as { apps: Array<Record<string, unknown>> }
+    expect(apps).toEqual([{
+      serverName: expect.stringMatching(/^openwork-app-host-connect-[0-9a-f]{12}$/),
+      connectionId: builtAppId,
+      toolName: "open_app",
+      projectedToolName: `${String(apps[0]?.serverName)}_open_app`,
+      resourceUri: mcpAppResourceUri(builtAppId, secondRevisionId),
+      title: "Order calculator",
+      description: "Price an order.",
+      pluginId: appPluginId,
+      pluginName: "Pricing tools",
+      requiresInput: false,
+      requiredInputKeys: [],
+      requiresApproval: false,
+    }])
+    // Only the Apps this admin can use, through their own Plugin access.
+    expect(listed).toHaveBeenCalledWith({ organizationId, member: { orgMembershipId: adminMemberId, teamIds: [] }, enabled: true })
+
+    listed.mockClear()
+    const memberResponse = await request("/v1/mcp-apps", { actor: "casey" })
+    expect(memberResponse.status).toBe(200)
+    expect(listed).toHaveBeenCalledWith({ organizationId, member: { orgMembershipId: caseyMemberId, teamIds: memberTeams("casey").map((team) => team.id) }, enabled: true })
+    listed.mockImplementation(async () => [])
+    expect(await (await request("/v1/mcp-apps", { actor: "nova" })).json()).toEqual({ apps: [] })
+
+    // Building your own Apps is off for this organization, or for the whole deployment.
+    listed.mockClear()
+    expect(await (await request("/v1/mcp-apps", { appsEnabled: false })).json()).toEqual({ apps: [] })
+    Object.assign(env, { appMcpServersEnabled: false })
+    try {
+      expect(await (await request("/v1/mcp-apps")).json()).toEqual({ apps: [] })
+    } finally {
+      Object.assign(env, { appMcpServersEnabled: true })
+    }
+    expect(listed).not.toHaveBeenCalled()
+  } finally {
+    listed.mockRestore()
+  }
+})
+
+test("organizations without the orgManagedDashboards capability cannot use dashboards", async () => {
+  const board = await createDashboard("Hidden when disabled")
+  await grantAccess(board.id, { orgWide: true, role: "viewer" })
+
+  const list = await request("/v1/dashboards", { dashboardsEnabled: false })
+  expect(list.status).toBe(404)
+  expect(await list.json()).toEqual({ error: "dashboards_not_enabled" })
+
+  const create = await request("/v1/dashboards", {
+    method: "POST",
+    dashboardsEnabled: false,
+    body: JSON.stringify({ name: "Blocked" }),
+  })
+  expect(create.status).toBe(404)
+
+  const detail = await request(`/v1/dashboards/${board.id}`, { dashboardsEnabled: false })
+  expect(detail.status).toBe(404)
+
+  const access = await request(`/v1/dashboards/${board.id}/access`, { dashboardsEnabled: false })
+  expect(access.status).toBe(404)
+
+  const granted = await request("/v1/me/dashboards", { actor: "nova", dashboardsEnabled: false })
+  expect(granted.status).toBe(200)
+  expect(await granted.json()).toEqual({ items: [] })
+
+  // Stored dashboards survive; re-enabling the capability restores them.
+  const restored = await request("/v1/me/dashboards", { actor: "nova" })
+  const restoredIds = (await restored.json() as { items: Array<{ id: string }> }).items.map((item) => item.id)
+  expect(restoredIds).toContain(board.id)
 })

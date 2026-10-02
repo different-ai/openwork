@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { captureServerException } from "./telemetry.js";
+import { captureServerException, isExpectedRequestCancellation } from "./telemetry.js";
 
 const originalTelemetry = globalThis.__openworkDesktopTelemetry;
 
@@ -28,4 +28,13 @@ describe("server telemetry", () => {
     expect(captureServerException(externalFailure, { requestSignal: controller.signal })).toBe(true);
     expect(captured).toEqual([externalFailure]);
   });
+});
+
+// Fetch abort reasons are arbitrary values, not necessarily Error instances.
+test("an explicit null abort reason remains request cancellation", () => {
+  const controller = new AbortController();
+  controller.abort(null);
+  expect(isExpectedRequestCancellation(null, controller.signal)).toBe(true);
+  expect(isExpectedRequestCancellation(new Error("unrelated"), controller.signal)).toBe(false);
+  expect(isExpectedRequestCancellation(null, new AbortController().signal)).toBe(false);
 });

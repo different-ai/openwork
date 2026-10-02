@@ -251,13 +251,14 @@ function validateAgentWorkloads(value) {
       if (!step.arguments || typeof step.arguments !== "object" || Array.isArray(step.arguments)) {
         throw new Error(`agent workload ${promptMarker} tool ${step.tool} needs object arguments`);
       }
-      if (step.argumentsFrom !== undefined && !["computer-mention", "skill-catalog", "capability-search", "skill-list"].includes(step.argumentsFrom)) {
+      if (step.argumentsFrom !== undefined && !["computer-mention", "skill-catalog", "capability-search", "skill-list", "app-preparation", "app-read"].includes(step.argumentsFrom)) {
         throw new Error(`agent workload ${promptMarker} has an unknown argument source`);
       }
       if (step.allowUnadvertisedTool !== undefined && typeof step.allowUnadvertisedTool !== "boolean") {
         throw new Error(`agent workload ${promptMarker} allowUnadvertisedTool must be a boolean`);
       }
-      return { tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom,
+      if (step.holdUntilReleased !== undefined && typeof step.holdUntilReleased !== "boolean") throw new Error("holdUntilReleased must be a boolean");
+      return { holdUntilReleased: step.holdUntilReleased === true, tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom,
         allowUnadvertisedTool: step.allowUnadvertisedTool === true };
     });
     if (workload.matchAll !== undefined && typeof workload.matchAll !== "boolean")
@@ -503,6 +504,33 @@ function capabilitySearchArguments(messages) {
   return { name: matches[0].name };
 }
 
+// App creation must use the id actually returned by prepare_app, never a guessed one.
+function appPreparationArguments(messages) {
+  let payload = JSON.parse(lastToolText(messages));
+  if (Array.isArray(payload.content)) payload = JSON.parse(agentContentText(payload));
+  const preparationId = payload.preparationId ?? payload.structuredContent?.preparationId;
+  if (typeof preparationId !== "string" || !/^[0-9a-f-]{36}$/i.test(preparationId)) throw new Error("prepare_app did not return a preparation id");
+  return { preparationId };
+}
+
+// Code Mode uses the same actual preparation id, embedded as a JSON literal in
+// the scripted call. The marker is a fixture placeholder, never a guessed id.
+function appPreparationStepArguments(messages, argumentsValue) {
+  const prepared = appPreparationArguments(messages);
+  if (typeof argumentsValue.code === "string") return { ...argumentsValue, code: argumentsValue.code.replace('"__APP_PREPARATION_ID__"', JSON.stringify(prepared.preparationId)) };
+  return { ...argumentsValue, ...prepared };
+}
+
+// Optimistic updates must carry the revision the model actually read.
+function appReadStepArguments(messages, argumentsValue) {
+  let payload = JSON.parse(lastToolText(messages));
+  if (Array.isArray(payload.content)) payload = JSON.parse(agentContentText(payload));
+  const app = payload.app ?? payload.structuredContent?.app;
+  if (typeof app?.revisionId !== "string") throw new Error("read_app did not return a revision id");
+  if (typeof argumentsValue.code === "string") return { ...argumentsValue, code: argumentsValue.code.replace('"__APP_REVISION_ID__"', JSON.stringify(app.revisionId)) };
+  return { ...argumentsValue, expectedRevisionId: app.revisionId };
+}
+
 // list_skills handoff: the next get_skill reads the one skill the catalog returned.
 function skillListArguments(messages) {
   let payload = JSON.parse(lastToolText(messages));
@@ -565,7 +593,10 @@ async function handleAgentCompletion(req, res, entry) {
   const model = typeof body.model === "string" ? body.model : "mock-agent-workload-model";
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const conversationText = messages.map(agentContentText).join("\n");
-  const latestUserIndex = messages.findLastIndex((message) => message?.role === "user");
+  // Native v2 inserts catalog updates as user-role protocol messages. They
+  // must not replace the person's turn or reset its completed tool count.
+  const latestUserIndex = messages.findLastIndex((message) => message?.role === "user"
+    && !/^<system-update>\n[\s\S]*\n<\/system-update>$/.test(agentContentText(message)));
   const latestUserText = latestUserIndex < 0 ? "" : agentContentText(messages[latestUserIndex]);
   const matched = agentWorkloads.filter((workload) =>
     workload.matchAll || (workload.latestUserTurn ? latestUserText : conversationText).includes(workload.promptMarker));
@@ -580,6 +611,7 @@ async function handleAgentCompletion(req, res, entry) {
       codes: [...value.matchAll(/"(?:error|code)"\s*:\s*"([a-z_]{2,80})"/g)].map(match => match[1]),
       isError: /"isError"\s*:\s*true/.test(value),
       hasAppMetadata: value.includes("openwork/mcpApp"),
+      hasAppShownNote: value.includes("the person now sees this App right above your reply"),
       hasDraftResult: value.includes("Draft ready for Test recipient"),
     };
   });
@@ -657,7 +689,9 @@ async function handleAgentCompletion(req, res, entry) {
   const toolArguments = step.argumentsFrom === "computer-mention" ? computerMentionArguments(messages)
     : step.argumentsFrom === "skill-catalog" ? skillCatalogArguments(messages, step.arguments.skill)
     : step.argumentsFrom === "capability-search" ? { ...step.arguments, ...capabilitySearchArguments(scopedMessages) }
-    : step.argumentsFrom === "skill-list" ? { ...step.arguments, ...skillListArguments(scopedMessages) } : step.arguments;
+    : step.argumentsFrom === "skill-list" ? { ...step.arguments, ...skillListArguments(scopedMessages) }
+    : step.argumentsFrom === "app-preparation" ? appPreparationStepArguments(scopedMessages, step.arguments)
+    : step.argumentsFrom === "app-read" ? appReadStepArguments(scopedMessages, step.arguments) : step.arguments;
   if (step.argumentsFrom === "skill-catalog" && toolArguments === null) {
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
     agentStream(res, model, [agentChunk(model, { role: "assistant" }),
@@ -683,7 +717,7 @@ async function handleAgentCompletion(req, res, entry) {
       }],
     }),
     agentChunk(model, {}, "tool_calls"),
-  ]);
+  ], step.holdUntilReleased && agentRepliesHeld);
 }
 
 async function readJson(req) {

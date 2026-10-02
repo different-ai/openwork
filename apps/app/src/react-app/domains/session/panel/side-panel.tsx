@@ -1,3 +1,4 @@
+import { BuiltMcpAppPanel } from "../../apps/built-mcp-app-panel";
 /** @jsxImportSource react */
 import * as React from "react";
 import {
@@ -44,7 +45,6 @@ import {
   getNativeMenuPoint,
   hasNativeBrowserOccluder,
 } from "./utils";
-import { LoginSyncCard } from "../../browser-logins/login-sync-card";
 import { createBrowserBoundsSync } from "./browser-bounds-sync";
 
 type SidePanelProps = {
@@ -147,7 +147,7 @@ function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
             ) : (
               <Globe />
             )
-          ) : tab.type === "app" ? <Blocks /> : (
+          ) : (tab.type === "app" || tab.type === "mcp-app") ? <Blocks /> : (
             <ArtifactIcon type={tab.preview} />
           )}
           <span className="min-w-0 flex-1 truncate text-left">{tab.label}</span>
@@ -176,6 +176,7 @@ function BrowserPanelContent({
   const isAvailable = Boolean(getElectronBrowser());
   const suspended = tab.status === "suspended";
   const busy = tab.status === "suspending" || tab.status === "restoring";
+  const pageFailure = tab.loadError?.code === "page_load_failed" ? tab.loadError : null;
   const [urlInput, setUrlInput] = React.useState(tab.url);
   const urlFocusedRef = React.useRef(false);
   const contentRef = React.useRef<HTMLDivElement>(null);
@@ -458,7 +459,7 @@ function BrowserPanelContent({
           <X />
         </Button>
       </div>
-      {tab.loadError ? (
+      {tab.loadError && !pageFailure ? (
         <div data-browser-shortcut-tab={tab.id} role="alert" className="shrink-0 border-b border-border bg-muted px-3 py-2 text-xs">
           {tab.loadError.message}
         </div>
@@ -466,7 +467,16 @@ function BrowserPanelContent({
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {isAvailable ? (
           <div ref={contentRef} data-browser-shortcut-tab={tab.id} className="h-full overflow-hidden">
-            {suspended ? (
+            {pageFailure && !suspended ? (
+              <div className="flex h-full items-center justify-center p-6" data-testid="browser-page-load-error">
+                <TaskRecovery
+                  compact
+                  title={pageFailure.message}
+                  technicalDetails={`${pageFailure.errorDescription} (${pageFailure.errorCode})\n${pageFailure.url}`}
+                  actions={<Button variant="outline" size="sm" disabled={tab.status === "loading" || busy} onClick={reload}>Reload</Button>}
+                />
+              </div>
+            ) : suspended ? (
               <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
                 <p className="text-sm font-medium">Tab suspended</p>
                 <p className="text-sm text-muted-foreground">Reload opens the saved URL, not the previous page state.</p>
@@ -702,7 +712,7 @@ export function SidePanel({
           event.stopPropagation();
         }}
       >
-        <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
+        {!(tabs.length === 1 && activeTab?.type === "mcp-app") ? <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
           <div className="flex h-10 items-center gap-1 border-b border-border/60 px-2">
             <div className="no-scrollbar min-w-0 flex-1 overflow-x-auto">
               <PanelTabList
@@ -748,7 +758,7 @@ export function SidePanel({
               </Button>
             ) : null}
           </div>
-        </div>
+        </div> : null}
         {!activeTab ? (
           <PanelEmpty
             onOpenBrowser={isBrowserAvailable ? createTab : undefined}
@@ -756,10 +766,9 @@ export function SidePanel({
           />
         ) : null}
         {activeTab?.type === "browser" ? (
-          <>
-            <LoginSyncCard />
-            <BrowserPanelContent sessionId={sessionId} tab={activeTab} onClose={onClose} />
-          </>
+          <BrowserPanelContent sessionId={sessionId} tab={activeTab} onClose={onClose} />
+        ) : activeTab?.type === "mcp-app" ? (
+          <BuiltMcpAppPanel key={activeTab.id} tab={activeTab} onClose={onClose} />
         ) : activeTab?.type === "app" ? (
           <div className="min-h-0 flex-1 overflow-hidden"><AppArtifact key={activeTab.id} appId={activeTab.appId} revisionId={activeTab.revisionId} receiptId={activeTab.receiptId} onClose={onClose} /></div>
         ) : activeTab?.type === "artifact" ? (

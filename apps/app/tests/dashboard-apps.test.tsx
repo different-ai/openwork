@@ -1,12 +1,14 @@
 import { afterAll, afterEach, beforeEach, expect, mock, test, setSystemTime, spyOn } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, useLayoutEffect, useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter, useLocation } from "react-router";
 import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { GeneratedArtifactViewRevision, SavedAppDetail } from "@openwork/types/workflows";
 
+import type { BuiltMcpAppCatalogEntry } from "../src/app/lib/built-mcp-app-catalog";
 import type { DashboardTileActions } from "../src/react-app/domains/dashboard/dashboard-tile-shell";
+import type { DashboardMcpAppEntry } from "../src/react-app/domains/dashboard/granted-dashboard-store";
 import type { DenGrantedDashboard } from "../src/app/lib/den";
 import type { DenAuthStatus } from "../src/react-app/domains/cloud/den-auth-provider";
 import type { McpAppSandboxViewProps } from "../src/components/chat/mcp-app-frame";
@@ -14,6 +16,7 @@ import { denSettingsChangedEvent } from "../src/app/lib/den-session-events";
 import { resetDashboardTileCacheMemory } from "../src/app/lib/dashboard-cache-storage";
 
 GlobalRegistrator.register({ url: "http://localhost/" });
+const { createRoot } = await import("react-dom/client");
 const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 notifyManager.setScheduler(queueMicrotask);
@@ -27,6 +30,7 @@ let memberId: string | null = "member";
 let organizationRole = "admin";
 const workspace = { workspaceId: "workspace", openworkServerClient: {} };
 const client = {
+  listBuiltMcpApps: mock(async (_orgId: string): Promise<BuiltMcpAppCatalogEntry[]> => { throw new den.DenApiError(404, "not_found", "Not available"); }),
   listOrgs: mock(async () => ({ orgs: [{ id: settings.activeOrgId, role: organizationRole }] })),
   listSavedApps: mock(async (_orgId: string) => ({ enabled: true, sharingEnabled: false, items: [detail] })),
   listGrantedDashboards: mock(async (_orgId: string): Promise<DenGrantedDashboard[]> => []),
@@ -62,11 +66,14 @@ mock.module("../src/components/chat/mcp-app-frame", () => ({
 }));
 
 const { DashboardTileShell } = await import("../src/react-app/domains/dashboard/dashboard-tile-shell");
+const { dashboardTileRunsAutomatically } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache");
 const refresh = mock(() => {});
 mock.module("../src/react-app/domains/dashboard/mcp-app-tile", () => ({
-  McpAppTile: ({ entry, cacheScopeKey, renderActions }: { entry: { title: string; toolName: string; launchArguments?: Record<string, unknown> }; cacheScopeKey: string; renderActions?: DashboardTileActions }) =>
-    <DashboardTileShell title={entry.title} compact renderActions={renderActions} onRefresh={refresh} badge={<span>Updated just now</span>}>
-      <div data-live-tool={entry.toolName} data-live-scope={cacheScopeKey} style={{ height: 720 }}>{JSON.stringify(entry.launchArguments)}</div>
+  McpAppTile: ({ entry, cacheScopeKey, renderActions, actionsPlacement }: { entry: DashboardMcpAppEntry; cacheScopeKey: string; renderActions?: DashboardTileActions; actionsPlacement?: "header" }) =>
+    <DashboardTileShell title={entry.title} compact actionsPlacement={actionsPlacement} renderActions={renderActions} onRefresh={refresh} badge={<span>Updated just now</span>}>
+      <div data-live-tool={entry.toolName} data-live-scope={cacheScopeKey}
+        data-auto-launch={dashboardTileRunsAutomatically(entry.requiresApproval === true, entry.autoLaunch === true, entry.launchApproved === true, entry.organizationAutoLaunch === true)}
+        style={{ height: 720 }}>{JSON.stringify(entry.launchArguments)}</div>
     </DashboardTileShell>,
 }));
 
@@ -120,6 +127,7 @@ beforeEach(() => {
   client.getSavedApp.mockClear();
   client.listSavedApps.mockClear().mockImplementation(async () => ({ enabled: true, sharingEnabled: false, items: [detail] }));
   client.listGrantedDashboards.mockClear().mockImplementation(async () => []);
+  client.listBuiltMcpApps.mockClear().mockImplementation(async () => { throw new den.DenApiError(404, "not_found", "Not available"); });
   client.setAppOnDashboard.mockClear().mockImplementation(async () => { await writes(); });
   launch = mock(async (_prompt: string) => {});
   cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity }, mutations: { retry: false } } });
@@ -524,8 +532,8 @@ test.each(["admin", "member", "unknown"])("%s empty dashboard only invites app c
   organizationRole = role;
   detail.onDashboard = false;
   await render("dashboard");
-  expect(findButton("Add your first app") !== undefined).toBe(role === "admin");
-  expect(container.textContent?.includes("Make this dashboard yours")).toBe(role === "admin");
+  expect(findButton("Add an app") !== undefined).toBe(role === "admin");
+  expect(container.textContent?.includes("Pin the apps you check every day")).toBe(role === "admin");
   expect(container.textContent?.includes("This dashboard has no apps yet.")).toBe(role !== "admin");
   expect(document.body.textContent).not.toContain("Only organization owners and admins");
 });
@@ -775,3 +783,74 @@ function workingDetail() {
     },
   };
 }
+
+
+const builtFixture: BuiltMcpAppCatalogEntry = {
+  connectionId: `cob_0${"a".repeat(25)}`, pluginId: `plg_0${"b".repeat(25)}`,
+  serverName: "openwork-app-host-connect-fixture", toolName: "open_app", projectedToolName: "fixture_open_app",
+  resourceUri: `ui://openwork/apps/cob_0${"a".repeat(25)}/revisions/cov_0${"1".repeat(25)}/index.html`,
+  title: "Bug dashboard", description: "Open bugs grouped by team", pluginName: "Engineering", requiresApproval: false,
+};
+
+test("a member adds a shared built App with fuzzy search, refreshes it and removes only their placement", async () => {
+  organizationRole = "member";
+  detail.onDashboard = false;
+  client.listBuiltMcpApps.mockImplementation(async () => [builtFixture, { ...builtFixture, connectionId: `cob_0${"c".repeat(25)}`, title: "Sales report" }]);
+  await render("dashboard");
+  expect(container.textContent).toContain("Pin the apps you check every day");
+  await act(async () => button("Add").click());
+  const input = document.querySelector<HTMLInputElement>('[aria-label="Search apps"]');
+  if (!input) throw new Error("App search missing");
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "bgdsh");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const choice = document.querySelector<HTMLElement>('[aria-label="Add Bug dashboard"]');
+  expect(choice).not.toBeNull();
+  expect(document.querySelector('[aria-label="Add Sales report"]')).toBeNull();
+  await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+  expect(container.querySelector('[aria-label="Bug dashboard"]')).not.toBeNull();
+  expect(container.querySelector('[data-live-tool="open_app"]')?.getAttribute("data-auto-launch")).toBe("true");
+  expect(container.querySelector('[aria-label="App options for Bug dashboard"]')?.closest("header")).not.toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="App options for Bug dashboard"]')?.click());
+  await act(async () => document.querySelector<HTMLElement>('[aria-label="Refresh Bug dashboard"]')?.click());
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(client.setAppOnDashboard).not.toHaveBeenCalled();
+  const storage = Array.from({ length: window.localStorage.length }, (_, index) => window.localStorage.key(index)).find(key => key?.startsWith("openwork:personal-mcp-apps"));
+  expect(storage).toBeDefined();
+  expect(JSON.parse(window.localStorage.getItem(storage ?? "") ?? "[]")).toEqual([builtFixture.connectionId]);
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="App options for Bug dashboard"]')?.click());
+  await act(async () => document.querySelector<HTMLElement>('[aria-label="Remove Bug dashboard from dashboard"]')?.click());
+  expect(container.querySelector('[aria-label="Bug dashboard"]')).toBeNull();
+  expect(client.setAppOnDashboard).not.toHaveBeenCalled();
+});
+
+test("built App placements survive reopening but do not cross members or revocation", async () => {
+  organizationRole = "member";
+  detail.onDashboard = false;
+  client.listBuiltMcpApps.mockImplementation(async () => [builtFixture]);
+  const { builtDashboardScope } = await import("../src/react-app/domains/dashboard/built-dashboard-apps");
+  const key = builtDashboardScope(scope);
+  window.localStorage.setItem(key, JSON.stringify([builtFixture.connectionId]));
+  await render("dashboard");
+  expect(container.querySelector('[aria-label="Bug dashboard"]')).not.toBeNull();
+  memberId = "another-member";
+  await render("dashboard");
+  expect(container.querySelector('[aria-label="Bug dashboard"]')).toBeNull();
+  memberId = "member";
+  await render("dashboard");
+  expect(container.querySelector('[aria-label="Bug dashboard"]')).not.toBeNull();
+  await act(async () => cache.setQueryData(["built-dashboard-apps", ...scope], []));
+  expect(container.querySelector('[aria-label="Bug dashboard"]')).toBeNull();
+  expect(JSON.parse(window.localStorage.getItem(key) ?? "[]")).toEqual([builtFixture.connectionId]);
+});
+
+test("built Apps retain the existing saved app and creation paths for admins", async () => {
+  client.listBuiltMcpApps.mockImplementation(async () => [builtFixture]);
+  await render("dashboard");
+  await act(async () => button("Add").click());
+  expect(document.body.textContent).toContain("Create with OpenWork");
+  const saved = Array.from(document.querySelectorAll("button")).find(candidate => candidate.textContent === "Other saved apps");
+  await act(async () => saved?.click());
+  expect(document.body.textContent).toContain(detail.view.title);
+});

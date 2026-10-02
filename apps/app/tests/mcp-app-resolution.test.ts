@@ -3,7 +3,7 @@ import { mcpAppResolutionRetryDelayMs } from "../src/app/lib/mcp-app-resolution"
 import { OpenworkServerError } from "../src/app/lib/openwork-server";
 
 test("bounds retries to transient discovery failures", () => {
-  for (const code of ["server_unavailable", "mcp_unreachable", "connect_catalog_discovery_unavailable"]) {
+  for (const code of ["server_unavailable", "mcp_unreachable", "connect_catalog_discovery_unavailable", "connect_catalog_missing_app_host_auth"]) {
     const cause = new OpenworkServerError(503, code, "starting");
     expect(mcpAppResolutionRetryDelayMs(cause, 0)).toBe(1_000);
     expect(mcpAppResolutionRetryDelayMs(cause, 1)).toBe(3_000);

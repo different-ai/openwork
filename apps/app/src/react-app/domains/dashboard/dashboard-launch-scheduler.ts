@@ -1,3 +1,4 @@
+import { startMcpAppTiming } from "@openwork/types/mcp-app-timing";
 type DashboardLaunchOptions = {
   signal: AbortSignal;
   priority?: () => number;
@@ -51,6 +52,7 @@ export function createDashboardLaunchScheduler(limit = 2) {
 
     return new Promise<T>((resolve, reject) => {
       const queuedAt = Date.now();
+      const queueTiming = startMcpAppTiming("dashboard.launch-queue");
       const abort = () => {
         if (!queue.delete(job)) return;
         signal.removeEventListener("abort", abort);
@@ -68,6 +70,7 @@ export function createDashboardLaunchScheduler(limit = 2) {
           }
         },
         async start() {
+          queueTiming();
           signal.removeEventListener("abort", abort);
           active += 1;
           try {

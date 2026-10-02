@@ -284,4 +284,19 @@ describe("contact and feedback submissions to Plain", () => {
     expect((await POST(formRequest())).status).toBe(403);
     expect(requests).toHaveLength(0);
   });
+
+  test("points agents flagged by bot protection to email and GitHub issues", async () => {
+    checkBotId.mockResolvedValue({ isBot: true });
+    const response = await POST(formRequest());
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: "form_requires_browser",
+      message: expect.stringContaining("team@openworklabs.com"),
+      alternatives: {
+        email: "team@openworklabs.com",
+        issues: "https://github.com/different-ai/openwork/issues",
+      },
+    });
+    expect(requests).toHaveLength(0);
+  });
 });

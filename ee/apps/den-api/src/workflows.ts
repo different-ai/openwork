@@ -114,7 +114,6 @@ async function workflowResource(
   if (!rows[0]) throw new Error("workflow_not_found")
   await requirePluginArchResourceRole({
     context,
-    requireFreshSession: false,
     resourceId: configObjectId,
     resourceKind: "config_object",
     role,

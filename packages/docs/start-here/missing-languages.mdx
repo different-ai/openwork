@@ -1,9 +1,11 @@
 ---
-title: "Missing languages"
-description: "See which OpenWork languages ship today and help us improve them."
+title: "Languages"
+sidebarTitle: "Languages"
+description: "Change the OpenWork app language, see which languages ship today, and help improve or add translations."
+keywords: ["language", "languages", "translation", "translate", "i18n", "locale", "localization", "change language"]
 ---
 
-OpenWork already ships with a growing set of languages, and we want to keep expanding that list.
+OpenWork's desktop app is available in 10 languages. You can switch languages at any time, and anyone can improve a translation or add a new language.
 
 <Frame>
   <iframe
@@ -16,39 +18,51 @@ OpenWork already ships with a growing set of languages, and we want to keep expa
   />
 </Frame>
 
+## Change the app language
+
+1. Open **Settings › Appearance**.
+2. Under **Language**, choose your language.
+
 ## Languages available today
 
-Watch the video above for a quick overview, then use this list as the current source of truth for languages supported in the app:
+| Language | Shown in the app as | Code |
+| --- | --- | --- |
+| English | English | `en` |
+| Japanese | 日本語 | `ja` |
+| Chinese (Simplified) | 简体中文 | `zh` |
+| Vietnamese | Tiếng Việt | `vi` |
+| Portuguese (Brazil) | Português (BR) | `pt-BR` |
+| Thai | ไทย | `th` |
+| French | Français | `fr` |
+| Catalan | Català | `ca` |
+| Spanish | Español | `es` |
+| Russian | Русский | `ru` |
 
-- English (`en`)
-- Japanese (`ja`)
-- Simplified Chinese (`zh`)
-- Vietnamese (`vi`)
-- Portuguese (Brazil) (`pt-BR`)
-- Thai (`th`)
-- French (`fr`)
-- Catalan (`ca`)
-- Spanish (`es`)
+If a phrase hasn't been translated yet, the app shows it in English.
 
-## Improve current translations
+## Improve a translation
 
-If you want to improve an existing translation, start in [`apps/app/src/i18n/locales`](https://github.com/different-ai/openwork/tree/dev/apps/app/src/i18n/locales).
-
-Each language lives in its own file, so most fixes are simple copy updates inside one locale file such as `apps/app/src/i18n/locales/fr.ts` or `apps/app/src/i18n/locales/es.ts`.
+Each language has its own file in [`apps/app/src/i18n/locales`](https://github.com/different-ai/openwork/tree/dev/apps/app/src/i18n/locales), such as `fr.ts` or `es.ts`. Most fixes are text changes in one file. Open a pull request with your change.
 
 ## Add a new language
 
-If you want to add a new language to OpenWork, the basic file changes are:
+These steps are for contributors comfortable editing code.
 
-- Create a new locale file in `apps/app/src/i18n/locales/<language-code>.ts`.
-- Register that locale in `apps/app/src/i18n/index.ts` by adding the import, language code, language option, and translation map entry.
-- Re-export the locale from `apps/app/src/i18n/locales/index.ts`.
-- Add the new locale code to `scripts/i18n-audit.mjs` so the audit script checks it.
-
-After that, run the audit script to spot missing keys:
+1. Create `apps/app/src/i18n/locales/<code>.ts`, using `en.ts` as the starting point.
+2. In `apps/app/src/i18n/index.ts`, register the language:
+   - Add the import.
+   - Add the code to the `Language` type and the `LANGUAGES` list.
+   - Add an entry to `LANGUAGE_OPTIONS` with the English name and the name in that language.
+   - Add the translations to `TRANSLATIONS`.
+   - Add the code to `pluralRulesByLanguage`.
+   - If the language doesn't mark plurals on nouns (like Japanese or Chinese), add it to `PLURAL_SUFFIX_EMPTY_LANGUAGES`.
+3. Re-export the file from `apps/app/src/i18n/locales/index.ts`.
+4. In `scripts/i18n-audit.mjs`, add the code to `LOCALES`. If the language needs plural forms beyond "one" and "other" and isn't already listed in `PLURAL_FORMS`, add it there.
+5. Check for missing text and plural forms:
 
 ```bash
 node scripts/i18n-audit.mjs --missing
+node scripts/i18n-audit.mjs --plurals
 ```
 
-If you want to follow broader localization work, language requests, or upcoming improvements, check the [i18n roadmap](https://github.com/different-ai/openwork/issues/1385).
+To follow localization work or request a language, see the [i18n roadmap](https://github.com/different-ai/openwork/issues/1385).

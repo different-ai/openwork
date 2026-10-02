@@ -44,3 +44,28 @@ await hold({ outputs: { selected: process.env.OPENWORK_WORLD_SELECTED_ENV_KEYS ?
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("keys the CLI adds itself are never recorded as --env selections", async () => {
+  const root = await mkdtemp(join(tmpdir(), "world-selected-env-internal-"));
+  const previous = process.env.OPENWORK_WORLD_SNAPSHOT_DIR;
+  const worlds = join(root, "worlds");
+  const snapshots = join(root, "receipts");
+  const options = { cwd: root, worldsDirectory: worlds, print: () => undefined };
+  try {
+    await mkdir(worlds);
+    const hold = new URL("../src/hold.ts", import.meta.url).href;
+    // A preview-named probe makes the CLI add its own source handoff key.
+    await writeFile(join(worlds, "preview-den.ts"), `import { hold } from ${JSON.stringify(hold)};
+await hold({ outputs: { selected: process.env.OPENWORK_WORLD_SELECTED_ENV_KEYS ?? "missing", sources: process.env.OPENWORK_WORLD_SOURCES ? "set" : "missing" } });`);
+    process.env.OPENWORK_WORLD_SNAPSHOT_DIR = snapshots;
+    assert.equal(await main(["up", "preview-den", "--place", "local", "--stage", "internal", "--detach", "--timeout", "10000", "--source", "den=local"], options), 0);
+    const receipt = await readScriptWorldSnapshot(join(snapshots, "preview-den--internal.json"));
+    assert.equal(receipt?.outputs.sources, "set");
+    assert.equal(receipt?.outputs.selected, "[]");
+  } finally {
+    await main(["down", "preview-den", "--stage", "internal"], options);
+    if (previous === undefined) delete process.env.OPENWORK_WORLD_SNAPSHOT_DIR;
+    else process.env.OPENWORK_WORLD_SNAPSHOT_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});

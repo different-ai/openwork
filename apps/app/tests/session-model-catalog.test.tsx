@@ -142,10 +142,10 @@ test("catalog outages preserve session inventory with ids-only metadata but fail
 });
 
 test.each([
-  { config: { allowCustomProviders: false, allowZenModel: false }, signedIn: true, expected: ["ipr_fixture"] },
+  { config: { allowCustomProviders: false, allowZenModel: false }, signedIn: true, expected: ["opencode", "ipr_fixture"] },
   { config: { allowCustomProviders: false, allowZenModel: true }, signedIn: true, expected: ["opencode", "ipr_fixture"] },
   { config: {}, signedIn: false, expected: ["provider", "opencode"] },
-  { config: { allowCustomProviders: false, allowZenModel: false }, signedIn: false, expected: [] },
+  { config: { allowCustomProviders: false, allowZenModel: false }, signedIn: false, expected: ["opencode"] },
 ])("renderer applies live picker policy and sign-in state: %j", async (scenario) => {
   policy = scenario.config;
   signedIn = scenario.signedIn;

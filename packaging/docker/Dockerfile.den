@@ -16,6 +16,7 @@ ENV PORT=8788
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml /app/
 COPY patches /app/patches
 COPY packages/types/package.json /app/packages/types/package.json
+COPY packages/free-auto/package.json /app/packages/free-auto/package.json
 COPY packages/automations/package.json /app/packages/automations/package.json
 COPY packages/codemode/package.json /app/packages/codemode/package.json
 COPY packages/email/package.json /app/packages/email/package.json
@@ -25,12 +26,10 @@ COPY packages/connect-link/package.json /app/packages/connect-link/package.json
 COPY packages/headless-threads/package.json /app/packages/headless-threads/package.json
 COPY packages/mcp-apps/package.json /app/packages/mcp-apps/package.json
 # apps/desktop/package.json is copied below for version metadata, and it depends
-# on @openwork/paths, @openwork/browser-tabs, and @openwork/browser-logins, so those
-# packages must exist for
-# workspace resolution.
+# on @openwork/paths and @openwork/browser-tabs, so those packages must exist
+# for workspace resolution.
 COPY packages/paths/package.json /app/packages/paths/package.json
 COPY packages/browser-tabs/package.json /app/packages/browser-tabs/package.json
-COPY packages/browser-logins/package.json /app/packages/browser-logins/package.json
 # The root workspace declares the shared evaluator helpers as dev dependencies.
 # Their manifests must be present even though the Den API image does not build
 # or ship their source.
@@ -49,6 +48,7 @@ COPY ee/apps/den-api/package.json /app/ee/apps/den-api/package.json
 RUN pnpm install --frozen-lockfile --trust-lockfile
 
 COPY packages/types /app/packages/types
+COPY packages/free-auto /app/packages/free-auto
 COPY packages/automations /app/packages/automations
 COPY packages/codemode /app/packages/codemode
 COPY packages/email /app/packages/email
@@ -59,7 +59,6 @@ COPY packages/headless-threads /app/packages/headless-threads
 COPY packages/mcp-apps /app/packages/mcp-apps
 COPY packages/paths /app/packages/paths
 COPY packages/browser-tabs /app/packages/browser-tabs
-COPY packages/browser-logins /app/packages/browser-logins
 COPY ee/packages/utils /app/ee/packages/utils
 COPY ee/packages/cloud-runtime /app/ee/packages/cloud-runtime
 COPY ee/packages/cloud-runtime-daytona /app/ee/packages/cloud-runtime-daytona

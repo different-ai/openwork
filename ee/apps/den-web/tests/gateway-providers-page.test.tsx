@@ -69,10 +69,11 @@ describe("AI Gateway nested provider routes", () => {
 });
 
 describe("Gateway providers sidebar", () => {
-  test("keeps the admin-gated AI Gateway item without submenu links and preserves the legacy page", () => {
+  test("keeps AI Gateway as one admin-gated Manage link and preserves the legacy page", () => {
     expect(navigation).not.toContain('label: "Bring Your Own Keys (Legacy)"');
     expect(existsSync(join(appRoot, "dashboard", "(admin)", "custom-llm-providers", "page.tsx"))).toBe(true);
-    expect(navigation).toMatch(/const aiGatewayItem[\s\S]*access\.isAdmin && orgSlug[\s\S]*label: "AI Gateway"/);
+    expect(navigation).toMatch(/const manageItems[\s\S]*access\.isAdmin && orgSlug[\s\S]*label: "AI Gateway", icon: Sparkles \}/);
+    expect(navigation).not.toContain('label: "Models"');
     expect(shell).toContain('return "AI Gateway";');
   });
 });
@@ -132,6 +133,22 @@ describe("Gateway provider form", () => {
     expect(editor).toContain("Replace key");
   });
 
+  test("initializes region once for a new route selection without overwriting saved or typed settings", () => {
+    const newPage = read("dashboard", "(admin)", "ai-gateway", "providers", "new", "page.tsx");
+    expect(newPage).toContain("key={provider} catalogProviderId={provider}");
+    const initialization = editor.slice(editor.indexOf("if (!provider || initializedProviderId.current"), editor.indexOf("}, [provider]);"));
+    expect(initialization).toContain("setSettings(provider.settings)");
+    expect(initialization).not.toContain("getNewInferenceProviderSettings");
+    const catalogLoad = editor.slice(editor.indexOf("void requestLlmProviderCatalogDetail"), editor.indexOf("const npm ="));
+    expect(catalogLoad).toContain("if (cancelled) return");
+    expect(catalogLoad).toContain("if (!inferenceProviderId)");
+    expect(catalogLoad).toContain("if (initializedNewProviderId.current !== providerId)");
+    expect(catalogLoad).toContain("initializedNewProviderId.current = providerId");
+    expect(catalogLoad).toContain("setSettings((current) => ({ ...getNewInferenceProviderSettings(getProviderNpmPackage(result.config)), ...current }))");
+    expect(editor).toContain('value={settings[key] ?? ""}');
+    expect(editor).toContain('key === "resourceName" ? normalizeAzureResourceNameInput(event.target.value) : event.target.value');
+  });
+
   test("create posts one body; edit rewrites group, set, and grants through the matrix routes", () => {
     expect(editor).toContain("buildInferenceProviderRequestBody(formInput)");
     expect(editor).toContain('resource: "model-groups"');
@@ -146,9 +163,71 @@ describe("Gateway provider form", () => {
 
   test("member sign-in is gated to Google Vertex and collects the org OAuth client", () => {
     expect(editor).toContain("supportsMemberCredentialMode(providerId)");
+    expect(editor).toContain('<DenSegmented<"org" | "member">');
+    expect(editor).toContain('label: "Shared API key"');
+    expect(editor).toContain('label: "Each member signs in", disabled: !memberSignInSupported');
+    expect(editor).toContain("Google sign-in is unavailable for this provider.");
+    expect(editor).toContain("onChange={changeCredentialMode}");
     expect(editor).toContain('data-testid="gateway-oauth-client-id"');
     expect(editor).toContain('data-testid="gateway-oauth-client-secret"');
     expect(editor).toContain("Saved — enter a replacement to change it");
+  });
+});
+
+describe("Google Web OAuth onboarding", () => {
+  test("links to published setup docs instead of embedding a disclosure or instructions", () => {
+    const start = editor.indexOf('<Link href="https://openworklabs.com/docs/ai-gateway/google-agent-platform"');
+    const end = editor.indexOf("</Link>", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const setup = editor.slice(start, end);
+    expect(setup).toContain("Read setup instructions");
+    expect(setup).toContain('target="_blank"');
+    expect(setup).toContain('rel="noopener noreferrer"');
+    expect(setup).toContain('buttonVariants({ variant: "secondary", size: "sm"');
+    expect(editor).not.toContain("<details");
+    expect(editor).not.toContain("<summary");
+    for (const text of ["Create a Google OAuth client", "Secrets are write-only", "roles/aiplatform.user", "invalid_rapt", "Saving configuration is not an inference test"]) {
+      expect(editor).not.toContain(text);
+    }
+    const fields = editor.slice(editor.indexOf('{credentialMode === "member" ? ('), start);
+    expect(fields).toContain("OAuth client ID");
+    expect(fields).toContain("OAuth client secret");
+    expect(fields).toContain("Copy callback URL");
+    expect(fields).not.toContain("Create a Google OAuth client");
+    expect(fields).toContain('tone="neutral"');
+    expect(editor.slice(0, start)).toContain("Revoke this set’s credentials and pending sign-ins on save; members must reconnect.");
+    expect(editor).not.toContain("<Dialog.Description");
+    expect(editor).not.toContain("Give this a friendly name");
+  });
+
+  test("keeps callback copy and the deployment-provided URL in the provider form", () => {
+    expect(editor).toContain("Copy callback URL");
+    expect(editor).toContain("navigator.clipboard.writeText(callback)");
+    expect(editor).toContain("{provider.oauthCallbackUrl}");
+    expect(editor).toContain("Callback unavailable. Ask your deployment administrator to configure the public Den API origin.");
+    expect(editor).toContain("Save this provider to obtain its exact OAuth callback URL");
+    expect(editor).toContain("Clipboard access is unavailable");
+    expect(editor).toContain("Could not copy the callback");
+    expect(editor).not.toContain("denApiEndpoint(getOauthCallbackPath())");
+    expect(editor).toContain("readOnly={Boolean(provider)}");
+  });
+
+  test("requires acknowledgement before rotating the first credential set through its current owner", () => {
+    expect(editor).toContain("const configuredSet = provider?.credentialSets[0] ?? null");
+    expect(editor).toContain("configuredSet.credentialMode !== credentialMode");
+    expect(editor).toContain('oauthClientId.trim() !== (configuredSet.oauthClientId ?? "")');
+    expect(editor).toContain("if (invalidatesCredentials && !rotationAcknowledged)");
+    expect(editor.indexOf("if (invalidatesCredentials && !rotationAcknowledged)")).toBeLessThan(editor.indexOf('runReauthableAction("save-inference-provider"'));
+    expect(editor).toContain("setRotationAcknowledged(false)");
+    expect(editor).toContain('aria-label="Confirm credential invalidation"');
+    expect(editor).toContain('setOauthClientSecret("")');
+    expect(editor).not.toContain("configuredSet.oauthClientSecret");
+    expect(editor).toContain('autoComplete="new-password"');
+    expect(editor).toContain("if (clientSecret !== undefined) body.oauthClientSecret = clientSecret");
+    const request = read("dashboard", "_components", "inference-provider-request.ts");
+    expect(request).toContain("if (oauthClientSecret) {");
+    expect(request).toContain("body.oauthClientSecret = oauthClientSecret");
   });
 });
 

@@ -1,5 +1,5 @@
 import { legacyExecutionPermissions } from "./managed-policy-rules.js";
-import { DESKTOP_POLICY_ENFORCEMENT_ENABLED } from "@openwork/types/den/desktop-policies-runtime";
+import { DESKTOP_POLICY_ENFORCEMENT_ENABLED, desktopCapabilityConfig } from "@openwork/types/den/desktop-policies-runtime";
 import { materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast";
 import { isManagedPolicyPlugin } from "./managed-policy-plugin.js";
 /**
@@ -62,8 +62,10 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
   runtimeConfig: RuntimeOpencodeConfig,
 ): Record<string, unknown> {
   if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) {
-    const { managedPolicy: _cachedPolicy, ...localConfig } = runtimeConfig;
-    runtimeConfig = localConfig;
+    // Only model access (the AI Gateway's "Who can use models") is enforced: keep allowCustomProviders from the verified
+    // policy (cleared on sign-out) and drop execution rules and every other desktop policy.
+    const { managedPolicy, ...localConfig } = runtimeConfig;
+    runtimeConfig = managedPolicy ? { ...localConfig, managedPolicy: desktopCapabilityConfig(managedPolicy) } : localConfig;
   }
   const disabledProviders = runtimeDisabledProviderList(runtimeConfig);
   const permissions = legacyExecutionPermissions(runtimeConfig.managedPolicy?.execution);

@@ -25,6 +25,9 @@ async function routingConfig() {
       if (id === "./observability/next-config-observability.cjs") {
         return { withObservabilityNextConfig: (config: NextConfig) => config };
       }
+      if (id === "./next-config-legacy-connector-redirects.cjs") {
+        return { legacyConnectorRedirects: () => [] };
+      }
       if (id === "./next-config-den-api-redirects.cjs") {
         return { denApiRedirects: () => { throw new Error("Den redirects must not run in this fixture"); } };
       }

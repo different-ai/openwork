@@ -43,6 +43,7 @@ test("parseTarget normalizes bare, structured, and regular-expression targets", 
     composer: false,
   });
   assert.equal(parseTarget({ role: "switch", label: "Check automatically" }).role, "switch");
+  assert.equal(parseTarget({ role: "progressbar", label: "Weekly usage limit remaining" }).role, "progressbar");
 });
 
 test("mapKey produces CDP key fields and modifier bits", () => {
@@ -138,8 +139,10 @@ test("the browser-side miss report lists every rendered element of the requested
   const menu = [menuItem("Remove Team briefing from dashboard"), menuItem("Delete Team briefing")];
   const dashboardRoot = new HTMLElement("div", { "data-dashboard-page": "" }, "");
   const interactive = [...rail, ...menu];
+  const progressbar = new HTMLElement("div", { role: "progressbar", "aria-label": "Weekly usage limit remaining" }, "");
   const document = {
     querySelectorAll(selector: string) {
+      if (selector.includes('[role="progressbar"]')) return [...interactive, progressbar];
       return selector.includes('[role="menuitem"]') ? interactive : rail;
     },
     querySelector(selector: string) {
@@ -166,6 +169,10 @@ test("the browser-side miss report lists every rendered element of the requested
   await assert.rejects(
     locate(surface, { role: "menuitem", text: "Missing" }),
     /Route #\/dashboard\. Page roots: appHeader=false dashboardPage=true\. Visible menuitem candidates \(2\): menuitem "Remove Team briefing from dashboard", menuitem "Delete Team briefing"\.$/,
+  );
+  await assert.rejects(
+    locate(surface, { role: "progressbar", label: "Missing" }),
+    /Visible progressbar candidates \(1\): progressbar "Weekly usage limit remaining"\./,
   );
   // A role-less miss keeps the historical button/link list, now without the DOM-order cap.
   await assert.rejects(
@@ -247,6 +254,66 @@ test("key dispatch leaves native codes to Chrome and retains explicit editing co
     { type: "keyUp", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40, modifiers: 4 },
     { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, modifiers: 0 },
     { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, modifiers: 0 },
+  ]);
+});
+
+test("Enter dispatch includes text for native button activation without adding it to shortcuts", async () => {
+  for (const key of ["Enter", "Shift+Enter", "Control+Enter", "Meta+Enter", "Alt+Enter"]) {
+    const surface = surfaceReturning(null);
+    const events: unknown[] = [];
+    surface.client.send = async (method, params) => {
+      assert.equal(method, "Input.dispatchKeyEvent");
+      events.push(params);
+      return {};
+    };
+    await pressKey(surface, key);
+    const descriptor = mapKey(key);
+    const text = key === "Enter" || key === "Shift+Enter" ? { text: "\r" } : {};
+    assert.deepEqual(events, [
+      { type: "keyDown", ...descriptor, ...text },
+      { type: "keyUp", ...descriptor },
+    ]);
+  }
+});
+
+test("paste shortcuts dispatch Chromium's native paste command", async () => {
+  for (const [key, modifiers] of [["Meta+V", 4], ["Control+V", 2]] satisfies [string, number][]) {
+    const surface = surfaceReturning(null);
+    const events: unknown[] = [];
+    surface.client.send = async (method, params) => {
+      assert.equal(method, "Input.dispatchKeyEvent");
+      events.push(params);
+      return {};
+    };
+    await pressKey(surface, key);
+    assert.deepEqual(events, [
+      { type: "keyDown", key: "V", code: "KeyV", windowsVirtualKeyCode: 86, modifiers, commands: ["paste"] },
+      { type: "keyUp", key: "V", code: "KeyV", windowsVirtualKeyCode: 86, modifiers },
+    ]);
+  }
+});
+
+test("plain printable key presses include text for native date and time segments, not shortcuts", async () => {
+  const surface = surfaceReturning(null);
+  const events: unknown[] = [];
+  surface.client.send = async (method, params) => {
+    assert.equal(method, "Input.dispatchKeyEvent");
+    events.push(params);
+    return {};
+  };
+  await pressKey(surface, "1");
+  await pressKey(surface, "a");
+  await pressKey(surface, "Space");
+  await pressKey(surface, "Control+a");
+  assert.deepEqual(events, [
+    { type: "keyDown", key: "1", code: "Digit1", windowsVirtualKeyCode: 49, modifiers: 0, text: "1" },
+    { type: "keyUp", key: "1", code: "Digit1", windowsVirtualKeyCode: 49, modifiers: 0 },
+    { type: "keyDown", key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers: 0, text: "a" },
+    { type: "keyUp", key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers: 0 },
+    { type: "keyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32, modifiers: 0, text: " " },
+    { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32, modifiers: 0 },
+    { type: "keyDown", key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers: 2 },
+    { type: "keyUp", key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers: 2 },
   ]);
 });
 
@@ -475,7 +542,7 @@ test("trusted input reaches an isolated MCP App iframe in Chrome", { skip: proce
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
   const { spawn } = await import("node:child_process");
-  const { attachSurface } = await import("../src/surface.ts");
+  const { attachSurface, evaluateOnSurface } = await import("../src/surface.ts");
   await using cleanup = new AsyncDisposableStack();
   const profile = await mkdtemp(join(tmpdir(), "openwork-frame-input-"));
   cleanup.defer(() => rm(profile, { recursive: true, force: true }));
@@ -487,7 +554,7 @@ test("trusted input reaches an isolated MCP App iframe in Chrome", { skip: proce
     if (request.url === "/frame") {
       const html = `<h1>Connect Notion</h1><button onclick="if(event.isTrusted){document.querySelector('h1').textContent='Notion connected';fetch('http://127.0.0.1:${port}/decision',{mode:'no-cors'});this.remove()}">Authenticate</button>`;
       response.end(`<iframe sandbox="allow-scripts" style="width:500px;height:200px" srcdoc="${html.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}"></iframe>`);
-    } else response.end(`<button>Authenticate</button><div data-mcp-app-resource="ui://connection" style="padding:80px"><iframe sandbox="allow-scripts allow-same-origin" style="width:600px;height:300px" src="http://127.0.0.1:${port}/frame"></iframe></div>`);
+    } else response.end(`<button>Authenticate</button><div style="height:420px"></div><button onclick="document.body.dataset.clicked='yes'">Reachable action</button><div data-mcp-app-resource="ui://connection" style="padding:80px"><iframe sandbox="allow-scripts allow-same-origin" style="width:600px;height:300px" src="http://127.0.0.1:${port}/frame"></iframe></div>`);
   });
   await new Promise<void>(resolve => server.listen(0, "::", resolve));
   cleanup.defer(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
@@ -513,6 +580,11 @@ test("trusted input reaches an isolated MCP App iframe in Chrome", { skip: proce
   });
   const surface = await attachSurface({ name: "isolated-frame-input", kind: "chrome", hostKind: "local", cdpUrl });
   cleanup.use(surface);
+  await surface.client.send("Emulation.setDeviceMetricsOverride", { width: 800, height: 600, deviceScaleFactor: 1, mobile: false });
+  await clickTarget(surface, { role: "button", label: "Reachable action" });
+  assert.equal(await evaluateOnSurface(surface, () => document.body.dataset.clicked), "yes");
+  assert.equal(await evaluateOnSurface(surface, () => scrollY), 0, "clicking an already reachable action must not move its hover target");
+  await surface.client.send("Emulation.setDeviceMetricsOverride", { width: 800, height: 1200, deviceScaleFactor: 1, mobile: false });
   await clickTarget(surface, appAuthenticate, { timeoutMs: 10_000 });
   const outcome = await waitForLocated(surface, { mcpApp: { resourceUri: "ui://connection" }, role: "heading", text: "Notion connected" }, { timeoutMs: 10_000 });
   assert.equal(outcome.visible, true);

@@ -148,6 +148,8 @@ type DenFlowContextValue = {
   cancelVerification: () => void;
   beginSocialAuth: (provider: SocialAuthProvider) => Promise<void>;
   signOut: () => Promise<void>;
+  /** Re-checks the session with Den; clears the signed-in user when it is gone. */
+  revalidateSession: () => Promise<AuthUser | null>;
   updateUserProfile: (input: { firstName: string; lastName: string }) => Promise<AuthUser>;
   resolveUserLandingRoute: () => Promise<string | null>;
   billingSummary: BillingSummary | null;
@@ -498,7 +500,12 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   ): Promise<AuthNavigationResult> {
     let payload = payloadOverride;
 
-    if (payload === undefined || (!getToken(payload) && nextMode === "sign-up" && Boolean(password))) {
+    // Verifying an email proves the mailbox but does not sign anyone in:
+    // /email-otp/verify-email answers with `token: null` and sets no cookie.
+    // Exchange the password the person just typed for a session in sign-in
+    // as well as sign-up, or an existing account that verifies from the
+    // sign-in form is shown as signed in without a session (ENG-550).
+    if (payload === undefined || (!getToken(payload) && Boolean(password))) {
       const signInBody = {
         email: trimmedEmail,
         password,
@@ -528,7 +535,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     let authenticatedUser: AuthUser | null = null;
-    const payloadUser = getUser(payload);
+    // A user object alone is not a session: the verify-email reply carries one
+    // with `token: null`. Trust it only next to a token; otherwise ask Den.
+    const payloadUser = token ? getUser(payload) : null;
     if (payloadUser) {
       authenticatedUser = payloadUser;
       setUser(payloadUser);
@@ -539,6 +548,13 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       if (refreshed) {
         authenticatedUser = refreshed;
         appendEvent("success", nextMode === "sign-up" ? "Account created" : "Signed in", refreshed.email);
+      } else if (getUser(payload)) {
+        // Verified, but there is no password to exchange for a session. Keep
+        // the person on the sign-in step instead of a signed-in screen that
+        // every request would reject.
+        setAuthMode("sign-in");
+        setAuthInfo(`Email verified. Sign in as ${trimmedEmail} to continue.`);
+        return null;
       } else {
         setAuthInfo("Authentication succeeded, but session details are still syncing.");
       }
@@ -2052,6 +2068,8 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    // The org dashboard refreshes workers once its org scope is set; an earlier unscoped fetch would be discarded.
+    if (pathname.startsWith("/dashboard")) return;
     void refreshWorkers();
   }, [user?.id, authToken]);
 
@@ -2404,6 +2422,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     cancelVerification,
     beginSocialAuth,
     signOut,
+    revalidateSession: () => refreshSession(true),
     updateUserProfile,
     resolveUserLandingRoute,
     billingSummary,

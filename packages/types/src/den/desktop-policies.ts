@@ -1,20 +1,45 @@
 import { z } from "zod";
 
-/** Desktop enforcement is suspended pending redesign. This is not a Cloud
- * authorization switch: schemas, assignments and resource entitlements remain
- * authoritative in Den. Keep all desktop enforcement entry points on this flag. */
+/** Desktop feature-policy enforcement is suspended pending redesign. This is
+ * not a Cloud authorization switch: schemas, assignments and resource
+ * entitlements remain authoritative in Den. Keep all desktop feature-policy
+ * entry points on this flag.
+ *
+ * Two controls are deliberately NOT behind this flag:
+ * - Required sign-in is a property of the build (enterprise and cloud always
+ *   require it; a public build can opt in through desktop-bootstrap.json).
+ * - `allowedDesktopVersions` is an organization setting, not a desktop policy,
+ *   so the projection below keeps it and the updater keeps honouring it.
+ * - Model access (below) is the AI Gateway's own setting; it only happens to
+ *   be stored in the default desktop policy. */
 export const DESKTOP_POLICY_ENFORCEMENT_ENABLED: boolean = false;
 
-export function desktopSigninRequired(requireSignin: boolean, desktop: boolean): boolean {
-  return requireSignin && (!desktop || DESKTOP_POLICY_ENFORCEMENT_ENABLED);
+/**
+ * Model access: the AI Gateway's "Who can use models" setting. "Only models
+ * you provide" is stored as `allowCustomProviders: false` in the
+ * organization's default desktop policy, and "Admins may still add their own
+ * keys" as a policy for the admin role. The desktop and web app enforce this
+ * key on its own; every other desktop policy, including `allowZenModel`,
+ * stays off with the flag above.
+ * Enforcement never blocks startup, sign-in or chat: callers apply the last
+ * known setting and allow when none is known (see #5131).
+ */
+export const MODEL_ACCESS_POLICY_KEYS = ["allowCustomProviders"] as const;
+
+export function isModelAccessPolicyKey(key: string): boolean {
+  return (MODEL_ACCESS_POLICY_KEYS as readonly string[]).includes(key);
+}
+
+export function desktopPolicyKeyEnforced(key: string): boolean {
+  return DESKTOP_POLICY_ENFORCEMENT_ENABLED || isModelAccessPolicyKey(key);
 }
 
 /** Runtime-only projection; never persist this over the control-plane config. */
 export function desktopCapabilityConfig(config: DesktopConfig): DesktopConfig {
   if (DESKTOP_POLICY_ENFORCEMENT_ENABLED) return config;
-  const { execution: _execution, allowedDesktopVersions: _versions, ...effective } = config;
+  const { execution: _execution, ...effective } = config;
   for (const key of desktopPolicyKeys) {
-    if (key !== "showWelcomePage") delete effective[key];
+    if (key !== "showWelcomePage" && !desktopPolicyKeyEnforced(key)) delete effective[key];
   }
   return effective;
 }
@@ -767,4 +792,13 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     ...(connectEnabled !== undefined ? { connectEnabled } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
   };
+}
+
+/** Role assignments include built-in parent roles; custom members still match the member assignment. */
+export function matchingDesktopPolicyAssignmentRoles(memberRole: string) {
+  const levels = new Map<string, number>([["owner", 3], ["super-admin", 2], ["admin", 1], ["member", 0]]);
+  const roles = memberRole.split(",").map((role) => role.trim()).filter(Boolean);
+  return (["owner", "admin", "member"] as const).filter((required) => roles.some((role) =>
+    required === "member" || (levels.get(role) ?? -1) >= (levels.get(required) ?? 0),
+  ));
 }

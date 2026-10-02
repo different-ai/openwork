@@ -169,6 +169,27 @@ async function startupFixture(options: Pick<McpAppSandboxViewProps, "presentatio
 }
 
 describe("MCP App startup scheduling", () => {
+  test("cached HTML exposes pending tools, waits for a live lease, and never reuses cached authority", async () => {
+    const host = await startupFixture()
+    const live = Promise.withResolvers<{ origin: mcpAppOrigin.McpAppOrigin; app: OpenworkMcpAppResource }>()
+    const call = spyOn(host.client, "callMcpAppTool").mockResolvedValue({ content: [] })
+    const actionContext = { requestId: 1, signal: new AbortController().signal,
+      sendNotification: async () => {}, sendRequest: async () => { throw new Error("Unexpected request") } }
+    try {
+      await host.renderView({ app: fixture({ toolName: "render-0", launchId: undefined }), resolveLiveActions: () => live.promise })
+      await host.notify(0, "ui/notifications/sandbox-proxy-ready")
+      expect(host.bridges[0].oncalltool).toBeDefined()
+      const pending = host.bridges[0].oncalltool?.({ name: "read_detail" }, actionContext)
+      expect(call).not.toHaveBeenCalled()
+      await act(async () => live.resolve({ origin: { client: host.client, workspaceId: "workspace-0", sessionId: null, readOnly: false },
+        app: fixture({ toolName: "render-0", launchId: "fresh-live-lease" }) }))
+      await expect(pending).resolves.toEqual({ content: [] })
+      expect(call.mock.calls[0][1]).toMatchObject({ launchId: "fresh-live-lease", name: "read_detail" })
+      expect(call.mock.calls[0][1].approved).toBeUndefined()
+      expect(host.failures).toEqual([])
+    } finally { call.mockRestore(); await host.dispose() }
+  })
+
   test("starts at most two Apps across workspaces and advances FIFO only after initialization", async () => {
     const host = await startupFixture()
     try {

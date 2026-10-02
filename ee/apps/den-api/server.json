@@ -1,0 +1,19 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.openworklabs/openwork",
+  "title": "OpenWork MCP Gateway",
+  "description": "Your OpenWork org's skills, plugins, workflows, and connections through one OAuth MCP URL.",
+  "websiteUrl": "https://openworklabs.com/docs/start-here/connect-openwork-mcp",
+  "repository": {
+    "url": "https://github.com/different-ai/openwork",
+    "source": "github",
+    "subfolder": "ee/apps/den-api"
+  },
+  "version": "1.0.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://api.openworklabs.com/mcp/agent"
+    }
+  ]
+}

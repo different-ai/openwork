@@ -66,6 +66,16 @@
       "development": "./src/schema/telemetry.ts",
       "default": "./dist/schema/telemetry.js"
     },
+    "./audit-accounting": {
+      "types": "./src/audit-accounting.ts",
+      "development": "./src/audit-accounting.ts",
+      "default": "./dist/audit-accounting.js"
+    },
+    "./audit-log": {
+      "types": "./src/audit-log.ts",
+      "development": "./src/audit-log.ts",
+      "default": "./dist/audit-log.js"
+    },
     "./gateway-usage-limits": {
       "types": "./src/gateway-usage-limits.ts",
       "development": "./src/gateway-usage-limits.ts",
@@ -87,6 +97,9 @@
     "db:migrate": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs migrate --config drizzle.config.ts && node --conditions=development --import tsx scripts/ensure-schema-repairs.ts",
     "db:push": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts && node --conditions=development --import tsx scripts/ensure-schema-repairs.ts",
     "test": "NODE_OPTIONS=--conditions=development tsx --test test/*.test.ts",
+    "test:audit": "NODE_OPTIONS=--conditions=development tsx --test --test-concurrency=1 test/audit-log.test.ts test/audit-migration.test.ts test/audit-accounting.test.ts",
+    "test:audit:db": "DEN_AUDIT_TEST_DATABASE_URL=${DEN_AUDIT_TEST_DATABASE_URL:?Set an isolated loopback audit_logs_test database URL} NODE_OPTIONS=--conditions=development tsx --test --test-concurrency=1 test/audit-log-db.test.ts",
+    "typecheck:audit": "tsc -p tsconfig.audit-test.json --pretty false",
     "test:usage-limits": "NODE_OPTIONS=--conditions=development tsx --test --test-concurrency=1 test/gateway-usage-limits.test.ts test/gateway-usage-migration.test.ts",
     "test:usage-limits:db": "DEN_USAGE_TEST_DATABASE_URL=${DEN_USAGE_TEST_DATABASE_URL:?Set an isolated loopback usage_limits_test database URL} NODE_OPTIONS=--conditions=development tsx --test --test-concurrency=1 test/gateway-usage-limits-db.test.ts",
     "typecheck:usage-limits": "tsc -p tsconfig.usage-limits-test.json --pretty false",

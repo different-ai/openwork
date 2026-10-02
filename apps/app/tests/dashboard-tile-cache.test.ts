@@ -194,7 +194,10 @@ describe("dashboard tile cache", () => {
     flushDashboardTileCacheStorage();
     expect(writes).toHaveBeenCalledTimes(1);
     const persisted: unknown = JSON.parse(storage.getItem(scope) ?? "null");
-    expect(persisted).toEqual({ tile: latest, other: cache });
+    expect(JSON.stringify(persisted)).not.toContain("launchId");
+    resetDashboardTileCacheMemory();
+    expect(readDashboardTileCache(scope, "tile")).toEqual(latest);
+    expect(readDashboardTileCache(scope, "other")).toEqual(cache);
   });
 
   test("retains exact workspace and argument signatures while rejecting malformed identities", () => {
@@ -225,7 +228,10 @@ describe("dashboard tile cache", () => {
     writeDashboardTileCache(scope, "new", cache);
     flushDashboardTileCacheStorage();
     const persisted: unknown = JSON.parse(storage.getItem(scope) ?? "null");
-    expect(persisted).toEqual({ legacy: cache, new: cache });
+    expect(JSON.stringify(persisted)).not.toMatch(/old-lease|old-authority|launchId/);
+    resetDashboardTileCacheMemory();
+    expect(readDashboardTileCache(scope, "legacy")).toEqual(cache);
+    expect(readDashboardTileCache(scope, "new")).toEqual(cache);
   });
 
   test.each(["{", "null", "[]"])("recovers from corrupt scope data (%s)", (raw) => {
@@ -304,7 +310,9 @@ describe("dashboard tile cache", () => {
     writeDashboardTileCache(scope, "circular", { ...cache, result: { content: [], structuredContent: circular } });
     expect(() => flushDashboardTileCacheStorage()).not.toThrow();
     const persisted: unknown = JSON.parse(storage.getItem(scope) ?? "null");
-    expect(persisted).toEqual({ good: cache });
+    expect(JSON.stringify(persisted)).not.toMatch(/oversized|circular/);
+    resetDashboardTileCacheMemory();
+    expect(readDashboardTileCache(scope, "good")).toEqual(cache);
     expect(readDashboardTileCache(scope, "oversized")).toBeNull();
     expect(readDashboardTileCache(scope, "circular")).toBeNull();
   });

@@ -1,57 +1,61 @@
 ---
-title: "Add Anthropic API key"
-description: "Create an Anthropic API key and use it in OpenWork"
+title: "Add an Anthropic API key"
+sidebarTitle: "Add Anthropic API key"
+description: "Create an Anthropic API key and paste it into OpenWork to use Claude models."
+keywords: ["anthropic", "claude", "api key", "sk-ant", "claude api", "connect provider", "claude pro", "claude max"]
 ---
 
 <Note>
 **Local provider setup.** The key you add here is for your desktop app. OpenWork remains free, and you do not need to sign in to OpenWork Cloud. To manage Anthropic access for a team, use [a managed LLM provider](/cloud/share-with-your-team/managed-llm-provider).
 </Note>
 
-Anthropic has disabled 3rd party authentication for their OAuth. In order to continue supporting Anthropic based models in OpenWork, we now default to manual API key entry for Anthropic.
-That means you create the key in Anthropic first, then paste it into OpenWork.
+To use Claude models in OpenWork, create an API key in Anthropic and paste it into OpenWork. Anthropic doesn't allow third-party apps to sign in with a Claude subscription, so OpenWork connects to Anthropic with an API key.
 
 ## Before you start
 
-- You need an Anthropic account at [platform.claude.com](https://platform.claude.com).
-- Your Claude subscription and your Anthropic API billing are not always the same thing, so make sure API access is enabled on your Anthropic account.
-- Treat the key like a password. Anthropic will only show the full value when you create it.
+- You need an account at [platform.claude.com](https://platform.claude.com) with API billing set up. API use is billed separately from a Claude Pro or Max subscription.
+- Treat the key like a password. Anthropic shows the full key only once, when you create it.
 
-If this key should be managed for a team, add Anthropic once under `Models > Bring your Own Keys` in OpenWork Cloud. Members receive it through `Settings > Cloud Providers` instead of pasting it into each workspace separately.
+<Tip>
+Setting this up for a team? An admin can add Anthropic once in OpenWork Cloud under **AI Gateway › AI Providers**. Members then get the models without pasting a key. See [Adding a managed LLM provider](/cloud/share-with-your-team/managed-llm-provider).
+</Tip>
 
 ## Create the key in Anthropic
 
 1. Sign in at [platform.claude.com](https://platform.claude.com).
-2. Open the `API Keys` page.
+2. Open the **API Keys** page.
 
 <Frame>
   ![Anthropic API Keys page](/images/anthropic-key.png)
 </Frame>
 
-3. Click `Create Key`.
-4. Give the key a recognizable name like `OpenWork`.
+3. Click **Create Key**.
+4. Give the key a name you'll recognize, such as `OpenWork`.
 
 <Frame>
   ![Anthropic Create Key dialog](/images/anthropic-openwork-key.png)
 </Frame>
 
-5. Copy the new key right away. It should look like `sk-ant-...`.
+5. Copy the key right away. It starts with `sk-ant-`.
 
 ## Add the key to OpenWork
 
-
-1. Open `Settings` in OpenWork.
-2. Go to `Connect Provider` and choose `Anthropic`.
-3. Paste the API key into the manual key field.
-4. Save the provider, then choose an Anthropic model in chat.
+1. Open **Settings › AI Providers**.
+2. Click **Connect provider**.
 
 <Frame>
-  ![How to add a new provider in OpenWork](/images/openwork-providers.png)
+  ![The Connect provider button in OpenWork settings](/images/openwork-providers.png)
 </Frame>
+
+3. Choose **Anthropic**. You see "Paste your API key to connect."
+4. Paste the key into the **API key** field.
+5. Click **Save key**.
+6. In a chat, click the model name under the message box and choose a Claude model.
 
 ## Common issues
 
-- If the key is rejected, make sure you copied the full value without extra spaces.
-- If you cannot see `API Keys`, check that your Anthropic account has API access and billing set up.
-- If you lose the key, create a new one in Anthropic and update OpenWork with the new value.
+- **The key is rejected.** Make sure you copied the whole key, with no extra spaces.
+- **You can't find API Keys.** Check that your Anthropic account has API access and billing set up.
+- **You lost the key.** Create a new key in Anthropic, then repeat the steps above to replace it in OpenWork.
 
-The same general process applies to most providers that use manual API keys: create the key in the provider's developer console, copy it once, and paste it into OpenWork.
+Most other providers that use API keys work the same way: create the key in the provider's console, copy it once, and paste it into OpenWork.

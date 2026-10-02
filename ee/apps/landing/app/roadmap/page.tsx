@@ -3,17 +3,17 @@ import { getGithubData } from "../../lib/github";
 import { baseOpenGraph, withSocialMetadata } from "../../lib/seo";
 
 export const metadata = withSocialMetadata({
-  title: "OpenWork Roadmap | Your workspace, on every surface",
+  title: "OpenWork Roadmap | A workspace for everyone, on any platform",
   description:
-    "See what OpenWork supports today and what is coming next for the desktop app, OpenWork Connect, hosted workspaces, Slack, mobile, and reliable agent workflows.",
+    "What is ready, being built, and coming soon for the OpenWork desktop app, Admin, MCP Gateway, Web, Automations, Workflows, Dashboards, and new apps.",
   alternates: {
     canonical: "/roadmap"
   },
   openGraph: {
     ...baseOpenGraph,
-    title: "OpenWork Roadmap | Your workspace, on every surface",
+    title: "OpenWork Roadmap | A workspace for everyone, on any platform",
     description:
-      "The roadmap for the OpenWork desktop app, portable agent capabilities, hosted workspaces, and every surface where work happens.",
+      "What is ready, being built, and coming soon across every OpenWork product.",
     url: "https://openworklabs.com/roadmap"
   }
 });

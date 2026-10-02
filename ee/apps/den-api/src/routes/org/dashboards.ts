@@ -8,10 +8,14 @@ import {
   type DashboardElement,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import type { Hono } from "hono"
+import { MCP_APP_LAUNCH_TOOL_NAME, mcpAppIdSchema, mcpAppResourceUri } from "@openwork/types/mcp-app"
+import type { Hono, MiddlewareHandler } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
+import { appMcpServersEnabled } from "../../mcp-app-rollout.js"
+import { currentMcpAppRevisionIds } from "../../mcp-apps.js"
+import { organizationManagedDashboardsEnabled } from "../../organization-capabilities.js"
 import {
   jsonValidator,
   orgMemberRoute,
@@ -145,6 +149,42 @@ function toStoredElement(value: DashboardElementInput): DashboardElement {
   }
 }
 
+/** The App an element opens through the App's own MCP server, if it is an App built in OpenWork. */
+function builtAppId(element: DashboardElement): string | null {
+  return element.connectionId && element.toolName === MCP_APP_LAUNCH_TOOL_NAME && mcpAppIdSchema.safeParse(element.connectionId).success
+    ? element.connectionId
+    : null
+}
+
+/**
+ * Points every element that opens an App built in OpenWork at the App's current
+ * revision. update_app gives the App a new ui:// revision, and hosts open only
+ * the revision its open_app advertises, so a stored reference would stop
+ * opening after any update. Archived Apps keep their element, which then shows
+ * as unavailable.
+ */
+async function withCurrentAppRevisions<Row extends { elementsJson: DashboardElement[] }>(
+  organizationId: DashboardRow["organizationId"],
+  rows: Row[],
+  appsEnabled: boolean,
+): Promise<Row[]> {
+  const appIds = rows.flatMap((row) => row.elementsJson.flatMap((element) => builtAppId(element) ?? []))
+  if (!appsEnabled || appIds.length === 0) return rows
+  const revisions = await currentMcpAppRevisionIds({ organizationId, appIds }).catch((error: unknown) => {
+    // The dashboards still load; their App tiles keep the revision they stored.
+    console.error("dashboard_app_revision_lookup_failed", { organizationId, error: error instanceof Error ? error.message : String(error) })
+    return new Map<string, string>()
+  })
+  return rows.map((row) => ({
+    ...row,
+    elementsJson: row.elementsJson.map((element) => {
+      const appId = builtAppId(element)
+      const revisionId = appId ? revisions.get(appId) : undefined
+      return appId && revisionId ? { ...element, resourceUri: mcpAppResourceUri(appId, revisionId) } : element
+    }),
+  }))
+}
+
 function serializeDashboard(row: DashboardRow) {
   return {
     id: row.id,
@@ -209,6 +249,18 @@ async function grantTargetsInOrganization(
   return null
 }
 
+// Org-managed Dashboards are enabled per organization. When the capability is
+// off, admin routes answer 404 as if the feature did not exist; stored
+// dashboards and grants are kept so re-enabling restores them unchanged.
+const requireOrgManagedDashboards: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
+  const payload = c.get("organizationContext")
+  if (!payload) return c.json({ error: "organization_not_found" }, 404)
+  if (!organizationManagedDashboardsEnabled(payload.organization.metadata)) {
+    return c.json({ error: "dashboards_not_enabled" }, 404)
+  }
+  await next()
+}
+
 export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/dashboards",
@@ -223,6 +275,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
       },
     }),
     orgRoleRoute(["admin"]),
+    requireOrgManagedDashboards,
     async (c) => {
       const payload = c.get("organizationContext")
       const rows = await db
@@ -230,7 +283,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         .from(DashboardTable)
         .where(and(eq(DashboardTable.organizationId, payload.organization.id), isNull(DashboardTable.deletedAt)))
         .orderBy(asc(DashboardTable.name), asc(DashboardTable.id))
-      return c.json({ items: rows.map(serializeDashboard) })
+      return c.json({ items: (await withCurrentAppRevisions(payload.organization.id, rows, appMcpServersEnabled(payload.organization.metadata))).map(serializeDashboard) })
     },
   )
 
@@ -239,7 +292,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Dashboards"],
       summary: "Create dashboard",
-      description: "Creates an organization-owned dashboard: a named, ordered list of up to 50 MCP App elements, each pointing at a ui:// resource served by a connected MCP server. Nobody sees the dashboard until access is granted through POST /v1/dashboards/{dashboardId}/access.",
+      description: "Creates an organization-owned dashboard: a named, ordered list of up to 50 MCP App elements, each pointing at a ui:// resource served by a connected MCP server or by an App built in OpenWork (from GET /v1/mcp-apps). An App's element always points at the App's current revision. Nobody sees the dashboard until access is granted through POST /v1/dashboards/{dashboardId}/access.",
       responses: {
         201: jsonResponse("Dashboard created successfully.", dashboardResponseSchema),
         400: jsonResponse("The dashboard request was invalid.", invalidRequestSchema),
@@ -248,6 +301,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
       },
     }),
     orgRoleRoute(["admin"]),
+    requireOrgManagedDashboards,
     jsonValidator(dashboardCreateSchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -264,7 +318,8 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         deletedAt: null,
       }
       await db.insert(DashboardTable).values(row)
-      return c.json({ item: serializeDashboard(row) }, 201)
+      const [current] = await withCurrentAppRevisions(payload.organization.id, [row], appMcpServersEnabled(payload.organization.metadata))
+      return c.json({ item: serializeDashboard(current ?? row) }, 201)
     },
   )
 
@@ -282,6 +337,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
       },
     }),
     orgRoleRoute(["admin"]),
+    requireOrgManagedDashboards,
     paramValidator(dashboardParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -290,7 +346,8 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         normalizeDenTypeId("dashboard", c.req.valid("param").dashboardId),
       )
       if (!row) return c.json({ error: "dashboard_not_found" }, 404)
-      return c.json({ item: serializeDashboard(row) })
+      const [current] = await withCurrentAppRevisions(payload.organization.id, [row], appMcpServersEnabled(payload.organization.metadata))
+      return c.json({ item: serializeDashboard(current ?? row) })
     },
   )
 
@@ -309,6 +366,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
       },
     }),
     orgRoleRoute(["admin"]),
+    requireOrgManagedDashboards,
     paramValidator(dashboardParamsSchema),
     jsonValidator(dashboardUpdateSchema),
     async (c) => {
@@ -330,7 +388,8 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         .update(DashboardTable)
         .set({ name: next.name, elementsJson: next.elementsJson, updatedAt })
         .where(eq(DashboardTable.id, existing.id))
-      return c.json({ item: serializeDashboard(next) })
+      const [current] = await withCurrentAppRevisions(payload.organization.id, [next], appMcpServersEnabled(payload.organization.metadata))
+      return c.json({ item: serializeDashboard(current ?? next) })
     },
   )
 
@@ -348,6 +407,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
       },
     }),
     orgRoleRoute(["admin"]),
+    requireOrgManagedDashboards,
     paramValidator(dashboardParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -378,6 +438,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
       },
     }),
     orgRoleRoute(["admin"]),
+    requireOrgManagedDashboards,
     paramValidator(dashboardParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -413,6 +474,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
       },
     }),
     orgRoleRoute(["admin"]),
+    requireOrgManagedDashboards,
     paramValidator(dashboardParamsSchema),
     jsonValidator(dashboardAccessGrantWriteSchema),
     async (c) => {
@@ -497,6 +559,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
       },
     }),
     orgRoleRoute(["admin"]),
+    requireOrgManagedDashboards,
     paramValidator(dashboardGrantParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -544,6 +607,10 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     resolveMemberTeamsMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
+      // Desktop polls this route; a disabled org sees no granted dashboards.
+      if (!organizationManagedDashboardsEnabled(payload.organization.metadata)) {
+        return c.json({ items: [] })
+      }
       const memberId = payload.currentMember.id
       const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
       const teamIds = memberTeams.map((team) => team.id)
@@ -575,7 +642,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         ))
         .orderBy(asc(DashboardTable.name), asc(DashboardTable.id))
       const seen = new Set<string>()
-      const items = rows.flatMap((row) => {
+      const items = (await withCurrentAppRevisions(payload.organization.id, rows, appMcpServersEnabled(payload.organization.metadata))).flatMap((row) => {
         if (seen.has(row.id)) return []
         seen.add(row.id)
         return [{

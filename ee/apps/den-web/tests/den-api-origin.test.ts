@@ -109,7 +109,7 @@ describe("Den API browser origin", () => {
 });
 
 const consentPages = [
-  { name: "consent authorization", page: McpConsentPage, route: "consent", button: "Authorize", path: "/api/auth/oauth2/consent" },
+  { name: "consent authorization", page: McpConsentPage, route: "consent", button: "Authorize this app", path: "/api/auth/oauth2/consent" },
   { name: "consent denial", page: McpConsentPage, route: "consent", button: "Deny", path: "/api/auth/oauth2/consent" },
   { name: "organization selection", page: McpSelectOrganizationPage, route: "select-organization", button: null, path: "/v1/me/orgs" },
 ];
@@ -144,15 +144,23 @@ test.each(consentPages)("fresh $name waits for runtime configuration and keeps t
       await act(async () => { control.click(); });
     }
 
+    // The page and its app-name lookup each wait for runtime config;
+    // nothing may reach the network before it resolves.
     expect(fetchRequest).not.toHaveBeenCalled();
-    expect(loadConfig).toHaveBeenCalledTimes(1);
+    expect(loadConfig).toHaveBeenCalled();
     await act(async () => { resolveConfig({ ...runtime.EMPTY_RUNTIME_CONFIG, denApiUrl: apiOrigin }); });
 
-    expect(fetchRequest).toHaveBeenCalledTimes(1);
-    expect(fetchRequest).toHaveBeenCalledWith(path.startsWith("/api/auth/") ? path : `/api/browser${path}`, expect.objectContaining({
+    const expectedPath = path.startsWith("/api/auth/") ? path : `/api/browser${path}`;
+    const pageCalls = fetchRequest.mock.calls.filter(([input]) => String(input) === expectedPath);
+    expect(pageCalls).toHaveLength(1);
+    expect(pageCalls[0]?.[1]).toEqual(expect.objectContaining({
       credentials: "include",
       method: button ? "POST" : "GET",
     }));
+    // Other requests are only the signed public-client lookup for the app name
+    // and the signed-in account and workspace shown in the facts.
+    const otherCalls = fetchRequest.mock.calls.filter(([input]) => String(input) !== expectedPath);
+    expect(otherCalls.every(([input]) => String(input).endsWith("/api/auth/oauth2/public-client-prelogin") || String(input) === "/api/browser/v1/me" || String(input) === "/api/browser/v1/me/orgs")).toBe(true);
   } finally {
     await act(async () => { root.unmount(); });
     fetchRequest.mockRestore();

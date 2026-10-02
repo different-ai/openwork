@@ -86,6 +86,19 @@ describe("connect providers gateway visibility", () => {
     );
   }
 
+  test("OpenWork Models is the first included non-credential row even when a legacy caller requests promotion", async () => {
+    const props = createProps();
+    await act(async () => root.render(<ProviderAuthModal {...props} openWorkModelsState="included" organizationName="Example Team" organizationProviderCount={2} organizationProviderIds={new Set(["google"])} />));
+    const included = dialog().querySelector('[data-testid="included-openwork-provider"]');
+    expect(included?.textContent).toContain("OpenWork Models");
+    expect(included?.textContent).toContain("Included");
+    expect(included?.querySelector("button")).toBeNull();
+    expect(dialog().textContent).not.toContain("Subscribe");
+    expect(dialog().textContent).toContain("2 providers from Example Team");
+    expect(providerButton("google")?.textContent).toContain("Also available from Example Team");
+    expect(props.onSelect).not.toHaveBeenCalled();
+  });
+
   test("hides runtime gateway IDs while retaining same-vendor direct and custom connected providers", async () => {
     await act(async () => root.render(<ProviderAuthModal {...createProps()} />));
 
@@ -96,7 +109,18 @@ describe("connect providers gateway visibility", () => {
     }
     expect(providerButton("google")?.textContent).toContain("Connect");
     expect(providerButton("google")?.textContent).not.toContain("Connected");
-    expect(dialog().textContent).toContain("All providers");
+    expect(dialog().textContent).toContain("Available to add");
+  });
+
+  test("labels OAuth providers Login while API-key providers keep Connect", async () => {
+    const props = createProps();
+    props.connectedProviderIds = [];
+    props.authMethods.openai = [{ type: "oauth", label: "Account sign-in", methodIndex: 0 }];
+    await act(async () => root.render(<ProviderAuthModal {...props} />));
+    expect(providerButton("openai")?.textContent).toContain("Login");
+    expect(providerButton("google")?.textContent).toContain("Connect");
+    expect(providerButton("google")?.textContent).not.toContain("Login");
+    expect(props.onSelect).not.toHaveBeenCalled();
   });
 
   test.each(["gateway-openai", "Managed OpenAI", "Managed credential"])("search cannot surface gateway providers by %s", async (query) => {
@@ -163,7 +187,7 @@ describe("connect providers gateway visibility", () => {
     expect(search?.classList.contains("text-base")).toBe(true);
     expect(search?.classList.contains("lg:text-[13px]")).toBe(true);
     await act(async () => providerButton("google")?.click());
-    expect(document.activeElement?.textContent).toBe("Connect providers");
+    expect(document.activeElement?.textContent).toBe("Connect a provider");
     const keyInput = dialog().querySelector("input");
     expect(keyInput?.classList.contains("text-base")).toBe(true);
     expect(keyInput?.classList.contains("lg:text-sm")).toBe(true);

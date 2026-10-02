@@ -31,6 +31,12 @@ function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
 }
 
+// The engine's `/config/providers` body: connected providers only.
+function connectedBody(value: ProviderListResponse) {
+  const connected = new Set(value.connected);
+  return { providers: value.all.filter((item) => connected.has(item.id)), default: value.default };
+}
+
 function deferredResponse() {
   let resolve: (value: Response) => void = () => undefined;
   const promise = new Promise<Response>((done) => { resolve = done; });
@@ -47,7 +53,7 @@ function createHarness() {
     config: { disabled_providers: ["disabled-existing"], permission: { bash: "ask" } },
     catalog: { all: [provider], connected: [provider.id], default: { openai: "fixture-model" } },
     readConfig: () => json(engine.config),
-    readProviders: () => json(engine.catalog),
+    readProviders: () => json(connectedBody(engine.catalog)),
   };
   const requests: Array<{ method: string; path: string }> = [];
   spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -55,7 +61,7 @@ function createHarness() {
     const path = new URL(request.url).pathname;
     requests.push({ method: request.method, path });
     if (request.method === "GET" && path === "/config") return engine.readConfig();
-    if (request.method === "GET" && path === "/provider") return engine.readProviders();
+    if (request.method === "GET" && path === "/config/providers") return engine.readProviders();
     throw new Error("Unexpected request during provider discovery");
   });
   const ui: {
@@ -128,7 +134,6 @@ function ProviderSettings({ harness }: { harness: Harness }) {
       onDisconnectProvider={() => undefined}
       canDisconnectProvider={() => true}
       canAddProviders={true}
-      showOpenWorkModelsSubscribe={ui.connected.length === 0}
     />
   );
 }
@@ -169,12 +174,12 @@ test("cold discovery waits, reports SDK failure, and only shows empty setup afte
   expect(failed).not.toContain("Subscribe");
 
   harness.engine.catalog = { all: [], connected: [], default: {} };
-  harness.engine.readProviders = () => json(harness.engine.catalog);
+  harness.engine.readProviders = () => json(connectedBody(harness.engine.catalog));
   await harness.store.refreshProviders({ force: true });
   expect(harness.store.getSnapshot().providerLoadState).toEqual({ status: "ready", error: null });
   const empty = render(harness);
   expect(empty).toContain(t("settings.no_providers_connected"));
-  expect(empty).toContain("Subscribe");
+  expect(empty).not.toContain("Subscribe");
   expect(empty).not.toContain('role="alert"');
   expect(empty).not.toContain('disabled=""');
   expectReadOnly(harness);
@@ -185,14 +190,14 @@ test("a config discovery failure preserves known providers, defaults, and disabl
   await harness.store.refreshProviders();
   const before = { ...harness.ui };
   const configBefore = JSON.stringify(harness.engine.config);
-  const providerReadsBefore = harness.requests.filter(({ path }) => path === "/provider").length;
+  const providerReadsBefore = harness.requests.filter(({ path }) => path === "/config/providers").length;
   harness.engine.readConfig = () => json({ name: "BadRequest", data: { message: `${privatePath}: invalid configuration ${secret}` } }, 400);
   expect(await harness.store.refreshProviders()).toBeNull();
   expect(harness.store.getSnapshot().providerLoadState.status).toBe("error");
   expect(harness.ui).toEqual(before);
   expect(harness.ui.providers).toBe(before.providers);
   expect(harness.ui.disabled).toBe(before.disabled);
-  expect(harness.requests.filter(({ path }) => path === "/provider")).toHaveLength(providerReadsBefore);
+  expect(harness.requests.filter(({ path }) => path === "/config/providers")).toHaveLength(providerReadsBefore);
   const html = render(harness);
   expect(html).toContain("OpenAI");
   expect(html).toContain(t("settings.providers_not_refreshed"));
@@ -230,13 +235,13 @@ test("Retry keeps stale rows and its error visible while pending, then uses a fr
     expect(disconnect?.disabled).toBe(true);
     const pending = deferredResponse();
     harness.engine.readProviders = () => pending.promise;
-    const readsBefore = harness.requests.filter(({ path }) => path === "/provider").length;
+    const readsBefore = harness.requests.filter(({ path }) => path === "/config/providers").length;
     await act(async () => retry.click());
-    expect(harness.requests.filter(({ path }) => path === "/provider")).toHaveLength(readsBefore + 1);
+    expect(harness.requests.filter(({ path }) => path === "/config/providers")).toHaveLength(readsBefore + 1);
     expect(retry.disabled).toBe(true);
     expect(container.textContent).toContain("OpenAI");
     expect(container.querySelector('[role="alert"]')).not.toBeNull();
-    await act(async () => pending.resolve(json({ all: [], connected: [], default: {} })));
+    await act(async () => pending.resolve(json(connectedBody({ all: [], connected: [], default: {} }))));
     expect(harness.store.getSnapshot().providerLoadState).toEqual({ status: "ready", error: null });
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(container.textContent).not.toContain("OpenAI");
@@ -319,7 +324,7 @@ test("a shared failed query cannot turn cached provider data into an implicit su
   await expect(ensureProviderListQuery(queryClient, harness.queryInput)).rejects.toThrow();
   expect(queryClient.getQueryState(harness.queryKey)?.status).toBe("error");
   expect(queryClient.getQueryData(harness.queryKey)).toEqual(harness.engine.catalog);
-  expect(harness.requests.filter(({ path }) => path === "/provider")).toHaveLength(3);
+  expect(harness.requests.filter(({ path }) => path === "/config/providers")).toHaveLength(3);
 });
 
 test("an invalidated or actively refreshing query awaits new data instead of returning the cached list", async () => {
@@ -332,10 +337,10 @@ test("an invalidated or actively refreshing query awaits new data instead of ret
   const invalidated = ensureProviderListQuery(queryClient, harness.queryInput);
   const inFlight = ensureProviderListQuery(queryClient, harness.queryInput);
   const empty: ProviderListResponse = { all: [], connected: [], default: {} };
-  pending.resolve(json(empty));
+  pending.resolve(json(connectedBody(empty)));
   expect(await invalidated).toEqual(empty);
   expect(await inFlight).toEqual(empty);
-  expect(harness.requests.filter(({ path }) => path === "/provider")).toHaveLength(2);
+  expect(harness.requests.filter(({ path }) => path === "/config/providers")).toHaveLength(2);
 });
 
 test("a superseded read cannot replace a recovered inventory with an older failure", async () => {

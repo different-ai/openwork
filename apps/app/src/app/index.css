@@ -48,6 +48,40 @@
   app-region: no-drag;
 }
 
+/* Native chrome is measured in CSS pixels, independent of the UI font scale. */
+:root {
+  --window-titlebar-height: 40px;
+  --window-controls-left: 0px;
+}
+
+html.openwork-electron.openwork-platform-mac:not([data-window-fullscreen="true"]) {
+  --window-titlebar-height: 48px;
+  --window-controls-left: 88px;
+}
+
+@utility window-titlebar {
+  height: var(--window-titlebar-height);
+  min-height: var(--window-titlebar-height);
+}
+
+@utility mac-window-controls-inset {
+  padding-left: max(--spacing(2), var(--window-controls-left));
+}
+
+/* The overlay may be on either side, according to the native desktop settings. */
+html.openwork-electron:is(.openwork-platform-windows, .openwork-platform-linux) [data-session-header],
+html.openwork-electron:is(.openwork-platform-windows, .openwork-platform-linux) [data-settings-titlebar] {
+  padding-right: max(--spacing(3), calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)));
+}
+
+html.openwork-electron:is(.openwork-platform-windows, .openwork-platform-linux) [data-sidebar-titlebar] {
+  padding-left: max(--spacing(2), env(titlebar-area-x, 0px));
+}
+
+html.openwork-electron:is(.openwork-platform-windows, .openwork-platform-linux) [data-session-header][data-sidebar-hidden="true"] {
+  padding-left: max(--spacing(3), env(titlebar-area-x, 0px));
+}
+
 @keyframes accordion-down {
   from {
     height: 0;

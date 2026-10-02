@@ -40,7 +40,7 @@ const INTERNAL_RESPONSE_HEADERS = new Set([
   "x-request-id",
   "x-vercel-id",
 ]);
-const SAFE_X_RESPONSE_HEADERS = new Set(["x-content-type-options"]);
+const SAFE_X_RESPONSE_HEADERS = new Set(["x-content-type-options", "x-audit-next-cursor", "x-audit-snapshot-sequence", "x-audit-resource-scope"]);
 const AUTH_COOKIE_PREFIXES = [
   "openwork-den.",
   "__Secure-openwork-den.",
@@ -71,7 +71,7 @@ const DEFAULT_REQUEST_BODY_MAX_BYTES = 32 * 1024 * 1024;
 const DEN_API_ROUTE_PREFIX = "/api/den";
 const BROWSER_API_ROUTE_PREFIX = "/api/browser/v1";
 const DEFAULT_CLOUD_INSTANCE_ORIGIN_SUFFIXES = [".daytonaproxy01.net"];
-const CORS_ALLOW_HEADERS = "authorization,content-type,x-openwork-org-id,x-openwork-legacy-org-id,x-request-id,accept";
+const CORS_ALLOW_HEADERS = "authorization,content-type,x-openwork-org-id,x-openwork-legacy-org-id,x-openwork-audit-correlation,x-request-id,accept";
 const CORS_ALLOW_METHODS = "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS";
 const UPSTREAM_DEADLINE_MS = 55_000;
 

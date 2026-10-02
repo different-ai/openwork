@@ -17,7 +17,7 @@ test("v2 rules and legacy permissions ignore restrictive desktop execution confi
   expect(legacyExecutionPermissions(execution)).toEqual({});
 });
 
-test.each([401, 403, 503])("desktop actions never depend on policy verification (HTTP %i)", async (status) => {
+test.each([401, 403, 503])("desktop actions never wait on or fail with policy verification (HTTP %i)", async (status) => {
   let requests = 0;
   const den = Bun.serve({ port: 0, fetch: () => {
     requests++;
@@ -40,7 +40,8 @@ test.each([401, 403, 503])("desktop actions never depend on policy verification 
           .resolves.toBeUndefined();
       }
     }
-    expect(requests).toBe(0);
+    // Den is read while signed in, but no failure ever blocks an action or startup.
+    expect(requests).toBeGreaterThan(0);
   } finally {
     den.stop(true);
   }

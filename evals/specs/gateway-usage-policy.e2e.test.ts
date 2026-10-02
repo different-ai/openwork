@@ -235,6 +235,19 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     return id;
   });
 
+  const openUsageFromAccountMenu = async (left: RegExp) => {
+    await member.click({ role: "button", label: "Account menu" });
+    await member.see({ testId: "gateway-usage-menu-item" }, { text: left, timeoutMs: 30_000 });
+    await member.click({ testId: "gateway-usage-menu-item" });
+    await member.see({ testId: "gateway-usage-settings" }, { timeoutMs: 30_000 });
+  };
+  const backToSession = async () => {
+    await member.click({ role: "button", label: "Back to app" });
+    await member.see("composer", { editable: true });
+    expect(await memberAgent.run("session.open", { sessionId })).toMatchObject({ ok: true });
+    await member.see("composer", { editable: true });
+  };
+
   await step("own status is identity scoped and members cannot administer policies or another person's usage", async () => {
     expect(await own(world.control, `?memberId=${world.memberId}`)).toMatchObject({ memberId: world.controlId, state: "unlimited", buckets: [] });
     for (const path of [policiesPath, requestsPath, `/v1/gateway/usage-limits/members/${world.controlId}`]) {
@@ -242,11 +255,10 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     }
     expect((await seed.api(world.member, policiesPath, { method: "POST", body: JSON.stringify({ name: "Unauthorized policy", limits: [{ timeframe: "month", costUsd: "100" }] }) })).response.status).toBe(403);
     expect(await policies()).toHaveLength(1);
-    await member.see({ role: "button", label: "Usage limits" }, { timeoutMs: 90_000 });
-    await member.click({ role: "button", label: "Usage limits" });
-    await member.see({ role: "heading", label: "Monthly" });
-    await member.see({ text: "$0.00 used / $1.00 total" });
-    await member.notSee({ role: "button", label: "Request Increase — Monthly" });
+    await member.see({ role: "button", label: "Account menu" }, { timeoutMs: 90_000 });
+    await openUsageFromAccountMenu(/This month\s*100% left/);
+    await member.see({ text: /\$1\.00 of \$1\.00 left/ });
+    await member.notSee({ role: "button", label: "Ask for $0.25 more" });
   });
   evidence.recordAssertionEvidence("Rendered Den assignment reaches only the intended member's real Desktop", "Monthly $1 hard/reset-enabled policy persisted through Den UI. Own-status identity injection did not change the control member; management requests returned 403; Desktop rendered zero used of $1.", true);
 
@@ -264,16 +276,17 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     expect(world.upstreamCount()).toBe(1);
     expect((await own()).buckets).toEqual(status.buckets);
     expect(await own(world.control)).toMatchObject({ state: "unlimited", buckets: [] });
-    await member.click({ role: "button", label: "Refresh usage" });
-    await member.see({ text: "$1.00 used / $1.00 total" });
-    await member.see({ role: "button", label: "Request Increase — Monthly" });
-    await capture("Desktop exhausted usage", member, memberProbe, '[aria-label="Monthly usage"]');
+    await backToSession();
+    await openUsageFromAccountMenu(/This month\s*0% left/);
+    await member.see({ text: /\$0\.00 of \$1\.00 left/ });
+    await member.see({ role: "button", label: "Ask for $0.25 more" });
+    await capture("Desktop exhausted usage", member, memberProbe, '[aria-label="This month usage"]');
     return status;
   });
   evidence.recordAssertionEvidence("Gateway, not Desktop, blocks after known consumption", "First request settled 1000000 micro-USD; second returned trusted policy HTTP 429 without a second upstream call or charge. Desktop rendered exhaustion; the unassigned control stayed unlimited.", true);
 
   await step("real composer submission reaches the Gateway through the native engine and shows truthful own-status exhaustion", async () => {
-    await member.press("Escape");
+    await backToSession();
     const rejectedBefore = await probe.eventually(() => world.rejectedCalls(), {
       within: 15_000, intervalMs: 200, label: "direct Gateway rejection finalized",
       until: (rows) => rows.length === 1,
@@ -301,42 +314,39 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
       },
     });
     expect(native.ok).toBe(true);
+    const nativeErrors = usageRecords(Array.isArray(native.body) ? native.body : usageRecord(native.body).data)
+      .map((entry) => usageRecord(entry.info ?? entry)).filter((info) => Boolean(info.error)).map((info) => info.error);
+    evidence.recordAssertionEvidence("Native engine reports the Gateway rejection", JSON.stringify(nativeErrors).slice(0, 2000), nativeErrors.length > 0);
     expect(world.upstreamCount()).toBe(1);
     expect((await own()).buckets).toEqual(exhausted.buckets);
-    await member.see({ testId: "gateway-usage-notice" }, { text: /Out of usage/ });
+    await member.see({ testId: "gateway-usage-notice" }, { text: /used this month’s \$1\.00/ });
+    await member.notSee({ text: /receiving too many requests/ });
     expect((await memberProbe.dom('[data-testid="gateway-usage-notice"]')).elements).toHaveLength(1);
     expect(await memberProbe.composer()).toMatchObject({ composerEditable: true, modelUnavailable: false });
     await capture("Desktop blocked composer", member, memberProbe, '[data-testid="gateway-usage-notice"]');
     evidence.recordAssertionEvidence("Native composer reaches the real Gateway and own status corroborates the custom notice", JSON.stringify({ engine: world.engine, rejectedBefore: rejectedBefore.length, rejectedAfter: rejectedAfter.length, upstreamRequests: world.upstreamCount(), nativePromptRecorded: true, nativeAssistantErrorRecorded: true, usedMicroUsd: exhausted.buckets[0]?.usedMicroUsd }), true);
-    await member.see({ role: "button", label: /^Request Increase$/ });
+    await member.see({ role: "button", label: "Ask for $0.25 more" });
   });
 
   const pending = await step("member submits a required reason from Desktop and cannot review the request", async () => {
     const blank = await seed.api(world.member, requestsPath, { method: "POST", body: JSON.stringify({ bucketId: initialBucket.id, reason: "   " }) });
     expect(blank.response.status).toBe(400);
     expect(await requests()).toEqual([]);
-    await member.click({ role: "button", label: /^Request Increase$/ });
-    await member.see({ role: "textbox", label: "Reason (required)" });
-    await member.type({ role: "textbox", label: "Reason (required)" }, reason);
-    await capture("Desktop direct increase form", member, memberProbe, '[role="dialog"]');
-    const submit = await memberProbe.dom('[role="dialog"] button[type="submit"]');
-    expect(submit.elements).toHaveLength(1);
-    expect(submit.elements[0]?.text).toBe("Request Increase");
-    expect((await memberProbe.dom("button")).elements.filter((element) => element.text === "Request Increase")).toHaveLength(2);
-    await member.click({ role: "button", label: /^Request Increase$/, nth: 1 });
+    await member.click({ role: "button", label: "Ask for $0.25 more" });
+    await member.see({ role: "textbox", label: "What do you need it for?" });
+    expect((await memberProbe.dom('[role="dialog"]')).elements).toHaveLength(0);
+    await member.type({ role: "textbox", label: "What do you need it for?" }, reason);
+    await capture("Desktop direct increase form", member, memberProbe, '[data-testid="gateway-usage-notice"]');
+    await member.click({ role: "button", label: "Send request" });
     await probe.eventually(() => requests(world.member, "/me"), {
       within: 15_000, intervalMs: 200, label: "one Desktop increase request persisted",
       until: (rows) => rows.length === 1 && rows[0]?.reason === reason && rows[0]?.status === "pending",
     });
-    await memberProbe.eventually(() => memberProbe.dom('[role="dialog"]'), {
-      within: 15_000, intervalMs: 200, label: "submitted increase dialog closes",
-      until: (value) => value.elements.length === 0,
-    });
-    await member.notSee({ role: "textbox", label: "Reason (required)" });
-    await member.click({ role: "button", label: "Usage limits", nth: 0 });
-    await member.see({ text: "Increase request pending" });
-    await member.notSee({ role: "button", label: "Request Increase — Monthly" });
-    await capture("Desktop pending increase", member, memberProbe, '[aria-label="Monthly usage"]');
+    await member.see({ testId: "gateway-usage-notice" }, { text: /Asked for \$0\.25 more this month[\s\S]*Waiting for an admin/, timeoutMs: 15_000 });
+    await member.notSee({ role: "textbox", label: "What do you need it for?" });
+    await member.notSee({ role: "button", label: "Ask for $0.25 more" });
+    expect((await memberProbe.dom('[data-testid="gateway-usage-notice"]')).elements).toHaveLength(1);
+    await capture("Desktop pending increase", member, memberProbe, '[data-testid="gateway-usage-notice"]');
     const rows = await requests();
     expect(rows).toHaveLength(1);
     const request = rows[0];
@@ -374,14 +384,16 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     await admin.notSee({ role: "button", label: "Load more history" });
     await admin.see({ text: "Reviewer: Usage Admin" });
     await capture("Den approved history", admin, probe.on(world.admin), '#gateway-reset-history tbody tr');
-    await member.click({ role: "button", label: "Refresh usage" });
-    await member.see({ text: "$1.00 used / $1.25 total" });
-    await member.see({ text: "Increase request: approved" });
-    await member.notSee({ text: "Increase request pending" });
-    await member.notSee({ role: "button", label: "Request Increase — Monthly" });
-    await member.press("Escape");
+    await openUsageFromAccountMenu(/This month\s*20% left/);
+    await member.see({ text: /\$0\.25 of \$1\.25 left/ });
+    await member.see({ text: /Added \$0\.25/ });
+    await member.notSee({ text: /waiting for an admin/ });
+    await member.notSee({ role: "button", label: "Ask for $0.25 more" });
+    await capture("Desktop usage after approval", member, memberProbe, '[data-testid="gateway-usage-settings"]');
+    await backToSession();
     await member.notSee({ testId: "gateway-usage-notice" }, { timeoutMs: 60_000 });
-    await member.see({ testId: "gateway-usage-approved-notice" }, { text: /Usage increase approved/ });
+    await member.see({ testId: "gateway-usage-approved-notice" }, { text: /You got \$0\.25 more this month/ });
+    await member.notSee({ text: /receiving too many requests/ });
     expect(await memberProbe.composer()).toMatchObject({ selectedModelLabel: world.modelName, composerEditable: true, modelUnavailable: false });
     await capture("Desktop approved increase", member, memberProbe, '[data-testid="gateway-usage-approved-notice"]');
     expect(await own(world.control)).toMatchObject({ state: "unlimited", buckets: [] });
@@ -438,7 +450,7 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     });
     expectSettledCoverage(settled);
     expect(settled.coverage.trackingStartedAt).toBe(exhausted.coverage.trackingStartedAt);
-    expect(settled).toMatchObject({ state: "blocked", buckets: [{ id: initialBucket.id, usedMicroUsd: 2_000_000, extensionMicroUsd: 250_000, allowanceMicroUsd: 1_250_000, resetRequestStatus: "approved", canRequestReset: false }] });
+    expect(settled).toMatchObject({ state: "blocked", buckets: [{ id: initialBucket.id, usedMicroUsd: 2_000_000, extensionMicroUsd: 250_000, allowanceMicroUsd: 1_250_000, resetRequestStatus: "approved", canRequestReset: true }] });
     expect(await world.rejectedCalls()).toEqual(rejectedBefore);
     expect(await own(world.control)).toMatchObject({ state: "unlimited", buckets: [] });
     if (typeof info.id !== "string" || !/^[A-Za-z0-9_-]+$/.test(info.id)) throw new Error("Native assistant has no valid message ID");
@@ -448,6 +460,64 @@ test("GATEWAY-USAGE-01 admin policy blocks member Gateway calls until a reviewed
     expect(answer.elements[0]?.text).toContain("Complete café");
     await capture("Desktop native recovery completed", member, memberProbe, answerSelector);
     evidence.recordAssertionEvidence("Den approval restores actual Desktop composer completion, not a direct HTTP bypass", JSON.stringify({ engine: world.engine, nativeAssistantCompleted: true, renderedAnswer: "Complete café", upstreamRequests: world.upstreamCount(), streamed: true, settledCostMicroUsd: 1_000_000, totalUsedMicroUsd: settled.buckets[0]?.usedMicroUsd, additionalRejections: 0 }), true);
+  });
+  await step("member requests another increase after exhaustion and Den adds to the existing extension", async () => {
+    const previousHistory = await requests(world.member, "/me?view=history");
+    const repeatReason = "Finish the remaining synthetic review after using the first increase";
+    await member.see({ testId: "gateway-usage-notice" }, { text: /used this month’s \$1\.25/, timeoutMs: 60_000 });
+    await member.click({ role: "button", label: "Ask for $0.25 more" });
+    await member.see({ role: "textbox", label: "What do you need it for?" });
+    expect((await memberProbe.dom('[role="dialog"]')).elements).toHaveLength(0);
+    expect((await memberProbe.dom('[data-testid="gateway-usage-notice"] button[type="submit"]:disabled')).elements).toHaveLength(1);
+    await member.type({ role: "textbox", label: "What do you need it for?" }, repeatReason);
+    await capture("Desktop repeat increase form", member, memberProbe, '[data-testid="gateway-usage-notice"]');
+    await member.click({ role: "button", label: "Send request" });
+    const rows = await probe.eventually(() => requests(world.member, "/me"), {
+      within: 15_000, intervalMs: 200, label: "second distinct Desktop increase request persisted",
+      until: (value) => value.length === 1 && value[0]?.reason === repeatReason && value[0]?.status === "pending",
+    });
+    const request = rows[0];
+    if (!request) throw new Error("Repeat increase request missing");
+    expect(request.id).not.toBe(pending.id);
+    expect(request).toMatchObject({ bucketId: initialBucket.id, allowanceMicroUsd: 1_250_000, usedMicroUsd: 2_000_000 });
+    expect(await requests()).toEqual(rows);
+    await member.see({ testId: "gateway-usage-notice" }, { text: /Asked for \$0\.25 more this month[\s\S]*Waiting for an admin/, timeoutMs: 15_000 });
+    await member.notSee({ role: "textbox", label: "What do you need it for?" });
+    await member.notSee({ role: "button", label: "Ask for $0.25 more" });
+    expect((await own()).buckets[0]).toMatchObject({ canRequestReset: false, resetRequestStatus: "pending" });
+    const duplicate = await seed.api(world.member, requestsPath, { method: "POST", body: JSON.stringify({ bucketId: initialBucket.id, reason: repeatReason }) });
+    expect(duplicate.response.status).toBe(200);
+    expect(usageRecord(duplicate.body).id).toBe(request.id);
+    expect(await requests()).toEqual(rows);
+    await admin.click({ role: "button", label: "Refresh requests" });
+    await admin.see({ text: repeatReason });
+    await admin.see({ text: "+$0.25 allowance ($1.50 total); may increase provider charges; no undo." });
+    await admin.click({ role: "button", label: "Approve 25% for Usage Member, 1 month" });
+    const approved = await probe.eventually(own, {
+      within: 15_000, intervalMs: 200, label: "second approval accumulates without clearing usage",
+      until: (value) => value.buckets[0]?.extensionMicroUsd === 500_000,
+    });
+    expect(approved).toMatchObject({ state: "blocked", buckets: [{
+      id: initialBucket.id, baseAllowanceMicroUsd: 1_000_000, extensionMicroUsd: 500_000,
+      allowanceMicroUsd: 1_500_000, usedMicroUsd: 2_000_000, remainingMicroUsd: -500_000,
+      resetAt: initialBucket.resetAt, resetRequestStatus: "approved", canRequestReset: true,
+    }] });
+    expect(await requests()).toEqual([]);
+    const history = await requests(world.den.admin, "?view=history");
+    expect(history).toHaveLength(2);
+    expect(history.filter((entry) => entry.id === pending.id)).toEqual(previousHistory);
+    expect(history.find((entry) => entry.id === request.id)).toMatchObject({ status: "approved", reviewedBy: world.adminId, allowanceMicroUsd: 1_500_000, usedMicroUsd: 2_000_000, resetAt: initialBucket.resetAt });
+    expect(await requests(world.member, "/me?view=history")).toEqual(history);
+    expect(await requests(world.control, "/me?view=history")).toEqual([]);
+    await openUsageFromAccountMenu(/This month\s*0% left/);
+    await member.see({ text: /\$0\.00 of \$1\.50 left/ });
+    await member.see({ role: "button", label: "Ask for $0.25 more" });
+    await capture("Desktop repeat approval still exhausted", member, memberProbe, '[aria-label="This month usage"]');
+    expect((await world.generate()).status).toBe(429);
+    expect(world.upstreamCount()).toBe(2);
+    expect((await own()).buckets).toEqual(approved.buckets);
+    expect(await own(world.control)).toMatchObject({ state: "unlimited", buckets: [] });
+    evidence.recordAssertionEvidence("Repeated increases accumulate without forgiving consumption or duplicating requests", "A second Desktop reason produced a distinct pending request; duplicate submission reused it. Den added another 250000 micro-USD, preserving both review records and reset time. Usage of $2 still exceeds $1.50, so Gateway remains blocked and another increase is eligible.", true);
   });
   evidence.recordAssertionEvidence("Desktop request and Den approval restore the same native session", "The member submitted a required reason through the blocked-notice dialog; Den displayed it and granted exactly 250000 micro-USD without forgiving consumption. After approval, a real Desktop composer send produced a completed native assistant and rendered answer with one streaming upstream call and a settled $1 cost. Total usage became $2, correctly exhausting the $1.25 allowance again; the control member remained unlimited.", true);
 });

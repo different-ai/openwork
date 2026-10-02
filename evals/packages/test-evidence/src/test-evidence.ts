@@ -6,6 +6,7 @@ import { resolveEvalEngine } from "@openwork/env/eval-engine";
 import type { EvalEngine } from "@openwork/env/eval-engine";
 import { resolveSandboxRef } from "@openwork/env/eval-ref";
 import type { ScreenshotArtifact } from "./screenshot.ts";
+import { parseEvidenceCheckpoint } from "@openwork/freestyle/checkpoint-schema";
 import { judgeVision } from "./validate.ts";
 import type { ValidateOptions, VisualEvidenceResult, VisualExpectationResult } from "./validate.ts";
 
@@ -31,6 +32,9 @@ export interface TestArtifact {
   ok: boolean | null;
   results: VisualExpectationResult[];
   judgments: EvidenceJudgment[];
+  checkpoint?: ScreenshotArtifact["checkpoint"];
+  checkpointMatch?: ScreenshotArtifact["checkpointMatch"];
+  checkpointError?: string;
 }
 
 export interface JsonArtifact {
@@ -127,6 +131,7 @@ export interface TestEvidenceRecorder {
   recordTrace(entry: TraceEntryInput): TraceEntry;
   recordStep(step: StepRecordInput): StepRecord;
   setOutcome(outcome: TestOutcome, failure?: string): void;
+  setEngine(engine: EvalEngine): void;
   close(): Promise<string>;
   [Symbol.asyncDispose](): Promise<void>;
 }
@@ -214,6 +219,9 @@ function testArtifact(artifact: StoredTestArtifact): TestArtifact {
     ok: artifact.ok,
     results: artifact.results,
     judgments: artifact.judgments,
+    ...(artifact.checkpoint ? { checkpoint: artifact.checkpoint } : {}),
+    ...(artifact.checkpointMatch ? { checkpointMatch: artifact.checkpointMatch } : {}),
+    ...(artifact.checkpointError ? { checkpointError: artifact.checkpointError } : {}),
   };
 }
 
@@ -343,7 +351,17 @@ function parseTestArtifact(value: unknown): TestArtifact | null {
   } else {
     judgments.push(...results.map(judgmentForResult));
   }
+  let checkpoint;
+  if (value.checkpoint !== undefined) {
+    try { checkpoint = parseEvidenceCheckpoint(value.checkpoint); } catch { return null; }
+    if (checkpoint.imageHash !== value.hash) return null;
+  }
+  if (value.checkpointError !== undefined && typeof value.checkpointError !== "string") return null;
+  if (value.checkpointMatch !== undefined && (!checkpoint || (value.checkpointMatch !== "exact" && value.checkpointMatch !== "approximate"))) return null;
   return {
+    ...(checkpoint ? { checkpoint } : {}),
+    ...(value.checkpointMatch === "exact" || value.checkpointMatch === "approximate" ? { checkpointMatch: value.checkpointMatch } : {}),
+    ...(typeof value.checkpointError === "string" ? { checkpointError: value.checkpointError } : {}),
     caption: value.caption,
     fileName: value.fileName,
     hash: value.hash,
@@ -587,7 +605,7 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
   const createdAt = new Date().toISOString();
   const gitSha = gitValue(["HEAD"]);
   const sandboxRef = resolveSandboxRef();
-  const engine = resolveEvalEngine();
+  let engine = resolveEvalEngine();
   const branch = gitValue(["--abbrev-ref", "HEAD"]);
   let nextSequence = 1;
   let nextTraceSequence = 1;
@@ -645,6 +663,10 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
 
   return {
     dir,
+    setEngine(value) {
+      assertOpen();
+      engine = value;
+    },
     recordScreenshot(screenshotArtifact, options) {
       assertOpen();
       const sequence = nextSequence;
@@ -665,6 +687,9 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
         sequence,
         png: screenshotArtifact.png,
         validationKey: null,
+        checkpoint: screenshotArtifact.checkpoint,
+        checkpointMatch: screenshotArtifact.checkpointMatch,
+        checkpointError: screenshotArtifact.checkpointError,
       });
       return join(dir, screenshotFileName);
     },

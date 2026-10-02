@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { selectedAppEnv } from "./app-env.ts";
 import { resolveEvalEngineValue } from "./eval-engine.ts";
 import type { ChromeSurfaceOptions, DenServiceHandle, DenServiceOptions, ElectronSurfaceOptions, Host, RetainedElectronSurface, ShareLinks, SurfaceHandle } from "./types.ts";
 
@@ -643,19 +644,30 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
     };
 
     try {
-      await checkedExec(exec, ["exec", sandbox, "--", "mkdir", "-p", shellQuote(userDataDir)], `mkdir Daytona Electron profile ${userDataDir}`, { timeoutMs: 30_000 });
+      // `daytona exec` runs no shell of its own: quotes, `|` and `>` in bare
+      // arguments reach the program literally. Anything shell-shaped goes
+      // through one `bash -lc` argument, as the other remote commands here do.
+      await checkedExec(
+        exec,
+        ["exec", sandbox, "--", `bash -lc ${shellQuote(`mkdir -p ${shellQuote(userDataDir)} && test -d ${shellQuote(userDataDir)}`)}`],
+        `mkdir Daytona Electron profile ${userDataDir}`,
+        { timeoutMs: 30_000 },
+      );
       if (opts.bootstrap) {
         const bootstrapJson = `${JSON.stringify(opts.bootstrap, null, 2)}\n`;
         const encoded = Buffer.from(bootstrapJson, "utf8").toString("base64");
         await checkedExec(
           exec,
-          ["exec", sandbox, "--", "echo", encoded, "|", "base64", "-d", ">", shellQuote(bootstrapPath)],
+          ["exec", sandbox, "--", `bash -lc ${shellQuote(`mkdir -p ${shellQuote(profileRoot)} && printf %s ${shellQuote(encoded)} | base64 -d > ${shellQuote(bootstrapPath)} && test -s ${shellQuote(bootstrapPath)}`)}`],
           `write Daytona Electron bootstrap ${bootstrapPath}`,
           { timeoutMs: 30_000 },
         );
       }
 
       const env = new Map<string, string>();
+      // Explicit `pnpm world up --env KEY` app settings; the launcher keys set
+      // below always win over a selected value.
+      appendExtraEnv(env, selectedAppEnv());
       if (opts.profile !== "blank") {
         if (resolveEvalEngineValue(process.env.OPENWORK_EVAL_ENGINE) === "v2") env.set("OPENWORK_ENGINE_V2_PREVIEW", "1");
         appendExtraEnv(env, opts.env);

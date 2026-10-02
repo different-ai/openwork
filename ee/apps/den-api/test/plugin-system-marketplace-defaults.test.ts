@@ -16,22 +16,8 @@ beforeAll(async () => {
   schemas = await import("../src/routes/org/plugin-system/schemas.js")
 })
 
-test("anthropic starter marketplace seeds a non-empty plugin catalog", () => {
-  expect(defaults.DEFAULT_ANTHROPIC_STARTER_PLUGINS.length).toBeGreaterThan(0)
-
-  const names = defaults.DEFAULT_ANTHROPIC_STARTER_PLUGINS.map((entry) => entry.name)
-  expect(new Set(names).size).toBe(names.length)
-
-  for (const entry of defaults.DEFAULT_ANTHROPIC_STARTER_PLUGINS) {
-    expect(entry.name.trim().length).toBeGreaterThan(0)
-    expect(entry.name.length).toBeLessThanOrEqual(255)
-    expect(entry.description.trim().length).toBeGreaterThan(0)
-  }
-})
-
-test("default marketplace logos pass logo url validation", () => {
+test("default marketplace logo passes logo url validation", () => {
   expect(schemas.marketplaceLogoUrlSchema.safeParse(defaults.DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL).success).toBe(true)
-  expect(schemas.marketplaceLogoUrlSchema.safeParse(defaults.DEFAULT_ANTHROPIC_MARKETPLACE_LOGO_URL).success).toBe(true)
 })
 
 test("marketplace logo url accepts https and root-relative paths only", () => {

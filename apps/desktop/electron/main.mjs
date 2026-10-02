@@ -23,7 +23,7 @@ import { globalOpencodeConfigDir, workspaceOpencodeConfigCandidates } from "@ope
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./runtime.mjs";
-import { registerUpdaterIpc } from "./updater.mjs";
+import { registerUpdaterIpc, resolveAppVersion } from "./updater.mjs";
 import {
   checkComputerUsePermissions,
   getComputerUseMcpCommand,
@@ -36,9 +36,7 @@ import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { createNativeContextMenus } from "./context-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
-import { createBrowserLoginSync } from "./browser-login-sync.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
-import { configureBrowserWebAuthn } from "./web-authn.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import {
   buildNukeManifest,
@@ -83,6 +81,8 @@ import {
 } from "./brand-icon-windows.mjs";
 import { resetMacDockIcon } from "./brand-icon-darwin.mjs";
 import { createDesktopVaultKeyProvider } from "./secure-vault-key.mjs";
+import { createDesktopFreeSigner, desktopFreeBootstrapEligible } from "./desktop-free-signer.mjs";
+import { applyDesktopFreeBuildSettings, loadDesktopFreeReleaseSecret } from "./desktop-free-release.mjs";
 import {
   clearOpenworkSentrySession,
   initOpenworkSentry,
@@ -1332,10 +1332,25 @@ function validateSkillName(raw) {
   return trimmed;
 }
 
+// Apply the build opt-out before the runtime captures inherited environment values.
+await applyDesktopFreeBuildSettings({ appVersion: resolveAppVersion(app) });
+let desktopFreeReleaseSecret = null;
 const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
+  anonymousInference: {
+    desktop: createDesktopFreeSigner({
+      filePath: path.join(app.getPath("userData"), "desktop-free-identity.bin"),
+      loadSafeStorage: () => require("electron").safeStorage,
+      // app.getVersion() is Electron's own version in development builds.
+      appVersion: resolveAppVersion(app),
+      platform: process.platform,
+      arch: process.arch,
+      isEligible: () => desktopFreeBootstrapEligible(DESKTOP_DISTRIBUTION, workspaceStore.readDesktopBootstrapConfigSync()),
+      releaseSecret: () => (desktopFreeReleaseSecret ??= loadDesktopFreeReleaseSecret({ appVersion: resolveAppVersion(app) })).then((value) => value.secret),
+    }),
+  },
   // When OPENWORK_ENCRYPTION_KEY is set, skip the safeStorage provider so it does not shadow the documented env override used by CI/headless/enterprise.
   localManagedMcpVaultKey: process.env.OPENWORK_ENCRYPTION_KEY?.trim()
     ? undefined
@@ -1439,7 +1454,6 @@ const quitSequencer = createQuitSequencer({
   stop: async () => {
     showShutdownScreen();
     desktopAutomationRunner.stop();
-    browserLoginSync.shutdown();
     await Promise.all([
       disposeRuntimeBeforeQuit(),
       uiControlServer.stop(),
@@ -2584,8 +2598,14 @@ async function createMainWindow() {
     Object.assign(windowAppearanceOptions, {
       backgroundColor: "#00000001",
       titleBarStyle: "hiddenInset",
+      trafficLightPosition: { x: 20, y: 18 },
       vibrancy: macosVibrancyForCurrentTheme(),
       visualEffectState: "active",
+    });
+  } else {
+    Object.assign(windowAppearanceOptions, {
+      titleBarStyle: "hidden",
+      titleBarOverlay: { height: 40 },
     });
   }
 
@@ -2633,6 +2653,15 @@ async function createMainWindow() {
   }
   applicationMenu.applyVisibility(mainWindow);
   browserPanel.registerWindowShortcuts(mainWindow);
+
+  // Native fullscreen is independent of the DOM Fullscreen API. The preload
+  // also reads the initial value, so reloading in fullscreen keeps its layout.
+  const publishFullscreen = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send("openwork:window-fullscreen", mainWindow.isFullScreen());
+  };
+  mainWindow.on("enter-full-screen", publishFullscreen);
+  mainWindow.on("leave-full-screen", publishFullscreen);
 
   mainWindow.webContents.on("context-menu", (_event, params) => {
     void nativeContextMenus.showEditing(params).catch((error) => {
@@ -2738,6 +2767,9 @@ ipcMain.on("openwork:desktop-bootstrap-sync", (event) => {
 ipcMain.on("openwork:desktop-distribution-sync", (event) => {
   event.returnValue = DESKTOP_DISTRIBUTION;
 });
+ipcMain.on("openwork:window-fullscreen-sync", (event) => {
+  event.returnValue = BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false;
+});
 ipcMain.handle("openwork:desktop", handleDesktopInvoke);
 ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {
   if (typeof url !== "string" || url.trim().length === 0) {
@@ -2827,41 +2859,6 @@ if (isDevMode && !app.isPackaged) {
     return open;
   });
 }
-const browserLoginEvalSeam = !app.isPackaged && process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC === "1";
-const browserLoginSync = createBrowserLoginSync({
-  statePath: path.join(app.getPath("userData"), "browser-login-sync.json"),
-  initialPolicyAllowed:
-    DESKTOP_DISTRIBUTION.flavor === "public"
-    && initialRunnerBootstrap.requireSignin !== true,
-  confirmUserAction: browserLoginEvalSeam
-    ? async () => true
-    : async ({ action, source, sites = [] }) => {
-      const sourceLabel = source ? `${source.label} · ${source.profile}` : "Supported browser profiles on this computer";
-      /** @type {import("electron").MessageBoxOptions} */
-      const options = {
-        type: "warning",
-        buttons: [action === "resume" ? "Resume sync" : action === "configure" ? "Enable sync" : action === "discover" ? "Look for browsers" : "Read sites", "Cancel"],
-        defaultId: 1,
-        cancelId: 1,
-        title: action === "resume" ? "Resume browser login sync?" : action === "configure" ? "Enable browser login sync?" : action === "discover" ? "Look for browser profiles?" : "Read logins from this browser?",
-        message: sourceLabel,
-        detail: action === "resume"
-          ? "OpenWork will resume reading the sites you selected from this profile. It never changes the source browser."
-          : action === "configure"
-            ? `OpenWork will keep reading login cookies for these sites until you pause or disconnect: ${sites.join(", ")}. It never changes the source browser.`
-            : action === "discover"
-              ? "OpenWork will look only for supported browser profile locations. It will not read cookie databases until you choose a profile and confirm again."
-              : "OpenWork will read login metadata from this profile so you can choose sites. Nothing syncs until you confirm those sites, and the source browser is never changed.",
-        noLink: true,
-      };
-      const result = mainWindow
-        ? await dialog.showMessageBox(mainWindow, options)
-        : await dialog.showMessageBox(options);
-      return result.response === 0;
-    },
-});
-browserLoginSync.registerIpc(ipcMain, { evalSeam: browserLoginEvalSeam });
-
 registerMigrationIpc({ app, ipcMain });
 const { ensureAutoUpdater } = registerUpdaterIpc({
   app,
@@ -2919,7 +2916,6 @@ or use: pnpm dev:worktree`);
   });
 
   app.whenReady().then(async () => {
-    configureBrowserWebAuthn({ app, appId: DESKTOP_DISTRIBUTION.appIdentifier });
     holdSpellcheckerUntilActivation(workspaceStore.readDesktopBootstrapConfigSync());
     const systemCaCertificates = await runtimeManager.systemCaCertificates();
     session.defaultSession.setCertificateVerifyProc(createSystemCaCertificateVerifyProc(systemCaCertificates));

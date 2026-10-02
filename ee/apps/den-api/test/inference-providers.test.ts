@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { serializeSignedCookie } from "better-call"
+import { randomUUID } from "node:crypto"
+import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR, freeInferenceWindow } from "@openwork/types/den/inference"
 
 const API_ORIGIN = "http://127.0.0.1:8790"
 const PROXY_BASE_URL = "https://inference.example.test"
@@ -71,6 +74,7 @@ function request(cookie: string, path: string, init: RequestInit = {}) {
   return app.fetch(new Request(`${API_ORIGIN}${path}`, { ...init, headers }))
 }
 
+let catalogReads = 0
 const catalog = {
   anthropic: {
     id: "anthropic",
@@ -94,6 +98,16 @@ const catalog = {
     api: null,
     config: { id: "amazon-bedrock", npm: "@ai-sdk/amazon-bedrock" },
     models: [{ id: "bedrock-model", name: "Bedrock Model", config: { id: "bedrock-model" } }],
+  },
+  "amazon-bedrock-mantle": {
+    id: "amazon-bedrock-mantle",
+    name: "Amazon Bedrock (OpenAI)",
+    npm: "@ai-sdk/amazon-bedrock/mantle",
+    env: ["AWS_BEARER_TOKEN_BEDROCK"],
+    doc: null,
+    api: null,
+    config: { id: "amazon-bedrock-mantle", npm: "@ai-sdk/amazon-bedrock/mantle", env: ["AWS_BEARER_TOKEN_BEDROCK"] },
+    models: [{ id: "openai.gpt-oss-20b", name: "gpt-oss-20b", config: { id: "openai.gpt-oss-20b", provider: { npm: "@ai-sdk/amazon-bedrock/mantle", shape: "responses" } } }],
   },
   azure: {
     id: "azure",
@@ -159,6 +173,7 @@ const outsiderSessionToken = `ipr-outsider-${outsiderSessionId}`
 let ownerCookie = ""
 let memberCookie = ""
 let outsiderCookie = ""
+let catalogUnavailable = false
 
 beforeAll(async () => {
   seedRequiredEnv()
@@ -171,8 +186,11 @@ beforeAll(async () => {
   mock.module("../src/db.js", () => ({ db: realDb }))
   mock.module("../src/llm/models-dev.js", () => ({
     getModelsDevProvider: async (providerId: string) => {
+      catalogReads += 1
+      if (catalogUnavailable) return null
       if (providerId === "anthropic") return catalog.anthropic
       if (providerId === "amazon-bedrock") return catalog["amazon-bedrock"]
+      if (providerId === "amazon-bedrock-mantle") return catalog["amazon-bedrock-mantle"]
       if (providerId === "azure") return catalog.azure
       if (providerId === "google-vertex") return catalog["google-vertex"]
       if (providerId === "google-vertex-anthropic") return catalog["google-vertex-anthropic"]
@@ -253,6 +271,8 @@ afterAll(async () => {
   await db.delete(schema.InferenceOrgUsageBucketTable).where(drizzle.eq(schema.InferenceOrgUsageBucketTable.organization_id, organizationId))
   await db.delete(schema.InferenceOrgLimitPolicyTable).where(drizzle.eq(schema.InferenceOrgLimitPolicyTable.organization_id, organizationId))
 
+  const { cache } = await import("../src/cache.js")
+  await Promise.all([ownerSessionToken, memberSessionToken, outsiderSessionToken].map((token) => cache.auth.deleteSession(token)))
   await db.delete(schema.AuthSessionTable).where(drizzle.inArray(schema.AuthSessionTable.id, [ownerSessionId, memberSessionId, outsiderSessionId]))
   await db.delete(schema.OrganizationRoleTable).where(drizzle.eq(schema.OrganizationRoleTable.organizationId, organizationId))
   await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.organizationId, organizationId))
@@ -400,6 +420,12 @@ test("org-credential provider: create, scoped lists, connect with member key and
 })
 
 test("all gateway management boundaries deny nonadmin creators, require fresh admin writes, and isolate organizations", async () => {
+  const { cache } = await import("../src/cache.js")
+  const setMemberSessionCreatedAt = async (createdAt: Date) => {
+    await db.update(schema.AuthSessionTable).set({ createdAt }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
+    await cache.auth.deleteSession(memberSessionToken)
+    await cache.auth.deleteSessionId(memberSessionId)
+  }
   const input = { name: "Management boundary", providerId: "anthropic", modelIds: ["claude-sonnet-4"], credential: { kind: "api_key", secret: "fake-boundary-upstream-key" }, memberIds: [memberId] }
   const created = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify(input) })
   expect(created.status).toBe(201)
@@ -420,6 +446,7 @@ test("all gateway management boundaries deny nonadmin creators, require fresh ad
   const writes: Array<{ path: string; method: string; body?: Record<string, unknown> }> = [
     { path: "/v1/inference-providers", method: "POST", body: input },
     { path: base, method: "PATCH", body: { name: "Denied rename" } },
+    { path: base, method: "PATCH", body: { pinnedModelIds: ["claude-sonnet-4"] } },
     { path: base, method: "DELETE" },
     { path: `${base}/model-groups`, method: "POST", body: { name: "Denied group", modelIds: input.modelIds } },
     { path: `${base}/model-groups/${groupId}`, method: "PATCH", body: { name: "Denied group edit" } },
@@ -468,7 +495,9 @@ test("all gateway management boundaries deny nonadmin creators, require fresh ad
       expect(entry?.accessGrants).toBeUndefined()
     }
     expect((await request(memberCookie, `${base}/oauth/start?credentialSetId=${setId}`)).status).toBe(403)
-    expect((await request(memberCookie, `${base}/oauth?credentialSetId=${setId}`, { method: "DELETE" })).status).toBe(403)
+    // Self-disconnect is idempotent and never revokes an organization credential.
+    expect((await request(memberCookie, `${base}/oauth?credentialSetId=${setId}`, { method: "DELETE" })).status).toBe(204)
+    expect(await snapshot()).toEqual(before)
     const foreignHeaders = { "x-openwork-org-id": foreignOrg }
     for (const path of reads.filter((path) => path.startsWith(base))) expect((await request(outsiderCookie, path, { headers: foreignHeaders })).status).toBe(404)
     for (const attempt of writes.filter((attempt) => attempt.path.startsWith(base) || attempt.path.endsWith("migrate-from-llm-provider"))) {
@@ -482,15 +511,18 @@ test("all gateway management boundaries deny nonadmin creators, require fresh ad
 
     for (const role of ["admin", "super-admin", "owner", "provider-manager,admin"]) {
       await db.update(schema.MemberTable).set({ role }).where(drizzle.eq(schema.MemberTable.id, memberId))
-      await db.update(schema.AuthSessionTable).set({ createdAt: new Date(Date.now() - 60 * 60 * 1000) }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
+      await setMemberSessionCreatedAt(new Date(Date.now() - 3 * 60 * 60 * 1000))
       for (const path of reads) expect((await request(memberCookie, path)).status).toBe(200)
+      const beforeStaleWrites = await snapshot()
       for (const attempt of writes) {
         const response = await request(memberCookie, attempt.path, { method: attempt.method, ...(attempt.body ? { body: JSON.stringify(attempt.body) } : {}) })
         expect(response.status).toBe(403)
         expect(await response.json()).toMatchObject({ error: "reauth", reason: "fresh_auth_required" })
       }
-      await db.update(schema.AuthSessionTable).set({ createdAt: new Date() }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
+      expect(await snapshot()).toEqual(beforeStaleWrites)
+      await setMemberSessionCreatedAt(new Date())
       expect((await request(memberCookie, base, { method: "PATCH", body: JSON.stringify({ name: `Allowed ${role}` }) })).status).toBe(200)
+      expect((await request(memberCookie, base, { method: "PATCH", body: JSON.stringify({ pinnedModelIds: input.modelIds }) })).status).toBe(200)
     }
     expect((await request(memberCookie, `${base}/credential-sets/${setId}`, { method: "PATCH", body: JSON.stringify({ name: "Admin edit" }) })).status).toBe(200)
     expect((await request(memberCookie, `${base}/model-groups/${groupId}`, { method: "PATCH", body: JSON.stringify({ name: "Admin group" }) })).status).toBe(200)
@@ -502,7 +534,7 @@ test("all gateway management boundaries deny nonadmin creators, require fresh ad
     expect((await request(memberCookie, base, { method: "DELETE" })).status).toBe(204)
   } finally {
     await db.update(schema.MemberTable).set({ role: "member" }).where(drizzle.eq(schema.MemberTable.id, memberId))
-    await db.update(schema.AuthSessionTable).set({ createdAt: new Date() }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
+    await setMemberSessionCreatedAt(new Date())
     await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.id, foreignMember))
     await db.delete(schema.OrganizationRoleTable).where(drizzle.eq(schema.OrganizationRoleTable.organizationId, foreignOrg))
     await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, foreignOrg))
@@ -602,7 +634,10 @@ test("member-credential mode reports member_auth_required until the member holds
   const credentialSetId = readString(firstRow(created, "credentialSets"), "id")
 
   const memberConnect = readProvider(await (await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/connect`)).json())
-  expect(memberConnect).toMatchObject({ credentialMode: "member", credentialStatus: "member_auth_required" })
+  expect(memberConnect).toMatchObject({ credentialMode: "member", credentialStatus: "member_auth_required", models: [] })
+  const pendingModels = readRows(firstRow(memberConnect, "authorizationRequests"), "models")
+  expect(pendingModels).toHaveLength(1)
+  expect(pendingModels[0]).toMatchObject({ upstreamModelId: "gemini-2.5-pro", credentialSetId, config: { id: pendingModels[0].id } })
   expect(new URL(readString(memberConnect, "authUrl")).searchParams.get("credentialSetId")).toBe(credentialSetId)
 
   await db.insert(schema.GatewayProviderCredentialTable).values({
@@ -613,14 +648,15 @@ test("member-credential mode reports member_auth_required until the member holds
     subject: memberId,
     org_membership_id: memberId,
     kind: "oauth_google",
-    secret: JSON.stringify({ accessToken: "ya29.member" }),
+    secret: JSON.stringify({ accessToken: "ya29.member", refreshToken: "fixture-member-refresh" }),
+    expires_at: new Date(Date.now() + 3600_000),
     status: "active",
   })
 
   const readyList = readProviderList(await (await request(memberCookie, "/v1/inference-providers")).json())
-  expect(readyList.find((provider) => provider.id === inferenceProviderId)).toMatchObject({ credentialStatus: "ready", authUrl: null })
+  expect(readyList.find((provider) => provider.id === inferenceProviderId)).toMatchObject({ credentialStatus: "ready", authUrl: null, models: pendingModels, authorizationRequests: [] })
   const ownerList = readProviderList(await (await request(ownerCookie, "/v1/inference-providers")).json())
-  expect(ownerList.find((provider) => provider.id === inferenceProviderId)).toMatchObject({ credentialStatus: "member_auth_required" })
+  expect(ownerList.find((provider) => provider.id === inferenceProviderId)).toMatchObject({ credentialStatus: "member_auth_required", models: [], authorizationRequests: [{ credentialSetId, models: pendingModels }] })
 
   // Manage view names the member behind each credential; the OAuth client secret stays server-side.
   const detailText = await (await request(ownerCookie, `/v1/inference-providers/${inferenceProviderId}`)).text()
@@ -652,13 +688,236 @@ test("member-credential mode reports member_auth_required until the member holds
   expect(readProvider(await orgModeNoCredential.json())).toMatchObject({ credentialStatus: "org_credential_missing" })
 })
 
-test("rejects unsupported SDKs, unknown models, malformed secrets, and missing Vertex settings", async () => {
+test("pending OAuth models are caller-scoped, sanitized, deduplicated and independent of ready organization models", async () => {
+  const originalModels = catalog["google-vertex"].models
+  const clientSecret = "fixture-pending-client-secret"
+  const modelSecret = "fixture-pending-model-secret"
+  const tokenSecret = "fixture-other-member-token"
+  const grantedModel = { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", config: {
+    id: "gemini-2.5-pro", provider: { npm: "@ai-sdk/google-vertex" }, apiKey: modelSecret, headers: { authorization: modelSecret },
+    options: { accessToken: modelSecret, nested: { refreshToken: modelSecret } }, limit: { context: 100000 },
+  } }
+  catalog["google-vertex"].models = [
+    grantedModel,
+    { id: "gemini-private", name: "Private model", config: { id: "gemini-private" } },
+    { id: "gemini-unassigned", name: "Unassigned model", config: { id: "gemini-unassigned" } },
+  ]
+  try {
+    const create = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({
+      name: "Pending model metadata", providerId: "google-vertex", modelIds: [], settings: { project: "test-project", location: "global" },
+      credentialMode: "member", oauthClientId: "fixture-client", oauthClientSecret: clientSecret, memberIds: [memberId],
+    }) })
+    expect(create.status).toBe(201)
+    const provider = readProvider(await create.json())
+    const id = normalizeDenTypeId("inferenceProvider", readString(provider, "id"))
+    const base = `/v1/inference-providers/${id}`
+    const groupId = normalizeDenTypeId("gatewayModelGroup", readString(firstRow(provider, "modelGroups"), "id"))
+    const firstSetId = normalizeDenTypeId("gatewayCredentialSet", readString(firstRow(provider, "credentialSets"), "id"))
+    expect(provider).toMatchObject({ models: [], authorizationRequests: [] })
+    const post = async (collection: string, key: string, body: Record<string, unknown>) => {
+      const response = await request(ownerCookie, `${base}/${collection}`, { method: "POST", body: JSON.stringify(body) })
+      expect(response.status).toBe(201)
+      return readString(readResource(await response.json(), key), "id")
+    }
+    expect((await request(ownerCookie, `${base}/model-groups/${groupId}`, { method: "PATCH", body: JSON.stringify({ modelIds: ["gemini-2.5-pro"] }) })).status).toBe(200)
+    const overlapId = await post("model-groups", "modelGroup", { name: "Overlap", modelIds: ["gemini-2.5-pro"] })
+    const privateGroupId = await post("model-groups", "modelGroup", { name: "Private group", modelIds: ["gemini-private"] })
+    const secondSetId = await post("credential-sets", "credentialSet", { name: "Second pending", credentialMode: "member", oauthClientId: "fixture-client", oauthClientSecret: clientSecret })
+    const privateSetId = await post("credential-sets", "credentialSet", { name: "Private pending", credentialMode: "member", oauthClientId: "fixture-client", oauthClientSecret: clientSecret })
+    const orgSetId = await post("credential-sets", "credentialSet", { name: "Ready org", credentialMode: "org", credential: { kind: "api_key", secret: "fixture-org-secret" } })
+    const grant = (modelGroupId: string, credentialSetId: string, audience: Record<string, string>) => post("access-grants", "accessGrant", { modelGroupId, credentialSetId, audience })
+    await grant(groupId, firstSetId, { type: "organization" })
+    await grant(overlapId, firstSetId, { type: "member", memberId })
+    await grant(privateGroupId, firstSetId, { type: "member", memberId: ownerMemberId })
+    await grant(privateGroupId, privateSetId, { type: "member", memberId: ownerMemberId })
+    const secondGrantId = await grant(groupId, secondSetId, { type: "member", memberId })
+    await grant(groupId, orgSetId, { type: "member", memberId })
+    await db.insert(schema.GatewayProviderCredentialTable).values({
+      id: createDenTypeId("inferenceProviderCredential"), gateway_provider_id: id, credential_set_id: firstSetId, organization_id: organizationId,
+      subject: ownerMemberId, org_membership_id: ownerMemberId, kind: "oauth_google", status: "active",
+      secret: JSON.stringify({ accessToken: tokenSecret, refreshToken: tokenSecret }), expires_at: new Date(Date.now() + 3600_000),
+    })
+    await db.update(schema.GatewayProviderTable).set({ settings: { project: "test-project", location: "global", accessToken: tokenSecret } }).where(drizzle.eq(schema.GatewayProviderTable.id, id))
+    const connect = async () => {
+      const response = await request(memberCookie, `${base}/connect`)
+      expect(response.status).toBe(200)
+      const text = await response.text()
+      for (const hidden of [clientSecret, modelSecret, tokenSecret, "fixture-org-secret", privateGroupId, privateSetId, "gemini-private", "gemini-unassigned", ownerMemberId]) expect(text).not.toContain(hidden)
+      return readProvider(JSON.parse(text))
+    }
+    const before = await connect()
+    expect(before).toMatchObject({ credentialMode: "org", credentialStatus: "ready" })
+    expect(readRows(before, "models")).toHaveLength(1)
+    expect(firstRow(before, "models").credentialSetId).toBe(orgSetId)
+    const pending = readRows(before, "authorizationRequests")
+    expect(pending).toHaveLength(2)
+    const first = pending.find((row) => row.credentialSetId === firstSetId)
+    const second = pending.find((row) => row.credentialSetId === secondSetId)
+    if (!first || !second) throw new Error("Pending sets missing")
+    const firstModels = readRows(first, "models")
+    const secondModels = readRows(second, "models")
+    expect(firstModels).toHaveLength(2)
+    expect(firstModels.map((model) => model.modelGroupId).sort()).toEqual([groupId, overlapId].sort())
+    expect(secondModels).toHaveLength(1)
+    expect(secondModels[0]).toMatchObject({ modelGroupId: groupId, credentialSetId: secondSetId })
+    const allModels = [...firstModels, ...secondModels, ...readRows(before, "models")]
+    expect(new Set(allModels.map((model) => model.id)).size).toBe(4)
+    for (const model of allModels) {
+      expect(model).toMatchObject({ upstreamModelId: "gemini-2.5-pro", config: { id: model.id, provider: { npm: "@ai-sdk/google" }, limit: { context: 100000 }, headers: { "x-openwork-gateway-request-model": model.id } } })
+      expect(readString(model, "id")).toMatch(/^gwm_/)
+    }
+    const listed = readProviderList(await (await request(memberCookie, "/v1/inference-providers?scope=usable")).json()).find((row) => row.id === id)
+    expect(listed).toMatchObject({ models: before.models, authorizationRequests: pending })
+    const ownerDetail = readProvider(await (await request(ownerCookie, base)).json())
+    expect(ownerDetail.settings).toEqual({ project: "test-project", location: "global" })
+    for (const hidden of [clientSecret, modelSecret, tokenSecret, "fixture-org-secret"]) expect(JSON.stringify(ownerDetail)).not.toContain(hidden)
+    expect(readRows(ownerDetail, "authorizationRequests").map((row) => row.credentialSetId)).toEqual([privateSetId])
+    expect(readRows(ownerDetail, "models").some((row) => row.modelGroupId === overlapId)).toBe(false)
+
+    const invalidCredentialId = createDenTypeId("inferenceProviderCredential")
+    await db.insert(schema.GatewayProviderCredentialTable).values({
+      id: invalidCredentialId, gateway_provider_id: id, credential_set_id: firstSetId, organization_id: organizationId,
+      subject: memberId, org_membership_id: memberId, kind: "oauth_google", status: "active", last_error: "invalid_client",
+      secret: JSON.stringify({ accessToken: "fixture-invalid-client-access", refreshToken: "fixture-invalid-client-refresh" }), expires_at: new Date(Date.now() + 3600_000),
+    })
+    expect(await connect()).toMatchObject({ models: before.models, authorizationRequests: pending })
+    await db.update(schema.GatewayProviderCredentialTable).set({ last_error: null }).where(drizzle.eq(schema.GatewayProviderCredentialTable.id, invalidCredentialId))
+    await db.update(schema.GatewayCredentialSetTable).set({ oauth_client_secret: null }).where(drizzle.eq(schema.GatewayCredentialSetTable.id, firstSetId))
+    expect(await connect()).toMatchObject({ models: before.models, authorizationRequests: pending })
+    expect((await request(ownerCookie, `${base}/access-grants/${secondGrantId}`, { method: "DELETE" })).status).toBe(204)
+    const revoked = await connect()
+    expect(readRows(revoked, "authorizationRequests")).toEqual([first])
+    expect(JSON.stringify(revoked)).not.toContain(secondSetId)
+    expect((await request(ownerCookie, `${base}/model-groups/${groupId}`, { method: "PATCH", body: JSON.stringify({ status: "disabled" }) })).status).toBe(200)
+    const disabledGroup = await connect()
+    expect(disabledGroup.models).toEqual([])
+    expect(readRows(firstRow(disabledGroup, "authorizationRequests"), "models")).toEqual(firstModels.filter((model) => model.modelGroupId === overlapId))
+    await db.update(schema.GatewayCredentialSetTable).set({ status: "disabled" }).where(drizzle.eq(schema.GatewayCredentialSetTable.id, firstSetId))
+    expect((await request(memberCookie, `${base}/connect`)).status).toBe(403)
+    const inaccessible = readProviderList(await (await request(memberCookie, "/v1/inference-providers?scope=usable")).json())
+    expect(inaccessible.some((row) => row.id === id)).toBe(false)
+    await db.update(schema.GatewayModelGroupTable).set({ status: "active" }).where(drizzle.eq(schema.GatewayModelGroupTable.id, groupId))
+    await db.update(schema.GatewayCredentialSetTable).set({ status: "active" }).where(drizzle.eq(schema.GatewayCredentialSetTable.id, firstSetId))
+    expect(readRows(await connect(), "authorizationRequests")).toEqual([first])
+    expect((await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ status: "disabled" }) })).status).toBe(200)
+    expect((await request(memberCookie, `${base}/connect`)).status).toBe(404)
+    expect(readProvider(await (await request(ownerCookie, base)).json())).toMatchObject({ models: [], authorizationRequests: [] })
+  } finally {
+    catalog["google-vertex"].models = originalModels
+  }
+})
+
+test("pending OAuth metadata filters cached out-of-universe and incompatible models during catalog outages", async () => {
+  const create = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({
+    name: "Pending cached catalog", providerId: "google-vertex", modelIds: ["gemini-2.5-pro"], settings: { project: "test-project", location: "global" },
+    credentialMode: "member", oauthClientId: "fixture-client", oauthClientSecret: "fixture-client-secret", memberIds: [memberId],
+  }) })
+  expect(create.status).toBe(201)
+  const provider = readProvider(await create.json())
+  const id = normalizeDenTypeId("inferenceProvider", readString(provider, "id"))
+  const groupId = normalizeDenTypeId("gatewayModelGroup", readString(firstRow(provider, "modelGroups"), "id"))
+  const setId = readString(firstRow(provider, "credentialSets"), "id")
+  const excluded = [
+    { model_id: "outside-universe", model_config: { id: "outside-universe" } },
+    { model_id: "wrong-sdk", model_config: { id: "wrong-sdk", provider: { npm: "@ai-sdk/google-vertex/anthropic" } } },
+    { model_id: "wrong-model-sdk", model_config: { id: "wrong-model-sdk", npm: "@ai-sdk/anthropic" } },
+    { model_id: "unresolved-model", model_config: { id: "unresolved-model", options: { baseURL: "https://fixture.example/${PROJECT}" } } },
+  ].map((model) => ({ ...model, id: createDenTypeId("inferenceProviderModel"), gateway_provider_id: id, name: model.model_id }))
+  await db.insert(schema.GatewayProviderModelTable).values(excluded)
+  await db.insert(schema.GatewayModelGroupModelTable).values(excluded.map((model) => ({ id: createDenTypeId("gatewayModelGroupModel"), model_group_id: groupId, gateway_provider_model_id: model.id })))
+  await db.update(schema.GatewayProviderTable).set({ model_ids: ["gemini-2.5-pro", "wrong-sdk", "wrong-model-sdk", "unresolved-model"] }).where(drizzle.eq(schema.GatewayProviderTable.id, id))
+  catalogUnavailable = true
+  try {
+    const connect = await request(memberCookie, `/v1/inference-providers/${id}/connect`)
+    expect(connect.status).toBe(200)
+    const summary = readProvider(await connect.json())
+    expect(summary).toMatchObject({ models: [], credentialStatus: "member_auth_required", catalogWarning: expect.stringContaining("unavailable") })
+    const pending = readRows(summary, "authorizationRequests")
+    expect(pending).toHaveLength(1)
+    expect(pending[0].credentialSetId).toBe(setId)
+    const models = readRows(pending[0], "models")
+    expect(models).toHaveLength(1)
+    expect(models[0]).toMatchObject({ upstreamModelId: "gemini-2.5-pro", modelGroupId: groupId, credentialSetId: setId, config: { id: models[0].id } })
+    for (const model of excluded) expect(JSON.stringify(pending)).not.toContain(model.model_id)
+    await db.delete(schema.GatewayModelGroupModelTable).where(drizzle.eq(schema.GatewayModelGroupModelTable.model_group_id, groupId))
+    const empty = readProvider(await (await request(memberCookie, `/v1/inference-providers/${id}/connect`)).json())
+    expect(empty).toMatchObject({ models: [], credentialStatus: "member_auth_required", authorizationRequests: [{ credentialSetId: setId, models: [] }] })
+    await db.delete(schema.GatewayProviderAccessTable).where(drizzle.eq(schema.GatewayProviderAccessTable.gateway_provider_id, id))
+    expect((await request(memberCookie, `/v1/inference-providers/${id}/connect`)).status).toBe(403)
+    expect(readProvider(await (await request(ownerCookie, `/v1/inference-providers/${id}`)).json())).toMatchObject({ models: [], authorizationRequests: [] })
+  } finally {
+    catalogUnavailable = false
+  }
+})
+
+test("a new Amazon Bedrock provider can reuse another Bedrock provider's saved AWS keys without the secret leaving the server", async () => {
+  const keys = { accessKeyId: "AKIDREUSE", secretAccessKey: "REUSE_SECRET_MARKER", sessionToken: "REUSE_TOKEN_MARKER", region: "eu-west-1" }
+  const source = await request(ownerCookie, "/v1/inference-providers", {
+    method: "POST",
+    body: JSON.stringify({ name: "Bedrock", providerId: "amazon-bedrock", modelIds: ["bedrock-model"], settings: { region: "us-east-1" }, credential: { kind: "aws_keys", secret: JSON.stringify(keys) } }),
+  })
+  expect(source.status).toBe(201)
+  const sourceId = readProvider(await source.json()).id
+  const reused = await request(ownerCookie, "/v1/inference-providers", {
+    method: "POST",
+    body: JSON.stringify({ name: "Bedrock OpenAI", providerId: "amazon-bedrock-mantle", modelIds: ["openai.gpt-oss-20b"], settings: { region: "us-west-2" }, reuseCredentialFrom: sourceId, allMembers: true }),
+  })
+  const reusedText = await reused.text()
+  expect(reused.status).toBe(201)
+  expect(reusedText).not.toContain("REUSE_SECRET_MARKER")
+  expect(reusedText).not.toContain("REUSE_TOKEN_MARKER")
+  const reusedProvider = readProvider(JSON.parse(reusedText))
+  expect(reusedProvider).toMatchObject({ providerId: "amazon-bedrock-mantle", credentialStatus: "ready" })
+  if (typeof reusedProvider.id !== "string") throw new Error("expected provider id")
+  const [copied] = await db.select().from(schema.GatewayProviderCredentialTable).where(drizzle.eq(schema.GatewayProviderCredentialTable.gateway_provider_id, reusedProvider.id))
+  expect(copied?.kind).toBe("aws_keys")
+  // The source's region override is dropped so the new provider's own region applies.
+  expect(JSON.parse(copied?.secret ?? "{}")).toEqual({ accessKeyId: "AKIDREUSE", secretAccessKey: "REUSE_SECRET_MARKER", sessionToken: "REUSE_TOKEN_MARKER" })
+
+  const anthropic = await request(ownerCookie, "/v1/inference-providers", {
+    method: "POST",
+    body: JSON.stringify({ name: "Anthropic", providerId: "anthropic", modelIds: ["claude-haiku-4"], credential: { kind: "api_key", secret: "sk-ant" } }),
+  })
+  const anthropicId = readProvider(await anthropic.json()).id
+  for (const body of [
+    { name: "Bedrock OpenAI", providerId: "amazon-bedrock-mantle", modelIds: ["openai.gpt-oss-20b"], settings: { region: "us-west-2" }, reuseCredentialFrom: anthropicId },
+    { name: "Anthropic", providerId: "anthropic", modelIds: ["claude-haiku-4"], reuseCredentialFrom: sourceId },
+  ]) {
+    const rejected = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify(body) })
+    expect(rejected.status).toBe(400)
+    await expect(rejected.json()).resolves.toMatchObject({ error: "credential_source_unavailable" })
+  }
+  const both = await request(ownerCookie, "/v1/inference-providers", {
+    method: "POST",
+    body: JSON.stringify({ name: "Bedrock OpenAI", providerId: "amazon-bedrock-mantle", modelIds: ["openai.gpt-oss-20b"], settings: { region: "us-west-2" }, reuseCredentialFrom: sourceId, credential: { kind: "api_key", secret: "k" } }),
+  })
+  expect(both.status).toBe(400)
+})
+
+test("rejects invalid Bedrock settings/keys, unknown models, malformed secrets, and missing Vertex settings", async () => {
   const bedrock = await request(ownerCookie, "/v1/inference-providers", {
     method: "POST",
     body: JSON.stringify({ name: "Bedrock", providerId: "amazon-bedrock", modelIds: ["bedrock-model"] }),
   })
   expect(bedrock.status).toBe(400)
-  await expect(bedrock.json()).resolves.toMatchObject({ error: "unsupported_provider" })
+  await expect(bedrock.json()).resolves.toMatchObject({ error: "invalid_settings" })
+
+  const bedrockHost = await request(ownerCookie, "/v1/inference-providers", {
+    method: "POST",
+    body: JSON.stringify({ name: "Bedrock", providerId: "amazon-bedrock", modelIds: ["bedrock-model"], settings: { region: "us-east-1.evil.test" } }),
+  })
+  expect(bedrockHost.status).toBe(400)
+  await expect(bedrockHost.json()).resolves.toMatchObject({ error: "invalid_settings" })
+
+  const bedrockKeyRegion = await request(ownerCookie, "/v1/inference-providers", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Bedrock", providerId: "amazon-bedrock", modelIds: ["bedrock-model"], settings: { region: "us-east-1" },
+      credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "AKIDEXAMPLE", secretAccessKey: "secret", region: "evil.test" }) },
+    }),
+  })
+  expect(bedrockKeyRegion.status).toBe(400)
+  await expect(bedrockKeyRegion.json()).resolves.toMatchObject({ error: "invalid_credential" })
 
   const unknownModel = await request(ownerCookie, "/v1/inference-providers", {
     method: "POST",
@@ -1282,6 +1541,131 @@ test("Vertex create and PATCH accept the runtime project and location constraint
       for (const invalid of invalidSettings) expect((await request(ownerCookie, `/v1/inference-providers/${id}`, { method: "PATCH", body: JSON.stringify({ settings: invalid }) })).status).toBe(400)
       expect(readProvider(await (await request(ownerCookie, `/v1/inference-providers/${id}`)).json()).settings).toEqual(settings)
     }
+  }
+})
+
+test("ordered pins preserve the matrix and expose only caller-usable aliases", async () => {
+  const createdResponse = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({
+    name: "Pinned models", providerId: "anthropic", modelIds: [],
+    credential: { kind: "api_key", secret: "fake-pin-upstream-key" }, memberIds: [memberId],
+  }) })
+  expect(createdResponse.status).toBe(201)
+  const created = readProvider(await createdResponse.json())
+  const id = readString(created, "id")
+  const base = `/v1/inference-providers/${id}`
+  const groupId = readString(firstRow(created, "modelGroups"), "id")
+  const setId = readString(firstRow(created, "credentialSets"), "id")
+  const grantId = readString(firstRow(created, "accessGrants"), "id")
+  expect(created.pinnedModelIds).toEqual([])
+  const configuredPins = ["claude-sonnet-4", "claude-haiku-4"]
+  const readsBeforePin = catalogReads
+  const savedResponse = await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ pinnedModelIds: configuredPins }) })
+  expect(savedResponse.status).toBe(200)
+  expect(catalogReads).toBe(readsBeforePin)
+  const saved = readProvider(await savedResponse.json())
+  expect(saved.pinnedModelIds).toEqual(configuredPins)
+  for (const field of ["name", "modelIds", "modelGroups", "credentialSets", "accessGrants", "settings"]) expect(saved[field]).toEqual(created[field])
+  expect(saved.models).toEqual([])
+  expect((await request(ownerCookie, `${base}/connect`)).status).toBe(403)
+
+  const connected = readProvider(await (await request(memberCookie, `${base}/connect`)).json())
+  const usableModels = readRows(connected, "models")
+  const expectedPins = configuredPins.map((id) => {
+    const model = usableModels.find((model) => model.upstreamModelId === id)
+    if (!model) throw new Error("Missing usable pinned model")
+    return readString(model, "id")
+  })
+  expect(connected.pinnedModelIds).toEqual(expectedPins)
+  expect(usableModels.map((model) => model.name)).toEqual(["Claude Haiku 4", "Claude Sonnet 4"])
+  const listed = readProviderList(await (await request(memberCookie, "/v1/inference-providers")).json()).find((provider) => provider.id === id)
+  expect(listed?.pinnedModelIds).toEqual(expectedPins)
+  for (const body of [
+    { pinnedModelIds: ["claude-sonnet-4", "claude-sonnet-4"] },
+    { pinnedModelIds: [], modelIds: [] },
+    { pinnedModelIds: [], extra: true },
+    { pinnedModelIds: [42] },
+  ]) expect((await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify(body) })).status).toBe(400)
+  for (const pinnedModelIds of [["unknown-model"], [expectedPins[0]]]) {
+    expect((await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ pinnedModelIds }) })).status).toBe(404)
+  }
+  expect(readProvider(await (await request(ownerCookie, base)).json()).pinnedModelIds).toEqual(configuredPins)
+
+  const restricted = await request(ownerCookie, `${base}/model-groups/${groupId}`, { method: "PATCH", body: JSON.stringify({ modelIds: ["claude-haiku-4"] }) })
+  expect(restricted.status).toBe(200)
+  const filtered = readProvider(await (await request(memberCookie, `${base}/connect`)).json())
+  expect(filtered.pinnedModelIds).toEqual([expectedPins[1]])
+  expect(readProvider(await (await request(ownerCookie, base)).json()).pinnedModelIds).toEqual(configuredPins)
+
+  expect((await request(ownerCookie, `${base}/credential-sets/${setId}`, { method: "PATCH", body: JSON.stringify({ status: "disabled" }) })).status).toBe(200)
+  expect(readProviderList(await (await request(memberCookie, "/v1/inference-providers")).json()).some((provider) => provider.id === id)).toBe(false)
+  expect((await request(memberCookie, `${base}/connect`)).status).toBe(403)
+  expect((await request(ownerCookie, `${base}/credential-sets/${setId}`, { method: "PATCH", body: JSON.stringify({ status: "active", credential: { kind: "api_key", secret: "fake-replacement-pin-key" } }) })).status).toBe(200)
+  expect((await request(ownerCookie, `${base}/access-grants/${grantId}`, { method: "DELETE" })).status).toBe(204)
+  expect(readProviderList(await (await request(memberCookie, "/v1/inference-providers")).json()).some((provider) => provider.id === id)).toBe(false)
+  expect((await request(memberCookie, `${base}/connect`)).status).toBe(403)
+  const cleared = await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ pinnedModelIds: [] }) })
+  expect(cleared.status).toBe(200)
+  expect(readProvider(await cleared.json()).pinnedModelIds).toEqual([])
+})
+
+test("Free provider summaries isolate organization usage and Auto pin writes preserve eligibility and metadata", async () => {
+  const { env } = await import("../src/env.js")
+  const previousFree = env.inferenceFree
+  const orgA = createDenTypeId("organization"), orgB = createDenTypeId("organization")
+  const members = [createDenTypeId("member"), createDenTypeId("member"), createDenTypeId("member"), createDenTypeId("member")]
+  const requestIds = Array.from({ length: 5 }, () => randomUUID())
+  const keyA = createDenTypeId("inferenceKey"), keyB = createDenTypeId("inferenceKey"), bucketId = randomUUID()
+  const now = new Date()
+  const unit = INFERENCE_USAGE_CONVERSION_FACTOR
+  const hash = freeInferenceDigest("member", ownerUserId)
+  const headers = { "x-openwork-org-id": orgA }
+  const metadata = { inferenceFree: { offerAllowed: true, defaultPinned: true, rolloutEnabled: true }, unrelated: "preserved" }
+  env.inferenceFree = { ...previousFree, enabled: true, weeklyBudgetUsd: 5, weeklyLimitAmount: 5 * unit }
+  try {
+    await db.insert(schema.OrganizationTable).values([{ id: orgA, name: "Free summary A", slug: orgA, metadata }, { id: orgB, name: "Free summary B", slug: orgB }])
+    await db.insert(schema.MemberTable).values([
+      { id: members[0], organizationId: orgA, userId: ownerUserId, role: "owner", joinedAt: now },
+      { id: members[1], organizationId: orgA, userId: memberUserId, role: "member", joinedAt: now },
+      { id: members[2], organizationId: orgA, userId: outsiderUserId, role: "member", joinedAt: now },
+      { id: members[3], organizationId: orgB, userId: ownerUserId, role: "member", joinedAt: now },
+    ])
+    await db.insert(schema.InferenceFreeUsageBucketTable).values({ id: bucketId, identity_hash: hash,
+      window_start_at: freeInferenceWindow(now).start, window_end_at: freeInferenceWindow(now).end, limit_amount: 5 * unit, used_amount: 5 * unit })
+    const ownerA = { organization_id: orgA, org_membership_id: members[0], inference_key_id: keyA }
+    await db.insert(schema.InferenceFreeUsageTable).values([
+      { request_id: requestIds[0], ...ownerA, completion_id: `chatcmpl-${requestIds[0]}`, principal_hash: hash, model_id: INFERENCE_FREE_MODEL_ID, amount: unit },
+      { request_id: requestIds[1], organization_id: orgB, org_membership_id: members[3], inference_key_id: keyB, completion_id: `chatcmpl-${requestIds[1]}`, principal_hash: hash, model_id: INFERENCE_FREE_MODEL_ID, amount: 9 * unit },
+      { request_id: requestIds[3], ...ownerA, principal_hash: hash, model_id: INFERENCE_FREE_MODEL_ID, amount: unit, estimated: true },
+    ])
+    // Guests live in their own tables and never count toward an organization.
+    await db.insert(schema.AnonymousInferenceUsageTable).values({ request_id: requestIds[2], completion_id: `chatcmpl-${requestIds[2]}`, principal_hash: "a".repeat(64), model_id: INFERENCE_FREE_MODEL_ID, amount: unit })
+    const summaryResponse = await request(ownerCookie, "/v1/inference/free/provider", { headers })
+    expect(summaryResponse.status).toBe(200)
+    const summary = readResource(await summaryResponse.json(), "provider")
+    expect(summary).toMatchObject({ defaultPinned: true, allowance: { joinedMembers: 3, eligibleMembers: 3, exhaustedMembers: 1, usedUsd: 2, requestCount: 2, usageScope: "organization" } })
+    expect(JSON.stringify(summary)).not.toContain(ownerUserId)
+    expect((await request(memberCookie, "/v1/inference/free/provider", { headers })).status).toBe(403)
+    expect((await request(ownerCookie, "/v1/inference/free/provider", { headers: { "x-openwork-org-id": orgB } })).status).toBe(403)
+    expect((await request(memberCookie, "/v1/inference/free/pins", { method: "PATCH", headers, body: JSON.stringify({ defaultPinned: false }) })).status).toBe(403)
+    const pinned = await request(ownerCookie, "/v1/inference/free/pins", { method: "PATCH", headers, body: JSON.stringify({ defaultPinned: false }) })
+    expect(pinned.status).toBe(200)
+    expect(await pinned.json()).toEqual({ defaultPinned: false })
+    const memberAccess = readResource(await (await request(memberCookie, "/v1/inference/access", { headers })).json(), "access")
+    expect(memberAccess).toMatchObject({ defaultPinned: false, kind: "free", modelID: INFERENCE_FREE_MODEL_ID })
+    const [saved] = await db.select({ metadata: schema.OrganizationTable.metadata }).from(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, orgA))
+    expect(saved.metadata).toEqual({ ...metadata, inferenceFree: { offerAllowed: true, defaultPinned: false, rolloutEnabled: true } })
+    await db.update(schema.OrganizationTable).set({ metadata: { ...saved.metadata, dpaSigned: true } }).where(drizzle.eq(schema.OrganizationTable.id, orgA))
+    expect((await request(ownerCookie, "/v1/inference/free/pins", { method: "PATCH", headers, body: JSON.stringify({ defaultPinned: true }) })).status).toBe(200)
+    expect(readResource(await (await request(memberCookie, "/v1/inference/access", { headers })).json(), "access")).toMatchObject({ defaultPinned: true, kind: "unavailable", reason: "admin_disabled" })
+    expect(readResource(await (await request(ownerCookie, "/v1/inference/free/provider", { headers })).json(), "provider")).toMatchObject({ state: "disabled", allowance: { eligibleMembers: 0, usedUsd: null } })
+  } finally {
+    env.inferenceFree = previousFree
+    await db.delete(schema.InferenceFreeUsageTable).where(drizzle.inArray(schema.InferenceFreeUsageTable.request_id, requestIds))
+    await db.delete(schema.AnonymousInferenceUsageTable).where(drizzle.inArray(schema.AnonymousInferenceUsageTable.request_id, requestIds))
+    await db.delete(schema.InferenceFreeUsageBucketTable).where(drizzle.eq(schema.InferenceFreeUsageBucketTable.id, bucketId))
+    await db.delete(schema.OrganizationRoleTable).where(drizzle.inArray(schema.OrganizationRoleTable.organizationId, [orgA, orgB]))
+    await db.delete(schema.MemberTable).where(drizzle.inArray(schema.MemberTable.id, members))
+    await db.delete(schema.OrganizationTable).where(drizzle.inArray(schema.OrganizationTable.id, [orgA, orgB]))
   }
 })
 

@@ -136,6 +136,15 @@
       "override": null
     },
     {
+      "host": "inference.openworklabs.com",
+      "kind": "fetched",
+      "components": ["server"],
+      "purpose": "Hosted gateway for desktop Auto free inference, including anonymous and signed-in member free-access sessions, status, model catalog, and chat requests.",
+      "requirement": "optional",
+      "blockedEffect": "Desktop Auto free inference is unavailable; separately configured BYOK and local providers remain usable.",
+      "override": "OPENWORK_FREE_INFERENCE_ORIGIN; OPENWORK_DISABLE_FREE_INFERENCE disables the free route"
+    },
+    {
       "host": "linear.app",
       "kind": "link-only",
       "components": ["renderer"],

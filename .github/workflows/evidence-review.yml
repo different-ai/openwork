@@ -9,7 +9,7 @@ on:
         type: string
   workflow_run:
     workflows: [PR change proof, Product journeys]
-    types: [completed]
+    types: [requested, in_progress, completed]
 
 permissions:
   contents: read
@@ -18,25 +18,124 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: evidence-review-${{ github.event_name }}-${{ github.event.workflow_run.id || github.run_id }}
+  group: evidence-review-${{ github.event.workflow_run.id || inputs.run_id || github.run_id }}
   cancel-in-progress: false
 
 jobs:
+  progress:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.action != 'completed' &&
+      github.event.workflow_run.name == 'PR change proof' &&
+      github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      statuses: write
+      checks: write
+      deployments: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - name: Update the commit-bound evidence check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEW_RUN_ID: ${{ github.event.workflow_run.id }}
+          REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: node .github/scripts/evidence-presentation.mjs progress
+
   publish:
     needs: required-verification
     concurrency:
-      group: evidence-review-publish-${{ github.repository }}
+      group: evidence-review-publish-${{ github.repository }}-${{ github.event.workflow_run.pull_requests[0].number || inputs.run_id || github.run_id }}
       cancel-in-progress: false
     if: >-
       always() &&
       ((github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.name == 'PR change proof' && github.event.workflow_run.event == 'pull_request'))
+      (github.event_name == 'workflow_run' && github.event.action == 'completed' && github.event.workflow_run.name == 'PR change proof' && github.event.workflow_run.event == 'pull_request'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       actions: read
       pull-requests: write
+      statuses: write
+      checks: write
+      deployments: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REVIEW_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+      REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      OPENWORK_REVIEW_URL: ${{ vars.OPENWORK_REVIEW_URL }}
+    outputs:
+      state: ${{ steps.receipt.outputs.state }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - name: Mark evidence as publishing
+        run: node .github/scripts/evidence-presentation.mjs progress
+      - uses: pnpm/action-setup@v4
+      - name: Install trusted publisher dependencies
+        run: |
+          pnpm --filter @openwork/review... install --frozen-lockfile --ignore-scripts
+          pnpm --dir evals --filter @openwork/test-artifacts install --frozen-lockfile --ignore-scripts
+      - name: Publish only live PR proof evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE_RECEIPT_PATH: ${{ runner.temp }}/evidence-publication.json
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.OPENWORK_REVIEW_BLOB_TOKEN }}
+          OPENWORK_REVIEW_URL: ${{ vars.OPENWORK_REVIEW_URL }}
+          REVIEW_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+          REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: node evals/scripts/publish-review.mjs
+      - name: Publish native check and deployment result
+        if: always()
+        env:
+          EVIDENCE_RECEIPT_PATH: ${{ runner.temp }}/evidence-publication.json
+        run: node .github/scripts/evidence-presentation.mjs complete
+      - name: Record whether a report was published
+        id: receipt
+        if: always()
+        env:
+          EVIDENCE_RECEIPT_PATH: ${{ runner.temp }}/evidence-publication.json
+        run: |
+          state="$(node -e 'try { const r = JSON.parse(require("fs").readFileSync(process.env.EVIDENCE_RECEIPT_PATH, "utf8")); process.stdout.write(typeof r.state === "string" ? r.state : "none"); } catch { process.stdout.write("none"); }')"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+
+  # Reviewers open a report within minutes, so build its sandboxes now and
+  # "Launch in Freestyle" is usually ready at the first click. Only commits that
+  # just got a report are built (not every push), and per-commit snapshots
+  # expire after a day unused. Default-branch controller; PR code only ever runs
+  # inside credential-free guest VMs.
+  prebuild:
+    needs: publish
+    if: >-
+      always() && needs.publish.outputs.state == 'published' &&
+      github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        world: [app-web, acme-web]
+    concurrency:
+      group: freestyle-prebuild-${{ github.event.workflow_run.head_sha }}-${{ matrix.world }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -46,21 +145,18 @@ jobs:
         with:
           node-version: 24
       - uses: pnpm/action-setup@v4
-      - name: Install trusted publisher dependencies
-        run: |
-          pnpm --filter @openwork/review... install --frozen-lockfile --ignore-scripts
-          pnpm --dir evals --filter @openwork/test-artifacts install --frozen-lockfile --ignore-scripts
-      - name: Publish only live PR proof evidence
+      - name: Install the Freestyle controller only
+        run: pnpm --filter @openwork/freestyle... install --frozen-lockfile --ignore-scripts
+      - name: Build this commit's sandbox snapshot
         env:
-          GH_TOKEN: ${{ github.token }}
-          BLOB_READ_WRITE_TOKEN: ${{ secrets.OPENWORK_REVIEW_BLOB_TOKEN }}
-          OPENWORK_REVIEW_URL: ${{ vars.OPENWORK_REVIEW_URL }}
-          REVIEW_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
-          REVIEW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-        run: node evals/scripts/publish-review.mjs
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
+          PREVIEW_SHA: ${{ github.event.workflow_run.head_sha }}
+          PREVIEW_WORLD: ${{ matrix.world }}
+        run: node scripts/prepare-freestyle-preview.ts "$PREVIEW_SHA" "$PREVIEW_WORLD"
 
   required-verification:
-    if: github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Product journeys' && github.event.workflow_run.event == 'workflow_run'
+    if: github.event_name == 'workflow_run' && github.event.action == 'completed' && github.event.workflow_run.name == 'Product journeys' && github.event.workflow_run.event == 'workflow_run'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

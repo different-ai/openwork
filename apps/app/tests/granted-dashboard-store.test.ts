@@ -44,6 +44,21 @@ describe("grantedEntryId", () => {
     }
   });
 
+  test("keeps consent across revisions of an App built in OpenWork, but not across Apps", () => {
+    const revision = (appId: string, revisionId: string) => `ui://openwork/apps/${appId}/revisions/${revisionId}/index.html`;
+    const app = `cob_01mcpapp${"a".repeat(18)}`;
+    const built: DenDashboardElement = {
+      ...element, connectionId: app, toolName: "open_app", resourceUri: revision(app, `cov_01mcpapp${"1".repeat(18)}`),
+    };
+    const updated = { ...built, resourceUri: revision(app, `cov_01mcpapp${"2".repeat(18)}`) };
+    expect(grantedEntryId("dsb_1", updated)).toBe(grantedEntryId("dsb_1", built));
+    // A provider using the same URI shape keeps exact resource consent.
+    expect(grantedEntryId("dsb_1", { ...updated, connectionId: "emc_provider" })).not.toBe(grantedEntryId("dsb_1", { ...built, connectionId: "emc_provider" }));
+    const other = `cob_01mcpapp${"b".repeat(18)}`;
+    expect(grantedEntryId("dsb_1", { ...built, resourceUri: revision(other, `cov_01mcpapp${"2".repeat(18)}`) })).not.toBe(grantedEntryId("dsb_1", built));
+    expect(grantedEntryId("dsb_1", { ...updated, connectionId: other })).not.toBe(grantedEntryId("dsb_1", built));
+  });
+
   test("is scoped to the granting dashboard", () => {
     expect(grantedEntryId("dsb_2", element)).not.toBe(grantedEntryId("dsb_1", element));
   });

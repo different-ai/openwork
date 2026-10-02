@@ -38,6 +38,21 @@ function queuedTexts(sessionId: string) {
 describe("composer state store", () => {
   beforeEach(reset);
 
+  test("settles only the rejected Auto message without restoring it over newer edits or queueing a retry", () => {
+    const submitted = { ...draft("submitted"), messageId: "message-a" };
+    const composer: ComposerSessionState = { draft: "submitted", attachments: [], mentions: {}, pasteParts: [], revertMessageId: null };
+    useComposerStateStore.setState({ pendingMessages: { owner: [{ draft: submitted, composer, settled: false, previousMessageIds: [], submissionMessageIds: [] }] } });
+    useComposerStateStore.getState().setDraft("session-a", "newer edits");
+    useComposerStateStore.getState().settleAutoAccessWall("different-owner", "message-a", { state: "limit" });
+    expect(useComposerStateStore.getState().pendingMessages.owner[0].autoAccessWall).toBeUndefined();
+    useComposerStateStore.getState().settleAutoAccessWall("owner", "message-a", { state: "limit" });
+    const state = useComposerStateStore.getState();
+    expect(state.pendingMessages.owner[0]).toMatchObject({ settled: true, autoAccessWall: { state: "limit" } });
+    expect(state.sessions["session-a"].draft).toBe("newer edits");
+    expect(state.queuedDrafts).toEqual({});
+    useComposerStateStore.setState({ pendingMessages: {} });
+  });
+
   test("scopes queued drafts by session", () => {
     const { appendQueuedDraft } = useComposerStateStore.getState();
     appendQueuedDraft("session-a", draft("queued in A"));

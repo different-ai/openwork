@@ -1,14 +1,37 @@
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { FreestyleApiError, type Freestyle, type Vm } from "freestyle";
-import { execChecked, isMissing } from "./index.ts";
+import { execChecked, isMissing, type PreviewWorld } from "./index.ts";
 
-export interface SourceEntry { path: string; sha: string; type: string }
+export interface SourceEntry { path: string; sha: string; type: string; installSha?: string; runtimeSha?: string }
 export interface BuildStage { stage: string; durationMs: number; cacheHit?: boolean }
 export type ObserveBuild = (event: BuildStage) => void;
 
 export function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 40);
+}
+
+/** Ignore only known inert metadata; unknown package fields remain conservative. */
+export function manifestFingerprints(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid package manifest");
+  const metadata = new Set(["description", "keywords", "author", "contributors", "license", "homepage", "bugs", "repository"]);
+  const runtime: Record<string, unknown> = {};
+  const install: Record<string, unknown> = {};
+  for (const [key, field] of Object.entries(value).sort(([a], [b]) => a.localeCompare(b))) {
+    if (metadata.has(key)) continue;
+    if (key === "scripts") {
+      if (!field || typeof field !== "object" || Array.isArray(field)) throw new Error("Invalid package scripts");
+      const scripts = Object.entries(field).filter(([name]) => !/^(pre|post)?(test|lint|typecheck)(:|$)/.test(name)).sort(([a], [b]) => a.localeCompare(b));
+      if (scripts.length) runtime[key] = Object.fromEntries(scripts);
+    } else { runtime[key] = field; install[key] = field; }
+  }
+  return { installSha: digest(JSON.stringify(install)), runtimeSha: digest(JSON.stringify(runtime)) };
+}
+
+function worldSource(path: string, world: PreviewWorld) {
+  // app-web runs the hosted Den proxy, never the local Den/Gateway or eval runtime.
+  if (world === "desktop") return !/^(ee\/apps\/(den-web|den-api|gateway)\/|worlds\/|packages\/world\/|evals\/(?!packages\/cdp\/))/.test(path);
+  return world !== "app-web" || !/^(ee\/apps\/(den-web|den-api|gateway)\/|evals\/|worlds\/acme-web\.)/.test(path);
 }
 
 export function dependencyInput(path: string): boolean {
@@ -20,7 +43,7 @@ export function dependencyFingerprint(entries: SourceEntry[]): string {
   const inputs = entries.filter((entry) => entry.type === "blob" && dependencyInput(entry.path))
     .sort((a, b) => a.path.localeCompare(b.path));
   if (!inputs.some((entry) => entry.path === "pnpm-lock.yaml")) throw new Error("Source tree is missing its lockfile");
-  return digest(JSON.stringify(inputs.map(({ path, sha }) => [path, sha])));
+  return digest(JSON.stringify(inputs.map(({ path, sha, installSha }) => [path, installSha ?? sha])));
 }
 
 /** Public metadata only: never check out or execute PR code on the credentialed host. */
@@ -35,18 +58,37 @@ export async function sourceTree(sha: string, request: typeof fetch = fetch): Pr
   const value: unknown = await response.json();
   if (!value || typeof value !== "object" || !("tree" in value) || !Array.isArray(value.tree)
     || !("truncated" in value) || value.truncated !== false) throw new Error("Incomplete dependency input tree");
-  return value.tree.map((entry: unknown) => {
+  const entries = value.tree.map((entry: unknown) => {
     if (!entry || typeof entry !== "object" || !("path" in entry) || typeof entry.path !== "string"
       || !("sha" in entry) || typeof entry.sha !== "string" || !/^[a-f0-9]{40}$/.test(entry.sha)
       || !("type" in entry) || typeof entry.type !== "string") throw new Error("Invalid dependency input tree");
     return { path: entry.path, sha: entry.sha, type: entry.type };
   });
+  const result: SourceEntry[] = [...entries];
+  const manifests = entries.filter((entry) => entry.type === "blob" && /(^|\/)package\.json$/.test(entry.path));
+  // Bound concurrent public reads. Only JSON is parsed; PR code never executes here.
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(8, manifests.length) }, async () => {
+    while (next < manifests.length) {
+      const entry = manifests[next++];
+      const response = await request(`https://raw.githubusercontent.com/different-ai/openwork/${sha}/${entry.path}`, {
+        redirect: "error", signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok) throw new Error(`Could not read package inputs (HTTP ${response.status})`);
+      Object.assign(result[entries.indexOf(entry)], manifestFingerprints(await response.json()));
+    }
+  }));
+  return result;
 }
 
 /** Immutable layers use the provider's unique builder slug as a distributed lock. */
 export async function ensureLayer(input: {
   slug: string; stage: string; parent: () => Promise<string>;
   prepare: (vm: Vm) => Promise<void>; observe: ObserveBuild; ttlSeconds?: number;
+  /** Delete after this long with no VM created from it. Defaults to 7 days. */
+  autoDeleteSeconds?: number;
+  /** Extra builder VM metadata, e.g. which commit/world build started it. */
+  metadata?: Record<string, string>;
 }, api: Freestyle) {
   const start = performance.now();
   const builderSlug = `ow-cache-build-${digest(input.slug)}`;
@@ -66,7 +108,7 @@ export async function ensureLayer(input: {
       created = await api.vms.create({
         slug: builderSlug, snapshotId: parent, ttlSeconds: 1800,
         displayName: `OpenWork ${input.stage} builder`,
-        metadata: { kind: "openwork-cache-builder-v1", cacheKey: digest(input.slug) },
+        metadata: { ...input.metadata, kind: "openwork-cache-builder-v1", cacheKey: digest(input.slug) },
         firewall: { rules: [{ action: "allow", source: {}, destination: { public: true } }] },
       });
     } catch (error) {
@@ -97,23 +139,26 @@ export async function ensureLayer(input: {
       await execChecked(created.vm, "sync && echo 3 > /proc/sys/vm/drop_caches");
       const snapshotStart = performance.now();
       const result = await created.vm.snapshot({ slug: input.slug, displayName: `OpenWork ${input.stage}`,
-        autoDeleteSeconds: 7 * 86400, ttlSeconds: input.ttlSeconds ?? 30 * 86400 });
+        autoDeleteSeconds: input.autoDeleteSeconds ?? 7 * 86400, ttlSeconds: input.ttlSeconds ?? 30 * 86400 });
       input.observe({ stage: `${input.stage}-snapshot`, durationMs: Math.round(performance.now() - snapshotStart) });
       input.observe({ stage: input.stage, durationMs: Math.round(performance.now() - start), cacheHit: false });
       return result.snapshot;
     } finally {
       const cleanupStart = performance.now();
-      await created.vm.delete().catch(() => undefined); // TTL bounds failed cleanup.
-      input.observe({ stage: `${input.stage}-cleanup`, durationMs: Math.round(performance.now() - cleanupStart) });
+      // The snapshot is materialized before this point. Deletion must not hold up
+      // the next layer. The builder's provider TTL also covers host termination.
+      void created.vm.delete().catch(() => undefined).then(() => {
+        input.observe({ stage: `${input.stage}-cleanup`, durationMs: Math.round(performance.now() - cleanupStart) });
+      });
     }
   }
   throw new Error(`${input.stage} cache build timed out`);
 }
 
-export function compiledFingerprint(entries: SourceEntry[]): string {
+export function compiledFingerprint(entries: SourceEntry[], world: PreviewWorld = "acme-web"): string {
   const runtimeSource = /^(apps\/app\/(src|public)\/|ee\/apps\/(den-web\/(src|app|public)|den-api\/src|gateway\/src)\/|packages\/freestyle\/|worlds\/|evals\/|\.github\/|docs\/)/;
-  return digest(JSON.stringify(entries.filter((entry) => entry.type === "blob" && !runtimeSource.test(entry.path))
-    .sort((a, b) => a.path.localeCompare(b.path)).map(({ path, sha }) => [path, sha])));
+  return digest(JSON.stringify(entries.filter((entry) => entry.type === "blob" && worldSource(entry.path, world) && !runtimeSource.test(entry.path))
+    .sort((a, b) => a.path.localeCompare(b.path)).map(({ path, sha, runtimeSha }) => [path, runtimeSha ?? sha])));
 }
 
 
@@ -136,8 +181,8 @@ export async function startBuildUnit(vm: Vm, stage: string, diagnostic?: (stage:
 
 
 /** These files run in development servers that reload them after checkout. */
-export function runningFingerprint(entries: SourceEntry[]): string {
+export function runningFingerprint(entries: SourceEntry[], world: PreviewWorld = "acme-web"): string {
   const refreshed = /^(apps\/app\/(src|public)\/|ee\/apps\/den-web\/(components|public|styles)\/|\.github\/|docs\/)/;
-  return digest(JSON.stringify(entries.filter((entry) => entry.type === "blob" && !refreshed.test(entry.path))
-    .sort((a, b) => a.path.localeCompare(b.path)).map(({ path, sha }) => [path, sha])));
+  return digest(JSON.stringify(entries.filter((entry) => entry.type === "blob" && worldSource(entry.path, world) && !refreshed.test(entry.path))
+    .sort((a, b) => a.path.localeCompare(b.path)).map(({ path, sha, runtimeSha }) => [path, runtimeSha ?? sha])));
 }

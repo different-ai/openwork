@@ -51,16 +51,16 @@ test("org owners and admins get plugin-system capability access", () => {
   expect(accessModule.hasPluginArchCapability(createActorContext({ role: "member" }), "connector_instance.create")).toBe(false)
 })
 
-test("server-side connector automation bypasses human session freshness without weakening human step-up", async () => {
+test("routine plugin-system capabilities do not require a fresh session", async () => {
   await expect(accessModule.requirePluginArchCapability(
-    createActorContext({ automation: true, role: "admin" }),
+    createActorContext({ role: "admin" }),
     "marketplace.create",
   )).resolves.toBeUndefined()
 
   await expect(accessModule.requirePluginArchCapability(
-    createActorContext({ role: "admin" }),
+    createActorContext({ role: "member" }),
     "marketplace.create",
-  )).rejects.toMatchObject({ error: "reauth" })
+  )).rejects.toMatchObject({ error: "forbidden" })
 })
 
 test("grant resolution supports direct, team, org-wide, and highest-role precedence", () => {
@@ -105,27 +105,4 @@ test("removed grants are ignored during resolution", () => {
     memberId: "member_current",
     teamIds: [],
   })).toBeNull()
-})
-
-test("audience expansion excludes only the caller's private direct grant", () => {
-  expect(accessModule.pluginArchGrantExpandsAudience({
-    orgMembershipId: "member_current",
-    orgWide: false,
-    teamId: null,
-  }, "member_current")).toBe(false)
-  expect(accessModule.pluginArchGrantExpandsAudience({
-    orgMembershipId: "member_other",
-    orgWide: false,
-    teamId: null,
-  }, "member_current")).toBe(true)
-  expect(accessModule.pluginArchGrantExpandsAudience({
-    orgMembershipId: null,
-    orgWide: false,
-    teamId: "team_alpha",
-  }, "member_current")).toBe(true)
-  expect(accessModule.pluginArchGrantExpandsAudience({
-    orgMembershipId: null,
-    orgWide: true,
-    teamId: null,
-  }, "member_current")).toBe(true)
 })

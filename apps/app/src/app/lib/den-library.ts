@@ -175,6 +175,17 @@ export function parseDenLibraryAccessGrants(payload: unknown): DenLibraryAccessG
   });
 }
 
+/** Grants per plugin from `GET /v1/plugins?includeAccess=true`; plugins the caller does not manage are absent. */
+export function parseDenPluginListAccess(payload: unknown): Map<string, DenLibraryAccessGrant[]> {
+  const access = new Map<string, DenLibraryAccessGrant[]>();
+  if (!isRecord(payload) || !Array.isArray(payload.items)) return access;
+  for (const item of payload.items) {
+    if (!isRecord(item) || typeof item.id !== "string" || !Array.isArray(item.access)) continue;
+    access.set(item.id, parseDenLibraryAccessGrants({ items: item.access }));
+  }
+  return access;
+}
+
 export function parseDenLibraryAccessGrant(payload: unknown): DenLibraryAccessGrant | null {
   const item = isRecord(payload) ? payload.item : null;
   return parseDenLibraryAccessGrants({ items: [item] })[0] ?? null;

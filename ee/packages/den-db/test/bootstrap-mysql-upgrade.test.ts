@@ -153,7 +153,7 @@ async function advance(connection: mysql.Connection, from: number, to: number) {
   }
 }
 
-test("production bootstrap native MySQL 0097 prevention matrix", { skip: !mysqlUrl || !isolated ? "needs: isolated mysql-0097-native world (DEN_DB_MYSQL_TEST_URL and DEN_DB_MYSQL_ISOLATED=1)" : false, timeout: 900_000 }, async t => {
+test("production bootstrap native MySQL 0097 prevention matrix", { skip: !mysqlUrl || !isolated ? "needs: isolated native MySQL world, pnpm world up ./ee/packages/den-db/test/mysql-0097-native.world.ts --place local (DEN_DB_MYSQL_TEST_URL and DEN_DB_MYSQL_ISOLATED=1)" : false, timeout: 900_000 }, async t => {
   assert.ok(mysqlUrl)
   assert.equal(new URL(mysqlUrl).hostname, "127.0.0.1")
   const root = await mkdtemp(join(tmpdir(), "bootstrap-regression-"))

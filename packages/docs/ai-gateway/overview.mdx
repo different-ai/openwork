@@ -1,0 +1,77 @@
+---
+title: "AI Gateway"
+sidebarTitle: "Overview"
+description: "Connect OpenAI, Anthropic, Vertex, Bedrock, Azure, or any OpenAI-compatible provider once. Control who uses which model and track cost."
+---
+
+Connect model providers once, decide who can use which model, and see what it costs. Members just pick a model; they never handle keys.
+
+## Set it up
+
+<Steps>
+  <Step title="Add a provider">
+    In the OpenWork Cloud dashboard, open `AI Gateway` > `AI Providers` > `Add provider` and pick one from the catalog.
+    <Frame>
+      <img src="https://b8tgacyg507ru26g.public.blob.vercel-storage.com/docs/ai-gateway/2026-09/add-provider-catalog-hCm3YnlhrYW0BlOcEqNmDfTd0eWnKw.png" alt="Add Anthropic: shared API key, who can use it, and which models" />
+    </Frame>
+  </Step>
+  <Step title="Choose who can use it">
+    Keep `Everyone in the organization`, or add specific teams and people. Pick all models or only some.
+    <Frame>
+      <img src="https://b8tgacyg507ru26g.public.blob.vercel-storage.com/docs/ai-gateway/2026-09/provider-ready-Uvj2euKqQpFH9YN0DixyiYgqwBUIEj.png" alt="Anthropic provider row: all models, everyone, ready" />
+    </Frame>
+  </Step>
+  <Step title="Limit models (optional)">
+    Under `Who can use models`, choose `Only models you provide` so members can't add their own keys.
+    <Frame>
+      <img src="https://b8tgacyg507ru26g.public.blob.vercel-storage.com/docs/ai-gateway/2026-09/model-policy-7C1rRsSLjiajaokEa8MlBXbnNBNdzR.png" alt="Who can use models set to Only models you provide" />
+    </Frame>
+  </Step>
+  <Step title="Set spend limits">
+    On `Limits`, give a team or person a daily, weekly, or monthly USD amount. Pause or warn when it runs out.
+    <Frame>
+      <img src="https://b8tgacyg507ru26g.public.blob.vercel-storage.com/docs/ai-gateway/2026-09/new-spend-limit-MVlmRqN5nFVJM5LcyTW7iFvPSo80Ox.png" alt="New spend limit: Design team, $20 a day and $300 a month" />
+    </Frame>
+  </Step>
+  <Step title="Test it">
+    A member picks the model in the desktop app or OpenWork Web and sends a prompt. Granted models sync automatically.
+  </Step>
+</Steps>
+
+Self-hosting? [Enable OpenWork Gateway](/self-host/gateway) first.
+
+## What you get
+
+<CardGroup cols={2}>
+  <Card title="Keys stay on the server" icon="key">
+    One org credential per provider, or per-member Google sign-in for [Vertex AI](/ai-gateway/google-agent-platform).
+  </Card>
+  <Card title="Access per team" icon="users">
+    Group models, then grant each group to the org, a team, or a person.
+  </Card>
+  <Card title="Spend limits" icon="gauge">
+    USD allowances with hard limits and optional increase requests.
+  </Card>
+  <Card title="Usage by person" icon="chart-column">
+    Per-member keys attribute tokens and cost. See [Counting usage](/ai-gateway/counting-usage).
+  </Card>
+</CardGroup>
+
+Already run LiteLLM or Bifrost? Keep it. See [AI Gateway vs LiteLLM vs Bifrost](/ai-gateway/compare-litellm-bifrost).
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Which providers are supported?">
+    OpenAI, Anthropic, Google, Google Vertex AI (including Claude on Vertex), Azure, Amazon Bedrock, Mistral, OpenRouter, and catalog providers with an OpenAI-compatible API. Models come from the models.dev catalog.
+  </Accordion>
+  <Accordion title="How is this different from OpenWork Models or bring your own keys?">
+    **AI Gateway** routes your providers through OpenWork with access rules, limits, and usage tracking. **OpenWork Models** is a managed subscription with no keys, billed separately. **Bring your own keys** syncs an org provider to members and the app calls it directly; see [Managed LLM provider](/cloud/share-with-your-team/managed-llm-provider). The [MCP Gateway](/start-here/connect-openwork-mcp) is separate: it shares skills and connections, not models.
+  </Accordion>
+  <Accordion title="How accurate is the cost view?">
+    Costs are estimates from reported tokens and public prices, or a provider-reported cost when returned. They are not your provider's bill. See [Token costs](/ai-gateway/token-costs).
+  </Accordion>
+  <Accordion title="What does it cost?">
+    Shared keys are on the Team plan and spend observability is on Enterprise, for Cloud and self-hosted alike. Providers bill model usage. See [Pricing and licensing](/start-here/pricing-and-licensing).
+  </Accordion>
+</AccordionGroup>

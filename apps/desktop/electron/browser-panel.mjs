@@ -16,7 +16,6 @@ import { openExternalUrl } from "./open-external.mjs";
 import { BrowserTaskError, createBrowserTaskHost } from "./browser-task.mjs";
 import { createWebMcpBroker } from "./webmcp-host.mjs";
 import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
-import { chooseWebAuthnAccount } from "./web-authn.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BROWSER_SESSION_PARTITION = "persist:openwork-browser";
@@ -56,13 +55,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       tab.downloads.add(item);
       item.once("done", () => tab.downloads.delete(item));
     });
-    browserSession.on("select-webauthn-account", (_event, details, callback) => {
-      // Chromium has already checked the relying party. A native chooser keeps
-      // the credential in the browser and gives the person the final choice.
-      Promise.resolve().then(() => chooseWebAuthnAccount({
-        details, window: window(), showMessageBox: (browserWindow, options) => dialog.showMessageBox(browserWindow, options),
-      })).then((credentialId) => callback(credentialId), () => callback(null));
-    });
     browserSessionHooksInstalled = true;
     if (!checkPolicy) return;
     // The session request boundary covers normal navigation, redirects, frames,
@@ -91,6 +83,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         }, (error) => {
           if (tab && getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed()
             && registry.ownerOf(tab.tabId) === owner && tab.documentGeneration === documentGeneration
+            && tab.loadError?.code !== "page_load_failed"
             && (error?.code === "policy_unavailable" || error?.code === "organization_policy_denied")) {
             tab.loadError = {
               code: error.code,
@@ -141,6 +134,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   let browserControlEnabled = true;
   let menuRequest = null;
   let menuShowSerial = 0;
+  let linkChoiceRequest = null;
+  let linkChoiceCounter = 0;
   const webMcpRefreshTimers = new Map();
 
   function window() {
@@ -286,8 +281,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
 
   function browserTabToPanelTab(tabId, tab) {
     const webContents = tab.view.webContents;
-    const url = webContents.getURL();
-    const title = webContents.getTitle();
+    const failed = tab.loadError?.code === "page_load_failed" ? tab.loadError : null;
+    const url = failed?.url ?? webContents.getURL();
+    const title = failed ? "" : webContents.getTitle();
     const isLoading = webContents.isLoading();
 
     return {
@@ -625,7 +621,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         signal?.removeEventListener("abort", canceled);
         if (approvals.get(tabId)?.id !== id) return;
         approvals.delete(tabId); tab.browserApproval = null;
-        if (!tab.view.webContents.isDestroyed()) tab.view.setVisible(true);
+        if (!tab.view.webContents.isDestroyed()) tab.view.setVisible(tab.loadError?.code !== "page_load_failed");
         sendBrowserState(); resolve(allowed && !signal?.aborted && getBrowserTab(tabId) === tab && registry.ownerOf(tabId) === owner && browserTabVisible(tabId));
       };
       const canceled = () => finish(false);
@@ -861,6 +857,30 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       // retain its warning; old resource failures cannot affect the new document.
       tab.documentGeneration += 1;
       tab.loadError = null;
+      if (registry.onScreenTabId() === tabId) attachActiveBrowserView();
+      sendBrowserState();
+    });
+    view.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      // Aborts (including downloads and superseded navigations) and iframe
+      // failures do not replace the page with a connection error.
+      if (!isMainFrame || errorCode === -3) return;
+      // The request policy already supplies the actionable reason for a
+      // blocked load. Keep that reason instead of calling it a network error.
+      if (errorDescription === "ERR_BLOCKED_BY_CLIENT" && tab.loadError && tab.loadError.code !== "page_load_failed") return;
+      tab.loadError = {
+        code: "page_load_failed",
+        message: errorCode === -102
+          ? "This site refused the connection. Check that it is running, then reload."
+          : errorCode === -106
+            ? "You are offline. Check your connection, then reload."
+            : "This page could not be loaded. Check the address and your connection, then reload.",
+        url: validatedURL,
+        errorCode,
+        errorDescription,
+      };
+      // Native views sit above the app renderer. Hide the failed document so
+      // the renderer's recovery controls can receive clicks and keyboard input.
+      tab.view.setVisible(false);
       sendBrowserState();
     });
     view.webContents.on("did-navigate-in-page", () => sendBrowserState());
@@ -1098,7 +1118,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const tab = getBrowserTab();
     if (!tab) { detachIdleBrowserViews(); return; }
     exitBackgroundMode(tab);
-    tab.view.setVisible(!approvals.has(tab.tabId));
+    tab.view.setVisible(!approvals.has(tab.tabId) && tab.loadError?.code !== "page_load_failed");
     detachIdleBrowserViews(tab.view);
     // Size before attaching so a restored view never flashes at stale bounds.
     tab.view.setBounds(lastBrowserBounds);
@@ -1452,6 +1472,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   function destroyBrowserView() {
+    linkChoiceRequest?.finish(null);
     hideBrowserView();
     menuShowSerial += 1;
     closeAllBrowserTabs();
@@ -1510,7 +1531,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     });
     ipcMain.handle("openwork:browser:reload", (event) => {
       authorizeManualNavigation(event);
-      getActiveWebContents()?.reload();
+      const webContents = getActiveWebContents();
+      const failure = getBrowserTab()?.loadError;
+      if (failure?.code === "page_load_failed") {
+        runDetachedTask("retry browser page", () => webContents?.loadURL(failure.url));
+      } else {
+        webContents?.reload();
+      }
     });
     ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
       if (!acceptBrowserBounds(bounds)) return false;
@@ -1589,6 +1616,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return browserControlEnabled;
     });
     ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
+    ipcMain.handle("openwork:browser:chooseLinkDestination", (event, id, destination) => {
+      const contents = window()?.webContents;
+      if (!contents || event.sender !== contents || event.senderFrame !== contents.mainFrame) return false;
+      if (!linkChoiceRequest || linkChoiceRequest.id !== id) return false;
+      if (destination !== null && destination !== "openwork" && destination !== "external") return false;
+      return linkChoiceRequest.finish(destination);
+    });
     ipcMain.on("openwork:browser:linkClick", (event, payload) => {
       const contents = window()?.webContents;
       if (!contents || event.sender !== contents || event.senderFrame !== contents.mainFrame) return;
@@ -1596,18 +1630,49 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       if (typeof url !== "string" || !isHttpUrl(url) || url.length > 32_768) return;
       const parsed = new URL(url);
       if (parsed.username || parsed.password || /[\u0000-\u001f\u007f]/.test(url)) return;
+      // A second activation must not replace the link the open dialog names.
+      if (linkChoiceRequest) return;
       const ownerSessionId = normalizeSessionId(payload.sessionId) ?? registry.visibleSessionId();
       const sourceFrame = event.senderFrame;
       let navigated = false;
-      const invalidate = (_event, _url, isInPlace, isMainFrame) => {
-        if (isMainFrame && !isInPlace) navigated = true;
+      let cancelChoice = () => {};
+      const isCurrent = () => !navigated && !contents.isDestroyed() && window()?.webContents === contents
+        && contents.mainFrame === sourceFrame;
+      const cleanup = () => {
+        contents.removeListener("did-start-navigation", invalidate);
+        contents.removeListener("destroyed", destroyed);
       };
+      const open = (external) => runDetachedTask("open clicked browser link", () => handleMenuChoice(
+        { source: "link", url, ownerSessionId }, external ? "open-external" : "open-builtin", isCurrent,
+      ).finally(cleanup));
+      const cancel = () => {
+        navigated = true;
+        cancelChoice();
+      };
+      const invalidate = (_event, _url, isInPlace, isMainFrame) => {
+        if (isMainFrame && !isInPlace) cancel();
+      };
+      const destroyed = () => cancel();
       contents.on("did-start-navigation", invalidate);
-      runDetachedTask("open clicked browser link", () => handleMenuChoice(
-        { source: "link", url, ownerSessionId }, payload.external === true ? "open-external" : "open-builtin",
-        () => !navigated && !contents.isDestroyed() && window()?.webContents === contents
-          && contents.mainFrame === sourceFrame,
-      ).finally(() => contents.removeListener("did-start-navigation", invalidate)));
+      contents.on("destroyed", destroyed);
+      if (payload.ask === true) {
+        const id = `link_${++linkChoiceCounter}`;
+        cancelChoice = () => { if (linkChoiceRequest?.id === id) linkChoiceRequest.finish(null); };
+        linkChoiceRequest = {
+          id,
+          finish(destination) {
+            if (linkChoiceRequest?.id !== id) return false;
+            linkChoiceRequest = null;
+            sendToRenderer("openwork:browser:link-open-request", null);
+            if (destination === null || !isCurrent()) { cleanup(); return false; }
+            open(destination === "external");
+            return true;
+          },
+        };
+        sendToRenderer("openwork:browser:link-open-request", { id, url });
+      } else {
+        open(payload.external === true);
+      }
     });
     ipcMain.on("openwork:browser:linkContextMenu", (event, payload) => {
       const mainContents = window()?.webContents;

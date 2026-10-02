@@ -20,7 +20,7 @@ export async function revokeInferenceCredentialsForMembers(tx: Tx, memberIds: Me
     .where(and(inArray(InferenceKeyTable.org_membership_id, memberIds), eq(InferenceKeyTable.status, "active")))
   await tx.update(GatewayKeyTable).set({ status: "revoked", revoked_at: new Date(), updated_at: new Date() })
     .where(and(inArray(GatewayKeyTable.org_membership_id, memberIds), eq(GatewayKeyTable.status, "active")))
-  await tx.update(GatewayProviderCredentialTable).set({ status: "revoked", refreshing_until: null, updated_at: new Date() })
+  await tx.update(GatewayProviderCredentialTable).set({ status: "revoked", secret: "{}", expires_at: null, scopes: null, refreshing_until: null, last_error: null, updated_at: new Date() })
     .where(inArray(GatewayProviderCredentialTable.org_membership_id, memberIds))
   return credentials.filter((credential) => credential.status !== "revoked")
 }
@@ -29,13 +29,16 @@ export async function revokeGoogleCredentials(credentials: Credential[]) {
   const signal = AbortSignal.timeout(5_000)
   let index = 0
   await Promise.all(Array.from({ length: Math.min(4, credentials.length) }, async () => {
-    while (index < credentials.length && !signal.aborted) {
+    while (index < credentials.length) {
       const credential = credentials[index++]
       try {
         const parsed = parseGatewayProviderSecret(credential.kind, credential.secret)
-        if (parsed.kind === "oauth_google") await revokeGoogleToken({ token: parsed.token.refreshToken ?? parsed.token.accessToken, signal })
+        if (parsed.kind === "oauth_google") {
+          if (signal.aborted) console.info("gateway_google_revocation", { outcome: "deadline_exceeded" })
+          else await revokeGoogleToken({ token: parsed.token.refreshToken ?? parsed.token.accessToken, signal })
+        }
       } catch {
-        // Local revocation remains authoritative if decoding or Google fails.
+        console.info("gateway_google_revocation", { outcome: "invalid_local_credential" })
       }
     }
   }))
@@ -71,10 +74,10 @@ export function effectiveGatewayGrants(grants: Array<typeof GatewayProviderAcces
 }
 
 /** Lock order: member, provider, set, group/access, state, credential. Never hold locks during HTTP. */
-export async function lockMemberOAuthAuthorization(tx: Tx, provider: Provider, set: CredentialSet, memberId: MemberId) {
+export async function lockMemberOAuthAuthorization(tx: Tx, provider: Provider, set: CredentialSet, memberId: MemberId, expectedUserId?: string) {
   const [member] = await tx.select().from(MemberTable)
     .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, provider.organization_id), isNull(MemberTable.removedAt))).for("update")
-  if (!member?.userId) return false
+  if (!member?.userId || expectedUserId !== undefined && member.userId !== expectedUserId) return false
   const [current] = await tx.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, provider.id)).for("update")
   if (!current || current.status !== "active" || !isGoogleOAuthInferenceProviderId(current.provider_id)
     || current.organization_id !== provider.organization_id || current.provider_id !== provider.provider_id) return false

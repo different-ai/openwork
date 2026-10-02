@@ -1,3 +1,6 @@
+export const summary = "The seeded Acme demo stack: Den, AI Gateway, and the web app.";
+export const supportedTargets = ["local/host", "daytona/linux", "freestyle/linux"];
+
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -12,9 +15,14 @@ import type { Den } from "../evals/packages/env/src/den.ts";
 import { resolvePlace } from "../evals/packages/env/src/place.ts";
 import { receiptName, resolveStage } from "../packages/world/src/stage.ts";
 import { ACME_REPLY, gatewayEnvironment, seedAcmeGateway, startAcmeGateway, startAcmeUpstream } from "./lib/acme-gateway.ts";
+import type { AcmeStreamCheckpoint } from "./lib/acme-gateway.ts";
 import { probeAcmeGateway } from "./lib/acme-gateway-probe.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+// A preview's Den sends its template origins to OAuth providers directly (client
+// registration, token exchange); this translates them on the way out, as the
+// preview gateway does for browsers.
+const PREVIEW_EGRESS = new URL("../packages/freestyle/src/egress.mjs", import.meta.url).href;
 const ACME_WEB_NAME = "acme-web";
 
 export interface AcmeWebWorld {
@@ -26,18 +34,21 @@ export interface AcmeWebWorld {
 }
 
 /** Seeded Acme Den + real AI Gateway + isolated web runtime; only the upstream model is fake. */
-export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: string; den: string; api: string }): Promise<AcmeWebWorld> {
+export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: string; den: string; api: string }, checkpoint?: AcmeStreamCheckpoint): Promise<AcmeWebWorld> {
   const place = resolvePlace();
   if (place.kind !== "local") {
     throw new Error("Run acme-web co-located with MySQL (--place local), including inside a prepared Daytona sandbox.");
   }
-  const upstream = await startAcmeUpstream(stack);
+  const upstream = await startAcmeUpstream(stack, checkpoint);
   const gateway = await gatewayEnvironment(upstream.baseUrl);
   const webPort = await allocateFreePort();
   const den = stack.use(await server({
     place,
     env: { ...gateway.env, DEN_DASHBOARDS_ENABLED: "true", RESEND_API_KEY: "", SMTP_HOST: "",
-      ...(preview ? { DEN_WEB_ALLOWED_DEV_ORIGINS: new URL(preview.den).hostname } : {}) },
+      ...(preview ? {
+        DEN_WEB_ALLOWED_DEV_ORIGINS: new URL(preview.den).hostname,
+        NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${PREVIEW_EGRESS}`].filter(Boolean).join(" "),
+      } : {}) },
     seedProfile: "demo-org",
     trustedOrigins: [`http://127.0.0.1:${webPort}`, ...(preview ? Object.values(preview) : [])],
     publicOrigins: preview ? { web: preview.den, api: preview.den } : undefined,

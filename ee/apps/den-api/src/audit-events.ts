@@ -26,6 +26,7 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   ssoConnectionDeleted: "organization.sso.connection_deleted",
   openWorkWebComplimentaryAccessGranted: "organization.openwork_web.complimentary_access_granted",
   openWorkWebComplimentaryAccessRevoked: "organization.openwork_web.complimentary_access_revoked",
+  freeAutoRolloutUpdated: "organization.free_auto.rollout_updated",
   dpaSignedUpdated: "organization.dpa_signed.updated",
   webOriginApproved: "organization.web_origin.approved",
   webOriginRemoved: "organization.web_origin.removed",
@@ -74,6 +75,7 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
     case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted:
     case ORGANIZATION_AUDIT_ACTIONS.openWorkWebComplimentaryAccessGranted:
     case ORGANIZATION_AUDIT_ACTIONS.openWorkWebComplimentaryAccessRevoked:
+    case ORGANIZATION_AUDIT_ACTIONS.freeAutoRolloutUpdated:
     case ORGANIZATION_AUDIT_ACTIONS.dpaSignedUpdated:
     case ORGANIZATION_AUDIT_ACTIONS.webOriginApproved:
     case ORGANIZATION_AUDIT_ACTIONS.webOriginRemoved:

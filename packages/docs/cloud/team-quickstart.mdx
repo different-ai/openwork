@@ -9,12 +9,12 @@ By the end of this walkthrough you will have:
 
 1. Created an organization on OpenWork Cloud.
 2. Invited a few teammates and organized them into teams.
-3. Created a plugin with a simple test skill in `Plugin Directory` and added it to a Collection.
+3. Created a Collection and added a plugin with a simple test skill to it.
 4. Granted the Collection to the relevant team.
 5. Signed in to the org from the OpenWork desktop app and triggered the skill with a plain-language prompt.
 
 <Note>
-**Seats:** every workspace includes **5 free seats**. If you need more seats, SSO, or early access to analytics, [reach out](mailto:founders@openworklabs.com).
+**Seats:** every workspace includes **5 free seats**. Team adds unlimited seats and SSO. For early access to analytics, [reach out](mailto:founders@openworklabs.com).
 </Note>
 
 ---
@@ -90,9 +90,9 @@ owner or super-admin must explicitly approve it. See
 
 Skills are step-by-step instructions the agent loads when a task matches — think of them as runbooks your whole team can share. A skill lives inside a **plugin**, and a **Collection** groups one or more plugins for assignment.
 
-First open **Collections**, click **New collection**, and create one for your team — for example `Sales Enablement`.
+First open **Settings › Advanced › Collections**, click **New collection**, and create one for your team — for example `Sales Enablement`.
 
-Next open **Plugin Directory → Create plugin**. Fill in the plugin name and description, then click **+ Skill**.
+The new Collection opens. On its **Plugins** tab, click **Add a plugin**. Fill in the **Plugin name** and **Description**, then click **Skill** under **What's inside**.
 
 Write the skill like a great runbook:
 
@@ -100,11 +100,11 @@ Write the skill like a great runbook:
 - **Description** — when should the agent use this? e.g. *"Use when someone asks to prepare for a sales call or customer meeting."*
 - **Instructions** — plain markdown with the steps you want the agent to follow.
 
-In the **Share** section, choose the **Sales Enablement** Collection. If only selected teams should receive it, leave **Share with everyone in the organization** off. Click **Create plugin**. The creator keeps access automatically.
+In the **Share** section, check that **Collection** shows **Sales Enablement**. If only selected teams should receive it, leave **Share with everyone in the organization** off. Click **Create plugin**. The creator keeps access automatically.
 
 ## 4. Give teams access to the Collection
 
-Open **Collections → Sales Enablement**. Under **Who can access this**, add the `Sales` team. You can instead grant the Collection to everyone in the organization or to individual members.
+Open **Settings › Advanced › Collections › Sales Enablement** and select the **Members** tab. Under **Who can access this**, click **Add team** and pick `Sales`. You can instead turn on access for everyone in the organization or click **Add people**.
 
 That's the whole admin loop: **skill inside a plugin → Collection → team or member**. Anyone added to the team later inherits access to the Collection.
 
@@ -122,13 +122,13 @@ Pick your organization:
   ![Choose your organization](/images/cloud-team-quickstart/19-desktop-choose-org.png)
 </Frame>
 
-You can confirm the connection any time under **Settings → Account**:
+You can confirm the connection any time under **Settings › Account**:
 
 <Frame>
   ![Signed in to Acme Labs](/images/cloud-team-quickstart/21-desktop-account-connected.png)
 </Frame>
 
-Open **Settings → Library** and filter to **Skills**. The skill assigned through `Sales Enablement` appears there automatically; click **Refresh** if the admin changed access moments ago.
+Open **Settings › Library** and filter to **Skills**. The skill assigned through `Sales Enablement` appears there automatically; click the refresh button (tooltip **Refresh**) if the admin changed access moments ago.
 
 Now just ask for the thing the skill knows how to do. Type a prompt that matches the skill's description and hit **Run task**:
 
@@ -147,10 +147,11 @@ The agent picks up the skill and follows your runbook — research, a timed agen
 ## What's next
 
 - Add more skills to the plugin as your team's playbooks grow — everyone gets updates automatically.
-- Import existing plugins from GitHub (**Plugin Directory → Create plugin → Import from GitHub**), including Anthropic-compatible plugin repositories.
+- Import existing plugins from GitHub (open a Collection, click **Add a plugin**, then **Import from GitHub**), including Anthropic-compatible plugin repositories.
 - Wire up **Sources** to keep Collections in sync with a repository.
+- To share a single plugin without a Collection, open it under **Manage › Plugins** and use **Who can use it**. See [Publish and copy a skill](/start-here/do-work-with-it/publish-and-copy-a-skill).
 - Read [Collections](/cloud/share-with-your-team/collections) when you need several plugins, reusable audiences, or more complex assignments.
 
 <Note>
-**Need more?** The first 5 users in your organization are free; additional users are $10 per user per month. For SSO or early analytics access, [contact us](mailto:founders@openworklabs.com).
+**Need more?** The first 5 seats are free; additional seats are $10 per seat per month. SSO is included in Team. For early analytics access, [contact us](mailto:founders@openworklabs.com).
 </Note>

@@ -20,7 +20,7 @@ beforeAll(async () => {
 
 afterAll(() => mock.restore())
 
-async function beforeCreate(metadata: unknown) {
+async function beforeCreate(metadata: unknown): Promise<{ data: { metadata: Record<string, unknown> } } | undefined> {
   // Invoke the registered hook, not the DB-backed organization creation endpoint.
   for (const plugin of auth.options.plugins ?? []) {
     if (plugin.id === "organization") {
@@ -55,6 +55,26 @@ test("public creation drops gateway-only metadata through the hook data replacem
   }
 })
 
+test.each([true, false, null, "true", 1])("public creation cannot set platform-managed slackAssistant to %s", async (value) => {
+  const metadata = { capabilities: { slackAssistant: value } }
+  for (const input of [metadata, JSON.stringify(metadata)]) {
+    await expect(beforeCreate(input)).rejects.toMatchObject({
+      status: "FORBIDDEN",
+      body: { message: "capabilities.slackAssistant is reserved for internal platform administration." },
+    })
+  }
+})
+
+test.each([true, false, null, "true", 1])("public creation cannot set platform-managed slackAssistantHeadless to %s", async (value) => {
+  const metadata = { capabilities: { slackAssistantHeadless: value } }
+  for (const input of [metadata, JSON.stringify(metadata)]) {
+    await expect(beforeCreate(input)).rejects.toMatchObject({
+      status: "FORBIDDEN",
+      body: { message: "capabilities.slackAssistantHeadless is reserved for internal platform administration." },
+    })
+  }
+})
+
 test("ordinary metadata and other capability overrides retain their existing behavior", async () => {
   for (const metadata of [undefined, null, {}, { label: "test" }, { capabilities: {} }, { capabilities: { inference: false, desktop: true } }]) {
     await expect(beforeCreate(metadata)).resolves.toBeUndefined()
@@ -73,10 +93,18 @@ test("existing malformed metadata and dpaSigned denials are preserved", async ()
   }
 })
 
+test("public organization creation cannot grant itself a commercial plan or audit entitlement", async () => {
+  for (const plan of [null, {}, { tier: "enterprise", source: "manual" }, { tier: "enterprise", source: "stripe" }, { tier: "enterprise", source: "grandfathered" }]) {
+    for (const metadata of [{ plan }, JSON.stringify({ plan })]) await expect(beforeCreate(metadata)).rejects.toMatchObject({
+      status: "FORBIDDEN", body: { message: "plan is reserved for internal platform administration." },
+    })
+  }
+})
+
 test("public organization updates cannot replace capability metadata", async () => {
   for (const plugin of auth.options.plugins ?? []) {
     if (plugin.id !== "organization") continue
-    for (const metadata of [{}, { capabilities: { gatewayDashboard: true } }, { capabilities: { gatewayDashboard: false } }]) {
+    for (const metadata of [{}, { inferenceFree: { rolloutEnabled: true } }, { capabilities: { auditLogs: true } }, { capabilities: { auditLogs: false } }, { capabilities: { gatewayDashboard: true } }, { capabilities: { gatewayDashboard: false } }, { plan: { tier: "enterprise" } }, { entitlements: { auditLogs: true } }]) {
       await expect(plugin.options.organizationHooks.beforeUpdateOrganization({
         organization: { metadata },
         user: { id: "test-user", name: "Member", email: "member@example.test", emailVerified: true, createdAt: new Date(0), updatedAt: new Date(0) },
@@ -86,4 +114,23 @@ test("public organization updates cannot replace capability metadata", async () 
     return
   }
   throw new Error("Organization hook not registered")
+})
+
+test("public creation rejects auditLogs presence, including string metadata and retired flag stripping", async () => {
+  for (const auditLogs of [true, false, null, "true", 1, {}, []]) {
+    const metadata = { capabilities: { auditLogs, gatewayDashboard: true } }
+    for (const input of [metadata, JSON.stringify(metadata)]) await expect(beforeCreate(input)).rejects.toMatchObject({
+      status: "FORBIDDEN", body: { message: "capabilities.auditLogs is reserved for internal platform administration." },
+    })
+  }
+})
+
+
+test("public organization creation cannot enroll itself in free Auto rollout", async () => {
+  for (const rolloutEnabled of [true, false, null, "true", 1]) {
+    const metadata = { inferenceFree: { rolloutEnabled }, capabilities: { gatewayDashboard: true } }
+    for (const input of [metadata, JSON.stringify(metadata)]) await expect(beforeCreate(input)).rejects.toMatchObject({
+      status: "FORBIDDEN", body: { message: "inferenceFree.rolloutEnabled is reserved for internal platform administration." },
+    })
+  }
 })

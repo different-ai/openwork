@@ -1,18 +1,10 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Blocks } from "lucide-react";
 
 import { createDenClient, readDenSettings, type DenGrantedDashboard } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { dashboardTileCacheScopeKey } from "./dashboard-tile-cache";
 import {
@@ -83,7 +75,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
   if (denAuth.status === "checking" || (grantedReady && grantedQuery.isPending && !grantedQuery.isFetched)
     || (Boolean(personal.client && personal.orgId) && personal.query.isPending && !personal.query.isFetched)) {
     return (
-      <div className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-4" data-dashboard-page>
+      <div className="mx-auto w-full max-w-5xl px-6 py-10 sm:px-8" data-dashboard-page>
         <div className="space-y-2 pt-3" role="status" aria-label="Loading dashboard">
           <Skeleton className="h-8 w-1/3" />
           <Skeleton className="h-40 w-full" />
@@ -127,7 +119,7 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
 
   return (
     <div
-      className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-4"
+      className="mx-auto w-full max-w-5xl px-6 py-10 sm:px-8"
       data-dashboard-page
       data-dashboard-cache-scope={cacheScopeKey}
       data-dashboard-consent-scope={consentScopeKey}
@@ -166,17 +158,7 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
           )}
         </section>
       ))}
-      {!grantedError && grantedDashboards.length === 0 ? (
-        <Empty>
-          <EmptyHeader>
-            <EmptyMedia variant="icon"><Blocks /></EmptyMedia>
-            <EmptyTitle>No company apps yet</EmptyTitle>
-            <EmptyDescription>
-              Apps shared by your company will appear here.
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : null}
+
     </div>
   );
 }

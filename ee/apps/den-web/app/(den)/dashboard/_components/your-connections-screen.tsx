@@ -32,7 +32,7 @@ import { useMcpAccountAuthorization } from "./use-mcp-account-authorization";
 
 /**
  * The member-facing half of MCP Connections. An admin publishes a
- * connection (mcp-connections-screen.tsx, admin-only); every granted member
+ * connection (its connector page, admin-only); every granted member
  * sees it here. For "per_member" connections this is where each person
  * connects their own account — after which their agent's
  * search_capabilities/execute_capability calls run as them.

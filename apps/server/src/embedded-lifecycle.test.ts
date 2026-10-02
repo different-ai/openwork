@@ -61,8 +61,10 @@ async function writeFakeOpencodeBin(root: string, authStatus = 200): Promise<str
     "  hostname: '127.0.0.1',",
     "  port: requestedPort,",
     "  async fetch(request) {",
-    "    const path = new URL(request.url).pathname;",
+    "    const url = new URL(request.url);",
+    "    const path = url.pathname;",
     "    append(path);",
+    "    if (path === '/config/providers') append(`warm:${url.searchParams.get('directory')}:${request.headers.get('authorization') ? 'auth' : 'no-auth'}`);",
     "    if (request.method === 'PUT' && path.startsWith('/auth/')) {",
     "      append(`auth-body:${await request.text()}`);",
     "      for (const healthPath of ['/health', '/w/startup/health']) {",
@@ -381,6 +383,23 @@ describe("embedded server lifecycle", () => {
       await expectHealth(handle.url, workspaceId(handle.config), 200);
     } finally {
       managedSpy.mockRestore();
+      await fixture.restore();
+    }
+  });
+
+  test.serial("sets the active workspace folder up on the engine right after startup, before any window asks", async () => {
+    const fixture = await createFixture();
+    try {
+      const handle = await startManaged(fixture, "warm");
+      const warmed = async () => (await logLines(fixture.logPath)).filter((line) => line.startsWith("warm:"));
+      for (let attempt = 0; attempt < 200 && (await warmed()).length === 0; attempt++) await Bun.sleep(10);
+      const lines = await warmed();
+      // One warm-up, for the active workspace, authenticated with the engine's credentials.
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toEndWith("warm-workspace:auth");
+      expect(lines[0]).toStartWith("warm:/");
+      expect(handle.config.workspaces[0]?.path).toEndWith("warm-workspace");
+    } finally {
       await fixture.restore();
     }
   });

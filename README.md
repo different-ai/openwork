@@ -1,14 +1,26 @@
 # OpenWork
 
-OpenWork is a free, open-source desktop app made for sharing AI workflows. It is an open-source alternative to Claude Cowork and Codex for macOS, Windows, and Linux.
+OpenWork is the free, open-source alternative to Claude Cowork and Codex: a desktop app for macOS, Windows, and Linux where AI agents do real work on your own files. It is built on [OpenCode](https://opencode.ai), works with any model — 50+ providers, your own API keys, or local models via Ollama — and lets teams share skills and MCP servers.
+
+[**Download OpenWork**](https://openworklabs.com/download) · [GitHub releases](https://github.com/different-ai/openwork/releases) · [Docs](https://openworklabs.com/docs)
+
+Read this in: [简体中文](./translated_readmes/README_ZH.md) · [繁體中文](./translated_readmes/README_ZH_hk.md) · [日本語](./translated_readmes/README_JA.md)
 
 Add one OpenWork MCP to Codex, Claude Code, Cursor, or another compatible agent and reuse the same skills, MCPs, and connected services across your tools, teammates, and machines. Create something once, share it with coworkers or friends, or keep it for yourself.
 
 The desktop app is there when you want a dedicated workspace, but it is not required. You can use OpenWork from the agent you already have. For larger organizations, the admin interface lets you publish capabilities, manage access, and configure shared or per-user connections.
 
-[**Download OpenWork**](https://openworklabs.com/download)
-
 <img width="1481" height="842" alt="OpenWork desktop app" src="https://github.com/user-attachments/assets/66a8dd9b-5260-488c-957d-e54331e78c1c" />
+
+## Why OpenWork instead of Claude Cowork
+
+- **Free and open source.** The desktop app is MIT-licensed; no OpenWork account is required to use it locally.
+- **Any model.** Bring your own API key, sign in with ChatGPT, or run local models through Ollama or any OpenAI-compatible server. See [Add a custom LLM](https://openworklabs.com/docs/start-here/connect-your-stack/add-a-custom-llm).
+- **Runs on macOS, Windows, and Linux** as a desktop app — not a CLI.
+- **Your files stay local.** Cloud is optional.
+- **Share skills and MCP servers with your team.** See [Share skills with your team](https://openworklabs.com/docs/start-here/do-work-with-it/share-your-setup) and [Shared MCP connections](https://openworklabs.com/docs/cloud/share-with-your-team/shared-mcp-connections).
+- **Self-host** the team control plane on your own infrastructure. See [Self-host](https://openworklabs.com/docs/start-here/self-host).
+- **Bring your Cowork setup.** Skills, Claude-compatible plugins, and MCP servers carry over. See [Migrate from Claude Cowork](https://openworklabs.com/docs/start-here/migrate-from-claude-cowork).
 
 ## Install with your AI agent
 
@@ -164,7 +176,7 @@ If a second instance cannot get the profile lock it now says so and exits, inste
 To run the OpenWork UI in a browser against a local `openwork-server` (no desktop shell):
 
 ```bash
-pnpm world up dev-headless --detach
+pnpm world up dev-app-web --detach
 ```
 
 `pnpm dev:headless-web` is a compatibility alias for the same script. The alias
@@ -179,15 +191,15 @@ This is an isolated launcher:
 - Proxies Den Cloud calls same-origin: Vite serves `/api/den` (forwarded to the Den control plane) and the app pins its Den API there via `VITE_DEN_API_BASE_URL`, so Cloud calls are never CORS-blocked and stale `localStorage` base URLs are cleared on load
 - Publishes an owner-only runtime manifest at `tmp/dev-headless-web.json` (`0600`), and allows browser calls to the local server only from the web app's own origins — not every site you visit
 - Uses stable ports by default (web `5178`, server `8778`; falls back to free ports when taken, override with `OPENWORK_WEB_PORT` / `OPENWORK_PORT`)
-- Is single-instance as `dev-headless`; stop it with `pnpm world down dev-headless` before launching it again
+- Is single-instance as `dev-app-web`; stop it with `pnpm world down dev-app-web` before launching it again
 - Keeps Vite and the backend under one script lifecycle, so either sibling exiting stops the other instead of leaving an orphan
 - In detached mode, waits for health, prints non-secret outputs and receipt/log paths, and exits
 
 Script-specific options must follow `--`:
 
 ```bash
-pnpm world up dev-headless --detach -- --replace
-pnpm world up dev-headless --detach -- --replace --keep-tokens
+pnpm world up dev-app-web --detach -- --replace
+pnpm world up dev-app-web --detach -- --replace --keep-tokens
 ```
 
 `--replace` restarts the headless runtime with fresh tokens; add
@@ -203,10 +215,10 @@ Open the printed Web URL. Cloud sign-in in headless web uses the **copy/paste** 
 
 Point Den at a local stack with `OPENWORK_DEV_DEN_PROXY_TARGET=http://127.0.0.1:3005` while `pnpm dev:web-local` is running. Set `OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY=0` to disable the Den wiring.
 
-The other checked-in scripts include `worlds/headless-prod-live.ts` and
-`worlds/desktop-prod-live.ts`. Both intentionally share installed production
+The other checked-in scripts include `worlds/live-app-web.ts` and
+`worlds/live-desktop.ts`. Both intentionally share installed production
 state and require their script-specific opt-in after `--`, for example
-`pnpm world up desktop-prod-live -- --allow-shared-state`. List scripts and
+`pnpm world up live-desktop -- --allow-shared-state`. List scripts and
 running receipts with `pnpm world list`. The headless
 production world is hard-limited to loopback; remote-access/public-host settings
 are refused because its browser session uses production credentials.

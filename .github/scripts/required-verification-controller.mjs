@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { internalProofContributor } from './internal-proof-contributor.mjs';
 import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -146,7 +147,7 @@ export async function authorize(event, repo) {
       summary: summaryText({ state: 'waiting', missing: plan.entries.map(entry => entry.spec), failed: [] }, producer.html_url),
       text: `Receipt SHA256: ${digest(receipt)}` } }, 'PATCH');
     await writeFile('required-verification.json', JSON.stringify({ checkId: check.id, receipt }));
-    await appendFile(process.env.GITHUB_OUTPUT, `authorized=true\npr=${identity.pr}\nsha=${identity.sha}\nbase=${current.base.sha}\n`);
+    await appendFile(process.env.GITHUB_OUTPUT, `authorized=true\ninternalContributor=${internalProofContributor(latest, upstream.repository)}\npr=${identity.pr}\nsha=${identity.sha}\nbase=${current.base.sha}\n`);
     await optionalPublication(() => comment(receipt, { state: 'waiting', missing: plan.entries.map(entry => entry.spec), failed: [] }, producer.html_url));
   } catch (error) {
     api(`repos/${repo}/check-runs/${check.id}`, { status: 'completed', conclusion: 'failure', output: {

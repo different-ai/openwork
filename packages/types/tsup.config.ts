@@ -10,6 +10,8 @@ export default defineConfig({
     "openwork-provider": "src/openwork-provider.ts",
     "automations": "src/automations.ts",
     workflows: "src/workflows.ts",
+    "mcp-app-timing": "src/mcp-app-timing.ts",
+    "mcp-app": "src/mcp-app.ts",
     "skill-created-app": "src/skill-created-app.ts",
     "connection-action-app": "src/connection-action-app.ts",
     "den/desktop-app-restrictions": "src/den/desktop-app-restrictions.ts",

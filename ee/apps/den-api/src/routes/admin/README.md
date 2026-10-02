@@ -4,11 +4,13 @@ This folder owns admin-only Den API surfaces.
 
 ## Files
 
-- `index.ts`: currently registers the admin overview endpoint
+- `index.ts`: registers the admin routes
+- `free-auto-usage.ts`: free Auto usage across all organizations (`GET /v1/admin/free-auto/usage`)
 
 ## Current routes
 
 - `GET /v1/admin/overview`
+- `GET /v1/admin/free-auto/usage`: members per organization and guests in aggregate, for the last 1–90 UTC days
 
 ## Expectations
 

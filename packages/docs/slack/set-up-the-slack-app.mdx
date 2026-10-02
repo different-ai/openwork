@@ -1,0 +1,71 @@
+---
+title: "Set up OpenWork in Slack"
+sidebarTitle: "Set up the Slack app"
+description: "Administrator setup for @openwork in Slack: merge the manifest into your existing Slack app, save the signing secret, install the bot, and choose where replies go."
+keywords: ["slack", "@openwork", "slack manifest", "slack app", "signing secret", "add to slack", "install slack bot", "bot scopes", "event subscriptions"]
+---
+
+<Note>
+**Private alpha.** A platform administrator must enable **Slack Assistant** for your organization first. See [OpenWork in Slack](/slack/overview) for what this sets up and who does each step.
+</Note>
+
+Prefer to delegate? The [setup prompt](/slack/overview#ask-your-agent-to-set-it-up) lets an agent do these steps with your access.
+
+## 1. Check alpha access and the existing connector
+
+Open **Connectors → Slack → OpenWork in Slack** in [OpenWork Cloud](https://app.openworklabs.com).
+
+- Use the Slack connector in **Individual accounts** mode, with the existing Slack app's client ID and client secret. Follow [Slack MCP setup](/cloud/share-with-your-team/shared-mcp-connections#slack) if you do not have a connector yet.
+- A platform administrator must enable **Slack Assistant** for your organization. Hosted runtime availability must also be configured by the operator. If the page reports missing access, resolve that before installation.
+- Keep the connector's workspace, team, and member grants appropriate for your rollout. The assistant follows those grants.
+
+## 2. Merge the manifest into the same Slack app
+
+Expand **Slack app manifest** in the connector. Open that same app at [Slack API apps](https://api.slack.com/apps), then **App Manifest**.
+
+Merge the generated settings into the existing manifest. Preserve existing user OAuth scopes, optional user scopes, redirect URLs, and MCP settings. Add the bot settings rather than replacing the user configuration.
+
+The resulting app needs:
+
+- Bot display name `openwork`.
+- **Agents → Agent experience** on.
+- **App Home → Messages Tab** on, with messages and slash commands allowed.
+- Bot scopes: `app_mentions:read`, `chat:write`, `im:history`, `im:read`, `im:write`, `assistant:write`, and `commands`.
+- Bot events: `app_mention`, `message.im`, `app_home_opened`, `app_context_changed`, `agent_session_stopped`, `agent_session_title_changed`, `app_uninstalled`, and `tokens_revoked`.
+
+Use the URLs generated for your connector and deployment:
+
+| Setting | Path under your public API URL |
+| --- | --- |
+| Event Subscriptions | `/v1/integrations/slack/<connectionId>/events` |
+| Interactivity | `/v1/integrations/slack/<connectionId>/interactions` |
+| `/openwork` command | `/v1/integrations/slack/<connectionId>/commands` |
+| Bot OAuth redirect | `/v1/integrations/slack/oauth/callback` |
+
+The events URL must be publicly reachable over HTTPS. Slack verifies it with a challenge. Save the manifest; complete URL verification after saving the signing secret if the first attempt fails.
+
+<Tip>
+If Slack rejects `features.agent_view.enabled`, use the agent-view representation already exported by Slack's manifest editor and verify **Agent experience** is on in **Agents**. Do not remove agent view or required events just to make validation pass.
+</Tip>
+
+## 3. Save the signing secret and install
+
+In Slack, open **Basic Information → App Credentials → Signing Secret**. Transfer it directly into **Slack app signing secret** in the connector and click **Save secret**. Keep it out of chats, source control, and screenshots shared with others.
+
+Click **Add to Slack**, authorize the correct workspace, and finish within ten minutes. OpenWork rejects an installation that does not grant every required bot scope. A successful installation changes the button to **Reinstall in Slack**.
+
+In Slack's **Event Subscriptions**, retry the challenge if needed. Confirm **Verified**, then **Save Changes**.
+
+## 4. Choose where replies go
+
+Turn on **Enable @openwork in Slack**. Start with **Send replies privately during rollout** on: replies move to the invoking member's DM.
+
+Under **Rollout limits**, enter comma-separated channel IDs to restrict channel use, or leave **Allowed channel IDs** blank to allow all channels. Blank does not automatically invite the bot into every channel. DMs remain available to eligible members. Set the daily request limit and save limits when you change them.
+
+Channel replies are visible to the channel when private rollout replies are off. Choose the reply mode before asking for personal information from connected services.
+
+## Next
+
+Installing the bot does not link anyone's account. Each member, including you, follows [Connect your account](/slack/connect-your-account) and sends a test message.
+
+To pause the rollout, turn off **Enable @openwork in Slack**. Disabling new requests cannot recall external actions that have already run.

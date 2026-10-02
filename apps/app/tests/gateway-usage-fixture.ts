@@ -33,7 +33,7 @@ export function approvedUsageStatus(): GatewayUsageStatus {
       extensionMicroUsd: 250_000,
       allowanceMicroUsd: 1_250_000,
       remainingMicroUsd: -50_000,
-      canRequestReset: false,
+      canRequestReset: true,
       resetRequestStatus: "approved",
     })),
   };

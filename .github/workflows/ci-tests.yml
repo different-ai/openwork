@@ -103,7 +103,7 @@ jobs:
       - name: Build MCP App resources required by the server
         run: pnpm --filter @openwork/mcp-apps build
       - name: Verify immutable runtime and authoring contracts
-        run: node --test scripts/ci/workflow-authoring-gate.test.mjs && pnpm --filter @openwork/codemode test && pnpm --filter @openwork-ee/den-api test:authoring
+        run: node --test scripts/ci/workflow-authoring-gate.test.mjs scripts/ci/den-contract-conflicts.test.mjs && pnpm --filter @openwork/codemode test && pnpm --filter @openwork-ee/den-api test:authoring
       - name: Verify shared encrypted receipt retention against Redis
         env:
           WORKFLOW_AUTHORING_TEST_REDIS_URL: redis://127.0.0.1:6379
@@ -441,6 +441,7 @@ jobs:
       - name: Regenerate the OpenAPI snapshot and SDK
         run: pnpm den:contract
       - name: Fail if the committed contract drifted from the route source
+        id: drift
         run: |
           set -euo pipefail
           if ! git diff --exit-code --stat -- packages/docs/openapi.json packages/sdk/src/gen; then
@@ -448,6 +449,17 @@ jobs:
             exit 1
           fi
           echo "OpenAPI snapshot and generated SDK match the route source."
+      # Den Contract Regenerated pushes this back to the PR, but only after
+      # Den Contract Conflicts merged dev into it with dev's generated files.
+      - name: Upload the regenerated contract
+        if: failure() && steps.drift.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: den-contract
+          path: |
+            packages/docs/openapi.json
+            packages/sdk/src/gen/
+          retention-days: 1
       - name: Lint the contract and typecheck the SDK
         run: pnpm api:lint && pnpm --filter @openwork/sdk typecheck
 

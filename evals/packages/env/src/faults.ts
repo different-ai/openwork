@@ -237,7 +237,10 @@ export async function faultProxy(ref: DenRef, options: FaultProxyOptions = {}): 
     throw new Error("fault proxy on Daytona needs the Den sandbox id; pass `sandbox: den.placement.sandboxId`.");
   }
 
-  const remote = await startFaultProxyOnSandbox({ sandbox: options.sandbox });
+  // Match the local lane when a world explicitly points the web-facing ref
+  // at the API. Always routing through Den Web can redirect away the bearer.
+  const apiUpstream = ref.webUrl === ref.apiUrl;
+  const remote = await startFaultProxyOnSandbox({ sandbox: options.sandbox, upstream: apiUpstream ? "api" : "web" });
   const requests: FaultRequest[] = [];
   const control = async (path: string, init: RequestInit = {}): Promise<Response> => {
     const response = await fetch(`${remote.url}/__openwork_faults/${path}`, {
@@ -259,7 +262,7 @@ export async function faultProxy(ref: DenRef, options: FaultProxyOptions = {}): 
   };
   let disposed = false;
   return {
-    ref: { apiUrl: `${remote.url}/api/den`, webUrl: remote.url },
+    ref: { apiUrl: apiUpstream ? remote.url : `${remote.url}/api/den`, webUrl: remote.url },
     faults: {
       status(pathPrefix, statusCode, opts = {}) {
         return post("rules", { kind: "status", pathPrefix, statusCode, times: opts.times, body: opts.body });

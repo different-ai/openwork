@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { headlessBrowserEnvironment } from "../src/headless-browser.ts";
 import { appWebEnvironment, parseAppWebOptions } from "../../../worlds/lib/app-web-options.ts";
-import { assertDevHeadlessPlacement } from "../../../worlds/dev-headless.ts";
+import { assertDevHeadlessPlacement } from "../../../worlds/dev-app-web.ts";
 
 const selection = { OPENWORK_WORLD_SELECTED_ENV_KEYS: '["OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY","OPENWORK_DEV_DEN_PROXY_TARGET"]' };
 

@@ -27,6 +27,7 @@ import type {
   EnterpriseMcpReadResourceInput,
 } from "./contracts.js"
 import { EnterpriseMcpClientError, EnterpriseMcpLifecycleDeadlineError, EnterpriseMcpToolResultError } from "./errors.js"
+import { ENTERPRISE_MCP_REQUESTED_SCOPES_LIMIT } from "./contracts.js"
 import { EnterpriseMcpOAuthProvider } from "./oauth-provider.js"
 import { createEnterpriseMcpRequestObserver, type EnterpriseMcpRequestObserver } from "./request-observer.js"
 import { createEnterpriseMcpTokenResponseCompat } from "./token-response-compat.js"
@@ -53,7 +54,7 @@ const oauthConfigurationSchema = z.object({
   applicationType: z.enum(["web", "native"]),
   clientMetadataUrl: clientMetadataUrlSchema.optional(),
   authorizationServerIssuer: z.string().trim().url().optional(),
-  requestedScopes: z.array(z.string().trim().min(1)).max(128).optional(),
+  requestedScopes: z.array(z.string().trim().min(1)).max(ENTERPRISE_MCP_REQUESTED_SCOPES_LIMIT).optional(),
 })
 const toolNameSchema = z.string().trim().min(1)
 const resourceUriSchema = z.string().trim().min(1).max(ENTERPRISE_MCP_RESOURCE_URI_LIMIT_BYTES).refine(

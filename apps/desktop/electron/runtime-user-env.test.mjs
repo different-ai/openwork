@@ -4,6 +4,21 @@ import assert from "node:assert/strict";
 import path from "node:path";
 
 import { reconcileInjectedUserEnv, resolveUserEnvFilePath } from "./runtime.mjs";
+import { applyDesktopFreeBuildSettings } from "./desktop-free-release.mjs";
+
+test("an installed build opt-out survives user environment changes and runtime restarts", async () => {
+  const processEnv = { OPENWORK_DISABLE_FREE_INFERENCE: "0" };
+  await applyDesktopFreeBuildSettings({ appVersion: "1.2.3", environment: processEnv,
+    importGenerated: async () => ({ version: "1.2.3", disabled: true }),
+  });
+  const inheritedEnv = { ...processEnv };
+  const injected = reconcileInjectedUserEnv({ processEnv, inheritedEnv,
+    userEnv: { OPENWORK_DISABLE_FREE_INFERENCE: "0" },
+  });
+  assert.equal(processEnv.OPENWORK_DISABLE_FREE_INFERENCE, "1");
+  reconcileInjectedUserEnv({ processEnv, inheritedEnv, userEnv: {}, previouslyInjectedKeys: injected });
+  assert.equal(processEnv.OPENWORK_DISABLE_FREE_INFERENCE, "1");
+});
 
 test("resolves the user env store from the effective desktop profile", () => {
   assert.equal(

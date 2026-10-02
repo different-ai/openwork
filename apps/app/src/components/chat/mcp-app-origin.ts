@@ -1,4 +1,5 @@
 import type { OpenworkMcpAppResource, OpenworkServerClient } from "@/app/lib/openwork-server";
+import { startMcpAppTiming } from "@openwork/types/mcp-app-timing";
 
 /** The host surface owns this value. Never derive it from the selected workspace or App HTML. */
 export type McpAppOrigin = {
@@ -50,6 +51,7 @@ export function createMcpAppActions(
         // All calls still pass live-lease, same-server and permission checks.
         ...(userInteraction ? { approved: true } : {}),
       };
+      const finishTiming = startMcpAppTiming("desktop.tool-roundtrip");
       try {
         const result = await origin.client.callMcpAppTool(origin.workspaceId, request);
         assertActive();
@@ -58,7 +60,7 @@ export function createMcpAppActions(
         assertActive();
         // Never retry an action whose outcome may already have taken effect.
         throw cause;
-      }
+      } finally { finishTiming(); }
     },
   };
 }

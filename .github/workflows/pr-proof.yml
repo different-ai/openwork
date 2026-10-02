@@ -17,10 +17,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     outputs:
+      internalContributor: ${{ steps.select.outputs.internalContributor }}
       matrix: ${{ steps.select.outputs.matrix }}
       selected: ${{ steps.select.outputs.selected }}
       liveMatrix: ${{ steps.select.outputs.liveMatrix }}
       liveSelected: ${{ steps.select.outputs.liveSelected }}
+      daytonaMatrix: ${{ steps.select.outputs.daytonaMatrix }}
+      daytonaSelected: ${{ steps.select.outputs.daytonaSelected }}
+      checkpointMatrix: ${{ steps.select.outputs.checkpointMatrix }}
+      checkpointSelected: ${{ steps.select.outputs.checkpointSelected }}
+      packagedMatrix: ${{ steps.select.outputs.packagedMatrix }}
+      packagedSelected: ${{ steps.select.outputs.packagedSelected }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -73,7 +80,66 @@ jobs:
         run: |
           set -euo pipefail
           test "$(id -u)" -ne 0
-          xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local
+          if [ "$PROOF_SPEC" = 'evals/specs/opencode-v2-session-home.e2e.test.ts' ]; then
+            xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --engine v2 --surface web
+          elif node evals/scripts/run-parity-proof.mjs --supports "$PROOF_SPEC"; then
+            xvfb-run -a node evals/scripts/run-parity-proof.mjs "$PROOF_SPEC"
+          else
+            xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local
+          fi
+      - name: Save selected native testkit and Vitest records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr-proof-${{ github.run_attempt }}-${{ matrix.key }}
+          path: |
+            evals/results/test-runs/
+            evals/results/.testkit/cli-run-*.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+
+  # Packaged specs need a packaged desktop binary. Build the same Linux
+  # artifacts as the packaged smoke gate and run only the changed journey.
+  packaged-proof:
+    needs: select
+    if: needs.select.outputs.packagedSelected == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.select.outputs.packagedMatrix) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Cache Electron and pinned sidecars
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            apps/desktop/resources/sidecars
+          key: ${{ runner.os }}-${{ runner.arch }}-desktop-smoke-${{ hashFiles('constants.json', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-sidecar.mjs') }}
+      - uses: ./.github/actions/setup-tests
+      - name: Bundle the server plugins the way packaged builds do
+        run: |
+          rm -rf packages/types/dist
+          pnpm --filter openwork-server build
+      - name: Run the selected packaged spec against the packaged desktop
+        timeout-minutes: 20
+        env:
+          PROOF_JOURNEY: ${{ matrix.journey }}
+          OPENWORK_PACKAGED_SMOKE_DIR: ${{ runner.temp }}/openwork-packaged-smoke
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # Same Chromium SUID-sandbox constraint as the proof job above.
+          OPENWORK_EVAL_CONTAINER_ELECTRON: "1"
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          node apps/desktop/scripts/packaged-smoke.mjs --server-built --journey "$PROOF_JOURNEY"
       - name: Save selected native testkit and Vitest records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -99,9 +165,17 @@ jobs:
       github.event.pull_request.user.login != 'dependabot[bot]' &&
       github.actor != 'dependabot[bot]' &&
       github.triggering_actor != 'dependabot[bot]'
-    environment: pr-slow-specs
+    # Check GitHub's event identity as well as the fresh API result from select.
+    # A PR-controlled selector cannot exempt an outside collaborator.
+    environment:
+      name: >-
+        ${{ github.event.repository.owner.type == 'Organization' &&
+            github.event.pull_request.user.type == 'User' &&
+            contains(fromJSON('["MEMBER", "OWNER"]'), github.event.pull_request.author_association) &&
+            needs.select.outputs.internalContributor == 'true' &&
+            'pr-internal-specs' || 'pr-slow-specs' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -113,10 +187,17 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-tests
       - uses: ./.github/actions/setup-browser
-      - name: Build local appWeb dependencies without live credentials
-        run: pnpm --filter @openwork/types build
-      - name: Run the whole selected live spec on local v1 appWeb
-        timeout-minutes: 20
+        with:
+          oauth-handoff: "true"
+      - name: Build local app dependencies without live credentials
+        run: |
+          pnpm --filter @openwork/types build
+          pnpm --filter @openwork-ee/den-db build
+          pnpm --filter @openwork/email build
+          pnpm --filter @openwork/review-app build
+          pnpm dev:den:mysql
+      - name: Run the whole selected live spec with real inference
+        timeout-minutes: 45
         env:
           PROOF_SPEC: ${{ matrix.spec }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -125,15 +206,159 @@ jobs:
         run: |
           set -euo pipefail
           test "$(id -u)" -ne 0
-          if [ "$PROOF_SPEC" != 'evals/specs/live-stream-continuity.e2e.test.ts' ]; then
+          if [ "$PROOF_SPEC" != 'evals/specs/live-stream-continuity.e2e.test.ts' ] && [ "$PROOF_SPEC" != 'evals/specs/engine-live-chat.e2e.test.ts' ]; then
             printf '%s\n' '::error::Unsupported live proof selection. Add an explicit reviewed live-spec policy before running another file.' >&2
             exit 1
           fi
           if [[ -z "${OPENAI_API_KEY//[[:space:]]/}" ]]; then
-            printf '%s\n' '::error::OPENAI_API_KEY is required for selected live proof. Configure repository/environment access and approve pr-slow-specs; this proof cannot be skipped.' >&2
+            printf '%s\n' '::error::OPENAI_API_KEY is required for selected live proof. Configure repository/environment access; this proof cannot be skipped.' >&2
             exit 1
           fi
-          xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --engine v1 --surface web
+          if [ "$PROOF_SPEC" = 'evals/specs/engine-live-chat.e2e.test.ts' ]; then
+            OPENWORK_LIVE_PROVIDER=OpenAI OPENWORK_LIVE_KEY_ENV=OPENAI_API_KEY \
+              OPENWORK_LIVE_MODELS=gpt-5.4,gpt-4.1-mini OPENWORK_EVAL_CONTAINER_ELECTRON=1 \
+              xvfb-run -a node evals/scripts/run-parity-proof.mjs "$PROOF_SPEC"
+          else
+            xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --engine v1 --surface web
+          fi
+      - name: Save selected native testkit and Vitest records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr-proof-${{ github.run_attempt }}-${{ matrix.key }}
+          path: |
+            evals/results/test-runs/
+            evals/results/.testkit/cli-run-*.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+
+  checkpoint-proof:
+    needs: select
+    if: >-
+      needs.select.outputs.checkpointSelected == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.event.pull_request.head.repo.id == github.event.repository.id &&
+      github.event.pull_request.base.repo.id == github.event.repository.id &&
+      github.event.pull_request.head.repo.fork == false &&
+      github.event.pull_request.base.repo.fork == false &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+    # Check GitHub's event identity as well as the fresh API result from select.
+    # A PR-controlled selector cannot exempt an outside collaborator.
+    environment:
+      name: >-
+        ${{ github.event.repository.owner.type == 'Organization' &&
+            github.event.pull_request.user.type == 'User' &&
+            contains(fromJSON('["MEMBER", "OWNER"]'), github.event.pull_request.author_association) &&
+            needs.select.outputs.internalContributor == 'true' &&
+            'pr-internal-specs' || 'pr-slow-specs' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.select.outputs.checkpointMatrix) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-tests
+      - uses: ./.github/actions/setup-browser
+      - name: Build this branch's review app
+        run: pnpm --filter @openwork/review-app build
+      - name: Prepare this branch's isolated web world
+        timeout-minutes: 35
+        env:
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/prepare-evidence-web.ts
+      # Specs tagged "checkpoints" run here because the Freestyle credential is
+      # protected. Their records join this PR's normal evidence report; the shared
+      # review app opens the checkpoints. Checkpoint worlds are web worlds on v1.
+      - name: Run the tagged spec with checkpoints on this head
+        id: proof
+        timeout-minutes: 20
+        env:
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
+          PROOF_SPEC: ${{ matrix.spec }}
+        run: xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --engine v1 --surface web --checkpoints
+      - name: Save selected native testkit and Vitest records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr-proof-${{ github.run_attempt }}-${{ matrix.key }}
+          path: |
+            evals/results/test-runs/
+            evals/results/.testkit/cli-run-*.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+
+  windows-proof:
+    needs: select
+    if: >-
+      needs.select.outputs.daytonaSelected == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.event.pull_request.head.repo.id == github.event.repository.id &&
+      github.event.pull_request.base.repo.id == github.event.repository.id &&
+      github.event.pull_request.head.repo.fork == false &&
+      github.event.pull_request.base.repo.fork == false &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      github.actor != 'dependabot[bot]' &&
+      github.triggering_actor != 'dependabot[bot]'
+    # Check GitHub's event identity as well as the fresh API result from select.
+    # A PR-controlled selector cannot exempt an outside collaborator.
+    environment:
+      name: >-
+        ${{ github.event.repository.owner.type == 'Organization' &&
+            github.event.pull_request.user.type == 'User' &&
+            contains(fromJSON('["MEMBER", "OWNER"]'), github.event.pull_request.author_association) &&
+            needs.select.outputs.internalContributor == 'true' &&
+            'pr-internal-specs' || 'pr-slow-specs' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.select.outputs.daytonaMatrix) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-tests
+      - name: Install reviewed Daytona CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          DAYTONA_CLI_TAG: v0.216.1
+          DAYTONA_CLI_SHA256: 8ee3a1f8bd5ef307b906cbb48a6888673a3a2221854e11f2cbbf9785e7fc2385
+        run: |
+          set -euo pipefail
+          test -n "${DAYTONA_API_KEY//[[:space:]]/}"
+          gh release download "$DAYTONA_CLI_TAG" --repo daytona/clients --pattern daytona-linux-amd64 --output /tmp/daytona --clobber
+          echo "$DAYTONA_CLI_SHA256  /tmp/daytona" | sha256sum -c -
+          sudo install -m 0755 /tmp/daytona /usr/local/bin/daytona
+          daytona login --api-key "$DAYTONA_API_KEY"
+      - name: Prove the published Windows desktop on the PR head
+        timeout-minutes: 40
+        env:
+          PROOF_SPEC: ${{ matrix.spec }}
+          OPENWORK_EVAL_REF: ${{ github.event.pull_request.head.sha }}
+          OPENWORK_EVAL_MODEL: big-pickle
+        run: |
+          set -euo pipefail
+          test "$PROOF_SPEC" = 'evals/specs/windows-published-preview.e2e.test.ts'
+          pnpm evals:e2e windows-published-preview --daytona --strict-ref
       - name: Save selected native testkit and Vitest records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

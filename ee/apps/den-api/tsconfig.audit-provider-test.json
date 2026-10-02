@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../../../..",
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node", "bun-types/test"]
+  },
+  "include": ["src/audit/provider*.ts", "src/llm/gateway-matrix.ts", "src/routes/org/inference-providers.ts", "test/audit-provider*.ts"]
+}

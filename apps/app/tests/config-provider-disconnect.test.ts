@@ -44,11 +44,15 @@ function createHarness(hooks: {
   beforeAuthRemove?: () => Promise<void>;
   beforeHealth?: () => Promise<void>;
   beforeConfigRead?: () => void;
+  /** Like the real engine: config writes only become visible after a dispose/reload. */
+  stagedConfig?: boolean;
 } = {}) {
   const engine = {
     authRemoved: [] as string[],
     configUpdates: [] as Array<Record<string, unknown>>,
     engineConfig: {} as Record<string, unknown>,
+    pendingConfig: null as Record<string, unknown> | null,
+    disposes: 0,
     all: [
       providerItem({ id: "litellm", name: "LiteLLM", source: "config" }),
       providerItem({ id: "anthropic", name: "Anthropic", source: "env", env: ["ANTHROPIC_API_KEY"] }),
@@ -70,7 +74,16 @@ function createHarness(hooks: {
         return { data: { healthy: true } };
       },
     },
-    instance: { dispose: async () => ({ data: true }) },
+    instance: {
+      dispose: async () => {
+        engine.disposes += 1;
+        if (engine.pendingConfig) {
+          engine.engineConfig = engine.pendingConfig;
+          engine.pendingConfig = null;
+        }
+        return { data: true };
+      },
+    },
     config: {
       get: async () => {
         hooks.beforeConfigRead?.();
@@ -78,9 +91,14 @@ function createHarness(hooks: {
       },
       update: async (input: { config: Record<string, unknown> }) => {
         engine.configUpdates.push(input.config);
-        engine.engineConfig = input.config;
+        if (hooks.stagedConfig) engine.pendingConfig = input.config;
+        else engine.engineConfig = input.config;
         return { data: input.config };
       },
+      // The provider list's read: connected providers only, as the engine's /config/providers.
+      providers: async () => ({
+        data: { providers: engine.all.filter((provider) => engine.connected.includes(provider.id)), default: {} },
+      }),
     },
     provider: {
       list: async () => ({
@@ -171,6 +189,51 @@ test("disconnecting a config-file provider disables it without changing env-back
   expect(ui.connected).toContain("anthropic");
   expect(ui.providers.some((provider) => provider.id === "anthropic")).toBe(true);
   expect(engine.configUpdates.at(-1)?.disabled_providers).toEqual(["litellm"]);
+});
+
+test("OpenCode Zen hidden by Disconnect can be enabled again", async () => {
+  const { engine, ui, store } = createHarness();
+  const zen = providerItem({ id: "opencode", name: "OpenCode Zen", source: "env" });
+  engine.all.push(zen);
+  engine.connected.push("opencode");
+  await store.refreshProviders({ force: true });
+
+  await store.disconnectProvider("opencode");
+  expect(ui.disabled).toEqual(["opencode"]);
+  expect(ui.providers.some((provider) => provider.id === "opencode")).toBe(false);
+
+  const message = await store.enableProvider("opencode");
+  expect(message).toBe("Enabled opencode");
+  expect(ui.disabled).toEqual([]);
+  expect(engine.configUpdates.at(-1)?.disabled_providers).toBeUndefined();
+  expect(ui.connected).toContain("opencode");
+  expect(ui.providers.some((provider) => provider.id === "opencode")).toBe(true);
+  expect(store.getSnapshot().providerAuthError).toBeNull();
+});
+
+test("Enable right after Disconnect reloads the engine instead of reading the pre-change config", async () => {
+  // Regression: provider refreshes throttle engine reloads to one per 10s. Enable
+  // pressed seconds after Disconnect skipped the reload, re-read the stale config
+  // (still disabling opencode) and put OpenCode Zen straight back into Disconnected.
+  const { engine, ui, store } = createHarness({ stagedConfig: true });
+  engine.all.push(providerItem({ id: "opencode", name: "OpenCode Zen", source: "env" }));
+  engine.connected.push("opencode");
+  await store.refreshProviders({ force: true });
+
+  await store.disconnectProvider("opencode");
+  expect(ui.disabled).toEqual(["opencode"]);
+  const disposesAfterDisconnect = engine.disposes;
+
+  await store.enableProvider("opencode");
+  expect(engine.disposes).toBeGreaterThan(disposesAfterDisconnect);
+  expect(engine.engineConfig.disabled_providers).toBeUndefined();
+  expect(ui.disabled).toEqual([]);
+  expect(ui.providers.some((provider) => provider.id === "opencode")).toBe(true);
+
+  // And the reverse: Disconnect again straight after Enable still sticks.
+  await store.disconnectProvider("opencode");
+  expect(ui.disabled).toEqual(["opencode"]);
+  expect(ui.providers.some((provider) => provider.id === "opencode")).toBe(false);
 });
 
 test.each([

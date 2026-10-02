@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { AutoAccessWall } from "@/app/lib/inference-access";
 
 import { createPromptMessageID } from "../../../../app/lib/opencode";
 import type { ComposerAttachment, ComposerDraft } from "../../../../app/types";
@@ -45,7 +46,9 @@ export type ComposerStateStore = {
     serverMessageId?: string;
     preparedText?: string;
     settled: boolean;
+    autoAccessWall?: AutoAccessWall;
   }[]>;
+  settleAutoAccessWall: (owner: string, messageId: string, wall: AutoAccessWall) => void;
   pendingFocusSessionId: string | null;
   sessions: Record<string, ComposerSessionState>;
   queuedDrafts: Record<string, QueuedComposerItem[]>;
@@ -75,6 +78,10 @@ export function claimComposerSessionDraftScope(sessionId: string, scopeKey: stri
   const session = sessionId.trim();
   if (!session) return;
   composerSessionDraftScopes.set(session, scopeKey);
+}
+
+export function releaseComposerSessionDraftScope(sessionId: string, expected: string) {
+  if (composerSessionDraftScopes.get(sessionId.trim()) === expected) composerSessionDraftScopes.delete(sessionId.trim());
 }
 
 export function getComposerSessionDraftScope(sessionId: string) {
@@ -128,6 +135,12 @@ function createQueuedItem(draft: ComposerDraft, id?: string): QueuedComposerItem
 export const useComposerStateStore = create<ComposerStateStore>((set) => ({
   failedDrafts: {},
   pendingMessages: {},
+  settleAutoAccessWall: (owner, messageId, wall) => set((state) => {
+    const pending = state.pendingMessages[owner];
+    if (!pending?.some((item) => item.draft.messageId === messageId)) return state;
+    return { pendingMessages: { ...state.pendingMessages, [owner]: pending.map((item) => item.draft.messageId === messageId
+      ? { ...item, settled: true, autoAccessWall: wall } : item) } };
+  }),
   pendingFocusSessionId: null,
   sessions: {},
   queuedDrafts: {},

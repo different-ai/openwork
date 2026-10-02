@@ -92,6 +92,8 @@ function registerRenderTool(input: {
   revision: GeneratedArtifactView["revisions"][number]
   preview: boolean
   run?: boolean
+  /** A live draft OpenWork may offer to save; never while legacy views are read-only. */
+  draft?: boolean
   loadData: (request: LoadDataRequest) => Promise<WorkflowArtifactLoadResult>
 }): RegisteredTool {
   const toolName = `${input.run ? "run" : input.preview ? "preview" : "render"}_artifact_${input.view.id}`
@@ -149,7 +151,7 @@ function registerRenderTool(input: {
             artifactViewId: input.view.id,
             viewRevisionId: input.revision.id,
           }),
-          ...(input.view.dataMode === "live" && input.preview ? {
+          ...(input.view.dataMode === "live" && input.draft ? {
             "openwork/appDraft": { appId: input.view.id, revisionId: input.revision.id, title: input.view.title },
           } : {}),
           appTitle: input.view.title,
@@ -158,6 +160,13 @@ function registerRenderTool(input: {
         },
       }
     },
+  )
+}
+
+function legacyViewReadOnlyResult() {
+  return errorToolResult(
+    "legacy_view_read_only",
+    "Workflow-bound views are read-only now: they still open and refresh, but they are not created, edited, or re-activated. Build a new App with create_app instead; it is its own MCP server and needs no Workflow.",
   )
 }
 
@@ -179,6 +188,13 @@ export function registerAgentGeneratedArtifactViews(input: {
   retire: (request: { artifactViewId: string }) => Promise<GeneratedArtifactView>
   readSource?: (request: { artifactViewId: string }) => Promise<{ view: GeneratedArtifactView; reactSource: string; cssSource: string }>
   notifyCatalogChanged: () => void
+  /**
+   * Legacy views are read-only where create_app is available: they render,
+   * run live data, and retire, but save and activation are refused. Where
+   * create_app is unavailable they stay writable, so no org loses a way to
+   * build apps.
+   */
+  legacyViewsWritable?: boolean
 }) {
   const registeredResources = new Map<string, RegisteredResource>()
   const registeredTools = new Map<string, { revisionId: string; registration: RegisteredTool }>()
@@ -197,7 +213,7 @@ export function registerAgentGeneratedArtifactViews(input: {
     if (!revision) return
     registeredTools.set(key, {
       revisionId: revision.id,
-      registration: registerRenderTool({ server: input.server, view, revision, preview, run, loadData: input.loadData }),
+      registration: registerRenderTool({ server: input.server, view, revision, preview, run, draft: preview && input.legacyViewsWritable === true, loadData: input.loadData }),
     })
   }
 
@@ -239,14 +255,19 @@ export function registerAgentGeneratedArtifactViews(input: {
   input.server.registerTool(
     "save_artifact_view",
     {
-      title: "Create or improve an app draft",
-      description: [
-        "Create or improve an in-app dashboard or artifact view of Workflow results. Call this Cloud MCP tool directly, not through search_capabilities or execute_capability. Compile React source into a self-contained immutable MCP App revision bound to one Workflow output schema.",
-        "Create the complete app in one request without asking the user about Workflow internals, naming, or runtime code. Reuse an existing app when editing. The current saved Workflow must declare outputSchema. New apps default to live: write the Workflow to read input.runtime.{now,today,timeZone,dayStart,dayEnd}, with an inputSchema accepting that object. Never hardcode creation dates or copy author example inputs. Live preview executes the saved version as the viewer. Snapshot mode is restricted to workflows without capability dependencies and receipts remain private to their caller.",
-        "Provide a default-exported React component that receives { data, artifact }. React is already injected: use React.useState and other React APIs without imports. Do not import modules, fetch data, access browser globals, or add URL-bearing elements; all render-time data comes from data.",
-        "Every successful build is a draft. Show the preview so the user can try it and choose Save in OpenWork to keep the workflow and app together on their dashboard. Never activate a draft merely because it built successfully. Editing never changes the saved app. Use one friendly name for the workflow and app. Only create an Automation when the user asks for a schedule. Generated views display, filter, and explore results; they do not submit approvals or other writes.",
-        "OpenWork offers Open preview from a successful build; no additional tool call is needed there. The user opens the preview and chooses Save. In other MCP clients, call the registered render_artifact_* or preview_artifact_* tool named in the result. A failed build returns artifact_view_build_failed with diagnostics; correct those diagnostics once and retry using the returned artifactViewId.",
-      ].join(" "),
+      ...(input.legacyViewsWritable ? {
+        title: "Create or improve an app draft",
+        description: [
+          "Create or improve an in-app dashboard or artifact view of Workflow results. Call this Cloud MCP tool directly, not through search_capabilities or execute_capability. Compile React source into a self-contained immutable MCP App revision bound to one Workflow output schema.",
+          "Create the complete app in one request without asking the user about Workflow internals, naming, or runtime code. Reuse an existing app when editing. The current saved Workflow must declare outputSchema. New apps default to live: write the Workflow to read input.runtime.{now,today,timeZone,dayStart,dayEnd}, with an inputSchema accepting that object. Never hardcode creation dates or copy author example inputs. Live preview executes the saved version as the viewer. Snapshot mode is restricted to workflows without capability dependencies and receipts remain private to their caller.",
+          "Provide a default-exported React component that receives { data, artifact }. React is already injected: use React.useState and other React APIs without imports. Do not import modules, fetch data, access browser globals, or add URL-bearing elements; all render-time data comes from data.",
+          "Every successful build is a draft. Show the preview so the user can try it and choose Save in OpenWork to keep the workflow and app together on their dashboard. Never activate a draft merely because it built successfully. Editing never changes the saved app. Use one friendly name for the workflow and app. Only create an Automation when the user asks for a schedule. Generated views display, filter, and explore results; they do not submit approvals or other writes.",
+          "OpenWork offers Open preview from a successful build; no additional tool call is needed there. The user opens the preview and chooses Save. In other MCP clients, call the registered render_artifact_* or preview_artifact_* tool named in the result. A failed build returns artifact_view_build_failed with diagnostics; correct those diagnostics once and retry using the returned artifactViewId.",
+        ].join(" "),
+      } : {
+        title: "Legacy Artifact views are read-only",
+        description: "Workflow-bound views are read-only: this returns legacy_view_read_only for new and existing views. They still open and refresh through their render, preview, and run tools. Build new apps, dashboards, and interactive views with create_app; each App is its own MCP server and needs no Workflow.",
+      }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: z.object({
         dataMode: z.enum(["live", "snapshot"]).optional().describe("New views default to live. Existing view mode is immutable. Snapshot receipts remain caller-private."),
@@ -260,6 +281,7 @@ export function registerAgentGeneratedArtifactViews(input: {
       outputSchema: saveOutputSchema,
     },
     async (request) => {
+      if (!input.legacyViewsWritable) return legacyViewReadOnlyResult()
       let view: GeneratedArtifactView
       try {
         view = await input.save(request)
@@ -339,12 +361,15 @@ export function registerAgentGeneratedArtifactViews(input: {
     "activate_artifact_view_revision",
     {
       title: "Activate or roll back Artifact view",
-      description: "Point an Artifact's render tool at an exact compatible immutable revision. Selecting an older revision performs a rollback without changing its bytes.",
+      description: input.legacyViewsWritable
+        ? "Point an Artifact's render tool at an exact compatible immutable revision. Selecting an older revision performs a rollback without changing its bytes."
+        : "Legacy Artifact views are read-only: this returns legacy_view_read_only. Build new apps with create_app.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({ artifactViewId: idSchema, revisionId: idSchema }),
       outputSchema: saveOutputSchema,
     },
     async (request) => {
+      if (!input.legacyViewsWritable) return legacyViewReadOnlyResult()
       const view = await input.activate(request)
       syncView(view)
       input.notifyCatalogChanged()

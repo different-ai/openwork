@@ -1,5 +1,5 @@
 import { evalIn, go } from "@openwork/behaviors";
-import { SkipError } from "@openwork/env";
+import { browserScript, setViewport } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 
 declare global {
@@ -7,6 +7,7 @@ declare global {
     __checkNowUpdateWitness: {
       channel: "stable" | "alpha";
       latestVersion: string;
+      newerVersion: string;
       selectedVersion: string | null;
       stagedVersion: string | null;
       published: boolean;
@@ -16,20 +17,28 @@ declare global {
       offset: number;
       intervalCheck: (() => void) | null;
       finishDownload: (() => void) | null;
+      holdCheck: boolean;
+      finishCheck: (() => void) | null;
     };
   }
 }
 
 export async function desktopUpdateCheckNowWorld(seed: Seed) {
-  if (process.platform !== "darwin") throw new SkipError("macOS desktop for the Alpha release channel");
+  const releases: { channel: "stable" | "alpha"; staged: string; newer: string } = process.platform === "darwin"
+    ? { channel: "alpha", staged: "0.18.47-alpha.2962", newer: "0.18.47-alpha.2966" }
+    : { channel: "stable", staged: "999999999.999999999.999999998", newer: "999999999.999999999.999999999" };
   const app = await seed.desktop({ name: "desktop-update-check-now", signIn: false });
+  await setViewport(app, { width: 1200, height: 820, deviceScaleFactor: 1 });
   const workspace = await seed.workspace(app, seed.tmpPath("desktop-update-check-now"));
-  await evalIn(app, () => {
-    const currentVersion = "0.18.47-alpha.2960";
+  await evalIn(app, browserScript(async (releases) => {
+    // Keep the installed version stable so the first manual check does not
+    // re-key the background checker while its fake download is pending.
+    const { currentVersion } = await window.__OPENWORK_ELECTRON__.updater.getChannel();
     const state: Window["__checkNowUpdateWitness"] = {
-      channel: "stable", latestVersion: "0.18.47-alpha.2962", selectedVersion: null,
+      channel: "stable", latestVersion: releases.staged, newerVersion: releases.newer, selectedVersion: null,
       stagedVersion: null, published: false, checks: [], downloads: [], installs: [],
       offset: 0, intervalCheck: null, finishDownload: null,
+      holdCheck: false, finishCheck: null,
     };
     window.__checkNowUpdateWitness = state;
     const now = Date.now.bind(Date);
@@ -42,9 +51,10 @@ export async function desktopUpdateCheckNowWorld(seed: Seed) {
     };
     window.__openworkApplyDesktopConfig({ allowAlphaUpdates: true });
     window.__openworkSetDesktopConfigRefreshResult({ allowAlphaUpdates: true });
-    window.__openworkReadDesktopVersionMetadataEval = () => ({
-      minAppVersion: "0.1.0", latestAppVersion: "0.18.46", publishedDesktopVersions: ["0.18.46"],
-    });
+    window.__openworkReadDesktopVersionMetadataEval = () => {
+      const latestAppVersion = releases.channel === "alpha" ? "0.18.46" : state.latestVersion;
+      return { minAppVersion: "0.1.0", latestAppVersion, publishedDesktopVersions: [latestAppVersion] };
+    };
     window.__openworkUpdaterEvalBridge = {
       getChannel: async () => ({ channel: state.channel, currentVersion }),
       setChannel: async (channel) => {
@@ -54,9 +64,13 @@ export async function desktopUpdateCheckNowWorld(seed: Seed) {
       },
       check: async (channel, targetVersion?: string, options?: { preserveStaged?: boolean }) => {
         state.checks.push({ channel, targetVersion, preserveStaged: options?.preserveStaged === true });
-        const available = state.published && channel === "alpha";
+        const available = state.published && channel === releases.channel;
         state.selectedVersion = available ? state.latestVersion : null;
         if (!options?.preserveStaged) state.stagedVersion = null;
+        if (state.holdCheck) {
+          state.holdCheck = false;
+          await new Promise<void>((resolve) => { state.finishCheck = resolve; });
+        }
         return {
           available, channel, currentVersion,
           latestVersion: available ? state.latestVersion : currentVersion,
@@ -86,13 +100,14 @@ export async function desktopUpdateCheckNowWorld(seed: Seed) {
       },
       onDownloadProgress: () => () => {},
     };
-  });
+  }, [releases]), { awaitPromise: true });
   return {
     app,
+    releases,
     snapshot: () => evalIn(app, () => {
       const { channel, checks, downloads, installs, stagedVersion } = window.__checkNowUpdateWitness;
       const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
-      const settingsActions = buttons.filter((button) => /^(Install v|Download v)/.test(button.textContent?.trim() ?? ""));
+      const settingsActions = buttons.filter((button) => /^(Install & restart|Download)$/.test(button.textContent?.trim() ?? ""));
       return {
         channel, checks, downloads, installs, stagedVersion,
         automaticChecksEnabled: localStorage.getItem("openwork.react.settings.update-auto-check") !== "0",
@@ -100,6 +115,7 @@ export async function desktopUpdateCheckNowWorld(seed: Seed) {
         capsuleText: document.querySelector<HTMLElement>("header [data-update-button]")?.textContent?.trim() ?? null,
         updateInSidebar: Boolean(document.querySelector('[data-sidebar="footer"] [data-update-button]')),
         panelText: document.querySelector<HTMLElement>('[role="alertdialog"]')?.innerText ?? null,
+        latestVersionText: document.querySelector('[data-testid="updates-latest-version"]')?.textContent?.trim() ?? null,
         settingsActions: settingsActions.map((button) => ({
           text: button.textContent?.trim(), disabled: button.disabled,
           primary: button.classList.contains("bg-foreground"),
@@ -107,8 +123,49 @@ export async function desktopUpdateCheckNowWorld(seed: Seed) {
         })),
       };
     }),
+    layout: () => evalIn(app, () => {
+      const versions = document.querySelector<HTMLElement>('[data-testid="updates-versions"]');
+      const actions = document.querySelector<HTMLElement>('[data-testid="updates-actions"]');
+      const status = document.querySelector<HTMLElement>('[data-testid="updates-status"]');
+      if (!versions || !actions || !status) throw new Error("Update controls are not visible");
+      const bounds = (element: Element) => {
+        const { x, y, width, height } = element.getBoundingClientRect();
+        return { x, y, width, height };
+      };
+      return {
+        versions: bounds(versions),
+        actions: bounds(actions),
+        status: bounds(status),
+        values: Array.from(versions.querySelectorAll("dd"), (element) => ({
+          ...bounds(element), text: element.textContent?.trim(),
+          fits: element.scrollWidth <= element.clientWidth,
+        })),
+        buttons: Array.from(actions.querySelectorAll("button"), (button) => ({
+          ...bounds(button), text: button.textContent?.trim(), disabled: button.disabled,
+        })),
+        fits: versions.scrollWidth <= versions.clientWidth && actions.scrollWidth <= actions.clientWidth
+          && status.scrollWidth <= status.clientWidth,
+        viewportWidth: window.innerWidth,
+      };
+    }),
+    resize: async (width: number) => {
+      await setViewport(app, { width, height: 820, deviceScaleFactor: 1 });
+      await evalIn(app, () => new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }), { awaitPromise: true });
+    },
+    holdNextCheck: () => evalIn(app, () => { window.__checkNowUpdateWitness.holdCheck = true; }),
+    finishCheck: () => evalIn(app, () => {
+      const state = window.__checkNowUpdateWitness;
+      if (!state.finishCheck) throw new Error("No update check is pending");
+      state.finishCheck();
+      state.finishCheck = null;
+    }),
     publishInitial: () => evalIn(app, () => { window.__checkNowUpdateWitness.published = true; }),
-    advanceFeed: () => evalIn(app, () => { window.__checkNowUpdateWitness.latestVersion = "0.18.47-alpha.2966"; }),
+    advanceFeed: () => evalIn(app, () => {
+      const state = window.__checkNowUpdateWitness;
+      state.latestVersion = state.newerVersion;
+    }),
     finishDownload: () => evalIn(app, () => {
       const finish = window.__checkNowUpdateWitness.finishDownload;
       if (!finish) throw new Error("No update download is pending");

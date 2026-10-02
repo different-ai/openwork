@@ -23,6 +23,16 @@ config:
     ownerEmails: ""
     allowPublicSignup: "false"
     requireEmailVerification: "false"
+  audit:
+    # Grant availability without a Cloud plan. Never turns org capture on by itself.
+    selfHostedEnabled: "false"
+    # Rollout gates; org admins separately control capture on their initialized policy.
+    # Default-on deployment switches; explicit false disables globally.
+    # Also requires metadata.capabilities.auditLogs=true per org plus entitlement.
+    # Ready orgs auto-provision 6M retained operations, capture ON, no cap enforcement.
+    # Existing policy values and explicit capture OFF choices are preserved.
+    captureEnabled: "true"
+    visibilityEnabled: "true"
   auth:
     passwordBreachScreeningEnabled: "false"
   githubConnector:
@@ -61,6 +71,7 @@ config:
     automationsRuntimeEnabled: "true"
     # Enable only after compatible Desktop MCP Apps hosts are deployed.
     generatedArtifactViewsEnabled: "false"
+    appMcpServersEnabled: "true"
     connectLinkMode: exchange
     connectLinkKeyId: ""
     openworkAppConnectUrl: ""

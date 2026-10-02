@@ -17,6 +17,7 @@ const searchBar = readFileSync(
 );
 
 const baseCapabilities: DenOrgCapabilities = {
+  auditLogs: false,
   cloud: true,
   installLinks: true,
   mcpConnections: true,
@@ -41,71 +42,62 @@ function buildFor(
 }
 
 describe("dashboard navigation index", () => {
-  test("keeps canonical navigation without the removed Gateway link", () => {
+  test("AI Gateway is one Manage link and Analytics has its own section, without the removed Gateway links", () => {
     const sections = buildFor("admin");
-    const models = sections.flatMap((section) => section.items).find((item) => item.label === "AI Gateway");
-    expect(models?.href).toBe("/dashboard/ai-gateway");
-    expect(models?.children).toBeUndefined();
+    const items = sections.flatMap((section) => section.items);
+    expect(items.some((item) => item.label === "Models")).toBe(false);
+    const gateway = items.find((item) => item.label === "AI Gateway");
+    expect(gateway?.href).toBe("/dashboard/ai-gateway");
+    expect(gateway?.children).toBeUndefined();
+    expect(sections.find((section) => section.label === "Observability")?.items.map((item) => item.label)).toEqual(["Analytics"]);
     const search = flattenNavigationForSearch(sections);
-    expect(search.some((entry) => entry.href.startsWith("/dashboard/gateway-providers"))).toBe(false);
-    expect(search.some((entry) => entry.label === "AI Gateway › OpenWork Models")).toBe(false);
-    expect(search.some((entry) => entry.label === "AI Gateway › Bring Your Own Keys (Legacy)")).toBe(false);
-    expect(search.find((entry) => entry.label === "AI Gateway")?.href).toBe("/dashboard/ai-gateway");
-    expect(flattenNavigationForSearch(buildFor("member"))
-      .some((entry) => entry.href === "/dashboard/gateway-providers")).toBe(false);
-  });
-
-  test("AI Gateway remains a top-level admin item without hiding billing/keys", () => {
-    const sections = buildFor("admin");
-    const entries = flattenNavigationForSearch(sections);
-    const hrefs = entries.map((entry) => entry.href);
+    const hrefs = search.map((entry) => entry.href);
     expect(hrefs.some((href) => href.startsWith("/dashboard/gateway-providers"))).toBe(false);
     expect(hrefs.includes("/dashboard/inference")).toBe(false);
-    for (const href of ["/dashboard/ai-gateway", "/dashboard/billing", "/dashboard/api-keys"]) expect(hrefs).toContain(href);
     expect(hrefs).not.toContain("/dashboard/custom-llm-providers");
-    const models = sections.flatMap((section) => section.items).find((item) => item.label === "AI Gateway");
-    expect(models?.href).toBe("/dashboard/ai-gateway");
-    expect(models?.children).toBeUndefined();
-    expect(models?.badge).toBe("Models");
-  });
-
-  test("hosted admins have one normal AI Gateway navigation item without children", () => {
-    const sections = buildFor("admin");
-    const models = sections.flatMap((section) => section.items).find((item) => item.label === "AI Gateway");
-    expect(models?.children).toBeUndefined();
-    const search = flattenNavigationForSearch(sections);
-    expect(search.find((entry) => entry.label === "AI Gateway › Old Gateway")).toBeUndefined();
-    expect(models?.href).toBe("/dashboard/ai-gateway");
-    expect(search.find((entry) => entry.label === "AI Gateway › OpenWork Models")).toBeUndefined();
+    for (const href of ["/dashboard/ai-gateway", "/dashboard/billing", "/dashboard/api-keys"]) expect(hrefs).toContain(href);
+    expect(search.find((entry) => entry.label === "AI Gateway")?.href).toBe("/dashboard/ai-gateway");
+    expect(search.some((entry) => entry.label.includes("OpenWork Models"))).toBe(false);
+    expect(search.some((entry) => entry.label.includes("Old Gateway"))).toBe(false);
     expect(shell).not.toContain("getInferenceRoute");
   });
 
-  test("no duplicate Models child appears before runtime config or on single-org deployments", () => {
+  test("AI Gateway is the same before runtime config and on single-org deployments", () => {
     for (const sections of [
       buildFor("admin", baseCapabilities, "single_org"),
       buildFor("admin", baseCapabilities, "multi_org", false),
     ]) {
-      const models = sections.flatMap((section) => section.items).find((item) => item.label === "AI Gateway");
-      expect(models?.href).toBe("/dashboard/ai-gateway");
-      expect(models?.children).toBeUndefined();
+      const gateway = sections.flatMap((section) => section.items).find((item) => item.label === "AI Gateway");
+      expect(gateway?.href).toBe("/dashboard/ai-gateway");
+      expect(gateway?.children).toBeUndefined();
       expect(flattenNavigationForSearch(sections).some((entry) => entry.href === "/dashboard/inference")).toBe(false);
     }
   });
 
-  test("members never receive AI Gateway, Old Gateway or OpenWork Models navigation", () => {
+  test("members never receive AI Gateway, Analytics or Manage navigation", () => {
     const sections = buildFor("member");
-    expect(sections.flatMap((section) => section.items).some((item) => item.label === "AI Gateway")).toBe(false);
+    expect(sections.flatMap((section) => section.items).some((item) => ["AI Gateway", "Analytics"].includes(item.label))).toBe(false);
     expect(flattenNavigationForSearch(sections).some((entry) => ["/dashboard/ai-gateway", "/dashboard/inference", "/dashboard/gateway-providers"].includes(entry.href))).toBe(false);
   });
 
-  test("keeps members in Work while admins receive Manage, Observability, and Team", () => {
+  test("keeps member work separate from admin management with audit rollout off by default", () => {
     expect(buildFor("member").map((section) => section.label)).toEqual(["Work"]);
-    expect(buildFor("admin").map((section) => section.label)).toEqual([
-      "Work",
-      "Manage",
-      "Observability",
-      "Team",
+    expect(buildFor("member")[0]?.items.map((item) => item.label)).toEqual(["My Library", "OpenWork Web"]);
+    expect(buildFor("admin").map((section) => section.label)).toEqual(["Work", "Manage", "Observability", "Team"]);
+    expect(buildFor("admin").find((section) => section.label === "Manage")?.items.map((item) => item.label)).toEqual([
+      "Plugins",
+      "Connectors",
+      "Dashboards",
+      "AI Gateway",
+      "Desktop policies",
     ]);
+  });
+
+  test("moves marketplaces and branding to Settings › Advanced for admins only", () => {
+    const admin = flattenNavigationForSearch(buildFor("admin"));
+    expect(admin.find((entry) => entry.label === "Settings › Advanced")?.href).toBe("/dashboard/marketplaces");
+    expect(admin.some((entry) => entry.label === "Plugin Directory")).toBe(false);
+    expect(flattenNavigationForSearch(buildFor("member")).some((entry) => entry.href === "/dashboard/marketplaces")).toBe(false);
   });
 
   test.each([
@@ -157,13 +149,12 @@ describe("dashboard navigation index", () => {
   });
 
   test("keeps workflow analytics inside the Analytics destination", () => {
-    const withoutWorkflows = buildFor("admin").flatMap((section) => section.items);
-    const withWorkflows = buildFor("admin", { ...baseCapabilities, workflows: true })
-      .flatMap((section) => section.items);
+    const withoutWorkflows = flattenNavigationForSearch(buildFor("admin"));
+    const withWorkflows = flattenNavigationForSearch(buildFor("admin", { ...baseCapabilities, workflows: true }));
 
-    expect(withoutWorkflows.some((item) => item.label === "Workflow Runs")).toBe(false);
-    expect(withWorkflows.some((item) => item.label === "Workflow Runs")).toBe(false);
-    expect(withWorkflows.some((item) => item.label === "Analytics")).toBe(true);
+    expect(withoutWorkflows.some((entry) => entry.label.includes("Workflow Runs"))).toBe(false);
+    expect(withWorkflows.some((entry) => entry.label.includes("Workflow Runs"))).toBe(false);
+    expect(withWorkflows.some((entry) => entry.label === "Analytics" && entry.section === "Observability")).toBe(true);
   });
 
   test("flattens grouped pages with their plain-language search keywords", () => {

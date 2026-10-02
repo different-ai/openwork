@@ -1,0 +1,152 @@
+name: Den Contract Regenerated
+
+# Second half of Den Contract Conflicts. After that workflow merges dev into a
+# PR with dev's copy of the generated contract, the PR's den-contract check
+# regenerates the contract, fails on the drift, and uploads the result. This
+# pushes that result to the PR, but only when the PR head is still the
+# diff-warden merge, so authors who forget to regenerate still get the failure.
+#
+# PR code ran to produce the artifact; this job runs none. It takes exactly the
+# generated paths from the artifact and nothing else.
+
+on:
+  workflow_run:
+    workflows: ["Build and core checks"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: den-contract-regenerated-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  push:
+    name: Push the regenerated Den API contract
+    if: >-
+      github.event.workflow_run.event == 'pull_request'
+      && github.event.workflow_run.conclusion == 'failure'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: warden-clearance
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check the PR head is the diff-warden merge
+        id: eligible
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          REF: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          IFS=$'\t' read -r author subject < <(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA" \
+            --jq '[.author.login // "", (.commit.message | split("\n")[0])] | @tsv')
+          if [ "$subject" != "chore: merge dev, Den API contract regenerates next" ]; then
+            echo "Head $HEAD_SHA is not a Den Contract Conflicts merge; nothing to do."
+            exit 0
+          fi
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/pulls" \
+            --jq "[.[] | select(.state == \"open\" and .base.ref == \"dev\" and .head.ref == \"$REF\" and .head.sha == \"$HEAD_SHA\")][0].number // empty")"
+          if [ -z "$pr" ]; then
+            echo "No open PR into dev has head $HEAD_SHA on $REF; nothing to do."
+            exit 0
+          fi
+          echo "author=$author" >> "$GITHUB_OUTPUT"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+
+      - name: Download the regenerated contract
+        id: artifact
+        if: steps.eligible.outputs.pr != ''
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: den-contract
+          path: ${{ runner.temp }}/contract
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Report a failure without a regenerated contract
+        if: steps.eligible.outputs.pr != '' && steps.artifact.outcome != 'success'
+        env:
+          PR: ${{ steps.eligible.outputs.pr }}
+        run: |
+          echo "::warning::#$PR failed its checks without a contract drift artifact; nothing to push."
+          printf -- '- #%s: no regenerated contract to push\n' "$PR" >> "$GITHUB_STEP_SUMMARY"
+
+      # Unscoped for the same reason as Den Contract Conflicts: the branch
+      # carries dev's workflow changes.
+      - name: Mint push token
+        id: app
+        if: steps.eligible.outputs.pr != '' && steps.artifact.outcome == 'success'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.WARDEN_APP_ID }}
+          private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Checkout dev
+        if: steps.app.outcome == 'success'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: dev
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Commit the regenerated contract and push
+        if: steps.app.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          AUTHOR: ${{ steps.eligible.outputs.author }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          REF: ${{ github.event.workflow_run.head_branch }}
+          PR: ${{ steps.eligible.outputs.pr }}
+          CONTRACT: ${{ runner.temp }}/contract
+        run: |
+          set -euo pipefail
+          if [ "$AUTHOR" != "${APP_SLUG}[bot]" ]; then
+            echo "#$PR head was not authored by ${APP_SLUG}[bot] ($AUTHOR); nothing to do."
+            exit 0
+          fi
+
+          # The artifact came from PR code: accept exactly the generated paths.
+          # upload-artifact roots it at packages/, their common parent.
+          unexpected="$(cd "$CONTRACT" && find . ! -type d ! -type f -o -type f ! -path ./docs/openapi.json ! -path './sdk/src/gen/*')"
+          if [ -n "$unexpected" ] || [ ! -f "$CONTRACT/docs/openapi.json" ] || [ ! -d "$CONTRACT/sdk/src/gen" ]; then
+            echo "::error::Artifact holds more than the generated contract:"$'\n'"$unexpected"
+            exit 1
+          fi
+
+          git fetch --quiet --no-tags origin "refs/heads/$REF"
+          if [ "$(git rev-parse FETCH_HEAD)" != "$HEAD_SHA" ]; then
+            echo "#$PR moved since its checks ran; nothing to do."
+            exit 0
+          fi
+          git checkout --quiet --detach "$HEAD_SHA"
+
+          bot_id="$(gh api "users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+
+          rm -rf packages/sdk/src/gen
+          mkdir -p packages/sdk/src/gen
+          cp "$CONTRACT/docs/openapi.json" packages/docs/openapi.json
+          cp -R "$CONTRACT/sdk/src/gen/." packages/sdk/src/gen/
+          git add -A packages/docs/openapi.json packages/sdk/src/gen
+          if git diff --cached --quiet; then
+            echo "#$PR contract already matches the artifact; nothing to push."
+            exit 0
+          fi
+
+          git commit --quiet \
+            -m "chore: regenerate the Den API contract" \
+            -m "Regenerated with 'pnpm den:contract' by the den-contract check after merging dev."
+          # Not forced: if the author pushed meanwhile, this is rejected.
+          git push origin "HEAD:refs/heads/$REF"
+          printf -- '- #%s: pushed the regenerated contract\n' "$PR" >> "$GITHUB_STEP_SUMMARY"

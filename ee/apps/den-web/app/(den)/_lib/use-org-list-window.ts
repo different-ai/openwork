@@ -35,6 +35,7 @@ export function useOrgListWindow<T extends { name?: string | null; slug?: string
     hiddenCount,
     hasMore: hiddenCount > 0,
     showMore: () => setVisibleCount((count) => count + pageSize),
+    showAll: () => setVisibleCount(Number.POSITIVE_INFINITY),
     showSearch: orgs.length > 10,
   };
 }

@@ -179,6 +179,7 @@ function nextConfig(env: Env) {
   return evaluate<NextConfig>("next.config.js", {
     path: { join },
     "./next-config-den-api-redirects.cjs": evaluate("next-config-den-api-redirects.cjs", {}),
+    "./next-config-legacy-connector-redirects.cjs": evaluate("next-config-legacy-connector-redirects.cjs", {}),
     "./observability/next-config-observability.cjs": {
       withObservabilityNextConfig: (config: NextConfig) => config,
     },
@@ -266,10 +267,12 @@ describe("PostHog existing public build-time key", () => {
       { source: "/ow/array/:path*", destination: "https://us-assets.i.posthog.com/array/:path*" },
       { source: "/ow/:path*", destination: "https://us.i.posthog.com/:path*" },
     ]);
+    const legacy = evaluate<{ legacyConnectorRedirects: () => unknown[] }>("next-config-legacy-connector-redirects.cjs", {}).legacyConnectorRedirects();
     expect(await config.redirects?.()).toEqual([
+      ...legacy,
       { source: "/api/den/:path*", destination: "https://api.example.test/:path*", permanent: false },
     ]);
-    expect(await nextConfig({}).redirects?.()).toEqual([]);
+    expect(await nextConfig({}).redirects?.()).toEqual(legacy);
   });
 });
 

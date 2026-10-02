@@ -35,6 +35,7 @@ import { db } from "../db.js"
 import { env } from "../env.js"
 import { tokenRoute } from "../middleware/index.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
+import { handleMcpAppServerRequest, isMcpAppServerId } from "./app-server.js"
 import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { externalMcpAppResourceUri, resolveMcpMemberIdentity } from "./external-capabilities.js"
 import { externalMcpToolSchemaDigest } from "./external-mcp-tool-arguments.js"
@@ -424,7 +425,8 @@ export async function handleExternalConnectionProxyRequest(input: {
  * ordinary client receives only a bounded search/execute compatibility surface
  * unless an administrator marked the connection `exposeDirectly`, in which case
  * it is served as a standard MCP server whose tool catalog is filtered by the
- * organization's tool policy. Grants are re-checked on every request.
+ * organization's tool policy. Grants are re-checked on every request. An
+ * authored App id at the same path is served as that App's own MCP server.
  */
 export function registerExternalConnectionProxyRoutes<T extends { Variables: RequestIdVariables & Record<string, unknown> }>(
   app: Hono<T>,
@@ -447,11 +449,18 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       return new Response(null, { status: 405, headers: { allow: "POST" } })
     }
 
+    // Each authored App is served as its own MCP server at a connection path,
+    // so released clients register and authorize it like any direct connection.
+    const requestedId = c.req.param("connectionId")
+    if (isMcpAppServerId(requestedId)) {
+      return handleMcpAppServerRequest({ app: app as unknown as Hono, context: c, principal, appId: requestedId })
+    }
+
     const organizationId = normalizeDenTypeId("organization", principal.organizationId)
 
     let connectionId
     try {
-      connectionId = normalizeDenTypeId("externalMcpConnection", c.req.param("connectionId"))
+      connectionId = normalizeDenTypeId("externalMcpConnection", requestedId)
     } catch {
       throw new McpError(ErrorCode.InvalidRequest, "The MCP connection id is invalid.")
     }

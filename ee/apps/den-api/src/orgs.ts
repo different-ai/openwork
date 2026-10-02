@@ -1,3 +1,4 @@
+import { peopleMemberCondition } from "./setup-agent-members.js"
 import { and, asc, count, eq, gt, inArray, isNotNull, isNull, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AuthSessionTable,
@@ -1492,7 +1493,7 @@ export async function listUserOrgs(userId: UserId) {
         memberCount: count(),
       })
       .from(MemberTable)
-      .where(and(inArray(MemberTable.organizationId, organizationIds), isNull(MemberTable.removedAt)))
+      .where(and(inArray(MemberTable.organizationId, organizationIds), peopleMemberCondition()))
       .groupBy(MemberTable.organizationId)
     for (const row of counts) {
       memberCounts.set(row.organizationId, row.memberCount)

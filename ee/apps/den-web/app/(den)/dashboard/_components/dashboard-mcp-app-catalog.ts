@@ -14,6 +14,11 @@ export function mcpAppCatalogIsLoading(appCount: number, hasPendingConnection: b
   return appCount === 0 && hasPendingConnection;
 }
 
+/** An element that opens an App built in OpenWork through the App's own MCP server. */
+export function isBuiltAppElement(element: { connectionId?: string; toolName: string }): boolean {
+  return element.toolName === "open_app" && element.connectionId?.startsWith("cob_") === true;
+}
+
 /** One MCP App launch tool on one connection, regardless of how it is launched. */
 export function dashboardCapabilityKey(element: { serverName: string; toolName: string }): string {
   return `${element.serverName}:${element.toolName}`;

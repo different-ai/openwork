@@ -7,6 +7,7 @@ import type {
   DenLibraryOrgDirectory,
   DenLibraryPluginItem,
 } from "../../../app/lib/den-library";
+import { clearCloudInventoryCache } from "../connections/cloud-inventory-cache";
 import { isOwnedLibraryPlugin, libraryAudienceFromGrants, type LibraryAudience } from "./library-sharing";
 import { parseSkillMarkdown, skillMarkdown } from "./library";
 
@@ -14,6 +15,8 @@ export type LibraryShareTarget = { kind: "team"; id: string } | { kind: "person"
 
 export type LibraryCloud = {
   ready: boolean;
+  sharingError: boolean;
+  grantsReadyFor: (pluginId: string) => boolean;
   items: DenLibraryItem[];
   directory: DenLibraryOrgDirectory | null;
   pluginById: Map<string, DenLibraryPluginItem>;
@@ -63,28 +66,40 @@ export function useLibraryCloud(input: {
     enabled: input.enabled,
     queryFn: () => input.client.getLibraryOrgDirectory(input.organizationId),
   });
+  const accessQuery = useQuery({
+    queryKey: ["library-cloud-access", ...scope],
+    enabled: input.enabled,
+    queryFn: () => input.client.listManagedPluginAccess(input.organizationId),
+  });
   const items = input.enabled ? itemsQuery.data ?? [] : [];
   const plugins = items.filter((item): item is DenLibraryPluginItem => item.type === "plugin");
   const owned = plugins.filter(isOwnedLibraryPlugin);
+  const listedAccess = accessQuery.data;
+  const unlisted = listedAccess ? owned.filter((plugin) => !listedAccess.has(plugin.id)) : accessQuery.isError ? owned : [];
   const grantQueries = useQueries({
-    queries: owned.map((plugin) => ({
+    queries: unlisted.map((plugin) => ({
       queryKey: ["library-cloud-grants", ...scope, plugin.id],
       enabled: input.enabled,
       queryFn: () => input.client.listPluginAccess(input.organizationId, plugin.id),
     })),
   });
-  const grantsById = new Map(owned.map((plugin, index) => [plugin.id, grantQueries[index]?.data ?? []]));
+  const unlistedGrants = new Map(unlisted.map((plugin, index) => [plugin.id, grantQueries[index]?.data ?? []]));
+  const grantsById = new Map(owned.map((plugin) => [plugin.id, listedAccess?.get(plugin.id) ?? unlistedGrants.get(plugin.id) ?? []]));
   const directory = input.enabled ? directoryQuery.data ?? null : null;
 
   const refresh = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["library-cloud-items", ...scope] }),
+      queryClient.invalidateQueries({ queryKey: ["library-cloud-access", ...scope] }),
       queryClient.invalidateQueries({ queryKey: ["library-cloud-grants", ...scope] }),
+      queryClient.invalidateQueries({ queryKey: ["library-cloud-directory", ...scope] }),
     ]);
   };
 
   return {
     ready: input.enabled && itemsQuery.isSuccess,
+    sharingError: itemsQuery.isError || directoryQuery.isError || grantQueries.some((query) => query.isError),
+    grantsReadyFor: (pluginId) => listedAccess?.has(pluginId) === true || grantQueries[unlisted.findIndex((plugin) => plugin.id === pluginId)]?.isSuccess === true,
     items,
     directory,
     pluginById: new Map(plugins.map((plugin) => [plugin.id, plugin])),
@@ -109,9 +124,11 @@ export function useLibraryCloud(input: {
         if (targets.some((target) => grantMatches(grant, target))) continue;
         await input.client.revokePluginAccess(input.organizationId, pluginId, grant.id);
       }
-      queryClient.setQueryData(
-        ["library-cloud-grants", ...scope, pluginId],
-        await input.client.listPluginAccess(input.organizationId, pluginId),
+      const saved = await input.client.listPluginAccess(input.organizationId, pluginId);
+      queryClient.setQueryData(["library-cloud-grants", ...scope, pluginId], saved);
+      queryClient.setQueryData<Map<string, DenLibraryAccessGrant[]>>(
+        ["library-cloud-access", ...scope],
+        (current) => current && new Map(current).set(pluginId, saved),
       );
       await refresh();
     },
@@ -121,10 +138,14 @@ export function useLibraryCloud(input: {
         ["library-cloud-items", ...scope],
         (current) => current?.filter((item) => item.id !== pluginId),
       );
+      // Archiving can retire the plugin's connections; tell session upkeep to
+      // re-read the org catalog now instead of on its next interval.
+      clearCloudInventoryCache();
       await refresh();
     },
     restore: async (pluginId) => {
       await input.client.restorePlugin(input.organizationId, pluginId);
+      clearCloudInventoryCache();
       await refresh();
     },
     readSkill: async (pluginId) => {

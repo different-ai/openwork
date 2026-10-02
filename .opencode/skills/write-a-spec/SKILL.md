@@ -10,6 +10,39 @@ head and is published as that PR's proof (private report + one PR comment).
 Write the spec for the person who will read that report in thirty seconds,
 not for the machine that runs it.
 
+## Map: from change to reviewed proof
+
+| Moment | Skill | Output |
+| --- | --- | --- |
+| Decide whether a journey is needed and design it | `write-a-spec` (this) | a spec whose titles, steps, and evidence read as the report |
+| Run it and read your own record | `run-tests` | `evals/results/test-runs/<latest>/` with the captions in order |
+| Let a reviewer click through the change | `preview-my-work` | a sandbox link in the report's **Show sandbox** panel |
+| Describe it on the PR | `open-a-pr` | an `## Evidence` line naming the spec and its before → after |
+| A proof or check is red | `diagnose-a-red-run` | classification before any code change |
+| Extra screenshots or a video outside the spec | `record-a-demo`, `upload-photo` | PR attachments (these are not proof) |
+
+### Which lane runs your spec (and when to tag)
+
+CI picks the lane from the file name and tags alone. Pick the lane first:
+it decides the world you can build.
+
+| If the spec… | Name / tag | CI lane |
+| --- | --- | --- |
+| runs in a browser or local world with no secrets (default) | `evals/specs/<journey>.e2e.test.ts` | PR change proof, unprotected |
+| must boot the packaged desktop binary | `evals/specs/packaged-<journey>.e2e.test.ts` | packaged smoke runner |
+| needs a reviewer to reopen the *running* browser at a screenshot | add `{ tags: ["checkpoints"] }` to the `test(...)` options | protected checkpoint lane on Freestyle |
+| needs Windows and a published installer | the existing `windows-published-preview` spec only | Daytona Windows, protected |
+
+Tag `checkpoints` only when a still image cannot show what the reviewer has to
+check: an open stream, a populated workspace to explore, a state that costs
+minutes to reach. The tag moves the spec to a protected lane that uses a
+secret, where fork PRs cannot run. It saves the end state of each tagged test,
+plus every `user.checkpoint("caption")` and every `step(..., { checkpoint: true })`.
+Plain `user.screenshot()` never saves one. Say why in a comment beside the
+tag. Checkpoints cost VM snapshots, so capture the one or two moments a
+reviewer would open, not every step. Run it locally with
+`pnpm evals:e2e <slug> --local --checkpoints` (needs `FREESTYLE_API_KEY`).
+
 ## Do not write one when…
 
 - An existing journey covers the behaviour: extend it. One spec per user
@@ -45,6 +78,11 @@ each comes from one place in your code; write those strings for the reviewer:
 | Caption under a screenshot | the `step("…")` the `user.screenshot()` ran inside | the old state starts `before:`, the new state `after:`; otherwise a plain claim |
 | Caption + judgment on a `looks()` image | the first expectation in `user.looks([...])` | judged later; pending until then, so CI proof stays `Incomplete` |
 | Assertion line | `recordAssertionEvidence(claim, evidence, ok)` | `claim` is the caption, `evidence` the text under it |
+
+Each test is one section, marked with a status icon. Its checks collapse to
+"N of M checks passed" and open only when one fails. Its screenshots form a
+numbered gallery in capture order, so the captions have to tell the story on
+their own. A section with no `recordAssertionEvidence` shows as Incomplete.
 
 A screenshot taken outside any `step()` is captioned "<title> artifact N",
 which tells the reviewer nothing. No verbs like "assert", no selectors, no

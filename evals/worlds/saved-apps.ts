@@ -6,6 +6,7 @@ import type { MockMcpTool } from "@openwork/labs";
 import { go, runWorkflow, saveWorkflow, waitFor } from "@openwork/behaviors";
 import { connect, debuggerUrlFor, evaluate, listTargets } from "@openwork/cdp";
 import { configureProvider } from "./chat.ts";
+import { enableOrgManagedDashboards } from "./dashboards.ts";
 import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 import { reconcileDraftHost } from "../fixtures/cloud-draft-host.ts";
 
@@ -429,6 +430,7 @@ export async function savedAppCreation(seed: Seed) {
       tracker: seed.mock({ allowUnauthenticatedMcp: true, appToolName: "search_issues_using_jql" }),
     },
   });
+  await enableOrgManagedDashboards(seed, den.admin);
   const connection = await seed.orgConnection(den.admin, {
     name: "Issue tracker", url: den.mocks.tracker.mcpUrl,
     authType: "none", credentialMode: "shared", access: { orgWide: true },
@@ -526,7 +528,7 @@ export async function savedAppCreation(seed: Seed) {
     async ageAdminSession() {
       if (den.placement?.kind !== "daytona") throw new Error("Session ageing requires the disposable Daytona database");
       const email = `CONVERT(0x${Buffer.from(den.admin.email).toString("hex")} USING utf8mb4)`;
-      const statement = `UPDATE session SET created_at=DATE_SUB(NOW(3), INTERVAL 20 MINUTE) WHERE user_id IN (SELECT id FROM user WHERE email=${email});`;
+      const statement = `UPDATE session SET created_at=DATE_SUB(NOW(3), INTERVAL 180 MINUTE) WHERE user_id IN (SELECT id FROM user WHERE email=${email});`;
       await execInSandbox(defaultDaytonaExec, den.placement.sandboxId,
         `echo ${Buffer.from(statement).toString("base64")} | base64 -d | mysql -h127.0.0.1 -uroot -ppassword -N openwork_den`,
         { timeoutMs: 30_000, context: "Age the synthetic sharing admin's session" });

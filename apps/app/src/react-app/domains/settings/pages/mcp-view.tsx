@@ -33,6 +33,7 @@ import type { EnablementResult } from "../../../../app/extensions";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "../../../../app/cloud/import-state";
 import { ExtensionCard, type ExtensionLayout } from "../../../design-system/extension-card";
 import { ExtensionDetailModal } from "../../../design-system/extension-detail-modal";
+import { resolveExtensionIconUrl } from "../../../design-system/extension-icon-src";
 import {
   isOrgMcpConnectionReady,
   isOrgMcpConnectionItem,
@@ -133,6 +134,8 @@ import {
   type LibraryAudience,
   type LibrarySection,
 } from "../library-sharing";
+import { seededConnectorDraft } from "../../session/surface/composer/connector-token";
+import { useStartSeededChat } from "../../../shell/use-start-seeded-chat";
 import { libraryConnectorCues } from "../library-connector-cues";
 import { useLibraryCloud, type LibraryEditableSkill, type LibraryShareTarget } from "../use-library-cloud";
 import { AddLibraryItemPage } from "./add-library-item-page";
@@ -568,7 +571,9 @@ export function McpView(props: McpViewProps) {
           ? t("extensions.cloud_choose_org")
           : undefined;
   const addDisabledReason = cloudIssue ?? (!props.createLibraryItem ? t("extensions.cloud_unavailable") : undefined);
-  const addControl = (
+  const signedOut = !libraryCloudSignedIn && denAuth.status !== "checking";
+  // Signed out, every add kind needs Cloud: the sign-in banner carries the action instead.
+  const addControl = signedOut ? null : (
     <LibraryAddControl
       kinds={libraryAddKindsForFilter("all")}
       connectorCues={connectorCues}
@@ -586,6 +591,18 @@ export function McpView(props: McpViewProps) {
     enabled: libraryAddOptions.cloudSignedIn,
   });
   const libraryDirectory = libraryCloud.directory;
+  const startSeededChat = useStartSeededChat();
+  const chatWith = (chips: { skills?: string[]; connectors?: string[] }) => {
+    const draft = [
+      ...(chips.skills ?? []).map((name) => `[skill ${name}]`),
+      ...(chips.connectors ?? []).map((name) => seededConnectorDraft({ connector: name, prompt: "" }).trim()),
+    ].join(" ");
+    return draft ? () => startSeededChat(`${draft} `) : undefined;
+  };
+  const shareOwned = (pluginId: string | undefined) =>
+    pluginId && libraryCloud.ownedPluginIds.has(pluginId) && libraryCloud.pluginById.has(pluginId)
+      ? () => setScreen({ kind: "share", pluginId })
+      : undefined;
   const audienceNameOrNull = (audience: LibraryAudience) =>
     isLibraryAudienceShared(audience) ? libraryAudienceName(audience) : null;
   const markChanged = (pluginId: string, changed: boolean) => {
@@ -1232,6 +1249,7 @@ export function McpView(props: McpViewProps) {
               props.removeMcp(slug);
               closeDetail();
             } : undefined}
+            onChat={chatWith({ connectors: [detailEntry.name] })}
             onHide={() => setOpenWorkExtensionHidden(detailEntry, true)}
             onShow={() => setOpenWorkExtensionHidden(detailEntry, false)}
           />
@@ -1271,6 +1289,7 @@ export function McpView(props: McpViewProps) {
               props.uninstallSkill?.(detailSkill.name);
               closeDetail();
             } : undefined}
+            onChat={chatWith({ skills: [detailSkill.name] })}
             onHide={() => setOpenWorkExtensionHidden(getSkillHiddenId(detailSkill), true)}
             onShow={() => setOpenWorkExtensionHidden(getSkillHiddenId(detailSkill), false)}
           />
@@ -1297,6 +1316,7 @@ export function McpView(props: McpViewProps) {
             ...(detailCommand.agent ? [{ label: t("extensions.detail_fact_agent"), value: detailCommand.agent }] : []),
             ...(detailCommand.model ? [{ label: t("extensions.detail_fact_model"), value: detailCommand.model }] : []),
           ]}
+          onChat={() => startSeededChat(`/${detailCommand.name} `)}
         />
       ) : null}
 
@@ -1354,6 +1374,7 @@ export function McpView(props: McpViewProps) {
               : []),
           ]}
           showEnablementCard
+          onChat={chatWith({ connectors: [detailConnectMcp.name] })}
           configSlot={openInDenAction({ id: detailConnectMcp.id ?? detailConnectMcp.name })}
         />
       ) : null}
@@ -1379,6 +1400,7 @@ export function McpView(props: McpViewProps) {
             errorInfo={readMcpErrorInfo(props.mcpStatuses[detailServer.name])}
             oauth={supportsOauth(detailServer)}
             showEnablementCard={false}
+            onChat={chatWith({ connectors: [displayName(detailServer.name)] })}
             configSlot={(
               <McpConfiguredServerDetails
                 entry={detailServer}
@@ -1408,6 +1430,11 @@ export function McpView(props: McpViewProps) {
         const marketplaceName = detailPlugin.files.find((file) => file.marketplaceName)?.marketplaceName;
         const cloudItem = libraryCloud.pluginById.get(detailPlugin.pluginId);
         const pluginTaxonomy = cloudItem ? libraryCloudItemTaxonomy(cloudItem.componentKinds, cloudItem.componentCount) : "plugin";
+        const filesOfKind = (kind: string) => detailPlugin.files
+          .filter((file) => libraryPluginFileKind(file.objectType) === kind)
+          .map((file) => libraryPluginFileDisplayName(file));
+        const pluginSkills = filesOfKind("skill");
+        const pluginConnectors = filesOfKind("mcp");
         return (
           <ExtensionDetailModal
             open={!!detailPlugin}
@@ -1438,6 +1465,11 @@ export function McpView(props: McpViewProps) {
               };
             })}
             configSlot={openInDenAction({ id: `marketplace:installed:${detailPlugin.pluginId}`, pluginId: detailPlugin.pluginId })}
+            onChat={chatWith({
+              skills: pluginSkills.length === 0 && pluginTaxonomy === "skill" ? [detailPlugin.name] : pluginSkills,
+              connectors: pluginConnectors,
+            })}
+            onShare={shareOwned(detailPlugin.pluginId)}
             onUninstall={props.removeCloudPlugin ? () => {
               void props.removeCloudPlugin?.(detailPlugin.pluginId);
               closeDetail();
@@ -1473,6 +1505,11 @@ export function McpView(props: McpViewProps) {
                 : []),
             ]}
             configSlot={openInDenAction({ id: `marketplace:installed:${plugin.pluginId}`, pluginId: plugin.pluginId })}
+            onChat={kind === "skill"
+              ? chatWith({ skills: [libraryPluginFileDisplayName(file)] })
+              : kind === "mcp"
+                ? chatWith({ connectors: [libraryPluginFileDisplayName(file)] })
+                : undefined}
           />
         );
       })() : null}
@@ -1527,6 +1564,8 @@ export function McpView(props: McpViewProps) {
             onReconnect={ready && canAuthorize && props.reconnectOrgMcp ? () => props.reconnectOrgMcp?.(connection.id) : undefined}
             onUninstall={canDisconnect && props.disconnectOrgMcp ? () => props.disconnectOrgMcp?.(connection.id) : undefined}
             uninstallLabel={t("mcp.org_connection_disconnect_action")}
+            onChat={chatWith({ connectors: [displayName] })}
+            onShare={shareOwned(ownPlugin?.id)}
             closeOnUninstall={false}
             showEnablementCard={false}
             configSlot={(
@@ -1811,7 +1850,6 @@ export function McpView(props: McpViewProps) {
       : t("extensions.section_mine_just_me", { count: String(ownedPlugins.length) }),
     openwork: openworkRowCount > 0 ? t("extensions.section_openwork_meta", { count: String(openworkRowCount) }) : null,
   };
-  const signedOut = !libraryCloudSignedIn && denAuth.status !== "checking";
 
   const inventory = (
     <LibraryInventory
@@ -1929,7 +1967,7 @@ export function McpView(props: McpViewProps) {
       return detailPanels;
     }
     return (
-      <div className="flex w-full max-w-3xl flex-col gap-6 animate-in fade-in duration-300">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 animate-in fade-in duration-300">
         <Button
           variant="ghost"
           size="sm"
@@ -2291,18 +2329,34 @@ function LibrarySectionHeader(props: { section: LibrarySection; label: string; m
 }
 
 /** Rows a signed-out member could use after signing in, shown locked. */
-const lockedLibraryPreviews: Array<{ name: string; description: string; iconSrc?: string; iconSlug?: string }> = [
+const lockedLibraryPreviews: Array<{ name: string; description: string; iconSrc: string }> = [
   { name: "Google Workspace", description: "Gmail, Calendar and Drive", iconSrc: "/ext-google-workspace.svg" },
-  { name: "Slack", description: "Read and post in your channels", iconSlug: "slack" },
+  // Simple Icons no longer ships Slack's mark, so it is bundled like the others.
+  { name: "Slack", description: "Read and post in your channels", iconSrc: "/ext-slack.svg" },
   { name: "Linear", description: "Issues and projects", iconSrc: "/ext-linear.svg" },
 ];
 
+/**
+ * Signed out, adding to the Library needs OpenWork Cloud, so the page's one
+ * primary action is signing in. It lives here, above what it unlocks, instead
+ * of a header "Add to library" that could not do anything.
+ */
 function LibrarySignUpBanner(props: { onSignUp?: () => void }) {
   return (
-    <div data-testid="library-sign-up-banner" className="flex items-center justify-between gap-3 rounded-xl border border-dls-border bg-dls-hover/60 px-4 py-3">
-      <p className="text-[13px] text-dls-text">{t("extensions.sign_up_banner")}</p>
+    <div data-testid="library-sign-up-banner" className="flex items-center gap-4 rounded-xl border border-dls-border bg-dls-surface px-4 py-3">
+      <div className="flex shrink-0 -space-x-1.5" aria-hidden>
+        {lockedLibraryPreviews.map((preview) => {
+          const src = resolveExtensionIconUrl({ iconSrc: preview.iconSrc });
+          return (
+            <span key={preview.name} className="flex size-7 items-center justify-center rounded-lg border border-dls-border bg-dls-surface">
+              {src ? <img src={src} alt="" width={16} height={16} loading="lazy" className="block" /> : null}
+            </span>
+          );
+        })}
+      </div>
+      <p className="min-w-0 flex-1 text-[13px] text-dls-text">{t("extensions.sign_up_banner")}</p>
       {props.onSignUp ? (
-        <Button variant="ghost" size="sm" className="shrink-0 font-semibold" onClick={props.onSignUp}>
+        <Button size="sm" className="shrink-0" onClick={props.onSignUp}>
           {t("extensions.sign_up_action")}
         </Button>
       ) : null}
@@ -2366,7 +2420,6 @@ export function LibraryInventory(props: {
                   name={preview.name}
                   description={preview.description}
                   iconSrc={preview.iconSrc}
-                  iconSlug={preview.iconSlug}
                   taxonomy="connection"
                   disabled
                   trailing={<Lock size={13} className="text-dls-secondary" aria-label={t("extensions.row_locked")} />}

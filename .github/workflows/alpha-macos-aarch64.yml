@@ -161,6 +161,8 @@ jobs:
         shell: bash
         env:
           TARGET: aarch64-apple-darwin
+          # Tags this alpha's version for signed-out Auto; the tag only validates for this exact version.
+          DESKTOP_FREE_RELEASE_KEY: ${{ secrets.DESKTOP_FREE_RELEASE_KEY }}
         run: |
           set -euo pipefail
           # Capture provenance at build start, not when the rolling release or

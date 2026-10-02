@@ -5,6 +5,7 @@ import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import {
   readOpenworkCloudMcpHealth,
   type CloudMcpHealth,
+  type CloudMcpNativeEngineResolver,
   type CloudMcpLiveStatusObserver,
   type CloudMcpProviderModelContext,
   type CloudMcpServerMetadata,
@@ -59,6 +60,7 @@ export type ConnectSnapshot = {
 };
 
 export type ConnectSnapshotOptions = {
+  nativeEngineForWorkspace?: CloudMcpNativeEngineResolver;
   workspaceId?: string;
   directory?: string;
   providerModel?: CloudMcpProviderModelContext;
@@ -271,6 +273,7 @@ async function resolveCloudHealth(config: ServerConfig, options: ConnectSnapshot
     serverMetadata: options.serverMetadata,
     probe: false,
     createWorkspaceOpencodeClient: options.createWorkspaceOpencodeClient,
+    nativeEngineForWorkspace: options.nativeEngineForWorkspace,
     refreshRegistrationFromLiveStatus: options.refreshRegistrationFromLiveStatus,
   });
   return {

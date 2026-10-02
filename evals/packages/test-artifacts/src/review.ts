@@ -97,6 +97,9 @@ export async function assembleReview(options: {
           description: artifact.description,
           judgments,
           asset: await image(join(directory, artifact.fileName)),
+          ...(artifact.checkpoint ? { checkpoint: artifact.checkpoint } : {}),
+          ...(artifact.checkpointMatch ? { checkpointMatch: artifact.checkpointMatch } : {}),
+          ...(artifact.checkpointError ? { checkpointError: artifact.checkpointError } : {}),
         });
       } else {
         if (judgments.length === 0) continue;

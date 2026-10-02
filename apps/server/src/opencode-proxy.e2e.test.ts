@@ -276,7 +276,7 @@ function readinessGate() {
   const entered = deferred();
   const released = deferred();
   let failure: ApiError | undefined;
-  const calls: string[][] = [];
+  const calls: unknown[][] = [];
   return {
     calls,
     entered: entered.promise,
@@ -285,7 +285,7 @@ function readinessGate() {
       failure = new ApiError(503, "fixture_readiness_failed", "Execution readiness failed");
       released.resolve();
     },
-    async wait(...args: string[]) {
+    async wait(...args: unknown[]) {
       calls.push(args);
       entered.resolve();
       await released.promise;
@@ -300,15 +300,16 @@ async function startV2Proxy(options?: MockReadOptions) {
   const engine = startMockOpencode({ ...options, nativeV2Directory: workspaceRoot, foreignSessionDirectory: secondWorkspaceRoot });
   const provider = readinessGate();
   const mcp = readinessGate();
-  const status = () => ({ enabled: true, chatRouting: true, running: true,
+  const status = (): engineV2Preview.EngineV2PreviewStatus => ({ migration: { state: "idle", imported: 0, skipped: 0, total: 0 }, enabled: true, chatRouting: true, running: true,
     mirroredProviderIds: [], skippedProviderIds: [], catalogModelIds: [] });
   // Hold only execution preparation; requests still cross the real HTTP server,
   // auth/policy checks, native proxy and ownership lookup into a loopback witness.
   const preview = spyOn(engineV2Preview, "createEngineV2Preview").mockReturnValue({
-    start() {}, status, setEnabled: async () => status(), setChatRouting: async () => status(),
+    start() {}, migrateHistory: status, status, setEnabled: async () => status(), setChatRouting: async () => status(),
     connection: () => ({ url: `http://127.0.0.1:${engine.server.port}`, username: "opencode", password: "fixture" }),
-    ensureWorkspaceReady: provider.wait, syncWorkspaceMcp: mcp.wait,
-    syncCloudSkills: async () => ({ root: join(workspaceRoot, "cloud-skills"), state: { root: null, skills: [] } }),
+    ensureWorkspaceReady: provider.wait, refreshProviders: async () => {}, syncWorkspaceMcp: mcp.wait,
+    warmWorkspace: () => {},
+    settleWorkspaceSkills: async () => {},
     stop: async () => {},
   });
   try {
@@ -334,6 +335,52 @@ async function waitUntil(predicate: () => boolean, attempts = 20) {
 }
 
 describe("workspace OpenCode proxy", () => {
+  test.serial("history migration requires the host token and explicit consent", async () => {
+    const fixture = await startV2Proxy();
+    const url = `${fixture.base}/experimental/engine-v2-preview/migrate`;
+    const post = (headers: Record<string, string>, body: unknown) => fetch(url, {
+      method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    expect((await post(auth(fixture.token), { confirm: true })).status).toBe(401);
+    const host = { "x-openwork-host-token": fixture.config.hostToken };
+    expect((await post(host, {})).status).toBe(400);
+    expect((await post(host, { confirm: false })).status).toBe(400);
+    expect((await post(host, { confirm: true })).status).toBe(200);
+  });
+
+  test.serial("history migration waits for running v1 tasks unless the person chooses to continue", async () => {
+    const v1 = startMockOpencode();
+    const workspaceRoot = await createWorkspaceRoot();
+    let migrations = 0;
+    const status = (): engineV2Preview.EngineV2PreviewStatus => ({ migration: { state: "idle", imported: 0, skipped: 0, total: 0 },
+      enabled: false, chatRouting: false, running: false, mirroredProviderIds: [], skippedProviderIds: [], catalogModelIds: [] });
+    const preview = spyOn(engineV2Preview, "createEngineV2Preview").mockReturnValue({
+      start() {}, migrateHistory: () => { migrations++; return status(); }, status,
+      setEnabled: async () => status(), setChatRouting: async () => status(), connection: () => undefined,
+      ensureWorkspaceReady: async () => {}, refreshProviders: async () => {}, syncWorkspaceMcp: async () => {},
+      warmWorkspace: () => {}, settleWorkspaceSkills: async () => {}, stop: async () => {},
+    });
+    try {
+      const openwork = await startOpenworkServer({ workspaceRoot, opencodeBaseUrl: `http://127.0.0.1:${v1.server.port}`, readOnly: false });
+      const base = `http://127.0.0.1:${openwork.server.port}`;
+      const activity = await fetch(`${base}/experimental/engine-v2-preview/activity`, { headers: auth(openwork.token) });
+      expect(activity.status).toBe(200);
+      expect(await activity.json()).toMatchObject({ v1: { verdict: "busy", busySessions: 1 }, v2: null });
+      const migrate = (body: unknown) => fetch(`${base}/experimental/engine-v2-preview/migrate`, {
+        method: "POST", headers: { "x-openwork-host-token": openwork.config.hostToken, "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      const blocked = await migrate({ confirm: true });
+      expect(blocked.status).toBe(409);
+      expect(await blocked.json()).toMatchObject({ code: "engine_migration_active_sessions", details: { busySessions: 1 } });
+      expect(migrations).toBe(0);
+      expect((await migrate({ confirm: true, allowActiveSessions: "yes" })).status).toBe(400);
+      expect((await migrate({ confirm: true, allowActiveSessions: true })).status).toBe(200);
+      expect(migrations).toBe(1);
+    } finally {
+      preview.mockRestore();
+    }
+  });
+
   test.serial("prompt admission bypasses held same-directory maintenance", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const engine = startMockOpencode();
@@ -399,7 +446,12 @@ describe("workspace OpenCode proxy", () => {
       signal: AbortSignal.timeout(1_000),
     });
     expect(identity.status).toBe(204);
-    expect(denRequests).toEqual([]);
+    // Identity installation does not wait on Den; the only Den call is the background policy read
+    // (model access is enforced), which must settle before the prompts below.
+    const settle = Date.now() + 2_000;
+    while (!denRequests.length && Date.now() < settle) await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(denRequests.every(({ method, pathname }) => method === "GET" && pathname === "/v1/me/desktop-config")).toBe(true);
     outage = true;
     const denCount = denRequests.length;
     const prompt = (providerID: string, token = openwork.token) => fetch(`${base}/workspace/ws_1/opencode/session/ses_created/prompt_async`, {
@@ -452,7 +504,8 @@ describe("workspace OpenCode proxy", () => {
     const response = await fixture.prompt("local-byok");
     expect(response.status).toBe(204);
     expect(fixture.prompts()).toHaveLength(1);
-    expect(fixture.denRequests).toEqual([]);
+    // Only the background policy read reached Den; a rejected identity never blocks the prompt.
+    expect(fixture.denRequests.every(({ pathname }) => pathname === "/v1/me/desktop-config")).toBe(true);
   });
 
   test.serial("native history pagination exposes cursors to browsers, preserves upstream headers, and verifies every page owner", async () => {
@@ -716,7 +769,7 @@ describe("workspace OpenCode proxy", () => {
     }
   }
 
-  test.serial("v2 session list resolves each directory once per page without caching ownership across pages", async () => {
+  test.serial("v2 session list keeps the original home while resolving a changed working directory once per page", async () => {
     const alias = join(await createWorkspaceRoot(), "alias");
     const sessions = { items: [
       { id: "ses_a", location: { directory: alias } },
@@ -735,7 +788,10 @@ describe("workspace OpenCode proxy", () => {
       await symlink(fixture.secondWorkspaceRoot, alias, "dir");
       const second = await fixture.request("/api/session?cursor=next-page&limit=50");
       expect(second.status).toBe(200);
-      await expect(second.json()).resolves.toEqual({ data: { ...sessions, items: [] } });
+      await expect(second.json()).resolves.toEqual({ data: { ...sessions, items: [
+        { ...sessions.items[0], openworkHomeDirectory: await fs.realpath(fixture.workspaceRoot) },
+        { info: { id: "ses_b", location: { directory: alias }, openworkHomeDirectory: await fs.realpath(fixture.workspaceRoot) } },
+      ] } });
       expect(resolvePath.mock.calls.filter(([directory]) => directory === alias)).toHaveLength(2);
       expect(fixture.provider.calls).toEqual([]);
       expect(fixture.mcp.calls).toEqual([]);
@@ -744,96 +800,122 @@ describe("workspace OpenCode proxy", () => {
     }
   });
 
-  test.serial("v2 stored history responds while provider and MCP readiness are held; prompts wait for both", async () => {
+  test.serial("v2 stored history responds while provider readiness is held; prompts wait for providers, never for MCP upkeep", async () => {
     const fixture = await startV2Proxy();
     let promptSettled = false;
     const prompt = fixture.request("/api/session/ses_1/prompt", { method: "POST", body: JSON.stringify({ parts: [] }) })
       .finally(() => { promptSettled = true; });
-    for (const gate of [fixture.provider, fixture.mcp]) {
-      await gate.entered;
-      const before = fixture.engine.requests.length;
-      const list = await fixture.request(`/api/session?limit=50&location[directory]=${encodeURIComponent(fixture.secondWorkspaceRoot)}`);
-      expect(list.status).toBe(200);
-      await expect(list.json()).resolves.toEqual({ data: [{ id: "ses_1", location: { directory: fixture.workspaceRoot } }] });
-      for (const suffix of ["", "/message", "/message/msg_1"]) {
-        const query = new URLSearchParams({ "location[directory]": fixture.secondWorkspaceRoot,
-          "location[project]": "foreign", location: "foreign", limit: "50" });
-        query.append("location[directory]", "another-directory");
-        const response = await fixture.request(`/api/session/ses_1${suffix}?${query}`, {
-          headers: { ...auth(fixture.token), "x-opencode-directory": fixture.secondWorkspaceRoot },
-        });
-        expect(response.status).toBe(200);
-        const payload = await response.json();
-        expect(JSON.stringify(payload)).toContain(suffix ? "Stored history" : "Stored thread");
-      }
-      const reads = fixture.engine.requests.slice(before);
-      expect(reads.map((item) => item.pathname)).toEqual([
-        "/api/session",
-        "/api/session/ses_1", "/api/session/ses_1",
-        "/api/session/ses_1", "/api/session/ses_1/message",
-        "/api/session/ses_1", "/api/session/ses_1/message/msg_1",
-      ]);
-      for (const read of reads) {
-        expect(read.method).toBe("GET");
-        expect(read.directory).toBe(fixture.workspaceRoot);
-        const query = new URLSearchParams(read.search);
-        expect([...query.keys()].filter((key) => key.startsWith("location"))).toEqual(["location[directory]"]);
-      }
-      expect(promptSettled).toBe(false);
-      gate.release();
+    await fixture.provider.entered;
+    const before = fixture.engine.requests.length;
+    const list = await fixture.request(`/api/session?limit=50&location[directory]=${encodeURIComponent(fixture.secondWorkspaceRoot)}`);
+    expect(list.status).toBe(200);
+    await expect(list.json()).resolves.toEqual({ data: [{ id: "ses_1", location: { directory: fixture.workspaceRoot } }] });
+    for (const suffix of ["", "/message", "/message/msg_1"]) {
+      const query = new URLSearchParams({ "location[directory]": fixture.secondWorkspaceRoot,
+        "location[project]": "foreign", location: "foreign", limit: "50" });
+      query.append("location[directory]", "another-directory");
+      const response = await fixture.request(`/api/session/ses_1${suffix}?${query}`, {
+        headers: { ...auth(fixture.token), "x-opencode-directory": fixture.secondWorkspaceRoot },
+      });
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(JSON.stringify(payload)).toContain(suffix ? "Stored history" : "Stored thread");
     }
+    const reads = fixture.engine.requests.slice(before);
+    const paths = reads.map((item) => item.pathname);
+    // The held prompt already verified (and stored) ses_1's home before joining
+    // upkeep, so listing backfills only the foreign session's home.
+    expect(paths.slice(1, 2)).toEqual(["/api/session/ses_foreign/message"]);
+    expect([paths[0], ...paths.slice(2)]).toEqual([
+      "/api/session",
+      "/api/session/ses_1", "/api/session/ses_1",
+      "/api/session/ses_1", "/api/session/ses_1/message",
+      "/api/session/ses_1", "/api/session/ses_1/message/msg_1",
+    ]);
+    for (const read of reads) {
+      expect(read.method).toBe("GET");
+      expect(read.directory).toBe(fixture.workspaceRoot);
+      const query = new URLSearchParams(read.search);
+      expect([...query.keys()].filter((key) => key.startsWith("location"))).toEqual(["location[directory]"]);
+    }
+    expect(promptSettled).toBe(false);
+    fixture.provider.release();
+    // MCP upkeep stays held for the whole prompt: the turn never waits on it.
     expect((await prompt).status).toBe(200);
     expect(fixture.provider.calls).toEqual([[fixture.workspaceRoot]]);
-    expect(fixture.mcp.calls).toEqual([["ws_1", fixture.workspaceRoot]]);
-    expect(fixture.engine.requests.slice(-5).map((item) => `${item.method} ${item.pathname}`)).toEqual([
-      "GET /api/session/ses_1", "GET /api/mcp", "GET /api/skill",
-      "PUT /api/session/ses_1/instructions/entries/openwork.context", "POST /api/session/ses_1/prompt",
+    expect(fixture.mcp.calls).toEqual([]);
+    // Ownership is verified before the prompt joins its folder's provider readiness.
+    expect(fixture.engine.requests.slice(-3).map((item) => `${item.method} ${item.pathname}`)).toEqual([
+      "GET /api/mcp", "PUT /api/session/ses_1/instructions/entries/openwork.context", "POST /api/session/ses_1/prompt",
     ]);
   });
 
-  for (const failingGate of ["provider", "mcp"]) {
-    test.serial(`v2 history survives failed ${failingGate} readiness without admitting other reads or mutations`, async () => {
+  test.serial("v1's connect route restarts that connection through OpenWork instead of reaching v2", async () => {
+    const fixture = await startV2Proxy();
+    fixture.mcp.release();
+    const response = await fixture.request("/mcp/design-app/connect", { method: "POST" });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toBe(true);
+    expect(fixture.mcp.calls).toEqual([["ws_1", fixture.workspaceRoot, { reconnect: ["design-app"] }]]);
+    expect(fixture.engine.requests).toEqual([]);
+  });
+
+  test.serial("v2 reads and non-execution writes never wait on held upkeep; catalog reads wait for providers only", async () => {
+    // Matches v1: provider mirroring and MCP registration run when their
+    // configuration changes and never hold requests. Only the provider
+    // catalog waits, because a folder the engine has not loaded briefly
+    // omits configured providers.
+    const fixture = await startV2Proxy();
+    const plain: Array<[string, string]> = [
+      ["GET", "/api/session/active"], ["GET", "/api/session/status"], ["GET", "/api/session/ses_1/permission"],
+      ["GET", "/api/session/ses_1/todo"], ["GET", "/api/permission"], ["GET", "/api/form/request"],
+      ["GET", "/api/event/unknown"], ["HEAD", "/api/session"], ["POST", "/api/session"], ["PATCH", "/api/session/ses_1"],
+    ];
+    for (const [method, path] of plain) {
+      const response = await fixture.request(path, { method, ...(method === "POST" ? { body: "{}" } : {}) });
+      expect({ method, path, status: response.status === 503 ? 503 : "answered" }).toEqual({ method, path, status: "answered" });
+    }
+    let settled = 0;
+    const catalog = ["/api/model", "/api/provider", "/api/%6dodel"].map((path) => fixture.request(path).finally(() => { settled++; }));
+    await fixture.provider.entered;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(settled).toBe(0);
+    fixture.provider.release();
+    for (const response of await Promise.all(catalog)) expect(response.status).not.toBe(503);
+    expect(fixture.provider.calls).toEqual([[fixture.workspaceRoot], [fixture.workspaceRoot], [fixture.workspaceRoot]]);
+    expect(fixture.mcp.calls).toEqual([]);
+  });
+
+  for (const failingGate of ["provider"]) {
+    test.serial(`failed ${failingGate} upkeep refuses execution only; reads and other writes still reach the engine`, async () => {
+      // Provider readiness fails outright only when execution must not
+      // proceed. Like v1, that never takes reads or conversation management
+      // offline. MCP upkeep is never on this path.
       const fixture = await startV2Proxy();
-      if (failingGate === "provider") { fixture.provider.fail(); fixture.mcp.release(); }
-      else { fixture.provider.release(); fixture.mcp.fail(); }
-      const guarded: Array<[string, string]> = [
-        ["GET", "/api/session/"], ["GET", "/api/%73ession"], ["HEAD", "/api/session"],
-        ["GET", "/api/session/status"], ["GET", "/api/session/active"],
-        ["GET", "/api/session/ses_1/todo"], ["GET", "/api/session/ses_1/permission"],
-        ["GET", "/api/permission"], ["GET", "/api/form/request"], ["GET", "/api/provider"],
-        ["GET", "/api/session/ses_1/unknown"], ["GET", "/api/session/status/message"],
-        ["GET", "/api/session/ses_1/messages"], ["GET", "/api/session/ses_1/message/"],
-        ["GET", "/api/session/ses_1/message/msg_1/part/prt_1"],
-        ["GET", "/apix/session/ses_1/message"], ["GET", "/api/%73ession/ses_1/message"],
-        ["GET", "/api/session/%73es_1/message"], ["GET", "/api/session/ses_1/%6dessage"],
-        ["GET", "/api/session/ses_1/message/%6dsg_1"],
-        ["GET", "/api/session/ses_1%2Fprompt/message"], ["GET", "/api/session/ses_1%252Fprompt/message"],
-        ["GET", "/api/session/ses_1/message/msg_1%2F..%2Fprompt"],
-        ["GET", "/api/session/ses_1/message/%2e%2e/prompt"],
-        ["HEAD", "/api/session/ses_1/message"],
-        ["POST", "/api/session"], ["POST", "/api/session/ses_1/prompt"],
-        ["POST", "/api/session/ses_1/command"], ["POST", "/api/session/ses_1/generate"],
-        ["POST", "/api/session/ses_1/message"], ["PUT", "/api/session/ses_1/message/msg_1"],
+      fixture.provider.fail();
+      const execution: Array<[string, string]> = [
+        ["POST", "/api/session/ses_1/prompt"], ["POST", "/api/session/ses_1/command"], ["POST", "/api/session/ses_1/generate"],
+      ];
+      for (const [method, path] of execution) {
+        const response = await fixture.request(path, { method, body: JSON.stringify({ parts: [] }) });
+        expect({ method, path, status: response.status }).toEqual({ method, path, status: 503 });
+        await expect(response.json()).resolves.toMatchObject({ code: "fixture_readiness_failed" });
+      }
+      expect(fixture.engine.requests.filter((item) => item.method !== "GET")).toEqual([]);
+      const catalog = await fixture.request("/api/provider");
+      expect(catalog.status === 503).toBe(failingGate === "provider");
+      const answered: Array<[string, string]> = [
+        ["GET", "/api/session/active"], ["GET", "/api/session/ses_1/permission"], ["GET", "/api/form/request"],
+        ["GET", "/api/session"], ["GET", "/api/session/ses_1"], ["GET", "/api/session/ses_1/message"],
         ["PATCH", "/api/session/ses_1"], ["DELETE", "/api/session/ses_1/message/msg_1"],
       ];
-      for (const [method, path] of guarded) {
+      for (const [method, path] of answered) {
         const response = await fixture.request(path, { method });
-        expect({ method, path, status: response.status }).toEqual({ method, path, status: 503 });
-        if (method !== "HEAD") await expect(response.json()).resolves.toMatchObject({ code: "fixture_readiness_failed" });
+        expect({ method, path, status: response.status === 503 ? 503 : "answered" }).toEqual({ method, path, status: "answered" });
       }
-      expect(fixture.engine.requests).toEqual([]);
-      expect(fixture.provider.calls).toHaveLength(guarded.length);
-      expect(fixture.mcp.calls).toHaveLength(failingGate === "provider" ? 0 : guarded.length);
-      const list = await fixture.request("/api/session");
-      expect(list.status).toBe(200);
-      await expect(list.json()).resolves.toEqual({ data: [{ id: "ses_1", location: { directory: fixture.workspaceRoot } }] });
-      for (const suffix of ["", "/message", "/message/msg_1"]) {
-        const response = await fixture.request(`/api/session/ses_1${suffix}`);
-        expect(response.status).toBe(200);
-        expect(JSON.stringify(await response.json())).toContain(suffix ? "Stored history" : "Stored thread");
-      }
-      expect(fixture.provider.calls).toHaveLength(guarded.length);
-      expect(fixture.mcp.calls).toHaveLength(failingGate === "provider" ? 0 : guarded.length);
+      const paths = fixture.engine.requests.map((item) => `${item.method} ${item.pathname}`);
+      expect(paths).toContain("PATCH /api/session/ses_1");
+      expect(paths).toContain("GET /api/session/ses_1/message");
     });
   }
 

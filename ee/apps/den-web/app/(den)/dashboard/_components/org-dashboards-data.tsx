@@ -91,6 +91,7 @@ export const orgDashboardsQueryKeys = {
     "connection-apps",
     connectionId,
   ] as const,
+  builtApps: (organizationId: string) => [...orgDashboardsQueryKeys.organization(organizationId), "built-apps"] as const,
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -403,6 +404,32 @@ export function useConnectionMcpAppCatalog(connections: Array<{ id: string; name
           ? results.find((result) => result.error)?.error ?? null
           : null,
       };
+    },
+  });
+}
+
+/**
+ * Apps built in OpenWork that the admin can use, in the same element shape,
+ * each labelled with its Plugin. Servers without App servers list none.
+ */
+export function useBuiltMcpAppCatalog() {
+  const { orgContext } = useOrgDashboard();
+  const organizationId = orgContext?.organization.id ?? "";
+  return useQuery({
+    enabled: Boolean(organizationId) && orgContext?.capabilities.appMcpServers === true,
+    queryKey: orgDashboardsQueryKeys.builtApps(organizationId),
+    queryFn: async (): Promise<ConnectionMcpAppCatalogItem[]> => {
+      const { response, payload } = await requestJson("/v1/mcp-apps", { method: "GET" }, 20000);
+      if (response.status === 404) return [];
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, `Failed to load Apps built in OpenWork (${response.status}).`));
+      }
+      const apps = isRecord(payload) && Array.isArray(payload.apps) ? payload.apps : [];
+      return apps.flatMap((value): ConnectionMcpAppCatalogItem[] => {
+        const app = parseConnectionApp(value);
+        if (!app || !isRecord(value)) return [];
+        return [{ ...app, connectionName: readString(value.pluginName) ?? app.title }];
+      });
     },
   });
 }

@@ -1,4 +1,6 @@
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
+import { MEMBER_FREE_STATUS_PATH, MEMBER_FREE_RESPONSES_PATH } from "@openwork/free-auto"
+import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
 import { createInferenceEgressFetch, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
 import { Hono } from "hono"
 import type { Context } from "hono"
@@ -30,6 +32,7 @@ import { isJsonContentType, readBoundedBody, RequestBodyLimitError } from "./rel
 import { createRequestLogRecorder, insertRequestLogIntoDb } from "./request-log.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
 import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usage/openai-chat.js"
+import type { FreeMemberHandler } from "./free/member/handler.js"
 import type { ParsedUsage } from "./usage/shared.js"
 
 type JsonObject = Record<string, unknown>
@@ -52,6 +55,20 @@ export type InferenceEnv = { Variables: InferenceAuthVariables & OrganizationVar
 
 const chatCompletionsPath = "/api/v1/chat/completions"
 const modelsPath = "/api/v1/models"
+
+/**
+ * Free Auto on a key whose organization pays for OpenWork Models: the Auto status check, or a chat request for the
+ * Auto model. Those go to the free handler, which bills the member's free allowance, never the organization.
+ */
+async function isFreeAutoRequest(request: Request): Promise<boolean> {
+  const path = new URL(request.url).pathname
+  if (request.method === "GET" && path === MEMBER_FREE_STATUS_PATH) return true
+  if (request.method !== "POST" || (path !== chatCompletionsPath && path !== MEMBER_FREE_RESPONSES_PATH)) return false
+  try {
+    const body: unknown = await request.clone().json()
+    return isJsonObject(body) && body.model === INFERENCE_FREE_MODEL_ID
+  } catch { return false }
+}
 const topLevelModelSelectorFields = ["models", "fallbacks", "preset", "route"]
 const pluginModelSelectorFields = ["model", "analysis_models", "allowed_models"]
 const blockedServerToolTypes = new Set([
@@ -85,7 +102,13 @@ const defaultProxyDependencies: ProxyDependencies = {
   },
   loadOrganization: loadOrganizationFromDb,
   insertRequestLog: insertRequestLogIntoDb,
+  async freeMember(c, key) {
+    const { createFreeMemberHandler } = await import("./free/member/handler.js")
+    freeMemberHandler ??= createFreeMemberHandler()
+    return freeMemberHandler(c, key)
+  },
 }
+let freeMemberHandler: FreeMemberHandler | undefined
 
 type ProxyDependencies = {
   findActiveGatewayKey?: typeof findActiveGatewayKey
@@ -100,6 +123,8 @@ type ProxyDependencies = {
   reporter?: InferenceReporter
   analytics?: typeof beginModelAnalytics
   gateway?: Partial<GatewayDependencies>
+  /** Serves free Auto to members of organizations without an OpenWork Models subscription. */
+  freeMember?: FreeMemberHandler
 }
 
 function isJsonRequest(request: Request) {
@@ -513,8 +538,10 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     const inferenceKey = identity.key
     const inference = c.get("organization")?.metadata?.inference
     if (!isJsonObject(inference) || inference.enabled !== true) {
+      if (dependencies.freeMember) return dependencies.freeMember(c, inferenceKey)
       return openAiError(403, "inference_disabled", "OpenWork Models are not enabled for this organization.")
     }
+    if (dependencies.freeMember && await isFreeAutoRequest(c.req.raw)) return dependencies.freeMember(c, inferenceKey)
 
     const policyRejection = await managedModelsRejection(inferenceKey.organization_id)
     if (policyRejection) return policyRejection

@@ -128,6 +128,7 @@ allowBuilds:
   protobufjs: true
   sharp: true
 patchedDependencies:
+  '@better-auth/cimd@1.7.0-beta.10': patches/@better-auth__cimd@1.7.0-beta.10.patch
   '@better-auth/drizzle-adapter@1.7.0-beta.10': patches/@better-auth__drizzle-adapter@1.7.0-beta.10.patch
   '@better-auth/sso@1.7.0-beta.10': patches/@better-auth__sso@1.7.0-beta.10.patch
   '@modelcontextprotocol/client@2.0.0': patches/@modelcontextprotocol__client@2.0.0.patch

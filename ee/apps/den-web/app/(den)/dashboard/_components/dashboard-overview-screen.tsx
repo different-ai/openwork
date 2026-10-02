@@ -9,7 +9,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { requestJson } from "../../_lib/den-flow";
-import { getMcpConnectionsRoute } from "../../_lib/den-org";
+import { getAddConnectorRoute, getMcpConnectionsRoute } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ConnectorQuickAddGrid } from "./connector-quick-add-grid";
@@ -136,11 +136,11 @@ export function DashboardOverviewScreen() {
           presets={presets}
           filter=""
           onSelect={(id) => {
-            router.push(`${getMcpConnectionsRoute(activeOrg?.slug)}?quickAdd=${encodeURIComponent(id)}`);
+            router.push(getAddConnectorRoute(activeOrg?.slug, id));
           }}
           onManage={() => router.push(getMcpConnectionsRoute(activeOrg?.slug))}
           onInstantAdd={(preset) => {
-            router.push(`${getMcpConnectionsRoute(activeOrg?.slug)}?quickAdd=${encodeURIComponent(preset.presetId)}`);
+            router.push(getAddConnectorRoute(activeOrg?.slug, preset.presetId));
           }}
           instantAddingPresetId={null}
         />

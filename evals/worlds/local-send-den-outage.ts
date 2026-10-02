@@ -1,13 +1,12 @@
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
-import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
+import type { Seed } from "@openwork/env";
 import { readHeadlessRuntimeManifest, resolveHeadlessWorldRuntimePaths } from "@openwork/world";
 import { sessionlessFirstSendWorld } from "./first-run.ts";
 import { eventually } from "@openwork/testkit";
 
 export async function localSendDenOutageWorld(seed: Seed) {
-  if (resolveEvalEngine() !== "v1") throw new SkipError("DEN-LOCAL-SEND requires the real v1 engine");
-  const base = await sessionlessFirstSendWorld(seed);
+  const base = await sessionlessFirstSendWorld(seed, { engine: "v1" });
   await using setup = new AsyncDisposableStack();
   let unavailable = false;
   const counts: { method: string; path: string; status: number; count: number }[] = [];

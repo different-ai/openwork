@@ -2,6 +2,7 @@ import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { beforeAll, describe, expect, test } from "bun:test"
 import type { CloudProviderMaterializationProvider } from "../src/llm/cloud-provider-materialization.js"
 import { runtimeProviderEnvTag } from "../src/llm/provider-credentials.js"
+import { buildGatewayModelConfig, buildGatewayProviderConfig, gatewayModelConfigurationError } from "../src/llm/inference-provider-config.js"
 import { materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast"
 
 // Fixed row ids so the provider-scoped runtime env names are stable across
@@ -221,6 +222,25 @@ function makeAzureProvider(apiKeys: Record<string, string>): CloudProviderMateri
   }
 }
 
+function makePerMemberProvider(apiKey: string | null): CloudProviderMaterializationProvider {
+  return {
+    id: "lpr_01kx4t3aqfendr688a4dedf2m6",
+    source: "custom",
+    providerId: "member-gateway",
+    name: "Member gateway",
+    credentialMode: "per_member",
+    providerConfig: {
+      id: "member-gateway",
+      name: "Member gateway",
+      npm: "@ai-sdk/openai-compatible",
+      env: ["MEMBER_GATEWAY_API_KEY"],
+      api: "https://gateway.example.test/v1",
+    },
+    apiKey,
+    models: [{ modelId: "team-model", name: "Team model", modelConfig: { id: "team-model", name: "Team model" } }],
+  }
+}
+
 function makeStore(providers: () => CloudProviderMaterializationProvider[]): Store {
   return {
     async listProviders() {
@@ -435,6 +455,18 @@ describe("Cloud provider materialization", () => {
     expect(next.status).toBe("noop")
     expect(writeCalls(restarted.calls)).toEqual([])
   })
+  test("materializes Anthropic catalog efforts for gateway aliases without guessing from their IDs", async () => {
+    const provider = makeAnthropicProvider({ apiKey: "synthetic" })
+    provider.models = [{ modelId: "gateway-model-1", name: "Claude Opus 5.5", modelConfig: {
+      reasoning: true, reasoning_options: [{ type: "effort", values: ["low", "medium", "high", "xhigh", "max"] }],
+    } }]
+    const instance = makeInstance()
+    expect((await materialize({ providers: () => [provider], fetchImpl: instance.fetchImpl, force: true })).status).toBe("applied")
+    expect(instance.runtimeProvider(provider.id)).toMatchObject({ models: { "gateway-model-1": { variants: {
+      low: { effort: "low" }, medium: { effort: "medium" }, high: { effort: "high" }, xhigh: { effort: "xhigh" }, max: { effort: "max" },
+    } } } })
+    expect((await materialize({ providers: () => [provider], fetchImpl: instance.fetchImpl, force: true })).status).toBe("noop")
+  })
   test("does not rewrite matching provider state after the den-api cache is lost", async () => {
     const provider = makeAnthropicProvider({ apiKey: "sk-anthropic" })
     const instance = makeInstance({
@@ -566,6 +598,76 @@ describe("Cloud provider materialization", () => {
     })
   })
 
+  for (const fixture of [
+    { providerId: "google-vertex", sourceNpm: "@ai-sdk/google-vertex", clientNpm: "@ai-sdk/google", env: "GOOGLE_GENERATIVE_AI_API_KEY" },
+    { providerId: "google-vertex-anthropic", sourceNpm: "@ai-sdk/google-vertex/anthropic", clientNpm: "@ai-sdk/anthropic", env: "ANTHROPIC_API_KEY" },
+  ]) {
+    for (const override of ["none", "model", "provider", "both"]) {
+      test(`materializes ${fixture.providerId} with ${override} SDK overrides using only Gateway credentials`, async () => {
+        const modelOverride = override === "model" || override === "both"
+        const providerOverride = override === "provider" || override === "both"
+        const gatewayBase = "https://gateway.example.test"
+        const api = `${gatewayBase}/api/v1/providers/${GATEWAY_PROVIDER_ID}`
+        const modelId = "gwm_fixture"
+        const memberKey = "ow_gw_synthetic_member_key"
+        const envName = `${runtimeProviderEnvTag(GATEWAY_PROVIDER_ID)}_${fixture.env}`
+        const sourceProvider = {
+          id: fixture.providerId, npm: fixture.sourceNpm,
+          env: ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_VERTEX_PROJECT", "GOOGLE_VERTEX_LOCATION"],
+        }
+        const routing = { api: "https://catalog.example.test/v1" }
+        const metadata = {
+          tool_call: true, reasoning: true, attachment: true,
+          modalities: { input: ["text", "image"], output: ["text"] },
+          limit: { context: 128000, output: 8192 }, cost: { input: 1, output: 5 },
+          options: { temperature: 0.2 }, variants: { careful: { temperature: 0.1 } },
+        }
+        const sourceModel = {
+          ...metadata,
+          ...(modelOverride ? { npm: fixture.sourceNpm } : {}),
+          provider: { ...routing, ...(providerOverride ? { npm: fixture.sourceNpm } : {}) },
+        }
+        expect(gatewayModelConfigurationError(sourceProvider, [sourceModel])).toBeNull()
+        const gateway = gatewayMaterializationProvider({
+          id: GATEWAY_PROVIDER_ID, source: "openwork_gateway", providerId: fixture.providerId,
+          name: "Vertex via Gateway", credentialMode: "member", credentialStatus: "ready",
+          authUrl: null, status: "active", updatedAt: "2026-09-22T00:00:00.000Z",
+          providerConfig: buildGatewayProviderConfig({ id: GATEWAY_PROVIDER_ID, provider_config: sourceProvider }, gatewayBase),
+          modelIds: ["upstream-model"], authorizationRequests: [],
+          models: [{
+            id: modelId, name: "Selected model",
+            config: buildGatewayModelConfig({ id: modelId, name: "Selected model", config: sourceModel }),
+            upstreamModelId: "upstream-model", modelGroupId: "gateway-group", modelGroupName: "Gateway group",
+            credentialSetId: "gateway-set", credentialSetName: "Member sign-in",
+          }],
+        }, memberKey)
+        const instance = makeInstance()
+        const result = await materialize({ providers: () => [gateway], fetchImpl: instance.fetchImpl, force: true })
+        expect(result).toMatchObject({ ok: true, status: "applied", providers: 1 })
+        expect(instance.calls.find((call) => call.method === "PUT" && call.path === "/env")?.body).toEqual({
+          entries: [{ key: envName, value: memberKey }],
+        })
+        const runtime = instance.runtimeProvider(GATEWAY_PROVIDER_ID)
+        expect(runtime).toEqual({
+          id: fixture.providerId, name: "Vertex via Gateway", npm: fixture.clientNpm,
+          api, options: { baseURL: api }, env: [envName],
+          models: { [modelId]: {
+            id: modelId, name: "Selected model", ...metadata,
+            provider: { ...routing, ...(providerOverride ? { npm: fixture.clientNpm } : {}) },
+            headers: { "x-openwork-gateway-request-model": modelId },
+          } },
+        })
+        expect(JSON.stringify(runtime)).not.toContain("@ai-sdk/google-vertex")
+        expect(JSON.stringify(runtime)).not.toContain(memberKey)
+        for (const name of ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_VERTEX_PROJECT", "GOOGLE_VERTEX_LOCATION", fixture.env]) {
+          expect(instance.envValue(name)).toBeNull()
+        }
+        expect(sourceModel.provider).toEqual({ ...routing, ...(providerOverride ? { npm: fixture.sourceNpm } : {}) })
+        expect(sourceProvider.npm).toBe(fixture.sourceNpm)
+      })
+    }
+  }
+
   test("removes a Gateway provider that is no longer in the member's usable inventory", async () => {
     const instance = makeInstance({
       envValues: { [GATEWAY_API_KEY_ENV]: "ow_gw_synthetic_member_key" },
@@ -661,6 +763,59 @@ describe("Cloud provider materialization", () => {
       entries: [{ key: "OPENAI_API_KEY", value: "sk-gateway" }],
     })
     expect(instance.runtimeProvider(provider.id)).toMatchObject({ id: "gateway", env: ["OPENAI_API_KEY"] })
+  })
+
+  test("a per-member provider reaches the worker with the credential resolved for its owner", async () => {
+    // Organizations that provision one credential per member store no
+    // organization key; the store hands over the worker owner's own binding.
+    const provider = makePerMemberProvider("owner-member-token")
+    const instance = makeInstance()
+
+    const result = await materialize({ providers: () => [provider], fetchImpl: instance.fetchImpl, force: true })
+
+    expect(result).toMatchObject({ ok: true, status: "applied", providers: 1 })
+    expect(instance.calls.find((call) => call.method === "PUT" && call.path === "/env")?.body).toEqual({
+      entries: [{ key: "MEMBER_GATEWAY_API_KEY", value: "owner-member-token" }],
+    })
+    expect(instance.runtimeProvider(provider.id)).toMatchObject({
+      id: "member-gateway",
+      env: ["MEMBER_GATEWAY_API_KEY"],
+      api: "https://gateway.example.test/v1",
+    })
+  })
+
+  test("names a provider it leaves out for lack of a credential, once per change", async () => {
+    const provider = makePerMemberProvider(null)
+    const instance = makeInstance()
+    const workerId = createDenTypeId("worker")
+    const logs: Array<{ message: string; metadata?: Record<string, unknown> }> = []
+    const logger: Logger = {
+      warn(message, metadata) {
+        logs.push({ message, metadata })
+      },
+      error(message, metadata) {
+        logs.push({ message, metadata })
+      },
+    }
+
+    const first = await materialize({ workerId, providers: () => [provider], fetchImpl: instance.fetchImpl, logger })
+    const second = await materialize({ workerId, providers: () => [provider], fetchImpl: instance.fetchImpl, logger })
+
+    expect(first).toMatchObject({ ok: true, status: "noop", providers: 0 })
+    expect(second).toMatchObject({ ok: true, status: "cached", providers: 0 })
+    expect(writeCalls(instance.calls)).toEqual([])
+    expect(logs).toEqual([
+      {
+        message: "cloud provider skipped without a usable credential",
+        metadata: {
+          worker_id: workerId,
+          organization_id: organizationId,
+          provider_id: provider.id,
+          source: "custom",
+          credential_mode: "per_member",
+        },
+      },
+    ])
   })
 
   test("does not materialize Azure from a resource name without its API key", async () => {

@@ -1,34 +1,66 @@
 ---
 title: "Sign in with ChatGPT"
-description: "Use ChatGPT OAuth as a local model provider in OpenWork"
+description: "Use your ChatGPT Plus or Pro subscription as a model provider in the OpenWork desktop app."
+keywords: ["chatgpt", "openai", "chatgpt plus", "chatgpt pro", "sign in", "connect provider", "gpt", "subscription", "oauth"]
 ---
 
 <Note>
 **Local provider setup.** This connects ChatGPT directly to the desktop app. OpenWork remains free, and you do not need to sign in to OpenWork Cloud. For model access managed by your organization, see [Adding a managed LLM provider](/cloud/share-with-your-team/managed-llm-provider).
 </Note>
 
-Connecting ChatGPT with OpenWork takes four clicks.
+If you pay for ChatGPT, you can use that subscription to run OpenWork. You sign in to OpenAI once, then pick a ChatGPT model in any chat.
 
-- Go to `Settings` \> `Connect Provider` \> `OpenAI` \> `ChatGPT Pro/Plus`
+## Before you start
 
-<Frame>
-  ![Settings page showing Connect Provider button](/images/chatgpt-connect-provider-settings.png)
-</Frame>
+- You need a paid ChatGPT plan, such as Plus or Pro.
+- Use the email address that holds that subscription when you sign in.
 
-Then sign in to OpenAI with the email for your valid subscription.
+## Connect ChatGPT
 
-<Frame>
-  ![OpenAI authentication login page](/images/chatgpt-openai-auth-login.png)
-</Frame>
-
-Once you have finished the auth, you can change the model below in the chat.
+1. Open **Settings › AI Providers**.
+2. Click **Connect provider**. The **Connect providers** dialog opens.
 
 <Frame>
-  ![Model selector dropdown in chat](/images/chatgpt-model-selector.png)
+  ![The Connect provider button in OpenWork settings](/images/chatgpt-connect-provider-settings.png)
 </Frame>
 
-You will be able to choose among any model offered by all the providers you're connected to:
+3. Choose **OpenAI**. You see "Choose how you'd like to connect."
+4. Choose the ChatGPT subscription option. It is named as in the provider list, for example **ChatGPT Pro/Plus**.
+5. A browser tab opens. Sign in to OpenAI with the email for your subscription.
 
 <Frame>
-  ![Model list showing available models from all providers](/images/chatgpt-model-list.png)
+  ![OpenAI sign-in page in the browser](/images/chatgpt-openai-auth-login.png)
 </Frame>
+
+6. Return to OpenWork. The dialog shows "Waiting for browser confirmation." and closes by itself once OpenAI confirms the sign-in.
+
+If the browser tab didn't open or you closed it, click **Open browser again**.
+
+### On a remote workspace
+
+When your workspace runs on another machine, OpenWork uses a sign-in code instead:
+
+1. In ChatGPT, turn on device code sign-in once: **Account Settings › Security › Enable device code authorization**.
+2. In OpenWork, click **Copy** next to the **Confirmation code**.
+3. Click **Open Browser**, sign in to OpenAI, and paste the code.
+
+OpenWork checks the connection automatically and closes the dialog when it's done.
+
+## Pick a ChatGPT model
+
+1. In a chat, click the model name under the message box.
+
+<Frame>
+  ![Model selector in the chat box](/images/chatgpt-model-selector.png)
+</Frame>
+
+2. Choose a ChatGPT model from the list. The list shows models from every provider you've connected.
+
+<Frame>
+  ![Model list showing models from all connected providers](/images/chatgpt-model-list.png)
+</Frame>
+
+## Common issues
+
+- **No Connect provider button.** Your organization may manage models for you. Ask your admin, or see [Adding a managed LLM provider](/cloud/share-with-your-team/managed-llm-provider).
+- **Sign-in stopped working later.** Reconnect under **Settings › AI Providers › Connect provider › OpenAI**.

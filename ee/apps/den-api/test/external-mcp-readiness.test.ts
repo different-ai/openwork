@@ -201,6 +201,7 @@ test("GitHub plugin readiness preserves legacy ready and sign-in states but stil
       [{ configObjectId, normalizedPayloadJson: { mcpServers: { github: { url, oauth: input.oauth } } } }],
       [{ connection: candidate }],
       [],
+      [], // No plugin bindings, so the connection is not retired.
       [candidate],
       [],
       ...(input.perMember ? [input.disconnected ? [] : [{ ...account, organizationId, orgMembershipId }]] : []),
@@ -229,6 +230,7 @@ test("GitHub plugin readiness preserves legacy ready and sign-in states but stil
       [], // Requirement bindings.
       [candidate], // All connections.
       [{ connection: candidate }], [], // Usable direct and plugin-sourced connections.
+      [], // No plugin bindings, so the connection is not retired.
     ]
     const memberRows = input.perMember ? [input.disconnected ? [] : [{ ...account, organizationId, orgMembershipId }]] : []
     const authMismatch = input.oauth && input.authType !== "oauth"

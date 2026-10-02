@@ -2,6 +2,7 @@ import type { WorkspaceInfo } from "../../../../app/lib/desktop";
 import type { WorkspaceSessionGroup } from "../../../../app/types";
 import { isSandboxWorkspace } from "../../../../app/utils";
 import { t } from "../../../../i18n";
+import { getSessionOrder } from "./session-order";
 
 export const MAX_SESSIONS_PREVIEW = 6;
 
@@ -162,27 +163,21 @@ export function buildGlobalArchivedSessions(groups: WorkspaceSessionGroup[]): Gl
 }
 
 /**
- * Order root sessions: pinned first, then manual order, then server recency.
+ * Order root sessions by saved position and creation, never server recency.
  */
 export const orderRootSessions = (
   roots: SessionListItem[],
   pinnedIds: Set<string>,
   orderIds: string[],
 ): SessionListItem[] => {
-  const byId = new Map(roots.map((root) => [root.id, root]));
-  const ordered: SessionListItem[] = [];
-  const used = new Set<string>();
-
-  for (const id of orderIds) {
-    const root = byId.get(id);
-    if (!root || used.has(id)) continue;
-    ordered.push(root);
-    used.add(id);
-  }
+  const byId = new Map<string, SessionListItem>();
   for (const root of roots) {
-    if (used.has(root.id)) continue;
-    ordered.push(root);
-    used.add(root.id);
+    if (!byId.has(root.id)) byId.set(root.id, root);
+  }
+  const ordered: SessionListItem[] = [];
+  for (const id of getSessionOrder(roots, orderIds)) {
+    const root = byId.get(id);
+    if (root) ordered.push(root);
   }
 
   // Stable partition: pinned roots float to the top, preserving relative order.

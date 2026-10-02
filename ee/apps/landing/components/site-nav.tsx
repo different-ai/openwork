@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { Menu, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ChevronDown, Menu, X } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 import { OpenWorkMark } from "./openwork-mark";
 import { DownloadLink } from "./download-link";
+import { LP_PRODUCTS } from "./lp-products";
 
 type ActivePage =
   | "home"
@@ -49,13 +50,15 @@ export function SiteNav(props: Props) {
   const callExternal = /^https?:\/\//.test(callHref);
   const mobilePrimaryExternal = /^https?:\/\//.test(mobilePrimaryHref);
   const navItems: NavItem[] = [
-    { href: "/#product", label: "Product", key: "home" },
-    { href: "/connect", label: "Connect", key: "connect" },
-    { href: "/cloud", label: "Cloud", key: "cloud" },
     { href: "/enterprise", label: "Enterprise", key: "enterprise" },
+    { href: "/pricing", label: "Pricing", key: "pricing" },
     { href: "/docs", label: "Docs", key: "docs", newTab: true },
-    { href: "/pricing", label: "Pricing", key: "pricing" }
+    { href: "/roadmap", label: "Roadmap", key: "roadmap" }
   ];
+  const productsActive =
+    props.active === "connect" ||
+    props.active === "cloud" ||
+    props.active === "download";
 
   const opensInNewTab = (item: NavItem) =>
     item.newTab || /^(?:https?:\/\/)/.test(item.href);
@@ -79,6 +82,7 @@ export function SiteNav(props: Props) {
           </Link>
 
           <nav className="hidden items-center justify-start gap-7 pl-10 text-[14px] font-normal lg:flex">
+            <ProductsMenu active={productsActive} />
             {navItems.map(item => (
               <Link
                 key={item.key}
@@ -131,6 +135,21 @@ export function SiteNav(props: Props) {
         {mobileOpen ? (
           <div className="mb-8 rounded-xl bg-white p-4 shadow-[0_1px_3px_rgba(1,22,39,0.08)] lg:hidden">
             <div className="flex flex-col gap-1 text-[15px] font-medium text-gray-700">
+              <div className="px-4 pb-1 pt-2 text-[13px] font-normal text-[var(--lp-muted)]">
+                Products
+              </div>
+              {LP_PRODUCTS.map(product => (
+                <Link
+                  key={product.key}
+                  href={product.href}
+                  className="flex items-center gap-3 rounded-2xl px-4 py-3 text-[var(--lp-ink)]"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  <product.icon size={16} strokeWidth={1.5} aria-hidden="true" />
+                  {product.name}
+                </Link>
+              ))}
+              <div className="mx-4 my-2 border-t border-[var(--lp-border)]" />
               {navItems.map(item => (
                 <Link
                   key={item.key}
@@ -185,5 +204,128 @@ export function SiteNav(props: Props) {
         ) : null}
       </div>
     </header>
+  );
+}
+
+function ProductsMenu({ active }: { active: boolean }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const panelId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        rootRef.current &&
+        event.target instanceof Node &&
+        !rootRef.current.contains(event.target)
+      ) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        buttonRef.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimer.current) clearTimeout(closeTimer.current);
+    };
+  }, []);
+
+  const cancelClose = () => {
+    if (closeTimer.current) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimer.current = setTimeout(() => setOpen(false), 120);
+  };
+
+  return (
+    <div
+      ref={rootRef}
+      className="relative"
+      onPointerEnter={event => {
+        if (event.pointerType !== "mouse") return;
+        cancelClose();
+        setOpen(true);
+      }}
+      onPointerLeave={event => {
+        if (event.pointerType !== "mouse") return;
+        scheduleClose();
+      }}
+      onBlur={event => {
+        if (
+          event.relatedTarget instanceof Node &&
+          rootRef.current?.contains(event.relatedTarget)
+        ) {
+          return;
+        }
+        setOpen(false);
+      }}
+    >
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen(current => !current)}
+        className={`inline-flex items-center gap-1.5 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--lp-ink)] ${
+          active || open
+            ? "text-[#011627]"
+            : "text-gray-600 transition-colors hover:text-[#011627]"
+        }`}
+      >
+        Products
+        <ChevronDown
+          size={14}
+          strokeWidth={1.75}
+          aria-hidden="true"
+          className={`transition-transform duration-150 ease-out motion-reduce:transition-none ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      <div
+        id={panelId}
+        hidden={!open}
+        className="absolute left-[-18px] top-full z-30 pt-3"
+      >
+        <ul className="lp-products-menu w-[420px] rounded-2xl bg-white p-2">
+          {LP_PRODUCTS.map(product => (
+            <li key={product.key}>
+              <Link
+                href={product.href}
+                onClick={() => setOpen(false)}
+                className="flex h-12 items-center gap-3 rounded-[10px] px-2.5 text-[var(--lp-ink)] transition-colors duration-150 hover:bg-[#f5f7fa] focus-visible:bg-[#f5f7fa] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--lp-ink)]"
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--lp-tonal)]">
+                  <product.icon size={16} strokeWidth={1.5} aria-hidden="true" />
+                </span>
+                <span className="flex-1 text-[14px] font-medium tracking-[-0.005em]">
+                  {product.name}
+                </span>
+                <span className="w-[130px] shrink-0 text-right text-[13px] text-[var(--lp-muted)]">
+                  {product.fact}
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
   );
 }

@@ -12,12 +12,37 @@ import { readdir, readFile } from 'node:fs/promises';
 // journey-ci.test.mjs checks these against what each spec and world guards.
 const PACKAGED_BINARY = { env: ['OPENWORK_EVAL_ELECTRON_BINARY'] };
 const definitions = {
+  'opencode-v2-context-activity.e2e.test.ts': {
+    cases: [{ id: 'V2-CONTEXT-ACTIVITY', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
+  },
+  'edit-running-message.e2e.test.ts': {
+    name: 'Replace a running message without queueing the edit', placement: 'local',
+    cases: [{ id: 'EDIT-BUSY', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
+  },
+  'opencode-v2-session-home.e2e.test.ts': {
+    cases: ['HOME-01', 'HOME-02', 'HOME-03'].map(id => ({ id, engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } })),
+  },
   'gateway-usage-policy.e2e.test.ts': { name: 'Request and approve a Gateway usage extension', placement: 'local' },
   'composer-model-picker-no-subscribe-promo.e2e.test.ts': {
     cases: [{ id: 'MODEL-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
   },
   // Its registered OAuth callback and synthetic client exchange run on owned loopback services.
   'mcp-connection-consent.e2e.test.ts': { name: 'Authorize a connected client once', placement: 'local' },
+  'agent-background-journey.e2e.test.ts': {
+    cases: [{ id: 'AGENT-VIS-03', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
+  },
+  'agent-connection-journey.e2e.test.ts': {
+    cases: [{ id: 'AGENT-VIS-04', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
+  },
+  'agent-connection-sign-in-journey.e2e.test.ts': {
+    cases: [{ id: 'AGENT-VIS-06', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
+  },
+  'agent-visibility-journey.e2e.test.ts': {
+    cases: [
+      { id: 'AGENT-VIS-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } },
+      { id: 'AGENT-VIS-02', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } },
+    ],
+  },
   'task-activity-shimmer.e2e.test.ts': {
     cases: [{ id: 'ACT-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
   },
@@ -77,16 +102,19 @@ const definitions = {
       { id: 'APP-DRAFT-ROUTING', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } },
     ],
   },
-  // Its Cloud endpoint is an in-process loopback MCP fixture reachable only from the spec process.
+  'engine-live-chat.e2e.test.ts': { name: 'Use real models for conversations, skills and connections', placement: 'local', model: 'live' },
+  // Native workspace skill tests use local watcher and loopback model fixtures.
   'opencode-v2-skill-jit.e2e.test.ts': {
-    name: 'Use Cloud and workspace skills just in time', placement: 'local',
+    name: 'Use workspace skills just in time', placement: 'local',
     cases: [
       { id: 'SKILL-ATTACH', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
       { id: 'SKILL-MISSING', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
-      { id: 'SKILL-CLOUD-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
-      { id: 'SKILL-CLOUD-02', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
       { id: 'SKILL-NATIVE-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
     ],
+  },
+  'opencode-v2-reads-during-mcp-startup.e2e.test.ts': {
+    name: 'Keep the conversation responsive while a connection starts', placement: 'local',
+    cases: [{ id: 'UPKEEP-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
   },
 };
 

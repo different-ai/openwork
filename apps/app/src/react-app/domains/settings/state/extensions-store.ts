@@ -64,7 +64,7 @@ import {
   refreshDesktopCloudSync,
   type PendingCloudPluginChange,
 } from "../../../../app/cloud/desktop-cloud-sync";
-import { notifyEvent } from "../../../shell/notifications";
+import { requestMemberActivityRefresh } from "@/react-app/kernel/activity-types";
 import type { OpenworkServerStore } from "../../connections/openwork-server-store";
 import { clearCloudInventoryCache } from "../../connections/cloud-inventory-cache";
 import {
@@ -394,7 +394,6 @@ export function createExtensionsStore(options: {
   let cloudOrgMarketplacesLoadKey = "";
   /** Plugin IDs the user has already been notified about. Prevents repeated
    *  "new extension available" notifications across sync cycles. */
-  const seenMarketplacePluginIds = new Set<string>();
 
   let state: MutableState = {
     skillsContextKey: "",
@@ -578,31 +577,10 @@ export function createExtensionsStore(options: {
       const previousPending = snapshot.pendingCloudPluginChanges;
       setStateField("pendingCloudPluginChanges", pending);
 
-      // Notify about newly detected plugin updates or removals.
-      for (const [pluginId, change] of Object.entries(pending)) {
-        if (previousPending[pluginId] === change) continue;
-        const installed = (installedPlugins ?? snapshot.importedCloudPlugins)[pluginId];
-        const pluginLabel = installed?.name ?? pluginId;
-        if (change === "modified") {
-          notifyEvent({
-            kind: "cloud",
-            severity: "info",
-            title: "Extension update available",
-            body: `${pluginLabel} has been updated`,
-            dedupeKey: `plugin-update:${pluginId}`,
-            action: { type: "open-extensions-marketplace" },
-            actionLabel: "View updates",
-          });
-        } else if (change === "removed") {
-          notifyEvent({
-            kind: "cloud",
-            severity: "warning",
-            title: "Extension removed by admin",
-            body: `${pluginLabel} is no longer available`,
-            dedupeKey: `plugin-removed:${pluginId}`,
-            action: { type: "open-extensions-marketplace" },
-          });
-        }
+      // Installation drift is not activity history or evidence of an admin
+      // removal. Ask the member-scoped observer to verify usable resources.
+      if (Object.entries(pending).some(([id, change]) => previousPending[id] !== change)) {
+        requestMemberActivityRefresh();
       }
     } catch {
       // keep previous pending state on failure
@@ -1183,37 +1161,9 @@ export function createExtensionsStore(options: {
         cloudOrgMarketplacesStatus: null,
       }));
 
-      // Notify the user about newly available marketplace plugins. On the
-      // first load we seed the seen set silently so only subsequent publishes
-      // trigger a notification.
-      const allPluginIds = new Set<string>();
-      for (const marketplace of resolved) {
-        for (const plugin of marketplace.plugins ?? []) {
-          if (plugin.id) allPluginIds.add(plugin.id);
-        }
-      }
-      if (seenMarketplacePluginIds.size === 0) {
-        // First load: seed without notifying.
-        for (const id of allPluginIds) seenMarketplacePluginIds.add(id);
-      } else {
-        for (const marketplace of resolved) {
-          const marketplaceName = marketplace.marketplace?.name ?? "your marketplace";
-          for (const plugin of marketplace.plugins ?? []) {
-            if (plugin.id && !seenMarketplacePluginIds.has(plugin.id)) {
-              seenMarketplacePluginIds.add(plugin.id);
-              notifyEvent({
-                kind: "cloud",
-                severity: "info",
-                title: "New extension available",
-                body: `${plugin.name ?? plugin.id} was added to ${marketplaceName}`,
-                dedupeKey: `new-marketplace-plugin:${plugin.id}`,
-                action: { type: "open-extensions-marketplace", pluginName: plugin.name ?? plugin.id },
-                actionLabel: t("extensions.view_in_extensions"),
-              });
-            }
-          }
-        }
-      }
+      // Activity uses grant-scoped inventories, not this broader marketplace
+      // management view (which can include admin-only resources).
+      requestMemberActivityRefresh();
 
       cloudOrgMarketplacesLoaded = true;
       cloudOrgMarketplacesLoadKey = loadKey;

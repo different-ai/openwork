@@ -1,7 +1,11 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, spyOn, test } from "bun:test"
+import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { createMcpAppDiscoveryScheduler, mcpAppDiscoverySignature } from "../src/app/lib/mcp-app-discovery-scheduler"
 import { createOpenworkServerClient, OpenworkServerError, type OpenworkMcpAppResource, type OpenworkServerClient } from "../src/app/lib/openwork-server"
 import type { McpAppOrigin } from "../src/components/chat/mcp-app-origin"
+
+GlobalRegistrator.register({ url: "http://localhost/" })
+afterAll(() => GlobalRegistrator.unregister())
 
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve() }
 const originFor = (resolveMcpApp: OpenworkServerClient["resolveMcpApp"]): McpAppOrigin => ({
@@ -14,6 +18,26 @@ const resource = (launchId: string): OpenworkMcpAppResource => ({
 })
 
 describe("chat discovery admission", () => {
+  test("warm-up stays loading through retries and a remount gets a fresh budget", async () => {
+    const timer = spyOn(window, "setTimeout").mockImplementation(callback => {
+      if (typeof callback === "function") queueMicrotask(() => callback())
+      return 1
+    })
+    try {
+      const schedule = createMcpAppDiscoveryScheduler()
+      let calls = 0; let errors = 0
+      const origin = originFor(async () => { calls++; throw new OpenworkServerError(503, "connect_catalog_missing_app_host_auth", "warming up") })
+      schedule(origin, "render", null, false, () => {}, () => errors++)
+      expect(errors).toBe(0)
+      await flush()
+      expect(calls).toBe(3); expect(errors).toBe(1)
+      origin.client.resolveMcpApp = async () => { calls++; return { app: resource("live-after-warmup") } }
+      const received: string[] = []
+      schedule(origin, "render", null, false, app => { if (app?.launchId) received.push(app.launchId) }, () => errors++)
+      await flush()
+      expect(calls).toBe(4); expect(errors).toBe(1); expect(received).toEqual(["live-after-warmup"])
+    } finally { timer.mockRestore() }
+  })
   test.each([null, "mcp_auth_required", "mcp_access_denied"])("100 identical negative discoveries share one request: %s", async code => {
     const schedule = createMcpAppDiscoveryScheduler()
     let calls = 0

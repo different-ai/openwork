@@ -14,13 +14,14 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../
 import { getManagedDashboardsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useMcpConnections } from "./mcp-connections-data";
-import { connectionCanListMcpApps, dashboardCapabilityKey, dashboardElementKey } from "./dashboard-mcp-app-catalog";
+import { connectionCanListMcpApps, dashboardCapabilityKey, dashboardElementKey, isBuiltAppElement } from "./dashboard-mcp-app-catalog";
 import { OrgMemberIdentity } from "./org-member-identity";
 import {
   type ConnectionMcpAppCatalogItem,
   type DashboardAccessGrant,
   type DashboardElement,
   filterConnectionsWithMcpApps,
+  useBuiltMcpAppCatalog,
   useConnectionMcpAppCatalog,
   useDashboardAccess,
   useDeleteDashboard,
@@ -29,6 +30,9 @@ import {
   useRevokeDashboardAccess,
   useUpdateDashboard,
 } from "./org-dashboards-data";
+
+/** The picker source for Apps built in OpenWork; connection ids never take this form. */
+const BUILT_APPS_SOURCE = "openwork-built-apps";
 
 /** Required launch-input keys the author left out (or set to undefined). */
 export function missingRequiredInputKeys(
@@ -39,7 +43,8 @@ export function missingRequiredInputKeys(
 }
 
 export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string }) {
-  const { orgSlug } = useOrgDashboard();
+  const { orgSlug, orgContext } = useOrgDashboard();
+  const builtAppsOffered = orgContext?.capabilities.appMcpServers === true;
   const router = useRouter();
   const dashboardQuery = useManagedDashboard(dashboardId);
   const accessQuery = useDashboardAccess(dashboardId);
@@ -156,7 +161,11 @@ export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string 
         {elements.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-6 py-10 text-center">
             <p className="text-[13px] font-medium text-gray-900">No apps yet</p>
-            <p className="mt-1 text-[12px] text-gray-500">Add MCP apps from your organization&apos;s connectors.</p>
+            <p className="mt-1 text-[12px] text-gray-500">
+              {builtAppsOffered
+                ? "Add Apps built in OpenWork or MCP apps from your organization's connectors."
+                : "Add MCP apps from your organization's connectors."}
+            </p>
           </div>
         ) : (
           <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
@@ -165,7 +174,7 @@ export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string 
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13.5px] font-medium text-gray-900">{element.title}</p>
                   <p className="truncate text-[12px] text-gray-400">
-                    {element.toolName}
+                    {isBuiltAppElement(element) ? "App built in OpenWork" : element.toolName}
                     {element.launchArguments ? ` · ${JSON.stringify(element.launchArguments)}` : ""}
                     {element.organizationAutoLaunch
                       ? " · runs automatically by organization policy"
@@ -275,6 +284,8 @@ function AddDashboardAppDialog({
   onClose: () => void;
   onAdd: (element: DashboardElement) => boolean;
 }) {
+  const { orgContext } = useOrgDashboard();
+  const builtAppsOffered = orgContext?.capabilities.appMcpServers === true;
   const connectionsQuery = useMcpConnections("manageable");
   const connections = useMemo(
     () => (connectionsQuery.data ?? []).filter((connection) => (
@@ -283,15 +294,23 @@ function AddDashboardAppDialog({
     [connectionsQuery.data],
   );
   const appsQuery = useConnectionMcpAppCatalog(connections);
+  const builtAppsQuery = useBuiltMcpAppCatalog();
+  const builtApps = builtAppsOffered ? builtAppsQuery.data ?? [] : [];
   const appConnections = useMemo(
     () => filterConnectionsWithMcpApps(connections, appsQuery.data),
     [appsQuery.data, connections],
   );
-  const [connectionId, setConnectionId] = useState<string | null>(null);
-  const selectedConnectionId = appConnections.some((connection) => connection.id === connectionId)
-    ? connectionId
-    : appConnections[0]?.id ?? null;
-  const visibleApps = appsQuery.data.filter((app) => app.connectionId === selectedConnectionId);
+  // Apps built in OpenWork come first, then each MCP that exposes Apps.
+  const sources = [
+    ...(builtApps.length > 0 ? [{ id: BUILT_APPS_SOURCE, name: "Apps built in OpenWork" }] : []),
+    ...appConnections.map((connection) => ({ id: connection.id, name: connection.name })),
+  ];
+  const [sourceId, setSourceId] = useState<string | null>(null);
+  const selectedSourceId = sources.some((source) => source.id === sourceId) ? sourceId : sources[0]?.id ?? null;
+  const builtSelected = selectedSourceId === BUILT_APPS_SOURCE;
+  const visibleApps = builtSelected ? builtApps : appsQuery.data.filter((app) => app.connectionId === selectedSourceId);
+  const loading = connectionsQuery.isLoading || appsQuery.isLoading || builtAppsQuery.isLoading;
+  const sourceError = builtSelected ? builtAppsQuery.error : sources.length === 0 ? appsQuery.error ?? builtAppsQuery.error : appsQuery.error;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
@@ -306,35 +325,44 @@ function AddDashboardAppDialog({
           Add app
         </h2>
         <p className="mt-1 text-[13px] leading-6 text-gray-500">
-          Select an MCP, then choose one of its Apps. MCPs without Apps are hidden.
+          {builtAppsOffered
+            ? "Choose Apps built in OpenWork or an MCP, then add one of its Apps. MCPs without Apps are hidden."
+            : "Select an MCP, then choose one of its Apps. MCPs without Apps are hidden."}
         </p>
 
         <label className="mt-4 block">
-          <span className="mb-1.5 block text-[12px] font-medium text-gray-700">MCP</span>
+          <span className="mb-1.5 block text-[12px] font-medium text-gray-700">{builtAppsOffered ? "Source" : "MCP"}</span>
           <DenSelect
-            aria-label="MCP"
-            value={selectedConnectionId ?? ""}
-            onChange={(event) => setConnectionId(event.target.value || null)}
-            disabled={appConnections.length === 0}
+            aria-label={builtAppsOffered ? "Source" : "MCP"}
+            value={selectedSourceId ?? ""}
+            onChange={(event) => setSourceId(event.target.value || null)}
+            disabled={sources.length === 0}
           >
-            {appConnections.length === 0 ? <option value="">No MCPs with Apps available</option> : null}
-            {appConnections.map((connection) => (
-              <option key={connection.id} value={connection.id}>{connection.name}</option>
+            {sources.length === 0 ? <option value="">No MCPs with Apps available</option> : null}
+            {sources.map((source) => (
+              <option key={source.id} value={source.id}>{source.name}</option>
             ))}
           </DenSelect>
         </label>
+        {builtSelected ? (
+          <p className="mt-2 text-[12px] leading-5 text-gray-500" data-testid="built-app-sharing-note">
+            Members see an App only when its Plugin is shared with them.
+          </p>
+        ) : null}
 
         <div className="mt-4 min-h-0 flex-1 overflow-y-auto">
-          {connectionsQuery.isLoading || appsQuery.isLoading ? (
+          {loading && visibleApps.length === 0 ? (
             <p className="py-6 text-center text-[13px] text-gray-400">Loading apps…</p>
-          ) : appsQuery.error ? (
+          ) : sourceError && visibleApps.length === 0 ? (
             <DenNotice
               tone="error"
-              message={appsQuery.error instanceof Error ? appsQuery.error.message : "Failed to load this connector's apps."}
+              message={sourceError instanceof Error ? sourceError.message : "Failed to load this connector's apps."}
             />
           ) : visibleApps.length === 0 ? (
             <p className="py-6 text-center text-[13px] text-gray-400">
-              No MCP Apps are available from your organization&apos;s connections.
+              {builtAppsOffered
+                ? "No Apps are available. Build one in OpenWork, or connect an MCP that has Apps."
+                : "No MCP Apps are available from your organization's connections."}
             </p>
           ) : (
             <div className="divide-y divide-gray-100 rounded-xl border border-gray-100">
@@ -414,7 +442,7 @@ function ConnectionAppRow({
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13.5px] font-medium text-gray-900">{app.title}</p>
           <p className="truncate text-[12px] text-gray-400">
-            {app.description ?? app.toolName}
+            {app.description ?? (isBuiltAppElement(app) ? "App built in OpenWork" : app.toolName)}
             {` · ${app.connectionName}`}
             {app.requiresApproval ? " · modifies data, runs on request" : ""}
           </p>

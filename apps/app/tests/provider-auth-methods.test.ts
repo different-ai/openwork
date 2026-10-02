@@ -22,6 +22,7 @@ function installWindow(options: {
       removeEventListener: () => undefined,
       dispatchEvent: () => true,
       location: { origin: options.origin },
+      localStorage: { getItem: () => null, setItem: () => undefined, removeItem: () => undefined },
       __OPENWORK_ELECTRON__: options.electronInfo
         ? {
             invokeDesktop: async () => ({

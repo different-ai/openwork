@@ -764,6 +764,62 @@
       "when": 1790127413187,
       "tag": "0109_organization_web_origins",
       "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "5",
+      "when": 1790207299296,
+      "tag": "0110_early_hiroim",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "5",
+      "when": 1790405726705,
+      "tag": "0111_device_authorization",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "5",
+      "when": 1790407468548,
+      "tag": "0112_claimable_workspaces",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "5",
+      "when": 1790454359250,
+      "tag": "0113_setup_agent_member",
+      "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "5",
+      "when": 1790605372888,
+      "tag": "0114_audit_operation_capture",
+      "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "5",
+      "when": 1790785674344,
+      "tag": "0115_slack_assistant",
+      "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "5",
+      "when": 1790791135950,
+      "tag": "0116_free_auto_and_provider_pins",
+      "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "5",
+      "when": 1790803693966,
+      "tag": "0117_slack_assistant_model",
+      "breakpoints": true
     }
   ]
 }

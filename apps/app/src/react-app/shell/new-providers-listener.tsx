@@ -8,6 +8,8 @@ import {
 } from "@/app/lib/provider-events";
 import { t } from "@/i18n";
 import { useNotificationStore } from "@/react-app/kernel/notification-store";
+import { readDenSettings } from "@/app/lib/den";
+import { requestMemberActivityRefresh } from "@/react-app/kernel/activity-types";
 import { notifyEvent } from "./notifications";
 import { orgOnboardingVisibilityEvent } from "./reload-coordinator";
 
@@ -116,6 +118,13 @@ export function NewProvidersListener() {
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<NewProvidersEventDetail>).detail;
+      // The engine catalog describes materialization, not member entitlement.
+      // Signed-in provider changes belong to the scoped inventory observer;
+      // never add a second, profile-wide cloud entry (including on first sync).
+      if (readDenSettings().authToken?.trim()) {
+        requestMemberActivityRefresh();
+        return;
+      }
       if (detail.providers.length === 0 && !detail.newModelCount) return;
       if (orgOnboardingVisible) {
         setPendingProviders((current) => [

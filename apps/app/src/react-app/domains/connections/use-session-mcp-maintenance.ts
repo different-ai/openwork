@@ -29,6 +29,7 @@ import {
   runOpenworkCloudMcpReconciler,
   type CloudMcpClient,
 } from "./cloud-mcp-reconciler";
+import { CLOUD_INVENTORY_CHANGED_EVENT } from "./cloud-inventory-cache";
 
 export const SESSION_MCP_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 export const SESSION_MCP_MAINTENANCE_TIMEOUT_MS = 2 * 60 * 1000;
@@ -464,6 +465,7 @@ export function useSessionMcpMaintenance(input: {
         && current.authToken === settings.authToken && current.activeOrgId === settings.activeOrgId;
     };
     let busyRetryTimer: number | null = null;
+    let rerunRequested = false;
     setCloudMcpState(input.cloudSignedIn
       ? { ...IDLE_CLOUD_MCP_MAINTENANCE_STATE, status: "checking" }
       : IDLE_CLOUD_MCP_MAINTENANCE_STATE);
@@ -545,7 +547,10 @@ export function useSessionMcpMaintenance(input: {
         },
       });
       running = false;
-      if (!started) scheduleBusyRetry();
+      if (!started || rerunRequested) {
+        rerunRequested = false;
+        scheduleBusyRetry();
+      }
     };
 
     void tick();
@@ -553,14 +558,24 @@ export function useSessionMcpMaintenance(input: {
     const handleFocus = () => {
       if (document.visibilityState === "visible") void tick();
     };
+    // Archiving, restoring or creating a Library plugin changes which org
+    // connections this member gets; refresh the direct MCP catalog right away.
+    // A change made while a run is in flight must not be dropped: that run may
+    // have read the catalog before the change.
+    const handleCloudInventoryChanged = () => {
+      if (running) rerunRequested = true;
+      else void tick();
+    };
     window.addEventListener("online", handleOnline);
     window.addEventListener("focus", handleFocus);
+    window.addEventListener(CLOUD_INVENTORY_CHANGED_EVENT, handleCloudInventoryChanged);
     const interval = window.setInterval(() => void tick(), SESSION_MCP_MAINTENANCE_INTERVAL_MS);
     return () => {
       cancelled = true;
       controller.abort();
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("focus", handleFocus);
+      window.removeEventListener(CLOUD_INVENTORY_CHANGED_EVENT, handleCloudInventoryChanged);
       window.clearInterval(interval);
       if (busyRetryTimer !== null) window.clearTimeout(busyRetryTimer);
     };

@@ -393,7 +393,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     async (c: OrgContext) => {
       try {
         const context = actorContext(c)
-        await requirePluginArchCapability(context, "config_object.create", false)
+        await requirePluginArchCapability(context, "config_object.create")
         const body = validJson<any>(c)
         const item = await createConfigObject({
           context,
@@ -707,7 +707,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     }),
     async (c: OrgContext) => {
       const query = validQuery<any>(c)
-      return c.json(await listPlugins({ context: actorContext(c), cursor: query.cursor, limit: query.limit, q: query.q, status: query.status }))
+      return c.json(await listPlugins({ context: actorContext(c), cursor: query.cursor, includeAccess: query.includeAccess, includeTotal: query.includeTotal, includeFacets: query.includeFacets, limit: query.limit, q: query.q, name: query.name, status: query.status, teamId: query.teamId, memberId: query.memberId, ownerId: query.ownerId }))
     })
 
   withPluginArchOrgContext(app, "post", pluginArchRoutePaths.plugins,
@@ -715,7 +715,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     describeRoute({
       tags: ["Plugins"],
       summary: "Create plugin",
-      description: "Creates a plugin and can also create components, share org-wide, and publish to a marketplace in one request. An mcp component may carry the same connection setup as the Connections page (authentication, credential mode, API key, OAuth app), or instead reference an existing organization connection by connectionId, so its server is configured immediately; owners and admins only.",
+      description: "Creates a plugin and can also create components, share org-wide, and publish to a marketplace in one request. An mcp component may carry the same connection setup as the Connections page (authentication, credential mode, API key, OAuth app), or instead reference an existing organization connection by connectionId, so its server is configured immediately. Connection setup is for owners and admins; other members may reference only a connection they added themselves.",
       responses: {
         201: jsonResponse("Plugin created successfully.", pluginMutationResponseSchema),
         400: jsonResponse("The plugin creation request was invalid.", invalidRequestSchema),
@@ -728,12 +728,12 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       try {
         const context = actorContext(c)
         const body = validJson<PluginCreateBody>(c)
-        await requirePluginArchCapability(context, "plugin.create", body.orgWide === true || Boolean(body.marketplaceId))
+        await requirePluginArchCapability(context, "plugin.create")
         if (body.orgWide === true && !isPluginArchOrgAdmin(context)) {
           throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can create org-wide plugins.")
         }
         if ((body.components?.length ?? 0) > 0) {
-          await requirePluginArchCapability(context, "config_object.create", false)
+          await requirePluginArchCapability(context, "config_object.create")
         }
         const sessionId = c.get("session")?.id
         if (body.components?.some((component) => component.connection && isAgentPluginMcpSecretSetup({

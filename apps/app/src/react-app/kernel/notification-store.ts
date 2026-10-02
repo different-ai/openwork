@@ -110,7 +110,6 @@ function sanitizeNotifications(value: unknown): AppNotification[] {
     const count = Reflect.get(entry, "count");
     const createdAt = Reflect.get(entry, "createdAt");
     const updatedAt = Reflect.get(entry, "updatedAt");
-    const readAt = Reflect.get(entry, "readAt");
     const dedupeKey = Reflect.get(entry, "dedupeKey");
     const action = Reflect.get(entry, "action");
     const actionLabel = Reflect.get(entry, "actionLabel");
@@ -126,7 +125,7 @@ function sanitizeNotifications(value: unknown): AppNotification[] {
       count: typeof count === "number" && count > 0 ? count : 1,
       createdAt,
       updatedAt,
-      readAt: typeof readAt === "number" ? readAt : null,
+      readAt: null,
       dedupeKey: typeof dedupeKey === "string" ? dedupeKey : undefined,
       action: isAction(action) ? action : undefined,
       actionLabel: typeof actionLabel === "string" ? actionLabel : undefined,
@@ -198,8 +197,19 @@ export const useNotificationStore = create<NotificationStore>()(
     }),
     {
       name: PERSISTED_NOTIFICATION_STORE_KEY,
+      version: 1,
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ notifications: state.notifications }),
+      // Old cloud/provider rows have no member identity and cannot be safely
+      // migrated into a scoped feed. Device/system notices keep their actions.
+      migrate: (persistedState) => ({
+        notifications: sanitizeNotifications(
+          typeof persistedState === "object" && persistedState !== null
+            ? Reflect.get(persistedState, "notifications") : null,
+        ).filter((entry) => entry.kind !== "cloud" && entry.kind !== "providers"),
+      }),
+      partialize: (state) => ({
+        notifications: state.notifications.map(({ readAt: _readAt, ...entry }) => entry),
+      }),
       merge: (persistedState, currentState) => ({
         ...currentState,
         notifications: prune(

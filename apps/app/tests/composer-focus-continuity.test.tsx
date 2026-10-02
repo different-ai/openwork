@@ -85,7 +85,9 @@ async function waitFor(predicate: () => boolean, label: string) {
 }
 
 test.each([
+  ...["enter", "modified-enter", "button"].map(editSubmission => ({ name: `busy edit via ${editSubmission} replaces its original turn without entering the queue`, editSubmission })),
   { name: "composer focus, shared Restore, pending stops, and optimistic sends preserve drafts through snapshots and first-message handoff", queueRegression: false, modeRegression: false },
+  { name: "Auto rejection clears only submitted text and reloads its unprocessed wall without resending", autoRejection: true },
   { name: "busy Enter clears persisted composer text and attachments without losing queued messages or newer typing", queueRegression: true, modeRegression: false },
   { name: "busy mode selection preserves the running turn and composer draft", queueRegression: false, modeRegression: true },
   { name: "new thread keeps the prompt before early assistant output through late native acknowledgement and settlement", orderingRegression: "empty" },
@@ -98,7 +100,7 @@ test.each([
   { name: "mobile web cancelled send keeps the keyboard", mobileOutcome: "cancelled" },
   { name: "mobile web rejected send keeps the keyboard", mobileOutcome: "rejected" },
   { name: "mobile web uncertain send keeps the keyboard", mobileOutcome: "unknown" },
-])("$name", async ({ queueRegression, modeRegression, orderingRegression, firstSendRegression, mobileOutcome }) => {
+])("$name", async ({ queueRegression, modeRegression, orderingRegression, firstSendRegression, mobileOutcome, autoRejection, editSubmission }) => {
   const sessionId = `session-focus-continuity${orderingRegression ? `-${orderingRegression}` : firstSendRegression ? "-first-send" : ""}`;
   window.localStorage.clear();
   const require = createRequire(import.meta.url);
@@ -331,7 +333,7 @@ test.each([
                 modelLabel="Test model"
                 onModelClick={() => {}}
                 modelPickerOpen={false}
-                selectedModel={{ providerID: "test", modelID: "test-model" }}
+                selectedModel={autoRejection ? { providerID: "openwork-free", modelID: "openai/gpt-6-luna" } : { providerID: "test", modelID: "test-model" }}
                 onModelPickerOpenChange={() => {}}
                 onModelChange={() => {}}
                 onForkAtMessage={forkAtMessage}
@@ -428,6 +430,41 @@ test.each([
       expect(creates).toBe(1);
       expect(sentDrafts).toHaveLength(2);
       expect(firstSendAdmissions).toBe(1);
+      return;
+    }
+    if (autoRejection) {
+      const { unavailableDesktopFreeStatus } = await import("../src/app/lib/inference-access");
+      const preflight = Promise.withResolvers<ReturnType<typeof unavailableDesktopFreeStatus>>();
+      const access = spyOn(client, "desktopFreePreflight").mockImplementation(() => preflight.promise);
+      fetchedSnapshot = createSnapshot({ type: "idle" }, 2, sessionId);
+      queryClient.setQueryData(snapshotKey(workspaceId, sessionId), fetchedSnapshot);
+      queryClient.setQueryData(statusKey(workspaceId, sessionId), { type: "idle" });
+      await act(async () => renderSession());
+      await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Keep the rejected task"));
+      await waitFor(() => container.querySelector('[data-lexical-editor="true"]')?.textContent === "Keep the rejected task", "the rejected draft");
+      await act(async () => {
+        const send = container.querySelector<HTMLButtonElement>('button[aria-label="Run task"]');
+        expect(send?.disabled).toBe(false);
+        send?.click(); send?.click();
+      });
+      expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("");
+      expect(access).toHaveBeenCalledTimes(1);
+      await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Newer continuation"));
+      await act(async () => preflight.resolve({ ...unavailableDesktopFreeStatus(), state: "exhausted" }));
+      await waitFor(() => container.querySelector('[data-testid="auto-access-wall"]') !== null, "the rejected turn wall");
+      expect(container.textContent).toContain("Keep the rejected task");
+      expect(container.querySelector('[data-unprocessed="true"]')).not.toBeNull();
+      expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Newer continuation");
+      expect(sentDrafts).toHaveLength(0);
+      await act(async () => root.render(null));
+      useComposerStateStore.setState({ pendingMessages: {}, sessions: {} });
+      await act(async () => renderSession());
+      await waitFor(() => container.querySelector('[data-testid="auto-access-wall"]') !== null, "the durable wall after reload");
+      expect(container.querySelectorAll('[data-testid="auto-access-wall"]')).toHaveLength(1);
+      expect(container.textContent).toContain("Keep the rejected task");
+      expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Newer continuation");
+      expect(sentDrafts).toHaveLength(0);
+      expect(access).toHaveBeenCalledTimes(1);
       return;
     }
     if (orderingRegression) {
@@ -540,6 +577,30 @@ test.each([
     if (!editor) throw new Error("Expected the Lexical editor");
     editor.focus();
     expect(document.activeElement).toBe(editor);
+
+    if (editSubmission) {
+      await openMessageMenu("edit");
+      await waitFor(() => editor.textContent === "Keep this session mounted.", "the original message in the editor");
+      expect(useComposerStateStore.getState().sessions[sessionId]?.revertMessageId).toBe("existing-user-message");
+      await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Replace the running turn"));
+      expect(container.querySelector('button[aria-label="Stop"]')).toBeNull();
+      const send = container.querySelector<HTMLButtonElement>('button[aria-label="Run task"]');
+      expect(send?.disabled).toBe(false);
+      await act(async () => {
+        if (editSubmission === "button") send?.click();
+        else editor.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Enter", ctrlKey: editSubmission === "modified-enter", bubbles: true, cancelable: true,
+        }));
+      });
+      await waitFor(() => sentDrafts.length === 1, "the edit submitted immediately");
+      expect(sentDrafts[0]?.text).toBe("Replace the running turn");
+      expect(sentDrafts[0]?.revertMessageId).toBe("existing-user-message");
+      expect(useComposerStateStore.getState().queuedDrafts[sessionId] ?? []).toEqual([]);
+      await act(async () => submission.resolve({ outcome: "blocked" }));
+      await waitFor(() => editor.textContent === "Replace the running turn", "a rejected edit restored to the composer");
+      expect(useComposerStateStore.getState().sessions[sessionId]?.revertMessageId).toBe("existing-user-message");
+      return;
+    }
 
     if (mobileOutcome) {
       await act(async () => useComposerStateStore.getState().setDraft(sessionId, ""));
@@ -705,7 +766,7 @@ test.each([
     expect(refetch).toHaveBeenCalledTimes(1);
     interruption = Promise.withResolvers<void>();
     // Opening a menu gives Escape to that menu, not the stop confirmation.
-    const tools = container.querySelector<HTMLButtonElement>('button[title="Agents, commands, skills, plugins, and connections"]');
+    const tools = container.querySelector<HTMLButtonElement>('button[aria-label="Add files, skills, connectors, and more"]');
     if (!tools) throw new Error("Expected the tools menu trigger");
     await act(async () => tools.click());
     await act(async () => { escape(); });
@@ -1334,7 +1395,11 @@ test.each([
           parts,
         })),
       };
-      await act(async () => queryClient.setQueryData(transcriptKey(workspaceId, sessionId), snapshotToUIMessages(nativeSnapshot)));
+      fetchedSnapshot = nativeSnapshot;
+      await act(async () => {
+        queryClient.setQueryData(snapshotKey(workspaceId, sessionId), nativeSnapshot);
+        queryClient.setQueryData(transcriptKey(workspaceId, sessionId), snapshotToUIMessages(nativeSnapshot));
+      });
     };
     nativeMessages.push({ id: "native-historical", role: "user", text: "Historical attachment", time: { created: 100 } });
     await refreshNativeTranscript();
@@ -1461,18 +1526,15 @@ test.each([
       expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Composer continuation beside queue");
     };
     submission = Promise.withResolvers<CloudMcpSubmissionResult>();
-    const queuedHistory = Promise.withResolvers<OpenworkSessionSnapshot>();
-    const ensureSnapshot = spyOn(queryClient, "ensureQueryData").mockImplementation(() => queuedHistory.promise);
+    // Complete cached history lets admission begin immediately. Hold the send
+    // itself to check duplicate clicks and session switches while it is pending.
     const sendsBeforeQueue = sentDrafts.length;
     await act(async () => sendNow());
     expectQueuedSending();
-    expect(sentDrafts).toHaveLength(sendsBeforeQueue);
+    expect(sentDrafts).toHaveLength(sendsBeforeQueue + 1);
     await act(async () => renderSession(otherSessionId));
     expect(container.querySelector('button[aria-label="Sending..."]')).toBeNull();
     await act(async () => renderSession());
-    expectQueuedSending();
-    await act(async () => queuedHistory.resolve(fetchedSnapshot));
-    ensureSnapshot.mockRestore();
     expectQueuedSending();
     expect(sentDrafts).toHaveLength(sendsBeforeQueue + 1);
     expect(sentDrafts.at(-1)?.text).toBe("Promote this queued message");
@@ -1550,7 +1612,8 @@ test.each([
     await act(async () => submission.reject(new PromptAdmissionUnknownError({ messageID: queuedUnknownId })));
     expect(getQueuedDrainState(sessionId).phase).toMatchObject({ kind: "admission_unknown", messageID: queuedUnknownId });
     expect(container.textContent).toContain("It may already be running");
-    expect(useComposerStateStore.getState().queuedDrafts[sessionId]).toBeUndefined();
+    // Keep the uncertain row for reconciliation, but fence it from another send.
+    expect(useComposerStateStore.getState().queuedDrafts[sessionId]?.map(item => item.draft.text)).toEqual(["Uncertain queued message"]);
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Newer composer edits during queue send");
     await act(async () => {
       useComposerStateStore.getState().appendQueuedDraft(sessionId, queueDraft("Do not retry uncertain admission"));
@@ -1706,7 +1769,7 @@ test("new-task composer keeps stable presentation and preserves submission owner
     expect(container.querySelector('[data-loading-message="starting"]')).toBeNull();
     expect(container.textContent).not.toContain("Starting");
     expect(container.querySelector('[data-loading-message="working"]')).toBeNull();
-    expect(container.querySelector('button[aria-label="Creating conversation..."]')?.getAttribute("aria-busy")).toBe("true");
+    expect(container.querySelector('button[aria-label="Send"]')?.getAttribute("aria-busy")).toBe("true");
   };
   const expectSettled = () => {
     expect(container.querySelector('[data-loading-message="starting"]')).toBeNull();
@@ -1745,7 +1808,7 @@ test("new-task composer keeps stable presentation and preserves submission owner
     expect(heroEditor.getAttribute("contenteditable")).toBe("true");
     expect(capturedHandoff?.submitted.draft).toBe("First hero message");
     expectPendingHero();
-    expect(container.querySelector('button[aria-label="Creating conversation..."]')?.getAttribute("aria-busy")).toBe("true");
+    expect(container.querySelector('button[aria-label="Send"]')?.getAttribute("aria-busy")).toBe("true");
     expect(container.querySelector('button[aria-label="Preparing connected service tools…"]')).toBeNull();
     await act(async () => updateHeroDraft("Newer hero draft"));
     expect(capturedHandoff?.getContinuation().draft).toBe("Newer hero draft");
@@ -1782,7 +1845,7 @@ test("new-task composer keeps stable presentation and preserves submission owner
     expect(creations).toBe(2);
     expect(container.querySelector('[data-lexical-editor="true"]')).toBe(heroEditor);
     expect(heroEditor.getAttribute("contenteditable")).toBe("true");
-    expect(container.querySelector('button[aria-label="Creating conversation..."]')?.getAttribute("aria-busy")).toBe("true");
+    expect(container.querySelector('button[aria-label="Send"]')?.getAttribute("aria-busy")).toBe("true");
     expect(container.querySelector('button[aria-label="Preparing connected service tools…"]')).toBeNull();
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("");
     expect(container.querySelector('[data-message-role="user"]')).toBeNull();

@@ -21,7 +21,14 @@ export function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export async function startAcmeUpstream(stack: AsyncDisposableStack) {
+export interface AcmeStreamCheckpoint {
+  trigger: string;
+  prefix: string;
+  suffix: string;
+  hold(): Promise<void>;
+}
+
+export async function startAcmeUpstream(stack: AsyncDisposableStack, checkpoint?: AcmeStreamCheckpoint) {
   const key = randomUUID();
   const requests: { model: string; authenticated: boolean }[] = [];
   const upstream = createServer(async (request, response) => {
@@ -49,10 +56,18 @@ export async function startAcmeUpstream(stack: AsyncDisposableStack) {
         usage: { input_tokens: 25, output_tokens: 12 } };
       if (record(body) && body.stream === true) {
         response.writeHead(200, { "content-type": "text/event-stream", "request-id": randomUUID() });
+        const held = checkpoint && record(body) && JSON.stringify(body.messages).includes(checkpoint.trigger) ? checkpoint : undefined;
         for (const event of [
           { type: "message_start", message: { ...message, content: [], stop_reason: null, usage: { input_tokens: 25, output_tokens: 0 } } },
           { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
-          { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: ACME_REPLY } },
+          { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: held?.prefix ?? ACME_REPLY } },
+        ]) response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+        if (held) {
+          await held.hold();
+          const next = { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: held.suffix } };
+          response.write(`event: ${next.type}\ndata: ${JSON.stringify(next)}\n\n`);
+        }
+        for (const event of [
           { type: "content_block_stop", index: 0 },
           { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 12 } },
           { type: "message_stop" },

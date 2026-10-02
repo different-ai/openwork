@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from "hono"
+import { INSUFFICIENT_SCOPE_CHALLENGE, requiresAdminError } from "../agent-error-envelope.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { getMcpResourceContext, verifyMcpRequest } from "../mcp/auth.js"
 import { DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
@@ -131,7 +132,13 @@ export function orgRoleRoute(roles: readonly string[]): MiddlewareHandler<{ Vari
 
       const allowed = verifyOrgRole({ roles, userContext: payload.currentMember })
       if (!allowed) {
-        roleResponse = c.json({ error: "forbidden" }, 403)
+        c.header("WWW-Authenticate", INSUFFICIENT_SCOPE_CHALLENGE)
+        roleResponse = c.json({
+          error: "forbidden",
+          ...requiresAdminError(roles.includes("admin")
+            ? "Only workspace owners and admins can do this. Ask one of them, or have them change your role."
+            : "Only the workspace owner can do this."),
+        }, 403)
         return
       }
 

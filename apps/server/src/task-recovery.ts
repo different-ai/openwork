@@ -4,6 +4,11 @@ import type { ServerConfig, WorkspaceInfo } from "./types.js";
 
 export const RECOVERY_INTERVAL_MS = 2_000;
 export const RECOVERY_CONCURRENCY = 2;
+/** Consecutive failed observations before a record is retried with backoff. */
+export const RECOVERY_FAILURES_BEFORE_BACKOFF = 3;
+const RECOVERY_MAX_BACKOFF_MS = 5 * 60_000;
+/** A new prompt is watched this long for an interruption worth resuming. */
+const OBSERVING_WINDOW_MS = 30_000;
 const MAX_TASKS = 1_000;
 const recordSchema = z.object({
   workspaceId: z.string(), directory: z.string(), sessionId: z.string(),
@@ -25,6 +30,10 @@ export async function createTaskRecovery(
   config: ServerConfig,
   request: (request: Request) => Promise<Response>,
   beforeResume: () => Promise<void> = async () => {},
+  options: {
+    /** False while an engine is stopped (v2 after switching back to v1): its records wait instead of polling 503s. */
+    engineAvailable?: (engine: Engine) => boolean;
+  } = {},
 ) {
   const records = new Map<string, RecoveryRecord>();
   const startup = new Set<string>();
@@ -32,6 +41,7 @@ export async function createTaskRecovery(
   const ownedRequests = new WeakMap<Request, RecoveryRecord>();
   const admissions = new Map<string, Promise<unknown>>();
   const observingSince = new Map<string, number>();
+  const failures = new Map<string, { count: number; retryAt: number }>();
   const key = (record: Pick<RecoveryRecord, "workspaceId" | "engine" | "sessionId">) =>
     JSON.stringify([record.workspaceId, record.engine, record.sessionId]);
   for (const record of await store.get(config, "desktop") ?? []) {
@@ -53,7 +63,22 @@ export async function createTaskRecovery(
   const current = (record: RecoveryRecord) => !stopped && records.get(key(record)) === record;
   const remove = (record: RecoveryRecord) => {
     records.delete(key(record)); startup.delete(key(record)); recovered.delete(key(record));
-    observingSince.delete(key(record));
+    observingSince.delete(key(record)); failures.delete(key(record));
+  };
+  // Unavailable state still never grants permission to send; it only stops a
+  // record that cannot be read from costing five engine reads every tick.
+  const observationFailed = async (record: RecoveryRecord) => {
+    const recordKey = key(record);
+    const count = (failures.get(recordKey)?.count ?? 0) + 1;
+    if (count >= RECOVERY_FAILURES_BEFORE_BACKOFF && record.phase === "observing" && !startup.has(recordKey)
+      && Date.now() - (observingSince.get(recordKey) ?? 0) > OBSERVING_WINDOW_MS && current(record)) {
+      // Only a successful read settles a watch, and it is past the window in
+      // which a quick interruption would be resumed.
+      remove(record); await persist(); return;
+    }
+    const delay = count < RECOVERY_FAILURES_BEFORE_BACKOFF ? 0
+      : Math.min(RECOVERY_MAX_BACKOFF_MS, RECOVERY_INTERVAL_MS * 2 ** (count - RECOVERY_FAILURES_BEFORE_BACKOFF + 1));
+    failures.set(recordKey, { count, retryAt: Date.now() + delay });
   };
   const call = async (record: RecoveryRecord, path: string, body?: unknown) => {
     const mount = `/workspace/${encodeURIComponent(record.workspaceId)}/${record.engine === "v2" ? "opencode2/api" : "opencode"}`;
@@ -87,7 +112,9 @@ export async function createTaskRecovery(
       call(record, sessionPath), call(record, v2 ? "/session/active" : "/session/status"),
       call(record, `${sessionPath}/${v2 ? "context" : "message?limit=100"}`),
       call(record, v2 ? `${sessionPath}/permission` : "/permission"),
-      call(record, v2 ? "/form/request" : "/question"),
+      // Only this session's forms decide `blocked`; the workspace-wide list
+      // pages every conversation the engine has and fails with any of them.
+      call(record, v2 ? `${sessionPath}/form` : "/question"),
       v2 ? [] : call(record, `/api${sessionPath}/permission`),
     ]);
     if (!isRecord(session) || !isRecord(statuses) || !Array.isArray(messages)
@@ -140,7 +167,13 @@ export async function createTaskRecovery(
     // Wait for restored sign-in/policy before claiming work. The actual send
     // still traverses the authenticated policy-enforcing proxy.
     if (startup.has(key(record))) await beforeResume();
-    const snapshot = await observe(record);
+    let snapshot: Awaited<ReturnType<typeof observe>>;
+    try { snapshot = await observe(record); }
+    catch (error) {
+      await observationFailed(record);
+      throw error;
+    }
+    failures.delete(key(record));
     if (!current(record)) return;
     const pending = startup.has(key(record));
     if (record.phase === "claimed" && (snapshot.active || admissions.has(key(record)))) return;
@@ -189,7 +222,12 @@ export async function createTaskRecovery(
   const tick = () => {
     if (stopped) return Promise.resolve();
     if (ticking) return ticking;
-    const batch = [...records.values()];
+    const now = Date.now();
+    const batch = [...records.values()].filter((record) => {
+      if (options.engineAvailable && !options.engineAvailable(record.engine)) return false;
+      const failure = failures.get(key(record));
+      return !failure || failure.retryAt <= now;
+    });
     // Bound background reads as well as starts; rotate so a large backlog is fair.
     const selected = batch.length ? [batch[cursor % batch.length], batch[(cursor + 1) % batch.length]] : [];
     cursor += RECOVERY_CONCURRENCY;

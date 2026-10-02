@@ -18,6 +18,7 @@ import {
   Square,
 } from "lucide-react"
 import { useNavigate, useSearchParams } from "react-router"
+import { globalSettingsRoute, workspaceSettingsRoute } from "@/react-app/shell/workspace-routes"
 import type {
   AutomationDetail,
   AutomationRun,
@@ -142,6 +143,7 @@ function LoadingState() {
 export function AutomationsPage(props: { providerCatalog?: AutomationProviderCatalog; workspaceId?: string | null } = {}) {
   const denAuth = useDenAuth()
   const navigate = useNavigate()
+  const openProviderSettings = () => navigate(props.workspaceId?.trim() ? workspaceSettingsRoute(props.workspaceId.trim(), "ai") : globalSettingsRoute("ai"))
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const [query, setQuery] = useState("")
@@ -333,6 +335,7 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
         ) : null}
         <AutomationEditor
           key={workflowVersion?.id ?? "agent"}
+          onOpenProviderSettings={openProviderSettings}
           placement={placement}
           initial={workflow && workflowVersion ? { ...inputDefaults(models), name: `${workflow.title} refresh` } : undefined}
           initialKey={workflowVersion?.id}
@@ -413,6 +416,7 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
             <p className="text-sm text-muted-foreground">Saving creates an immutable revision for future runs.</p>
           </div>
           <AutomationEditor
+            onOpenProviderSettings={openProviderSettings}
             placement={detailPlacement}
             initial={inputFromDetail(detail)}
             initialKey={detail.revision.id}

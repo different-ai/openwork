@@ -36,7 +36,7 @@ import { scoreText, tokenize, type CapabilityMatch } from "./search.js"
  */
 
 export const REMOTE_SESSION_CAPABILITY_PREFIX = "remote-session:"
-export const REMOTE_SESSION_ACTIONS = ["create", "send", "read"] as const
+export const REMOTE_SESSION_ACTIONS = ["create", "send", "read", "stop"] as const
 export type RemoteSessionAction = (typeof REMOTE_SESSION_ACTIONS)[number]
 
 export function remoteSessionCapabilityName(action: RemoteSessionAction): string {
@@ -62,13 +62,17 @@ const createBodySchema = z.object({
   model: modelSchema.optional(),
 })
 
+const stopBodySchema = z.object({ sessionId: z.string().trim().min(1), messageId: z.string().optional() })
+
 const sendBodySchema = z.object({
+  messageId: z.string().regex(/^msg_[a-zA-Z0-9]+$/).optional(),
   sessionId: z.string().trim().min(1),
   prompt: z.string().min(1).max(100_000),
   model: modelSchema.optional(),
 })
 
 const readBodySchema = z.object({
+  messageId: z.string().optional(),
   sessionId: z.string().trim().min(1).optional(),
   commandId: z.string().trim().min(1).optional(),
   limit: z.number().int().min(1).max(100).optional(),
@@ -85,6 +89,7 @@ const BODY_SCHEMAS: Record<RemoteSessionAction, z.ZodTypeAny> = {
   create: createBodySchema,
   send: sendBodySchema,
   read: readBodySchema,
+  stop: stopBodySchema,
 }
 
 type RemoteSessionDefinition = {
@@ -105,6 +110,19 @@ const MODEL_ARGUMENT_SCHEMA = {
 } as const
 
 const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
+  {
+    action: "stop",
+    summary: "Stop a running remote session on your own OpenWork Web instance.",
+    searchExtraTokens: "remote session stop abort cancel running",
+    argumentsSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string" },
+        messageId: { type: "string", description: "Optional guard: stop only if this is still the latest user turn." },
+      },
+      required: ["sessionId"],
+    },
+  },
   {
     action: "create",
     summary:
@@ -131,6 +149,7 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
       type: "object",
       properties: {
         sessionId: { type: "string", description: "Session id returned by remote-session:create." },
+        messageId: { type: "string", description: "Optional stable msg_ id for idempotent retries." },
         prompt: { type: "string" },
         model: MODEL_ARGUMENT_SCHEMA,
       },
@@ -148,6 +167,7 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
       properties: {
         sessionId: { type: "string", description: "Session id returned by remote-session:create." },
         commandId: { type: "string", description: "Desktop command id returned by remote-session:create." },
+        messageId: { type: "string", description: "Only return this user turn and its assistant replies." },
         limit: { type: "number", description: "Maximum number of recent messages to return. Defaults to 20, max 100." },
       },
       oneOf: [{ required: ["sessionId"] }, { required: ["commandId"] }],
@@ -209,7 +229,7 @@ export type RemoteSessionRuntimeResult =
       retryAfterMs?: number
     }
 
-export type RemoteSessionThreadClient = Pick<AgentSessionClient, "createThread" | "sendTurn" | "getThreadSnapshot">
+export type RemoteSessionThreadClient = Pick<AgentSessionClient, "createThread" | "sendTurn" | "getThreadSnapshot"> & Partial<Pick<AgentSessionClient, "abortThread">>
 
 export type RemoteSessionExecuteDeps = {
   getOpenWorkWebAccess: OpenWorkWebRuntimeAccessResolver
@@ -490,7 +510,7 @@ export async function executeRemoteSessionCapability(
   input: RemoteSessionExecuteInput,
   deps: RemoteSessionExecuteDeps = DEFAULT_REMOTE_SESSION_DEPS,
 ): Promise<RemoteSessionToolResult> {
-  if ((input.action === "create" || input.action === "send") && !input.hasWriteScope) {
+  if ((input.action === "create" || input.action === "send" || input.action === "stop") && !input.hasWriteScope) {
     return errorResult({
       error: "insufficient_mcp_scope",
       message: `remote-session:${input.action} requires the mcp:write scope.`,
@@ -615,11 +635,30 @@ export async function executeRemoteSessionCapability(
     }
   }
 
+  if (input.action === "stop") {
+    const body = stopBodySchema.parse(parsedBody.data)
+    try {
+      if (!client.abortThread) return errorResult({ error: "stop_unavailable", retryable: false })
+      if (body.messageId) {
+        const snapshot = await client.getThreadSnapshot(body.sessionId)
+        const currentTurn = snapshot.messages.slice().reverse().find(message => message.role === "user")
+        if (currentTurn?.id !== body.messageId) {
+          return jsonResult({ sessionId: body.sessionId, stopped: false, reason: "different_turn" })
+        }
+      }
+      const result = await client.abortThread(body.sessionId)
+      return jsonResult({ sessionId: body.sessionId, ...result })
+    } catch (error) {
+      return threadErrorResult("stop", body.sessionId, error)
+    }
+  }
+
   if (input.action === "send") {
     const body = sendBodySchema.parse(parsedBody.data)
     try {
       const accepted = await client.sendTurn(body.sessionId, {
         prompt: body.prompt,
+        ...(body.messageId ? { messageId: body.messageId } : {}),
         ...(modelInput(body.model) === undefined ? {} : { model: modelInput(body.model) }),
       })
       return jsonResult({
@@ -639,7 +678,10 @@ export async function executeRemoteSessionCapability(
   if (!body.sessionId) throw new Error("remote_session_read_body_invariant")
   try {
     const snapshot = await client.getThreadSnapshot(body.sessionId)
-    const transcript = toTranscript(snapshot)
+    const currentMessages = body.messageId
+      ? snapshot.messages.filter(message => message.id === body.messageId || message.parentId === body.messageId)
+      : snapshot.messages
+    const transcript = toTranscript({ ...snapshot, messages: currentMessages })
     const limit = body.limit ?? READ_DEFAULT_MESSAGE_LIMIT
     return jsonResult({
       target: "cloud",
@@ -651,9 +693,11 @@ export async function executeRemoteSessionCapability(
         id: message.id,
         role: message.role,
         text: message.text.slice(0, READ_MESSAGE_TEXT_LIMIT),
-        toolCalls: message.toolCalls.map((tool) => ({ name: tool.name, status: tool.status })),
+        toolCalls: message.toolCalls.map((tool) => ({ id: tool.partId, name: tool.name, status: tool.status })),
       })),
-      finalAssistantText: transcript.finalAssistantText.slice(0, FINAL_TEXT_LIMIT),
+      finalAssistantText: body.messageId
+        ? transcript.messages.filter(message => message.role === "assistant" && message.text).map(message => message.text).join("\n\n").slice(0, 100_000)
+        : transcript.finalAssistantText.slice(0, FINAL_TEXT_LIMIT),
       ...(transcript.terminalError ? { terminalError: transcript.terminalError } : {}),
     })
   } catch (error) {

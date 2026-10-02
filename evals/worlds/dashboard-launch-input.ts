@@ -7,6 +7,7 @@ import {
   atlassianAppTools, confluenceResourceUri, jiraResourceUri,
   confluenceTileTitle, jiraTileTitle, pastedConfluenceJson, pastedJqlJson,
 } from "@openwork/labs";
+import { enableOrgManagedDashboards } from "./dashboards.ts";
 export { confluenceTileTitle, jiraTileTitle, expectedJql } from "@openwork/labs";
 
 /**
@@ -85,6 +86,7 @@ export async function atlassianDashboardTiles(seed: Seed) {
     org: { name: `Dashboard launch input ${Date.now()}`, admin: { name: "Avery" } },
   });
   const organizationId = await activeOrganizationId(seed, den.admin);
+  await enableOrgManagedDashboards(seed, den.admin, organizationId);
   const orgHeaders = { "x-openwork-org-id": organizationId };
   const connection = await seed.orgConnection(den.admin, {
     name: "Atlassian (One org account)",

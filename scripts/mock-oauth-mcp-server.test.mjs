@@ -34,7 +34,8 @@ async function stop(child) {
   await exited;
 }
 
-test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeout: 10_000 }, async (context) => {
+// Each synthetic answer streams on a timer; allow the expanded scenarios to finish.
+test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeout: 20_000 }, async (context) => {
   const port = await reservePort();
   const origin = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, [serverPath], {
@@ -250,6 +251,30 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
   assert.equal(final.status, 200);
   assert.equal(final.frames.map(frame => frame.choices[0].delta.content ?? "").join(""), "unique text returned by the real tool");
 
+  assert.equal((await fetch(`${origin}/admin/agent-workloads`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workloads: [{ promptMarker: "Build a prepared App", finalReply: "Created", steps: [
+      { tool: "prepare_app", arguments: { title: "Dashboard" } },
+      { tool: "create_app", arguments: { title: "Dashboard" }, argumentsFrom: "app-preparation", holdUntilReleased: true },
+    ] }] }),
+  })).status, 200);
+  const preparationId = "00000000-0000-4000-8000-000000000001";
+  await fetch(`${origin}/admin/agent-hold`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ held: true }) });
+  const held = await fetch(`${origin}/v1/chat/completions`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "discovery-model", messages: [
+      { role: "user", content: "Build a prepared App" },
+      { role: "tool", content: JSON.stringify({ content: [{ type: "text", text: JSON.stringify({ preparationId }) }] }) },
+    ], tools: ["prepare_app", "create_app"].map(name => ({ type: "function", function: { name } })) }),
+  });
+  assert.equal(held.status, 200);
+  const heldBody = held.text();
+  const released = await fetch(`${origin}/admin/agent-hold`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ held: false }) });
+  assert.equal((await released.json()).pending, 0);
+  const heldFrames = (await heldBody).split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
+  const preparedCall = heldFrames.flatMap(frame => frame.choices[0].delta.tool_calls ?? [])[0];
+  assert.deepEqual(JSON.parse(preparedCall.function.arguments), { title: "Dashboard", preparationId });
+
   // The direct skill tools hand off the same way: list_skills narrows to one
   // skill, and get_skill reads it by the capability that list returned.
   assert.equal((await fetch(`${origin}/admin/agent-workloads`, {
@@ -297,6 +322,18 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
   const initial = { role: "system", content: `You are OpenWork.\n<available_skills>${skillEntry}</available_skills>` };
   const update = content => ({ role: "user", content: `<system-update>\n${content.replaceAll("<", "&lt;").replaceAll(">", "&gt;")}\n</system-update>` });
   const removed = update("The following skill IDs are no longer available and must not be used: release-current.");
+  // A watcher update can arrive after the human's prompt. It must not become
+  // the newest task or erase already completed tool calls in that task.
+  const afterPrompt = await fetch(`${origin}/v1/chat/completions`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "skill-model", messages: [initial,
+      { role: "user", content: "Read current instructions" },
+      { role: "tool", content: "Independent tool result" }, removed],
+      tools: [{ type: "function", function: { name: "skill" } }],
+    }),
+  });
+  assert.equal(afterPrompt.status, 200);
+  assert.match(await afterPrompt.text(), /Independent tool result/);
   for (const [history, available] of [
     [[initial], true], [[initial, removed], false],
     [[initial, removed, update(`New skills are available in addition to those previously listed:\n${skillEntry}`)], true],
