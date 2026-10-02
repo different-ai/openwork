@@ -85,12 +85,13 @@ test("test evidence writes visual validations, assertions, failures, and unvalid
     assert.deepEqual(testRun.steps, [{ seq: 1, name: "reload succeeds", depth: 0, ok: true, ms: 25 }]);
     assert.equal(testRun.outcome, "failed");
     assert.equal(testRun.failure, "expected test failure");
+    // Capture order, so the captions tell the story in the order it happened.
     assert.deepEqual(
       testRun.artifacts.map((artifact) => isRecord(artifact) ? artifact.caption : null),
-      ["Passing screenshot", "Failing screenshot", "API returned success", "body cam artifact 3"],
+      ["Passing screenshot", "Failing screenshot", "body cam artifact 3", "API returned success"],
     );
     const failedArtifact = testRun.artifacts[1];
-    const assertionArtifact = testRun.artifacts[2];
+    const assertionArtifact = testRun.artifacts[3];
     assert.ok(isRecord(failedArtifact));
     assert.equal(failedArtifact.ok, false);
     assert.ok(isRecord(assertionArtifact));
@@ -273,12 +274,17 @@ for (const caption of [undefined, 'after: <guide> grows & keeps "its beginning"'
       const methods: string[] = [];
       const client: CdpClient = {
         close() {},
-        async send(method) {
+        async send(method, params) {
           methods.push(method);
           if (method === "Page.bringToFront") return {};
           if (method === "Page.captureScreenshot") return { data: png.toString("base64") };
+          if (method === "Runtime.evaluate" && params?.expression === "globalThis") return { result: { objectId: "page-global" } };
           if (method === "Runtime.evaluate") {
-            return { result: { value: { route: "#/ambient", visibleText: "Ambient screenshot" } } };
+            return { result: { value: { route: "#/ambient", visibleText: "Ambient screenshot", width: 1280, height: 800 } } };
+          }
+          // The settle wait reports how long the page took to go quiet; hiding the caret returns nothing.
+          if (method === "Runtime.callFunctionOn") {
+            return { result: String(params?.functionDeclaration).includes("MutationObserver") ? { value: { ms: 210, settled: true } } : { type: "undefined" } };
           }
           throw new Error(`Unexpected CDP method: ${method}`);
         },
@@ -291,8 +297,11 @@ for (const caption of [undefined, 'after: <guide> grows & keeps "its beginning"'
       const captured = await withTestEvidence(testEvidence, () => caption === undefined ? screenshot(app) : screenshot(app, { caption }));
       assert.deepEqual(captured.png, png);
       assert.equal(captured.hash, createHash("sha256").update(png).digest("hex"));
-      assert.deepEqual(methods.slice(0, 2), ["Page.bringToFront", "Page.captureScreenshot"]);
+      assert.deepEqual(methods.filter((method) => method.startsWith("Page.")), ["Page.bringToFront", "Page.captureScreenshot"]);
+      assert.ok(methods.indexOf("Runtime.callFunctionOn") < methods.indexOf("Page.captureScreenshot"), "the page settles before it is captured");
       assert.equal(captured.route, "#/ambient");
+      assert.deepEqual(captured.settle, { ms: 210, settled: true });
+      assert.deepEqual(captured.viewport, { width: 1280, height: 800 });
       await testEvidence.close();
 
       const testRun = await payload(dir);

@@ -50,7 +50,7 @@ import {
 import type { App, Den, EvalEngine, Place, WorldResources } from "@openwork/env";
 import { chrome, desktop } from "@openwork/hosts";
 import type { DesktopHandle } from "@openwork/hosts";
-import { findCheckpointCapability, screenshot, takeCheckpoint, validate } from "@openwork/test-evidence";
+import { findCheckpointCapability, redactText, screenshot, takeCheckpoint, validate } from "@openwork/test-evidence";
 import type { CheckpointCapability, ScreenshotArtifact } from "@openwork/test-evidence";
 import type {
   StepRecord,
@@ -86,6 +86,7 @@ interface EvidenceSink {
   recordStep(step: StepRecordInput): StepRecord;
   setOutcome(outcome: TestOutcome, failure?: string): void;
   setEngine(engine: EvalEngine): void;
+  setActiveStep?(name: string | undefined): void;
 }
 
 export class BufferedEvidenceSink implements EvidenceSink {
@@ -155,11 +156,7 @@ function messageText(error: unknown): string {
 }
 
 function redacted(value: string): string {
-  return value
-    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "<email>")
-    .replace(/Bearer\s+[^\s,;]+/gi, "Bearer <redacted>")
-    .replace(/((?:["']?[\w.-]*(?:token|secret|password)[\w.-]*["']?)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}&]+)/gi, "$1<redacted>")
-    .slice(0, 240);
+  return redactText(value).slice(0, 240);
 }
 
 function isSurface(value: unknown): value is Surface {
@@ -304,6 +301,11 @@ export class SpecRuntime {
   #capability: CheckpointCapability | undefined;
   #warnedNoCapture = false;
   #actedSinceCheckpoint = true;
+  /** The surface the person last acted on or looked at; a failed step's frame comes from it. */
+  #lastSurface: Surface | null = null;
+  #failureFramed = false;
+  /** What the running step verified with `user.see` since the last screenshot, to outline on the next one. */
+  #seen: { surface: Surface; target: Target }[] = [];
 
   /** Name of the innermost `step()` currently running; screenshots taken inside it are captioned with it. */
   currentStepName(): string | undefined {
@@ -398,6 +400,7 @@ export class SpecRuntime {
   async call<T>(channel: TraceChannel, verb: string, detail: string, surface: Surface | null, fn: () => Promise<T>): Promise<T> {
     const startedAt = Date.now();
     const safeDetail = redacted(detail);
+    if (surface && (channel === "user" || channel === "agent")) this.#lastSurface = surface;
     try {
       this.checkOrder(channel, verb);
       const result = await fn();
@@ -469,6 +472,8 @@ export class SpecRuntime {
     const depth = this.#stepDepth;
     this.#stepDepth += 1;
     this.#stepNames.push(name);
+    this.#seen = [];
+    this.sink.setActiveStep?.(name);
     const startedAt = Date.now();
     try {
       const result = await fn();
@@ -486,12 +491,57 @@ export class SpecRuntime {
       this.emit({ stage: "body", channel: "step", verb: "step", detail: name, ok: false, ms, error: failure });
       this.#stepBlocked = true;
       this.setOutcome("failed", failure);
+      await this.#failureFrame(name);
       throw error;
     } finally {
       this.#stepDepth -= 1;
       this.#stepNames.pop();
+      this.sink.setActiveStep?.(this.currentStepName());
     }
   };
+
+  noteSeen(surface: Surface, target: Target): void {
+    this.#seen = [...this.#seen.filter((entry) => entry.surface !== surface || targetDetail(entry.target) !== targetDetail(target)), { surface, target }];
+  }
+
+  /** Where the elements this step verified are now, most recent first; each is outlined on the screenshot once. */
+  async locateSeen(surface: Surface): Promise<{ label: string; rect: Located["rect"] }[]> {
+    const mine = this.#seen.filter((entry) => entry.surface === surface).slice(-4).reverse();
+    this.#seen = this.#seen.filter((entry) => entry.surface !== surface);
+    const found = await Promise.all(mine.map(async ({ target }) => {
+      try {
+        const located = await locate(surface, target);
+        return located.visible ? [{ label: redacted(focusLabel(target, located)), rect: located.rect }] : [];
+      } catch {
+        return [];
+      }
+    }));
+    return found.flat();
+  }
+
+  /**
+   * The screen at the moment a step failed, so a red run shows what went
+   * wrong and not only what came before. Best effort: never changes the
+   * outcome, never waits more than 5 s, and only once per test.
+   */
+  async #failureFrame(name: string): Promise<void> {
+    const surface = this.#lastSurface ?? this.primary;
+    if (this.#failureFramed || !surface || this.stage !== "body") return;
+    this.#failureFramed = true;
+    const capture = screenshot(surface, { caption: `failed: ${name}`, failure: true }).then(() => undefined, () => undefined);
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([capture, new Promise<void>((resolve) => { timer = setTimeout(resolve, 5_000); })]);
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** A reviewer-readable name for an outlined element: the words the test looked for. */
+function focusLabel(target: Target, located: Located): string {
+  if (typeof target === "string") return target;
+  const words = target.label ?? target.text ?? target.placeholder;
+  if (typeof words === "string") return words;
+  const name = (located.name || located.text).replace(/\s+/g, " ").trim();
+  return name ? (name.length > 60 ? `${name.slice(0, 59)}…` : name) : targetDetail(target);
 }
 
 function requireSurface(surface: Surface | null): Surface {
@@ -841,7 +891,10 @@ export class UserChannel implements User {
           if (found.visible
             && (options.editable === undefined || found.editable === options.editable)
             && (options.value === undefined || found.value === options.value)
-            && (options.text === undefined || textMatches(found.text, options.text))) return;
+            && (options.text === undefined || textMatches(found.text, options.text))) {
+            this.#runtime.noteSeen(surface, target);
+            return;
+          }
         } catch {
           found = null;
         }
@@ -874,7 +927,8 @@ export class UserChannel implements User {
   screenshot() {
     const surface = requireSurface(this.#surface);
     const caption = this.#runtime.currentStepName();
-    return this.#runtime.call("user", "screenshot", "screenshot", surface, () => screenshot(surface, { caption }));
+    return this.#runtime.call("user", "screenshot", "screenshot", surface, () =>
+      screenshot(surface, { caption, locateFocus: () => this.#runtime.locateSeen(surface) }));
   }
 
   checkpoint(caption?: string) {

@@ -16,8 +16,12 @@ import {
 import type { Den, WorldResources } from "@openwork/env";
 import type { DenRef, DenSession } from "@openwork/behaviors";
 import type { MockMcpHandle } from "@openwork/labs";
-import { BufferedEvidenceSink, SeedChannel, SpecRuntime, copyWorldResources, registerWorldDisposable, replayEvidence } from "../src/spec/runtime.ts";
-import { createTestEvidence } from "@openwork/test-evidence";
+import { BufferedEvidenceSink, SeedChannel, SpecRuntime, channels, copyWorldResources, registerWorldDisposable, replayEvidence } from "../src/spec/runtime.ts";
+import { createTestEvidence, withTestEvidence } from "@openwork/test-evidence";
+import type { CdpClient, Surface } from "@openwork/cdp";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 test("active step captions follow nesting and clear after success or failure", async () => {
   await using stack = new AsyncDisposableStack();
@@ -280,5 +284,66 @@ test("needs recognizes OpenSSL implementations that reject --version", (context)
   } finally {
     spawn.mock.restore();
     syncBuiltinESMExports();
+  }
+});
+
+/** A page that settles at once, renders `frame`, and reports one element at a fixed place for every lookup. */
+function fakePage(frame: Buffer) {
+  const methods: string[] = [];
+  const client: CdpClient = {
+    close() {},
+    async send(method, params) {
+      methods.push(method);
+      if (method === "Page.bringToFront") return {};
+      if (method === "Page.captureScreenshot") return { data: frame.toString("base64") };
+      if (method === "Runtime.evaluate" && params?.expression === "globalThis") return { result: { objectId: "page-global" } };
+      if (method === "Runtime.evaluate") return { result: { value: { route: "#/panel", visibleText: "Panel\nSaved", width: 1280, height: 800 } } };
+      if (method === "Runtime.callFunctionOn") {
+        const declaration = String(params?.functionDeclaration);
+        if (declaration.includes("MutationObserver")) return { result: { value: { ms: 200, settled: true } } };
+        if (declaration.includes("implicitRole")) {
+          return { result: { value: { center: { x: 256, y: 100 }, rect: { x: 128, y: 80, width: 256, height: 40 }, tag: "button", name: "Saved", visible: true, hitTestOk: true, editable: false, disabled: null, value: "", text: "Saved", covering: null } } };
+        }
+        return { result: { type: "undefined" } };
+      }
+      throw new Error(`Unexpected CDP method: ${method}`);
+    },
+  };
+  const surface: Surface = { handle: { name: "page", kind: "chrome", hostKind: "test", cdpUrl: "http://127.0.0.1" }, client };
+  return { surface, methods };
+}
+
+test("a screenshot outlines what its step verified, and a failed step keeps the screen it failed on", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openwork-spec-evidence-"));
+  try {
+    await using stack = new AsyncDisposableStack();
+    const evidence = createTestEvidence({ name: "panel opens", outDir: dir });
+    const runtime = new SpecRuntime(resolvePlace({}), stack, evidence);
+    runtime.stage = "body";
+    const { surface } = fakePage(Buffer.from("not decoded"));
+    runtime.setPrimary({ web: surface });
+    const user = channels(runtime).user;
+    await withTestEvidence(evidence, async () => {
+      await runtime.step("after: the panel opens", async () => {
+        await user.see({ role: "button", label: "Saved" });
+        await user.screenshot();
+      });
+      await assert.rejects(runtime.step("the panel survives reload", async () => {
+        await runtime.step("after reload", async () => { throw new Error("Timed out seeing Saved"); });
+      }), /Timed out seeing Saved/);
+    });
+    await evidence.close();
+    const record: unknown = JSON.parse(await readFile(join(dir, "test-run.json"), "utf8"));
+    assert.ok(typeof record === "object" && record !== null && "artifacts" in record && Array.isArray(record.artifacts));
+    const [shown, failed, ...rest] = record.artifacts;
+    assert.equal(rest.length, 0, "one failure frame, not one per enclosing step");
+    assert.equal(shown.step, "after: the panel opens");
+    assert.deepEqual(shown.focus, [{ label: "Saved", box: { x: 0.1, y: 0.1, width: 0.2, height: 0.05 } }]);
+    assert.deepEqual(shown.settle, { ms: 200, settled: true });
+    assert.equal(failed.caption, "failed: after reload");
+    assert.equal(failed.step, "after reload");
+    assert.equal(failed.failure, true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });
