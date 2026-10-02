@@ -5,8 +5,10 @@ import { fileURLToPath } from "node:url";
 import { resolveEvalEngine } from "@openwork/env/eval-engine";
 import type { EvalEngine } from "@openwork/env/eval-engine";
 import { resolveSandboxRef } from "@openwork/env/eval-ref";
-import type { ScreenshotArtifact } from "./screenshot.ts";
 import { layoutFileName, type LayoutSnapshot } from "@openwork/design-review";
+import type { EvidenceFocus, RecordScreenshotOptions, ScreenshotArtifact } from "./screenshot.ts";
+import { decodePng, diffPixels, diffText } from "./screen-change.ts";
+import type { EvidenceBox, ScreenChange } from "./screen-change.ts";
 import { parseEvidenceCheckpoint } from "@openwork/freestyle/checkpoint-schema";
 import { judgeVision } from "./validate.ts";
 import type { ValidateOptions, VisualEvidenceResult, VisualExpectationResult } from "./validate.ts";
@@ -36,6 +38,15 @@ export interface TestArtifact {
   checkpoint?: ScreenshotArtifact["checkpoint"];
   checkpointMatch?: ScreenshotArtifact["checkpointMatch"];
   checkpointError?: string;
+  /** The innermost `step()` running when this was recorded. */
+  step?: string;
+  /** Screenshots only: what changed since the previous screenshot in this test. */
+  change?: ScreenChange;
+  /** Screenshots only: elements the test verified just before taking it. */
+  focus?: EvidenceFocus[];
+  settle?: ScreenshotArtifact["settle"];
+  /** Taken by the runtime when a step failed. */
+  failure?: boolean;
 }
 
 export interface JsonArtifact {
@@ -112,6 +123,7 @@ interface StoredTestArtifact extends TestArtifact {
   png: Buffer | null;
   /** Written beside the PNG as `NN-caption.layout.json` for design checks. */
   layout: LayoutSnapshot | null;
+  visibleText: string;
   validationKey: string | null;
 }
 
@@ -127,12 +139,14 @@ export interface TestEvidenceRecorder {
    * the review app; the spec runtime passes the active `step()` name. Without
    * it the caption falls back to "<test name> artifact N".
    */
-  recordScreenshot(screenshotArtifact: ScreenshotArtifact, options?: { caption?: string }): string;
+  recordScreenshot(screenshotArtifact: ScreenshotArtifact, options?: RecordScreenshotOptions): string;
   recordVisualValidation(screenshotHash: string, visualEvidence: VisualEvidenceResult): string;
   recordAssertionEvidence(assertion: string, evidence: string, passed: boolean): void;
   recordJsonArtifact(label: string, value: unknown): void;
   recordTrace(entry: TraceEntryInput): TraceEntry;
   recordStep(step: StepRecordInput): StepRecord;
+  /** The spec runtime names the innermost running step, so screenshots and assertion lines say which claim they belong to. */
+  setActiveStep(name: string | undefined): void;
   setOutcome(outcome: TestOutcome, failure?: string): void;
   setEngine(engine: EvalEngine): void;
   close(): Promise<string>;
@@ -210,6 +224,50 @@ function gitValue(args: string[]): string {
   return result.status === 0 && !result.error ? result.stdout.trim() : "";
 }
 
+/** Trace verbs that change what the person sees; looking (`see`, probes) does not. */
+const SCREEN_ACTIONS = new Set(["click", "dblclick", "rightClick", "type", "press", "hover", "reload", "navigate", "send", "run", "browserTask", "createSession"]);
+
+function redactLine(line: string): string {
+  return line
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "<email>")
+    .replace(/Bearer\s+[^\s,;]+/gi, "Bearer <redacted>");
+}
+
+/**
+ * Each screenshot against the one before it in this test: what the person did
+ * in between (from the trace), where the image changed, and which visible
+ * lines appeared or went away. Measured once, when the record is written.
+ */
+function describeChanges(artifacts: StoredTestArtifact[], trace: TraceEntry[]): void {
+  let previous: StoredTestArtifact | null = null;
+  let previousPixels: ReturnType<typeof decodePng> = null;
+  for (const artifact of artifacts) {
+    if (!artifact.png || !artifact.fileName) continue;
+    const pixels = decodePng(artifact.png);
+    const since = previous ? Date.parse(previous.at) : -Infinity;
+    const until = Date.parse(artifact.at);
+    const actions = trace
+      .filter((entry) => entry.stage === "body" && (entry.channel === "user" || entry.channel === "agent") && SCREEN_ACTIONS.has(entry.verb))
+      .filter((entry) => Date.parse(entry.at) > since && Date.parse(entry.at) <= until)
+      .map((entry) => entry.detail);
+    const pixelChange = !previous
+      ? { ratio: 1, boxes: [{ x: 0, y: 0, width: 1, height: 1 }] }
+      : previous.hash === artifact.hash
+        ? { ratio: 0, boxes: [] }
+        : previousPixels && pixels ? diffPixels(previousPixels, pixels) : null;
+    if (pixelChange) {
+      artifact.change = {
+        since: previous?.fileName ?? null,
+        actions,
+        ...pixelChange,
+        ...(previous ? diffText(previous.visibleText, artifact.visibleText, redactLine) : { added: [], addedCount: 0, removed: [], removedCount: 0 }),
+      };
+    }
+    previous = artifact;
+    previousPixels = pixels;
+  }
+}
+
 function testArtifact(artifact: StoredTestArtifact): TestArtifact {
   return {
     caption: artifact.caption,
@@ -225,6 +283,11 @@ function testArtifact(artifact: StoredTestArtifact): TestArtifact {
     ...(artifact.checkpoint ? { checkpoint: artifact.checkpoint } : {}),
     ...(artifact.checkpointMatch ? { checkpointMatch: artifact.checkpointMatch } : {}),
     ...(artifact.checkpointError ? { checkpointError: artifact.checkpointError } : {}),
+    ...(artifact.step === undefined ? {} : { step: artifact.step }),
+    ...(artifact.change ? { change: artifact.change } : {}),
+    ...(artifact.focus && artifact.focus.length > 0 ? { focus: artifact.focus } : {}),
+    ...(artifact.settle ? { settle: artifact.settle } : {}),
+    ...(artifact.failure ? { failure: artifact.failure } : {}),
   };
 }
 
@@ -244,6 +307,25 @@ function summarize(artifacts: TestArtifact[]): TestRunSummary {
   };
 }
 
+/** One plain sentence: what the person did and what appeared or went away. */
+export function describeChange(change: ScreenChange | undefined): string {
+  if (!change || change.since === null) return "";
+  if (change.ratio === 0) return "Same screen as the previous screenshot.";
+  const did = change.actions.length > 0 ? `After ${change.actions.slice(-2).join(", ")}: ` : "";
+  const parts = [
+    change.added.length > 0 ? `shows ${change.added.slice(0, 2).map((line) => `“${line}”`).join(", ")}${change.addedCount > 2 ? ` and ${change.addedCount - 2} more` : ""}` : "",
+    change.removed.length > 0 ? `no longer shows ${change.removed.slice(0, 2).map((line) => `“${line}”`).join(", ")}${change.removedCount > 2 ? ` and ${change.removedCount - 2} more` : ""}` : "",
+  ].filter(Boolean);
+  const area = change.ratio >= 0.01 ? `${Math.round(change.ratio * 100)}%` : "under 1%";
+  return `${did}${parts.length > 0 ? parts.join("; ") : `${area} of the screen changed`}.`;
+}
+
+function changeLine(artifact: TestArtifact): string {
+  const line = describeChange(artifact.change);
+  const unsettled = artifact.settle && !artifact.settle.settled ? " The screen was still changing when this was taken." : "";
+  return line || unsettled ? `<p class="meta">${html(`${line}${unsettled}`.trim())}</p>` : "";
+}
+
 function renderArtifact(artifact: TestArtifact): string {
   const pending = artifact.judgments.some((judgment) => judgment.state === "pending");
   const stateClass = pending ? "pending" : artifact.ok === true ? "passed" : artifact.ok === false ? "failed" : "unvalidated";
@@ -253,6 +335,7 @@ function renderArtifact(artifact: TestArtifact): string {
         <h2>${html(artifact.caption)}</h2>
         <p class="meta">${html(artifact.route)} · ${html(artifact.at)}${artifact.model ? ` · ${html(artifact.model)}` : ""}</p>
         ${artifact.fileName ? `<img src="${html(artifact.fileName)}" alt="${html(artifact.caption)}">` : ""}
+        ${changeLine(artifact)}
         <p>${html(description)}</p>
         <ul>${artifact.judgments.map((judgment) => `<li class="${judgment.state}"><strong>${judgment.state.toUpperCase()}</strong> ${html(judgment.expectation)} — ${html(judgment.reasoning)}</li>`).join("")}</ul>
       </article>`;
@@ -322,6 +405,56 @@ function judgmentForResult(result: VisualExpectationResult): EvidenceJudgment {
   };
 }
 
+function parseBox(value: unknown): EvidenceBox | null {
+  if (!isRecord(value) || typeof value.x !== "number" || typeof value.y !== "number" || typeof value.width !== "number" || typeof value.height !== "number") return null;
+  return { x: value.x, y: value.y, width: value.width, height: value.height };
+}
+
+function strings(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function parseChange(value: unknown): ScreenChange | undefined {
+  if (!isRecord(value) || typeof value.ratio !== "number" || !Array.isArray(value.boxes)) return undefined;
+  const boxes = value.boxes.map(parseBox).filter((box): box is EvidenceBox => box !== null);
+  const added = strings(value.added);
+  const removed = strings(value.removed);
+  return {
+    since: typeof value.since === "string" ? value.since : null,
+    actions: strings(value.actions),
+    ratio: value.ratio,
+    boxes,
+    added,
+    addedCount: typeof value.addedCount === "number" ? value.addedCount : added.length,
+    removed,
+    removedCount: typeof value.removedCount === "number" ? value.removedCount : removed.length,
+  };
+}
+
+function parseFocus(value: unknown): EvidenceFocus[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const box = isRecord(entry) ? parseBox(entry.box) : null;
+    return isRecord(entry) && typeof entry.label === "string" && box ? [{ label: entry.label, box }] : [];
+  });
+}
+
+/** The fields this harness adds to a screenshot or assertion line; older records simply lack them. */
+function parseMoment(value: Record<string, unknown>): Pick<TestArtifact, "step" | "change" | "focus" | "settle" | "failure"> {
+  const change = parseChange(value.change);
+  const focus = parseFocus(value.focus);
+  const settle = isRecord(value.settle) && typeof value.settle.ms === "number" && typeof value.settle.settled === "boolean"
+    ? { ms: value.settle.ms, settled: value.settle.settled }
+    : undefined;
+  return {
+    ...(typeof value.step === "string" ? { step: value.step } : {}),
+    ...(change ? { change } : {}),
+    ...(focus.length > 0 ? { focus } : {}),
+    ...(settle ? { settle } : {}),
+    ...(value.failure === true ? { failure: true } : {}),
+  };
+}
+
 function parseTestArtifact(value: unknown): TestArtifact | null {
   if (
     !isRecord(value)
@@ -365,6 +498,7 @@ function parseTestArtifact(value: unknown): TestArtifact | null {
     ...(checkpoint ? { checkpoint } : {}),
     ...(value.checkpointMatch === "exact" || value.checkpointMatch === "approximate" ? { checkpointMatch: value.checkpointMatch } : {}),
     ...(typeof value.checkpointError === "string" ? { checkpointError: value.checkpointError } : {}),
+    ...parseMoment(value),
     caption: value.caption,
     fileName: value.fileName,
     hash: value.hash,
@@ -615,6 +749,7 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
   let nextStepSequence = 1;
   let outcome: TestOutcome = "unknown";
   let failure: string | undefined;
+  let activeStep: string | undefined;
   let closing: Promise<string> | null = null;
 
   const assertOpen = (): void => {
@@ -634,10 +769,9 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
       for (const artifact of jsonArtifacts) {
         await writeFile(join(dir, artifact.fileName), `${JSON.stringify(artifact.value, null, 2)}\n`, "utf8");
       }
-      const orderedArtifacts = [
-        ...artifacts.filter((artifact) => artifact.validationKey !== null),
-        ...artifacts.filter((artifact) => artifact.validationKey === null),
-      ].map(testArtifact);
+      describeChanges(artifacts, trace);
+      // Capture order: the captions tell the story only in the order it happened.
+      const orderedArtifacts = artifacts.map(testArtifact);
       const summary = summarize(orderedArtifacts);
       if (orderedArtifacts.length === 0 && outcome === "passed") summary.ok = true;
       const record: TestRunRecord = {
@@ -693,10 +827,15 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
         sequence,
         png: screenshotArtifact.png,
         layout: screenshotArtifact.layout ?? null,
+        visibleText: screenshotArtifact.visibleText,
         validationKey: null,
         checkpoint: screenshotArtifact.checkpoint,
         checkpointMatch: screenshotArtifact.checkpointMatch,
         checkpointError: screenshotArtifact.checkpointError,
+        step: activeStep,
+        focus: options?.focus,
+        settle: screenshotArtifact.settle,
+        ...(options?.failure ? { failure: true } : {}),
       });
       return join(dir, screenshotFileName);
     },
@@ -751,7 +890,9 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
         sequence,
         png: null,
         layout: null,
+        visibleText: "",
         validationKey: JSON.stringify([caption]),
+        step: activeStep,
       });
     },
     recordJsonArtifact(label, value) {
@@ -776,6 +917,9 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
       nextTraceSequence += 1;
       trace.push(recorded);
       return recorded;
+    },
+    setActiveStep(name) {
+      activeStep = name;
     },
     recordStep(step) {
       assertOpen();
