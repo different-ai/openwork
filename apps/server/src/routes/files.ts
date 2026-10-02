@@ -462,7 +462,7 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
 
   const walk = async (dirPath: string) => {
     const entries = await readdir(dirPath, { withFileTypes: true }).catch((error: unknown) => {
-      if (error instanceof Error && "code" in error && (error.code === "EACCES" || error.code === "EPERM")) {
+      if (error instanceof Error && "code" in error && (error.code === "EACCES" || error.code === "EPERM" || error.code === "EINVAL" || error.code === "ENOTSUP")) {
         if (dirPath === rootResolved) {
           throw new ApiError(403, "workspace_permission_denied", "OpenWork does not have permission to list this workspace folder.");
         }
