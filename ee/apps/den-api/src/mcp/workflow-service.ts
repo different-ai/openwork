@@ -160,6 +160,7 @@ export async function executeWorkflow(input: {
     code: input.code,
     scriptInput,
     readOnlyInput: input.readOnly,
+    failOnToolAvailabilityError: input.readOnly === true,
     tools: restricted.tools,
     timeoutMs: Math.min(parsed.payload.limits?.timeoutMs ?? 120_000, 170_000),
     maxToolCalls: parsed.payload.limits?.maxToolCalls,

@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, mock, spyOn, test } from "bun:test"
+import { Tool } from "@openwork/codemode"
+import { Effect } from "effect"
 import {
   ConfigObjectTable,
   ConfigObjectVersionTable,
@@ -228,6 +230,46 @@ test("live input validation uses retained runtime without persisting day bounds 
   for (const currentInput of [undefined, null, {}, { runtime: source.runtime }]) {
     await expect(workflows.saveWorkflow({ ...input, workflow: { ...input.workflow, currentInput } })).rejects.toThrow("workflow_live_current_input_forbidden")
   }
+})
+
+test("save revalidates live dependency authority and executable availability before persistence", async () => {
+  for (const state of ["eligible", "write", "external", "unknown", "missing-definition", "missing-manifest", "disabled-definition", "conflicting"] as const) {
+    written = []
+    const { input, row } = await fixture({ mode: "live" })
+    row.tool_calls = [{ name: "den.read" }]
+    const definition = Tool.make({ description: "Synthetic read", input: { type: "object" }, run: () => Effect.succeed(2),
+      ...(state === "disabled-definition" ? { unavailableReason: "Disabled" } : {}),
+    })
+    const entry = { scriptPath: "tools.den.read", capabilityName: "read", authority: "den", readOnly: true } as const
+    const built: BuiltCodemodeTools = {
+      tools: state === "missing-definition" ? {} : { den: { read: definition } },
+      manifest: state === "missing-manifest" ? [] : [{
+        ...entry,
+        ...(state === "write" ? { readOnly: false } : {}),
+        ...(state === "external" ? { authority: "external" } : {}),
+        ...(state === "unknown" ? { authority: undefined } : {}),
+      }],
+    }
+    if (state === "conflicting") built.manifest.push({ ...entry, readOnly: false })
+    const save = workflows.saveWorkflow({ ...input, buildTools: async () => built })
+    if (state === "eligible") {
+      await save
+      expect(savedVersion().normalizedPayloadJson).toMatchObject({ requiredCapabilities: [{ scriptPath: entry.scriptPath, capabilityName: "read" }] })
+    } else {
+      await expect(save).rejects.toThrow(state.startsWith("missing") || state === "disabled-definition" ? "workflow_capability_unavailable:" : "workflow_live_capability_ineligible:")
+      expect(written).toEqual([])
+    }
+  }
+})
+
+test("adhoc save retains interactive external dependencies", async () => {
+  const { input, row } = await fixture()
+  row.tool_calls = [{ name: "external.read" }]
+  await workflows.saveWorkflow({ ...input, buildTools: async () => ({
+    tools: { external: { read: Tool.make({ description: "Synthetic external read", input: { type: "object" }, run: () => Effect.succeed(2) }) } },
+    manifest: [{ scriptPath: "tools.external.read", capabilityName: "external-read", authority: "external", readOnly: true }],
+  }) })
+  expect(savedVersion().normalizedPayloadJson).toMatchObject({ requiredCapabilities: [{ scriptPath: "tools.external.read", capabilityName: "external-read" }] })
 })
 
 test("save rejects asynchronous input and output schemas before persistence", async () => {

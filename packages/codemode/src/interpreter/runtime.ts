@@ -3389,6 +3389,8 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
     const program = parseProgram(options.code)
     const interpreter = new Interpreter<Services<Tools>>(tools.invoke, tools.keys, bindings, logs)
     const value = yield* interpreter.run(program)
+    const unavailable = tools.unavailable()
+    if (options.failOnToolAvailabilityError && unavailable) throw unavailable
     const result = copyOut(copyIn(value, "Execution result"), true) as DataValue
     return {
       ok: true,

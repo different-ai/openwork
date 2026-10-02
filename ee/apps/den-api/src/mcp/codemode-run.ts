@@ -30,6 +30,7 @@ export async function runCodemodeScript(input: {
   code: string
   scriptInput?: unknown
   readOnlyInput?: boolean
+  failOnToolAvailabilityError?: boolean
   tools: CodemodeToolTree
   timeoutMs: number
   maxToolCalls?: number
@@ -51,6 +52,7 @@ export async function runCodemodeScript(input: {
     tools: input.tools,
     ...(bindings ? { bindings } : {}),
     readonlyBindings: input.readOnlyInput,
+    failOnToolAvailabilityError: input.failOnToolAvailabilityError,
     limits: {
       timeoutMs: input.timeoutMs,
       maxToolCalls: input.maxToolCalls ?? 50,

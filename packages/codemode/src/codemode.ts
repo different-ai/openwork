@@ -39,6 +39,8 @@ export type ExecuteOptions<Tools extends Record<string, unknown> = {}> = {
   /** Plain-data values exposed as read-only variables in program scope. */
   bindings?: Record<string, DataValue>
   readonlyBindings?: boolean
+  /** Fail even caught tool-availability errors. Host policy for live read-only runs; defaults to false. */
+  failOnToolAvailabilityError?: boolean
   /** Explicit tool tree exposed to the program as `tools`. */
   tools?: Tools & ToolTree<Services<Tools>>
   /** Per-execution overrides for the default resource limits. */
@@ -66,6 +68,7 @@ export const DiagnosticKind = Schema.Literals([
   "ParseError",
   "UnsupportedSyntax",
   "UnknownTool",
+  "ToolUnavailable",
   "InvalidToolInput",
   "InvalidToolOutput",
   "InvalidDataValue",

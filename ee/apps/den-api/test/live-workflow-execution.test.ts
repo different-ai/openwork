@@ -98,6 +98,33 @@ test("normal explicit runs retain write authority while Automations and live run
   expect((await executeWorkflow({ ...input, readOnly: false, automationRunId: createDenTypeId("automationRun"), buildTools })).ok).toBe(false)
 })
 
+test("a caught undeclared live dependency cannot produce a validated artifact snapshot", async () => {
+  const { input, receipts } = fixture()
+  const result = await executeWorkflow({
+    ...input,
+    code: "try { await tools.den.missing({}) } catch (error) { return { actor: 'fallback' } }",
+    buildTools: async () => built(() => Effect.succeed({ actor: "caller" })),
+  })
+  expect(result).toMatchObject({ ok: false, error: "script_failed", kind: "UnknownTool", toolCalls: [] })
+  expect(receipts).toHaveLength(1)
+  expect(receipts[0]).toMatchObject({ status: "failed", result_markdown: null })
+  expect(receipts[0]?.validated_result).toBeUndefined()
+})
+
+test("ordinary saved execution reports success after an authorized fallback write", async () => {
+  const { input, receipts } = fixture()
+  let writes = 0
+  const result = await executeWorkflow({
+    ...input,
+    readOnly: false,
+    code: "try { await tools.den.missing({}) } catch (error) { return await tools.den.read({}) }",
+    buildTools: async () => built(() => Effect.sync(() => { writes++; return { actor: "fallback" } }), false),
+  })
+  expect(result).toMatchObject({ ok: true, value: { actor: "fallback" }, toolCalls: [{ name: "den.read" }] })
+  expect(writes).toBe(1)
+  expect(receipts[0]).toMatchObject({ status: "succeeded", validated_result: { actor: "fallback" } })
+})
+
 test("live provenance overrides a snapshot source on success and preflight failure", async () => {
   const { input, receipts } = fixture()
   const receiptSource = `plugin:${input.pluginId}:${input.configObjectId}`
