@@ -3,7 +3,7 @@
   "compilerOptions": {
     "noEmit": true,
     "rootDir": "../../..",
-    "types": ["bun-types"]
+    "types": ["node"]
   },
   "include": [
     "src/automations/**/*.ts",

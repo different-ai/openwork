@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 import { describe, expect, test } from "bun:test";
 
 import { createHeadlessThreadClient } from "./client.js";
-import { HeadlessThreadError } from "./errors.js";
+import { HeadlessThreadError, isHeadlessModelAccessError } from "./errors.js";
 import type { HeadlessFetch, HeadlessThreadStatus } from "./types.js";
 
 type RecordedRequest = {
@@ -238,6 +238,197 @@ describe("createThread", () => {
       code: "invalid_payload",
       status: 400,
     });
+  });
+});
+
+describe("Automation model admission", () => {
+  const model = { providerId: "lpr_selected", modelId: "friendly-alias", variant: "high" };
+  const available = { providers: [{ id: model.providerId, models: { [model.modelId]: { id: "upstream/wire-id" } } }] };
+
+  function checkedClient(catalog: () => Response) {
+    const double = createOpenworkDouble();
+    const reads: string[] = [];
+    const client = createHeadlessThreadClient({
+      baseUrl: BASE_URL, workspaceId: "ws_1", token: "client-token", hostToken: "host-token",
+      requireModelAvailability: true, defaultModel: model,
+      fetch: async (url, init) => {
+        if (url.endsWith("/config/providers")) {
+          reads.push(url);
+          expect(new Headers(init?.headers).get("authorization")).toBe("Bearer client-token");
+          expect(new Headers(init?.headers).get("x-openwork-host-token")).toBe("host-token");
+          expect(init?.signal).toBeDefined();
+          return catalog();
+        }
+        return double.fetchImpl(url, init);
+      },
+    });
+    return { client, double, reads };
+  }
+
+  test("uses the effective workspace catalog key, never the provider's wire id or a fallback", async () => {
+    const { client, double, reads } = checkedClient(() => Response.json(available));
+    await client.createThread({ title: "Automation", prompt: "Do the work" });
+    expect(reads).toEqual([`${BASE_URL}/workspace/ws_1/opencode/config/providers`]);
+    expect(double.requests.at(-1)?.body).toMatchObject({
+      model: { providerID: model.providerId, modelID: model.modelId }, variant: "high",
+    });
+    await expect(client.createThread({ title: "Wrong identity", prompt: "Do the work", model: { ...model, modelId: "upstream/wire-id" } }))
+      .rejects.toMatchObject({ code: "model_access_lost" });
+    expect(double.requests).toHaveLength(2);
+  });
+
+  test("rejects disabled or removed providers and models before creating a thread", async () => {
+    for (const catalog of [{ providers: [] }, { providers: [{ id: model.providerId, models: {} }] }]) {
+      const { client, double } = checkedClient(() => Response.json(catalog));
+      await expect(client.createThread({ title: "Automation", prompt: "Do the work" }))
+        .rejects.toMatchObject({ code: "model_access_lost" });
+      expect(double.requests).toHaveLength(0);
+    }
+  });
+
+  test("rechecks a stale selection at send time without resubmitting an already admitted turn", async () => {
+    let catalog = available;
+    const { client, double, reads } = checkedClient(() => Response.json(catalog));
+    await client.createThread({ title: "Automation" });
+    catalog = { providers: [] };
+    await expect(client.sendTurn(SESSION_ID, { prompt: "Do the work" })).rejects.toMatchObject({ code: "model_access_lost" });
+    expect(reads).toHaveLength(2);
+    expect(double.requests.some((request) => request.path.endsWith("/prompt_async"))).toBe(false);
+    const admitted = createOpenworkDouble({ messages: [reply("msg_admitted", "user")] });
+    const recovery = createHeadlessThreadClient({
+      baseUrl: BASE_URL, workspaceId: "ws_1", token: "client-token", requireModelAvailability: true,
+      fetch: admitted.fetchImpl,
+    });
+    expect(await recovery.sendTurn(SESSION_ID, { prompt: "Do the work", messageId: "msg_admitted" }))
+      .toMatchObject({ alreadyPresent: true });
+    expect(admitted.requests).toHaveLength(1);
+  });
+
+  test("catalog failures and malformed successes stop admission without claiming access loss", async () => {
+    for (const response of [
+      () => Response.json({ message: "Unavailable" }, { status: 503 }),
+      () => Response.json({}),
+      () => Response.json({ providers: [{ id: model.providerId }] }),
+    ]) {
+      const { client, double } = checkedClient(response);
+      let caught: unknown;
+      try { await client.createThread({ title: "Automation", prompt: "Do the work" }); } catch (error) { caught = error; }
+      expect(caught).toBeInstanceOf(HeadlessThreadError);
+      expect(isHeadlessModelAccessError(caught)).toBe(false);
+      expect(double.requests).toHaveLength(0);
+    }
+  });
+
+  test("model preflight respects default, disabled, shorter, and longer request timeouts", async () => {
+    const timeoutDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, "timeout");
+    if (!timeoutDescriptor) throw new Error("AbortSignal.timeout is unavailable");
+    const requested: number[] = [];
+    Object.defineProperty(AbortSignal, "timeout", {
+      configurable: true,
+      value: (milliseconds: number) => {
+        requested.push(milliseconds);
+        return new AbortController().signal;
+      },
+    });
+    try {
+      for (const requestTimeoutMs of [undefined, 0, 5, 45_000]) {
+        requested.length = 0;
+        const double = createOpenworkDouble();
+        const client = createHeadlessThreadClient({
+          baseUrl: BASE_URL, workspaceId: "ws_1", token: "client-token",
+          requireModelAvailability: true, defaultModel: model, requestTimeoutMs,
+          fetch: (url, init) => url.endsWith("/config/providers")
+            ? Promise.resolve(Response.json(available))
+            : double.fetchImpl(url, init),
+        });
+        await client.createThread({ title: "Timeout contract" });
+        expect(requested).toEqual(requestTimeoutMs === 0 ? [] : [requestTimeoutMs ?? 15_000, requestTimeoutMs ?? 15_000]);
+      }
+    } finally {
+      Object.defineProperty(AbortSignal, "timeout", timeoutDescriptor);
+    }
+  });
+
+  test("model preflight preserves client-wide and per-call cancellation when request timeouts are disabled", async () => {
+    for (const cancelGlobal of [true, false]) {
+      const globalController = new AbortController();
+      const callController = new AbortController();
+      const signals: AbortSignal[] = [];
+      const double = createOpenworkDouble();
+      const client = createHeadlessThreadClient({
+        baseUrl: BASE_URL, workspaceId: "ws_1", token: "client-token",
+        requireModelAvailability: true, defaultModel: model, requestTimeoutMs: 0,
+        signal: globalController.signal,
+        fetch: (url, init) => {
+          if (url.endsWith("/config/providers")) {
+            if (init?.signal) signals.push(init.signal);
+            return Promise.resolve(Response.json(available));
+          }
+          return double.fetchImpl(url, init);
+        },
+      });
+      await client.createThread({ title: "Cancellation contract", signal: callController.signal });
+      expect(signals).toHaveLength(1);
+      expect(signals[0]?.aborted).toBe(false);
+      (cancelGlobal ? globalController : callController).abort();
+      expect(signals[0]?.aborted).toBe(true);
+    }
+  });
+
+  test("an actual preflight timeout cannot create a thread or claim model access was revoked", async () => {
+    const requests: string[] = [];
+    const client = createHeadlessThreadClient({
+      baseUrl: BASE_URL, workspaceId: "ws_1", token: "client-token",
+      requireModelAvailability: true, defaultModel: model, requestTimeoutMs: 5,
+      fetch: async (url, init) => {
+        requests.push(url);
+        return new Promise((_resolve, reject) => {
+          const abort = () => reject(init?.signal?.reason);
+          if (init?.signal?.aborted) abort();
+          else init?.signal?.addEventListener("abort", abort, { once: true });
+        });
+      },
+    });
+    const error: unknown = await client.createThread({ title: "Timed out preflight" }).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "request_failed", method: "GET" });
+    expect(isHeadlessModelAccessError(error)).toBe(false);
+    expect(requests).toEqual([`${BASE_URL}/workspace/ws_1/opencode/config/providers`]);
+  });
+
+  test("classifies named model failures consistently without treating transport errors as revocation", () => {
+    for (const error of [
+      "Model not found: lpr_selected/friendly-alias",
+      new Error("ProviderModelNotFoundError: unavailable"),
+      { name: "ProviderAuthError", message: "Missing credential" },
+      { code: "model_access_lost", message: "Disabled model" },
+    ]) expect(isHeadlessModelAccessError(error)).toBe(true);
+    for (const error of [
+      new Error("Provider returned HTTP 503"),
+      { name: "APIError", message: "Rate limited" },
+      { code: "request_failed", status: 403 },
+    ]) expect(isHeadlessModelAccessError(error)).toBe(false);
+  });
+
+  test("preserves created session identity and structured admission errors", async () => {
+    for (const failure of [
+      { name: "ProviderModelNotFoundError", data: { message: "Model not found: lpr_selected/friendly-alias" } },
+      { name: "ProviderAuthError", data: { message: "Provider credential missing" } },
+      { name: "APIError", data: { message: "Temporary upstream failure" } },
+    ]) {
+      const double = createOpenworkDouble();
+      const client = createHeadlessThreadClient({
+        baseUrl: BASE_URL, workspaceId: "ws_1", token: "client-token",
+        fetch: (url, init) => url.endsWith("/prompt_async")
+          ? Promise.resolve(Response.json(failure, { status: 400 }))
+          : double.fetchImpl(url, init),
+      });
+      let caught: unknown;
+      try { await client.createThread({ title: "Automation", prompt: "Do the work", model }); } catch (error) { caught = error; }
+      expect(caught).toMatchObject({
+        sessionId: SESSION_ID, workspaceId: "ws_1", code: failure.name, message: failure.data.message,
+      });
+      expect(isHeadlessModelAccessError(caught)).toBe(failure.name !== "APIError");
+    }
   });
 });
 

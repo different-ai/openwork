@@ -7,7 +7,7 @@ import {
   TeamMemberTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
+import { AUTOMATION_FREE_MODEL, automationModelAllowedByProvider } from "@openwork/types/automations"
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
 import { db } from "../db.js"
 import { organizationAllowsManagedModels } from "../inference.js"
@@ -24,6 +24,7 @@ export type AutomationAuthorityProvider = {
   id: ProviderId
   source: "models_dev" | "custom" | "openwork"
   name: string
+  providerConfig: Record<string, unknown>
 }
 
 export type AutomationAuthorityModel = {
@@ -47,6 +48,8 @@ export type AutomationAuthorityFailure = {
   ok: false
   code: "owner_membership_lost" | "model_access_lost" | "provider_unavailable"
   message: string
+  /** Internal rollout classification; never substitutes for checking existing grants. */
+  reason?: "provider_model_disabled"
 }
 
 export type AutomationAuthorityResult =
@@ -197,6 +200,9 @@ export async function resolveAutomationModelAccessWithStore(
     if (!await store.canAccessProvider({ member, providerRecordId: provider.id })) {
       return { ok: false, code: "model_access_lost", message: "The Automation owner no longer has access to OpenWork Models." }
     }
+    if (!automationModelAllowedByProvider(provider.providerConfig, input.modelId)) {
+      return { ok: false, code: "model_access_lost", reason: "provider_model_disabled", message: "The selected model is disabled by its provider configuration." }
+    }
     return {
       ok: true,
       value: {
@@ -220,6 +226,9 @@ export async function resolveAutomationModelAccessWithStore(
   }
   if (!await store.canAccessProvider({ member, providerRecordId: provider.id })) {
     return { ok: false, code: "model_access_lost", message: "The Automation owner no longer has access to the selected model." }
+  }
+  if (!automationModelAllowedByProvider(provider.providerConfig, input.modelId)) {
+    return { ok: false, code: "model_access_lost", reason: "provider_model_disabled", message: "The selected model is disabled by its provider configuration." }
   }
   return { ok: true, value: resolvedProviderModel({ accessKind: "authorized_custom", providerId: input.providerId, modelId: input.modelId, provider, model }) }
 }

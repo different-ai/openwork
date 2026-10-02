@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { shouldApplyAutomationModelAccessFailure } from "../src/automations/model-attention-rollout.js"
 import type {
   AutomationAuthorityMember,
   AutomationAuthorityModel,
@@ -27,11 +28,13 @@ const openWorkProvider: AutomationAuthorityProvider = {
   id: createDenTypeId("llmProvider"),
   source: "openwork",
   name: "OpenWork Models",
+  providerConfig: {},
 }
 const customProvider: AutomationAuthorityProvider = {
   id: createDenTypeId("llmProvider"),
   source: "custom",
   name: "Team Provider",
+  providerConfig: {},
 }
 const customModel: AutomationAuthorityModel = {
   modelId: "team-model",
@@ -158,6 +161,92 @@ describe("Automation normalized model authority", () => {
       ok: false,
       code: "model_access_lost",
     })
+  })
+
+  test("stored model rows do not override a provider's current allowlist or blocklist", async () => {
+    for (const providerConfig of [
+      { whitelist: [] },
+      { whitelist: [], blacklist: [] },
+      { whitelist: ["another-model"] },
+      { blacklist: [customModel.modelId] },
+      { whitelist: [customModel.modelId], blacklist: [customModel.modelId] },
+    ]) {
+      expect(await resolveAutomationModelAccessWithStore({
+        ...base, providerId: customProvider.id, modelId: customModel.modelId,
+      }, authorityStore({ async findProvider() { return { ...customProvider, providerConfig } } })))
+        .toMatchObject({ ok: false, code: "model_access_lost" })
+    }
+    expect(await resolveAutomationModelAccessWithStore({
+      ...base, providerId: "openwork", modelId: "z-ai/glm-5.2",
+    }, authorityStore({ async findOpenWorkProvider() {
+      return { ...openWorkProvider, providerConfig: { blacklist: ["z-ai/glm-5.2"] } }
+    } }))).toMatchObject({ ok: false, code: "model_access_lost" })
+  })
+
+  test("an omitted allowlist and an empty blocklist do not remove model access", async () => {
+    for (const providerConfig of [{}, { blacklist: [] }, { whitelist: [customModel.modelId], blacklist: [] }]) {
+      expect(await resolveAutomationModelAccessWithStore({
+        ...base, providerId: customProvider.id, modelId: customModel.modelId,
+      }, authorityStore({ async findProvider() { return { ...customProvider, providerConfig } } })))
+        .toMatchObject({ ok: true })
+    }
+  })
+
+  test("provider filters preserve published Desktop admission, including model-attention v1, but block Cloud", async () => {
+    for (const selection of [
+      { providerId: customProvider.id, modelId: customModel.modelId },
+      { providerId: "openwork", modelId: "z-ai/glm-5.2" },
+    ]) {
+      for (const providerConfig of [{ whitelist: [] }, { blacklist: [selection.modelId] }]) {
+        const failure = await resolveAutomationModelAccessWithStore({ ...base, ...selection }, authorityStore({
+          async findProvider() { return { ...customProvider, providerConfig } },
+          async findOpenWorkProvider() { return { ...openWorkProvider, providerConfig } },
+        }))
+        expect(failure).toMatchObject({ ok: false, code: "model_access_lost", reason: "provider_model_disabled" })
+        if (failure.ok) throw new Error("Expected provider filter failure")
+        for (const modelAttentionCapable of [false, true]) {
+          expect(shouldApplyAutomationModelAccessFailure({ model: selection, failure, modelAttentionCapable })).toBe(false)
+          expect(shouldApplyAutomationModelAccessFailure({ model: selection, failure, modelAttentionCapable, executionTarget: "desktop" })).toBe(false)
+          expect(shouldApplyAutomationModelAccessFailure({ model: selection, failure, modelAttentionCapable, executionTarget: "cloud" })).toBe(true)
+        }
+      }
+    }
+  })
+
+  test("a disabled model never hides membership, provider, model, or grant revocation from legacy clients", async () => {
+    for (const selection of [
+      { providerId: customProvider.id, modelId: customModel.modelId },
+      { providerId: "openwork", modelId: "z-ai/glm-5.2" },
+    ]) {
+      const disabled: Partial<AutomationModelAuthorityStore> = {
+        async findProvider() { return { ...customProvider, providerConfig: { whitelist: [] } } },
+        async findOpenWorkProvider() { return { ...openWorkProvider, providerConfig: { whitelist: [] } } },
+      }
+      const revocations: Partial<AutomationModelAuthorityStore>[] = [
+        { async findActiveMember() { return null } },
+        { async findProvider() { return null }, async findOpenWorkProvider() { return null } },
+        { async canAccessProvider() { return false } },
+        ...(selection.providerId === "openwork" ? [] : [{ async findModel() { return null } }]),
+      ]
+      for (const revoked of revocations) {
+        const failure = await resolveAutomationModelAccessWithStore({ ...base, ...selection }, authorityStore({ ...disabled, ...revoked }))
+        expect(failure.ok).toBe(false)
+        if (failure.ok) throw new Error("Expected authority failure")
+        expect(failure.reason).toBeUndefined()
+        for (const modelAttentionCapable of [false, true]) {
+          for (const executionTarget of ["desktop", "cloud"] as const) {
+            expect(shouldApplyAutomationModelAccessFailure({ model: selection, failure, modelAttentionCapable, executionTarget })).toBe(true)
+          }
+        }
+      }
+    }
+  })
+
+  test("authority storage failures are not evidence that model access was revoked", async () => {
+    await expect(resolveAutomationModelAccessWithStore({
+      ...base, providerId: customProvider.id, modelId: customModel.modelId,
+    }, authorityStore({ async findModel() { throw new Error("Temporary catalog failure") } })))
+      .rejects.toThrow("Temporary catalog failure")
   })
 
   test("never lets a removed membership inherit model access", async () => {

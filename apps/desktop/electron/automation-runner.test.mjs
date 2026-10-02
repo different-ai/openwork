@@ -155,6 +155,10 @@ function remoteSessionAssignment(overrides = {}) {
   }
 }
 
+function effectiveAutomationProviders() {
+  return Response.json({ providers: [{ id: "opencode", models: { "big-pickle": {} } }] })
+}
+
 function opencodeSessionPaths(workspaceId, sessionId) {
   const base = `/workspace/${encodeURIComponent(workspaceId)}/opencode/session`
   return {
@@ -194,6 +198,7 @@ async function observeAssignmentCredentialRejection(status, deniedRoute) {
         if (parsed.pathname === "/workspaces") {
           return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
         }
+        if (parsed.pathname.endsWith("/config/providers")) return effectiveAutomationProviders()
         if (parsed.pathname === sessionPaths.create && options.method === "POST") {
           return Response.json({ id: "session-1" }, { status: 201 })
         }
@@ -548,6 +553,7 @@ test("routine credential rotation waits for the active assignment to complete", 
       const parsed = new URL(url)
       if (parsed.origin === "http://127.0.0.1:3000") {
         if (parsed.pathname === "/workspaces") return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
+        if (parsed.pathname.endsWith("/config/providers")) return effectiveAutomationProviders()
         if (parsed.pathname === sessionPaths.create) return Response.json({ id: "session-1" })
         if (parsed.pathname === sessionPaths.prompt) return new Response(null, { status: 204 })
         if (parsed.pathname === sessionPaths.abort) { localAborts += 1; return Response.json(true) }
@@ -607,6 +613,7 @@ test("routine credential rotation waits for an in-flight claim", async () => {
       const parsed = new URL(url)
       if (parsed.origin === "http://127.0.0.1:3000") {
         if (parsed.pathname === "/workspaces") return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
+        if (parsed.pathname.endsWith("/config/providers")) return effectiveAutomationProviders()
         if (parsed.pathname === sessionPaths.create) return Response.json({ id: "session-1" })
         if (parsed.pathname === sessionPaths.prompt) return new Response(null, { status: 204 })
         if ([sessionPaths.get, sessionPaths.messages, sessionPaths.todo, sessionPaths.status].includes(parsed.pathname)) {
@@ -757,6 +764,7 @@ test("waking during an active run keeps its lease and starts no second claim loo
         if (parsed.pathname === "/workspaces") {
           return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
         }
+        if (parsed.pathname.endsWith("/config/providers")) return effectiveAutomationProviders()
         if (parsed.pathname === sessionPaths.create && options.method === "POST") {
           return Response.json({ id: "session-1" }, { status: 201 })
         }
@@ -1068,6 +1076,7 @@ test("desktop Automation execution creates a normal visible local OpenWork threa
     if (parsed.pathname === "/workspaces") {
       return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
     }
+    if (parsed.pathname.endsWith("/config/providers")) return effectiveAutomationProviders()
     if (parsed.pathname === sessionPaths.create && options.method === "POST") {
       return Response.json({ id: "session-1" }, { status: 201 })
     }
@@ -1111,7 +1120,8 @@ test("desktop Automation execution creates a normal visible local OpenWork threa
   assert.deepEqual(result.usage, { inputTokens: 12, outputTokens: 7, costMicros: null })
   const localRequests = requests.filter((request) => request.path !== "/workspaces")
   assert(localRequests.every((request) => new Headers(request.options.headers).get("x-openwork-task-recovery") === "off"))
-  assert.deepEqual(localRequests.slice(0, 2).map(({ path, method, body }) => ({ path, method, body })), [
+  assert.deepEqual(localRequests.slice(0, 3).map(({ path, method, body }) => ({ path, method, body })), [
+    { path: "/workspace/workspace-1/opencode/config/providers", method: "GET", body: null },
     {
       path: sessionPaths.create,
       method: "POST",
@@ -1137,6 +1147,65 @@ test("desktop Automation execution creates a normal visible local OpenWork threa
   assert.ok(requests.every((request) => request.options.signal instanceof AbortSignal))
   assert.ok(localRequests.every((request) => new Headers(request.options.headers).get("Authorization") === "Bearer local-client-token"))
 })
+
+for (const scenario of [
+  { name: "disabled provider", catalog: { providers: [] }, code: "model_access_lost" },
+  { name: "disabled model", catalog: { providers: [{ id: "opencode", models: {} }] }, code: "model_access_lost" },
+  { name: "catalog outage", catalog: { message: "Catalog temporarily unavailable" }, status: 503, code: "execution_failed" },
+  { name: "malformed catalog", catalog: {}, code: "execution_failed" },
+  { name: "admission rejection", admission: true, code: "model_access_lost" },
+]) {
+  test(`${scenario.name} completes without fallback and preserves only an actually created thread`, async () => {
+    const localRequests = []
+    let offered = false
+    let resolveCompleted
+    const completed = new Promise((resolve) => { resolveCompleted = resolve })
+    const runner = createDesktopAutomationRunner({
+      getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local" }),
+      fetchImpl: async (url, options = {}) => {
+        const path = new URL(url).pathname
+        if (path === "/workspaces") return Response.json({
+          items: [{ id: "workspace-pinned" }, { id: "workspace-active" }], activeId: "workspace-active",
+        })
+        if (path.startsWith("/workspace/")) {
+          localRequests.push(path)
+          assert.ok(path.startsWith("/workspace/workspace-pinned/"))
+          if (path.endsWith("/config/providers")) return scenario.admission
+            ? effectiveAutomationProviders()
+            : Response.json(scenario.catalog, { status: scenario.status ?? 200 })
+          if (path.endsWith("/session")) return Response.json({ id: "session-rejected" })
+          if (path.endsWith("/prompt_async")) return Response.json({
+            name: "ProviderModelNotFoundError", data: { message: "Model not found: opencode/big-pickle" },
+          }, { status: 400 })
+          throw new Error(`Unexpected request ${path}`)
+        }
+        if (path.endsWith("/work")) {
+          const items = offered ? [] : [{ runId: "run-1" }]
+          offered = true
+          return Response.json({ items })
+        }
+        if (path.endsWith("/claim")) return Response.json({ assignment: { ...testAssignment(), workspaceId: "workspace-pinned" } })
+        if (path.endsWith("/events")) return Response.json({ ok: true })
+        if (path.endsWith("/complete")) {
+          resolveCompleted(JSON.parse(options.body))
+          return Response.json({ ok: true })
+        }
+        throw new Error(`Unexpected request ${path}`)
+      },
+    })
+    try {
+      runner.configure({ baseUrl: "https://den.example.com", token: runnerTokenFor("https://den.example.com"), runnerId: "runner-1" })
+      const receipt = await withTimeout(completed, "model failure did not complete")
+      assert.equal(receipt.status, "failed")
+      assert.equal(receipt.error.code, scenario.code)
+      assert.equal(receipt.sessionId, scenario.admission ? "session-rejected" : null)
+      assert.equal(receipt.workspaceId, scenario.admission ? "workspace-pinned" : null)
+      assert.equal(localRequests.length, scenario.admission ? 3 : 1)
+    } finally {
+      runner.stop()
+    }
+  })
+}
 
 test("a pinned workspace wins over the active workspace", () => {
   const listed = {
@@ -1173,6 +1242,7 @@ test("desktop Automation execution runs in the assignment's pinned workspace", a
         activeId: "workspace-active",
       })
     }
+    if (parsed.pathname.endsWith("/config/providers")) return effectiveAutomationProviders()
     if (parsed.pathname === sessionPaths.create && options.method === "POST") {
       return Response.json({ id: "session-pinned" }, { status: 201 })
     }
@@ -1204,6 +1274,7 @@ test("desktop Automation execution accepts a completed tool-only assistant turn"
     if (parsed.pathname === "/workspaces") {
       return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
     }
+    if (parsed.pathname.endsWith("/config/providers")) return effectiveAutomationProviders()
     if (parsed.pathname === sessionPaths.create && options.method === "POST") {
       return Response.json({ id: "session-tool-only" }, { status: 201 })
     }
@@ -1248,6 +1319,7 @@ test("failed desktop assignments retain their created local thread in the Den co
         if (parsed.pathname === "/workspaces") {
           return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
         }
+        if (parsed.pathname.endsWith("/config/providers")) return effectiveAutomationProviders()
         if (parsed.pathname === sessionPaths.create && options.method === "POST") {
           return Response.json({ id: "session-failed" }, { status: 201 })
         }
@@ -1324,6 +1396,7 @@ test("cancellation during execution preserves the local thread and reaches a ter
         if (parsed.pathname === "/workspaces") {
           return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
         }
+        if (parsed.pathname.endsWith("/config/providers")) return effectiveAutomationProviders()
         if (parsed.pathname === sessionPaths.create && options.method === "POST") {
           return Response.json({ id: "session-cancelled" }, { status: 201 })
         }
@@ -1389,6 +1462,7 @@ test("an explicit assistant provider failure terminates immediately with its loc
     if (parsed.pathname === "/workspaces") {
       return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
     }
+    if (parsed.pathname.endsWith("/config/providers")) return effectiveAutomationProviders()
     if (parsed.pathname === sessionPaths.create && options.method === "POST") {
       return Response.json({ id: "session-provider-failure" }, { status: 201 })
     }
@@ -1448,6 +1522,7 @@ test("desktop Automation execution surfaces a missing pinned model", async () =>
     if (parsed.pathname === "/workspaces") {
       return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
     }
+    if (parsed.pathname.endsWith("/config/providers")) return effectiveAutomationProviders()
     if (parsed.pathname === sessionPaths.create && options.method === "POST") {
       return Response.json({ id: "session-1" }, { status: 201 })
     }
@@ -1500,6 +1575,7 @@ function localExecutionRoutes(sessionPaths, snapshot) {
     if (parsed.pathname === "/workspaces") {
       return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
     }
+    if (parsed.pathname.endsWith("/config/providers")) return effectiveAutomationProviders()
     if (parsed.pathname === sessionPaths.create && options.method === "POST") {
       return Response.json({ id: "session-1" }, { status: 201 })
     }

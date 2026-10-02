@@ -7,7 +7,7 @@ import { useNavigate } from "react-router"
 import { toast } from "sonner"
 import { useQuery } from "@tanstack/react-query"
 
-import { automationProposalSchema, AUTOMATION_FREE_MODEL, type AutomationProposal } from "@openwork/types/automations"
+import { automationProposalSchema, type AutomationProposal } from "@openwork/types/automations"
 
 import { createDenClient, readDenSettings } from "@/app/lib/den"
 import { Button } from "@/components/ui/button"
@@ -17,11 +17,14 @@ import { automationCreationPlacement, useAutomationDeploymentEnabled } from "@/r
 import { formatAutomationSchedule } from "@/react-app/domains/automations/automation-format"
 import {
   automationModelOptions,
+  automationProviderCatalog,
   describeAutomationModel,
   resolveProposalModel,
 } from "@/react-app/domains/automations/automation-model-options"
 import { automationsRoute } from "@/react-app/shell/workspace-routes"
 import { useWorkspaceMaybe } from "@/react-app/shell/workspace-provider"
+import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider"
+import { getConnectedProviderItems, useProviderListQuery } from "@/react-app/infra/provider-list-query"
 
 function parseOutputValue(output: unknown): unknown {
   if (typeof output !== "string") return output
@@ -73,12 +76,28 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
     queryFn: () => createDenClient({ baseUrl: settings.baseUrl, token }).listOrgLlmProviders(organizationId),
     enabled: automationsEnabled && signedIn && !created,
   })
+  const runtimeProviders = useProviderListQuery({
+    client: workspaceContext?.client ?? null,
+    baseUrl: workspaceContext?.opencodeBaseUrl,
+    directory: workspaceContext?.selectedWorkspaceRoot,
+    enabled: automationsEnabled && signedIn && !created && placement === "desktop",
+  })
+  const zenModelRestricted = useDesktopRestriction("allowZenModel")
   const providers = providersQuery.data ?? []
-  const resolved = providersQuery.isError || providersQuery.data === undefined || !proposal
+  const availability = {
+    includeFreeStarter: placement === "desktop" && !zenModelRestricted,
+    catalog: placement === "desktop" && runtimeProviders.data !== undefined
+      ? automationProviderCatalog(getConnectedProviderItems(runtimeProviders.data))
+      : undefined,
+  }
+  const modelLookupFailed = providersQuery.isError || (placement === "desktop" && runtimeProviders.isError)
+  const modelLookupPending = providersQuery.data === undefined
+    || (placement === "desktop" && runtimeProviders.data === undefined)
+  const resolved = modelLookupFailed || modelLookupPending || !proposal
     ? null
-    : resolveProposalModel(proposal.model, providers)
+    : resolveProposalModel(proposal.model, providers, availability)
   const modelLabel = resolved
-    ? describeAutomationModel(resolved.model, automationModelOptions(providers))
+    ? describeAutomationModel(resolved.model, automationModelOptions(providers, availability))
     : null
 
   if (!proposal) {
@@ -94,17 +113,16 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
     ? "Automations are disabled for this deployment."
     : !signedIn
       ? "Sign in to OpenWork Cloud to create this Automation."
-      : null
+      : modelLookupFailed
+        ? "Model availability could not be checked. Try again before creating this Automation."
+        : null
 
   const create = async () => {
-    if (!automationsEnabled) return
+    if (!automationsEnabled || blocker || !resolved || resolved.resolution === "unavailable") return
     setBusy(true)
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token })
-      const model = resolved?.model ?? proposal.model ?? {
-        providerId: AUTOMATION_FREE_MODEL.providerId,
-        modelId: AUTOMATION_FREE_MODEL.modelId,
-      }
+      const model = resolved.model
       const detail = placement === "cloud"
         ? await client.createCloudAutomation(organizationId, {
             name: proposal.name,
@@ -188,7 +206,7 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
             type="button"
             size="sm"
             className="shrink-0"
-            disabled={busy || blocker !== null || (signedIn && providersQuery.isLoading)}
+            disabled={busy || blocker !== null || !resolved || resolved.resolution === "unavailable"}
             data-create-automation
             onClick={() => void create()}
           >
@@ -203,11 +221,11 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
           <span className="min-w-0 flex-1">{blocker}</span>
         </div>
       ) : null}
-      {resolved?.resolution === "fallback" && !created ? (
+      {resolved?.resolution === "unavailable" && !created ? (
         <div className="flex items-center gap-2 border-t border-dls-border px-4 py-2 text-xs text-amber-11">
           <AlertTriangle className="size-3.5 shrink-0" />
           <span className="min-w-0 flex-1">
-            The proposed model isn't available for Automations, so runs use the free starter model. You can change the model after creating.
+            The proposed model isn't available for Automations. Choose a supported model in a new proposal or in Automations before creating. No replacement model was selected.
           </span>
         </div>
       ) : null}

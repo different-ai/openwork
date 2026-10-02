@@ -1,4 +1,4 @@
-import { createHeadlessThreadClient } from "@openwork/headless-threads"
+import { createHeadlessThreadClient, isHeadlessModelAccessError } from "@openwork/headless-threads"
 
 const EMPTY_USAGE = { inputTokens: null, outputTokens: null, costMicros: null }
 const RUNNER_WORK_POLL_MS = 60_000
@@ -16,7 +16,7 @@ export function classifyAutomationExecutionError(error) {
   if (error?.code === "model_access_lost") {
     return { code: "model_access_lost", message: raw }
   }
-  if (/ProviderModelNotFoundError/i.test(raw) || /model\s+not\s+found\s*:/i.test(raw)) {
+  if (isHeadlessModelAccessError(error)) {
     const identity = raw.match(/model\s+not\s+found\s*:\s*([^.,}\]"\n]+)/i)?.[1]?.trim()
     return {
       code: "model_access_lost",
@@ -68,11 +68,12 @@ async function requestJson(fetchImpl, baseUrl, token, requestPath, options = {})
   return payload
 }
 
-function createWorkspaceSessionClient(local, workspaceId, fetchImpl) {
+function createWorkspaceSessionClient(local, workspaceId, fetchImpl, requireModelAvailability = false) {
   return createHeadlessThreadClient({
     baseUrl: local.baseUrl,
     workspaceId,
     token: local.token,
+    requireModelAvailability,
     // Automation run receipts own recovery; desktop restart must not independently
     // resume an occurrence that its scheduler may already have settled or retried.
     fetch: (input, init) => {
@@ -80,7 +81,7 @@ function createWorkspaceSessionClient(local, workspaceId, fetchImpl) {
       headers.set("x-openwork-task-recovery", "off")
       return fetchImpl(input, { ...init, headers })
     },
-    requestTimeoutMs: 0,
+    requestTimeoutMs: requireModelAvailability ? 15_000 : 0,
   })
 }
 
@@ -166,7 +167,7 @@ export async function executeDesktopAutomation(assignment, options) {
   const listed = await localRequest("/workspaces")
   const workspace = resolveAssignmentWorkspace(listed, assignment.workspaceId ?? null)
   const workspaceId = String(workspace.id)
-  const client = createWorkspaceSessionClient(local, workspaceId, options.fetchImpl ?? fetch)
+  const client = createWorkspaceSessionClient(local, workspaceId, options.fetchImpl ?? fetch, true)
   const created = await client.createThread({
     title: `Automation: ${assignment.automationName}`.slice(0, 120),
     ...(assignment.instructions ? { prompt: assignment.instructions } : {}),
