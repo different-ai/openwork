@@ -227,7 +227,7 @@ export const OAuthAccessTokenTable = mysqlTable(
     confirmation: text("confirmation"),
   },
   (table) => [
-    index("oauth_access_token_token").on(sql`${table.token}(191)`),
+    index("oauth_access_token_token").on(sql.raw("token(191)")),
     index("oauth_access_token_client_id").on(table.clientId),
     index("oauth_access_token_session_id").on(table.sessionId),
     index("oauth_access_token_user_id").on(table.userId),
