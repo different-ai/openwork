@@ -2,6 +2,7 @@ const { spawnSync } = require("node:child_process");
 const { existsSync, mkdtempSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
+const { verifyAppProvisioning } = require("./macos-provisioning.cjs");
 
 const computerUseHelperAppName = "OpenWork Computer Use.app";
 
@@ -80,6 +81,10 @@ async function afterSign(context) {
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const appPath = path.join(context.appOutDir, appName);
   verifyComputerUseHelper(appPath, process.env.MACOS_NOTARIZE === "true");
+  // Reject unauthorized passkey entitlements before sending an otherwise valid
+  // signature to Apple. Notarization can accept an app that taskgated kills.
+  verifyAppProvisioning(appPath);
+  verifyAppProvisioning(computerUseHelperPath(appPath));
 
   const notaryTempDir = mkdtempSync(path.join(tmpdir(), "openwork-electron-notary-"));
   const notaryZipPath = path.join(notaryTempDir, `${context.packager.appInfo.productFilename}-notary.zip`);

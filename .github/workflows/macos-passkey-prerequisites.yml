@@ -1,0 +1,45 @@
+name: macOS passkey prerequisites
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - apps/desktop/scripts/macos-provisioning*
+      - apps/desktop/scripts/electron-after-sign*
+      - apps/desktop/scripts/passkey-probe/**
+      - .github/workflows/macos-passkey-prerequisites.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-passkey-prerequisites-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Test provisioning validation and actual signed launch
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: node --test apps/desktop/scripts/electron-after-sign.test.mjs apps/desktop/scripts/macos-provisioning.integration.test.mjs
+      - name: Save baseline probe results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: passkey-prerequisites-${{ matrix.os }}
+          path: ${{ runner.temp }}/openwork-passkey-probe-*/result.json
+          if-no-files-found: warn
