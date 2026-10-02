@@ -61,12 +61,27 @@ platform capability are rechecked while processing each turn.
 - Requests time out after fifteen minutes; headless tasks have no time limit and
   end with their answer, Stop, a failure, or the runner's stuck check. The runner
   pauses a long turn every 50 minutes and the read resumes it with a fresh MCP token.
-  Transient errors retry up to twenty times; Slack Retry-After is respected. A
-  run that gives up logs `slack_assistant_failed` with the error code. Five terminal failures within five
-  minutes pause new requests for that installation until the window expires.
-- Ingress is limited to 120 events per minute per installation and ten invocations
-  per minute per Slack user. The configurable daily limit counts admitted runs
-  per member over a rolling 24-hour window. Existing runtime billing applies.
+  Transient errors retry up to twenty times; a Slack rate limit is a wait that
+  respects Retry-After and never uses up those attempts. A run that gives up logs
+  `slack_assistant_failed` with the error code. New requests pause for a few
+  minutes only when most recent runs fail: at least five failures, and at least as
+  many failures as completed runs, within five minutes.
+- Under load nothing is dropped silently or blocked by someone else:
+  - Ingress takes 600 requests a minute per installation
+    (`DEN_SLACK_INGRESS_PER_MINUTE`) and ten per person
+    (`DEN_SLACK_INGRESS_PER_MEMBER_PER_MINUTE`). Over either, the person is told
+    to send it again, at most once a minute.
+  - A person runs at most three tasks at once (`DEN_SLACK_RUNNING_PER_MEMBER`).
+    Another waits, is told once, and starts when one of theirs finishes.
+  - Up to 20 tasks per installation stream live progress
+    (`DEN_SLACK_LIVE_STREAMS_PER_WORKSPACE`). Beyond that, new tasks show Slack's
+    working status and post their answer, which keeps Slack calls inside Slack's
+    per-method rate limits. Live tasks send text and step changes in one call and
+    are read every three seconds after their first thirty.
+  - When the runner has no free slot, the task says it is waiting, once.
+  - A follow-up in a thread whose runner session expired starts a new session.
+- The configurable daily limit counts admitted runs per member over a rolling
+  24-hour window, and says so when reached. Existing runtime billing applies.
 - Encrypted payloads/checkpoints and dedupe records expire after seven days.
   Pending connect requests expire after fifteen minutes, app context after thirty
   minutes, and unused install OAuth state after ten minutes. Native sessions keep

@@ -227,6 +227,8 @@ export async function headlessRemoteCall(
     messageCount: messages.length,
     finalAssistantText,
     lastAssistantText: lastAssistantText || finalAssistantText,
+    // Accepted but not started: every runner slot is busy.
+    waiting: turn?.status === "queued",
     ...(failed ? { terminalError: { code: turn.error ?? "headless_run_failed" } } : {}),
     messages: messages.map((message) => ({
       role: message.role,

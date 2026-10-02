@@ -159,6 +159,21 @@ export class Store {
     return Number(this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id).changes) > 0
   }
 
+  /**
+   * Deletes conversations untouched since `before` (their turns, transcript, and files go with them), except any
+   * with a queued or running turn. Keeps the disk bounded; a caller that sends to a deleted session gets
+   * unknown_session and starts a new one.
+   */
+  pruneIdleSessions(before: number) {
+    const result = this.db
+      .prepare(
+        `DELETE FROM sessions WHERE updated_at < ?
+         AND id NOT IN (SELECT session_id FROM turns WHERE status IN ('queued', 'running'))`,
+      )
+      .run(before)
+    return Number(result.changes)
+  }
+
   getTurn(sessionId: string, messageId: string): Turn | null {
     const row = this.db.prepare("SELECT * FROM turns WHERE session_id = ? AND message_id = ?").get(sessionId, messageId)
     return row ? toTurn(row) : null

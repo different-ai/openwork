@@ -245,6 +245,37 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
 }
 export type SlackActor = NonNullable<Awaited<ReturnType<typeof resolveSlackActor>>>
 
+function positiveIntegerEnv(name: string, fallback: number) {
+  const value = Number(process.env[name])
+  return Number.isInteger(value) && value > 0 ? value : fallback
+}
+
+/**
+ * Load limits. Read per call so a deployment (or a test) can tune them without a restart of this module.
+ * - ingress: requests accepted per minute, per workspace and per person; over it, the person is told.
+ * - runningPerMember: one person's tasks running at once; more wait their turn instead of crowding others out.
+ * - liveStreamsPerWorkspace: tasks streaming live progress at once; beyond it new tasks show Slack's working
+ *   status and post their answer, which keeps a busy workspace inside Slack's per-method rate limits.
+ */
+export function slackLoadLimits() {
+  return {
+    ingressPerWorkspacePerMinute: positiveIntegerEnv("DEN_SLACK_INGRESS_PER_MINUTE", 600),
+    ingressPerMemberPerMinute: positiveIntegerEnv("DEN_SLACK_INGRESS_PER_MEMBER_PER_MINUTE", 10),
+    runningPerMember: positiveIntegerEnv("DEN_SLACK_RUNNING_PER_MEMBER", 3),
+    liveStreamsPerWorkspace: positiveIntegerEnv("DEN_SLACK_LIVE_STREAMS_PER_WORKSPACE", 20),
+  }
+}
+
+/** A request over the intake limit gets this status; the worker tells the person, then marks it sent. */
+export const THROTTLED_STATUS = "throttled"
+export const THROTTLED_SENT_STATUS = "throttled_sent"
+
+const LEASE_MS = 120_000
+const LEASE_RECHECK_MS = 20_000
+/** When this process last claimed or extended each lease it holds. */
+const leaseRenewedAt = new Map<string, number>()
+const leaseKey = (eventId: string, owner: string | null) => `${eventId}:${owner ?? ""}`
+
 export async function enqueueSlackEvent(installation: InstallationRow, eventId: string, event: SlackEvent) {
   const id = scopeKey(installation.connectionId, eventId)
   return db.transaction(async (tx) => {
@@ -273,8 +304,8 @@ export async function enqueueSlackEvent(installation: InstallationRow, eventId: 
         ),
       )
     const invocation = event.type === "app_mention" || event.type === "message"
-    if (invocation && ((total?.total ?? 0) >= 120 || (member?.total ?? 0) >= 10)) return null
-    await tx.insert(Event).values({
+    const limits = slackLoadLimits()
+    const row = {
       id,
       connectionId: installation.connectionId,
       teamId: installation.teamId ?? "",
@@ -284,7 +315,27 @@ export async function enqueueSlackEvent(installation: InstallationRow, eventId: 
       payload: JSON.stringify(event),
       createdAt: new Date(),
       availableAt: new Date(),
-    })
+    }
+    if (
+      invocation &&
+      ((total?.total ?? 0) >= limits.ingressPerWorkspacePerMinute || (member?.total ?? 0) >= limits.ingressPerMemberPerMinute)
+    ) {
+      // Never drop a request silently: the person hears that it was not taken, at most once a minute.
+      const [noticed] = await tx
+        .select({ total: count() })
+        .from(Event)
+        .where(
+          and(
+            eq(Event.connectionId, installation.connectionId),
+            eq(Event.slackUserId, event.user ?? ""),
+            inArray(Event.status, [THROTTLED_STATUS, THROTTLED_SENT_STATUS]),
+            gt(Event.createdAt, minute),
+          ),
+        )
+      if (!(noticed?.total ?? 0)) await tx.insert(Event).values({ ...row, status: THROTTLED_STATUS })
+      return null
+    }
+    await tx.insert(Event).values(row)
     return id
   })
 }
@@ -297,7 +348,7 @@ export async function claimSlackEvent(): Promise<EventRow | null> {
       .from(Event)
       .where(
         and(
-          inArray(Event.status, ["pending", "running"]),
+          inArray(Event.status, ["pending", "running", THROTTLED_STATUS]),
           lte(Event.availableAt, now),
           or(isNull(Event.leaseUntil), lte(Event.leaseUntil, now)),
         ),
@@ -310,8 +361,9 @@ export async function claimSlackEvent(): Promise<EventRow | null> {
     const leaseOwner = randomUUID()
     await tx
       .update(Event)
-      .set({ leaseOwner, leaseUntil: new Date(Date.now() + 120_000) })
+      .set({ leaseOwner, leaseUntil: new Date(Date.now() + LEASE_MS) })
       .where(eq(Event.id, event.id))
+    leaseRenewedAt.set(leaseKey(event.id, leaseOwner), Date.now())
     return { ...event, leaseOwner }
   })
 }
@@ -320,6 +372,7 @@ export async function checkpointEvent(
   changes: Partial<Pick<EventRow, "checkpoint" | "status" | "cancelled" | "attempts">>,
   delayMs = 0,
 ) {
+  leaseRenewedAt.delete(leaseKey(event.id, event.leaseOwner))
   await db
     .update(Event)
     .set({ ...changes, availableAt: new Date(Date.now() + delayMs), leaseUntil: null, leaseOwner: null })
@@ -424,9 +477,10 @@ export async function persistSlackCheckpoint(event: EventRow, checkpoint: unknow
   const serialized = JSON.stringify(checkpoint)
   const result = await db
     .update(Event)
-    .set({ checkpoint: serialized, leaseUntil: new Date(Date.now() + 120_000) })
+    .set({ checkpoint: serialized, leaseUntil: new Date(Date.now() + LEASE_MS) })
     .where(and(eq(Event.id, event.id), eq(Event.leaseOwner, event.leaseOwner ?? ""), gt(Event.leaseUntil, new Date())))
   if (!updatedRows(result)) throw new SlackLeaseLostError()
+  leaseRenewedAt.set(leaseKey(event.id, event.leaseOwner), Date.now())
   event.checkpoint = serialized
 }
 export class SlackLeaseLostError extends Error {
@@ -434,12 +488,24 @@ export class SlackLeaseLostError extends Error {
     super("slack_assistant_lease_lost")
   }
 }
-export async function renewSlackLease(event: EventRow) {
+/**
+ * Extends this worker's lease before it acts. Within LEASE_RECHECK_MS of the last claim or renewal the lease
+ * cannot have expired (it lasts LEASE_MS), so the write is skipped; `force` always checks, for the first act of
+ * each processing pass, so a worker that stalled notices a lost lease before it publishes anything.
+ */
+export async function renewSlackLease(event: EventRow, options: { force?: boolean } = {}) {
+  const key = leaseKey(event.id, event.leaseOwner)
+  if (!options.force && Date.now() - (leaseRenewedAt.get(key) ?? 0) < LEASE_RECHECK_MS) return
   const result = await db
     .update(Event)
-    .set({ leaseUntil: new Date(Date.now() + 120_000) })
+    .set({ leaseUntil: new Date(Date.now() + LEASE_MS) })
     .where(and(eq(Event.id, event.id), eq(Event.leaseOwner, event.leaseOwner ?? ""), gt(Event.leaseUntil, new Date())))
-  if (!updatedRows(result)) throw new SlackLeaseLostError()
+  if (!updatedRows(result)) {
+    leaseRenewedAt.delete(key)
+    throw new SlackLeaseLostError()
+  }
+  if (leaseRenewedAt.size > 10_000) leaseRenewedAt.clear()
+  leaseRenewedAt.set(key, Date.now())
 }
 export async function removeSlackIdentities(connectionId: DenTypeId<"externalMcpConnection">, slackUserIds: string[]) {
   if (slackUserIds.length)
@@ -461,7 +527,15 @@ export async function findSlackThread(event: EventRow, actor: SlackActor) {
   )
 }
 
-export async function admitSlackRun(event: EventRow, installation: InstallationRow) {
+/**
+ * - admitted: the run may start.
+ * - paused: most recent runs in this workspace failed; new work waits out the window (already running work finishes).
+ * - daily_limit: this person reached the workspace's daily run limit.
+ * - busy: this person already has their maximum of tasks running; this one starts when one finishes.
+ */
+export type SlackAdmission = "admitted" | "paused" | "daily_limit" | "busy"
+
+export async function admitSlackRun(event: EventRow, installation: InstallationRow): Promise<SlackAdmission> {
   return db.transaction(async (tx) => {
     await tx
       .select({ id: Installation.connectionId })
@@ -469,20 +543,31 @@ export async function admitSlackRun(event: EventRow, installation: InstallationR
       .where(eq(Installation.connectionId, event.connectionId))
       .for("update")
     const current = (await tx.select({ status: Event.status }).from(Event).where(eq(Event.id, event.id)))[0]
-    if (current?.status === "running") return true
-    // A burst of terminal failures pauses new work for this installation;
-    // already admitted runs can finish. The window expires automatically.
+    if (current?.status === "running") return "admitted"
+    // When most recent runs fail, the service is broken: pause new work for this installation instead of
+    // failing every request. A handful of failures among many successes in a busy workspace does not pause it.
+    // Already admitted runs can finish, and the window expires on its own.
+    const window = new Date(Date.now() - 300_000)
     const [failures] = await tx
       .select({ total: count() })
       .from(Event)
-      .where(
-        and(
-          eq(Event.connectionId, event.connectionId),
-          eq(Event.status, "failed"),
-          gt(Event.availableAt, new Date(Date.now() - 300_000)),
-        ),
-      )
-    if ((failures?.total ?? 0) >= 5) return false
+      .where(and(eq(Event.connectionId, event.connectionId), eq(Event.status, "failed"), gt(Event.availableAt, window)))
+    const failed = failures?.total ?? 0
+    if (failed >= 5) {
+      // Runs that completed in the same window: pause only when failures are at least half of what finished.
+      const [completed] = await tx
+        .select({ total: count() })
+        .from(Event)
+        .where(
+          and(
+            eq(Event.connectionId, event.connectionId),
+            eq(Event.status, "done"),
+            isNotNull(Event.checkpoint),
+            gt(Event.availableAt, window),
+          ),
+        )
+      if (failed >= (completed?.total ?? 0)) return "paused"
+    }
     const [row] = await tx
       .select({ total: count() })
       .from(Event)
@@ -494,11 +579,34 @@ export async function admitSlackRun(event: EventRow, installation: InstallationR
           or(eq(Event.status, "running"), and(inArray(Event.status, ["done", "failed"]), isNotNull(Event.checkpoint))),
         ),
       )
-    if ((row?.total ?? 0) >= installation.dailyLimit) return false
+    if ((row?.total ?? 0) >= installation.dailyLimit) return "daily_limit"
+    // One person cannot take every slot: extra tasks wait (and are told so) until one of theirs finishes.
+    const [running] = await tx
+      .select({ total: count() })
+      .from(Event)
+      .where(
+        and(eq(Event.connectionId, event.connectionId), eq(Event.slackUserId, event.slackUserId), eq(Event.status, "running")),
+      )
+    if ((running?.total ?? 0) >= slackLoadLimits().runningPerMember) return "busy"
     await tx.update(Event).set({ status: "running" }).where(eq(Event.id, event.id))
-    return true
+    return "admitted"
   })
 }
+/** Tasks in this workspace that are probably streaming live: running, and still within their live minutes. */
+export async function liveSlackTasks(connectionId: DenTypeId<"externalMcpConnection">, liveWindowMs: number) {
+  const [row] = await db
+    .select({ total: count() })
+    .from(Event)
+    .where(
+      and(
+        eq(Event.connectionId, connectionId),
+        eq(Event.status, "running"),
+        gt(Event.createdAt, new Date(Date.now() - liveWindowMs)),
+      ),
+    )
+  return row?.total ?? 0
+}
+
 export async function pruneSlackEvents() {
   await db.delete(State).where(lt(State.expiresAt, new Date()))
   await db.delete(Event).where(and(eq(Event.status, "context"), lt(Event.createdAt, new Date(Date.now() - 1_800_000))))
@@ -512,7 +620,7 @@ export async function pruneSlackEvents() {
     .delete(Event)
     .where(
       and(
-        inArray(Event.status, ["done", "failed", "expired", "feedback_positive", "feedback_negative"]),
+        inArray(Event.status, ["done", "failed", "expired", "feedback_positive", "feedback_negative", THROTTLED_SENT_STATUS]),
         lt(Event.createdAt, new Date(Date.now() - 7 * 86_400_000)),
       ),
     )

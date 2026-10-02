@@ -28,6 +28,12 @@ export const checkpointSchema = z.object({
   lastCheckInAt: z.number().optional(),
   /** A message sent while an earlier task ran was acknowledged once. */
   queuedNoticeShown: z.boolean().default(false),
+  /** Streams live progress. A busy workspace starts new tasks without it: Slack's working status, then the answer. */
+  live: z.boolean().default(true),
+  /** Waited for one of this person's running tasks to finish; they were told once. */
+  slotNoticeShown: z.boolean().default(false),
+  /** Waited for a free runner slot; the person was told once. */
+  waitingShown: z.boolean().default(false),
 })
 type Checkpoint = z.infer<typeof checkpointSchema>
 const readSchema = z.object({
@@ -37,6 +43,8 @@ const readSchema = z.object({
   finalAssistantText: z.string(),
   /** The last assistant message alone; runtimes without it fall back to finalAssistantText. */
   lastAssistantText: z.string().optional(),
+  /** The runtime accepted the turn but has not started it: every slot is busy. */
+  waiting: z.boolean().optional(),
   terminalError: z.unknown().optional(),
   messages: z.array(
     z.object({
@@ -76,11 +84,27 @@ export const CHECK_IN_EVERY_MS = 60 * 60_000
 const QUIET_POLL_MS = 5_000
 /** The reply to a message sent while an earlier task is still running in the thread. */
 export const QUEUED_LINE = "Got it. I'll do this right after the current task. Press Stop to end that task and start this now."
+/** The reply to a request over the intake limit. */
+export const THROTTLED_LINE = "I'm getting a lot of requests right now, so I didn't start this one. Please send it again in a minute."
+/** Said once when the runtime has had no free slot for a while. */
+export const WAITING_LINE = "Lots of requests right now, so this one is waiting for a free spot. It will start on its own."
+const WAITING_NOTICE_AFTER_MS = 15_000
+/** Live tasks are read every second at first, then every 3 seconds: fewer Slack and database calls per task. */
+const LIVE_POLL_FAST_MS = 1_000
+const LIVE_POLL_MS = 3_000
+const LIVE_POLL_FAST_FOR_MS = 30_000
 
 export function formatElapsed(ms: number) {
   const minutes = Math.max(0, Math.floor(ms / 60_000))
   const hours = Math.floor(minutes / 60)
   return hours ? `${hours}h ${minutes % 60}m` : `${minutes}m`
+}
+
+/** What the thread is told when a task ends without an answer. */
+function failureText(webHandoff: boolean, sessionId: string | undefined, terminalError: unknown) {
+  return webHandoff
+    ? `This task needs attention. [Open in OpenWork Web](${webLink(sessionId ?? "")}).`
+    : headlessFailureText(terminalError)
 }
 
 /** What the thread is told when a headless task ends without an answer. */
@@ -274,6 +298,14 @@ export async function advanceSlackRun(input: {
       messageId: input.messageId,
       ...(input.model ? { model: input.model } : {}),
     })
+    if (result.error === "unknown_session") {
+      // The runtime no longer has this conversation (old sessions expire): start a fresh one with the same prompt,
+      // which carries the thread's recent messages.
+      cp.sessionId = undefined
+      cp.workspaceId = undefined
+      cp.phase = "create"
+      return { checkpoint: cp, delayMs: 0 }
+    }
     if (result.error) return retryProvisioning(result, cp, input.slack, now)
     cp.phase = "read"
     cp.prompt = undefined
@@ -304,6 +336,11 @@ export async function advanceSlackRun(input: {
       await input.persist?.(cp)
     }
     const finished = snapshot.status === "idle" && Boolean(snapshot.finalAssistantText)
+    if (snapshot.waiting && !cp.waitingShown && cp.startedAt !== undefined && now() - cp.startedAt >= WAITING_NOTICE_AFTER_MS) {
+      await input.slack("chat.postMessage", { channel: cp.channel, thread_ts: cp.threadTs, text: WAITING_LINE })
+      cp.waitingShown = true
+      await input.persist?.(cp)
+    }
     if (cp.quiet) {
       if (snapshot.terminalError) {
         await appendText(input.slack, cp, headlessFailureText(snapshot.terminalError), now)
@@ -346,13 +383,23 @@ export async function advanceSlackRun(input: {
       await input.persist?.(cp)
       return { checkpoint: cp, delayMs: QUIET_POLL_MS }
     }
+    if (!cp.live) {
+      // No live progress: Slack's working status shows until the answer (or the long-task note) arrives.
+      if (snapshot.terminalError) {
+        await appendText(input.slack, cp, failureText(webHandoff, cp.sessionId, snapshot.terminalError), now)
+        cp.finalStatus = "suspended"
+        cp.phase = "finish"
+      } else if (finished) {
+        await appendText(input.slack, cp, snapshot.lastAssistantText || snapshot.finalAssistantText, now, async (part) => {
+          cp.sentText += part
+          cp.firstTextAt ??= now()
+          await input.persist?.(cp)
+        })
+        cp.phase = "finish"
+      }
+      return { checkpoint: cp, delayMs: cp.phase === "finish" ? 0 : LIVE_POLL_MS }
+    }
     const delta = currentReplyDelta(cp.sentText, snapshot.finalAssistantText)
-    if (delta)
-      await appendText(input.slack, cp, delta, now, async (part) => {
-        cp.sentText += part
-        cp.firstTextAt ??= now()
-        await input.persist?.(cp)
-      })
     const updates = new Map<
       string,
       {
@@ -377,12 +424,27 @@ export async function advanceSlackRun(input: {
         })
       }
     const entries = [...updates.entries()]
-    for (let offset = 0; offset < entries.length; offset += 20) {
-      const batch = entries.slice(offset, offset + 20)
-      const chunks = batch.map(([, { rawStatus, ...chunk }]) => chunk)
-      await sendChunks(input.slack, cp, chunks, now)
-      for (const [id, update] of batch) cp.steps[id] = update.rawStatus
+    if (delta && delta.length <= 10_000 && entries.length <= 20) {
+      // New text and step changes travel in one Slack call.
+      await sendChunks(input.slack, cp, [{ type: "markdown_text", text: delta }, ...entries.map(([, { rawStatus, ...chunk }]) => chunk)], now)
+      cp.sentText += delta
+      cp.firstTextAt ??= now()
+      for (const [id, update] of entries) cp.steps[id] = update.rawStatus
       await input.persist?.(cp)
+    } else {
+      if (delta)
+        await appendText(input.slack, cp, delta, now, async (part) => {
+          cp.sentText += part
+          cp.firstTextAt ??= now()
+          await input.persist?.(cp)
+        })
+      for (let offset = 0; offset < entries.length; offset += 20) {
+        const batch = entries.slice(offset, offset + 20)
+        const chunks = batch.map(([, { rawStatus, ...chunk }]) => chunk)
+        await sendChunks(input.slack, cp, chunks, now)
+        for (const [id, update] of batch) cp.steps[id] = update.rawStatus
+        await input.persist?.(cp)
+      }
     }
     const noAnswerYet = !cp.sentText && !snapshot.finalAssistantText
     if (noAnswerYet && !cp.stillWorkingShown && cp.startedAt !== undefined && now() - cp.startedAt > STILL_WORKING_AFTER_MS) {
@@ -394,15 +456,14 @@ export async function advanceSlackRun(input: {
       await appendText(
         input.slack,
         cp,
-        webHandoff
-          ? `\n\nThis task needs attention. [Open in OpenWork Web](${webLink(cp.sessionId ?? "")}).`
-          : `\n\n${headlessFailureText(snapshot.terminalError)}`,
+        `\n\n${failureText(webHandoff, cp.sessionId, snapshot.terminalError)}`,
         now,
       )
       cp.finalStatus = "suspended"
       cp.phase = "finish"
     } else if (finished) cp.phase = "finish"
-    return { checkpoint: cp, delayMs: 1_000 }
+    const fast = cp.startedAt === undefined || now() - cp.startedAt < LIVE_POLL_FAST_FOR_MS
+    return { checkpoint: cp, delayMs: fast ? LIVE_POLL_FAST_MS : LIVE_POLL_MS }
   }
   cp.completedAt ??= now()
   await stopSlackStream(input.slack, cp, {

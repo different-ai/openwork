@@ -108,6 +108,18 @@ test("config refuses weak tokens and non-https remote endpoints", () => {
   assert.throws(() => loadConfig({ ...base, HEADLESS_MCP_URL: "http://evil.example/mcp" }))
 })
 
+test("idle conversations are kept 7 days by default; 0 keeps them forever", () => {
+  const base = {
+    HEADLESS_API_TOKEN: TOKEN,
+    HEADLESS_MODEL_PROTOCOL: "anthropic",
+    HEADLESS_MODEL_BASE_URL: "https://gateway.openworklabs.com/api/v1/providers/ipr_x",
+    HEADLESS_MODEL: "gwm_x",
+  }
+  assert.equal(loadConfig(base).sessionRetentionMs, 7 * 86_400_000)
+  assert.equal(loadConfig({ ...base, HEADLESS_SESSION_RETENTION_DAYS: "30" }).sessionRetentionMs, 30 * 86_400_000)
+  assert.equal(loadConfig({ ...base, HEADLESS_SESSION_RETENTION_DAYS: "0" }).sessionRetentionMs, null)
+})
+
 test("turns have no step limit unless one is configured", () => {
   const base = {
     HEADLESS_API_TOKEN: TOKEN,

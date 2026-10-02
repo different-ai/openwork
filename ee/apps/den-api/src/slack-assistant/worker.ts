@@ -6,6 +6,7 @@ import {
   RemoteSessionUnavailableError,
   LONG_TASK_QUIET_AFTER_MS,
   QUEUED_LINE,
+  THROTTLED_LINE,
 } from "./run.js"
 import { z } from "zod"
 import { appLogger } from "../observability/logger.js"
@@ -31,6 +32,10 @@ import {
   slackRuntimeForInstallation,
   revokeSlackInstallation,
   saveSlackSession,
+  liveSlackTasks,
+  slackLoadLimits,
+  THROTTLED_SENT_STATUS,
+  THROTTLED_STATUS,
   type EventRow,
   type SlackActor,
 } from "./repository.js"
@@ -65,7 +70,7 @@ const defaultWorkerDeps = {
   },
 }
 export async function processSlackEvent(event: EventRow, suppliedDeps = defaultWorkerDeps) {
-  await renewSlackLease(event)
+  await renewSlackLease(event, { force: true })
   const deps: typeof defaultWorkerDeps = {
     slack: (token) => async (method, body) => {
       await renewSlackLease(event)
@@ -95,6 +100,20 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
     return checkpointEvent(event, { status: "done" })
   }
   const slack = deps.slack(installation.botToken)
+  if (event.status === THROTTLED_STATUS) {
+    // Over the intake limit: say so instead of staying silent. A notice that cannot be delivered is not retried.
+    try {
+      await slack("chat.postEphemeral", {
+        channel: event.channelId,
+        user: event.slackUserId,
+        ...(payload.thread_ts ? { thread_ts: payload.thread_ts } : {}),
+        text: THROTTLED_LINE,
+      })
+    } catch (error) {
+      if (error instanceof SlackLeaseLostError) throw error
+    }
+    return checkpointEvent(event, { status: THROTTLED_SENT_STATUS })
+  }
   if (payload.type === "app_uninstalled") {
     await revokeSlackInstallation(event.connectionId)
     return checkpointEvent(event, { status: "done" })
@@ -235,14 +254,34 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
     return checkpointEvent(event, { status: "done" })
   }
   if (cp.phase === "create" && !cp.prompt) {
-    if (!(await admitSlackRun(event, installation))) {
-      await slack("chat.postEphemeral", {
+    const admission = await admitSlackRun(event, installation)
+    const tellPrivately = (text: string) =>
+      slack("chat.postEphemeral", {
         channel: event.channelId,
         user: event.slackUserId,
-        text: headless
-          ? "OpenWork Slack has paused new requests because of a usage limit or repeated service failures. Please try again later."
-          : "OpenWork Slack has paused new requests because of a usage limit or repeated service failures. Please use OpenWork Web or try again later.",
+        ...(payload.thread_ts ? { thread_ts: payload.thread_ts } : {}),
+        text,
       })
+    if (admission === "busy") {
+      // This person's other tasks are using their share; this one waits its turn and starts on its own.
+      if (!cp.slotNoticeShown) {
+        const running = slackLoadLimits().runningPerMember
+        await tellPrivately(
+          running === 1
+            ? "You already have a task running. I'll start this one as soon as it finishes."
+            : `You already have ${running} tasks running. I'll start this one as soon as one of them finishes.`,
+        )
+      }
+      return checkpointEvent(event, { checkpoint: JSON.stringify({ ...cp, slotNoticeShown: true }) }, 5_000)
+    }
+    if (admission !== "admitted") {
+      await tellPrivately(
+        admission === "daily_limit"
+          ? `You've reached the limit of ${installation.dailyLimit} OpenWork requests in 24 hours. Please try again later.`
+          : headless
+            ? "OpenWork paused new requests for a few minutes because most recent requests failed. Please try again shortly."
+            : "OpenWork paused new requests for a few minutes because most recent requests failed. Please use OpenWork Web or try again shortly.",
+      )
       await releaseSlackThread(event)
       return checkpointEvent(event, { status: "done" })
     }
@@ -251,6 +290,9 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
     if (identity.user_id !== event.slackUserId || identity.team_id !== event.teamId || identity.bot_id)
       throw new Error("slack_actor_mismatch")
     cp.startedAt ??= Date.now()
+    // In a busy workspace, new tasks skip the live progress stream so Slack's per-method rate limits hold:
+    // Slack's working status shows, and the answer arrives as usual.
+    cp.live = (await liveSlackTasks(installation.connectionId, LONG_TASK_QUIET_AFTER_MS)) <= slackLoadLimits().liveStreamsPerWorkspace
     cp.recipientUserId = event.slackUserId
     cp.recipientTeamId = event.teamId
     cp.privateReply =
@@ -338,6 +380,11 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
 
 export async function handleSlackEventFailure(event: EventRow, error: unknown, deps = defaultWorkerDeps) {
   if (error instanceof SlackLeaseLostError) return
+  // Slack asking us to slow down is a wait, not a failure: it never uses up the task's attempts.
+  if (error instanceof SlackApiError && error.code === "ratelimited") {
+    await checkpointEvent(event, {}, Math.max(1_000, error.retryAfterMs))
+    return
+  }
   const stopped = error instanceof SlackApiError && error.code === "stopped_by_user"
   const permanent =
     error instanceof RemoteSessionUnavailableError ||

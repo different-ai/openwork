@@ -11,6 +11,15 @@ const config = loadConfig()
 const store = new Store(config.dbPath)
 const recovered = store.recoverInterruptedTurns()
 
+// Idle conversations expire so the disk stays bounded however many people use the runner.
+function pruneIdleSessions() {
+  if (config.sessionRetentionMs === null) return
+  const deleted = store.pruneIdleSessions(Date.now() - config.sessionRetentionMs)
+  if (deleted) console.log(`[headless-runner] deleted ${deleted} idle session(s)`)
+}
+pruneIdleSessions()
+setInterval(pruneIdleSessions, 60 * 60_000).unref()
+
 const runner = new Runner({
   store,
   model:

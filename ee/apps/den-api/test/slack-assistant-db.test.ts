@@ -1,8 +1,9 @@
 import { beforeAll, afterAll, describe, expect, test } from "bun:test"
 import { createHmac } from "node:crypto"
 import { Hono } from "hono"
+import { z } from "zod"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { and, eq } from "@openwork-ee/den-db/drizzle"
+import { and, count, eq, gt, isNotNull } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
   MemberTable,
@@ -414,6 +415,102 @@ suite("Slack assistant: real database and signed HTTP journey", () => {
     await drain()
   })
 
+  async function withEnv(values: Record<string, string>, run: () => Promise<void>) {
+    const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]))
+    Object.assign(process.env, values)
+    try {
+      await run()
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    }
+  }
+  const checkpointOf = (row: { checkpoint: string | null } | undefined) => z.object({ live: z.boolean() }).parse(JSON.parse(row?.checkpoint ?? "{}"))
+
+  test("one person's extra task waits its turn with one notice; a busy workspace starts tasks without live progress", async () => {
+    await withEnv({ DEN_SLACK_RUNNING_PER_MEMBER: "1", DEN_SLACK_LIVE_STREAMS_PER_WORKSPACE: "1" }, async () => {
+      const { deps: holding, release } = holdingDeps()
+      await ingress("ECAP1", slackUsers[1], "long task", "600.1")
+      const [first] = await threadEvents("600.1")
+      if (!first) throw new Error("first event missing")
+      for (let i = 0; i < 4; i++) await processOnly(first.id, holding)
+      expect(checkpointOf((await threadEvents("600.1"))[0]).live).toBe(true)
+
+      // Someone else's task while the first still runs: over the live limit, so it shows only Slack's status.
+      await ingress("ELIVE1", slackUsers[0], "quick question", "602.1")
+      const [other] = await threadEvents("602.1")
+      if (!other) throw new Error("other event missing")
+      for (let i = 0; i < 4; i++) await processOnly(other.id, holding)
+      expect(checkpointOf((await threadEvents("602.1"))[0]).live).toBe(false)
+
+      // The first person's second task, in another thread: it waits for their running one and says so once.
+      await ingress("ECAP2", slackUsers[1], "another task", "601.1")
+      const [second] = await threadEvents("601.1")
+      if (!second) throw new Error("second event missing")
+      for (let i = 0; i < 3; i++) await processOnly(second.id, holding)
+      const notices = slackCalls.filter(
+        (call) => call.method === "chat.postEphemeral" && call.body.text === "You already have a task running. I'll start this one as soon as it finishes.",
+      )
+      expect(notices).toHaveLength(1)
+      expect((await threadEvents("601.1"))[0]?.status).toBe("pending")
+      expect(remoteCalls.some((call) => call.action === "send" && call.body.messageId === `msg_${second.id}`)).toBe(false)
+
+      release()
+      for (const event of [first, other])
+        for (let i = 0; i < 4 && (await db.select().from(Event).where(eq(Event.id, event.id)))[0]?.status !== "done"; i++)
+          await processOnly(event.id, holding)
+      for (let i = 0; i < 4; i++) await processOnly(second.id, holding)
+      expect(remoteCalls.some((call) => call.action === "send" && call.body.messageId === `msg_${second.id}`)).toBe(true)
+      await drain()
+    })
+  })
+
+  test("Slack asking us to slow down is a wait: it never uses up a task's attempts", async () => {
+    const { SlackApiError } = await import("../src/slack-assistant/protocol.js")
+    await ingress("ERATE1", slackUsers[1], "task", "700.1")
+    const [row] = await threadEvents("700.1")
+    if (!row) throw new Error("event missing")
+    await db.update(Event).set({ availableAt: new Date(Date.now() + 3_600_000) }).where(eq(Event.connectionId, connectionId))
+    await db.update(Event).set({ availableAt: new Date(Date.now() - 1000) }).where(eq(Event.id, row.id))
+    const claimed = await repository.claimSlackEvent()
+    if (claimed?.id !== row.id) throw new Error("claim mismatch")
+    await worker.handleSlackEventFailure(claimed, new SlackApiError("ratelimited", 2_000), deps)
+    const waited = (await threadEvents("700.1"))[0]
+    expect(waited?.attempts).toBe(0)
+    expect(waited?.status).toBe("pending")
+    expect((waited?.availableAt.getTime() ?? 0) - Date.now()).toBeGreaterThan(1_000)
+
+    await db.update(Event).set({ availableAt: new Date(Date.now() - 1000) }).where(eq(Event.id, row.id))
+    const again = await repository.claimSlackEvent()
+    if (again?.id !== row.id) throw new Error("claim mismatch")
+    await worker.handleSlackEventFailure(again, new SlackApiError("internal_error"), deps)
+    expect((await threadEvents("700.1"))[0]?.attempts).toBe(1)
+    await db.delete(Event).where(eq(Event.id, row.id))
+  })
+
+  test("a request over the intake limit gets a notice, at most once a minute, instead of silence", async () => {
+    await withEnv({ DEN_SLACK_INGRESS_PER_MEMBER_PER_MINUTE: "1" }, async () => {
+      await ingress("ETHROTTLE1", "UTHROTTLE", "first", "500.1")
+      await ingress("ETHROTTLE2", "UTHROTTLE", "second", "500.1")
+      await ingress("ETHROTTLE3", "UTHROTTLE", "third", "500.1")
+      const rows = await threadEvents("500.1")
+      expect(rows.map((row) => row.status)).toEqual(["pending", "throttled"])
+      const notice = rows[1]
+      if (!notice) throw new Error("notice missing")
+      await processOnly(notice.id, deps)
+      const told = slackCalls.filter((call) => call.method === "chat.postEphemeral" && call.body.user === "UTHROTTLE")
+      expect(told.map((call) => [call.body.thread_ts, call.body.text])).toEqual([
+        ["500.1", "I'm getting a lot of requests right now, so I didn't start this one. Please send it again in a minute."],
+      ])
+      expect((await threadEvents("500.1"))[1]?.status).toBe("throttled_sent")
+      await ingress("ETHROTTLE4", "UTHROTTLE", "fourth", "500.1")
+      expect((await threadEvents("500.1")).length).toBe(2)
+    })
+    await db.delete(Event).where(and(eq(Event.connectionId, connectionId), eq(Event.threadTs, "500.1")))
+  })
+
   test("a second member cannot bind an already-bound Slack user", async () => {
     const connection = (
       await db.select().from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, connectionId))
@@ -440,31 +537,43 @@ suite("Slack assistant: real database and signed HTTP journey", () => {
     expect(await repository.recordSlackFeedback(installation, slackUsers[0], event.id, "positive")).toBe(true)
     expect((await repository.slackAssistantMetrics(connectionId)).helpful).toBe(1)
   })
-  test("daily admission ignores lifecycle notifications and the circuit breaker pauses new work", async () => {
+  test("daily admission ignores lifecycle notifications; the breaker pauses only when most recent runs fail", async () => {
     const installation = await repository.getInstallation(connectionId)
     if (!installation) throw new Error("fixture missing")
     const ids: string[] = []
-    async function fixture(id: string, status: string) {
+    async function fixture(id: string, status: string, checkpoint: string | null = null, user = "UBUDGET") {
       const eventId = await repository.enqueueSlackEvent(installation, id, {
         type: "app_home_opened",
-        user: "UBUDGET",
+        user,
         channel: "CBUDGET",
         ts: "101.1",
       })
       if (!eventId) throw new Error("missing budget fixture")
       ids.push(eventId)
-      await db.update(Event).set({ status, availableAt: new Date() }).where(eq(Event.id, eventId))
+      await db.update(Event).set({ status, checkpoint, availableAt: new Date() }).where(eq(Event.id, eventId))
       return (await db.select().from(Event).where(eq(Event.id, eventId)))[0]
     }
     try {
       await fixture("ENOTIFICATION", "done")
       const first = await fixture("EBUDGET1", "pending")
-      expect(await repository.admitSlackRun(first, { ...installation, dailyLimit: 1 })).toBe(true)
+      expect(await repository.admitSlackRun(first, { ...installation, dailyLimit: 1 })).toBe("admitted")
       const second = await fixture("EBUDGET2", "pending")
-      expect(await repository.admitSlackRun(second, { ...installation, dailyLimit: 1 })).toBe(false)
+      expect(await repository.admitSlackRun(second, { ...installation, dailyLimit: 1 })).toBe("daily_limit")
+
+      // A busy workspace: five failures among more completed runs do not pause anyone.
+      for (let i = 0; i < 6; i++) await fixture(`EOK${i}`, "done", "{}", `UOK${i}`)
       for (let i = 0; i < 5; i++) await fixture(`EFAIL${i}`, "failed")
-      expect(await repository.admitSlackRun(second, { ...installation, dailyLimit: 100 })).toBe(false)
-      expect(await repository.admitSlackRun(first, { ...installation, dailyLimit: 100 })).toBe(true)
+      expect(await repository.admitSlackRun(second, { ...installation, dailyLimit: 100 })).toBe("admitted")
+
+      // When failures reach the number of completed runs, the service is broken: new work pauses.
+      const [completed] = await db
+        .select({ total: count() })
+        .from(Event)
+        .where(and(eq(Event.connectionId, connectionId), eq(Event.status, "done"), isNotNull(Event.checkpoint), gt(Event.availableAt, new Date(Date.now() - 300_000))))
+      for (let i = 5; i < (completed?.total ?? 0); i++) await fixture(`EFAIL${i}`, "failed")
+      const third = await fixture("EBUDGET3", "pending", null, "UBUDGET3")
+      expect(await repository.admitSlackRun(third, { ...installation, dailyLimit: 100 })).toBe("paused")
+      expect(await repository.admitSlackRun(first, { ...installation, dailyLimit: 100 })).toBe("admitted")
     } finally {
       for (const id of ids) await db.delete(Event).where(eq(Event.id, id))
     }

@@ -81,6 +81,7 @@ The model sees these tools:
 | `HEADLESS_CREDENTIAL_REFRESH_MS` | `3000000` | A turn with an MCP token pauses between steps after this long so the caller resumes it with a fresh one. Keep it under the token lifetime (60 minutes for Den) |
 | `HEADLESS_MAX_OUTPUT_TOKENS` | `8192` | Output cap per model call: Anthropic `max_tokens`, OpenAI `max_completion_tokens` |
 | `HEADLESS_CONTEXT_CHAR_BUDGET` | `400000` | Older whole turns are dropped past this. A turn that outgrows it alone replaces its oldest large tool outputs with a short note, in blocks of eight |
+| `HEADLESS_SESSION_RETENTION_DAYS` | `7` | Conversations untouched this long are deleted hourly, with their transcript and files, except any with a queued or running turn. `0` keeps them forever. A caller that sends to a deleted session gets `unknown_session`; Den then starts a new one |
 | `HEADLESS_SYSTEM_PROMPT` | built-in | |
 
 ## Run

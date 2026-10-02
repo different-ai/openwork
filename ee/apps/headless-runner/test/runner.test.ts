@@ -386,6 +386,28 @@ test("an image from a tool is shown to the model in its turn, then dropped from 
   assert.equal(toolLater?.role === "tool" && toolLater.images, undefined)
 })
 
+test("idle conversations expire with their transcript and files, but never one with a turn in progress", () => {
+  let clock = 1_000
+  const store = new Store(tempDbPath(), () => clock)
+  const old = store.createSession({})
+  store.admitTurn({ sessionId: old.id, messageId: "m", prompt: "hi", model: null })
+  store.startTranscript(old.id, "m")
+  store.writeFile(old.id, "notes.md", "x")
+  store.setTurnStatus(old.id, "m", "completed")
+  const busy = store.createSession({})
+  store.admitTurn({ sessionId: busy.id, messageId: "m", prompt: "long task", model: null })
+  store.setTurnStatus(busy.id, "m", "running")
+  clock = 10 * 86_400_000
+  const recent = store.createSession({})
+
+  assert.equal(store.pruneIdleSessions(clock - 7 * 86_400_000), 1)
+  assert.equal(store.getSession(old.id), null)
+  assert.deepEqual(store.messages(old.id), [])
+  assert.equal(store.readFile(old.id, "notes.md"), null)
+  assert.ok(store.getSession(busy.id), "a running turn keeps its conversation")
+  assert.ok(store.getSession(recent.id))
+})
+
 test("context keeps whole recent turns within budget", () => {
   const entry = (seq: number, messageId: string, body: string) => ({
     seq,

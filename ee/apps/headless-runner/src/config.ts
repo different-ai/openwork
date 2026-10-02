@@ -43,6 +43,8 @@ const configSchema = z.object({
    */
   HEADLESS_CREDENTIAL_REFRESH_MS: z.coerce.number().int().min(60_000).default(50 * 60_000),
   HEADLESS_CONTEXT_CHAR_BUDGET: z.coerce.number().int().min(10_000).default(400_000),
+  /** Conversations untouched this many days are deleted; 0 keeps them forever. */
+  HEADLESS_SESSION_RETENTION_DAYS: z.coerce.number().int().min(0).default(7),
   HEADLESS_SYSTEM_PROMPT: z.string().optional(),
 })
 
@@ -66,6 +68,8 @@ export type Config = {
     contextCharBudget: number
   }
   systemPrompt?: string
+  /** Idle conversations older than this are deleted; null keeps them. */
+  sessionRetentionMs: number | null
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -97,5 +101,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       contextCharBudget: value.HEADLESS_CONTEXT_CHAR_BUDGET,
     },
     systemPrompt: value.HEADLESS_SYSTEM_PROMPT,
+    sessionRetentionMs: value.HEADLESS_SESSION_RETENTION_DAYS === 0 ? null : value.HEADLESS_SESSION_RETENTION_DAYS * 86_400_000,
   }
 }
