@@ -1,6 +1,6 @@
 // Freestyle world check: proves the e2e/preview world end to end, with timings.
 //
-//   node evals/scripts/check-freestyle-world.ts [--only docs,ui,den-api,den-web,server] [--base <sha>] [--keep-branches]
+//   node evals/scripts/check-freestyle-world.ts [--only docs,ui,den-api,den-web,server,gateway] [--base <sha>] [--keep-branches]
 //
 // WORLD_CHECK_VERBOSE=1 prints each build stage with its time.
 // --base tests a pushed branch as if it were dev (default: the dev head), e.g. to
@@ -47,7 +47,9 @@ const scenarios: Scenario[] = [
   } },
   { name: "den-api", expect: "fast", change: async (dir) => appendFile(join(dir, "ee/apps/den-api/src/main.ts"), `\n// world check ${stamp}\n`) },
   { name: "den-web", expect: "fast", change: async (dir) => appendFile(join(dir, "ee/apps/den-web/app/layout.tsx"), `\n// world check ${stamp}\n`) },
-  { name: "server", expect: "full", change: async (dir) => appendFile(join(dir, "apps/server/src/cli.ts"), `\n// world check ${stamp}\n`) },
+  { name: "server", expect: "fast", change: async (dir) => appendFile(join(dir, "apps/server/src/cli.ts"), `\n// world check ${stamp}\n`) },
+  // Not applied live yet, so it keeps the full build covered.
+  { name: "gateway", expect: "full", change: async (dir) => appendFile(join(dir, "ee/apps/gateway/src/app.ts"), `\n// world check ${stamp}\n`) },
 ];
 
 const args = process.argv.slice(2);

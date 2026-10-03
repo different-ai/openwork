@@ -64,14 +64,16 @@ export async function ensureEvidenceImage(devSha: string, api = client(), option
 
 /**
  * Changes the running world applies without a rebuild. Vite (app) and Next
- * (Den web) serve the checked-out sources; den-api runs once from source, so it
- * is restarted. Extend this only together with the reload or restart that
+ * (Den web) serve the checked-out sources; den-api and the OpenWork server run
+ * once from source, so they are restarted. Extend this only together with the reload or restart that
  * applies the new kind of change; anything else takes the full build.
  */
-const HOT_RULES: { path: RegExp; restart?: "den-api" }[] = [
+const HOT_RULES: { path: RegExp; restart?: "den-api" | "server" }[] = [
   { path: /^apps\/app\/(?:src|public)\// },
   { path: /^ee\/apps\/den-web\/(?:app|components|lib|src|public|styles|hooks)\// },
   { path: /^ee\/apps\/den-api\/src\//, restart: "den-api" },
+  // The server runs from source; its OpenCode plugin bundles are rebuilt first.
+  { path: /^apps\/server\/src\//, restart: "server" },
 ];
 
 /** Runtime paths (see INERT_PATH) whose content differs between two trees. */
@@ -144,7 +146,7 @@ git config remote.origin.partialclonefilter blob:none
 git fetch --depth=1 --filter=blob:none origin ${sha}
 git checkout --force --detach FETCH_HEAD
 test "$(git rev-parse HEAD)" = "${sha}"
-sleep 0.3
+${state.restart.includes("server") ? "pnpm --filter openwork-server build:bundles\n" : ""}sleep 0.3
 node /opt/openwork-preview/evidence-control.mjs refresh ${state.restart.join(" ")}
 printf %s ${runtimeFingerprint} > /opt/openwork-preview/runtime-fingerprint
 printf %s ${sha} > /opt/openwork-preview/built-from-sha

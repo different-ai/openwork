@@ -35,6 +35,8 @@ export interface AcmeWebWorld {
   upstream: Awaited<ReturnType<typeof startAcmeUpstream>>;
   /** In-memory demo Slack, Notion, Linear, Google Calendar and Gmail, added to the Acme org. */
   demo: DemoWorkspace;
+  /** Restart the OpenWork server from current sources and sign it back in to Den. */
+  restartServer(): Promise<void>;
 }
 
 /** Seeded Acme Den + real AI Gateway + isolated web runtime; only the upstream model is fake. */
@@ -84,13 +86,22 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: 
     },
   });
   stack.adopt(web, (owned) => owned.stop());
-  const synced = await fetch(`${web.manifest.openworkUrl}/den-session`, {
-    method: "PUT", headers: { "x-openwork-host-token": web.manifest.hostToken, "content-type": "application/json" },
-    body: JSON.stringify({ baseUrl: den.ref.apiUrl, token: den.admin.token, orgId: model.orgId }),
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!synced.ok) throw new Error(`Acme runtime sign-in failed: HTTP ${synced.status}`);
-  return { den, web, model, upstream, demo, gatewayUrl: gateway.baseUrl };
+  // The server keeps this session in memory, so it is sent again after a restart.
+  const signIn = async () => {
+    const synced = await fetch(`${web.manifest.openworkUrl}/den-session`, {
+      method: "PUT", headers: { "x-openwork-host-token": web.manifest.hostToken, "content-type": "application/json" },
+      body: JSON.stringify({ baseUrl: den.ref.apiUrl, token: den.admin.token, orgId: model.orgId }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!synced.ok) throw new Error(`Acme runtime sign-in failed: HTTP ${synced.status}`);
+  };
+  await signIn();
+  return { den, web, model, upstream, demo, gatewayUrl: gateway.baseUrl,
+    async restartServer() {
+      if (!web.restartServer) throw new Error("This web runtime was not started by the world and cannot be restarted");
+      await web.restartServer();
+      await signIn();
+    } };
 }
 
 export function acmeWebOutputs(world: AcmeWebWorld) {

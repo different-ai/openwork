@@ -55,6 +55,12 @@ export interface HeadlessWebHandle {
   waitForExit(): Promise<string>;
   detach(): Promise<void>;
   stop(): Promise<void>;
+  /**
+   * Only when this launch started the server: stop the OpenWork server and start
+   * it again from the current sources with the same arguments, then wait until
+   * the stack is healthy. Server memory (such as a pushed Den session) is lost.
+   */
+  restartServer?(): Promise<void>;
 }
 
 export interface HeadlessWorldRuntimePaths {
@@ -887,13 +893,14 @@ export async function launchHeadlessWeb(options: HeadlessWebLaunchOptions): Prom
     manifest = supervised.manifest;
     acquiredManifest = manifest;
     acquiredSupervisor = supervised.supervisor;
-    const children = [...acquiredChildren];
-    const supervisor = acquiredSupervisor;
+    let children = [...acquiredChildren];
+    let supervisor = acquiredSupervisor;
+    let liveManifest = manifest;
     let stopped = false;
     return {
-      manifest,
+      get manifest() { return liveManifest; },
       reused: false,
-      waitForExit: () => waitForOwnedRuntimeExit(manifest),
+      waitForExit: () => waitForOwnedRuntimeExit(liveManifest),
       async detach() {
         for (const child of children) child.unref();
         supervisor?.unref();
@@ -903,7 +910,24 @@ export async function launchHeadlessWeb(options: HeadlessWebLaunchOptions): Prom
         stopped = true;
         await Promise.all(children.map(stopAcquiredChild));
         if (supervisor) await stopAcquiredChild(supervisor);
-        await stopManifest(manifest);
+        await stopManifest(liveManifest);
+      },
+      async restartServer() {
+        // The supervisor stops the whole runtime when the server exits, and it
+        // only knows the old process id: stop it first, start a new one after.
+        if (supervisor) await stopAcquiredChild(supervisor);
+        else await killOwnedRuntimeProcess(liveManifest, liveManifest.supervisorPid, "supervisor");
+        const previous = children.find((child) => child.pid === liveManifest.pids.openworkServer);
+        if (previous) await stopAcquiredChild(previous);
+        const next = spawnLogged(serverLaunch.command, serverLaunch.args, headlessLogPath, repoRoot, headlessEnv);
+        children = [...children.filter((child) => child !== previous), next];
+        await waitForSpawn(next, "openwork-server");
+        liveManifest = { ...liveManifest, pids: { ...liveManifest.pids, openworkServer: next.pid ?? null }, supervisorPid: null };
+        await writeRuntimeManifest(liveManifest);
+        await waitForHealthy(liveManifest);
+        const supervised = await ensureRuntimeSupervisor(liveManifest, repoRoot, env);
+        liveManifest = supervised.manifest;
+        supervisor = supervised.supervisor;
       },
     };
   } catch (error) {

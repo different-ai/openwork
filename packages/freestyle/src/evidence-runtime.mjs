@@ -58,9 +58,11 @@ try {
   // document and is deliberately not presented as an exact checkpoint restore.
   // Fast path: after a checkout, reload the saved tab and wait until the app is
   // ready again with the same model. Vite and Next serve the checked-out sources;
-  // den-api runs once from source, so it is restarted when its sources changed.
+  // den-api and the OpenWork server run once from source, so they are restarted
+  // when their sources changed.
   async function refresh(restart) {
     if (restart.includes("den-api")) await world.den.restartApi();
+    if (restart.includes("server")) await world.restartServer();
     await evalIn(browser, browserScript(() => { setTimeout(() => location.reload(), 0); return true; }, [])).catch(() => undefined);
     await delay(500);
     await waitUntilInteractive(browser);
@@ -72,7 +74,7 @@ try {
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
         let restart = [];
-        try { const body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"); if (Array.isArray(body.restart)) restart = body.restart.filter((name) => name === "den-api"); } catch {}
+        try { const body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"); if (Array.isArray(body.restart)) restart = body.restart.filter((name) => name === "den-api" || name === "server"); } catch {}
         refresh(restart).then(() => res.end(`refreshed${restart.length ? ` after restarting ${restart.join(", ")}` : ""}`), (error) => { res.writeHead(500); res.end(error instanceof Error ? error.message : String(error)); });
       });
       return;
