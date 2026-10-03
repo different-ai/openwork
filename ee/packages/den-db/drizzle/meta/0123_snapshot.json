@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "daa43df9-2943-492a-a563-29035d37356d",
+  "id": "45722e8e-506a-4ce3-b813-a6e63b146db8",
   "prevId": "dbac4fd6-418a-48c6-a832-e3a4d8655a74",
   "tables": {
     "account": {
@@ -8546,6 +8546,13 @@
         "owner_email": {
           "name": "owner_email",
           "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "teammate_emails": {
+          "name": "teammate_emails",
+          "type": "json",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

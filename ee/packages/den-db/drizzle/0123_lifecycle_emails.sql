@@ -10,4 +10,5 @@ CREATE TABLE `lifecycle_email` (
 );
 --> statement-breakpoint
 ALTER TABLE `workspace_bootstrap` ADD `owner_email` varchar(255);--> statement-breakpoint
+ALTER TABLE `workspace_bootstrap` ADD `teammate_emails` json;--> statement-breakpoint
 CREATE INDEX `lifecycle_email_recipient` ON `lifecycle_email` (`recipient`);

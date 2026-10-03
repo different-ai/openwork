@@ -68,6 +68,16 @@ function pluralize(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
+// Teammates saved with the workspace come back on accept, so invites survive a
+// sign-up or verification round trip that drops the `invite` URL parameter.
+function teammatesToInvite(fromUrl: readonly string[], payload: unknown): string[] {
+  const saved =
+    typeof payload === "object" && payload !== null && Array.isArray((payload as { teammateEmails?: unknown }).teammateEmails)
+      ? (payload as { teammateEmails: unknown[] }).teammateEmails.filter((email): email is string => typeof email === "string")
+      : [];
+  return [...new Set([...fromUrl, ...saved].map((email) => email.trim().toLowerCase()).filter(Boolean))].slice(0, 10);
+}
+
 async function inviteTeammates(inviteEmails: readonly string[]): Promise<string> {
   const results = await Promise.allSettled(
     inviteEmails.map((email) =>
@@ -163,14 +173,15 @@ export function WorkspaceClaimScreen({
         window.sessionStorage.removeItem(PENDING_WORKSPACE_CLAIM_STORAGE_KEY);
       }
 
-      if (inviteEmails.length > 0) {
+      const toInvite = teammatesToInvite(inviteEmails, payload);
+      if (toInvite.length > 0) {
         // The claim above just made this account the owner (and set it as
         // the session's active organization), so it can now invite
         // teammates through the same endpoint Manage Members uses. Show the
         // result briefly before moving on - this is best-effort: a failed
         // invite never blocks the claim, the owner can always retry from
         // Manage Members.
-        const summary = await inviteTeammates(inviteEmails);
+        const summary = await inviteTeammates(toInvite);
         setInviteSummary(summary);
         await new Promise((resolveDelay) => setTimeout(resolveDelay, 1400));
       }

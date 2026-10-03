@@ -154,6 +154,10 @@ export const WorkspaceBootstrapTable = mysqlTable(
     // Optional address the person gave the setup agent. Only used to prefill
     // the claim page and to send one claim reminder before the workspace expires.
     ownerEmail: varchar("owner_email", { length: 255 }),
+    // Teammates the person asked to invite. Returned to the owner when the claim
+    // is accepted so the claim page sends the invites, whichever link or
+    // sign-up round trip got them there.
+    teammateEmails: json("teammate_emails").$type<string[] | null>(),
   },
   (table) => [
     index("workspace_bootstrap_organization_id").on(table.organizationId),

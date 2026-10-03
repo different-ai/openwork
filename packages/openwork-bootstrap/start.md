@@ -142,9 +142,10 @@ friendly, human message that gives momentum:
 
 1. Confirm in one line that OpenWork is installed and their workspace is ready
    (use the workspace name).
-2. Point them at ONE concrete first task they can run right now, e.g. "OpenWork
-   is open — try typing: 'summarize the files in my Downloads folder' and hit
-   Run."
+2. Give them the ONE next step: in the app, click `Claim workspace and
+   continue` to make the workspace theirs (it signs them in and sends any
+   teammate invites). Then suggest one first task, e.g. "try typing:
+   'summarize the files in my Downloads folder' and hit Run."
 3. Mention that teammates whose emails were already provided will be invited
    automatically once the workspace is claimed. If no emails were provided,
    offer to collect them later.
