@@ -8,6 +8,7 @@ import { app, blankReleaseApp, standaloneApp } from "../../evals/packages/env/sr
 import { server } from "../../evals/packages/env/src/den.ts";
 import type { Den } from "../../evals/packages/env/src/den.ts";
 import { resolvePlace } from "../../evals/packages/env/src/place.ts";
+import { bootDemoWorkspace, connectDemoWorkspace, DEMO_WORKSPACE_SERVICES } from "./demo-workspace.ts";
 import type { Place } from "../../evals/packages/env/src/place.ts";
 import { selectedEnvKeys } from "../../evals/packages/hosts/src/app-env.ts";
 import { daytonaSandbox } from "../../evals/packages/hosts/src/resolve.ts";
@@ -153,8 +154,9 @@ async function localSourceRef(): Promise<string> {
 
 async function setupTeam(den: Den, restricted: boolean): Promise<void> {
   const headers = { authorization: `Bearer ${den.admin.token}` };
-  // OAuth metadata only: no live provider call or account authorization.
-  for (const [name, url] of [["Notion", "https://mcp.notion.com/mcp"], ["Linear", "https://mcp.linear.app/mcp"]]) {
+  // Real connectors next to the demo ones: OAuth metadata only, no live provider call or account authorization.
+  // Members connect their own accounts; "(live)" keeps them apart from the in-memory demo Notion and Linear.
+  for (const [name, url] of [["Notion (live)", "https://mcp.notion.com/mcp"], ["Linear (live)", "https://mcp.linear.app/mcp"]]) {
     const result = await denFetch(den.ref, "/v1/mcp-connections", {
       method: "POST", headers,
       body: JSON.stringify({ name, url, authType: "oauth", credentialMode: "per_member", access: { orgWide: true, memberIds: [], teamIds: [] } }),
@@ -309,7 +311,12 @@ export async function bootDenPreview(stack: AsyncDisposableStack, place: Place, 
     ...(!fresh ? { org: { name: "Preview team", admin: { name: "Preview owner", email: `preview-${randomBytes(6).toString("hex")}@example.test` } } } : {}),
     env: { OPENWORK_DEV_MODE: "1", DEN_REQUIRE_EMAIL_VERIFICATION: "false", RESEND_API_KEY: "", SMTP_HOST: "" },
   }));
-  if (scenario === "team" || scenario === "restricted") await setupTeam(den, scenario === "restricted");
+  // Every seeded org gets the in-memory demo apps plus real connectors; fresh stays a true first launch.
+  const demo = fresh ? null : await bootDemoWorkspace(stack, den);
+  if (demo) {
+    await connectDemoWorkspace(den, demo);
+    await setupTeam(den, scenario === "restricted");
+  }
   const outputs: Record<string, WorldOutput> = {
     preview: output(fresh ? `${den.ref.webUrl}/?mode=sign-up` : `${den.ref.webUrl}/dashboard`, { group: "Preview" }),
     denWeb: output(den.ref.webUrl, { group: "Services" }),
@@ -320,6 +327,11 @@ export async function bootDenPreview(stack: AsyncDisposableStack, place: Place, 
     denRef: output(source.ref, { group: "World" }),
   };
   if (den.placement?.kind === "daytona") outputs.denSandbox = output(den.placement.sandboxId, { group: "World" });
+  if (demo) {
+    outputs.demoApps = output(DEMO_WORKSPACE_SERVICES.map((service) => service.name).join(", "), { group: "Demo apps",
+      note: "Acme Robotics demo data (you are Alex Chen); reads and writes stay in memory until the world stops. Notion (live) and Linear (live) are real connectors." });
+    if (demo.stateUrl) outputs.demoState = output(demo.stateUrl, { group: "Demo apps", note: "Live demo data; POST /reset restores the seed" });
+  }
   if (!fresh) {
     outputs.email = output(den.admin.email, { group: "Test account" });
     outputs.password = secret(den.admin.password, { group: "Test account" });
