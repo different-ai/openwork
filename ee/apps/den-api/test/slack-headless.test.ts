@@ -4,6 +4,7 @@ import { isHeadlessRunMcpToken } from "../src/mcp/headless-run-token.js"
 import {
   headlessRemoteCall,
   headlessRunnerConfig,
+  headlessRunnerSplit,
   listHeadlessModels,
   slackRuntimeForOrganization,
   stepLabel,
@@ -190,6 +191,89 @@ describe("headless remote calls", () => {
       retryable: true,
     })
     expect(await headlessRemoteCall(actor, "create", {}, null)).toEqual({ error: "headless_runner_not_configured", retryable: false })
+  })
+})
+
+describe("A/B between two headless runners", () => {
+  const TOKEN_B = "b".repeat(40)
+  const runnerB = { url: "https://runner-b.example.com", token: TOKEN_B }
+
+  /** Two runners behind one fetch; records which host and token each call used. */
+  function split(input: { percent?: number; organizations?: string[]; random?: number; withB?: boolean }, responses: Array<{ status: number; body: unknown }>) {
+    const base = runner(responses)
+    const calls: Array<{ host: string; path: string; authorization: string | null }> = []
+    const deps: HeadlessDeps = {
+      ...base.deps,
+      split:
+        input.withB === false
+          ? null
+          : { config: runnerB, percent: input.percent ?? 0, organizations: new Set(input.organizations ?? []) },
+      random: () => input.random ?? 0.5,
+      fetch: async (url, init) => {
+        const parsed = new URL(String(url))
+        calls.push({ host: parsed.host, path: `${parsed.pathname}${parsed.search}`, authorization: new Headers(init?.headers).get("authorization") })
+        return base.deps.fetch(url, init)
+      },
+    }
+    return { deps, calls }
+  }
+
+  test("runner B needs its own URL and strong token; the share is a clamped percentage", () => {
+    const b = { DEN_HEADLESS_RUNNER_B_URL: "https://runner-b.example.com/", DEN_HEADLESS_RUNNER_B_TOKEN: TOKEN_B }
+    expect(headlessRunnerSplit({})).toBeNull()
+    expect(headlessRunnerSplit({ ...b, DEN_HEADLESS_RUNNER_B_TOKEN: "short" })).toBeNull()
+    expect(headlessRunnerSplit({ ...b, DEN_HEADLESS_RUNNER_B_URL: "http://runner-b.example.com" })).toBeNull()
+    expect(headlessRunnerSplit(b)).toEqual({ config: runnerB, percent: 0, organizations: new Set() })
+    const configured = headlessRunnerSplit({ ...b, DEN_HEADLESS_RUNNER_B_PERCENT: "250", DEN_HEADLESS_RUNNER_B_ORGANIZATIONS: " org_1, org_2 ," })
+    expect(configured?.percent).toBe(100)
+    expect([...(configured?.organizations ?? [])]).toEqual(["org_1", "org_2"])
+    expect(headlessRunnerSplit({ ...b, DEN_HEADLESS_RUNNER_B_PERCENT: "nope" })?.percent).toBe(0)
+  })
+
+  test("a session created on B keeps every later call on B, under B's own id and token", async () => {
+    const { deps, calls } = split({ percent: 100 }, [
+      { status: 201, body: { id: "hs_b1" } },
+      { status: 202, body: {} },
+      snapshot({ status: "completed" }, [], "done"),
+      { status: 200, body: { accepted: true } },
+    ])
+    const created = await headlessRemoteCall(actor, "create", { title: "t" }, deps)
+    expect(created).toEqual({ sessionId: "b:hs_b1", workspaceId: "headless" })
+    await headlessRemoteCall(actor, "send", { sessionId: "b:hs_b1", prompt: "x", messageId: "msg_1" }, deps)
+    expect(await headlessRemoteCall(actor, "read", { sessionId: "b:hs_b1", messageId: "msg_1" }, deps)).toMatchObject({ status: "idle" })
+    await headlessRemoteCall(actor, "stop", { sessionId: "b:hs_b1", messageId: "msg_1" }, deps)
+    expect(calls.map((call) => `${call.host} ${call.path.split("?")[0]}`)).toEqual([
+      "runner-b.example.com /v1/sessions",
+      "runner-b.example.com /v1/sessions/hs_b1/turns",
+      "runner-b.example.com /v1/sessions/hs_b1",
+      "runner-b.example.com /v1/sessions/hs_b1/abort",
+    ])
+    expect(calls.every((call) => call.authorization === `Bearer ${TOKEN_B}`)).toBe(true)
+  })
+
+  test("sessions without the prefix stay on runner A while a split is on", async () => {
+    const { deps, calls } = split({ percent: 100 }, [{ status: 202, body: {} }])
+    await headlessRemoteCall(actor, "send", { sessionId: "hs_a1", prompt: "x", messageId: "msg_1" }, deps)
+    expect(calls).toEqual([{ host: "headless-runner:8795", path: "/v1/sessions/hs_a1/turns", authorization: `Bearer ${TOKEN}` }])
+  })
+
+  test("listed organizations always go to B; the rest split by percentage", async () => {
+    const listed = split({ percent: 0, organizations: ["org_1"] }, [{ status: 201, body: { id: "hs_1" } }])
+    expect(await headlessRemoteCall(actor, "create", {}, listed.deps)).toMatchObject({ sessionId: "b:hs_1" })
+    const below = split({ percent: 30, random: 0.2 }, [{ status: 201, body: { id: "hs_2" } }])
+    expect(await headlessRemoteCall(actor, "create", {}, below.deps)).toMatchObject({ sessionId: "b:hs_2" })
+    const above = split({ percent: 30, random: 0.5 }, [{ status: 201, body: { id: "hs_3" } }])
+    expect(await headlessRemoteCall(actor, "create", {}, above.deps)).toMatchObject({ sessionId: "hs_3" })
+    expect(above.calls[0].host).toBe("headless-runner:8795")
+  })
+
+  test("a B session after runner B is removed fails clearly instead of reaching runner A", async () => {
+    const { deps, calls } = split({ withB: false }, [])
+    expect(await headlessRemoteCall(actor, "read", { sessionId: "b:hs_b1", messageId: "msg_1" }, deps)).toEqual({
+      error: "headless_runner_b_not_configured",
+      retryable: false,
+    })
+    expect(calls).toEqual([])
   })
 })
 

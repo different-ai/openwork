@@ -11,6 +11,10 @@ import { organizationHasCapability } from "../organization-capabilities.js"
  * Runs have no time limit. Each MCP token still lives at most 60 minutes: the
  * runner pauses a long turn between steps every 50 minutes, and the read below
  * resumes it at once with a freshly minted token.
+ *
+ * A/B: an optional second runner ("B", for example the Worker build) can take a
+ * share of new sessions. A session stays on the runner that created it: B
+ * session ids are stored with a `b:` prefix, so later calls reach the same runner.
  */
 
 type HeadlessConfig = { url: string; token: string }
@@ -33,6 +37,25 @@ export function headlessRunnerConfig(env: Record<string, string | undefined> = p
   return { url: url.replace(/\/+$/, ""), token }
 }
 
+/** Session ids created on runner B carry this prefix in Den; the runner itself never sees it. */
+const B_PREFIX = "b:"
+
+/** Runner B and which new sessions it takes: every listed organization, plus `percent` of the rest. */
+export type HeadlessSplit = { config: HeadlessConfig; percent: number; organizations: ReadonlySet<string> }
+
+export function headlessRunnerSplit(env: Record<string, string | undefined> = process.env): HeadlessSplit | null {
+  const url = env.DEN_HEADLESS_RUNNER_B_URL?.trim()
+  const token = env.DEN_HEADLESS_RUNNER_B_TOKEN?.trim()
+  if (!url || !token || token.length < 32 || !isSafeRunnerUrl(url)) return null
+  const percent = Number(env.DEN_HEADLESS_RUNNER_B_PERCENT ?? "0")
+  const organizations = (env.DEN_HEADLESS_RUNNER_B_ORGANIZATIONS ?? "").split(",").map((id) => id.trim()).filter(Boolean)
+  return {
+    config: { url: url.replace(/\/+$/, ""), token },
+    percent: Number.isFinite(percent) ? Math.min(100, Math.max(0, percent)) : 0,
+    organizations: new Set(organizations),
+  }
+}
+
 export type SlackRuntime = "headless" | "web"
 
 /** An organization uses the headless runner only when it is switched on for it and the deployment has one. */
@@ -44,7 +67,13 @@ export function slackRuntimeForOrganization(
   return enabled && headlessRunnerConfig(env) !== null ? "headless" : "web"
 }
 
-const turnSchema = z.object({ messageId: z.string(), status: z.string(), error: z.string().nullable() })
+const turnSchema = z.object({
+  messageId: z.string(),
+  status: z.string(),
+  error: z.string().nullable(),
+  createdAt: z.number().optional(),
+  updatedAt: z.number().optional(),
+})
 const messageSchema = z.discriminatedUnion("role", [
   z.object({ role: z.literal("user"), text: z.string() }),
   z.object({
@@ -86,7 +115,12 @@ export function stepLabel(name: string, input: Record<string, unknown> = {}) {
 }
 
 export type HeadlessDeps = {
+  /** Runner A: every session unless runner B takes it. */
   config: HeadlessConfig
+  /** Runner B for an A/B comparison; null or absent sends everything to A. */
+  split?: HeadlessSplit | null
+  /** For tests; picks the share of new sessions that go to B. */
+  random?: () => number
   fetch: typeof fetch
   /** `messageId` is the Slack run's turn id; Den remembers the run the token was minted for. */
   mintToken: (input: { userId: string; organizationId: string; messageId?: string }) => Promise<{ token: string }>
@@ -106,15 +140,31 @@ function defaultDeps(): HeadlessDeps | null {
     }
     return minted
   }
-  return config ? { config, fetch, mintToken } : null
+  return config ? { config, split: headlessRunnerSplit(), fetch, mintToken } : null
 }
 
 type Actor = { userId: string; organizationId: string }
+type Backend = "a" | "b"
+type Target = { backend: Backend; config: HeadlessConfig; sessionId: string }
 
-async function call(deps: HeadlessDeps, method: string, path: string, body?: unknown) {
-  const response = await deps.fetch(`${deps.config.url}${path}`, {
+/** Which runner a new session goes to. */
+function pickBackend(deps: HeadlessDeps, actor: Actor): Backend {
+  const split = deps.split
+  if (!split) return "a"
+  if (split.organizations.has(actor.organizationId)) return "b"
+  return (deps.random ?? Math.random)() * 100 < split.percent ? "b" : "a"
+}
+
+/** The runner that holds a stored session id, and the id that runner knows it by. Null when B is gone. */
+function sessionTarget(deps: HeadlessDeps, sessionId: string): Target | null {
+  if (!sessionId.startsWith(B_PREFIX)) return { backend: "a", config: deps.config, sessionId }
+  return deps.split ? { backend: "b", config: deps.split.config, sessionId: sessionId.slice(B_PREFIX.length) } : null
+}
+
+async function call(deps: HeadlessDeps, config: HeadlessConfig, method: string, path: string, body?: unknown) {
+  const response = await deps.fetch(`${config.url}${path}`, {
     method,
-    headers: { authorization: `Bearer ${deps.config.token}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${config.token}`, "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(15_000),
   })
@@ -134,7 +184,7 @@ const catalogSchema = z.object({
 export async function listHeadlessModels(suppliedDeps: HeadlessDeps | null = defaultDeps()) {
   if (!suppliedDeps) return null
   try {
-    const { status, payload } = await call(suppliedDeps, "GET", "/v1/models")
+    const { status, payload } = await call(suppliedDeps, suppliedDeps.config, "GET", "/v1/models")
     const parsed = catalogSchema.safeParse(payload)
     return status === 200 && parsed.success ? parsed.data : null
   } catch {
@@ -144,15 +194,15 @@ export async function listHeadlessModels(suppliedDeps: HeadlessDeps | null = def
 
 async function send(
   deps: HeadlessDeps,
+  target: Target,
   actor: Actor,
-  sessionId: string,
   messageId: string,
   prompt: string,
   model?: string,
 ) {
   // One fresh, member-scoped MCP token per admitted run; the runner holds it in memory only.
   const { token } = await deps.mintToken({ userId: actor.userId, organizationId: actor.organizationId, messageId })
-  const { status, payload } = await call(deps, "POST", `/v1/sessions/${encodeURIComponent(sessionId)}/turns`, {
+  const { status } = await call(deps, target.config, "POST", `/v1/sessions/${encodeURIComponent(target.sessionId)}/turns`, {
     messageId,
     prompt,
     ...(model ? { model } : {}),
@@ -175,19 +225,25 @@ export async function headlessRemoteCall(
   const messageId = typeof body.messageId === "string" ? body.messageId : ""
 
   if (action === "create") {
-    const { status, payload } = await call(deps, "POST", "/v1/sessions", {
+    const backend = pickBackend(deps, actor)
+    const config = backend === "b" && deps.split ? deps.split.config : deps.config
+    const { status, payload } = await call(deps, config, "POST", "/v1/sessions", {
       title: typeof body.title === "string" ? body.title.slice(0, 200) : undefined,
     })
     const created = z.object({ id: z.string() }).safeParse(payload)
     if (status !== 201 || !created.success) return retryable(`headless_create_${status}`)
-    return { sessionId: created.data.id, workspaceId: "headless" }
+    if (deps.split) console.log(`[slack-assistant] headless session created ${JSON.stringify({ backend, organizationId: actor.organizationId })}`)
+    return { sessionId: backend === "b" ? `${B_PREFIX}${created.data.id}` : created.data.id, workspaceId: "headless" }
   }
+
+  const target = sessionTarget(deps, sessionId)
+  if (!target) return { error: "headless_runner_b_not_configured", retryable: false }
 
   if (action === "send") {
     return send(
       deps,
+      target,
       actor,
-      sessionId,
       messageId,
       typeof body.prompt === "string" ? body.prompt : "",
       typeof body.model === "string" ? body.model : undefined,
@@ -195,7 +251,7 @@ export async function headlessRemoteCall(
   }
 
   if (action === "stop") {
-    const { status } = await call(deps, "POST", `/v1/sessions/${encodeURIComponent(sessionId)}/abort`, { messageId })
+    const { status } = await call(deps, target.config, "POST", `/v1/sessions/${encodeURIComponent(target.sessionId)}/abort`, { messageId })
     return status === 200 ? { accepted: true } : { stopped: false }
   }
 
@@ -203,8 +259,9 @@ export async function headlessRemoteCall(
   // whole run, so tool outputs (up to 50k characters each) stay on the runner; only their outcome is needed.
   const { status, payload } = await call(
     deps,
+    target.config,
     "GET",
-    `/v1/sessions/${encodeURIComponent(sessionId)}?messageId=${encodeURIComponent(messageId)}&limit=500&outputs=none`,
+    `/v1/sessions/${encodeURIComponent(target.sessionId)}?messageId=${encodeURIComponent(messageId)}&limit=500&outputs=none`,
   )
   if (status === 404) return { error: "unknown_session", retryable: false }
   const snapshot = snapshotSchema.safeParse(payload)
@@ -213,7 +270,7 @@ export async function headlessRemoteCall(
 
   // A runner restart or a credential refresh interrupts a turn; re-sending the same messageId resumes it.
   if (turn?.status === "interrupted") {
-    const resumed = await send(deps, actor, sessionId, messageId, "resume")
+    const resumed = await send(deps, target, actor, messageId, "resume")
     if ("error" in resumed) return resumed
   }
 
@@ -226,6 +283,11 @@ export async function headlessRemoteCall(
   )
   const terminal = turn !== undefined && ["completed", "failed", "aborted"].includes(turn.status)
   const failed = turn?.status === "failed"
+  if (terminal && deps.split) {
+    // One line per finished turn while an A/B split is configured: which runner, how it ended, how long it ran.
+    const runnerMs = turn.createdAt !== undefined && turn.updatedAt !== undefined ? turn.updatedAt - turn.createdAt : null
+    console.log(`[slack-assistant] headless turn ended ${JSON.stringify({ backend: target.backend, status: turn.status, error: turn.error, runnerMs })}`)
+  }
   let finalAssistantText = snapshot.data.finalAssistantText
   if (terminal && !failed && !finalAssistantText) finalAssistantText = "Done."
   // The turn's last message, without the progress notes before it: the answer a long, quiet run posts.
