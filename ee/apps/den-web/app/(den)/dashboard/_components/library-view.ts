@@ -102,3 +102,17 @@ export function libraryItemDescription(item: LibraryItem): string {
   if (item.type === "workflow") return "Workflow";
   return isSingleSkill(item) ? "Skill" : "Plugin";
 }
+
+/** What a row reads as in its Kind column. */
+export function libraryKindLabel(item: LibraryItem): string {
+  if (item.type === "connection") return "Connector";
+  if (item.type === "workflow") return "Workflow";
+  return isSingleSkill(item) ? "Skill" : "Plugin";
+}
+
+/** Ready to use right now: a connector you are signed in to, any plugin, a runnable workflow. */
+export function libraryItemReady(item: LibraryItem): boolean {
+  if (item.type === "connection") return item.state === "connected";
+  if (item.type === "workflow") return item.state === "ready";
+  return true;
+}

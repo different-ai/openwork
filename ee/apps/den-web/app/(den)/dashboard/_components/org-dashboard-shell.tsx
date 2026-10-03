@@ -60,6 +60,7 @@ import {
 } from "./command-palette/den-search-bar";
 import { useDashboardPrefetch } from "./use-dashboard-prefetch";
 import { useLibraryNeedsSignInCount } from "./library-data";
+import { useLibraryModels } from "./library-models-data";
 import { UserProfileDialog } from "./user-profile-dialog";
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
@@ -438,7 +439,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     pathname,
     orgSlug: activeOrg?.slug,
   });
-  const libraryNeedsSignIn = useLibraryNeedsSignInCount(Boolean(activeOrg));
+  const libraryModels = useLibraryModels();
+  const libraryNeedsSignIn = useLibraryNeedsSignInCount(Boolean(activeOrg))
+    + (libraryModels.data ?? []).filter((provider) => provider.state === "needs_signin").length;
   const navSections = buildDashboardNavSections({
     libraryNeedsSignIn,
     orgSlug: activeOrg?.slug ?? null,

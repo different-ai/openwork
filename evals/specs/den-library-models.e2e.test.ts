@@ -20,6 +20,23 @@ test("a member: I want to use Gemini, so I sign in with my own Google account ri
     await user.screenshot();
   });
 
+  await step("after: My Library's sidebar dot and Needs sign-in filter point straight at Google Cloud", async () => {
+    await user.see({ testId: "nav-attention" }, { timeoutMs: 30_000 });
+    await user.click({ testId: "library-needs-sign-in-filter" });
+    await user.see({ text: "Google Cloud" }, { timeoutMs: 30_000 });
+    await user.notSee({ text: "Anthropic" }, { timeoutMs: 15_000 });
+    const landed = await world.location();
+    evidence.recordAssertionEvidence(
+      "Needs sign-in narrows My Library to what waits on Sam, and the address keeps it",
+      `${landed}; Google Cloud shown, Anthropic hidden; sidebar dot shown`,
+      landed.includes("status=needs-sign-in"),
+    );
+    expect(landed).toContain("status=needs-sign-in");
+    await user.screenshot();
+    await user.click({ testId: "library-needs-sign-in-filter" });
+    await user.see({ text: "Anthropic" }, { timeoutMs: 15_000 });
+  });
+
   await step("the old My Model Connections address opens this same list, so installed desktop apps still land here", async () => {
     await user.navigate(`${world.den.ref.webUrl}/dashboard/model-connections`);
     const landed = await probe.eventually(() => world.location(), {
@@ -107,6 +124,8 @@ test("a member: I want to use Gemini, so I sign in with my own Google account ri
     await user.click({ role: "link", label: "My Library" });
     await user.see({ text: "Google Cloud" }, { timeoutMs: 60_000 });
     await user.notSee({ role: "button", label: "Sign in" });
+    await user.notSee({ testId: "library-needs-sign-in-filter" });
+    await user.notSee({ testId: "nav-attention" });
     const [maya] = await world.memberConnections(world.maya);
     const mayaModels = await world.usableModelNames(world.maya);
     evidence.recordAssertionEvidence("Maya is not signed in by Sam's sign-in", `Maya ready: ${String(maya?.ready)}; Maya's usable Google Cloud models: ${mayaModels.length}`, maya?.ready === false && mayaModels.length === 0);

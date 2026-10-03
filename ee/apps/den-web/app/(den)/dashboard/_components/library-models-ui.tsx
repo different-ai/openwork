@@ -6,7 +6,7 @@ import { DenButton } from "../../_components/ui/button";
 import { getLibraryModelRoute, getLibraryRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
-import { ItemMenu, ItemPanel, ItemRow } from "./item-list";
+import { ItemMenu, ItemPanel, LibraryListRow } from "./item-list";
 import {
   type LibraryModelProvider,
   modelCount,
@@ -54,12 +54,13 @@ export function LibraryModelRow({ provider, signIn }: { provider: LibraryModelPr
         </DenButton>
       ) : <ChevronRight className="h-4 w-4 text-gray-400" aria-hidden />;
   return (
-    <div data-library-item={provider.name} data-library-kind="model" data-model-state={provider.state}>
-      <ItemRow
+    <div data-library-item={provider.name} data-library-kind="model" data-model-state={provider.state} title={modelNamesSummary(provider.models)}>
+      <LibraryListRow
         href={getLibraryModelRoute(orgSlug, provider.id)}
         logo={<ProviderLogo provider={provider} />}
         title={provider.name}
-        description={modelNamesSummary(provider.models)}
+        ready={provider.state === "ready"}
+        kind="Model"
         status={status}
         action={action ?? <span />}
       />
