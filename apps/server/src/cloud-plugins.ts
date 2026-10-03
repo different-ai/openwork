@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { ServerConfig } from "./types.js";
 import { ApiError } from "./errors.js";
@@ -533,6 +533,35 @@ function cloudPluginMcpNameFromPath(path: string): string | null {
   return OPENCODE_MCP_NAME_RE.test(name) ? name : null;
 }
 
+// Plugins often declare the same server (two Cowork plugins both bring
+// `slack`). A server stays while any other installed plugin still lists it.
+function mcpNamesUsedByOtherPlugins(plugins: Record<string, CloudImportedPlugin>, pluginId: string): Set<string> {
+  const names = new Set<string>();
+  for (const [id, plugin] of Object.entries(plugins)) {
+    if (id === pluginId) continue;
+    for (const file of plugin.files) {
+      const name = file.objectType === "mcp" ? cloudPluginMcpNameFromPath(file.path) : null;
+      if (name) names.add(name);
+    }
+  }
+  return names;
+}
+
+// Removing every skill of a plugin leaves `.opencode/skills/<plugin>-plugin/`
+// behind; drop such namespace folders once they are empty.
+async function removeEmptyPluginFolders(workspaceRoot: string, paths: string[]): Promise<void> {
+  const folders = new Set<string>();
+  for (const path of paths) {
+    const match = path.match(/^(\.opencode\/(?:skills|agents|commands)\/[^/]+)\//);
+    if (match?.[1]) folders.add(match[1]);
+  }
+  for (const folder of folders) {
+    const absolute = resolveWorkspaceInstallPath(workspaceRoot, folder);
+    const entries = await readdir(absolute).catch(() => null);
+    if (entries && entries.length === 0) await rm(absolute, { recursive: true, force: true });
+  }
+}
+
 export async function installCloudPlugin(input: {
   serverConfig: ServerConfig;
   workspaceId: string;
@@ -599,11 +628,12 @@ export async function installCloudPlugin(input: {
   }
 
   const nextPaths = new Set(files.map((file) => file.path));
+  const sharedMcpNames = mcpNamesUsedByOtherPlugins(cloudImports.plugins, input.resolved.plugin.id);
   const removedMcpNames = (existing?.files ?? []).flatMap((file) => {
     const name = file.objectType === "mcp" && !nextPaths.has(file.path) ? cloudPluginMcpNameFromPath(file.path) : null;
-    return name ? [name] : [];
+    return name && !sharedMcpNames.has(name) ? [name] : [];
   });
-  await Promise.all(removedMcpNames.map((name) => removeMcp(input.serverConfig, input.workspaceId, name)));
+  for (const name of removedMcpNames) await removeMcp(input.serverConfig, input.workspaceId, name);
 
   const imported: CloudImportedPlugin = {
     pluginId: input.resolved.plugin.id,
@@ -656,14 +686,16 @@ export async function removeCloudPlugin(input: {
   const imported = cloudImports.plugins[input.pluginId];
   if (!imported) throw new ApiError(404, "cloud_plugin_not_installed", "Marketplace package is not installed in this workspace.");
 
-  await Promise.all(imported.files.map(async (file) => {
+  const sharedMcpNames = mcpNamesUsedByOtherPlugins(cloudImports.plugins, input.pluginId);
+  for (const file of imported.files) {
     const mcpName = file.objectType === "mcp" ? cloudPluginMcpNameFromPath(file.path) : null;
     if (mcpName) {
-      await removeMcp(input.serverConfig, input.workspaceId, mcpName);
-      return;
+      if (!sharedMcpNames.has(mcpName)) await removeMcp(input.serverConfig, input.workspaceId, mcpName);
+      continue;
     }
     await removePluginWorkspaceFile(input.workspaceRoot, file.path);
-  }));
+  }
+  await removeEmptyPluginFolders(input.workspaceRoot, imported.files.map((file) => file.path));
 
   const nextPlugins = { ...cloudImports.plugins };
   delete nextPlugins[input.pluginId];

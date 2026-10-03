@@ -667,21 +667,28 @@ export async function addMcp(
 ): Promise<{ action: "added" | "updated" }> {
   validateUserMcpName(name);
   validateMcpConfig(config);
-  const runtimeConfig = await readRuntimeOpencodeConfig(serverConfig, workspaceId);
-  const mcpMap = { ...runtimeMcpMap(runtimeConfig) };
-  const existed = Object.prototype.hasOwnProperty.call(mcpMap, name);
-  mcpMap[name] = config;
-  await writeRuntimeOpencodeConfig(serverConfig, workspaceId, (current) => ({ ...current, mcp: mcpMap }));
+  // Read and change the map inside the serialized updater: a copy taken before
+  // the write is stale when several servers are added or removed at once.
+  let existed = false;
+  await writeRuntimeOpencodeConfig(serverConfig, workspaceId, (current) => {
+    const mcpMap = { ...runtimeMcpMap(current) };
+    existed = Object.prototype.hasOwnProperty.call(mcpMap, name);
+    mcpMap[name] = config;
+    return { ...current, mcp: mcpMap };
+  });
   return { action: existed ? "updated" : "added" };
 }
 
 export async function removeMcp(serverConfig: ServerConfig, workspaceId: string, name: string): Promise<boolean> {
-  const runtimeConfig = await readRuntimeOpencodeConfig(serverConfig, workspaceId);
-  const mcpMap = { ...runtimeMcpMap(runtimeConfig) };
-  if (!Object.prototype.hasOwnProperty.call(mcpMap, name)) return false;
-  delete mcpMap[name];
-  await writeRuntimeOpencodeConfig(serverConfig, workspaceId, (current) => ({ ...current, mcp: mcpMap }));
-  return true;
+  let existed = false;
+  await writeRuntimeOpencodeConfig(serverConfig, workspaceId, (current) => {
+    const mcpMap = { ...runtimeMcpMap(current) };
+    existed = Object.prototype.hasOwnProperty.call(mcpMap, name);
+    if (!existed) return current;
+    delete mcpMap[name];
+    return { ...current, mcp: mcpMap };
+  });
+  return existed;
 }
 
 // Flips `enabled` on a workspace MCP entry. Returns false for "toggle does
