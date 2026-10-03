@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { appendFile, readFile } from "node:fs/promises";
 import { internalProofContributor } from "./internal-proof-contributor.mjs";
-import { changedFiles, checkpointTagged, packagedJourney, proofKey, proofLanes, safePath, selectProof } from "./pr-proof.mjs";
+import { CORE_SPECS, changedFiles, checkpointTagged, packagedJourney, proofKey, proofLanes, safePath, selectProof } from "./pr-proof.mjs";
 
 const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, "utf8"));
 if (!event.pull_request) throw new Error("Proof selection requires a pull request event.");
@@ -32,9 +32,11 @@ const matrix = selected => JSON.stringify({ include: selected.map(spec => ({ spe
 const packagedMatrix = selected => JSON.stringify({ include: selected.map(spec => ({ spec, key: proofKey(spec), journey: packagedJourney(spec) })) });
 if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT,
   `internalContributor=${internalContributor}\nmatrix=${matrix(normalSpecs)}\nselected=${normalSpecs.length > 0}\nliveMatrix=${matrix(liveSpecs)}\nliveSelected=${liveSpecs.length > 0}\npackagedMatrix=${packagedMatrix(packagedSpecs)}\npackagedSelected=${packagedSpecs.length > 0}\ndaytonaMatrix=${matrix(daytonaSpecs)}\ndaytonaSelected=${daytonaSpecs.length > 0}\ncheckpointMatrix=${matrix(checkpointSpecs)}\ncheckpointSelected=${checkpointSpecs.length > 0}\n`);
-const summary = specs.length
-  ? `## PR proof selection\n\n${specs.length} added or changed E2E spec(s) will run on this head; their records are the PR's proof.\n\n${specs.map(spec => `- \`${spec}\``).join("\n")}\n`
-  : "## PR proof selection\n\nThis PR adds or changes no `evals/specs/**/*.e2e.test.ts`. No proof was executed and no evidence will be published for it.\n";
+const running = [...normalSpecs, ...liveSpecs, ...packagedSpecs, ...daytonaSpecs, ...checkpointSpecs].sort();
+const label = spec => CORE_SPECS.includes(spec) ? `- \`${spec}\` (core journey; its end state is this PR's preview)` : `- \`${spec}\``;
+const summary = running.length
+  ? `## PR proof selection\n\n${running.length} E2E spec(s) will run on this head; their records are the PR's proof.\n\n${running.map(label).join("\n")}\n`
+  : "## PR proof selection\n\nNo E2E spec runs on this head (docs-only change, or core journeys unavailable to forks). No evidence will be published for it.\n";
 const liveSummary = liveSpecs.length || daytonaSpecs.length || checkpointSpecs.length
   ? (internalContributor
     ? "\nProof for this internal organization contributor runs automatically in `pr-internal-specs`.\n"

@@ -5,7 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createServer, request } from "node:http";
 import { bootAcmeWeb } from "/workspace/worlds/acme-web.ts";
 import { chrome, localHost } from "/workspace/evals/packages/hosts/src/index.ts";
-import { signInDesktopAs, selectModel, waitUntilInteractive, evalIn } from "/workspace/evals/packages/behaviors/src/index.ts";
+import { signInDesktopAs, waitFor, waitUntilInteractive, evalIn } from "/workspace/evals/packages/behaviors/src/index.ts";
 import { browserScript } from "/workspace/evals/packages/cdp/src/index.ts";
 
 const root = "/opt/openwork-preview";
@@ -51,7 +51,9 @@ try {
   // bootAcmeWeb already owns a fresh workspace. The desktop workspace helper
   // waits on hash routes; app-web uses pathname routes and needs no second one.
   await evalIn(browser, browserScript((value) => { localStorage.setItem("openwork.defaultModel", value); window.dispatchEvent(new Event("openwork.defaultModelChanged")); }, [`${world.model.providerId}/${world.model.modelId}`]));
-  await selectModel(browser, world.model.modelName, { provider: "Acme AI Gateway" });
+  // The saved default selects the model; confirm the composer shows it. (The
+  // shared selectModel helper still targets the pre-#5196 picker dialog.)
+  await waitFor(browser, browserScript((name) => document.body.innerText.includes(name), [world.model.modelName]), { timeoutMs: 30_000, label: `composer model ${world.model.modelName}` });
   // The viewer keeps the saved Chromium tab. A direct app link would open a new
   // document and is deliberately not presented as an exact checkpoint restore.
   const viewer = createServer((req, res) => {
