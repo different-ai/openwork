@@ -2,6 +2,7 @@
 //
 //   node evals/scripts/check-freestyle-world.ts [--only docs,ui,den-api,den-web,server] [--base <sha>] [--keep-branches]
 //
+// WORLD_CHECK_VERBOSE=1 prints each build stage with its time.
 // --base tests a pushed branch as if it were dev (default: the dev head), e.g. to
 // prove a change to the world itself before it merges.
 //
@@ -33,18 +34,20 @@ interface Scenario {
   marker?: string;
 }
 
-const UI_MARKER = "What do you need done? (world check)";
+// Unique per run, so every scenario really builds instead of reusing an earlier run's world.
+const stamp = Date.now().toString(36);
+const UI_MARKER = `What do you need done? (world check ${stamp})`;
 const scenarios: Scenario[] = [
-  { name: "docs", expect: "reused", change: async (dir) => appendFile(join(dir, "README.md"), "\n<!-- world check -->\n") },
+  { name: "docs", expect: "reused", change: async (dir) => appendFile(join(dir, "README.md"), `\n<!-- world check ${stamp} -->\n`) },
   { name: "ui", expect: "fast", marker: UI_MARKER, change: async (dir) => {
     const file = join(dir, "apps/app/src/react-app/domains/session/chat/session-empty-hero.tsx");
     const text = await readFile(file, "utf8");
     if (!text.includes("What do you need done?")) throw new Error("UI scenario anchor text moved; update check-freestyle-world.ts");
     await writeFile(file, text.replace("What do you need done?", UI_MARKER));
   } },
-  { name: "den-api", expect: "fast", change: async (dir) => appendFile(join(dir, "ee/apps/den-api/src/main.ts"), "\n// world check\n") },
-  { name: "den-web", expect: "fast", change: async (dir) => appendFile(join(dir, "ee/apps/den-web/app/layout.tsx"), "\n// world check\n") },
-  { name: "server", expect: "full", change: async (dir) => appendFile(join(dir, "apps/server/src/cli.ts"), "\n// world check\n") },
+  { name: "den-api", expect: "fast", change: async (dir) => appendFile(join(dir, "ee/apps/den-api/src/main.ts"), `\n// world check ${stamp}\n`) },
+  { name: "den-web", expect: "fast", change: async (dir) => appendFile(join(dir, "ee/apps/den-web/app/layout.tsx"), `\n// world check ${stamp}\n`) },
+  { name: "server", expect: "full", change: async (dir) => appendFile(join(dir, "apps/server/src/cli.ts"), `\n// world check ${stamp}\n`) },
 ];
 
 const args = process.argv.slice(2);
@@ -56,11 +59,12 @@ process.env.OPENWORK_PREVIEW_GITHUB_TOKEN ||= spawnSync("gh", ["auth", "token"],
 const seconds = (start: number) => Math.round((performance.now() - start) / 1000);
 async function prepare(sha: string, imageSha?: string) {
   const start = performance.now();
+  if (process.env.WORLD_CHECK_VERBOSE) console.log(`    · start`);
   let path = "reused";
   let reason = "";
   await ensureEvidenceSnapshot(sha, undefined, {
     imageSha,
-    observe: (event) => { if (event.stage.startsWith("path:")) { path = event.stage.includes("fast") ? "fast" : "full"; reason = event.reason ?? ""; } },
+    observe: (event) => { if (process.env.WORLD_CHECK_VERBOSE) console.log(`    · ${event.stage} ${Math.round(event.durationMs / 1000)}s${event.cacheHit === undefined ? "" : event.cacheHit ? " (reused)" : " (built)"}`); if (event.stage.startsWith("path:")) { path = event.stage.includes("fast") ? "fast" : "full"; reason = event.reason ?? ""; } },
     diagnostic: async (stage, log) => console.error(`--- ${stage} builder log (last 60 lines) ---\n${log.split("\n").slice(-60).join("\n")}`),
   });
   return { path, reason, worldSeconds: seconds(start) };
@@ -73,7 +77,6 @@ const warm = await prepare(dev, dev);
 console.log(`  dev world ${warm.path} in ${warm.worldSeconds}s`);
 
 const workdir = await mkdtemp(join(tmpdir(), "world-check-"));
-const stamp = Date.now().toString(36);
 const branches: string[] = [];
 const rows: string[] = [];
 let failed = false;

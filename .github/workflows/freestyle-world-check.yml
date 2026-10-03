@@ -1,0 +1,58 @@
+name: Freestyle world check
+
+# Proves the e2e/preview world end to end and prints a timing table:
+# docs, app UI, den-api, Den web and server changes on top of dev (or a branch
+# passed as base), each built (reused, fast or full path) and exercised with the
+# core journey. Run it after changing the world, HOT_RULES or the warm image.
+# Locally: node evals/scripts/check-freestyle-world.ts [--base <sha>]
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Commit to treat as dev (empty: the dev head)"
+        required: false
+        type: string
+      only:
+        description: "Scenarios, comma-separated (empty: all)"
+        required: false
+        type: string
+
+permissions:
+  contents: write # pushes and deletes throwaway tmp/world-check/* branches
+
+concurrency:
+  group: freestyle-world-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.repository == 'different-ai/openwork'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.base || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - name: Install only the test tools
+        run: |
+          pnpm --filter @openwork/freestyle... --filter @openwork/review... --filter @openwork/world... --filter @openwork/types... --filter @openwork/sdk... install --frozen-lockfile --ignore-scripts --prefer-offline
+          pnpm --dir evals install --frozen-lockfile --ignore-scripts --prefer-offline
+      - name: Check the world
+        env:
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
+          BASE: ${{ inputs.base }}
+          ONLY: ${{ inputs.only }}
+          WORLD_CHECK_VERBOSE: "1"
+        run: |
+          git config user.name world-check
+          git config user.email world-check@openwork.invalid
+          node evals/scripts/check-freestyle-world.ts ${BASE:+--base "$BASE"} ${ONLY:+--only "$ONLY"}

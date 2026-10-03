@@ -101,6 +101,10 @@ export function fastPathDecision(changes: string[]): { fast: boolean; restart: s
  */
 export async function ensureEvidenceSnapshot(sha: string, api = client(), options: EvidenceBuildOptions = {}): Promise<EvidenceTemplate> {
   if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error("A full pushed source SHA is required");
+  // Read this commit's and dev's file lists in parallel; dev's is only awaited if a build is needed.
+  const devShaPromise = options.imageSha ? Promise.resolve(options.imageSha) : devHead(options.sourceFetch);
+  const devEntriesPromise = devShaPromise.then((devSha) => devSha === sha ? null : sourceTree(devSha, options.sourceFetch));
+  devEntriesPromise.catch(() => undefined);
   const entries = await sourceTree(sha, options.sourceFetch);
   const observe = options.observe ?? (() => {});
   const files: ControllerAsset[] = ["evidence-runtime.mjs", "evidence-control.mjs", "gateway.mjs", "origins.mjs"];
@@ -111,10 +115,7 @@ export async function ensureEvidenceSnapshot(sha: string, api = client(), option
   const state: { mode: "fast" | "full"; restart: string[] } = { mode: "full", restart: [] };
   let dev: { sha: string; entries: SourceEntry[] } | undefined;
   const devTree = async () => {
-    if (!dev) {
-      const devSha = options.imageSha ?? await devHead(options.sourceFetch);
-      dev = { sha: devSha, entries: devSha === sha ? entries : await sourceTree(devSha, options.sourceFetch) };
-    }
+    if (!dev) dev = { sha: await devShaPromise, entries: (await devEntriesPromise) ?? entries };
     return dev;
   };
   let allowFast = true;
@@ -133,20 +134,24 @@ export async function ensureEvidenceSnapshot(sha: string, api = client(), option
       return (await ensureEvidenceImage(devSha, api, options, devEntries)).id;
     },
     prepare: async (vm) => {
-      for (const [index, name] of files.entries()) await vm.fs.writeTextFile(`/opt/openwork-preview/${name}`, controller[index]);
       if (state.mode === "fast") {
-        // Keep dev's installed and built files; only tracked sources change.
+        // dev's world already has these controller files (they are in its key)
+        // and its installed and built files. Fetch commit metadata only; checkout
+        // then downloads just the files that differ from dev.
         await runScript(vm, "evidence-world-fast", `cd /workspace
-git fetch --depth=1 origin ${sha}
+git config remote.origin.promisor true
+git config remote.origin.partialclonefilter blob:none
+git fetch --depth=1 --filter=blob:none origin ${sha}
 git checkout --force --detach FETCH_HEAD
 test "$(git rev-parse HEAD)" = "${sha}"
-sleep 2
+sleep 0.3
 node /opt/openwork-preview/evidence-control.mjs refresh ${state.restart.join(" ")}
 printf %s ${runtimeFingerprint} > /opt/openwork-preview/runtime-fingerprint
 printf %s ${sha} > /opt/openwork-preview/built-from-sha
-`, options);
+`, options, 3 * 60_000);
         return;
       }
+      for (const [index, name] of files.entries()) await vm.fs.writeTextFile(`/opt/openwork-preview/${name}`, controller[index]);
       await vm.fs.writeTextFile("/etc/systemd/system/openwork-evidence.service", `[Unit]\nDescription=OpenWork isolated evidence web world\n[Service]\nWorkingDirectory=/workspace\nEnvironment=PATH=/opt/openwork-preview/tools/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nExecStart=/usr/bin/env node /opt/openwork-preview/evidence-runtime.mjs\n`);
       await vm.fs.writeTextFile("/etc/systemd/system/openwork-evidence-gateway.service", `[Unit]\nDescription=Private evidence viewer\n[Service]\nExecStart=/usr/bin/env node /opt/openwork-preview/gateway.mjs\n`);
       await runScript(vm, "evidence-world", `${checkoutRecipe(sha)}
