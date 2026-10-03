@@ -195,3 +195,30 @@ footer { padding: 0 0 24px; color: var(--muted-foreground); font-size: 12px; }
 .readiness li[data-state="pending"] { color: var(--muted-foreground); }
 .readiness li[data-state="failed"] > .readiness-glyph { color: var(--destructive); }
 .readiness-footer { margin: 8px 0 0; color: var(--muted-foreground); font-size: 12px; }
+
+/* What changed and what was checked, drawn on the screenshot. */
+.marked-shot { position: relative; display: block; }
+.marked-shot img { display: block; width: 100%; height: 100%; }
+.image-link .marked-shot { position: absolute; top: 0; left: 0; width: 100%; }
+.viewer-image.actual-size .marked-shot { max-width: none; }
+.viewer-image.actual-size .marked-shot img { width: 100%; }
+.mark { position: absolute; pointer-events: none; border-radius: 2px; }
+.mark.changed { outline: 2px dashed var(--amber-9); outline-offset: 1px; }
+.mark.checked { outline: 2px solid var(--blue-9); outline-offset: 2px; }
+.mark-label { position: absolute; left: -4px; bottom: calc(100% + 6px); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 6px; border-radius: var(--radius); background: var(--blue-9); color: var(--slate-1); font-size: 12px; line-height: 20px; }
+.marks-hidden .mark { display: none; }
+.failed-here { position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; border-radius: var(--radius); background: var(--red-9); color: var(--slate-1); font-size: 12px; font-weight: 500; }
+figcaption .change { color: var(--foreground); }
+.gallery li.repeat figcaption { padding-top: 0; }
+.proof { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12px; }
+.proof li { display: flex; gap: 6px; align-items: flex-start; }
+.proof li .status-icon { margin-top: 2px; }
+.proof li.failed { color: var(--destructive); }
+.proof .observed { display: block; color: var(--muted-foreground); overflow-wrap: anywhere; }
+figcaption .unchecked { color: var(--warning); }
+.lines { list-style: none; margin: 0 0 8px; padding: 0; font-size: 12px; }
+.lines li { padding: 2px 8px; border-left: 2px solid; overflow-wrap: anywhere; }
+.lines.added li { border-color: var(--green-9); }
+.lines.removed li { border-color: var(--red-9); color: var(--muted-foreground); text-decoration: line-through; }
+figcaption .found { color: var(--blue-11); }
+.lines.found li { border-color: var(--blue-9); }

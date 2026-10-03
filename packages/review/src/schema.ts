@@ -25,6 +25,32 @@ const source = z.object({
 });
 const evidence = z.object({ id, sourceId: id, caption: z.string() });
 
+/** A region of a screenshot as fractions of its width and height. */
+export const evidenceBoxSchema = z.object({
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+  width: z.number().min(0).max(1),
+  height: z.number().min(0).max(1),
+});
+
+/** What differs from the previous screenshot of the same test, as the harness measured it. */
+export const screenChangeSchema = z.object({
+  since: z.string().max(200).nullable(),
+  actions: z.array(z.string().max(240)).max(20),
+  ratio: z.number().min(0).max(1),
+  boxes: z.array(evidenceBoxSchema).max(8),
+  added: z.array(z.string().max(200)).max(6),
+  addedCount: z.number().int().min(0),
+  removed: z.array(z.string().max(200)).max(6),
+  removedCount: z.number().int().min(0),
+});
+
+/** An element the test verified just before the screenshot. */
+export const evidenceFocusSchema = z.object({ label: z.string().max(120), box: evidenceBoxSchema });
+
+/** The step a screenshot or check line belongs to: the claim it shows or proves. */
+const step = z.string().max(500).optional();
+
 export const reviewSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -59,6 +85,7 @@ export const reviewSchema = z
         evidence.extend({
           kind: z.literal("assertion"),
           judgments: z.array(judgment).min(1),
+          step,
         }),
         evidence.extend({
           kind: z.literal("image"),
@@ -69,6 +96,15 @@ export const reviewSchema = z
           // "exact": the screen did not change while the checkpoint was captured.
           checkpointMatch: z.enum(["exact", "approximate"]).optional(),
           checkpointError: z.string().max(200).optional(),
+          step,
+          /** Pixel size of the image, so marks line up when a thumbnail crops it. */
+          size: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }).optional(),
+          change: screenChangeSchema.optional(),
+          focus: z.array(evidenceFocusSchema).max(8).optional(),
+          /** false when the screen was still changing at capture. */
+          settled: z.boolean().optional(),
+          /** Taken by the harness at the moment a step failed. */
+          failure: z.boolean().optional(),
         }),
       ]),
     ),
@@ -100,6 +136,7 @@ export const reviewSchema = z
   });
 
 export type ReviewReport = z.infer<typeof reviewSchema>;
+export type EvidenceBox = z.infer<typeof evidenceBoxSchema>;
 export type ReviewEvidence = ReviewReport["evidence"][number];
 
 export const docShotReceiptSchema = z.object({

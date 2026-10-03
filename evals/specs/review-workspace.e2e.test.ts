@@ -18,19 +18,20 @@ test("a reviewer can triage failures and inspect linked evidence without losing 
     expect((await probe.dom(".sections > .section")).elements).toHaveLength(1);
     expect((await probe.dom(".checks[open]")).elements).toHaveLength(1);
     await user.see({ text: "1 of 3 sections" });
+    await user.see({ text: "Failed here" });
     await user.screenshot();
     await user.click({ role: "button", text: "Incomplete (0)" });
     await user.see({ text: "No incomplete sections." });
     await user.click({ role: "button", text: "Next failure" });
     expect((await probe.dom(".sections > .section")).elements).toHaveLength(3);
-    evidence.recordAssertionEvidence("Failure filters and next-failure navigation preserve honest results", "The verdict banner names the failing section count; the failed report filters to one failed section with expanded checks; the empty incomplete filter gives recovery; Next failure restores all three sections.", true);
+    evidence.recordAssertionEvidence("Failure filters and next-failure navigation preserve honest results", "The verdict banner names the failing section count; the failed report filters to one failed section with expanded checks and its failure frame labelled Failed here; the empty incomplete filter gives recovery; Next failure restores all three sections.", true);
   });
 
   await step("screenshots retain source assertions, support zoom, and restore keyboard focus", async () => {
     await user.click({ role: "link", label: "Inspect Share link dialog · fixture" });
     await user.see({ role: "button", text: "100% zoom" });
     expect((await probe.dom("dialog[open]")).elements).toHaveLength(1);
-    await user.see({ role: "heading", text: "Source assertions" });
+    await user.see({ role: "heading", text: "Checked in this step" });
     await user.click({ role: "button", text: "100% zoom" });
     expect((await probe.dom(".viewer-image.actual-size")).elements).toHaveLength(1);
     await user.click({ role: "button", text: "Fit to width" });
@@ -40,7 +41,42 @@ test("a reviewer can triage failures and inspect linked evidence without losing 
     await user.see({ text: "2 of 2" });
     await user.press("Escape");
     expect((await probe.dom("dialog[open]")).elements).toHaveLength(0);
-    evidence.recordAssertionEvidence("Evidence opens in a keyboard-accessible viewer", "The native dialog displays source assertions alongside the screenshot, switches between actual size and fit, advances with ArrowRight, and closes with Escape.", true);
+    evidence.recordAssertionEvidence("Evidence opens in a keyboard-accessible viewer", "The native dialog displays its step's checks alongside the screenshot, switches between actual size and fit, advances with ArrowRight, and closes with Escape.", true);
+  });
+
+  await step("before: a screenshot from a record without measurements shows only its caption", async () => {
+    await user.navigate(`${world.baseUrl}/r/${world.incomplete}`);
+    await user.see({ text: "Existing documentation image, reused as a report fixture." });
+    await user.notSee({ text: "Found on screen: “Create link”." });
+    const marks = (await probe.dom(".gallery .mark")).elements.length;
+    expect(marks).toBe(0);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("Older records render as before", `The unmeasured screenshot keeps its caption and description with ${marks} marks and no change or found-on-screen line.`, true);
+  });
+
+  await step("after: each screenshot says what the person did, what appeared, and what the step found", async () => {
+    await user.navigate(`${world.baseUrl}/r/${world.passed}`);
+    await user.see({ text: "Clicked “Share”. “Share link” and “Publish a public link. Anyone with the URL can install this skill.” and 2 more lines appeared." });
+    await user.see({ text: "Found on screen: “Create link”." });
+    const marks = (await probe.dom(".gallery .mark")).elements.length;
+    expect(marks).toBe(2);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("Screenshots say what changed and what their step found", `The caption names the click and the lines that appeared, lists “Create link” as found on screen, and the thumbnail carries ${marks} marks: the changed dialog and the checked button.`, true);
+  });
+
+  await step("the viewer outlines the change and the checked button, and Hide marks clears them", async () => {
+    await user.click({ role: "link", label: "Inspect Share link dialog · fixture" });
+    await user.see({ role: "heading", text: "What changed" });
+    await user.see({ role: "heading", text: "Found on screen" });
+    await user.see({ role: "heading", text: "Checked in this step" });
+    await user.see({ text: "Create link" });
+    await user.click({ role: "button", text: "Hide marks" });
+    const hidden = (await probe.dom(".viewer-image.marks-hidden")).elements.length;
+    expect(hidden).toBe(1);
+    await user.click({ role: "button", text: "Show marks" });
+    await user.screenshot();
+    await user.press("Escape");
+    evidence.recordAssertionEvidence("The viewer explains the screenshot and its marks can be hidden", `What changed, Found on screen and the step's own check sit beside the image; Hide marks cleared the outlines (${hidden} hidden view) and Show marks restored them.`, true);
   });
 
   await step("a shared image link opens the same evidence directly", async () => {
