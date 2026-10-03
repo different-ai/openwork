@@ -18,7 +18,7 @@ import {
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ownedAccessStatus } from "./access-summary";
 import { draftFromPluginGrants } from "./item-sharing";
-import { FilterInput, ItemMenu, removeEntry, ItemPanel, ItemRow, ItemSection, ItemSectionSkeleton } from "./item-list";
+import { FilterInput, ItemFlatList, ItemMenu, LibraryListRow, removeEntry, ItemSection, ItemSectionSkeleton } from "./item-list";
 import { ItemPage } from "./item-header";
 import { ConnectorLogo, LetterTile } from "./item-logo";
 import { LibraryAddDialog, type LibraryAddChoice, ConnectorLogoStrip } from "./library-add-dialog";
@@ -29,6 +29,8 @@ import {
   LIBRARY_FILTERS,
   type LibraryFilter,
   libraryItemDescription,
+  libraryItemReady,
+  libraryKindLabel,
   NEEDS_SIGN_IN_STATUS,
   needsViewerSignIn,
   parseLibraryFilter,
@@ -122,12 +124,13 @@ function LibraryItemRow({ item, mine, ownedConnection, signIn }: {
   );
 
   return (
-    <div data-library-item={item.name} data-library-kind={item.type}>
-      <ItemRow
+    <div data-library-item={item.name} data-library-kind={item.type} title={libraryItemDescription(item)}>
+      <LibraryListRow
         href={href}
         logo={<ItemLogo item={item} />}
         title={item.name}
-        description={libraryItemDescription(item)}
+        ready={libraryItemReady(item)}
+        kind={libraryKindLabel(item)}
         status={status}
         action={action}
       />
@@ -253,7 +256,7 @@ function LibraryContent() {
                     role="tab"
                     aria-selected={active}
                     onClick={() => setFilter(entry.value)}
-                    className={`h-[30px] rounded-full px-3 text-[12px] font-medium transition-colors ${active ? "bg-gray-900 text-white" : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`}
+                    className={`h-7 rounded-full px-3 text-[12px] transition-colors ${active ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200/70"}`}
                   >
                     {entry.label}
                   </button>
@@ -267,7 +270,7 @@ function LibraryContent() {
                     aria-pressed={onlyNeedsSignIn}
                     onClick={toggleNeedsSignIn}
                     data-testid="library-needs-sign-in-filter"
-                    className={`flex h-[30px] items-center gap-1.5 rounded-full px-3 text-[12px] font-medium transition-colors ${onlyNeedsSignIn ? "bg-gray-900 text-white" : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`}
+                    className={`flex h-7 items-center gap-1.5 rounded-full px-3 text-[12px] transition-colors ${onlyNeedsSignIn ? "bg-gray-900 text-white" : "border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"}`}
                   >
                     <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
                     Needs sign-in
@@ -276,31 +279,31 @@ function LibraryContent() {
                 </>
               ) : null}
             </div>
-            <FilterInput value={query} onChange={setQuery} className="w-[240px]" />
+            <FilterInput value={query} onChange={setQuery} className="w-[200px]" />
           </div>
 
           {library.isLoading ? <ItemSectionSkeleton label="Loading your Library" /> : null}
 
           {groups.mine.length > 0 ? (
-            <ItemSection title="Added by you" testId="library-section-mine">
-              <ItemPanel>
+            <ItemSection title="Added by you" meta={String(groups.mine.length)} testId="library-section-mine" variant="rule">
+              <ItemFlatList>
                 {groups.mine.map((item) => (
                   <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine ownedConnection={ownedConnections.get(item.id)} signIn={signIn} />
                 ))}
-              </ItemPanel>
+              </ItemFlatList>
             </ItemSection>
           ) : null}
 
           {groups.received.length > 0 || modelRows.length > 0 ? (
-            <ItemSection title="From OpenWork" testId="library-section-received">
-              <ItemPanel>
+            <ItemSection title="From OpenWork" meta={`${groups.received.length + modelRows.length} shared with you`} testId="library-section-received" variant="rule">
+              <ItemFlatList>
                 {groups.received.map((item) => (
                   <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine={false} ownedConnection={undefined} signIn={signIn} />
                 ))}
                 {modelRows.map((provider) => (
                   <LibraryModelRow key={`model:${provider.id}`} provider={provider} signIn={modelSignIn} />
                 ))}
-              </ItemPanel>
+              </ItemFlatList>
             </ItemSection>
           ) : null}
 

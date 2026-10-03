@@ -92,7 +92,7 @@ function ExtensionIcon(props: {
   return (
     <div className="relative shrink-0">
       <div
-        className={`flex ${boxSize} items-center justify-center rounded-lg border ${readinessSurface(props.readiness)}`}
+        className={`flex ${boxSize} items-center justify-center rounded-lg ${props.compact ? "bg-dls-hover" : `border ${readinessSurface(props.readiness)}`}`}
       >
         {props.connecting ? (
           <Loader2 size={props.compact ? 15 : 18} className="animate-spin text-dls-secondary" />
@@ -249,65 +249,44 @@ export function ExtensionCard(props: ExtensionCardProps) {
   if (layout === "list") {
     // Dense single-line row. Readiness is carried by the group header and a
     // small dot; the per-row badge only says what kind of extension this is.
+    // Landing-style Library row: logo tile, name with a ready dot, kind, where
+    // it came from, and one trailing action. Fixed lanes keep rows aligned.
     return (
-      <div className={`group flex w-full items-center transition-colors hover:bg-dls-hover ${hidden ? "opacity-60" : ""}`}>
+      <div className={`group flex h-[52px] w-full items-center gap-3 ${hidden ? "opacity-60" : ""}`}>
       <button
         type="button"
         disabled={disabled || connecting}
         onClick={onClick}
         data-library-row={name}
-        className="flex min-w-0 flex-1 items-center gap-3 py-2 pl-3.5 pr-3 text-left"
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {icon}
-        <div className="flex w-44 shrink-0 items-center gap-1.5">
-          <h4 className="min-w-0 truncate text-[13px] font-medium text-dls-text">{name}</h4>
+        <div className="flex w-[150px] shrink-0 items-center gap-1.5 md:w-[190px]">
+          <h4 className="min-w-0 truncate text-[13px] font-medium text-dls-text group-hover:underline group-hover:decoration-dls-border group-hover:underline-offset-4">{name}</h4>
           {readyDot}
-        </div>
-        <div className="flex w-36 shrink-0 items-center gap-1">
-          <span className="whitespace-nowrap rounded-md bg-dls-hover px-1.5 py-0.5 text-[10px] font-medium tracking-[0.04em] text-dls-secondary uppercase">
-            {extensionTaxonomyLabel(taxonomy)}
-          </span>
           {props.statusChip ? (
-            <span
-              data-library-status={props.statusChip.label}
-              className={`whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-medium ${props.statusChip.tone === "attention" ? "bg-amber-3 text-amber-11" : "bg-dls-hover text-dls-text"}`}
-            >
-              {props.statusChip.label}
-            </span>
+            <span data-library-status={props.statusChip.label} className="sr-only">{props.statusChip.label}</span>
           ) : null}
+          {preview ? <span className="shrink-0 rounded-md bg-dls-hover px-1.5 py-0.5 text-[11px] text-dls-secondary">Preview</span> : null}
+          {beta ? <span className="shrink-0 rounded-md bg-dls-hover px-1.5 py-0.5 text-[11px] text-dls-secondary">{t("common.beta")}</span> : null}
         </div>
-        <p className="hidden min-w-0 flex-1 truncate text-xs text-dls-secondary sm:block">
-          {disabledReason ?? description}
+        <span className="hidden w-[84px] shrink-0 text-xs text-dls-secondary sm:block">{extensionTaxonomyLabel(taxonomy)}</span>
+        <p className="min-w-0 flex-1 truncate text-xs text-dls-secondary" data-library-caption={meta ? "" : undefined}>
+          {disabledReason ?? meta ?? description}
         </p>
-        {preview ? (
-          <span className="shrink-0 rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">
-            Preview
-          </span>
-        ) : null}
-        {beta ? (
-          <span className="shrink-0 rounded-md bg-amber-3 px-1.5 py-0.5 text-[10px] font-medium text-amber-11">
-            {t("common.beta")}
-          </span>
-        ) : null}
-        {meta ? (
-          <div data-library-caption className="hidden shrink-0 text-[11px] text-dls-secondary md:block">{meta}</div>
-        ) : null}
+      </button>
+      <div className="flex min-w-[96px] shrink-0 items-center justify-end gap-1">
         {!disabledReason && !connecting && nextActionLabel ? (
-          <span
-            className="inline-flex h-7 shrink-0 items-center rounded-lg border border-dls-border px-3 text-xs font-medium text-dls-text transition-colors group-hover:border-dls-secondary/40"
-            onClick={(event) => {
-              if (!onNextAction) return;
-              event.stopPropagation();
-              onNextAction();
-            }}
+          <button
+            type="button"
+            className="inline-flex h-7 shrink-0 items-center rounded-lg px-3 text-xs text-dls-text shadow-[0_0_0_1px_var(--dls-border)] transition-colors hover:bg-dls-hover"
+            onClick={() => (onNextAction ? onNextAction() : onClick?.())}
           >
             {nextActionLabel}
-          </span>
-        ) : props.trailing ? null : (
-          <ChevronRight size={14} className="shrink-0 text-dls-secondary" />
-        )}
-      </button>
-      {props.trailing ? <div className="flex shrink-0 items-center pr-2">{props.trailing}</div> : null}
+          </button>
+        ) : null}
+        {props.trailing}
+      </div>
       </div>
     );
   }

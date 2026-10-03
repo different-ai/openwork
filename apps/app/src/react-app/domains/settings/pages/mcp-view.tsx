@@ -2019,7 +2019,7 @@ export function McpView(props: McpViewProps) {
         </div>
       )}
 
-      <div className="mb-6 flex flex-wrap items-center gap-2" aria-label={t("extensions.filters_label")}>
+      <div className="mb-5 flex flex-wrap items-center gap-1.5" aria-label={t("extensions.filters_label")}>
         {extensionInventoryFilters.map((f) => {
           const selected = filter === f;
           return (
@@ -2028,10 +2028,10 @@ export function McpView(props: McpViewProps) {
               type="button"
               aria-pressed={selected}
               onClick={() => setInventoryFilter(f)}
-              className={`inline-flex h-[30px] items-center rounded-full border px-3 text-[13px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring ${
+              className={`inline-flex h-7 items-center rounded-full px-3 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-ring ${
                 selected
-                  ? "border-foreground bg-foreground text-background"
-                  : "border-border bg-background text-muted-foreground hover:border-foreground/40 hover:text-foreground"
+                  ? "bg-foreground text-background"
+                  : "bg-dls-hover text-dls-text hover:bg-dls-border/60"
               }`}
             >
               {extensionFilterLabel(f)}
@@ -2046,7 +2046,7 @@ export function McpView(props: McpViewProps) {
               aria-pressed={onlyNeedsSignIn}
               onClick={toggleNeedsSignIn}
               data-testid="library-needs-sign-in-filter"
-              className={`inline-flex h-[30px] items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring ${
+              className={`inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-ring ${
                 onlyNeedsSignIn
                   ? "border-foreground bg-foreground text-background"
                   : "border-border bg-background text-muted-foreground hover:border-foreground/40 hover:text-foreground"
@@ -2344,8 +2344,8 @@ function librarySectionLabel(section: LibrarySection) {
 
 function LibrarySectionHeader(props: { section: LibrarySection; label: string; meta?: string | null }) {
   return (
-    <div className="flex items-center justify-between gap-3 px-0.5">
-      <h2 className="flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.06em] text-dls-secondary uppercase">
+    <div className="flex items-center justify-between gap-3 border-b border-dls-border pb-1.5">
+      <h2 className="flex items-center gap-1.5 text-xs font-medium text-dls-text">
         {props.section === "mac" ? <Laptop size={12} /> : null}
         {props.label}
       </h2>
@@ -2407,7 +2407,7 @@ export function LibraryInventory(props: {
     .map((section) => ({ section, rows: visible.filter((row) => row.section === section) }))
     .filter((entry) => entry.rows.length > 0);
   const containerClassName = props.layout === "list"
-    ? "overflow-hidden rounded-xl border border-dls-border bg-dls-surface [&>div+div]:border-t [&>div+div]:border-dls-border/60"
+    ? "flex flex-col [&>div]:border-b [&>div]:border-dls-border/60"
     : "grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3";
   const showLocked = props.signedOut === true && category === "all" && !needle && !props.onlyNeedsSignIn;
 
@@ -2422,7 +2422,7 @@ export function LibraryInventory(props: {
         </div>
       ) : sections.length === 0 && !showLocked ? props.emptyState ?? null : (
         sections.map(({ section, rows }) => (
-          <div key={section} className="space-y-2.5" data-library-section={section}>
+          <div key={section} className={props.layout === "list" ? "" : "space-y-2.5"} data-library-section={section}>
             <LibrarySectionHeader section={section} label={librarySectionLabel(section)} meta={props.sectionMeta?.[section]} />
             <div className={containerClassName}>
               {rows.map((row) => (
