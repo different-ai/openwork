@@ -7,6 +7,9 @@ export const EVIDENCE_KIND = "openwork-evidence-source-v1";
 export const FORK_KIND = "openwork-evidence-fork-v1";
 const root = "/opt/openwork-preview";
 const manifest = `${root}/checkpoint.json`;
+/** How long a saved checkpoint (a PR preview) can be opened. */
+export const CHECKPOINT_TTL_SECONDS = 12 * 3600;
+
 export class CheckpointUnavailable extends Error {}
 export class CheckpointCapacity extends Error {}
 
@@ -86,11 +89,12 @@ export async function startEvidenceCheckpoint(input: { vmId: string; sourceSha: 
   const count = await handle.fs.exists(countPath) ? Number(await handle.fs.readTextFile(countPath)) : 0;
   if (!Number.isInteger(count) || count < 0 || count >= 10) throw new CheckpointCapacity("This proof has reached its ten-checkpoint limit");
   const now = Date.now();
+  // Previews are opened within hours; 12h keeps snapshot storage, the largest cost, small.
   const checkpoint = parseEvidenceCheckpoint({ version: 1, provider: "freestyle", id: `ow-evidence-v1-${randomUUID().replaceAll("-", "")}`,
-    sourceSha: input.sourceSha, imageHash: input.imageHash, capturedAt: new Date(now).toISOString(), expiresAt: new Date(now + 86400_000).toISOString() });
+    sourceSha: input.sourceSha, imageHash: input.imageHash, capturedAt: new Date(now).toISOString(), expiresAt: new Date(now + CHECKPOINT_TTL_SECONDS * 1000).toISOString() });
   await handle.fs.writeTextFile(countPath, String(count + 1));
   await handle.fs.writeTextFile(manifest, JSON.stringify(checkpoint), { mode: 0o600 });
-  const saved = handle.snapshot({ slug: checkpoint.id, ttlSeconds: 86400, autoDeleteSeconds: 86400 }).then(async (result) => {
+  const saved = handle.snapshot({ slug: checkpoint.id, ttlSeconds: CHECKPOINT_TTL_SECONDS, autoDeleteSeconds: CHECKPOINT_TTL_SECONDS }).then(async (result) => {
     if (result.snapshot.public !== false) { await api.vms.snapshots.delete(result.snapshotId); throw new Error("Evidence snapshots must be private"); }
   });
   // Mark handled now; callers still observe a failure when they await it.

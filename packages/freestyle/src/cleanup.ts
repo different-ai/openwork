@@ -19,12 +19,14 @@ const RECENT = 2 * HOUR;
 const PREVIEW_IDLE = 24 * HOUR;
 /** Superseded cache layers are kept this long in case an older commit rebuilds. */
 const LAYER_IDLE = 24 * HOUR;
-/** Checkpoints carry a 24-hour TTL; this only catches ones the provider missed. */
-const CHECKPOINT_MAX_AGE = 26 * HOUR;
+/** Checkpoints carry a 12-hour TTL; this only catches ones the provider missed. */
+const CHECKPOINT_MAX_AGE = 14 * HOUR;
 
 const WORLDS: PreviewWorld[] = ["app-web", "acme-web", "desktop"];
 const PREVIEW = /^openwork-[a-z-]+-v\d+-[0-9a-f]{40}$|^openwork-web-v\d+-[0-9a-f]{40}$/;
-const LAYER = /^ow-(tools|deps|build|warm)-v1-(app-web|acme-web|desktop)-[0-9a-f]{40}$|^ow-evidence-(tools|deps)-v1-[0-9a-f]{40}$/;
+const LAYER = /^ow-(tools|deps|build|warm)-v1-(app-web|acme-web|desktop)-[0-9a-f]{40}$|^ow-evidence-image-v1-[0-9a-f]{40}$/;
+/** Replaced by the warm dev image (ow-evidence-image-*). */
+const RETIRED_LAYER = /^ow-evidence-(tools|deps)-v1-[0-9a-f]{40}$/;
 const TEMPLATE = /^ow-evidence-web-v\d+-[0-9a-f]{40}$/;
 const CHECKPOINT = /^ow-evidence-v1-[0-9a-f]{32}$|^ow-checkpoint-probe-[a-z0-9-]+$/;
 
@@ -50,6 +52,8 @@ export function planCleanup(snapshots: CleanupSnapshot[], options: CleanupOption
     if (PREVIEW.test(slug)) {
       if (!current.some((prefix) => slug.startsWith(prefix))) plan.push({ id: snapshot.id, slug, reason: "preview from an old naming version" });
       else if (idle > PREVIEW_IDLE) plan.push({ id: snapshot.id, slug, reason: "preview not launched for a day" });
+    } else if (RETIRED_LAYER.test(slug)) {
+      plan.push({ id: snapshot.id, slug, reason: "evidence layer replaced by the warm dev image" });
     } else if (TEMPLATE.test(slug) && !slug.startsWith(EVIDENCE_TEMPLATE_PREFIX)) {
       plan.push({ id: snapshot.id, slug, reason: "evidence template from an old naming version" });
     } else if (LAYER.test(slug) || TEMPLATE.test(slug)) {
@@ -71,7 +75,7 @@ export function planCleanup(snapshots: CleanupSnapshot[], options: CleanupOption
 
 export function isOurs(slug: string | null | undefined): boolean {
   const value = slug ?? "";
-  return PREVIEW.test(value) || LAYER.test(value) || TEMPLATE.test(value) || CHECKPOINT.test(value);
+  return PREVIEW.test(value) || LAYER.test(value) || RETIRED_LAYER.test(value) || TEMPLATE.test(value) || CHECKPOINT.test(value);
 }
 
 export async function listAllSnapshots(api: Freestyle): Promise<CleanupSnapshot[]> {
