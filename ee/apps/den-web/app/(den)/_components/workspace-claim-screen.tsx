@@ -334,7 +334,7 @@ export function WorkspaceClaimScreen({
             <p className={`den-eyebrow ${isLoopback ? "text-blue-700" : ""}`}>{isLoopback ? "Demo workspace ready" : "Workspace ready"}</p>
             <h1 className="den-title-lg max-w-[22ch]">{claimedOrg.organizationName} is yours.</h1>
             <p className="den-copy max-w-[46ch]">
-              Copy the OpenWork link, open OpenWork Enterprise, and paste it to connect. You will not need to enter your password again.
+              Copy the OpenWork link, open OpenWork, and paste it under Paste sign-in code. You will not need to enter your password again.
             </p>
           </div>
 
@@ -373,7 +373,7 @@ export function WorkspaceClaimScreen({
 
           {linkCopied ? (
             <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
-              Open OpenWork Enterprise and paste the OpenWork link to connect.
+              Open OpenWork and paste the OpenWork link under Paste sign-in code.
             </div>
           ) : null}
 

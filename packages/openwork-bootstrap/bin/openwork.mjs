@@ -364,10 +364,14 @@ function runInstall(args) {
   chmodSync(installedCli, 0o755)
 
   const executable = join(binDir, executableBasename())
+  // Pin the Node that ran the install: install.sh may have fetched a private
+  // Node into the install dir that is not on PATH. Fall back to PATH if that
+  // Node is later removed (for example a version manager uninstall).
+  const nodePath = process.execPath
   if (process.platform === "win32") {
-    writeFileSync(executable, `@echo off\r\nnode "${installedCli}" %*\r\n`)
+    writeFileSync(executable, `@echo off\r\nif exist "${nodePath}" (\r\n  "${nodePath}" "${installedCli}" %*\r\n) else (\r\n  node "${installedCli}" %*\r\n)\r\n`)
   } else {
-    writeFileSync(executable, `#!/usr/bin/env sh\nexec node "${installedCli}" "$@"\n`)
+    writeFileSync(executable, `#!/usr/bin/env sh\nif [ -x "${nodePath}" ]; then exec "${nodePath}" "${installedCli}" "$@"; fi\nexec node "${installedCli}" "$@"\n`)
   }
   chmodSync(executable, 0o755)
 

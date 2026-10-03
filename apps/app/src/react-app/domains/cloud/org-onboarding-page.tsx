@@ -38,6 +38,7 @@ import {
   exchangeHandoffAndSignIn,
 } from "@/app/lib/den-handoff";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
+import { parseManualAuthInput } from "@/app/lib/manual-auth-input";
 import { clearOrgSelectionPending, readOrgSelectionPending } from "@/app/lib/den-sign-in-intent";
 import { usePlatform } from "../../kernel/platform";
 import { useBootState } from "../../shell/boot-state";
@@ -233,9 +234,11 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
   const [signInError, setSignInError] = useState<string | null>(null);
 
   const submitSignInCode = useCallback(async () => {
-    const grant = signInCode.trim();
-    if (grant.length < 12 || signInBusy) {
-      if (grant.length < 12) setSignInError("Paste a valid one-time sign-in code.");
+    // The claim page hands over a full `openwork://den-auth?grant=…` link;
+    // accept that as well as a bare code, like the main sign-in page does.
+    const parsed = parseManualAuthInput(signInCode);
+    if (!parsed || signInBusy) {
+      if (!parsed) setSignInError("Paste a valid one-time sign-in code.");
       return;
     }
 
@@ -244,7 +247,7 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
     setSignInError(null);
 
     try {
-      const result = await exchangeHandoffAndSignIn(grant, {
+      const result = await exchangeHandoffAndSignIn(parsed.grant, {
         baseUrl: settings.baseUrl,
         // A pasted one-time code is a desktop-initiated sign-in.
         desktopInitiated: true,

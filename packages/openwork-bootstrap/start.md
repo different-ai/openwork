@@ -27,11 +27,10 @@ node packages/openwork-bootstrap/bin/openwork.mjs install \
 In production, download the bootstrap script, inspect it, then run it. Do not
 pipe remote scripts directly into a shell. The script downloads the
 `openwork-bootstrap` CLI (a single dependency-free Node file) and installs it
-into `$HOME/.local/bin` - no npm or npx required. It needs Node.js 20 or newer:
-if `node --version` fails or is older, tell the user OpenWork's setup tool
-needs Node.js and install it with their OS package manager (for example
-`brew install node` on macOS or `winget install OpenJS.NodeJS.LTS` on Windows)
-before continuing.
+into `$HOME/.local/bin` - no npm or npx required. If Node.js 20+ is missing,
+the script downloads the official Node.js build into
+`$HOME/.openwork/bootstrap/node` (checksum-verified, no admin rights), so the
+user does not need to install anything first.
 
 ```bash
 curl -fsSLo /tmp/openwork-install.sh https://openworklabs.com/install.sh
