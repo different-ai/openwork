@@ -11,7 +11,7 @@
  * Format reference: https://code.claude.com/docs/en/plugins-reference
  */
 import { ApiError } from "./errors.js";
-import { parseFrontmatter } from "./frontmatter.js";
+import { buildFrontmatter, parseFrontmatter } from "./frontmatter.js";
 import type { CloudPluginResolved } from "./cloud-plugins.js";
 import { externalFetch } from "./server-fetch.js";
 
@@ -390,8 +390,13 @@ export async function resolveClaudePluginBundle(input: { url: string; ref?: stri
   ];
 
   const fetched = await mapWithConcurrency(componentInputs, 6, async (item): Promise<FetchedComponent> => {
-    const content = await fetchGithubText(rawFileUrl(source, ref, item.path));
-    const { data } = parseFrontmatter(content);
+    const text = await fetchGithubText(rawFileUrl(source, ref, item.path));
+    const { data, body } = parseFrontmatter(text);
+    // Claude Code plugin agents are always delegated to by skills or the main
+    // agent; without a mode, OpenCode would list each one as a primary agent.
+    const content = item.type === "agent" && data.mode === undefined
+      ? buildFrontmatter({ ...data, mode: "subagent" }) + body
+      : text;
     const fallbackTitle = item.type === "skill"
       ? item.path.split("/").at(-2) ?? "skill"
       : (item.path.split("/").at(-1) ?? "").replace(/\.md$/, "");

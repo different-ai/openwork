@@ -312,8 +312,10 @@ function buildCloudAgentContent(description: string, rawSourceText: string): str
   const safeDescription = (readString(data.description) ?? description).replace(/\s+/g, " ").trim();
   const model = translateClaudeModel(data.model);
   const tools = translateClaudeTools(data.tools);
+  const mode = data.mode === "primary" || data.mode === "subagent" || data.mode === "all" ? data.mode : null;
   const frontmatter = buildFrontmatter({
     description: safeDescription,
+    ...(mode ? { mode } : {}),
     ...(model ? { model } : {}),
     ...(tools ? { tools } : {}),
   });
