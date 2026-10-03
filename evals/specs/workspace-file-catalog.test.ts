@@ -89,7 +89,8 @@ test("healthy workspace catalog preserves symlink boundaries, pagination, and di
   const workspace = join(scratch, "workspace");
   const outside = join(scratch, "outside");
   const home = join(scratch, "home");
-  const pageNames = ["001.txt", "002.txt", "003.txt", "004.txt", "005.txt"];
+  // The zero-width space is ignored by locale collation, but these are distinct files.
+  const pageNames = ["001.txt", "a.txt", "a\u200b.txt", "B.txt", "c.txt", "é.txt", "z.txt"];
   for (const path of [outside, home, join(workspace, "pages"), join(workspace, ".git"), join(workspace, "node_modules"), join(workspace, "nested", "node_modules")]) {
     await mkdir(path, { recursive: true });
   }
@@ -138,24 +139,25 @@ test("healthy workspace catalog preserves symlink boundaries, pagination, and di
 
     const received: unknown[] = [];
     let after = "";
-    for (let page = 0; page < 3; page += 1) {
+    for (let page = 0; page < Math.ceil(pageNames.length / 2); page += 1) {
       const result = await catalog(`prefix=pages&includeDirs=false&limit=2${after ? `&after=${encodeURIComponent(after)}` : ""}`);
-      expect(result.total).toBe(5 - page * 2);
+      const hasMore = (page + 1) * 2 < pageNames.length;
+      expect(result.total).toBe(pageNames.length - page * 2);
       expect(result.paths).toEqual(pageNames.slice(page * 2, page * 2 + 2).map((name) => `pages/${name}`));
-      expect(result.truncated).toBe(page < 2);
+      expect(result.truncated).toBe(hasMore);
       received.push(...result.paths);
-      if (page < 2) {
+      if (hasMore) {
         expect(result.nextAfter).toBe(result.paths.at(-1));
         if (typeof result.nextAfter !== "string") throw new Error("Missing continuation cursor");
         after = result.nextAfter;
       } else expect(result.nextAfter).toBeUndefined();
     }
     expect(received).toEqual(pageNames.map((name) => `pages/${name}`));
-    expect(new Set(received).size).toBe(5);
-    const exhausted = await catalog(`prefix=pages&includeDirs=false&limit=2&after=${encodeURIComponent("pages/005.txt")}`);
+    expect(new Set(received).size).toBe(pageNames.length);
+    const exhausted = await catalog(`prefix=pages&includeDirs=false&limit=2&after=${encodeURIComponent("pages/z.txt")}`);
     expect(exhausted).toMatchObject({ paths: [], total: 0, truncated: false });
     expect(exhausted.nextAfter).toBeUndefined();
-    evidence.recordAssertionEvidence("Numbered filenames paginate without omission or duplication", "Five files were returned exactly once across three HTTP pages (2, 2, 1); continuation cursors, remaining totals, terminal truncation, and an exhausted page were asserted.", true);
+    evidence.recordAssertionEvidence("Mixed-case, accented, and collation-equal filenames paginate without omission or duplication", "Seven files were returned exactly once across four HTTP pages (2, 2, 2, 1), including distinct collation-equal paths split across a page boundary; continuation cursors, remaining totals, terminal truncation, and an exhausted page were asserted.", true);
   } finally {
     await stopChild(booted.child);
     await rm(scratch, { recursive: true, force: true });
