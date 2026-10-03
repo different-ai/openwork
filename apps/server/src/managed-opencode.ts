@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { chmod, mkdir } from "node:fs/promises";
 import net from "node:net";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { appendEngineOutputTail, createEngineStartupLineReader } from "./engine-output.js";
 
@@ -128,6 +130,12 @@ type ManagedOpencodeServerOptions = {
   excludedPorts?: number[];
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
+  /**
+   * OpenWork-owned directory the engine may keep private state under. Supplied
+   * only so a startup failure caused by another opencode install's storage can
+   * be recovered from; omit it to keep the retry disabled.
+   */
+  stateDir?: string;
 };
 
 class ManagedOpencodeExitError extends Error {
@@ -145,6 +153,54 @@ function isRetryableAddressInUseExit(error: unknown): boolean {
   return error instanceof ManagedOpencodeExitError &&
     error.exitCode === 1 &&
     error.addressInUse;
+}
+
+/**
+ * Startup failures that mean the storage engine v1 defaulted to belongs to a
+ * newer opencode. A v2 database carries `session_v2` and no `session`, which
+ * engine v1's bootstrap refuses; a v2 global config carries a `permissions`
+ * array that engine v1 rejects outright. Both surface as a code-1 exit with a
+ * stable message, so recognising them lets one retry hand the engine a private
+ * store instead of leaving the user with an app that cannot start at all.
+ *
+ * Matching on the engine's own output keeps this honest: a store that already
+ * works is never moved, so the shared-history behaviour is unchanged for the
+ * users it is correct for.
+ */
+const FOREIGN_STORAGE_EXIT_PATTERNS = [
+  /Database is not empty and has no session table/,
+  /V2 permissions are not supported by OpenCode V1/,
+];
+
+function isForeignStorageExit(error: unknown): boolean {
+  return error instanceof ManagedOpencodeExitError &&
+    error.exitCode === 1 &&
+    FOREIGN_STORAGE_EXIT_PATTERNS.some((pattern) => pattern.test(error.message));
+}
+
+/**
+ * A store that a standalone opencode install cannot collide with.
+ *
+ * `OPENCODE_DB` and `OPENCODE_CONFIG_DIR` mirror what engine v2 already pins
+ * (see managed-opencode-v2.ts). `XDG_CONFIG_HOME` is the part engine v1 needs
+ * and v2 does not: v1 always loads its global config from
+ * `$XDG_CONFIG_HOME/opencode`, and `OPENCODE_CONFIG_DIR` only merges an extra
+ * layer on top of that rather than replacing it. Scoping the redirect to the
+ * spawned engine leaves OpenWork's own config, runtime database and Electron
+ * userData on their existing paths.
+ */
+async function isolatedEngineStorageEnv(stateDir: string): Promise<Record<string, string>> {
+  const root = join(stateDir, "foreign-storage");
+  const configDir = join(root, "config");
+  // The engine creates the database file but not the directory holding it.
+  await mkdir(join(root, "xdg-config", "opencode"), { recursive: true, mode: 0o700 });
+  await mkdir(configDir, { recursive: true, mode: 0o700 });
+  await chmod(root, 0o700);
+  return {
+    XDG_CONFIG_HOME: join(root, "xdg-config"),
+    OPENCODE_DB: join(root, "opencode.db"),
+    OPENCODE_CONFIG_DIR: configDir,
+  };
 }
 
 async function startManagedOpencodeServer(
@@ -275,15 +331,29 @@ async function startManagedOpencodeServer(
 
 export async function createManagedOpencodeServer(options: ManagedOpencodeServerOptions): Promise<ManagedOpencodeServer> {
   const hostname = options.hostname ?? "127.0.0.1";
-  const port = options.port ?? await findFreePort(hostname, options.excludedPorts);
-  try {
-    return await startManagedOpencodeServer(options, hostname, port);
-  } catch (error) {
-    // The automatic free-port probe is necessarily racy. Retry exactly once on
-    // the one startup failure that a new port can safely fix; explicit ports
-    // and all other code-1 exits remain actionable.
-    if (options.port !== undefined || !isRetryableAddressInUseExit(error)) throw error;
-    const retryPort = await findFreePort(hostname, [...(options.excludedPorts ?? []), port]);
-    return startManagedOpencodeServer(options, hostname, retryPort);
+  let port = options.port ?? await findFreePort(hostname, options.excludedPorts);
+  let env = options.env;
+  // At most one recovery attempt, and only for a failure the retry can fix.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await startManagedOpencodeServer({ ...options, env }, hostname, port);
+    } catch (error) {
+      if (attempt > 0) throw error;
+      // The automatic free-port probe is necessarily racy. Retry exactly once
+      // on the one startup failure a new port can safely fix; explicit ports
+      // and all other code-1 exits remain actionable.
+      if (options.port === undefined && isRetryableAddressInUseExit(error)) {
+        port = await findFreePort(hostname, [...(options.excludedPorts ?? []), port]);
+        continue;
+      }
+      // A newer standalone opencode owns the storage engine v1 defaults to.
+      // Private storage is safe to retry on: it is an unused store, so the
+      // retry reuses nothing the failed attempt wrote.
+      if (options.stateDir && isForeignStorageExit(error)) {
+        env = { ...(options.env ?? {}), ...(await isolatedEngineStorageEnv(options.stateDir)) };
+        continue;
+      }
+      throw error;
+    }
   }
 }
