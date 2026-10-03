@@ -23,19 +23,29 @@ export function safePath(path) {
     && path.split("/").every(part => part.length > 0 && part !== "." && part !== "..");
 }
 
-// Every E2E spec the PR added or changed is a proof of its work. Nothing is
-// required; a PR that touches no spec simply produces no proof evidence.
+// Core journeys run on every PR that changes more than docs. Their end-state
+// checkpoint is the PR's hands-on preview in the review app.
+export const CORE_SPECS = ["evals/specs/core-chat.e2e.test.ts"];
+const docsOnlyFile = path => path.startsWith("packages/docs/") || path.endsWith(".md");
+
+// Every E2E spec the PR added or changed is a proof of its work, plus the core
+// journeys unless the PR only touches docs.
 export function selectProof(files) {
   if (!Array.isArray(files) || files.some(file => !safePath(file.filename) || (file.previous_filename !== undefined && !safePath(file.previous_filename))))
     throw new Error("Missing or unsafe changed-file listing; proof selection is unavailable.");
   if (new Set(files.map(file => file.filename)).size !== files.length) throw new Error("Duplicate changed files; proof selection is unavailable.");
-  const specs = files
+  const changed = files
     .filter(file => ["added", "modified", "renamed", "changed", "copied"].includes(file.status) && SPEC.test(file.filename))
-    .map(file => file.filename).sort();
+    .map(file => file.filename);
+  const core = files.some(file => !docsOnlyFile(file.filename)) ? CORE_SPECS : [];
+  const specs = [...new Set([...changed, ...core])].sort();
   return { specs };
 }
 
-export function proofLanes(specs, { event, current, repo, actor, triggeringActor }, tagged = () => false) {
+export function proofLanes(allSpecs, { event, current, repo, actor, triggeringActor }, tagged = () => false) {
+  // Forks and Dependabot cannot reach the Freestyle credential; they skip the
+  // core journeys instead of failing selection. A changed checkpoint spec still fails below.
+  const specs = trustedProofContext({ event, current, repo, actor, triggeringActor }) ? allSpecs : allSpecs.filter(spec => !CORE_SPECS.includes(spec));
   const liveSpecs = specs.filter(spec => ["evals/specs/live-stream-continuity.e2e.test.ts", "evals/specs/engine-live-chat.e2e.test.ts"].includes(spec));
   // Packaged specs boot a packaged desktop binary, which only the packaged
   // smoke runner builds; running them against a dev build always fails.
@@ -43,21 +53,27 @@ export function proofLanes(specs, { event, current, repo, actor, triggeringActor
   // Windows release proof requires a Daytona Windows VM and a real installer.
   // It cannot be rerouted to local Linux to obtain a green but meaningless run.
   const daytonaSpecs = specs.filter(spec => spec === DAYTONA_SPEC);
+  // Core journeys get their own slim job: the app runs in Freestyle, the runner only drives it.
+  const coreSpecs = specs.filter(spec => CORE_SPECS.includes(spec));
   // Checkpoint runs need the Freestyle credential, so they use the protected lane.
-  const checkpointSpecs = specs.filter(spec => !liveSpecs.includes(spec) && !packagedSpecs.includes(spec) && !daytonaSpecs.includes(spec) && tagged(spec));
-  const normalSpecs = specs.filter(spec => !liveSpecs.includes(spec) && !packagedSpecs.includes(spec) && !daytonaSpecs.includes(spec) && !checkpointSpecs.includes(spec));
+  const checkpointSpecs = specs.filter(spec => !coreSpecs.includes(spec) && !liveSpecs.includes(spec) && !packagedSpecs.includes(spec) && !daytonaSpecs.includes(spec) && tagged(spec));
+  const normalSpecs = specs.filter(spec => !coreSpecs.includes(spec) && !liveSpecs.includes(spec) && !packagedSpecs.includes(spec) && !daytonaSpecs.includes(spec) && !checkpointSpecs.includes(spec));
   if (liveSpecs.length || daytonaSpecs.length || checkpointSpecs.length) {
-    const repository = event?.repository;
-    const sameRepo = candidate => Number.isSafeInteger(repository?.id) && repository.id > 0
-      && repository.full_name === repo && candidate?.id === repository.id
-      && candidate.full_name === repo && candidate.fork === false;
-    const identities = [actor, triggeringActor, event?.pull_request?.user?.login, current?.user?.login];
-    if (![event?.pull_request, current].every(pr => sameRepo(pr?.head?.repo) && sameRepo(pr?.base?.repo))
-      || identities.some(login => typeof login !== "string" || !login || login.toLowerCase() === "dependabot[bot]")) {
+    if (!trustedProofContext({ event, current, repo, actor, triggeringActor })) {
       throw new Error("Live PR proof is unsupported for forks, untrusted repository metadata, or Dependabot. A maintainer must move the reviewed change to a same-repository PR (organization members run automatically; other contributors need pr-slow-specs approval); do not bypass or skip the selected live or Windows spec.");
     }
   }
-  return { normalSpecs, liveSpecs, packagedSpecs, daytonaSpecs, checkpointSpecs };
+  return { coreSpecs, normalSpecs, liveSpecs, packagedSpecs, daytonaSpecs, checkpointSpecs };
+}
+
+function trustedProofContext({ event, current, repo, actor, triggeringActor }) {
+  const repository = event?.repository;
+  const sameRepo = candidate => Number.isSafeInteger(repository?.id) && repository.id > 0
+    && repository.full_name === repo && candidate?.id === repository.id
+    && candidate.full_name === repo && candidate.fork === false;
+  const identities = [actor, triggeringActor, event?.pull_request?.user?.login, current?.user?.login];
+  return [event?.pull_request, current].every(pr => sameRepo(pr?.head?.repo) && sameRepo(pr?.base?.repo))
+    && identities.every(login => typeof login === "string" && login.length > 0 && login.toLowerCase() !== "dependabot[bot]");
 }
 
 export async function changedFiles(api, repo, pr, expectedCount) {
