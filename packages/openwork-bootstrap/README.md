@@ -11,7 +11,7 @@ openwork-bootstrap doctor --json
 openwork-bootstrap install app --manifest https://example.com/openwork-install-manifest.json
 openwork-bootstrap doctor --app --json
 openwork-bootstrap login --base-url https://den.example.com
-openwork-bootstrap cloud onboard --base-url https://den.example.com --org-name 'Ada Workspace' --invite-email teammate@example.com --skill-name 'First skill' --json
+openwork-bootstrap cloud onboard --base-url https://den.example.com --org-name "Ada Workspace" --teammate-emails teammate@example.com --skill-name 'First skill' --json
 ```
 
 Current scope:

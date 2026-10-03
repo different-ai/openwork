@@ -5,6 +5,8 @@ const startMarkdown = [
   "",
   "Goal: install OpenWork, create a provisional workspace without requiring email identity first, create a first skill, prepare the desktop app with that workspace/skill, verify the running app opens to the setup-complete state, and offer to connect the OpenWork MCP to the agent the user is already using.",
   "",
+  "> Working without a person present (CI, a background agent)? Follow https://openworklabs.com/auth.md instead: it is the agent sign-in protocol (register, use, hand over a claim later).",
+  "",
   "> The bootstrap command is `openwork-bootstrap`. Use that exact command for these setup steps so the bootstrap flow stays distinct from other OpenWork tooling a user may already have on their PATH.",
   "",
   "## 1. Install CLI",

@@ -73,7 +73,7 @@ function printHelp() {
     "  openwork-bootstrap doctor [--bin-dir <path>] [--install-dir <path>] [--base-url <url>] [--desktop-bootstrap] [--json]",
     "  openwork-bootstrap login [--base-url <url>] [--force] [--json]",
     "  openwork-bootstrap logout [--json]",
-    "  openwork-bootstrap cloud onboard --base-url <url> --org-name <name> --invite-email <email> [--skill-name <name>] [--web-base-url <url>] [--prepare-desktop] [--json]",
+    "  openwork-bootstrap cloud onboard --base-url <url> --org-name <name> [--teammate-emails a@x.com,b@y.com] [--skill-name <name>] [--web-base-url <url>] [--prepare-desktop] [--json]",
     "  (deprecated) OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --request-code --base-url <url> --owner-email <email> [--json]",
     "  (deprecated) OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --verification-code <code> --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--json]",
     "  openwork-bootstrap cloud bootstrap-workspace --base-url <url> --workspace-name <name> [--skill-name <name>] [--owner-email <email>] [--teammate-emails a@x.com,b@y.com] [--claim-roles owner,member] [--web-base-url <url>] [--prepare-desktop] [--json]",
@@ -86,7 +86,7 @@ function printHelp() {
     "  doctor           Check CLI installation and optional Den API health",
     "  login            Sign in from the browser with a one-time code (no password)",
     "  logout           Sign out and delete the saved credentials",
-    "  cloud onboard    Create an org, invite a teammate, and create a skill as the",
+    "  cloud onboard    Create an org you own, optionally invite teammates, and create a skill as the",
     "                   signed-in person (OPENWORK_API_TOKEN, then `login`). The",
     "                   --owner-email/--owner-password flags are deprecated.",
     "  cloud bootstrap-workspace  Create a provisional workspace without email/password auth",
@@ -107,6 +107,8 @@ function printHelp() {
     "                   links). Defaults to https://app.openworklabs.com when",
     "                   --base-url is the hosted API (api.openworklabs.com);",
     "                   set explicitly for self-hosted/custom deployments.",
+    "  --no-agents-skills  Write the first skill only to the OpenCode skills dir,",
+    "                   not also to the cross-client ~/.agents/skills dir",
     "  --json           Print machine-readable JSON",
     "",
     "Environment:",
@@ -159,6 +161,21 @@ function defaultDesktopBootstrapPath() {
 
 function defaultSkillsDir() {
   return process.env.OPENWORK_SKILLS_DIR || join(configHomeDir(), "opencode", "skills")
+}
+
+// Cross-client user skills dir from the Agent Skills standard (agentskills.io),
+// read by many agents besides OpenCode. Skipped when the caller chose an
+// explicit skills dir, so tests and custom installs never touch the real home.
+function defaultAgentsSkillsDir(flags) {
+  if (process.env.OPENWORK_AGENTS_SKILLS_DIR) return process.env.OPENWORK_AGENTS_SKILLS_DIR
+  if (flags.has("skills-dir") || process.env.OPENWORK_SKILLS_DIR || hasFlag(flags, "no-agents-skills")) return null
+  return join(process.env.USERPROFILE || process.env.HOME || process.cwd(), ".agents", "skills")
+}
+
+// The Agent Skills spec requires `name` to be lowercase-hyphenated (max 64)
+// and to match the folder name; the OpenCode copy keeps the display title.
+function agentsSkillText(skillText, slug) {
+  return skillText.replace(/^name: .*$/m, `name: ${slug}`)
 }
 
 function defaultDeviceKeyPath() {
@@ -984,6 +1001,14 @@ function writePreparedDesktop(input) {
   mkdirSync(dirname(bootstrapPath), { recursive: true })
   mkdirSync(skillDir, { recursive: true })
   writeFileSync(skillPath, input.skill.skillText, "utf8")
+  let agentsSkillPath = null
+  if (input.agentsSkillsDir) {
+    const agentsSlug = skillName.slice(0, 64).replace(/-+$/, "")
+    const agentsSkillDir = resolve(input.agentsSkillsDir, agentsSlug)
+    mkdirSync(agentsSkillDir, { recursive: true })
+    agentsSkillPath = join(agentsSkillDir, "SKILL.md")
+    writeFileSync(agentsSkillPath, agentsSkillText(input.skill.skillText, agentsSlug), "utf8")
+  }
   const preparedAt = new Date().toISOString()
   const prepared = {
     orgId: input.organization.id,
@@ -1025,6 +1050,7 @@ function writePreparedDesktop(input) {
     bootstrapPath,
     skillsDir: resolve(input.skillsDir),
     skillPath,
+    ...(agentsSkillPath ? { agentsSkillPath } : {}),
     ...(input.handoff ? { handoffExpiresAt: input.handoff.expiresAt, handoffGrant: "redacted: saved to bootstrapPath" } : {}),
     ...(input.claimLinks
       ? {
@@ -1092,7 +1118,12 @@ async function runCloudOnboard(args) {
   const signedIn = baseUrl && !explicitPasswordPath ? resolveApiToken(baseUrl) : null
   const ownerPassword = signedIn ? null : await resolveOwnerPassword(args.flags)
   const orgName = getFlag(args.flags, "org-name")
-  const inviteEmail = getFlag(args.flags, "invite-email")
+  // Teammates are optional: a person can start alone and invite later.
+  const inviteEmails = [getFlag(args.flags, "invite-email"), getFlag(args.flags, "teammate-emails")]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(","))
+    .map((value) => value.trim())
+    .filter(Boolean)
   const skillName = getFlag(args.flags, "skill-name", "First OpenWork Skill")
   const skillOutput = getFlag(args.flags, "skill-output", "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED")
   const prepareDesktop = hasFlag(args.flags, "prepare-desktop")
@@ -1113,7 +1144,7 @@ async function runCloudOnboard(args) {
 
   const required = requestCodeOnly
     ? { baseUrl, ownerEmail, ownerPassword }
-    : { baseUrl, orgName, inviteEmail }
+    : { baseUrl, orgName }
   for (const [name, value] of Object.entries(required)) {
     if (!value) throw new Error(`missing_required_flag: --${name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`)
   }
@@ -1175,13 +1206,17 @@ async function runCloudOnboard(args) {
     throw new Error(`org_create_failed: ${org.status} ${JSON.stringify(org.body)}`)
   }
 
-  const invite = await request(baseUrl, "/v1/invitations", {
-    method: "POST",
-    headers: auth,
-    body: JSON.stringify({ email: inviteEmail, role: "member" }),
-  })
-  if (invite.status !== 201 || !invite.body?.invitationId) {
-    throw new Error(`invite_failed: ${invite.status} ${JSON.stringify(invite.body)}`)
+  const invitations = []
+  for (const email of inviteEmails) {
+    const invite = await request(baseUrl, "/v1/invitations", {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ email, role: "member" }),
+    })
+    if (invite.status !== 201 || !invite.body?.invitationId) {
+      throw new Error(`invite_failed: ${invite.status} ${JSON.stringify(invite.body)}`)
+    }
+    invitations.push(invite.body)
   }
 
   const rawSourceText = skillText(skillName, skillOutput)
@@ -1203,6 +1238,7 @@ async function runCloudOnboard(args) {
       apiBaseUrl: baseUrl,
       bootstrapPath: desktopBootstrapPath,
       skillsDir,
+      agentsSkillsDir: defaultAgentsSkillsDir(args.flags),
       handoff,
       organization: org.body.organization,
       skill,
@@ -1215,7 +1251,9 @@ async function runCloudOnboard(args) {
     user: { id: owner.user.id, email: owner.user.email, emailVerified: owner.user.emailVerified },
     signedInWith: signedIn ? signedIn.source : "password",
     organization: org.body.organization,
-    invitation: invite.body,
+    // `invitation` kept for scripts written against the single-invite shape.
+    invitation: invitations[0] ?? null,
+    invitations,
     skill,
     skillRun,
     desktop,
@@ -1284,6 +1322,7 @@ async function runCloudBootstrapWorkspace(args) {
       apiBaseUrl: baseUrl,
       bootstrapPath: desktopBootstrapPath,
       skillsDir,
+      agentsSkillsDir: defaultAgentsSkillsDir(args.flags),
       organization: response.body.organization,
       skill,
       claimLinks: response.body.claimLinks,

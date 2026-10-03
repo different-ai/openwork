@@ -146,7 +146,7 @@ Response (200, `Cache-Control: no-store`):
 }
 ```
 
-- The workspace, the assertion, and the claim links all last 24 hours. The limit is 5 registrations per IP address per hour; a 429 response carries `Retry-After`.
+- The workspace, the assertion, and the claim links all last 72 hours. The limit is 5 registrations per IP address per hour; a 429 response carries `Retry-After`.
 - `identity.assertion` is a secret. Keep it in memory or an owner-only file. Never print or log it.
 - `setup.id` is the `bootstrap_id` in `claim_endpoint`.
 
@@ -256,6 +256,6 @@ Retry policy: on a 5xx, back off and retry. On a 4xx, do not resend the same req
 
 ## Revocation
 
-- Claiming (Step 4) revokes the assertion and every access_token minted from it. Tokens also stop working when the workspace expires after 24 hours.
+- Claiming (Step 4) revokes the assertion and every access_token minted from it. Tokens also stop working when the workspace expires after 72 hours.
 - MCP OAuth tokens can be revoked at `revocation_endpoint` (RFC 7009).
 - A device-login session ends with `POST https://api.openworklabs.com/api/auth/sign-out` using `Authorization: Bearer <access_token>` (`openwork-bootstrap logout`).

@@ -11,6 +11,10 @@ offer to connect the OpenWork MCP to the agent the user is already using.
 > these setup steps so the bootstrap flow stays distinct from other OpenWork
 > tooling a user may already have on their PATH.
 
+> Working without a person present (CI, a background agent)? Follow
+> https://openworklabs.com/auth.md instead: it is the agent sign-in protocol
+> (register, use, hand over a claim later).
+
 ## 1. Install CLI
 
 Install the `openwork-bootstrap` CLI into a user-writable bin dir.
@@ -107,7 +111,7 @@ click `Sign in OpenWork CLI`. The command then saves the session to
 `OPENWORK_API_TOKEN` is set, it is used instead and no code is shown.
 
 After `login`, `openwork-bootstrap cloud onboard --base-url <url> --org-name
-"<name>" --invite-email <email> --json` creates the organization, invitation,
+"<name>" [--teammate-emails <emails>] --json` creates the organization, any invitations,
 and starter skill as that user. Never ask the user for their password.
 
 Only if `login` is unavailable, the deprecated password path remains: `cloud

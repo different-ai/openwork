@@ -53,7 +53,9 @@ import {
   DEFAULT_OPENWORK_MARKETPLACE_NAME,
 } from "../org/plugin-system/default-marketplaces.js"
 
-const BOOTSTRAP_TTL_MS = 1000 * 60 * 60 * 24
+// Long enough to come back the next day or after a weekend; the 15-minute
+// pre-claim tokens and claim codes are separate, shorter clocks.
+const BOOTSTRAP_TTL_MS = 1000 * 60 * 60 * 72
 const BOOTSTRAP_RATE_LIMIT_WINDOW_MS = 1000 * 60 * 60
 const BOOTSTRAP_RATE_LIMIT_MAX = 5
 const CLAIM_TOKEN_BYTES = 32
