@@ -4,7 +4,7 @@ import { FreestyleApiError, type Freestyle, type Vm } from "freestyle";
 import { execChecked, isMissing, type PreviewWorld } from "./index.ts";
 
 export interface SourceEntry { path: string; sha: string; type: string; installSha?: string; runtimeSha?: string }
-export interface BuildStage { stage: string; durationMs: number; cacheHit?: boolean }
+export interface BuildStage { stage: string; durationMs: number; cacheHit?: boolean; reason?: string }
 export type ObserveBuild = (event: BuildStage) => void;
 
 export function digest(value: string): string {

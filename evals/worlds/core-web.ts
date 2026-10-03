@@ -10,8 +10,8 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
  * Its end-state checkpoint is the PR's hands-on preview.
  */
 export async function coreWebWorld() {
-  const sourceSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
-  if (process.env.OPENWORK_EVIDENCE_SOURCE_SHA && process.env.OPENWORK_EVIDENCE_SOURCE_SHA !== sourceSha)
-    throw new Error("OPENWORK_EVIDENCE_SOURCE_SHA must equal the runner checkout");
+  // CI sets the PR head (the checkout); the world check passes throwaway commits.
+  const sourceSha = process.env.OPENWORK_EVIDENCE_SOURCE_SHA || execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+  if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error("OPENWORK_EVIDENCE_SOURCE_SHA must be a full commit SHA");
   return { ...(await freestyleEvidenceWeb(sourceSha)), sourceSha };
 }

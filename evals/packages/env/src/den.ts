@@ -85,6 +85,11 @@ export interface Den extends AsyncDisposable {
   mocks: Record<string, MockHandle>;
   database?: DbHandle;
   ports?: { api: number; web: number };
+  /**
+   * Local Den only: stop den-api and start it again from the current sources
+   * with the same environment, then wait until it is healthy and serving auth.
+   */
+  restartApi?(): Promise<void>;
   /** Co-located AI Gateway, when the Den was booted with GATEWAY_ENABLED=true. */
   gateway?: { publicUrl: string };
   /**
@@ -887,7 +892,8 @@ export async function server(options: ServerOptions): Promise<Den> {
         DEN_BOOTSTRAP_ADMIN_EMAILS: bootstrapAdmin.email,
         ...options.env,
       };
-    const api = spawnService("den-api", "dev:den:api", apiPort, { ...commonEnv, DEN_BIND_HOST: "127.0.0.1" }, join(logsDir, "api.log"));
+    const startApi = () => spawnService("den-api", "dev:den:api", apiPort, { ...commonEnv, DEN_BIND_HOST: "127.0.0.1" }, join(logsDir, "api.log"));
+    let api = startApi();
     const apiStep = steps.step("den-api", "den-api", { log: api.logPath });
     services.push(api);
     await trackResource({ kind: "process", id: String(api.pid), label: "den-api", match: prepared ? "@openwork-ee/den-api" : "dev:den:api" });
@@ -967,6 +973,14 @@ export async function server(options: ServerOptions): Promise<Den> {
       ports: { api: apiPort, web: webPort },
       async apiLog(): Promise<string> {
         return readFile(api.logPath, "utf8");
+      },
+      async restartApi(): Promise<void> {
+        await stopServices([api]);
+        const next = startApi();
+        services.splice(services.indexOf(api), 1, next);
+        api = next;
+        await waitForHttp(`${ref.apiUrl}/health`, next, (response) => response.ok);
+        await waitForAuthProbe(ref, next);
       },
       async [Symbol.asyncDispose](): Promise<void> {
         if (disposed) return;
