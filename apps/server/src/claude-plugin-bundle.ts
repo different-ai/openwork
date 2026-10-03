@@ -265,6 +265,18 @@ function mcpConfigReferencesPluginRoot(config: unknown): boolean {
   return false;
 }
 
+function mcpConfigHasEndpoint(config: Record<string, unknown>): boolean {
+  if (readString(config.url)) return true;
+  if (Array.isArray(config.command)) return config.command.some((entry) => typeof entry === "string" && entry.trim());
+  return Boolean(readString(config.command));
+}
+
+function quotedList(names: string[]): string {
+  const quoted = names.map((name) => `"${name}"`);
+  if (quoted.length <= 1) return quoted.join("");
+  return `${quoted.slice(0, -1).join(", ")} and ${quoted.at(-1)}`;
+}
+
 export async function resolveClaudePluginBundle(input: { url: string; ref?: string }): Promise<ClaudePluginBundle> {
   const source = parseClaudePluginSource(input.url);
   const { ref, dir, tree } = await resolveRefAndTree(source, input.ref?.trim() || undefined);
@@ -337,6 +349,7 @@ export async function resolveClaudePluginBundle(input: { url: string; ref?: stri
 
   // --- MCP servers -----------------------------------------------------------
   const mcpServers: Record<string, unknown> = {};
+  const unconfiguredMcp = new Set<string>();
   const addMcpServers = (value: unknown) => {
     if (!isRecord(value)) return;
     const record = isRecord(value.mcpServers) ? value.mcpServers : value;
@@ -344,6 +357,13 @@ export async function resolveClaudePluginBundle(input: { url: string; ref?: stri
       if (!isRecord(config)) continue;
       if (mcpConfigReferencesPluginRoot(config)) {
         warnings.push(`MCP server "${name}" uses \${CLAUDE_PLUGIN_ROOT} (a plugin-local command), which OpenWork does not support yet. It was skipped.`);
+        continue;
+      }
+      // Cowork plugins leave some connectors blank (`url: ""`) for the person
+      // to choose a provider. Installing would drop them silently, so the
+      // preview must not list them as installable.
+      if (!mcpConfigHasEndpoint(config)) {
+        unconfiguredMcp.add(name);
         continue;
       }
       mcpServers[name] = config;
@@ -372,6 +392,11 @@ export async function resolveClaudePluginBundle(input: { url: string; ref?: stri
     } catch {
       warnings.push(`${dotMcpPath} is not valid JSON; its MCP servers were skipped.`);
     }
+  }
+  if (unconfiguredMcp.size > 0) {
+    warnings.push(
+      `This plugin leaves ${quotedList([...unconfiguredMcp])} for you to set up, so ${unconfiguredMcp.size === 1 ? "it was" : "they were"} not installed. Connect ${unconfiguredMcp.size === 1 ? "it" : "them"} in OpenWork under Connections.`,
+    );
   }
 
   // --- Fetch component contents ----------------------------------------------
@@ -404,6 +429,15 @@ export async function resolveClaudePluginBundle(input: { url: string; ref?: stri
       content,
     };
   });
+
+  // Skills, commands and agents that point at files through
+  // ${CLAUDE_PLUGIN_ROOT} lose those files on install.
+  const pluginRootReferences = fetched.filter((component) => component.content.includes(CLAUDE_PLUGIN_ROOT_VAR));
+  if (pluginRootReferences.length > 0) {
+    warnings.push(
+      `${quotedList(pluginRootReferences.map((component) => component.title))} ${pluginRootReferences.length === 1 ? "refers" : "refer"} to plugin files through \${CLAUDE_PLUGIN_ROOT}, which OpenWork does not install yet. ${pluginRootReferences.length === 1 ? "It" : "They"} may not work as in Cowork.`,
+    );
+  }
 
   // --- Assemble CloudPluginResolved -------------------------------------------
   const dirSuffix = dir ? `#${dir}` : "";
