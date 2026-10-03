@@ -151,7 +151,7 @@ import {
   sidebarRowPaddingInlineStart,
 } from "./sidebar-lanes";
 import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
-import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
+import { isSameWorkbenchSession, useWorkbenchStore, workbenchSessionKey } from "../chat/workbench-store";
 import { SidebarDestination } from "./sidebar-destination";
 import { SessionTitle } from "./session-title";
 import { getSessionOrder } from "./session-order";
@@ -2028,10 +2028,18 @@ export function SessionMenuItem({
   const isSelected = ctx.selectedSessionId === session.id;
   const displayTitle = getDisplaySessionTitle(session.title);
   const itemTitle = workspaceName ? `${displayTitle} — ${workspaceName}` : displayTitle;
-  const sessionActivityStatus = ctx.sessionStatusById?.[session.id];
-  const sessionAttentionLabel = ctx.sessionAttentionLabelById?.[session.id];
+  // Side chats have no sidebar row, so the owning row reports their activity
+  // whenever the owner itself is quiet.
+  const sideChatId = useWorkbenchStore((state) => state.sideChats[workbenchSessionKey({ workspaceId, sessionId: session.id })]?.sessionId);
+  const ownStatus = ctx.sessionStatusById?.[session.id];
+  const sideStatus = sideChatId ? ctx.sessionStatusById?.[sideChatId] : undefined;
+  const ownIsQuiet = !isActiveWorkSessionStatus(ownStatus) && !isNeedsAttentionSessionStatus(ownStatus);
+  const showSideStatus = ownIsQuiet && (isActiveWorkSessionStatus(sideStatus) || isNeedsAttentionSessionStatus(sideStatus));
+  const statusSessionId = showSideStatus && sideChatId ? sideChatId : session.id;
+  const sessionActivityStatus = showSideStatus ? sideStatus : ownStatus;
+  const sessionAttentionLabel = ctx.sessionAttentionLabelById?.[statusSessionId];
   const resolvedActiveWork = isActiveWorkSessionStatus(sessionActivityStatus);
-  const isUnread = unreadIds.has(session.id) && !isSelected;
+  const isUnread = !isSelected && (unreadIds.has(session.id) || Boolean(sideChatId && unreadIds.has(sideChatId)));
   const isArchived = isSessionArchived(session);
   const relativeTime = formatSessionRelativeTime(session.time?.updated ?? session.time?.created);
   const shortcutDigit = ctx.sessionNumberShortcutByTarget.get(
@@ -2044,6 +2052,7 @@ export function SessionMenuItem({
   const openSession = () => {
     commitPrefetch();
     useSessionManagementStore.getState().clearUnread(session.id);
+    if (sideChatId) useSessionManagementStore.getState().clearUnread(sideChatId);
     ctx.onOpenSession(workspaceId, session.id);
   };
 
@@ -2075,8 +2084,8 @@ export function SessionMenuItem({
   const rowButtonClass = cn(
     // Soft pill @ 11px radius from Paper; overlay tint adapts to theme
     // (light: --ow-light-hover ≈ black/5, dark: #FFFFFF17 ≈ white/9).
-    // Reserve quick-action space only while visible. The side-chat control
-    // occupies its own flex slot, so idle titles need only the normal end inset.
+    // Reserve quick-action space only while visible; idle titles need only the
+    // normal end inset.
     SESSION_ROW_BUTTON_CLASS,
     "group-hover/menu-sub-item:pe-18 group-has-data-popup-open/menu-sub-item:pe-18 max-lg:pe-18 pointer-coarse:pe-18",
   );
@@ -2092,7 +2101,7 @@ export function SessionMenuItem({
       isActiveWork={resolvedActiveWork}
       isUnread={isUnread}
       attentionLabel={sessionAttentionLabel}
-      attentionSource={ctx.sessionAttentionSourceById?.[session.id]}
+      attentionSource={ctx.sessionAttentionSourceById?.[statusSessionId]}
     />
   );
 

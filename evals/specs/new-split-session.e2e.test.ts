@@ -161,6 +161,12 @@ test("side chats keep questions, replies, and saved splits attached to their own
       await send("secondary", world.secondaryQuestionPrompt);
       await user.see({ text: "Which format should the side task use?" }, { timeoutMs: 45_000 });
       expect(await pane("primary")).not.toHaveProperty("text", expect.stringContaining("Which format should the side task use?"));
+      await probe.eventually(() => probe.eval(browserScript((id) => {
+        const row = document.querySelector<HTMLElement>('[data-sidebar-session-id="' + id + '"]');
+        return Boolean(row?.querySelector<HTMLElement>('[data-session-attention-indicator]'));
+      }, [primary])), {
+        within: 15_000, label: "the owning row shows that its side chat needs an answer", until: (value) => value === true,
+      });
       await send("primary", world.primaryQuestionPrompt);
       await user.see({ text: "Which format should the main task use?" }, { timeoutMs: 45_000 });
       expect(await pane("secondary")).not.toHaveProperty("text", expect.stringContaining("Which format should the main task use?"));
