@@ -7,6 +7,8 @@ name: Freestyle warm dev image
 #      runtime code matches dev then start in about 2 seconds.
 # PR worlds start from the image, check out their commit, run an incremental
 # pnpm install, build and boot.
+# It also saves the pnpm store for the PR core job's slim install: GitHub only
+# shares caches saved on dev with every PR.
 
 on:
   push:
@@ -25,7 +27,8 @@ concurrency:
 jobs:
   warm:
     if: github.repository == 'different-ai/openwork'
-    runs-on: ubuntu-latest
+    # Same runner family as the PR core job, so its pnpm store cache is shared.
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -37,8 +40,19 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 11.4.0
-      - name: Install the Freestyle client only
-        run: pnpm --filter @openwork/freestyle... install --frozen-lockfile --ignore-scripts
+      - id: store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      # Same key and install as the core job in pr-proof.yml.
+      - name: Cache the pnpm store for PR core jobs
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-core-${{ hashFiles('pnpm-lock.yaml', 'evals/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-core-
+      - name: Install only the test tools
+        run: |
+          pnpm --filter @openwork/freestyle... --filter @openwork/review... --filter @openwork/world... --filter @openwork/types... --filter @openwork/sdk... install --frozen-lockfile --ignore-scripts --prefer-offline
+          pnpm --dir evals install --frozen-lockfile --ignore-scripts --prefer-offline
       - name: Warm the image and dev's world
         env:
           FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
