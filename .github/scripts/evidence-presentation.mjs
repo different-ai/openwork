@@ -7,7 +7,7 @@ const checkName = "Evidence preview";
 const validId = value => Number.isSafeInteger(value) && value > 0;
 export function githubApi(path, method = "GET", body) {
   const result = spawnSync("gh", ["api", path, "--method", method, ...(body ? ["--input", "-"] : [])], {
-    encoding: "utf8", input: body ? JSON.stringify(body) : undefined, timeout: 30_000,
+    encoding: "utf8", input: body ? JSON.stringify(body) : undefined, timeout: 30_000, maxBuffer: 64 * 1024 * 1024,
   });
   if (result.status !== 0) throw new Error("GitHub evidence presentation failed");
   return JSON.parse(result.stdout);

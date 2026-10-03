@@ -8,7 +8,7 @@ if (!event.pull_request) throw new Error("Proof selection requires a pull reques
 const repo = process.env.GITHUB_REPOSITORY;
 const pr = event.pull_request.number;
 function api(path) {
-  const result = spawnSync("gh", ["api", path], { encoding: "utf8", timeout: 30_000 });
+  const result = spawnSync("gh", ["api", path], { encoding: "utf8", timeout: 30_000, maxBuffer: 64 * 1024 * 1024 });
   if (result.status !== 0) throw new Error("GitHub proof selection unavailable.");
   return JSON.parse(result.stdout);
 }

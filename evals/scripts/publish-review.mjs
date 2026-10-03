@@ -43,7 +43,7 @@ export function association(run, repo, workflows) {
 }
 
 function gh(args) {
-  const result = spawnSync("gh", args, { encoding: "utf8", timeout: 90_000 });
+  const result = spawnSync("gh", args, { encoding: "utf8", timeout: 90_000, maxBuffer: 64 * 1024 * 1024 });
   if (result.status !== 0 || result.error) throw new Error("GitHub evidence operation failed; existing report unchanged.");
   return result.stdout;
 }
