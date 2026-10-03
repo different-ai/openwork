@@ -11,6 +11,7 @@ import {
   loadOrCreateWebTokens,
   opencodeReleaseAsset,
   opencodeReleaseUrl,
+  renameWithRetry,
   resolvePackageRoot,
   resolveWebRoot,
 } from "./selfhost-web.js";
@@ -80,5 +81,35 @@ describe("openwork-server web", () => {
     expect(second.token).toBe(first.token);
     expect(second.hostToken).toBe(first.hostToken);
     expect(JSON.parse(await readFile(join(dataDir, "web-tokens.json"), "utf8")).token).toBe(first.token);
+  });
+
+  test("retries the engine rename while Windows still holds the new binary", async () => {
+    const busy = Object.assign(new Error("EBUSY: resource busy or locked, rename"), { code: "EBUSY" });
+    let calls = 0;
+    const flaky = async () => {
+      calls += 1;
+      if (calls < 3) throw busy;
+    };
+    await renameWithRetry("a.partial", "a", { platform: "win32", renameImpl: flaky, delaysMs: [0, 0, 0] });
+    expect(calls).toBe(3);
+
+    calls = 0;
+    await expect(
+      renameWithRetry("a.partial", "a", { platform: "win32", renameImpl: async () => { calls += 1; throw busy; }, delaysMs: [0, 0] }),
+    ).rejects.toThrow("EBUSY");
+    expect(calls).toBe(3);
+
+    calls = 0;
+    await expect(
+      renameWithRetry("a.partial", "a", { platform: "darwin", renameImpl: async () => { calls += 1; throw busy; } }),
+    ).rejects.toThrow("EBUSY");
+    expect(calls).toBe(1);
+
+    calls = 0;
+    const missing = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    await expect(
+      renameWithRetry("a.partial", "a", { platform: "win32", renameImpl: async () => { calls += 1; throw missing; }, delaysMs: [0] }),
+    ).rejects.toThrow("ENOENT");
+    expect(calls).toBe(1);
   });
 });

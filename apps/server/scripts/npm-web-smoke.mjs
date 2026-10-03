@@ -19,6 +19,12 @@ if (!launcher || !expectedVersion) {
 }
 
 const READY_TIMEOUT_MS = 5 * 60_000;
+const REQUEST_TIMEOUT_MS = 20_000;
+// The first engine request for a folder on a fresh profile waits for OpenCode
+// to `npm install @opencode-ai/plugin` into its global config dir (it does that
+// whenever plugins are configured). Measured on GitHub runners: 4-6 s on macOS,
+// 34-50 s on windows-2022. Later requests take under a second.
+const FIRST_ENGINE_REQUEST_TIMEOUT_MS = 3 * 60_000;
 const log = (message) => console.log(`[npm-web-smoke] ${message}`);
 const fail = (message) => {
   throw new Error(message);
@@ -35,10 +41,16 @@ async function freePort() {
   });
 }
 
-async function request(url, init = {}) {
-  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
-  const text = await response.text();
-  return { status: response.status, text };
+async function request(url, init = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    const text = await response.text();
+    return { status: response.status, text, durationMs: Date.now() - startedAt };
+  } catch (error) {
+    const reason = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    fail(`${init.method ?? "GET"} ${new URL(url).pathname} failed after ${Date.now() - startedAt} ms (${reason})`);
+  }
 }
 
 function stopTree(child) {
@@ -117,8 +129,13 @@ try {
   const workspaceId = JSON.parse(workspaces.text).items?.[0]?.id;
   if (!workspaceId) fail("no workspace was created for the working directory");
 
-  const config = await request(`${base}/workspace/${workspaceId}/opencode/config`, { headers: auth });
+  const config = await request(
+    `${base}/workspace/${workspaceId}/opencode/config`,
+    { headers: auth },
+    FIRST_ENGINE_REQUEST_TIMEOUT_MS,
+  );
   if (config.status !== 200) fail(`engine config returned ${config.status}`);
+  log(`engine set the folder up in ${config.durationMs} ms`);
   const plugins = JSON.parse(config.text).plugin ?? [];
   const missing = plugins.filter((entry) => {
     const spec = String(entry);
