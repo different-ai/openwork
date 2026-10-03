@@ -27,7 +27,11 @@ node packages/openwork-bootstrap/bin/openwork.mjs install \
 In production, download the bootstrap script, inspect it, then run it. Do not
 pipe remote scripts directly into a shell. The script downloads the
 `openwork-bootstrap` CLI (a single dependency-free Node file) and installs it
-into `$HOME/.local/bin` - no npm or npx required.
+into `$HOME/.local/bin` - no npm or npx required. It needs Node.js 20 or newer:
+if `node --version` fails or is older, tell the user OpenWork's setup tool
+needs Node.js and install it with their OS package manager (for example
+`brew install node` on macOS or `winget install OpenJS.NodeJS.LTS` on Windows)
+before continuing.
 
 ```bash
 curl -fsSLo /tmp/openwork-install.sh https://openworklabs.com/install.sh
@@ -84,7 +88,7 @@ openwork-bootstrap cloud bootstrap-workspace \
 ```
 
 If the user wants to attach a real account immediately, finish this provisional
-setup first, then use the `Claim this workspace` action in the desktop app. Do
+setup first, then use the `Claim workspace and continue` action in the desktop app. Do
 not create an email/password account from the CLI during agent-first install.
 
 ### Signing in as an existing user (no password)
@@ -115,11 +119,17 @@ the code; never guess it.
 ## 4. Launch the App
 
 Open the desktop app so the user lands on the setup-complete screen with their
-first skill ready.
+first skill ready. This works on macOS, Windows, and Linux:
 
 ```bash
-open -a OpenWork    # macOS
+openwork-bootstrap open app --json
 ```
+
+The app opens to a green `Setup complete` banner with the workspace name and
+`First skill ready`. The person is not signed in yet: a provisional workspace
+has no owner until they claim it, so do not try to sign them in from the CLI.
+On Linux the app may first ask to add itself to the application launcher; tell
+the user to choose `Integrate` so browser sign-in can return to the app.
 
 ## 5. Finish Well (most important step)
 
@@ -205,7 +215,7 @@ You are done only when all are true:
 - `openwork-bootstrap doctor --desktop-bootstrap --json` returns `ok: true`
 - When the desktop app is launched, it lands on the onboarding screen showing a
   green "Setup complete" banner, the organization name, a "First skill ready"
-  tile, and a "Claim this workspace" action.
+  row, and a "Claim workspace and continue" action.
 
 ## 8. If Something Fails
 
@@ -215,7 +225,7 @@ You are done only when all are true:
   (`$HOME/.local/bin/openwork-bootstrap`).
 - If app install fails: run `openwork-bootstrap doctor --app --json` and report failed checks.
 - If the user needs account ownership immediately: complete the install, launch
-  the app, and use `Claim this workspace` so email verification happens in the
+  the app, and use `Claim workspace and continue` so email verification happens in the
   browser/app instead of in the CLI.
 
 ## 9. Constraints

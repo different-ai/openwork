@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
-import { execFileSync } from "node:child_process"
+import { chmodSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { execFileSync, spawn } from "node:child_process"
 import { createHash, generateKeyPairSync } from "node:crypto"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
@@ -69,6 +69,7 @@ function printHelp() {
     "Usage:",
     "  openwork-bootstrap install [--bin-dir <path>] [--install-dir <path>] [--source <path>] [--json]",
     "  openwork-bootstrap install app --manifest <url-or-file> [--app-dir <path>] [--json]",
+    "  openwork-bootstrap open app [--app-dir <path>] [--json]",
     "  openwork-bootstrap doctor [--bin-dir <path>] [--install-dir <path>] [--base-url <url>] [--desktop-bootstrap] [--json]",
     "  openwork-bootstrap login [--base-url <url>] [--force] [--json]",
     "  openwork-bootstrap logout [--json]",
@@ -81,6 +82,7 @@ function printHelp() {
     "Commands:",
     "  install          Install the openwork-bootstrap CLI into a user bin dir",
     "  install app      Download and install the desktop app from a manifest",
+    "  open app         Launch the installed desktop app (macOS, Windows, Linux)",
     "  doctor           Check CLI installation and optional Den API health",
     "  login            Sign in from the browser with a one-time code (no password)",
     "  logout           Sign out and delete the saved credentials",
@@ -620,6 +622,85 @@ async function runInstallApp(args) {
   }
 }
 
+function resolveInstalledApp(appDir) {
+  const appManifest = join(appDir, "openwork-app-install.json")
+  let appPath = process.platform === "darwin"
+    ? join(appDir, "OpenWork.app")
+    : process.platform === "win32"
+      ? join(appDir, "OpenWork.exe")
+      : join(appDir, "openwork")
+  if (existsSync(appManifest)) {
+    try {
+      const appInstall = JSON.parse(readFileSync(appManifest, "utf8"))
+      if (appInstall.appPath) appPath = appInstall.appPath
+    } catch {
+      // Keep fallback path.
+    }
+  }
+  return { appPath, appManifest }
+}
+
+function launchDetached(command, commandArgs, logPath) {
+  const log = openSync(logPath, "a")
+  const child = spawn(command, commandArgs, { detached: true, stdio: ["ignore", log, log] })
+  closeSync(log)
+  let exit = null
+  child.on("exit", (code, signal) => { exit = { code, signal } })
+  child.unref()
+  return { child, exited: () => exit }
+}
+
+
+// Electron's Chromium sandbox cannot start for an AppImage when the OS blocks
+// unprivileged user namespaces (Ubuntu 24.04+ AppArmor default, containers) or
+// when running as root. Retry once without it instead of leaving the user with
+// a window that never appears.
+function linuxSandboxFailure(logPath) {
+  try {
+    return /sandbox|namespace|setuid/i.test(readFileSync(logPath, "utf8"))
+  } catch {
+    return false
+  }
+}
+
+async function runOpenApp(args) {
+  const json = hasFlag(args.flags, "json")
+  const appDir = resolve(getFlag(args.flags, "app-dir", defaultAppDir()))
+  const { appPath } = resolveInstalledApp(appDir)
+  if (!existsSync(appPath)) {
+    throw new Error(`app_not_installed: ${appPath} (run \`${COMMAND_NAME} install app --manifest <url>\` first)`)
+  }
+
+  if (process.platform === "darwin") {
+    execFileSync("open", [appPath])
+    jsonOut({ ok: true, message: `Opened ${appPath}`, appPath, launcher: "open" }, json)
+    return
+  }
+
+  if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+    throw new Error("no_display: DISPLAY and WAYLAND_DISPLAY are unset; run this from the user's desktop session")
+  }
+
+  const logPath = join(appDir, "openwork-app-launch.log")
+  const forceNoSandbox = process.platform === "linux" && typeof process.getuid === "function" && process.getuid() === 0
+  let appArgs = forceNoSandbox ? ["--no-sandbox"] : []
+  let launch = launchDetached(appPath, appArgs, logPath)
+  await sleep(4000)
+  if (process.platform === "linux" && launch.exited() && !appArgs.includes("--no-sandbox") && linuxSandboxFailure(logPath)) {
+    appArgs = ["--no-sandbox"]
+    launch = launchDetached(appPath, appArgs, logPath)
+    await sleep(4000)
+  }
+
+  const exited = launch.exited()
+  if (exited && exited.code !== 0) {
+    jsonOut({ ok: false, message: `OpenWork exited during launch (code ${exited.code ?? exited.signal}); see ${logPath}`, appPath, args: appArgs, log: logPath }, json)
+    process.exitCode = 1
+    return
+  }
+  jsonOut({ ok: true, message: `Opened ${appPath}`, appPath, pid: launch.child.pid, args: appArgs, log: logPath }, json)
+}
+
 async function runDoctor(args) {
   const installDir = resolve(getFlag(args.flags, "install-dir", defaultInstallDir()))
   const binDir = resolve(getFlag(args.flags, "bin-dir", defaultBinDir()))
@@ -657,20 +738,7 @@ async function runDoctor(args) {
   }
 
   if (hasFlag(args.flags, "app") || args.flags.has("app-dir")) {
-    const appManifest = join(appDir, "openwork-app-install.json")
-    let appPath = process.platform === "darwin"
-      ? join(appDir, "OpenWork.app")
-      : process.platform === "win32"
-        ? join(appDir, "OpenWork.exe")
-        : join(appDir, "openwork")
-    if (existsSync(appManifest)) {
-      try {
-        const appInstall = JSON.parse(readFileSync(appManifest, "utf8"))
-        if (appInstall.appPath) appPath = appInstall.appPath
-      } catch {
-        // Keep fallback path.
-      }
-    }
+    const { appPath, appManifest } = resolveInstalledApp(appDir)
     checks.push({ name: "openworkApp", ok: existsSync(appPath), value: appPath })
     checks.push({ name: "appInstallManifest", ok: existsSync(appManifest), value: appManifest })
   }
@@ -1299,6 +1367,11 @@ async function main() {
   const command = args.positionals[0] || "help"
   if (command === "install") {
     runInstall(args)
+    return
+  }
+  if (command === "open") {
+    if (args.positionals[1] !== "app") throw new Error("usage: openwork-bootstrap open app [--json]")
+    await runOpenApp(args)
     return
   }
   if (command === "doctor") {
