@@ -197,6 +197,72 @@ async function resolveRefAndTree(
   throw new ApiError(404, "plugin_ref_not_found", "Could not resolve the requested branch or tag");
 }
 
+export type ClaudeMarketplacePlugin = {
+  name: string;
+  description: string | null;
+  /** Folder in the repository, or null when the plugin lives elsewhere. */
+  dir: string | null;
+  /** URL that installs exactly this plugin. */
+  url: string;
+  installable: boolean;
+};
+
+const MARKETPLACE_MANIFEST = ".claude-plugin/marketplace.json";
+
+function pluginDirsInTree(tree: TreeEntry[]): string[] {
+  return tree
+    .map((entry) => entry.path)
+    .filter((path) => path.endsWith("/.claude-plugin/plugin.json"))
+    .map((path) => path.slice(0, -"/.claude-plugin/plugin.json".length))
+    .sort();
+}
+
+function pluginTreeUrl(source: ClaudePluginSource, ref: string, dir: string): string {
+  return `https://github.com/${source.owner}/${source.repo}/tree/${ref}/${dir}`;
+}
+
+// A marketplace repository (Anthropic's knowledge-work-plugins, a team's
+// Cowork marketplace) holds many plugins. List each with the URL that
+// installs it, using marketplace.json for names when present and every
+// plugin.json folder (including nested ones such as partner-built/*).
+async function listMarketplacePlugins(
+  source: ClaudePluginSource,
+  ref: string,
+  tree: TreeEntry[],
+): Promise<ClaudeMarketplacePlugin[]> {
+  const dirs = pluginDirsInTree(tree);
+  const listed: ClaudeMarketplacePlugin[] = [];
+  const seenDirs = new Set<string>();
+  if (tree.some((entry) => entry.path === MARKETPLACE_MANIFEST)) {
+    let manifest: unknown = null;
+    try {
+      manifest = JSON.parse(await fetchGithubText(rawFileUrl(source, ref, MARKETPLACE_MANIFEST)));
+    } catch {
+      manifest = null;
+    }
+    const entries = isRecord(manifest) && Array.isArray(manifest.plugins) ? manifest.plugins.filter(isRecord) : [];
+    for (const entry of entries) {
+      const name = readString(entry.displayName) ?? readString(entry.name);
+      if (!name) continue;
+      const description = readString(entry.description);
+      const localSource = typeof entry.source === "string" ? entry.source.replace(/^\.\//, "").replace(/\/+$/, "") : null;
+      if (localSource && dirs.includes(localSource)) {
+        seenDirs.add(localSource);
+        listed.push({ name, description, dir: localSource, url: pluginTreeUrl(source, ref, localSource), installable: true });
+        continue;
+      }
+      const external = isRecord(entry.source) ? readString(entry.source.url) ?? readString(entry.source.repo) : null;
+      const homepage = readString(entry.homepage);
+      listed.push({ name, description, dir: null, url: external ?? homepage ?? "", installable: false });
+    }
+  }
+  for (const dir of dirs) {
+    if (seenDirs.has(dir)) continue;
+    listed.push({ name: dir.split("/").at(-1) ?? dir, description: null, dir, url: pluginTreeUrl(source, ref, dir), installable: true });
+  }
+  return listed;
+}
+
 // Find the plugin root: the given subdir, the repo root, or the shallowest
 // directory containing `.claude-plugin/plugin.json`.
 function locatePluginRoot(tree: TreeEntry[], dir: string | null): string {
@@ -268,7 +334,21 @@ function mcpConfigReferencesPluginRoot(config: unknown): boolean {
 export async function resolveClaudePluginBundle(input: { url: string; ref?: string }): Promise<ClaudePluginBundle> {
   const source = parseClaudePluginSource(input.url);
   const { ref, dir, tree } = await resolveRefAndTree(source, input.ref?.trim() || undefined);
-  const root = locatePluginRoot(tree, dir);
+  let root: string;
+  try {
+    root = locatePluginRoot(tree, dir);
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.code !== "plugin_ambiguous") throw error;
+    const plugins = await listMarketplacePlugins(source, ref, tree);
+    const installable = plugins.filter((plugin) => plugin.installable);
+    const example = installable[0]?.url ?? `https://github.com/${source.owner}/${source.repo}/tree/${ref}/<plugin folder>`;
+    throw new ApiError(
+      400,
+      "plugin_ambiguous",
+      `This repository is a marketplace with ${installable.length} plugins: ${installable.map((plugin) => plugin.name).join(", ")}. Paste the link to one plugin, for example ${example}`,
+      { plugins },
+    );
+  }
   const treeByPath = new Map(tree.map((entry) => [entry.path, entry]));
   const warnings: string[] = [];
 
