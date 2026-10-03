@@ -4,7 +4,7 @@ import { FreestyleApiError, type Freestyle, type Vm } from "freestyle";
 import { execChecked, isMissing, type PreviewWorld } from "./index.ts";
 
 export interface SourceEntry { path: string; sha: string; type: string; installSha?: string; runtimeSha?: string }
-export interface BuildStage { stage: string; durationMs: number; cacheHit?: boolean }
+export interface BuildStage { stage: string; durationMs: number; cacheHit?: boolean; reason?: string }
 export type ObserveBuild = (event: BuildStage) => void;
 
 export function digest(value: string): string {
@@ -46,8 +46,21 @@ export function dependencyFingerprint(entries: SourceEntry[]): string {
   return digest(JSON.stringify(inputs.map(({ path, sha, installSha }) => [path, installSha ?? sha])));
 }
 
+/** Public GitHub reads retry transient network failures; HTTP errors are returned as-is. */
+function retrying(request: typeof fetch): typeof fetch {
+  return async (input, init) => {
+    for (let attempt = 1; ; attempt++) {
+      try { return await request(input, init); } catch (error) {
+        if (attempt >= 3) throw error;
+        await delay(500 * attempt);
+      }
+    }
+  };
+}
+
 /** Public metadata only: never check out or execute PR code on the credentialed host. */
-export async function sourceTree(sha: string, request: typeof fetch = fetch): Promise<SourceEntry[]> {
+export async function sourceTree(sha: string, baseRequest: typeof fetch = fetch): Promise<SourceEntry[]> {
+  const request = retrying(baseRequest);
   if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error("A full pushed commit SHA is required.");
   const response = await request(`https://api.github.com/repos/different-ai/openwork/git/trees/${sha}?recursive=1`, {
     headers: { accept: "application/vnd.github+json",
@@ -68,7 +81,7 @@ export async function sourceTree(sha: string, request: typeof fetch = fetch): Pr
   const manifests = entries.filter((entry) => entry.type === "blob" && /(^|\/)package\.json$/.test(entry.path));
   // Bound concurrent public reads. Only JSON is parsed; PR code never executes here.
   let next = 0;
-  await Promise.all(Array.from({ length: Math.min(8, manifests.length) }, async () => {
+  await Promise.all(Array.from({ length: Math.min(24, manifests.length) }, async () => {
     while (next < manifests.length) {
       const entry = manifests[next++];
       const response = await request(`https://raw.githubusercontent.com/different-ai/openwork/${sha}/${entry.path}`, {

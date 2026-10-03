@@ -18,6 +18,8 @@ jobs:
     timeout-minutes: 3
     outputs:
       internalContributor: ${{ steps.select.outputs.internalContributor }}
+      coreMatrix: ${{ steps.select.outputs.coreMatrix }}
+      coreSelected: ${{ steps.select.outputs.coreSelected }}
       matrix: ${{ steps.select.outputs.matrix }}
       selected: ${{ steps.select.outputs.selected }}
       liveMatrix: ${{ steps.select.outputs.liveMatrix }}
@@ -40,6 +42,85 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node .github/scripts/pr-proof-controller.mjs
+
+  # Core journeys: the app, Den, gateway and model run in a Freestyle world built
+  # from this commit. The runner installs only the test tools and drives it.
+  # The end-state checkpoint is the PR's preview.
+  core:
+    needs: select
+    if: >-
+      needs.select.outputs.coreSelected == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.event.pull_request.head.repo.id == github.event.repository.id &&
+      github.event.pull_request.base.repo.id == github.event.repository.id &&
+      github.event.pull_request.head.repo.fork == false &&
+      github.event.pull_request.base.repo.fork == false &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+    environment:
+      name: >-
+        ${{ github.event.repository.owner.type == 'Organization' &&
+            github.event.pull_request.user.type == 'User' &&
+            contains(fromJSON('["MEMBER", "OWNER"]'), github.event.pull_request.author_association) &&
+            needs.select.outputs.internalContributor == 'true' &&
+            'pr-internal-specs' || 'pr-slow-specs' }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.coreMatrix) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - id: store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - name: Restore the pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-core-${{ hashFiles('pnpm-lock.yaml', 'evals/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-core-
+      - name: Install only the test tools
+        run: |
+          pnpm --filter @openwork/freestyle... --filter @openwork/review... --filter @openwork/world... --filter @openwork/types... --filter @openwork/sdk... install --frozen-lockfile --ignore-scripts --prefer-offline
+          pnpm --dir evals install --frozen-lockfile --ignore-scripts --prefer-offline
+      - name: Prepare this commit's Freestyle world
+        timeout-minutes: 35
+        env:
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/prepare-evidence-web.ts
+      - name: Run the core journey and save its end state as the preview
+        timeout-minutes: 15
+        env:
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
+          PROOF_SPEC: ${{ matrix.spec }}
+        run: node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --engine v1 --surface web --checkpoints
+      - name: Save testkit and Vitest records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr-proof-${{ github.run_attempt }}-${{ matrix.key }}
+          path: |
+            evals/results/test-runs/
+            evals/results/.testkit/cli-run-*.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
 
   proof:
     needs: select

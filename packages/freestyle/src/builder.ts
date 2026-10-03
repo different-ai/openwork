@@ -30,7 +30,7 @@ export function buildLabel(sha: string, world: PreviewWorld): Record<string, str
   return { openworkBuild: `${world}-${sha}` };
 }
 
-export async function runScript(vm: Vm, stage: string, script: string, options: BuildOptions) {
+export async function runScript(vm: Vm, stage: string, script: string, options: BuildOptions, deadlineMs = 11 * 60_000) {
   const root = `/opt/openwork-preview/${stage}`;
   await execChecked(vm, "mkdir -p /opt/openwork-preview");
   await vm.fs.writeTextFile(`${root}.sh`, `#!/bin/bash
@@ -43,7 +43,7 @@ ${script}
 touch ${root}.ready
 `);
   await startBuildUnit(vm, stage, options.diagnostic);
-  const deadline = Date.now() + 11 * 60_000;
+  const deadline = Date.now() + deadlineMs;
   while (Date.now() < deadline) {
     // Poll files directly: spawning a shell for every check can be interrupted
     // while a restored guest settles, even when the build itself is healthy.
@@ -53,7 +53,7 @@ touch ${root}.ready
     if (state === "failed") {
       if (options.diagnostic) {
         const runtime = stage === "world" ? await execChecked(vm, "journalctl -u openwork-preview-runtime --no-pager -n 100")
-          : stage === "evidence-world" ? await execChecked(vm, "journalctl -u openwork-evidence --no-pager -n 100") : "";
+          : stage.startsWith("evidence-world") ? await execChecked(vm, "journalctl -u openwork-evidence --no-pager -n 100") : "";
         await options.diagnostic(stage, await vm.fs.readTextFile(`${root}.log`) + runtime);
       }
       throw new Error(`Snapshot ${stage} failed. Private builder log: ${root}.log`);
@@ -61,7 +61,7 @@ touch ${root}.ready
     await delay(1_000);
   }
   if (options.diagnostic) await options.diagnostic(stage, await vm.fs.readTextFile(`${root}.log`));
-  throw new Error(`Snapshot ${stage} exceeded 11 minutes`);
+  throw new Error(`Snapshot ${stage} exceeded ${Math.round(deadlineMs / 60_000)} minutes`);
 }
 
 /** Immutable tools/dependencies are shared; the running world always belongs to one exact commit. */

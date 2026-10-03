@@ -5,7 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createServer, request } from "node:http";
 import { bootAcmeWeb } from "/workspace/worlds/acme-web.ts";
 import { chrome, localHost } from "/workspace/evals/packages/hosts/src/index.ts";
-import { signInDesktopAs, selectModel, waitUntilInteractive, evalIn } from "/workspace/evals/packages/behaviors/src/index.ts";
+import { signInDesktopAs, waitFor, waitUntilInteractive, evalIn } from "/workspace/evals/packages/behaviors/src/index.ts";
 import { browserScript } from "/workspace/evals/packages/cdp/src/index.ts";
 
 const root = "/opt/openwork-preview";
@@ -51,10 +51,32 @@ try {
   // bootAcmeWeb already owns a fresh workspace. The desktop workspace helper
   // waits on hash routes; app-web uses pathname routes and needs no second one.
   await evalIn(browser, browserScript((value) => { localStorage.setItem("openwork.defaultModel", value); window.dispatchEvent(new Event("openwork.defaultModelChanged")); }, [`${world.model.providerId}/${world.model.modelId}`]));
-  await selectModel(browser, world.model.modelName, { provider: "Acme AI Gateway" });
+  // The saved default selects the model; confirm the composer shows it. (The
+  // shared selectModel helper still targets the pre-#5196 picker dialog.)
+  await waitFor(browser, browserScript((name) => document.body.innerText.includes(name), [world.model.modelName]), { timeoutMs: 30_000, label: `composer model ${world.model.modelName}` });
   // The viewer keeps the saved Chromium tab. A direct app link would open a new
   // document and is deliberately not presented as an exact checkpoint restore.
+  // Fast path: after a checkout, reload the saved tab and wait until the app is
+  // ready again with the same model. Vite and Next serve the checked-out sources;
+  // den-api runs once from source, so it is restarted when its sources changed.
+  async function refresh(restart) {
+    if (restart.includes("den-api")) await world.den.restartApi();
+    await evalIn(browser, browserScript(() => { setTimeout(() => location.reload(), 0); return true; }, [])).catch(() => undefined);
+    await delay(500);
+    await waitUntilInteractive(browser);
+    await waitFor(browser, browserScript((name) => document.body.innerText.includes(name), [world.model.modelName]), { timeoutMs: 60_000, label: `composer model ${world.model.modelName} after refresh` });
+  }
   const viewer = createServer((req, res) => {
+    if (req.url === "/__evidence/refresh" && req.method === "POST") {
+      const chunks = [];
+      req.on("data", (chunk) => chunks.push(chunk));
+      req.on("end", () => {
+        let restart = [];
+        try { const body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"); if (Array.isArray(body.restart)) restart = body.restart.filter((name) => name === "den-api"); } catch {}
+        refresh(restart).then(() => res.end(`refreshed${restart.length ? ` after restarting ${restart.join(", ")}` : ""}`), (error) => { res.writeHead(500); res.end(error instanceof Error ? error.message : String(error)); });
+      });
+      return;
+    }
     if (req.url === "/__evidence/state") { res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ held, complete, streamCount })); return; }
     if (req.url === "/__evidence/continue" && req.method === "POST") { release?.(); res.end("continued"); return; }
     if (req.url === "/") {
