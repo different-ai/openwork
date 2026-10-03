@@ -53,15 +53,17 @@ export function proofLanes(allSpecs, { event, current, repo, actor, triggeringAc
   // Windows release proof requires a Daytona Windows VM and a real installer.
   // It cannot be rerouted to local Linux to obtain a green but meaningless run.
   const daytonaSpecs = specs.filter(spec => spec === DAYTONA_SPEC);
+  // Core journeys get their own slim job: the app runs in Freestyle, the runner only drives it.
+  const coreSpecs = specs.filter(spec => CORE_SPECS.includes(spec));
   // Checkpoint runs need the Freestyle credential, so they use the protected lane.
-  const checkpointSpecs = specs.filter(spec => !liveSpecs.includes(spec) && !packagedSpecs.includes(spec) && !daytonaSpecs.includes(spec) && tagged(spec));
-  const normalSpecs = specs.filter(spec => !liveSpecs.includes(spec) && !packagedSpecs.includes(spec) && !daytonaSpecs.includes(spec) && !checkpointSpecs.includes(spec));
+  const checkpointSpecs = specs.filter(spec => !coreSpecs.includes(spec) && !liveSpecs.includes(spec) && !packagedSpecs.includes(spec) && !daytonaSpecs.includes(spec) && tagged(spec));
+  const normalSpecs = specs.filter(spec => !coreSpecs.includes(spec) && !liveSpecs.includes(spec) && !packagedSpecs.includes(spec) && !daytonaSpecs.includes(spec) && !checkpointSpecs.includes(spec));
   if (liveSpecs.length || daytonaSpecs.length || checkpointSpecs.length) {
     if (!trustedProofContext({ event, current, repo, actor, triggeringActor })) {
       throw new Error("Live PR proof is unsupported for forks, untrusted repository metadata, or Dependabot. A maintainer must move the reviewed change to a same-repository PR (organization members run automatically; other contributors need pr-slow-specs approval); do not bypass or skip the selected live or Windows spec.");
     }
   }
-  return { normalSpecs, liveSpecs, packagedSpecs, daytonaSpecs, checkpointSpecs };
+  return { coreSpecs, normalSpecs, liveSpecs, packagedSpecs, daytonaSpecs, checkpointSpecs };
 }
 
 function trustedProofContext({ event, current, repo, actor, triggeringActor }) {
