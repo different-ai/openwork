@@ -107,8 +107,6 @@ function printHelp() {
     "                   links). Defaults to https://app.openworklabs.com when",
     "                   --base-url is the hosted API (api.openworklabs.com);",
     "                   set explicitly for self-hosted/custom deployments.",
-    "  --no-agents-skills  Write the first skill only to the OpenCode skills dir,",
-    "                   not also to the cross-client ~/.agents/skills dir",
     "  --json           Print machine-readable JSON",
     "",
     "Environment:",
@@ -161,21 +159,6 @@ function defaultDesktopBootstrapPath() {
 
 function defaultSkillsDir() {
   return process.env.OPENWORK_SKILLS_DIR || join(configHomeDir(), "opencode", "skills")
-}
-
-// Cross-client user skills dir from the Agent Skills standard (agentskills.io),
-// read by many agents besides OpenCode. Skipped when the caller chose an
-// explicit skills dir, so tests and custom installs never touch the real home.
-function defaultAgentsSkillsDir(flags) {
-  if (process.env.OPENWORK_AGENTS_SKILLS_DIR) return process.env.OPENWORK_AGENTS_SKILLS_DIR
-  if (flags.has("skills-dir") || process.env.OPENWORK_SKILLS_DIR || hasFlag(flags, "no-agents-skills")) return null
-  return join(process.env.USERPROFILE || process.env.HOME || process.cwd(), ".agents", "skills")
-}
-
-// The Agent Skills spec requires `name` to be lowercase-hyphenated (max 64)
-// and to match the folder name; the OpenCode copy keeps the display title.
-function agentsSkillText(skillText, slug) {
-  return skillText.replace(/^name: .*$/m, `name: ${slug}`)
 }
 
 function defaultDeviceKeyPath() {
@@ -1001,14 +984,6 @@ function writePreparedDesktop(input) {
   mkdirSync(dirname(bootstrapPath), { recursive: true })
   mkdirSync(skillDir, { recursive: true })
   writeFileSync(skillPath, input.skill.skillText, "utf8")
-  let agentsSkillPath = null
-  if (input.agentsSkillsDir) {
-    const agentsSlug = skillName.slice(0, 64).replace(/-+$/, "")
-    const agentsSkillDir = resolve(input.agentsSkillsDir, agentsSlug)
-    mkdirSync(agentsSkillDir, { recursive: true })
-    agentsSkillPath = join(agentsSkillDir, "SKILL.md")
-    writeFileSync(agentsSkillPath, agentsSkillText(input.skill.skillText, agentsSlug), "utf8")
-  }
   const preparedAt = new Date().toISOString()
   const prepared = {
     orgId: input.organization.id,
@@ -1050,7 +1025,6 @@ function writePreparedDesktop(input) {
     bootstrapPath,
     skillsDir: resolve(input.skillsDir),
     skillPath,
-    ...(agentsSkillPath ? { agentsSkillPath } : {}),
     ...(input.handoff ? { handoffExpiresAt: input.handoff.expiresAt, handoffGrant: "redacted: saved to bootstrapPath" } : {}),
     ...(input.claimLinks
       ? {
@@ -1238,7 +1212,6 @@ async function runCloudOnboard(args) {
       apiBaseUrl: baseUrl,
       bootstrapPath: desktopBootstrapPath,
       skillsDir,
-      agentsSkillsDir: defaultAgentsSkillsDir(args.flags),
       handoff,
       organization: org.body.organization,
       skill,
@@ -1322,7 +1295,6 @@ async function runCloudBootstrapWorkspace(args) {
       apiBaseUrl: baseUrl,
       bootstrapPath: desktopBootstrapPath,
       skillsDir,
-      agentsSkillsDir: defaultAgentsSkillsDir(args.flags),
       organization: response.body.organization,
       skill,
       claimLinks: response.body.claimLinks,
