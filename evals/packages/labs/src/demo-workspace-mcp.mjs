@@ -336,6 +336,8 @@ const str = (args, key, required = true) => {
     if (required) throw new ToolError(`Missing required argument "${key}".`);
     return undefined;
   }
+  // Models often send ids and timestamps as numbers; accept them like a lenient real API would.
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (typeof value !== "string") throw new ToolError(`"${key}" must be a string.`);
   return value;
 };
@@ -395,6 +397,17 @@ function slackMessageView(message) {
   };
 }
 const byTsDesc = (a, b) => Number(b.ts) - Number(a.ts);
+/** Matches "1791055334.000025", the same number, or a permalink-style "p1791055334000025". */
+const sameTs = (ts, value) => {
+  const wanted = String(value).trim().replace(/^p(\d{10})(\d{6})$/, "$1.$2");
+  return ts === wanted || Math.abs(Number(ts) - Number(wanted)) < 0.0000005;
+};
+function slackMessage(channelValue, ts) {
+  const channel = channelValue ? slackChannel(channelValue) : null;
+  const message = state.slack.messages.find((m) => (!channel || m.channel === channel.id) && sameTs(m.ts, ts));
+  if (!message) throw new ToolError(`No message with ts ${ts}${channel ? ` in ${channel.name}` : ""}. Use the ts value returned by slack_read_channel or slack_search_messages.`);
+  return message;
+}
 
 const slackTools = [
   { name: "slack_list_channels", title: "List channels", description: "List public channels in the Acme Robotics Slack workspace with purpose and member count.", annotations: read,
@@ -415,21 +428,20 @@ const slackTools = [
     run: (args) => { const channel = slackChannel(str(args, "channel")); return { channel: channel.is_im ? channel.name : `#${channel.name}`, channel_id: channel.id,
       messages: state.slack.messages.filter((m) => m.channel === channel.id && !m.thread_ts).sort(byTsDesc).slice(0, num(args, "limit", 20)).map(slackMessageView) }; } },
   { name: "slack_read_thread", title: "Read thread", description: "Read a message and all of its thread replies in order.", annotations: read,
-    inputSchema: schema({ channel: S("Channel name or ID"), thread_ts: S("ts of the parent message") }, ["channel", "thread_ts"]),
-    run: (args) => { const channel = slackChannel(str(args, "channel")); const ts = str(args, "thread_ts");
-      const parent = state.slack.messages.find((m) => m.channel === channel.id && m.ts === ts);
-      if (!parent) throw new ToolError(`No message ${ts} in ${channel.name}.`);
-      return { parent: slackMessageView(parent), replies: state.slack.messages.filter((m) => m.thread_ts === ts).sort((a, b) => Number(a.ts) - Number(b.ts)).map(slackMessageView) }; } },
+    inputSchema: schema({ channel: S("Channel name or ID"), thread_ts: S("ts of the parent message, e.g. \"1791055334.000025\"") }, ["thread_ts"]),
+    run: (args) => { const found = slackMessage(str(args, "channel", false), str(args, "ts", false) ?? str(args, "thread_ts"));
+      const parent = found.thread_ts ? slackMessage(found.channel, found.thread_ts) : found;
+      return { parent: slackMessageView(parent), replies: state.slack.messages.filter((m) => m.thread_ts === parent.ts).sort((a, b) => Number(a.ts) - Number(b.ts)).map(slackMessageView) }; } },
   { name: "slack_send_message", title: "Send message", description: "Post a message as Alex Chen to a channel or DM, optionally as a thread reply.", annotations: write,
     inputSchema: schema({ channel: S("Channel name, channel ID, or a person for a DM"), text: S("Message text (Slack mrkdwn)"), thread_ts: S("Reply in this thread") }, ["channel", "text"]),
-    run: (args) => { const channel = slackChannel(str(args, "channel")); const threadTs = str(args, "thread_ts", false);
-      if (threadTs && !state.slack.messages.some((m) => m.channel === channel.id && m.ts === threadTs)) throw new ToolError(`No thread ${threadTs} in ${channel.name}.`);
+    run: (args) => { const channel = slackChannel(str(args, "channel")); const threadValue = str(args, "thread_ts", false);
+      // Replying to a reply lands in its thread, as in Slack.
+      const parent = threadValue ? slackMessage(channel.id, threadValue) : null; const threadTs = parent ? parent.thread_ts ?? parent.ts : null;
       const message = { channel: channel.id, ts: slackTs(0), user: ME.id, text: str(args, "text"), reactions: [], ...(threadTs ? { thread_ts: threadTs } : {}) };
       state.slack.messages.push(message); return { ok: true, message: slackMessageView(message) }; } },
   { name: "slack_add_reaction", title: "Add reaction", description: "Add an emoji reaction (as Alex Chen) to a message.", annotations: write,
     inputSchema: schema({ channel: S("Channel name or ID"), ts: S("Message ts"), emoji: S("Emoji name without colons, e.g. white_check_mark") }, ["channel", "ts", "emoji"]),
-    run: (args) => { const channel = slackChannel(str(args, "channel")); const message = state.slack.messages.find((m) => m.channel === channel.id && m.ts === str(args, "ts"));
-      if (!message) throw new ToolError("Message not found."); const name = str(args, "emoji").replace(/:/g, "");
+    run: (args) => { const message = slackMessage(str(args, "channel"), str(args, "ts")); const name = str(args, "emoji").replace(/:/g, "");
       let reaction = message.reactions.find((r) => r.name === name); if (!reaction) { reaction = { name, users: [] }; message.reactions.push(reaction); }
       if (!reaction.users.includes(ME.id)) reaction.users.push(ME.id); return { ok: true, message: slackMessageView(message) }; } },
   { name: "slack_list_users", title: "List people", description: "List people in the workspace with titles and emails.", annotations: read,
