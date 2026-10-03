@@ -10,6 +10,7 @@ import {
   type GatewayUsageResetPage,
   type GatewayUsageResetRequest,
 } from "@openwork/types/den/gateway-usage-limits"
+import { normalizeDenTypeIdOrLegacyUuid } from "@openwork-ee/utils/typeid"
 import type { createDenDb } from "./client"
 import { GatewayUsageError } from "./gateway-usage-errors"
 import { AuthUserTable } from "./schema/auth"
@@ -48,7 +49,8 @@ function readCursor(
       cursor.view !== view
     )
       throw new Error()
-    return cursor
+    // Cursors issued before reset requests adopted TypeIDs carry a legacy UUID.
+    return { ...cursor, id: normalizeDenTypeIdOrLegacyUuid("gatewayUsageResetRequest", cursor.id) }
   } catch {
     throw new GatewayUsageError(
       "invalid_cursor",

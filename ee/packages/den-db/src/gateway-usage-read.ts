@@ -9,6 +9,7 @@ import {
   type GatewayUsageStatus,
   type GatewayUsageProvenance,
 } from "@openwork/types/den/gateway-usage-limits"
+import { normalizeDenTypeIdOrLegacyUuid } from "@openwork-ee/utils/typeid"
 import type { createDenDb } from "./client"
 import { GatewayUsageError } from "./gateway-usage-errors"
 import { MemberTable } from "./schema/org"
@@ -20,6 +21,7 @@ import {
   GatewayUsageBucketTable as B,
   GatewayUsageResetTable as R,
   GatewayUsageTrackingTable as T,
+  GATEWAY_USAGE_UNLIMITED_POLICY_ID,
 } from "./schema/gateway-usage-limits"
 
 export type GatewayUsageDb = ReturnType<typeof createDenDb>["db"]
@@ -30,6 +32,13 @@ export type GatewayUsageScope = {
   memberId: typeof MemberTable.$inferSelect.id
 }
 export type UsageBucket = typeof B.$inferSelect
+
+/** Types a policy reference from an API-shaped view: a policy TypeID or the unlimited placeholder. */
+export function gatewayUsagePolicyRef(value: string): UsageBucket["policyId"] {
+  return value === GATEWAY_USAGE_UNLIMITED_POLICY_ID
+    ? value
+    : normalizeDenTypeIdOrLegacyUuid("gatewayUsagePolicy", value)
+}
 import type { GatewayUsageSnapshot } from "./gateway-usage-snapshot"
 export type { GatewayUsageSnapshot, UsageBucketSnapshot } from "./gateway-usage-snapshot"
 
@@ -244,7 +253,7 @@ export function projectedBucket(
     timeframe,
     startAt: period.start,
     resetAt: period.end,
-    policyId: "unlimited",
+    policyId: GATEWAY_USAGE_UNLIMITED_POLICY_ID,
     policyName: "Unlimited",
     policyRevision: 0,
     baseAllowanceMicroUsd: 0,
@@ -283,7 +292,7 @@ export async function currentUsage(
     if (!winner)
       return {
         ...bucket,
-        policyId: "unlimited",
+        policyId: GATEWAY_USAGE_UNLIMITED_POLICY_ID,
         policyName: "Unlimited",
         policyRevision: 0,
         baseAllowanceMicroUsd: 0,
@@ -294,7 +303,7 @@ export async function currentUsage(
     const { policy, limit } = winner
     return {
       ...bucket,
-      policyId: policy.id,
+      policyId: gatewayUsagePolicyRef(policy.id),
       policyName: policy.name,
       policyRevision: policy.revision,
       baseAllowanceMicroUsd: limit.costLimitMicroUsd,

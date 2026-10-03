@@ -5,6 +5,7 @@ import {
   GatewayUsageAssignmentTable as A,
   GatewayUsageBucketTable as B,
   GatewayUsageResetTable as R,
+  type GatewayUsagePolicyId,
 } from "./schema/gateway-usage-limits"
 import {
   effectiveUsagePolicies,
@@ -45,7 +46,7 @@ export async function usageOrganizationMembers(tx: UsageTx, organizationId: Orga
 export async function usagePolicyMembers(
   tx: UsageTx,
   organizationId: OrganizationId,
-  policyId: string,
+  policyId: GatewayUsagePolicyId,
 ) {
   await lockUsageOrganization(tx, organizationId)
   const assignments = await tx

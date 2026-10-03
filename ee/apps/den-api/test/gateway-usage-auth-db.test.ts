@@ -4,7 +4,7 @@ import { createDenDb } from "@openwork-ee/den-db"
 import { randomUUID } from "node:crypto"
 import { Hono } from "hono"
 import { z } from "zod"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import {
   AuthSessionTable,
   ConnectedAccountTable,
@@ -449,10 +449,10 @@ test("small team changes touch only old/new members despite 80 other policy memb
     )
   await db.insert(GatewayUsageAssignmentTable).values(
     people.map((person) => ({
-      id: randomUUID(),
+      id: createDenTypeId("gatewayUsageAssignment"),
       organizationId: owner.organizationId,
       memberId: person.id,
-      policyId: policy.id,
+      policyId: normalizeDenTypeId("gatewayUsagePolicy", policy.id),
       createdAt: new Date(),
     })),
   )
@@ -545,7 +545,7 @@ test("both global-user hard-removal paths expire pending requests and clear mark
     const [stored] = await db
       .select()
       .from(GatewayUsageResetTable)
-      .where(eq(GatewayUsageResetTable.id, pending.id))
+      .where(eq(GatewayUsageResetTable.id, normalizeDenTypeId("gatewayUsageResetRequest", pending.id)))
     expect(stored.status).toBe("expired")
     expect(stored.pendingBucketId).toBeNull()
     expect((await service.listResets(owner, false)).pendingCount).toBe(0)
@@ -777,7 +777,7 @@ test("permanent organization deletion erases every usage table and preserves ano
     })
     return {
       organizationId: scope.organizationId,
-      policyId: policy.id,
+      policyId: normalizeDenTypeId("gatewayUsagePolicy", policy.id),
       eventId,
       bucketId: bucket.id,
     }

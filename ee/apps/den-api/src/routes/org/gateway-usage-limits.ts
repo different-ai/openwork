@@ -12,7 +12,7 @@ import {
   gatewayUsageResetPageSchema,
 } from "@openwork/types/den/gateway-usage-limits"
 import { describeRoute } from "hono-openapi"
-import { jsonResponse } from "../../openapi.js"
+import { denTypeIdSchema, jsonResponse } from "../../openapi.js"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Context, Hono, MiddlewareHandler } from "hono"
 import { z } from "zod"
@@ -62,8 +62,10 @@ const resetListQuery = z
     cursor: z.string().min(1).max(1024).optional(),
   })
   .strict()
-const idSchema = z.string().min(1).max(64)
-const policyParams = z.object({ policyId: idSchema })
+// Buckets are keyed by a content hash, not a Den TypeID.
+const bucketIdSchema = z.string().min(1).max(64)
+const policyParams = z.object({ policyId: denTypeIdSchema("gatewayUsagePolicy") })
+const resetRequestParams = z.object({ id: denTypeIdSchema("gatewayUsageResetRequest") })
 const revisionSchema = z.object({ revision: z.number().int().min(1).max(2_147_483_646) }).strict()
 const memberSchema = z
   .string()
@@ -243,7 +245,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     orgMemberRoute(),
     available,
     admin,
-    paramValidator(policyParams.extend({ assignmentId: idSchema })),
+    paramValidator(policyParams.extend({ assignmentId: denTypeIdSchema("gatewayUsageAssignment") })),
     (c) =>
       respond(c, () =>
         service.unassign(
@@ -295,7 +297,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     orgMemberRoute(),
     available,
     jsonValidator(
-      z.object({ bucketId: idSchema, reason: z.string().trim().min(1).max(2000) }).strict(),
+      z.object({ bucketId: bucketIdSchema, reason: z.string().trim().min(1).max(2000) }).strict(),
     ),
     (c) =>
       respond(c, () =>
@@ -325,7 +327,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     orgMemberRoute(),
     available,
     admin,
-    paramValidator(z.object({ id: idSchema })),
+    paramValidator(resetRequestParams),
     jsonValidator(z.object({}).strict()),
     (c) => respond(c, () => service.reviewReset(scope(c), c.req.valid("param").id, "approved")),
   )
@@ -335,7 +337,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     orgMemberRoute(),
     available,
     admin,
-    paramValidator(z.object({ id: idSchema })),
+    paramValidator(resetRequestParams),
     jsonValidator(z.object({ note: z.string().trim().max(2000).optional() }).strict()),
     (c) =>
       respond(c, () =>

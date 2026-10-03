@@ -14,9 +14,25 @@ import {
   uniqueIndex,
   varchar,
 } from "drizzle-orm/mysql-core"
-import { denTypeIdColumn } from "../columns"
+import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import { denTypeIdColumn, legacyUuidDenTypeIdColumn } from "../columns"
 
+export type GatewayUsagePolicyId = DenTypeId<"gatewayUsagePolicy">
+export type GatewayUsageAssignmentId = DenTypeId<"gatewayUsageAssignment">
+export type GatewayUsageResetRequestId = DenTypeId<"gatewayUsageResetRequest">
+
+/** Placeholder policy reference for a usage window that no policy limits. */
+export const GATEWAY_USAGE_UNLIMITED_POLICY_ID: "unlimited" = "unlimited"
+
+// Buckets (content hashes), events and quarantine rows (gateway request IDs)
+// are keyed by values that are not Den TypeIDs; they keep plain string keys.
 const id = () => varchar("id", { length: 64 }).notNull().primaryKey()
+// Policies, assignments, reset requests and audit rows were keyed by plain
+// UUIDs before adopting TypeIDs. These columns read legacy rows as TypeIDs
+// until `convertGatewayUsageLegacyIds` has rewritten them.
+const policyId = (column: string) => legacyUuidDenTypeIdColumn("gatewayUsagePolicy", column)
+const policySnapshotId = (column: string) =>
+  legacyUuidDenTypeIdColumn("gatewayUsagePolicy", column, [GATEWAY_USAGE_UNLIMITED_POLICY_ID])
 const org = () => denTypeIdColumn("organization", "organization_id").notNull()
 const member = () => denTypeIdColumn("member", "member_id").notNull()
 const timeframe = () => mysqlEnum("timeframe", ["day", "week", "month"]).notNull()
@@ -26,7 +42,7 @@ const date = (name: string) => timestamp(name, { fsp: 3 }).notNull()
 export const GatewayUsagePolicyTable = mysqlTable(
   "gateway_usage_limit_policy",
   {
-    id: id(),
+    id: policyId("id").notNull().primaryKey(),
     organizationId: org(),
     name: varchar("name", { length: 120 }).notNull(),
     hardLimit: boolean("hard_limit").notNull().default(true),
@@ -42,7 +58,7 @@ export const GatewayUsagePolicyTable = mysqlTable(
 export const GatewayUsageLimitTable = mysqlTable(
   "gateway_usage_limit_entry",
   {
-    policyId: varchar("policy_id", { length: 64 }).notNull(),
+    policyId: policyId("policy_id").notNull(),
     timeframe: timeframe(),
     costLimitMicroUsd: money("cost_limit_micro_usd"),
   },
@@ -57,8 +73,8 @@ export const GatewayUsageLimitTable = mysqlTable(
 export const GatewayUsageAssignmentTable = mysqlTable(
   "gateway_usage_limit_assignment",
   {
-    id: id(),
-    policyId: varchar("policy_id", { length: 64 }).notNull(),
+    id: legacyUuidDenTypeIdColumn("gatewayUsageAssignment", "id").notNull().primaryKey(),
+    policyId: policyId("policy_id").notNull(),
     organizationId: org(),
     memberId: denTypeIdColumn("member", "member_id"),
     teamId: denTypeIdColumn("team", "team_id"),
@@ -117,7 +133,7 @@ export const GatewayUsageBucketTable = mysqlTable(
     timeframe: timeframe(),
     startAt: date("start_at"),
     resetAt: date("reset_at"),
-    policyId: varchar("policy_id", { length: 64 }).notNull(),
+    policyId: policySnapshotId("policy_id").notNull(),
     policyName: varchar("policy_name", { length: 120 }).notNull(),
     policyRevision: int("policy_revision").notNull(),
     baseAllowanceMicroUsd: money("base_allowance_micro_usd"),
@@ -193,7 +209,7 @@ export const GatewayUsageChargeTable = mysqlTable(
     amount: money("amount"),
     unpricedRequests: money("unpriced_requests"),
     incompleteRequests: money("incomplete_requests"),
-    policyId: varchar("policy_id", { length: 64 }).notNull(),
+    policyId: policySnapshotId("policy_id").notNull(),
     policyRevision: int("policy_revision").notNull(),
   },
   (t) => [
@@ -204,11 +220,11 @@ export const GatewayUsageChargeTable = mysqlTable(
 export const GatewayUsageResetTable = mysqlTable(
   "gateway_usage_reset_request",
   {
-    id: id(),
+    id: legacyUuidDenTypeIdColumn("gatewayUsageResetRequest", "id").notNull().primaryKey(),
     organizationId: org(),
     memberId: member(),
     bucketId: varchar("bucket_id", { length: 64 }).notNull(),
-    policyId: varchar("policy_id", { length: 64 }).notNull(),
+    policyId: policySnapshotId("policy_id").notNull(),
     policyRevision: int("policy_revision").notNull(),
     timeframe: timeframe(),
     policyName: varchar("policy_name", { length: 120 }).notNull(),
@@ -243,9 +259,10 @@ export const GatewayUsageResetTable = mysqlTable(
 export const GatewayUsageAuditTable = mysqlTable(
   "gateway_usage_audit",
   {
-    id: id(),
+    id: legacyUuidDenTypeIdColumn("gatewayUsageAudit", "id").notNull().primaryKey(),
     organizationId: org(),
     actorId: denTypeIdColumn("member", "actor_id"),
+    // Polymorphic: a policy, reset request, member or gateway request ID, depending on `action`.
     subjectId: varchar("subject_id", { length: 64 }).notNull(),
     action: varchar("action", { length: 64 }).notNull(),
     details: json("details").$type<Record<string, unknown>>().notNull(),

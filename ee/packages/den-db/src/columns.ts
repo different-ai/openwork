@@ -4,6 +4,7 @@ import {
   type DenTypeId,
   type DenTypeIdName,
   normalizeDenTypeId,
+  normalizeDenTypeIdOrLegacyUuid,
 } from "@openwork-ee/utils/typeid"
 import { sql } from "drizzle-orm"
 
@@ -166,6 +167,38 @@ export const denTypeIdColumn = <TName extends DenTypeIdName>(
       return normalizeDenTypeId(name, value)
     },
   })(columnName)
+
+/**
+ * A Den TypeID column for tables that stored plain UUIDs before adopting
+ * TypeIDs. Stored legacy UUIDs read back as the equivalent TypeID, and any
+ * UUID written or used as a query parameter is converted first, so new rows
+ * always store TypeIDs. Optional `literals` pass through unchanged (for
+ * example the `"unlimited"` placeholder in usage snapshots).
+ *
+ * Conversion only happens in Drizzle's typed column paths. SQL-level joins
+ * compare stored values, so a row and its references must be converted
+ * together; see `convertGatewayUsageLegacyIds`.
+ */
+export const legacyUuidDenTypeIdColumn = <
+  TName extends DenTypeIdName,
+  const TLiteral extends string = never,
+>(
+  name: TName,
+  columnName: string,
+  literals: readonly TLiteral[] = [],
+) => {
+  const allowed = new Set<string>(literals)
+  const isLiteral = (value: string): value is TLiteral => allowed.has(value)
+  const normalize = (value: string): DenTypeId<TName> | TLiteral =>
+    isLiteral(value) ? value : normalizeDenTypeIdOrLegacyUuid(name, value)
+  return customType<{ data: DenTypeId<TName> | TLiteral; driverData: string }>({
+    dataType() {
+      return `varchar(${INTERNAL_ID_LENGTH})`
+    },
+    toDriver: normalize,
+    fromDriver: normalize,
+  })(columnName)
+}
 
 export const timestamps = {
   created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),

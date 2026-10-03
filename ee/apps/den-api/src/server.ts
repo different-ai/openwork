@@ -9,6 +9,7 @@ import { startScimMaintenanceLoop } from "./scim-maintenance.js"
 import { startCloudIdleStopLoop } from "./workers/cloud-lifecycle.js"
 import { startWorkerProvisioningReconcileLoop } from "./workers/reconciler.js"
 import { startGithubSyncWorker } from "./workers/github-sync.js"
+import { startGatewayUsageIdConversionLoop } from "./workers/gateway-usage-id-conversion.js"
 import { externalMcpClientRuntimeName } from "./capability-sources/external-mcp-client-runtime.js"
 import { startAutomationSchedulerLoop } from "./automations/scheduler-loop.js"
 import { startModelsAnalyticsExportLoop } from "./models-analytics-export.js"
@@ -19,6 +20,7 @@ const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopCloudIdleStopLoop = startCloudIdleStopLoop()
 const stopWorkerProvisioningReconcileLoop = startWorkerProvisioningReconcileLoop()
 const stopGithubSyncWorker = startGithubSyncWorker()
+const stopGatewayUsageIdConversionLoop = startGatewayUsageIdConversionLoop()
 const stopModelsAnalyticsExportLoop = startModelsAnalyticsExportLoop()
 const automationScheduler = startAutomationSchedulerLoop({ enabled: env.automations.runtimeEnabled })
 
@@ -86,6 +88,7 @@ async function stopBackgroundLoops() {
     stopCloudIdleStopLoop(),
     stopWorkerProvisioningReconcileLoop(),
     stopGithubSyncWorker(),
+    stopGatewayUsageIdConversionLoop(),
     automationScheduler.stop(),
   ])
 

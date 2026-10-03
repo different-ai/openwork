@@ -12,7 +12,7 @@ import { promisify } from "node:util"
 import mysql from "mysql2/promise"
 import { drizzle } from "drizzle-orm/mysql2"
 import { and, eq, inArray, sql } from "drizzle-orm"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import {
   createGatewayUsageLimits,
   reconcileGatewayUsageBatch,
@@ -294,19 +294,23 @@ dbTest("organization grants are unique, dynamic, tenant-scoped and retain all wi
 dbTest("organization assignment CHECK and unique index reject ambiguous and duplicate targets", async () => {
   const f = await fixture()
   const policy = await f.service.savePolicy(f.admin, f.body)
-  const base = { policyId: policy.id, organizationId: f.admin.organizationId, createdAt: new Date() }
+  const base = {
+    policyId: normalizeDenTypeId("gatewayUsagePolicy", policy.id),
+    organizationId: f.admin.organizationId,
+    createdAt: new Date(),
+  }
   for (const target of [
     { memberId: null, teamId: null, organization: null },
     { memberId: null, teamId: null, organization: false },
     { memberId: f.member.memberId, teamId: null, organization: true },
     { memberId: null, teamId: createDenTypeId("team"), organization: true },
     { memberId: f.member.memberId, teamId: createDenTypeId("team"), organization: null },
-  ]) await assert.rejects(f.db.insert(A).values({ ...base, ...target, id: randomUUID() }))
-  await f.db.insert(A).values({ ...base, id: randomUUID(), organization: true })
-  await assert.rejects(f.db.insert(A).values({ ...base, id: randomUUID(), organization: true }))
+  ]) await assert.rejects(f.db.insert(A).values({ ...base, ...target, id: createDenTypeId("gatewayUsageAssignment") }))
+  await f.db.insert(A).values({ ...base, id: createDenTypeId("gatewayUsageAssignment"), organization: true })
+  await assert.rejects(f.db.insert(A).values({ ...base, id: createDenTypeId("gatewayUsageAssignment"), organization: true }))
   for (const memberId of [f.admin.memberId, f.member.memberId])
-    await f.db.insert(A).values({ ...base, id: randomUUID(), memberId })
-  assert.equal((await f.db.select().from(A).where(eq(A.policyId, policy.id))).length, 3)
+    await f.db.insert(A).values({ ...base, id: createDenTypeId("gatewayUsageAssignment"), memberId })
+  assert.equal((await f.db.select().from(A).where(eq(A.policyId, base.policyId))).length, 3)
 })
 
 dbTest("organization transitions revoke stale extensions and pending resets without clearing spend", async () => {
@@ -686,11 +690,12 @@ dbTest(
   async () => {
     const f = await fixture()
     const p = await f.assigned()
+    const policyId = normalizeDenTypeId("gatewayUsagePolicy", p.id)
     const old = f.raw(41)
     const day = {
       ...projectedBucket(f.member, "day", old.started_at),
       id: randomUUID(),
-      policyId: p.id,
+      policyId,
       policyRevision: 1,
       usedMicroUsd: 500,
       baseAllowanceMicroUsd: 1000000,
@@ -717,7 +722,7 @@ dbTest(
       eventId: old.openwork_request_id,
       bucketId: day.id,
       amount: 41,
-      policyId: p.id,
+      policyId,
       policyRevision: 1,
     })
     await f.service.record(old)
@@ -733,7 +738,7 @@ dbTest(
       eventId: pending.openwork_request_id,
       bucketId: day.id,
       amount: 0,
-      policyId: p.id,
+      policyId,
       policyRevision: 1,
     })
     await f.service.record({ ...pending, cost_micro_usd: 3 })

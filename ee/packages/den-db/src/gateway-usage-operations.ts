@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { and, asc, eq, lte, or } from "drizzle-orm"
 import {
   gatewayUsageTimeframes,
@@ -118,7 +118,7 @@ export async function recoverGatewayUsageRequests(
         )
         if (changed)
           await tx.insert(H).values({
-            id: randomUUID(),
+            id: createDenTypeId("gatewayUsageAudit"),
             organizationId,
             actorId: input.actor.memberId,
             subjectId: requestId,
@@ -225,7 +225,7 @@ export async function rotateGatewayUsageEpoch(
               ),
             )
           await tx.insert(H).values({
-            id: randomUUID(),
+            id: createDenTypeId("gatewayUsageAudit"),
             organizationId: input.actor.organizationId,
             actorId: input.actor.memberId,
             subjectId: member.memberId,

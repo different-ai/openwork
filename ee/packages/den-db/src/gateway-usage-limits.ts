@@ -1,5 +1,12 @@
-import { randomUUID } from "node:crypto"
 import { and, asc, eq, isNull, or, sql } from "drizzle-orm"
+import {
+  createDenTypeId,
+  isDenTypeId,
+  isLegacyUuid,
+  normalizeDenTypeIdOrLegacyUuid,
+  type DenTypeId,
+  type DenTypeIdName,
+} from "@openwork-ee/utils/typeid"
 import {
   gatewaySafeMoney,
   gatewayUsdToMicroUsd,
@@ -22,6 +29,7 @@ import {
   currentUsage,
   readUsageStatus,
   usageFail as fail,
+  gatewayUsagePolicyRef,
   type GatewayUsageDb,
   type GatewayUsageScope,
   type UsageTx,
@@ -37,11 +45,18 @@ import {
   GatewayUsageBucketTable as B,
   GatewayUsageResetTable as R,
   GatewayUsageAuditTable as H,
+  type GatewayUsageAssignmentId,
+  type GatewayUsagePolicyId,
+  type GatewayUsageResetRequestId,
 } from "./schema/gateway-usage-limits"
 
 export { GatewayUsageError, safeUsageDatabaseCode } from "./gateway-usage-errors"
 export { withGatewayUsageEntitlementMutation } from "./gateway-usage-entitlements"
 export { deleteGatewayUsageForOrganization } from "./gateway-usage-erasure"
+export {
+  convertGatewayUsageLegacyIds,
+  type GatewayUsageLegacyIdConversion,
+} from "./gateway-usage-legacy-ids"
 export { reconcileGatewayUsageBatch } from "./gateway-usage-reconciliation"
 export { listPendingGatewayUsageRequests, recoverGatewayUsageRequests, rotateGatewayUsageEpoch } from "./gateway-usage-operations"
 export {
@@ -51,6 +66,16 @@ export {
   fenceUsageOrganizationDeletion,
 } from "./gateway-usage-lifecycle"
 export type { GatewayUsageDb, GatewayUsageScope, GatewayUsageSnapshot } from "./gateway-usage-read"
+
+/** Parses an ID at the service boundary; TypeIDs and pre-TypeID UUIDs are both accepted. */
+function parseUsageId<TName extends DenTypeIdName>(name: TName, value: string): DenTypeId<TName> | null {
+  return isDenTypeId(name, value) || isLegacyUuid(value)
+    ? normalizeDenTypeIdOrLegacyUuid(name, value)
+    : null
+}
+function policyIdOrFail(value: string): GatewayUsagePolicyId {
+  return parseUsageId("gatewayUsagePolicy", value) ?? fail("policy_not_found", 404, "Policy not found.")
+}
 
 export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new Date()) {
   async function transaction<T>(run: (tx: UsageTx, now: Date) => Promise<T>): Promise<T> {
@@ -72,7 +97,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     now: Date,
   ) {
     await tx.insert(H).values({
-      id: randomUUID(),
+      id: createDenTypeId("gatewayUsageAudit"),
       organizationId: scope.organizationId,
       actorId: scope.memberId,
       subjectId,
@@ -81,7 +106,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
       createdAt: now,
     })
   }
-  async function policyById(tx: UsageTx, scope: GatewayUsageScope, id: string) {
+  async function policyById(tx: UsageTx, scope: GatewayUsageScope, id: GatewayUsagePolicyId) {
     const [policy] = await tx
       .select()
       .from(P)
@@ -90,7 +115,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     if (!policy) return fail("policy_not_found", 404, "Policy not found.")
     return policy
   }
-  async function policyView(tx: UsageTx, scope: GatewayUsageScope, id: string) {
+  async function policyView(tx: UsageTx, scope: GatewayUsageScope, id: GatewayUsagePolicyId) {
     const policy = (await usagePolicies(tx, scope.organizationId)).find((row) => row.id === id)
     if (!policy) return fail("policy_not_found", 404, "Policy not found.")
     return policy
@@ -142,12 +167,13 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         return { policies: await usagePolicies(tx, scope.organizationId) }
       })
     },
-    savePolicy(
+    async savePolicy(
       scope: GatewayUsageScope,
       input: GatewayUsagePolicyWrite,
-      id?: string,
+      existingId?: string,
       revision?: number,
     ) {
+      const id = existingId === undefined ? undefined : policyIdOrFail(existingId)
       return transaction(async (tx, now) => {
         const members = id ? await usagePolicyMembers(tx, scope.organizationId, id) : []
         return withGatewayUsageEntitlementMutation(
@@ -155,7 +181,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           scope.organizationId,
           async () => {
             await activeUsageMember(tx, scope, true, true)
-            const policyId = id ?? randomUUID()
+            const policyId = id ?? createDenTypeId("gatewayUsagePolicy")
             const previous = id ? await policyById(tx, scope, id) : null
             if (previous && (previous.archivedAt || previous.revision !== revision))
               return fail("policy_revision_conflict", 409, "Policy changed. Reload before editing.")
@@ -202,7 +228,8 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         )
       })
     },
-    archivePolicy(scope: GatewayUsageScope, id: string, revision: number) {
+    async archivePolicy(scope: GatewayUsageScope, policyId: string, revision: number) {
+      const id = policyIdOrFail(policyId)
       return transaction(async (tx, now) =>
         withGatewayUsageEntitlementMutation(
           tx,
@@ -230,7 +257,8 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         ),
       )
     },
-    restorePolicy(scope: GatewayUsageScope, id: string, revision: number) {
+    async restorePolicy(scope: GatewayUsageScope, policyId: string, revision: number) {
+      const id = policyIdOrFail(policyId)
       return transaction(async (tx, now) =>
         withGatewayUsageEntitlementMutation(
           tx,
@@ -258,14 +286,15 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         ),
       )
     },
-    assign(
+    async assign(
       scope: GatewayUsageScope,
-      policyId: string,
+      rawPolicyId: string,
       target:
         | { organization: true }
         | { memberId: GatewayUsageScope["memberId"] }
         | { teamId: typeof TeamTable.$inferSelect.id },
     ) {
+      const policyId = policyIdOrFail(rawPolicyId)
       return transaction(async (tx, now) => {
         await lockUsageOrganization(tx, scope.organizationId)
         const members =
@@ -311,7 +340,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
             await tx
               .insert(A)
               .values({
-                id: randomUUID(),
+                id: createDenTypeId("gatewayUsageAssignment"),
                 policyId,
                 organizationId: scope.organizationId,
                 memberId,
@@ -328,7 +357,12 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         )
       })
     },
-    unassign(scope: GatewayUsageScope, policyId: string, assignmentId: string) {
+    async unassign(scope: GatewayUsageScope, rawPolicyId: string, rawAssignmentId: string) {
+      const policyId = policyIdOrFail(rawPolicyId)
+      const assignmentId: GatewayUsageAssignmentId | null = parseUsageId(
+        "gatewayUsageAssignment",
+        rawAssignmentId,
+      )
       return transaction(async (tx, now) =>
         withGatewayUsageEntitlementMutation(
           tx,
@@ -336,16 +370,24 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           async () => {
             await activeUsageMember(tx, scope, true, true)
             await policyById(tx, scope, policyId)
-            await tx
-              .delete(A)
-              .where(
-                and(
-                  eq(A.id, assignmentId),
-                  eq(A.policyId, policyId),
-                  eq(A.organizationId, scope.organizationId),
-                ),
-              )
-            await audit(tx, scope, policyId, "policy_unassigned", { assignmentId }, now)
+            if (assignmentId)
+              await tx
+                .delete(A)
+                .where(
+                  and(
+                    eq(A.id, assignmentId),
+                    eq(A.policyId, policyId),
+                    eq(A.organizationId, scope.organizationId),
+                  ),
+                )
+            await audit(
+              tx,
+              scope,
+              policyId,
+              "policy_unassigned",
+              { assignmentId: assignmentId ?? rawAssignmentId },
+              now,
+            )
             return policyView(tx, scope, policyId)
           },
           await usagePolicyMembers(tx, scope.organizationId, policyId),
@@ -434,7 +476,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         await tx
           .update(B)
           .set({
-            policyId: view.policyId,
+            policyId: gatewayUsagePolicyRef(view.policyId),
             policyName: view.policyName,
             policyRevision: view.policyRevision,
             baseAllowanceMicroUsd: view.baseAllowanceMicroUsd,
@@ -446,10 +488,10 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         if (view.policyRevision === undefined)
           return fail("policy_revision_missing", 503, "Policy revision missing.")
         const row: typeof R.$inferSelect = {
-          id: randomUUID(),
+          id: createDenTypeId("gatewayUsageResetRequest"),
           ...scope,
           bucketId,
-          policyId: view.policyId,
+          policyId: gatewayUsagePolicyRef(view.policyId),
           policyRevision: view.policyRevision,
           timeframe: view.timeframe,
           policyName: view.policyName,
@@ -476,12 +518,15 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         return readGatewayUsageResetPage(tx, scope, own, options, now)
       })
     },
-    reviewReset(
+    async reviewReset(
       scope: GatewayUsageScope,
-      id: string,
+      requestId: string,
       decision: "approved" | "denied",
       denialNote?: string,
     ) {
+      const id: GatewayUsageResetRequestId =
+        parseUsageId("gatewayUsageResetRequest", requestId) ??
+        fail("reset_not_found", 404, "Increase request not found.")
       return transaction(async (tx, now) => {
         const [subject] = await tx
           .select({ memberId: R.memberId })

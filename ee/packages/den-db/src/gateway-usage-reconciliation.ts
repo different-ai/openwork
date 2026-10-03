@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { and, eq, gte, lt, or, sql } from "drizzle-orm"
 import { gatewaySafeMoney, gatewayUsageTimeframes } from "@openwork/types/den/gateway-usage-limits"
 import { GatewayRequestLogTable as Log } from "./schema/inference"
@@ -216,7 +216,7 @@ async function reconcileOne(
   await tx.update(Log).set({ metadata: attributed.metadata }).where(eq(Log.id, row.id))
   await settleGatewayUsage(tx, attributed, new Date())
   await tx.insert(H).values({
-    id: randomUUID(),
+    id: createDenTypeId("gatewayUsageAudit"),
     organizationId: input.actor.organizationId,
     actorId: input.actor.memberId,
     subjectId: entry.requestId,

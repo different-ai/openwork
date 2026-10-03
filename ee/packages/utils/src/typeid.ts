@@ -121,6 +121,10 @@ export const idTypesMapNameToPrefix = {
   auditOperation: "aop",
   auditEventResource: "aer",
   auditUsageFact: "auf",
+  gatewayUsagePolicy: "gulp",
+  gatewayUsageAssignment: "gula",
+  gatewayUsageResetRequest: "gurr",
+  gatewayUsageAudit: "guae",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix
@@ -296,4 +300,36 @@ export function isDenTypeId<TName extends DenTypeIdName>(
   value: unknown,
 ): value is DenTypeId<TName> {
   return typeId.validator(name, value)
+}
+
+const LEGACY_UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** MySQL `REGEXP` pattern matching the same legacy UUID shape as `isLegacyUuid`. */
+export const LEGACY_UUID_SQL_PATTERN =
+  "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+
+/** True for a plain RFC 4122-shaped UUID, as stored by rows created before a table adopted TypeIDs. */
+export function isLegacyUuid(value: string): boolean {
+  return LEGACY_UUID_REGEX.test(value)
+}
+
+/**
+ * Re-encodes a legacy UUID as the TypeID with the same 128-bit value. The
+ * mapping is lossless and deterministic, so every process converting the same
+ * UUID arrives at the same TypeID.
+ */
+export function denTypeIdFromLegacyUuid<TName extends DenTypeIdName>(
+  name: TName,
+  uuid: string,
+): DenTypeId<TName> {
+  if (!isLegacyUuid(uuid)) throw new Error("Expected a legacy UUID")
+  return TypeID.fromUUID(idTypesMapNameToPrefix[name], uuid.toLowerCase()).toString() as DenTypeId<TName>
+}
+
+/** Normalizes a TypeID, converting a legacy UUID for the same entity first. */
+export function normalizeDenTypeIdOrLegacyUuid<TName extends DenTypeIdName>(
+  name: TName,
+  value: string,
+): DenTypeId<TName> {
+  return isLegacyUuid(value) ? denTypeIdFromLegacyUuid(name, value) : normalizeDenTypeId(name, value)
 }
