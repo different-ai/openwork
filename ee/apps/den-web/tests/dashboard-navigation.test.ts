@@ -87,7 +87,6 @@ describe("dashboard navigation index", () => {
     expect(buildFor("admin").find((section) => section.label === "Manage")?.items.map((item) => item.label)).toEqual([
       "Plugins",
       "Connectors",
-      "Dashboards",
       "AI Gateway",
       "Desktop policies",
     ]);

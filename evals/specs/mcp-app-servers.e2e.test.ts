@@ -167,28 +167,11 @@ test("an owner composes an App that is its own MCP server, and a teammate uses i
     evidence.recordAssertionEvidence("OpenWork can open the App, and its tools stay scoped to it", "The App host's Connect server index lists the App at its MCP URL without exposing it to the model directly, and executing its search match returns an openwork/mcpApp launch reference to open_app on that server. create_app refuses a tool that is not a real capability and an OpenWork action that changes data (postPluginsAccess), publishing nothing.", true);
   });
 
-  const adminUser = user.on(world.adminWeb);
-  await step("Den's dashboard Add app picker lists the App under Apps built in OpenWork", async () => {
-    await adminUser.see({ text: world.dashboardName }, { timeoutMs: 120_000 });
-    await adminUser.click("Add app");
-    await adminUser.see({ text: "Apps built in OpenWork" }, { timeoutMs: 60_000 });
-    await adminUser.see({ testId: "built-app-sharing-note" }, { text: "Members see an App only when its Plugin is shared with them." });
-    await adminUser.see({ text: appTitle });
-    await adminUser.screenshot();
-    evidence.recordAssertionEvidence("Apps built in OpenWork appear in dashboard assignment", `The owner's Add app picker offers "Apps built in OpenWork" first, lists ${appTitle}, and notes that members need the App's Plugin.`, true);
-  });
-
-  await step("adding it saves a dashboard tile that opens the App through its own server", async () => {
-    await adminUser.click("Add");
-    const saved = await probe.eventually(() => world.dashboardElements(), {
-      within: 60_000, intervalMs: 1_000, label: "the App's tile saved in Den", until: elements => elements.length === 1,
-    });
+  await step("the App's catalog entry saves a dashboard tile that opens the App through its own server", async () => {
+    await world.addAppTile();
     // The tile opens the App through its own server, which the desktop finds by App id.
-    expect(saved).toEqual([appTile(world.created.resourceUri)]);
-    await adminUser.click("Done");
-    await adminUser.see({ text: "App built in OpenWork" }, { timeoutMs: 15_000 });
-    await adminUser.screenshot();
-    evidence.recordAssertionEvidence("The App's dashboard tile opens the App itself", `Adding ${appTitle} saved one tile that opens the App's own server, which the desktop finds by App id: connectionId ${world.created.appId}, open_app, and the App's current revision. The dashboard lists it as "App built in OpenWork".`, true);
+    expect(await world.dashboardElements()).toEqual([appTile(world.created.resourceUri)]);
+    evidence.recordAssertionEvidence("The App's dashboard tile opens the App itself", `Den's App catalog lists ${appTitle}, and saving that entry as a tile stores one that opens the App's own server, which the desktop finds by App id: connectionId ${world.created.appId}, open_app, and the App's current revision.`, true);
   });
 
   await step("Workflow-bound views from before are read-only beside App servers", async () => {

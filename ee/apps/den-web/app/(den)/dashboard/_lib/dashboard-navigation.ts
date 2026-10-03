@@ -4,7 +4,6 @@ import {
   CalendarClock,
   Globe,
   Laptop,
-  LayoutDashboard,
   LibraryBig,
   LockKeyhole,
   ScrollText,
@@ -26,7 +25,6 @@ import {
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
   getLibraryRoute,
-  getManagedDashboardsRoute,
   getMarketplacesRoute,
   getMcpConnectionsRoute,
   getMembersRoute,
@@ -105,9 +103,6 @@ export function buildDashboardNavSections({
     ? [
         { href: getPluginsRoute(orgSlug), label: "Plugins", icon: Box },
         { href: getMcpConnectionsRoute(orgSlug), label: "Connectors", icon: Plug, badge: "MCPs" },
-        ...(capabilities.orgManagedDashboards
-          ? [{ href: getManagedDashboardsRoute(orgSlug), label: "Dashboards", icon: LayoutDashboard }]
-          : []),
         { href: getAiGatewayRoute(orgSlug), label: "AI Gateway", icon: Sparkles },
         { href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop },
       ]

@@ -53,7 +53,6 @@ describe("Den org sidebar information architecture", () => {
       expect(badge).toContain("border border-gray-200 bg-white");
       expect(badge).toContain("text-gray-600");
     }
-    const managedDashboards = indexOfNeedle('label: "Dashboards"');
     const aiGateway = indexOfNeedle('label: "AI Gateway"');
     const desktopPolicies = indexOfNeedle('label: "Desktop policies"');
     const workSection = indexOfNeedle('{ label: "Work", items: workItems }');
@@ -62,8 +61,7 @@ describe("Den org sidebar information architecture", () => {
     const teamSection = indexOfNeedle('{ label: "Team", items: teamItems }');
 
     expect(plugins).toBeLessThan(connectors);
-    expect(connectors).toBeLessThan(managedDashboards);
-    expect(managedDashboards).toBeLessThan(aiGateway);
+    expect(connectors).toBeLessThan(aiGateway);
     expect(aiGateway).toBeLessThan(desktopPolicies);
     expect(workSection).toBeLessThan(manageSection);
     expect(manageSection).toBeLessThan(observabilitySection);
