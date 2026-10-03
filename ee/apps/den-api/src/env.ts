@@ -160,6 +160,8 @@ const EnvSchema = z.object({
   DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: z.string().optional(),
   DEN_APP_MCP_SERVERS_ENABLED: z.string().optional(),
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
+  LIFECYCLE_EMAILS_ENABLED: z.string().optional(),
+  LIFECYCLE_EMAILS_INTERVAL_MS: z.string().optional(),
   POLAR_FEATURE_GATE_ENABLED: z.string().optional(),
   POLAR_API_BASE: z.string().optional(),
   POLAR_ACCESS_TOKEN: z.string().optional(),
@@ -713,6 +715,12 @@ export const env = {
   generatedArtifactViewsEnabled,
   appMcpServersEnabled,
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
+  // Lifecycle reminder emails (claim reminder, team nudge). Off unless
+  // LIFECYCLE_EMAILS_ENABLED=1 so self-hosted deployments opt in explicitly.
+  lifecycleEmails: {
+    enabled: parsed.LIFECYCLE_EMAILS_ENABLED?.trim() === "1",
+    intervalMs: Number(parsed.LIFECYCLE_EMAILS_INTERVAL_MS ?? "900000"),
+  },
   requireEmailVerification,
   passwordBreachScreeningEnabled,
   github: {

@@ -855,6 +855,13 @@
       "when": 1791004073865,
       "tag": "0122_remote_session_targets",
       "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "5",
+      "when": 1791052490190,
+      "tag": "0123_lifecycle_emails",
+      "breakpoints": true
     }
   ]
 }

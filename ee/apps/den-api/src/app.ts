@@ -25,6 +25,7 @@ import { createRequestAccessLogMiddleware, createTelemetryErrorSanitizerMiddlewa
 import { registerAdminRoutes } from "./routes/admin/index.js"
 import { registerAuthRoutes } from "./routes/auth/index.js"
 import { registerBootstrapRoutes } from "./routes/bootstrap/index.js"
+import { registerEmailRoutes } from "./routes/email/index.js"
 import { registerCloudRoutes } from "./routes/cloud/index.js"
 import { registerDeprecatedMemoryRoutes } from "./routes/deprecated-memory.js"
 import { registerDeprecatedSkillHubRoutes } from "./routes/deprecated-skill-hubs.js"
@@ -270,6 +271,7 @@ app.get(
 registerAdminRoutes(app)
 registerAuthRoutes(app)
 registerBootstrapRoutes(app)
+registerEmailRoutes(app)
 registerCloudRoutes(app)
 registerDeprecatedMemoryRoutes(app)
 registerDeprecatedSkillHubRoutes(app)

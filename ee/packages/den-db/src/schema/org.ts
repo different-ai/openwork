@@ -151,6 +151,9 @@ export const WorkspaceBootstrapTable = mysqlTable(
     agentUserId: denTypeIdColumn("user", "agent_user_id"),
     assertionJti: varchar("assertion_jti", { length: 64 }),
     credentialsRevokedAt: timestamp("credentials_revoked_at", { fsp: 3 }),
+    // Optional address the person gave the setup agent. Only used to prefill
+    // the claim page and to send one claim reminder before the workspace expires.
+    ownerEmail: varchar("owner_email", { length: 255 }),
   },
   (table) => [
     index("workspace_bootstrap_organization_id").on(table.organizationId),

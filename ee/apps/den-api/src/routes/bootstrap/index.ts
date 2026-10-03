@@ -192,7 +192,7 @@ function requestAddress(headers: Headers) {
   return forwarded || headers.get("x-real-ip")?.trim() || "unknown"
 }
 
-function claimUrl(token: string, options?: { prefillEmail?: string | null; inviteEmails?: readonly string[] | null }) {
+export function claimUrl(token: string, options?: { prefillEmail?: string | null; inviteEmails?: readonly string[] | null }) {
   let url = `${env.betterAuthUrl}/workspace-claim?token=${encodeURIComponent(token)}`
   if (options?.prefillEmail) {
     url += `&email=${encodeURIComponent(options.prefillEmail)}`
@@ -394,6 +394,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
           expiresAt,
           agentUserId: agentUser.id,
           assertionJti,
+          ownerEmail: input.ownerEmail ?? null,
         })
 
         await tx.insert(PluginTable).values({
