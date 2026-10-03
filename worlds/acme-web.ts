@@ -101,6 +101,19 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: 
       if (!web.restartServer) throw new Error("This web runtime was not started by the world and cannot be restarted");
       await web.restartServer();
       await signIn();
+      // The open app tab can make the new server start its engine before the
+      // sign-in above; reload the engine so it connects with the session.
+      const headers = { authorization: `Bearer ${web.manifest.token}`, "content-type": "application/json" };
+      const listed = await fetch(`${web.manifest.openworkUrl}/workspaces`, { headers, signal: AbortSignal.timeout(30_000) });
+      if (!listed.ok) throw new Error(`Listing workspaces after restart failed: HTTP ${listed.status}`);
+      const body: unknown = await listed.json();
+      const items = typeof body === "object" && body !== null && "items" in body && Array.isArray(body.items) ? body.items : [];
+      for (const item of items) {
+        const id = typeof item === "object" && item !== null && "id" in item && typeof item.id === "string" ? item.id : "";
+        if (!id) continue;
+        const reloaded = await fetch(`${web.manifest.openworkUrl}/workspace/${encodeURIComponent(id)}/engine/reload`, { method: "POST", headers, signal: AbortSignal.timeout(60_000) });
+        if (!reloaded.ok) throw new Error(`Engine reload after restart failed: HTTP ${reloaded.status}`);
+      }
     } };
 }
 
