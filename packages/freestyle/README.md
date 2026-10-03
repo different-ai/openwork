@@ -22,7 +22,8 @@ can later change without changing capture or fork APIs.
 Checkpoints are explicit and never part of the proof:
 
 - A spec saves one with `user.checkpoint(caption?)` or `step(name, fn, { checkpoint: true })`.
-  Tests tagged `checkpoints` also keep their end state. `user.screenshot()` never saves one.
+  Tests tagged `checkpoints` also keep their start state (the world as launched
+  for the commit, before the body acts) and their end state. `user.screenshot()` never saves one.
 - They run only with `--checkpoints`, on a world that advertises the capability
   (`checkpointCapability` from `@openwork/env`). Only Freestyle-backed worlds do;
   anywhere else the run prints one warning and continues unchanged.

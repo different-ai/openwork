@@ -7,7 +7,7 @@ const common = {
   testTimeout: 120_000,
   // Tags are explicit opt-ins that CI reads; strictTags rejects unknown ones.
   tags: [
-    { name: "checkpoints", description: "Save the world's end state (and marked steps) as reopenable checkpoints when run with --checkpoints on a world that can capture." },
+    { name: "checkpoints", description: "Save the world's start and end states (and marked steps) as reopenable checkpoints when run with --checkpoints on a world that can capture." },
     { name: "user-flow", description: "A person goes through the real UI; every step is a click or typed input that ends with a screenshot of what they see." },
     { name: "agent-flow", description: "The actor is an agent, an MCP client or a server; the proof is the requests and responses." },
   ],

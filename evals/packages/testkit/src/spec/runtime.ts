@@ -369,6 +369,11 @@ export class SpecRuntime {
     return result;
   }
 
+  /** Tagged tests keep the world as launched, before the body acts, so it can be reopened as a clean start. */
+  async checkpointStartState(): Promise<void> {
+    await this.checkpoint(this.primary, "Start state", true);
+  }
+
   /** Tagged tests keep their end state, unless nothing changed since the last checkpoint. */
   async checkpointEndState(): Promise<void> {
     if (!this.#actedSinceCheckpoint) return;
