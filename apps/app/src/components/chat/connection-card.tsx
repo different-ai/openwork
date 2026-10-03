@@ -54,7 +54,7 @@ function ServiceMark({ name, iconUrl }: { name: string; iconUrl: string | null |
  * labels (C1/T4); blocked states are neutral with a lock (C5); the raw failure
  * lives behind an icon-only disclosure (T2/P3).
  */
-export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectScope, connectorIdentities, allowDiscovery = false }: {
+export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectScope, connectorIdentities, allowDiscovery = false, subject }: {
   callbacks?: ChatToolReconnectCallbacks
   part: DynamicToolUIPart
   reconnectCallbacks?: ChatToolReconnectCallbacks
@@ -62,6 +62,8 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   connectorIdentities?: ConnectorToolIdentity[]
   /** Read the connection from ordinary discovery too; only for a bound native question. */
   allowDiscovery?: boolean
+  /** What the sign-in unlocks, such as an App's title: the card then asks to "Sign in to X to use it". */
+  subject?: string
 }) {
   const messageList = useOptionalMessageList()
   const found = connectionFromChatToolPart(part, { allowDiscovery })
@@ -95,14 +97,18 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   const failed = !settled && reconnectState === "failed"
   const blocked = !settled && !action
   const verb = action?.label ?? "Connect"
+  const again = connection.state === "reauth_required"
+  const idleTitle = subject && action ? `Sign in to ${name}${again ? " again" : ""} to use ${subject}`
+    : decisionAvailable ? `${verb} ${name} to continue` : `${verb} ${name}`
   const title = skipped ? `Skipped ${name}`
     : connected ? `${name} connected`
     : blocked ? blockedTitle(connection)
     : opening ? `Signing in to ${name}…`
     : waiting ? `Finish signing in to ${name} in your browser`
     : failed ? `${name} sign-in didn't finish`
-    : decisionAvailable ? `${verb} ${name} to continue` : `${verb} ${name}`
-  const primaryLabel = waiting ? "Open sign-in again" : failed ? "Try again" : decisionAvailable ? "Authenticate" : verb
+    : idleTitle
+  const primaryLabel = waiting ? "Open sign-in again" : failed ? "Try again" : decisionAvailable ? "Authenticate"
+    : subject ? again ? "Sign in again" : "Sign in" : verb
   const actionable = !readOnly && (!settled || decisionAvailable)
   const showDetails = actionable && Boolean(reconnectError)
 

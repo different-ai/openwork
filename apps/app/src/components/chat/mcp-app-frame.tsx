@@ -21,6 +21,7 @@ import {
 } from "@/app/lib/openwork-server"
 import { useOptionalMessageList } from "./message-list-provider"
 import { createMcpAppActions, type McpAppOrigin } from "./mcp-app-origin"
+import { McpAppSignInPrompts, useMcpAppSignIn } from "./mcp-app-sign-in"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { t } from "@/i18n"
@@ -357,6 +358,9 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, toolName, i
   onErrorRef.current = onError
   const onReadyRef = useRef(onReady)
   onReadyRef.current = onReady
+  const signIn = useMcpAppSignIn(result)
+  const reportToolResultRef = useRef(signIn.reportToolResult)
+  reportToolResultRef.current = signIn.reportToolResult
   const toolDeliveryRef = useRef({ inputArguments, result })
   const deliverToolDataRef = useRef<(() => Promise<void>) | null>(null)
   const replacementInput = updateMode === "replace" ? inputArguments : null
@@ -526,8 +530,11 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, toolName, i
           if (disposed || failed) throw new Error("This artifact view has closed or changed.")
         }
         const userInteraction = _meta?.["openwork/userInteraction"] === true
-        if (connectionController) return await connectionController.callTool(actions, app, name, args, userInteraction)
-        return standardMcpToolResult(await actions.callTool(name, args, userInteraction))
+        const toolResult = connectionController
+          ? await connectionController.callTool(actions, app, name, args, userInteraction)
+          : standardMcpToolResult(await actions.callTool(name, args, userInteraction))
+        if (!disposed && !failed) reportToolResultRef.current(toolResult)
+        return toolResult
       } catch (cause) {
         if (cause instanceof OpenworkServerError && ["missing_launch_context", "stale_launch_context", "inactive_session"].includes(cause.code)) {
           fail("MCP_APP_LAUNCH_CONTEXT_STALE", "resource-resolution", cause, "Reopen the artifact in its original conversation before trying again.")
@@ -756,29 +763,38 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, toolName, i
     }
   }, [app, replacementInput, openworkServerClient, replacementResult, toolName, workspaceId, readOnly, origin, origin.sessionId, origin.engine, presentation, updateMode, connectionController, retryAttempt, resolveLiveActions])
 
-  if (error) return <McpAppDiagnosticNotice error={error} notice={unavailableNotice} onRetry={onRetry ?? (() => {
+  const reload = onRetry ?? (() => {
     setError(null)
     setRetryAttempt((attempt) => attempt + 1)
-  })} />
+  })
+  if (error) return <McpAppDiagnosticNotice error={error} notice={unavailableNotice} onRetry={reload} />
   return (
-    <div
-      className={cn(
-        presentation === "dashboard" ? "overflow-hidden" : "mt-3 overflow-hidden rounded-xl bg-background",
-        presentation !== "dashboard" && app.prefersBorder && "border border-border",
-      )}
-      data-mcp-app-resource={app.resourceUri}
-    >
-      <iframe
-        ref={iframeRef}
-        title={`${toolName} interactive view`}
-        sandbox="allow-scripts"
-        referrerPolicy="no-referrer"
-        className="block w-full border-0 bg-transparent"
-        inert={readOnly && Boolean(resolveLiveActions) || undefined}
-        aria-busy={readOnly && Boolean(resolveLiveActions) || undefined}
-        style={{ height: normalizeMcpAppHeight(height, MIN_HEIGHT) }}
-      />
-    </div>
+    <>
+      <McpAppSignInPrompts prompts={signIn.prompts} appTitle={signIn.appTitle} scope={app.resourceUri}
+        className={presentation === "dashboard" ? undefined : "mt-3"}
+        onSignedIn={(connectionId) => {
+          signIn.signedIn(connectionId)
+          reload()
+        }} />
+      <div
+        className={cn(
+          presentation === "dashboard" ? "overflow-hidden" : "mt-3 overflow-hidden rounded-xl bg-background",
+          presentation !== "dashboard" && app.prefersBorder && "border border-border",
+        )}
+        data-mcp-app-resource={app.resourceUri}
+      >
+        <iframe
+          ref={iframeRef}
+          title={`${toolName} interactive view`}
+          sandbox="allow-scripts"
+          referrerPolicy="no-referrer"
+          className="block w-full border-0 bg-transparent"
+          inert={readOnly && Boolean(resolveLiveActions) || undefined}
+          aria-busy={readOnly && Boolean(resolveLiveActions) || undefined}
+          style={{ height: normalizeMcpAppHeight(height, MIN_HEIGHT) }}
+        />
+      </div>
+    </>
   )
 }
 
