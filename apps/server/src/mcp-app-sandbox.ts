@@ -11,7 +11,7 @@ function sourceList(values: string[], fallback: string): string {
   return values.length ? values.join(" ") : fallback;
 }
 
-function safeOrigin(value: unknown): value is string {
+function safeOrigin(value: unknown, allowWebSocket: boolean): value is string {
   if (typeof value !== "string"
     || /\s/u.test(value)
     || value.includes(";")
@@ -19,7 +19,8 @@ function safeOrigin(value: unknown): value is string {
     || value.includes(String.fromCharCode(34))) return false;
   try {
     const url = new URL(value);
-    return (url.protocol === "https:" || url.protocol === "http:") && url.origin === value;
+    const schemes = allowWebSocket ? ["https:", "http:", "wss:", "ws:"] : ["https:", "http:"];
+    return schemes.includes(url.protocol) && url.origin === value;
   } catch {
     return false;
   }
@@ -32,7 +33,7 @@ export function parseMcpAppSandboxCsp(value: string | null): McpAppSandboxCsp {
   try {
     const parsed = JSON.parse(value) as Partial<Record<keyof McpAppSandboxCsp, unknown>>;
     const domains = (key: keyof McpAppSandboxCsp) => Array.isArray(parsed[key])
-      ? parsed[key].filter(safeOrigin).slice(0, 16)
+      ? parsed[key].filter((domain) => safeOrigin(domain, key === "connectDomains")).slice(0, 16)
       : [];
     return {
       connectDomains: domains("connectDomains"),

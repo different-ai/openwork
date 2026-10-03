@@ -257,13 +257,15 @@ export function toolUiResourceUri(tool: Partial<Tool>): string | null {
   return uri;
 }
 
-function safeDomain(value: unknown): string | null {
+// connectDomains also covers WebSocket connections, so it may list wss:
+// origins (and ws: on loopback), as in the MCP Apps spec's own example.
+function safeDomain(value: unknown, allowWebSocket: boolean): string | null {
   if (typeof value !== "string" || value.length > 2048) return null;
   try {
     const url = new URL(value);
     if (url.username || url.password || url.pathname !== "/" || url.search || url.hash) return null;
-    if (url.protocol === "https:") return url.origin;
-    if (url.protocol === "http:" && isLoopbackHostname(url.hostname)) return url.origin;
+    if (url.protocol === "https:" || (allowWebSocket && url.protocol === "wss:")) return url.origin;
+    if ((url.protocol === "http:" || (allowWebSocket && url.protocol === "ws:")) && isLoopbackHostname(url.hostname)) return url.origin;
   } catch {
     return null;
   }
@@ -274,14 +276,19 @@ function isLoopbackHostname(hostname: string): boolean {
   return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]";
 }
 
-function domainList(value: unknown): string[] {
+function domainList(value: unknown, allowWebSocket = false): string[] {
   if (!Array.isArray(value) || value.length > 16) {
     if (value === undefined) return [];
     throw new McpAppHostError("invalid_resource_csp", "MCP App CSP domain lists must contain at most 16 origins.");
   }
-  const domains = value.map(safeDomain);
+  const domains = value.map((domain) => safeDomain(domain, allowWebSocket));
   if (domains.some((domain) => domain === null)) {
-    throw new McpAppHostError("invalid_resource_csp", "MCP App CSP domains must be HTTPS origins (or loopback HTTP origins).");
+    throw new McpAppHostError(
+      "invalid_resource_csp",
+      allowWebSocket
+        ? "MCP App CSP connect domains must be HTTPS or WSS origins (or loopback HTTP or WS origins)."
+        : "MCP App CSP domains must be HTTPS origins (or loopback HTTP origins).",
+    );
   }
   return Array.from(new Set(domains as string[]));
 }
@@ -299,7 +306,7 @@ function resourcePresentationMeta(value: unknown): { csp: McpAppCsp; prefersBord
   }
   return {
     csp: {
-      connectDomains: domainList(csp.connectDomains),
+      connectDomains: domainList(csp.connectDomains, true),
       resourceDomains: domainList(csp.resourceDomains),
       frameDomains: domainList(csp.frameDomains),
       baseUriDomains: domainList(csp.baseUriDomains),

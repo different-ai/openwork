@@ -920,6 +920,26 @@ describe("MCP Apps host transport", () => {
     })).rejects.toMatchObject({ code: "invalid_resource" });
   });
 
+  test("accepts WebSocket origins in connectDomains only", async () => {
+    const { config, root, setResourceMeta } = await configuredFixture("openwork-mcp-app-host-ws-");
+    const input = { serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, projectedToolName: "fixture_render_fixture" };
+    setResourceMeta({ ui: { csp: { connectDomains: ["wss://realtime.example", "ws://localhost:3000", "ws://127.0.0.1:3000"] } } });
+    expect((await resolveMcpAppResource(input))?.csp.connectDomains).toEqual([
+      "wss://realtime.example",
+      "ws://localhost:3000",
+      "ws://127.0.0.1:3000",
+    ]);
+    for (const csp of [
+      { connectDomains: ["ws://realtime.example"] },
+      { resourceDomains: ["wss://static.example"] },
+      { frameDomains: ["wss://frame.example"] },
+      { baseUriDomains: ["wss://base.example"] },
+    ]) {
+      setResourceMeta({ ui: { csp } });
+      await expect(resolveMcpAppResource(input)).rejects.toMatchObject({ code: "invalid_resource_csp" });
+    }
+  });
+
   test("preserves an unreachable provider error for host diagnostics", async () => {
     const { config, root } = await configuredFixture("openwork-mcp-app-host-unreachable-");
     await stops.pop()?.();

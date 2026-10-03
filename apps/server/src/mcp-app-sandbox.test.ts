@@ -494,6 +494,18 @@ describe("MCP Apps sandbox proxy policy", () => {
     expect(csp).not.toContain("bad.example");
   });
 
+  test("keeps WebSocket origins for connect-src only", () => {
+    const csp = buildMcpAppSandboxCsp(parseMcpAppSandboxCsp(JSON.stringify({
+      connectDomains: ["https://api.example.com", "wss://realtime.example.com", "ws://localhost:3000"],
+      resourceDomains: ["wss://static.example.com"],
+      frameDomains: ["wss://frame.example.com"],
+      baseUriDomains: [],
+    })));
+    expect(csp).toContain("connect-src https://api.example.com wss://realtime.example.com ws://localhost:3000;");
+    expect(csp).not.toContain("static.example.com");
+    expect(csp).not.toContain("frame.example.com");
+  });
+
   test("serves the proxy unauthenticated with an HTTP CSP header", async () => {
     const { startServer } = await import("./server.js");
     const root = await mkdtemp(join(tmpdir(), "openwork-mcp-app-sandbox-"));
