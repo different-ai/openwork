@@ -1521,7 +1521,8 @@ async function previewMarketplace(target, url) {
       needsSetup: servers.filter((server) => !server.supported).map((server) => ({ name: server.name, reason: server.skippedReason })),
     }
   })
-  return { url, name: item.marketplace?.name ?? url, plugins }
+  const marketplaceName = item.marketplace?.name ?? url.split("/").at(-1) ?? url
+  return { url, name: marketplaceName, plugins: plugins.map((plugin) => ({ ...plugin, marketplaceName })) }
 }
 
 function connectorNextStep(entry) {
@@ -1531,17 +1532,27 @@ function connectorNextStep(entry) {
 }
 
 async function importMarketplacePlugin(target, plugin, access) {
-  const imported = await request(target.baseUrl, "/v1/plugins/import-mcps-from-github-url", {
+  const importAs = (name) => request(target.baseUrl, "/v1/plugins/import-mcps-from-github-url", {
     method: "POST",
     headers: target.headers,
-    body: JSON.stringify({ githubUrl: plugin.url, name: plugin.name, access }),
+    body: JSON.stringify({ githubUrl: plugin.url, name, access }),
   })
+  // The organization may already have a different plugin with this name
+  // (made by hand, or from another source). Import next to it under a name
+  // that says where it came from; later runs land on the same name and update.
+  let imported = await importAs(plugin.name)
+  let importedName = plugin.name
+  if (imported.status === 409 && imported.body?.error === "duplicate_plugin" && plugin.marketplaceName) {
+    importedName = `${plugin.name} (${plugin.marketplaceName})`
+    imported = await importAs(importedName)
+  }
   if (imported.status !== 200 && imported.status !== 201) {
     return { plugin: plugin.name, ok: false, error: imported.body?.message ?? imported.body?.error ?? `HTTP ${imported.status}` }
   }
   const item = imported.body?.item ?? imported.body
   return {
     plugin: plugin.name,
+    ...(importedName !== plugin.name ? { importedAs: importedName } : {}),
     ok: true,
     mode: item.mode ?? "created",
     pluginId: item.plugin?.id ?? null,
@@ -1553,32 +1564,44 @@ async function importMarketplacePlugin(target, plugin, access) {
   }
 }
 
-/** A Cowork skill the person wrote becomes a private OpenWork skill; re-running updates it. */
-async function migrateLocalSkill(target, skill, ownership) {
+async function singleSkillOfPlugin(target, pluginId) {
+  const components = await request(target.baseUrl, `/v1/plugins/${encodeURIComponent(pluginId)}/config-objects`, { method: "GET", headers: target.headers })
+  const objects = (components.body?.items ?? []).map((entry) => entry.configObject).filter(Boolean)
+  return objects.length === 1 && objects[0].objectType === "skill" ? objects[0] : null
+}
+
+/**
+ * A Cowork skill the person wrote becomes a private OpenWork skill in a plugin
+ * of the same name. Re-running updates that skill when its text changed. A
+ * different plugin that already has the name is left alone: the skill goes
+ * next to it as "<name> (from Cowork)".
+ */
+async function migrateLocalSkill(target, skill) {
   const rawSourceText = readFileSync(skill.path, "utf8")
-  const created = await request(target.baseUrl, "/v1/plugins", {
-    method: "POST",
-    headers: target.headers,
-    body: JSON.stringify({ name: skill.name, components: [{ type: "skill", input: { rawSourceText } }], orgWide: false }),
-  })
-  if (created.status === 201) return { skill: skill.name, ok: true, mode: "created", pluginId: created.body?.item?.id ?? null }
-  const existingId = created.status === 409 ? String(created.body?.message ?? "").match(/\((plg_[0-9a-z]+)\)/)?.[1] : null
-  if (!existingId) return { skill: skill.name, ok: false, error: created.body?.message ?? created.body?.error ?? `HTTP ${created.status}` }
-  if (ownership.has(existingId)) return { skill: skill.name, ok: false, error: `two local skills share the name ${skill.name}` }
-  ownership.add(existingId)
-  const components = await request(target.baseUrl, `/v1/plugins/${encodeURIComponent(existingId)}/config-objects`, { method: "GET", headers: target.headers })
-  const configObject = (components.body?.items ?? []).map((entry) => entry.configObject).find((object) => object?.objectType === "skill")
-  if (!configObject?.id) return { skill: skill.name, ok: false, error: `existing plugin ${existingId} has no skill to update` }
-  const latest = await request(target.baseUrl, `/v1/config-objects/${encodeURIComponent(configObject.id)}/versions/latest`, { method: "GET", headers: target.headers })
-  const current = latest.body?.item?.rawSourceText ?? latest.body?.rawSourceText ?? null
-  if (typeof current === "string" && current.trim() === rawSourceText.trim()) return { skill: skill.name, ok: true, mode: "unchanged", pluginId: existingId }
-  const updated = await request(target.baseUrl, `/v1/config-objects/${encodeURIComponent(configObject.id)}/versions`, {
-    method: "POST",
-    headers: target.headers,
-    body: JSON.stringify({ input: { rawSourceText }, reason: "Re-migrated from Claude Cowork" }),
-  })
-  if (updated.status !== 200 && updated.status !== 201) return { skill: skill.name, ok: false, error: updated.body?.message ?? `HTTP ${updated.status}` }
-  return { skill: skill.name, ok: true, mode: "updated", pluginId: existingId }
+  for (const name of [skill.name, `${skill.name} (from Cowork)`]) {
+    const created = await request(target.baseUrl, "/v1/plugins", {
+      method: "POST",
+      headers: target.headers,
+      body: JSON.stringify({ name, components: [{ type: "skill", input: { rawSourceText } }], orgWide: false }),
+    })
+    if (created.status === 201) return { skill: skill.name, ...(name !== skill.name ? { importedAs: name } : {}), ok: true, mode: "created", pluginId: created.body?.item?.id ?? null }
+    const existingId = created.status === 409 ? String(created.body?.message ?? "").match(/\((plg_[0-9a-z]+)\)/)?.[1] : null
+    if (!existingId) return { skill: skill.name, ok: false, error: created.body?.message ?? created.body?.error ?? `HTTP ${created.status}` }
+    const configObject = await singleSkillOfPlugin(target, existingId)
+    if (!configObject?.id) continue
+    const latest = await request(target.baseUrl, `/v1/config-objects/${encodeURIComponent(configObject.id)}/versions/latest`, { method: "GET", headers: target.headers })
+    const current = latest.body?.item?.rawSourceText ?? null
+    const base = { skill: skill.name, ...(name !== skill.name ? { importedAs: name } : {}), ok: true, pluginId: existingId }
+    if (typeof current === "string" && current.trim() === rawSourceText.trim()) return { ...base, mode: "unchanged" }
+    const updated = await request(target.baseUrl, `/v1/config-objects/${encodeURIComponent(configObject.id)}/versions`, {
+      method: "POST",
+      headers: target.headers,
+      body: JSON.stringify({ input: { rawSourceText }, reason: "Re-migrated from Claude Cowork" }),
+    })
+    if (updated.status !== 200 && updated.status !== 201) return { skill: skill.name, ok: false, error: updated.body?.message ?? `HTTP ${updated.status}` }
+    return { ...base, mode: "updated" }
+  }
+  return { skill: skill.name, ok: false, error: `plugins named "${skill.name}" and "${skill.name} (from Cowork)" already exist with other content` }
 }
 
 function migrationSummary(lines) {
@@ -1659,9 +1682,8 @@ async function runMigrate(args) {
   const access = hasFlag(args.flags, "private") ? { orgWide: false, memberIds: [target.org.memberId], teamIds: [] } : { orgWide: true }
   const plugins = []
   for (const plugin of selected) plugins.push(await importMarketplacePlugin(target, plugin, access))
-  const ownership = new Set()
   const skills = []
-  for (const skill of localSkills) skills.push(await migrateLocalSkill(target, skill, ownership))
+  for (const skill of localSkills) skills.push(await migrateLocalSkill(target, skill))
 
   const failures = [...plugins, ...skills].filter((entry) => !entry.ok)
   const nextSteps = plugins.flatMap((entry) => (entry.nextSteps ?? []).map((step) => `${entry.plugin}: ${step}`))
@@ -1674,9 +1696,9 @@ async function runMigrate(args) {
     message: migrationSummary([
       `Migrated into ${target.org.name}:`,
       ...plugins.map((entry) => entry.ok
-        ? `  ${entry.plugin} (${entry.mode}): ${entry.skillsAdded.length} skills added, ${entry.skillsUpdated.length} updated, ${entry.connectorsAdded.length} optional connectors added, ${entry.unchanged} unchanged`
+        ? `  ${entry.importedAs ?? entry.plugin} (${entry.mode}): ${entry.skillsAdded.length} skills added, ${entry.skillsUpdated.length} updated, ${entry.connectorsAdded.length} optional connectors added, ${entry.unchanged} unchanged`
         : `  ${entry.plugin}: failed (${entry.error})`),
-      ...skills.map((entry) => entry.ok ? `  your skill ${entry.skill}: ${entry.mode}` : `  your skill ${entry.skill}: failed (${entry.error})`),
+      ...skills.map((entry) => entry.ok ? `  your skill ${entry.importedAs ?? entry.skill}: ${entry.mode}` : `  your skill ${entry.skill}: failed (${entry.error})`),
       nextSteps.length ? "\nStill to do:" : "",
       ...nextSteps.map((step) => `  - ${step}`),
       "\nSkills work now. Each person connects the optional connectors they use from OpenWork; skills say which ones help.",
