@@ -38,6 +38,13 @@ const rawPrefix = `/raw/${repo.owner}/${repo.repo}/`;
 createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   if (url.pathname === "/__requests") return send(response, 200, { requests, head: HEAD });
+  // An upstream edit: GET /__set?path=<file>&b64=<base64 content>.
+  if (url.pathname === "/__set") {
+    const path = url.searchParams.get("path") ?? "";
+    if (!(path in files)) return send(response, 404, { message: "unknown file" });
+    files[path] = Buffer.from(url.searchParams.get("b64") ?? "", "base64").toString("utf8");
+    return send(response, 200, { ok: true });
+  }
   requests.push({ kind: url.pathname.startsWith("/api/") ? "api" : url.pathname.startsWith("/raw/") ? "raw" : "other", path: url.pathname });
 
   if (url.pathname === repoPath) return send(response, 200, { full_name: `${repo.owner}/${repo.repo}`, default_branch: repo.ref, private: false });

@@ -561,6 +561,22 @@ async function getPublicGithubRepositoryTree(target: PublicGithubPluginTarget): 
   }
 }
 
+const PUBLIC_GITHUB_FETCH_CONCURRENCY = 8
+
+async function mapPublicGithubConcurrently<T, R>(items: T[], mapper: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let next = 0
+  const workers = Array.from({ length: Math.min(PUBLIC_GITHUB_FETCH_CONCURRENCY, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next
+      next += 1
+      results[index] = await mapper(items[index])
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
 async function getPublicGithubTextFile(input: { branch: string; discoveryPath: string; snapshot: PublicGithubTreeSnapshot }) {
   const fullPath = input.snapshot.fullPathByDiscoveryPath.get(input.discoveryPath) ?? input.discoveryPath
   const { owner, repo } = publicGithubRepoParts(input.snapshot.repositoryFullName)
@@ -591,15 +607,13 @@ async function getPublicGithubDiscoveryFileTexts(snapshot: PublicGithubTreeSnaps
     }
   }
 
-  const fileTextByPath: Record<string, string | null> = {}
-  for (const path of interestingPaths) {
-    fileTextByPath[path] = await getPublicGithubTextFile({
-      branch: snapshot.branch,
-      discoveryPath: path,
-      snapshot,
-    })
-  }
-  return fileTextByPath
+  const paths = [...interestingPaths]
+  const texts = await mapPublicGithubConcurrently(paths, (path) => getPublicGithubTextFile({
+    branch: snapshot.branch,
+    discoveryPath: path,
+    snapshot,
+  }))
+  return Object.fromEntries(paths.map((path, index) => [path, texts[index] ?? null]))
 }
 
 const STANDARD_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -5088,38 +5102,34 @@ async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; incl
     treeEntries: snapshot.treeEntries,
   })
 
+  // Read every component file up front, a few at a time; a marketplace like
+  // knowledge-work-plugins has 250+ files and reading them one by one took
+  // over 30 seconds. Results are then assembled in discovery order.
+  const jobs = discovery.discoveredPlugins
+    .filter((entry) => entry.supported)
+    .flatMap((plugin) => (importPlansByPluginKey[plugin.key] ?? [])
+      .filter((plan) => plan.objectType === "mcp" || plan.objectType === "skill")
+      .flatMap((plan) => plan.paths.map((path) => ({ kind: plan.objectType === "mcp" ? "mcp" as const : "skill" as const, path, plugin }))))
+  const texts = await mapPublicGithubConcurrently(jobs, (job) => getPublicGithubTextFile({
+    branch: snapshot.branch,
+    discoveryPath: job.path,
+    snapshot,
+  }))
+
   const servers: GithubPluginMcpImportServer[] = []
   const skills: GithubPluginSkillImportSkill[] = []
-  for (const plugin of discovery.discoveredPlugins.filter((entry) => entry.supported)) {
-    const componentPlans = importPlansByPluginKey[plugin.key] ?? []
-    for (const plan of componentPlans.filter((entry) => entry.objectType === "mcp")) {
-      for (const path of plan.paths) {
-        const rawSourceText = await getPublicGithubTextFile({
-          branch: snapshot.branch,
-          discoveryPath: path,
-          snapshot,
-        })
-        if (!rawSourceText) continue
-        servers.push(...mcpServerEntriesFromPayload({
-          plugin,
-          rawSourceText,
-          sourcePath: path,
-        }))
-      }
-    }
-    for (const plan of componentPlans.filter((entry) => entry.objectType === "skill")) {
-      for (const path of plan.paths) {
-        const rawSourceText = await getPublicGithubTextFile({
-          branch: snapshot.branch,
-          discoveryPath: path,
-          snapshot,
-        })
-        if (!rawSourceText) continue
+  for (const kind of ["mcp", "skill"] as const) {
+    for (const [index, job] of jobs.entries()) {
+      const rawSourceText = texts[index]
+      if (job.kind !== kind || !rawSourceText) continue
+      if (kind === "mcp") {
+        servers.push(...mcpServerEntriesFromPayload({ plugin: job.plugin, rawSourceText, sourcePath: job.path }))
+      } else {
         skills.push(skillEntryFromSource({
           includeRawSourceText: input.includeSkillText === true,
-          plugin,
+          plugin: job.plugin,
           rawSourceText,
-          sourcePath: path,
+          sourcePath: job.path,
         }))
       }
     }
@@ -5761,6 +5771,7 @@ async function markImportedExternalMcpConnectionConnected(connectionId: typeof E
 function connectionBackedMcpPayload(input: {
   authType: PluginMcpAuthType
   connectionId: string
+  optional?: boolean
   ownedByPlugin: boolean
   server: { name: string; url: string | null }
 }) {
@@ -5775,6 +5786,7 @@ function connectionBackedMcpPayload(input: {
         externalMcpConnectionOwnedByPlugin: input.ownedByPlugin,
         requiredAuthType: input.authType,
         ...(input.authType === "oauth" ? { oauth: true } : {}),
+        ...(input.optional ? { optional: true } : {}),
       },
     },
     openworkManaged: "den_external_mcp",
@@ -5787,12 +5799,14 @@ function connectionBackedMcpPayload(input: {
 function importedConnectionBackedMcpPayload(input: {
   authType: PluginMcpAuthType
   connectionId: string
+  optional: boolean
   ownedByImportedPlugin: boolean
   server: GithubPluginMcpImportServer
 }) {
   return connectionBackedMcpPayload({
     authType: input.authType,
     connectionId: input.connectionId,
+    optional: input.optional,
     ownedByPlugin: input.ownedByImportedPlugin,
     server: input.server,
   })
@@ -5966,6 +5980,68 @@ async function grantImportAccessToPluginArchResource(input: {
   }
 }
 
+type ImportedGithubObject = {
+  id: ConfigObjectId
+  rawSourceText: string | null
+}
+
+// Keys that survive a re-import: a skill's name (its SKILL.md frontmatter
+// name, stored as the title) and an MCP server's URL.
+function importedSkillKey(name: string) {
+  return `skill:${name.trim().toLowerCase()}`
+}
+
+function importedMcpKey(url: string) {
+  return `mcp:${comparablePluginMcpRequirementUrl(url)}`
+}
+
+async function findPreviouslyImportedGithubPlugin(input: { context: PluginArchActorContext; name: string; sourceRepositoryUrl: string }) {
+  const rows = await db
+    .select({ id: PluginTable.id })
+    .from(PluginTable)
+    .where(and(
+      eq(PluginTable.organizationId, input.context.organizationContext.organization.id),
+      eq(PluginTable.createdByOrgMembershipId, input.context.organizationContext.currentMember.id),
+      eq(PluginTable.name, input.name.trim()),
+      eq(PluginTable.sourceRepositoryUrl, input.sourceRepositoryUrl),
+      eq(PluginTable.status, "active"),
+      isNull(PluginTable.deletedAt),
+    ))
+    .orderBy(asc(PluginTable.createdAt), asc(PluginTable.id))
+    .limit(1)
+  return rows[0] ?? null
+}
+
+/** The skills and MCP servers already in a plugin, by the keys a re-import matches on. */
+async function importedGithubObjectsByKey(context: PluginArchActorContext, pluginId: PluginId) {
+  const organizationId = context.organizationContext.organization.id
+  const objects = await db
+    .select({ id: ConfigObjectTable.id, objectType: ConfigObjectTable.objectType, title: ConfigObjectTable.title })
+    .from(PluginConfigObjectTable)
+    .innerJoin(ConfigObjectTable, eq(ConfigObjectTable.id, PluginConfigObjectTable.configObjectId))
+    .where(and(
+      eq(PluginConfigObjectTable.organizationId, organizationId),
+      eq(PluginConfigObjectTable.pluginId, pluginId),
+      isNull(PluginConfigObjectTable.removedAt),
+      eq(ConfigObjectTable.status, "active"),
+      isNull(ConfigObjectTable.deletedAt),
+    ))
+  const versions = await getLatestVersions(objects.map((object) => object.id))
+  const byKey = new Map<string, ImportedGithubObject>()
+  for (const object of objects) {
+    const version = versions.get(object.id)
+    if (object.objectType === "skill") {
+      byKey.set(importedSkillKey(object.title), { id: object.id, rawSourceText: version?.rawSourceText ?? null })
+    }
+    if (object.objectType === "mcp" && version && isRecord(version.normalizedPayloadJson) && isRecord(version.normalizedPayloadJson.mcpServers)) {
+      for (const server of Object.values(version.normalizedPayloadJson.mcpServers)) {
+        if (isRecord(server) && typeof server.url === "string") byKey.set(importedMcpKey(server.url), { id: object.id, rawSourceText: null })
+      }
+    }
+  }
+  return byKey
+}
+
 export async function importGithubPluginMcps(input: {
   access?: GithubPluginMcpImportAccess
   authType: "none" | "oauth"
@@ -5995,9 +6071,10 @@ export async function importGithubPluginMcps(input: {
     : selectedServerNames.size > 0
     ? plan.servers.filter((server) => selectedServerNames.has(server.name))
     : plan.servers
-  const consideredSkills = selectedSkillKeys.size > 0
-    ? plan.skills.filter((skill) => selectedSkillKeys.has(skill.skillKey))
-    : []
+  // Omitted means every skill, like servers; an explicit [] imports none.
+  const consideredSkills = input.selectedSkillKeys === undefined
+    ? plan.skills
+    : plan.skills.filter((skill) => selectedSkillKeys.has(skill.skillKey))
   const supportedServers = consideredServers.filter((server) => server.supported && server.url)
   const supportedSkills = consideredSkills.filter((skill) => skill.supported && skill.rawSourceText)
   if (supportedServers.length === 0 && supportedSkills.length === 0) {
@@ -6012,29 +6089,44 @@ export async function importGithubPluginMcps(input: {
   if (!access.orgWide && access.memberIds.length === 0 && access.teamIds.length === 0) {
     throw new PluginArchRouteFailure(400, "missing_import_access", "Choose who can use the imported plugin.")
   }
-  const plugin = await createPlugin({
+  const pluginName = input.name ?? importedPluginName(plan)
+  const sourceRepositoryUrl = `https://github.com/${plan.repositoryFullName}`
+  // Re-running an import (a migration agent retrying, or picking up upstream
+  // changes) updates the plugin imported earlier from the same repository
+  // instead of failing as a duplicate.
+  const previous = await findPreviouslyImportedGithubPlugin({ context: input.context, name: pluginName, sourceRepositoryUrl })
+  const plugin = previous ?? await createPlugin({
     context: input.context,
     description: input.description === undefined
       ? `Plugin components imported from ${plan.repositoryFullName}${plan.rootPath ? `/${plan.rootPath}` : ""}.`
       : input.description,
-    name: input.name ?? importedPluginName(plan),
+    name: pluginName,
     sourceFormat: plan.classification === "agent_plugin_repo" ? "agent-plugin" : "claude-plugin",
-    sourceRepositoryUrl: `https://github.com/${plan.repositoryFullName}`,
+    sourceRepositoryUrl,
     sourceSchemaVersion: plan.classification === "agent_plugin_repo" ? plan.sourceSchemaVersion : null,
   })
+  const existingObjects = previous ? await importedGithubObjectsByKey(input.context, previous.id) : new Map<string, ImportedGithubObject>()
 
   const importedOwnedConnectionIds = new Set<ExternalMcpConnectionRow["id"]>()
   try {
-    await grantImportAccessToPluginArchResource({
-    access,
-    context: input.context,
-    resourceId: plugin.id,
-    resourceKind: "plugin",
-  })
+    if (!previous) {
+      await grantImportAccessToPluginArchResource({
+        access,
+        context: input.context,
+        resourceId: plugin.id,
+        resourceKind: "plugin",
+      })
+    }
 
   const imported: Array<{ connectionId: string; name: string; url: string }> = []
   const importedSkills: Array<{ configObjectId: ConfigObjectId; name: string; sourcePath: string }> = []
+  const updatedSkills: Array<{ configObjectId: ConfigObjectId; name: string; sourcePath: string }> = []
+  const unchanged: Array<{ name: string; objectType: "mcp" | "skill" }> = []
   for (const server of supportedServers) {
+    if (server.url && existingObjects.has(importedMcpKey(server.url))) {
+      unchanged.push({ name: server.name, objectType: "mcp" })
+      continue
+    }
     const defaultAuthType = resolveGithubPluginMcpImportAuthType({
       declaredAuthType: server.authType,
       requestedAuthType: input.authType,
@@ -6053,6 +6145,10 @@ export async function importGithubPluginMcps(input: {
     const payload = importedConnectionBackedMcpPayload({
       authType,
       connectionId: connection.id,
+      // Claude/Cowork plugins list connectors as suggestions ("connect one
+      // of these"); their skills work without them. Agent Plugins declare
+      // what they need, so those stay required.
+      optional: plan.classification !== "agent_plugin_repo",
       ownedByImportedPlugin: importedConnection.ownedByImportedPlugin,
       server,
     })
@@ -6104,6 +6200,22 @@ export async function importGithubPluginMcps(input: {
       throw new PluginArchRouteFailure(400, "invalid_skill_import", "Selected skill content was unavailable.")
     }
     const metadata = skillMetadataFromText(skillText)
+    const existingSkill = existingObjects.get(importedSkillKey(metadata.title))
+    if (existingSkill) {
+      // Stored text is trimmed on write; compare the same way.
+      if (existingSkill.rawSourceText?.trim() === skillText.trim()) {
+        unchanged.push({ name: metadata.title, objectType: "skill" })
+        continue
+      }
+      await createConfigObjectVersion({
+        context: input.context,
+        configObjectId: existingSkill.id,
+        reason: `Re-imported from ${input.githubUrl}`,
+        value: { rawSourceText: skillText },
+      })
+      updatedSkills.push({ configObjectId: existingSkill.id, name: metadata.title, sourcePath: skill.sourcePath })
+      continue
+    }
     const configObject = await createConfigObject({
       context: input.context,
       objectType: "skill",
@@ -6131,7 +6243,7 @@ export async function importGithubPluginMcps(input: {
     importedSkills.push({ configObjectId: configObject.id, name: metadata.title, sourcePath: skill.sourcePath })
   }
 
-  if (input.marketplaceId) {
+  if (input.marketplaceId && !previous) {
     await attachPluginToMarketplace({
       context: input.context,
       marketplaceId: input.marketplaceId,
@@ -6149,11 +6261,16 @@ export async function importGithubPluginMcps(input: {
     imported,
     importedSkills,
     marketplaceId: input.marketplaceId ?? null,
+    mode: previous ? "updated" as const : "created" as const,
     plugin: await getPluginDetail(input.context, plugin.id),
     skipped,
     skippedSkills,
+    unchanged,
+    updatedSkills,
   }
   } catch (error) {
+    // Never tear down a plugin that existed before this import.
+    if (previous) throw error
     await deletePluginMcpRequirementBindingsForPlugin({
       organizationId: input.context.organizationContext.organization.id,
       pluginId: plugin.id,

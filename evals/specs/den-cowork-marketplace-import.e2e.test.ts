@@ -9,7 +9,7 @@ const test = spec.world(denCoworkMarketplace, { timeout: 900_000, resources: { s
 const PLUGIN_NAME = `Productivity ${Date.now().toString(36)}`;
 const SKILL_FILES = Object.keys(COWORK_FIXTURE.files).filter((path) => path.endsWith("/SKILL.md"));
 
-test("an admin's agent imports a Cowork marketplace into the organization without exhausting GitHub", async ({ world, step, evidence }) => {
+test("an admin's agent migrates a Cowork plugin into the organization and can safely run the migration again", async ({ world, step, evidence }) => {
   const callTool = world.callTool;
 
   await step("given an agent with the organization's OpenWork MCP finds the import tools by asking", async () => {
@@ -40,51 +40,93 @@ test("an admin's agent imports a Cowork marketplace into the organization withou
     expect(api.length).toBeLessThanOrEqual(3);
   });
 
-  await step("and the agent imports the productivity plugin's skills and connectors for the whole organization", async () => {
-    // Skills are opt-in by key, as the MCP instructions tell agents to confirm.
-    const preview = await callTool("execute_capability", {
-      name: "postPluginsImportMcpsFromGithubUrlPreview",
-      body: { githubUrl: world.repoUrl("productivity") },
-    });
-    const item = isRecord(preview.json) && isRecord(preview.json.item) ? preview.json.item : {};
-    const skillKeys = records(item.skills).filter((skill) => skill.supported === true).map((skill) => String(skill.skillKey));
+  let firstImportMode = "";
+
+  await step("and the agent imports the productivity plugin without hand-picking its skills", async () => {
     const { isError, json } = await callTool("execute_capability", {
       name: "postPluginsImportMcpsFromGithubUrl",
-      body: { githubUrl: world.repoUrl("productivity"), name: PLUGIN_NAME, access: { orgWide: true }, selectedSkillKeys: skillKeys },
+      body: { githubUrl: world.repoUrl("productivity"), name: PLUGIN_NAME, access: { orgWide: true } },
     });
     const imported = isRecord(json) && isRecord(json.item) ? json.item : {};
-    const connectors = records(imported.imported).map((entry) => String(entry.name));
-    const skills = records(imported.importedSkills).map((entry) => String(entry.name ?? entry.title ?? entry.skillKey));
+    const connectors = records(imported.imported).map((entry) => String(entry.name)).sort();
+    const skills = records(imported.importedSkills).map((entry) => String(entry.name)).sort();
+    firstImportMode = String(imported.mode);
     evidence.recordAssertionEvidence(
       "imported",
-      isError ? `import failed: ${JSON.stringify(json).slice(0, 600)}` : `connectors: ${connectors.join(", ")}; skills: ${skills.join(", ")}; skipped connectors in preview: ${records(item.servers).filter((server) => server.supported !== true).map((server) => `${String(server.name)} (${String(server.skippedReason)})`).join(", ")}`,
+      isError ? `import failed: ${JSON.stringify(json).slice(0, 600)}` : `mode ${firstImportMode}; connectors: ${connectors.join(", ")}; skills: ${skills.join(", ")}`,
       !isError && skills.length === 2,
     );
     expect(isError).toBe(false);
-    expect(connectors.sort()).toEqual(["notion", "slack"]);
-    expect(skills).toHaveLength(2);
+    expect(firstImportMode).toBe("created");
+    expect(connectors).toEqual(["notion", "slack"]);
+    expect(skills).toEqual(["start", "task-management"]);
   });
 
-  await step("after: the agent finds the migrated skill and is told what setup it still needs", async () => {
-    const { json } = await callTool("list_skills", { query: "task" });
-    const skills = records(isRecord(json) ? json.skills : []);
-    // Imported skills get a unique suffix (task-management-xxxx); match plugin and prefix.
-    const taskSkill = skills.find((skill) => String(skill.name).startsWith("task-management") && skill.pluginName === PLUGIN_NAME);
-    evidence.recordAssertionEvidence("list_skills", skills.map((skill) => `${String(skill.name)} (${String(skill.pluginName ?? "")})`).join(", "), Boolean(taskSkill));
-    expect(taskSkill).toBeDefined();
-    // The plugin's Slack and Notion connections are not set up yet, so the
-    // skill text is withheld; the agent must learn why and who can fix it.
-    const read = await callTool("get_skill", { name: String(taskSkill?.capability ?? "") });
-    const error = isRecord(read.json) ? read.json : {};
-    const action = isRecord(error.action) ? error.action : {};
+  await step("then the agent reads a migrated skill by its plain name, before any connector is set up", async () => {
+    const read = await callTool("get_skill", { name: `${PLUGIN_NAME}/task-management` });
+    const skill = isRecord(read.json) ? read.json : {};
+    const content = typeof skill.content === "string" ? skill.content : "";
     evidence.recordAssertionEvidence(
-      "what the agent is told",
-      `${String(error.error)}: ${String(error.message)} → ${String(action.label)}`,
-      error.error === "skill_needs_setup",
+      "get_skill productivity/task-management",
+      read.isError ? `error: ${JSON.stringify(read.json).slice(0, 500)}` : `${String(skill.name)}: ${content.split("\n").filter(Boolean).slice(-1)[0] ?? ""}`,
+      !read.isError && content.includes("Keep TASKS.md up to date."),
     );
-    expect(read.isError).toBe(true);
-    expect(error).toMatchObject({ error: "skill_needs_setup", status: "needs_admin_setup" });
-    expect(String(error.message)).not.toContain("no longer available");
-    expect(action).toMatchObject({ type: "setup_connection" });
+    expect(read.isError).toBe(false);
+    expect(content).toContain("Keep TASKS.md up to date.");
+  });
+
+  await step("and the skill's connectors are offered as optional, each saying how to connect it", async () => {
+    const { json } = await callTool("list_skills", { query: "task" });
+    const listed = records(isRecord(json) ? json.skills : []).find((skill) => skill.pluginName === PLUGIN_NAME);
+    const run = await callTool("execute_capability", { name: String(listed?.capability ?? "") });
+    const result = isRecord(run.json) ? run.json : {};
+    const requirements = records(result.mcpRequirements);
+    evidence.recordAssertionEvidence(
+      "optional connectors",
+      requirements.map((requirement) => `${String(requirement.serverName)}: ${String(requirement.state)} (optional ${String(requirement.optional)})`).join("; "),
+      requirements.length === 2 && requirements.every((requirement) => requirement.optional === true),
+    );
+    expect(typeof result.content).toBe("string");
+    expect(requirements.map((requirement) => String(requirement.serverName)).sort()).toEqual(["notion", "slack"]);
+    expect(requirements.every((requirement) => requirement.optional === true)).toBe(true);
+  });
+
+  await step("when the agent runs the same migration again, nothing is duplicated", async () => {
+    const { isError, json } = await callTool("execute_capability", {
+      name: "postPluginsImportMcpsFromGithubUrl",
+      body: { githubUrl: world.repoUrl("productivity"), name: PLUGIN_NAME, access: { orgWide: true } },
+    });
+    const item = isRecord(json) && isRecord(json.item) ? json.item : {};
+    const unchanged = records(item.unchanged).map((entry) => `${String(entry.objectType)}:${String(entry.name)}`).sort();
+    evidence.recordAssertionEvidence(
+      "re-run",
+      isError ? `failed: ${JSON.stringify(json).slice(0, 400)}` : `mode ${String(item.mode)}; unchanged: ${unchanged.join(", ")}; new: ${records(item.importedSkills).length + records(item.imported).length}`,
+      !isError && item.mode === "updated",
+    );
+    expect(isError).toBe(false);
+    expect(item.mode).toBe("updated");
+    expect(unchanged).toEqual(["mcp:notion", "mcp:slack", "skill:start", "skill:task-management"]);
+    expect(records(item.importedSkills)).toHaveLength(0);
+  });
+
+  await step("after: an upstream edit to a skill reaches the organization on the next run", async () => {
+    const path = "productivity/skills/task-management/SKILL.md";
+    const edited = String(COWORK_FIXTURE.files[path]).replace("Keep TASKS.md up to date.", "Keep TASKS.md up to date and archive done items weekly.");
+    await world.setRepoFile(path, edited);
+    const { json } = await callTool("execute_capability", {
+      name: "postPluginsImportMcpsFromGithubUrl",
+      body: { githubUrl: world.repoUrl("productivity"), name: PLUGIN_NAME, access: { orgWide: true } },
+    });
+    const item = isRecord(json) && isRecord(json.item) ? json.item : {};
+    const updated = records(item.updatedSkills).map((entry) => String(entry.name));
+    const read = await callTool("get_skill", { name: `${PLUGIN_NAME}/task-management` });
+    const content = isRecord(read.json) && typeof read.json.content === "string" ? read.json.content : "";
+    evidence.recordAssertionEvidence(
+      "upstream edit",
+      `updatedSkills: ${updated.join(", ")}; skill now says "${content.includes("archive done items weekly") ? "…archive done items weekly." : content.slice(-80)}"`,
+      updated.includes("task-management") && content.includes("archive done items weekly"),
+    );
+    expect(updated).toEqual(["task-management"]);
+    expect(content).toContain("archive done items weekly");
   });
 });

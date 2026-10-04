@@ -36,6 +36,8 @@ export interface DenCoworkMarketplaceWorld {
   repoUrl(dir?: string): string;
   /** Calls one OpenWork MCP tool as the admin's agent. */
   callTool(name: string, args: Record<string, unknown>): Promise<{ isError: boolean; json: unknown }>;
+  /** Changes one file in the served repository, as an upstream commit would. */
+  setRepoFile(path: string, content: string): Promise<void>;
   /** Requests the GitHub stand-in served so far. */
   githubRequests(): Promise<GithubRequest[]>;
   [Symbol.asyncDispose](): Promise<void>;
@@ -115,6 +117,15 @@ export async function denCoworkMarketplace(seed: Seed): Promise<DenCoworkMarketp
       return { isError: rpc.isError === true, json: rpc.structuredContent ?? toolJson(result) };
     },
     repoUrl: (dir) => `https://github.com/${COWORK_FIXTURE.repo.owner}/${COWORK_FIXTURE.repo.repo}${dir ? `/tree/${COWORK_FIXTURE.repo.ref}/${dir}` : ""}`,
+    async setRepoFile(path, content) {
+      const query = `path=${encodeURIComponent(path)}&b64=${encodeURIComponent(Buffer.from(content).toString("base64"))}`;
+      if (sandboxId) {
+        await execInSandbox(defaultDaytonaExec, sandboxId, `curl -sf "${ORIGIN}/__set?${query}"`, { context: "edit the served repository", timeoutMs: 30_000 });
+        return;
+      }
+      const response = await fetch(`${ORIGIN}/__set?${query}`);
+      if (!response.ok) throw new Error(`GitHub stand-in refused the edit: HTTP ${response.status}`);
+    },
     async githubRequests() {
       if (sandboxId) {
         const result = await execInSandbox(defaultDaytonaExec, sandboxId, `curl -sf ${ORIGIN}/__requests`, { context: "read the GitHub stand-in log", timeoutMs: 30_000 });

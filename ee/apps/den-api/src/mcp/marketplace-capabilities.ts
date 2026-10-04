@@ -138,6 +138,8 @@ export type MarketplaceMcpRequirementStatus = {
   pluginName: string
   serverName: string
   name: string
+  /** Optional connections (Claude/Cowork plugin suggestions) never block the plugin's skills. */
+  optional?: boolean
   state: MarketplaceMcpRequirementState
   action: MarketplaceMcpRequirementAction
   connectionId?: string
@@ -250,6 +252,7 @@ type MarketplaceMcpDependency = {
   configObjectId: ConfigObjectId
   externalMcpConnectionId: string | null
   name: string
+  optional?: boolean
   pluginId: PluginId
   requiredAuthType: PluginMcpAuthType | null
   serverName: string
@@ -260,6 +263,7 @@ type MarketplacePluginMcpRequirement = {
   configObjectId: ConfigObjectId
   externalMcpConnectionId: string | null
   name: string
+  optional: boolean
   pluginId: PluginId
   pluginName: string
   requiredAuthType: PluginMcpAuthType | null
@@ -875,6 +879,7 @@ function mcpDependenciesForObject(input: {
       configObjectId: input.object.id,
       externalMcpConnectionId: readExternalMcpConnectionId({ config: entry.config, spec }),
       name: entry.name,
+      optional: entry.config.optional === true,
       pluginId: input.object.pluginId,
       requiredAuthType: requiredPluginMcpAuthType({ declaredAuthType: declaredPluginMcpAuthType(entry.config), url }),
       serverName: entry.name,
@@ -957,7 +962,8 @@ function requirementSort(left: MarketplaceMcpRequirementStatus, right: Marketpla
     || left.name.localeCompare(right.name)
 }
 
-function firstBlockingRequirement(requirements: MarketplaceMcpRequirementStatus[]) {
+function firstBlockingRequirement(statuses: MarketplaceMcpRequirementStatus[]) {
+  const requirements = statuses.filter((requirement) => requirement.optional !== true)
   return requirements.find((requirement) => requirement.state === "needs_admin_setup")
     ?? requirements.find((requirement) => requirement.state === "needs_connection" || requirement.state === "reconnect")
     ?? null
@@ -1029,6 +1035,7 @@ async function statusForRequirement(input: {
     pluginName: input.requirement.pluginName,
     serverName: input.requirement.serverName,
     name: input.requirement.name,
+    ...(input.requirement.optional ? { optional: true } : {}),
     ...(connection && usable ? { connectionId: connection.id, connectionName: connection.name, credentialMode: connection.credentialMode } : {}),
   }
 
@@ -1095,6 +1102,7 @@ function requirementsForMcpObject(input: {
         configObjectId: input.configObjectId,
         externalMcpConnectionId: binding?.externalMcpConnectionId ?? readExternalMcpConnectionId({ config: entry.config, spec }),
         name: entry.name,
+        optional: entry.config.optional === true,
         pluginId: input.pluginId,
         pluginName: input.pluginName,
         requiredAuthType: requiredPluginMcpAuthType({ declaredAuthType: declaredPluginMcpAuthType(entry.config), url }),
@@ -1358,12 +1366,19 @@ export async function resolveMarketplacePluginCloudReadiness(input: {
       return version ? mcpDependenciesForObject({ object, version }) : []
     })
     const connections = await resolveMcpReadinessConnections({ allConnections, connections: usableConnections, dependencies, member: input.member, organizationId: input.organizationId })
-    const state = connections.some((connection) => connection.id === null
+    // Optional connections are listed but do not hold the plugin back.
+    const requiredDependencies = hasInstructional
+      ? dependencies.filter((dependency) => dependency.optional !== true)
+      : dependencies
+    const requiredConnections = requiredDependencies.length === dependencies.length
+      ? connections
+      : await resolveMcpReadinessConnections({ allConnections, connections: usableConnections, dependencies: requiredDependencies, member: input.member, organizationId: input.organizationId })
+    const state = requiredConnections.some((connection) => connection.id === null
       || connection.authTypeMismatch === true
       || (connection.oauthClientRequired === true && connection.oauthClientConfigured === false)
       || (connection.credentialMode === "shared" && connection.connectedForMe === false))
       ? "needs_admin_setup"
-      : connections.some((connection) => connection.credentialMode === "per_member" && connection.connectedForMe === false)
+      : requiredConnections.some((connection) => connection.credentialMode === "per_member" && connection.connectedForMe === false)
         ? "needs_signin"
         : "ready"
     readiness.set(pluginId, { state, hasInstructional, connections })
@@ -1695,6 +1710,7 @@ export async function executeMarketplaceCapability(input: {
     }
   }
 
+  let optionalRequirements: MarketplaceMcpRequirementStatus[] = []
   if (marketplaceConfigObjectExecutionMode(row.configObject.objectType) === "instructional") {
     const requirementStatuses = await marketplacePluginMcpRequirementStatuses({
       mode: "execution",
@@ -1703,6 +1719,7 @@ export async function executeMarketplaceCapability(input: {
       pluginIds: [row.plugin.id],
     })
     const requirements = requirementStatuses.get(row.plugin.id) ?? []
+    optionalRequirements = requirements.filter((requirement) => requirement.optional === true)
     const blockingRequirement = firstBlockingRequirement(requirements)
     if (blockingRequirement) {
       return {
@@ -1739,6 +1756,8 @@ export async function executeMarketplaceCapability(input: {
       result: {
         ...basePayload(row),
         content: version.rawSourceText ?? "",
+        // Connections the plugin can use but does not need: each says how to connect it.
+        ...(optionalRequirements.length > 0 ? { mcpRequirements: optionalRequirements } : {}),
       },
     }
   }
