@@ -5,6 +5,8 @@ import { COWORK_FIXTURE, denCoworkMarketplace } from "../worlds/den-cowork-marke
 
 const test = spec.world(denCoworkMarketplace, { timeout: 900_000, resources: { surfaces: [], services: ["den"] } });
 
+// A reused Daytona Den keeps earlier runs' plugins; each run imports under its own name.
+const PLUGIN_NAME = `Productivity ${Date.now().toString(36)}`;
 const SKILL_FILES = Object.keys(COWORK_FIXTURE.files).filter((path) => path.endsWith("/SKILL.md"));
 
 test("an admin's agent imports a Cowork marketplace into the organization without exhausting GitHub", async ({ world, step, evidence }) => {
@@ -48,7 +50,7 @@ test("an admin's agent imports a Cowork marketplace into the organization withou
     const skillKeys = records(item.skills).filter((skill) => skill.supported === true).map((skill) => String(skill.skillKey));
     const { isError, json } = await callTool("execute_capability", {
       name: "postPluginsImportMcpsFromGithubUrl",
-      body: { githubUrl: world.repoUrl("productivity"), access: { orgWide: true }, selectedSkillKeys: skillKeys },
+      body: { githubUrl: world.repoUrl("productivity"), name: PLUGIN_NAME, access: { orgWide: true }, selectedSkillKeys: skillKeys },
     });
     const imported = isRecord(json) && isRecord(json.item) ? json.item : {};
     const connectors = records(imported.imported).map((entry) => String(entry.name));
@@ -67,7 +69,7 @@ test("an admin's agent imports a Cowork marketplace into the organization withou
     const { json } = await callTool("list_skills", { query: "task" });
     const skills = records(isRecord(json) ? json.skills : []);
     // Imported skills get a unique suffix (task-management-xxxx); match plugin and prefix.
-    const taskSkill = skills.find((skill) => String(skill.name).startsWith("task-management") && skill.pluginName === "productivity");
+    const taskSkill = skills.find((skill) => String(skill.name).startsWith("task-management") && skill.pluginName === PLUGIN_NAME);
     evidence.recordAssertionEvidence("list_skills", skills.map((skill) => `${String(skill.name)} (${String(skill.pluginName ?? "")})`).join(", "), Boolean(taskSkill));
     expect(taskSkill).toBeDefined();
     // The plugin's Slack and Notion connections are not set up yet, so the
