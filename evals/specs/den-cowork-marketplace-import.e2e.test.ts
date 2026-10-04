@@ -55,7 +55,7 @@ test("an admin's agent imports a Cowork marketplace into the organization withou
     const skills = records(imported.importedSkills).map((entry) => String(entry.name ?? entry.title ?? entry.skillKey));
     evidence.recordAssertionEvidence(
       "imported",
-      `connectors: ${connectors.join(", ")}; skills: ${skills.join(", ")}; skipped connectors in preview: ${records(item.servers).filter((server) => server.supported !== true).map((server) => `${String(server.name)} (${String(server.skippedReason)})`).join(", ")}`,
+      isError ? `import failed: ${JSON.stringify(json).slice(0, 600)}` : `connectors: ${connectors.join(", ")}; skills: ${skills.join(", ")}; skipped connectors in preview: ${records(item.servers).filter((server) => server.supported !== true).map((server) => `${String(server.name)} (${String(server.skippedReason)})`).join(", ")}`,
       !isError && skills.length === 2,
     );
     expect(isError).toBe(false);
