@@ -78,6 +78,9 @@ function printHelp() {
     "  (deprecated) OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --verification-code <code> --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--json]",
     "  openwork-bootstrap cloud bootstrap-workspace --base-url <url> --workspace-name <name> [--skill-name <name>] [--owner-email <email>] [--teammate-emails a@x.com,b@y.com] [--claim-roles owner,member] [--web-base-url <url>] [--prepare-desktop] [--json]",
     "  openwork-bootstrap cloud claim-link [--role owner] [--desktop-bootstrap-path <path>] [--json]",
+    "  openwork-bootstrap migrate scan [--json]",
+    "  openwork-bootstrap migrate plan [--source <github-url,...>] [--org <id>] [--no-skills] [--json]",
+    "  openwork-bootstrap migrate apply [--plugin <name,...> | --all] [--source <github-url,...>] [--org <id>] [--private] [--no-skills] [--json]",
     "",
     "Commands:",
     "  install          Install the openwork-bootstrap CLI into a user bin dir",
@@ -93,6 +96,13 @@ function printHelp() {
     "  cloud claim-link Retrieve a claim link saved by --prepare-desktop. Only run",
     "                   this when you are ready to hand the link to a human; do",
     "                   not print claim links preemptively.",
+    "  migrate scan     List the Claude Cowork / Claude Code marketplaces and your",
+    "                   own Cowork skills on this computer (reads only)",
+    "  migrate plan     Preview what importing them into your OpenWork organization",
+    "                   brings: plugins, skills, connectors (no changes)",
+    "  migrate apply    Import the chosen plugins (organization-wide unless",
+    "                   --private) and your own skills (private). Safe to re-run:",
+    "                   imported plugins update in place.",
     "",
     "Options:",
     "  --request-code   Create the account (or resend) and email a 6-digit",
@@ -1350,6 +1360,331 @@ function runCloudClaimLink(args) {
   }, json)
 }
 
+// ---------------------------------------------------------------------------
+// migrate: Claude Cowork / Claude Code plugins and skills -> OpenWork Cloud
+//
+// Reads what the person already has on this computer (marketplaces they added
+// in Cowork or Claude Code, and the skills they wrote themselves in Cowork),
+// then imports it into their OpenWork organization through Den's GitHub plugin
+// import. Every step is safe to re-run: Den updates a plugin imported earlier
+// from the same repository, and a skill that already exists gets a new
+// version only when its text changed.
+// ---------------------------------------------------------------------------
+
+function coworkSessionsDir() {
+  if (process.env.OPENWORK_COWORK_DIR) return process.env.OPENWORK_COWORK_DIR
+  const home = process.env.HOME || process.env.USERPROFILE || process.cwd()
+  if (process.platform === "darwin") return join(home, "Library", "Application Support", "Claude", "local-agent-mode-sessions")
+  if (process.platform === "win32") return join(process.env.APPDATA || join(home, "AppData", "Roaming"), "Claude", "local-agent-mode-sessions")
+  return join(configHomeDir(), "Claude", "local-agent-mode-sessions")
+}
+
+function claudeCodePluginsDir() {
+  if (process.env.OPENWORK_CLAUDE_CODE_PLUGINS_DIR) return process.env.OPENWORK_CLAUDE_CODE_PLUGINS_DIR
+  const home = process.env.HOME || process.env.USERPROFILE || process.cwd()
+  return join(process.env.CLAUDE_CONFIG_DIR || join(home, ".claude"), "plugins")
+}
+
+function readJsonFile(path) {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"))
+  } catch {
+    return null
+  }
+}
+
+function listDirs(path) {
+  try {
+    return readdirSync(path, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => join(path, entry.name))
+  } catch {
+    return []
+  }
+}
+
+function githubRepoUrl(repo) {
+  const cleaned = String(repo || "").trim().replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "").replace(/\/+$/, "")
+  return /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(cleaned) ? `https://github.com/${cleaned}` : null
+}
+
+function addMarketplace(found, input) {
+  const url = input.source?.source === "github" ? githubRepoUrl(input.source.repo) : null
+  if (!url) {
+    found.unsupported.push({ name: input.name, origin: input.origin, reason: "not_on_github", detail: "Only public GitHub marketplaces can be imported; add its plugins to your organization by hand." })
+    return
+  }
+  const existing = found.marketplaces.find((entry) => entry.url === url)
+  if (existing) {
+    if (!existing.origins.includes(input.origin)) existing.origins.push(input.origin)
+    for (const plugin of input.installedPlugins ?? []) if (!existing.installedPlugins.includes(plugin)) existing.installedPlugins.push(plugin)
+    return
+  }
+  found.marketplaces.push({ name: input.name, url, origins: [input.origin], installedPlugins: [...(input.installedPlugins ?? [])] })
+}
+
+/** What the person has locally. Reads names and file paths; never uploads anything. */
+function scanLocalClaude() {
+  const found = { marketplaces: [], skills: [], unsupported: [], searched: [] }
+
+  const coworkDir = coworkSessionsDir()
+  found.searched.push(coworkDir)
+  for (const account of listDirs(coworkDir)) {
+    for (const org of listDirs(account)) {
+      const known = readJsonFile(join(org, "cowork_plugins", "known_marketplaces.json"))
+      if (!known || typeof known !== "object") continue
+      for (const [name, entry] of Object.entries(known)) addMarketplace(found, { name, origin: "cowork", source: entry?.source })
+    }
+  }
+
+  // Skills the person wrote in Cowork (creatorType "user"); Anthropic's
+  // built-in skills stay behind.
+  const seenSkills = new Set()
+  for (const org of listDirs(join(coworkDir, "skills-plugin"))) {
+    for (const bundle of listDirs(org)) {
+      const manifest = readJsonFile(join(bundle, "manifest.json"))
+      for (const skill of Array.isArray(manifest?.skills) ? manifest.skills : []) {
+        if (skill?.creatorType !== "user" || typeof skill.name !== "string") continue
+        const path = join(bundle, "skills", skill.name, "SKILL.md")
+        if (!existsSync(path) || seenSkills.has(skill.name)) continue
+        seenSkills.add(skill.name)
+        found.skills.push({ name: skill.name, description: typeof skill.description === "string" ? skill.description : null, enabled: skill.enabled !== false, origin: "cowork", path })
+      }
+    }
+  }
+
+  const claudeCodeDir = claudeCodePluginsDir()
+  found.searched.push(claudeCodeDir)
+  const installed = readJsonFile(join(claudeCodeDir, "installed_plugins.json"))
+  const installedByMarketplace = new Map()
+  for (const key of Object.keys(installed?.plugins ?? {})) {
+    const at = key.lastIndexOf("@")
+    if (at <= 0) continue
+    const list = installedByMarketplace.get(key.slice(at + 1)) ?? []
+    list.push(key.slice(0, at))
+    installedByMarketplace.set(key.slice(at + 1), list)
+  }
+  const knownClaudeCode = readJsonFile(join(claudeCodeDir, "known_marketplaces.json"))
+  for (const [name, entry] of Object.entries(knownClaudeCode && typeof knownClaudeCode === "object" ? knownClaudeCode : {})) {
+    addMarketplace(found, { name, origin: "claude-code", source: entry?.source ?? entry, installedPlugins: installedByMarketplace.get(name) })
+  }
+
+  return found
+}
+
+async function resolveMigrationTarget(flags) {
+  const baseUrl = normalizeBaseUrl(getFlag(flags, "base-url", readSavedCredentials()?.baseUrl || DEFAULT_API_BASE_URL))
+  const token = resolveApiToken(baseUrl)
+  if (!token) throw new Error(`not_signed_in: run \`${COMMAND_NAME} login\` first (or set OPENWORK_API_TOKEN)`)
+  const orgs = await request(baseUrl, "/v1/me/orgs", { method: "GET", headers: { authorization: `Bearer ${token.token}` } })
+  if (orgs.status !== 200 || !Array.isArray(orgs.body?.orgs)) throw new Error(`org_list_failed: ${orgs.status} ${JSON.stringify(orgs.body)}`)
+  const wanted = getFlag(flags, "org")
+  const org = wanted
+    ? orgs.body.orgs.find((entry) => entry.id === wanted || entry.slug === wanted || entry.name === wanted)
+    : orgs.body.orgs.length === 1 ? orgs.body.orgs[0] : orgs.body.orgs.find((entry) => entry.id === orgs.body.activeOrgId)
+  if (!org) {
+    const names = orgs.body.orgs.map((entry) => `${entry.name ?? entry.slug} (${entry.id})`).join(", ")
+    throw new Error(wanted ? `org_not_found: ${wanted}. Yours: ${names}` : `org_ambiguous: pass --org <id>. Yours: ${names}`)
+  }
+  const headers = { authorization: `Bearer ${token.token}`, "x-openwork-org-id": org.id }
+  return { baseUrl, headers, org: { id: org.id, name: org.name ?? org.slug ?? org.id, memberId: org.orgMemberId ?? null } }
+}
+
+function sourcesFromFlags(flags) {
+  return String(getFlag(flags, "source", "")).split(",").map((value) => value.trim()).filter(Boolean)
+}
+
+function listFlag(flags, name) {
+  return String(getFlag(flags, name, "")).split(",").map((value) => value.trim()).filter(Boolean)
+}
+
+/** Den's preview of one marketplace, reduced to what a person decides on. */
+async function previewMarketplace(target, url) {
+  const preview = await request(target.baseUrl, "/v1/plugins/import-mcps-from-github-url/preview", {
+    method: "POST",
+    headers: target.headers,
+    body: JSON.stringify({ githubUrl: url }),
+  })
+  if (preview.status !== 200) {
+    return { url, error: preview.body?.message ?? preview.body?.error ?? `HTTP ${preview.status}` }
+  }
+  const item = preview.body?.item ?? preview.body
+  const branch = item.branch || "main"
+  const plugins = (item.plugins ?? []).map((plugin) => {
+    const folder = String(plugin.key ?? "").replace(/^marketplace:/, "")
+    const servers = (item.servers ?? []).filter((server) => server.pluginKey === plugin.key)
+    const skills = (item.skills ?? []).filter((skill) => skill.pluginKey === plugin.key && skill.supported)
+    return {
+      name: plugin.name,
+      description: plugin.description ?? null,
+      url: plugin.key?.startsWith("marketplace:") && folder ? `${url}/tree/${branch}/${folder}` : url,
+      skills: skills.map((skill) => skill.name),
+      connectors: servers.filter((server) => server.supported).map((server) => server.name),
+      needsSetup: servers.filter((server) => !server.supported).map((server) => ({ name: server.name, reason: server.skippedReason })),
+    }
+  })
+  return { url, name: item.marketplace?.name ?? url, plugins }
+}
+
+function connectorNextStep(entry) {
+  if (entry.reason === "missing_url") return `${entry.name}: the plugin leaves this for you to choose; connect it in OpenWork (Connections)`
+  if (entry.reason === "local_unsupported") return `${entry.name}: runs on your computer in Claude; add it to OpenWork as a local MCP server if you still need it`
+  return `${entry.name}: not importable (${entry.reason})`
+}
+
+async function importMarketplacePlugin(target, plugin, access) {
+  const imported = await request(target.baseUrl, "/v1/plugins/import-mcps-from-github-url", {
+    method: "POST",
+    headers: target.headers,
+    body: JSON.stringify({ githubUrl: plugin.url, name: plugin.name, access }),
+  })
+  if (imported.status !== 200 && imported.status !== 201) {
+    return { plugin: plugin.name, ok: false, error: imported.body?.message ?? imported.body?.error ?? `HTTP ${imported.status}` }
+  }
+  const item = imported.body?.item ?? imported.body
+  return {
+    plugin: plugin.name,
+    ok: true,
+    mode: item.mode ?? "created",
+    pluginId: item.plugin?.id ?? null,
+    skillsAdded: (item.importedSkills ?? []).map((skill) => skill.name),
+    skillsUpdated: (item.updatedSkills ?? []).map((skill) => skill.name),
+    connectorsAdded: (item.imported ?? []).map((server) => server.name),
+    unchanged: (item.unchanged ?? []).length,
+    nextSteps: [...(item.skipped ?? []).map((entry) => connectorNextStep(entry)), ...(item.skippedSkills ?? []).map((entry) => `${entry.name}: skill not imported (${entry.reason})`)],
+  }
+}
+
+/** A Cowork skill the person wrote becomes a private OpenWork skill; re-running updates it. */
+async function migrateLocalSkill(target, skill, ownership) {
+  const rawSourceText = readFileSync(skill.path, "utf8")
+  const created = await request(target.baseUrl, "/v1/plugins", {
+    method: "POST",
+    headers: target.headers,
+    body: JSON.stringify({ name: skill.name, components: [{ type: "skill", input: { rawSourceText } }], orgWide: false }),
+  })
+  if (created.status === 201) return { skill: skill.name, ok: true, mode: "created", pluginId: created.body?.item?.id ?? null }
+  const existingId = created.status === 409 ? String(created.body?.message ?? "").match(/\((plg_[0-9a-z]+)\)/)?.[1] : null
+  if (!existingId) return { skill: skill.name, ok: false, error: created.body?.message ?? created.body?.error ?? `HTTP ${created.status}` }
+  if (ownership.has(existingId)) return { skill: skill.name, ok: false, error: `two local skills share the name ${skill.name}` }
+  ownership.add(existingId)
+  const components = await request(target.baseUrl, `/v1/plugins/${encodeURIComponent(existingId)}/config-objects`, { method: "GET", headers: target.headers })
+  const configObject = (components.body?.items ?? []).map((entry) => entry.configObject).find((object) => object?.objectType === "skill")
+  if (!configObject?.id) return { skill: skill.name, ok: false, error: `existing plugin ${existingId} has no skill to update` }
+  const latest = await request(target.baseUrl, `/v1/config-objects/${encodeURIComponent(configObject.id)}/versions/latest`, { method: "GET", headers: target.headers })
+  const current = latest.body?.item?.rawSourceText ?? latest.body?.rawSourceText ?? null
+  if (typeof current === "string" && current.trim() === rawSourceText.trim()) return { skill: skill.name, ok: true, mode: "unchanged", pluginId: existingId }
+  const updated = await request(target.baseUrl, `/v1/config-objects/${encodeURIComponent(configObject.id)}/versions`, {
+    method: "POST",
+    headers: target.headers,
+    body: JSON.stringify({ input: { rawSourceText }, reason: "Re-migrated from Claude Cowork" }),
+  })
+  if (updated.status !== 200 && updated.status !== 201) return { skill: skill.name, ok: false, error: updated.body?.message ?? `HTTP ${updated.status}` }
+  return { skill: skill.name, ok: true, mode: "updated", pluginId: existingId }
+}
+
+function migrationSummary(lines) {
+  return lines.filter(Boolean).join("\n")
+}
+
+async function runMigrate(args) {
+  const json = hasFlag(args.flags, "json")
+  const subcommand = args.positionals[1] || "plan"
+
+  if (subcommand === "scan") {
+    const found = scanLocalClaude()
+    jsonOut({
+      ok: true,
+      ...found,
+      message: migrationSummary([
+        `Marketplaces: ${found.marketplaces.map((entry) => `${entry.name} (${entry.url})`).join(", ") || "none found"}`,
+        `Your Cowork skills: ${found.skills.map((skill) => skill.name).join(", ") || "none found"}`,
+        found.unsupported.length ? `Not importable: ${found.unsupported.map((entry) => `${entry.name} (${entry.reason})`).join(", ")}` : "",
+      ]),
+    }, json)
+    return
+  }
+
+  if (subcommand !== "plan" && subcommand !== "apply") {
+    printHelp()
+    process.exitCode = 1
+    return
+  }
+
+  const target = await resolveMigrationTarget(args.flags)
+  const found = scanLocalClaude()
+  const explicitSources = sourcesFromFlags(args.flags)
+  const sourceUrls = explicitSources.length > 0 ? explicitSources : found.marketplaces.map((entry) => entry.url)
+  const marketplaces = []
+  for (const url of sourceUrls) marketplaces.push(await previewMarketplace(target, url))
+  const includeSkills = !hasFlag(args.flags, "no-skills")
+  const localSkills = includeSkills && explicitSources.length === 0 ? found.skills : []
+
+  if (subcommand === "plan") {
+    jsonOut({
+      ok: marketplaces.every((entry) => !entry.error),
+      org: target.org,
+      marketplaces: marketplaces.map((entry) => ({
+        ...entry,
+        installedLocally: found.marketplaces.find((local) => local.url === entry.url)?.installedPlugins ?? [],
+      })),
+      skills: localSkills.map((skill) => ({ name: skill.name, description: skill.description })),
+      unsupported: found.unsupported,
+      message: migrationSummary([
+        `Plan for ${target.org.name}:`,
+        ...marketplaces.flatMap((entry) => entry.error
+          ? [`  ${entry.url}: preview failed (${entry.error})`]
+          : [`  ${entry.name}: ${entry.plugins.length} plugins`, ...entry.plugins.map((plugin) => `    - ${plugin.name}: ${plugin.skills.length} skills, ${plugin.connectors.length} optional connectors${plugin.needsSetup.length ? `, ${plugin.needsSetup.length} to set up yourself` : ""}`)]),
+        localSkills.length ? `  Your own Cowork skills (private to you): ${localSkills.map((skill) => skill.name).join(", ")}` : "",
+        "",
+        `Import with: ${COMMAND_NAME} migrate apply --plugin <name,...> (or --all)`,
+      ]),
+    }, json)
+    return
+  }
+
+  const wanted = new Set(listFlag(args.flags, "plugin").map((name) => name.toLowerCase()))
+  const all = hasFlag(args.flags, "all")
+  const selected = marketplaces.flatMap((entry) => (entry.plugins ?? []).filter((plugin) => {
+    if (all) return true
+    if (wanted.has(plugin.name.toLowerCase())) return true
+    const local = found.marketplaces.find((candidate) => candidate.url === entry.url)
+    return wanted.size === 0 && (local?.installedPlugins ?? []).includes(plugin.name)
+  }))
+  const missing = [...wanted].filter((name) => !marketplaces.some((entry) => (entry.plugins ?? []).some((plugin) => plugin.name.toLowerCase() === name)))
+  if (missing.length > 0) throw new Error(`plugin_not_found: ${missing.join(", ")}. Run \`${COMMAND_NAME} migrate plan\` to list them.`)
+  if (selected.length === 0 && localSkills.length === 0) {
+    throw new Error(`nothing_selected: pass --plugin <name,...> or --all. Run \`${COMMAND_NAME} migrate plan\` to see what is available.`)
+  }
+
+  if (hasFlag(args.flags, "private") && !target.org.memberId) throw new Error("private_unavailable: this OpenWork server did not return your member id; omit --private")
+  const access = hasFlag(args.flags, "private") ? { orgWide: false, memberIds: [target.org.memberId], teamIds: [] } : { orgWide: true }
+  const plugins = []
+  for (const plugin of selected) plugins.push(await importMarketplacePlugin(target, plugin, access))
+  const ownership = new Set()
+  const skills = []
+  for (const skill of localSkills) skills.push(await migrateLocalSkill(target, skill, ownership))
+
+  const failures = [...plugins, ...skills].filter((entry) => !entry.ok)
+  const nextSteps = plugins.flatMap((entry) => (entry.nextSteps ?? []).map((step) => `${entry.plugin}: ${step}`))
+  jsonOut({
+    ok: failures.length === 0,
+    org: target.org,
+    plugins,
+    skills,
+    nextSteps,
+    message: migrationSummary([
+      `Migrated into ${target.org.name}:`,
+      ...plugins.map((entry) => entry.ok
+        ? `  ${entry.plugin} (${entry.mode}): ${entry.skillsAdded.length} skills added, ${entry.skillsUpdated.length} updated, ${entry.connectorsAdded.length} optional connectors added, ${entry.unchanged} unchanged`
+        : `  ${entry.plugin}: failed (${entry.error})`),
+      ...skills.map((entry) => entry.ok ? `  your skill ${entry.skill}: ${entry.mode}` : `  your skill ${entry.skill}: failed (${entry.error})`),
+      nextSteps.length ? "\nStill to do:" : "",
+      ...nextSteps.map((step) => `  - ${step}`),
+      "\nSkills work now. Each person connects the optional connectors they use from OpenWork; skills say which ones help.",
+    ]),
+  }, json)
+  if (failures.length > 0) process.exitCode = 1
+}
+
 async function runCloud(args) {
   const subcommand = args.positionals[1]
   if (subcommand === "claim-link") {
@@ -1399,6 +1734,10 @@ async function main() {
   }
   if (command === "login") {
     await runLogin(args)
+    return
+  }
+  if (command === "migrate") {
+    await runMigrate(args)
     return
   }
   if (command === "logout") {
