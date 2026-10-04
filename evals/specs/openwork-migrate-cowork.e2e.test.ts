@@ -46,7 +46,9 @@ test("an admin's agent moves their Cowork plugins and own skills to OpenWork wit
     const nextSteps = Array.isArray(result.nextSteps) ? result.nextSteps.map(String) : [];
     evidence.recordAssertionEvidence(
       "apply",
-      `productivity ${String(plugin.mode)}: skills ${JSON.stringify(plugin.skillsAdded)}, connectors ${JSON.stringify(plugin.connectorsAdded)}; own skill ${String(ownSkill.mode)}; still to do: ${nextSteps.length}`,
+      plugin.ok === true
+        ? `productivity ${String(plugin.mode)}: skills ${JSON.stringify(plugin.skillsAdded)}, connectors ${JSON.stringify(plugin.connectorsAdded)}; own skill ${String(ownSkill.mode)}; still to do: ${nextSteps.length}`
+        : `productivity failed: ${String(plugin.error)}; stderr: ${run.stderr.slice(0, 300)}`,
       run.code === 0,
     );
     expect(run.code).toBe(0);
