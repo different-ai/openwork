@@ -270,10 +270,16 @@ export async function readRemoteSkillSource(input: {
     configObjectId: marketplace.configObjectId,
     enabled: input.marketplaceEnabled,
   })
-  if (!marketplaceResult.ok || marketplaceResult.result.kind !== "skill" || typeof marketplaceResult.result.content !== "string") {
+  if (!marketplaceResult.ok || marketplaceResult.result.kind !== "skill") return null
+  const result = marketplaceResult.result
+  if (typeof result.content !== "string") {
+    // Listed but withheld until its plugin is set up: say what unblocks it.
+    if (typeof result.status === "string" && typeof result.hint === "string") {
+      return { blocked: { status: result.status, message: result.hint, action: result.action ?? null } }
+    }
     return null
   }
-  return { content: marketplaceResult.result.content, provenance: marketplaceResult.result.provenance }
+  return { content: result.content, provenance: result.provenance }
 }
 
 const EXECUTE_CAPABILITY_TIMEOUT_MESSAGE = `The capability call exceeded ${EXECUTE_CAPABILITY_TIMEOUT_MS / 1_000}s. Retry once; if it times out again, narrow the request (fewer results, tighter query) and tell the user the service is slow — do NOT tell them to reconfigure or reconnect.`
@@ -395,6 +401,9 @@ export function registerAgentSkillResources(input: {
       })
       if (!source) {
         throw new ProtocolError(ProtocolErrorCode.InvalidRequest, "Skill is no longer available")
+      }
+      if ("blocked" in source) {
+        throw new ProtocolError(ProtocolErrorCode.InvalidRequest, source.blocked.message)
       }
       return {
         contents: [{

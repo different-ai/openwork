@@ -83,7 +83,7 @@ import { roleIncludesOwner } from "../../../orgs.js"
 import { redactWorkflowNormalizedPayloadAuthoringDetails } from "../../../workflow-projections.js"
 import { memberFacingMcpConnectionsEnabled } from "../../../capability-sources/external-mcp-rollout.js"
 import { comparablePluginMcpRequirementUrl, marketplaceMcpServerEntries, resolveMarketplacePluginCloudReadiness } from "../../../mcp/marketplace-capabilities.js"
-import { assertPublicUrl } from "../../../capability-sources/url-guard.js"
+import { assertPublicUrl, PrivateUrlError } from "../../../capability-sources/url-guard.js"
 import {
   createExternalMcpConnection,
   deleteExternalMcpConnection,
@@ -440,12 +440,31 @@ function parsePublicGithubPluginUrl(rawUrl: string): PublicGithubPluginTarget {
   }
 }
 
+// Overridable so @openwork/testkit specs can serve a fixed repository.
+function publicGithubApiBase() {
+  return (process.env.DEN_PUBLIC_GITHUB_API_BASE?.trim() || "https://api.github.com").replace(/\/+$/, "")
+}
+
+function publicGithubRawBase() {
+  return (process.env.DEN_PUBLIC_GITHUB_RAW_BASE?.trim() || "https://raw.githubusercontent.com").replace(/\/+$/, "")
+}
+
+// Unauthenticated GitHub API calls share 60 requests an hour per server IP,
+// across every organization. The OAuth app's client credentials raise that to
+// 5,000 an hour for public data, and grant no access to anyone's account.
+function publicGithubAuthorization(): Record<string, string> {
+  const { clientId, clientSecret } = env.github
+  if (!clientId || !clientSecret) return {}
+  return { Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}` }
+}
+
 async function requestPublicGithubJson(input: { path: string; allowStatuses?: number[] }) {
-  const response = await fetch(`https://api.github.com${input.path}`, {
+  const response = await fetch(`${publicGithubApiBase()}${input.path}`, {
     headers: {
       Accept: "application/vnd.github+json",
       "User-Agent": "openwork-den-api",
       "X-GitHub-Api-Version": "2022-11-28",
+      ...publicGithubAuthorization(),
     },
   })
   const text = await response.text()
@@ -545,15 +564,19 @@ async function getPublicGithubRepositoryTree(target: PublicGithubPluginTarget): 
 async function getPublicGithubTextFile(input: { branch: string; discoveryPath: string; snapshot: PublicGithubTreeSnapshot }) {
   const fullPath = input.snapshot.fullPathByDiscoveryPath.get(input.discoveryPath) ?? input.discoveryPath
   const { owner, repo } = publicGithubRepoParts(input.snapshot.repositoryFullName)
-  const response = await requestPublicGithubJson({
-    allowStatuses: [404],
-    path: `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${fullPath.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(input.branch)}`,
-  })
-  if (!response.ok) return null
-  if (!isRecord(response.body) || response.body.encoding !== "base64" || typeof response.body.content !== "string") {
-    throw new PluginArchRouteFailure(502, "github_response_incomplete", "GitHub file response was incomplete.")
+  // Raw downloads at the resolved commit do not count against the API rate
+  // limit; a marketplace such as knowledge-work-plugins has 250+ SKILL.md
+  // files, so reading them through /contents exhausted it in one preview.
+  const ref = input.snapshot.headSha || input.branch
+  const response = await fetch(
+    `${publicGithubRawBase()}/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${ref.split("/").map(encodeURIComponent).join("/")}/${fullPath.split("/").map(encodeURIComponent).join("/")}`,
+    { headers: { "User-Agent": "openwork-den-api" } },
+  )
+  if (response.status === 404) return null
+  if (!response.ok) {
+    throw new PluginArchRouteFailure(502, "github_request_failed", `GitHub file download failed with status ${response.status}.`)
   }
-  return Buffer.from(response.body.content.replace(/\n/g, ""), "base64").toString("utf8")
+  return await response.text()
 }
 
 async function getPublicGithubDiscoveryFileTexts(snapshot: PublicGithubTreeSnapshot) {
@@ -5102,6 +5125,27 @@ async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; incl
     }
   }
 
+  // Import connects each server through hosted egress, which only accepts
+  // public HTTPS URLs. Apply the same rule here so the preview never promises
+  // a server the import then refuses (it used to fail the whole import with a
+  // 500 after the preview said "supported").
+  const egressByUrl = new Map<string, Promise<boolean>>()
+  const egressAllowed = (url: string) => {
+    let pending = egressByUrl.get(url)
+    if (!pending) {
+      pending = assertPublicUrl(url).then(() => true, (error: unknown) => {
+        if (error instanceof PrivateUrlError) return false
+        throw error
+      })
+      egressByUrl.set(url, pending)
+    }
+    return pending
+  }
+  for (const [index, server] of servers.entries()) {
+    if (env.allowPrivateMcpUrls || !server.supported || !server.url || await egressAllowed(server.url)) continue
+    servers[index] = { ...server, skippedReason: "invalid_url", supported: false }
+  }
+
   const plugins = discovery.discoveredPlugins
     .filter((plugin) => plugin.supported)
     .map((plugin) => ({
@@ -5644,7 +5688,16 @@ async function ensureImportedExternalMcpConnection(input: {
   }
   const serverUrl = input.server.url
 
-  await assertPublicUrl(serverUrl)
+  // Same rule as every other MCP connection: self-hosted Dens that allow
+  // private MCP URLs (DEN_ALLOW_PRIVATE_MCP_URLS, dev mode) skip the guard.
+  if (!env.allowPrivateMcpUrls) {
+    try {
+      await assertPublicUrl(serverUrl)
+    } catch (error) {
+      if (!(error instanceof PrivateUrlError)) throw error
+      throw new PluginArchRouteFailure(400, "invalid_mcp_import", `MCP server "${input.server.name}" cannot be imported: ${error.message}`)
+    }
+  }
   const organizationId = input.context.organizationContext.organization.id
   const existing = (await listExternalMcpConnections(organizationId))
     .find((connection) => connection.kind === "external_mcp" && comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(serverUrl))

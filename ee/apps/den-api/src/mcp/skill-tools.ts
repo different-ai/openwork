@@ -49,7 +49,15 @@ export type ListSkillsPayload = z.infer<typeof LIST_SKILLS_OUTPUT_SCHEMA>
 export type GetSkillPayload = z.infer<typeof GET_SKILL_OUTPUT_SCHEMA>
 
 /** Authorized SKILL.md source for one descriptor, or null once it is gone. */
-export type RemoteSkillSource = { content: string; provenance?: string } | null
+/**
+ * The authorized SKILL.md, or why it is held back. A marketplace skill whose
+ * plugin still needs a connection set up is listed but its text is withheld;
+ * `blocked` carries the readiness hint and the action that unblocks it.
+ */
+export type RemoteSkillSource =
+  | { content: string; provenance?: string }
+  | { blocked: { status: string; message: string; action: unknown } }
+  | null
 
 /** Standard SKILL.md framing: normalized frontmatter, then the source body verbatim. */
 export function standardSkillMarkdown(skill: RemoteSkillDescriptor, source: string): string {
@@ -96,10 +104,10 @@ function jsonText(value: unknown): CallToolResult["content"] {
   return [{ type: "text", text: JSON.stringify(value, null, 2) }]
 }
 
-function skillErrorResult(error: "unknown_skill" | "skill_unavailable", name: string, message: string): CallToolResult {
+function skillErrorResult(error: "unknown_skill" | "skill_unavailable" | "skill_needs_setup", name: string, message: string, extra: Record<string, unknown> = {}): CallToolResult {
   return {
     isError: true,
-    content: jsonText({ error, name, message }),
+    content: jsonText({ error, name, message, ...extra }),
   }
 }
 
@@ -162,6 +170,9 @@ export function registerAgentSkillCatalogTools(input: {
         return skillErrorResult("unknown_skill", name, `No skill named "${name}" is available to you. Call list_skills for the exact name or capability.`)
       }
       const source = await input.readSkill(skill)
+      if (source && "blocked" in source) {
+        return skillErrorResult("skill_needs_setup", name, source.blocked.message, { status: source.blocked.status, action: source.blocked.action })
+      }
       if (!source) {
         return skillErrorResult("skill_unavailable", name, `Skill "${skill.name}" is no longer available. Call list_skills for the current catalog.`)
       }
