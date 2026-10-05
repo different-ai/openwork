@@ -3170,7 +3170,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         connectionName: action.connectionName,
         listConnections: () => denClient.listMcpConnections(organizationId, "usable"),
         startConnect: () => denClient.startMcpConnectionConnect(organizationId, action.connectionId),
-        connectPersonalKey: () => openMemberApiKeyDialog(action.connectionId, { replacing: action.label === "Replace key" }),
+        connectPersonalKey: () => openMemberApiKeyDialog(action.connectionId, { connectionName: action.connectionName, replacing: action.label === "Replace key" }),
         openUrl: openDesktopUrl,
         isCurrent: isAuthorizationCurrent,
         onProgress,

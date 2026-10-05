@@ -229,7 +229,7 @@ export function useOrgMcpConnections() {
     const previousConnectedAt = previous?.connectedAt ?? null;
 
     if (previous?.authType === "apikey" && previous.credentialMode === "per_member") {
-      await openMemberApiKeyDialog(connectionId, { replacing: previous.connectedForMe === true });
+      await openMemberApiKeyDialog(connectionId, { connectionName: previous.name, replacing: previous.connectedForMe === true });
       await refresh();
       return;
     }

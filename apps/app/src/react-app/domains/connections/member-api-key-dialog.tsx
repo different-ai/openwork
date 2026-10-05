@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 
-type Request = { generation: number; connectionId: string; replacing: boolean; finish: (connected: boolean) => void };
+type Request = { generation: number; connectionId: string; connectionName: string; replacing: boolean; finish: (connected: boolean) => void };
 let requestGeneration = 0;
 let request: Request | null = null;
 const listeners = new Set<() => void>();
@@ -14,9 +14,9 @@ const notify = () => { for (const listener of listeners) listener(); };
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 
 /** UI intent only. The credential is sent through the existing Den client. */
-export function openMemberApiKeyDialog(connectionId: string, options: { replacing?: boolean } = {}): Promise<boolean> {
+export function openMemberApiKeyDialog(connectionId: string, options: { connectionName: string; replacing?: boolean }): Promise<boolean> {
   request?.finish(false);
-  return new Promise((finish) => { request = { generation: ++requestGeneration, connectionId, replacing: options.replacing === true, finish }; notify(); });
+  return new Promise((finish) => { request = { generation: ++requestGeneration, connectionId, connectionName: options.connectionName, replacing: options.replacing === true, finish }; notify(); });
 }
 
 function errorMessage(error: unknown): string {
@@ -87,7 +87,7 @@ function Prompt({ target, close }: { target: Request; close: (connected: boolean
   return <Dialog open onOpenChange={(open) => { if (!open) close(saved); }}>
     <DialogContent data-testid="member-api-key-dialog" data-ph-no-capture="true">
       <DialogHeader>
-        <DialogTitle>{saved ? "Key saved" : `${target.replacing ? "Replace" : "Add"} key for your account`}</DialogTitle>
+        <DialogTitle>{saved ? "Key saved" : `${target.replacing ? "Replace" : "Add"} key for ${target.connectionName}`}</DialogTitle>
         <DialogDescription>Use your own key. Never paste it into chat. OpenWork uses it only for your requests.</DialogDescription>
       </DialogHeader>
       {saved ? <p role="status">You saved your key. You can replace it at any time.</p>
