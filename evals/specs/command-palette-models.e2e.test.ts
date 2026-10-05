@@ -43,7 +43,7 @@ test("a member finds the model actions in the command palette with their keys an
     expect(nextRow).toContain(`${current} → `);
   });
 
-  await step("Models lists every model with its provider mark set apart from its name and the current one marked", async () => {
+  await step("Models lists every model by name with its provider, its mark set apart from its name, and the current one marked", async () => {
     await user.click({ role: "option", label: /^Models/ });
     await user.see({ placeholder: "Search models…" });
     await user.see({ role: "button", label: "Back" });
@@ -57,6 +57,13 @@ test("a member finds the model actions in the command palette with their keys an
     evidence.recordAssertionEvidence("Provider mark to name spacing", `${gaps.length} rows, gaps ${[...new Set(gaps)].join(", ")}px`, gaps.length > 3 && gaps.every((gap) => gap >= 8));
     expect(gaps.length).toBeGreaterThan(3);
     for (const gap of gaps) expect.soft(gap).toBeGreaterThanOrEqual(8);
+    // Each row's second line names the provider, as the composer picker does, never the model id.
+    const details = await texts('[data-command-palette-item^="model:"] [data-slot="command-item-detail"]');
+    const leaked = details.filter((detail) => [world.organization, world.favorite, world.recent, world.byok].some((model) => detail.includes(model.modelID)) || /\w\/[\w.-]+/.test(detail));
+    evidence.recordAssertionEvidence("Model rows name the provider, not the model id", details.slice(0, 5).join(" | "), details.length > 3 && leaked.length === 0);
+    expect(details).toContain("Organization provider · pinned by your org");
+    expect(details).toContain("BYOK provider");
+    expect(leaked).toEqual([]);
     const marked = await texts('[data-command-palette-item^="model:"]:has([data-slot="command-shortcut"])');
     expect(marked).toHaveLength(1);
     expect(marked[0]).toContain(current);

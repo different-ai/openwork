@@ -196,10 +196,13 @@ export async function configureProvider(
   // The display name the app gives the configured model once its provider list
   // contains it; a fixture provider declares it in opencode.json, a live one is
   // read from the engine catalog.
-  const configuredModel = recordValue(recordValue(recordValue(opencode, "provider"), providerId), "models");
+  const configuredProvider = recordValue(recordValue(opencode, "provider"), providerId);
+  const configuredModel = recordValue(configuredProvider, "models");
   const configuredNameValue = recordValue(recordValue(configuredModel, modelId), "name");
   const configuredName = typeof configuredNameValue === "string" ? configuredNameValue : null;
-  const ready = await seed.evalIn(app, browserScript(async (workspaceId, engine, providerId, modelId, configuredName) => {
+  const providerNameValue = recordValue(configuredProvider, "name");
+  const providerName = typeof providerNameValue === "string" ? providerNameValue : null;
+  const ready = await seed.evalIn(app, browserScript(async (workspaceId, engine, providerId, modelId, configuredName, providerName) => {
     const deadline = Date.now() + 60000;
     const expectedRef = providerId + "/" + modelId;
     let observed = "";
@@ -232,7 +235,9 @@ export async function configureProvider(
           // list contains the configured model, and the stored default must
           // have survived boot rather than being replaced by an organization
           // model while that list was still loading.
-          const name = configuredName ?? catalogName ?? modelId;
+          const configured = configuredName ?? catalogName ?? modelId;
+          // The app never shows an opaque gateway id as a name: it reads "<Provider> model" instead.
+          const name = /^(gwm|ipr)_/.test(configured) ? (providerName ? providerName + " model" : "Model") : configured;
           const chip = document.querySelector<HTMLElement>('button[aria-label="Change model"]');
           const chipText = chip?.innerText.trim() ?? "";
           const stored = localStorage.getItem("openwork.defaultModel");
@@ -243,7 +248,7 @@ export async function configureProvider(
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     return observed || false;
-  }, [workspaceId, engine, providerId, modelId, configuredName]), { awaitPromise: true, timeoutMs: 120_000 });
+  }, [workspaceId, engine, providerId, modelId, configuredName, providerName]), { awaitPromise: true, timeoutMs: 120_000 });
   if (ready !== true) {
     throw new Error(`Selected ${engine} engine did not become ready after provider configuration`
       + (typeof ready === "string" ? `; last observed ${ready}` : "."));
