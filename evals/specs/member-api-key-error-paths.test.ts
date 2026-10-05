@@ -58,7 +58,7 @@ test("in-flight key replacement and rejection stop the request without disclosin
   const created = await api(den.admin, "/v1/mcp-connections", { name: "Error path fixture", url: `http://127.0.0.1:${address.port}/mcp`, authType: "apikey", credentialMode: "per_member", exposeDirectly: true, access: { orgWide: false, memberIds: [bobId] } });
   expect(created.response.status).toBe(200);
   const id = connectionResponse.parse(created.body).id;
-  const endpoint = `/v1/mcp-connections/${id}/member-api-key`;
+  const endpoint = `/v1/mcp-connections/${id}/my-credential`;
   const minted = await api(bob, "/v1/mcp/token", { scopes: ["mcp:read", "mcp:write"] });
   expect(minted.response.status).toBe(200);
   const bearer = tokenResponse.parse(minted.body).token;
@@ -79,7 +79,7 @@ test("in-flight key replacement and rejection stop the request without disclosin
   };
   const bobConnection = async () => connectionResponse.parse(inventoryResponse.parse((await api(bob, "/v1/mcp-connections", undefined, "GET")).body).connections.find((entry) => entry.id === id));
 
-  expect((await api(bob, endpoint, { apiKey: keyFirst })).body).toEqual({ ok: true });
+  expect((await api(bob, endpoint, { apiKey: keyFirst }, "PUT")).body).toEqual({ ok: true });
   expect((await call()).rpc.result.isError).not.toBe(true);
   expect((await den.mocks.keyed.toolCalls()).at(-1)?.tokenId).toBe(fingerprint(keyFirst));
 
@@ -88,7 +88,7 @@ test("in-flight key replacement and rejection stop the request without disclosin
   const guard = holdNext(keyFirst);
   const guarded = call();
   await guard.arrived;
-  expect((await api(bob, endpoint, { apiKey: keyNext })).response.status).toBe(200);
+  expect((await api(bob, endpoint, { apiKey: keyNext }, "PUT")).response.status).toBe(200);
   const afterGuardRelease = wire.length;
   guard.release();
   const guardResult = await guarded;

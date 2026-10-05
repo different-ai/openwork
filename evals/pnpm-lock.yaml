@@ -69,6 +69,9 @@ importers:
       xml-crypto:
         specifier: 6.1.2
         version: 6.1.2
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
 
   ../scenarios:
     dependencies:

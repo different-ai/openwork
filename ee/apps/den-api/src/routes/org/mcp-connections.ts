@@ -77,7 +77,7 @@ import {
   type ExternalMcpConnectionRow,
 } from "../../capability-sources/external-mcp-connections.js"
 import { evaluateToolPolicy } from "../../capability-sources/external-mcp-tool-policy.js"
-import { validMemberApiKey } from "../../capability-sources/member-api-key.js"
+import { memberApiKeyUsable, usesMemberApiKey, validMemberApiKey } from "../../capability-sources/member-api-key.js"
 import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { externalMcpAppResourceUri } from "../../mcp/external-capabilities.js"
 import { EXECUTE_CAPABILITY_TOOL_NAME, SEARCH_CAPABILITIES_TOOL_NAME } from "../../mcp/search.js"
@@ -821,7 +821,7 @@ async function resolveExternalMcpToolCredential(
       orgMembershipId,
       providerId: connection.id,
     })
-    return account?.accessToken && (connection.authType !== "apikey" || (account.tokenType === "api_key" && account.credentialHealth?.status !== "reconnect_required"))
+    return (usesMemberApiKey(connection) ? memberApiKeyUsable(account) : account?.accessToken)
       ? { ok: true, member: { orgMembershipId } }
       : { ok: false, message: "Connect your account before using this MCP's tools." }
   }
@@ -1125,7 +1125,7 @@ async function toConnectionResponse(
       orgMembershipId: options.callerOrgMembershipId,
       providerId: row.id,
     })
-    connectedForMe = Boolean(account?.accessToken) && (row.authType !== "apikey" || account?.tokenType === "api_key")
+    connectedForMe = Boolean(account?.accessToken) && (!usesMemberApiKey(row) || account?.tokenType === "api_key")
     callerExternalAccountId = account?.accessToken ? account.externalAccountId : null
     callerCredentialHealth = account?.credentialHealth ?? null
     grantedScopes = account?.scopes ?? []
@@ -3054,10 +3054,13 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     },
   )
 
-  // Deliberately no agent capability description: personal secrets belong only
-  // in the secure member form, never an MCP tool argument or chat transcript.
-  app.post(
-    "/v1/mcp-connections/:connectionId/member-api-key",
+  // Same shape as PUT /v1/llm-providers/:id/my-credential: a write-only
+  // credential for the calling member. Hidden from the OpenAPI contract so it
+  // can never become an agent capability: personal secrets belong only in the
+  // member form, never an MCP tool argument or chat transcript. Removal reuses
+  // POST /disconnect-my-account.
+  app.put(
+    "/v1/mcp-connections/:connectionId/my-credential",
     describeRoute({ hide: true }),
     orgMemberRoute(),
     resolveMemberTeamsMiddleware,
@@ -3075,7 +3078,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       const connectionId = normalizeDenTypeId("externalMcpConnection", c.req.valid("param").connectionId)
       const connection = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId })
       if (!connection) return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
-      if (connection.kind !== "external_mcp" || connection.authType !== "apikey" || connection.credentialMode !== "per_member") {
+      if (connection.kind !== "external_mcp" || !usesMemberApiKey(connection)) {
         return c.json({ error: "invalid_request", message: "This connection does not accept personal API keys." }, 400)
       }
       const teams: MemberTeamSummary[] = c.get("memberTeams") ?? []

@@ -10,8 +10,8 @@ import {
 } from "@openwork/enterprise-mcp-client"
 import { env } from "../env.js"
 import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
-import { rejectMemberApiKey, resolveMemberApiKey, type ExternalMcpConnectionRow } from "./external-mcp-connections.js"
-import { memberApiKeyAuthorization } from "./member-api-key.js"
+import { memberApiKeyStillCurrent, rejectMemberApiKey, resolveMemberApiKey, type ExternalMcpConnectionRow } from "./external-mcp-connections.js"
+import { memberApiKeyAuthorization, usesMemberApiKey } from "./member-api-key.js"
 import {
   EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS,
   type ExternalMcpLifecycleDeadline,
@@ -33,11 +33,14 @@ import {
   type ExternalMcpToolCallInspector,
 } from "./external-mcp-tool-inspection.js"
 
-async function toEnterpriseConnection(
+type MemberApiKeyCredential = Awaited<ReturnType<typeof resolveMemberApiKey>>
+
+function toEnterpriseConnection(
   connection: ExternalMcpConnectionRow,
   member: ExternalMcpMemberContext | undefined,
   tracker: ExternalMcpDiagnosticTracker,
-): Promise<EnterpriseMcpConnection> {
+  memberApiKey: MemberApiKeyCredential | undefined,
+): EnterpriseMcpConnection {
   if (connection.kind !== "external_mcp") {
     throw new Error("Native provider connectors do not expose an MCP server.")
   }
@@ -68,9 +71,8 @@ async function toEnterpriseConnection(
   }
   if (connection.authType === "apikey") {
     if (connection.credentialMode === "per_member") {
-      if (!member) throw new Error("A member identity is required for this connection.")
-      const credential = await resolveMemberApiKey(connection, member.orgMembershipId)
-      return { id: connection.id, serverUrl: connection.url, authorization: { type: "api-key", token: credential.key, scheme: connection.apiKeyAuthScheme } }
+      if (!memberApiKey) throw new Error("A member identity is required for this connection.")
+      return { id: connection.id, serverUrl: connection.url, authorization: { type: "api-key", token: memberApiKey.key, scheme: connection.apiKeyAuthScheme } }
     }
     if (!connection.apiKey) throw new Error(`Connection "${connection.id}" does not have an API key.`)
     return {
@@ -196,29 +198,36 @@ function translateEnterpriseMcpError(
   return tracker.error(source, phase)
 }
 
-function createOperationClient(input: {
+type OperationInput = {
   connection: ExternalMcpConnectionRow
   member?: ExternalMcpMemberContext
   diagnosticReferenceId?: string
   lifecycleDeadline?: ExternalMcpLifecycleDeadline
   operationTimeoutMs?: number
   toolCallInspector?: ExternalMcpToolCallInspector
-}): { client: EnterpriseMcpClient; tracker: ExternalMcpDiagnosticTracker } {
-  const tracker = new ExternalMcpDiagnosticTracker(input.diagnosticReferenceId ?? randomUUID(), {
-    authType: input.connection.authType,
-    credentialMode: input.connection.credentialMode,
-  })
-  const fetchForCaller: typeof guardedFetch = input.connection.authType === "apikey" && input.connection.credentialMode === "per_member"
+}
+
+function createOperationClient(
+  input: OperationInput,
+  tracker: ExternalMcpDiagnosticTracker,
+  memberApiKey: MemberApiKeyCredential | undefined,
+): EnterpriseMcpClient {
+  const member = input.member
+  const fetchForCaller: typeof guardedFetch = memberApiKey && member
     ? async (resource, init) => {
-      if (!input.member) throw new Error("A member identity is required for this connection.")
-      const credential = await resolveMemberApiKey(input.connection, input.member.orgMembershipId)
+      const credential = memberApiKey
+      // Authorization ran once for the operation; each request only re-reads
+      // the stored key, so a replaced or rejected key stops the operation here.
+      if (!await memberApiKeyStillCurrent(input.connection, member.orgMembershipId, credential)) {
+        throw new Error("Connect your personal API key in Your Connections.")
+      }
       const request = new Request(resource, init)
       // Never forward a personal token to a discovery URL or redirect target.
       if (request.url !== new URL(input.connection.url).href || request.headers.get("authorization") !== memberApiKeyAuthorization(credential.key, input.connection.apiKeyAuthScheme)) {
         throw new Error("Connection credentials or destination changed. Reconnect and retry.")
       }
       const response = await guardedFetch(resource, { ...init, redirect: "error" })
-      if (response.status === 401) await rejectMemberApiKey(input.connection, input.member.orgMembershipId, credential)
+      if (response.status === 401) await rejectMemberApiKey(input.connection, member.orgMembershipId, credential)
       return response
     }
     : guardedFetch
@@ -230,34 +239,36 @@ function createOperationClient(input: {
   const observedFetch = input.toolCallInspector
     ? input.toolCallInspector.observeFetch(diagnosticFetch)
     : diagnosticFetch
-  return {
-    tracker,
-    client: createEnterpriseMcpClient({
-      fetch: observedFetch,
-      diagnosticSink: diagnosticSink(tracker),
-      ...(input.operationTimeoutMs ? { operationTimeoutMs: input.operationTimeoutMs } : {}),
-      ...(input.lifecycleDeadline ? {
-        lifecycle: {
-          expiresAt: input.lifecycleDeadline.expiresAt,
-          signal: input.lifecycleDeadline.signal,
-        },
-      } : {}),
-    }),
-  }
+  return createEnterpriseMcpClient({
+    fetch: observedFetch,
+    diagnosticSink: diagnosticSink(tracker),
+    ...(input.operationTimeoutMs ? { operationTimeoutMs: input.operationTimeoutMs } : {}),
+    ...(input.lifecycleDeadline ? {
+      lifecycle: {
+        expiresAt: input.lifecycleDeadline.expiresAt,
+        signal: input.lifecycleDeadline.signal,
+      },
+    } : {}),
+  })
 }
 
-async function runEnterpriseMcpOperation<T>(input: {
-  connection: ExternalMcpConnectionRow
-  member?: ExternalMcpMemberContext
-  diagnosticReferenceId?: string
-  lifecycleDeadline?: ExternalMcpLifecycleDeadline
-  operationTimeoutMs?: number
-  toolCallInspector?: ExternalMcpToolCallInspector
-  operation: (client: EnterpriseMcpClient, tracker: ExternalMcpDiagnosticTracker) => Promise<T>
+async function runEnterpriseMcpOperation<T>(input: OperationInput & {
+  operation: (client: EnterpriseMcpClient, connection: EnterpriseMcpConnection) => Promise<T>
 }): Promise<T> {
-  const { client, tracker } = createOperationClient(input)
+  const tracker = new ExternalMcpDiagnosticTracker(input.diagnosticReferenceId ?? randomUUID(), {
+    authType: input.connection.authType,
+    credentialMode: input.connection.credentialMode,
+  })
   try {
-    return await input.operation(client, tracker)
+    // A personal key is authorized and read once per operation; every request
+    // of the operation must then carry exactly that key to exactly this URL.
+    let memberApiKey: MemberApiKeyCredential | undefined
+    if (usesMemberApiKey(input.connection)) {
+      if (!input.member) throw new Error("A member identity is required for this connection.")
+      memberApiKey = await resolveMemberApiKey(input.connection, input.member.orgMembershipId)
+    }
+    const client = createOperationClient(input, tracker, memberApiKey)
+    return await input.operation(client, toEnterpriseConnection(input.connection, input.member, tracker, memberApiKey))
   } catch (error) {
     throw translateEnterpriseMcpError(error, tracker)
   }
@@ -274,8 +285,8 @@ export async function connectExternalMcp(
     connection,
     member,
     diagnosticReferenceId,
-    operation: async (client, tracker) => client.connect({
-      connection: await toEnterpriseConnection(connection, member, tracker),
+    operation: (client, connection) => client.connect({
+      connection,
       redirectUri,
       authorizationId: signedState,
     }),
@@ -296,8 +307,8 @@ export async function completeExternalMcpAuth(
     connection,
     member,
     diagnosticReferenceId,
-    operation: async (client, tracker) => client.completeAuthorization({
-      connection: await toEnterpriseConnection(connection, member, tracker),
+    operation: (client, connection) => client.completeAuthorization({
+      connection,
       redirectUri,
       code,
       authorizationId: signedState,
@@ -316,8 +327,8 @@ export async function abandonExternalMcpAuth(
     connection,
     member,
     diagnosticReferenceId,
-    operation: async (client, tracker) => client.abandonAuthorization({
-      connection: await toEnterpriseConnection(connection, member, tracker),
+    operation: (client, connection) => client.abandonAuthorization({
+      connection,
       authorizationId: signedState,
       reason: "provider-rejected",
     }),
@@ -338,8 +349,8 @@ export async function listExternalMcpTools(
     diagnosticReferenceId,
     lifecycleDeadline,
     operationTimeoutMs,
-    operation: async (client, tracker) => client.listTools({
-      connection: await toEnterpriseConnection(connection, member, tracker),
+    operation: (client, connection) => client.listTools({
+      connection,
       redirectUri,
     }),
   })
@@ -366,8 +377,8 @@ function runExternalMcpToolCall(
     lifecycleDeadline: input.lifecycleDeadline,
     operationTimeoutMs: EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS,
     toolCallInspector,
-    operation: async (client, tracker) => client.callTool({
-      connection: await toEnterpriseConnection(input.connection, input.member, tracker),
+    operation: (client, connection) => client.callTool({
+      connection,
       redirectUri: input.redirectUri,
       toolName: input.toolName,
       arguments: input.args,
@@ -386,8 +397,8 @@ export function callExternalMcpToolRaw(input: ExternalMcpToolCallInput) {
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
     operationTimeoutMs: EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS,
-    operation: async (client, tracker) => client.callToolRaw({
-      connection: await toEnterpriseConnection(input.connection, input.member, tracker),
+    operation: (client, connection) => client.callToolRaw({
+      connection,
       redirectUri: input.redirectUri,
       toolName: input.toolName,
       arguments: input.args,
@@ -409,8 +420,8 @@ export function describeExternalMcpServer(input: ExternalMcpResourceInput) {
     member: input.member,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
-    operation: async (client, tracker) => client.describeServer({
-      connection: await toEnterpriseConnection(input.connection, input.member, tracker),
+    operation: (client, connection) => client.describeServer({
+      connection,
       redirectUri: input.redirectUri,
     }),
   })
@@ -422,8 +433,8 @@ export function listExternalMcpResources(input: ExternalMcpResourceInput) {
     member: input.member,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
-    operation: async (client, tracker) => client.listResources({
-      connection: await toEnterpriseConnection(input.connection, input.member, tracker),
+    operation: (client, connection) => client.listResources({
+      connection,
       redirectUri: input.redirectUri,
     }),
   })
@@ -435,8 +446,8 @@ export function listExternalMcpResourceTemplates(input: ExternalMcpResourceInput
     member: input.member,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
-    operation: async (client, tracker) => client.listResourceTemplates({
-      connection: await toEnterpriseConnection(input.connection, input.member, tracker),
+    operation: (client, connection) => client.listResourceTemplates({
+      connection,
       redirectUri: input.redirectUri,
     }),
   })
@@ -448,8 +459,8 @@ export function readExternalMcpResource(input: ExternalMcpResourceInput & { uri:
     member: input.member,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
-    operation: async (client, tracker) => client.readResource({
-      connection: await toEnterpriseConnection(input.connection, input.member, tracker),
+    operation: (client, connection) => client.readResource({
+      connection,
       redirectUri: input.redirectUri,
       uri: input.uri,
     }),
