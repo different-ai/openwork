@@ -43,11 +43,11 @@ async function loadUsableProviders(orgId: string, signal?: AbortSignal) {
 }
 
 /** Every model provider the organization gives the viewer, with their sign-in state. */
-export function useLibraryModels() {
+export function useLibraryModels(enabled = true) {
   const { orgId } = useOrgDashboard();
   const providers = useQuery({
     queryKey: libraryModelQueryKeys.providers(orgId),
-    enabled: Boolean(orgId),
+    enabled: enabled && Boolean(orgId),
     queryFn: ({ signal }) => {
       if (!orgId) throw new Error("Select an organization first.");
       return loadUsableProviders(orgId, signal);
@@ -55,7 +55,7 @@ export function useLibraryModels() {
   });
   const connections = useQuery({
     queryKey: libraryModelQueryKeys.connections(orgId),
-    enabled: Boolean(orgId),
+    enabled: enabled && Boolean(orgId),
     queryFn: ({ signal }) => {
       if (!orgId) throw new Error("Select an organization first.");
       return loadGatewayMemberConnections(orgId, signal);

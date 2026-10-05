@@ -34,7 +34,7 @@ import {
   typeText,
   waitForLocated,
 } from "@openwork/cdp";
-import type { Located, Surface, Target } from "@openwork/cdp";
+import type { Located, Surface, Target, Viewport } from "@openwork/cdp";
 import {
   app as startApp,
   appWeb as startAppWeb,
@@ -861,6 +861,12 @@ export class UserChannel implements User {
   reload(): Promise<void> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("user", "reload", "reload", surface, () => reload(surface));
+  }
+
+  resizeViewport(viewport: Viewport): Promise<void> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("user", "resizeViewport", `resizeViewport(${viewport.width}×${viewport.height}, scale=${viewport.deviceScaleFactor})`, surface,
+      () => setViewport(surface, viewport));
   }
 
   navigate(url: string): Promise<void> {

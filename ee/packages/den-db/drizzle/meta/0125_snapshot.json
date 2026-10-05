@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "0408e453-8792-4e62-acfa-bce37132932b",
-  "prevId": "45722e8e-506a-4ce3-b813-a6e63b146db8",
+  "id": "5ef617b2-ed36-4e80-96e5-1287b5d42da4",
+  "prevId": "0408e453-8792-4e62-acfa-bce37132932b",
   "tables": {
     "account": {
       "name": "account",
@@ -11794,6 +11794,14 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "api_key_auth_scheme": {
+          "name": "api_key_auth_scheme",
+          "type": "enum('bearer','token')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'bearer'"
         },
         "access_token": {
           "name": "access_token",

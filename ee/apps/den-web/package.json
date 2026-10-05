@@ -8,7 +8,7 @@
     "prebuild": "pnpm --filter @openwork/types build && pnpm --dir ../../../packages/ui build && pnpm --dir ../../packages/utils build",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0 --port 3005",
-    "lint": "next lint",
+    "lint": "eslint app components --no-inline-config --max-warnings=0",
     "typecheck": "tsc --noEmit --pretty false",
     "typecheck:gateway-usage-limits": "tsc --noEmit --pretty false -p tsconfig.usage-limits.json"
   },
@@ -45,6 +45,9 @@
     "@types/node": "20.12.12",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "@typescript-eslint/parser": "8.71.0",
+    "eslint": "10.11.0",
+    "eslint-plugin-react-hooks": "7.1.1",
     "postcss": "8.5.23",
     "tailwindcss": "^4.3.3",
     "typescript": "5.4.5"
