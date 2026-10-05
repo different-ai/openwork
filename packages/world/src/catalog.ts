@@ -147,6 +147,25 @@ export const WORLD_GUIDES: Readonly<Record<string, WorldGuide>> = {
     ],
     caveats: ["Includes the in-memory demo Slack, Notion, Linear, Google Calendar and Gmail on every placement; Alex Chen is the signed-in owner."],
   },
+  "preview-workbot": {
+    family: "web",
+    components: ["*"],
+    targets: [
+      { target: "local/host", seeds: [], sources: ["local"], defaultSource: LOCAL },
+      { target: "daytona/linux", seeds: [], sources: ["sha", "ref"], defaultSource: DEV },
+      { target: "freestyle/linux", seeds: [], sources: ["sha", "ref"], note: "A source is required: --source ref:dev or sha:<full-pushed-sha>." },
+    ],
+    examples: [
+      { intent: "Workbot, Den and the headless runner from this checkout", command: `${UP} preview-workbot --stage <stage>` },
+      { intent: "Workbot from latest dev on Daytona", command: `${UP} preview-workbot --place daytona --stage <stage> ${DETACH}` },
+      { intent: "Workbot on Freestyle", command: `${UP} preview-workbot --place freestyle --stage <stage> --source ref:dev ${DETACH}` },
+    ],
+    caveats: [
+      "Sign in to Workbot as alex@acme.test (Den's seeded owner); Workbot and headless Automations are on for Acme Robotics.",
+      "The model is the deterministic Acme upstream (every answer is the same sentence) and the runner's computer is off: no paid keys or Freestyle key enter the world.",
+      "Every placement signs in through Den, sends a message and checks the runner's answer before reporting ready.",
+    ],
+  },
 };
 
 /** Seeds a guided world accepts on any target, in catalog order. */

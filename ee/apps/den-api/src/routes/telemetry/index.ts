@@ -11,7 +11,10 @@ import {
   isKnownTelemetryEventType,
   isKnownTelemetrySource,
   normalizeTelemetrySource,
-  readWindowMetrics,
+  queryWindowMetrics,
+  selectModelDimensionUsage,
+  selectWeeklyActiveMembers,
+  selectWeeklyActivity,
   sessionDimensionKey,
   telemetryAdoptionResponseSchema,
   telemetryAnalyticsQuerySchema,
@@ -19,12 +22,8 @@ import {
   telemetryDimensionListResponseSchema,
   telemetryDimensionsQuerySchema,
   telemetryIngestBatchSchema,
-  telemetryWindowConditions,
-  weekIndexExpression,
-  windowMetricsSelection,
   type DimensionFilter,
   type TelemetryDimensionInput,
-  type TelemetryOrgId,
 } from "@openwork-ee/telemetry"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
@@ -48,14 +47,6 @@ const telemetryDimensionListDocumentSchema = telemetryDimensionListResponseSchem
     lastSeenAt: z.string().datetime(),
   })),
 }).meta({ ref: "TelemetryDimensionListResponse" })
-
-async function queryWindowMetrics(orgId: TelemetryOrgId, since: Date, filter: DimensionFilter | null) {
-  const rows = await db
-    .select(windowMetricsSelection())
-    .from(TelemetryEventTable)
-    .where(and(...telemetryWindowConditions(orgId, since, filter)))
-  return readWindowMetrics(rows[0])
-}
 
 export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVariables }>(app: Hono<T>) {
   // ── POST /v1/telemetry/ingest ─────────────────────────────────────────────
@@ -206,7 +197,6 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
       const sevenDaysAgo = new Date(now - 7 * DAY_MS)
       const thirtyDaysAgo = new Date(now - 30 * DAY_MS)
       const trendStart = new Date(now - ANALYTICS_TREND_WEEKS * 7 * DAY_MS)
-      const weekIndex = weekIndexExpression(trendStart)
 
       const [memberRows, inviteRows, active7d, active30d, weeklyRows] = await Promise.all([
         db
@@ -217,17 +207,9 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
           .select({ count: sql<number>`count(*)` })
           .from(InvitationTable)
           .where(and(eq(InvitationTable.organizationId, orgId), eq(InvitationTable.status, "pending"))),
-        queryWindowMetrics(orgId, sevenDaysAgo, null),
-        queryWindowMetrics(orgId, thirtyDaysAgo, null),
-        db
-          .select({
-            week: weekIndex,
-            count: sql<number>`count(distinct ${TelemetryEventTable.member_id})`,
-          })
-          .from(TelemetryEventTable)
-          .where(and(...telemetryWindowConditions(orgId, trendStart, null)))
-          .groupBy(weekIndex)
-          .orderBy(weekIndex),
+        queryWindowMetrics(db, orgId, sevenDaysAgo, null),
+        queryWindowMetrics(db, orgId, thirtyDaysAgo, null),
+        selectWeeklyActiveMembers(db, orgId, trendStart),
       ])
 
       const weeklyTrend = Array.from({ length: ANALYTICS_TREND_WEEKS }, (_, i) => {
@@ -298,7 +280,6 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
       const sevenDaysAgo = new Date(now - 7 * DAY_MS)
       const thirtyDaysAgo = new Date(now - 30 * DAY_MS)
       const trendStart = new Date(now - ANALYTICS_TREND_WEEKS * 7 * DAY_MS)
-      const weekIndex = weekIndexExpression(trendStart)
 
       const [memberRows, inviteRows, window7d, window30d, weeklyRows, modelDimensionRows] = await Promise.all([
         db
@@ -309,43 +290,10 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
           .select({ count: sql<number>`count(*)` })
           .from(InvitationTable)
           .where(and(eq(InvitationTable.organizationId, orgId), eq(InvitationTable.status, "pending"))),
-        queryWindowMetrics(orgId, sevenDaysAgo, dimensionFilter),
-        queryWindowMetrics(orgId, thirtyDaysAgo, dimensionFilter),
-        db
-          .select({
-            week: weekIndex,
-            activeMembers: sql<number>`count(distinct ${TelemetryEventTable.member_id})`,
-            sessions: sql<number>`count(distinct ${TelemetryEventTable.session_id})`,
-            tasksCompleted: sql<number>`coalesce(sum(${TelemetryEventTable.event_type} = 'task.completed'), 0)`,
-            tasksFailed: sql<number>`coalesce(sum(${TelemetryEventTable.event_type} = 'task.failed'), 0)`,
-          })
-          .from(TelemetryEventTable)
-          .where(and(...telemetryWindowConditions(orgId, trendStart, dimensionFilter)))
-          .groupBy(weekIndex)
-          .orderBy(weekIndex),
-        db
-          .select({
-            type: TelemetrySessionDimensionTable.dimension_type,
-            value: TelemetrySessionDimensionTable.dimension_value,
-            label: sql<string>`max(${TelemetrySessionDimensionTable.dimension_label})`,
-            sessions: sql<number>`count(distinct ${TelemetrySessionDimensionTable.session_id})`,
-          })
-          .from(TelemetrySessionDimensionTable)
-          .innerJoin(TelemetryEventTable, and(
-            eq(TelemetryEventTable.org_id, TelemetrySessionDimensionTable.org_id),
-            eq(TelemetryEventTable.session_id, TelemetrySessionDimensionTable.session_id),
-            sql`coalesce(${TelemetryEventTable.source}, 'unknown') = ${TelemetrySessionDimensionTable.source}`,
-          ))
-          .where(and(
-            eq(TelemetrySessionDimensionTable.org_id, orgId),
-            sql`${TelemetrySessionDimensionTable.dimension_type} in ('model', 'model_selection')`,
-            ...telemetryWindowConditions(orgId, thirtyDaysAgo, dimensionFilter),
-          ))
-          .groupBy(
-            TelemetrySessionDimensionTable.dimension_type,
-            TelemetrySessionDimensionTable.dimension_value,
-          )
-          .orderBy(desc(sql`count(distinct ${TelemetrySessionDimensionTable.session_id})`)),
+        queryWindowMetrics(db, orgId, sevenDaysAgo, dimensionFilter),
+        queryWindowMetrics(db, orgId, thirtyDaysAgo, dimensionFilter),
+        selectWeeklyActivity(db, orgId, trendStart, dimensionFilter),
+        selectModelDimensionUsage(db, orgId, thirtyDaysAgo, dimensionFilter),
       ])
 
       const weekly = Array.from({ length: ANALYTICS_TREND_WEEKS }, (_, i) => {

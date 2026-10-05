@@ -1,7 +1,17 @@
 import type { PreviewWorld } from "./index.ts";
 import { browserRecipe } from "./browser-recipe.ts";
 
+/** Workbot's VM runs Den on its own MySQL/Redis, the runner and Workbot: no desktop, browser or OpenCode. */
+const WORKBOT_TOOLS = `corepack enable
+corepack prepare pnpm@11.4.0 --activate
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server redis-server
+systemctl enable --now mysql redis-server
+mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'password'; FLUSH PRIVILEGES;"
+mkdir -p /opt/openwork-preview/tools`;
+
 export function toolsRecipe(world: PreviewWorld): string {
+  if (world === "workbot") return WORKBOT_TOOLS;
   return `${world === "desktop" ? `node -e 'if (Number(process.versions.node.split(".")[0]) < 24) throw new Error("Desktop previews require Node 24 or newer")'
 export COREPACK_HOME=/opt/openwork-preview/corepack
 ` : ""}corepack enable
@@ -22,6 +32,13 @@ node /opt/openwork-preview/tools/node_modules/opencode-ai/postinstall.mjs
 }
 
 export function dependencyRecipe(world: PreviewWorld): string {
+  if (world === "workbot") {
+    return `# Only manifests/config/patches remain when we install this reusable layer.
+# No application lifecycle scripts or pnpm hooks may mutate the shared cache.
+pnpm install --frozen-lockfile --ignore-scripts --ignore-pnpmfile --filter @openwork/world... --filter @openwork-ee/den-api... --filter @openwork-ee/den-web... --filter @openwork-ee/headless-runner... --filter @openwork-ee/workbot...
+pnpm --config.ignore-pnpmfile=true rebuild esbuild better-sqlite3 sharp @sentry/cli
+pnpm --dir evals install --frozen-lockfile --ignore-scripts --ignore-pnpmfile`;
+  }
   return `${world === "desktop" ? "export COREPACK_HOME=/opt/openwork-preview/corepack\n" : ""}# Only manifests/config/patches remain when we install this reusable layer.
 # No application lifecycle scripts or pnpm hooks may mutate the shared cache.
 pnpm install --frozen-lockfile --ignore-scripts --ignore-pnpmfile --filter @openwork/app... --filter openwork-server... ${world === "desktop" ? "--filter @openwork/desktop..." : "--filter @openwork/world..."} ${world === "acme-web" ? "--filter @openwork-ee/den-api... --filter @openwork-ee/den-web... --filter @openwork-ee/gateway... --filter @openwork/desktop..." : ""}
@@ -43,6 +60,11 @@ test "$(git rev-parse HEAD)" = "${sha}"`;
 }
 
 export function compiledRecipe(world: PreviewWorld): string {
+  if (world === "workbot") {
+    return `pnpm --filter @openwork-ee/den-api run build:workspace-dependencies
+pnpm --filter @openwork-ee/workbot build
+${ARCHIVE_COMPILED}`;
+  }
   return `${world === "desktop" ? `export COREPACK_HOME=/opt/openwork-preview/corepack
 export PATH="/opt/openwork-preview/tools/node_modules/.bin:$PATH"
 node --input-type=module -e 'await import("./evals/packages/cdp/src/index.ts")'
@@ -54,7 +76,11 @@ pnpm --filter openwork-server build
 wait "$DESKTOP_BUILD"
 ` : "pnpm --filter @openwork/types build\npnpm --filter @openwork/enterprise-mcp-client build"}
 pnpm --filter @openwork/sdk build${world === "desktop" ? "\npnpm --filter @openwork/desktop rebuild:electron-native" : ""}
-# Archive generated workspace output only; runtime databases and credentials do not exist yet.
+${ARCHIVE_COMPILED}`;
+}
+
+// Kept byte-for-byte as before: the compiled layer's cache key is a digest of this recipe text.
+const ARCHIVE_COMPILED = `# Archive generated workspace output only; runtime databases and credentials do not exist yet.
 node --input-type=module - <<'NODE'
 import { readdirSync, existsSync, writeFileSync } from 'node:fs';
 const paths = [];
@@ -70,4 +96,3 @@ for (const path of ['apps/desktop/resources/sidecars']) {
 writeFileSync('/opt/openwork-preview/compiled-files', paths.join('\\0') + '\\0');
 NODE
 tar --null -T /opt/openwork-preview/compiled-files -cf /opt/openwork-preview/compiled.tar`;
-}
