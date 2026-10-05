@@ -34,6 +34,7 @@ import type { ModelOption, ModelRef } from "@/app/types";
 import { useModelChoice } from "@/react-app/domains/models/use-model-catalog";
 import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { usePlatform } from "../kernel/platform";
+import { formatChord, resolveShortcutOs } from "@/react-app/domains/shortcuts/shortcut-keys";
 import { ModelSourceIcon } from "@/react-app/domains/models/model-picker-list";
 import { ProviderIcon } from "../design-system/provider-icon";
 import { resolveExtensionIconSrc } from "../design-system/extension-icon-src";
@@ -150,6 +151,8 @@ export type CommandPaletteProps = {
  */
 export function CommandPalette(props: CommandPaletteProps) {
   const platform = usePlatform();
+  // Key hints read the way this OS writes them: ⌃⇧M on macOS, Ctrl+Shift+M elsewhere.
+  const shortcutOs = resolveShortcutOs(platform.os, typeof navigator === "undefined" ? "" : navigator.platform);
   const engine = useOpencodeEngineControls(props.engineClient, props.open);
   const [mode, setMode] = useState<CommandPaletteMode>("root");
   const [query, setQuery] = useState("");
@@ -259,11 +262,11 @@ export function CommandPalette(props: CommandPaletteProps) {
           },
         }]
       : []),
-    ...(hasNestedModelPicker || props.onNextPinnedModel ? [{ id: "models.next-pinned", title: "Next pinned model", shortcut: "Ctrl+Shift+M", group: ACTIONS_GROUP,
+    ...(hasNestedModelPicker || props.onNextPinnedModel ? [{ id: "models.next-pinned", title: "Next pinned model", shortcut: formatChord(shortcutOs === "macos" ? "Ctrl+Shift+M" : "Mod+Shift+M", shortcutOs), group: ACTIONS_GROUP,
       detail: modelControls.nextPinnedOption ? [currentModelTitle, modelTitle(modelControls.nextPinnedOption)].filter(Boolean).join(" → ") : "No alternative pinned model",
       disabled: !modelControls.nextPinnedOption,
       action: () => { (props.onNextPinnedModel ?? modelControls.onNextPinnedModel)(); props.onClose(); } }] : []),
-    ...(hasNestedModelPicker || props.onCycleModelSource ? [{ id: "models.next-source", title: "Cycle model source", shortcut: "Ctrl+Alt+M", group: ACTIONS_GROUP,
+    ...(hasNestedModelPicker || props.onCycleModelSource ? [{ id: "models.next-source", title: "Cycle model source", shortcut: formatChord(shortcutOs === "macos" ? "Ctrl+Alt+M" : "Mod+Alt+M", shortcutOs), group: ACTIONS_GROUP,
       detail: modelControls.sourceCycleDetail || "No accessible model sources", disabled: !modelControls.nextSourceOption,
       action: () => { (props.onCycleModelSource ?? modelControls.onCycleModelSource)(); props.onClose(); } }] : []),
     ...(hasNestedModelPicker || props.onOpenModelPicker
@@ -351,7 +354,7 @@ export function CommandPalette(props: CommandPaletteProps) {
         openUrl("https://openwork.dev/feedback");
       },
     },
-  ], [accessibleTargetCount, canMoveCurrentSessionToGroup, hasNestedModelPicker, props, sessionGroupCount, currentModelTitle, modelControls]);
+  ], [accessibleTargetCount, canMoveCurrentSessionToGroup, hasNestedModelPicker, props, sessionGroupCount, currentModelTitle, modelControls, shortcutOs]);
 
   const settingsItems = useMemo(
     () => buildCommandPaletteSettingsItems({
@@ -632,6 +635,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       key={item.id}
       value={mode === "root" ? item.id : item}
       data-command-palette-item={item.id}
+      className="gap-2.5"
       disabled={item.disabled}
       onClick={() => {
         setRecents(recordPaletteRecent(item.id));
@@ -660,7 +664,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       </div>
       {model && !isAutoModel(model) ? <span data-slot="model-source" className="flex size-4 shrink-0 items-center justify-center"><ModelSourceIcon model={model} /></span> : null}
       {item.shortcut || item.meta ? (
-        <CommandShortcut>{item.shortcut ?? item.meta}</CommandShortcut>
+        <CommandShortcut className="tracking-normal">{item.shortcut ?? item.meta}</CommandShortcut>
       ) : null}
     </CommandItem>;
   };
