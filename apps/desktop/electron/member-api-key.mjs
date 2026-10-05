@@ -33,7 +33,7 @@ export function createMemberApiKeyService({ readState, fetch: fetchTransport, al
 
   async function request(current, path, signal, options = {}) {
     const response = await fetchTransport(`${current.apiBaseUrl}${path}`, {
-      method: options.body === undefined ? "GET" : "POST", redirect: "error",
+      method: options.body === undefined ? "GET" : "PUT", redirect: "error",
       credentials: "omit", cache: "no-store", signal,
       headers: { Accept: "application/json", Authorization: `Bearer ${current.token}`,
         "x-openwork-org-id": current.organizationId, "x-openwork-legacy-org-id": current.organizationId,
@@ -126,7 +126,7 @@ export function createMemberApiKeyService({ readState, fetch: fetchTransport, al
         if (actor.memberId !== entry.memberId || actor.userId !== entry.userId || actor.sessionId !== entry.sessionId
           || actor.revision !== entry.revision || !await current(owner, entry)) return failure("context_changed");
         dispatched = true;
-        const result = await request(initial, `/v1/mcp-connections/${encodeURIComponent(entry.connectionId)}/member-api-key`, signal,
+        const result = await request(initial, `/v1/mcp-connections/${encodeURIComponent(entry.connectionId)}/my-credential`, signal,
           { body: { apiKey } });
         apiKey = "";
         if (!await current(owner, entry)) return failure("context_changed");
