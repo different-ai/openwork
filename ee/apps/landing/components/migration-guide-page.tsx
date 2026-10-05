@@ -1,147 +1,142 @@
-import { CheckCircle2 } from "lucide-react";
-
+import { HeroDownloadButton } from "./hero-download-button";
+import { LandingFaq } from "./landing-faq";
+import { LandingHeroPrompt } from "./landing-hero-prompt";
+import { LpCta } from "./lp-cta";
+import { LpHeroBackground } from "./lp-hero-background";
+import { LpParityTable } from "./lp-parity-table";
+import { LpSectionHeader, LpTonalCard } from "./lp-primitives";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
+import {
+  MIGRATION_PROMPT,
+  migrationFaq,
+  migrationMoves,
+  migrationStays,
+  migrationSteps
+} from "../lib/claude-cowork-migration";
 
 type Props = {
   stars: string;
-  downloadHref: string;
 };
 
-// The one action on this page. The agent guide it points to lives in
-// packages/openwork-bootstrap/migrate.md and is served at /migrate.md.
-export const MIGRATION_PROMPT =
-  "Follow https://openworklabs.com/migrate.md to move my Claude plugins and skills to OpenWork.";
-
-const moves = [
-  ["Plugins you added in Cowork or Claude Code", "Imported into your OpenWork organization from their GitHub marketplace, such as Anthropic's knowledge-work-plugins. Their skills work right away."],
-  ["Skills you wrote yourself", "Uploaded as private skills only you can use until you share them."],
-  ["Connectors a plugin suggests", "Added as optional. Each person connects the services they use, such as Slack or Google Workspace."],
-  ["Running it again", "Picks up changes from the marketplace and from your own skills. Nothing is duplicated."]
-];
-
-const stays = [
-  "Conversation history and saved credentials.",
-  "Plugins that are not in a public GitHub repository.",
-  "Scheduled tasks: recreate each one and run it once by hand."
-];
-
-const manualSteps = [
-  ["Install the OpenWork command", "curl -fsSLo /tmp/openwork-install.sh https://openworklabs.com/install.sh && sh /tmp/openwork-install.sh"],
-  ["Sign in", "openwork-bootstrap login"],
-  ["See what will move", "openwork-bootstrap migrate plan"],
-  ["Move the plugins you use", "openwork-bootstrap migrate apply --plugin productivity,sales"]
-];
-
-const checklist = [
-  "Each skill you rely on runs on a real task in OpenWork.",
-  "The connectors those skills need are connected.",
-  "At least one model is set up and you know how it is billed.",
-  "Scheduled tasks are recreated and have run once."
-];
-
-export function MigrationGuidePage({ stars, downloadHref }: Props) {
+export function MigrationGuidePage({ stars }: Props) {
   return (
-    <div className="min-h-screen overflow-x-hidden bg-[var(--lp-page)] text-[var(--lp-ink)]">
-      <SiteNav stars={stars} active="docs" />
+    <div className="relative min-h-screen overflow-x-hidden bg-[var(--lp-page)] text-[var(--lp-ink)]">
+      <LpHeroBackground />
 
-      <main className="mx-auto w-full max-w-[1040px] px-6 pb-8">
-        <header className="border-b border-[var(--lp-border)] pb-14 pt-16 md:pb-20 md:pt-[88px]">
-          <div className="text-[15px] text-[var(--lp-muted)]">Migration guide</div>
-          <h1 className="mt-5 max-w-[820px] text-[44px] font-light leading-[49px] tracking-[-0.02em] md:text-[58px] md:leading-[62px]">
-            Move from Claude Cowork with one prompt.
-          </h1>
-          <p className="mt-7 max-w-[720px] text-[18px] leading-[29px] text-[var(--lp-body)]">
-            Paste this into Claude Code, or any agent that can run commands on your
-            computer. It finds your plugins and the skills you wrote, shows you what
-            will move, and imports what you choose into OpenWork.
-          </p>
-          <pre className="mt-8 max-w-[820px] overflow-x-auto whitespace-pre-wrap rounded-[16px] bg-[#011627] p-5 font-mono text-[14px] leading-6 text-white">
-            <code>{MIGRATION_PROMPT}</code>
-          </pre>
-          <p className="mt-4 max-w-[720px] text-[14px] leading-[22px] text-[var(--lp-muted)]">
-            You need an owner or admin account in your OpenWork organization to share
-            plugins with everyone. The agent asks before it uploads anything.
-          </p>
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <a href="/migrate.md" className="lp-pill-primary">
-              Read what the agent will do
-            </a>
-            <a href={downloadHref} className="lp-pill-secondary">
-              Download OpenWork
-            </a>
-          </div>
-        </header>
+      <div className="relative z-10">
+        <SiteNav stars={stars} active="docs" />
 
-        <section className="py-14 md:py-20">
-          <div className="text-[15px] text-[var(--lp-muted)]">What moves</div>
-          <h2 className="mt-3 text-[34px] font-light leading-[41px] tracking-[-0.015em] md:text-[42px] md:leading-[48px]">
-            Your plugins and skills, ready to use.
-          </h2>
-          <div className="mt-9 grid gap-4 md:grid-cols-2">
-            {moves.map(([title, body]) => (
-              <div key={title} className="rounded-[20px] bg-[var(--lp-tonal)] p-6">
-                <h3 className="text-[16px] font-semibold">{title}</h3>
-                <p className="mt-2 text-[14px] leading-[22px] text-[var(--lp-body)]">{body}</p>
+        <main className="mx-auto w-full max-w-[1176px] px-6 pb-8">
+          <section
+            aria-labelledby="migration-heading"
+            className="grid items-start gap-10 pt-16 md:pt-24 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] lg:gap-14"
+          >
+            <div className="min-w-0">
+              <p className="mb-5 text-[13px] leading-relaxed text-[var(--lp-muted)]">
+                Claude Cowork migration guide
+              </p>
+              <h1
+                id="migration-heading"
+                className="text-[clamp(2.5rem,4.4vw,3.25rem)] font-medium leading-[1.08] tracking-[-0.045em]"
+              >
+                <span className="block">Switch from Claude Cowork</span>{" "}
+                <span className="block">in one prompt.</span>
+              </h1>
+              <p className="mt-6 max-w-xl text-[17px] leading-[1.6] text-[var(--lp-body)] lg:text-lg">
+                Bring your Cowork plugins and Claude skills to OpenWork, the
+                open-source Claude Cowork alternative. Your agent moves them and
+                tells you what is left.
+              </p>
+              <div className="mt-8 flex flex-wrap items-center gap-3">
+                <HeroDownloadButton />
+                <a href="/migrate.md" className="lp-btn lp-btn--secondary">
+                  Read what the agent will do
+                </a>
               </div>
-            ))}
-          </div>
-          <div className="mt-5 rounded-[14px] bg-[#fff7ed] p-4 text-[13.5px] leading-[22px] text-[#7c2d12]">
-            <div className="font-semibold">What stays behind</div>
-            <ul className="mt-1 list-disc pl-5">
-              {stays.map((item) => <li key={item}>{item}</li>)}
-            </ul>
-          </div>
-        </section>
-
-        <section className="border-t border-[var(--lp-border)] py-14 md:py-20">
-          <div className="grid gap-12 lg:grid-cols-[260px_minmax(0,1fr)]">
-            <div>
-              <div className="text-[15px] text-[var(--lp-muted)]">Without an agent</div>
-              <h2 className="mt-3 text-[34px] font-light leading-[41px] tracking-[-0.015em]">
-                The same move, by hand.
-              </h2>
+              <p className="mt-4 text-xs text-[var(--lp-muted)]">
+                Free and open source · Needs an owner or admin account to share plugins with your team
+              </p>
             </div>
-            <div className="divide-y divide-[var(--lp-border)] border-y border-[var(--lp-border)]">
-              {manualSteps.map(([title, command], index) => (
-                <article key={title} className="grid gap-3 py-6 sm:grid-cols-[44px_minmax(0,1fr)]">
-                  <div className="font-pixel text-[24px] text-[var(--lp-faint)]">{String(index + 1).padStart(2, "0")}</div>
-                  <div className="min-w-0">
-                    <h3 className="text-[17px] font-semibold">{title}</h3>
-                    <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-[10px] bg-[var(--lp-tonal)] px-3 py-2 font-mono text-[13px] leading-[21px]">
-                      <code>{command}</code>
-                    </pre>
-                  </div>
-                </article>
+
+            <div className="flex min-w-0 lg:justify-end">
+              <LandingHeroPrompt
+                className="w-full lg:max-w-[480px]"
+                prompt={MIGRATION_PROMPT}
+                heading="Paste this into Claude Code"
+                description="Or any agent that can run commands on your computer. It asks before it uploads anything."
+                variant="cowork-migration"
+                placement="migration-guide"
+                showPrompt
+              />
+            </div>
+          </section>
+
+          <section className="mt-20 lg:mt-[120px]" aria-labelledby="moves-heading">
+            <LpSectionHeader label="What moves" heading="Your plugins and skills, ready on day one." />
+            <div className="mt-10 grid gap-4 md:grid-cols-2">
+              {migrationMoves.map((item) => (
+                <LpTonalCard key={item.title} className="p-7">
+                  <h3 className="text-[17px] font-medium">{item.title}</h3>
+                  <p className="mt-2 text-[15px] leading-[1.6] text-[var(--lp-body)]">{item.body}</p>
+                </LpTonalCard>
               ))}
             </div>
-          </div>
-        </section>
+            <p className="mt-6 text-[14px] leading-[1.6] text-[var(--lp-muted)]">
+              Stays behind: {migrationStays.join("; ")}.
+            </p>
+          </section>
 
-        <section className="rounded-[24px] bg-[var(--lp-tonal)] p-7 md:p-12">
-          <h2 className="max-w-[620px] text-[34px] font-light leading-[41px] tracking-[-0.015em]">
-            Switch once your real work runs.
-          </h2>
-          <div className="mt-6 flex flex-col gap-4">
-            {checklist.map((item) => (
-              <div key={item} className="flex gap-3 text-[14px] leading-[22px]">
-                <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" strokeWidth={1.6} />
-                <span>{item}</span>
-              </div>
-            ))}
-          </div>
-          <p className="mt-6 max-w-[650px] text-[14px] leading-[22px] text-[var(--lp-body)]">
-            Need more detail? See{" "}
-            <a href="/docs/start-here/connect-your-stack/connect-services" className="underline underline-offset-4">connecting your services</a>{" "}
-            and the{" "}
-            <a href="/docs/cloud/team-quickstart" className="underline underline-offset-4">team quickstart</a>.
-          </p>
-        </section>
+          <section className="mt-20 lg:mt-[120px]" aria-labelledby="steps-heading">
+            <LpSectionHeader label="How it works" heading="Look first. Then move only what you use." />
+            <ol className="mt-10 grid gap-4 lg:grid-cols-3">
+              {migrationSteps.map((step, index) => (
+                <li key={step.title} className="flex flex-col rounded-[24px] border border-[var(--lp-border)] bg-white/60 p-7">
+                  <span className="font-pixel text-[28px] leading-none text-[var(--lp-faint)]">
+                    {String(index + 1).padStart(2, "0")}
+                  </span>
+                  <h3 className="mt-5 text-[17px] font-medium">{step.title}</h3>
+                  <p className="mt-2 flex-1 text-[15px] leading-[1.6] text-[var(--lp-body)]">{step.body}</p>
+                  <code className="mt-6 block overflow-x-auto whitespace-nowrap rounded-xl bg-[var(--lp-tonal)] px-3.5 py-2.5 font-mono text-[12.5px] text-[var(--lp-ink)]">
+                    {step.command}
+                  </code>
+                </li>
+              ))}
+            </ol>
+            <p className="mt-6 text-[14px] leading-[1.6] text-[var(--lp-muted)]">
+              No agent? Install the command with{" "}
+              <code className="font-mono text-[13px] text-[var(--lp-ink)]">curl -fsSLo /tmp/openwork-install.sh https://openworklabs.com/install.sh</code>,
+              {" "}run it with <code className="font-mono text-[13px] text-[var(--lp-ink)]">sh</code>, then{" "}
+              <code className="font-mono text-[13px] text-[var(--lp-ink)]">openwork-bootstrap login</code> and the three commands above.
+            </p>
+          </section>
 
-        <div className="mt-16">
-          <SiteFooter />
-        </div>
-      </main>
+          <section className="mt-20 lg:mt-[120px]" aria-labelledby="parity-heading">
+            <LpSectionHeader label="After the move" heading="Everything Cowork does. No lock-in." />
+            <div className="mt-10">
+              <LpParityTable showMigrationLink={false} />
+            </div>
+          </section>
+
+          <div className="mt-[120px] [&_h2]:!text-[36px] [&_h2]:!leading-[42px]">
+            <LandingFaq entries={migrationFaq} />
+          </div>
+
+          <div className="mt-[120px]">
+            <LpCta
+              heading="Keep your work. Change your tools."
+              sub="Move your Cowork plugins and skills today, and keep Cowork until your real work runs in OpenWork."
+              primary={{ label: "Download OpenWork", href: "/download" }}
+              secondary={{ label: "Read the agent guide", href: "/migrate.md" }}
+              trust="Free & open source · macOS, Windows, Linux"
+            />
+          </div>
+
+          <div className="mt-16">
+            <SiteFooter />
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

@@ -16,7 +16,7 @@ test("a person leaving Claude Cowork finds one prompt to paste, and the guide th
 
   const visible = await eventually(async () => evaluateOnSurface(browser, () => document.body.innerText), {
     within: 30_000,
-    until: (value) => typeof value === "string" && value.includes("Migration guide"),
+    until: (value) => typeof value === "string" && value.includes("Switch from Claude Cowork"),
   });
   const text = String(visible);
   evidence.recordAssertionEvidence(
