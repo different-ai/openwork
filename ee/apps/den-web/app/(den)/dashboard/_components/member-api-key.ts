@@ -18,61 +18,6 @@ type PersonalApiKeyConnection = MemberApiKeyConnection & {
 
 export type PersonalApiKeyStatus = "missing" | "saved_unverified" | "ready" | "reconnect_required";
 
-export type MemberApiKeyBoundary = {
-  organizationId: string | null;
-  connectionId: string | null;
-  generation: number;
-};
-
-export type MemberApiKeySaveOutcome =
-  | { kind: "stored" }
-  | { kind: "failed"; message: string }
-  | { kind: "uncertain"; message: string }
-  | { kind: "stale" };
-
-export function nextMemberApiKeyBoundary(
-  current: MemberApiKeyBoundary,
-  organizationId: string | null,
-  connectionId: string | null,
-  invalidate = false,
-): MemberApiKeyBoundary {
-  if (!invalidate && current.organizationId === organizationId && current.connectionId === connectionId) return current;
-  return { organizationId, connectionId, generation: current.generation + 1 };
-}
-
-export function isCurrentMemberApiKeyBoundary(current: MemberApiKeyBoundary, attempt: MemberApiKeyBoundary): boolean {
-  return current.generation === attempt.generation
-    && current.organizationId === attempt.organizationId
-    && current.connectionId === attempt.connectionId;
-}
-
-export async function settleMemberApiKeySave(input: {
-  request: () => Promise<{ ok: boolean; status: number }>;
-  refresh: () => Promise<void>;
-  isCurrent: () => boolean;
-}): Promise<MemberApiKeySaveOutcome> {
-  let response: { ok: boolean; status: number };
-  try {
-    response = await input.request();
-  } catch {
-    return input.isCurrent()
-      ? { kind: "uncertain", message: MEMBER_API_KEY_UNCERTAIN_MESSAGE }
-      : { kind: "stale" };
-  }
-  if (!input.isCurrent()) return { kind: "stale" };
-  if (!response.ok) {
-    return isDefinitiveMemberApiKeyFailureStatus(response.status)
-      ? { kind: "failed", message: memberApiKeyFailureMessage(response.status) }
-      : { kind: "uncertain", message: MEMBER_API_KEY_UNCERTAIN_MESSAGE };
-  }
-  try {
-    await input.refresh();
-  } catch {
-    // HTTP success confirms storage; a stale query must not reverse that result.
-  }
-  return input.isCurrent() ? { kind: "stored" } : { kind: "stale" };
-}
-
 export function usesMemberApiKey(connection: MemberApiKeyConnection): boolean {
   return connection.authType === "apikey" && connection.credentialMode === "per_member";
 }
@@ -107,25 +52,6 @@ export function validateMemberApiKey(apiKey: string): string | null {
     return "Use the raw key without spaces or control characters.";
   }
   return null;
-}
-
-export function memberApiKeyRequest(connectionId: string, orgId: string, apiKey: string): {
-  path: string;
-  init: RequestInit;
-} {
-  return {
-    path: `/v1/mcp-connections/${encodeURIComponent(connectionId)}/my-credential`,
-    init: {
-      method: "PUT",
-      headers: { "x-openwork-org-id": orgId },
-      body: JSON.stringify({ apiKey }),
-    },
-  };
-}
-
-/** Provider and server response text is deliberately excluded because it may echo a key. */
-export function isDefinitiveMemberApiKeyFailureStatus(status: number): boolean {
-  return status === 400 || status === 403 || status === 404 || status === 409;
 }
 
 export function memberApiKeyFailureMessage(status?: number): string {
