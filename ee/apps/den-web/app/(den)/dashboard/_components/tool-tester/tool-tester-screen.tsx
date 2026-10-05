@@ -429,7 +429,7 @@ export function ToolTesterScreen() {
                 {testableConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name}</option>)}
               </DenSelect>
             </div>
-            <DenBadge tone={selectedApiKeyStatus === "saved_unverified" ? "neutral" : selectedConnection.connectedForMe ? "success" : "neutral"}>
+            <DenBadge tone={selectedApiKeyStatus === "reconnect_required" ? "warning" : selectedApiKeyStatus === "saved_unverified" ? "neutral" : selectedConnection.connectedForMe ? "success" : "neutral"}>
               {selectedApiKeyStatus
                 ? personalApiKeyStatusLabel(selectedApiKeyStatus)
                 : selectedConnection.connectedForMe ? "Connected as you" : "Not connected"}
