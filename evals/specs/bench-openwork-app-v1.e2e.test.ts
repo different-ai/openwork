@@ -503,32 +503,20 @@ async function selectBenchModel(app: Surface): Promise<void> {
     "open bench model picker",
     30_000,
   );
-  const modelPaneOpened = await evalIn(app, browserScript((modelName) => {
-    const popover = document.querySelector<HTMLElement>('[data-slot="popover-content"]');
-    if (!(popover instanceof HTMLElement)) return false;
-    if ([...popover.querySelectorAll<HTMLElement>('[data-slot="command-item"]')]
-      .some((item) => (item.textContent ?? "").includes(modelName))) return true;
-    const modelButton = [...popover.querySelectorAll('button')]
-      .find((button) => (button.textContent ?? "").trim().startsWith("Model"));
-    if (!(modelButton instanceof HTMLButtonElement)) return false;
-    modelButton.click();
-    return true;
-  }, [modelName]));
-  expect(modelPaneOpened).toBe(true);
-  await pollExpression(app, browserScript((modelName) => {
-    const popover = document.querySelector<HTMLElement>('[data-slot="popover-content"]');
-    if (!(popover instanceof HTMLElement)) return false;
-    return [...popover.querySelectorAll<HTMLElement>('[data-slot="command-item"]')]
-      .some((item) => (item.textContent ?? "").includes(modelName));
-  }, [modelName]), "Bench Model listed in picker");
-  const picked = await evalIn(app, browserScript((modelName) => {
-    const popover = document.querySelector<HTMLElement>('[data-slot="popover-content"]');
-    const item = [...(popover?.querySelectorAll<HTMLElement>('[data-slot="command-item"]') ?? [])]
-      .find((candidate) => (candidate.textContent ?? "").includes(modelName));
+  // The composer opens the model list directly. Its catalog refresh is async;
+  // an open popover does not mean the witness model has arrived yet.
+  await pollExpression(app, browserScript((providerId, modelId) => {
+    const picker = document.querySelector<HTMLElement>('[data-testid="composer-model-picker"]');
+    const item = picker?.querySelector<HTMLElement>(`[data-testid="model-option-${providerId}-${modelId}"]`);
+    return Boolean(item && item.getAttribute("aria-disabled") !== "true" && !item.hasAttribute("data-disabled"));
+  }, [providerId, modelId]), "Bench Model available in picker", 60_000);
+  const picked = await evalIn(app, browserScript((providerId, modelId) => {
+    const picker = document.querySelector<HTMLElement>('[data-testid="composer-model-picker"]');
+    const item = picker?.querySelector<HTMLElement>(`[data-testid="model-option-${providerId}-${modelId}"]`);
     if (!(item instanceof HTMLElement)) return false;
     item.click();
     return true;
-  }, [modelName]));
+  }, [providerId, modelId]));
   expect(picked).toBe(true);
   await pollExpression(
     app,

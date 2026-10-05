@@ -5,7 +5,7 @@
   "attachment-upload-loading-state.e2e.test.ts": 9,
   "automation-registration-recovery.e2e.test.ts": 5,
   "automation-revision-revert.e2e.test.ts": 4,
-  "bench-openwork-app-v1.e2e.test.ts": 27,
+  "bench-openwork-app-v1.e2e.test.ts": 26,
   "chat-loading-shimmer.e2e.test.ts": 3,
   "cloud-provider-local-credential-fallback.e2e.test.ts": 6,
   "command-palette-search.e2e.test.ts": 3,
