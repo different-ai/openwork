@@ -4,7 +4,7 @@ import { createOpenworkServerClient, type OpenworkMcpAppResource } from "../../.
 import { McpAppFrame } from "../../../apps/app/src/components/chat/mcp-app-frame";
 import { setDenBootstrapConfig, writeDenSettings } from "../../../apps/app/src/app/lib/den";
 import { McpAppTile } from "../../../apps/app/src/react-app/domains/dashboard/mcp-app-tile";
-import type { DashboardMcpAppEntry } from "../../../apps/app/src/react-app/domains/dashboard/granted-dashboard-store";
+import type { DashboardMcpAppEntry } from "../../../apps/app/src/react-app/domains/dashboard/dashboard-mcp-app-entry";
 
 type Configuration = {
   baseUrl: string; directBaseUrl: string; token: string; workspaceId: string; sessionId: string;

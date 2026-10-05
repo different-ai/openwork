@@ -353,8 +353,6 @@ test("create, preview, save and reopen an app without changing already-open resu
   const companyBefore = (await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body;
   await step("remove a personal card and add the saved app again", async () => {
     await world.open("/dashboard");
-    await user.see({ text: "Project updates" });
-    await user.see({ text: "From your company" });
     await user.click("App options for Team briefing");
     await user.click("Remove Team briefing from dashboard");
     await user.see({ text: "Make this dashboard yours" }, { timeoutMs: 30_000 });
@@ -369,11 +367,13 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.reload();
     await user.see("App options for Team briefing", { timeoutMs: 30_000 });
     await probe.eventually(() => world.previewText(), { within: 30_000, label: "saved app rendered on dashboard", until: (text) => text.includes("Weekly overview") && text.includes("Launch briefing") });
-    await user.see({ text: "Project updates" });
+    // The granted company dashboard stays in Den but no longer renders on Desktop.
+    await user.notSee({ text: "From your company" });
+    await user.notSee({ text: "Project updates" });
     expect((await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body).toEqual(companyBefore);
     await user.screenshot();
   });
-  evidence.recordAssertionEvidence("Removing and adding an existing app changes dashboard placement without deleting the app", "Remove kept the saved revision and company dashboard; Choose an existing app added the personal card again and it survived reload beside Project updates.", true);
+  evidence.recordAssertionEvidence("Removing and adding an existing app changes dashboard placement without deleting the app", "Remove kept the saved revision and company dashboard; Choose an existing app added the personal card again and it survived reload, while the granted company dashboard did not render.", true);
 
   await step("a saved snapshot reserves its measured tile size while reloading", async () => {
     const saved = await readApp();
