@@ -27,7 +27,7 @@ import { getModelsDevProvider } from "../../llm/models-dev.js"
 import { LiteLlmError, createLiteLlmClient, normalizeLiteLlmBaseUrl } from "../../llm/litellm.js"
 import { liteLlmCatalogProvider } from "../../llm/litellm-settings.js"
 import { deleteLiteLlmIssuedKeys, liteLlmMemberIssueStatus, provisionLiteLlmMember, pruneLiteLlmIssuedKeys, reconcileLiteLlmIssuedKeys, scheduleLiteLlmProvisioning } from "../../llm/litellm-issued.js"
-import { applyLiteLlmSync, connectLiteLlmMemberKey, createLiteLlmProvider, updateLiteLlmIssueSettings, disconnectLiteLlmMember, emptySettings, liteLlmEndpoints, liteLlmErrorResponse, liteLlmMemberSet, planLiteLlmCatalog, planLiteLlmSync, pruneLiteLlmAssignments, readLiteLlmSettings, recordLiteLlmSyncError, replaceLiteLlmSyncKey, verifyLiteLlmKey } from "../../llm/litellm-sync.js"
+import { applyLiteLlmSync, connectLiteLlmMemberKey, createLiteLlmProvider, liteLlmAdminKey, updateLiteLlmIssueSettings, disconnectLiteLlmMember, emptySettings, liteLlmEndpoints, liteLlmErrorResponse, liteLlmMemberSet, planLiteLlmCatalog, planLiteLlmSync, pruneLiteLlmAssignments, readLiteLlmSettings, recordLiteLlmSyncError, replaceLiteLlmSyncKey, verifyLiteLlmKey } from "../../llm/litellm-sync.js"
 import { LITELLM_PROVIDER_ID, isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
 import { decodeProviderCredential, readProviderEnvNames, runtimeProviderEnvNames } from "../../llm/provider-credentials.js"
 import { jsonValidator, orgMemberRoute, paramValidator, publicRoute, queryValidator, userSessionRoute } from "../../middleware/index.js"
@@ -946,7 +946,8 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
       if (provider.status !== "active" || !isLiteLlmProviderId(provider.provider_id)) throw new GatewayWriteError(404, "inference_provider_not_found")
       const set = await liteLlmMemberSet(db, provider, input.credentialSetId)
-      const verified = await liteLlmCall(() => verifyLiteLlmKey(createLiteLlmClient(liteLlmEndpoints(provider)), input.apiKey))
+      const adminKey = await liteLlmAdminKey(provider)
+      const verified = await liteLlmCall(() => verifyLiteLlmKey(createLiteLlmClient(liteLlmEndpoints(provider)), input.apiKey, adminKey))
       const assignment = await db.transaction(async (tx) => {
         if (!await lockMemberOAuthAuthorization(tx, provider, set, actor.currentMember.id, userId)) throw new GatewayWriteError(403, "forbidden", "Your admin has not given you access to connect a LiteLLM key.")
         return connectLiteLlmMemberKey(tx, provider, actor.currentMember.id, input.apiKey, verified)
@@ -974,7 +975,8 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, entry.gateway_provider_id))
       const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
       if (!provider || !set || !isLiteLlmProviderId(provider.provider_id) || attempt.clientBinding !== memberAttemptBinding(provider, set, attempt.verifier)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
-      const verified = await liteLlmCall(() => verifyLiteLlmKey(createLiteLlmClient(liteLlmEndpoints(provider)), input.apiKey))
+      const adminKey = await liteLlmAdminKey(provider)
+      const verified = await liteLlmCall(() => verifyLiteLlmKey(createLiteLlmClient(liteLlmEndpoints(provider)), input.apiKey, adminKey))
       const assignment = await db.transaction(async (tx) => {
         if (!await lockMemberOAuthAuthorization(tx, provider, set, entry.org_membership_id, attempt.userId)) throw new GatewayWriteError(403, "forbidden", "Your admin has not given you access to connect a LiteLLM key.")
         const [liveSession] = await tx.select().from(AuthSessionTable).where(and(eq(AuthSessionTable.id, session.id), eq(AuthSessionTable.token, session.token), eq(AuthSessionTable.userId, session.userId), gt(AuthSessionTable.expiresAt, new Date()))).for("update")

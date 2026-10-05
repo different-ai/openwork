@@ -24,7 +24,7 @@ import type { GatewayAudience } from "@openwork/types/den/gateway"
 import { db } from "../db.js"
 import { GatewayWriteError, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "./gateway-matrix.js"
 import { effectiveGatewayGrants, memberGatewayTeams } from "./inference-provider-lifecycle.js"
-import { LiteLlmError, createLiteLlmClient, liteLlmCatalogModels, liteLlmModelSetKey, liteLlmTeamModels, normalizeLiteLlmBaseUrl, type LiteLlmClient, type LiteLlmEndpoints, type LiteLlmModel, type LiteLlmTeam } from "./litellm.js"
+import { LiteLlmError, createLiteLlmClient, liteLlmCatalogModels, liteLlmModelSetKey, liteLlmPersonalModels, liteLlmTeamModels, normalizeLiteLlmBaseUrl, type LiteLlmClient, type LiteLlmEndpoints, type LiteLlmModel, type LiteLlmTeam } from "./litellm.js"
 export { readLiteLlmSettings, liteLlmCatalogProvider, type LiteLlmSettings } from "./litellm-settings.js"
 import { readLiteLlmSettings, type LiteLlmSettings } from "./litellm-settings.js"
 
@@ -91,12 +91,33 @@ export type LiteLlmSyncPlan = {
   members: MemberMatch[]
 }
 
-/** What a member key can reach. A key that reaches nothing is rejected up front. */
-export async function verifyLiteLlmKey(client: LiteLlmClient, key: string) {
-  const models = await client.listModels(key)
+/**
+ * What a member key can reach. A key that reaches nothing is rejected up front.
+ * LiteLLM's /v1/models over-reports for a key without a team: it lists every
+ * proxy model even when the owner may call only some. With the admin key, the
+ * owner's own model list narrows it to what LiteLLM will actually serve.
+ */
+export async function verifyLiteLlmKey(client: LiteLlmClient, key: string, adminKey: string | null = null) {
+  let models = await client.listModels(key)
+  const info = models.length ? await client.keyInfo(key) : null
+  if (info && !info.teamId && info.userId && adminKey) {
+    const owner = await client.userModels(adminKey, info.userId).catch((error: unknown) => {
+      if (error instanceof LiteLlmError && error.code === "unreachable") throw error
+      return null
+    })
+    const personal = owner === null ? null : liteLlmPersonalModels(owner, info.models, models)
+    if (personal !== null) models = personal
+  }
   if (!models.length) throw new LiteLlmError("no_models", "This LiteLLM key has no models it can use.")
-  const info = await client.keyInfo(key)
   return { models, teamId: info?.teamId ?? null }
+}
+
+/** The stored admin key of a per-person LiteLLM provider, for checks that need it. */
+export async function liteLlmAdminKey(provider: GatewayProvider): Promise<string | null> {
+  const settings = requireSettings(provider)
+  if (settings.mode !== "member") return null
+  const set = await activeSet(db, provider, settings)
+  try { return (await syncKey(db, set, settings.mode)).key } catch { return null }
 }
 
 async function mapLimited<T, R>(items: T[], limit: number, run: (item: T) => Promise<R>): Promise<R[]> {
@@ -119,11 +140,10 @@ export async function planLiteLlmCatalog(client: LiteLlmClient, mode: LiteLlmMod
   if (!catalog.length) throw new LiteLlmError("no_models", "LiteLLM lists no chat models for this key.")
   let teams: LiteLlmTeam[] = []
   let teamsAvailable = false
+  // Per-person modes read users, teams and keys, so the key must be an admin key.
   if (mode === "member") {
-    try { teams = (await client.listTeams(key)).slice(0, 1000); teamsAvailable = true } catch (error) {
-      // Teams only name groups; members still match by their own model list.
-      if (error instanceof LiteLlmError && error.code === "unreachable") throw error
-    }
+    teams = (await client.requireAdmin(key)).slice(0, 1000)
+    teamsAvailable = true
   }
   return { catalog, teams, teamsAvailable }
 }
@@ -135,18 +155,18 @@ export async function planLiteLlmSync(provider: GatewayProvider, client: LiteLlm
   const { credential, key } = await syncKey(db, set, settings.mode)
   const catalog = await planLiteLlmCatalog(client, settings.mode, key)
   // Issued keys are reconciled per person by litellm-issued.ts, not matched here.
-  const members = settings.mode === "member" && settings.keySource === "personal" ? await planMemberMatches(set, client) : []
+  const members = settings.mode === "member" && settings.keySource === "personal" ? await planMemberMatches(set, client, key) : []
   return { mode: settings.mode, setId: set.id, syncCredential: { id: credential.id, secret: credential.secret }, ...catalog, members }
 }
 
-async function planMemberMatches(set: GatewaySet, client: LiteLlmClient): Promise<MemberMatch[]> {
+async function planMemberMatches(set: GatewaySet, client: LiteLlmClient, adminKey: string): Promise<MemberMatch[]> {
   const rows = (await db.select().from(GatewayProviderCredentialTable).where(and(eq(GatewayProviderCredentialTable.credential_set_id, set.id), eq(GatewayProviderCredentialTable.status, "active"))))
     .flatMap((row) => row.org_membership_id !== null && row.subject === row.org_membership_id ? [{ row, memberId: row.org_membership_id }] : [])
   return mapLimited(rows, MEMBER_MATCH_CONCURRENCY, async ({ row, memberId }): Promise<MemberMatch> => {
     const key = apiKeyOf(row)
     if (!key) return { kind: "unavailable", memberId }
     try {
-      const verified = await verifyLiteLlmKey(client, key)
+      const verified = await verifyLiteLlmKey(client, key, adminKey)
       return { kind: "matched", memberId, credentialId: row.id, secret: row.secret, ...verified }
     } catch (error) {
       if (error instanceof LiteLlmError && (error.code === "unauthorized" || error.code === "no_models")) return { kind: "rejected", memberId, credentialId: row.id, secret: row.secret }

@@ -109,7 +109,7 @@ sequenceDiagram
   LL-->>GW: response (LiteLLM budgets Alice's key)
 ```
 
-The admin key is used only to read LiteLLM. Each request uses the person's own key, so LiteLLM's user, team and key budgets apply and LiteLLM's logs show the real person. OpenWork logs tokens but not cost. If LiteLLM later rejects a key, the next sync revokes it and the person sees **Connect** again.
+The admin key is used only to read LiteLLM. For a key without a team, LiteLLM lists every model on the proxy but only serves the ones its owner may use, so OpenWork checks the owner's own model list and grants just those. Each request uses the person's own key, so LiteLLM's user, team and key budgets apply and LiteLLM's logs show the real person. OpenWork logs tokens but not cost. If LiteLLM later rejects a key, the next sync revokes it and the person sees **Connect** again.
 
 ### OpenWork creates keys
 
@@ -180,8 +180,9 @@ If LiteLLM can't be read, OpenWork keeps the last synced models and shows the er
 
 | What you see | Why | What to do |
 | --- | --- | --- |
+| "LiteLLM rejected the key" | The key doesn't exist, is blocked, or has expired | Check the key in LiteLLM, or create a new one |
 | The key is refused when you add the provider | The proxy URL is wrong, unreachable, or the key is not valid there | Check the URL opens `/v1/models` with that key. For a private proxy, ask the operator to allow its origin |
-| "The LiteLLM key is not allowed to call this endpoint" | The member and created-keys modes need a key that can read users, teams and keys | Use a LiteLLM admin (proxy admin) key |
+| "This LiteLLM key can call models but can't manage LiteLLM" | **Each person's own key** and **OpenWork creates keys** need a key that can read users, teams and keys | Use the master key or a proxy admin key |
 | A person's key is refused with "no shared models" | Their key reaches none of the synced models | In LiteLLM, give the key at least one chat model, then **Sync models** |
 | A person is under **No key yet**: not in LiteLLM | No LiteLLM user has their OpenWork email | Add them in LiteLLM with that email, then **Check again** |
 | A person is under **No key yet**: no key to copy | Copy mode with **Show an error**, and they have no active key | Create a key for them in LiteLLM, or switch the fallback to **Use their teams** |

@@ -24,7 +24,7 @@ export type LiteLlmEndpoints = {
 
 export type LiteLlmModel = { id: string; name: string; config: JsonRecord }
 export type LiteLlmTeam = { id: string; alias: string | null; models: string[] }
-export type LiteLlmKeyInfo = { teamId: string | null; models: string[] }
+export type LiteLlmKeyInfo = { teamId: string | null; userId: string | null; models: string[] }
 export type LiteLlmUser = { userId: string; email: string; teams: string[]; models: string[] }
 /** An existing key's settings. Never its value: LiteLLM keeps only a hash. */
 export type LiteLlmKeyRecord = {
@@ -55,7 +55,7 @@ export type LiteLlmIssueRequest = {
 export const LITELLM_ISSUED_KEY_ALIAS_PREFIX = "openwork-"
 
 export class LiteLlmError extends Error {
-  constructor(readonly code: "invalid_base_url" | "unreachable" | "unauthorized" | "forbidden" | "bad_response" | "no_models", message: string, readonly status: number | null = null) {
+  constructor(readonly code: "invalid_base_url" | "unreachable" | "unauthorized" | "forbidden" | "not_admin" | "bad_response" | "no_models", message: string, readonly status: number | null = null) {
     super(message)
     this.name = "LiteLlmError"
   }
@@ -164,7 +164,7 @@ export function createLiteLlmClient(endpoints: LiteLlmEndpoints, fetchImpl: Lite
       const body = await request("/key/info", key)
       const info = isRecord(body) && isRecord(body.info) ? body.info : null
       if (!info) return null
-      return { teamId: readString(info.team_id), models: Array.isArray(info.models) ? info.models.flatMap((model) => readString(model) ?? []) : [] }
+      return { teamId: readString(info.team_id), userId: readString(info.user_id), models: Array.isArray(info.models) ? info.models.flatMap((model) => readString(model) ?? []) : [] }
     } catch (error) {
       if (error instanceof LiteLlmError && error.code === "unauthorized") throw error
       return null
@@ -181,6 +181,27 @@ export function createLiteLlmClient(endpoints: LiteLlmEndpoints, fetchImpl: Lite
     if (!match) return null
     const strings = (value: unknown) => Array.isArray(value) ? value.flatMap((entry) => readString(entry) ?? []) : []
     return { userId: readString(match.user_id) ?? "", email: readString(match.user_email) ?? wanted, teams: strings(match.teams), models: strings(match.models) }
+  }
+
+  /** A user's own model list, or null when LiteLLM does not know the user. Requires an admin key. */
+  async function userModels(adminKey: string, userId: string): Promise<string[] | null> {
+    const body = await request(`/user/info?user_id=${encodeURIComponent(userId)}`, adminKey, undefined, null)
+    const info = isRecord(body) && isRecord(body.user_info) ? body.user_info : null
+    if (!info || readString(info.user_id) !== userId) return null
+    return Array.isArray(info.models) ? info.models.flatMap((model) => readString(model) ?? []) : []
+  }
+
+  /**
+   * Proves the key can manage LiteLLM. Its admin endpoints answer a valid
+   * non-admin key with 401 (v1.97) or 403, so both mean "not an admin key".
+   */
+  async function requireAdmin(key: string): Promise<LiteLlmTeam[]> {
+    try { return await listTeams(key) } catch (error) {
+      if (error instanceof LiteLlmError && (error.code === "unauthorized" || error.code === "forbidden")) {
+        throw new LiteLlmError("not_admin", "This LiteLLM key can call models but can't manage LiteLLM. Use the master key or a proxy admin key.", error.status)
+      }
+      throw error
+    }
   }
 
   /** A user's keys, oldest first. Values are never returned, only settings. Requires an admin key. */
@@ -227,7 +248,7 @@ export function createLiteLlmClient(endpoints: LiteLlmEndpoints, fetchImpl: Lite
     await request("/key/delete", adminKey, { keys: tokenIds }, { deleted_keys: [] })
   }
 
-  return { listModels, modelGroupInfo, listTeams, keyInfo, findUserByEmail, listUserKeys, issueKey, deleteKeys }
+  return { listModels, modelGroupInfo, listTeams, requireAdmin, keyInfo, findUserByEmail, userModels, listUserKeys, issueKey, deleteKeys }
 }
 
 export type LiteLlmClient = ReturnType<typeof createLiteLlmClient>

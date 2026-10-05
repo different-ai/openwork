@@ -22,7 +22,10 @@ import { eventually, localMysqlIsRunning, needs, queryDenDatabase, server, SkipE
  *                             email and creates their keys; nobody pastes anything.
  *
  * The LiteLLM proxy here is a loopback fake that keeps users, teams and keys
- * like LiteLLM v1.97 and records which key each chat request used. Den, the
+ * like LiteLLM v1.97 and records which key each chat request used. Where real
+ * LiteLLM is surprising, the fake copies it (checked against a v1.97 proxy):
+ * admin routes answer a valid non-admin key with 401, and /v1/models lists
+ * every model for a key without a team while chat enforces the owner's list. Den, the
  * gateway and the fake share one machine and one scratch MySQL database; run
  * with OPENWORK_WORLD_PLACE=local (locally or inside a Daytona sandbox).
  */
@@ -35,6 +38,8 @@ const DEN_DB_ENCRYPTION_KEY = "local-dev-db-encryption-key-please-change-1234567
 const ORG_KEY = "sk-litellm-org-000000000000";
 const ADMIN_KEY = "sk-litellm-admin-0000000000";
 const ALICE_KEY = "sk-litellm-alice-0000000000";
+const CAROL_KEY = "sk-litellm-carol-0000000000";
+const PLAIN_KEY = "sk-litellm-plain-0000000000";
 
 type Json = Record<string, unknown>;
 
@@ -102,13 +107,19 @@ async function startFakeLiteLlm(): Promise<FakeLiteLlm> {
   };
   addKey({ value: ORG_KEY, userId: null, teamId: null, alias: "openwork-shared", metadata: {}, generated: {} });
   addKey({ value: ADMIN_KEY, userId: null, teamId: null, alias: null, metadata: {}, generated: {} });
+  addKey({ value: PLAIN_KEY, userId: null, teamId: null, alias: "plain", metadata: {}, generated: {} });
   const isAdmin = (value: string) => value === ADMIN_KEY;
+  // What LiteLLM lists on /v1/models: a key without a team sees every model.
   const modelsFor = (key: FakeKey) => {
     if (key.value === ORG_KEY) return ["gpt-4o", "claude-sonnet", "text-embed"];
-    if (isAdmin(key.value)) return ALL_MODELS;
+    if (key.value === PLAIN_KEY) return ["gpt-4o"];
     if (key.teamId) return TEAMS[key.teamId] ?? [];
-    const owner = key.userId ? users.get(key.userId) : undefined;
-    return owner?.models.length ? owner.models : ALL_MODELS;
+    return ALL_MODELS;
+  };
+  // What LiteLLM actually serves: a key without a team is held to its owner's own list.
+  const callableFor = (key: FakeKey) => {
+    const owner = !key.teamId && key.userId ? users.get(key.userId) : undefined;
+    return owner?.models.length ? owner.models : modelsFor(key);
   };
   const json = (response: ServerResponse, status: number, body: unknown) => {
     response.writeHead(status, { "content-type": "application/json" });
@@ -134,7 +145,7 @@ async function startFakeLiteLlm(): Promise<FakeLiteLlm> {
       if (route === "GET /v1/models") return json(response, 200, { object: "list", data: modelsFor(key).map((id) => ({ id, object: "model" })) });
       if (route === "POST /v1/chat/completions") {
         const model = stringAt(body, "model");
-        if (!modelsFor(key).includes(model)) return json(response, 401, { error: { message: `key not allowed to access model ${model}` } });
+        if (!callableFor(key).includes(model)) return json(response, 403, { error: { message: `user not allowed to access model ${model}` } });
         chats.push({ key: key.value, model });
         return json(response, 200, {
           id: "chatcmpl-litellm", object: "chat.completion", created: 1767225600, model,
@@ -148,9 +159,17 @@ async function startFakeLiteLlm(): Promise<FakeLiteLlm> {
           input_cost_per_token: 0.000002, output_cost_per_token: 0.00001, supports_function_calling: true,
         })) });
       }
-      if (!admin) return json(response, 403, { error: { message: "admin only" } });
+      if (route === "GET /key/info") {
+        if (admin) return json(response, 404, { error: { message: "Key not found in database" } });
+        return json(response, 200, { info: { team_id: key.teamId, user_id: key.userId, models: [] } });
+      }
+      if (!admin) return json(response, 401, { error: { message: "Only proxy admin can call this route" } });
+      if (route === "GET /user/info") {
+        const userId = url.searchParams.get("user_id") ?? "";
+        const user = users.get(userId);
+        return user ? json(response, 200, { user_id: userId, user_info: { user_id: userId, models: user.models, teams: user.teams } }) : json(response, 404, { error: { message: "User not found" } });
+      }
       if (route === "GET /team/list") return json(response, 200, Object.entries(TEAMS).map(([team_id, models]) => ({ team_id, team_alias: team_id.slice(2), models })));
-      if (route === "GET /key/info") return json(response, 200, { info: { team_id: key.teamId, models: [] } });
       if (route === "GET /user/list") {
         const fragment = (url.searchParams.get("user_email") ?? "").toLowerCase();
         return json(response, 200, { users: [...users].filter(([, user]) => user.email.toLowerCase().includes(fragment))
@@ -340,22 +359,25 @@ test("an owner connects the team's LiteLLM proxy three ways, and each member's r
     org: {
       name: organizationName,
       admin: { name: "Gateway Owner" },
-      members: { alice: { name: "Alice Rivera" }, bob: { name: "Bob Chen" } },
+      members: { alice: { name: "Alice Rivera" }, bob: { name: "Bob Chen" }, carol: { name: "Carol Diaz" } },
     },
   });
   const databaseUrl = denServer.database?.url;
   if (!databaseUrl || !new URL(databaseUrl).pathname.startsWith("/openwork_eval_")) throw new Error("An isolated testkit scratch database is required.");
-  const alice = denServer.members.alice;
-  const bob = denServer.members.bob;
-  if (!alice || !bob) throw new Error("The local Den did not provision both members.");
+  const { alice, bob, carol } = denServer.members;
+  if (!alice || !bob || !carol) throw new Error("The local Den did not provision every member.");
   await using gatewayApp = await startGateway({ port: gatewayPort, databaseUrl, allowedOrigin: litellm.baseUrl });
   expect(gatewayApp.baseUrl).toBe(gateway);
   const owner = denServer.admin;
   const orgId = await organizationId(owner, organizationName);
   const aliceId = await memberIdByEmail(owner, orgId, alice.email);
   const bobId = await memberIdByEmail(owner, orgId, bob.email);
+  const carolId = await memberIdByEmail(owner, orgId, carol.email);
   // Alice exists in LiteLLM (two teams, plus a laptop key with a $10 budget); Bob does not.
   litellm.users.set("alice", { email: alice.email.toUpperCase(), teams: ["t-research", "t-design"], models: [] });
+  // Carol is in no team and may only call claude-sonnet.
+  litellm.users.set("carol", { email: carol.email, teams: [], models: ["claude-sonnet"] });
+  litellm.keys.push({ value: CAROL_KEY, token: `caroltoken${"0".repeat(54)}`, userId: "carol", teamId: null, alias: "carol-laptop", metadata: {}, createdAt: "2025-12-02T00:00:00.000Z", generated: {} });
   litellm.keys.push({ value: ALICE_KEY, token: `alicetoken${"0".repeat(54)}`, userId: "alice", teamId: "t-research", alias: "alice-laptop", metadata: { owner: "it" }, createdAt: "2025-12-01T00:00:00.000Z", generated: { max_budget: 10, tpm_limit: 1000 } });
 
   // --- 1. One organization key ------------------------------------------------
@@ -383,7 +405,10 @@ test("an owner connects the team's LiteLLM proxy three ways, and each member's r
   );
 
   // --- 2. Each person's own key -----------------------------------------------
-  const personal = await den(owner, orgId, "/v1/inference-providers/litellm", { body: { name: "LiteLLM (personal keys)", baseUrl: `${litellm.baseUrl}/v1`, mode: "member", apiKey: ADMIN_KEY, memberIds: [aliceId] } });
+  const notAdmin = await den(owner, orgId, "/v1/inference-providers/litellm", { body: { name: "LiteLLM (not admin)", baseUrl: litellm.baseUrl, mode: "member", apiKey: PLAIN_KEY, memberIds: [aliceId] } });
+  expect(notAdmin.status).toBe(409);
+  expect(notAdmin.body).toMatchObject({ error: "litellm_not_admin" });
+  const personal = await den(owner, orgId, "/v1/inference-providers/litellm", { body: { name: "LiteLLM (personal keys)", baseUrl: `${litellm.baseUrl}/v1`, mode: "member", apiKey: ADMIN_KEY, memberIds: [aliceId, carolId] } });
   expect(personal.status).toBe(201);
   const personalId = stringAt(recordAt(personal.body, "inferenceProvider"), "id");
   const before = await connect(alice, orgId, personalId);
@@ -402,9 +427,22 @@ test("an owner connects the team's LiteLLM proxy three ways, and each member's r
   expect(personalLog).toMatchObject({ input_tokens: 1000, output_tokens: 100, cost_micro_usd: null, spend_tracking: "disabled" });
   const bobPaste = await den(bob, orgId, `/v1/inference-providers/${personalId}/litellm/member-key`, { method: "PUT", body: { apiKey: ALICE_KEY } });
   expect(bobPaste.status).toBe(403);
+  // Carol's key has no team. LiteLLM lists every model for it but serves only her own list.
+  const carolPaste = await den(carol, orgId, `/v1/inference-providers/${personalId}/litellm/member-key`, { method: "PUT", body: { apiKey: CAROL_KEY } });
+  expect(carolPaste.status).toBe(200);
+  expect(carolPaste.body).toMatchObject({ connected: true, modelIds: ["claude-sonnet"] });
+  const carolModels = await connect(carol, orgId, personalId);
+  expect(carolModels.models.map((model) => model.upstream)).toEqual(["claude-sonnet"]);
+  expect((await chat(gateway, carolModels.key, carolModels.models[0]?.alias ?? "")).status).toBe(200);
+  expect(litellm.chats.at(-1)).toEqual({ key: CAROL_KEY, model: "claude-sonnet" });
   evidence.recordAssertionEvidence(
     "with each person's own key, Alice pastes hers once and her requests carry it; Bob, without access, cannot connect",
-    `Before: no models and 1 connect request. After pasting, Alice joined "LiteLLM · research" with the same ow_gw_ key; LiteLLM saw her own key for claude-sonnet; OpenWork logged tokens with no cost (spend tracking disabled). Bob's paste: HTTP ${bobPaste.status}.`,
+    `A non-admin key was refused as the admin key (litellm_not_admin). Before: no models and 1 connect request. After pasting, Alice joined "LiteLLM · research" with the same ow_gw_ key; LiteLLM saw her own key for claude-sonnet; OpenWork logged tokens with no cost (spend tracking disabled). Bob's paste: HTTP ${bobPaste.status}.`,
+    true,
+  );
+  evidence.recordAssertionEvidence(
+    "a key without a team gets only the models its owner may call, not LiteLLM's over-reported list",
+    `LiteLLM lists 4 models for Carol's team-less key, but her LiteLLM user may only call claude-sonnet. OpenWork granted her exactly ["claude-sonnet"], and her call reached LiteLLM with her key.`,
     true,
   );
 
