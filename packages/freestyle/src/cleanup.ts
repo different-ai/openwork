@@ -22,9 +22,9 @@ const LAYER_IDLE = 24 * HOUR;
 /** Checkpoints carry a 12-hour TTL; this only catches ones the provider missed. */
 const CHECKPOINT_MAX_AGE = 14 * HOUR;
 
-const WORLDS: PreviewWorld[] = ["app-web", "acme-web", "desktop"];
+const WORLDS: PreviewWorld[] = ["app-web", "acme-web", "desktop", "workbot"];
 const PREVIEW = /^openwork-[a-z-]+-v\d+-[0-9a-f]{40}$|^openwork-web-v\d+-[0-9a-f]{40}$/;
-const LAYER = /^ow-(tools|deps|build|warm)-v1-(app-web|acme-web|desktop)-[0-9a-f]{40}$|^ow-evidence-image-v1-[0-9a-f]{40}$/;
+const LAYER = /^ow-(tools|deps|build|warm)-v1-(app-web|acme-web|desktop|workbot)-[0-9a-f]{40}$|^ow-evidence-image-v1-[0-9a-f]{40}$/;
 /** Replaced by the warm dev image (ow-evidence-image-*). */
 const RETIRED_LAYER = /^ow-evidence-(tools|deps)-v1-[0-9a-f]{40}$/;
 const TEMPLATE = /^ow-evidence-web-v\d+-[0-9a-f]{40}$/;

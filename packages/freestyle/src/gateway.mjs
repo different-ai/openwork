@@ -35,7 +35,9 @@ async function target(req, auth) {
   if ((name === "app" || name === "den") && /^\/api\/den(?:\/|\?|$)/.test(path)) {
     name = "api";
     path = path.replace(/^\/api\/den(?=\/|\?|$)/, "") || "/";
-  } else if (name === "den" && /^(?:\/v1(?:\/|\?|$)|\/mcp(?:\/|\?|$)|\/health(?:\?|$)|\/oauth\/client-metadata\.json(?:\?|$))/.test(path)) {
+  } else if (name === "den" && /^(?:\/v1(?:\/|\?|$)|\/mcp(?!\/(?:consent|select-organization)(?:[/?]|$))(?:\/|\?|$)|\/health(?:\?|$)|\/oauth\/client-metadata\.json(?:\?|$))/.test(path)) {
+    // Den's API serves /mcp, /mcp/agent and /mcp/admin; /mcp/consent and /mcp/select-organization are Den web pages
+    // an OAuth sign-in passes through.
     name = "api";
   }
   const url = new URL(services[name]);
@@ -89,9 +91,13 @@ export const server = createServer(async (req, res) => {
   if (url.pathname === "/__openwork_launch" && req.method === "GET" && auth
     && equal(url.searchParams.get("token"), auth.config.token)) {
     const seconds = Math.max(0, Math.floor((Date.parse(auth.config.expiresAt) - Date.now()) / 1000));
+    // Each service host keeps its own access cookie. `then=<service>` continues to that sibling's launch, so one link
+    // authorizes every host a flow crosses (Workbot sends people to Den to sign in, and Den sends them back).
+    const then = url.searchParams.get("then");
+    const next = then && Object.hasOwn(auth.config.origins ?? {}, then) ? auth.config.origins[then] : null;
     res.writeHead(303, {
       "set-cookie": `${cookieName}=${auth.config.token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${seconds}`,
-      location: "/",
+      location: next && next !== `https://${req.headers.host}` ? `${next}/__openwork_launch?token=${encodeURIComponent(auth.config.token)}` : "/",
     });
     res.end();
     return;
@@ -116,7 +122,10 @@ export const server = createServer(async (req, res) => {
   const rewriteBody = inward.length > 0 && /^(?:\/api\/den)?\/api\/auth\//.test(req.url)
     && String(req.headers["content-type"]).startsWith("application/json");
   if (rewriteBody) delete requestHeaders["content-length"];
-  const upstream = request({ ...destination, path: destination.path ?? req.url, method: req.method, headers: requestHeaders }, (response) => relay(response, res, outward));
+  // Query strings carry origins too (an OAuth redirect_uri and resource); services see their template names, as in
+  // headers and bodies. Without this, Den would compare a clone's callback against the one it registered and signed.
+  const path = replaceOrigins(destination.path ?? req.url, inward);
+  const upstream = request({ ...destination, path, method: req.method, headers: requestHeaders }, (response) => relay(response, res, outward));
   upstream.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end("Sandbox unavailable. Launch a fresh sandbox from the review."); });
   if (rewriteBody) req.pipe(originTransform(inward)).pipe(upstream);
   else req.pipe(upstream);

@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "da19ab7e-5b7e-4b24-89be-448e5d95105d",
-  "prevId": "0408e453-8792-4e62-acfa-bce37132932b",
+  "id": "d6fa3dd6-b5dd-475e-9533-985b22fb6beb",
+  "prevId": "0c71cf40-30f5-4614-8b25-464504657abd",
   "tables": {
     "account": {
       "name": "account",
@@ -11797,6 +11797,14 @@
           "notNull": false,
           "autoincrement": false
         },
+        "api_key_auth_scheme": {
+          "name": "api_key_auth_scheme",
+          "type": "enum('bearer','token')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'bearer'"
+        },
         "access_token": {
           "name": "access_token",
           "type": "text",
@@ -16522,6 +16530,19 @@
             "org_id",
             "session_id",
             "event_timestamp"
+          ],
+          "isUnique": false
+        },
+        "telemetry_event_org_ts_window": {
+          "name": "telemetry_event_org_ts_window",
+          "columns": [
+            "org_id",
+            "event_timestamp",
+            "event_type",
+            "member_id",
+            "session_id",
+            "source",
+            "duration_ms"
           ],
           "isUnique": false
         }

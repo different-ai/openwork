@@ -20,7 +20,7 @@
     "@openwork/workbook": "workspace:*",
     "@vercel/blob": "^2.8.0",
     "aws4fetch": "1.0.20",
-    "hono": "4.13.5",
+    "hono": "4.13.9",
     "zod": "^4.3.6"
   },
   "devDependencies": {

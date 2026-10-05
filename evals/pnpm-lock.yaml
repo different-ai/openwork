@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  fast-uri@>=3.0.0 <3.1.8: 3.1.8
+
 importers:
 
   .:
@@ -59,10 +62,10 @@ importers:
         version: 5.9.3
       vite:
         specifier: ^6.4.3
-        version: 6.4.3(@types/node@26.1.2)
+        version: 6.4.3(@types/node@26.1.2)(terser@5.51.2)
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.1.2)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.1.2))
+        version: 4.1.11(@types/node@26.1.2)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.1.2)(terser@5.51.2))
       xml-crypto:
         specifier: 6.1.2
         version: 6.1.2
@@ -101,7 +104,7 @@ importers:
         version: 4.0.520(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.1.2)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@26.1.2)(terser@5.51.2))
+        version: 4.1.11(@types/node@26.1.2)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.1.2)(terser@5.51.2))
     devDependencies:
       '@types/react':
         specifier: ^19.1.13
@@ -129,15 +132,15 @@ importers:
 
   packages/env:
     dependencies:
-      '@openwork/freestyle':
-        specifier: link:../../../packages/freestyle
-        version: link:../../../packages/freestyle
       '@openwork/behaviors':
         specifier: workspace:*
         version: link:../behaviors
       '@openwork/cdp':
         specifier: workspace:*
         version: link:../cdp
+      '@openwork/freestyle':
+        specifier: link:../../../packages/freestyle
+        version: link:../../../packages/freestyle
       '@openwork/hosts':
         specifier: workspace:*
         version: link:../hosts
@@ -175,15 +178,15 @@ importers:
 
   packages/test-evidence:
     dependencies:
-      '@openwork/freestyle':
-        specifier: link:../../../packages/freestyle
-        version: link:../../../packages/freestyle
       '@openwork/cdp':
         specifier: workspace:*
         version: link:../cdp
       '@openwork/env':
         specifier: workspace:*
         version: link:../env
+      '@openwork/freestyle':
+        specifier: link:../../../packages/freestyle
+        version: link:../../../packages/freestyle
       '@openwork/timeline':
         specifier: workspace:*
         version: link:../timeline
@@ -216,7 +219,7 @@ importers:
         version: 3.23.2(@types/node@26.1.2)
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.1.2)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.1.2))
+        version: 4.1.11(@types/node@26.1.2)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.1.2)(terser@5.51.2))
 
   packages/timeline: {}
 
@@ -1310,8 +1313,8 @@ packages:
   fast-deep-equal@3.1.3:
     resolution: {integrity: sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==}
 
-  fast-uri@3.1.7:
-    resolution: {integrity: sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==}
+  fast-uri@3.1.8:
+    resolution: {integrity: sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==}
 
   fdir@6.5.0:
     resolution: {integrity: sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==}
@@ -1853,46 +1856,6 @@ packages:
       sass-embedded: '*'
       stylus: '*'
       sugarss: '*'
-      terser: ^5.16.0
-      tsx: ^4.8.1
-      yaml: ^2.4.2
-    peerDependenciesMeta:
-      '@types/node':
-        optional: true
-      jiti:
-        optional: true
-      less:
-        optional: true
-      lightningcss:
-        optional: true
-      sass:
-        optional: true
-      sass-embedded:
-        optional: true
-      stylus:
-        optional: true
-      sugarss:
-        optional: true
-      terser:
-        optional: true
-      tsx:
-        optional: true
-      yaml:
-        optional: true
-
-  vite@7.3.6:
-    resolution: {integrity: sha512-4XP60spRGjSZFf1qYH+dJIkK2znL3zQfl9KkOV9MkkRR/3Dls0dxaBsQPTloEc5BLXWPL9vsOxopxyKoMmDueg==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    hasBin: true
-    peerDependencies:
-      '@types/node': ^20.19.0 || >=22.12.0
-      jiti: '>=1.21.0'
-      less: ^4.0.0
-      lightningcss: ^1.21.0
-      sass: ^1.70.0
-      sass-embedded: ^1.70.0
-      stylus: '>=0.54.8'
-      sugarss: ^5.0.0
       terser: ^5.16.0
       tsx: ^4.8.1
       yaml: ^2.4.2
@@ -2668,7 +2631,7 @@ snapshots:
       obug: 2.1.4
       std-env: 4.2.0
       tinyrainbow: 3.1.1
-      vitest: 4.1.11(@types/node@26.1.2)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.1.2))
+      vitest: 4.1.11(@types/node@26.1.2)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.1.2)(terser@5.51.2))
 
   '@vitest/expect@4.1.11':
     dependencies:
@@ -2679,21 +2642,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.1
 
-  '@vitest/mocker@4.1.11(vite@6.4.3(@types/node@26.1.2))':
+  '@vitest/mocker@4.1.11(vite@6.4.3(@types/node@26.1.2)(terser@5.51.2))':
     dependencies:
       '@vitest/spy': 4.1.11
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 6.4.3(@types/node@26.1.2)
-
-  '@vitest/mocker@4.1.11(vite@7.3.6(@types/node@26.1.2)(terser@5.51.2))':
-    dependencies:
-      '@vitest/spy': 4.1.11
-      estree-walker: 3.0.3
-      magic-string: 0.30.21
-    optionalDependencies:
-      vite: 7.3.6(@types/node@26.1.2)(terser@5.51.2)
+      vite: 6.4.3(@types/node@26.1.2)(terser@5.51.2)
 
   '@vitest/pretty-format@4.1.11':
     dependencies:
@@ -2835,7 +2790,7 @@ snapshots:
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.7
+      fast-uri: 3.1.8
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -3053,7 +3008,7 @@ snapshots:
 
   fast-deep-equal@3.1.3: {}
 
-  fast-uri@3.1.7: {}
+  fast-uri@3.1.8: {}
 
   fdir@6.5.0(picomatch@4.0.5):
     optionalDependencies:
@@ -3490,7 +3445,7 @@ snapshots:
 
   util-deprecate@1.0.2: {}
 
-  vite@6.4.3(@types/node@26.1.2):
+  vite@6.4.3(@types/node@26.1.2)(terser@5.51.2):
     dependencies:
       esbuild: 0.25.12
       fdir: 6.5.0(picomatch@4.0.5)
@@ -3501,24 +3456,12 @@ snapshots:
     optionalDependencies:
       '@types/node': 26.1.2
       fsevents: 2.3.3
-
-  vite@7.3.6(@types/node@26.1.2)(terser@5.51.2):
-    dependencies:
-      esbuild: 0.28.1
-      fdir: 6.5.0(picomatch@4.0.5)
-      picomatch: 4.0.5
-      postcss: 8.5.23
-      rollup: 4.62.2
-      tinyglobby: 0.2.17
-    optionalDependencies:
-      '@types/node': 26.1.2
-      fsevents: 2.3.3
       terser: 5.51.2
 
-  vitest@4.1.11(@types/node@26.1.2)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.1.2)):
+  vitest@4.1.11(@types/node@26.1.2)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.1.2)(terser@5.51.2)):
     dependencies:
       '@vitest/expect': 4.1.11
-      '@vitest/mocker': 4.1.11(vite@6.4.3(@types/node@26.1.2))
+      '@vitest/mocker': 4.1.11(vite@6.4.3(@types/node@26.1.2)(terser@5.51.2))
       '@vitest/pretty-format': 4.1.11
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11
@@ -3535,35 +3478,7 @@ snapshots:
       tinyexec: 1.3.1
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.1
-      vite: 6.4.3(@types/node@26.1.2)
-      why-is-node-running: 2.3.0
-    optionalDependencies:
-      '@types/node': 26.1.2
-      '@vitest/coverage-v8': 4.1.11(vitest@4.1.11)
-    transitivePeerDependencies:
-      - msw
-
-  vitest@4.1.11(@types/node@26.1.2)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@26.1.2)(terser@5.51.2)):
-    dependencies:
-      '@vitest/expect': 4.1.11
-      '@vitest/mocker': 4.1.11(vite@7.3.6(@types/node@26.1.2)(terser@5.51.2))
-      '@vitest/pretty-format': 4.1.11
-      '@vitest/runner': 4.1.11
-      '@vitest/snapshot': 4.1.11
-      '@vitest/spy': 4.1.11
-      '@vitest/utils': 4.1.11
-      es-module-lexer: 2.3.2
-      expect-type: 1.4.0
-      magic-string: 0.30.21
-      obug: 2.1.4
-      pathe: 2.0.3
-      picomatch: 4.0.5
-      std-env: 4.2.0
-      tinybench: 2.9.0
-      tinyexec: 1.3.1
-      tinyglobby: 0.2.17
-      tinyrainbow: 3.1.1
-      vite: 7.3.6(@types/node@26.1.2)(terser@5.51.2)
+      vite: 6.4.3(@types/node@26.1.2)(terser@5.51.2)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 26.1.2
