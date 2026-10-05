@@ -6,7 +6,9 @@ import type { RunnerMessage, RunnerSnapshot, RunnerTurn } from "@openwork-ee/hea
  * Workbot's emoji reaction, if it reacted), then its answer as it happened.
  * Work behind the answer is told the way a colleague would say it, and only
  * while it happens: "Searching Slack", "Using my computer". Tool names,
- * notes to self, models and raw errors never reach the page.
+ * notes to self, models and raw errors never reach the page. Bigger jobs
+ * run as background tasks out of sight; each comes back as Workbot's own
+ * message (a report), with the files the task made.
  */
 
 /** Runner message ids for Workbot turns are the page's own ids with this prefix. */
@@ -193,7 +195,8 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
 
   const turns: WorkbotTurn[] = []
   for (const turn of snapshot.turns) {
-    if (!turn.messageId.startsWith(WORKBOT_MESSAGE_PREFIX)) continue
+    // A background task's own work stays out of the conversation; its report shows instead.
+    if (!turn.messageId.startsWith(WORKBOT_MESSAGE_PREFIX) || turn.kind === "task") continue
     const messages = byTurn.get(turn.messageId) ?? []
     const user = messages.find((message) => message.role === "user")
     // Queued follow-ups join the transcript only when they start; the page shows its own copy until then.
@@ -245,14 +248,19 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
 
     const status = statusOf(turn)
     const working = status === "working" || status === "queued"
+    const outputs = outputsOf(files, turn.createdAt ?? null, working ? null : (turn.updatedAt ?? null))
+    // A report is Workbot speaking first: the task's notes to it stay hidden, and it brings back what the task made.
+    const task = turn.kind === "report" ? snapshot.turns.find((entry) => entry.messageId === turn.parent) : undefined
     turns.push({
       id: turn.messageId.slice(WORKBOT_MESSAGE_PREFIX.length),
-      text: user.text,
+      text: turn.kind === "report" ? "" : user.text,
       sentAt: turn.createdAt ?? null,
       finishedAt: working ? null : turn.updatedAt ?? null,
       status,
-      attachments: user.attachments ?? [],
-      outputs: outputsOf(files, turn.createdAt ?? null, working ? null : (turn.updatedAt ?? null)),
+      attachments: turn.kind === "report" ? [] : (user.attachments ?? []),
+      outputs: task
+        ? [...new Map([...outputsOf(files, task.createdAt ?? null, task.updatedAt ?? null), ...outputs].map((file) => [file.id, file])).values()]
+        : outputs,
       reaction,
       parts,
       modelSteps,
@@ -262,13 +270,19 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
   return turns
 }
 
-/** The newest turn the runner restarted mid-way, which the next read resumes. */
-export function interruptedTurnId(snapshot: RunnerSnapshot): string | null {
-  const turn = snapshot.turns.filter((entry) => entry.messageId.startsWith(WORKBOT_MESSAGE_PREFIX)).at(-1)
-  return turn?.status === "interrupted" ? turn.messageId : null
+/**
+ * Turns the next read resumes with a fresh token: the newest message if the runner restarted mid-way, and any
+ * background task or report that was paused (a restart, or a long task's token running out).
+ */
+export function interruptedTurnIds(snapshot: RunnerSnapshot): string[] {
+  const ours = snapshot.turns.filter((entry) => entry.messageId.startsWith(WORKBOT_MESSAGE_PREFIX))
+  const newest = ours.filter((entry) => entry.kind === undefined).at(-1)
+  const background = ours.filter((entry) => entry.kind !== undefined && entry.status === "interrupted").map((entry) => entry.messageId)
+  return newest?.status === "interrupted" ? [newest.messageId, ...background] : background
 }
 
+/** Whether Workbot is answering; background tasks working alongside don't hold up the conversation. */
 export function threadBusy(snapshot: RunnerSnapshot) {
   if (snapshot.status === "busy") return true
-  return snapshot.turns.some((turn) => ACTIVE.has(turn.status) || turn.status === "interrupted")
+  return snapshot.turns.some((turn) => turn.kind !== "task" && (ACTIVE.has(turn.status) || turn.status === "interrupted"))
 }

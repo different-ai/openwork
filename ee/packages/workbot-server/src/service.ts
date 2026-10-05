@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import type { HeadlessRunnerClient, RunnerSavedFile } from "@openwork-ee/headless-protocol"
 import { AUTOMATION_CLOUD_DEFAULT_MODEL } from "@openwork/types/automations"
-import { buildWorkbotTurns, interruptedTurnId, threadBusy, WORKBOT_MESSAGE_PREFIX, type WorkbotTurn } from "./thread.js"
+import { buildWorkbotTurns, interruptedTurnIds, threadBusy, WORKBOT_MESSAGE_PREFIX, type WorkbotTurn } from "./thread.js"
 
 /**
  * Workbot: one chat per person, set up once by an admin. Each member has a
@@ -86,6 +86,7 @@ export function workbotInstructions(input: {
     `- ${person} is not technical. Never mention tools, MCP, capabilities, models, prompts, files or settings. Write like a helpful coworker: short, plain sentences.`,
     "- Reach their connected apps with search_capabilities, then execute_capability. Look things up before asking them.",
     "- Answer in the chat. Keep replies short; use a short list or a quoted draft when it helps. Before a lookup, say in a few words what you are checking.",
+    "- Like a colleague, take bigger jobs away and come back with them: hand anything more than a quick look to start_task and tell them in a few words that you're on it. When a task reports back, give them what matters in a line or two and the obvious next step.",
     "- React to their message with one emoji (react) when a colleague would, before you reply: 👍 when you're on it or agree, ❤️ for thanks, 😮 or ‼️ when they tell you something surprising, 😂 when it's funny, 🎉 for good news. Not on every message. When a reaction is all a colleague would send back (\"thanks!\", \"ok\", \"sounds good\"), react with final: that is your whole reply.",
     `- Memory: older messages drop out of what you can see, but files under memory/ are always shown to you. Keep them current without being asked: who ${person} is and how they like to work (memory/about.md), the people, projects and threads they care about (memory/people.md, memory/projects.md), and anything they ask you to remember. Write facts, not transcripts; update or remove what is no longer true. Never tell them you are updating memory unless they asked you to remember something.`,
     "- Ask before you send, post, delete or change anything in their apps, unless they asked for that exact action in this message.",
@@ -131,11 +132,12 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
       timeZone,
       canSchedule,
     }),
-    // Workbot keeps the person's files, works on its own computer and reacts to messages with an emoji; the runner
-    // offers each only on request.
+    // Workbot keeps the person's files, works on its own computer, reacts to messages with an emoji and hands longer
+    // work to background tasks; the runner offers each only on request.
     files: true,
     computer: true,
     reactions: true,
+    tasks: true,
   })
   if (!saved.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
   return saved.value.id
@@ -160,9 +162,8 @@ export async function readWorkbotThread(
   }
   if (!read.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
 
-  // A runner restart interrupts the running turn; re-sending its id resumes it with a fresh token.
-  const interrupted = interruptedTurnId(read.value)
-  if (interrupted) {
+  // A runner restart, or a long task's token running out, pauses a turn; re-sending its id resumes it with a fresh token.
+  for (const interrupted of interruptedTurnIds(read.value)) {
     await client.sendTurn({ userId: actor.userId, organizationId: actor.organizationId }, { sessionId, messageId: interrupted, prompt: "resume" }).catch(() => null)
   }
 
@@ -202,6 +203,7 @@ export async function sendWorkbotMessage(
   return { ok: true as const }
 }
 
+/** Stops the answer in progress and anything queued behind it; background tasks keep going (Workbot stops one when asked). */
 export async function stopWorkbot(actor: WorkbotActor, deps: WorkbotDeps) {
   const stopped = await clientOf(deps).abort(workbotSessionId(actor.organizationId, actor.memberId))
   return { stopped: stopped.stopped }

@@ -3,6 +3,7 @@ import { createApp } from "./app.js"
 import { SessionEvents } from "./events.js"
 import { diskBlobStore, s3BlobStore, vercelBlobStore } from "./blobs.js"
 import { REACTION_TOOL_NAMES } from "./reactions.js"
+import { TASK_TOOL_NAMES } from "./tasks.js"
 import { mediaTypeFor, SavedFiles, SAVED_FILE_TOOL_NAMES } from "./saved-files.js"
 import { loadConfig } from "./config.js"
 import { FILE_TOOL_NAMES } from "./files.js"
@@ -47,7 +48,7 @@ const runner = new Runner({
     ? remoteMcpConnector({
         url: config.mcp.url,
         allowlist: config.mcp.toolAllowlist,
-        reservedNames: new Set([...FILE_TOOL_NAMES, ...SAVED_FILE_TOOL_NAMES, ...REACTION_TOOL_NAMES, ...(computer?.toolNames ?? [])]),
+        reservedNames: new Set([...FILE_TOOL_NAMES, ...SAVED_FILE_TOOL_NAMES, ...REACTION_TOOL_NAMES, ...TASK_TOOL_NAMES, ...(computer?.toolNames ?? [])]),
       })
     : undefined,
   limits: config.limits,

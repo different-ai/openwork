@@ -6,6 +6,17 @@ import { ModelError, type ModelClient } from "./model.js"
 import type { Store, StoredMessage, Turn } from "./store.js"
 import { REACTION_TOOL_NAMES, REACTION_TOOLS, reactionEndsTurn, runReactionTool } from "./reactions.js"
 import { asAttachment, runSavedFileTool, SAVED_FILE_TOOL_NAMES, SAVED_FILE_TOOLS, type SavedFiles } from "./saved-files.js"
+import {
+  MAX_OPEN_TASKS,
+  MAX_RUNNING_TASKS,
+  reportMessageId,
+  reportPrompt,
+  TASK_TOOL_NAMES,
+  TASK_TOOLS,
+  taskInstructions,
+  taskMessageId,
+  tasksSection,
+} from "./tasks.js"
 import { formatBytes, withoutAttachments } from "./tool-files.js"
 import { RESUMABLE, type Attachment, type Message, type RepeatLimits, type SessionComputer, type ToolResult, type TurnCredentials } from "./types.js"
 
@@ -93,7 +104,20 @@ export type SendResult =
 /** Follow-ups a person can stack behind a running turn in one conversation. */
 export const MAX_QUEUED_PER_SESSION = 20
 
-type Job = { sessionId: string; messageId: string }
+/** A person's message, a background task, or a task's report back to the conversation (see Turn.kind). */
+type JobKind = "message" | "task" | "report"
+type Job = { sessionId: string; messageId: string; kind: JobKind }
+/**
+ * A turn's credentials and when they were issued. Tasks and reports inherit the turn's that started them, so they
+ * count their age from then: the token was minted for that turn.
+ */
+type HeldCredentials = { credentials: TurnCredentials; at: number; inherited?: boolean }
+
+/** The conversation is one lane (messages, then reports, in order); each background task runs in its own. */
+const laneOf = (job: Job) => (job.kind === "task" ? `${job.sessionId}#${job.messageId}` : job.sessionId)
+const MAX_MESSAGE_ID_LENGTH = 128
+/** A task's report quotes this much of what it wrote at the end. */
+const MAX_REPORT_CHARS = 8_000
 
 /** Stands in for an older tool result in a long turn; the call, and whether it failed, stay in context. */
 export const TRIMMED_TOOL_OUTPUT =
@@ -193,9 +217,9 @@ function unansweredCalls(messages: Message[]) {
 }
 
 export class Runner {
-  /** The one running turn per session. Other turns for that session wait in the queue, in order. */
-  private readonly controllers = new Map<string, { messageId: string; controller: AbortController }>()
-  private readonly credentials = new Map<string, TurnCredentials>()
+  /** The one running turn per lane (see laneOf). Other turns for that lane wait in the queue, in order. */
+  private readonly controllers = new Map<string, { sessionId: string; messageId: string; kind: JobKind; controller: AbortController }>()
+  private readonly credentials = new Map<string, HeldCredentials>()
   private readonly queue: Job[] = []
   private readonly running = new Set<Promise<void>>()
   private activeCount = 0
@@ -208,7 +232,7 @@ export class Runner {
     const existing = store.getTurn(input.sessionId, input.messageId)
     if (existing && !RESUMABLE.has(existing.status)) return { ok: true, state: "already_present", turn: existing }
     // A message sent while another turn runs is not an error: it is queued and answered next.
-    const queued = this.queue.filter((job) => job.sessionId === input.sessionId).length
+    const queued = this.queue.filter((job) => job.sessionId === input.sessionId && job.kind !== "task").length
     if (queued >= MAX_QUEUED_PER_SESSION) return { ok: false, error: "too_many_queued" }
     let state: "accepted" | "resumed"
     if (existing) {
@@ -224,31 +248,44 @@ export class Runner {
       store.admitTurn({ sessionId: input.sessionId, messageId: input.messageId, prompt: input.prompt, model: input.model ?? null, attachments })
       state = "accepted"
     }
-    this.credentials.set(`${input.sessionId}:${input.messageId}`, input.credentials)
-    this.queue.push({ sessionId: input.sessionId, messageId: input.messageId })
-    this.pump()
     const turn = store.getTurn(input.sessionId, input.messageId)
     if (!turn) throw new Error("turn_missing_after_admission")
-    return { ok: true, state, turn }
+    // Resuming a task or a report keeps it in its lane.
+    this.enqueue({ sessionId: input.sessionId, messageId: input.messageId, kind: turn.kind ?? "message" }, { credentials: input.credentials, at: Date.now() })
+    return { ok: true, state, turn: store.getTurn(input.sessionId, input.messageId) ?? turn }
+  }
+
+  private enqueue(job: Job, credentials: HeldCredentials) {
+    this.credentials.set(`${job.sessionId}:${job.messageId}`, credentials)
+    this.queue.push(job)
+    this.pump()
   }
 
   /**
-   * Stops one turn (by messageId) or, without a messageId, the running turn and
-   * every follow-up queued behind it.
+   * Stops one turn (by messageId) or, without a messageId, the conversation's running turn and every follow-up
+   * queued behind it. Background tasks keep going unless stopped by their own id.
    */
   abort(sessionId: string, messageId?: string): boolean {
     let stopped = false
-    const running = this.controllers.get(sessionId)
-    if (running && (!messageId || running.messageId === messageId)) {
+    const matches = (job: { sessionId: string; messageId: string; kind: JobKind }) =>
+      job.sessionId === sessionId && (messageId ? job.messageId === messageId : job.kind !== "task")
+    for (const running of this.controllers.values()) {
+      if (!matches(running)) continue
       running.controller.abort(new Error("aborted"))
       stopped = true
     }
     for (let index = this.queue.length - 1; index >= 0; index -= 1) {
       const job = this.queue[index]
-      if (job.sessionId !== sessionId || (messageId && job.messageId !== messageId)) continue
+      if (!matches(job)) continue
       this.queue.splice(index, 1)
       this.credentials.delete(`${job.sessionId}:${job.messageId}`)
       this.options.store.setTurnStatus(job.sessionId, job.messageId, "aborted")
+      stopped = true
+    }
+    // A task paused for fresh credentials is in neither place; stopping it means it won't be resumed.
+    const paused = !stopped && messageId ? this.options.store.getTurn(sessionId, messageId) : null
+    if (paused?.kind === "task" && paused.status === "interrupted") {
+      this.options.store.setTurnStatus(sessionId, messageId ?? paused.messageId, "aborted")
       stopped = true
     }
     return stopped
@@ -268,33 +305,92 @@ export class Runner {
     await Promise.all([...this.running])
   }
 
-  /** Starts queued turns in order, at most one per session and maxConcurrentTurns overall. */
+  private runningTasks(sessionId: string) {
+    let count = 0
+    for (const running of this.controllers.values()) if (running.sessionId === sessionId && running.kind === "task") count += 1
+    return count
+  }
+
+  /**
+   * Starts queued turns in order, at most one per lane and maxConcurrentTurns overall. The conversation goes first:
+   * a person's message before a task's report, and both before background tasks.
+   */
   private pump() {
-    for (let index = 0; index < this.queue.length && this.activeCount < this.options.limits.maxConcurrentTurns; ) {
-      const job = this.queue[index]
-      if (this.controllers.has(job.sessionId)) {
-        index += 1
-        continue
+    for (const kind of ["message", "report", "task"] as const) {
+      for (let index = 0; index < this.queue.length && this.activeCount < this.options.limits.maxConcurrentTurns; ) {
+        const job = this.queue[index]
+        const lane = laneOf(job)
+        if (job.kind !== kind || this.controllers.has(lane) || (kind === "task" && this.runningTasks(job.sessionId) >= MAX_RUNNING_TASKS)) {
+          index += 1
+          continue
+        }
+        this.queue.splice(index, 1)
+        this.activeCount += 1
+        const controller = new AbortController()
+        this.controllers.set(lane, { sessionId: job.sessionId, messageId: job.messageId, kind: job.kind, controller })
+        const promise = this.runTurn(job, controller).finally(() => {
+          this.activeCount -= 1
+          this.controllers.delete(lane)
+          this.running.delete(promise)
+          this.pump()
+        })
+        this.running.add(promise)
       }
-      this.queue.splice(index, 1)
-      this.activeCount += 1
-      const controller = new AbortController()
-      this.controllers.set(job.sessionId, { messageId: job.messageId, controller })
-      const promise = this.runTurn(job, controller).finally(() => {
-        this.activeCount -= 1
-        this.controllers.delete(job.sessionId)
-        this.running.delete(promise)
-        this.pump()
-      })
-      this.running.add(promise)
     }
   }
 
-  private async runTurn({ sessionId, messageId }: Job, controller: AbortController) {
+  /** start_task and stop_task, for a person's message in a session with tasks. */
+  private runTaskTool(parent: Turn, name: string, input: Record<string, unknown>, held: HeldCredentials): ToolResult {
+    const { store } = this.options
+    const { sessionId } = parent
+    if (name === "stop_task") {
+      const id = typeof input.task === "string" ? input.task.trim() : ""
+      const task = id ? store.getTurn(sessionId, id) : null
+      if (task?.kind !== "task") return { output: `No background task has the id ${id || "(none)"}.`, isError: true }
+      if (!["queued", "running", "interrupted"].includes(task.status)) return { output: `"${task.title}" isn't running.`, isError: false }
+      this.abort(sessionId, task.messageId)
+      return { output: `Stopped "${task.title}".`, isError: false }
+    }
+    const title = typeof input.title === "string" ? input.title.trim().slice(0, 80) : ""
+    const brief = typeof input.brief === "string" ? input.brief.trim().slice(0, 100_000) : ""
+    if (!title || !brief) return { output: "start_task needs a title and a brief.", isError: true }
+    if (store.openTaskCount(sessionId) >= MAX_OPEN_TASKS) {
+      return { output: `${MAX_OPEN_TASKS} tasks haven't finished yet. Wait for one, or stop one with stop_task.`, isError: true }
+    }
+    const messageId = taskMessageId(parent.messageId, store.taskCount(sessionId, parent.messageId) + 1)
+    if (messageId.length > MAX_MESSAGE_ID_LENGTH) return { output: "This message can't start more tasks.", isError: true }
+    store.admitTurn({ sessionId, messageId, prompt: brief, model: parent.model, kind: "task", parent: parent.messageId, title })
+    this.enqueue({ sessionId, messageId, kind: "task" }, { ...held, inherited: true })
+    return { output: `Started task ${messageId} "${title}". Its report will arrive in this conversation when it's done.`, isError: false }
+  }
+
+  /** Queues a finished task's report in the conversation, once. */
+  private queueReport(task: Turn, held: HeldCredentials) {
+    const { store } = this.options
+    const messageId = reportMessageId(task.messageId)
+    if (messageId.length > MAX_MESSAGE_ID_LENGTH || store.getTurn(task.sessionId, messageId)) return
+    const written = store
+      .turnMessages(task.sessionId, task.messageId)
+      .flatMap(({ message }) => (message.role === "assistant" && message.text.trim() ? [message.text.trim()] : []))
+      .at(-1)
+    store.admitTurn({
+      sessionId: task.sessionId,
+      messageId,
+      prompt: reportPrompt(task, (written ?? "").slice(0, MAX_REPORT_CHARS)),
+      model: task.model,
+      kind: "report",
+      parent: task.messageId,
+      title: task.title,
+    })
+    this.enqueue({ sessionId: task.sessionId, messageId, kind: "report" }, { ...held, inherited: true })
+  }
+
+  private async runTurn({ sessionId, messageId, kind }: Job, controller: AbortController) {
     const { store, limits } = this.options
     const events = this.options.events
     const key = `${sessionId}:${messageId}`
-    const credentials = this.credentials.get(key) ?? {}
+    const held = this.credentials.get(key)
+    const credentials = held?.credentials ?? {}
     this.credentials.delete(key)
     const timeout = Number.isFinite(limits.turnTimeoutMs)
       ? setTimeout(() => controller.abort(new Error("turn_timeout")), limits.turnTimeoutMs)
@@ -302,6 +398,11 @@ export class Runner {
     const signal = controller.signal
     let tools: ToolSession | null = null
     const startedAt = Date.now()
+    const inherited = held?.inherited === true
+    // When the credentials were issued, for the tasks and report this turn passes them to; this turn itself counts
+    // their age from when it started, unless it inherited them.
+    const issuedAt = held?.at ?? startedAt
+    const credentialsAt = inherited ? issuedAt : startedAt
     let steps = 0
     let toolCalls = 0
     let lastStep = ""
@@ -351,7 +452,9 @@ export class Runner {
       // Files and the computer only for conversations that asked for them (see Session.files / .computer).
       const files = session?.files ? this.options.files : undefined
       const computer = session?.computer ? this.options.computer : undefined
-      const reactions = session?.reactions === true
+      // Reactions and task tools are for the person's own messages, not for tasks or their reports.
+      const reactions = session?.reactions === true && kind === "message"
+      const taskTools = session?.tasks === true && kind === "message"
       // Wake the computer while the model thinks, when this turn is likely to need it.
       const sentFiles = turnMessages().some((message) => message.role === "user" && (message.attachments?.length ?? 0) > 0)
       if (computer && (sentFiles || computer.known(sessionId))) computer.prewarm(sessionId)
@@ -362,11 +465,12 @@ export class Runner {
         tools ? "" : "No OpenWork connection is available in this conversation, so connected apps cannot be reached.",
         session?.instructions ?? "",
         memorySection(store.memoryFiles(sessionId)),
+        kind === "task" ? taskInstructions(turn?.title ?? "") : session?.tasks ? tasksSection(store.recentTasks(sessionId, 8), Date.now()) : "",
         `Current time: ${new Date(this.options.now?.() ?? Date.now()).toISOString()}`,
       ]
         .filter(Boolean)
         .join("\n\n")
-      const toolSpecs = [...FILE_TOOLS, ...(files ? SAVED_FILE_TOOLS : []), ...(computer?.tools ?? []), ...(reactions ? REACTION_TOOLS : []), ...(tools?.tools ?? [])]
+      const toolSpecs = [...FILE_TOOLS, ...(files ? SAVED_FILE_TOOLS : []), ...(computer?.tools ?? []), ...(reactions ? REACTION_TOOLS : []), ...(taskTools ? TASK_TOOLS : []), ...(tools?.tools ?? [])]
       // The current turn's files, read once and shown to the model on every step of this turn.
       const expanded = new Map<string, Message>()
       const withFiles = async (messages: Message[]) =>
@@ -412,15 +516,23 @@ export class Runner {
         signal.throwIfAborted()
         if (waitBeforeNextStep) await sleep(waitBeforeNextStep, signal)
         // Between steps, never mid-call, so no tool is cut off. The caller resumes the turn right away with a
-        // fresh MCP token; a caller that stopped supervising simply never resumes it.
-        if (tools && step > 0 && Date.now() - startedAt >= limits.credentialRefreshMs) {
+        // fresh MCP token; a caller that stopped supervising simply never resumes it. Inherited credentials may
+        // already be too old before the first step.
+        if (tools && (step > 0 || inherited) && Date.now() - credentialsAt >= limits.credentialRefreshMs) {
           store.setTurnStatus(sessionId, messageId, "interrupted", "credentials_refresh")
           return
         }
         const streamStep = modelStep
         const result = await this.options.model.complete({
           system: askedToStop ? `${baseSystem}\n\n${STOP_REPEATING_INSTRUCTION}` : baseSystem,
-          messages: await withFiles(buildContext(store.contextMessages(sessionId, messageId, limits.contextCharBudget), messageId, limits.contextCharBudget)),
+          // A task sees only its own brief and work; the conversation sees everything but tasks' work.
+          messages: await withFiles(
+            buildContext(
+              kind === "task" ? store.turnMessages(sessionId, messageId) : store.contextMessages(sessionId, messageId, limits.contextCharBudget),
+              messageId,
+              limits.contextCharBudget,
+            ),
+          ),
           tools: toolSpecs,
           model: turn?.model ?? this.options.defaultModel,
           apiKey,
@@ -456,6 +568,8 @@ export class Runner {
                   }))
               : reactions && REACTION_TOOL_NAMES.has(call.name)
                 ? runReactionTool(call.input)
+              : taskTools && turn && TASK_TOOL_NAMES.has(call.name)
+                ? this.runTaskTool(turn, call.name, call.input, { credentials, at: issuedAt })
               : computer?.toolNames.has(call.name)
                 ? await computer.run(sessionId, call.name, call.input).catch((error: unknown) => ({
                     output: `The computer didn't respond: ${error instanceof Error ? error.message : "unknown error"}. Its outcome is unknown; check before repeating it.`,
@@ -522,9 +636,15 @@ export class Runner {
       clearTimeout(timeout)
       await tools?.close()
       // A no-op for conversations whose computer never started; pauses one that did, even if since switched off.
-      this.options.computer?.release(sessionId)
+      // Not while another lane of the conversation (a task) may still be using it.
+      const othersRunning = [...this.controllers.values()].some((entry) => entry.sessionId === sessionId && entry.messageId !== messageId)
+      if (!othersRunning) this.options.computer?.release(sessionId)
       // One line per turn, never content or credentials: how it ended, how long it ran, and what it cost.
       const turn = store.getTurn(sessionId, messageId)
+      // A task that ended (not stopped, not paused to resume) reports back to the conversation.
+      if (turn?.kind === "task" && (turn.status === "completed" || turn.status === "failed")) {
+        this.queueReport(turn, { credentials, at: issuedAt })
+      }
       // Later turns never see a finished turn's images and PDFs, so their bytes are not kept on the small disk.
       // Interrupted turns keep them: the turn resumes and still needs them.
       if (turn && ["completed", "failed", "aborted"].includes(turn.status)) store.stripAttachments(sessionId, messageId)

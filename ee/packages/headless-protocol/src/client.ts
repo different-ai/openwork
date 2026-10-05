@@ -57,6 +57,14 @@ export const runnerTurnSchema = z.object({
   usage: z.object({ inputTokens: z.number(), cachedInputTokens: z.number(), outputTokens: z.number() }).optional(),
   createdAt: z.number().optional(),
   updatedAt: z.number().optional(),
+  /**
+   * `task` for a background task (`parent` is the turn that started it, `title` its name), `report` for the turn that
+   * brings a finished task back to the conversation (`parent` is the task). Absent for turns a caller sent. Kept open
+   * like `status`.
+   */
+  kind: z.string().optional(),
+  parent: z.string().optional(),
+  title: z.string().optional(),
 })
 export type RunnerTurn = z.infer<typeof runnerTurnSchema>
 
@@ -162,16 +170,18 @@ const sessionPath = (sessionId: string) => `/v1/sessions/${encodeURIComponent(se
 export type RunnerRepeatLimits = { maxWaitingMs?: number; maxIdenticalFailures?: number }
 
 /**
- * What a conversation may use beyond chat: kept files, a Linux computer, and emoji reactions to the person's
- * message. All are off unless asked for (files and the computer must be configured on the runner too), so a caller
- * that never asks (Slack, Automations) never gets any of them.
+ * What a conversation may use beyond chat: kept files, a Linux computer, emoji reactions to the person's message,
+ * and background tasks it can hand longer work to while it keeps talking. All are off unless asked for (files and
+ * the computer must be configured on the runner too), so a caller that never asks (Slack, Automations) never gets
+ * any of them.
  */
-export type RunnerCapabilities = { files?: boolean; computer?: boolean; reactions?: boolean }
+export type RunnerCapabilities = { files?: boolean; computer?: boolean; reactions?: boolean; tasks?: boolean }
 
 const capabilityFields = (input: RunnerCapabilities) => ({
   ...(input.files !== undefined ? { files: input.files } : {}),
   ...(input.computer !== undefined ? { computer: input.computer } : {}),
   ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
+  ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
 })
 
 export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
