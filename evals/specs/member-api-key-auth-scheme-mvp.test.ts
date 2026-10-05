@@ -64,7 +64,7 @@ test("admin Bearer and Token schemes preserve member isolation and invalidate ch
     const id = String(connectionResponse.parse(created.body).id);
     if (scheme === "token") tokenConnectionId = id;
     for (const [index, member] of [alice, bob].entries()) {
-      const saved = await api(member, `/v1/mcp-connections/${id}/member-api-key`, { apiKey: keys[index] });
+      const saved = await api(member, `/v1/mcp-connections/${id}/my-credential`, { apiKey: keys[index] }, "PUT");
       expect(saved.response.status).toBe(200); expect(saved.body).toEqual({ ok: true });
       const start = wire.length;
       expect((await invoke(member, id)).result.isError).not.toBe(true);
@@ -86,14 +86,14 @@ test("admin Bearer and Token schemes preserve member isolation and invalidate ch
   const latest = await current(tokenConnectionId);
   const edit = { expectedUpdatedAt: latest.updatedAt, name: latest.name, url, authType: "apikey", credentialMode: "per_member", apiKeyAuthScheme: "bearer", access: { orgWide: true } };
   expect((await api(alice, `/v1/mcp-connections/${tokenConnectionId}`, edit, "PUT")).response.status).toBe(403);
-  expect((await api(alice, `/v1/mcp-connections/${tokenConnectionId}/member-api-key`, { apiKey: keys[0], apiKeyAuthScheme: "bearer" })).response.status).toBe(400);
+  expect((await api(alice, `/v1/mcp-connections/${tokenConnectionId}/my-credential`, { apiKey: keys[0], apiKeyAuthScheme: "bearer" }, "PUT")).response.status).toBe(400);
   expect((await api(den.admin, `/v1/mcp-connections/${tokenConnectionId}`, edit, "PUT")).response.status).toBe(200);
   expect((await current(tokenConnectionId)).apiKeyAuthScheme).toBe("bearer");
   const beforeMissing = wire.length;
   expect((await invoke(alice, tokenConnectionId)).result.isError).toBe(true);
   expect((await invoke(bob, tokenConnectionId)).result.isError).toBe(true);
   expect(wire).toHaveLength(beforeMissing);
-  expect((await api(alice, `/v1/mcp-connections/${tokenConnectionId}/member-api-key`, { apiKey: keys[0] })).response.status).toBe(200);
+  expect((await api(alice, `/v1/mcp-connections/${tokenConnectionId}/my-credential`, { apiKey: keys[0] }, "PUT")).response.status).toBe(200);
   expect((await invoke(alice, tokenConnectionId)).result.isError).not.toBe(true);
   expect(wire.slice(beforeMissing).every((entry) => entry.scheme === "Bearer")).toBe(true);
   for (const invalid of ["Basic", "Token", "bearer\r\nCookie:x", "x-api-key"]) {

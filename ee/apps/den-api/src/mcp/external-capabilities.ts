@@ -33,6 +33,7 @@ import {
 import { cache } from "../cache.js"
 import { db } from "../db.js"
 import { listTeamsForMember } from "../orgs.js"
+import { memberApiKeyRejected, memberApiKeyUsable, usesMemberApiKey } from "../capability-sources/member-api-key.js"
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
 import {
   externalMcpToolSchemaDigest,
@@ -448,6 +449,35 @@ function providerAuthorizationConnectionStatus(input: {
   }
 }
 
+/**
+ * The per-member credential gate shared by search, status and execution.
+ * Null when the member's own credential is usable; otherwise what to tell them.
+ */
+function memberCredentialGap(
+  connection: ExternalMcpConnectionRow,
+  account: Awaited<ReturnType<typeof getConnectedAccount>>,
+): { message: string; status: ExternalConnectionStatus } | null {
+  if (usesMemberApiKey(connection)) {
+    if (memberApiKeyUsable(account)) return null
+    const rejected = memberApiKeyRejected(account)
+    const message = rejected
+      ? `Your ${connection.name} key was rejected. Replace your own key in Connect or Your Connections. Never paste a key into chat or tool arguments.`
+      : `Add your own ${connection.name} key in Connect or Your Connections. Never paste a key into chat or tool arguments.`
+    return {
+      message,
+      status: buildExternalConnectionStatus({
+        connection,
+        state: rejected ? "reauth_required" : "needs_connection",
+        errorCode: rejected ? "unauthorized" : "not_connected",
+        message,
+      }),
+    }
+  }
+  if (account?.accessToken) return null
+  const message = `You haven't connected your ${connection.name} account yet.`
+  return { message, status: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }) }
+}
+
 export function buildExternalConnectionStatus(input: {
   connection: ConnectionStatusIdentity
   state: ExternalConnectionStatus["state"]
@@ -505,7 +535,7 @@ export function buildExternalConnectionStatus(input: {
   const surface = actor === "member"
     ? "openwork_your_connections"
     : "openwork_organization_connections"
-  const actionType = input.connection.authType === "apikey" && input.connection.credentialMode === "per_member"
+  const actionType = usesMemberApiKey(input.connection)
     ? "update_credentials"
     : input.state === "needs_connection"
     ? "connect"
@@ -694,25 +724,23 @@ async function probeExternalMcpConnection(input: {
       orgMembershipId: input.member.orgMembershipId,
       providerId: connection.id,
     })
-    if (!account?.accessToken || (connection.authType === "apikey" && (account.tokenType !== "api_key" || account.credentialHealth?.status === "reconnect_required"))) {
+    const gap = memberCredentialGap(connection, account)
+    if (gap) {
       // Granted but not yet connected: surface the connection itself (not
       // its tools — we can't list them without the member's credential) so
       // the agent can tell the human exactly what to do.
       const nameTokens = tokenize(connection.name)
       const score = scoreText(nameTokens, nameTokens, input.queryTokens)
       if (score > 0) {
-        const rejected = connection.authType === "apikey" && account?.credentialHealth?.status === "reconnect_required"
-        const message = rejected ? `Your ${connection.name} key was rejected. Replace your own key in Connect or Your Connections. Never paste a key into chat or tool arguments.`
-          : `You haven't connected your ${connection.name} account yet.`
         add(statusMatch({
           connection,
           score,
-          summary: `[${connection.name}] ${message}`,
+          summary: `[${connection.name}] ${gap.message}`,
           status: "needs_connection",
-          hint: connection.authType === "apikey"
+          hint: usesMemberApiKey(connection)
             ? "Ask the user to open the member settings link in connectionStatus.action.url and add or replace their own key in Your Connections, then search again. Never request a key in chat or tool arguments. This is not an OAuth sign-in flow."
             : `Ask the user to click Connect on the "${connection.name}" card in OpenWork desktop, then search again. In clients without inline connection controls, use OpenWork Cloud -> Your Connections. ${CONNECTION_CARD_HINT}`,
-          connectionStatus: buildExternalConnectionStatus({ connection, state: rejected ? "reauth_required" : "needs_connection", errorCode: rejected ? "unauthorized" : "not_connected", message }),
+          connectionStatus: gap.status,
         }))
       }
       return matches
@@ -747,7 +775,7 @@ async function probeExternalMcpConnection(input: {
   }
   // Personal keys can be replaced or revoked independently of connection
   // configuration. Do not reuse a credential-dependent catalog or failure.
-  const cacheable = connection.authType !== "apikey" || connection.credentialMode !== "per_member"
+  const cacheable = !usesMemberApiKey(connection)
   const cachedProbe = cacheable ? getExternalToolsSearchCache(cacheKey) : undefined
   try {
     if (cachedProbe?.outcome === "failure") throw cachedProbe.error
@@ -1079,16 +1107,8 @@ export async function probeExternalConnectionStatus(input: {
       orgMembershipId: input.member.orgMembershipId,
       providerId: connection.id,
     })
-    if (!account?.accessToken || (connection.authType === "apikey" && (account.tokenType !== "api_key" || account.credentialHealth?.status === "reconnect_required"))) {
-      const rejected = connection.authType === "apikey" && account?.credentialHealth?.status === "reconnect_required"
-      const message = rejected ? `Your ${connection.name} key was rejected. Replace your own key in Connect or Your Connections. Never paste a key into chat or tool arguments.`
-        : `You haven't connected your ${connection.name} account yet.`
-      return {
-        ok: true,
-        connected: false,
-        status: buildExternalConnectionStatus({ connection, state: rejected ? "reauth_required" : "needs_connection", errorCode: rejected ? "unauthorized" : "not_connected", message }),
-      }
-    }
+    const gap = memberCredentialGap(connection, account)
+    if (gap) return { ok: true, connected: false, status: gap.status }
   } else if (!hasSharedCredential(connection)) {
     const message = `"${connection.name}" is not connected yet.`
     return {
@@ -1206,26 +1226,15 @@ async function prepareExternalCapability(input: {
       orgMembershipId: input.member.orgMembershipId,
       providerId: connection.id,
     })
-    if (!account?.accessToken || (connection.authType === "apikey" && (account.tokenType !== "api_key" || account.credentialHealth?.status === "reconnect_required"))) {
-      if (connection.authType === "apikey") {
-        const rejected = account?.credentialHealth?.status === "reconnect_required"
-        const message = rejected
-          ? `Your ${connection.name} key was rejected. Replace your own key in Connect or Your Connections, then retry. Never paste a key into chat or tool arguments.`
-          : `Add your own ${connection.name} key in Connect or Your Connections. Never paste a key into chat or tool arguments.`
-        return { ok: false, error: "needs_connection", message,
-          connectionStatus: buildExternalConnectionStatus({ connection, state: rejected ? "reauth_required" : "needs_connection",
-            errorCode: rejected ? "unauthorized" : "not_connected", message }) }
-      }
+    const gap = memberCredentialGap(connection, account)
+    if (gap) {
       return {
         ok: false,
         error: "needs_connection",
-        message: `You haven't connected your ${connection.name} account yet. Open OpenWork Cloud -> Your Connections and click Connect on "${connection.name}".`,
-        connectionStatus: buildExternalConnectionStatus({
-          connection,
-          state: "needs_connection",
-          errorCode: "not_connected",
-          message: `You haven't connected your ${connection.name} account yet.`,
-        }),
+        message: usesMemberApiKey(connection)
+          ? gap.message
+          : `${gap.message} Open OpenWork Cloud -> Your Connections and click Connect on "${connection.name}".`,
+        connectionStatus: gap.status,
       }
     }
     member = { orgMembershipId: input.member.orgMembershipId }

@@ -25,7 +25,7 @@ test("losing a team removes only the personal keys of connections the member can
     const created = await api(admin, "/v1/mcp-connections", { name, url: den.mocks.keyed.mcpUrl, authType: "apikey", credentialMode: "per_member", access });
     expect(created.response.status).toBe(200);
     const id = connectionResponse.parse(created.body).id;
-    expect((await api(bob, `/v1/mcp-connections/${id}/member-api-key`, { apiKey: `synthetic-${name.toLowerCase().replaceAll(" ", "-")}` })).body).toEqual({ ok: true });
+    expect((await api(bob, `/v1/mcp-connections/${id}/my-credential`, { apiKey: `synthetic-${name.toLowerCase().replaceAll(" ", "-")}` }, "PUT")).body).toEqual({ ok: true });
     return id;
   };
   const onlyTeam = await connect("Only team", { orgWide: false, teamIds: [granting] });

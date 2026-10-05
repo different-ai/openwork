@@ -71,7 +71,7 @@ test("one central personal-key connection routes only the calling member credent
   const created = await api(admin, "/v1/mcp-connections", { name: "Personal fixture", url, authType: "apikey", credentialMode: "per_member", exposeDirectly: true, access: { orgWide: false, memberIds: [aliceId, bobId] } });
   expect(created.response.status).toBe(200);
   const id = connectionResponse.parse(created.body).id;
-  const endpoint = `/v1/mcp-connections/${id}/member-api-key`;
+  const endpoint = `/v1/mcp-connections/${id}/my-credential`;
   const tokenA = "synthetic-member-alice";
   const tokenB = "synthetic-member-bob";
   const fingerprint = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 12);
@@ -91,9 +91,9 @@ test("one central personal-key connection routes only the calling member credent
     return JSON.parse(line ? line.slice(5) : text);
   };
   const call = (member: typeof admin) => invoke(member, "execute_capability", { name: `mcp:${id}:identity_probe`, body: {} });
-  expect((await api(alice, endpoint, { apiKey: tokenA })).body).toEqual({ ok: true });
-  expect((await api(charlie, endpoint, { apiKey: "synthetic-charlie" })).response.status).toBe(403);
-  expect((await api(admin, endpoint, { apiKey: "synthetic-admin" })).response.status).toBe(403);
+  expect((await api(alice, endpoint, { apiKey: tokenA }, "PUT")).body).toEqual({ ok: true });
+  expect((await api(charlie, endpoint, { apiKey: "synthetic-charlie" }, "PUT")).response.status).toBe(403);
+  expect((await api(admin, endpoint, { apiKey: "synthetic-admin" }, "PUT")).response.status).toBe(403);
   const missing = await call(bob);
   expect(missing.result.isError).toBe(true);
   expect(await den.mocks.keyed.toolCalls()).toHaveLength(0);
@@ -103,7 +103,7 @@ test("one central personal-key connection routes only the calling member credent
   expect(missingSearch).toContain("openwork_your_connections");
   expect(missingSearch).toContain("Never request a key in chat");
   expect(wire).toHaveLength(0);
-  expect((await api(bob, endpoint, { apiKey: tokenB })).body).toEqual({ ok: true });
+  expect((await api(bob, endpoint, { apiKey: tokenB }, "PUT")).body).toEqual({ ok: true });
   if (!den.database || !den.database.name.startsWith("openwork_eval_")) throw new Error("At-rest proof requires this test's owned isolated schema");
   const stored = await queryDenDatabase(den.database.url, "SELECT COUNT(*) AS total, SUM(access_token LIKE 'enc:v1:%') AS encrypted, SUM(access_token IN (?, ?)) AS plaintext FROM connected_account WHERE provider_id = ? AND token_type = 'api_key'", [tokenA, tokenB, id]);
   const atRest = stored[0];
@@ -130,9 +130,9 @@ test("one central personal-key connection routes only the calling member credent
     expect(direct.result.isError).not.toBe(true);
     expect((await den.mocks.keyed.toolCalls()).at(-1)?.tokenId).toBe(fingerprint(member === alice ? tokenA : tokenB));
   }
-  expect((await api(alice, endpoint, { apiKey: "synthetic-replacement", orgMembershipId: "someone-else" })).response.status).toBe(400);
-  expect((await api(alice, endpoint, { apiKey: "Token synthetic" })).response.status).toBe(400);
-  expect((await api(alice, endpoint, { apiKey: "synthetic-replacement" })).response.status).toBe(200);
+  expect((await api(alice, endpoint, { apiKey: "synthetic-replacement", orgMembershipId: "someone-else" }, "PUT")).response.status).toBe(400);
+  expect((await api(alice, endpoint, { apiKey: "Token synthetic" }, "PUT")).response.status).toBe(400);
+  expect((await api(alice, endpoint, { apiKey: "synthetic-replacement" }, "PUT")).response.status).toBe(200);
   expect((await call(alice)).result.isError).not.toBe(true);
   expect((await den.mocks.keyed.toolCalls()).at(-1)?.tokenId).toBe(fingerprint("synthetic-replacement"));
   expect((await api(alice, `/v1/mcp-connections/${id}/disconnect-my-account`)).response.status).toBe(200);
@@ -149,7 +149,7 @@ test("one central personal-key connection routes only the calling member credent
   expect((await call(bob)).result.isError).not.toBe(true);
   // A deterministically delayed rejection of the OLD key may not poison NEW.
   for (const mode of ["different", "same", "recreate"]) {
-    expect((await api(bob, endpoint, { apiKey: tokenB })).response.status).toBe(200);
+    expect((await api(bob, endpoint, { apiKey: tokenB }, "PUT")).response.status).toBe(200);
     const arrived = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     held401 = { arrived: arrived.resolve, release: release.promise };
@@ -161,13 +161,13 @@ test("one central personal-key connection routes only the calling member credent
       })]);
       accepted.add(replacement);
       if (mode === "recreate") expect((await api(bob, `/v1/mcp-connections/${id}/disconnect-my-account`)).response.status).toBe(200);
-      expect((await api(bob, endpoint, { apiKey: replacement })).response.status).toBe(200);
+      expect((await api(bob, endpoint, { apiKey: replacement }, "PUT")).response.status).toBe(200);
     } finally { release.resolve(); }
     expect((await oldRequest).result.isError).toBe(true);
     expect((await call(bob)).result.isError).not.toBe(true);
     expect((await den.mocks.keyed.toolCalls()).at(-1)?.tokenId).toBe(fingerprint(replacement));
   }
-  expect((await api(bob, endpoint, { apiKey: tokenB })).response.status).toBe(200);
+  expect((await api(bob, endpoint, { apiKey: tokenB }, "PUT")).response.status).toBe(200);
   accepted.delete(tokenB);
   const rejectedKey = await call(bob);
   expect(rejectedKey.result.isError).toBe(true);
@@ -182,7 +182,7 @@ test("one central personal-key connection routes only the calling member credent
   expect(inventoryResponse.parse(bobStatus.body).connections.find((entry: { id: string }) => entry.id === id)).toMatchObject({ credentialHealth: "reconnect_required", needsReconnect: true });
   const rejectedDiscovery = await invoke(bob, "search_capabilities", { query: "identity_probe" });
   expect(JSON.stringify(rejectedDiscovery)).not.toContain(`mcp:${id}:identity_probe`);
-  expect((await api(bob, endpoint, { apiKey: "synthetic-invalid" })).response.status).toBe(200);
+  expect((await api(bob, endpoint, { apiKey: "synthetic-invalid" }, "PUT")).response.status).toBe(200);
   expect((await call(bob)).result.isError).toBe(true);
   const inventory = await api(admin, "/v1/mcp-connections?scope=manageable", undefined, "GET");
   expect(JSON.stringify(inventory.body)).not.toContain(tokenA);
@@ -196,17 +196,20 @@ test("one central personal-key connection routes only the calling member credent
     expect(result.response.status).toBe(200);
   };
   accepted.add(tokenB);
-  expect((await api(bob, endpoint, { apiKey: tokenB })).response.status).toBe(200);
+  expect((await api(bob, endpoint, { apiKey: tokenB }, "PUT")).response.status).toBe(200);
   expect((await call(bob)).result.isError).not.toBe(true);
+  expect((await api(alice, endpoint, { apiKey: tokenA }, "PUT")).response.status).toBe(200);
   await updateAccess([aliceId]);
+  // Narrowing access prunes only the member who lost it; Alice keeps her key.
+  expect((await call(alice)).result.isError).not.toBe(true);
   const beforeRevoked = wire.length;
-  expect((await api(bob, endpoint, { apiKey: tokenB })).response.status).toBe(403);
+  expect((await api(bob, endpoint, { apiKey: tokenB }, "PUT")).response.status).toBe(403);
   expect((await call(bob)).result.isError).toBe(true);
   expect(wire).toHaveLength(beforeRevoked);
   await updateAccess([aliceId, bobId]);
   expect((await call(bob)).result.isError).toBe(true);
   expect(wire).toHaveLength(beforeRevoked);
-  expect((await api(bob, endpoint, { apiKey: tokenB })).response.status).toBe(200);
+  expect((await api(bob, endpoint, { apiKey: tokenB }, "PUT")).response.status).toBe(200);
   const current = await api(admin, "/v1/mcp-connections?scope=manageable", undefined, "GET");
   const row = connectionResponse.parse(inventoryResponse.parse(current.body).connections.find(entry => entry.id === id));
   const edited = await api(admin, `/v1/mcp-connections/${id}`, { expectedUpdatedAt: row.updatedAt, name: row.name, url: `${url}?new-destination=1`, authType: "apikey", credentialMode: "per_member", access: { orgWide: false, memberIds: [aliceId, bobId] } }, "PUT");
@@ -217,7 +220,7 @@ test("one central personal-key connection routes only the calling member credent
   expect(orgKey.response.status).toBe(201);
   const machineControl = await denFetch(admin, "/v1/api-keys", { headers: { "x-api-key": apiKeyResponse.parse(orgKey.body).key } });
   expect(machineControl.response.status).toBe(200);
-  const machineEnroll = await denFetch(admin, endpoint, { method: "POST", headers: { "x-api-key": apiKeyResponse.parse(orgKey.body).key }, body: JSON.stringify({ apiKey: tokenA }) });
+  const machineEnroll = await denFetch(admin, endpoint, { method: "PUT", headers: { "x-api-key": apiKeyResponse.parse(orgKey.body).key }, body: JSON.stringify({ apiKey: tokenA }) });
   expect(machineEnroll.response.status).toBe(403);
   const shared = await api(admin, "/v1/mcp-connections", { name: "Shared regression", url, authType: "apikey", credentialMode: "shared", apiKey: tokenA, access: { orgWide: true } });
   expect(shared.response.status).toBe(200);
@@ -236,9 +239,9 @@ test("one central personal-key connection routes only the calling member credent
   const teamPath = `/v1/teams/${teamResponse.parse(team.body).team.id}`;
   const teamConnection = await api(admin, "/v1/mcp-connections", { name: "Team key lifecycle", url, authType: "apikey", credentialMode: "per_member", access: { orgWide: false, teamIds: [teamResponse.parse(team.body).team.id] } });
   expect(teamConnection.response.status).toBe(200);
-  const teamKeyPath = `/v1/mcp-connections/${connectionResponse.parse(teamConnection.body).id}/member-api-key`;
+  const teamKeyPath = `/v1/mcp-connections/${connectionResponse.parse(teamConnection.body).id}/my-credential`;
   const teamCall = () => invoke(bob, "execute_capability", { name: `mcp:${connectionResponse.parse(teamConnection.body).id}:identity_probe`, body: {} });
-  expect((await api(bob, teamKeyPath, { apiKey: tokenB })).response.status).toBe(200);
+  expect((await api(bob, teamKeyPath, { apiKey: tokenB }, "PUT")).response.status).toBe(200);
   expect((await api(alice, teamPath, { memberIds: [] }, "PATCH")).response.status).toBe(403);
   expect((await teamCall()).result.isError).not.toBe(true);
   expect((await api(admin, teamPath, { memberIds: [bobId] }, "PATCH")).response.status).toBe(200);
@@ -249,9 +252,9 @@ test("one central personal-key connection routes only the calling member credent
   expect((await api(admin, teamPath, { memberIds: [bobId] }, "PATCH")).response.status).toBe(200);
   expect((await teamCall()).result.isError).toBe(true);
   expect(wire).toHaveLength(beforeTeamRemoval);
-  expect((await api(bob, teamKeyPath, { apiKey: tokenB })).response.status).toBe(200);
+  expect((await api(bob, teamKeyPath, { apiKey: tokenB }, "PUT")).response.status).toBe(200);
   const raced = await Promise.all([
-    api(bob, teamKeyPath, { apiKey: tokenB }),
+    api(bob, teamKeyPath, { apiKey: tokenB }, "PUT"),
     api(admin, teamPath, { memberIds: [] }, "PATCH"),
   ]);
   expect([200, 403, 409]).toContain(raced[0].response.status);
@@ -261,7 +264,7 @@ test("one central personal-key connection routes only the calling member credent
   for (const path of ["redirect", "redirect-cross"].flatMap((origin) => [301, 302, 303, 307, 308].map((status) => `${origin}/${status}`))) {
     const redirectConnection = await api(admin, "/v1/mcp-connections", { name: `Redirect boundary ${path}`, url: `http://127.0.0.1:${address.port}/${path}`, authType: "apikey", credentialMode: "per_member", access: { orgWide: false, memberIds: [aliceId] } });
     expect(redirectConnection.response.status).toBe(200);
-    expect((await api(alice, `/v1/mcp-connections/${connectionResponse.parse(redirectConnection.body).id}/member-api-key`, { apiKey: tokenA })).response.status).toBe(200);
+    expect((await api(alice, `/v1/mcp-connections/${connectionResponse.parse(redirectConnection.body).id}/my-credential`, { apiKey: tokenA }, "PUT")).response.status).toBe(200);
     const beforeRedirect = wire.length;
     expect((await invoke(alice, "execute_capability", { name: `mcp:${connectionResponse.parse(redirectConnection.body).id}:identity_probe`, body: {} })).result.isError).toBe(true);
     expect(wire.length).toBeGreaterThan(beforeRedirect);
@@ -271,7 +274,7 @@ test("one central personal-key connection routes only the calling member credent
   expect(crossOriginTargetRequests).toBe(0);
   const otherOrg = await api(charlie, "/v1/org", { name: "Separate personal key tenant" });
   expect(otherOrg.response.status).toBe(201);
-  const crossOrg = await denFetch(charlie, endpoint, { method: "POST", headers: { authorization: `Bearer ${charlie.token}`, "x-openwork-org-id": newOrganizationResponse.parse(otherOrg.body).organization.id }, body: JSON.stringify({ apiKey: tokenA }) });
+  const crossOrg = await denFetch(charlie, endpoint, { method: "PUT", headers: { authorization: `Bearer ${charlie.token}`, "x-openwork-org-id": newOrganizationResponse.parse(otherOrg.body).organization.id }, body: JSON.stringify({ apiKey: tokenA }) });
   expect(crossOrg.response.status).toBe(404);
   const otherToken = await denFetch(charlie, "/v1/mcp/token", { method: "POST", headers: { authorization: `Bearer ${charlie.token}`, "x-openwork-org-id": newOrganizationResponse.parse(otherOrg.body).organization.id }, body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }) });
   expect(otherToken.response.status).toBe(200);

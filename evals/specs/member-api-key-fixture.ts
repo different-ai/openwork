@@ -1,4 +1,4 @@
-import { z } from "../../apps/app/node_modules/zod/index.js";
+import { z } from "zod";
 
 export const connectionResponse = z.object({
   id: z.string(), name: z.string(), updatedAt: z.string(),

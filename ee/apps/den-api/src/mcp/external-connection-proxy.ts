@@ -21,6 +21,7 @@ import {
   memberCanUseExternalMcpConnection,
   type ExternalMcpConnectionRow,
 } from "../capability-sources/external-mcp-connections.js"
+import { usesMemberApiKey } from "../capability-sources/member-api-key.js"
 import {
   callExternalMcpToolRaw,
   describeExternalMcpServer,
@@ -478,7 +479,7 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       teamIds: member.teamIds,
     })
     if (!connection || !allowed) return c.json({ error: "connection_not_available" }, 403)
-    if (connection.authType === "apikey" && connection.credentialMode === "per_member"
+    if (usesMemberApiKey(connection)
       && !await externalMcpConnectionReadyForMember(connection, member.orgMembershipId)) {
       return c.json({ error: "connection_not_available", message: "Connect your personal API key in Your Connections." }, 403)
     }
