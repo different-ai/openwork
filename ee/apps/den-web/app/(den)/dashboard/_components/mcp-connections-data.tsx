@@ -1,18 +1,9 @@
 "use client";
 
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
 import { DenRequestCanceledError, DenRequestTimeoutError, getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import {
-  isCurrentMemberApiKeyBoundary,
-  MEMBER_API_KEY_UNCERTAIN_MESSAGE,
-  memberApiKeyRequest,
-  nextMemberApiKeyBoundary,
-  settleMemberApiKeySave,
-  type MemberApiKeyBoundary,
-  type MemberApiKeySaveOutcome,
-} from "./member-api-key";
+import { memberApiKeyFailureMessage } from "./member-api-key";
 import {
   type ExternalMcpDiagnostic,
   parseExternalMcpDiagnostic,
@@ -974,138 +965,30 @@ export function useStartMcpConnectionOAuth() {
   });
 }
 
-type ActiveMemberApiKeyAttempt = {
-  boundary: MemberApiKeyBoundary;
-  controller: AbortController;
-};
-
-export type MemberApiKeySaveResult = MemberApiKeySaveOutcome & { attemptGeneration: number };
-
-export function memberApiKeySaveErrorMessage(_cause: unknown): string {
-  return MEMBER_API_KEY_UNCERTAIN_MESSAGE;
-}
-
 /**
- * Saves a caller-owned API key without placing it in TanStack mutation state.
- * Only the connection id is retained while the request is pending.
+ * Saves the caller's own key on a per-member API-key connection. gcTime 0 and
+ * the dialog's reset() drop the key from mutation state once the form closes.
  */
-export function useSaveMyMcpApiKey(connectionId: string | null) {
+export function useSaveMyMcpCredential() {
   const queryClient = useQueryClient();
   const { orgId } = useOrgDashboard();
-  const organizationId = orgId ?? null;
-  const boundaryRef = useRef<MemberApiKeyBoundary>({ organizationId, connectionId, generation: 0 });
-  const renderedBoundary = nextMemberApiKeyBoundary(boundaryRef.current, organizationId, connectionId);
-  if (renderedBoundary !== boundaryRef.current) boundaryRef.current = renderedBoundary;
-  const activeAttempt = useRef<ActiveMemberApiKeyAttempt | null>(null);
-  const [pendingAttempt, setPendingAttempt] = useState<{ connectionId: string; generation: number } | null>(null);
-  const mounted = useRef(true);
 
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      const boundary = boundaryRef.current;
-      boundaryRef.current = nextMemberApiKeyBoundary(boundary, boundary.organizationId, boundary.connectionId, true);
-      activeAttempt.current?.controller.abort();
-      activeAttempt.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    const boundary = boundaryRef.current;
-    const active = activeAttempt.current;
-    if (active && !isCurrentMemberApiKeyBoundary(boundary, active.boundary)) {
-      active.controller.abort();
-      activeAttempt.current = null;
-    }
-    setPendingAttempt((pending) => pending && pending.generation !== boundary.generation ? null : pending);
-  }, [connectionId, organizationId]);
-
-  const cancel = useCallback(() => {
-    const boundary = boundaryRef.current;
-    boundaryRef.current = nextMemberApiKeyBoundary(boundary, boundary.organizationId, boundary.connectionId, true);
-    activeAttempt.current?.controller.abort();
-    activeAttempt.current = null;
-    if (mounted.current) setPendingAttempt(null);
-  }, []);
-
-  const save = useCallback(async (apiKey: string): Promise<MemberApiKeySaveResult> => {
-    const currentBoundary = boundaryRef.current;
-    const attemptOrganizationId = currentBoundary.organizationId;
-    const attemptConnectionId = currentBoundary.connectionId;
-    if (!attemptOrganizationId || !attemptConnectionId) {
-      return { kind: "stale", attemptGeneration: currentBoundary.generation };
-    }
-    const attemptBoundary = nextMemberApiKeyBoundary(
-      currentBoundary,
-      attemptOrganizationId,
-      attemptConnectionId,
-      true,
-    );
-    boundaryRef.current = attemptBoundary;
-    activeAttempt.current?.controller.abort();
-    const controller = new AbortController();
-    const attempt = { boundary: attemptBoundary, controller };
-    activeAttempt.current = attempt;
-    setPendingAttempt({ connectionId: attemptConnectionId, generation: attemptBoundary.generation });
-    const outcome = await settleMemberApiKeySave({
-      request: async () => {
-        const request = memberApiKeyRequest(attemptConnectionId, attemptOrganizationId, apiKey);
-        const timeoutMs = 15000;
-        let deadlineReached = false;
-        const timeout = setTimeout(() => {
-          if (controller.signal.aborted) return;
-          deadlineReached = true;
-          controller.abort();
-        }, timeoutMs);
-        try {
-          const { response } = await requestJson(
-            request.path,
-            { ...request.init, signal: controller.signal },
-            timeoutMs,
-          );
-          return { ok: response.ok, status: response.status };
-        } catch (cause) {
-          if (deadlineReached) throw new DenRequestTimeoutError(timeoutMs, cause);
-          throw cause;
-        } finally {
-          clearTimeout(timeout);
-        }
-      },
-      refresh: async () => {
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
-          queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items }),
-        ]);
-      },
-      isCurrent: () => mounted.current
-        && activeAttempt.current === attempt
-        && isCurrentMemberApiKeyBoundary(boundaryRef.current, attemptBoundary),
-    });
-    try {
-      return { ...outcome, attemptGeneration: attemptBoundary.generation };
-    } finally {
-      if (activeAttempt.current === attempt) {
-        activeAttempt.current = null;
-        if (mounted.current) {
-          setPendingAttempt((pending) => pending?.generation === attemptBoundary.generation ? null : pending);
-        }
-      }
-    }
-  }, [queryClient]);
-
-  const isCurrentAttempt = useCallback((attemptGeneration: number): boolean => (
-    mounted.current && boundaryRef.current.generation === attemptGeneration
-  ), []);
-  const currentPendingAttempt = pendingAttempt?.generation === boundaryRef.current.generation ? pendingAttempt : null;
-
-  return {
-    cancel,
-    isCurrentAttempt,
-    isPending: currentPendingAttempt !== null,
-    pendingConnectionId: currentPendingAttempt?.connectionId ?? null,
-    save,
-  };
+  return useMutation({
+    gcTime: 0,
+    mutationFn: async (input: { connectionId: string; apiKey: string }): Promise<void> => {
+      const response = await requestJson(
+        `/v1/mcp-connections/${encodeURIComponent(input.connectionId)}/my-credential`,
+        { method: "PUT", headers: getOrgScopeHeaders(requireOrgId(orgId)), body: JSON.stringify({ apiKey: input.apiKey }) },
+        15000,
+      ).then(({ response }) => response, () => null);
+      // Never surface server text: a provider or proxy may echo the submitted key.
+      if (!response?.ok) throw new Error(memberApiKeyFailureMessage(response?.status));
+    },
+    onSuccess: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
+      queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items }),
+    ]),
+  });
 }
 
 export function useDisconnectMyProviderAccount() {
