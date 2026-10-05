@@ -28,7 +28,6 @@ export type AdminFreeAutoUsageResponse = {
   };
   settings: {
     membersEnabled: boolean;
-    rolloutAllOrganizations: boolean;
     weeklyLimitMicroUsd: number;
   };
   totals: {
@@ -88,10 +87,6 @@ export type AdminFreeAutoUsageResponse = {
     id: string;
     name: string;
     slug: string | null;
-    /**
-     * Whether the organization's members are offered free Auto by the rollout.
-     */
-    enrolled: boolean;
     /**
      * Pays for OpenWork Models, so its members use paid Models rather than free Auto.
      */
@@ -190,11 +185,6 @@ export type AdminOrganizationsPageResponse = {
        */
       gatewayDashboard: true;
     };
-    freeAuto: {
-      enabled: boolean;
-      globallyEnabled: boolean;
-      rolloutAllOrganizations: boolean;
-    };
     [key: string]: unknown;
   }>;
   page: AdminPageInfo;
@@ -273,11 +263,6 @@ export type AdminOverviewResponse = {
        * @deprecated
        */
       gatewayDashboard: true;
-    };
-    freeAuto: {
-      enabled: boolean;
-      globallyEnabled: boolean;
-      rolloutAllOrganizations: boolean;
     };
     [key: string]: unknown;
   }>;
@@ -5285,72 +5270,6 @@ export type PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses = {
 
 export type PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponse =
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses[keyof PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses];
-
-export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoData = {
-  body: {
-    enabled: boolean | null;
-  };
-  path: {
-    organizationId: string;
-  };
-  query?: never;
-  url: "/v1/admin/organizations/{organizationId}/free-auto";
-};
-
-export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors = {
-  /**
-   * Invalid rollout or organization identifier.
-   */
-  400: {
-    error: "invalid_request";
-    message: string;
-  };
-  /**
-   * The caller must be authenticated.
-   */
-  401: UnauthorizedError;
-  /**
-   * The authenticated user is not an admin.
-   */
-  403: ForbiddenError;
-  /**
-   * Organization not found.
-   */
-  404: NotFoundError;
-  /**
-   * Organization metadata could not be read.
-   */
-  503: {
-    error: "managed_models_policy_unavailable";
-    message: string;
-  };
-};
-
-export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoError =
-  PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors[keyof PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors];
-
-export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses = {
-  /**
-   * Free Auto rollout updated.
-   */
-  200: {
-    ok: true;
-    organization: {
-      /**
-       * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
-       */
-      id: string;
-      freeAuto: {
-        enabled: boolean;
-        globallyEnabled: boolean;
-        rolloutAllOrganizations: boolean;
-      };
-    };
-  };
-};
-
-export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponse =
-  PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses[keyof PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses];
 
 export type PatchV1AdminOrganizationsByOrganizationIdDpaData = {
   body: {
