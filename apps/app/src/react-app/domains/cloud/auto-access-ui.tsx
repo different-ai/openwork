@@ -131,17 +131,6 @@ export function useAutoAccess(available: boolean, override?: AutoAccessWorkspace
   return { query, auth };
 }
 
-export function AutoFirstUseStatus({ onConnect }: { onConnect?: () => void }) {
-  const { query } = useAutoAccess(true);
-  if ((query.isPending && query.fetchStatus !== "idle") || (query.isSuccess && (freeAutoSwitchedOff(query.data) || autoQuietlyUnavailable(query.data)))) return null;
-  const ready = query.isSuccess && query.data.state === "ready";
-  return <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xs text-muted-foreground" data-testid="auto-first-use">
-    {ready ? <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-green-9" /> : null}
-    <span role="status">{ready ? "Auto is free on this device. No account needed." : query.isFetching ? "Checking Auto access…" : "Auto isn’t ready yet. Choose a model to continue."}</span>
-    {onConnect ? <Button size="sm" variant="link" onClick={onConnect}>Connect your own provider</Button> : null}
-  </div>;
-}
-
 function AutoAccessFooterContent({ available, syncing = false }: { available: boolean; syncing?: boolean }) {
   const { query, auth } = useAutoAccess(available);
   if ((!available && !syncing) || freeAutoSwitchedOff(query.data) || autoQuietlyUnavailable(query.data)) return null;

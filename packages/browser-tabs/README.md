@@ -12,8 +12,7 @@ React:
   (`background`).
 - **Background rendering** — the recipe that keeps a hidden tab behaving like
   a real page for the agent driving it: a full emulated viewport, focus
-  emulation, and a one-pixel on-window presence so Chromium keeps painting
-  (`backgroundTabEmulationCommands`, `BACKGROUND_TAB_PRESENCE_BOUNDS`).
+  emulation (`backgroundTabEmulationCommands`).
 - **What a conversation sees** — the renderer-side filters that give each
   side panel only its own tabs (`browserTabsForSession`,
   `activeBrowserTabIdForSession`).

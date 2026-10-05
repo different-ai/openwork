@@ -7,11 +7,6 @@
  * (`metadata.mcpConnectionsEnabled` and `metadata.connectEnabled`). Admin
  * management (scope=manageable, create, access grants) stays available so orgs
  * can stage or repair connections while members see an empty list.
- *
- * DEN_MCP_CONNECTIONS_GATING_ENABLED is deprecated and inert. env.ts still
- * accepts it, and callers still pass `options.gatingEnabled`, so existing
- * deployment configs and call sites continue to work while this helper ignores
- * the deployment-level gate.
  */
 
 type MetadataInput = Record<string, unknown> | string | null | undefined
@@ -37,10 +32,7 @@ function parseMetadata(input: MetadataInput): Record<string, unknown> {
   return isRecord(input) ? input : {}
 }
 
-export function memberFacingMcpConnectionsEnabled(
-  metadata: MetadataInput,
-  options: { gatingEnabled: boolean },
-): boolean {
+export function memberFacingMcpConnectionsEnabled(metadata: MetadataInput): boolean {
   const parsed = parseMetadata(metadata)
   const capabilities = isRecord(parsed.capabilities) ? parsed.capabilities : {}
 

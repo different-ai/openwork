@@ -218,8 +218,6 @@ config:
     betterAuthTrustedOrigins: ""
     webAppHosts: ""
     bootstrapAdminEmails: "admin@example.com"
-    # Self-hosted default: every organization gets install downloads.
-    installLinksGatingEnabled: "false"
     authCallbackUrl: "https://openwork.example.com"
   githubConnector:
     appId: ""
@@ -442,7 +440,7 @@ The existing Secret must contain the keys listed under `secret.keys`, especially
 - `BETTER_AUTH_SECRET`
 - `DEN_DB_ENCRYPTION_KEY`
 
-Set optional `DATABASE_REDIS_URL` to enable Den API Redis-backed session and query caching. Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `POLAR_ACCESS_TOKEN` when Polar feature gating is enabled. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling OpenWork Models management.
+Set optional `DATABASE_REDIS_URL` to enable Den API Redis-backed session and query caching. Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling OpenWork Models management.
 
 Redis cache examples:
 

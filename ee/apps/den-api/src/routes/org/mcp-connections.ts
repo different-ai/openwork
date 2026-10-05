@@ -1262,7 +1262,7 @@ export async function listMemberUsableConnectionFacts(input: {
   context: PluginArchActorContext
 }): Promise<MemberUsableConnectionFacts[]> {
   const organization = input.context.organizationContext.organization
-  if (!memberFacingMcpConnectionsEnabled(organization.metadata, { gatingEnabled: env.mcpConnectionsGatingEnabled })) {
+  if (!memberFacingMcpConnectionsEnabled(organization.metadata)) {
     return []
   }
 
@@ -2391,7 +2391,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       const isAdmin = verifyOrgRole({ roles: ["admin"], userContext: payload.currentMember })
       if (!isAdmin) {
         const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
-        const canUse = memberFacingMcpConnectionsEnabled(payload.organization.metadata, { gatingEnabled: env.mcpConnectionsGatingEnabled })
+        const canUse = memberFacingMcpConnectionsEnabled(payload.organization.metadata)
           && await memberCanUseExternalMcpConnection({
             connectionId: connection.id,
             orgMembershipId: payload.currentMember.id,
@@ -2582,7 +2582,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       }
 
       const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
-      const canUse = memberFacingMcpConnectionsEnabled(payload.organization.metadata, { gatingEnabled: env.mcpConnectionsGatingEnabled })
+      const canUse = memberFacingMcpConnectionsEnabled(payload.organization.metadata)
         && await memberCanUseExternalMcpConnection({
           connectionId: connection.id,
           orgMembershipId: payload.currentMember.id,
@@ -2686,7 +2686,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       const parsedBody = c.req.valid("json")
       let body = parsedBody
       if (!isOrganizationAdmin(payload)) {
-        const denial = !memberFacingMcpConnectionsEnabled(payload.organization.metadata, { gatingEnabled: env.mcpConnectionsGatingEnabled })
+        const denial = !memberFacingMcpConnectionsEnabled(payload.organization.metadata)
           ? "Connections are not enabled for this organization."
           : memberConnectionCreateDenial(parsedBody)
         if (denial || parsedBody.kind === "native_provider") {

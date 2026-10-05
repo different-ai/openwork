@@ -376,9 +376,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         ...desktopPolicy,
         automationsEnabled: env.automations.enabled,
         dashboardEnabled: env.dashboardsEnabled,
-        connectEnabled: memberFacingMcpConnectionsEnabled(organization.metadata, {
-          gatingEnabled: env.mcpConnectionsGatingEnabled,
-        }),
+        connectEnabled: memberFacingMcpConnectionsEnabled(organization.metadata),
         ...(Array.isArray(metadata.allowedDesktopVersions)
           ? { allowedDesktopVersions: metadata.allowedDesktopVersions }
           : {}),

@@ -4,7 +4,6 @@ import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 
 export type OpenTargetOptions = {
-  auto?: boolean;
   external?: boolean;
   reveal?: boolean;
 };

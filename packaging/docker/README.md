@@ -297,9 +297,9 @@ pnpm --dir _repos/openwork dev:den
 
 What it does:
 - Starts only **MySQL** in Docker
-- Runs **Den controller** locally in watch mode
+- Runs **Den API** locally in watch mode
 - Runs **OpenWork Cloud web app** locally in Next.js dev mode
-- Reuses the existing local-dev wiring in `scripts/dev-web-local.sh`
+- Uses the local-dev wiring in `scripts/dev-local.mjs`
 
 This is usually the fastest path for UI/auth/control-plane iteration because it avoids rebuilding the Docker web image on each boot.
 

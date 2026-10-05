@@ -93,8 +93,7 @@ Reuse the existing 402 pattern from seat gating
 
 ### Kill switch
 
-`DEN_PLAN_GATING_ENABLED` env var (mirrors `POLAR_FEATURE_GATE_ENABLED` in
-`env.ts` / `billing/polar.ts`). Default **off**:
+`DEN_PLAN_GATING_ENABLED` env var (parsed in `env.ts`). Default **off**:
 
 - Hosted Den: we flip it on after the backfill runs.
 - Self-hosted installs: stays off unless the operator opts in, so the

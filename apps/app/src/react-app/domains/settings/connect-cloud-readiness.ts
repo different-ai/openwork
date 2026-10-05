@@ -89,10 +89,6 @@ export function formatPluginComponentMeta(componentCounts: Record<string, number
   return labels.length > 0 ? labels.join(t("connect.row_meta_separator")) : t("connect.row_meta_no_components");
 }
 
-export function cloudReadinessConnectableConnectionId(readiness: DenPluginCloudReadiness | null | undefined) {
-  return readiness?.connections.find((connection) => connection.id && connection.credentialMode === "per_member" && connection.connectedForMe === false)?.id ?? null;
-}
-
 export function cloudReadinessMissingConnectionNames(readiness: DenPluginCloudReadiness | null | undefined) {
   return readiness?.connections.flatMap((connection) => connection.id === null ? [connection.name] : []) ?? [];
 }

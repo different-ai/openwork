@@ -174,7 +174,6 @@ export const otherAuditSurfaces: readonly Readonly<{ location: string; surface: 
   { location: "ee/apps/den-api/src/llm/gateway-matrix.ts", surface: "job", coverage: { ...providerCoverage, limitations: "Only refreshGatewayCatalog local mutations via catalog.refresh; no general job or runtime token-refresh coverage." } },
   { location: "ee/apps/gateway", surface: "service", coverage: uncovered("Inference gateway requests, streaming outcomes, usage and token refresh outside den-api.") },
   { location: "ee/apps/den-gateway", surface: "service", coverage: uncovered("Worker gateway proxy and access activity outside den-api.") },
-  { location: "ee/apps/den-controller", surface: "job", coverage: uncovered("Controller reconciliation and lifecycle work outside den-api.") },
   { location: "ee/apps/den-worker-runtime", surface: "service", coverage: uncovered("Remote runtime execution outside den-api.") },
   { location: "ee/apps/den-web", surface: "service", coverage: uncovered("Web server/proxy/auth/download surfaces; downstream covered APIs only, not blanket web coverage.") },
   { location: "packages/automations", surface: "job", coverage: uncovered("Automation runners and scheduled work; no general operation propagation or completion capture.") },

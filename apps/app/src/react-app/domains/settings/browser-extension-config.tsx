@@ -17,7 +17,7 @@ function OpenWorkBrowserConfig() {
         <div className="space-y-1 text-[13px] leading-relaxed text-dls-secondary">
           <div className="font-medium text-dls-text">Ready by default</div>
           <div>Each conversation uses its own tabs in the built-in browser. Allow browser control once for the thread to navigate, read and scroll. Clicks, typing and keys still need your confirmation. Choose Take over to revoke control and sign in; Resume browser lets the thread request access again. Website tools and sharing their results still need separate approval.</div>
-          <div>Sign in directly in the built-in browser; your session stays available across browser tasks. Your regular browser profile and login syncing are separate. Site tools support the imperative WebMCP document API; declarative forms and external browser control are not supported yet.</div>
+          <div>Sign in directly in the built-in browser; your session stays available across browser tasks. Your regular browser profile stays separate. Site tools support the imperative WebMCP document API; declarative forms and external browser control are not supported yet.</div>
         </div>
       </div>
     </div>

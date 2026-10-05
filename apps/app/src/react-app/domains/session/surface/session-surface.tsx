@@ -113,7 +113,7 @@ import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionAct
 import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permission-approval-modal";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
-import { deriveOpenTargets, sameOpenTargets, selectAutoOpenTarget, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
+import { deriveOpenTargets, sameOpenTargets, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
   markSessionSnapshotFetchStart,
@@ -1258,8 +1258,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const lastObservationProbeAtRef = useRef<number | null>(null);
   const [observationProbeVersion, setObservationProbeVersion] = useState(0);
   const composerShellRef = useRef<HTMLDivElement>(null);
-  const autoOpenedTargetRef = useRef<string | null>(null);
-  const initializedAutoOpenSessionRef = useRef<string | null>(null);
   const opencodeClient = useMemo(
     () => isOpencodeV2BaseUrl(props.opencodeBaseUrl)
       ? createClientV2(props.opencodeBaseUrl, props.workspaceRoot || undefined, { token: props.openworkToken })
@@ -1389,8 +1387,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setAdmissionOutcomeUnresolved(false);
     // Composer draft state lives in the shared store keyed by session id, so
     // switching sessions preserves each session's own in-progress composer.
-    autoOpenedTargetRef.current = null;
-    initializedAutoOpenSessionRef.current = null;
     setVerifiedOpenTargets([]);
   }, [sessionOwner, setError]);
 
@@ -1898,7 +1894,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     () => openTargets.map((target) => `${target.kind}:${target.value}:${target.confidence}`).join("|"),
     [openTargets],
   );
-  const autoOpenTarget = selectAutoOpenTarget(verifiedOpenTargets);
   const handleOpenTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions) => {
     props.onOpenTarget?.(target, options, props.sessionId);
   }, [props.onOpenTarget, props.sessionId]);
@@ -1932,26 +1927,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
 
   useEffect(() => {
-    if (!autoOpenTarget || chatStreaming) return;
-    if (autoOpenedTargetRef.current === autoOpenTarget.id) return;
-    autoOpenedTargetRef.current = autoOpenTarget.id;
-    props.onOpenTarget?.(autoOpenTarget, { auto: true }, props.sessionId);
-  }, [autoOpenTarget, chatStreaming, props.onOpenTarget, props.sessionId]);
-
-  useEffect(() => {
     let cancelled = false;
     const updateVerifiedOpenTargets = (targets: OpenTarget[]) => {
       setVerifiedOpenTargets((current) => sameOpenTargets(current, targets) ? current : targets);
     };
-    function initializeAutoOpenState(targets: OpenTarget[]) {
-      if (initializedAutoOpenSessionRef.current === props.sessionId) return;
-      initializedAutoOpenSessionRef.current = props.sessionId;
-      autoOpenedTargetRef.current = selectAutoOpenTarget(targets)?.id ?? null;
-    }
-
     async function verifyTargets() {
       if (!openTargets.length) {
-        initializeAutoOpenState([]);
         updateVerifiedOpenTargets([]);
         return;
       }
@@ -1959,13 +1940,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
         const response = await props.client.resolveArtifacts(props.workspaceId, openTargets);
         if (!cancelled) {
           const nextTargets = response.items as OpenTarget[];
-          initializeAutoOpenState(nextTargets);
           updateVerifiedOpenTargets(nextTargets);
         }
       } catch {
         if (!cancelled) {
           const nextTargets = openTargets.map((target) => ({ ...target, exists: target.kind === "url" }));
-          initializeAutoOpenState(nextTargets);
           updateVerifiedOpenTargets(nextTargets);
         }
       }

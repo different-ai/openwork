@@ -51,7 +51,6 @@ data:
   DEN_WEB_APP_HOSTS: {{ .Values.config.public.webAppHosts | quote }}
   {{ end }}
   DEN_BOOTSTRAP_ADMIN_EMAILS: {{ .Values.config.public.bootstrapAdminEmails | quote }}
-  DEN_INSTALL_LINKS_GATING_ENABLED: {{ .Values.config.public.installLinksGatingEnabled | quote }}
   DEN_AUTOMATIONS_ENABLED: {{ .Values.config.public.automationsEnabled | quote }}
   DEN_DASHBOARDS_ENABLED: {{ .Values.config.public.dashboardsEnabled | quote }}
   DEN_OPENWORK_WEB_ENABLED: {{ .Values.config.public.openworkWebEnabled | quote }}
@@ -89,28 +88,12 @@ data:
   {{ end }}
   INFERENCE_PROXY_BASE_URL: {{ include "openwork-ee.modelsProxyUrl" . | quote }}
   {{ end }}
-  POLAR_FEATURE_GATE_ENABLED: {{ .Values.config.polar.featureGateEnabled | quote }}
   DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS: {{ .Values.config.daytona.signedPreviewExpiresSeconds | quote }}
   DEN_API_BASE: {{ include "openwork-ee.denApiInternalUrl" . | quote }}
   DEN_AUTH_FALLBACK_BASE: {{ include "openwork-ee.authFallbackInternalUrl" . | quote }}
   DEN_AUTH_ORIGIN: {{ .Values.config.public.webOrigin | quote }}
   DEN_WEB_PUBLIC_ORIGIN: {{ .Values.config.public.webOrigin | quote }}
   DEN_WEB_OPENWORK_AUTH_CALLBACK_URL: {{ .Values.config.public.authCallbackUrl | quote }}
-  {{ with .Values.config.polar.apiBase }}
-  POLAR_API_BASE: {{ . | quote }}
-  {{ end }}
-  {{ with .Values.config.polar.productId }}
-  POLAR_PRODUCT_ID: {{ . | quote }}
-  {{ end }}
-  {{ with .Values.config.polar.benefitId }}
-  POLAR_BENEFIT_ID: {{ . | quote }}
-  {{ end }}
-  {{ with .Values.config.polar.successUrl }}
-  POLAR_SUCCESS_URL: {{ . | quote }}
-  {{ end }}
-  {{ with .Values.config.polar.returnUrl }}
-  POLAR_RETURN_URL: {{ . | quote }}
-  {{ end }}
   {{ with .Values.config.daytona.apiUrl }}
   DAYTONA_API_URL: {{ . | quote }}
   {{ end }}

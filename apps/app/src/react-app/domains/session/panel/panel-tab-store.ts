@@ -53,10 +53,6 @@ export type PanelTabStore = {
   selectTab: (sessionId: string, tabId: string | null) => void;
   reorderTabs: (sessionId: string, tabIds: string[]) => void;
   syncBrowserTabs: (sessionId: string, browserTabs: BrowserPanelTab[], activeBrowserTabId: string | null) => void;
-  syncArtifactTargets: (
-    sessionId: string,
-    targets: Array<{ id: string; name: string; preview: OpenTargetPreview }>,
-  ) => void;
   syncTranscriptArtifacts: (sessionId: string, targets: OpenTarget[]) => void;
   clearSession: (sessionId: string) => void;
 };
@@ -344,16 +340,6 @@ export const usePanelTabStore = create<PanelTabStore>()(
           tabs: mergedTabs,
           activeTabId,
         });
-      }),
-      syncArtifactTargets: (sessionId, targets) => set((state) => {
-        const session = getWritableSession(state, sessionId);
-        const nextSession = reconcileOpenArtifactTabs(session, targets);
-
-        if (isSameSessionPanelState(session, nextSession.tabs, nextSession.activeTabId)) {
-          return state;
-        }
-
-        return updateSession(state, sessionId, nextSession);
       }),
       syncTranscriptArtifacts: (sessionId, targets) => set((state) => {
         const currentTranscript = state.transcriptArtifactTargets[sessionId] ?? [];

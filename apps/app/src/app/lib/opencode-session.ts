@@ -8,7 +8,7 @@
  * (e.g. `shellAsync`) that may not be present in older SDK versions.
  */
 import type { Session } from "@opencode-ai/sdk/v2/client";
-import type { Client, ModelRef } from "../types";
+import type { Client } from "../types";
 import { unwrap } from "./opencode";
 
 export type AbortSessionLogContext = {
@@ -143,45 +143,6 @@ export async function setSessionArchived(
       time: { archived: archived ? Date.now() : 0 },
     }, options),
   );
-}
-
-/**
- * Compact/summarize a long session to reduce context size.
- * Uses `session.summarize` when available and falls back to `/compact` command.
- */
-export async function compactSession(
-  client: Client,
-  sessionID: string,
-  model: ModelRef,
-  options?: { directory?: string },
-): Promise<void> {
-  const session = client.session as { summarize?: (input: {
-    sessionID: string;
-    directory?: string;
-    providerID: string;
-    modelID: string;
-  }) => Promise<unknown> };
-
-  if (typeof session.summarize === "function") {
-    const result = await session.summarize({
-      sessionID,
-      directory: options?.directory,
-      providerID: model.providerID,
-      modelID: model.modelID,
-    });
-    assertNoClientError(result);
-    return;
-  }
-
-  const modelString = `${model.providerID}/${model.modelID}`;
-  const result = await client.session.command({
-    sessionID,
-    command: "compact",
-    arguments: "",
-    model: modelString,
-    directory: options?.directory,
-  });
-  assertNoClientError(result);
 }
 
 // ---------------------------------------------------------------------------

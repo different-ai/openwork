@@ -27,9 +27,6 @@
 #   DEN_WORKER_URL_TEMPLATE — worker URL template used by stub provisioning
 #   DAYTONA_API_URL / DAYTONA_API_KEY / DAYTONA_TARGET / DAYTONA_SNAPSHOT
 #                           — optional Daytona passthrough vars when DEN_PROVISIONER_MODE=daytona
-#   POLAR_FEATURE_GATE_ENABLED / POLAR_API_BASE / POLAR_ACCESS_TOKEN
-#   POLAR_PRODUCT_ID / POLAR_BENEFIT_ID / POLAR_SUCCESS_URL / POLAR_RETURN_URL
-#                           — optional Polar passthrough vars for billing/paywall testing
 #   DEN_OBSERVABILITY_BACKEND — none, otel, or sentry (default: none)
 #   OTEL_EXPORTER_OTLP_ENDPOINT — OTLP/HTTP base endpoint for den + web, e.g. http://otel-lgtm:4318
 #   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT / OTEL_EXPORTER_OTLP_METRICS_ENDPOINT / OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
@@ -139,13 +136,6 @@ services:
       CORS_ORIGINS: ${DEN_CORS_ORIGINS:-http://localhost:3005,http://127.0.0.1:3005,http://0.0.0.0:3005,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8788,http://127.0.0.1:8788}
       PROVISIONER_MODE: ${DEN_PROVISIONER_MODE:-stub}
       WORKER_URL_TEMPLATE: ${DEN_WORKER_URL_TEMPLATE:-}
-      POLAR_FEATURE_GATE_ENABLED: ${POLAR_FEATURE_GATE_ENABLED:-false}
-      POLAR_API_BASE: ${POLAR_API_BASE:-}
-      POLAR_ACCESS_TOKEN: ${POLAR_ACCESS_TOKEN:-}
-      POLAR_PRODUCT_ID: ${POLAR_PRODUCT_ID:-}
-      POLAR_BENEFIT_ID: ${POLAR_BENEFIT_ID:-}
-      POLAR_SUCCESS_URL: ${POLAR_SUCCESS_URL:-}
-      POLAR_RETURN_URL: ${POLAR_RETURN_URL:-}
       DAYTONA_API_URL: ${DAYTONA_API_URL:-}
       DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
       DAYTONA_TARGET: ${DAYTONA_TARGET:-}

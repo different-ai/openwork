@@ -401,15 +401,7 @@ export type DesktopCommandMap = {
   workspaceCreate: { args: [input: WorkspaceCreateInput]; result: WorkspaceList };
   workspaceCreateRemote: { args: [input: WorkspaceCreateRemoteInput]; result: WorkspaceList };
   workspaceUpdateRemote: { args: [input: WorkspaceUpdateRemoteInput]; result: WorkspaceList };
-  workspaceUpdateDisplayName: {
-    args: [input: { workspaceId: string; displayName?: string | null }];
-    result: WorkspaceList;
-  };
   workspaceForget: { args: [workspaceId: string]; result: WorkspaceList };
-  workspaceAddAuthorizedRoot: {
-    args: [input: { workspacePath: string; folderPath?: string; authorizedRoot?: string }];
-    result: unknown;
-  };
   workspaceOpenworkRead: {
     args: [input: { workspacePath: string }];
     result: WorkspaceOpenworkConfig;
@@ -418,39 +410,14 @@ export type DesktopCommandMap = {
     args: [input: { workspacePath: string; config: WorkspaceOpenworkConfig }];
     result: unknown;
   };
-  workspaceExportConfig: {
-    args: [input: { workspaceId: string; outputPath: string }];
-    result: WorkspaceExportSummary;
-  };
-  workspaceImportConfig: {
-    args: [input: { archivePath: string; targetDir: string; name?: string | null }];
-    result: unknown;
-  };
-
-  // Opencode custom commands
-  opencodeCommandList: {
-    args: [input: { scope: string; projectDir?: string }];
-    result: string[];
-  };
-  opencodeCommandWrite: {
-    args: [input: { scope: string; projectDir?: string; command: OpencodeCommandDraft }];
-    result: unknown;
-  };
-  opencodeCommandDelete: {
-    args: [input: { scope: string; projectDir?: string; name: string }];
-    result: unknown;
-  };
 
   // Engine / runtime lifecycle
   engineStart: { args: [projectDir: string, options?: Record<string, unknown>]; result: EngineInfo };
-  prepareFreshRuntime: { args: []; result: unknown };
   runtimeBootstrap: { args: []; result: unknown };
   runtimeStatus: { args: []; result: unknown };
   engineStop: { args: []; result: EngineInfo };
   engineRestart: { args: [options?: Record<string, unknown>]; result: EngineInfo };
   engineInfo: { args: []; result: EngineInfo };
-  engineDoctor: { args: [projectDir?: string]; result: EngineDoctorResult };
-  engineInstall: { args: []; result: unknown };
 
   // App / bridge info
   appBuildInfo: { args: []; result: AppBuildInfo };
@@ -494,9 +461,6 @@ export type DesktopCommandMap = {
   nukeOpenworkAndOpencodeConfigPreview: { args: [options?: NukeOptions]; result: NukeManifestPreview };
   nukeOpenworkAndOpencodeConfigAndExit: { args: [options?: NukeOptions]; result: NukeReceipt };
 
-  // Sandbox
-  sandboxCleanupOpenworkContainers: { args: []; result: OpenworkDockerCleanupResult };
-
   // Openwork server sidecar
   openworkServerInfo: { args: []; result: OpenworkServerInfo };
   automationRunnerConfigure: {
@@ -523,10 +487,6 @@ export type DesktopCommandMap = {
       },
     ];
     result: string | string[] | null;
-  };
-  saveFile: {
-    args: [options?: { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] }];
-    result: string | null;
   };
 
   // Skills
@@ -560,9 +520,7 @@ export type DesktopCommandMap = {
    * whether "onboarding" should preserve desktop workspace state.
    */
   resetOpenworkState: { args: [mode?: "onboarding" | "all"]; result: unknown };
-  resetOpencodeCache: { args: []; result: CacheResetResult };
   opencodeMcpAuth: { args: [action: string, name: string]; result: ExecResult };
-  setWindowDecorations: { args: [decorated: boolean]; result: unknown };
 
   // Window / OS utilities (dunder commands)
   __showContextMenu: { args: [request: NativeContextMenuRequest]; result: string | null };
@@ -570,7 +528,6 @@ export type DesktopCommandMap = {
   __openPath: { args: [target: string]; result: unknown };
   __openWorkspaceFile: { args: [workspaceRoot: string, target: string]; result: DesktopWorkspaceFileOpenResult };
   __revealItemInDir: { args: [target: string]; result: unknown };
-  __getFileIcon: { args: [target: string, size?: "small" | "normal" | "large"]; result: string | null };
   __applyBrandAppName: { args: [appName: string | null]; result: { ok: true; appName: string } };
   __applyBrandIcon: { args: [url: string | null]; result: BrandIconApplyResult };
   __getBrandIconState: { args: []; result: BrandIconState };
@@ -579,7 +536,6 @@ export type DesktopCommandMap = {
   __openWithApp: { args: [target: string, appPath: string, workspaceRoot: string]; result: unknown };
   __fetch: { args: [url: string, init?: DesktopFetchInit]; result: DesktopFetchResult };
   __uploadMultipart: { args: [input: DesktopMultipartUploadInput]; result: DesktopFetchResult };
-  __downloadBinary: { args: [input: DesktopBinaryDownloadInput]; result: DesktopBinaryDownloadResult };
   __cancelTransfer: { args: [transferId: string]; result: boolean };
   __homeDir: { args: []; result: string };
   __joinPath: { args: [...segments: string[]]; result: string };

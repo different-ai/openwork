@@ -123,12 +123,6 @@ export const readPerfLogs = (limit = 120) => {
   return logs.slice(logs.length - limit);
 };
 
-export const clearPerfLogs = () => {
-  const root = globalThis as PerfRoot;
-  root.__openworkPerfLogs = [];
-  root.__openworkPerfSeq = 0;
-};
-
 export const finishPerf = (
   enabled: boolean,
   scope: string,

@@ -15,9 +15,6 @@ export type ConnectSkillToken = {
   capability: string;
 };
 
-/** Regex source matching one `[connect-skill …]` token (no capture group). */
-export const CONNECT_SKILL_TOKEN_RE_SOURCE = String.raw`\[connect-skill [^\]]+\]`;
-
 const FIELD_SEPARATOR = "|";
 
 function encodeField(value: string) {

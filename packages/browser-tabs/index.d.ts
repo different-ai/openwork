@@ -118,7 +118,6 @@ export type BrowserTabRegistry = {
 
 export const SHARED_OWNER_KEY: "*";
 export const BACKGROUND_TAB_VIEWPORT: Readonly<Viewport>;
-export const BACKGROUND_TAB_PRESENCE_BOUNDS: Readonly<Bounds>;
 
 export function backgroundTabEmulationCommands(viewport?: Viewport): CdpCommand[];
 export function foregroundTabEmulationCommands(): CdpCommand[];

@@ -18,7 +18,7 @@ import { organizationAppMcpServersEnabled } from "./organization-capabilities.js
 export function appMcpServersEnabled(metadata: Parameters<typeof organizationAppMcpServersEnabled>[0]): boolean {
   return env.appMcpServersEnabled
     && organizationAppMcpServersEnabled(metadata)
-    && memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: env.mcpConnectionsGatingEnabled })
+    && memberFacingMcpConnectionsEnabled(metadata)
 }
 
 /** The same check by organization id, for callers that do not hold its metadata. */

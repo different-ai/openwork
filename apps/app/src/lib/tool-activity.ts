@@ -95,14 +95,3 @@ export function getToolActivityLabel(part: AnyToolPart): string {
   }
   return "Working"
 }
-
-/** Label for the most recent tool still in flight, if any. */
-export function getActiveToolLabel(parts: DynamicToolUIPart[]): string | null {
-  for (let index = parts.length - 1; index >= 0; index -= 1) {
-    const part = parts[index]
-    if (part && isToolPartInFlight(part)) {
-      return getToolActivityLabel(part)
-    }
-  }
-  return null
-}

@@ -515,7 +515,7 @@ async function memberFacingMcpConnectionsEnabledForOrganization(
     .from(OrganizationTable)
     .where(eq(OrganizationTable.id, organizationId))
     .limit(1)
-  return memberFacingMcpConnectionsEnabled(rows[0]?.metadata, { gatingEnabled: env.mcpConnectionsGatingEnabled })
+  return memberFacingMcpConnectionsEnabled(rows[0]?.metadata)
 }
 
 export const STANDARD_MCP_APP_EXTENSION = {

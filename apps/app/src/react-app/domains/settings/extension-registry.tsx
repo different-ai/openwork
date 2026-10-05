@@ -13,14 +13,6 @@ export type ExtensionConfigContext = {
   openworkServerClient?: OpenworkServerClient | null;
   hostOpenworkServerClient?: OpenworkServerClient | null;
   restartLocalServer?: () => Promise<boolean>;
-  imageExtension: {
-    busy: boolean;
-    status: string | null;
-    error: string | null;
-    envKeyDetected: boolean;
-    onInstall: (apiKey: string) => void | Promise<void>;
-    onTestGenerate: (input: { apiKey: string; prompt: string }) => void | Promise<void>;
-  };
   localProvider: {
     busy: boolean;
     status: string | null;

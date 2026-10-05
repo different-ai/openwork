@@ -281,9 +281,7 @@ export function registerOrgResourceRoutes<T extends { Variables: OrgRouteVariabl
           orgMembershipId: organizationContext.currentMember.id,
           teamIds,
         },
-        enabled: memberFacingMcpConnectionsEnabled(organizationContext.organization.metadata, {
-          gatingEnabled: env.mcpConnectionsGatingEnabled,
-        }),
+        enabled: memberFacingMcpConnectionsEnabled(organizationContext.organization.metadata),
       })
       return c.json({
         items: items.map((item) => ({

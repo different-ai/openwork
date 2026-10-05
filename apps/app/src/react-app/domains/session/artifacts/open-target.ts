@@ -227,10 +227,6 @@ export function isLocalhostBrowserTarget(target: OpenTarget) {
   return target.kind === "url" && /(?:https?|wss?):\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])/i.test(target.value);
 }
 
-export function selectAutoOpenTarget(_targets: OpenTarget[]): OpenTarget | null {
-  return null;
-}
-
 function scanText(
   map: Map<string, OpenTarget>,
   text: string,

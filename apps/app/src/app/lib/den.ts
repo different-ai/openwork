@@ -91,7 +91,6 @@ const ORG_PROXY_HEADER = "x-openwork-legacy-org-id";
 const ORG_SCOPE_HEADER = "x-openwork-org-id";
 const DEFAULT_DEN_TIMEOUT_MS = 12_000;
 
-export const DEFAULT_DEN_AUTH_NAME = "OpenWork User";
 const BUILD_DEN_BASE_URL =
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_BASE_URL === "string"
     ? import.meta.env.VITE_DEN_BASE_URL
@@ -123,7 +122,6 @@ function readForceEnvDenSettings(): boolean {
 }
 
 export const HOSTED_DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
-export const HOSTED_DEFAULT_DEN_API_BASE_URL = "https://api.app.openworklabs.com";
 export const DEFAULT_DEN_BASE_URL = BUILD_DEN_BASE_URL;
 export const DEN_INFERENCE_PATH = "/dashboard/inference";
 
@@ -428,50 +426,6 @@ export type DenOrgLlmProviderConnection = DenOrgLlmProvider & {
 export type DenOrgMarketplaceResolved = {
   marketplace: DenOrgMarketplace;
   plugins: DenOrgPlugin[];
-};
-
-export type DenBillingPrice = {
-  amount: number | null;
-  currency: string | null;
-  recurringInterval: string | null;
-  recurringIntervalCount: number | null;
-};
-
-export type DenBillingSubscription = {
-  id: string;
-  status: string;
-  amount: number | null;
-  currency: string | null;
-  recurringInterval: string | null;
-  recurringIntervalCount: number | null;
-  currentPeriodStart: string | null;
-  currentPeriodEnd: string | null;
-  cancelAtPeriodEnd: boolean;
-  canceledAt: string | null;
-  endedAt: string | null;
-};
-
-export type DenBillingInvoice = {
-  id: string;
-  createdAt: string | null;
-  status: string;
-  totalAmount: number | null;
-  currency: string | null;
-  invoiceNumber: string | null;
-  invoiceUrl: string | null;
-};
-
-export type DenBillingSummary = {
-  featureGateEnabled: boolean;
-  hasActivePlan: boolean;
-  checkoutRequired: boolean;
-  checkoutUrl: string | null;
-  portalUrl: string | null;
-  price: DenBillingPrice | null;
-  subscription: DenBillingSubscription | null;
-  invoices: DenBillingInvoice[];
-  productId: string | null;
-  benefitId: string | null;
 };
 
 export type DenOpenWorkWebAccessSource = "subscription" | "complimentary" | null;
@@ -2799,88 +2753,6 @@ function getMeLibraryPlugins(payload: unknown): DenMeLibraryPlugin[] {
   });
 }
 
-function getBillingPrice(value: unknown): DenBillingPrice | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  return {
-    amount: typeof value.amount === "number" ? value.amount : null,
-    currency: typeof value.currency === "string" ? value.currency : null,
-    recurringInterval: typeof value.recurringInterval === "string" ? value.recurringInterval : null,
-    recurringIntervalCount: typeof value.recurringIntervalCount === "number" ? value.recurringIntervalCount : null,
-  };
-}
-
-function getBillingSubscription(value: unknown): DenBillingSubscription | null {
-  if (!isRecord(value) || typeof value.id !== "string") {
-    return null;
-  }
-
-  return {
-    id: value.id,
-    status: typeof value.status === "string" ? value.status : "unknown",
-    amount: typeof value.amount === "number" ? value.amount : null,
-    currency: typeof value.currency === "string" ? value.currency : null,
-    recurringInterval: typeof value.recurringInterval === "string" ? value.recurringInterval : null,
-    recurringIntervalCount: typeof value.recurringIntervalCount === "number" ? value.recurringIntervalCount : null,
-    currentPeriodStart: typeof value.currentPeriodStart === "string" ? value.currentPeriodStart : null,
-    currentPeriodEnd: typeof value.currentPeriodEnd === "string" ? value.currentPeriodEnd : null,
-    cancelAtPeriodEnd: value.cancelAtPeriodEnd === true,
-    canceledAt: typeof value.canceledAt === "string" ? value.canceledAt : null,
-    endedAt: typeof value.endedAt === "string" ? value.endedAt : null,
-  };
-}
-
-function getBillingInvoice(value: unknown): DenBillingInvoice | null {
-  if (!isRecord(value) || typeof value.id !== "string") {
-    return null;
-  }
-
-  return {
-    id: value.id,
-    createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
-    status: typeof value.status === "string" ? value.status : "unknown",
-    totalAmount: typeof value.totalAmount === "number" ? value.totalAmount : null,
-    currency: typeof value.currency === "string" ? value.currency : null,
-    invoiceNumber: typeof value.invoiceNumber === "string" ? value.invoiceNumber : null,
-    invoiceUrl: typeof value.invoiceUrl === "string" ? value.invoiceUrl : null,
-  };
-}
-
-function getBillingSummary(payload: unknown): DenBillingSummary | null {
-  if (!isRecord(payload) || !isRecord(payload.billing)) {
-    return null;
-  }
-
-  const billing = payload.billing;
-  if (
-    typeof billing.featureGateEnabled !== "boolean" ||
-    typeof billing.hasActivePlan !== "boolean" ||
-    typeof billing.checkoutRequired !== "boolean"
-  ) {
-    return null;
-  }
-
-  return {
-    featureGateEnabled: billing.featureGateEnabled,
-    hasActivePlan: billing.hasActivePlan,
-    checkoutRequired: billing.checkoutRequired,
-    checkoutUrl: typeof billing.checkoutUrl === "string" ? billing.checkoutUrl : null,
-    portalUrl: typeof billing.portalUrl === "string" ? billing.portalUrl : null,
-    price: getBillingPrice(billing.price),
-    subscription: getBillingSubscription(billing.subscription),
-    invoices: Array.isArray(billing.invoices)
-      ? billing.invoices.flatMap((item) => {
-          const invoice = getBillingInvoice(item);
-          return invoice ? [invoice] : [];
-        })
-      : [],
-    productId: typeof billing.productId === "string" ? billing.productId : null,
-    benefitId: typeof billing.benefitId === "string" ? billing.benefitId : null,
-  };
-}
-
 export function parseDenOpenWorkWebAccess(payload: unknown): DenOpenWorkWebAccess | null {
   if (!isRecord(payload) || !isRecord(payload.billing)) return null;
   const stripe = payload.billing.stripe;
@@ -3090,18 +2962,6 @@ export function createDenClient(options: {
       return { user: getUser(payload), token: getToken(payload) };
     },
 
-    /**
-     * @deprecated Desktop email/password signup is no longer supported directly.
-     * Open the Den browser signup flow with `buildDenAuthUrl(baseUrl, "sign-up")`
-     * so password-strength feedback and invite handling stay server-compatible.
-     */
-    async signUpEmail(_email: string, _password: string): Promise<DenAuthResult> {
-      throw new DenApiError(
-        410,
-        "desktop_signup_deprecated",
-        "Create your account in the browser to choose a secure password.",
-      );
-    },
 
     async signOut() {
       await requestJson<unknown>(baseUrls, "/api/auth/sign-out", {
@@ -3893,44 +3753,6 @@ export function createDenClient(options: {
         `/v1/config-objects/${encodeURIComponent(configObjectId)}/versions`,
         { method: "POST", token, organizationId: orgId, body: { input } },
       );
-    },
-
-    async getBillingStatus(options: { includePortal?: boolean; includeInvoices?: boolean } = {}): Promise<DenBillingSummary> {
-      const params = new URLSearchParams();
-      if (options.includePortal === false) {
-        params.set("excludePortal", "1");
-      }
-      if (options.includeInvoices === false) {
-        params.set("excludeInvoices", "1");
-      }
-
-      const path = params.size > 0 ? `/v1/workers/billing?${params.toString()}` : "/v1/workers/billing";
-      const payload = await requestJson<unknown>(baseUrls, path, {
-        method: "GET",
-        token,
-      });
-      const summary = getBillingSummary(payload);
-      if (!summary) {
-        throw new DenApiError(500, "invalid_billing_payload", "Billing response was missing details.");
-      }
-      return summary;
-    },
-
-    async updateSubscriptionCancellation(cancelAtPeriodEnd: boolean): Promise<{ subscription: DenBillingSubscription | null; billing: DenBillingSummary }> {
-      const payload = await requestJson<unknown>(baseUrls, "/v1/workers/billing/subscription", {
-        method: "POST",
-        token,
-        body: { cancelAtPeriodEnd },
-      });
-      const billing = getBillingSummary(payload);
-      if (!billing) {
-        throw new DenApiError(500, "invalid_billing_payload", "Subscription update response was missing billing details.");
-      }
-
-      return {
-        subscription: isRecord(payload) ? getBillingSubscription(payload.subscription) : null,
-        billing,
-      };
     },
   };
 }

@@ -563,10 +563,6 @@ export function useOrgRestrictions(): DenDesktopConfig {
   return useDesktopConfig().config;
 }
 
-export function useConnectEnabled(): boolean | undefined {
-  return useDesktopConfig().config.connectEnabled;
-}
-
 /**
  * Hook variant that returns the stable `checkRestriction` function so
  * feature sites that already receive a "checker" (e.g. helpers ported

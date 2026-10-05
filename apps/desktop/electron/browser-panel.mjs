@@ -1434,11 +1434,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
    * Attach the browser view to the main window.
    * @param {object} bounds — { x, y, width, height }
    * @param {object} [opts]
-   * @param {boolean} [opts.preloadDefault=false] - load default URL if the view has no URL
-   * @param {boolean} [opts.ensureTab=false] - create a blank tab if needed
    * @param {string | null} [opts.sessionId] - the conversation whose panel is showing
    */
-  function attachBrowserView(bounds, { preloadDefault = false, ensureTab = false, sessionId } = {}) {
+  function attachBrowserView(bounds, { sessionId } = {}) {
     if (!window() || !acceptBrowserBounds(bounds)) return false;
     browserViewVisible = true;
     if (sessionId !== undefined) {
@@ -1449,16 +1447,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         applySurfacing();
       }
     }
-    if (ensureTab && !registry.onScreenTabId()) {
-      createBrowserTab("about:blank", { ownerSessionId: registry.visibleSessionId() });
-    }
     const view = getActiveBrowserView();
     attachActiveBrowserView();
     resetViewportEmulation(view);
-    const url = view?.webContents.getURL();
-    if (preloadDefault && (!url || url === "about:blank")) {
-      runDetachedTask("load browser default page", () => view?.webContents.loadURL(BROWSER_DEFAULT_URL));
-    }
     sendBrowserState();
     return true;
   }
@@ -1575,7 +1566,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       sendBrowserState();
       return { tabId, released: true };
     });
-    ipcMain.handle("openwork:browser:closeAllTabs", () => closeAllBrowserTabs());
     ipcMain.handle("openwork:browser:closeSessionTabs", (_event, sessionId) => closeSessionBrowserTabs(sessionId));
     ipcMain.handle("openwork:browser:selectTab", async (_event, tabId) => {
       const id = String(tabId ?? "");
@@ -1585,9 +1575,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return tab.tabId;
     });
     ipcMain.handle("openwork:browser:reorderTabs", (_event, tabIds) => reorderBrowserTabs(tabIds));
-    ipcMain.handle("openwork:browser:listTabs", () => listBrowserTabs());
-    ipcMain.handle("openwork:browser:webmcpListTools", (_event, args) => taskHost.request({ sessionId: registry.visibleSessionId(), operation: "site_tools", args }));
-    ipcMain.handle("openwork:browser:webmcpExecuteTool", (_event, args) => taskHost.request({ sessionId: registry.visibleSessionId(), operation: "site_tool", args }));
     ipcMain.handle("openwork:browser:approve", (event, tabId, approvalId, allowed) => {
       if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame || registry.ownerOf(tabId) !== registry.visibleSessionId()) return false;
       const pending = approvals.get(tabId);
@@ -1608,7 +1595,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return ensureWebMcpFramePolicy().checkFrame(event.senderFrame);
     });
     ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
-    ipcMain.handle("openwork:browser:getProxy", () => browserProxyState());
     ipcMain.handle("openwork:browser:setControlEnabled", (event, enabled) => {
       if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame) return false;
       browserControlEnabled = enabled === true;

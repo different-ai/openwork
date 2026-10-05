@@ -65,14 +65,13 @@ locals {
         requireEmailVerification = local.bool_string[var.require_email_verification]
       }
       public = {
-        webOrigin                 = var.web_origin
-        authCallbackUrl           = var.web_origin
-        apiOrigin                 = var.api_origin
-        mcpClaimNamespace         = var.mcp_claim_namespace
-        allowPrivateMcpUrls       = var.allow_private_mcp_urls ? "1" : ""
-        installLinksGatingEnabled = local.bool_string[var.install_links_gating_enabled]
-        automationsEnabled        = local.bool_string[var.automations_enabled]
-        dashboardsEnabled         = local.bool_string[var.dashboards_enabled]
+        webOrigin           = var.web_origin
+        authCallbackUrl     = var.web_origin
+        apiOrigin           = var.api_origin
+        mcpClaimNamespace   = var.mcp_claim_namespace
+        allowPrivateMcpUrls = var.allow_private_mcp_urls ? "1" : ""
+        automationsEnabled  = local.bool_string[var.automations_enabled]
+        dashboardsEnabled   = local.bool_string[var.dashboards_enabled]
       }
     }
 

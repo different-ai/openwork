@@ -3757,7 +3757,7 @@ export async function getMarketplaceResolved(input: { context: PluginArchActorCo
     counts.set(objectType, (counts.get(objectType) ?? 0) + 1)
   }
 
-  const cloudReadinessByPlugin = memberFacingMcpConnectionsEnabled(input.context.organizationContext.organization.metadata, { gatingEnabled: env.mcpConnectionsGatingEnabled })
+  const cloudReadinessByPlugin = memberFacingMcpConnectionsEnabled(input.context.organizationContext.organization.metadata)
     ? await resolveMarketplacePluginCloudReadiness({
         organizationId,
         member: {

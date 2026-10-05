@@ -18,7 +18,6 @@ export { workflowArtifactPayloadSchema } from "@openwork/types/workflows"
 
 export const WORKFLOW_ARTIFACT_APP_RESOURCE_URI = "ui://openwork/workflow-artifact/v1/view.html"
 export const WORKFLOW_ARTIFACT_APP_TOOL_NAME = "render_workflow_artifact"
-export const LEGACY_WORKFLOW_ARTIFACT_TOOL_NAME = "render_dynamic_artifact"
 export const WORKFLOW_ARTIFACT_APP_SCHEMA_VERSION = workflowArtifactSchemaVersion
 
 const idSchema = z.string().trim().min(1).max(160)
@@ -480,34 +479,6 @@ export function registerAgentWorkflowArtifactApp(input: {
         "This tool never runs or refreshes a Workflow; Automations and explicit Workflow runs own data refresh.",
         "Clients without MCP Apps support receive the same artifact as Markdown text.",
       ].join(" "),
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-      inputSchema: z.object({
-        configObjectId: idSchema.describe("The Workflow configObjectId."),
-        receiptId: idSchema.optional().describe("Optional exact immutable artifact receipt. Defaults to the latest successful snapshot."),
-        maxAgeMs: z.number().int().min(60_000).max(30 * 24 * 60 * 60_000).optional().describe("Freshness threshold used for the rendered status. Defaults to 24 hours."),
-      }),
-      outputSchema: workflowArtifactPayloadSchema,
-      _meta: {
-        ui: {
-          resourceUri: WORKFLOW_ARTIFACT_APP_RESOURCE_URI,
-          visibility: ["model", "app"],
-        },
-      },
-    },
-    renderWorkflowArtifact,
-  )
-
-  registerAppTool(
-    input.server,
-    LEGACY_WORKFLOW_ARTIFACT_TOOL_NAME,
-    {
-      title: "Render Workflow Artifact (Deprecated Alias)",
-      description: "Deprecated: use render_workflow_artifact. This alias delegates to the canonical Workflow Artifact renderer and will be removed after one release.",
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

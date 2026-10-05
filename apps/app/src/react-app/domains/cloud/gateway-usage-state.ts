@@ -101,8 +101,6 @@ export function formatGatewayMoney(microUsd: number): string {
   return new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(microUsd / 1_000_000);
 }
 
-export const gatewayTimeframeLabels = { day: "Daily", week: "Weekly", month: "Monthly" };
-
 export const gatewayPeriodLabels: Record<GatewayUsageBucket["timeframe"], string> = { day: "Today", week: "This week", month: "This month" };
 export const gatewayPeriodPossessives: Record<GatewayUsageBucket["timeframe"], string> = { day: "today’s", week: "this week’s", month: "this month’s" };
 

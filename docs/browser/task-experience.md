@@ -90,8 +90,8 @@ and result sharing. There is no renderer-managed website grant or parallel
 policy cache. `execution.browserOrigins` matches exact scheme, host and port
 and intersects across policies; it does not union host patterns or wildcards.
 
-Electron's existing `installPolicyRequestHook` remains the only
-`onBeforeRequest` listener. It checks all network requests, including redirects,
+The browser session's request-policy hook in `browser-panel.mjs` remains the
+only `onBeforeRequest` listener. It checks all network requests, including redirects,
 frames, subresources, scripted requests and uploads. `blockBrowserUploads`
 remains authoritative. User consent cannot bypass it, and a denied request
 never falls back to an external browser.
@@ -119,9 +119,7 @@ fresh outcome verification.
 
 Tasks use the built-in browser's existing sign-in. Sign in directly in the page
 and resume the task; the persistent partition keeps that session available.
-The separately enabled login-sync feature can also supply that shared sign-in.
-Browser task tools neither read another browser's profile nor enroll sites in
-sync; its native consent and managed-desktop restrictions remain unchanged.
+Browser task tools never read another browser's profile.
 
 Popups force the same sandbox, context isolation and same-origin security as
 ordinary tabs, regardless of website-supplied features. The per-frame preload
@@ -168,7 +166,7 @@ untrusted even if its tool claims to be read-only.
 Conversation-owned tabs, background-view parking, viewport recovery, team
 execution policy and workflow dashboard panels remain
 owned by their current implementations. Browser tasks reuse those boundaries.
-External profile syncing is provided separately by merged #4452. The browser access
+The browser access
 mechanism from #4481 is superseded by the merged execution policy in #4564;
 this feature adds no Den policy fields or login-import API.
 
@@ -231,5 +229,4 @@ The deterministic provider verifies tool availability, execution context and
 result delivery and a verified completion answer in the conversation. It does not prove open-ended planning
 quality for every provider. Direct control of external browser profiles,
 declarative WebMCP, closed-shadow-root DOM references, file transfer and restart
-restoration of live tab handles remain outside the browser-task subset. Login
-sync retains its separately documented support limits.
+restoration of live tab handles remain outside the browser-task subset.

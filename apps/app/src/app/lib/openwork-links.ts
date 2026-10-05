@@ -88,41 +88,6 @@ export function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefau
   };
 }
 
-export function stripRemoteConnectQuery(rawUrl: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return null;
-  }
-
-  let changed = false;
-  for (const key of [
-    "openworkHostUrl",
-    "openworkUrl",
-    "openworkToken",
-    "accessToken",
-    "workerId",
-    "workerName",
-    "autoConnect",
-    "bypassModal",
-    "bypassAddWorkerModal",
-    "source",
-  ]) {
-    if (url.searchParams.has(key)) {
-      url.searchParams.delete(key);
-      changed = true;
-    }
-  }
-
-  if (!changed) {
-    return null;
-  }
-
-  const search = url.searchParams.toString();
-  return `${url.pathname}${search ? `?${search}` : ""}${url.hash}`;
-}
-
 export function parseDenAuthDeepLink(rawUrl: string): DenAuthDeepLink | null {
   let url: URL;
   try {
@@ -228,34 +193,4 @@ export function parseChatDeepLink(rawUrl: string): ChatDeepLink | null {
     connector: connector || null,
     key: `chat:${connector}:${prompt}`,
   };
-}
-
-function normalizeDebugDeepLinkInput(rawValue: string): string {
-  const trimmed = rawValue.trim();
-  if (!trimmed) return "";
-
-  const directMatch = trimmed.match(/(?:openwork-dev|openwork|https?):\/\/[^\s"'<>]+/i);
-  if (directMatch) return directMatch[0];
-
-  return trimmed;
-}
-
-export function parseDebugDeepLinkInput(rawValue: string):
-  | { kind: "remote"; link: RemoteWorkspaceDefaults }
-  | { kind: "auth"; link: DenAuthDeepLink }
-  | null {
-  const normalized = normalizeDebugDeepLinkInput(rawValue);
-  if (!normalized) return null;
-
-  const denAuthLink = parseDenAuthDeepLink(normalized);
-  if (denAuthLink) {
-    return { kind: "auth", link: denAuthLink };
-  }
-
-  const remoteConnectLink = parseRemoteConnectDeepLink(normalized);
-  if (remoteConnectLink) {
-    return { kind: "remote", link: remoteConnectLink };
-  }
-
-  return null;
 }

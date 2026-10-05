@@ -11,16 +11,6 @@ import { ChevronDown, Circle } from "lucide-react"
 
 export type CollapsibleToolItemProps = React.ComponentProps<"div">
 
-export const CollapsibleToolItem = ({
-  children,
-  className,
-  ...props
-}: CollapsibleToolItemProps) => (
-  <div className={cn("text-muted-foreground text-sm", className)} {...props}>
-    {children}
-  </div>
-)
-
 export type CollapsibleToolTriggerProps = React.ComponentProps<
   typeof CollapsibleTrigger
 > & {

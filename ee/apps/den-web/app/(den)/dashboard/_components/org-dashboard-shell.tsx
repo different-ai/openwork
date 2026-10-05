@@ -399,6 +399,13 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     };
   }, [switcherOpen]);
 
+  // Keep sidebar hooks unconditional across picker and onboarding transitions,
+  // but don't fetch sidebar data while the full-page shell is showing.
+  const sidebarQueriesEnabled = !orgSelectionOpen && !isOnboarding && Boolean(activeOrg);
+  const libraryModels = useLibraryModels(sidebarQueriesEnabled);
+  const libraryNeedsSignIn = useLibraryNeedsSignInCount(sidebarQueriesEnabled)
+    + (libraryModels.data ?? []).filter((provider) => provider.state === "needs_signin").length;
+
   // The picker replaces the whole shell until a workspace is chosen.
   if (orgSelectionOpen) {
     return (
@@ -439,9 +446,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     pathname,
     orgSlug: activeOrg?.slug,
   });
-  const libraryModels = useLibraryModels();
-  const libraryNeedsSignIn = useLibraryNeedsSignInCount(Boolean(activeOrg))
-    + (libraryModels.data ?? []).filter((provider) => provider.state === "needs_signin").length;
   const navSections = buildDashboardNavSections({
     libraryNeedsSignIn,
     orgSlug: activeOrg?.slug ?? null,

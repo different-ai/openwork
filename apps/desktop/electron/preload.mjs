@@ -183,12 +183,6 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     getArchitectureInfo() {
       return ipcRenderer.invoke("openwork:system:architecture");
     },
-    getMicrophoneStatus() {
-      return ipcRenderer.invoke("openwork:system:microphoneStatus");
-    },
-    askMicrophoneAccess() {
-      return ipcRenderer.invoke("openwork:system:askMicrophoneAccess");
-    },
   },
   migration: {
     readSnapshot() {
@@ -209,14 +203,6 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
   dev: {
     evalRelaunch() {
       return ipcRenderer.invoke("openwork:desktop", "__evalRelaunch");
-    },
-  },
-  nuke: {
-    preview(options) {
-      return ipcRenderer.invoke("openwork:desktop", "nukeOpenworkAndOpencodeConfigPreview", options);
-    },
-    execute(options) {
-      return ipcRenderer.invoke("openwork:desktop", "nukeOpenworkAndOpencodeConfigAndExit", options);
     },
   },
   updater: {
@@ -284,17 +270,12 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     suspendTab(tabId) { return ipcRenderer.invoke("openwork:browser:suspendTab", tabId); },
     restoreTab(tabId, sessionId) { return ipcRenderer.invoke("openwork:browser:restoreTab", tabId, sessionId); },
     releaseTab(tabId, sessionId) { return ipcRenderer.invoke("openwork:browser:releaseTab", tabId, sessionId); },
-    closeAllTabs() { return ipcRenderer.invoke("openwork:browser:closeAllTabs"); },
     closeSessionTabs(sessionId) { return ipcRenderer.invoke("openwork:browser:closeSessionTabs", sessionId); },
     selectTab(tabId) { return ipcRenderer.invoke("openwork:browser:selectTab", tabId); },
     reorderTabs(tabIds) { return ipcRenderer.invoke("openwork:browser:reorderTabs", tabIds); },
     approve(tabId, approvalId, allowed) { return ipcRenderer.invoke("openwork:browser:approve", tabId, approvalId, allowed); },
     taskControl(tabId, action) { return ipcRenderer.invoke("openwork:browser:taskControl", tabId, action); },
-    listTabs() { return ipcRenderer.invoke("openwork:browser:listTabs"); },
-    listWebMcpTools(args) { return ipcRenderer.invoke("openwork:browser:webmcpListTools", args); },
-    executeWebMcpTool(args) { return ipcRenderer.invoke("openwork:browser:webmcpExecuteTool", args); },
     setProxy(proxy) { return ipcRenderer.invoke("openwork:browser:setProxy", proxy); },
-    getProxy() { return ipcRenderer.invoke("openwork:browser:getProxy"); },
     setControlEnabled(enabled) { return ipcRenderer.invoke("openwork:browser:setControlEnabled", enabled); },
     showTabContextMenu(tabId, point) { return ipcRenderer.invoke("openwork:browser:tabContextMenu", tabId, point); },
     destroy() {

@@ -4740,11 +4740,6 @@ export type WorkerUserEmailRequiredError = {
   error: "user_email_required";
 };
 
-export type WorkerPaymentRequiredError = {
-  error: "cloud_worker_billing_unavailable";
-  message: string;
-};
-
 export type WorkerOpenWorkWebAccessRequiredError = {
   error: "openwork_web_access_required";
   message: string;
@@ -27473,10 +27468,6 @@ export type PostV1WorkersErrors = {
    * The caller must be signed in to create workers.
    */
   401: UnauthorizedError;
-  /**
-   * The caller needs an active cloud plan before launching a cloud worker.
-   */
-  402: WorkerPaymentRequiredError;
   /**
    * OpenWork Web access is required to launch a cloud worker.
    */

@@ -257,7 +257,6 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       redirectUriBase: env.apiPublicUrl ?? "http://127.0.0.1",
       generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
       organizationMetadata: context.organization.metadata,
-      mcpConnectionsGatingEnabled: env.mcpConnectionsGatingEnabled,
     })
     const buildTools = () => buildCapabilityToolTree(capabilityContext)
     const actorContext = { organizationContext: context, memberTeams: teams, session: c.get("session") }
