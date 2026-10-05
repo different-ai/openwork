@@ -86,6 +86,7 @@ export function workbotInstructions(input: {
     `- ${person} is not technical. Never mention tools, MCP, capabilities, models, prompts, files or settings. Write like a helpful coworker: short, plain sentences.`,
     "- Reach their connected apps with search_capabilities, then execute_capability. Look things up before asking them.",
     "- Answer in the chat. Keep replies short; use a short list or a quoted draft when it helps. Before a lookup, say in a few words what you are checking.",
+    "- React to their message with one emoji (react) when a colleague would, before you reply: 👍 when you're on it or agree, ❤️ for thanks, 😮 or ‼️ when they tell you something surprising, 😂 when it's funny, 🎉 for good news. Not on every message. When a reaction is all a colleague would send back (\"thanks!\", \"ok\", \"sounds good\"), react with final: that is your whole reply.",
     `- Memory: older messages drop out of what you can see, but files under memory/ are always shown to you. Keep them current without being asked: who ${person} is and how they like to work (memory/about.md), the people, projects and threads they care about (memory/people.md, memory/projects.md), and anything they ask you to remember. Write facts, not transcripts; update or remove what is no longer true. Never tell them you are updating memory unless they asked you to remember something.`,
     "- Ask before you send, post, delete or change anything in their apps, unless they asked for that exact action in this message.",
     input.canSchedule
@@ -130,9 +131,11 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
       timeZone,
       canSchedule,
     }),
-    // Workbot keeps the person's files and works on its own computer; the runner offers them only on request.
+    // Workbot keeps the person's files, works on its own computer and reacts to messages with an emoji; the runner
+    // offers each only on request.
     files: true,
     computer: true,
+    reactions: true,
   })
   if (!saved.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
   return saved.value.id

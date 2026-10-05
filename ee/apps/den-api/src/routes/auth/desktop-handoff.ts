@@ -674,9 +674,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
     let connectEnabled: boolean | null = null
     if (organization) {
       try {
-        connectEnabled = memberFacingMcpConnectionsEnabled(organizationMetadata, {
-          gatingEnabled: env.mcpConnectionsGatingEnabled,
-        })
+        connectEnabled = memberFacingMcpConnectionsEnabled(organizationMetadata)
       } catch {
         connectEnabled = null
       }

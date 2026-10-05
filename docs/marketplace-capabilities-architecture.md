@@ -200,11 +200,9 @@ Scope note: these are `mcp:read`-class operations; nothing on this path writes; 
 ## 7. Org kill switch
 
 Marketplace capability search/execute uses the same effective Connect rail check
-as External MCP connections: `memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled })`
-in `ee/apps/den-api/src/capability-sources/external-mcp-rollout.ts`.
-`gatingEnabled` and `DEN_MCP_CONNECTIONS_GATING_ENABLED` are deprecated and
-inert; they stay wired only so existing deployment configs and call sites keep
-working.
+as External MCP connections: `memberFacingMcpConnectionsEnabled(metadata)`
+in `ee/apps/den-api/src/capability-sources/external-mcp-rollout.ts`. There is
+no deployment-level gate; org metadata is authoritative.
 
 Org metadata kill-switch key:
 

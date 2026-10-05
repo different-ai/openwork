@@ -17,12 +17,6 @@ export function isOpenworkGatewayRuntime() {
   return typeof window !== "undefined" && window.__OPENWORK_GATEWAY__?.version === 1;
 }
 
-export function getOpenworkGatewayBuild(): string | null {
-  if (!isOpenworkGatewayRuntime()) return null;
-  const build = window.__OPENWORK_GATEWAY__?.build?.trim() ?? "";
-  return build || null;
-}
-
 export function getOpenworkGatewayOrigin() {
   if (!isOpenworkGatewayRuntime()) return null;
   const origin = window.location.origin.trim();

@@ -36,7 +36,7 @@ All `/v1` routes require `Authorization: Bearer $HEADLESS_API_TOKEN`.
 |---|---|---|---|
 | `GET` | `/health` | | `{ ok: true }` |
 | `GET` | `/v1/models` | | `{ defaultModel, models: [{ id, name }] }`: the models the Gateway route serves with the runner's key (cached 5 min), for pickers. Pass one as a turn's `model` |
-| `POST` | `/v1/sessions` | `{ title?, instructions?, repeats?: { maxWaitingMs?, maxIdenticalFailures? }, files?, computer? }` | session (`hs_…`). `files` and `computer` are off unless set to `true` (see [Isolation](#isolation)) |
+| `POST` | `/v1/sessions` | `{ title?, instructions?, repeats?: { maxWaitingMs?, maxIdenticalFailures? }, files?, computer?, reactions? }` | session (`hs_…`). `files`, `computer` and `reactions` are off unless set to `true` (see [Isolation](#isolation)) |
 | `PUT` | `/v1/sessions/:id` | same body as `POST` | `201` session when created, `200` when updated; settings left out keep their value. The caller picks the id (`hs_` + 8–96 of `A-Za-z0-9_-`), so it can keep one durable conversation per person without storing the runner's id. Den's Workbot derives one per member |
 | `POST` | `/v1/sessions/:id/turns` | `{ messageId, prompt, model?, credentials: { modelApiKey?, mcpToken? } }` | `202 { state: accepted \| resumed \| already_present, turn }`. A message sent while another turn runs is accepted and answered next (`turn.status: queued`); only a runaway queue of 20+ returns `429 too_many_queued` |
 | `GET` | `/v1/sessions/:id` | `?messageId=&limit=&outputs=` | `{ session, status: idle \| busy, turns, messages, finalAssistantText }`. `outputs=none` returns each tool result's `outputLength` instead of its output, for callers that poll a long turn |
@@ -79,6 +79,7 @@ The model sees these tools:
 - `list_files`, `read_file`, `write_file`, `edit_file`, `delete_file`
 - In a session with `files: true` (and files configured): `list_saved_files`, `open_file` (brings a kept file back into view), `save_file` (hands a scratch file to the person)
 - In a session with `computer: true` (and a computer configured): `bash` and `look` (see below)
+- In a session with `reactions: true`: `react { emoji, final? }`, one emoji on the person's latest message, the way a colleague reacts in chat. The runner checks it is exactly one emoji and keeps the call in the transcript; the caller shows it (Workbot puts it on the person's message). A step that only reacts with `final: true` ends the turn: the reaction is the whole reply
 
 ## Isolation
 

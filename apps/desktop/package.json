@@ -53,8 +53,7 @@
     "@electron/asar": "^3.4.1",
     "@electron/rebuild": "^4.2.0",
     "electron": "^43.2.0",
-    "electron-builder": "^26.15.3",
-    "electron-devtools-installer": "^4.0.0"
+    "electron-builder": "^26.15.3"
   },
   "packageManager": "pnpm@10.27.0"
 }

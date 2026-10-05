@@ -112,10 +112,6 @@ export function isOpenworkProvidedSkill(skill: Pick<SkillCard, "name" | "path">)
     OPENWORK_PROVIDED_SKILL_NAMES.has(normalizedName);
 }
 
-export function isToggleControlledExtension(entry: McpDirectoryInfo) {
-  return entry.extensionManifest?.enablement?.some((condition) => condition.type === "toggle-enabled") === true;
-}
-
 function setupStateFromEnablement(enablement: { active: boolean; results: EnablementResult[] } | null): ExtensionSetupState {
   if (!enablement || enablement.results.length === 0) return "needs_setup";
   if (enablement.active) return "ready";

@@ -118,9 +118,7 @@ export async function nativeProviderConnectionPolicyError(organizationId: DenTyp
     .from(OrganizationTable)
     .where(eq(OrganizationTable.id, organizationId))
     .limit(1)
-  if (organization && memberFacingMcpConnectionsEnabled(organization.metadata, {
-    gatingEnabled: env.mcpConnectionsGatingEnabled,
-  })) return null
+  if (organization && memberFacingMcpConnectionsEnabled(organization.metadata)) return null
   return {
     kind: "policy_blocked",
     message: organization

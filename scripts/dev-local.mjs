@@ -18,7 +18,7 @@ try {
 const composeFile = path.join(rootDir, "packaging", "docker", "docker-compose.web-local.yml")
 const composeProject = "openwork-den-local"
 
-const apiPort = process.env.DEN_API_PORT?.trim() || process.env.DEN_CONTROLLER_PORT?.trim() || "8788"
+const apiPort = process.env.DEN_API_PORT?.trim() || "8788"
 const gatewayPort = process.env.GATEWAY_PORT ?? process.env.INFERENCE_PORT?.trim() ?? "8791"
 const webPort = process.env.DEN_WEB_PORT?.trim() || "3005"
 const appPort = process.env.OPENWORK_APP_PORT?.trim() || process.env.PORT?.trim() || "5173"
@@ -261,7 +261,6 @@ async function main() {
         DEN_BETTER_AUTH_TRUSTED_ORIGINS: process.env.DEN_BETTER_AUTH_TRUSTED_ORIGINS?.trim() || webOrigins,
         CORS_ORIGINS: process.env.CORS_ORIGINS?.trim() || webOrigins,
         DEN_API_PORT: apiPort,
-        DEN_CONTROLLER_PORT: apiPort,
         GATEWAY_PORT: gatewayPort,
         GATEWAY_PROXY_BASE_URL: process.env.GATEWAY_PROXY_BASE_URL ?? process.env.INFERENCE_PROXY_BASE_URL?.trim() ?? `http://127.0.0.1:${gatewayPort}`,
         DEN_WEB_PORT: webPort,

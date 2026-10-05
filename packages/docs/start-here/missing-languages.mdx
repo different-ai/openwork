@@ -56,9 +56,8 @@ These steps are for contributors comfortable editing code.
    - Add the translations to `TRANSLATIONS`.
    - Add the code to `pluralRulesByLanguage`.
    - If the language doesn't mark plurals on nouns (like Japanese or Chinese), add it to `PLURAL_SUFFIX_EMPTY_LANGUAGES`.
-3. Re-export the file from `apps/app/src/i18n/locales/index.ts`.
-4. In `scripts/i18n-audit.mjs`, add the code to `LOCALES`. If the language needs plural forms beyond "one" and "other" and isn't already listed in `PLURAL_FORMS`, add it there.
-5. Check for missing text and plural forms:
+3. In `scripts/i18n-audit.mjs`, add the code to `LOCALES`. If the language needs plural forms beyond "one" and "other" and isn't already listed in `PLURAL_FORMS`, add it there.
+4. Check for missing text and plural forms:
 
 ```bash
 node scripts/i18n-audit.mjs --missing

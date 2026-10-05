@@ -31,10 +31,6 @@ export const isActiveWorkSessionStatus = (status: string | undefined) =>
   status === "responding" ||
   status === "compacting";
 
-/** Waiting is "needs you" on the right edge — not left-lane activity. */
-export const isStreamingSessionStatus = (status: string | undefined) =>
-  isActiveWorkSessionStatus(status) || status === "waiting";
-
 export const isNeedsAttentionSessionStatus = (status: string | undefined) =>
   status === "waiting";
 

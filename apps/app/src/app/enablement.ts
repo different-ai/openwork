@@ -10,8 +10,6 @@ export type EnablementContext = {
   mcpStatuses?: McpStatusMap;
   /** Set of MCP server names that are at least configured (in opencode.json). */
   mcpConfigured?: Set<string>;
-  /** Set of loaded plugin package names or path fragments. */
-  loadedPlugins?: Set<string>;
   /** Set of connected provider IDs. */
   connectedProviders?: Set<string>;
   /** Set of environment variable keys that are configured. */
@@ -29,8 +27,6 @@ function evaluateCondition(condition: EnablementCondition, ctx: EnablementContex
       const status = ctx.mcpStatuses?.[condition.ref];
       return status?.status === "connected";
     }
-    case "plugin-loaded":
-      return ctx.loadedPlugins?.has(condition.ref) === true;
     case "provider-connected":
       return ctx.connectedProviders?.has(condition.ref) === true;
     case "env-set":
@@ -61,12 +57,4 @@ export function evaluateEnablement(
     active: results.every((r) => r.met),
     results,
   };
-}
-
-/**
- * For plain MCP entries that don't have an extension manifest,
- * generate a default single-condition enablement: mcp-connected.
- */
-export function defaultMcpEnablement(serverName: string): EnablementCondition[] {
-  return [{ type: "mcp-connected", ref: serverName, label: "MCP server connected" }];
 }

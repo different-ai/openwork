@@ -26,7 +26,12 @@ const sessionRow = z.object({
   created_at: z.number(),
   updated_at: z.number(),
 })
-const sessionOptions = z.object({ repeats: repeatLimitsSchema.optional(), files: z.boolean().optional(), computer: z.boolean().optional() })
+const sessionOptions = z.object({
+  repeats: repeatLimitsSchema.optional(),
+  files: z.boolean().optional(),
+  computer: z.boolean().optional(),
+  reactions: z.boolean().optional(),
+})
 type SessionOptions = z.infer<typeof sessionOptions>
 const tableColumns = z.array(z.object({ name: z.string() }).loose())
 const turnRow = z.object({
@@ -59,18 +64,21 @@ export type Session = {
    */
   files: boolean
   computer: boolean
+  /** Whether the model may react to the person's message with an emoji (the caller shows it). */
+  reactions: boolean
   createdAt: number
   updatedAt: number
 }
 /** What a caller may set on a session: its text, and its settings (stored together as JSON). */
-export type SessionInput = { title?: string; instructions?: string; repeats?: RepeatLimits; files?: boolean; computer?: boolean }
+export type SessionInput = { title?: string; instructions?: string; repeats?: RepeatLimits; files?: boolean; computer?: boolean; reactions?: boolean }
 
 /** The settings part of a session, leaving out what the caller didn't set. */
-function optionsOf(input: { repeats?: RepeatLimits | null; files?: boolean; computer?: boolean }): SessionOptions {
+function optionsOf(input: { repeats?: RepeatLimits | null; files?: boolean; computer?: boolean; reactions?: boolean }): SessionOptions {
   return {
     ...(input.repeats ? { repeats: input.repeats } : {}),
     ...(input.files !== undefined ? { files: input.files } : {}),
     ...(input.computer !== undefined ? { computer: input.computer } : {}),
+    ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
   }
 }
 
@@ -80,6 +88,7 @@ function serializeOptions(options: SessionOptions) {
     ...(options.repeats ? { repeats: options.repeats } : {}),
     ...(options.files ? { files: true } : {}),
     ...(options.computer ? { computer: true } : {}),
+    ...(options.reactions ? { reactions: true } : {}),
   }
   return Object.keys(ordered).length ? JSON.stringify(ordered) : null
 }
@@ -265,6 +274,7 @@ export class Store {
       repeats: options.repeats ?? null,
       files: options.files ?? false,
       computer: options.computer ?? false,
+      reactions: options.reactions ?? false,
       createdAt: at,
       updatedAt: at,
     }
@@ -316,6 +326,7 @@ export class Store {
       repeats: options?.success ? (options.data.repeats ?? null) : null,
       files: options?.success ? (options.data.files ?? false) : false,
       computer: options?.success ? (options.data.computer ?? false) : false,
+      reactions: options?.success ? (options.data.reactions ?? false) : false,
       createdAt: value.created_at,
       updatedAt: value.updated_at,
     }

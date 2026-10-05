@@ -1,5 +1,5 @@
 import type { DenSession, DenFetchResult, FieldTypingOptions } from "@openwork/behaviors";
-import type { BrowserEvaluation, Surface, Target } from "@openwork/cdp";
+import type { BrowserEvaluation, Surface, Target, Viewport } from "@openwork/cdp";
 import type {
   MockHandle,
   Place,
@@ -44,6 +44,7 @@ export interface User {
   see(target: Target, options?: SeeOptions): Promise<void>;
   notSee(target: Target, options?: { timeoutMs?: number }): Promise<void>;
   reload(): Promise<void>;
+  resizeViewport(viewport: Viewport): Promise<void>;
   navigate(url: string): Promise<void>;
   screenshot(): Promise<ScreenshotArtifact>;
   /**

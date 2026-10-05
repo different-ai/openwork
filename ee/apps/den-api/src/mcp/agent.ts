@@ -499,7 +499,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       redirectUriBase,
       generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
       organizationMetadata,
-      mcpConnectionsGatingEnabled: env.mcpConnectionsGatingEnabled,
     })
     const { externalMcpConnectionsEnabled } = capabilityContext
     // Building your own Apps is per-organization and default-off; MCP Apps

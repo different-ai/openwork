@@ -305,7 +305,9 @@ async function deviceLogin(baseUrl, { json, log = (line) => console.error(line) 
 
 async function runLogin(args) {
   const json = hasFlag(args.flags, "json")
-  const baseUrl = normalizeBaseUrl(getFlag(args.flags, "base-url", DEFAULT_API_BASE_URL))
+  // Without --base-url, check the account already signed in (self-hosted or
+  // hosted) before starting a new sign-in against the hosted default.
+  const baseUrl = normalizeBaseUrl(getFlag(args.flags, "base-url", readSavedCredentials()?.baseUrl || DEFAULT_API_BASE_URL))
   const force = hasFlag(args.flags, "force")
 
   const existing = force ? null : resolveApiToken(baseUrl)

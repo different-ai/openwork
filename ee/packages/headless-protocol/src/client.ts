@@ -162,14 +162,16 @@ const sessionPath = (sessionId: string) => `/v1/sessions/${encodeURIComponent(se
 export type RunnerRepeatLimits = { maxWaitingMs?: number; maxIdenticalFailures?: number }
 
 /**
- * What a conversation may use beyond chat: kept files and a Linux computer. Both are off unless asked for, and the
- * runner must be configured for them too, so a caller that never asks (Slack, Automations) never gets either.
+ * What a conversation may use beyond chat: kept files, a Linux computer, and emoji reactions to the person's
+ * message. All are off unless asked for (files and the computer must be configured on the runner too), so a caller
+ * that never asks (Slack, Automations) never gets any of them.
  */
-export type RunnerCapabilities = { files?: boolean; computer?: boolean }
+export type RunnerCapabilities = { files?: boolean; computer?: boolean; reactions?: boolean }
 
 const capabilityFields = (input: RunnerCapabilities) => ({
   ...(input.files !== undefined ? { files: input.files } : {}),
   ...(input.computer !== undefined ? { computer: input.computer } : {}),
+  ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
 })
 
 export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {

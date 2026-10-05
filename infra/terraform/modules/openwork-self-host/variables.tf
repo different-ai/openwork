@@ -159,12 +159,6 @@ variable "allow_private_mcp_urls" {
   default     = false
 }
 
-variable "install_links_gating_enabled" {
-  description = "Gate desktop installer downloads behind org install links."
-  type        = bool
-  default     = false
-}
-
 variable "automations_enabled" {
   description = "Enable Automations (opt-in for self-hosted)."
   type        = bool

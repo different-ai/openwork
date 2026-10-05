@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, ChevronRight, FileText, Lock } from "lucide-react";
+import { ArrowUp, FileText, Lock } from "lucide-react";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
@@ -12,12 +12,11 @@ import {
   workbotFilesKey,
   type LiveText,
   type WorkbotAttachment,
-  type WorkbotPart,
   type WorkbotStep,
   type WorkbotTurn,
 } from "./data";
-import { AppMark, AttachButton, FileBadge, FilesButton, FilesPanel, fileTypeColor, ImageThumb, isImage, kindLabel, SentAttachments, UploadTray, useFileDrop, useUploads, type Upload } from "./files";
-import { durationLabel, initials } from "./format";
+import { AppMark, AttachButton, FileBadge, FilesButton, FilesPanel, ImageThumb, isImage, kindLabel, SentAttachments, UploadTray, useFileDrop, useUploads, type Upload } from "./files";
+import { initials } from "./format";
 import { WorkbotMarkdown } from "./markdown";
 import { OpenFileContext } from "./open-file";
 import { PreviewPanel } from "./preview";
@@ -445,13 +444,42 @@ function Conversation(props: {
   );
 }
 
-function UserBubble({ text, muted = false }: { text: string; muted?: boolean }) {
-  if (!text) return null;
+/**
+ * Workbot's reaction to a message: one emoji in the system's own emoji font, pinned to the message's corner like a
+ * messaging app's tapback. It pops in once when it arrives (no bounce; none for reduced motion, DESIGN V6).
+ */
+function Reaction({ emoji }: { emoji: string }) {
+  return (
+    <span
+      role="img"
+      aria-label={`Reacted ${emoji}`}
+      className="workbot-reaction workbot-emoji grid h-7 min-w-7 place-items-center rounded-full bg-[var(--wb-surface)] px-1 text-[15px] leading-none shadow-[var(--wb-card-shadow)]"
+    >
+      {emoji}
+    </span>
+  );
+}
+
+function UserBubble({ text, muted = false, reaction = null }: { text: string; muted?: boolean; reaction?: string | null }) {
+  if (!text) {
+    return reaction ? (
+      <div className="flex justify-end">
+        <Reaction emoji={reaction} />
+      </div>
+    ) : null;
+  }
   return (
     <div className="flex justify-end">
-      <p className={`max-w-[85%] whitespace-pre-wrap break-words rounded-[20px] bg-[var(--wb-user-bubble)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] transition-opacity duration-150 sm:max-w-[480px] ${muted ? "opacity-60" : ""}`}>
-        {text}
-      </p>
+      <div className="relative max-w-[85%] sm:max-w-[480px]">
+        <p className={`whitespace-pre-wrap break-words rounded-[20px] bg-[var(--wb-user-bubble)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] transition-opacity duration-150 ${muted ? "opacity-60" : ""}`}>
+          {text}
+        </p>
+        {reaction ? (
+          <span className="absolute -left-3 -top-3.5">
+            <Reaction emoji={reaction} />
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -504,7 +532,7 @@ function PendingView({ entry, onRetry }: { entry: Pending; onRetry: () => void }
       ) : (
         <>
           <Gap />
-          {uploading ? <LiveLine label="Uploading your files" since={entry.sentAt} /> : <TypingBubble />}
+          {uploading ? <QuietLine label="Uploading your files" /> : <TypingBubble />}
         </>
       )}
     </>
@@ -523,12 +551,11 @@ function useNow() {
 
 /**
  * Workbot's computer: a slim laptop with a soft blue screen whose two lines write themselves while it works.
- * Sized for the 16px step slot (DESIGN V5); the motion belongs to the running step only and stops for reduced
- * motion (V6).
+ * Sized for the 16px slot (DESIGN V5); the motion stops for reduced motion (V6).
  */
-function ComputerGlyph({ working }: { working: boolean }) {
+function ComputerGlyph() {
   return (
-    <svg viewBox="0 0 16 16" width={16} height={16} fill="none" className={working ? "workbot-computer is-working" : "workbot-computer"}>
+    <svg viewBox="0 0 16 16" width={16} height={16} fill="none" className="workbot-computer is-working">
       <rect x="2.25" y="3" width="11.5" height="8" rx="1.75" className="workbot-computer-screen" strokeWidth={1.25} />
       <path d="M1.5 13h13" className="workbot-computer-stand" strokeWidth={1.25} strokeLinecap="round" />
       <path className="workbot-computer-line" d="M4.75 6h3.5" strokeWidth={1.25} strokeLinecap="round" />
@@ -537,56 +564,11 @@ function ComputerGlyph({ working }: { working: boolean }) {
   );
 }
 
-/** A file step's icon in its file type's color, read from the file name in the label. */
-function FileGlyph({ label }: { label: string }) {
-  const name = /([^\s/]+\.[A-Za-z0-9]{2,5})\b/.exec(label)?.[1] ?? "";
-  return <FileText size={14} strokeWidth={1.75} style={{ color: fileTypeColor(name) }} />;
-}
-
-function StepIcon({ step, working = false }: { step: Pick<WorkbotStep, "icon" | "app" | "label">; working?: boolean }) {
+/** A quiet line for the page's own waiting states ("Uploading your files", "Up next"): words only. */
+function QuietLine({ label }: { label: string }) {
   return (
-    <span aria-hidden className="grid size-4 shrink-0 place-items-center text-[var(--wb-muted)]">
-      {step.icon === "app" && step.app ? (
-        <AppMark name={step.app} size={14} />
-      ) : step.icon === "file" ? (
-        <FileGlyph label={step.label} />
-      ) : step.icon === "computer" ? (
-        <ComputerGlyph working={working} />
-      ) : (
-        <span className={`h-1.5 w-1.5 rounded-full ${working ? "workbot-pulse bg-[var(--wb-muted)]" : "bg-[var(--wb-disabled)]"}`} />
-      )}
-    </span>
-  );
-}
-
-/** Up to three distinct icons of a folded group, side by side, so the apps it worked in show at a glance. */
-function StepIcons({ steps }: { steps: WorkbotStep[] }) {
-  const seen = new Set<string>();
-  const distinct = steps.filter((step) => {
-    const key = step.icon === "app" ? `app:${step.app}` : step.icon;
-    if (step.icon === "dot" || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  const shown = (distinct.length ? distinct : steps.slice(0, 1)).slice(0, 3);
-  return (
-    <span aria-hidden className="flex shrink-0 items-center gap-1">
-      {shown.map((step, index) => (
-        <StepIcon key={index} step={step} />
-      ))}
-    </span>
-  );
-}
-
-/** The one line that says what is happening right now. Shimmer only here (DESIGN V6). */
-function LiveLine({ label, since, step }: { label: string; since: number | null; step?: Pick<WorkbotStep, "icon" | "app" | "label"> }) {
-  const now = useNow();
-  const elapsed = since ? Math.max(0, now - since) : 0;
-  return (
-    <p className="flex h-6 shrink-0 items-center gap-2 pl-1" role="status" aria-live="polite">
-      <StepIcon step={step ?? { icon: "dot", app: null, label }} working />
-      <span className={step ? "workbot-shimmer text-[13px] leading-4" : "text-[13px] leading-4 text-[var(--wb-faint)]"}>{label}</span>
-      {elapsed >= 1_000 ? <span className="text-[12px] leading-4 tabular-nums text-[var(--wb-faint)]">{durationLabel(elapsed)}</span> : null}
+    <p className="flex h-6 shrink-0 items-center pl-1 text-[13px] leading-4 text-[var(--wb-faint)]" role="status" aria-live="polite">
+      {label}
     </p>
   );
 }
@@ -629,197 +611,44 @@ function StreamingText({ text }: { text: string }) {
   );
 }
 
-function stepDuration(steps: WorkbotStep[]) {
-  const started = steps.find((step) => step.startedAt)?.startedAt ?? null;
-  const ended = steps.reduce<number | null>((latest, step) => (step.finishedAt && (!latest || step.finishedAt > latest) ? step.finishedAt : latest), null);
-  return started && ended ? durationLabel(ended - started) : null;
-}
-
-const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
-
-/** One sentence for a folded group: "Searched Slack and checked Gmail", "Worked in Slack and Notion", "Used my computer". */
-function groupLabel(steps: WorkbotStep[]) {
-  const [first, second] = steps;
-  if (!first) return "";
-  if (!second) return first.label;
-  // The same step twice ("Updated memory") reads once.
-  if (steps.every((step) => step.label === first.label)) return first.label;
-  const apps = [...new Set(steps.flatMap((step) => (step.app ? [step.app] : [])))];
-  const computer = steps.some((step) => step.icon === "computer");
-  // Its computer leads the summary; files it opened along the way are in the details.
-  if (computer && !apps.length) return "Used my computer";
-  if (steps.length === 2 && !computer) return `${first.label} and ${lowerFirst(second.label)}`;
-  const places = computer ? [...apps, "my computer"] : apps;
-  if (places.length) return `Worked in ${places.length === 1 ? places[0] : `${places.slice(0, -1).join(", ")} and ${places.at(-1)}`}`;
-  return `${first.label} and ${steps.length - 1} more`;
-}
-
-/** What it did on its computer, in its own words, under the step. */
-function Updates({ updates }: { updates: string[] }) {
-  return (
-    <ul className="flex flex-col gap-1">
-      {updates.map((update, index) => (
-        <li key={index} className="flex items-center gap-2 text-[12px] leading-4 text-[var(--wb-muted)]">
-          <span aria-hidden className="h-1 w-1 shrink-0 rounded-full bg-[var(--wb-computer-line)]" />
-          <span className="truncate">{update}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/** A finished step folds to one quiet line; several fold to one summary line. Both open inline (DESIGN T1, S3). */
-function StepsLine({ steps }: { steps: WorkbotStep[] }) {
-  const failed = steps.filter((step) => step.status === "error").length;
-  const label = groupLabel(steps);
-  const duration = stepDuration(steps);
-  const single = steps.length === 1 ? steps[0] : undefined;
-  const meta = (
-    <>
-      {failed ? <span className="shrink-0 text-[12px] leading-4 text-[var(--wb-faint)]">{failed === steps.length ? "didn't work" : `${failed} didn't work`}</span> : null}
-      {duration ? <span className="shrink-0 text-[12px] leading-4 tabular-nums text-[var(--wb-faint)]">{duration}</span> : null}
-    </>
-  );
-  // A single step with nothing more to say stays a plain line.
-  if (single && !single.updates.length) {
-    return (
-      <p className="flex h-6 w-fit max-w-full items-center gap-2 pl-1">
-        <StepIcon step={single} />
-        <span className="truncate text-[13px] leading-4 text-[var(--wb-muted)]">{single.label}</span>
-        {meta}
-      </p>
-    );
-  }
-  return (
-    <details className="workbot-details group">
-      <summary className="flex h-6 w-fit max-w-full cursor-pointer list-none items-center gap-2 rounded pl-1 hover:[&>span.label]:text-[var(--wb-text)] focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)] [&::-webkit-details-marker]:hidden">
-        {single ? <StepIcon step={single} /> : <StepIcons steps={steps} />}
-        <span className="label truncate text-[13px] leading-4 text-[var(--wb-muted)] transition-colors duration-150">{label}</span>
-        {meta}
-        <ChevronRight size={12} strokeWidth={1.75} aria-hidden className="shrink-0 text-[var(--wb-faint)] transition-transform duration-150 group-open:rotate-90" />
-      </summary>
-      <div className="ml-[11px] mt-1 border-l border-[var(--wb-hairline)] pb-1 pl-4">
-        {single ? (
-          <Updates updates={single.updates} />
-        ) : (
-          <ol className="flex flex-col gap-1.5">
-            {steps.map((step, index) => (
-              <li key={index} className="flex flex-col gap-1">
-                <span className="flex items-center gap-2 text-[12px] leading-4 text-[var(--wb-muted)]">
-                  <StepIcon step={step} />
-                  <span className="truncate">{step.label}</span>
-                  {step.status === "error" ? <span className="shrink-0 text-[var(--wb-faint)]">didn&apos;t work</span> : null}
-                  {step.startedAt && step.finishedAt ? <span className="shrink-0 tabular-nums text-[var(--wb-faint)]">{durationLabel(step.finishedAt - step.startedAt)}</span> : null}
-                </span>
-                {step.updates.length ? (
-                  <div className="pl-6">
-                    <Updates updates={step.updates} />
-                  </div>
-                ) : null}
-              </li>
-            ))}
-          </ol>
-        )}
-      </div>
-    </details>
-  );
-}
-
-type LedgerRow = { key: string; label: string; step: WorkbotStep; state: "running" | "done" | "error"; since: number | null; subtitle?: string };
-
-/** The rows of a group at work: one per step; its computer's newest update rides under its row. */
-function ledgerRows(steps: WorkbotStep[], starting: LiveText["working"] | null): LedgerRow[] {
-  const rows = steps.map((step, index): LedgerRow => {
-    const state = step.status === "running" ? "running" : step.status === "error" ? "error" : "done";
-    // Its computer is one row; while it works, its newest update in its own words sits underneath.
-    const subtitle = step.icon === "computer" && state === "running" ? step.updates.at(-1) : undefined;
-    return { key: `${index}`, label: step.label, step, state, since: step.startedAt, subtitle };
-  });
-  // The model has started writing its next command: the computer row is at work again right away.
-  if (starting?.on === "computer" && !rows.some((row) => row.state === "running")) {
-    const previous = rows.at(-1);
-    if (previous?.step.icon === "computer") {
-      rows[rows.length - 1] = { ...previous, label: "Using my computer", state: "running" };
-    } else {
-      rows.push({ key: "starting", label: "Using my computer", step: { label: "Using my computer", icon: "computer", status: "running", app: null, startedAt: starting.since, finishedAt: null, updates: [] }, state: "running", since: starting.since });
-    }
-  }
-  return rows;
-}
-
-/** A pause between steps shorter than this shows nothing, so quick hops between steps don't flicker the typing bubble. */
+/** A pause between two steps shorter than this keeps the line, so quick hops don't flicker to the typing bubble. */
 const THINKING_AFTER_MS = 2_000;
 
-/** How many rows of a group at work stay in view; older ones fade out at the top. */
-const LEDGER_ROWS = 4;
-
-function LedgerLine({ row }: { row: LedgerRow }) {
-  const now = useNow();
-  const elapsed = row.state === "running" && row.since ? Math.max(0, now - row.since) : 0;
-  return (
-    <li className="workbot-row-enter flex flex-col pl-1">
-      <span className="flex h-6 items-center gap-2">
-        <StepIcon step={row.step} working={row.state === "running"} />
-        <span className={row.state === "running" ? "workbot-shimmer truncate text-[13px] leading-4" : "truncate text-[13px] leading-4 text-[var(--wb-faint)]"}>{row.label}</span>
-        {row.state === "error" ? <span className="shrink-0 text-[12px] leading-4 text-[var(--wb-faint)]">didn&apos;t work</span> : null}
-        {elapsed >= 1_000 ? <span className="shrink-0 text-[12px] leading-4 tabular-nums text-[var(--wb-faint)]">{durationLabel(elapsed)}</span> : null}
-      </span>
-      {row.subtitle ? (
-        // Keyed by the text, so each new update fades in over the last one.
-        <span key={row.subtitle} className="workbot-subtitle-enter -mt-0.5 truncate pb-1 pl-6 text-[12px] leading-4 text-[var(--wb-faint)]">
-          {row.subtitle}
-        </span>
-      ) : null}
-    </li>
-  );
-}
+const ON_MY_COMPUTER: WorkbotStep = { label: "Using my computer", icon: "computer", status: "running", app: null, startedAt: null, finishedAt: null, updates: [] };
 
 /**
- * A group while Workbot works on it: its last few steps, the current one shimmering with its time, the ones
- * before it quiet. It stays put between steps (a longer pause shows the typing bubble) so the list
- * never collapses and reopens (DESIGN P11, T1).
+ * What Workbot is doing right now, said the way a colleague would: one line, "Searching Slack" with Slack's logo,
+ * or "Using my computer" with what it is doing in its own words underneath. Anything else it does (notes to
+ * itself, lookups, opening files) is just the typing bubble, and nothing stays behind once it is done: the answer
+ * says what it did (DESIGN C3, T2, P11). Shimmer only on this line (V6).
  */
-function LiveLedger({ steps, thinking, starting = null }: { steps: WorkbotStep[]; thinking: boolean; starting?: LiveText["working"] | null }) {
+function Activity({ steps, starting }: { steps: WorkbotStep[]; starting: LiveText["working"] | null }) {
   const now = useNow();
-  const lastFinished = steps.reduce<number | null>((latest, step) => (step.finishedAt && (!latest || step.finishedAt > latest) ? step.finishedAt : latest), null);
-  const rows = ledgerRows(steps, starting);
-  // Between steps nothing shows at first; a longer pause, or a step that isn't on its computer, brings the
-  // typing bubble where the reply will go.
-  const typing =
-    thinking && !rows.some((row) => row.state === "running") && (starting?.on === "other" || lastFinished === null || now - lastFinished >= THINKING_AFTER_MS);
-  const shown = rows.slice(-LEDGER_ROWS);
-  const current = [...rows].reverse().find((row) => row.state === "running");
+  const last = steps.at(-1);
+  const running = [...steps].reverse().find((step) => step.status === "running");
+  const step =
+    running ??
+    (starting?.on === "computer"
+      ? last?.icon === "computer" ? last : ON_MY_COMPUTER
+      : !starting && last?.finishedAt && now - last.finishedAt < THINKING_AFTER_MS
+        ? last
+        : undefined);
+  if (!step) return <TypingBubble />;
+  const update = step.icon === "computer" ? step.updates.at(-1) : undefined;
   return (
-    <div role="status" aria-live="polite" aria-label={current?.label}>
-      <ol className={rows.length > shown.length ? "workbot-ledger-earlier flex flex-col" : "flex flex-col"}>
-        {shown.map((row) => (
-          <LedgerLine key={row.key} row={row} />
-        ))}
-      </ol>
-      {typing ? <TypingBubble /> : null}
-    </div>
-  );
-}
-
-function PartView({ part, live, starting }: { part: WorkbotPart; live: boolean; starting: LiveText["working"] | null }) {
-  // When a group finishes, its list settles into the one-line summary with a soft fade, never on page load.
-  const [wasLive, setWasLive] = useState(live);
-  const [settled, setSettled] = useState(false);
-  if (wasLive !== live) {
-    setWasLive(live);
-    if (!live) setSettled(true);
-  }
-  if (part.kind === "text") {
-    return (
-      <AssistantBubble>
-        <WorkbotMarkdown text={part.text} />
-      </AssistantBubble>
-    );
-  }
-  if (live) return <LiveLedger steps={part.steps} thinking starting={starting} />;
-  return (
-    <div className={settled ? "workbot-settle" : undefined}>
-      <StepsLine steps={part.steps} />
+    <div className="flex flex-col pl-1" role="status" aria-live="polite" aria-label={step.label}>
+      {/* Keyed by what it is doing, so a new activity fades in over the last one. */}
+      <span key={`${step.app ?? step.icon}:${step.label}`} className="workbot-row-enter flex h-6 items-center gap-2">
+        <span aria-hidden className="grid size-4 shrink-0 place-items-center">
+          {step.icon === "computer" ? <ComputerGlyph /> : step.app ? <AppMark name={step.app} size={14} /> : null}
+        </span>
+        <span className="workbot-shimmer truncate text-[13px] leading-4">{step.label}</span>
+      </span>
+      {update ? (
+        <span key={update} className="workbot-subtitle-enter -mt-0.5 truncate pb-1 pl-6 text-[12px] leading-4 text-[var(--wb-faint)]">
+          {update}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -831,26 +660,26 @@ function TurnView(props: { turn: WorkbotTurn; live: LiveText | null; latest: boo
   const current = working && props.live && props.live.step >= turn.modelSteps ? props.live : null;
   const liveText = current?.text ?? "";
   const starting = current?.working ?? null;
+  const texts = turn.parts.flatMap((part, index) => (part.kind === "text" ? [{ key: index, text: part.text }] : []));
   const last = turn.parts.at(-1);
-  // While it works, the newest group of steps stays live: it shows the step starting, or the typing bubble.
-  const liveGroup = working && !liveText && last?.kind === "steps";
-  const showThinking = working && !liveText && !liveGroup && !starting;
+  // While it works, one line says what it is doing; text being written says it by itself.
+  const showActivity = working && (!liveText || starting !== null);
   return (
     <>
       <SentAttachments attachments={turn.attachments} localUrls={props.previews} />
-      <UserBubble text={turn.text} />
-      {turn.parts.length > 0 || liveText || showThinking || starting ? <Gap /> : null}
-      {turn.parts.map((part, index) => (
-        <PartView key={index} part={part} live={liveGroup && index === turn.parts.length - 1} starting={starting} />
+      <UserBubble text={turn.text} reaction={turn.reaction} />
+      {texts.length > 0 || liveText || showActivity ? <Gap /> : null}
+      {texts.map((part) => (
+        <AssistantBubble key={part.key}>
+          <WorkbotMarkdown text={part.text} />
+        </AssistantBubble>
       ))}
       {liveText ? (
         <AssistantBubble>
           <StreamingText text={liveText} />
         </AssistantBubble>
       ) : null}
-      {/* Writing the instructions for a step can take a while (a long script): show the step starting now. */}
-      {starting && !liveGroup ? <LiveLedger steps={[]} thinking starting={starting} /> : null}
-      {showThinking ? turn.status === "queued" ? <LiveLine label="Up next" since={null} /> : <TypingBubble /> : null}
+      {showActivity ? turn.status === "queued" ? <QuietLine label="Up next" /> : <Activity steps={last?.kind === "steps" ? last.steps : []} starting={starting} /> : null}
       {turn.outputs.length ? <OutputFiles files={turn.outputs} /> : null}
       {turn.status === "failed" ? (
         <p className="flex items-center gap-2 pl-1 pt-1.5 text-[13px] leading-4 text-[var(--wb-danger)]">

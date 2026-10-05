@@ -30,7 +30,7 @@ function installPageUrl(token: string) {
 }
 
 export async function mintOrganizationInstallLink(input: MintOrganizationInstallLinkInput) {
-  if (!organizationInstallLinksEnabled(input.metadata, { gatingEnabled: env.installLinksGatingEnabled })) {
+  if (!organizationInstallLinksEnabled(input.metadata)) {
     return null
   }
 

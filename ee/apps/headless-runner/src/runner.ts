@@ -4,6 +4,7 @@ import { FILE_TOOLS, FILE_TOOL_NAMES, runFileTool } from "./files.js"
 import type { McpConnector, ToolSession } from "./mcp.js"
 import { ModelError, type ModelClient } from "./model.js"
 import type { Store, StoredMessage, Turn } from "./store.js"
+import { REACTION_TOOL_NAMES, REACTION_TOOLS, reactionEndsTurn, runReactionTool } from "./reactions.js"
 import { asAttachment, runSavedFileTool, SAVED_FILE_TOOL_NAMES, SAVED_FILE_TOOLS, type SavedFiles } from "./saved-files.js"
 import { formatBytes, withoutAttachments } from "./tool-files.js"
 import { RESUMABLE, type Attachment, type Message, type RepeatLimits, type SessionComputer, type ToolResult, type TurnCredentials } from "./types.js"
@@ -350,6 +351,7 @@ export class Runner {
       // Files and the computer only for conversations that asked for them (see Session.files / .computer).
       const files = session?.files ? this.options.files : undefined
       const computer = session?.computer ? this.options.computer : undefined
+      const reactions = session?.reactions === true
       // Wake the computer while the model thinks, when this turn is likely to need it.
       const sentFiles = turnMessages().some((message) => message.role === "user" && (message.attachments?.length ?? 0) > 0)
       if (computer && (sentFiles || computer.known(sessionId))) computer.prewarm(sessionId)
@@ -364,7 +366,7 @@ export class Runner {
       ]
         .filter(Boolean)
         .join("\n\n")
-      const toolSpecs = [...FILE_TOOLS, ...(files ? SAVED_FILE_TOOLS : []), ...(computer?.tools ?? []), ...(tools?.tools ?? [])]
+      const toolSpecs = [...FILE_TOOLS, ...(files ? SAVED_FILE_TOOLS : []), ...(computer?.tools ?? []), ...(reactions ? REACTION_TOOLS : []), ...(tools?.tools ?? [])]
       // The current turn's files, read once and shown to the model on every step of this turn.
       const expanded = new Map<string, Message>()
       const withFiles = async (messages: Message[]) =>
@@ -452,6 +454,8 @@ export class Runner {
                     output: `File tool failed: ${error instanceof Error ? error.message : "unknown error"}`,
                     isError: true,
                   }))
+              : reactions && REACTION_TOOL_NAMES.has(call.name)
+                ? runReactionTool(call.input)
               : computer?.toolNames.has(call.name)
                 ? await computer.run(sessionId, call.name, call.input).catch((error: unknown) => ({
                     output: `The computer didn't respond: ${error instanceof Error ? error.message : "unknown error"}. Its outcome is unknown; check before repeating it.`,
@@ -473,6 +477,10 @@ export class Runner {
             ...(outcome.documents?.length ? { documents: outcome.documents } : {}),
           })
           outcomes.push(outcome)
+        }
+        if (reactions && reactionEndsTurn(result.toolCalls, outcomes)) {
+          store.setTurnStatus(sessionId, messageId, "completed")
+          return
         }
         // Same calls, same inputs, same results as the step before: waiting on something, or stuck.
         const signature = createHash("sha256")

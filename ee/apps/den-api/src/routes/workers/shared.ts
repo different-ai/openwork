@@ -12,7 +12,6 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
-import { requireCloudWorkerAccess } from "../../billing/polar.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { keysetCursorQuerySchema } from "../../list-pagination.js"
@@ -580,14 +579,6 @@ export async function continueCloudProvisioning(input: {
   cloudProvisioningInFlight.set(input.workerId, promise)
 
   return promise
-}
-
-export async function requireCloudAccessOrPayment(input: {
-  userId: UserId
-  email: string
-  name: string
-}) {
-  return requireCloudWorkerAccess(input)
 }
 
 export async function getWorkerTokensAndConnect(worker: WorkerRow, options: {

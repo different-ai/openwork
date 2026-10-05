@@ -313,8 +313,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unknown> | string | null | undefined): z.infer<typeof adminOrganizationCapabilitiesSchema> {
   return {
-    installLinks: organizationInstallLinksEnabled(metadata, { gatingEnabled: false }),
-    mcpConnections: memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: false }),
+    installLinks: organizationInstallLinksEnabled(metadata),
+    mcpConnections: memberFacingMcpConnectionsEnabled(metadata),
     modelsAnalytics: normalizeOrganizationCapabilities(metadata).modelsAnalytics,
     auditLogs: normalizeOrganizationCapabilities(metadata).auditLogs,
     orgManagedDashboards: normalizeOrganizationCapabilities(metadata).orgManagedDashboards,

@@ -1,7 +1,9 @@
 # Move from Claude Cowork to OpenWork
 
-You are an agent (in Claude Cowork, Claude Code, Codex, or OpenWork) helping a
-person move their Claude plugins and skills into their OpenWork organization.
+You are an agent running on the person's computer (Claude Code, Codex, Cursor,
+or OpenWork) helping them move their Claude Cowork plugins and skills into their
+OpenWork organization. Inside Cowork itself, read "If you are running inside
+Claude Cowork" below first.
 
 Goal: find what they use on this computer, show them what will move, import
 what they choose, and tell them exactly what is left for them to do. Everything
@@ -63,6 +65,19 @@ plugins are listed under `installedLocally`.
 
 To migrate a marketplace that the scan did not find, pass
 `--source https://github.com/<owner>/<repo>`.
+
+### If you are running inside Claude Cowork
+
+Cowork runs shell commands in an isolated virtual machine that only sees the
+folders the person connected, and its network access may be limited. There,
+`migrate scan` finds nothing and the install or sign-in may fail. Tell the
+person, then either:
+
+- ask them to paste the same prompt into Claude Code (or another agent that
+  runs on their computer), which is the reliable path; or
+- ask which marketplaces they added in Cowork (for example
+  `anthropics/knowledge-work-plugins`) and pass each with `--source`. Their own
+  skills cannot be read from the sandbox and stay behind.
 
 ## 5. Import
 

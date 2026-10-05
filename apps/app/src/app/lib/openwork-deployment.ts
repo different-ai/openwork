@@ -1,4 +1,3 @@
-export const OPENWORK_DEPLOYMENT_ENV_VAR = "VITE_OPENWORK_DEPLOYMENT";
 
 export type OpenWorkDeployment = "desktop" | "web";
 

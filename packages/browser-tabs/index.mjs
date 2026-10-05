@@ -15,12 +15,6 @@ export const SHARED_OWNER_KEY = "*";
 export const BACKGROUND_TAB_VIEWPORT = Object.freeze({ width: 1280, height: 800 });
 
 /**
- * Parking bounds for detached background tabs. These bounds must never be
- * used as a visibility boundary: attached native views paint above the app.
- */
-export const BACKGROUND_TAB_PRESENCE_BOUNDS = Object.freeze({ x: 0, y: 0, width: 1, height: 1 });
-
-/**
  * DevTools commands that make a background tab behave like a page the user is
  * looking at: a real viewport for layout, clicks, and screenshots, and focus
  * emulation so typing and `:focus` behave as on a focused page. This is the

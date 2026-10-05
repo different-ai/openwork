@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "0b5bb95c-9fa9-45b0-ad58-b4c696aa2047",
+  "id": "0408e453-8792-4e62-acfa-bce37132932b",
   "prevId": "45722e8e-506a-4ce3-b813-a6e63b146db8",
   "tables": {
     "account": {
@@ -109,11 +109,11 @@
           ],
           "isUnique": false
         },
-        "account_account_id_provider_id": {
-          "name": "account_account_id_provider_id",
+        "account_provider_id_account_id": {
+          "name": "account_provider_id_account_id",
           "columns": [
-            "`account_id`(191)",
-            "`provider_id`(191)"
+            "`provider_id`(191)",
+            "`account_id`(191)"
           ],
           "isUnique": false
         }
@@ -11795,14 +11795,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "api_key_auth_scheme": {
-          "name": "api_key_auth_scheme",
-          "type": "enum('bearer','token')",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'bearer'"
-        },
         "access_token": {
           "name": "access_token",
           "type": "text",
@@ -17794,12 +17786,12 @@
   "internal": {
     "tables": {},
     "indexes": {
-      "account_account_id_provider_id": {
+      "account_provider_id_account_id": {
         "columns": {
-          "`account_id`(191)": {
+          "`provider_id`(191)": {
             "isExpression": true
           },
-          "`provider_id`(191)": {
+          "`account_id`(191)": {
             "isExpression": true
           }
         }

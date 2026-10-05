@@ -1,6 +1,6 @@
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
-import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -23,7 +23,6 @@ import {
   getWorkerTokensAndConnect,
   listWorkersQuerySchema,
   parseWorkerIdParam,
-  requireCloudAccessOrPayment,
   toInstanceResponse,
   toWorkerResponse,
   token,
@@ -129,11 +128,6 @@ const orgLimitReachedSchema = z.object({
   message: z.string(),
 }).meta({ ref: "WorkerOrgLimitReachedError" })
 
-const paymentRequiredSchema = z.object({
-  error: z.literal("cloud_worker_billing_unavailable"),
-  message: z.string(),
-}).meta({ ref: "WorkerPaymentRequiredError" })
-
 const openWorkWebAccessRequiredSchema = z.object({
   error: z.literal("openwork_web_access_required"),
   message: z.string(),
@@ -203,7 +197,6 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         202: jsonResponse("Cloud worker creation started successfully.", workerCreateResponseSchema),
         400: jsonResponse("The worker creation payload was invalid.", z.union([invalidRequestSchema, organizationUnavailableSchema, workspacePathRequiredSchema, userEmailRequiredSchema])),
         401: jsonResponse("The caller must be signed in to create workers.", unauthorizedSchema),
-        402: jsonResponse("The caller needs an active cloud plan before launching a cloud worker.", paymentRequiredSchema),
         403: jsonResponse("OpenWork Web access is required to launch a cloud worker.", openWorkWebAccessRequiredSchema),
         409: jsonResponse("The organization has reached its worker limit.", orgLimitReachedSchema),
       },
@@ -231,19 +224,6 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
       const email = getRequiredUserEmail(user)
       if (!email) {
         return c.json({ error: "user_email_required" }, 400)
-      }
-
-      const access = await requireCloudAccessOrPayment({
-        userId: normalizeDenTypeId("user", user.id),
-        email,
-        name: user.name ?? user.email ?? "OpenWork User",
-      })
-
-      if (!access.allowed) {
-        return c.json({
-          error: "cloud_worker_billing_unavailable",
-          message: "Creating new cloud workers requires an existing OpenWork Cloud plan. New self-serve purchases are no longer available.",
-        }, 402)
       }
 
       const workerLimit = await getOrganizationLimitStatus(orgId, "workers")

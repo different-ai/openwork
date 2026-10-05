@@ -964,20 +964,6 @@ export type OpenworkWorkspaceExportWarning = {
   detail: string;
 };
 
-export type OpenworkArtifactItem = {
-  id: string;
-  name?: string;
-  path?: string;
-  size?: number;
-  createdAt?: number;
-  updatedAt?: number;
-  mime?: string;
-};
-
-export type OpenworkArtifactList = {
-  items: OpenworkArtifactItem[];
-};
-
 export type OpenworkConnectState = {
   ok: true;
   schemaVersion: 1;
@@ -1115,10 +1101,6 @@ export type OpenworkSessionGroupEvent = {
   timestamp: number;
 };
 
-// Fallback for explicit server-mode URL derivation. Desktop local workers replace this
-// with the persisted runtime-discovered port once the host reports it.
-export const DEFAULT_OPENWORK_SERVER_PORT = 8787;
-
 const STORAGE_URL_OVERRIDE = "openwork.server.urlOverride";
 const STORAGE_PORT_OVERRIDE = "openwork.server.port";
 const STORAGE_TOKEN = "openwork.server.token";
@@ -1211,53 +1193,12 @@ export function buildOpenworkWorkspaceBaseUrl(hostUrl: string, workspaceId?: str
   }
 }
 
-const OPENWORK_INVITE_PARAM_URL = "ow_url";
-const OPENWORK_INVITE_PARAM_TOKEN = "ow_token";
-const OPENWORK_INVITE_PARAM_STARTUP = "ow_startup";
-const OPENWORK_INVITE_PARAM_AUTO_CONNECT = "ow_auto_connect";
-
 export type OpenworkConnectInvite = {
   url: string;
   token?: string;
   startup?: "server";
   autoConnect?: boolean;
 };
-
-export function readOpenworkConnectInviteFromSearch(input: string | URLSearchParams) {
-  const search =
-    typeof input === "string"
-      ? new URLSearchParams(input.startsWith("?") ? input.slice(1) : input)
-      : input;
-
-  const rawUrl = search.get(OPENWORK_INVITE_PARAM_URL)?.trim() ?? "";
-  const url = normalizeOpenworkServerUrl(rawUrl);
-  if (!url) return null;
-
-  const token = search.get(OPENWORK_INVITE_PARAM_TOKEN)?.trim() ?? "";
-  const startupRaw = search.get(OPENWORK_INVITE_PARAM_STARTUP)?.trim() ?? "";
-  const startup = startupRaw === "server" ? "server" : undefined;
-  const autoConnect = search.get(OPENWORK_INVITE_PARAM_AUTO_CONNECT)?.trim() === "1";
-
-  return {
-    url,
-    token: token || undefined,
-    startup,
-    autoConnect: autoConnect || undefined,
-  } satisfies OpenworkConnectInvite;
-}
-
-export function stripOpenworkConnectInviteFromUrl(input: string) {
-  try {
-    const url = new URL(input);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_URL);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_TOKEN);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_STARTUP);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_AUTO_CONNECT);
-    return url.toString();
-  } catch {
-    return input;
-  }
-}
 
 export function readOpenworkServerSettings(): OpenworkServerSettings {
   if (typeof window === "undefined") return {};
@@ -2562,12 +2503,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         { token, hostToken, timeoutMs: timeouts.binary },
       ),
 
-    listArtifacts: (workspaceId: string) =>
-      requestJson<OpenworkArtifactList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/artifacts`, {
-        token,
-        hostToken,
-      }),
-
     resolveArtifacts: (
       workspaceId: string,
       targets: Array<{
@@ -2583,13 +2518,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/artifacts/resolve`,
         { token, hostToken, method: "POST", body: { targets } },
-      ),
-
-    downloadArtifact: (workspaceId: string, artifactId: string) =>
-      requestBinary(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}`,
-        { token, hostToken, timeoutMs: timeouts.binary },
       ),
 
     // User-level env vars (host-auth only — desktop shell is the sole caller).

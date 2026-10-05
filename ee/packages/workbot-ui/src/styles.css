@@ -74,24 +74,19 @@
   from { opacity: 0; transform: translateY(2px); }
   to { opacity: 1; transform: none; }
 }
-/* A step joining the live list rises in softly; a finished group settles into its summary line. */
+/* What it is doing now rises in softly, over what it was doing before. */
 .workbot-row-enter { animation: workbot-row-enter 200ms cubic-bezier(.2, 0, 0, 1) both; }
 @keyframes workbot-row-enter {
   from { opacity: 0; transform: translateY(4px); filter: blur(2px); }
   to { opacity: 1; transform: none; filter: none; }
 }
-.workbot-settle { animation: workbot-settle 180ms ease-out both; }
-@keyframes workbot-settle {
-  from { opacity: 0; transform: translateY(-2px); }
+/* Emoji in the system's own color emoji font, whatever the page's text font. */
+.workbot-emoji { font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Segoe UI Symbol", sans-serif; }
+/* A reaction grows out of the message's corner once, without overshoot. */
+.workbot-reaction { animation: workbot-reaction 200ms cubic-bezier(.2, .8, .2, 1) both; transform-origin: 75% 75%; }
+@keyframes workbot-reaction {
+  from { opacity: 0; transform: scale(.5); }
   to { opacity: 1; transform: none; }
-}
-/* Older rows of a long live list fade out at the top instead of piling up. */
-.workbot-ledger-earlier { mask-image: linear-gradient(to bottom, transparent 0, #000 20px); }
-/* "Thinking": the dot breathes slowly; nothing else moves. */
-.workbot-pulse { animation: workbot-pulse 2.4s ease-in-out infinite; }
-@keyframes workbot-pulse {
-  0%, 100% { opacity: .4; }
-  50% { opacity: .9; }
 }
 /* Browser surfaces in Workbot's palette: selection and thin, quiet scrollbars. */
 .workbot ::selection { background: #0116271f; }
@@ -122,15 +117,6 @@
   0%, 60%, 100% { opacity: .3; }
   30% { opacity: .85; }
 }
-/* Step details glide open and closed instead of jumping. */
-.workbot-details { interpolate-size: allow-keywords; }
-.workbot-details::details-content {
-  block-size: 0;
-  overflow-y: clip;
-  opacity: 0;
-  transition: block-size 200ms cubic-bezier(.2, 0, 0, 1), opacity 160ms ease-out, content-visibility 200ms allow-discrete;
-}
-.workbot-details[open]::details-content { block-size: auto; opacity: 1; }
 @keyframes workbot-computer-write {
   0% { transform: scaleX(0); opacity: .35; }
   35%, 80% { transform: scaleX(1); opacity: 1; }
@@ -139,7 +125,6 @@
 @media (prefers-reduced-motion: reduce) {
   .workbot-shimmer { animation: none; -webkit-text-fill-color: var(--wb-muted); }
   .workbot-computer.is-working .workbot-computer-line { animation: none; }
-  .workbot-row-enter, .workbot-settle, .workbot-pulse, .workbot-subtitle-enter, .workbot-panel-enter, .workbot-fade-in { animation: none; }
+  .workbot-row-enter, .workbot-reaction, .workbot-subtitle-enter, .workbot-panel-enter, .workbot-fade-in { animation: none; }
   .workbot-typing-dot { animation: none; opacity: .55; }
-  .workbot-details::details-content { transition: none; }
 }
