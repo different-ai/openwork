@@ -12,18 +12,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { McpDirectoryInfo } from "@/app/constants";
-import { openDesktopUrl, opencodeMcpAuth } from "@/app/lib/desktop";
+import { opencodeMcpAuth } from "@/app/lib/desktop";
 import { unwrap } from "@/app/lib/opencode";
 import { getMcpIdentityKey, validateMcpServerName } from "@/app/mcp";
 import type { Client } from "@/app/types";
 import { isDesktopRuntime, normalizeDirectoryPath } from "@/app/utils";
 import { t } from "@/i18n";
 import { Button } from "@/components/ui/button";
-import { TextInput } from "../../design-system/text-input";
 import { resolveMcpStatusByIdentity } from "./mcp-status-synchronization";
 
-const MCP_AUTH_POLL_INTERVAL_MS = 2_000;
-const MCP_AUTH_TIMEOUT_MS = 90_000;
 const MCP_AUTH_DISCOVERY_TIMEOUT_MS = 15_000;
 
 type McpStatusEntry = {
@@ -54,7 +51,6 @@ export type McpAuthModalProps = {
   reloadRequired?: boolean;
   reloadBlocked?: boolean;
   activeSessions?: Array<{ id: string; title: string }>;
-  isRemoteWorkspace?: boolean;
   client: Client | null;
   entry: McpDirectoryInfo | null;
   projectDir: string;
@@ -69,75 +65,23 @@ export function McpAuthModal(props: McpAuthModalProps) {
   const [authInProgress, setAuthInProgress] = useState(false);
   const [statusChecking, setStatusChecking] = useState(false);
   const [reloadNotice, setReloadNotice] = useState<string | null>(null);
-  const [authorizationUrl, setAuthorizationUrl] = useState<string | null>(null);
-  const [callbackInput, setCallbackInput] = useState("");
-  const [manualAuthBusy, setManualAuthBusy] = useState(false);
   const [cliAuthBusy, setCliAuthBusy] = useState(false);
   const [cliAuthResult, setCliAuthResult] = useState<string | null>(null);
-  const [authUrlCopied, setAuthUrlCopied] = useState(false);
   const [resolvedDir, setResolvedDir] = useState("");
   const [awaitingReload, setAwaitingReload] = useState(false);
   const [reloadStarting, setReloadStarting] = useState(false);
   const [reloadSatisfied, setReloadSatisfied] = useState(false);
   const [forceStopBusySessionID, setForceStopBusySessionID] = useState<string | null>(null);
 
-  const statusPollRef = useRef<number | null>(null);
-  const authCopyTimeoutRef = useRef<number | null>(null);
   const previousOpenRef = useRef(false);
   const previousEntryNameRef = useRef<string | null>(null);
   const reloadAuthRunRef = useRef(false);
-
-  const stopStatusPolling = () => {
-    if (statusPollRef.current !== null) {
-      window.clearInterval(statusPollRef.current);
-      statusPollRef.current = null;
-    }
-  };
 
   useEffect(() => {
     const normalized = normalizeDirectoryPath(props.projectDir ?? "");
     const collapsed = normalized.replace(/^\/private\/tmp(?=\/|$)/, "/tmp");
     setResolvedDir(collapsed);
   }, [props.projectDir]);
-
-  useEffect(() => {
-    return () => {
-      stopStatusPolling();
-      if (authCopyTimeoutRef.current !== null) {
-        window.clearTimeout(authCopyTimeoutRef.current);
-        authCopyTimeoutRef.current = null;
-      }
-    };
-  }, []);
-
-  const openAuthorizationUrl = async (url: string) => {
-    if (isDesktopRuntime()) {
-      await openDesktopUrl(url);
-      return;
-    }
-
-    if (typeof window !== "undefined") {
-      window.open(url, "_blank", "noopener,noreferrer");
-    }
-  };
-
-  const handleCopyAuthorizationUrl = async () => {
-    if (!authorizationUrl) return;
-
-    try {
-      await navigator.clipboard.writeText(authorizationUrl);
-      setAuthUrlCopied(true);
-      if (authCopyTimeoutRef.current !== null) {
-        window.clearTimeout(authCopyTimeoutRef.current);
-      }
-      authCopyTimeoutRef.current = window.setTimeout(() => {
-        setAuthUrlCopied(false);
-        authCopyTimeoutRef.current = null;
-      }, 2_000);
-    } catch {
-      // ignore clipboard failures
-    }
-  };
 
   const fetchMcpStatus = async (slug: string) => {
     if (!props.entry || !props.client) return null;
@@ -192,27 +136,6 @@ export function McpAuthModal(props: McpAuthModalProps) {
     return null;
   };
 
-  const startStatusPolling = (slug: string) => {
-    if (typeof window === "undefined") return;
-
-    stopStatusPolling();
-    const startedAt = Date.now();
-    statusPollRef.current = window.setInterval(async () => {
-      if (Date.now() - startedAt >= MCP_AUTH_TIMEOUT_MS) {
-        stopStatusPolling();
-        setError(t("mcp.auth.request_timed_out"));
-        return;
-      }
-
-      const status = await fetchMcpStatus(slug);
-      if (status?.status === "connected") {
-        markAuthenticated(slug);
-        setError(null);
-        stopStatusPolling();
-      }
-    }, MCP_AUTH_POLL_INTERVAL_MS);
-  };
-
   const startAuth = async (forceRetry = false, allowAutoReload = true) => {
     if (!props.entry || !props.client) return;
 
@@ -234,9 +157,6 @@ export function McpAuthModal(props: McpAuthModalProps) {
     setError(null);
     setNeedsReload(false);
     setAlreadyConnected(false);
-    stopStatusPolling();
-    setAuthorizationUrl(null);
-    setCallbackInput("");
     setReloadNotice(null);
     setLoading(true);
     setAuthInProgress(true);
@@ -268,45 +188,27 @@ export function McpAuthModal(props: McpAuthModalProps) {
         return;
       }
 
-      if (!props.isRemoteWorkspace) {
-        const result = await props.client.mcp.auth.authenticate({
-          name: slug,
-          directory,
-        });
-        const status = unwrap(result) as McpStatusEntry;
-
-        if (status.status === "connected") {
-          markAuthenticated(slug);
-          await props.onComplete();
-          return;
-        }
-
-        if (status.status === "needs_client_registration") {
-          setError(status.error ?? t("mcp.auth.client_registration_required"));
-        } else if (status.status === "disabled") {
-          setError(t("mcp.auth.server_disabled"));
-        } else if (status.status === "failed") {
-          setError(status.error ?? t("mcp.auth.oauth_failed"));
-        } else {
-          setError(t("mcp.auth.authorization_still_required"));
-        }
-        return;
-      }
-
-      const authResult = await props.client.mcp.auth.start({
+      const result = await props.client.mcp.auth.authenticate({
         name: slug,
         directory,
       });
-      const auth = unwrap(authResult) as { authorizationUrl?: string };
+      const status = unwrap(result) as McpStatusEntry;
 
-      if (!auth.authorizationUrl) {
+      if (status.status === "connected") {
         markAuthenticated(slug);
+        await props.onComplete();
         return;
       }
 
-      setAuthorizationUrl(auth.authorizationUrl);
-      await openAuthorizationUrl(auth.authorizationUrl);
-      startStatusPolling(slug);
+      if (status.status === "needs_client_registration") {
+        setError(status.error ?? t("mcp.auth.client_registration_required"));
+      } else if (status.status === "disabled") {
+        setError(t("mcp.auth.server_disabled"));
+      } else if (status.status === "failed") {
+        setError(status.error ?? t("mcp.auth.oauth_failed"));
+      } else {
+        setError(t("mcp.auth.authorization_still_required"));
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : t("mcp.auth.failed_to_start_oauth");
 
@@ -316,7 +218,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
       } else if (message.toLowerCase().includes("does not support oauth")) {
         const serverSlug = props.entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "server";
         const canAutoReload =
-          allowAutoReload && !props.isRemoteWorkspace && !props.reloadBlocked && Boolean(props.onReloadEngine);
+          allowAutoReload && !props.reloadBlocked && Boolean(props.onReloadEngine);
 
         if (canAutoReload && props.onReloadEngine) {
           await props.onReloadEngine();
@@ -359,7 +261,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
   };
 
   const handleCliReauth = async () => {
-    if (!props.entry || cliAuthBusy || props.isRemoteWorkspace || !isDesktopRuntime()) return;
+    if (!props.entry || cliAuthBusy || !isDesktopRuntime()) return;
 
     setCliAuthBusy(true);
     setCliAuthResult(null);
@@ -469,10 +371,6 @@ export function McpAuthModal(props: McpAuthModalProps) {
 
   const handleReloadAndRetry = async () => {
     if (!props.onReloadEngine) return;
-    if (props.isRemoteWorkspace && typeof window !== "undefined") {
-      const proceed = window.confirm(t("mcp.auth.reload_remote_confirm"));
-      if (!proceed) return;
-    }
     await props.onReloadEngine();
     await startAuth(true);
   };
@@ -494,9 +392,6 @@ export function McpAuthModal(props: McpAuthModalProps) {
     setNeedsReload(false);
     setAuthInProgress(false);
     setStatusChecking(false);
-    setAuthorizationUrl(null);
-    setCallbackInput("");
-    setManualAuthBusy(false);
     setReloadNotice(null);
     setCliAuthBusy(false);
     setCliAuthResult(null);
@@ -504,87 +399,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
     setReloadStarting(false);
     setReloadSatisfied(false);
     setForceStopBusySessionID(null);
-    stopStatusPolling();
     props.onClose();
-  };
-
-  const parseAuthCode = (value: string) => {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-
-    const match = trimmed.match(/[?&]code=([^&]+)/);
-    if (match) {
-      try {
-        return decodeURIComponent(match[1]);
-      } catch {
-        return match[1];
-      }
-    }
-
-    if (/^https?:\/\//i.test(trimmed) || trimmed.includes("localhost") || trimmed.includes("127.0.0.1")) {
-      return null;
-    }
-
-    return trimmed;
-  };
-
-  const handleManualComplete = async () => {
-    if (!props.entry || !props.client) return;
-
-    let slug = "";
-    try {
-      slug = resolveSlug(props.entry);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : t("mcp.auth.failed_to_start_oauth");
-      setError(message);
-      return;
-    }
-
-    const code = parseAuthCode(callbackInput);
-    if (!code) {
-      setError(t("mcp.auth.callback_invalid"));
-      return;
-    }
-
-    setManualAuthBusy(true);
-    setError(null);
-    stopStatusPolling();
-
-    try {
-      const directory = await resolveDirectory();
-      if (!directory) {
-        setError(t("mcp.pick_workspace_first"));
-        return;
-      }
-
-      const result = await props.client.mcp.auth.callback({
-        name: slug,
-        directory,
-        code,
-      });
-      const status = unwrap(result) as McpStatusEntry;
-      if (status.status === "connected") {
-        markAuthenticated(slug);
-        setManualAuthBusy(false);
-        await props.onComplete();
-        return;
-      }
-
-      if (status.status === "needs_client_registration") {
-        setError(status.error ?? t("mcp.auth.client_registration_required"));
-      } else if (status.status === "disabled") {
-        setError(t("mcp.auth.server_disabled"));
-      } else if (status.status === "failed") {
-        setError(status.error ?? t("mcp.auth.oauth_failed"));
-      } else {
-        setError(t("mcp.auth.authorization_still_required"));
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : t("mcp.auth.oauth_failed");
-      setError(message);
-    } finally {
-      setManualAuthBusy(false);
-    }
   };
 
   const handleComplete = async () => {
@@ -624,7 +439,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
     setStatusChecking(false);
   };
 
-  const isBusy = loading || statusChecking || manualAuthBusy;
+  const isBusy = loading || statusChecking;
   const isPreparingReload = awaitingReload || reloadStarting;
   const serverName = props.entry?.name ?? "MCP Server";
 
@@ -777,59 +592,21 @@ export function McpAuthModal(props: McpAuthModalProps) {
               {isInvalidRefreshToken() ? (
                 <div className="space-y-2 pt-2">
                   <p className="text-xs text-red-11">{t("mcp.auth.invalid_refresh_token")}</p>
-                  {!props.isRemoteWorkspace ? (
-                    isDesktopRuntime() ? (
-                      <Button onClick={() => void handleCliReauth()} disabled={cliAuthBusy}>
-                        {cliAuthBusy ? <Loader2 size={14} className="animate-spin" /> : null}
-                        {cliAuthBusy
-                          ? t("mcp.auth.reauth_running")
-                          : t("mcp.auth.reauth_action")}
-                      </Button>
-                    ) : (
-                      <div className="text-[11px] text-red-10">
-                        {t("mcp.auth.reauth_cli_hint", { server: serverName })}
-                      </div>
-                    )
+                  {isDesktopRuntime() ? (
+                    <Button onClick={() => void handleCliReauth()} disabled={cliAuthBusy}>
+                      {cliAuthBusy ? <Loader2 size={14} className="animate-spin" /> : null}
+                      {cliAuthBusy
+                        ? t("mcp.auth.reauth_running")
+                        : t("mcp.auth.reauth_action")}
+                    </Button>
                   ) : (
-                    <div className="text-[11px] text-red-10">{t("mcp.auth.reauth_remote_hint")}</div>
+                    <div className="text-[11px] text-red-10">
+                      {t("mcp.auth.reauth_cli_hint", { server: serverName })}
+                    </div>
                   )}
                   {cliAuthResult ? <div className="text-[11px] text-red-10">{cliAuthResult}</div> : null}
                 </div>
               ) : null}
-            </div>
-          ) : null}
-
-          {!isBusy && authorizationUrl && props.isRemoteWorkspace && !alreadyConnected ? (
-            <div className="space-y-3 rounded-xl border border-gray-6/60 bg-gray-1/40 p-4">
-              <div className="text-xs font-medium text-gray-12">{t("mcp.auth.manual_finish_title")}</div>
-              <div className="text-xs text-gray-10">{t("mcp.auth.manual_finish_hint")}</div>
-              <div className="flex items-center gap-3 rounded-xl border border-gray-6/70 bg-gray-2/40 px-3 py-2">
-                <div className="min-w-0 flex-1">
-                  <div className="text-[10px] uppercase tracking-wide text-gray-8">
-                    {t("mcp.auth.authorization_link")}
-                  </div>
-                  <div className="truncate font-mono text-[11px] text-gray-11">{authorizationUrl}</div>
-                </div>
-                <Button variant="outline" size="sm" onClick={() => void handleCopyAuthorizationUrl()}>
-                  {authUrlCopied ? t("mcp.auth.copied") : t("mcp.auth.copy_link")}
-                </Button>
-              </div>
-              <TextInput
-                label={t("mcp.auth.callback_label")}
-                placeholder={t("mcp.auth.callback_placeholder")}
-                value={callbackInput}
-                onChange={(event) => setCallbackInput(event.currentTarget.value)}
-              />
-              <div className="text-[11px] text-gray-9">{t("mcp.auth.port_forward_hint")}</div>
-              <div className="flex justify-end">
-                <Button
-                  onClick={() => void handleManualComplete()}
-                  disabled={manualAuthBusy || !callbackInput.trim()}
-                >
-                  {manualAuthBusy ? <Loader2 size={14} className="animate-spin" /> : null}
-                  {t("mcp.auth.complete_connection")}
-                </Button>
-              </div>
             </div>
           ) : null}
 

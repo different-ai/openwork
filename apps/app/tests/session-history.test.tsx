@@ -385,23 +385,6 @@ describe("independent opening regression audit", () => {
     }
   });
 
-  for (const engine of ["opencode", "opencode2"]) test(`runtime authority admits the resolved remote ${engine} endpoint rather than its sidebar alias`, async () => {
-    const view = fixture();
-    const endpoint = resolveWorkspaceEndpoint({ id: "rem_alias", workspaceType: "remote", baseUrl: "https://worker.example",
-      openworkToken: "remote-token", openworkWorkspaceId: "runtime-x" }, { baseUrl: "http://localhost:7777", token: "local-token" });
-    if (!endpoint) throw new Error("Remote endpoint is missing");
-    const identity = sessionHistoryIdentity({ draftScope: "principal", opencodeBaseUrl: `${endpoint.mountedBaseUrl}/${engine}`,
-      runtimeWorkspaceId: endpoint.workspaceId, sessionId: "a" });
-    const selected = { ...view.input("a", endpoint.token), ...identity, transcriptQueryKey: transcriptKey(endpoint.workspaceId, "a") };
-    await view.renderRuntimeOwners([{ owner: identity.runtimeOwner, authToken: endpoint.token }], [selected]);
-    expect(view.reads).toHaveLength(1);
-    expect(view.reads[0].signal.aborted).toBe(false);
-    expect(identity.snapshotQueryKey).toEqual(snapshotKey("runtime-x", "a"));
-    await view.resolve(0, page(["remote-message"], null, "older"));
-    expect(visibleIds(view)).toEqual(["remote-message"]);
-    expect(view.openingError).toBeNull();
-  });
-
   test("retry after failed stale-cache revalidation replaces the displayed page and cursor", async () => {
     const view = fixture();
     await view.render("a");
@@ -1381,11 +1364,10 @@ describe("opening a thread", () => {
     expect(cached?.todos).toBeUndefined();
   });
 
-  for (const openworkWorkspaceId of [undefined, "runtime-x"]) test(`remote sidebar alias shares runtime preview/full keys with click (explicit runtime ID=${Boolean(openworkWorkspaceId)})`, async () => {
-    const sidebarWorkspaceId = "rem_x";
-    const endpoint = resolveWorkspaceEndpoint({ id: sidebarWorkspaceId, workspaceType: "remote", baseUrl: "https://worker.example", openworkToken: "remote-token", openworkWorkspaceId }, { baseUrl: "http://localhost:7777", token: "local-token" });
-    if (!endpoint) throw new Error("Missing remote endpoint");
-    const runtimeWorkspaceId = openworkWorkspaceId ?? "x";
+  test("sidebar prefetch shares runtime preview/full keys with click", async () => {
+    const endpoint = resolveWorkspaceEndpoint({ id: "x" }, { baseUrl: "http://localhost:7777", token: "remote-token" });
+    if (!endpoint) throw new Error("Missing workspace endpoint");
+    const runtimeWorkspaceId = "x";
     expect(endpoint.workspaceId).toBe(runtimeWorkspaceId);
     // The route's resolved engine can be v2 even though endpoint.opencodeBaseUrl
     // is v1. Both prefetch and the mounted primary surface use this resolved URL.
@@ -1396,9 +1378,7 @@ describe("opening a thread", () => {
     expect(prefetchIdentity).toEqual(surfaceIdentity);
     expect(prefetchIdentity.owner).toBe(JSON.stringify([draftScope, opencodeBaseUrl, runtimeWorkspaceId, "a"]));
     expect(prefetchIdentity.snapshotQueryKey).toEqual(snapshotKey(runtimeWorkspaceId, "a"));
-    expect(prefetchIdentity.snapshotQueryKey).not.toEqual(snapshotKey(sidebarWorkspaceId, "a"));
     const view = fixture();
-    view.client.setQueryData(snapshotKey(sidebarWorkspaceId, "a"), snapshot("a", "Wrong alias cache"));
     const warmed = { ...view.input("a", endpoint.token), ...prefetchIdentity };
     const clicked = { ...view.input("a", endpoint.token), ...surfaceIdentity };
     const cancel = prefetchOpeningSessionHistory(view.client, warmed);
@@ -1407,7 +1387,6 @@ describe("opening a thread", () => {
     cancel?.();
     expect(view.reads).toHaveLength(1);
     expect(view.reads[0].signal.aborted).toBe(false);
-    expect(view.host.textContent).not.toContain("Wrong alias cache");
     await view.resolve(0, "Shared remote preview");
     expect(view.host.textContent).toContain("Shared remote preview");
     expect(view.reads).toHaveLength(1);
@@ -1416,7 +1395,7 @@ describe("opening a thread", () => {
     for (const identity of [
       sessionHistoryIdentity({ draftScope: "org-a/member-b", opencodeBaseUrl, runtimeWorkspaceId, sessionId: "a" }),
       sessionHistoryIdentity({ draftScope, opencodeBaseUrl: endpoint.opencodeBaseUrl, runtimeWorkspaceId, sessionId: "a" }),
-      sessionHistoryIdentity({ draftScope, opencodeBaseUrl, runtimeWorkspaceId: sidebarWorkspaceId, sessionId: "a" }),
+      sessionHistoryIdentity({ draftScope, opencodeBaseUrl, runtimeWorkspaceId: "other", sessionId: "a" }),
     ]) expect(openingSessionHistoryOptions({ ...clicked, ...identity }).queryKey).not.toEqual(openingKey);
     const rotated = { ...view.input("a", "rotated-token"), ...surfaceIdentity };
     expect(openingSessionHistoryOptions(rotated).queryKey).not.toEqual(openingKey);
@@ -1434,7 +1413,7 @@ describe("opening a thread", () => {
     await view.resolve(2, "Current principal preview");
     expect(view.host.textContent).toContain("Current principal preview");
 
-    // A complete runtime snapshot, not the sidebar alias entry, skips warming.
+    // A complete runtime snapshot skips warming.
     await act(async () => view.client.setQueryData(surfaceIdentity.snapshotQueryKey, snapshot("a", "Complete runtime history")));
     await settle();
     prefetchOpeningSessionHistory(view.client, nextPrincipal);

@@ -28,11 +28,12 @@ The tested production path is the published Helm chart on managed Kubernetes. Th
 OpenWork is split into normal services:
 
 - **OpenWork app**: the desktop or web client people use.
-- **Den web**: the web app for sign-in, worker launch, and connect links if you want a cloud-style setup.
-- **Den controller**: the control plane for auth, workers, and provisioning.
+- **OpenWork server**: the workspace runtime and API. The desktop runs its own local server; a self-hosted server provides the runtime for its web client.
+- **Den web**: the web app for sign-in and organization administration if you want a cloud-style setup.
+- **Den controller**: the control plane for authentication, teams, access, and provisioning.
 - **OpenWork Gateway**: optional model-request routing and metering service from `ee/apps/gateway`, including the existing OpenWork Models proxy. This is not the separate `den-gateway` Web proxy.
 
-If you only need one private remote workspace, deploy the worker runtime. If you want OpenWork Cloud-style accounts, teams, and organization management, deploy Den web, Den controller, and optionally OpenWork Gateway.
+For a standalone workspace runtime, deploy OpenWork server and use its web client. The desktop app does not offer Share workspace or Connect to remote workspace; its embedded server listens only on loopback. If you also need OpenWork Cloud-style accounts, teams, and organization management, deploy Den web, Den controller, and optionally OpenWork Gateway.
 
 For Kubernetes installs, use the published Helm chart:
 

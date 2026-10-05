@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 import { t } from "../../../i18n";
-import type { StartupPreference, WorkspaceDisplay } from "../../../app/types";
+import type { StartupPreference } from "../../../app/types";
 import { isDesktopRuntime } from "../../../app/utils";
 import {
   openworkServerInfo,
@@ -30,17 +30,8 @@ import {
 
 type SetStateAction<T> = T | ((current: T) => T);
 
-type RemoteWorkspaceInput = {
-  openworkHostUrl: string;
-  openworkToken?: string | null;
-  directory?: string | null;
-  displayName?: string | null;
-};
-
 export type OpenworkServerStoreSnapshot = {
   openworkServerSettings: OpenworkServerSettings;
-  shareRemoteAccessBusy: boolean;
-  shareRemoteAccessError: string | null;
   openworkServerUrl: string;
   openworkServerBaseUrl: string;
   openworkServerAuth: { token?: string; hostToken?: string };
@@ -68,16 +59,10 @@ type CreateOpenworkServerStoreOptions = {
   documentVisible: () => boolean;
   developerMode: () => boolean;
   runtimeWorkspaceId: () => string | null;
-  activeClient: () => unknown | null;
-  selectedWorkspaceDisplay: () => WorkspaceDisplay;
-  restartLocalServer: () => Promise<boolean>;
-  createRemoteWorkspaceFlow: (input: RemoteWorkspaceInput) => Promise<boolean>;
 };
 
 type MutableState = {
   openworkServerSettings: OpenworkServerSettings;
-  shareRemoteAccessBusy: boolean;
-  shareRemoteAccessError: string | null;
   openworkServerUrl: string;
   openworkServerStatus: OpenworkServerStatus;
   openworkServerCapabilities: OpenworkServerCapabilities | null;
@@ -101,8 +86,6 @@ function sameOpenworkServerSnapshot(
 ): boolean {
   return (
     current.openworkServerSettings === next.openworkServerSettings &&
-    current.shareRemoteAccessBusy === next.shareRemoteAccessBusy &&
-    current.shareRemoteAccessError === next.shareRemoteAccessError &&
     current.openworkServerUrl === next.openworkServerUrl &&
     current.openworkServerBaseUrl === next.openworkServerBaseUrl &&
     current.openworkServerAuth.token === next.openworkServerAuth.token &&
@@ -143,8 +126,6 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
 
   let state: MutableState = {
     openworkServerSettings: readOpenworkServerSettings(),
-    shareRemoteAccessBusy: false,
-    shareRemoteAccessError: null,
     openworkServerUrl: "",
     openworkServerStatus: "disconnected",
     openworkServerCapabilities: null,
@@ -249,7 +230,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
 
     const pref = options.startupPreference();
     const info = state.openworkServerHostInfo;
-    const hostUrl = info?.connectUrl ?? info?.lanUrl ?? info?.mdnsUrl ?? info?.baseUrl ?? "";
+    const hostUrl = info?.baseUrl ?? "";
     const settingsUrl = normalizeOpenworkServerUrl(state.openworkServerSettings.urlOverride ?? "") ?? "";
 
     let openworkServerUrl = hostUrl || settingsUrl;
@@ -259,8 +240,6 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
 
     const nextSnapshot: OpenworkServerStoreSnapshot = {
       openworkServerSettings: state.openworkServerSettings,
-      shareRemoteAccessBusy: state.shareRemoteAccessBusy,
-      shareRemoteAccessError: state.shareRemoteAccessError,
       openworkServerUrl,
       openworkServerBaseUrl,
       openworkServerAuth,
@@ -676,23 +655,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       openworkServerCheckedAt: Date.now(),
     }));
 
-    const ok = result.status === "connected" || result.status === "limited";
-    if (ok && !isDesktopRuntime()) {
-      const active = options.selectedWorkspaceDisplay();
-      const shouldAttach =
-        !options.activeClient() ||
-        active.workspaceType !== "remote" ||
-        active.remoteType !== "openwork";
-      if (shouldAttach) {
-        await options
-          .createRemoteWorkspaceFlow({
-            openworkHostUrl: derived,
-            openworkToken: next.token ?? null,
-          })
-          .catch(() => undefined);
-      }
-    }
-    return ok;
+    return result.status === "connected" || result.status === "limited";
   };
 
   const reconnectOpenworkServer = async () => {
@@ -807,9 +770,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     }
 
     try {
-      hostInfo = await openworkServerRestart({
-        remoteAccessEnabled: state.openworkServerSettings.remoteAccessEnabled === true,
-      }) as OpenworkServerInfo;
+      hostInfo = await openworkServerRestart() as OpenworkServerInfo;
       mutateState((current) => ({ ...current, openworkServerHostInfo: hostInfo }));
     } catch {
       return null;
@@ -830,44 +791,6 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       hostToken: hostToken || undefined,
     });
   }
-
-  const saveShareRemoteAccess = async (enabled: boolean) => {
-    if (state.shareRemoteAccessBusy) return;
-    const previous = state.openworkServerSettings;
-    const next: OpenworkServerSettings = {
-      ...previous,
-      remoteAccessEnabled: enabled,
-    };
-
-    mutateState((current) => ({
-      ...current,
-      shareRemoteAccessBusy: true,
-      shareRemoteAccessError: null,
-    }));
-    updateOpenworkServerSettings(next);
-
-    try {
-      if (isDesktopRuntime() && options.selectedWorkspaceDisplay().workspaceType === "local") {
-        const restarted = await options.restartLocalServer();
-        if (!restarted) {
-          throw new Error(t("app.error_restart_local_worker"));
-        }
-        await reconnectOpenworkServer();
-      }
-    } catch (error) {
-      updateOpenworkServerSettings(previous);
-      mutateState((current) => ({
-        ...current,
-        shareRemoteAccessError:
-          error instanceof Error
-            ? error.message
-            : t("app.error_remote_access"),
-      }));
-      return;
-    } finally {
-      setStateField("shareRemoteAccessBusy", false);
-    }
-  };
 
   refreshSnapshot();
 
@@ -892,7 +815,6 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     setOpenworkServerSettings,
     updateOpenworkServerSettings,
     resetOpenworkServerSettings,
-    saveShareRemoteAccess,
     checkOpenworkServer,
     testOpenworkServerConnection,
     reconnectOpenworkServer,

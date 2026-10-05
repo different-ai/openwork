@@ -648,8 +648,6 @@ export type SessionSurfaceProps = {
   listCommands: () => Promise<import("@/app/types").SlashCommandOption[]>;
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
-  isRemoteWorkspace: boolean;
-  isSandboxWorkspace: boolean;
   todos?: TodoItem[];
   activePermission?: PendingPermission | null;
   activePermissionSourceTitle?: string | null;
@@ -660,7 +658,6 @@ export type SessionSurfaceProps = {
   respondQuestion?: (requestID: string, answers: string[][]) => void | Promise<void>;
   safeStringify?: (value: unknown) => string;
   onChangeModel?: (model: { providerID: string; modelID: string }) => void;
-  onUploadInboxFiles?: ((files: File[], options?: { notify?: boolean }) => void | Promise<unknown>) | null;
   providerConnectedCount?: number;
   onOpenSettingsSection?: ((section: ComposerSettingsSection) => void) | undefined;
   onRevertToMessage?: (messageId: string, sessionId: string) => Promise<boolean>;
@@ -1088,7 +1085,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // session.
   const queryClient = useQueryClient();
   const rejectedDenBaseUrl = readDenSettings().baseUrl;
-  const localRejectedRuntime = isDesktopRuntime() && !props.isRemoteWorkspace && !props.isSandboxWorkspace && isLoopbackOpenworkServerUrl(props.client.baseUrl);
+  const localRejectedRuntime = isDesktopRuntime() && isLoopbackOpenworkServerUrl(props.client.baseUrl);
   const rejectedOwner = useMemo(() => rejectedTurnOwner({ draftScope: props.draftScope, denBaseUrl: rejectedDenBaseUrl,
     opencodeBaseUrl: props.opencodeBaseUrl, workspaceId: props.workspaceId, sessionId: props.sessionId, localRuntime: localRejectedRuntime,
   }), [props.draftScope, rejectedDenBaseUrl, props.opencodeBaseUrl, props.workspaceId, props.sessionId, localRejectedRuntime]);
@@ -2980,18 +2977,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     return plugins;
   }, []);
 
-  const handleUploadInboxFiles = useCallback(async (files: File[]) => {
-    const input = files.filter(Boolean);
-    if (!input.length) return;
-    try {
-      const results = await Promise.all(input.map((file) => props.client.uploadInbox(props.workspaceId, file)));
-      return results;
-    } catch (nextError) {
-      toast.warning(nextError instanceof Error ? nextError.message : "Shared folder upload failed");
-      throw nextError;
-    }
-  }, [props.client, props.workspaceId]);
-
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const sessionScroll = useSessionScrollController({
@@ -3469,12 +3454,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   workspaceId={props.workspaceId}
                   workspaceRoot={props.workspaceRoot}
                   sessionId={props.sessionId}
-                  isLocalWorkspace={!props.isRemoteWorkspace}
+                  isLocalWorkspace
                   openTargets={verifiedOpenTargets}
                   onOpenTarget={handleOpenTarget}
                 >
                   <EnvironmentVariableProvider
-                    client={props.isRemoteWorkspace ? null : props.environmentClient ?? props.client}
+                    client={props.environmentClient ?? props.client}
                     runtimeKey={props.environmentRuntimeKey}
                     onApplyChanges={props.onApplyEnvironmentChanges}
                   >
@@ -3672,9 +3657,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
         pastedText={pasteParts}
         onExpandPastedText={handleExpandPastedText}
         onRemovePastedText={handleRemovePastedText}
-        isRemoteWorkspace={props.isRemoteWorkspace}
-          isSandboxWorkspace={props.isSandboxWorkspace}
-          onUploadInboxFiles={props.onUploadInboxFiles ?? handleUploadInboxFiles}
           compactTopSpacing={Boolean(composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedItems.length > 0)}
           topAccessory={
             composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedItems.length > 0 ? (

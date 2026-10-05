@@ -31,13 +31,9 @@ import { prefetchOpeningSessionHistory, sessionHistoryIdentity, sessionHistoryRu
 import { sendSessionCommand, sessionWorkHeld } from "@/app/lib/opencode-interruption";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
-import {
-  buildOpenworkWorkspaceBaseUrl,
-  readOpenworkServerSettings,
-} from "@/app/lib/openwork-server";
+import { buildOpenworkWorkspaceBaseUrl } from "@/app/lib/openwork-server";
 import {
   resolveWorkspaceEndpoint,
-  workspaceServerId,
   type ResolvedWorkspaceEndpoint,
 } from "@/app/lib/workspace-endpoint";
 import { buildOpenworkEnvRuntimeKey } from "@/app/lib/openwork-env-runtime";
@@ -49,7 +45,6 @@ import {
   pickDirectory,
   resolveWorkspaceListSelectedId,
   workspaceBootstrap,
-  workspaceCreateRemote,
   workspaceForget,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
@@ -73,9 +68,7 @@ import type {
 } from "@/app/types";
 import { buildFeedbackUrl } from "@/app/lib/feedback";
 import {
-  getWorkspaceTaskLoadErrorDisplay,
   isDesktopRuntime,
-  isSandboxWorkspace,
   normalizeDirectoryPath,
   normalizeSessionStatus,
   resolveModelDisplayName,
@@ -92,7 +85,6 @@ import {
   createRouteSession,
   createRouteSessionOnEngine,
   deleteRouteSession,
-  downloadWorkspaceJson,
   folderNameFromPath,
   getSessionStatus,
   isActiveSessionStatus,
@@ -103,7 +95,6 @@ import {
   TASK_CREATE_RETRY_DELAYS_MS,
   toSessionGroups,
   withTransientEngineRetry,
-  workspaceExportFilename,
   workspaceLabel,
 } from "@/react-app/shell/route-workspaces";
 import { reloadEngineWithDesktopFallback } from "@/react-app/shell/engine-reload-escalation";
@@ -164,7 +155,6 @@ import {
 } from "@/react-app/domains/session/surface/composer-auto-send";
 import { sendWithRevertRollback } from "@/react-app/domains/session/surface/safe-edit-resend";
 import { assertQueuedSendCurrent, getQueuedSendGeneration } from "@/react-app/domains/session/surface/queued-drain-machine";
-import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
 import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types";
 import {
@@ -200,20 +190,12 @@ import {
   IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE,
   type CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
-import { useRemoteAccessRestart } from "@/react-app/domains/workspace/remote-access-restart";
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
-import { useRemoteWorkspaceConnectionEditor } from "@/react-app/domains/workspace/use-remote-workspace-connection-editor";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import {
   hasOpenWorkModelsAvailable,
   shouldShowOpenWorkModelsSyncing,
 } from "@/react-app/domains/cloud/openwork-models-promo";
-import {
-  diagnoseRemoteWorkspaceTaskLoadFailure,
-  getRemoteWorkspaceConnectionKey,
-  testRemoteWorkspaceConnection,
-} from "@/react-app/domains/workspace/remote-workspace-diagnostics";
-import { useShareWorkspaceState } from "@/react-app/domains/workspace/share-workspace-state";
 import { ModelPickerModal, MODEL_PICKER_UNAVAILABLE_SUBTITLE } from "@/react-app/domains/session/modals/model-picker-modal";
 import { CommandPalette, type PaletteItem, type SessionGroupOption } from "./command-palette";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
@@ -498,7 +480,6 @@ export function SessionRoute() {
   const restrictionNotice = useRestrictionNotice();
   const [activeOrganizationRole, setActiveOrganizationRole] = useState<DenOrgRole | null>(null);
   const [openworkServerHostInfoState, setOpenworkServerHostInfoState] = useState<OpenworkServerInfo | null>(null);
-  const [openworkServerSettingsVersion, setOpenworkServerSettingsVersion] = useState(0);
 
   const [developerMode, setDeveloperMode] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -554,13 +535,11 @@ export function SessionRoute() {
     handleRuntimeSessionCreated,
     handleRuntimeSessionUpdated,
     handleRuntimeSessionDeleted,
-    handleRemoteWorkspaceConnectionSaved,
-    runRemoteWorkspaceConnectionCheck,
   } = useWorkspaceRouteState({
     preservePendingConversationRoute: Boolean(requestedPendingId && pendingConversations[requestedPendingId]?.scope === sessionDraftScope),
     developerMode,
     workspaceRoute: activityRouteActive ? "activity" : appsRouteActive ? "apps" : automationsRouteActive ? "automations" : dashboardWorkspaceRoute ? "dashboard" : "session",
-    onServerSettingsChanged: () => setOpenworkServerSettingsVersion((value) => value + 1),
+    onServerSettingsChanged: () => undefined,
     onHostInfo: setOpenworkServerHostInfoState,
   });
   const modelProfileId = useWorkspaceModelProfile();
@@ -718,8 +697,6 @@ export function SessionRoute() {
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
-  const [createWorkspaceRemoteBusy, setCreateWorkspaceRemoteBusy] = useState(false);
-  const [createWorkspaceRemoteError, setCreateWorkspaceRemoteError] = useState<string | null>(null);
   const [renameWorkspaceId, setRenameWorkspaceId] = useState<string | null>(null);
   const [renameWorkspaceTitle, setRenameWorkspaceTitle] = useState("");
   const [renameWorkspaceBusy, setRenameWorkspaceBusy] = useState(false);
@@ -748,11 +725,6 @@ export function SessionRoute() {
   // Provider catalog cache. Used to compute the reasoning/thinking variant
   // options for whichever model is currently selected so the composer's
   // behavior pill actually shows its options (bug: was empty before).
-
-  const openworkServerSettings = useMemo(
-    () => readOpenworkServerSettings(),
-    [openworkServerSettingsVersion],
-  );
 
   const activeReloadBlockingSessions = useMemo(
     () =>
@@ -788,12 +760,6 @@ export function SessionRoute() {
     ])),
     [selectedInteractionSessionIds, selectedWorkspaceId, sessionsByWorkspaceId],
   );
-  const remoteAccessRestart = useRemoteAccessRestart({
-    isEnabled: () => openworkServerSettings.remoteAccessEnabled === true,
-    onHostInfo: setOpenworkServerHostInfoState,
-    onSettingsChanged: () => setOpenworkServerSettingsVersion((value) => value + 1),
-  });
-
   useEffect(() => {
     if (!isDesktopRuntime() || selectedWorkspace?.workspaceType !== "local") return;
     let cancelled = false;
@@ -819,7 +785,7 @@ export function SessionRoute() {
     };
   }, [openworkServerHostInfoState?.generation, refreshRouteState, selectedWorkspace?.workspaceType]);
 
-  const { engineReloadVersion, routeEngineInfo, reloadWorkspaceEngineFromUi } = useEngineReload({
+  const { engineReloadVersion, reloadWorkspaceEngineFromUi } = useEngineReload({
     client,
     opencodeBaseUrl,
     workspaceId: selectedWorkspaceId,
@@ -854,24 +820,6 @@ export function SessionRoute() {
       throw new Error(t("app.error_connect_first"));
     }
   }, [activeReloadBlockingSessions.length, reloadWorkspaceEngineFromUi, selectedWorkspaceRoot]);
-
-  const shareWorkspaceState = useShareWorkspaceState({
-    workspaces,
-    openworkServerHostInfo: openworkServerHostInfoState,
-    openworkServerSettings,
-    engineInfo: routeEngineInfo,
-    exportWorkspaceBusy: false,
-    openLink: (url) => platform.openLink(url),
-    workspaceLabel,
-  });
-
-
-  const remoteWorkspaceConnectionEditor = useRemoteWorkspaceConnectionEditor({
-    workspaces,
-    client,
-    onSaved: handleRemoteWorkspaceConnectionSaved,
-  });
-
 
   const pendingConversation = pendingConversationForRoute(pendingConversations, requestedPendingId, sessionDraftScope, selectedWorkspaceId, location.pathname === "/session");
   const workspaceSessionGroups = useMemo(() => {
@@ -910,10 +858,6 @@ export function SessionRoute() {
   useEffect(() => {
     for (const group of workspaceSessionGroups) {
       seedWorkspaceActivitySessions(group.workspace.id, group.sessions);
-      const serverId = workspaceServerId(group.workspace);
-      if (serverId && serverId !== group.workspace.id) {
-        seedWorkspaceActivitySessions(serverId, group.sessions);
-      }
     }
   }, [seedWorkspaceActivitySessions, workspaceSessionGroups]);
 
@@ -923,14 +867,10 @@ export function SessionRoute() {
     const labelById: Record<string, string> = {};
     const sourceById: Record<string, "child" | "descendant"> = {};
     for (const group of workspaceSessionGroups) {
-      const serverId = workspaceServerId(group.workspace);
       const attention = selectWorkspaceAttention(group.sessions, {
         statuses: sessionActivityByWorkspaceId[group.workspace.id],
         waiting: sessionWaitingByWorkspaceId[group.workspace.id],
         childIds: sessionChildIdsByWorkspaceId[group.workspace.id],
-        serverStatuses: serverId ? sessionActivityByWorkspaceId[serverId] : undefined,
-        serverWaiting: serverId ? sessionWaitingByWorkspaceId[serverId] : undefined,
-        serverChildIds: serverId ? sessionChildIdsByWorkspaceId[serverId] : undefined,
       });
       for (const session of group.sessions) {
         const entry = attention.get(session.id);
@@ -957,22 +897,9 @@ export function SessionRoute() {
     return selectedWorkspaceId;
   }, [selectedSessionId, selectedWorkspaceId, workspaceSessionGroups]);
 
-  const workspaceConnectionStateById = useMemo(() => {
-    const next: Record<string, WorkspaceConnectionState> = { ...workspaceConnectionOverrides };
-    for (const workspace of workspaces) {
-      if (workspace.workspaceType !== "remote") continue;
-      const error = errorsByWorkspaceId[workspace.id]?.trim();
-      if (!error || next[workspace.id]?.status === "connecting") continue;
-      next[workspace.id] ??= {
-        status: "error",
-        message: getWorkspaceTaskLoadErrorDisplay(workspace, error).message || error,
-        checkedAt: null,
-      };
-    }
-    return next;
-  }, [errorsByWorkspaceId, workspaceConnectionOverrides, workspaces]);
+  const workspaceConnectionStateById: Record<string, WorkspaceConnectionState> = workspaceConnectionOverrides;
   useSessionHistoryRuntimeOwners(workspaces.flatMap((workspace) => {
-    if (connectionPending && workspace.workspaceType !== "remote") return [];
+    if (connectionPending) return [];
     const connection = workspaceConnectionStateById[workspace.id];
     const runtime = resolveWorkbenchPaneEndpoint({
       workspaceId: workspace.id,
@@ -1387,8 +1314,6 @@ export function SessionRoute() {
     todos,
   } = useSessionInteractions({
     client: opencodeClient,
-    // Match ReactSessionRuntime and SessionSurface: remote route IDs can carry
-    // a client-only prefix, while interaction caches use the server workspace.
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId,
     sessionId: selectedSessionId,
     interactionSessionIds: selectedInteractionSessionIds,
@@ -1557,8 +1482,7 @@ export function SessionRoute() {
     // explicitly to SessionSurface from the per-workspace endpoint resolved
     // by `resolveWorkspaceEndpoint`. If we leak them in here, the spread of
     // `surfaceProps` in SessionPage overrides those correct values with the
-    // local server's, and remote workspaces silently end up calling the
-    // local server with the local `rem_*` id.
+    // local server's.
     return {
       workspaceRoot: selectedWorkspaceRoot,
       draftScope: sessionDraftScope,
@@ -1785,8 +1709,6 @@ export function SessionRoute() {
         );
         return result;
       },
-      isRemoteWorkspace: selectedWorkspace?.workspaceType === "remote",
-      isSandboxWorkspace: selectedWorkspace ? isSandboxWorkspace(selectedWorkspace) : false,
       onRevertToMessage: async (messageId: string, sessionId: string) => {
         const targetSessionId = sessionId.trim() || selectedSessionId;
         if (!targetSessionId) return false;
@@ -1853,9 +1775,7 @@ export function SessionRoute() {
         }));
       },
       environmentRuntimeKey,
-      onApplyEnvironmentChanges: isDesktopRuntime() && selectedWorkspace?.workspaceType !== "remote"
-        ? handleApplyEnvironmentChanges
-        : undefined,
+      onApplyEnvironmentChanges: isDesktopRuntime() ? handleApplyEnvironmentChanges : undefined,
     };
   }, [
     client,
@@ -1984,9 +1904,7 @@ export function SessionRoute() {
           directory: workspaceRoot || undefined,
         }));
       },
-      isRemoteWorkspace: workspace.workspaceType === "remote",
-      isSandboxWorkspace: isSandboxWorkspace(workspace),
-      environmentRuntimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
+      environmentRuntimeKey,
       onApplyEnvironmentChanges: undefined,
       onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void, agent?: string | null): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || session.sessionId;
@@ -2078,7 +1996,7 @@ export function SessionRoute() {
                   const system = await buildOpenworkSessionSystemContext(endpoint.client, {
                     workspaceId: workspace.id,
                     cacheKey: targetSessionId,
-                    runtimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
+                    runtimeKey: environmentRuntimeKey,
                     desktopTransport: isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl) ? undefined : "main",
                   });
                   assertCurrent();
@@ -2337,8 +2255,6 @@ export function SessionRoute() {
         );
         return result;
       },
-      isRemoteWorkspace: selectedWorkspace?.workspaceType === "remote",
-      isSandboxWorkspace: selectedWorkspace ? isSandboxWorkspace(selectedWorkspace) : false,
       onOpenSettingsSection: (section: ComposerSettingsSection) => {
         openComposerConfigure(section, {
           openLibrary: handleOpenExtensions,
@@ -2400,7 +2316,6 @@ export function SessionRoute() {
       });
       return;
     }
-    setCreateWorkspaceRemoteError(null);
     setCreateWorkspaceOpen(true);
   }, [checkDesktopRestriction, restrictionNotice, workspaces.length]);
 
@@ -2449,33 +2364,6 @@ export function SessionRoute() {
       // ignore
     }
   }, [workspaces]);
-
-  const handleShareWorkspace = useCallback((workspaceId: string) => {
-    shareWorkspaceState.openShareWorkspace(workspaceId);
-  }, [shareWorkspaceState]);
-
-  const handleSaveShareRemoteAccess = useCallback(
-    async (enabled: boolean) => {
-      if (!isDesktopRuntime()) return;
-      await remoteAccessRestart.save(enabled);
-    },
-    [remoteAccessRestart],
-  );
-
-  const handleExportWorkspaceConfig = useCallback(
-    async (workspaceId: string) => {
-      const workspace = workspaces.find((item) => item.id === workspaceId) ?? null;
-      if (!workspace) return;
-      const endpoint = endpointForWorkspace(workspace);
-      if (endpoint) {
-        const payload = await endpoint.client.exportWorkspace(endpoint.workspaceId);
-        downloadWorkspaceJson(workspaceExportFilename(workspace), payload);
-        return;
-      }
-      throw new Error("OpenWork server is unavailable. Reconnect the server before exporting workspace config.");
-    },
-    [endpointForWorkspace, workspaces],
-  );
 
   const handleForgetWorkspace = useCallback(
     async (workspaceId: string) => {
@@ -3686,53 +3574,6 @@ export function SessionRoute() {
   }), [reloadWorkspaceSessions, workspaces]);
   useControlAction(reloadWorkspaceSessionsControlAction);
 
-  const handleCreateRemoteWorkspace = useCallback(async (input: {
-    openworkHostUrl?: string | null;
-    openworkToken?: string | null;
-    directory?: string | null;
-    displayName?: string | null;
-  }) => {
-    const baseUrlValue = input.openworkHostUrl?.trim() ?? "";
-    if (!baseUrlValue) return false;
-    setCreateWorkspaceRemoteBusy(true);
-    setCreateWorkspaceRemoteError(null);
-    try {
-      const remoteType: "openwork" = "openwork";
-      const payload = {
-        baseUrl: baseUrlValue,
-        openworkHostUrl: baseUrlValue,
-        openworkToken: input.openworkToken?.trim() || null,
-        displayName: input.displayName?.trim() || null,
-        directory: input.directory?.trim() || null,
-        remoteType,
-      };
-      let list: WorkspaceList | null = null;
-      if (isDesktopRuntime()) {
-        list = await workspaceCreateRemote(payload);
-      } else if (client) {
-        list = await client.createRemoteWorkspace(payload).catch(() => null);
-      }
-      if (!list) {
-        throw new Error("OpenWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");
-      }
-      const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
-      if (createdId) {
-        await workspaceSetSelected(createdId).catch(() => undefined);
-        await workspaceSetRuntimeActive(createdId).catch(() => undefined);
-      }
-      setCreateWorkspaceOpen(false);
-      // Mark onboarding complete so the /welcome redirect never fires again.
-      local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
-      await refreshRouteState();
-      return true;
-    } catch (error) {
-      setCreateWorkspaceRemoteError(error instanceof Error ? error.message : t("app.unknown_error"));
-      return false;
-    } finally {
-      setCreateWorkspaceRemoteBusy(false);
-    }
-  }, [client, local, refreshRouteState]);
-
   const startAppConversation = async (prompt: string) => {
     const sessionId = await handleCreateTaskInWorkspaceWithOpenMode(selectedWorkspaceId, "primary");
     if (!sessionId) throw new Error("Could not start a conversation. Check that your workspace is connected.");
@@ -3757,9 +3598,8 @@ export function SessionRoute() {
     >
     {opencodeClient && selectedWorkspaceEndpoint && opencodeBaseUrl && selectedWorkspaceServerToken ? (
       <ReactSessionRuntime
-        // Use the server-side workspace id (the one without the `rem_`
-        // prefix) so the React Query cache keys session-sync writes match
-        // the keys SessionSurface reads from. Otherwise events arrive but
+        // Use the server-side workspace id so the React Query cache keys
+        // session-sync writes match the keys SessionSurface reads from. Otherwise events arrive but
         // the UI never sees them and gets stuck on "thinking".
         workspaceId={selectedWorkspaceEndpoint.workspaceId}
         sessionId={selectedSessionId}
@@ -3825,7 +3665,6 @@ export function SessionRoute() {
         submitting: sessionProviderAuthSnapshot.providerAuthBusy,
         error: sessionProviderAuthSnapshot.providerAuthError,
         preferredProviderId: sessionProviderAuthSnapshot.providerAuthPreferredProviderId,
-        workerType: sessionProviderAuthSnapshot.providerAuthWorkerType,
         providers: sessionProviderAuthSnapshot.providerAuthProviders.filter(
           (provider) => !isDesktopProviderBlocked({ providerId: provider.id, checkRestriction: checkDesktopRestriction }),
         ),
@@ -4002,11 +3841,8 @@ export function SessionRoute() {
           }, (created) => publishCreatedConversation(pending, created, agent, workspace?.displayNameResolved));
         },
         onOpenRenameWorkspace: handleOpenRenameWorkspace,
-        onShareWorkspace: handleShareWorkspace,
         onRevealWorkspace: (id) => void handleRevealWorkspace(id),
-        onRecoverWorkspace: (workspaceId) => runRemoteWorkspaceConnectionCheck(workspaceId, "recover"),
-        onTestWorkspaceConnection: (workspaceId) => runRemoteWorkspaceConnectionCheck(workspaceId, "test"),
-        onEditWorkspaceConnection: remoteWorkspaceConnectionEditor.open,
+        onRetryWorkspace: (workspaceId) => reloadWorkspaceSessions(workspaceId),
         onForgetWorkspace: (id) => void handleForgetWorkspace(id),
         onOpenCreateWorkspace: handleOpenCreateWorkspace,
         onOpenSessionSearch: () => setSessionSearchOpen(true),
@@ -4023,37 +3859,6 @@ export function SessionRoute() {
       }}
       todos={todos}
       sessionLoadingById={(sessionId) => effectiveLoading && Boolean(sessionId && sessionId === selectedSessionId)}
-      shareWorkspaceModal={
-        shareWorkspaceState.shareWorkspaceOpen
-          ? {
-              open: true,
-              onClose: shareWorkspaceState.closeShareWorkspace,
-              workspaceName: shareWorkspaceState.shareWorkspaceName,
-              workspaceDetail: shareWorkspaceState.shareWorkspaceDetail,
-              fields: shareWorkspaceState.shareFields,
-              remoteAccess:
-                isDesktopRuntime() && shareWorkspaceState.shareWorkspace?.workspaceType === "local"
-                  ? {
-                      enabled: openworkServerSettings.remoteAccessEnabled === true,
-                      busy: remoteAccessRestart.busy,
-                      error: remoteAccessRestart.error,
-                      status: remoteAccessRestart.status,
-                      onSave: handleSaveShareRemoteAccess,
-                    }
-                  : undefined,
-              note: shareWorkspaceState.shareNote,
-              onExportConfig:
-                shareWorkspaceState.exportDisabledReason === null
-                  ? () => {
-                      const id = shareWorkspaceState.shareWorkspaceId;
-                      if (!id) return;
-                      void handleExportWorkspaceConfig(id);
-                    }
-                  : undefined,
-              exportDisabledReason: shareWorkspaceState.exportDisabledReason,
-            }
-          : null
-      }
       activePermission={activePermission}
       activePermissionSourceTitle={activePermissionSourceTitle}
       permissionReplyBusy={permissionReplyBusy}
@@ -4125,7 +3930,6 @@ export function SessionRoute() {
         setCreateWorkspaceError(null);
       }}
       onConfirm={handleCreateWorkspace}
-      onConfirmRemote={handleCreateRemoteWorkspace}
       onPickFolder={async () => singlePickedDirectory(await pickDirectory({ title: t("onboarding.authorize_folder") }))}
       submitting={createWorkspaceBusy}
       localError={createWorkspaceError}
@@ -4135,19 +3939,6 @@ export function SessionRoute() {
           ? undefined
           : t("app.local_disabled_reason")
       }
-      remoteSubmitting={createWorkspaceRemoteBusy}
-      remoteError={createWorkspaceRemoteError}
-    />
-    <CreateRemoteWorkspaceModal
-      open={remoteWorkspaceConnectionEditor.workspace !== null}
-      onClose={remoteWorkspaceConnectionEditor.close}
-      onConfirm={(input) => void remoteWorkspaceConnectionEditor.save(input)}
-      initialValues={remoteWorkspaceConnectionEditor.initialValues}
-      submitting={remoteWorkspaceConnectionEditor.busy}
-      error={remoteWorkspaceConnectionEditor.error}
-      title={t("dashboard.edit_remote_workspace_title")}
-      subtitle={t("dashboard.edit_remote_workspace_subtitle")}
-      confirmLabel={t("dashboard.edit_remote_workspace_confirm")}
     />
     <RenameWorkspaceModal
       open={renameWorkspaceId !== null}

@@ -30,7 +30,7 @@ src/
     └── domains/               Feature-scoped code, one folder per product domain
         ├── session/           chat/ surface/ sync/ composer, sidebar/, panel/, terminal/,
         │                      artifacts/, modals/, …
-        ├── workspace/         Create/rename/share workspace flows
+        ├── workspace/         Create/rename workspace flows
         ├── settings/          state/ + pages/ + modals/ (settings shell)
         ├── connections/       MCP + provider auth UI
         ├── cloud/             Den sign-in and cloud surfaces

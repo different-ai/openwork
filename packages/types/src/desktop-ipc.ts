@@ -95,13 +95,9 @@ export type OpenworkServerInfo = {
    * the bridge predates the field or no start completed yet.
    */
   generation: number | null;
-  remoteAccessEnabled: boolean;
   host: string | null;
   port: number | null;
   baseUrl: string | null;
-  connectUrl: string | null;
-  mdnsUrl: string | null;
-  lanUrl: string | null;
   clientToken: string | null;
   ownerToken: string | null;
   hostToken: string | null;
@@ -325,30 +321,6 @@ export type DesktopWorkspaceFileOpenResult =
   | { ok: true; action: "opened" | "revealed" }
   | { ok: false; error: string };
 
-export type DesktopMultipartUploadInput = {
-  transferId: string;
-  url: string;
-  bytes: ArrayBuffer;
-  filename: string;
-  size: number;
-  contentType?: string;
-  fieldName?: string;
-  fields?: Record<string, string>;
-  method?: string;
-  headers?: Record<string, string>;
-  timeoutMs?: number;
-};
-
-export type DesktopBinaryDownloadInput = {
-  transferId: string;
-  url: string;
-  destinationPath: string;
-  maxBytes?: number;
-  method?: string;
-  headers?: Record<string, string>;
-  timeoutMs?: number;
-};
-
 export type DesktopBinaryDownloadResult = {
   status: number;
   statusText: string;
@@ -362,26 +334,6 @@ export type WorkspaceCreateInput = {
   folderPath: string;
   name?: string | null;
   preset?: string | null;
-};
-
-export type WorkspaceCreateRemoteInput = {
-  baseUrl: string;
-  remoteType?: "openwork" | "opencode" | null;
-  directory?: string | null;
-  displayName?: string | null;
-  openworkHostUrl?: string | null;
-  openworkToken?: string | null;
-  openworkClientToken?: string | null;
-  openworkHostToken?: string | null;
-  openworkWorkspaceId?: string | null;
-  openworkWorkspaceName?: string | null;
-  sandboxBackend?: string | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
-};
-
-export type WorkspaceUpdateRemoteInput = WorkspaceCreateRemoteInput & {
-  workspaceId: string;
 };
 
 export type UiControlBridgeInfo = {
@@ -399,8 +351,6 @@ export type DesktopCommandMap = {
   workspaceSetSelected: { args: [workspaceId: string]; result: WorkspaceList };
   workspaceSetRuntimeActive: { args: [workspaceId: string | null]; result: WorkspaceList };
   workspaceCreate: { args: [input: WorkspaceCreateInput]; result: WorkspaceList };
-  workspaceCreateRemote: { args: [input: WorkspaceCreateRemoteInput]; result: WorkspaceList };
-  workspaceUpdateRemote: { args: [input: WorkspaceUpdateRemoteInput]; result: WorkspaceList };
   workspaceForget: { args: [workspaceId: string]; result: WorkspaceList };
   workspaceOpenworkRead: {
     args: [input: { workspacePath: string }];
@@ -535,7 +485,6 @@ export type DesktopCommandMap = {
   __getApplicationsForFile: { args: [target: string]; result: { name: string; appPath: string; icon: string | null }[] };
   __openWithApp: { args: [target: string, appPath: string, workspaceRoot: string]; result: unknown };
   __fetch: { args: [url: string, init?: DesktopFetchInit]; result: DesktopFetchResult };
-  __uploadMultipart: { args: [input: DesktopMultipartUploadInput]; result: DesktopFetchResult };
   __cancelTransfer: { args: [transferId: string]; result: boolean };
   __homeDir: { args: []; result: string };
   __joinPath: { args: [...segments: string[]]; result: string };

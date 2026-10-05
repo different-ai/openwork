@@ -179,7 +179,6 @@ const getSkillHiddenId = (skill: SkillItem) => `skill:${skill.name}`;
 export type McpViewProps = {
   busy: boolean;
   selectedWorkspaceRoot: string;
-  isRemoteWorkspace: boolean;
   /** Installed skills to render alongside MCPs in the grid. */
   installedSkills?: SkillItem[];
   /** Composer slash commands to render in Library. */
@@ -990,7 +989,7 @@ export function McpView(props: McpViewProps) {
     const nextId = configRequestId.current + 1;
     configRequestId.current = nextId;
     const readConfig = props.readConfigFile;
-    const canReadDesktopConfig = !props.isRemoteWorkspace && isDesktopRuntime();
+    const canReadDesktopConfig = isDesktopRuntime();
 
     if (!readConfig && !canReadDesktopConfig) {
       dispatchLocal({ type: "configUnavailable" });
@@ -1028,7 +1027,7 @@ export function McpView(props: McpViewProps) {
         });
       }
     })();
-  }, [props.isRemoteWorkspace, props.readConfigFile, props.selectedWorkspaceRoot]);
+  }, [props.readConfigFile, props.selectedWorkspaceRoot]);
 
   const activeConfig = configScope === "project" ? projectConfig : globalConfig;
 
@@ -1038,7 +1037,6 @@ export function McpView(props: McpViewProps) {
 
   const canRevealConfig =
     isDesktopRuntime() &&
-    !props.isRemoteWorkspace &&
     !revealBusy &&
     !(configScope === "project" && !props.selectedWorkspaceRoot.trim()) &&
     Boolean(activeConfig?.exists);
@@ -1156,9 +1154,7 @@ export function McpView(props: McpViewProps) {
     try {
       const resolved = props.readConfigFile
         ? await props.readConfigFile(configScope)
-        : !props.isRemoteWorkspace
-        ? await readOpencodeConfig(configScope, root)
-        : null;
+        : await readOpencodeConfig(configScope, root);
       const configFile = resolved as OpencodeConfigFile | null;
       if (!configFile) {
         throw new Error(t("mcp.config_load_failed"));
@@ -2147,7 +2143,6 @@ export function McpView(props: McpViewProps) {
         onClose={() => setAddMcpModalOpen(false)}
         onAdd={props.connectMcp}
         busy={props.busy}
-        isRemoteWorkspace={props.isRemoteWorkspace}
       />
 
       <LibraryDeleteDialog

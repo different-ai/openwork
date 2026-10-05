@@ -28,13 +28,6 @@ type InboxUploadResult = {
 
 type ChatAttachmentUploadClient = {
   uploadInbox: (workspaceId: string, file: File, options?: { path?: string }) => Promise<InboxUploadResult>;
-  /**
-   * True when the upload transport streams the original file from disk (for
-   * example the Electron main-process transfer used for remote workspaces).
-   * Re-encoding such a file would strip its local path and corrupt the upload
-   * route, so callers must send it unmodified.
-   */
-  uploadInboxPrefersOriginalFile?: (file: File) => boolean;
 };
 
 export type ChatAttachmentWorkspaceEndpoint = {
@@ -379,12 +372,8 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
   for (const attachment of input.attachments) {
     // Oversized images are re-encoded here, at send time, so the composer chip
     // appears instantly at attach time and the canvas work happens while the
-    // chip already shows its uploading state. When the transport uploads the
-    // original file from its local path, re-encoding would detach that path,
-    // so the original bytes are sent instead.
-    const file = input.endpoint.client.uploadInboxPrefersOriginalFile?.(attachment.file)
-      ? attachment.file
-      : await compressImageFile(attachment.file);
+    // chip already shows its uploading state.
+    const file = await compressImageFile(attachment.file);
     const metadata = resolveAttachmentFileMetadata(file);
     const id = input.createId ? input.createId() : randomAttachmentId();
     const inboxPath = buildChatAttachmentInboxPath({

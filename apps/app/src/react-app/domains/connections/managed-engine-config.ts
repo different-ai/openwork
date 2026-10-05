@@ -3,7 +3,7 @@ import { isOpencodeV2Client } from "@/app/lib/opencode-v2-adapter";
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import type { Client } from "@/app/types";
 
-type WorkspaceType = "local" | "remote" | string;
+type WorkspaceType = string;
 
 export type UpdateManagedDisabledProvidersOptions = {
   opencodeClient: Client | null;

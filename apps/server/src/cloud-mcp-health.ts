@@ -2281,8 +2281,8 @@ async function readOpenworkCloudMcpHealthInternal(
       code: "workspace_directory_ambiguous",
       stage: "prerequisites",
       retryable: false,
-      recommendedAction: "Set an explicit OpenCode directory for this remote workspace",
-      message: "Remote workspace has no exact OpenCode directory, so Cloud MCP readiness cannot be claimed.",
+      recommendedAction: "Set an explicit OpenCode directory for this workspace",
+      message: "Workspace has no exact OpenCode directory, so Cloud MCP readiness cannot be claimed.",
     }));
   }
   if (desired.present && input.directory && !baseUrlConfigured(input.config, input.workspace)) {
@@ -2577,7 +2577,7 @@ export async function reconcileOpenworkCloudMcp(input: {
     await Promise.all(input.config.workspaces
       .filter((workspace) => workspace.id !== input.workspace.id)
       .map(async (workspace) => {
-        const directory = workspace.workspaceType === "local" ? workspace.path : workspace.directory ?? null;
+        const directory = workspace.path || null;
         if (!directory) return;
         await input.createWorkspaceOpencodeClient(input.config, workspace).mcp.disconnect({
           name: OPENWORK_CLOUD_MCP_NAME,
@@ -2593,8 +2593,8 @@ export async function reconcileOpenworkCloudMcp(input: {
       code: "workspace_directory_ambiguous",
       stage: "prerequisites",
       retryable: false,
-      recommendedAction: "Set an explicit OpenCode directory for this remote workspace",
-      message: "Remote workspace has no exact OpenCode directory, so Cloud MCP readiness cannot be claimed.",
+      recommendedAction: "Set an explicit OpenCode directory for this workspace",
+      message: "Workspace has no exact OpenCode directory, so Cloud MCP readiness cannot be claimed.",
     });
     cloudMcpDeliveryState.markFailed(input.workspace, input.directory, desiredRevision, directoryFailure);
     return healthWithFailure(await readHealth(), directoryFailure);

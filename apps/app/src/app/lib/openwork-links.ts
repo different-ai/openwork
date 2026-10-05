@@ -1,13 +1,4 @@
 import { DEFAULT_DEN_BASE_URL, normalizeDenBaseUrl } from "./den";
-import { normalizeOpenworkServerUrl } from "./openwork-server";
-
-export type RemoteWorkspaceDefaults = {
-  openworkHostUrl?: string | null;
-  openworkToken?: string | null;
-  directory?: string | null;
-  displayName?: string | null;
-  autoConnect?: boolean;
-};
 
 export type DenAuthDeepLink = {
   grant: string;
@@ -38,54 +29,6 @@ function isSupportedDeepLinkProtocol(protocol: string): boolean {
     || normalized === "openwork-dev:"
     || normalized === "https:"
     || normalized === "http:";
-}
-
-export function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefaults | null {
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return null;
-  }
-
-  const protocol = url.protocol.toLowerCase();
-  if (!isSupportedDeepLinkProtocol(protocol)) {
-    return null;
-  }
-
-  const routeHost = url.hostname.toLowerCase();
-  const routePath = url.pathname.replace(/^\/+/, "").toLowerCase();
-  const routeSegments = routePath.split("/").filter(Boolean);
-  const routeTail = routeSegments[routeSegments.length - 1] ?? "";
-  if (routeHost !== "connect-remote" && routePath !== "connect-remote" && routeTail !== "connect-remote") {
-    return null;
-  }
-
-  const hostUrlRaw = url.searchParams.get("openworkHostUrl") ?? url.searchParams.get("openworkUrl") ?? "";
-  const tokenRaw = url.searchParams.get("openworkToken") ?? url.searchParams.get("accessToken") ?? "";
-  const normalizedHostUrl = normalizeOpenworkServerUrl(hostUrlRaw);
-  const token = tokenRaw.trim();
-  if (!normalizedHostUrl || !token) {
-    return null;
-  }
-
-  const workerName = url.searchParams.get("workerName")?.trim() ?? "";
-  const workerId = url.searchParams.get("workerId")?.trim() ?? "";
-  const displayName = workerName || (workerId ? `Worker ${workerId.slice(0, 8)}` : "");
-  const autoConnectRaw =
-    url.searchParams.get("autoConnect") ??
-    url.searchParams.get("bypassModal") ??
-    url.searchParams.get("bypassAddWorkerModal") ??
-    "";
-  const autoConnect = ["1", "true", "yes", "on"].includes(autoConnectRaw.trim().toLowerCase());
-
-  return {
-    openworkHostUrl: normalizedHostUrl,
-    openworkToken: token,
-    directory: null,
-    displayName: displayName || null,
-    autoConnect,
-  };
 }
 
 export function parseDenAuthDeepLink(rawUrl: string): DenAuthDeepLink | null {

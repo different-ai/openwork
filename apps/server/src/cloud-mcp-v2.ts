@@ -2,10 +2,10 @@ import type { CloudMcpNativeEngineResolver, CloudMcpRuntimeRegistrar } from "./c
 import type { EngineV2Preview } from "./engine-v2-preview.js";
 import artifacts from "./opencode-v2-artifacts.json" with { type: "json" };
 
-/** Bind each health request to the selected local engine; remote owners remain independent. */
+/** Bind each health request to the selected local engine. */
 export function createNativeCloudMcpResolver(preview: Pick<EngineV2Preview, "status" | "connection">): CloudMcpNativeEngineResolver {
   return (workspace) => {
-    if (workspace.workspaceType === "remote" || !preview.status().chatRouting) return undefined;
+    if (!preview.status().chatRouting) return undefined;
     const connection = preview.connection();
     return {
       version: artifacts.version,

@@ -39,7 +39,6 @@ import type {
   DesktopCommandName,
   DesktopCommandResult,
   DesktopFetchResult,
-  DesktopMultipartUploadInput,
   EvalRelaunchResult,
   NukeManifestPreview,
   NukeOptions,
@@ -365,39 +364,6 @@ async function runCancellableDesktopTransfer<T>(
   }
 }
 
-export function electronLocalPathForFile(file: File): string | null {
-  const getPathForFile = window.__OPENWORK_ELECTRON__?.fileSystem?.getPathForFile;
-  if (!getPathForFile) return null;
-  try {
-    return getPathForFile(file).trim() || null;
-  } catch {
-    return null;
-  }
-}
-
-export async function desktopUploadMultipart(
-  file: File,
-  input: Omit<DesktopMultipartUploadInput, "transferId" | "bytes" | "filename" | "size" | "contentType">,
-  signal?: AbortSignal,
-): Promise<DesktopFetchResult> {
-  const transferId = desktopTransferId();
-  // The renderer hands over the bytes it already holds for this File; the
-  // main process never reads renderer-chosen paths for uploads.
-  const payload: DesktopMultipartUploadInput = {
-    ...input,
-    transferId,
-    bytes: await file.arrayBuffer(),
-    filename: file.name,
-    size: file.size,
-    contentType: file.type || undefined,
-  };
-  return runCancellableDesktopTransfer(
-    transferId,
-    signal,
-    () => invokeElectronHelper("__uploadMultipart", payload),
-  );
-}
-
 type DesktopFetchMainOptions = {
   timeoutMs?: number;
   agentContextDiagnosticsDeadlineAtMs?: number;
@@ -669,8 +635,6 @@ const {
   workspaceSetSelected,
   workspaceSetRuntimeActive,
   workspaceCreate,
-  workspaceCreateRemote,
-  workspaceUpdateRemote,
   workspaceForget,
   workspaceOpenworkRead,
   workspaceOpenworkWrite,
@@ -711,8 +675,6 @@ export {
   workspaceSetSelected,
   workspaceSetRuntimeActive,
   workspaceCreate,
-  workspaceCreateRemote,
-  workspaceUpdateRemote,
   workspaceForget,
   workspaceOpenworkRead,
   workspaceOpenworkWrite,

@@ -119,7 +119,7 @@ export function createConnectionsStore(options: {
   projectDir: () => string;
   selectedWorkspaceId: () => string;
   selectedWorkspaceRoot: () => string;
-  workspaceType: () => "local" | "remote";
+  workspaceType: () => "local";
   openworkServer: OpenworkServerStore;
   runtimeWorkspaceId: () => string | null;
   ensureRuntimeWorkspaceId?: () => Promise<string | null | undefined>;
@@ -491,8 +491,6 @@ export function createConnectionsStore(options: {
     const refreshToken = mcpStatusSynchronizer.beginRefresh(getWorkspaceContextKey());
     const isCurrentRefresh = () => !disposed && mcpStatusSynchronizer.isCurrent(refreshToken);
     const projectDir = options.projectDir().trim();
-    const isRemoteWorkspace = options.workspaceType() === "remote";
-
     try {
       if (isCurrentRefresh()) setStateField("mcpStatus", null);
       const serverResult = await listMcpFromOpenworkServer(projectDir);
@@ -528,7 +526,7 @@ export function createConnectionsStore(options: {
       });
       const serverTarget = await resolveMcpOpenworkTarget("read").catch(() => null);
       if (!isCurrentRefresh()) return;
-      if (isRemoteWorkspace || serverTarget?.hasOpenworkTarget) {
+      if (serverTarget?.hasOpenworkTarget) {
         mutateState((current) => ({
           ...current,
           mcpServers: [],
@@ -537,17 +535,6 @@ export function createConnectionsStore(options: {
         }));
         return;
       }
-    }
-
-    if (isRemoteWorkspace) {
-      if (!isCurrentRefresh()) return;
-      mutateState((current) => ({
-        ...current,
-        mcpStatus: "OpenWork server unavailable. MCP config is read-only.",
-        mcpServers: [],
-        mcpStatuses: {},
-      }));
-      return;
     }
 
     if (!isDesktopRuntime()) {
@@ -683,23 +670,22 @@ export function createConnectionsStore(options: {
     }
     const startedAt = perfNow();
     const openworkSnapshot = getOpenworkSnapshot();
-    const isRemoteWorkspace =
-      options.workspaceType() === "remote" ||
-      (!isDesktopRuntime() && openworkSnapshot.openworkServerStatus === "connected");
+    // A browser session connected to an OpenWork server has no local config to fall back to.
+    const serverOnly = !isDesktopRuntime() && openworkSnapshot.openworkServerStatus === "connected";
     const projectDir = options.projectDir().trim();
     const entryType = entry.type ?? "remote";
 
     recordPerfLog(options.developerMode(), "mcp.connect", "start", {
       name: entry.name,
       type: entryType,
-      workspaceType: isRemoteWorkspace ? "remote" : "local",
+      serverOnly,
       projectDir: projectDir || null,
     });
 
     const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
       await resolveWritableOpenworkTarget();
 
-    if (isRemoteWorkspace && !canUseOpenworkServer) {
+    if (serverOnly && !canUseOpenworkServer) {
       const error = "OpenWork server unavailable. MCP config is read-only.";
       setStateField("mcpStatus", error);
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
@@ -726,7 +712,7 @@ export function createConnectionsStore(options: {
       return { ok: false, error };
     }
 
-    if (!isRemoteWorkspace && !projectDir && !canUseOpenworkServer) {
+    if (!serverOnly && !projectDir && !canUseOpenworkServer) {
       const error = t("mcp.pick_workspace_first");
       setStateField("mcpStatus", error);
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
@@ -816,7 +802,7 @@ export function createConnectionsStore(options: {
       }
 
       if (entry.managedOAuth) {
-        if (isRemoteWorkspace || !isDesktopRuntime()) {
+        if (!isDesktopRuntime()) {
           throw new Error("OpenWork-managed MCP OAuth is currently available for local desktop workspaces only.");
         }
         if (entryType !== "remote" || !entry.url) {
@@ -1169,15 +1155,14 @@ export function createConnectionsStore(options: {
 
   async function logoutMcpAuth(name: string) {
     const openworkSnapshot = getOpenworkSnapshot();
-    const isRemoteWorkspace =
-      options.workspaceType() === "remote" ||
-      (!isDesktopRuntime() && openworkSnapshot.openworkServerStatus === "connected");
+    // A browser session connected to an OpenWork server has no local config to fall back to.
+    const serverOnly = !isDesktopRuntime() && openworkSnapshot.openworkServerStatus === "connected";
     const projectDir = options.projectDir().trim();
 
     const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
       await resolveWritableOpenworkTarget();
 
-    if (isRemoteWorkspace && !canUseOpenworkServer) {
+    if (serverOnly && !canUseOpenworkServer) {
       setStateField("mcpStatus", "OpenWork server unavailable. MCP auth is read-only.");
       return;
     }

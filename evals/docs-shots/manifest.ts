@@ -58,7 +58,6 @@ const ALLOWLIST = new Set([
   "desktop-org-mcp-connected.png",
   "desktop-org-mcp-marketplace.png",
   "exa-search-toggle.png",
-  "get-started-add-remote-workspace.png",
   "get-started-cli-output.png",
   "improved-skills-march11th.gif",
   "infron-model-active.png",
