@@ -966,7 +966,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         const body = validJson<{
           githubUrl: string
         }>(c)
-        return c.json({ ok: true, item: await previewGithubPluginMcpImport({ githubUrl: body.githubUrl }) })
+        return c.json({ ok: true, item: await previewGithubPluginMcpImport({ context: actorContext(c), githubUrl: body.githubUrl }) })
       } catch (error) {
         return routeErrorResponse(c, error)
       }

@@ -1518,7 +1518,10 @@ async function previewMarketplace(target, url) {
       url: plugin.key?.startsWith("marketplace:") && folder ? `${url}/tree/${branch}/${folder}` : url,
       skills: skills.map((skill) => skill.name),
       connectors: servers.filter((server) => server.supported).map((server) => server.name),
-      needsSetup: servers.filter((server) => !server.supported).map((server) => ({ name: server.name, reason: server.skippedReason })),
+      // Connectors Den maps to a connection the organization already has
+      // (e.g. Claude's Slack or blank Gmail entry -> your Slack / Google Workspace).
+      usesExisting: servers.filter((server) => server.reuse).map((server) => ({ name: server.name, connection: server.reuse.connectionName })),
+      needsSetup: servers.filter((server) => !server.supported && !server.reuse).map((server) => ({ name: server.name, reason: server.skippedReason, mapsTo: server.mapsTo?.displayName ?? null })),
     }
   })
   const marketplaceName = item.marketplace?.name ?? url.split("/").at(-1) ?? url
@@ -1526,6 +1529,8 @@ async function previewMarketplace(target, url) {
 }
 
 function connectorNextStep(entry) {
+  const mapsTo = entry.mapsTo?.displayName ?? null
+  if (entry.reason === "native_connector") return `${entry.name}: Claude-only connector; connect ${mapsTo ?? "the matching provider"} in OpenWork (Connections) instead`
   if (entry.reason === "missing_url") return `${entry.name}: the plugin leaves this for you to choose; connect it in OpenWork (Connections)`
   if (entry.reason === "local_unsupported") return `${entry.name}: runs on your computer in Claude; add it to OpenWork as a local MCP server if you still need it`
   return `${entry.name}: not importable (${entry.reason})`
@@ -1559,10 +1564,14 @@ async function importMarketplacePlugin(target, plugin, access) {
     skillsAdded: (item.importedSkills ?? []).map((skill) => skill.name),
     skillsUpdated: (item.updatedSkills ?? []).map((skill) => skill.name),
     connectorsAdded: (item.imported ?? []).map((server) => server.name),
+    usesExisting: [
+      ...(item.imported ?? []).filter((server) => server.existingConnection).map((server) => ({ name: server.name, connection: server.connectionName })),
+      ...(item.skipped ?? []).filter((entry) => entry.reuse).map((entry) => ({ name: entry.name, connection: entry.reuse.connectionName })),
+    ],
     unchanged: (item.unchanged ?? []).length,
     // Skills and connectors deleted upstream since the last run.
     removed: (item.removed ?? []).map((entry) => `${entry.objectType === "mcp" ? "connector" : "skill"} ${entry.name}`),
-    nextSteps: [...(item.skipped ?? []).map((entry) => connectorNextStep(entry)), ...(item.skippedSkills ?? []).map((entry) => `${entry.name}: skill not imported (${entry.reason})`)],
+    nextSteps: [...(item.skipped ?? []).filter((entry) => !entry.reuse).map((entry) => connectorNextStep(entry)), ...(item.skippedSkills ?? []).map((entry) => `${entry.name}: skill not imported (${entry.reason})`)],
   }
 }
 
@@ -1657,7 +1666,10 @@ async function runMigrate(args) {
         `Plan for ${target.org.name}:`,
         ...marketplaces.flatMap((entry) => entry.error
           ? [`  ${entry.url}: preview failed (${entry.error})`]
-          : [`  ${entry.name}: ${entry.plugins.length} plugins`, ...entry.plugins.map((plugin) => `    - ${plugin.name}: ${plugin.skills.length} skills, ${plugin.connectors.length} optional connectors${plugin.needsSetup.length ? `, ${plugin.needsSetup.length} to set up yourself` : ""}`)]),
+          : [`  ${entry.name}: ${entry.plugins.length} plugins`, ...entry.plugins.flatMap((plugin) => [
+            `    - ${plugin.name}: ${plugin.skills.length} skills, ${plugin.connectors.length} optional connectors${plugin.needsSetup.length ? `, ${plugin.needsSetup.length} to set up yourself` : ""}`,
+            ...plugin.usesExisting.map((use) => `        ${use.name}: will use your existing ${use.connection} connection`),
+          ])]),
         localSkills.length ? `  Your own Cowork skills (private to you): ${localSkills.map((skill) => skill.name).join(", ")}` : "",
         "",
         `Import with: ${COMMAND_NAME} migrate apply --plugin <name,...> (or --all)`,
@@ -1698,7 +1710,10 @@ async function runMigrate(args) {
     message: migrationSummary([
       `Migrated into ${target.org.name}:`,
       ...plugins.map((entry) => entry.ok
-        ? `  ${entry.importedAs ?? entry.plugin} (${entry.mode}): ${entry.skillsAdded.length} skills added, ${entry.skillsUpdated.length} updated, ${entry.connectorsAdded.length} optional connectors added, ${entry.unchanged} unchanged${entry.removed.length ? `, ${entry.removed.length} removed (deleted upstream: ${entry.removed.join(", ")})` : ""}`
+        ? [
+          `  ${entry.importedAs ?? entry.plugin} (${entry.mode}): ${entry.skillsAdded.length} skills added, ${entry.skillsUpdated.length} updated, ${entry.connectorsAdded.length} optional connectors added, ${entry.unchanged} unchanged${entry.removed.length ? `, ${entry.removed.length} removed (deleted upstream: ${entry.removed.join(", ")})` : ""}`,
+          ...entry.usesExisting.map((use) => `    ${use.name}: uses your existing ${use.connection} connection`),
+        ].join("\n")
         : `  ${entry.plugin}: failed (${entry.error})`),
       ...skills.map((entry) => entry.ok ? `  your skill ${entry.importedAs ?? entry.skill}: ${entry.mode}` : `  your skill ${entry.skill}: failed (${entry.error})`),
       nextSteps.length ? "\nStill to do:" : "",

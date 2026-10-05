@@ -205,3 +205,83 @@ export async function denCoworkMarketplace(seed: Seed): Promise<DenCoworkMarketp
     },
   };
 }
+
+export type OrgConnectionFacts = { id: string; name: string; url: string; nativeProviderKey: string | null };
+
+/** Claude's Slack connector URL, which is also OpenWork's Slack preset. */
+export const SLACK_MCP_URL = "https://mcp.slack.com/mcp";
+
+export interface DenCoworkMarketplaceWithConnectionsWorld extends DenCoworkMarketplaceWorld {
+  /** Connections the organization had before anything was imported, by provider. */
+  existing: { slack: OrgConnectionFacts[]; microsoft365: OrgConnectionFacts[]; googleWorkspace: OrgConnectionFacts[] };
+  /** Every connection in the organization right now, as an admin lists them. */
+  connections(): Promise<OrgConnectionFacts[]>;
+  /** The stored definitions of a plugin's components, as JSON text. */
+  pluginComponentsText(pluginId: string): Promise<string>;
+}
+
+function readConnections(value: unknown): OrgConnectionFacts[] {
+  if (!isRecord(value) || !Array.isArray(value.connections)) return [];
+  return value.connections.flatMap((entry): OrgConnectionFacts[] => {
+    if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.name !== "string") return [];
+    return [{
+      id: entry.id,
+      name: entry.name,
+      url: typeof entry.url === "string" ? entry.url : "",
+      nativeProviderKey: typeof entry.nativeProviderKey === "string" ? entry.nativeProviderKey : null,
+    }];
+  });
+}
+
+const sameUrl = (a: string, b: string) => a.replace(/\/+$/, "") === b.replace(/\/+$/, "");
+
+/**
+ * The same Den, for an organization that already uses Slack, Microsoft 365
+ * and Google Workspace in OpenWork (a reused Daytona Den's demo organization
+ * may already have some of them; those are kept, not duplicated).
+ */
+export async function denCoworkMarketplaceWithConnections(seed: Seed): Promise<DenCoworkMarketplaceWithConnectionsWorld> {
+  const world = await denCoworkMarketplace(seed);
+  const headers = { "x-openwork-org-id": world.organizationId };
+  const list = async () => readConnections((await seed.api(world.den.admin, "/v1/mcp-connections?scope=manageable", { headers })).body);
+  const before = await list();
+  const slack = before.filter((connection) => !connection.nativeProviderKey && sameUrl(connection.url, SLACK_MCP_URL));
+  if (slack.length === 0) {
+    const created = await seed.orgConnection(world.den.admin, { name: "Slack", url: SLACK_MCP_URL, authType: "oauth", credentialMode: "per_member", access: { orgWide: true } });
+    slack.push({ ...created, url: SLACK_MCP_URL, nativeProviderKey: null });
+  }
+  const native = async (providerKey: string, name: string) => {
+    const found = before.filter((connection) => connection.nativeProviderKey === providerKey);
+    if (found.length > 0) return found;
+    const created = await seed.nativeConnector(world.den.admin, {
+      providerKey, name, clientId: `eval-${providerKey}-client`, clientSecret: "eval-native-client-secret", features: [],
+    });
+    return [{ ...created, url: "", nativeProviderKey: providerKey }];
+  };
+  const microsoft365 = await native("microsoft-365", "Microsoft 365");
+  const googleWorkspace = await native("google-workspace", "Google Workspace");
+
+  return {
+    ...world,
+    existing: { slack, microsoft365, googleWorkspace },
+    connections: async () => {
+      const result = await denFetch(world.den.ref, "/v1/mcp-connections?scope=manageable", {
+        headers: { ...headers, authorization: `Bearer ${world.den.admin.token}` },
+      });
+      return readConnections(result.body);
+    },
+    async pluginComponentsText(pluginId) {
+      const auth = { ...headers, authorization: `Bearer ${world.den.admin.token}` };
+      const components = await denFetch(world.den.ref, `/v1/plugins/${encodeURIComponent(pluginId)}/config-objects`, { headers: auth });
+      const items = isRecord(components.body) && Array.isArray(components.body.items) ? components.body.items : [];
+      const texts = [JSON.stringify(components.body)];
+      for (const item of items) {
+        const configObject = isRecord(item) && isRecord(item.configObject) ? item.configObject : null;
+        if (typeof configObject?.id !== "string") continue;
+        const latest = await denFetch(world.den.ref, `/v1/config-objects/${encodeURIComponent(configObject.id)}/versions/latest`, { headers: auth });
+        texts.push(JSON.stringify(latest.body));
+      }
+      return texts.join("\n");
+    },
+  };
+}

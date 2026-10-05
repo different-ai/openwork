@@ -115,6 +115,8 @@ import {
   resolveGithubPluginMcpImportAuthType,
   type PluginMcpAuthType,
 } from "../../../capability-sources/external-mcp-auth-policy.js"
+import { resolveImportedConnectorTarget } from "../../../capability-sources/claude-connector-aliases.js"
+import { NATIVE_OAUTH_PROVIDERS } from "../../../capability-sources/provider-registry.js"
 import type { MemberUsableConnectionFacts } from "../mcp-connections.js"
 
 type OrganizationId = PluginArchActorContext["organizationContext"]["organization"]["id"]
@@ -246,14 +248,29 @@ type PluginMcpConnectionSetup = {
   oauthClient?: { clientId: string; clientSecret?: string }
 }
 
+type GithubPluginMcpImportMapping = {
+  displayName: string
+  kind: "native" | "preset"
+  providerId: string
+}
+
+type GithubPluginMcpImportReuse = {
+  connectionId: string
+  connectionName: string
+}
+
 type GithubPluginMcpImportServer = {
   authType: "oauth" | null
   connectionId: string | null
+  /** The provider OpenWork already knows for this declared connector (see claude-connector-aliases.ts). */
+  mapsTo: GithubPluginMcpImportMapping | null
   name: string
   pluginKey: string
   pluginName: string
+  /** The organization's existing connection this server will use instead of a new one. */
+  reuse: GithubPluginMcpImportReuse | null
   serverKey: string
-  skippedReason: "headers_unsupported" | "invalid_config" | "invalid_url" | "local_unsupported" | "missing_url" | "unsupported_auth" | null
+  skippedReason: "headers_unsupported" | "invalid_config" | "invalid_url" | "local_unsupported" | "missing_url" | "native_connector" | "unsupported_auth" | null
   sourceSchemaVersion: string | null
   sourcePath: string
   supported: boolean
@@ -4811,11 +4828,31 @@ function githubPluginMcpServerKey(input: { name: string; pluginKey: string; sour
   return [input.pluginKey, input.sourcePath, input.name, input.url ?? ""].map(encodeURIComponent).join(":")
 }
 
-function githubPluginMcpImportServer(input: Omit<GithubPluginMcpImportServer, "serverKey">): GithubPluginMcpImportServer {
+function githubPluginMcpImportServer(input: Omit<GithubPluginMcpImportServer, "mapsTo" | "reuse" | "serverKey">): GithubPluginMcpImportServer {
   return {
     ...input,
+    mapsTo: null,
+    reuse: null,
     serverKey: githubPluginMcpServerKey(input),
   }
+}
+
+/**
+ * Claude/Cowork connectors that point at Anthropic-only endpoints (or leave
+ * the URL to Claude) map to the provider OpenWork already knows. Presets use
+ * their own URL; native providers are never imported as MCP servers.
+ */
+function withImportedConnectorTarget(server: GithubPluginMcpImportServer): GithubPluginMcpImportServer {
+  const target = resolveImportedConnectorTarget({ name: server.name, url: server.url })
+  if (!target) return server
+  const mapsTo = { displayName: target.displayName, kind: target.kind, providerId: target.providerId }
+  if (target.kind === "preset") {
+    return { ...server, mapsTo, url: server.supported ? target.url : server.url }
+  }
+  if (target.whenMissing === "skip" && (server.supported || server.skippedReason === "missing_url")) {
+    return { ...server, mapsTo, skippedReason: "native_connector", supported: false }
+  }
+  return { ...server, mapsTo }
 }
 
 function isLoopbackMcpHostname(hostname: string) {
@@ -4894,6 +4931,12 @@ export function mcpServerEntriesFromPayload(input: {
   }
 
   return [...invalidAgentEntries, ...fallbackEntries.map(([rawName, rawConfig]) => {
+    const server = mcpServerEntryFromConfig(rawName, rawConfig)
+    // Agent Plugins declare what they require; only Claude/Cowork suggestions are mapped.
+    return isAgentPlugin ? server : withImportedConnectorTarget(server)
+  })]
+
+  function mcpServerEntryFromConfig(rawName: string, rawConfig: unknown): GithubPluginMcpImportServer {
     const config = isRecord(rawConfig) ? rawConfig : {}
     const name = rawName.trim() || input.plugin.displayName
     const url = typeof config.url === "string" ? config.url.trim() : ""
@@ -4999,7 +5042,7 @@ export function mcpServerEntriesFromPayload(input: {
       supported: true,
       url,
     })
-  })]
+  }
 }
 
 function githubPluginSkillKey(input: { pluginKey: string; sourcePath: string }) {
@@ -5093,7 +5136,47 @@ export function skillEntryFromSource(input: {
   }
 }
 
-async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; includeSkillText?: boolean }): Promise<GithubPluginMcpImportPlan> {
+/**
+ * Fills in which existing organization connection each server will use: the
+ * External MCP connection for its (canonical) URL, or the native Google
+ * Workspace / Microsoft 365 connection a Claude connector maps to.
+ */
+async function withExistingConnectionReuse(input: { organizationId: OrganizationId; servers: GithubPluginMcpImportServer[] }) {
+  const connections = await listExternalMcpConnections(input.organizationId)
+  const nativeByProvider = new Map<string, GithubPluginMcpImportReuse | null>()
+  const nativeConnection = async (providerId: string) => {
+    if (nativeByProvider.has(providerId)) return nativeByProvider.get(providerId) ?? null
+    const row = connections.find((connection) => connection.kind === "native_provider" && connection.nativeProviderKey === providerId)
+    // Legacy native setups keep the OAuth client under the provider key, with no connection row.
+    const legacy = row ? null : await getOrgOAuthClient(input.organizationId, providerId)
+    const reuse = row
+      ? { connectionId: row.id, connectionName: row.name }
+      : legacy
+        ? { connectionId: providerId, connectionName: NATIVE_OAUTH_PROVIDERS[providerId]?.displayName ?? providerId }
+        : null
+    nativeByProvider.set(providerId, reuse)
+    return reuse
+  }
+  const result: GithubPluginMcpImportServer[] = []
+  for (const server of input.servers) {
+    if (server.mapsTo?.kind === "native") {
+      const reuse = await nativeConnection(server.mapsTo.providerId)
+      // A vendor-hosted server kept only for orgs without the native connection.
+      result.push(reuse && server.supported
+        ? { ...server, reuse, skippedReason: "native_connector", supported: false }
+        : { ...server, reuse })
+      continue
+    }
+    const serverUrl = server.url
+    const existing = server.supported && serverUrl
+      ? connections.find((connection) => connection.kind === "external_mcp" && comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(serverUrl))
+      : undefined
+    result.push(existing ? { ...server, reuse: { connectionId: existing.id, connectionName: existing.name } } : server)
+  }
+  return result
+}
+
+async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; includeSkillText?: boolean; organizationId?: OrganizationId }): Promise<GithubPluginMcpImportPlan> {
   const target = parsePublicGithubPluginUrl(input.githubUrl)
   const snapshot = await getPublicGithubRepositoryTree(target)
   const fileTextByPath = await getPublicGithubDiscoveryFileTexts(snapshot)
@@ -5158,6 +5241,9 @@ async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; incl
   for (const [index, server] of servers.entries()) {
     if (env.allowPrivateMcpUrls || !server.supported || !server.url || await egressAllowed(server.url)) continue
     servers[index] = { ...server, skippedReason: "invalid_url", supported: false }
+  }
+  if (input.organizationId) {
+    servers.splice(0, servers.length, ...await withExistingConnectionReuse({ organizationId: input.organizationId, servers }))
   }
 
   const plugins = discovery.discoveredPlugins
@@ -5717,6 +5803,13 @@ async function ensureImportedExternalMcpConnection(input: {
   const existing = (await listExternalMcpConnections(organizationId))
     .find((connection) => connection.kind === "external_mcp" && comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(serverUrl))
 
+  // A Claude connector mapped to a preset (Slack, Notion, ...) uses the
+  // organization's connection for it as the admin set it up, rather than
+  // failing the import over a different credential mode.
+  if (existing && input.server.mapsTo?.kind === "preset") {
+    return { connection: existing, ownedByImportedPlugin: false }
+  }
+
   if (existing) {
     const authType = resolveGithubPluginMcpImportAuthType({
       declaredAuthType: input.server.authType,
@@ -5822,8 +5915,12 @@ function importedPluginName(plan: GithubPluginMcpImportPlan) {
   return plan.marketplace?.name?.trim() || plan.rootPath.split("/").filter(Boolean).at(-1) || plan.repositoryFullName.split("/").at(-1) || "GitHub MCP Plugin"
 }
 
-export async function previewGithubPluginMcpImport(input: { githubUrl: string }) {
-  return computeGithubPluginMcpImportPlan({ githubUrl: input.githubUrl })
+export async function previewGithubPluginMcpImport(input: { context: PluginArchActorContext; githubUrl: string }) {
+  // Only admins import, and only they see which organization connections an import would use.
+  return computeGithubPluginMcpImportPlan({
+    githubUrl: input.githubUrl,
+    organizationId: isPluginArchOrgAdmin(input.context) ? input.context.organizationContext.organization.id : undefined,
+  })
 }
 
 export async function configureMarketplacePluginMcpRequirement(input: {
@@ -6144,7 +6241,11 @@ export async function importGithubPluginMcps(input: {
   if (input.marketplaceId) {
     await ensureEditableMarketplace(input.context, input.marketplaceId)
   }
-  const plan = await computeGithubPluginMcpImportPlan({ githubUrl: input.githubUrl, includeSkillText: true })
+  const plan = await computeGithubPluginMcpImportPlan({
+    githubUrl: input.githubUrl,
+    includeSkillText: true,
+    organizationId: input.context.organizationContext.organization.id,
+  })
   const selectedSkillKeys = new Set(input.selectedSkillKeys?.map((key) => key.trim()).filter(Boolean) ?? [])
   const selectedServerKeys = new Set(input.selectedServerKeys?.map((key) => key.trim()).filter(Boolean) ?? [])
   const selectedServerNames = new Set(input.selectedServerNames?.map((name) => name.trim()).filter(Boolean) ?? [])
@@ -6210,7 +6311,7 @@ export async function importGithubPluginMcps(input: {
       })
     }
 
-  const imported: Array<{ connectionId: string; name: string; url: string }> = []
+  const imported: Array<{ connectionId: string; connectionName: string; existingConnection: boolean; name: string; url: string }> = []
   const importedSkills: Array<{ configObjectId: ConfigObjectId; name: string; sourcePath: string }> = []
   const updatedSkills: Array<{ configObjectId: ConfigObjectId; name: string; sourcePath: string }> = []
   const unchanged: Array<{ name: string; objectType: "mcp" | "skill" }> = []
@@ -6291,7 +6392,13 @@ export async function importGithubPluginMcps(input: {
       resourceId: configObject.id,
       resourceKind: "config_object",
     })
-    imported.push({ connectionId: connection.id, name: server.name, url: server.url ?? "" })
+    imported.push({
+      connectionId: connection.id,
+      connectionName: connection.name,
+      existingConnection: !importedConnection.ownedByImportedPlugin,
+      name: server.name,
+      url: server.url ?? "",
+    })
   }
 
   for (const skill of supportedSkills) {
@@ -6381,7 +6488,7 @@ export async function importGithubPluginMcps(input: {
   }
 
   const skipped = consideredServers.flatMap((server) =>
-    server.supported || !server.skippedReason ? [] : [{ name: server.name, reason: server.skippedReason }])
+    server.supported || !server.skippedReason ? [] : [{ mapsTo: server.mapsTo, name: server.name, reason: server.skippedReason, reuse: server.reuse }])
   const skippedSkills = consideredSkills.flatMap((skill) =>
     skill.supported || !skill.skippedReason ? [] : [{ name: skill.name, reason: skill.skippedReason, sourcePath: skill.sourcePath }])
 
