@@ -3545,6 +3545,14 @@ export function createDenClient(options: {
       );
     },
 
+    async setMyMcpCredential(orgId: string, connectionId: string, apiKey: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/mcp-connections/${encodeURIComponent(connectionId)}/my-credential`,
+        { method: "PUT", token, organizationId: orgId, body: { apiKey } },
+      );
+    },
+
     async disconnectMyMcpConnectionAccount(orgId: string, connectionId: string): Promise<void> {
       await requestJson<unknown>(
         baseUrls,

@@ -17,8 +17,7 @@ import {
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { memberApiKeyProofEnabled, registerMemberApiKeyIpc } from "./member-api-key.mjs";
+import { fileURLToPath } from "node:url";
 import { globalOpencodeConfigDir, workspaceOpencodeConfigCandidates } from "@openwork/paths";
 
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
@@ -2581,18 +2580,6 @@ ipcMain.on("openwork:desktop-distribution-sync", (event) => {
 });
 ipcMain.on("openwork:window-fullscreen-sync", (event) => {
   event.returnValue = BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false;
-});
-registerMemberApiKeyIpc({
-  ipcMain, window: () => mainWindow,
-  expectedUrl: () => process.env.OPENWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim()
-    || pathToFileURL(app.isPackaged ? path.join(process.resourcesPath, "app-dist", "index.html")
-      : path.resolve(__dirname, "../../app/dist/index.html")).href,
-  readBootstrap: () => workspaceStore.getDesktopBootstrapConfig(),
-  fetch: (input, init) => electronNet.fetch(input, init),
-  allowLoopback: isDevMode && process.env.OPENWORK_EVAL_MEMBER_KEY_LOOPBACK === "1",
-  proofObserver: memberApiKeyProofEnabled({ development: isDevMode, packaged: app.isPackaged,
-    optIn: process.env.OPENWORK_EVAL_MEMBER_KEY_OBSERVER }),
-  assertActivation: assertDesktopActivation,
 });
 ipcMain.handle("openwork:desktop", handleDesktopInvoke);
 ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {

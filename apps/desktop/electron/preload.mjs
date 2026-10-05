@@ -155,44 +155,6 @@ try {
   desktopDistribution = null;
 }
 
-// Read existing sign-in state in the isolated preload, never from submit args.
-if (process.isMainFrame) {
-  ipcRenderer.on("openwork:member-key:snapshot", (_event, nonce) => {
-    if (typeof nonce !== "string" || !/^[a-f0-9]{64}$/.test(nonce)) return;
-    let snapshot = null;
-    try {
-      snapshot = {
-        token: localStorage.getItem("openwork.den.authToken"),
-        organizationId: localStorage.getItem("openwork.den.activeOrgId"),
-        sessionOrigin: localStorage.getItem("openwork.den.sessionOrigin"),
-      };
-    } catch { /* Signed-out/unavailable, never report storage errors. */ }
-    ipcRenderer.send("openwork:member-key:snapshot-result", nonce, snapshot);
-  });
-  contextBridge.exposeInMainWorld("__OPENWORK_MEMBER_API_KEY__", {
-    prepare: (connectionId) => ipcRenderer.invoke("openwork:member-key:prepare", connectionId),
-    submit: (handle, apiKey) => ipcRenderer.invoke("openwork:member-key:submit", handle, apiKey),
-    cancel: (handle) => ipcRenderer.invoke("openwork:member-key:cancel", handle),
-  });
-  // Main enforces unpackaged + development + explicit test opt-in. Not an agent
-  // tool or a default/packaged bridge surface, and never observes a request.
-  if (ipcRenderer.sendSync("openwork:member-key:proof-enabled") === true) {
-    contextBridge.exposeInMainWorld("__OPENWORK_MEMBER_API_KEY_PROOF__", {
-      subscribe: (listener) => {
-        if (typeof listener !== "function") throw new Error("Invalid proof listener");
-        const onSaved = (_event, receipt) => {
-          if (receipt?.httpStatus !== 200 || receipt.stored !== true
-            || ![receipt.organizationId, receipt.memberId, receipt.connectionId].every((value) => typeof value === "string")) return;
-          try { listener({ httpStatus: 200, stored: true, organizationId: receipt.organizationId,
-            memberId: receipt.memberId, connectionId: receipt.connectionId }); } catch { /* No observer failures in application flow. */ }
-        };
-        ipcRenderer.on("openwork:member-key:saved-proof", onSaved);
-        return () => ipcRenderer.removeListener("openwork:member-key:saved-proof", onSaved);
-      },
-    });
-  }
-}
-
 contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
   invokeDesktop(command, ...args) {
     return ipcRenderer.invoke("openwork:desktop", command, ...args);

@@ -16,7 +16,7 @@ test("native Electron Library enrolls two ordinary members on one real Den conne
     await world.withMember(name, async (desktop, memberId) => {
     const person = user.on(desktop);
     const page = probe.on(desktop);
-    expect(await page.desktopBootstrap()).toEqual({ apiBaseUrl: den.ref.apiUrl, sessionOriginPresent: true, nativeBridgePresent: true });
+    expect(await page.desktopBootstrap()).toEqual({ apiBaseUrl: den.ref.apiUrl, sessionOriginPresent: true });
     await person.see({ text: "Native credential proof model" }, { timeoutMs: 30_000 });
     if (name === "alice") {
       await control(desktop, "settings.panel.open", { panel: "connect" });

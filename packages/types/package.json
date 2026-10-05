@@ -4,11 +4,6 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./member-api-key": {
-      "types": "./src/member-api-key.ts",
-      "development": "./src/member-api-key.ts",
-      "default": "./src/member-api-key.ts"
-    },
     "./cloud-model-fast": {
       "types": "./src/cloud-model-fast.ts",
       "development": "./src/cloud-model-fast.ts",

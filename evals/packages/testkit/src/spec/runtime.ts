@@ -1091,7 +1091,7 @@ export class ProbeChannel implements Probe {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "desktopBootstrap", "desktopBootstrap(<routing-only>)", surface, () => callFunctionOnSurface(surface, async () => {
       const bootstrap = await window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig");
-      return { apiBaseUrl: bootstrap?.apiBaseUrl ?? null, sessionOriginPresent: Boolean(localStorage.getItem("openwork.den.sessionOrigin")), nativeBridgePresent: "__OPENWORK_MEMBER_API_KEY__" in window };
+      return { apiBaseUrl: bootstrap?.apiBaseUrl ?? null, sessionOriginPresent: Boolean(localStorage.getItem("openwork.den.sessionOrigin")) };
     }, []));
   }
 
