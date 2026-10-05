@@ -75,6 +75,8 @@ export interface DenCoworkMarketplaceWorld {
   migrate(args: string[]): Promise<CliRun>;
   /** Changes one file in the served repository, as an upstream commit would. */
   setRepoFile(path: string, content: string): Promise<void>;
+  /** Deletes one file from the served repository, as an upstream commit would. */
+  deleteRepoFile(path: string): Promise<void>;
   /** Requests the GitHub stand-in served so far. */
   githubRequests(): Promise<GithubRequest[]>;
   [Symbol.asyncDispose](): Promise<void>;
@@ -142,6 +144,14 @@ export async function denCoworkMarketplace(seed: Seed): Promise<DenCoworkMarketp
   const emptyClaudeCode = seed.tmpPath("claude-code-plugins");
   mkdirSync(emptyClaudeCode, { recursive: true });
   let rpcId = 0;
+  const editRepo = async (route: string, query: string) => {
+    if (sandboxId) {
+      await execInSandbox(defaultDaytonaExec, sandboxId, `curl -sf "${ORIGIN}${route}?${query}"`, { context: "edit the served repository", timeoutMs: 30_000 });
+      return;
+    }
+    const response = await fetch(`${ORIGIN}${route}?${query}`);
+    if (!response.ok) throw new Error(`GitHub stand-in refused the edit: HTTP ${response.status}`);
+  };
   return {
     den,
     organizationId,
@@ -177,13 +187,10 @@ export async function denCoworkMarketplace(seed: Seed): Promise<DenCoworkMarketp
       });
     },
     async setRepoFile(path, content) {
-      const query = `path=${encodeURIComponent(path)}&b64=${encodeURIComponent(Buffer.from(content).toString("base64"))}`;
-      if (sandboxId) {
-        await execInSandbox(defaultDaytonaExec, sandboxId, `curl -sf "${ORIGIN}/__set?${query}"`, { context: "edit the served repository", timeoutMs: 30_000 });
-        return;
-      }
-      const response = await fetch(`${ORIGIN}/__set?${query}`);
-      if (!response.ok) throw new Error(`GitHub stand-in refused the edit: HTTP ${response.status}`);
+      await editRepo("/__set", `path=${encodeURIComponent(path)}&b64=${encodeURIComponent(Buffer.from(content).toString("base64"))}`);
+    },
+    async deleteRepoFile(path) {
+      await editRepo("/__delete", `path=${encodeURIComponent(path)}`);
     },
     async githubRequests() {
       if (sandboxId) {

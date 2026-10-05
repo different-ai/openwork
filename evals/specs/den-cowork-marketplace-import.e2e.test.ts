@@ -129,4 +129,41 @@ test("an admin's agent migrates a Cowork plugin into the organization and can sa
     expect(updated).toEqual(["task-management"]);
     expect(content).toContain("archive done items weekly");
   });
+
+  await step("after: a skill and a connector deleted upstream leave the organization on the next run, and the rest stays", async () => {
+    await world.deleteRepoFile("productivity/skills/start/SKILL.md");
+    const mcpPath = "productivity/.mcp.json";
+    const mcp: unknown = JSON.parse(String(COWORK_FIXTURE.files[mcpPath]));
+    const servers = isRecord(mcp) && isRecord(mcp.mcpServers) ? { ...mcp.mcpServers } : {};
+    delete servers.slack;
+    await world.setRepoFile(mcpPath, JSON.stringify({ mcpServers: servers }, null, 2));
+
+    const { isError, json } = await callTool("execute_capability", {
+      name: "postPluginsImportMcpsFromGithubUrl",
+      body: { githubUrl: world.repoUrl("productivity"), name: PLUGIN_NAME, access: { orgWide: true } },
+    });
+    const item = isRecord(json) && isRecord(json.item) ? json.item : {};
+    const removed = records(item.removed).map((entry) => `${String(entry.objectType)}:${String(entry.name)}`).sort();
+    const unchanged = records(item.unchanged).map((entry) => `${String(entry.objectType)}:${String(entry.name)}`).sort();
+    const listed = await callTool("list_skills", { query: PLUGIN_NAME });
+    const remaining = records(isRecord(listed.json) ? listed.json.skills : [])
+      .filter((skill) => skill.pluginName === PLUGIN_NAME)
+      // Names shared with other plugins come back with a short suffix ("task-management-1a2b3c4d").
+      .map((skill) => String(skill.name).split("/").at(-1)?.replace(/-[a-z0-9]{8}$/, ""))
+      .sort();
+    const ok = !isError
+      && removed.join() === "mcp:slack,skill:start"
+      && remaining.join() === "task-management";
+    evidence.recordAssertionEvidence(
+      "upstream deletion",
+      isError
+        ? `failed: ${JSON.stringify(json).slice(0, 400)}`
+        : `removed: ${removed.join(", ") || "none"}; unchanged: ${unchanged.join(", ")}; plugin's skills now: ${remaining.join(", ")}`,
+      ok,
+    );
+    expect(isError).toBe(false);
+    expect(removed).toEqual(["mcp:slack", "skill:start"]);
+    expect(unchanged).toEqual(["mcp:notion", "skill:task-management"]);
+    expect(remaining).toEqual(["task-management"]);
+  });
 });

@@ -1084,7 +1084,14 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
       sourcePath: z.string(),
     })),
     marketplaceId: marketplaceIdSchema.nullable(),
+    mode: z.enum(["created", "updated"]),
     plugin: pluginSchema,
+    removed: z.array(z.object({
+      configObjectId: configObjectIdSchema,
+      name: z.string(),
+      objectType: z.enum(["mcp", "skill"]),
+      sourcePath: z.string(),
+    })).describe("Skills and MCP servers imported earlier that were deleted upstream; they are removed from the plugin and archived, not deleted."),
     skipped: z.array(z.object({
       name: z.string(),
       reason: z.enum(["headers_unsupported", "invalid_config", "invalid_url", "local_unsupported", "missing_url", "unsupported_auth"]),
@@ -1092,6 +1099,15 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
     skippedSkills: z.array(z.object({
       name: z.string(),
       reason: z.enum(["invalid_skill"]),
+      sourcePath: z.string(),
+    })),
+    unchanged: z.array(z.object({
+      name: z.string(),
+      objectType: z.enum(["mcp", "skill"]),
+    })),
+    updatedSkills: z.array(z.object({
+      configObjectId: configObjectIdSchema,
+      name: z.string(),
       sourcePath: z.string(),
     })),
   }),

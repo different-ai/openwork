@@ -16,15 +16,18 @@ const sha = (text) => createHash("sha1").update(text).digest("hex");
 const HEAD = sha(`commit:${JSON.stringify(files)}`);
 const TREE = sha(`tree:${JSON.stringify(files)}`);
 
-const directories = new Set();
-for (const path of Object.keys(files)) {
-  const parts = path.split("/");
-  for (let index = 1; index < parts.length; index += 1) directories.add(parts.slice(0, index).join("/"));
-}
-const tree = [
-  ...[...directories].map((path) => ({ path, type: "tree", sha: sha(`dir:${path}`) })),
-  ...Object.entries(files).map(([path, content]) => ({ path, type: "blob", sha: sha(content), size: Buffer.byteLength(content) })),
-].sort((a, b) => a.path.localeCompare(b.path));
+// Built per request so an upstream deletion (/__delete) disappears from the tree.
+const tree = () => {
+  const directories = new Set();
+  for (const path of Object.keys(files)) {
+    const parts = path.split("/");
+    for (let index = 1; index < parts.length; index += 1) directories.add(parts.slice(0, index).join("/"));
+  }
+  return [
+    ...[...directories].map((path) => ({ path, type: "tree", sha: sha(`dir:${path}`) })),
+    ...Object.entries(files).map(([path, content]) => ({ path, type: "blob", sha: sha(content), size: Buffer.byteLength(content) })),
+  ].sort((a, b) => a.path.localeCompare(b.path));
+};
 
 const requests = [];
 const send = (response, status, body, type = "application/json") => {
@@ -45,13 +48,20 @@ createServer((request, response) => {
     files[path] = Buffer.from(url.searchParams.get("b64") ?? "", "base64").toString("utf8");
     return send(response, 200, { ok: true });
   }
+  // An upstream deletion: GET /__delete?path=<file>.
+  if (url.pathname === "/__delete") {
+    const path = url.searchParams.get("path") ?? "";
+    if (!(path in files)) return send(response, 404, { message: "unknown file" });
+    delete files[path];
+    return send(response, 200, { ok: true });
+  }
   requests.push({ kind: url.pathname.startsWith("/api/") ? "api" : url.pathname.startsWith("/raw/") ? "raw" : "other", path: url.pathname });
 
   if (url.pathname === repoPath) return send(response, 200, { full_name: `${repo.owner}/${repo.repo}`, default_branch: repo.ref, private: false });
   if (url.pathname === `${repoPath}/commits/${repo.ref}` || url.pathname === `${repoPath}/commits/${HEAD}`) {
     return send(response, 200, { sha: HEAD, commit: { tree: { sha: TREE } } });
   }
-  if (url.pathname === `${repoPath}/git/trees/${TREE}`) return send(response, 200, { sha: TREE, tree, truncated: false });
+  if (url.pathname === `${repoPath}/git/trees/${TREE}`) return send(response, 200, { sha: TREE, tree: tree(), truncated: false });
   if (url.pathname.startsWith(`${repoPath}/contents/`)) {
     const path = decodeURIComponent(url.pathname.slice(`${repoPath}/contents/`.length));
     const content = files[path];

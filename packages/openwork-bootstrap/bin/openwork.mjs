@@ -1560,6 +1560,8 @@ async function importMarketplacePlugin(target, plugin, access) {
     skillsUpdated: (item.updatedSkills ?? []).map((skill) => skill.name),
     connectorsAdded: (item.imported ?? []).map((server) => server.name),
     unchanged: (item.unchanged ?? []).length,
+    // Skills and connectors deleted upstream since the last run.
+    removed: (item.removed ?? []).map((entry) => `${entry.objectType === "mcp" ? "connector" : "skill"} ${entry.name}`),
     nextSteps: [...(item.skipped ?? []).map((entry) => connectorNextStep(entry)), ...(item.skippedSkills ?? []).map((entry) => `${entry.name}: skill not imported (${entry.reason})`)],
   }
 }
@@ -1696,7 +1698,7 @@ async function runMigrate(args) {
     message: migrationSummary([
       `Migrated into ${target.org.name}:`,
       ...plugins.map((entry) => entry.ok
-        ? `  ${entry.importedAs ?? entry.plugin} (${entry.mode}): ${entry.skillsAdded.length} skills added, ${entry.skillsUpdated.length} updated, ${entry.connectorsAdded.length} optional connectors added, ${entry.unchanged} unchanged`
+        ? `  ${entry.importedAs ?? entry.plugin} (${entry.mode}): ${entry.skillsAdded.length} skills added, ${entry.skillsUpdated.length} updated, ${entry.connectorsAdded.length} optional connectors added, ${entry.unchanged} unchanged${entry.removed.length ? `, ${entry.removed.length} removed (deleted upstream: ${entry.removed.join(", ")})` : ""}`
         : `  ${entry.plugin}: failed (${entry.error})`),
       ...skills.map((entry) => entry.ok ? `  your skill ${entry.importedAs ?? entry.skill}: ${entry.mode}` : `  your skill ${entry.skill}: failed (${entry.error})`),
       nextSteps.length ? "\nStill to do:" : "",
