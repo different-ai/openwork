@@ -39,7 +39,7 @@ export async function denRetiredStarterPlugins(seed: Seed, ctx: { place: Place }
   const marketplaceId = stringField(isRecord(marketplaceBody?.item) ? marketplaceBody.item : marketplaceBody, "id");
   if (!marketplaceId) throw new Error(`Could not create the starter marketplace: HTTP ${marketplace.response.status} ${marketplace.text.slice(0, 300)}`);
 
-  const skill = "---\nname: Prep a sales call\ndescription: Before any call with a customer\n---\n\nRead the account notes, then list three questions to ask.\n";
+  const skill = "---\nname: prep-a-sales-call\ndescription: Before any call with a customer\n---\n\nRead the account notes, then list three questions to ask.\n";
   for (const name of [...EMPTY_STARTERS, FILLED_STARTER]) {
     const created = await seed.api(den.admin, "/v1/plugins", {
       method: "POST",

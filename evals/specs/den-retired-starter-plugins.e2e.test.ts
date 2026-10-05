@@ -3,7 +3,9 @@ import { spec } from "@openwork/testkit";
 import { denRetiredStarterPlugins } from "../worlds/den-retired-starter-plugins.ts";
 
 // Older organizations were seeded with example plugins that had nothing inside.
-const test = spec.world(denRetiredStarterPlugins, { timeout: 600_000 });
+const test = spec.world(denRetiredStarterPlugins, {
+  timeout: 600_000, resources: { surfaces: ["web"], services: ["den"] },
+});
 
 const describe = (rows: { name: string; status: string; contents: number }[]) => rows.map((row) => `${row.name}: ${row.status}, ${row.contents} inside`).join("; ");
 
