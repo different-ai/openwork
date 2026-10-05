@@ -147,11 +147,11 @@ export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConne
   const prefix = provider ? `${provider} — ` : "";
   if (connection.credentialMode === "shared") return `${prefix}One org account managed by your organization — the AI acts as it.`;
   if (connection.authType === "apikey") {
-    if (connection.needsReconnect === true || connection.credentialHealth === "reconnect_required") return "The service rejected your key. Replace it to try again.";
+    if (connection.needsReconnect === true || connection.credentialHealth === "reconnect_required") return "Your key was rejected.";
     return connection.connectedForMe && !connectionNeedsReconnect(connection)
-      ? "You saved your key. You can replace it at any time."
-      : connection.connectedForMe ? "The service rejected your key. Replace it to try again."
-      : "Add your own key. OpenWork uses it only for your requests.";
+      ? "Uses your own key."
+      : connection.connectedForMe ? "Your key was rejected."
+      : "Available from your organization. Add your own key to use it.";
   }
   if (connection.connectedForMe && connectionNeedsReconnect(connection)) return `${prefix}Reconnect your account to grant newly requested permissions.`;
   if (connection.connectedForMe) {

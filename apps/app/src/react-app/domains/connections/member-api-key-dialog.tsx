@@ -1,9 +1,10 @@
+import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { DenApiError, createDenClient, readDenSettings } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 
 type Request = { generation: number; connectionId: string; connectionName: string; replacing: boolean; finish: (connected: boolean) => void };
@@ -34,7 +35,6 @@ function Prompt({ target, close }: { target: Request; close: (connected: boolean
   const generation = useRef(0);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
   const [hasValue, setHasValue] = useState(false);
 
   useEffect(() => {
@@ -57,7 +57,7 @@ function Prompt({ target, close }: { target: Request; close: (connected: boolean
   }, [close]);
 
   const submit = async () => {
-    if (pending || saved || !field.current) return;
+    if (pending || !field.current) return;
     const run = generation.current;
     let apiKey = field.current.value;
     field.current.value = "";
@@ -73,7 +73,6 @@ function Prompt({ target, close }: { target: Request; close: (connected: boolean
       await createDenClient({ baseUrl: settings.baseUrl, token }).setMyMcpCredential(organizationId, target.connectionId, apiKey);
       apiKey = "";
       if (generation.current !== run) return;
-      setSaved(true);
       close(true);
     } catch (cause) {
       apiKey = "";
@@ -84,28 +83,30 @@ function Prompt({ target, close }: { target: Request; close: (connected: boolean
     }
   };
 
-  return <Dialog open onOpenChange={(open) => { if (!open) close(saved); }}>
+  return <Dialog open onOpenChange={(open) => { if (!open) close(false); }}>
     <DialogContent data-testid="member-api-key-dialog" data-ph-no-capture="true">
       <DialogHeader>
-        <DialogTitle>{saved ? "Key saved" : `${target.replacing ? "Replace" : "Add"} key for ${target.connectionName}`}</DialogTitle>
-        <DialogDescription>Use your own key. Never paste it into chat. OpenWork uses it only for your requests.</DialogDescription>
+        <DialogTitle>{`${target.replacing ? "Replace" : "Add"} key for ${target.connectionName}`}</DialogTitle>
+        <DialogDescription className="sr-only">Saved for your requests only.</DialogDescription>
       </DialogHeader>
-      {saved ? <p role="status">You saved your key. You can replace it at any time.</p>
-        : <FieldGroup>
-          <Field data-disabled={pending}>
-            <FieldLabel htmlFor="member-api-key-input">Personal access token or API key</FieldLabel>
-            <Input ref={field} id="member-api-key-input" data-testid="member-api-key-input" type="password"
-              autoComplete="off" spellCheck={false} maxLength={8192} disabled={pending}
-              data-ph-no-capture="true" data-private="true" autoFocus
-              onChange={(event) => setHasValue(event.currentTarget.value.length > 0)} />
-            <FieldDescription>Your key is sent through the existing secure OpenWork connection, not through the conversation.</FieldDescription>
-          </Field>
-          {pending ? <p role="status">Saving your key…</p> : null}
-          {error ? <p role="alert">{error}</p> : null}
-        </FieldGroup>}
+      <FieldGroup>
+        <Field data-disabled={pending}>
+          <FieldLabel htmlFor="member-api-key-input">Personal access token or API key</FieldLabel>
+          <Input ref={field} id="member-api-key-input" data-testid="member-api-key-input" type="password"
+            autoComplete="off" spellCheck={false} maxLength={8192} disabled={pending}
+            data-ph-no-capture="true" data-private="true" autoFocus
+            aria-invalid={error ? true : undefined}
+            onChange={(event) => setHasValue(event.currentTarget.value.length > 0)}
+            onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void submit(); } }} />
+          {error ? <FieldError>{error}</FieldError> : null}
+        </Field>
+      </FieldGroup>
       <DialogFooter>
-        <Button variant="outline" onClick={() => close(saved)}>{saved ? "Done" : "Close"}</Button>
-        {!saved ? <Button disabled={pending || !hasValue} onClick={() => void submit()}>Save key</Button> : null}
+        <Button variant="outline" disabled={pending} onClick={() => close(false)}>Cancel</Button>
+        <Button disabled={pending || !hasValue} onClick={() => void submit()}>
+          {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+          Save key
+        </Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>;

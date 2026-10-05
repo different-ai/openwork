@@ -807,7 +807,7 @@ export default {
   "extensions.detail_fact_whose_account": "Whose account does the AI use?",
   "extensions.detail_fact_added_by": "Added by",
   "extensions.detail_account_yours": "Your own. You sign in once.",
-  "extensions.detail_account_your_key": "Your own. You add your own key.",
+  "extensions.detail_account_your_key": "Your own key",
   "extensions.detail_key_saved": "Key saved",
   "extensions.detail_no_key": "No key",
   "extensions.detail_account_org": "The organization's shared account",

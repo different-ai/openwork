@@ -33,15 +33,17 @@ test("native Electron Library enrolls two ordinary members on one real Den conne
     await person.screenshot();
     await person.type({ testId: "member-api-key-input" }, keys[name], { sensitive: true });
     await person.click({ role: "button", label: "Save key" });
-    await probe.eventually(() => page.memberCredentialSaved(connectionId, organizationId, memberId), { within: 45_000, until: Boolean, label: "same-member acknowledged native save" });
-    await person.see({ text: "Key saved" }, { timeoutMs: 30_000 });
+    // Den is the source of truth: the member's own inventory reports the saved key.
+    await probe.eventually(async () => inventoryResponse.parse((await probe.api(den.members[name], "/v1/mcp-connections?scope=usable")).body).connections.find(row => row.id === connectionId)?.connectedForMe === true,
+      { within: 45_000, until: Boolean, label: "same-member saved key in Den" });
+    // The dialog closes on save; the row (Library) or the card (chat) reports the result.
+    await person.see({ text: name === "alice" ? "Key saved" : "Native private tools: key saved" }, { timeoutMs: 30_000 });
     expect(await page.credentialInputState('[data-testid="member-api-key-input"]', keys[name])).toMatchObject({ inputContainsSecret: false, bodyContainsSecret: false, urlContainsSecret: false, storageContainsSecret: false, consoleContainsSecret: false });
     await person.screenshot();
     const inventory = await probe.api(den.members[name], "/v1/mcp-connections?scope=usable");
     expect(inventoryResponse.parse(inventory.body).connections.find(row => row.id === connectionId)).toMatchObject({ connectedForMe: true, credentialHealth: "unknown" });
     const logPath = desktop.handle.meta?.log;
     if (logPath) expect((await readFile(logPath, "utf8")).includes(keys[name])).toBe(false);
-    await person.click({ role: "button", label: "Done" });
     if (name === "alice") {
       await person.click({ role: "button", label: "Replace key" });
       await person.see({ testId: "member-api-key-input" }, { value: "" });

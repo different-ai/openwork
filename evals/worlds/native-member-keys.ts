@@ -133,7 +133,7 @@ export async function nativeMemberKeys(seed: Seed, { place }: { place: Place }) 
   const reloads: { member: string; status: number; code: string }[] = [];
   const withMember = async (name: "alice" | "blair", use: (desktop: App, memberId: string) => Promise<void>) => {
     await using desktop = await startApp({ den, as: name, place, env: {
-      OPENWORK_EVAL_MEMBER_KEY_LOOPBACK: "1", OPENWORK_EVAL_MEMBER_KEY_OBSERVER: "1", OPENWORK_APP_NAME: "OpenWork Native Credential Proof",
+      OPENWORK_APP_NAME: "OpenWork Native Credential Proof",
       VITE_OPENWORK_POSTHOG_HOST: `http://127.0.0.1:${analyticsAddress.port}`, VITE_OPENWORK_POSTHOG_KEY: "synthetic-analytics-only",
     } });
     const reload = await configureModel(desktop, den.mocks.source.url, `${den.ref.apiUrl}/mcp/agent`, tokens[name]);
@@ -145,11 +145,6 @@ export async function nativeMemberKeys(seed: Seed, { place }: { place: Place }) 
         const original = console[name].bind(console);
         console[name] = (...args: unknown[]) => { entries.push(args.map(String).join(" ")); original(...args); };
       }
-      const receipts: { httpStatus: number; stored: boolean; organizationId: string; memberId: string; connectionId: string }[] = [];
-      const proof = Reflect.get(window, "__OPENWORK_MEMBER_API_KEY_PROOF__");
-      if (!proof || typeof proof.subscribe !== "function") throw new Error("Owned native observer unavailable");
-      proof.subscribe((receipt: { httpStatus: number; stored: boolean; organizationId: string; memberId: string; connectionId: string }) => receipts.push(receipt));
-      Reflect.set(window, "__nativeProofSaved", receipts);
     });
     await use(desktop, memberFor(den.members[name].email));
   };

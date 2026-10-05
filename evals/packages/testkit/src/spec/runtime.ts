@@ -1095,17 +1095,6 @@ export class ProbeChannel implements Probe {
     }, []));
   }
 
-  memberCredentialSaved(connectionId: string, organizationId: string, memberId: string): Promise<boolean> {
-    const surface = requireSurface(this.#surface);
-    return this.#runtime.call("probe", "memberCredentialSaved", "memberCredentialSaved(<fixed-status>)", surface, () => callFunctionOnSurface(surface, (connectionId, organizationId, memberId) => {
-      const values: unknown = Reflect.get(window, "__nativeProofSaved");
-      return Array.isArray(values) && values.some((value: unknown) => value && typeof value === "object"
-        && "httpStatus" in value && value.httpStatus === 200 && "stored" in value && value.stored === true
-        && "connectionId" in value && value.connectionId === connectionId && "organizationId" in value && value.organizationId === organizationId
-        && "memberId" in value && value.memberId === memberId);
-    }, [connectionId, organizationId, memberId]));
-  }
-
   credentialInputState(selector: string, candidate = ""): Promise<CredentialInputState> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "credentialInputState", "credentialInputState(<masked>)", surface, async () => {
