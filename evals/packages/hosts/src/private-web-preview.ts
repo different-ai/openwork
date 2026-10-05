@@ -1,9 +1,21 @@
 import { defaultDaytonaExec } from "./daytona.ts";
 import type { DaytonaExec } from "./daytona.ts";
 
-export async function privateSandboxId(sandbox: string, exec: DaytonaExec = defaultDaytonaExec): Promise<string> {
-  const result = await exec(["info", sandbox, "-f", "json"], { timeoutMs: 30_000 });
-  if (result.code !== 0) throw new Error("Could not verify private sandbox identity.");
+export async function privateSandboxId(
+  sandbox: string,
+  exec: DaytonaExec = defaultDaytonaExec,
+  pause: (ms: number) => Promise<unknown> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<string> {
+  // A sandbox from a large snapshot can briefly answer `info` with an error right after `create` returns.
+  let result = await exec(["info", sandbox, "-f", "json"], { timeoutMs: 30_000 });
+  for (let attempt = 1; result.code !== 0 && attempt < 6; attempt++) {
+    await pause(2_000 * attempt);
+    result = await exec(["info", sandbox, "-f", "json"], { timeoutMs: 30_000 });
+  }
+  if (result.code !== 0) {
+    const detail = (result.stderr ?? "").split("\n").filter((line) => line.trim() && !line.includes("Version mismatch")).slice(-3).join(" ").slice(0, 300);
+    throw new Error(`Could not verify private sandbox identity.${detail ? ` Daytona: ${detail}` : ""}`);
+  }
   let info: unknown;
   try { info = JSON.parse(result.stdout); } catch { throw new Error("Invalid private sandbox identity receipt."); }
   if (typeof info !== "object" || info === null || !("public" in info) || info.public !== false

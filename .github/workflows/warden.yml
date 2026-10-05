@@ -1,7 +1,7 @@
 name: Warden
 
-# Keep these actions aligned with warden.toml. The workflow remains disabled
-# in GitHub until a maintainer explicitly enables it after rollout.
+# Keep these actions aligned with warden.toml. Warden Clearance
+# (warden-clearance.yml) reads this run's warden-summary receipt to approve.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]

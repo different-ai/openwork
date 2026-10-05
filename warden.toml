@@ -1,6 +1,7 @@
 version = 1
 
-# Security review only. GitHub's admin-team rule owns merge approval.
+# Security and confidentiality review. warden-clearance.yml approves clean PRs;
+# see .warden/README.md.
 [defaults]
 defaultBranch = "dev"
 reportOn = "low"
