@@ -75,10 +75,7 @@ function organizationColumns(now: number): DenTableColumn<FreeAutoOrganizationUs
       key: "organization", header: "Organization", render: (row) => (
         <div className="min-w-[12rem]">
           <p className="font-medium text-gray-900">{row.name}</p>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5">
-            {row.enrolled ? <DenBadge tone="success">Enrolled</DenBadge> : <DenBadge>Not enrolled</DenBadge>}
-            {row.subscribed ? <DenBadge tone="info">Pays for Models</DenBadge> : null}
-          </div>
+          {row.subscribed ? <div className="mt-1 flex flex-wrap items-center gap-1.5"><DenBadge tone="info">Pays for Models</DenBadge></div> : null}
         </div>
       ),
     },
@@ -116,21 +113,18 @@ function organizationColumns(now: number): DenTableColumn<FreeAutoOrganizationUs
 function Report({ report }: { report: FreeAutoUsageReport }) {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<OrganizationSort>("spend");
-  const [scope, setScope] = useState<"all" | "enrolled">("all");
   const colors = useSeriesColors(SERIES.map((series) => series.id), "free-auto-usage");
-  const rows = useMemo(() => selectOrganizations(report.organizations, { search, sort, enrolledOnly: scope === "enrolled" }), [report.organizations, search, sort, scope]);
+  const rows = useMemo(() => selectOrganizations(report.organizations, { search, sort }), [report.organizations, search, sort]);
   const now = Date.parse(report.generatedAt);
   const daily = report.daily.map((day) => ({
     date: day.date, total: day.membersMicroUsd + day.guestsMicroUsd, values: { members: day.membersMicroUsd, guests: day.guestsMicroUsd },
   }));
-  const enrolledCount = report.organizations.filter((row) => row.enrolled).length;
   const { totals, members, guests, week, settings } = report;
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center gap-2" aria-label="Free Auto settings">
         <DenBadge tone={settings.membersEnabled ? "success" : "neutral"}>Members {settings.membersEnabled ? "on" : "off"}</DenBadge>
-        <DenBadge tone="info">{settings.rolloutAllOrganizations ? "Rollout: all organizations" : `Rollout: ${formatCount(enrolledCount)} enrolled`}</DenBadge>
         <DenBadge>{formatUsd(settings.weeklyLimitMicroUsd)} a week per person</DenBadge>
       </div>
 
@@ -154,14 +148,12 @@ function Report({ report }: { report: FreeAutoUsageReport }) {
           <div className="min-w-[14rem] flex-1">
             <DenInput icon={Search} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search organizations" aria-label="Search organizations" />
           </div>
-          <DenSegmented aria-label="Organizations shown" value={scope} onChange={setScope}
-            options={[{ value: "all", label: "All" }, { value: "enrolled", label: "Enrolled" }]} />
           <DenSelect aria-label="Sort organizations" value={sort} onChange={(event) => setSort(event.target.value as OrganizationSort)}>
             {SORTS.map((option) => <option key={option.value} value={option.value}>Sort: {option.label}</option>)}
           </DenSelect>
         </div>
         <DenTable columns={organizationColumns(now)} rows={rows} getRowKey={(row) => row.id} density="compact"
-          emptyLabel={search ? "No organizations match this search." : "No organizations have used free Auto in this range, and none are enrolled."} />
+          emptyLabel={search ? "No organizations match this search." : "No organizations have used free Auto in this range."} />
         {report.otherOrganizations ? (
           <p className="text-[13px] text-gray-500">
             Plus {formatCount(report.otherOrganizations.organizations)} more organizations with {formatCount(report.otherOrganizations.requests)} requests

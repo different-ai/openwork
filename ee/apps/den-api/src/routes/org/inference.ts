@@ -105,12 +105,11 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
     return c.json({ access })
   })
   const FREE_REFUSAL_MESSAGES = {
-    free_not_enrolled: "Auto isn't turned on for your organization yet.",
     free_not_offered: "Your organization has turned off Auto.",
     not_eligible: "Auto isn't available for this account.",
   } as const
   app.post("/v1/inference/free/credential", describeRoute({ tags: ["Inference"], summary: "Get my free Auto credential",
-    description: "Issues or reuses the member's OpenWork Models key for free Auto, within the member's weekly allowance. Organizations with an OpenWork Models subscription get it too; Auto is never billed to them. A refusal names its reason: free_not_enrolled (the organization is not in the rollout), free_not_offered (the organization turned the free starter model off) or not_eligible.",
+    description: "Issues or reuses the member's OpenWork Models key for free Auto, within the member's weekly allowance. Organizations with an OpenWork Models subscription get it too; Auto is never billed to them. A refusal names its reason: free_not_offered (the organization turned the free starter model off) or not_eligible.",
     responses: { 200: jsonResponse("Member Auto credential returned.", freeCredentialSchema),
       401: jsonResponse("Authentication required.", unauthorizedSchema), 403: jsonResponse("Auto access denied.", forbiddenSchema),
       503: jsonResponse("Auto unavailable.", z.object({ error: z.string() })) },

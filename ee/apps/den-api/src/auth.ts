@@ -1221,10 +1221,6 @@ export const auth = betterAuth({
           if ("dpaSigned" in metadata) {
             throw new APIError("FORBIDDEN", { message: "dpaSigned is reserved for internal platform administration." });
           }
-          const free = metadata.inferenceFree;
-          if (free && typeof free === "object" && "rolloutEnabled" in free) {
-            throw new APIError("FORBIDDEN", { message: "inferenceFree.rolloutEnabled is reserved for internal platform administration." });
-          }
           if ("plan" in metadata) {
             throw new APIError("FORBIDDEN", { message: "plan is reserved for internal platform administration." });
           }
