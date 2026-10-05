@@ -542,7 +542,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       id: item.id,
       title: item.title,
       detail: item.detail,
-      meta: item.option.gatewayAuthorization ? "Sign-in required" : item.meta,
+      meta: item.meta,
       searchText: item.searchText,
       disabled: item.option.disabled,
       action: () => {
@@ -649,7 +649,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       <div className="min-w-0 flex-1">
         <div className="truncate font-medium">{item.title}</div>
         {item.breadcrumb || item.detail ? (
-          <div className="truncate text-muted-foreground text-xs">
+          <div data-slot="command-item-detail" className="truncate text-muted-foreground text-xs">
             {item.breadcrumb ? (
               <span className="text-muted-foreground/72">
                 {item.breadcrumb}{item.detail ? " › " : ""}
