@@ -83,7 +83,13 @@ test("an admin migrating a Cowork plugin gets it wired to the Slack, Microsoft 3
     const mapped = ["microsoft-365", "gmail"].map((name) => skipped.find((entry) => entry.name === name));
     const after = await world.connections();
     const added = after.filter((connection) => !connectionsBefore.some((earlier) => earlier.id === connection.id));
-    const claudeHosted = after.filter((connection) => connection.url.includes(CLAUDE_MICROSOFT_365_HOST));
+    const claudeHosted = after.filter((connection) => {
+      try {
+        return new URL(connection.url).hostname === CLAUDE_MICROSOFT_365_HOST;
+      } catch {
+        return false;
+      }
+    });
     const ok = mapped.every((entry) => entry?.reason === "native_connector" && isRecord(entry.reuse) && existingIds.has(String(entry.reuse.connectionId)))
       && claudeHosted.length === 0;
     evidence.recordAssertionEvidence(
