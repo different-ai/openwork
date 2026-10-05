@@ -43,6 +43,22 @@ test("every organization's members get free Auto without a platform admin turnin
     await admin.screenshot();
   });
 
+  await step("the free Auto usage page reports every organization without an enrollment filter", async () => {
+    await admin.click({ role: "link", label: "Free Auto usage" });
+    // Witness: the Organizations section renders only after the page accepted the whole report.
+    await admin.see({ role: "heading", label: "Organizations" }, { timeoutMs: 60_000 });
+    await admin.see({ text: "No organizations have used free Auto in this range." });
+    await admin.notSee({ text: "Rollout:" });
+    await admin.notSee({ text: "Enrolled" });
+    const report = (await probe.api(world.den.admin, "/v1/admin/free-auto/usage?days=7")).body;
+    const settings = report && typeof report === "object" && "settings" in report ? report.settings : null;
+    const fields = settings && typeof settings === "object" ? Object.keys(settings).sort() : [];
+    expect(fields).toEqual(["membersEnabled", "weeklyLimitMicroUsd"]);
+    evidence.recordAssertionEvidence("the usage report has no rollout setting or enrollment column",
+      `usage settings: ${fields.join(", ")}; page shows no "Rollout:" badge or "Enrolled" filter`, fields.join(",") === "membersEnabled,weeklyLimitMicroUsd");
+    await admin.screenshot();
+  });
+
   await step("an ordinary member still cannot open platform administration", async () => {
     await member.see({ role: "heading", label: "Admin access required" }, { timeoutMs: 60_000 });
     const denied = await probe.api(world.teammate, "/v1/admin/organizations");
