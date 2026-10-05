@@ -40,7 +40,8 @@
     "typescript": "^5.9.3",
     "vite": "^6.4.3",
     "vitest": "^4.1.11",
-    "xml-crypto": "6.1.2"
+    "xml-crypto": "6.1.2",
+    "zod": "^4.4.3"
   },
   "packageManager": "pnpm@11.4.0"
 }

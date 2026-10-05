@@ -47,7 +47,7 @@ test("Den validates personal key values and redacts provider failures across rea
   await using ownedWitness = { [Symbol.asyncDispose]: () => new Promise<void>((resolve, reject) => { witness.closeAllConnections(); witness.close(error => error ? reject(error) : resolve()); }) };
   const address = witness.address();
   if (!address || typeof address === "string") throw new Error("Missing owned provider witness");
-  const api = (member: typeof alice, path: string, body: unknown) => denFetch(member, path, { method: "POST", headers: { authorization: `Bearer ${member.token}` }, body: JSON.stringify(body) });
+  const api = (member: typeof alice, path: string, body: unknown, method = "POST") => denFetch(member, path, { method, headers: { authorization: `Bearer ${member.token}` }, body: JSON.stringify(body) });
   const minted = await api(alice, "/v1/mcp/token", { scopes: ["mcp:read", "mcp:write"] });
   expect(minted.response.status).toBe(200);
   const bearer = tokenResponse.parse(minted.body).token;
@@ -67,20 +67,20 @@ test("Den validates personal key values and redacts provider failures across rea
     const created = await api(den.admin, "/v1/mcp-connections", { name: `Value boundary ${scheme}`, url: `http://127.0.0.1:${address.port}/mcp`, authType: "apikey", credentialMode: "per_member", apiKeyAuthScheme: scheme, access: { orgWide: true } });
     expect(created.response.status).toBe(200);
     const id = connectionResponse.parse(created.body).id;
-    const endpoint = `/v1/mcp-connections/${id}/member-api-key`;
+    const endpoint = `/v1/mcp-connections/${id}/my-credential`;
     for (const apiKey of ["", "Bearer synthetic", "Token synthetic", "x\r\ny:z", "x\0", "x\t", "x ", "é", "x".repeat(8193)]) {
       const before = wire.length;
-      expect((await api(alice, endpoint, { apiKey })).response.status).toBe(400);
+      expect((await api(alice, endpoint, { apiKey }, "PUT")).response.status).toBe(400);
       expect(wire).toHaveLength(before);
     }
     const bounded = "x".repeat(8192);
-    expect((await api(alice, endpoint, { apiKey: bounded })).response.status).toBe(200);
+    expect((await api(alice, endpoint, { apiKey: bounded }, "PUT")).response.status).toBe(200);
     const before = wire.length;
     expect((await invoke(id)).result.isError).not.toBe(true);
     expect(wire.slice(before).some(entry => entry.method === "tools/call" && entry.scheme === (scheme === "bearer" ? "Bearer" : "Token") && entry.fingerprint === fingerprint(bounded))).toBe(true);
     for (const prefix of ["Bearer", "Token", "tOkEn"]) {
       for (const key of ["q", "abc1234", "a:!\"%&'()*+,./;<=>?@[\\]^_`{|}~", "synthetic-bearer-control"]) {
-        expect((await api(alice, endpoint, { apiKey: key })).response.status).toBe(200);
+        expect((await api(alice, endpoint, { apiKey: key }, "PUT")).response.status).toBe(200);
         for (const text of [`403 forbidden ${prefix} ${key}`, `403 forbidden Authorization: ${prefix} ${key}`, `403 forbidden ${JSON.stringify({ authorization: `${prefix} ${key}` })}`]) {
           providerError = text;
           const result = await invoke(id);
@@ -98,7 +98,7 @@ test("Den validates personal key values and redacts provider failures across rea
     providerError = undefined;
     for (const status of [301, 302, 303, 307, 308]) {
       redirectStatus = status;
-      expect((await api(alice, endpoint, { apiKey: `synthetic-redirect-${status}` })).response.status).toBe(200);
+      expect((await api(alice, endpoint, { apiKey: `synthetic-redirect-${status}` }, "PUT")).response.status).toBe(200);
       expect((await invoke(id)).result.isError).toBe(true);
       expect(targetRequests).toBe(0);
     }

@@ -29,11 +29,10 @@ import {
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
-import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { env } from "../env.js"
-import { listTeamsForMember } from "../orgs.js"
-import { validMemberApiKey } from "./member-api-key.js"
+import { memberApiKeyUsable, usesMemberApiKey, validMemberApiKey } from "./member-api-key.js"
 import { declaredPluginMcpAuthType, existingPluginMcpAuthTypeCompatible, requiredPluginMcpAuthType } from "./external-mcp-auth-policy.js"
 import { isExternalMcpSharedCallbackRedirectUri } from "./external-mcp-oauth-contract.js"
 import {
@@ -889,12 +888,10 @@ export async function replaceExternalMcpConnectionAccess(input: {
     ))
     const rows = accessGrantRows(input)
     if (rows.length > 0) await tx.insert(ExternalMcpConnectionAccessGrantTable).values(rows)
-    if (connection.authType === "apikey" && connection.credentialMode === "per_member") {
-      // Conservative policy: changing access requires fresh personal enrollment.
-      await tx.delete(ConnectedAccountTable).where(and(
-        eq(ConnectedAccountTable.organizationId, input.organizationId),
-        eq(ConnectedAccountTable.providerId, input.connectionId),
-      ))
+    if (usesMemberApiKey(connection)) {
+      // Members who lose access lose their stored key; everyone else keeps theirs.
+      await pruneUnreachableMemberApiKeys(tx, { organizationId: input.organizationId, connectionId: input.connectionId })
+      // Invalidates enrollments that were authorized against the old grants.
       await tx.update(ExternalMcpConnectionTable).set({ updatedAt: new Date(Math.max(Date.now(), connection.updatedAt.getTime() + 1)) }).where(eq(ExternalMcpConnectionTable.id, connection.id))
     }
   })
@@ -1168,12 +1165,6 @@ export async function updateExternalMcpConnection(
     }
 
     if (accessChanged) {
-      if (existing.authType === "apikey" && existing.credentialMode === "per_member") {
-        await tx.delete(ConnectedAccountTable).where(and(
-          eq(ConnectedAccountTable.organizationId, input.organizationId),
-          eq(ConnectedAccountTable.providerId, input.connectionId),
-        ))
-      }
       await tx.delete(ExternalMcpConnectionAccessGrantTable).where(and(
         eq(ExternalMcpConnectionAccessGrantTable.organizationId, input.organizationId),
         eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, input.connectionId),
@@ -1187,6 +1178,10 @@ export async function updateExternalMcpConnection(
       })
       if (grantRows.length > 0) {
         await tx.insert(ExternalMcpConnectionAccessGrantTable).values(grantRows)
+      }
+      if (usesMemberApiKey(existing)) {
+        // Members who lose access lose their stored key; everyone else keeps theirs.
+        await pruneUnreachableMemberApiKeys(tx, { organizationId: input.organizationId, connectionId: input.connectionId })
       }
     }
 
@@ -1397,8 +1392,8 @@ export async function externalMcpConnectionReadyForMember(
   }
   if (connection.authType !== "oauth" && connection.authType !== "apikey") return false
   const account = await readAccount({ connection, orgMembershipId })
-  return account.current && Boolean(account.value?.accessToken)
-    && (connection.authType !== "apikey" || (account.value?.tokenType === "api_key" && account.value.credentialHealth?.status !== "reconnect_required"))
+  if (!account.current) return false
+  return usesMemberApiKey(connection) ? memberApiKeyUsable(account.value) : Boolean(account.value?.accessToken)
 }
 
 /**
@@ -1770,27 +1765,103 @@ export async function readConnectedAccountForExternalMcpIdentity(input: {
   return { current: true, value }
 }
 
-/** Re-read authorization, identity and the write-only credential on every operation. */
-export async function resolveMemberApiKey(connection: ExternalMcpConnectionRow, orgMembershipId: OrgMembershipId) {
-  if (connection.authType !== "apikey" || connection.credentialMode !== "per_member") {
-    throw new Error("This connection does not accept personal API keys.")
-  }
-  const members = await db.select({ id: MemberTable.id }).from(MemberTable).where(and(
-    eq(MemberTable.id, orgMembershipId),
-    eq(MemberTable.organizationId, connection.organizationId),
+type ExternalMcpDatabase = typeof db | ExternalMcpTransaction
+
+/**
+ * The one reach rule for personal API keys, shared by enrollment, use and
+ * pruning: an active, non-agent member with a direct grant (org-wide, the
+ * member, or one of their teams). Plugin-binding grants never authorize a
+ * personal key.
+ */
+export async function memberApiKeyReachesMember(database: ExternalMcpDatabase, input: {
+  connection: Pick<ExternalMcpConnectionRow, "id" | "organizationId">
+  orgMembershipId: OrgMembershipId
+  /** Lock the member row inside a write transaction (enrollment). */
+  lockMember?: boolean
+}): Promise<boolean> {
+  const memberQuery = database.select({ id: MemberTable.id }).from(MemberTable).where(and(
+    eq(MemberTable.id, input.orgMembershipId),
+    eq(MemberTable.organizationId, input.connection.organizationId),
     isNull(MemberTable.removedAt),
     eq(MemberTable.isSetupAgent, false),
   )).limit(1)
-  if (!members[0]) throw new Error("Connection access is not available.")
-  const teams = await listTeamsForMember({ organizationId: connection.organizationId, memberId: orgMembershipId })
-  if (!await memberCanUseExternalMcpConnection({ connectionId: connection.id, orgMembershipId, teamIds: teams.map((team) => team.id) })) {
+  const members = input.lockMember ? await memberQuery.for("update") : await memberQuery
+  if (!members[0]) return false
+  const teams = await database.select({ id: TeamTable.id }).from(TeamMemberTable)
+    .innerJoin(TeamTable, eq(TeamTable.id, TeamMemberTable.teamId))
+    .where(and(eq(TeamTable.organizationId, input.connection.organizationId), eq(TeamMemberTable.orgMembershipId, input.orgMembershipId)))
+  const grants = await database.select({ id: ExternalMcpConnectionAccessGrantTable.id }).from(ExternalMcpConnectionAccessGrantTable).where(and(
+    eq(ExternalMcpConnectionAccessGrantTable.organizationId, input.connection.organizationId),
+    eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, input.connection.id),
+    isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
+    grantFilter({ orgMembershipId: input.orgMembershipId, teamIds: teams.map((team) => team.id) }),
+  )).limit(1)
+  return Boolean(grants[0])
+}
+
+/**
+ * Deletes personal API keys whose owner the reach rule no longer covers.
+ * Called inside the transaction that changed team membership or connection
+ * access; keys of members who keep access are never touched.
+ */
+export async function pruneUnreachableMemberApiKeys(tx: ExternalMcpTransaction, input: {
+  organizationId: OrganizationId
+  orgMembershipIds?: OrgMembershipId[]
+  connectionId?: ExternalMcpConnectionId
+}): Promise<void> {
+  if (input.orgMembershipIds?.length === 0) return
+  const keys = await tx.select({
+    id: ConnectedAccountTable.id,
+    orgMembershipId: ConnectedAccountTable.orgMembershipId,
+    providerId: ConnectedAccountTable.providerId,
+  }).from(ConnectedAccountTable).where(and(
+    eq(ConnectedAccountTable.organizationId, input.organizationId),
+    eq(ConnectedAccountTable.tokenType, "api_key"),
+    input.orgMembershipIds ? inArray(ConnectedAccountTable.orgMembershipId, input.orgMembershipIds) : undefined,
+    input.connectionId ? eq(ConnectedAccountTable.providerId, input.connectionId) : undefined,
+  ))
+  const unreachable: (typeof keys)[number]["id"][] = []
+  for (const key of keys) {
+    const reaches = await memberApiKeyReachesMember(tx, {
+      connection: { id: normalizeDenTypeId("externalMcpConnection", key.providerId), organizationId: input.organizationId },
+      orgMembershipId: key.orgMembershipId,
+    })
+    if (!reaches) unreachable.push(key.id)
+  }
+  if (unreachable.length > 0) await tx.delete(ConnectedAccountTable).where(inArray(ConnectedAccountTable.id, unreachable))
+}
+
+/** Re-read authorization, identity and the write-only credential once per operation. */
+export async function resolveMemberApiKey(connection: ExternalMcpConnectionRow, orgMembershipId: OrgMembershipId) {
+  if (!usesMemberApiKey(connection)) {
+    throw new Error("This connection does not accept personal API keys.")
+  }
+  if (!await memberApiKeyReachesMember(db, { connection, orgMembershipId })) {
     throw new Error("Connection access is not available.")
   }
   const account = await readConnectedAccountForExternalMcpIdentity({ connection, orgMembershipId })
-  if (!account.current || account.value?.tokenType !== "api_key" || account.value.credentialHealth?.status === "reconnect_required" || !account.value.accessToken || !validMemberApiKey(account.value.accessToken)) {
+  if (!account.current || !account.value?.accessToken || !memberApiKeyUsable(account.value) || !validMemberApiKey(account.value.accessToken)) {
     throw new Error("Connect your personal API key in Your Connections.")
   }
   return { key: account.value.accessToken, accountId: account.value.id, updatedAt: account.value.updatedAt }
+}
+
+/**
+ * Per-request check inside one operation: the stored key is still exactly the
+ * one the operation resolved, and still usable. Replacement, rejection, lost
+ * access (prune), member removal and identity changes all change that row.
+ */
+export async function memberApiKeyStillCurrent(
+  connection: ExternalMcpConnectionRow,
+  orgMembershipId: OrgMembershipId,
+  resolved: Awaited<ReturnType<typeof resolveMemberApiKey>>,
+): Promise<boolean> {
+  const account = await readConnectedAccountForExternalMcpIdentity({ connection, orgMembershipId })
+  return account.current
+    && account.value?.id === resolved.accountId
+    && account.value.updatedAt.getTime() === resolved.updatedAt.getTime()
+    && account.value.accessToken === resolved.key
+    && memberApiKeyUsable(account.value)
 }
 
 /** An old failed request must never invalidate a concurrently replaced key. */
@@ -1827,23 +1898,7 @@ export async function upsertConnectedAccountForExternalMcpIdentity(input: {
     if (!current) return false
     if (current.authType === "apikey") {
       if (current.credentialMode !== "per_member" || current.updatedAt.getTime() !== input.connection.updatedAt.getTime()) return false
-      const members = await tx.select({ id: MemberTable.id }).from(MemberTable).where(and(
-        eq(MemberTable.id, input.orgMembershipId),
-        eq(MemberTable.organizationId, current.organizationId),
-        isNull(MemberTable.removedAt),
-        eq(MemberTable.isSetupAgent, false),
-      )).limit(1).for("update")
-      if (!members[0]) return false
-      const teams = await tx.select({ id: TeamTable.id }).from(TeamMemberTable)
-        .innerJoin(TeamTable, eq(TeamTable.id, TeamMemberTable.teamId))
-        .where(and(eq(TeamTable.organizationId, current.organizationId), eq(TeamMemberTable.orgMembershipId, input.orgMembershipId)))
-      const grants = await tx.select({ id: ExternalMcpConnectionAccessGrantTable.id }).from(ExternalMcpConnectionAccessGrantTable).where(and(
-        eq(ExternalMcpConnectionAccessGrantTable.organizationId, current.organizationId),
-        eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, current.id),
-        isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
-        grantFilter({ orgMembershipId: input.orgMembershipId, teamIds: teams.map((team) => team.id) }),
-      )).limit(1)
-      if (!grants[0]) return false
+      if (!await memberApiKeyReachesMember(tx, { connection: current, orgMembershipId: input.orgMembershipId, lockMember: true })) return false
     }
     const rows = await tx
       .select()
