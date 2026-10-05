@@ -2,8 +2,7 @@ import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { InferenceKeyTable, MemberTable, OrganizationTable, readDesktopPolicyForOrgMember } from "@openwork-ee/den-db"
 import { assertManagedModelsAllowed } from "@openwork/types/den/managed-models-policy"
-import { freeInferenceDefaultPinned, freeInferenceOrganizationAllowed, freeInferenceRolloutEnabled } from "@openwork/types/den/inference"
-import { env } from "../../env.js"
+import { freeInferenceDefaultPinned, freeInferenceOrganizationAllowed } from "@openwork/types/den/inference"
 import { db, freeAutoDatabase } from "../../db.js"
 
 type InferenceKeyRow = typeof InferenceKeyTable.$inferSelect
@@ -33,13 +32,13 @@ async function memberFreePrincipalRow(principal: Pick<MemberPrincipal, "inferenc
 }
 
 /**
- * Free Auto is for joined members of enrolled organizations that have not opted out, whether or not they pay for
+ * Free Auto is for joined members of every organization that has not opted out, whether or not they pay for
  * OpenWork Models. It always comes from the member's free weekly allowance and is never billed to the organization.
  */
 function freeOrganization(metadata: Record<string, unknown> | null) {
   if (!freeInferenceOrganizationAllowed(metadata)) return false
   assertManagedModelsAllowed(metadata)
-  return freeInferenceRolloutEnabled(metadata, env.freeAuto.member)
+  return true
 }
 
 async function freePolicyAllowed(identity: Pick<MemberPrincipal, "memberId" | "organizationId">, database: Database) {
