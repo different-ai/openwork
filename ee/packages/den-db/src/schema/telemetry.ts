@@ -20,6 +20,15 @@ export const TelemetryEventType = [
 ] as const
 
 /**
+ * Covering index for org analytics windows (`org_id = ? and event_timestamp >= ?`).
+ * It holds every column those aggregates and their session-dimension joins read,
+ * so a window scan touches only the window's index entries and never the rows.
+ * The other org-leading indexes put a column before `event_timestamp`, so they
+ * can only narrow by org and make the scan walk the org's whole history.
+ */
+export const TELEMETRY_EVENT_ORG_WINDOW_INDEX = "telemetry_event_org_ts_window"
+
+/**
  * One telemetry event, org-scoped and attributed to a member. Rows carry only
  * identifiers, timings, and outcomes — never user content. `session_id` is an
  * opaque correlation id; `source` distinguishes desktop/web ("app") from
@@ -44,6 +53,15 @@ export const TelemetryEventTable = mysqlTable(
     index("telemetry_event_org_id_member_id").on(table.org_id, table.member_id),
     index("telemetry_event_member_ts").on(table.member_id, table.event_timestamp),
     index("telemetry_event_org_session_ts").on(table.org_id, table.session_id, table.event_timestamp),
+    index(TELEMETRY_EVENT_ORG_WINDOW_INDEX).on(
+      table.org_id,
+      table.event_timestamp,
+      table.event_type,
+      table.member_id,
+      table.session_id,
+      table.source,
+      table.duration_ms,
+    ),
   ],
 )
 
