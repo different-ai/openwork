@@ -14,6 +14,20 @@ Connect a LiteLLM proxy you already run to OpenWork AI Gateway. OpenWork reads t
 | What people do | Nothing | Paste their own LiteLLM key once | Nothing |
 | Spend tracking and limits | On. OpenWork prices usage from LiteLLM's model prices and applies your usage limits | Off. LiteLLM's budgets and rate limits apply | Off. LiteLLM's budgets and rate limits apply |
 
+### Which mode fits
+
+```mermaid
+flowchart TD
+  A{"Should LiteLLM budget<br/>each person or team?"} -- "No, one shared budget" --> ORG["One organization key"]
+  A -- Yes --> B{"Do people already have<br/>LiteLLM keys they can paste?"}
+  B -- "Yes, and they're happy to" --> MEM["Each person's own key"]
+  B -- "No, or you want zero setup<br/>for people" --> C{"Is everyone already a<br/>LiteLLM user with their email?"}
+  C -- Yes --> ISS["OpenWork creates keys"]
+  C -- "Not yet" --> FIX["Add them in LiteLLM first,<br/>then use OpenWork creates keys"]
+```
+
+Whatever the mode, people's apps hold one AI Gateway key, never a LiteLLM key. See [How a prompt reaches a model](/ai-gateway/how-requests-flow) for the full request path.
+
 ## How LiteLLM maps to OpenWork
 
 | LiteLLM | OpenWork |
@@ -42,6 +56,89 @@ Embedding, image and audio models are skipped. Model names, context limits, pric
   </Step>
 </Steps>
 
+## How each mode works
+
+### One organization key
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor Admin
+  participant Den as OpenWork Cloud
+  participant LL as LiteLLM proxy
+  actor Alice
+  participant GW as AI Gateway
+
+  Admin->>Den: Add LiteLLM: proxy URL + organization key
+  Den->>LL: GET /key/info, /v1/models, /model_group/info
+  LL-->>Den: the key's models and prices
+  Den->>Den: create "All LiteLLM models", grant it to the chosen people and teams
+  Alice->>Den: open OpenWork (app refreshes providers)
+  Den-->>Alice: LiteLLM models + her AI Gateway key
+  Alice->>GW: prompt with her AI Gateway key
+  GW->>GW: check spend limits
+  GW->>LL: same request with the organization key
+  LL-->>GW: response
+  GW->>Den: log tokens and price for Alice
+```
+
+Everyone shares the organization key's models and LiteLLM budget. OpenWork prices each request from LiteLLM's model prices, so per-person reports and OpenWork spend limits work as they do for other providers. In LiteLLM, all usage shows under the one key.
+
+### Each person's own key
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor Admin
+  participant Den as OpenWork Cloud
+  participant LL as LiteLLM proxy
+  actor Alice
+  participant GW as AI Gateway
+
+  Admin->>Den: Add LiteLLM: proxy URL + admin key
+  Den->>LL: read models, teams and keys (admin key)
+  Den->>Den: create one group per distinct model set
+  Alice->>Den: open OpenWork
+  Den-->>Alice: LiteLLM needs connecting
+  Alice->>Den: Connect: paste her LiteLLM key in the browser
+  Den->>LL: GET /key/info with her key
+  LL-->>Den: her key's team and models
+  Den->>Den: store her key, grant her the group with exactly those models
+  Alice->>GW: prompt with her AI Gateway key
+  GW->>LL: same request with Alice's LiteLLM key
+  LL-->>GW: response (LiteLLM budgets Alice's key)
+```
+
+The admin key is used only to read LiteLLM. Each request uses the person's own key, so LiteLLM's user, team and key budgets apply and LiteLLM's logs show the real person. OpenWork logs tokens but not cost. If LiteLLM later rejects a key, the next sync revokes it and the person sees **Connect** again.
+
+### OpenWork creates keys
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor Admin
+  participant Den as OpenWork Cloud
+  participant LL as LiteLLM proxy
+  actor Alice
+  participant GW as AI Gateway
+
+  Admin->>Den: Add LiteLLM: proxy URL + admin key, one key per team or copy
+  Den->>LL: read models, users and teams
+  loop each allowed person
+    Den->>LL: find the LiteLLM user with their OpenWork email
+    Den->>LL: POST /key/generate (one per team, or a copy)
+    LL-->>Den: new key, stored encrypted, never shown
+  end
+  Den->>Den: group models per team, grant each person their teams' groups
+  Alice->>Den: open OpenWork
+  Den-->>Alice: her models, no connect step
+  Alice->>GW: prompt for a research team model
+  GW->>LL: same request with Alice's research team key
+  LL-->>GW: response (LiteLLM budgets Alice and the team)
+```
+
+People do nothing. Spend lands in LiteLLM on the right person and team, and OpenWork logs tokens but not cost.
+
 ## Keys OpenWork creates
 
 LiteLLM stores only a hash of each key, so OpenWork cannot read anyone's existing key. Instead it finds each allowed person's LiteLLM user by their OpenWork email and creates new keys for them.
@@ -52,6 +149,19 @@ Choose what each person gets:
 - **Copy their existing key**: a copy of their oldest active key, with the same team, models, model aliases, tags and expiry. Key-level budgets and rate limits are not copied, because a copy would double the allowance. Team and user budgets still apply. For someone with no key to copy, choose **Use their teams** or **Show an error**.
 
 Created keys can only call models: they can't manage LiteLLM, even if the person is a LiteLLM admin. OpenWork never creates LiteLLM users, because it can't know which teams they belong in. People whose email isn't in LiteLLM are listed on the provider page under **No key yet**, and see why when they select **Connect** in the app. Once a LiteLLM admin adds them, the next sync, or **Check again** on that page, creates their keys.
+
+```mermaid
+stateDiagram-v2
+  state "No key yet" as NoKey
+  state "Has keys" as Active
+  state "Keys deleted" as Deleted
+  [*] --> NoKey: person is allowed
+  NoKey --> Active: their email is a LiteLLM user<br/>and a key is created
+  NoKey --> NoKey: not in LiteLLM, no key to copy,<br/>or no synced models
+  Active --> Active: sync follows team changes<br/>and replaces stale copies
+  Active --> Deleted: loses access, leaves,<br/>or the provider is removed
+  Deleted --> [*]
+```
 
 Keys are created when the provider is added, at each sync, and the first time an allowed person opens OpenWork. When someone loses access or leaves the organization, their keys are deleted in LiteLLM at the next sync. Removing the provider deletes every key OpenWork created there. Deleting the whole organization does not touch your LiteLLM proxy.
 
@@ -65,6 +175,19 @@ Select **Sync models** on the provider page after you change models, teams or ke
 - removes the models of people you no longer allow to connect
 
 If LiteLLM can't be read, OpenWork keeps the last synced models and shows the error on the provider page.
+
+## Troubleshooting
+
+| What you see | Why | What to do |
+| --- | --- | --- |
+| The key is refused when you add the provider | The proxy URL is wrong, unreachable, or the key is not valid there | Check the URL opens `/v1/models` with that key. For a private proxy, ask the operator to allow its origin |
+| "The LiteLLM key is not allowed to call this endpoint" | The member and created-keys modes need a key that can read users, teams and keys | Use a LiteLLM admin (proxy admin) key |
+| A person's key is refused with "no shared models" | Their key reaches none of the synced models | In LiteLLM, give the key at least one chat model, then **Sync models** |
+| A person is under **No key yet**: not in LiteLLM | No LiteLLM user has their OpenWork email | Add them in LiteLLM with that email, then **Check again** |
+| A person is under **No key yet**: no key to copy | Copy mode with **Show an error**, and they have no active key | Create a key for them in LiteLLM, or switch the fallback to **Use their teams** |
+| A person is under **No key yet**: no models | Their teams and user settings allow none of the synced models | Give them a model in LiteLLM, then **Sync models** |
+| Models are missing after a LiteLLM change | OpenWork keeps the last synced list | Select **Sync models** |
+| The provider shows a sync error | LiteLLM couldn't be read | OpenWork keeps the last models. Fix the proxy, then **Sync models** |
 
 ## Requirements and limits
 

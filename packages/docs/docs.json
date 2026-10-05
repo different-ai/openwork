@@ -140,6 +140,7 @@
               "ai-gateway/overview",
               "ai-gateway/compare-litellm-bifrost",
               "ai-gateway/litellm",
+              "ai-gateway/how-requests-flow",
               "ai-gateway/google-agent-platform"
             ]
           },
