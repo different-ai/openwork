@@ -82,3 +82,6 @@ evals/results/
 
 # Warden local run logs
 .warden/logs/
+
+# Local Workbot runner database (scripts/dev-workbot.sh)
+/.data/

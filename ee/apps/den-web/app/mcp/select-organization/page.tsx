@@ -28,6 +28,7 @@ import { McpReturnLine, McpUnverifiedAppWarning, mcpIdentityFacts, useMcpRedirec
 import { McpConsentPermissions, McpTechnicalDetails } from "../consent-permissions";
 import { McpStoryTiles, mcpStoryCopy } from "../mcp-story";
 import { useLocationQuery } from "../use-location-query";
+import { FIRST_PARTY_APP_CLIENT_IDS } from "../client-trust-constants";
 import { useMcpClient } from "../use-mcp-client";
 
 type Organization = {
@@ -137,6 +138,8 @@ export default function McpSelectOrganizationPage() {
   const params = useMemo(() => new URLSearchParams(oauthQuery), [oauthQuery]);
   const requestedScope = params.get("scope") ?? "openid profile email mcp:read";
   const client = useMcpClient(oauthQuery);
+  // OpenWork's own apps (Workbot): choosing a workspace is all there is to it.
+  const firstParty = client.clientId !== null && FIRST_PARTY_APP_CLIENT_IDS.has(client.clientId);
   const redirect = useMcpRedirect(oauthQuery);
   const appName = client.name ?? "this app";
   const actor = client.name ?? "This app";
@@ -368,11 +371,11 @@ export default function McpSelectOrganizationPage() {
 
       <SetupFacts rows={facts} />
 
-      <McpConsentPermissions scope={requestedScope} actor={actor} />
+      {firstParty ? null : <McpConsentPermissions scope={requestedScope} actor={actor} />}
 
       <div className="flex flex-col gap-3.5">
-        <McpUnverifiedAppWarning redirect={redirect} client={client} />
-        <McpReturnLine client={client} redirect={redirect} short />
+        {firstParty ? null : <McpUnverifiedAppWarning redirect={redirect} client={client} />}
+        {firstParty ? null : <McpReturnLine client={client} redirect={redirect} short />}
         {errorMessage ? <SetupErrorLine>{errorMessage}</SetupErrorLine> : null}
         {creating ? (
           <button
@@ -381,7 +384,7 @@ export default function McpSelectOrganizationPage() {
             className="den-button-primary w-full"
             disabled={isBusy || workspaceName.trim().length < 2}
           >
-            {isBusy ? "Authorizing…" : "Create workspace and authorize"}
+            {isBusy ? (firstParty ? "Opening…" : "Authorizing…") : firstParty ? "Create workspace and continue" : "Create workspace and authorize"}
           </button>
         ) : (
           <button
@@ -390,7 +393,7 @@ export default function McpSelectOrganizationPage() {
             onClick={() => void continueFlow()}
             disabled={isBusy || flowState === "loading" || !selectedOrgId}
           >
-            {isBusy ? "Authorizing…" : client.name ? `Authorize ${client.name}` : "Authorize this app"}
+            {isBusy ? (firstParty ? "Opening…" : "Authorizing…") : firstParty ? `Continue to ${client.name ?? "OpenWork"}` : client.name ? `Authorize ${client.name}` : "Authorize this app"}
           </button>
         )}
         <div className="flex items-start justify-between gap-4">

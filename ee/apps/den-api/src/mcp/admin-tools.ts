@@ -7,6 +7,7 @@ import { db } from "../db.js"
 import { getDesktopReleaseMetadata } from "../desktop-releases.js"
 import { parseOrganizationPlan, type PlanTier } from "../entitlements.js"
 import { normalizeOrganizationMetadata } from "../organization-limits.js"
+import { organizationCapabilityKeySchema, organizationHasCapability } from "../organization-capabilities.js"
 import { updateOrganizationMetadata } from "../organization-metadata.js"
 
 /**
@@ -23,7 +24,7 @@ import { updateOrganizationMetadata } from "../organization-metadata.js"
  * timeout so one expensive SELECT cannot pin an API worker indefinitely.
  */
 
-export const DEN_ADMIN_MCP_VERSION = "0.6.0"
+export const DEN_ADMIN_MCP_VERSION = "0.7.0"
 
 const QUERY_TIMEOUT_MS = 15_000
 const DEFAULT_ROW_LIMIT = 200
@@ -479,6 +480,47 @@ export function registerAdminMcpTools(server: McpServer) {
             plan: parseOrganizationPlan(metadata),
             seatLimit,
           },
+        }
+      }),
+  )
+
+  server.registerTool(
+    "den_set_org_capability",
+    {
+      description:
+        "Admin write tool: turn one organization capability on or off (the same switches as the admin panel), e.g. capability='workbot'. enabled=null removes the override and restores the default.",
+      inputSchema: z.object({
+        organizationId: z.string().min(1).describe("Organization id, e.g. org_..."),
+        capability: organizationCapabilityKeySchema.describe("Capability to set"),
+        enabled: z.boolean().nullable().describe("true or false, or null to restore the default"),
+      }),
+    },
+    async ({ organizationId, capability, enabled }) =>
+      run(async () => {
+        if (!isOrganizationId(organizationId)) {
+          throw new Error("Invalid organization id")
+        }
+        const existing = await db
+          .select({ id: OrganizationTable.id, name: OrganizationTable.name, slug: OrganizationTable.slug })
+          .from(OrganizationTable)
+          .where(eq(OrganizationTable.id, organizationId))
+          .limit(1)
+        const organization = existing[0]
+        if (!organization) {
+          throw new Error(`No organization found for ${organizationId}`)
+        }
+        const metadata = await updateOrganizationMetadata(organizationId, (current) => {
+          // Other capability keys (and unmanaged ones) are kept as they are.
+          const capabilities = { ...readOrganizationMetadata(current.capabilities) }
+          if (enabled === null) delete capabilities[capability]
+          else capabilities[capability] = enabled
+          return { ...current, capabilities }
+        })
+        return {
+          ok: true,
+          organization: { id: organization.id, name: organization.name, slug: organization.slug },
+          capability,
+          enabled: organizationHasCapability(metadata, capability),
         }
       }),
   )

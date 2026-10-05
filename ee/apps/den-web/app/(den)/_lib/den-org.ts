@@ -263,6 +263,8 @@ export type DenOrgCapabilities = {
   /** Effective Web offer; true for the global switch or this organization's complimentary admin grant. */
   openworkWeb: boolean;
   cloud: boolean;
+  /** The organization's one-chat assistant; absent (off) on older servers. */
+  workbot?: boolean;
 };
 
 export type DenOrganizationMetadata = {
@@ -1076,7 +1078,7 @@ function parseOrgAuthMethods(value: unknown): DenOrgAuthMethods {
 
 function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
   if (!isRecord(value)) {
-    return { auditLogs: false, orgManagedDashboards: false, installLinks: false, mcpConnections: false, appMcpServers: false, workflows: true, openworkWeb: false, cloud: false };
+    return { auditLogs: false, orgManagedDashboards: false, installLinks: false, mcpConnections: false, appMcpServers: false, workflows: true, openworkWeb: false, cloud: false, workbot: false };
   }
 
   return {
@@ -1090,6 +1092,7 @@ function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
     workflows: value.workflows !== false,
     openworkWeb: value.openworkWeb === true,
     cloud: value.cloud === true,
+    workbot: value.workbot === true,
   };
 }
 

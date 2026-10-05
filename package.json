@@ -19,6 +19,7 @@
     "dev:enterprise-mock-lab": "pnpm --filter @openwork-ee/enterprise-mock-lab dev",
     "dev:diagnostics": "pnpm --filter @openwork-ee/diagnostics dev",
     "dev:den-local": "pnpm run dev:den",
+    "dev:workbot": "bash scripts/dev-workbot.sh",
     "dev:den:mysql": "docker compose -p openwork-den-local -f packaging/docker/docker-compose.web-local.yml up -d --wait mysql redis",
     "dev:den:mysql:down": "docker compose -p openwork-den-local -f packaging/docker/docker-compose.web-local.yml down",
     "dev:den:db-push": "DATABASE_URL=${DATABASE_URL:-mysql://root:password@127.0.0.1:3306/openwork_den} DEN_DB_ENCRYPTION_KEY=${DEN_DB_ENCRYPTION_KEY:-local-dev-db-encryption-key-please-change-1234567890} pnpm --filter @openwork-ee/den-db db:push",

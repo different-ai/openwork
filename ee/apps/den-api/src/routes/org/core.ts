@@ -23,6 +23,7 @@ import { validateInvitationAcceptVerification } from "../../organization-join-ve
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { organizationHasCapability, organizationManagedDashboardsEnabled } from "../../organization-capabilities.js"
 import { appMcpServersEnabled } from "../../mcp-app-rollout.js"
+import { workbotOrigin } from "../../workbot/config.js"
 import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
 import { getOpenWorkWebAccess } from "../../stripe-billing.js"
 import {
@@ -747,6 +748,8 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           // while the platform-admin complimentary grant enables only this
           // organization when the deployment switch is off.
           openworkWeb: isOpenWorkWebAvailableForOrganization(payload.organization.metadata),
+          // Workbot is its own app (DEN_WORKBOT_URL), per-organization and default-off.
+          workbot: organizationHasCapability(payload.organization.metadata, "workbot") && workbotOrigin() !== null,
           ...(cloudEnabled ? { cloud: true } : {}),
         },
         authMethods: {

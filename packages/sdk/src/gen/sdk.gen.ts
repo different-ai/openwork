@@ -29,6 +29,8 @@ import type {
   CreateMicrosoft365ReplyDraftErrors,
   CreateMicrosoft365ReplyDraftResponses,
   CreateOrganizationApiKeyRequest,
+  CreateWorkbotRunTokenErrors,
+  CreateWorkbotRunTokenResponses,
   DashboardElement,
   DeactivateAutomationErrors,
   DeactivateAutomationResponses,
@@ -490,6 +492,8 @@ import type {
   GetWellKnownOauthProtectedResourceResponses,
   GetWellKnownOpenidConfigurationApiAuthResponses,
   GetWellKnownOpenidConfigurationResponses,
+  GetWorkbotSessionErrors,
+  GetWorkbotSessionResponses,
   GoogleWorkspaceCreateCalendarEventBody,
   GoogleWorkspaceShareDriveFileBody,
   GoogleWorkspaceUpdateCalendarEventBody,
@@ -14213,6 +14217,46 @@ export class DenClient extends HeyApiClient {
       url: "/v1/integrations/slack/{connectionId}/interactions",
       ...options,
       ...params,
+    });
+  }
+
+  /**
+   * Who is signed in to Workbot
+   *
+   * For the Workbot app only. With the access token a person got by signing in to Workbot through Den, returns who they are, the workspace they chose, and whether Workbot is on for it.
+   */
+  public getWorkbotSession<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetWorkbotSessionResponses, GetWorkbotSessionErrors, ThrowOnError>({
+      url: "/v1/workbot/session",
+      ...options,
+    });
+  }
+
+  /**
+   * A short-lived token for one Workbot turn
+   *
+   * For the Workbot app only. Mints the member-scoped MCP token a Workbot turn uses to reach the person's connected apps on the headless runner, for at most an hour. Refused when Workbot is off for the workspace.
+   */
+  public createWorkbotRunToken<ThrowOnError extends boolean = false>(
+    parameters?: {
+      ttlMs?: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "ttlMs" }] }]);
+    return (options?.client ?? this.client).post<
+      CreateWorkbotRunTokenResponses,
+      CreateWorkbotRunTokenErrors,
+      ThrowOnError
+    >({
+      url: "/v1/workbot/run-token",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 

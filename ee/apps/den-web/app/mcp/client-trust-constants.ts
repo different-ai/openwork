@@ -40,3 +40,10 @@ export function knownMcpCimdDomain(clientId: string | null): string | null {
   if (!url || !KNOWN_MCP_CIMD_DOMAINS.includes(url.host) || !url.pathname.startsWith(KNOWN_MCP_CIMD_PATH_PREFIX)) return null;
   return url.host;
 }
+
+/**
+ * OpenWork's own apps that sign in with Den (registered by Den itself, with fixed return addresses, never by
+ * dynamic registration). Their sign-in is a plain workspace choice: no unverified-app warning or permission list,
+ * since they are part of OpenWork. Matches Den's WORKBOT_OAUTH_CLIENT_ID.
+ */
+export const FIRST_PARTY_APP_CLIENT_IDS: ReadonlySet<string> = new Set(["openwork-workbot"]);
