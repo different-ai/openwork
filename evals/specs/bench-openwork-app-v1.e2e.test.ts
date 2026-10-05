@@ -282,7 +282,7 @@ async function readServerInfo(app: Surface): Promise<ServerInfo> {
       if (invokeDesktop) {
         const info = await invokeDesktop("openworkServerInfo");
         if (info && info.running === true) {
-          baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").trim().replace(/\/+$/, "");
+          baseUrl = String(info.baseUrl ?? "").trim().replace(/\/+$/, "");
           token = String(info.ownerToken ?? info.clientToken ?? "").trim();
         }
       }
