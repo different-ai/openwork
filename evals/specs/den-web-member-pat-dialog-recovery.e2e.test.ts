@@ -33,7 +33,7 @@ for (const scenario of ["cancel", "uncertain", "refresh", "stale-target", "deadl
     await person.see({ role: "heading", label: "Add key for Key recovery A" });
     const candidate = "synthetic-private-dialog-candidate";
     await person.type({ label: "Key recovery A key" }, candidate, { sensitive: true });
-    const endpoint = `/v1/mcp-connections/${id}/member-api-key`;
+    const endpoint = `/v1/mcp-connections/${id}/my-credential`;
     if (scenario === "cancel") {
       await person.click({ role: "button", label: "Cancel" });
       await person.click({ testId: `connect-my-mcp-account-${id}` });

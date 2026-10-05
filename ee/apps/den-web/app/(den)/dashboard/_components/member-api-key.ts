@@ -114,9 +114,9 @@ export function memberApiKeyRequest(connectionId: string, orgId: string, apiKey:
   init: RequestInit;
 } {
   return {
-    path: `/v1/mcp-connections/${encodeURIComponent(connectionId)}/member-api-key`,
+    path: `/v1/mcp-connections/${encodeURIComponent(connectionId)}/my-credential`,
     init: {
-      method: "POST",
+      method: "PUT",
       headers: { "x-openwork-org-id": orgId },
       body: JSON.stringify({ apiKey }),
     },

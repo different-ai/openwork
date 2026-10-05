@@ -27,7 +27,7 @@ const test = spec.world(async (seed) => {
   const bearers = new Map<string, string>();
   for (const [member, key] of [[den.members.alice, "fixture-alice-old"], [den.members.blair, "fixture-blair"]]) {
     if (typeof member === "string" || typeof key !== "string") throw new Error("Invalid fixture pair");
-    const saved = await seed.api(member, `/v1/mcp-connections/${id}/member-api-key`, { method: "POST", body: JSON.stringify({ apiKey: key }) });
+    const saved = await seed.api(member, `/v1/mcp-connections/${id}/my-credential`, { method: "PUT", body: JSON.stringify({ apiKey: key }) });
     expect(saved.response.status).toBe(200);
     const minted = await seed.api(member, "/v1/mcp/token", { method: "POST", body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }) });
     expect(minted.response.status).toBe(200);
