@@ -32,7 +32,7 @@ export const OWN_COWORK_SKILL = {
 // What Claude Cowork keeps on a Mac under Application Support/Claude/
 // local-agent-mode-sessions: the marketplaces the person added, and a skills
 // bundle mixing their own skills with Anthropic's.
-function writeCoworkHome(root: string, repo: { owner: string; repo: string }) {
+export function writeCoworkHome(root: string, repo: { owner: string; repo: string }) {
   const sessions = join(root, "local-agent-mode-sessions");
   const pluginsDir = join(sessions, "acct", "org", "cowork_plugins");
   mkdirSync(pluginsDir, { recursive: true });
