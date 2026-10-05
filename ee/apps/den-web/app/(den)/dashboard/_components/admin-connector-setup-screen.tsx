@@ -3,12 +3,11 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
-import { DenSelect } from "../../_components/ui/select";
 import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessPeopleIds, peopleLabel } from "./access-summary";
 import { useConnectorSetup } from "./connector-setup";
-import { ApiKeyFields, OAuthAppFields } from "./connector-setup-fields";
+import { ApiKeyFields, ApiKeySchemeAdvanced, OAuthAppFields } from "./connector-setup-fields";
 import { useConnectorTarget } from "./connector-setup-screen";
 import { useDenToast } from "./den-toast";
 import { ItemHeader, ItemPage, SectionTitle, StepFooter } from "./item-header";
@@ -135,21 +134,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
           ? (
             <div className="flex flex-col gap-3">
               <SignInChoice name={name} value={chosenMode} onChange={setMode} disabled={setup.saving} kind="api_key" />
-              <label className="flex flex-col gap-1.5">
-                <span className="text-[12px] font-medium text-gray-700">Authorization scheme</span>
-                <DenSelect
-                  value={apiKeyAuthScheme}
-                  disabled={setup.saving}
-                  data-testid="connector-setup-api-key-auth-scheme"
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    if (value === "bearer" || value === "token") setApiKeyAuthScheme(value);
-                  }}
-                >
-                  <option value="bearer">Bearer</option>
-                  <option value="token">Token</option>
-                </DenSelect>
-              </label>
+              <ApiKeySchemeAdvanced value={apiKeyAuthScheme} onChange={setApiKeyAuthScheme} disabled={setup.saving} testId="connector-setup-api-key-auth-scheme" />
               {chosenMode === "shared" ? (
                 <ApiKeyFields name={name} saving={setup.saving} error={setup.saveError} onSave={(apiKey) => void setup.saveApiKey(apiKey, apiKeyAuthScheme)} />
               ) : (
@@ -195,7 +180,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
       const connectionId = connection.id;
       toast({
         title: `${name} is ready`,
-        description: `${usesIndividualKeys ? "Each person can now add their own key in My Library. " : ""}${reached > 0 ? `${peopleLabel(reached)} will find it in My Library.` : "Only you have it so far."}`,
+        description: `${reached > 0 ? `${peopleLabel(reached)} will find it in My Library.` : "Only you have it so far."}`,
         action: { label: "View", onClick: () => router.push(getMcpConnectionRoute(orgSlug, connectionId)) },
       });
       router.push(getMcpConnectionsRoute(orgSlug));
@@ -228,7 +213,6 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
         back={back}
         logo={<ConnectorLogo name={name} url={target.url} size="md" />}
         title={usesIndividualKeys ? `${name} is ready` : `${name} passed all ${checks.length} checks`}
-        description={usesIndividualKeys ? "Each person can now add their own key in My Library." : undefined}
       />
       {signsIn || usesKey ? (
         <section className="flex flex-col gap-2.5">

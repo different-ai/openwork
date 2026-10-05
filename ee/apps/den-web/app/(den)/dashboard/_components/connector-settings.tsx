@@ -4,6 +4,7 @@ import { type ReactNode, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenSelect } from "../../_components/ui/select";
 import { DenInput } from "../../_components/ui/input";
+import { ApiKeySchemeAdvanced } from "./connector-setup-fields";
 import { ConfirmDialog } from "./item-list";
 import { credentialModeForAuth } from "./member-api-key";
 import { McpCredentialInput } from "./mcp-credential-input";
@@ -123,22 +124,8 @@ export function ConnectorSettingsForm({ connection, onSaved }: { connection: Ext
         </DenSelect>
       </Field>
       {authType === "none" ? <p className="text-[12px] text-gray-500">This connection is shared; nobody signs in individually.</p> : null}
-      {usesKey && chosenMode === "per_member" ? <p className="text-[12px] text-gray-500">Each person adds their own key. Admins cannot read it back.</p> : null}
       {usesKey ? (
-        <Field label="Authorization scheme">
-          <DenSelect
-            value={apiKeyAuthScheme}
-            disabled={managedByPlugin}
-            data-testid="connector-settings-api-key-auth-scheme"
-            onChange={(event) => {
-              const value = event.target.value;
-              if (value === "bearer" || value === "token") setApiKeyAuthScheme(value);
-            }}
-          >
-            <option value="bearer">Bearer</option>
-            <option value="token">Token</option>
-          </DenSelect>
-        </Field>
+        <ApiKeySchemeAdvanced value={apiKeyAuthScheme} onChange={setApiKeyAuthScheme} disabled={managedByPlugin} testId="connector-settings-api-key-auth-scheme" />
       ) : null}
       {authType === "oauth" && !showOAuthApp ? <DenButton type="button" variant="secondary" size="sm" onClick={() => setShowOAuthApp(true)}>Add OAuth app</DenButton> : null}
       {usesSharedKey && !managedByPlugin ? (

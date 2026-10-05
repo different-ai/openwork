@@ -292,6 +292,9 @@ test("Den Web gives two ordinary members private keys on one admin-created conne
     await admin.see({ role: "heading", label: `Add ${CONNECTION_NAME}` }, { timeoutMs: READINESS_TIMEOUT_MS });
     await admin.see({ role: "radio", label: /Each person adds a key/ });
     await admin.click({ role: "radio", label: /Each person adds a key/ });
+    // The scheme is advanced, rarely changed configuration: collapsed by default (DESIGN P3).
+    await admin.notSee({ role: "button", label: /Authorization scheme/ });
+    await admin.click({ text: "Advanced" });
     await admin.see({ role: "button", label: /Authorization scheme/ }, { text: "Bearer" });
     await admin.click({ role: "button", label: /Authorization scheme/ });
     expect((await adminPage.dom('[role="listbox"] [role="option"]')).elements.map(option => option.text)).toEqual(["Bearer", "Token"]);
