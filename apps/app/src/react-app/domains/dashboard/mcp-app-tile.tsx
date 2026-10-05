@@ -30,7 +30,7 @@ import {
   shouldAutoRefreshDashboardTile,
   writeDashboardTileCache,
 } from "./dashboard-tile-cache";
-import type { DashboardMcpAppEntry } from "./granted-dashboard-store";
+import type { DashboardMcpAppEntry } from "./dashboard-mcp-app-entry";
 
 /** A workspace MCP runtime a tile may launch through. */
 export type DashboardLaunchEndpoint = {
