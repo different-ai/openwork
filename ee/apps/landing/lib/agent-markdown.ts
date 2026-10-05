@@ -23,7 +23,7 @@ const home = `# OpenWork
 - **SCIM / audit / procurement** — [Enterprise](https://openworklabs.com/enterprise)
 - **Docs** — [openworklabs.com/docs](https://openworklabs.com/docs)
 - **Compare with Claude Cowork** — [Claude Cowork alternative](https://openworklabs.com/alternatives/claude-cowork)
-- **Migrate from Claude Cowork** — [Migration guide](https://openworklabs.com/docs/start-here/migrate-from-claude-cowork)
+- **Migrate from Claude Cowork** — [Migration guide](https://openworklabs.com/docs/start-here/migrate-from-claude-cowork); agents follow [migrate.md](https://openworklabs.com/migrate.md)
 
 ## How it compares
 

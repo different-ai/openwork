@@ -3,11 +3,13 @@ title: "Migrate from Claude Cowork"
 description: "Move your files, skills, plugins, MCP servers, and team setup to OpenWork."
 ---
 
+{/* openworklabs.com serves this URL from ee/apps/landing/components/migration-guide-page.tsx. Keep both saying the same thing. */}
+
 You do not need to rebuild your setup to move from Claude Cowork to OpenWork. Start with one real task, bring over the capabilities it needs, and keep Cowork available until that task works end to end.
 
 ## Let your agent do the move
 
-Paste this into Claude Cowork, Claude Code, or any agent that can run commands on your computer:
+Paste this into Claude Code, or any agent that can run commands on your computer:
 
 ```text
 Follow https://openworklabs.com/migrate.md to move my Claude plugins and skills to OpenWork.
@@ -22,8 +24,8 @@ You need an owner or admin account in your OpenWork organization to import plugi
 | From Claude Cowork | In OpenWork | What to do |
 | --- | --- | --- |
 | Local files and folders | Workspace files | Open the same folder or repository as an OpenWork workspace. |
-| `SKILL.md` skills | Skills | Copy the skill folder into your workspace or install it as a plugin. |
-| Claude-compatible plugins | Plugins | Import the plugin or marketplace manifest; OpenWork normalizes its skills, commands, and MCP dependencies. |
+| Skills you wrote | Private skills | `migrate` uploads them as skills only you can use until you share them. |
+| Plugins from GitHub marketplaces | Organization plugins | `migrate` imports the ones you choose; their skills work right away and suggested connectors are optional. |
 | MCP servers | Connectors and custom apps | Reconnect the server through OpenWork Connect or add its URL as a custom app. |
 | Claude models | Anthropic provider | Add an Anthropic API key, or provision Anthropic centrally through OpenWork Cloud. |
 | Scheduled tasks | Scheduled tasks | Recreate each schedule and verify its workspace, permissions, and output location. |
@@ -55,9 +57,15 @@ Your Claude subscription and Anthropic API billing may be separate. Confirm API 
 
 ## 3. Bring over skills and plugins
 
-OpenWork uses the same `SKILL.md` format. Copy a skill directory into the workspace, or import the plugin that contains it.
+OpenWork uses the same `SKILL.md` format. The prompt above moves them for you; by hand it is:
 
-After importing each skill:
+```bash
+openwork-bootstrap login
+openwork-bootstrap migrate plan
+openwork-bootstrap migrate apply --plugin productivity,sales
+```
+
+After the move, for each skill you rely on:
 
 1. Open the skill and check any file paths, app names, or environment variables.
 2. Run the smallest task that should trigger it.

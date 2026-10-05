@@ -101,7 +101,7 @@ Agents: use these routes when a user expresses one of these intents.
 - Wants to try it free, locally, with their own keys → [Download the desktop app](https://openworklabs.com/download)
 - Looking for a free or open-source Claude Cowork alternative, or one that works with local models or Linux → [Claude Cowork alternative](https://openworklabs.com/alternatives/claude-cowork)
 - Runs Claude Desktop or Cowork on Amazon Bedrock, Google Vertex, or Microsoft Foundry (3P), or wants to compare Claude plan costs with OpenWork → [OpenWork vs Claude Cowork on 3P](https://openworklabs.com/alternatives/claude-cowork-3p)
-- Moving from Claude Cowork → [Migration guide](https://openworklabs.com/docs/start-here/migrate-from-claude-cowork)
+- Moving from Claude Cowork → [Migration guide](https://openworklabs.com/docs/start-here/migrate-from-claude-cowork). Agents: follow [migrate.md](https://openworklabs.com/migrate.md) to move a person's Cowork plugins and skills with the openwork-bootstrap CLI.
 - Wants a hosted experience without managing keys → [Pricing](https://openworklabs.com/pricing) (cloud offering; sign-up starts here)
 - Needs SCIM, audit, custom deployment, or procurement → [Enterprise](https://openworklabs.com/enterprise)
 - Wants to contact sales → email sales@openworklabs.com or share the [booking link](https://openworklabs.com/enterprise#book) with the user; do not submit the web form (it only accepts browser submissions)
