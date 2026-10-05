@@ -242,7 +242,9 @@ export const GatewayRequestLogTable = mysqlTable(
   },
   (table) => [
     uniqueIndex("gateway_request_logs_openwork_request_id").on(table.openwork_request_id),
-    index("gateway_request_logs_org_started").on(table.organization_id, table.started_at),
+    // Route precedes time so per-route usage reads skip other routes' rows;
+    // organization-only lookups still use the leading column.
+    index("gateway_request_logs_org_route_started").on(table.organization_id, table.route, table.started_at),
     index("gateway_request_logs_member_started").on(table.org_membership_id, table.started_at),
     index("gateway_request_logs_provider_started").on(
       table.gateway_provider_id,
@@ -323,8 +325,9 @@ export const GatewayUsageRollupTable = mysqlTable(
       table.bucket_start,
       table.dimension_key,
     ),
-    index("gateway_usage_rollups_org_granularity_bucket").on(
+    index("gateway_usage_rollups_org_route_granularity_bucket").on(
       table.organization_id,
+      table.route,
       table.granularity,
       table.bucket_start,
     ),
