@@ -1,0 +1,44 @@
+---
+title: "Sign in on a restricted network"
+description: "Recover when browser sign-in does not return to the desktop, and check the network paths still required."
+---
+
+## When the browser does not return to OpenWork
+
+Complete sign-in in your browser and copy the OpenWork sign-in link offered on
+the completion page (for example, **Copy OpenWork link** or **Copy link**).
+Return to the desktop manually:
+
+- If you can open **Settings → Account**, choose **Paste sign-in code**,
+  paste into **Sign-in link or one-time code**, then choose **Finish sign-in**.
+- If the desktop shows **Link this app to your organization**, paste the full
+  link into **Workspace address or sign-in code**, choose **Continue**, check
+  the displayed server, then choose **Confirm and finish sign-in**. In older
+  builds this same field is labeled **Workspace address**. The activation
+  field needs the full link, including its workspace address; a bare code is
+  only supported by the Account sign-in form for its configured server.
+- After starting browser sign-in from the activation screen, **Sign-in didn’t
+  come back? Paste the code from the browser** focuses the same field.
+
+Sign-in links are one-time credentials. Paste them only into OpenWork, not into
+support messages or screenshots. If a link has expired or was already used,
+start sign-in again to obtain a fresh one.
+
+## What manual handoff does and does not solve
+
+Pasting replaces the browser-to-desktop link handoff. It still requires the
+desktop to reach Den web for destination configuration and the advertised Den
+API to exchange the one-time grant. A successful browser login alone does not
+prove those desktop requests can succeed. Manual handoff does not bypass a
+blocked API, proxy authentication, certificate trust, or VPN routing.
+
+Ask your administrator to verify the Den web origin and the API origin
+advertised by `/api/runtime-config`, including any configured
+`DEN_API_PUBLIC_URL`. Use **Settings → Debug** when available to gather
+endpoint and network diagnostics. Do not disable certificate verification.
+
+See [Private network deployment](/start-here/private-network-deployment),
+[Certificate trust and proxies](/start-here/certificate-trust-and-proxies), and
+[Network diagnostics](/start-here/network-diagnostics) for supported setup and
+diagnostic steps. A failed return to the app by itself does not establish a
+corporate proxy or callback root cause.

@@ -4,6 +4,9 @@
  */
 
 export default {
+  "den.workspace_address_or_code": "Adresse de l’espace de travail ou code de connexion",
+  "den.workspace_code_hint": "Pour un code de connexion, collez le lien OpenWork complet copié depuis votre navigateur, avec l’adresse de l’espace de travail.",
+  "den.signin_return_help": "La connexion n’est pas revenue ? Collez le code du navigateur",
   "app.compact_command_desc": "Résumez cette session pour réduire la taille du contexte.",
   "app.error_audit_load": "Échec du chargement du journal d'audit.",
   "app.error_auth_failed": "Échec de l'authentification",
