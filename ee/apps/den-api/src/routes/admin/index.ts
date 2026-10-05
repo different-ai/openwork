@@ -110,7 +110,6 @@ const updateOrganizationCapabilitiesSchema = z.object({
     modelsAnalytics: z.boolean().nullable().optional(),
     auditLogs: z.boolean().nullable().optional(),
     orgManagedDashboards: z.boolean().nullable().optional(),
-    appMcpServers: z.boolean().nullable().optional(),
     slackAssistant: z.boolean().nullable().optional(),
     slackAssistantHeadless: z.boolean().nullable().optional(),
     headlessAutomations: z.boolean().nullable().optional(),
@@ -128,7 +127,6 @@ const adminOrganizationCapabilitiesSchema = z.object({
   modelsAnalytics: z.boolean(),
   auditLogs: z.boolean(),
   orgManagedDashboards: z.boolean(),
-  appMcpServers: z.boolean(),
   slackAssistant: z.boolean(),
   slackAssistantHeadless: z.boolean(),
   headlessAutomations: z.boolean(),
@@ -310,7 +308,6 @@ function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unkno
     modelsAnalytics: normalizeOrganizationCapabilities(metadata).modelsAnalytics,
     auditLogs: normalizeOrganizationCapabilities(metadata).auditLogs,
     orgManagedDashboards: normalizeOrganizationCapabilities(metadata).orgManagedDashboards,
-    appMcpServers: normalizeOrganizationCapabilities(metadata).appMcpServers,
     slackAssistant: normalizeOrganizationCapabilities(metadata).slackAssistant,
     slackAssistantHeadless: normalizeOrganizationCapabilities(metadata).slackAssistantHeadless,
     headlessAutomations: normalizeOrganizationCapabilities(metadata).headlessAutomations,
@@ -349,11 +346,11 @@ function readUnmanagedCapabilityMetadata(metadata: Record<string, unknown>): Rec
   const capabilities: Record<string, unknown> = {}
 
   for (const [key, value] of Object.entries(raw)) {
-    // "workflows", "codemodeScripts", "remoteMcpApps", and "cloud" are retired
-    // rollout keys: those features are now always on (Cloud is entitled by
-    // OpenWork Web access instead), so stale stored overrides stay managed
-    // (dropped on the next capabilities write) instead of passing through as
-    // unmanaged metadata.
+    // "workflows", "codemodeScripts", "remoteMcpApps", "appMcpServers", and
+    // "cloud" are retired rollout keys: those features are now always on (Cloud
+    // is entitled by OpenWork Web access instead), so stale stored overrides
+    // stay managed (dropped on the next capabilities write) instead of passing
+    // through as unmanaged metadata.
     if (key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "auditLogs" && key !== "orgManagedDashboards" && key !== "appMcpServers" && key !== "slackAssistant" && key !== "slackAssistantHeadless" && key !== "headlessAutomations" && key !== "workbot" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
       capabilities[key] = value
     }
@@ -2028,7 +2025,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     describeRoute({
       tags: ["Admin"],
       summary: "Set an organization's capability overrides",
-      description: "Enables, disables or clears (null) the install-links, MCP-connections, Models analytics, auditLogs, orgManagedDashboards and appMcpServers overrides. Audit logs, org-managed Dashboards and appMcpServers (building your own Apps as MCP servers) require literal true (absent/false is disabled); this flag neither grants capture entitlement nor initializes capacity or changes capture preferences. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true. Stale retired overrides are removed on capability writes.",
+      description: "Enables, disables or clears (null) the install-links, MCP-connections, Models analytics, auditLogs and orgManagedDashboards overrides. Audit logs and org-managed Dashboards require literal true (absent/false is disabled); this flag neither grants capture entitlement nor initializes capacity or changes capture preferences. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true. Stale retired overrides are removed on capability writes.",
       responses: {
         200: jsonResponse("Capability overrides were updated.", z.object({ ok: z.literal(true), organization: z.object({ id: z.string() }), capabilities: adminOrganizationCapabilitiesSchema })),
         400: jsonResponse("The request body or organization id was invalid.", adminRequestErrorSchema),
@@ -2089,10 +2086,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         const orgManagedDashboards = body.data.capabilities.orgManagedDashboards
         if (orgManagedDashboards === null) delete capabilities.orgManagedDashboards
         else if (orgManagedDashboards !== undefined) capabilities.orgManagedDashboards = orgManagedDashboards
-
-        const appMcpServers = body.data.capabilities.appMcpServers
-        if (appMcpServers === null) delete capabilities.appMcpServers
-        else if (appMcpServers !== undefined) capabilities.appMcpServers = appMcpServers
 
         const slackAssistant = body.data.capabilities.slackAssistant
         if (slackAssistant === null) delete capabilities.slackAssistant

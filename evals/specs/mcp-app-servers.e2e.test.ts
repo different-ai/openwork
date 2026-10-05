@@ -77,11 +77,11 @@ test("an owner composes an App that is its own MCP server, and a teammate uses i
   let ownerSince = "";
   let updatedResourceUri = "";
 
-  await step("before: an organization has no App builder until a platform admin turns it on in /admin", async () => {
-    expect(world.builderToolsBefore).toEqual([]);
-    const names = rows((await world.rpc("owner", "connect", "tools/list", {})).tools).map(tool => tool.name);
-    expect(names).toEqual(expect.arrayContaining(["create_app", "update_app", "read_app"]));
-    evidence.recordAssertionEvidence("Building your own Apps is off until /admin turns it on", "Before the organization's Apps built in OpenWork capability was on, Connect offered none of create_app, update_app, or read_app. After a platform admin turned it on through the route the /admin panel uses, Connect offers all three.", true);
+  await step("a new organization can build Apps without a platform admin turning anything on", async () => {
+    expect([...world.builderToolsByDefault].sort()).toEqual(["create_app", "read_app", "update_app"]);
+    const capabilities = record((await probe.api(world.den.admin, `/v1/admin/organizations/${world.organizationId}/capabilities`)).body).capabilities;
+    expect(record(capabilities)).not.toHaveProperty("appMcpServers");
+    evidence.recordAssertionEvidence("Building your own Apps is on by default", `Before any /admin change, Connect offered ${[...world.builderToolsByDefault].sort().join(", ")} to the new organization's owner, and /admin has no Apps built in OpenWork capability to turn on.`, world.builderToolsByDefault.length === 3);
   });
 
   await step("before: a teammate the App's Plugin is not shared with is refused by its MCP server", async () => {

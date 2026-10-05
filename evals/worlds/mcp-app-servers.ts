@@ -360,11 +360,12 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
     return result;
   }
   const call = (persona: Persona, name: string, args: Record<string, unknown>) => rpc(persona, "connect", "tools/call", { name, arguments: args });
-  // Building your own Apps and org dashboards are default-off per organization:
-  // Connect offers no App builder until a platform admin turns it on in /admin.
-  const builderToolsBefore = rows((await rpc("owner", "connect", "tools/list", {})).tools)
+  // Building your own Apps is on for every organization, so Connect offers the
+  // App builder before any platform admin changes a capability. Org dashboards
+  // stay default-off per organization.
+  const builderToolsByDefault = rows((await rpc("owner", "connect", "tools/list", {})).tools)
     .map(tool => field(tool, "name")).filter(name => ["create_app", "update_app", "read_app"].includes(name));
-  await enableOrganizationCapabilities(seed, den.admin, { appMcpServers: true, orgManagedDashboards: true }, organizationId);
+  await enableOrganizationCapabilities(seed, den.admin, { orgManagedDashboards: true }, organizationId);
   const membership = rows(org.members).find(entry => field(entry.user, "email") === member.email);
   if (!membership) throw new Error("Synthetic member grant target missing");
   const memberId = field(membership, "id");
@@ -432,9 +433,9 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
   const retained = resources.move();
   const elementsOf = (body: unknown) => rows(record(body).elements ?? []);
   return {
-    app, pluginWeb, adminWeb, dashboardId, dashboardName, den, created, capabilities, tools, url, requests, rpc, call,
-    /** The App builder tools Connect offered before a platform admin turned the capability on. */
-    builderToolsBefore,
+    app, pluginWeb, adminWeb, dashboardId, dashboardName, den, organizationId, created, capabilities, tools, url, requests, rpc, call,
+    /** The App builder tools Connect offered a new organization before any /admin change. */
+    builderToolsByDefault,
     /** The dashboard's tiles as its admin sees them. */
     async dashboardElements() {
       const read = await seed.api(den.admin, `/v1/dashboards/${dashboardId}`);
@@ -527,7 +528,6 @@ export async function mcpAppServersChat(seed: Seed, benchmark: boolean | { place
     authType: "none", credentialMode: "shared", access: { orgWide: true },
   });
   const organizationId = field(record((await seed.api(den.admin, "/v1/org")).body).organization, "id");
-  await enableOrganizationCapabilities(seed, den.admin, { appMcpServers: true }, organizationId);
   const minted = await seed.api(den.admin, "/v1/mcp/token", {
     method: "POST", headers: { "x-openwork-org-id": organizationId }, body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }),
   });

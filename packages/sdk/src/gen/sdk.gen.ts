@@ -1270,7 +1270,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Set an organization's capability overrides
    *
-   * Enables, disables or clears (null) the install-links, MCP-connections, Models analytics, auditLogs, orgManagedDashboards and appMcpServers overrides. Audit logs, org-managed Dashboards and appMcpServers (building your own Apps as MCP servers) require literal true (absent/false is disabled); this flag neither grants capture entitlement nor initializes capacity or changes capture preferences. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true. Stale retired overrides are removed on capability writes.
+   * Enables, disables or clears (null) the install-links, MCP-connections, Models analytics, auditLogs and orgManagedDashboards overrides. Audit logs and org-managed Dashboards require literal true (absent/false is disabled); this flag neither grants capture entitlement nor initializes capacity or changes capture preferences. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true. Stale retired overrides are removed on capability writes.
    */
   public putV1AdminOrganizationsByOrganizationIdCapabilities<ThrowOnError extends boolean = false>(
     parameters: {

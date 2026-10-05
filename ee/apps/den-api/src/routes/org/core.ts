@@ -733,8 +733,8 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           // Expose the effective value, not the raw stored flag: Connect is
           // member-facing default-on unless an explicit org kill switch says no.
           mcpConnections: memberFacingMcpConnectionsEnabled(payload.organization.metadata),
-          // Building your own Apps is per-organization and default-off:
-          // platform admins enable metadata.capabilities.appMcpServers in /admin.
+          // Building your own Apps is on for every organization unless the
+          // deployment or the org's member-facing MCP connections turn it off.
           appMcpServers: appMcpServersEnabled(payload.organization.metadata),
           // Workflows/Code Mode are enabled for every organization; the field
           // remains for published clients that still read it.

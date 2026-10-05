@@ -4,21 +4,18 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { memberFacingMcpConnectionsEnabled } from "./capability-sources/external-mcp-rollout.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
-import { organizationAppMcpServersEnabled } from "./organization-capabilities.js"
 
 /**
  * Whether members of this organization can build their own Apps, each served
- * as its own MCP server: the deployment allows it (DEN_APP_MCP_SERVERS_ENABLED),
- * a platform admin turned on the organization's appMcpServers capability in
- * /admin (off by default), and member-facing MCP connections are on.
+ * as its own MCP server. It is on for every organization: the deployment allows
+ * it (DEN_APP_MCP_SERVERS_ENABLED, default true) and the organization's
+ * member-facing MCP connections are on.
  *
  * It gates only Apps built in OpenWork. MCP Apps from connected MCP servers
  * work either way, and where it is off, Workflow-bound views stay writable.
  */
-export function appMcpServersEnabled(metadata: Parameters<typeof organizationAppMcpServersEnabled>[0]): boolean {
-  return env.appMcpServersEnabled
-    && organizationAppMcpServersEnabled(metadata)
-    && memberFacingMcpConnectionsEnabled(metadata)
+export function appMcpServersEnabled(metadata: Parameters<typeof memberFacingMcpConnectionsEnabled>[0]): boolean {
+  return env.appMcpServersEnabled && memberFacingMcpConnectionsEnabled(metadata)
 }
 
 /** The same check by organization id, for callers that do not hold its metadata. */
