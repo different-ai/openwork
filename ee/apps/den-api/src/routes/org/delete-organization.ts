@@ -1,5 +1,5 @@
 import { eq, inArray } from "@openwork-ee/den-db/drizzle"
-import { deleteGatewayUsageForOrganization } from "@openwork-ee/den-db/gateway-usage-limits"
+import { deleteGatewayUsageForOrganization } from "@openwork-ee/den-db/gateway-usage-accounting"
 import {
   AuthApiKeyTable,
   AuthSessionTable,

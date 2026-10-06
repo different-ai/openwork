@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
-import { expireUsageRequestsForMembers } from "@openwork-ee/den-db/gateway-usage-limits"
+import { expireUsageRequestsForMembers } from "@openwork-ee/den-db/gateway-usage-accounting"
 import { revokeGoogleCredentials, revokeInferenceCredentialsForMembers } from "../../llm/inference-provider-lifecycle.js"
 import type { SQL } from "@openwork-ee/den-db/drizzle"
 import {

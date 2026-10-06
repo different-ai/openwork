@@ -1,5 +1,5 @@
 import { GatewayRequestLogTable } from "@openwork-ee/den-db"
-import { startGatewayUsageLog, safeUsageDatabaseCode, type GatewayUsageSnapshot } from "@openwork-ee/den-db/gateway-usage-limits"
+import { recordGatewayUsage, startGatewayUsageLog, safeUsageDatabaseCode, type GatewayUsageSnapshot } from "@openwork-ee/den-db/gateway-usage-accounting"
 import { eq, sql } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type {
@@ -103,8 +103,7 @@ export const insertRequestLogIntoDb: InsertRequestLog = async (row, options) => 
 export async function updateRequestLogInDb(row: GatewayRequestLogRow): Promise<boolean> {
   const { db, usageWriteDatabase } = await import("./db.js")
   if (row.route === "org_provider") {
-    const { createGatewayUsageLimits } = await import("@openwork-ee/den-db/gateway-usage-limits")
-    return gatewayUsageWrites.settle(row.org_membership_id, row.openwork_request_id, () => createGatewayUsageLimits(usageWriteDatabase()).record(row))
+    return gatewayUsageWrites.settle(row.org_membership_id, row.openwork_request_id, () => recordGatewayUsage(usageWriteDatabase(), row))
   }
   // A transaction/locking read also distinguishes a no-op retry from a missing
   // row without relying on driver-specific affectedRows/CLIENT_FOUND_ROWS.

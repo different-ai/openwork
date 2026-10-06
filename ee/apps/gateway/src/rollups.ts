@@ -4,7 +4,7 @@
 // remaining source IDs; inserting new raw rows is NEW consumption, not replay.
 import { timingSafeEqual } from "node:crypto"
 import { GatewayProviderOauthStateTable, GatewayRequestLogTable, GatewayUsageRollupTable, GatewayRollupLockTable } from "@openwork-ee/den-db"
-import { assertUsageRetentionSafe } from "@openwork-ee/den-db/gateway-usage-limits"
+import { assertUsageRetentionSafe } from "@openwork-ee/den-db/gateway-usage-accounting"
 import { gatewayRollupDimensionKey } from "@openwork-ee/utils/gateway-rollups"
 import { and, eq, gte, inArray, lt, sql } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"

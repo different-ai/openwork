@@ -29,6 +29,7 @@ export function withOrganizationMembershipUsageMutation<T>(
 ) {
   return withOrganizationTeamMutation(organizationId, async (tx) => {
     const affected = [...new Set(typeof memberIds === "function" ? await memberIds(tx) : memberIds)]
+    // Always runs, even when usage limits are off: re-enabling must see correct assignments.
     const result = await withGatewayUsageEntitlementMutation(tx, organizationId, () => mutation(tx), affected)
     // Team membership is one of the grants a personal MCP key relies on.
     await pruneUnreachableMemberApiKeys(tx, { organizationId, orgMembershipIds: affected })

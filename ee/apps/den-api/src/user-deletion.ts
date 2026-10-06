@@ -1,5 +1,5 @@
 import { eq } from "@openwork-ee/den-db/drizzle"
-import { expireUsageRequestsForMembers } from "@openwork-ee/den-db/gateway-usage-limits"
+import { expireUsageRequestsForMembers } from "@openwork-ee/den-db/gateway-usage-accounting"
 import {
   AuthAccountTable,
   AuthApiKeyTable,
