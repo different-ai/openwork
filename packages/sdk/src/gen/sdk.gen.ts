@@ -3908,7 +3908,9 @@ export class DenClient extends HeyApiClient {
   /**
    * List dashboards
    *
-   * Lists every dashboard in the organization, ordered by name, with its ordered MCP App elements. Workspace owners and admins only; members read the dashboards granted to them through GET /v1/me/dashboards.
+   * Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Lists every dashboard in the organization, ordered by name, with its ordered MCP App elements. Workspace owners and admins only; members read the dashboards granted to them through GET /v1/me/dashboards.
+   *
+   * @deprecated
    */
   public getV1Dashboards<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1DashboardsResponses, GetV1DashboardsErrors, ThrowOnError>({
@@ -3920,7 +3922,9 @@ export class DenClient extends HeyApiClient {
   /**
    * Create dashboard
    *
-   * Creates an organization-owned dashboard: a named, ordered list of up to 50 MCP App elements, each pointing at a ui:// resource served by a connected MCP server or by an App built in OpenWork (from GET /v1/mcp-apps). An App's element always points at the App's current revision. Nobody sees the dashboard until access is granted through POST /v1/dashboards/{dashboardId}/access.
+   * Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Creates an organization-owned dashboard: a named, ordered list of up to 50 MCP App elements, each pointing at a ui:// resource served by a connected MCP server or by an App built in OpenWork (from GET /v1/mcp-apps). An App's element always points at the App's current revision. Nobody sees the dashboard until access is granted through POST /v1/dashboards/{dashboardId}/access.
+   *
+   * @deprecated
    */
   public postV1Dashboards<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3955,7 +3959,9 @@ export class DenClient extends HeyApiClient {
   /**
    * Delete dashboard
    *
-   * Soft-deletes the dashboard so it disappears from admin lists and from every member's granted dashboards. Its access grants are kept but stop applying; there is no restore.
+   * Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Soft-deletes the dashboard so it disappears from admin lists and from every member's granted dashboards. Its access grants are kept but stop applying; there is no restore.
+   *
+   * @deprecated
    */
   public deleteV1DashboardsByDashboardId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3978,7 +3984,9 @@ export class DenClient extends HeyApiClient {
   /**
    * Get dashboard
    *
-   * Returns one dashboard with its ordered MCP App elements. Deleted dashboards answer 404.
+   * Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Returns one dashboard with its ordered MCP App elements. Deleted dashboards answer 404.
+   *
+   * @deprecated
    */
   public getV1DashboardsByDashboardId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4001,7 +4009,9 @@ export class DenClient extends HeyApiClient {
   /**
    * Update dashboard
    *
-   * Partially updates a dashboard. Send name, elements, or both; when elements is present it replaces the whole ordered element list.
+   * Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Partially updates a dashboard. Send name, elements, or both; when elements is present it replaces the whole ordered element list.
+   *
+   * @deprecated
    */
   public patchV1DashboardsByDashboardId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4042,7 +4052,9 @@ export class DenClient extends HeyApiClient {
   /**
    * List dashboard access grants
    *
-   * Lists every access grant on the dashboard, oldest first, including revoked grants (removedAt set). Each grant targets exactly one member, one team, or the whole organization.
+   * Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Lists every access grant on the dashboard, oldest first, including revoked grants (removedAt set). Each grant targets exactly one member, one team, or the whole organization.
+   *
+   * @deprecated
    */
   public getV1DashboardsByDashboardIdAccess<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4065,7 +4077,9 @@ export class DenClient extends HeyApiClient {
   /**
    * Grant dashboard access
    *
-   * Assigns a dashboard to one member, one team, or the whole organization — the same subject model connector assignment grants use. Regranting a revoked subject reactivates the existing grant.
+   * Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Assigns a dashboard to one member, one team, or the whole organization — the same subject model connector assignment grants use. Regranting a revoked subject reactivates the existing grant.
+   *
+   * @deprecated
    */
   public postV1DashboardsByDashboardIdAccess<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4110,7 +4124,9 @@ export class DenClient extends HeyApiClient {
   /**
    * Revoke dashboard access
    *
-   * Revokes one access grant by setting removedAt; the grant row is kept so regranting the same subject reactivates it. Revoking an already revoked grant answers 204 again.
+   * Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Revokes one access grant by setting removedAt; the grant row is kept so regranting the same subject reactivates it. Revoking an already revoked grant answers 204 again.
+   *
+   * @deprecated
    */
   public deleteV1DashboardsByDashboardIdAccessByGrantId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4144,7 +4160,9 @@ export class DenClient extends HeyApiClient {
   /**
    * List dashboards granted to the current member
    *
-   * Returns the dashboards the signed-in member can see: granted directly, through one of their teams, or org-wide, deduplicated and ordered by name. The desktop MCP Apps dashboard renders these as read-only tiles.
+   * Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Returns the dashboards the signed-in member can see: granted directly, through one of their teams, or org-wide, deduplicated and ordered by name. The desktop MCP Apps dashboard renders these as read-only tiles.
+   *
+   * @deprecated
    */
   public getV1MeDashboards<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1MeDashboardsResponses, GetV1MeDashboardsErrors, ThrowOnError>({

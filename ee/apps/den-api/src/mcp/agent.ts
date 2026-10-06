@@ -492,7 +492,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       organizationId,
       member: memberIdentity,
       redirectUriBase,
-      generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
+      generatedArtifactViewsEnabled: organizationFeatures.generatedArtifactViews,
       organizationFeatures,
     })
     const { externalMcpConnectionsEnabled } = capabilityContext
@@ -1027,7 +1027,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       server,
       load: loadWorkflowArtifact,
       selectApp: async ({ configObjectId, receiptId }) => {
-        if (!artifactContext || !env.generatedArtifactViewsEnabled) return null
+        if (!artifactContext || !organizationFeatures.generatedArtifactViews) return null
         const views = await listArtifactViews({ context: artifactContext, activeOnly: true, savedOnly: true })
         const snapshot = await getWorkflowSnapshot({ context: artifactContext, configObjectId, receiptId })
         if (!snapshot) return null
@@ -1045,7 +1045,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     // This server deploys independently from Desktop. Do not advertise or
     // serve bridge-dependent generated views until the compatible Desktop
     // MCP Apps host has been released and the operator enables the rollout.
-    if (artifactContext && env.generatedArtifactViewsEnabled) {
+    if (artifactContext && organizationFeatures.generatedArtifactViews) {
       const loadGeneratedResource = async ({ artifactViewId, revisionId }: { artifactViewId: string; revisionId: string }) => {
         const { revision } = await loadArtifactViewRevision({ context: artifactContext, artifactViewId, revisionId })
         if (revision.build_status !== "ready" || !revision.compiled_html || !revision.resource_digest) {

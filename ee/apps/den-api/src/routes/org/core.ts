@@ -749,7 +749,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           // Effective offer: the deployment switch enables Web generally,
           // while the platform-admin complimentary grant enables only this
           // organization when the deployment switch is off.
-          openworkWeb: isOpenWorkWebAvailableForOrganization(payload.organization.metadata),
+          openworkWeb: await isOpenWorkWebAvailableForOrganization(payload.organization.id, payload.organization.metadata),
           // Workbot is its own app (DEN_WORKBOT_URL), per-organization and default-off.
           workbot: features.workbot && workbotOrigin() !== null,
           ...(cloudEnabled ? { cloud: true } : {}),

@@ -18,7 +18,9 @@ data:
   DB_MODE: {{ .Values.config.databaseMode | quote }}
   # Feature registry: packages/features/src/registry.ts. Keys come from the
   # generated config.features block; never add per-feature lines here.
-  DEN_DEPLOYMENT: {{ .Values.config.deployment | default "self_hosted" | quote }}
+  {{- with .Values.config.deployment }}
+  DEN_DEPLOYMENT: {{ . | quote }}
+  {{- end }}
   {{- range $key, $value := .Values.config.features }}
   {{- if ne (toString $value) "" }}
   DEN_FEATURE_{{ $key | snakecase | upper }}: {{ toString $value | quote }}

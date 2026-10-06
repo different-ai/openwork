@@ -44,6 +44,12 @@ export type FeatureDefinition = {
    * `pnpm features:check` asks for a decision six months after `since`.
    */
   permanent?: boolean
+  /**
+   * The feature itself is going away. /admin and the API announce it, and
+   * `pnpm features:check` fails after `removeBy` until the entry and its code
+   * are deleted.
+   */
+  deprecated?: { announced: `${number}-${number}-${number}`; removeBy: `${number}-${number}-${number}`; note: string }
 }
 
 function defineFeatures<const T extends Record<string, FeatureDefinition>>(features: T): T {
@@ -82,11 +88,16 @@ export const FEATURES = defineFeatures({
     default: false,
   },
   orgManagedDashboards: {
-    label: "Dashboards",
+    label: "Organization-managed dashboards",
     description: "Organization admins publish dashboards to members in Den and the desktop app.",
     since: "2026-10",
     deployments: everywhere,
     default: false,
+    deprecated: {
+      announced: "2026-10-06",
+      removeBy: "2026-10-20",
+      note: "Being removed from the OpenWork API. Desktops use the Dashboard feature instead.",
+    },
   },
   slackAssistant: {
     label: "Slack Assistant",
@@ -105,6 +116,41 @@ export const FEATURES = defineFeatures({
   headlessAutomations: {
     label: "Cloud Automations: headless runtime",
     description: "Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
+  dashboard: {
+    label: "Dashboard",
+    description: "Members see the Dashboard in the desktop app.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
+  automations: {
+    label: "Automations",
+    description: "Members can create and run Automations from the desktop app.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
+  openworkWeb: {
+    label: "OpenWork Web",
+    description: "Organizations can use OpenWork Web, an OpenWork computer in the browser. Complimentary grants and subscriptions still decide access.",
+    since: "2026-10",
+    deployments: ["cloud"],
+    default: false,
+  },
+  appMcpServers: {
+    label: "Apps built in OpenWork",
+    description: "Members can build Apps that are served as their own MCP servers. Needs OpenWork Connect; older Workflow-bound views become read-only.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: true,
+  },
+  generatedArtifactViews: {
+    label: "Generated artifact views",
+    description: "Agents can save custom views for Workflow results. Turn on only after desktops that can show them are released.",
     since: "2026-10",
     deployments: everywhere,
     default: false,

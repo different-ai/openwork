@@ -148,7 +148,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
     orgRoleRoute(["member"]),
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!isOpenWorkWebAvailableForOrganization(payload.organization.metadata)) {
+      if (!(await isOpenWorkWebAvailableForOrganization(payload.organization.id, payload.organization.metadata))) {
         return c.json(openWorkWebUnavailableResponse(), 404)
       }
       const web = await getOpenWorkWebBillingSummary(payload.organization.id)
@@ -223,7 +223,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       }
       const payload = c.get("organizationContext")
       const subscriptionType = parsed.data.type ?? "inference"
-      if (subscriptionType === "web" && !isOpenWorkWebAvailableForOrganization(payload.organization.metadata)) {
+      if (subscriptionType === "web" && !(await isOpenWorkWebAvailableForOrganization(payload.organization.id, payload.organization.metadata))) {
         return c.json(openWorkWebUnavailableResponse(), 404)
       }
       if (subscriptionType === "web") {

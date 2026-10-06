@@ -25,7 +25,7 @@ import {
  * Retired keys. Older clients and stored overrides may still send or hold them;
  * inputs accept and ignore them, and they are never stored again.
  */
-export const RETIRED_FEATURE_KEYS = ["gatewayDashboard", "workflows", "codemodeScripts", "remoteMcpApps", "appMcpServers", "cloud"] as const
+export const RETIRED_FEATURE_KEYS = ["gatewayDashboard", "workflows", "codemodeScripts", "remoteMcpApps", "cloud"] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {
   return Object.hasOwn(FEATURES, value)
@@ -123,6 +123,26 @@ export function resolveFeatures(context: FeatureContext): FeatureMap {
 export type FeatureEnvironmentProblem = { variable: string; message: string; fatal: boolean }
 
 /**
+ * Deployment-wide switches that existed before the registry. Until they are
+ * removed (after 2026-11-30), each still works as an operator lock when
+ * DEN_FEATURE_<KEY> is not set, but only when its value differs from the
+ * registry default, so a chart that renders the old default does not freeze
+ * /admin. New code must never add to this list.
+ */
+export const LEGACY_FEATURE_ENV: Partial<Record<FeatureKey, string>> = {
+  dashboard: "DEN_DASHBOARDS_ENABLED",
+  automations: "DEN_AUTOMATIONS_ENABLED",
+  openworkWeb: "DEN_OPENWORK_WEB_ENABLED",
+  appMcpServers: "DEN_APP_MCP_SERVERS_ENABLED",
+  generatedArtifactViews: "DEN_GENERATED_ARTIFACT_VIEWS_ENABLED",
+}
+
+function parseLegacyBoolean(value: string): boolean {
+  const normalized = value.trim().toLowerCase()
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on"
+}
+
+/**
  * Reads DEN_DEPLOYMENT and DEN_FEATURE_* from an environment record. Fatal
  * problems (unknown deployment, a value other than "true"/"false") should stop
  * the server at boot; the others are warnings about ignored variables.
@@ -130,7 +150,9 @@ export type FeatureEnvironmentProblem = { variable: string; message: string; fat
 export function parseFeatureEnvironment(env: Record<string, string | undefined>): FeatureEnvironment & { problems: FeatureEnvironmentProblem[] } {
   const problems: FeatureEnvironmentProblem[] = []
   const rawDeployment = env.DEN_DEPLOYMENT?.trim() ?? ""
-  let deployment: FeatureDeployment = "self_hosted"
+  // Unset: only OpenWork Cloud runs multi-organization, so that means cloud.
+  // The Helm chart always sets DEN_DEPLOYMENT, so self-hosted installs are explicit.
+  let deployment: FeatureDeployment = env.DEN_ORG_MODE?.trim() === "multi_org" ? "cloud" : "self_hosted"
   if (rawDeployment === "cloud" || rawDeployment === "self_hosted") {
     deployment = rawDeployment
   } else if (rawDeployment !== "") {
@@ -157,6 +179,20 @@ export function parseFeatureEnvironment(env: Record<string, string | undefined>)
       continue
     }
     locks[key] = value === "true"
+  }
+
+  for (const key of FEATURE_KEYS) {
+    const variable = LEGACY_FEATURE_ENV[key]
+    const raw = variable ? env[variable]?.trim() ?? "" : ""
+    if (!variable || raw === "" || locks[key] !== undefined) continue
+    const value = parseLegacyBoolean(raw)
+    if (!featureAvailableOn(key, deployment)) {
+      if (value) problems.push({ variable, message: `is ignored: ${key} is not part of this deployment.`, fatal: false })
+      continue
+    }
+    if (value === featureDefinition(key).default) continue
+    locks[key] = value
+    problems.push({ variable, message: `is deprecated; set ${featureLockEnvName(key)} (Helm config.features.${key}) instead.`, fatal: false })
   }
 
   return { deployment, locks, problems }

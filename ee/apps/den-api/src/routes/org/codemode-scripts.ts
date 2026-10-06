@@ -29,7 +29,7 @@ import { orgMemberRoute, jsonValidator, queryValidator } from "../../middleware/
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { listTeamsForMember } from "../../orgs.js"
 import { env } from "../../env.js"
-import { getOrganizationFeatures } from "../../features.js"
+import { getOrganizationFeatures, organizationFeatureEnabled } from "../../features.js"
 import { getCatalog } from "../../mcp/index.js"
 import { buildCapabilityToolTree, createCapabilityRegistryContext } from "../../mcp/capability-registry.js"
 import {
@@ -231,6 +231,13 @@ function appRouteFailure(error: unknown) {
 
 export const saveWorkflowOperationId = "saveWorkflow"
 
+/** The generatedArtifactViews feature for the caller's organization. */
+async function generatedArtifactViewsOn(c: { get(name: "organizationContext"): OrgRouteVariables["organizationContext"] }): Promise<boolean> {
+  const context = c.get("organizationContext")
+  if (!context) return false
+  return organizationFeatureEnabled(context.organization.id, "generatedArtifactViews")
+}
+
 export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   const contextFor = async (c: {
     get(name: "organizationContext"): OrgRouteVariables["organizationContext"]
@@ -241,6 +248,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     if (!context) throw new Error("organization_context_required")
     const teams = await listTeamsForMember({ organizationId: context.organization.id, memberId: context.currentMember.id })
     const member = { orgMembershipId: context.currentMember.id, teamIds: teams.map((team) => team.id) }
+    const organizationFeatures = await getOrganizationFeatures(context.organization.id)
     const catalog = await getCatalog(app as unknown as Hono, c.env)
     const principal = {
       userId: context.currentMember.userId,
@@ -256,8 +264,8 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       organizationId: context.organization.id,
       member,
       redirectUriBase: env.apiPublicUrl ?? "http://127.0.0.1",
-      generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
-      organizationFeatures: await getOrganizationFeatures(context.organization.id),
+      generatedArtifactViewsEnabled: organizationFeatures.generatedArtifactViews,
+      organizationFeatures,
     })
     const buildTools = () => buildCapabilityToolTree(capabilityContext)
     const actorContext = { organizationContext: context, memberTeams: teams, session: c.get("session") }
@@ -328,7 +336,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       try {
         const { actorContext } = await contextFor(c)
         const detail = await getWorkflowLibraryDetail({ context: actorContext, configObjectId: params.data.configObjectId, maxAgeMs: c.req.valid("query").maxAgeMs })
-        return c.json(env.generatedArtifactViewsEnabled
+        return c.json((await generatedArtifactViewsOn(c))
           ? detail
           : {
               ...detail,
@@ -353,7 +361,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     }),
     orgMemberRoute(),
     async (c) => {
-      if (!env.generatedArtifactViewsEnabled) return c.json({ enabled: false, sharingEnabled: false, items: [] })
+      if (!(await generatedArtifactViewsOn(c))) return c.json({ enabled: false, sharingEnabled: false, items: [] })
       try {
         const { actorContext } = await contextFor(c)
         return c.json({ enabled: true, sharingEnabled: true, items: await listSavedApps(actorContext) })
@@ -378,7 +386,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     orgMemberRoute(),
     jsonValidator(z.object({ email: z.string().trim().email().max(320) })),
     async (c) => {
-      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
+      if (!(await generatedArtifactViewsOn(c))) return c.json({ error: "artifact_view_not_found" }, 404)
       try {
         const { actorContext } = await contextFor(c)
         await shareSavedApp(actorContext, c.req.param("appId"), c.req.valid("json").email)
@@ -402,7 +410,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     orgMemberRoute(),
     queryValidator(artifactRunInputSchema.extend({ revisionId: z.string().trim().min(1).max(160).optional(), receiptId: z.string().trim().min(1).max(160).optional() })),
     async (c) => {
-      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
+      if (!(await generatedArtifactViewsOn(c))) return c.json({ error: "artifact_view_not_found" }, 404)
       try {
         const { actorContext, buildTools, describeUnavailable } = await contextFor(c)
         c.header("Cache-Control", "private, no-store")
@@ -425,7 +433,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     }),
     orgMemberRoute(), jsonValidator(z.object({ added: z.boolean() })),
     async (c) => {
-      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
+      if (!(await generatedArtifactViewsOn(c))) return c.json({ error: "artifact_view_not_found" }, 404)
       try {
         const { actorContext } = await contextFor(c)
         await setAppOnDashboard(actorContext, c.req.param("appId"), c.req.valid("json").added)
@@ -449,7 +457,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     orgMemberRoute(),
     jsonValidator(saveAppSchema),
     async (c) => {
-      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
+      if (!(await generatedArtifactViewsOn(c))) return c.json({ error: "artifact_view_not_found" }, 404)
       try {
         const { actorContext } = await contextFor(c)
         const { revisionId, ...save } = c.req.valid("json")
@@ -479,7 +487,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       if (!params.success) return c.json({ error: "invalid_request", message: "Invalid Workflow id." }, 400)
       try {
         const { actorContext } = await contextFor(c)
-        if (!env.generatedArtifactViewsEnabled) return c.json({ items: [] })
+        if (!(await generatedArtifactViewsOn(c))) return c.json({ items: [] })
         return c.json({ items: await listArtifactViewsForScript({ context: actorContext, configObjectId: params.data.configObjectId }) })
       } catch (error) {
         const failure = routeFailure(error)
@@ -502,7 +510,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     }),
     orgMemberRoute(),
     async (c) => {
-      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
+      if (!(await generatedArtifactViewsOn(c))) return c.json({ error: "artifact_view_not_found" }, 404)
       const params = artifactViewParamsSchema.safeParse(c.req.param())
       if (!params.success || !params.data.revisionId) return c.json({ error: "invalid_request", message: "Invalid view revision." }, 400)
       try {
@@ -529,7 +537,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     }),
     orgMemberRoute(),
     async (c) => {
-      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
+      if (!(await generatedArtifactViewsOn(c))) return c.json({ error: "artifact_view_not_found" }, 404)
       const params = artifactViewParamsSchema.safeParse(c.req.param())
       if (!params.success) return c.json({ error: "invalid_request", message: "Invalid view." }, 400)
       try {
