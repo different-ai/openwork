@@ -1,3 +1,7 @@
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { normalizeDesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions"
+import type { DesktopPolicyValue } from "@openwork/types/den/desktop-policies"
+
 export type Executor = {
   query: (sql: string, args?: (string | number)[]) => Promise<Record<string, unknown>[]>
 }
@@ -194,6 +198,99 @@ async function ensureInferenceOrgLimitAmountNullable(executor: Executor) {
   console.log("[den-db] inference_org_limit_policies.limit_amount made nullable")
 }
 
+const LEGACY_DEFAULT_DESKTOP_POLICY_NAME = "Default desktop policy"
+
+async function columnExists(executor: Executor, table: string, column: string) {
+  const rows = await executor.query(
+    `SELECT 1 AS present FROM information_schema.COLUMNS
+     WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1`,
+    [table, column],
+  )
+  return rows.length > 0
+}
+
+function roleIncludesOwner(roleValue: unknown) {
+  return typeof roleValue === "string" && roleValue.split(",").map((entry) => entry.trim()).includes("owner")
+}
+
+function parseJsonColumn(value: unknown): unknown {
+  if (typeof value !== "string") return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
+}
+
+export function legacyRestrictionsToPolicy(value: unknown): DesktopPolicyValue {
+  const restrictions = normalizeDesktopAppRestrictions(value)
+  return {
+    allowCustomProviders: restrictions.disallowNonCloudModels !== true,
+    allowZenModel: restrictions.blockZenModel !== true,
+    allowMultipleWorkspaces: restrictions.blockMultipleWorkspaces !== true,
+  }
+}
+
+/**
+ * Applies the legacy `organization.desktop_app_restrictions` column as a
+ * default desktop policy, for organizations that never ran the retired
+ * `backfill:desktop-policies` script. Idempotent: only organizations with no
+ * default desktop policy row and at least one legacy restriction are touched,
+ * and the created policy makes the next run skip them. The column is dropped
+ * one release later (W0-P13 PR F); until then this runs on every migrate.
+ */
+export async function ensureLegacyDesktopRestrictionsBackfilled(executor: Executor): Promise<number> {
+  if (!(await tableExists(executor, "desktop_policy")) || !(await columnExists(executor, "organization", "desktop_app_restrictions"))) {
+    return 0
+  }
+
+  // Any is_default row, deleted or not, counts: desktop_policy_org_default is
+  // unique on (organization_id, is_default), so a second default cannot exist.
+  const candidates = await executor.query(
+    `SELECT o.id AS id, o.desktop_app_restrictions AS restrictions
+     FROM organization o
+     WHERE JSON_LENGTH(o.desktop_app_restrictions) > 0
+       AND NOT EXISTS (
+         SELECT 1 FROM desktop_policy p WHERE p.organization_id = o.id AND p.is_default = 1
+       )
+     ORDER BY o.created_at ASC`,
+  )
+
+  let created = 0
+  for (const candidate of candidates) {
+    const organizationId = candidate.id
+    if (typeof organizationId !== "string") continue
+    const restrictions = parseJsonColumn(candidate.restrictions)
+    if (Object.keys(normalizeDesktopAppRestrictions(restrictions)).length === 0) continue
+
+    // Same owner choice as the retired script: the latest-created owner.
+    const members = await executor.query(
+      "SELECT id, role FROM member WHERE organization_id = ? ORDER BY created_at ASC",
+      [organizationId],
+    )
+    let owner: Record<string, unknown> | undefined
+    for (const member of members) {
+      if (!owner || roleIncludesOwner(member.role)) owner = member
+    }
+    if (!owner || typeof owner.id !== "string" || !roleIncludesOwner(owner.role)) {
+      console.warn(`[den-db] Skipping legacy desktop restrictions for organization ${organizationId}: owner member not found.`)
+      continue
+    }
+
+    await executor.query(
+      `INSERT INTO desktop_policy (id, organization_id, policy_name, is_default, is_enabled, policy, created_by_org_member_id, created_at, updated_at)
+       VALUES (?, ?, ?, 1, 1, CAST(? AS JSON), ?, NOW(3), NOW(3))`,
+      [createDenTypeId("desktopPolicy"), organizationId, LEGACY_DEFAULT_DESKTOP_POLICY_NAME, JSON.stringify(legacyRestrictionsToPolicy(restrictions)), owner.id],
+    )
+    created += 1
+  }
+
+  if (created > 0) {
+    console.log(`[den-db] Created ${created} default desktop policies from legacy desktop app restrictions`)
+  }
+  return created
+}
+
 export async function ensureSchemaRepairs(executor: Executor): Promise<void> {
   for (const repair of ORGANIZATION_REPAIRS) {
     if (!(await tableExists(executor, repair.table))) {
@@ -211,4 +308,5 @@ export async function ensureSchemaRepairs(executor: Executor): Promise<void> {
   }
 
   await ensureInferenceOrgLimitAmountNullable(executor)
+  await ensureLegacyDesktopRestrictionsBackfilled(executor)
 }

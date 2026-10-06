@@ -45,6 +45,7 @@ export const OrganizationTable = mysqlTable(
     slug: varchar("slug", { length: 255 }).notNull(),
     logo: varchar("logo", { length: 2048 }),
     allowedEmailDomains: json("allowed_email_domains").$type<string[] | null>(),
+    // Legacy; read only by ensureLegacyDesktopRestrictionsBackfilled (schema-repairs.ts). Dropped in W0-P13 PR F.
     desktopAppRestrictions: json("desktop_app_restrictions").$type<DesktopAppRestrictions>().notNull().default(sql`(json_object())`),
     metadata: json("metadata").$type<Record<string, unknown> | null>(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
