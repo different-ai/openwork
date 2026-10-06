@@ -151,7 +151,8 @@ export type AdminFeature = {
     | "slackAssistant"
     | "slackAssistantHeadless"
     | "headlessAutomations"
-    | "workbot";
+    | "workbot"
+    | "litellm";
   label: string;
   description: string;
   since: string;
@@ -199,6 +200,7 @@ export type AdminOrganizationsPageResponse = {
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
       workbot: boolean;
+      litellm: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -283,6 +285,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       workbot: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      litellm: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -363,6 +374,7 @@ export type AdminOverviewResponse = {
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
       workbot: boolean;
+      litellm: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -447,6 +459,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       workbot: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      litellm: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -1571,7 +1592,8 @@ export type CapabilityDisabledError = {
     | "slackAssistant"
     | "slackAssistantHeadless"
     | "headlessAutomations"
-    | "workbot";
+    | "workbot"
+    | "litellm";
 };
 
 export type CreateInstallLinkRequest = {
@@ -5552,6 +5574,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
       workbot: boolean;
+      litellm: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -5636,6 +5659,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       workbot: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      litellm: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -5704,6 +5736,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
       workbot: boolean;
+      litellm: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -5788,6 +5821,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       workbot: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      litellm: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
