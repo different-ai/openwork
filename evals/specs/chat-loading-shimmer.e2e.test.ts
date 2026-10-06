@@ -22,7 +22,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-test("chat working and command activity use quiet shimmer without spinners", async ({ world, user, seed, probe, step }) => {
+test("chat working and command activity use quiet shimmer without spinners", async ({ world, user, seed, probe, step, evidence }) => {
   const working = await step("the main Working state shimmers without a spinner", async () => {
     await user.see({ text: /Working/ });
     // TODO(primitive): inspect the visual treatment, animation cadence, and backdrop composition of a visible status row.
@@ -67,6 +67,11 @@ test("chat working and command activity use quiet shimmer without spinners", asy
         nestedFilters,
       };
     }, { awaitPromise: true, timeoutMs: 15_000 });
+    evidence.recordAssertionEvidence(
+      "The Working line shimmers without a spinner",
+      `"${reading.text}"; shimmer ${reading.hasShimmer ? "on" : "off"}; spinner ${reading.hasSpinner ? "shown" : "none"}`,
+      reading.text.includes("Working") && reading.hasShimmer && !reading.hasSpinner,
+    );
     expect(reading).toMatchObject({ text: expect.stringContaining("Working"), hasSpinner: false, hasShimmer: true });
     return reading;
   });
@@ -76,6 +81,14 @@ test("chat working and command activity use quiet shimmer without spinners", asy
     if (!isRecord(working) || typeof working.sampledFrames !== "number" || typeof working.distinctPositions !== "number") {
       throw new Error(`Shimmer cadence was not readable: ${JSON.stringify(working)}`);
     }
+    evidence.recordAssertionEvidence(
+      "The shimmer repaints on a bounded cadence",
+      `${working.distinctPositions} distinct positions over ${working.sampledFrames} frames in one second (at most ${maxDistinctShimmerPositions})`,
+      working.animationName === "ow-text-shimmer"
+        && working.sampledFrames >= minSampledFrames
+        && working.distinctPositions >= 2
+        && working.distinctPositions <= maxDistinctShimmerPositions,
+    );
     expect(working.sampledFrames).toBeGreaterThanOrEqual(minSampledFrames);
     expect(working.distinctPositions).toBeGreaterThanOrEqual(2);
     expect(working.distinctPositions).toBeLessThanOrEqual(maxDistinctShimmerPositions);
@@ -89,6 +102,14 @@ test("chat working and command activity use quiet shimmer without spinners", asy
     if (!isRecord(working) || typeof working.isMac !== "boolean") {
       throw new Error(`Pane composition was not readable: ${JSON.stringify(working)}`);
     }
+    const nested = working.nestedFilters.join(", ") || "none";
+    evidence.recordAssertionEvidence(
+      "Only the session pane blurs the backdrop",
+      `pane: ${working.paneFilter}; session header: ${working.headerFilter}; between the pane and the Working line: ${nested}`,
+      (working.isMac ? working.paneFilter.includes("blur(") : working.paneFilter === "none")
+        && working.headerFilter === "none"
+        && working.nestedFilters.length === 0,
+    );
     expect(working).toMatchObject({
       paneFilter: working.isMac ? expect.stringContaining("blur(") : "none",
       headerFilter: "none",
@@ -99,6 +120,12 @@ test("chat working and command activity use quiet shimmer without spinners", asy
   await step("the Working line stays through a minute with no new output", async () => {
     await new Promise((resolve) => setTimeout(resolve, silentRunWaitMs));
     await user.see({ text: /Working \d+m \d+s/ });
+    const line = (await probe.text()).match(/Working \d+m \d+s/)?.[0];
+    evidence.recordAssertionEvidence(
+      "The Working line is still on screen after a minute without output",
+      line ? `"${line}" after ${silentRunWaitMs / 1000}s with no new output` : "no Working line on screen",
+      line !== undefined,
+    );
     await user.screenshot();
   });
 
@@ -119,6 +146,12 @@ test("chat working and command activity use quiet shimmer without spinners", asy
         summary: summary instanceof HTMLElement ? summary.innerText.replace(/\s+/g, " ").trim() : "",
       };
     });
+    evidence.recordAssertionEvidence(
+      "The live step shimmers and the summary stays singular",
+      `now: "${aggregate.text}" (shimmer ${aggregate.hasShimmer ? "on" : "off"}, spinner ${aggregate.hasSpinner ? "shown" : "none"}); summary: "${aggregate.summary}"`,
+      aggregate.text.includes("Reading brief.md") && aggregate.hasShimmer && !aggregate.hasSpinner && !aggregate.text.includes("Now:")
+        && aggregate.summary.includes("Running command") && !aggregate.summary.includes("Running 1 command"),
+    );
     expect(aggregate).toMatchObject({ text: expect.stringContaining("Reading brief.md"), hasSpinner: false, hasShimmer: true });
     expect(aggregate).not.toMatchObject({ text: expect.stringContaining("Now:") });
     expect(aggregate).toMatchObject({ summary: expect.stringContaining("Running command") });
@@ -139,6 +172,11 @@ test("chat working and command activity use quiet shimmer without spinners", asy
           : 0,
       };
     });
+    evidence.recordAssertionEvidence(
+      "The expanded command is readable under one summary",
+      `command box: "${command.text}"; command summaries in the group: ${command.summaryCount}`,
+      command.text.includes("$") && command.text.includes("git status --short --branch") && command.summaryCount === 1,
+    );
     expect(command).toMatchObject({ text: expect.stringContaining("$"), summaryCount: 1 });
     expect(command).toMatchObject({ text: expect.stringContaining("git status --short --branch") });
   });
