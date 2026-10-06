@@ -14,6 +14,7 @@ export default defineConfig({
     "schema/workers": "src/schema/workers.ts",
     "schema/system": "src/schema/system.ts",
     drizzle: "src/drizzle.ts",
+    "gateway-usage-accounting": "src/gateway-usage-accounting.ts",
     "gateway-usage-limits": "src/gateway-usage-limits.ts",
     "audit-log": "src/audit-log.ts",
     "organization-features": "src/organization-features.ts",

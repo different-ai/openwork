@@ -76,6 +76,11 @@
       "development": "./src/audit-log.ts",
       "default": "./dist/audit-log.js"
     },
+    "./gateway-usage-accounting": {
+      "types": "./src/gateway-usage-accounting.ts",
+      "development": "./src/gateway-usage-accounting.ts",
+      "default": "./dist/gateway-usage-accounting.js"
+    },
     "./gateway-usage-limits": {
       "types": "./src/gateway-usage-limits.ts",
       "development": "./src/gateway-usage-limits.ts",
@@ -97,7 +102,8 @@
     "db:migrate": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs migrate --config drizzle.config.ts && node --conditions=development --import tsx scripts/ensure-schema-repairs.ts",
     "db:push": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts && node --conditions=development --import tsx scripts/ensure-schema-repairs.ts",
     "db:verify-memory": "pnpm run build && node --import tsx scripts/verify-memory-schema.ts",
-    "benchmark:admin-scale:mysql": "node --import tsx scripts/admin-scale-benchmark.ts"
+    "benchmark:admin-scale:mysql": "node --import tsx scripts/admin-scale-benchmark.ts",
+    "test": "node --conditions=development --import tsx --test 'src/**/*.test.ts'"
   },
   "dependencies": {
     "@openwork-ee/utils": "workspace:*",

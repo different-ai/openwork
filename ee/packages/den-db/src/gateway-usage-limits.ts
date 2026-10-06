@@ -1,3 +1,14 @@
+/**
+ * Gateway usage limits: the admission and policy half of Gateway usage.
+ *
+ * `createGatewayUsageLimits` owns admission (`admit`), status, policy CRUD and
+ * reset requests; only admission is gated by the usage-limits module. The
+ * always-on accounting surface lives in `@openwork-ee/den-db/gateway-usage-accounting`.
+ *
+ * `withGatewayUsageEntitlementMutation` stays here but is never gated: team and
+ * role mutations must keep policy assignment snapshots consistent whatever the
+ * module state, so re-enabling limits sees correct assignments.
+ */
 import { randomUUID } from "node:crypto"
 import { and, asc, eq, isNull, or, sql } from "drizzle-orm"
 import {
@@ -14,7 +25,6 @@ import {
   lockUsageOrganization,
   lockUsageMembers,
 } from "./gateway-usage-entitlements"
-import { isGatewayUsageDeadlock } from "./gateway-usage-errors"
 import { readGatewayUsageResetPage } from "./gateway-usage-reset-page"
 import {
   activeUsageMember,
@@ -26,7 +36,9 @@ import {
   type GatewayUsageScope,
   type UsageTx,
 } from "./gateway-usage-read"
-import { settleGatewayUsage, type UsageLogRow } from "./gateway-usage-settlement"
+import { recordGatewayUsage } from "./gateway-usage-accounting"
+import type { UsageLogRow } from "./gateway-usage-settlement"
+import { runGatewayUsageTransaction } from "./gateway-usage-tx"
 import { AuthUserTable } from "./schema/auth"
 import { MemberTable } from "./schema/org"
 import { TeamMemberTable, TeamTable } from "./schema/teams"
@@ -39,29 +51,31 @@ import {
   GatewayUsageAuditTable as H,
 } from "./schema/gateway-usage-limits"
 
-export { GatewayUsageError, safeUsageDatabaseCode } from "./gateway-usage-errors"
+/** Never gated by the usage-limits module: team and role mutations must keep assignment snapshots consistent. */
 export { withGatewayUsageEntitlementMutation } from "./gateway-usage-entitlements"
+// Each entry is bundled on its own, so import the error from the entry whose
+// code throws it: `instanceof` does not cross entry points in the built package.
+export { GatewayUsageError, safeUsageDatabaseCode } from "./gateway-usage-errors"
+/** @deprecated Import from `@openwork-ee/den-db/gateway-usage-accounting`. */
 export { deleteGatewayUsageForOrganization } from "./gateway-usage-erasure"
+/** @deprecated Import from `@openwork-ee/den-db/gateway-usage-accounting`. */
 export { reconcileGatewayUsageBatch } from "./gateway-usage-reconciliation"
+/** @deprecated Import from `@openwork-ee/den-db/gateway-usage-accounting`. */
 export { listPendingGatewayUsageRequests, recoverGatewayUsageRequests, rotateGatewayUsageEpoch } from "./gateway-usage-operations"
+/** @deprecated Import from `@openwork-ee/den-db/gateway-usage-accounting`. */
 export {
   startGatewayUsageLog,
   assertUsageRetentionSafe,
   expireUsageRequestsForMembers,
   fenceUsageOrganizationDeletion,
 } from "./gateway-usage-lifecycle"
+/** @deprecated Import from `@openwork-ee/den-db/gateway-usage-accounting`. */
+export { recordGatewayUsage } from "./gateway-usage-accounting"
 export type { GatewayUsageDb, GatewayUsageScope, GatewayUsageSnapshot } from "./gateway-usage-read"
 
 export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new Date()) {
-  async function transaction<T>(run: (tx: UsageTx, now: Date) => Promise<T>): Promise<T> {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        return await db.transaction((tx) => run(tx, clock()))
-      } catch (error) {
-        if (!isGatewayUsageDeadlock(error) || attempt >= 2) throw error
-        await new Promise((resolve) => setTimeout(resolve, 5 * (attempt + 1)))
-      }
-    }
+  function transaction<T>(run: (tx: UsageTx, now: Date) => Promise<T>): Promise<T> {
+    return runGatewayUsageTransaction(db, clock, run)
   }
   async function audit(
     tx: UsageTx,
@@ -403,9 +417,9 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         }
       })
     },
+    /** @deprecated Accounting, not admission: use `recordGatewayUsage` from `@openwork-ee/den-db/gateway-usage-accounting`. */
     record(row: UsageLogRow) {
-      if (row.route !== "org_provider") return Promise.resolve(false)
-      return transaction((tx, now) => settleGatewayUsage(tx, row, now))
+      return recordGatewayUsage(db, row, clock)
     },
     submitReset(scope: GatewayUsageScope, bucketId: string, reason: string) {
       return transaction(async (tx, now) => {
