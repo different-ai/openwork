@@ -76,7 +76,7 @@ import {
 } from "./default-marketplaces.js"
 import { db } from "../../../db.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "../../../list-pagination.js"
-import { resolveOrganizationMemberAuthority } from "../../../organization-team-roles.js"
+import { resolveMemberAuthority } from "../../../core/member-authority.js"
 import { env } from "../../../env.js"
 import { appLogger } from "../../../observability/logger.js"
 import { roleIncludesOwner } from "../../../orgs.js"
@@ -2723,7 +2723,7 @@ export async function listPlugins(input: { context: PluginArchActorContext; curs
   )).limit(1) : []
   if ((input.memberId && !targetMember) || (input.teamId && !targetTeam)) return { items: [], nextCursor: null, ...(input.includeTotal ? { total: 0 } : {}) }
   const effectiveMember = input.memberId && targetMember?.userId && !roleIncludesOwner(targetMember.role) && !memberHasRole(targetMember.role, "admin")
-    ? await resolveOrganizationMemberAuthority({ organizationId, memberId: input.memberId })
+    ? await resolveMemberAuthority({ organizationId, memberId: input.memberId })
     : null
   const adminAudience = targetMember && (roleIncludesOwner(targetMember.role) || memberHasRole(targetMember.role, "admin") || (effectiveMember ? memberHasRole(effectiveMember.role, "admin") : false))
   const audience = adminAudience ? undefined : input.memberId || input.teamId
@@ -6628,7 +6628,7 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
     throw new PluginArchRouteFailure(404, "organization_not_found", "Organization not found for connector instance.")
   }
 
-  const member = await resolveOrganizationMemberAuthority({
+  const member = await resolveMemberAuthority({
     organizationId: input.connectorInstance.organizationId,
     memberId: input.connectorInstance.createdByOrgMembershipId,
   })

@@ -15,7 +15,7 @@ import { auditExportQuerySchema, auditOperationsQuerySchema, auditPageQuerySchem
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { jsonValidator, orgMemberRoute } from "../../middleware/index.js"
-import { effectiveOrganizationRole, listOrganizationAdminTeamGrants } from "../../organization-team-roles.js"
+import { computeEffectiveRole, listAuthorityElevations } from "../../core/member-authority.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { ensureOrganizationAdmin, ensureOrganizationAdminRole, memberHasRole, orgAccessFailureStatus, type OrgRouteVariables } from "./shared.js"
 
@@ -124,8 +124,8 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
         const { entitlement } = await requireAuditFeature(tx, organization.organization.id)
         const [member] = await tx.select().from(MemberTable).where(and(eq(MemberTable.id, organization.currentMember.id), eq(MemberTable.organizationId, organization.organization.id), eq(MemberTable.userId, organization.currentMember.userId), isNull(MemberTable.removedAt))).limit(1).for("share")
         if (!member) return "forbidden"
-        const adminTeams = memberHasRole(member.role, "admin") ? [] : (await listOrganizationAdminTeamGrants(organization.organization.id, tx)).filter((grant) => grant.memberId === member.id)
-        if (!memberHasRole(effectiveOrganizationRole(member.role, adminTeams), "admin")) return "forbidden"
+        const elevations = memberHasRole(member.role, "admin") ? [] : await listAuthorityElevations({ organizationId: organization.organization.id, memberId: member.id, database: tx })
+        if (!memberHasRole(computeEffectiveRole(member.role, elevations), "admin")) return "forbidden"
         if (input.captureOn && !entitlement.enabled) return "enterprise_plan_required"
         if (input.captureOn && !env.auditCaptureEnabled) return "audit_capture_unavailable"
         const initialization = await initializeAuditPolicyInTx(tx, organization.organization.id, env.auditCaptureEnabled)

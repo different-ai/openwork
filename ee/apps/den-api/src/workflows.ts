@@ -27,7 +27,7 @@ import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-e
 import { codemodeCodeDigest, parseCodemodeToolCalls } from "./workflow-runs.js"
 import { db } from "./db.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "./list-pagination.js"
-import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js"
+import { resolveMemberAuthority } from "./core/member-authority.js"
 import { parseCodemodeScriptPayload, validateCodemodeScriptInput } from "./mcp/codemode-script-object.js"
 import { codemodeCallName } from "./mcp/codemode-namespaces.js"
 import type { BuiltCodemodeTools, CodemodeManifestEntry } from "./mcp/codemode-tools.js"
@@ -593,7 +593,7 @@ export async function validateWorkflowAutomationAction(input: {
   const pluginId = normalizeDenTypeId("plugin", input.action.script.pluginId)
   const configObjectId = normalizeDenTypeId("configObject", input.action.script.configObjectId)
   const configObjectVersionId = normalizeDenTypeId("configObjectVersion", input.action.script.configObjectVersionId)
-  const member = await resolveOrganizationMemberAuthority({ organizationId, memberId: ownerMemberId })
+  const member = await resolveMemberAuthority({ organizationId, memberId: ownerMemberId })
   if (!member) throw new Error("automation_owner_inactive")
   if (!memberHasRole(member.role, "admin")) {
     const [teams, configObjectGrants, pluginGrants] = await Promise.all([

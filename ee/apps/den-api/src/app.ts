@@ -1,4 +1,5 @@
 import "./load-env.js"
+import "./core/legacy-hooks.js"
 import { registerSlackAssistantRoutes } from "./slack-assistant/routes.js"
 import { registerWorkbotRoutes } from "./workbot/routes.js"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"

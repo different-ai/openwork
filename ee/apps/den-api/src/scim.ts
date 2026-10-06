@@ -1,6 +1,6 @@
 import { and, count, desc, eq, inArray, isNotNull, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthAccountTable, AuthUserTable, ExternalIdentityTable, MemberTable, ScimGroupMemberTable, ScimGroupTable, ScimProviderTable, ScimSyncEventTable, ScimUserTombstoneTable, TeamTable } from "@openwork-ee/den-db/schema"
-import { withOrganizationTeamMutation } from "./organization-team-roles.js"
+import { withOrganizationRowLock } from "./core/org-row-lock.js"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { auth } from "./auth.js"
 import { cache } from "./cache.js"
@@ -323,7 +323,7 @@ export async function deleteOrganizationScimConnection(organizationId: Organizat
 }
 
 async function cleanupExternalIdentitiesForDeletedScimConnection(connection: typeof ScimProviderTable.$inferSelect) {
-  await withOrganizationTeamMutation(connection.organizationId, async (db) => {
+  await withOrganizationRowLock(connection.organizationId, async (db) => {
     const providers = await db.select().from(ScimProviderTable)
       .where(and(eq(ScimProviderTable.id, connection.id), eq(ScimProviderTable.organizationId, connection.organizationId), eq(ScimProviderTable.providerId, connection.providerId))).limit(1)
     const provider = providers[0]

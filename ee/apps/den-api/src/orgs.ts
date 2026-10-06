@@ -44,7 +44,9 @@ import {
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js"
 import { getScimManagedTeamIds } from "./scim-groups.js"
-import { effectiveOrganizationRole, listOrganizationAdminTeamGrants, withOrganizationMembershipUsageMutation, withOrganizationTeamMutation, type OrganizationAdminTeam } from "./organization-team-roles.js"
+import { adminTeamsFromElevations, computeEffectiveRole, listAuthorityElevations, listOrganizationAuthority, type OrganizationAdminTeam } from "./core/member-authority.js"
+import { withMembershipMutation } from "./core/membership-mutation.js"
+import { withOrganizationRowLock } from "./core/org-row-lock.js"
 import {
   DEFAULT_ORGANIZATION_LIMITS,
   normalizeOrganizationMetadata,
@@ -737,7 +739,7 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
   }
 
   const availableRoles = await listAssignableRoles(invitation.organizationId)
-  return withOrganizationMembershipUsageMutation(invitation.organizationId, async (tx) => {
+  return withMembershipMutation(invitation.organizationId, async (tx) => {
     const lockedInvitations = await tx
       .select()
       .from(InvitationTable)
@@ -1497,8 +1499,8 @@ export async function listUserOrgs(userId: UserId) {
   }
 
   return Promise.all(memberships.map(async (row) => {
-    const grants = await listOrganizationAdminTeamGrants(row.organization.id)
-    const adminTeams = grants.filter((grant) => grant.memberId === row.membershipId).map(({ id, name }) => ({ id, name }))
+    const elevations = await listAuthorityElevations({ organizationId: row.organization.id, memberId: row.membershipId })
+    const adminTeams = adminTeamsFromElevations(elevations)
     return {
       id: row.organization.id,
       name: row.organization.name,
@@ -1506,7 +1508,7 @@ export async function listUserOrgs(userId: UserId) {
       logo: row.organization.logo,
       allowedEmailDomains: normalizeStoredAllowedEmailDomains(row.organization.allowedEmailDomains),
       metadata: serializeMemberFacingOrganizationMetadata(row.organization.metadata),
-      role: effectiveOrganizationRole(row.role, adminTeams),
+      role: computeEffectiveRole(row.role, elevations),
       directRole: row.role,
       adminTeams,
       orgMemberId: row.membershipId,
@@ -1609,11 +1611,9 @@ export async function getOrganizationContextForUser(input: {
     .orderBy(asc(OrganizationRoleTable.createdAt))
 
   const teams = await listOrganizationTeams(organization.id)
-  const adminGrants = await listOrganizationAdminTeamGrants(organization.id)
-  const adminTeamsFor = (memberId: MemberId) => adminGrants
-    .filter((grant) => grant.memberId === memberId)
-    .map(({ id, name }) => ({ id, name }))
-  const currentAdminTeams = adminTeamsFor(currentMember.id)
+  const authority = await listOrganizationAuthority({ organizationId: organization.id })
+  const elevationsFor = (memberId: MemberId) => authority.get(memberId) ?? []
+  const currentAdminTeams = adminTeamsFromElevations(elevationsFor(currentMember.id))
 
   return {
     organization: {
@@ -1629,7 +1629,7 @@ export async function getOrganizationContextForUser(input: {
     currentMember: {
       id: currentMember.id,
       userId: currentMember.userId,
-      role: effectiveOrganizationRole(currentMember.role, currentAdminTeams),
+      role: computeEffectiveRole(currentMember.role, elevationsFor(currentMember.id)),
       directRole: currentMember.role,
       adminTeams: currentAdminTeams,
       createdAt: currentMember.createdAt,
@@ -1637,8 +1637,8 @@ export async function getOrganizationContextForUser(input: {
       isOwner: roleIncludesOwner(currentMember.role),
     },
     members: members.map((member) => {
-      const adminTeams = adminTeamsFor(member.id)
-      return { ...member, adminTeams, effectiveRole: effectiveOrganizationRole(member.role, adminTeams) }
+      const elevations = elevationsFor(member.id)
+      return { ...member, adminTeams: adminTeamsFromElevations(elevations), effectiveRole: computeEffectiveRole(member.role, elevations) }
     }),
     invitations,
     roles: [
@@ -1792,7 +1792,7 @@ export async function updateOrganizationMemberRole(input: {
   memberId: MemberRow["id"]
   nextRole: string
 }): Promise<MemberRoleUpdateResult> {
-  const updated = await withOrganizationTeamMutation(input.organizationId, async (tx): Promise<MemberRoleUpdateResult> => {
+  const updated = await withOrganizationRowLock(input.organizationId, async (tx): Promise<MemberRoleUpdateResult> => {
     const activeRows = await tx
       .select({ member: MemberTable, userId: AuthUserTable.id })
       .from(MemberTable)
@@ -1902,7 +1902,7 @@ export async function transferOrganizationOwnership(input: {
     )
   }
 
-  const transfer: OwnershipTransferCommitResult = await withOrganizationTeamMutation(input.organizationId, async (tx): Promise<OwnershipTransferCommitResult> => {
+  const transfer: OwnershipTransferCommitResult = await withOrganizationRowLock(input.organizationId, async (tx): Promise<OwnershipTransferCommitResult> => {
     const memberRows = await tx
       .select({ member: MemberTable, userId: AuthUserTable.id })
       .from(MemberTable)
@@ -2023,7 +2023,7 @@ export async function removeOrganizationMember(input: {
   removedByOrgMemberId?: MemberRow["id"]
 }): Promise<MemberMutationResult> {
   let gatewayCredentials: Awaited<ReturnType<typeof revokeInferenceCredentialsForMembers>> = []
-  const removed = await withOrganizationMembershipUsageMutation(input.organizationId, async (tx): Promise<MemberMutationResult> => {
+  const removed = await withMembershipMutation(input.organizationId, async (tx): Promise<MemberMutationResult> => {
     const activeRows = await tx
       .select({ member: MemberTable, userId: AuthUserTable.id })
       .from(MemberTable)

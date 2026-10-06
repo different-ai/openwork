@@ -21,7 +21,8 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import { invalidateTeamInferenceOAuth } from "../../llm/inference-provider-lifecycle.js"
 import { isScimManagedTeam } from "../../scim-groups.js"
-import { withOrganizationTeamMutation, withOrganizationMembershipUsageMutation, type TeamMutationTransaction } from "../../organization-team-roles.js"
+import { withMembershipMutation } from "../../core/membership-mutation.js"
+import { withOrganizationRowLock, type CoreTx } from "../../core/org-row-lock.js"
 import {
   jsonValidator,
   orgRoleRoute,
@@ -101,7 +102,7 @@ async function ensureMembersBelongToOrganization(input: {
 }
 
 async function createTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof createTeamSchema>, externalKey?: string) {
-  return withOrganizationTeamMutation(payload.organization.id, async (tx) => {
+  return withOrganizationRowLock(payload.organization.id, async (tx) => {
   const permission = ensureTeamManager(c)
   if (!permission.ok) {
     return c.json(permission.response, orgAccessFailureStatus(permission.response))
@@ -176,7 +177,7 @@ async function createTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   })
 }
 
-async function affectedTeamUsageMembers(tx: TeamMutationTransaction, organizationId: typeof TeamTable.$inferSelect.organizationId, rawId: string, added: string[] = []) {
+async function affectedTeamUsageMembers(tx: CoreTx, organizationId: typeof TeamTable.$inferSelect.organizationId, rawId: string, added: string[] = []) {
   let teamId: TeamId, addedIds: MemberId[]
   try { teamId = parseTeamId(rawId); addedIds = parseMemberIds(added) } catch { return [] }
   const old = await tx.select({ id: TeamMemberTable.orgMembershipId }).from(TeamMemberTable)
@@ -186,7 +187,7 @@ async function affectedTeamUsageMembers(tx: TeamMutationTransaction, organizatio
 }
 
 async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof updateTeamSchema>) {
-  return withOrganizationMembershipUsageMutation(payload.organization.id, async (tx) => {
+  return withMembershipMutation(payload.organization.id, async (tx) => {
   const permission = ensureTeamManager(c)
   if (!permission.ok) {
     return c.json(permission.response, orgAccessFailureStatus(permission.response))
@@ -284,7 +285,7 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
 }
 
 async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
-  return withOrganizationMembershipUsageMutation(payload.organization.id, async (tx) => {
+  return withMembershipMutation(payload.organization.id, async (tx) => {
   const permission = ensureTeamManager(c)
   if (!permission.ok) {
     return c.json(permission.response, orgAccessFailureStatus(permission.response))

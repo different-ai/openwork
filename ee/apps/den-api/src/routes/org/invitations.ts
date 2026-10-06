@@ -7,7 +7,8 @@ import { z } from "zod"
 import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
 import { db } from "../../db.js"
 import { invitationBillingUrl } from "../../agent-links.js"
-import { invitationHasAdminTeam, withOrganizationTeamMutation } from "../../organization-team-roles.js"
+import { withOrganizationRowLock } from "../../core/org-row-lock.js"
+import { invitationHasAdminTeam } from "../../teams-authority.js"
 import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
@@ -410,7 +411,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       return c.json({ error: "invitation_not_found" }, 404)
     }
 
-    const cancellation = await withOrganizationTeamMutation(payload.organization.id, async (tx) => {
+    const cancellation = await withOrganizationRowLock(payload.organization.id, async (tx) => {
       const invitationRows = await tx
         .select({
           id: InvitationTable.id,

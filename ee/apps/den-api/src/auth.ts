@@ -4,7 +4,7 @@ import { invalidateTeamInferenceOAuth, revokeMemberGatewayCredentials } from "./
 import { ensureMemberGatewayKey } from "./gateway-keys.js";
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
-import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js";
+import { resolveMemberAuthority } from "./core/member-authority.js";
 import { env } from "./env.js";
 import { appLogger } from "./observability/logger.js";
 import {
@@ -598,7 +598,7 @@ async function getOrganizationMemberRole(input: {
   if (!member) {
     return null;
   }
-  const authority = await resolveOrganizationMemberAuthority({
+  const authority = await resolveMemberAuthority({
     organizationId: normalizeDenTypeId("organization", input.organizationId),
     memberId: member.id,
   });
