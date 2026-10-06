@@ -11,7 +11,6 @@ import {
   MemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
-import { isAwsRegion } from "@openwork-ee/utils/inference-egress"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
@@ -356,7 +355,7 @@ function resolveCredentialColumn(input: {
   apiKeys?: Record<string, string>
 }) {
   try {
-    const value = resolveProviderCredential({
+    return resolveProviderCredential({
       envNames: readProviderEnvNames(input.providerConfig),
       existing: input.existingProvider
         ? {
@@ -367,14 +366,6 @@ function resolveCredentialColumn(input: {
       apiKey: input.apiKey,
       apiKeys: input.apiKeys,
     })
-    // The Bedrock SDK cannot reach any endpoint without a region, so a
-    // credential change without a valid one fails here rather than on every chat.
-    const credentialChanged = input.apiKey !== undefined || input.apiKeys !== undefined
-    if (credentialChanged && value && input.providerConfig.npm === "@ai-sdk/amazon-bedrock"
-      && !isAwsRegion(decodeProviderCredential(value).apiKeys?.AWS_REGION)) {
-      throw new ProviderCredentialError("Amazon Bedrock requires AWS_REGION set to an AWS region code such as us-east-1.")
-    }
-    return value
   } catch (error) {
     if (error instanceof ProviderCredentialError) {
       throw createFailure(400, "invalid_api_keys", error.message)

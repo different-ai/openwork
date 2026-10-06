@@ -75,11 +75,6 @@
       "types": "./src/litellm-catalog.ts",
       "development": "./src/litellm-catalog.ts",
       "default": "./dist/litellm-catalog.js"
-    },
-    "./ai-sdk-env-settings": {
-      "types": "./src/ai-sdk-env-settings.ts",
-      "development": "./src/ai-sdk-env-settings.ts",
-      "default": "./dist/ai-sdk-env-settings.js"
     }
   },
   "scripts": {
