@@ -12,6 +12,7 @@ on:
   pull_request:
     paths:
       - "packages/features/**"
+      - "packages/license-contracts/src/module-id-list.ts"
       - "packaging/helm/openwork-ee/**"
       - "scripts/features-sync.mjs"
       - "scripts/check-docker-workspace-packages.mjs"
