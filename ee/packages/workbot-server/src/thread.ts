@@ -29,7 +29,8 @@ export function isGreetingRunnerId(messageId: string | undefined) {
 export function splitSuggestions(text: string): { text: string; suggestions: string[] } {
   const lines = text.trimEnd().split("\n")
   const last = lines.at(-1)?.trim() ?? ""
-  const match = /^\**next:?\**\s*:?\s*(.+)$/i.exec(last)
+  // Only a real list ("Next: a | b"), never a sentence that happens to start with "Next".
+  const match = /^\**next\**\s*:\**\s*(.+\|.+)$/i.exec(last)
   if (!match?.[1]) return { text, suggestions: [] }
   const suggestions = match[1]
     .split("|")
@@ -330,9 +331,9 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
 
     const status = statusOf(turn)
     const working = status === "working" || status === "queued"
-    // Workbot's hello: the prompt that asked for it stays hidden, and its closing "Next:" line becomes buttons.
+    // A closing "Next: a | b | c" line becomes buttons: the hello asks for one, and later answers sometimes follow suit.
     let suggestions: string[] = []
-    if (greeting && !working) {
+    if (!working) {
       const last = [...parts].reverse().find((part) => part.kind === "text")
       if (last?.kind === "text") {
         const split = splitSuggestions(last.text)

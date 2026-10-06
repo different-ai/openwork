@@ -340,7 +340,7 @@ function WorkbotSkeleton() {
         <div className={`${COLUMN} flex flex-col gap-[3px]`}>
           <span className="ml-auto h-[38px] w-48 rounded-[20px] rounded-br-md bg-[var(--wb-bubble)]" />
           <span className="mt-3.5 h-6 w-40 rounded bg-[var(--wb-chip)]" />
-          <span className="mt-1.5 h-24 w-[70%] rounded-[20px] rounded-bl-md bg-[var(--wb-bubble)]" />
+          <span className="mt-1.5 h-24 w-[70%] rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] shadow-[var(--wb-card-shadow)]" />
         </div>
       </div>
       <div className="flex justify-center px-3 pb-3 pt-3 sm:px-10 sm:pb-7">
@@ -430,12 +430,12 @@ function Intro(props: { name: string; organizationName: string; firstName: strin
         <div className="flex flex-col gap-[3px]">
           <Timestamp at={props.at} />
           <div className="flex">
-            <p className="max-w-[520px] rounded-[20px] rounded-bl-md bg-[var(--wb-bubble)] px-3.5 py-[9px] text-[15px] leading-[21px] text-[var(--wb-text)] sm:text-[14px] sm:leading-5">
+            <p className="max-w-[520px] rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[var(--wb-card-shadow)]">
               {hello}{props.firstName ? ` ${props.firstName}` : ""}.{seeing ? ` I can already see your ${seeing}.` : ""}
             </p>
           </div>
           <div className="flex">
-            <p className="max-w-[520px] rounded-[20px] rounded-tl-md bg-[var(--wb-bubble)] px-3.5 py-[9px] text-[15px] leading-[21px] text-[var(--wb-text)] sm:text-[14px] sm:leading-5">
+            <p className="max-w-[520px] rounded-[20px] rounded-tl-md bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[var(--wb-card-shadow)]">
               What can I take off your plate today?
             </p>
           </div>
@@ -809,9 +809,19 @@ function CopyAnswer({ text }: { text: string }) {
   );
 }
 
-/** Workbot's words read as a page, not a chat bubble: plain text in the column. */
+/**
+ * Workbot's words in a chat bubble on the left: white on the page with a hairline, so its answers and the person's
+ * grey bubbles on the right read as two sides of one conversation. It hugs short replies and stops at a readable
+ * width; wide tables and code scroll inside it.
+ */
 function AssistantBubble({ children }: { children: ReactNode }) {
-  return <div className="flex flex-col py-1.5 pl-1">{children}</div>;
+  return (
+    <div className="flex py-[3px]">
+      <div className="flex w-fit min-w-0 max-w-full flex-col overflow-x-auto rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 py-2.5 shadow-[var(--wb-card-shadow)] sm:max-w-[600px]">
+        {children}
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -821,7 +831,7 @@ function AssistantBubble({ children }: { children: ReactNode }) {
 function TypingBubble() {
   return (
     <div className="workbot-row-enter flex pt-1.5 pl-1" role="status" aria-label="Thinking">
-      <div className="flex h-8 items-center gap-[5px] rounded-full bg-[var(--wb-chip)] px-3">
+      <div className="flex h-9 items-center gap-[5px] rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 shadow-[var(--wb-card-shadow)]">
         <span aria-hidden className="workbot-typing-dot" />
         <span aria-hidden className="workbot-typing-dot" />
         <span aria-hidden className="workbot-typing-dot" />
@@ -1134,8 +1144,13 @@ function UsedLine({ steps }: { steps: WorkbotStep[] }) {
  */
 function helloSoFar(text: string, working: LiveText["working"] | null) {
   if (working || (text.length < 40 && !text.includes("\n"))) return "";
+  return withoutNextLine(text);
+}
+
+/** An answer as it is written, without a closing "Next:" line, which becomes buttons once the answer is done. */
+function withoutNextLine(text: string) {
   const lines = text.split("\n");
-  const next = lines.findIndex((line) => /^\**next\b/i.test(line.trim()));
+  const next = lines.findIndex((line) => /^\**next\**\s*:/i.test(line.trim()));
   if (next !== -1) return lines.slice(0, next).join("\n").trimEnd();
   // A last line that may still become "Next:" waits until it can't.
   const last = lines.at(-1)?.trim().replace(/\*/g, "").toLowerCase() ?? "";
@@ -1159,7 +1174,7 @@ function TurnView(props: {
   // The model call in progress (not stored yet): its text so far, and whether it has started a step.
   const current = working && props.live && props.live.step >= turn.modelSteps ? props.live : null;
   // Workbot's hello streams only its message, never its notes between lookups.
-  const liveText = turn.greeting ? helloSoFar(current?.text ?? "", current?.working ?? null) : (current?.text ?? "");
+  const liveText = turn.greeting ? helloSoFar(current?.text ?? "", current?.working ?? null) : withoutNextLine(current?.text ?? "");
   const starting = current?.working ?? null;
   const texts = turn.parts.flatMap((part, index) => (part.kind === "text" ? [{ key: index, text: part.text }] : []));
   // An answer watched while it was written keeps revealing at the same pace once it's stored, instead of the whole
