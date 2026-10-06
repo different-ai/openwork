@@ -221,6 +221,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.click("Run task");
     try {
       await user.see({ text: creationReply }, { timeoutMs: 90_000 });
+      await user.click("Open preview");
       await user.see("Save", { timeoutMs: 60_000 });
     } finally {
       await user.screenshot();
