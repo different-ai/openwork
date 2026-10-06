@@ -357,7 +357,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.see({ text: "Saved artifact" }, { timeoutMs: 30_000 });
     await user.click("Artifact options for Team briefing");
     await user.see("Run again");
-    await user.see("Update artifact");
+    await user.see("Ask for changes");
     await user.see("Delete Team briefing");
     await user.screenshot();
     await user.click("Artifact options for Team briefing");
@@ -386,7 +386,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     expect((await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body).toEqual(companyBefore);
     await user.screenshot();
   });
-  evidence.recordAssertionEvidence("Removing and adding an existing app changes dashboard placement without deleting the app", "Remove kept the saved revision and company dashboard; Choose an existing app added the personal card again and it survived reload, while the granted company dashboard did not render.", true);
+  evidence.recordAssertionEvidence("Removing and adding an existing app changes dashboard placement without deleting the app", "Remove kept the saved revision and company dashboard; Other saved artifacts added the personal card again and it survived reload, while the granted company dashboard did not render.", true);
 
   await step("a saved snapshot reserves its measured tile size while reloading", async () => {
     const saved = await readApp();
@@ -429,7 +429,7 @@ test("create, preview, save and reopen an app without changing already-open resu
       await world.proxy.faults.latency(detailPath, 15_000, { times: 1 });
       await world.proxy.faults.latency(`/api/den${detailPath}`, 15_000, { times: 1 });
       await user.reload();
-      await user.see({ text: "Loading app…" }, { timeoutMs: 30_000 });
+      await user.see({ text: "Loading artifact…" }, { timeoutMs: 30_000 });
       const loading = await probe.dom(tileSelector);
       expect(loading.elements).toHaveLength(1);
       expect(loading.viewportWidth).toBe(before.viewportWidth);
