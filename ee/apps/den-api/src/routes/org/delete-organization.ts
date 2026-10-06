@@ -1,4 +1,4 @@
-import { eq, inArray } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, or } from "@openwork-ee/den-db/drizzle"
 import { deleteGatewayUsageForOrganization } from "@openwork-ee/den-db/gateway-usage-limits"
 import {
   AuthApiKeyTable,
@@ -97,6 +97,8 @@ import { completeLinearIssue, createLinearIssue, type LinearIssue } from "../../
 import { orgRoleRoute } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
+import { revokeGoogleCredentials, revokeGoogleTokens } from "../../llm/inference-provider-lifecycle.js"
+import { GOOGLE_WORKSPACE_PROVIDER_ID, googleWorkspaceRevocationTokens } from "../../organization-deletion-google-tokens.js"
 import { invalidateWebOriginApprovalCache } from "../../organization-web-origins.js"
 import { cancelOrganizationSubscriptions } from "../../stripe-billing.js"
 import { ensureOwner, orgAccessFailureStatus, type OrgRouteVariables } from "./shared.js"
@@ -109,6 +111,8 @@ type ParsedApiKeyMetadata = {
   organizationId: string
   orgMembershipId: string
 }
+
+type GatewayProviderCredential = typeof GatewayProviderCredentialTable.$inferSelect
 
 type DeletionRequestSnapshot = {
   memberCount: number | null
@@ -340,6 +344,41 @@ async function completeAccountDeletionIssue(issue: LinearIssue | null) {
   await completeLinearIssue({ issueId: issue.id })
 }
 
+/** A row that cannot be read (for example an undecryptable secret) must not block deletion. */
+async function collectForRevocation<T>(source: string, organizationId: OrganizationId, collect: () => Promise<T[]>): Promise<T[]> {
+  try {
+    return await collect()
+  } catch (error) {
+    logger.warn("failed to collect google grants to revoke", { error, organization_id: organizationId, source })
+    return []
+  }
+}
+
+/** Best effort and post-commit: deletion has already succeeded and never waits more than the revoke budget. */
+async function revokeDeletedOrganizationGoogleGrants(input: {
+  organizationId: OrganizationId
+  gatewayCredentials: GatewayProviderCredential[]
+  googleWorkspaceTokens: string[]
+}) {
+  if (input.gatewayCredentials.length === 0 && input.googleWorkspaceTokens.length === 0) {
+    return
+  }
+
+  logger.info("revoking google grants for deleted organization", {
+    organization_id: input.organizationId,
+    google_gateway_credential_count: input.gatewayCredentials.length,
+    google_workspace_account_count: input.googleWorkspaceTokens.length,
+  })
+  try {
+    await Promise.all([
+      revokeGoogleCredentials(input.gatewayCredentials),
+      revokeGoogleTokens(input.googleWorkspaceTokens),
+    ])
+  } catch (error) {
+    logger.warn("google grant revocation failed for deleted organization", { error, organization_id: input.organizationId })
+  }
+}
+
 export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.delete(
     "/v1/org",
@@ -378,6 +417,8 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
       await cancelOrganizationSubscriptions({ organizationId })
 
       let affectedSessions: Array<{ id: typeof AuthSessionTable.$inferSelect.id; token: typeof AuthSessionTable.$inferSelect.token }> = []
+      let googleGatewayCredentials: GatewayProviderCredential[] = []
+      let googleWorkspaceTokens: string[] = []
       await db.transaction(async (tx) => {
         await tx.select({ id: OrganizationTable.id }).from(OrganizationTable)
           .where(eq(OrganizationTable.id, organizationId)).for("update")
@@ -469,6 +510,18 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           .from(GatewayProviderTable)
           .where(eq(GatewayProviderTable.organization_id, organizationId)).for("update"))
           .map((row) => row.id)
+        // Read before the rows go so the grants can be revoked at Google after commit.
+        googleGatewayCredentials = await collectForRevocation("gateway_provider_credentials", organizationId, async () => (await tx
+          .select()
+          .from(GatewayProviderCredentialTable)
+          .where(and(
+            eq(GatewayProviderCredentialTable.kind, "oauth_google"),
+            gatewayProviderIds.length > 0
+              ? or(eq(GatewayProviderCredentialTable.organization_id, organizationId), inArray(GatewayProviderCredentialTable.gateway_provider_id, gatewayProviderIds))
+              : eq(GatewayProviderCredentialTable.organization_id, organizationId),
+          ))
+          .for("update"))
+          .filter((credential) => credential.status !== "revoked"))
         if (gatewayProviderIds.length > 0) {
           await tx.delete(GatewayProviderOauthStateTable).where(inArray(GatewayProviderOauthStateTable.gateway_provider_id, gatewayProviderIds))
           const groups = await tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, gatewayProviderIds))
@@ -547,6 +600,24 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(OrganizationWebOriginTable).where(eq(OrganizationWebOriginTable.organizationId, organizationId))
 
         await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.organizationId, organizationId))
+        googleWorkspaceTokens = await collectForRevocation("connected_account", organizationId, async () => {
+          const googleWorkspaceConnectionIds = (await tx
+            .select({ id: ExternalMcpConnectionTable.id })
+            .from(ExternalMcpConnectionTable)
+            .where(and(eq(ExternalMcpConnectionTable.organizationId, organizationId), eq(ExternalMcpConnectionTable.nativeProviderKey, GOOGLE_WORKSPACE_PROVIDER_ID))))
+            .map((row) => row.id)
+          const accounts = await tx
+            .select({
+              providerId: ConnectedAccountTable.providerId,
+              tokenType: ConnectedAccountTable.tokenType,
+              accessToken: ConnectedAccountTable.accessToken,
+              refreshToken: ConnectedAccountTable.refreshToken,
+            })
+            .from(ConnectedAccountTable)
+            .where(eq(ConnectedAccountTable.organizationId, organizationId))
+            .for("update")
+          return googleWorkspaceRevocationTokens(accounts, googleWorkspaceConnectionIds)
+        })
         await tx.delete(ConnectedAccountTable).where(eq(ConnectedAccountTable.organizationId, organizationId))
         await tx.delete(LlmProviderMemberCredentialTable).where(eq(LlmProviderMemberCredentialTable.organizationId, organizationId))
         await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.organizationId, organizationId))
@@ -585,6 +656,12 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         cache.auth.revokeSession(session.token),
         cache.auth.revokeSessionId(session.id),
       ]))
+
+      await revokeDeletedOrganizationGoogleGrants({
+        organizationId,
+        gatewayCredentials: googleGatewayCredentials,
+        googleWorkspaceTokens,
+      })
 
       logger.info("organization deleted", {
         organization_id: organizationId,

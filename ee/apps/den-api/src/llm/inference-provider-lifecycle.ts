@@ -26,20 +26,27 @@ export async function revokeInferenceCredentialsForMembers(tx: Tx, memberIds: Me
 }
 
 export async function revokeGoogleCredentials(credentials: Credential[]) {
+  const tokens: string[] = []
+  for (const credential of credentials) {
+    try {
+      const parsed = parseGatewayProviderSecret(credential.kind, credential.secret)
+      if (parsed.kind === "oauth_google") tokens.push(parsed.token.refreshToken ?? parsed.token.accessToken)
+    } catch {
+      console.info("gateway_google_revocation", { outcome: "invalid_local_credential" })
+    }
+  }
+  await revokeGoogleTokens(tokens)
+}
+
+/** Best effort: at most 4 requests in flight and a shared 5 s budget. Never throws. */
+export async function revokeGoogleTokens(tokens: string[]) {
   const signal = AbortSignal.timeout(5_000)
   let index = 0
-  await Promise.all(Array.from({ length: Math.min(4, credentials.length) }, async () => {
-    while (index < credentials.length) {
-      const credential = credentials[index++]
-      try {
-        const parsed = parseGatewayProviderSecret(credential.kind, credential.secret)
-        if (parsed.kind === "oauth_google") {
-          if (signal.aborted) console.info("gateway_google_revocation", { outcome: "deadline_exceeded" })
-          else await revokeGoogleToken({ token: parsed.token.refreshToken ?? parsed.token.accessToken, signal })
-        }
-      } catch {
-        console.info("gateway_google_revocation", { outcome: "invalid_local_credential" })
-      }
+  await Promise.all(Array.from({ length: Math.min(4, tokens.length) }, async () => {
+    while (index < tokens.length) {
+      const token = tokens[index++]
+      if (signal.aborted) console.info("gateway_google_revocation", { outcome: "deadline_exceeded" })
+      else await revokeGoogleToken({ token, signal })
     }
   }))
 }
