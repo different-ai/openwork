@@ -116,6 +116,12 @@ variable "den_api_image" {
   default     = ""
 }
 
+variable "den_gateway_image" {
+  description = "Full den-gateway image reference. Empty uses ghcr.io/different-ai/openwork-den-gateway:<openwork_version>."
+  type        = string
+  default     = ""
+}
+
 variable "den_web_image" {
   description = "Full den-web image reference. Empty uses ghcr.io/different-ai/openwork-den-web:<openwork_version>."
   type        = string
@@ -165,7 +171,7 @@ variable "api_domain_name" {
 }
 
 variable "certificate_arn" {
-  description = "ACM certificate (same region) covering domain_name and api_domain_name. Empty creates and DNS-validates one in route53_zone_id."
+  description = "ACM certificate (same region) covering domain_name, api_domain_name, and openwork_web_domain_name when openwork_web_enabled. Empty creates and DNS-validates one in route53_zone_id."
   type        = string
   default     = ""
 }
@@ -236,21 +242,62 @@ variable "dashboards_enabled" {
 }
 
 variable "openwork_web_enabled" {
-  description = "Enable OpenWork Web (cloud chat sessions). Needs a sandbox provider: set provisioner_mode = \"daytona\" and pass DAYTONA_API_KEY through extra_secrets."
+  description = "Run OpenWork Web (chat in the browser, one Daytona sandbox per member) on this deployment: adds the den-gateway service at openwork_web_domain_name and points the dashboard's OpenWork Web button at it. Requires daytona_api_key and daytona.snapshot."
   type        = bool
   default     = false
 }
 
-variable "openwork_web_url" {
-  description = "URL the dashboard's OpenWork Web button opens (DEN_WEB_OPENWORK_WEB_URL). Empty keeps den-web's default, which is the hosted https://web.openworklabs.com, not your deployment."
+variable "openwork_web_domain_name" {
+  description = "Public hostname for OpenWork Web (den-gateway). Empty uses web.<domain_name>. Must be covered by certificate_arn; a module-created certificate includes it."
   type        = string
   default     = ""
 }
 
-variable "provisioner_mode" {
-  description = "Sandbox provider for OpenWork Web: stub (none), daytona or render."
+variable "openwork_web_url" {
+  description = "URL the dashboard's OpenWork Web button opens (DEN_WEB_OPENWORK_WEB_URL). Empty uses this deployment's gateway when openwork_web_enabled, otherwise den-web's default (the hosted https://web.openworklabs.com)."
   type        = string
-  default     = "stub"
+  default     = ""
+}
+
+variable "openwork_web_listener_rule_priority" {
+  description = "Priority of the den-gateway host rule on the HTTPS listener (created with openwork_web_enabled). Must be unique on that listener."
+  type        = number
+  default     = 30
+}
+
+variable "provisioner_mode" {
+  description = "Sandbox provider (PROVISIONER_MODE): stub (none) or daytona. Empty picks daytona when openwork_web_enabled, otherwise stub."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "stub", "daytona"], var.provisioner_mode)
+    error_message = "provisioner_mode must be empty, stub or daytona."
+  }
+}
+
+variable "daytona_api_key" {
+  description = "Daytona API key for OpenWork Web sandboxes. Required with openwork_web_enabled; stored in Secrets Manager."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "daytona" {
+  description = <<-EOT
+    Daytona settings for OpenWork Web sandboxes (daytona.io or a self-hosted Daytona).
+    snapshot: required with openwork_web_enabled; a snapshot in the API key's Daytona
+    organization built from the OpenWork sandbox image for openwork_version (see the
+    README). name_prefix: prefix for sandbox and volume names; empty uses <name>, so
+    deployments sharing one Daytona organization stay apart.
+  EOT
+  type = object({
+    api_url     = optional(string, "https://app.daytona.io/api")
+    snapshot    = optional(string, "")
+    target      = optional(string, "")
+    name_prefix = optional(string, "")
+  })
+  default = {}
 }
 
 variable "extra_environment" {
@@ -356,6 +403,16 @@ variable "den_api" {
   type = object({
     cpu           = optional(number, 1024)
     memory        = optional(number, 2048)
+    desired_count = optional(number, 1)
+  })
+  default = {}
+}
+
+variable "den_gateway" {
+  description = "den-gateway (OpenWork Web) task size and count. Created only with openwork_web_enabled."
+  type = object({
+    cpu           = optional(number, 256)
+    memory        = optional(number, 512)
     desired_count = optional(number, 1)
   })
   default = {}
