@@ -361,6 +361,12 @@ variable "den_web" {
   default = {}
 }
 
+variable "wait_for_steady_state" {
+  description = "Whether to wait for the ECS services to reach a steady state before completing terraform apply. When true, terraform blocks until tasks pass health checks and old tasks drain."
+  type        = bool
+  default     = false
+}
+
 variable "log_retention_days" {
   description = "CloudWatch log retention."
   type        = number
