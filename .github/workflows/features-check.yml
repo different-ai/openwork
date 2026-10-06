@@ -3,7 +3,8 @@ name: Feature registry check
 # The feature registry (packages/features/src/registry.ts) generates the Helm
 # chart's config.features block, values schema and README table. This job
 # fails when those are stale, when the chart renders DEN_FEATURE_* names that
-# den-api does not read, or when code adds a DEN_*_ENABLED switch or reads
+# den-api does not read, when a Dockerfile misses a workspace package its
+# service needs, or when code adds a DEN_*_ENABLED switch or reads
 # organization metadata.capabilities instead of the registry.
 # See .opencode/skills/add-a-feature/SKILL.md.
 
@@ -13,6 +14,13 @@ on:
       - "packages/features/**"
       - "packaging/helm/openwork-ee/**"
       - "scripts/features-sync.mjs"
+      - "scripts/check-docker-workspace-packages.mjs"
+      - "packaging/docker/**"
+      - "pnpm-workspace.yaml"
+      - "apps/*/package.json"
+      - "packages/*/package.json"
+      - "ee/apps/*/package.json"
+      - "ee/packages/*/package.json"
       - "ee/apps/den-api/src/**"
       - "ee/apps/den-web/app/**"
       - "ee/apps/den-web/components/**"

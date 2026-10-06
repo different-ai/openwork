@@ -5,8 +5,9 @@
 //                         schema and README table from
 //                         packages/features/src/registry.ts
 //   pnpm features:check   fail if those files are stale, if the chart renders
-//                         different DEN_FEATURE_* names than den-api reads, or
-//                         if code bypasses the registry (see the rules below)
+//                         different DEN_FEATURE_* names than den-api reads, if
+//                         a Dockerfile misses a workspace package its service
+//                         needs, or if code bypasses the registry (see below)
 //
 // Read .opencode/skills/add-a-feature/SKILL.md before adding a feature.
 
@@ -21,6 +22,7 @@ import {
   featureIsAdjustable,
   featureLockEnvName,
 } from "../packages/features/src/index.ts"
+import { checkDockerWorkspacePackages } from "./check-docker-workspace-packages.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const chartDir = path.join(root, "packaging/helm/openwork-ee")
@@ -191,6 +193,9 @@ if (check) {
   } else if (!helmAvailable) {
     console.warn("[features] helm is not installed; skipped the chart render check.")
   }
+
+  // Images that copy workspace packages one by one must copy every one they need.
+  problems.push(...checkDockerWorkspacePackages(root))
 
   // No new deployment-wide feature switches: declare a feature instead.
   const allowedEnableFlags = new Set([
