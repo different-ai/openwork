@@ -5,9 +5,11 @@ import { readOrganizationMetadata } from "@openwork/types/den/managed-models-pol
 import { z } from "zod"
 import { db } from "../db.js"
 import { getDesktopReleaseMetadata } from "../desktop-releases.js"
+import { env } from "../env.js"
 import { parseOrganizationPlan, type PlanTier } from "../entitlements.js"
 import { normalizeOrganizationMetadata } from "../organization-limits.js"
-import { organizationCapabilityKeySchema, organizationHasCapability } from "../organization-capabilities.js"
+import { setOrganizationFeatureOverrides } from "@openwork-ee/den-db/organization-features"
+import { featureIsAdjustable, featureKeySchema, resolveFeature } from "@openwork/types/den/features"
 import { updateOrganizationMetadata } from "../organization-metadata.js"
 
 /**
@@ -488,7 +490,7 @@ export function registerAdminMcpTools(server: McpServer) {
         "Admin write tool: turn one organization capability on or off (the same switches as the admin panel), e.g. capability='workbot'. enabled=null removes the override and restores the default.",
       inputSchema: z.object({
         organizationId: z.string().min(1).describe("Organization id, e.g. org_..."),
-        capability: organizationCapabilityKeySchema.describe("Capability to set"),
+        capability: featureKeySchema.describe("Feature to set (see packages/types/src/den/features.ts)"),
         enabled: z.boolean().nullable().describe("true or false, or null to restore the default"),
       }),
     },
@@ -506,18 +508,19 @@ export function registerAdminMcpTools(server: McpServer) {
         if (!organization) {
           throw new Error(`No organization found for ${organizationId}`)
         }
-        const metadata = await updateOrganizationMetadata(organizationId, (current) => {
-          // Other capability keys (and unmanaged ones) are kept as they are.
-          const capabilities = { ...readOrganizationMetadata(current.capabilities) }
-          if (enabled === null) delete capabilities[capability]
-          else capabilities[capability] = enabled
-          return { ...current, capabilities }
+        if (!featureIsAdjustable(capability, env.features.deployment)) {
+          throw new Error(`${capability} cannot be changed per organization on this deployment.`)
+        }
+        const overrides = await setOrganizationFeatureOverrides(db, {
+          organizationId,
+          changes: { [capability]: enabled },
+          source: "platform",
         })
         return {
           ok: true,
           organization: { id: organization.id, name: organization.name, slug: organization.slug },
           capability,
-          enabled: organizationHasCapability(metadata, capability),
+          enabled: resolveFeature(capability, { ...env.features, overrides }).enabled,
         }
       }),
   )

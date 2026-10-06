@@ -35,7 +35,7 @@ import { getExternalMcpConnection } from "../capability-sources/external-mcp-con
 import { getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
 import { getOpenWorkWebRuntimeAccess } from "../openwork-web-runtime-access.js"
 import { listHeadlessModels, slackRuntimeForOrganization } from "./headless.js"
-import { organizationHasCapability } from "../organization-capabilities.js"
+import { getOrganizationFeatures } from "../features.js"
 import { publicRequestUrl } from "../request-url.js"
 import { getOrganizationContextForUser } from "../orgs.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
@@ -162,16 +162,17 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       if (!connection) return c.json({ error: "not_found" }, 404)
       const installation = await getInstallation(connectionId)
       const web = await getOpenWorkWebRuntimeAccess(org.organization.id)
+      const features = await getOrganizationFeatures(org.organization.id)
       const catalog =
-        slackRuntimeForOrganization(org.organization.metadata) === "headless" ? await listHeadlessModels() : null
+        slackRuntimeForOrganization(features) === "headless" ? await listHeadlessModels() : null
       return c.json({
         enabled: installation?.enabled ?? false,
         installed: Boolean(installation?.botToken),
         teamId: installation?.teamId ?? null,
-        rolloutEnabled: organizationHasCapability(org.organization.metadata, "slackAssistant"),
+        rolloutEnabled: features.slackAssistant,
         hasSigningSecret: Boolean(installation?.signingSecret),
         eligible: isSlackConnection(connection),
-        webAccess: slackRuntimeForOrganization(org.organization.metadata) === "headless" || web.hasAccess,
+        webAccess: slackRuntimeForOrganization(features) === "headless" || web.hasAccess,
         channelIds: installation?.channelIds ?? [],
         shadowMode: installation?.shadowMode ?? false,
         dailyLimit: installation?.dailyLimit ?? 100,
@@ -213,7 +214,8 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
           400,
         )
       const body = c.req.valid("json")
-      if (body.enabled && !organizationHasCapability(org.organization.metadata, "slackAssistant")) {
+      const features = await getOrganizationFeatures(org.organization.id)
+      if (body.enabled && !features.slackAssistant) {
         return c.json(
           {
             error: "slack_assistant_not_enabled",
@@ -224,7 +226,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       }
       if (
         body.enabled &&
-        slackRuntimeForOrganization(org.organization.metadata) !== "headless" &&
+        slackRuntimeForOrganization(features) !== "headless" &&
         !(await getOpenWorkWebRuntimeAccess(org.organization.id)).hasAccess
       )
         return c.json({ error: "openwork_web_access_required" }, 403)

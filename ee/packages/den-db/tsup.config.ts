@@ -16,6 +16,7 @@ export default defineConfig({
     drizzle: "src/drizzle.ts",
     "gateway-usage-limits": "src/gateway-usage-limits.ts",
     "audit-log": "src/audit-log.ts",
+    "organization-features": "src/organization-features.ts",
     "audit-accounting": "src/audit-accounting.ts",
   },
   format: ["esm"],

@@ -66,6 +66,11 @@
       "development": "./src/audit-accounting.ts",
       "default": "./dist/audit-accounting.js"
     },
+    "./organization-features": {
+      "types": "./src/organization-features.ts",
+      "development": "./src/organization-features.ts",
+      "default": "./dist/organization-features.js"
+    },
     "./audit-log": {
       "types": "./src/audit-log.ts",
       "development": "./src/audit-log.ts",

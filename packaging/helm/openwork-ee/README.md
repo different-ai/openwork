@@ -299,6 +299,50 @@ helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
   -f values.prod.yaml
 ```
 
+### Features
+
+OpenWork features are declared once, in `packages/types/src/den/features.ts`.
+For each feature, that registry decides whether it exists on self-hosted
+installs and who controls it. Features that platform admins can turn on or off
+per organization appear under `config.features`:
+
+```yaml
+config:
+  features:
+    orgManagedDashboards: "true"   # on for every organization
+    installLinks: "false"          # off for every organization
+```
+
+- `""` (the default) keeps the registry default. Platform admins can then
+  change it per organization in `/admin`.
+- `"true"` or `"false"` locks the feature for every organization. `/admin`
+  shows "Set by deployment config" and can't change it.
+
+Each key renders `DEN_FEATURE_<KEY>` for den-api. Features the registry fixes
+for self-hosted installs (unavailable, off, or on for everyone) have no key,
+so an operator can't turn on something that isn't part of self-hosted. A key
+that isn't listed below fails `helm install` through `values.schema.json`.
+
+`config.deployment` (`DEN_DEPLOYMENT`) is `self_hosted` unless this is
+OpenWork Cloud. Don't change it on a customer install.
+
+<!-- BEGIN GENERATED features (pnpm features:sync) -->
+| `config.features.*` | Environment variable | Default | What it does |
+| --- | --- | --- | --- |
+| `installLinks` | `DEN_FEATURE_INSTALL_LINKS` | default on | Workspace admins can create desktop install links for their organization. |
+| `mcpConnections` | `DEN_FEATURE_MCP_CONNECTIONS` | default on | Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab. |
+| `modelsAnalytics` | `DEN_FEATURE_MODELS_ANALYTICS` | default off | Organization admins can opt in to task analytics for OpenWork Models. |
+| `auditLogs` | `DEN_FEATURE_AUDIT_LOGS` | default off | Organization admins can read and configure audit logs. Capture still needs an audit entitlement. |
+| `orgManagedDashboards` | `DEN_FEATURE_ORG_MANAGED_DASHBOARDS` | default off | Organization admins publish dashboards to members in Den and the desktop app. |
+| `slackAssistant` | `DEN_FEATURE_SLACK_ASSISTANT` | default off | Answers Slack mentions and DMs for the organization after the Slack connector is set up. |
+| `slackAssistantHeadless` | `DEN_FEATURE_SLACK_ASSISTANT_HEADLESS` | default off | Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner. |
+| `headlessAutomations` | `DEN_FEATURE_HEADLESS_AUTOMATIONS` | default off | Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it. |
+| `workbot` | `DEN_FEATURE_WORKBOT` | default off | Members can use Workbot. Needs the deployment's Workbot app. |
+<!-- END GENERATED features -->
+
+The table and the `config.features` block are generated: run `pnpm features:sync`
+after changing the registry.
+
 ### Automations rollout
 
 The Helm chart advertises Automations as unavailable by default for self-hosted

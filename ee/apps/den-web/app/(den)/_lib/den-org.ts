@@ -1,4 +1,5 @@
 import { parseDeploymentCapabilities, type DeploymentCapabilities } from "@openwork/types/den/deployment-capabilities";
+import { mapFeatures, type FeatureMap } from "@openwork/types/den/features";
 
 export type DenOrgSummary = {
   id: string;
@@ -232,7 +233,10 @@ export type DenOrgContext = {
   currentMemberTeams: DenCurrentMemberTeam[];
   entitlements: DenOrgEntitlements;
   authMethods: DenOrgAuthMethods;
+  /** Frozen for published screens; new code reads `features` through orgFeatureEnabled(). */
   capabilities: DenOrgCapabilities;
+  /** Effective on/off per registry feature (packages/types/src/den/features.ts). Missing from older servers means off. */
+  features: FeatureMap;
   deploymentCapabilities: DeploymentCapabilities;
 };
 
@@ -1051,6 +1055,7 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
     entitlements: parseOrgEntitlements(payload.entitlements),
     authMethods: parseOrgAuthMethods(payload.authMethods),
     capabilities: parseOrgCapabilities(payload.capabilities),
+    features: parseOrgFeatures(payload.features),
     deploymentCapabilities: parseDeploymentCapabilities(payload.deploymentCapabilities),
   };
 }
@@ -1064,6 +1069,17 @@ function parseOrgAuthMethods(value: unknown): DenOrgAuthMethods {
     sso: value.sso === true,
     scim: value.scim === true,
   };
+}
+
+/** Fail closed: a feature the server did not report (older server) is off. */
+function parseOrgFeatures(value: unknown): FeatureMap {
+  const reported = isRecord(value) ? value : {};
+  return mapFeatures((key) => reported[key] === true);
+}
+
+/** Whether a registry feature is on for the active organization. Use this for every new feature gate. */
+export function orgFeatureEnabled(orgContext: Pick<DenOrgContext, "features"> | null | undefined, key: keyof FeatureMap): boolean {
+  return orgContext?.features[key] === true;
 }
 
 function parseOrgCapabilities(value: unknown): DenOrgCapabilities {

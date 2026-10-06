@@ -16,6 +16,14 @@ data:
   # prefer rediss:// whenever the provider supports TLS.
   DATABASE_REDIS_ALLOW_INSECURE_INTERNAL: {{ ternary "1" "0" .Values.redis.allowInsecureInternal | quote }}
   DB_MODE: {{ .Values.config.databaseMode | quote }}
+  # Feature registry: packages/types/src/den/features.ts. Keys come from the
+  # generated config.features block; never add per-feature lines here.
+  DEN_DEPLOYMENT: {{ .Values.config.deployment | default "self_hosted" | quote }}
+  {{- range $key, $value := .Values.config.features }}
+  {{- if ne (toString $value) "" }}
+  DEN_FEATURE_{{ $key | snakecase | upper }}: {{ toString $value | quote }}
+  {{- end }}
+  {{- end }}
   DEN_ORG_MODE: {{ .Values.config.tenancy.mode | quote }}
   DEN_SINGLE_ORG_NAME: {{ .Values.config.tenancy.singleOrgName | quote }}
   DEN_SINGLE_ORG_SLUG: {{ .Values.config.tenancy.singleOrgSlug | quote }}

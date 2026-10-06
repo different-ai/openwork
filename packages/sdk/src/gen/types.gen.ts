@@ -184,6 +184,74 @@ export type AdminOrganizationsPageResponse = {
        */
       gatewayDashboard: true;
     };
+    /**
+     * Per feature: whether it is on, why (registry default, stored override, deployment lock, or fixed in code), and whether /admin can change it.
+     */
+    featureStates: {
+      installLinks: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      modelsAnalytics: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      auditLogs: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      orgManagedDashboards: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      slackAssistant: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      slackAssistantHeadless: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      headlessAutomations: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      workbot: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+    };
     [key: string]: unknown;
   }>;
   page: AdminPageInfo;
@@ -261,6 +329,74 @@ export type AdminOverviewResponse = {
        * @deprecated
        */
       gatewayDashboard: true;
+    };
+    /**
+     * Per feature: whether it is on, why (registry default, stored override, deployment lock, or fixed in code), and whether /admin can change it.
+     */
+    featureStates: {
+      installLinks: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      modelsAnalytics: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      auditLogs: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      orgManagedDashboards: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      slackAssistant: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      slackAssistantHeadless: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      headlessAutomations: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      workbot: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
     };
     [key: string]: unknown;
   }>;
@@ -822,6 +958,12 @@ export type OrganizationContextResponse = {
      */
     gatewayDashboard: true;
     [key: string]: unknown;
+  };
+  /**
+   * Effective on/off for every OpenWork feature in this organization. Treat a missing key as off.
+   */
+  features: {
+    [key: string]: boolean;
   };
   deploymentCapabilities: {
     version: 1;
@@ -5324,6 +5466,74 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
        */
       gatewayDashboard: true;
     };
+    /**
+     * Per feature: whether it is on, why (registry default, stored override, deployment lock, or fixed in code), and whether /admin can change it.
+     */
+    featureStates: {
+      installLinks: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      modelsAnalytics: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      auditLogs: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      orgManagedDashboards: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      slackAssistant: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      slackAssistantHeadless: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      headlessAutomations: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      workbot: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+    };
   };
 };
 
@@ -5389,6 +5599,74 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
        * @deprecated
        */
       gatewayDashboard: true;
+    };
+    /**
+     * Per feature: whether it is on, why (registry default, stored override, deployment lock, or fixed in code), and whether /admin can change it.
+     */
+    featureStates: {
+      installLinks: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      modelsAnalytics: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      auditLogs: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      orgManagedDashboards: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      slackAssistant: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      slackAssistantHeadless: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      headlessAutomations: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
+      workbot: {
+        enabled: boolean;
+        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
+        adminCanChange: boolean;
+        override: boolean | null;
+        default: boolean | null;
+      };
     };
   };
 };

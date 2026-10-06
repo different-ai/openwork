@@ -4,7 +4,7 @@ import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { Effect } from "effect"
 import type { Hono } from "hono"
 import { z } from "zod"
-import { memberFacingMcpConnectionsEnabled } from "../capability-sources/external-mcp-rollout.js"
+import type { FeatureMap } from "../features.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import type { McpPrincipal } from "./auth.js"
 import type { McpToolOperation } from "./catalog.js"
@@ -137,11 +137,12 @@ export type CapabilityRegistryContextInput = {
   member: McpMemberIdentity | null
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
-  organizationMetadata: Parameters<typeof memberFacingMcpConnectionsEnabled>[0]
+  /** Effective features of the organization (see features.ts). */
+  organizationFeatures: Pick<FeatureMap, "mcpConnections">
 }
 
 export function createCapabilityRegistryContext(input: CapabilityRegistryContextInput): CapabilityRegistryContext {
-  const externalMcpConnectionsEnabled = memberFacingMcpConnectionsEnabled(input.organizationMetadata)
+  const externalMcpConnectionsEnabled = input.organizationFeatures.mcpConnections
   let platformAdmin: Promise<boolean> | undefined
   const resolvePlatformAdmin = () => {
     platformAdmin ??= isPlatformAdminUserId(input.principal.userId)
@@ -166,7 +167,7 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     redirectUriBase: input.redirectUriBase,
     generatedArtifactViewsEnabled: input.generatedArtifactViewsEnabled,
     externalMcpConnectionsEnabled,
-    remoteSessionsEnabled: remoteSessionCapabilitiesEnabled(input.organizationMetadata),
+    remoteSessionsEnabled: remoteSessionCapabilitiesEnabled(),
     resolvePlatformAdmin,
     resolveNamespaceContext,
   }
