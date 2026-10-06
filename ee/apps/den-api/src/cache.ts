@@ -791,6 +791,23 @@ async function deleteAuthSessionsForUser(userId: UserId) {
 }
 
 /**
+ * Cross-replica lease (`SET key 1 PX ttl NX`): true when this caller took it,
+ * false when another replica holds it. Without Redis, or on a Redis error,
+ * it answers true, so callers fall back to their per-replica singleflight
+ * instead of never running. Used by the den-modules entitlement refresher.
+ */
+async function acquireLease(key: string, ttlMs: number): Promise<boolean> {
+  if (!redisClient) return true
+  try {
+    const result = await redisClient.set(`cache:lease:${key}`, "1", "PX", Math.max(1, Math.round(ttlMs)), "NX")
+    return result === "OK"
+  } catch (error) {
+    console.error("openwork_cache_lease_failed", { key, error })
+    return true
+  }
+}
+
+/**
  * Shared Den API read-through cache.
  *
  * All entries use the Redis URL configured by DATABASE_REDIS_URL, but live
@@ -836,5 +853,6 @@ export const cache = {
     deleteMembers: deleteOrgMembers,
     deleteMembership: deleteOrgMembership,
   },
+  acquireLease,
 }
 

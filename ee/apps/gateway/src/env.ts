@@ -24,6 +24,9 @@ const EnvSchema = z
     GATEWAY_UPSTREAM_TIMEOUT_MS: z.number().int().min(1000).max(24 * 60 * 60_000),
     GATEWAY_WEBHOOK_SECRET: z.string().optional(),
     GATEWAY_CREDITS_PER_DOLLAR: z.string().optional(),
+    // Den modules (plan W0-03): cloud | self_hosted. Hosted Cloud must set it here,
+    // because the gateway has no DEN_ORG_MODE to derive it from.
+    DEN_DEPLOYMENT: z.string().optional(),
   })
   .superRefine((value, ctx) => {
     const mode =
@@ -155,4 +158,5 @@ export const env = {
   adminToken: optionalString(parsed.GATEWAY_ADMIN_TOKEN),
   webhookSecret: optionalString(parsed.GATEWAY_WEBHOOK_SECRET),
   creditsPerDollar: parseCreditsPerDollar(parsed.GATEWAY_CREDITS_PER_DOLLAR),
+  deployment: optionalString(parsed.DEN_DEPLOYMENT),
 };

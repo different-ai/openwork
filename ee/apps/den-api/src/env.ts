@@ -158,6 +158,14 @@ const EnvSchema = z.object({
   DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: z.string().optional(),
   DEN_APP_MCP_SERVERS_ENABLED: z.string().optional(),
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
+  // Den modules (plan W0-03). DEN_DEPLOYMENT is infrastructure (cloud | self_hosted);
+  // unset derives from DEN_ORG_MODE.
+  DEN_DEPLOYMENT: z.string().optional(),
+  DEN_MODULES_ENTITLEMENT_SOURCE: z.enum(["legacy", "dev_override", "license"]).optional(),
+  DEN_MODULES_SHADOW_COMPARE: z.string().optional(),
+  DEN_LICENSE_DEV_OVERRIDE: z.string().optional(),
+  // Read raw by the Slack workers (only the literal "false" disables them).
+  DEN_SLACK_ASSISTANT_WORKER_ENABLED: z.string().optional(),
   LIFECYCLE_EMAILS_ENABLED: z.string().optional(),
   LIFECYCLE_EMAILS_INTERVAL_MS: z.string().optional(),
   DAYTONA_API_URL: z.string().optional(),
@@ -548,6 +556,15 @@ const corsHandledByEdge = parseBooleanFlag(parsed.DEN_CORS_HANDLED_BY_EDGE ?? "f
 const openworkWebEnabled = parseBooleanFlag(parsed.DEN_OPENWORK_WEB_ENABLED ?? "false")
 
 const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
+const denDeployment = optionalString(parsed.DEN_DEPLOYMENT)
+if (denDeployment !== undefined && denDeployment !== "cloud" && denDeployment !== "self_hosted") {
+  throw new Error("DEN_DEPLOYMENT must be cloud or self_hosted")
+}
+// The license client ships in Phase 5; until then license mode is a development tool.
+const modulesEntitlementSource = parsed.DEN_MODULES_ENTITLEMENT_SOURCE ?? "legacy"
+if (modulesEntitlementSource === "license" && !devMode) {
+  throw new Error("DEN_MODULES_ENTITLEMENT_SOURCE=license is not available yet; it needs OPENWORK_DEV_MODE=1")
+}
 const port = Number(parsed.PORT ?? "8790")
 const botIdProtectionEnabled = (parsed.DEN_BOTID_PROTECTION_ENABLED ?? "0").trim() === "1"
 const diagnosticsOrigin = normalizeDiagnosticsOrigin(parsed.DEN_DIAGNOSTICS_ORIGIN, devMode)
@@ -832,6 +849,14 @@ export const env = {
   auditSelfHostedEnabled: parsed.DEN_AUDIT_SELF_HOSTED_ENABLED === "true",
   corsHandledByEdge,
   openworkWebEnabled,
+  modules: {
+    /** Raw DEN_DEPLOYMENT; `src/modules/runtime.ts` resolves it (unset derives from orgMode). */
+    deployment: denDeployment,
+    entitlementSource: modulesEntitlementSource,
+    shadowCompare: parseBooleanFlag(parsed.DEN_MODULES_SHADOW_COMPARE ?? "true"),
+    licenseDevOverride: optionalString(parsed.DEN_LICENSE_DEV_OVERRIDE),
+  },
+  slackAssistantWorkerEnabled: parsed.DEN_SLACK_ASSISTANT_WORKER_ENABLED !== "false",
   inferenceFree: readFreeInferenceConfig(process.env),
   inferenceProxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
   // Keep known public Models destinations even when Gateway management is off.

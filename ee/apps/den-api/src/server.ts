@@ -13,6 +13,11 @@ import { startGithubSyncWorker } from "./workers/github-sync.js"
 import { externalMcpClientRuntimeName } from "./capability-sources/external-mcp-client-runtime.js"
 import { startAutomationSchedulerLoop } from "./automations/scheduler-loop.js"
 import { startModelsAnalyticsExportLoop } from "./models-analytics-export.js"
+import { createDenApiLegacyOracles } from "./modules/legacy-oracles.js"
+import { moduleRuntime } from "./modules/runtime.js"
+
+moduleRuntime.registerLegacyOracles(createDenApiLegacyOracles())
+await moduleRuntime.start()
 
 const stopSlackAssistantWorker = startSlackAssistantWorker()
 const stopSlackDesktopHandoffWorker = startSlackDesktopHandoffWorker()
@@ -90,6 +95,7 @@ async function stopBackgroundLoops() {
     stopWorkerProvisioningReconcileLoop(),
     stopGithubSyncWorker(),
     automationScheduler.stop(),
+    moduleRuntime.close(),
   ])
 
   for (const result of results) {

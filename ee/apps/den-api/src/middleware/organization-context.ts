@@ -1,6 +1,7 @@
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { MiddlewareHandler } from "hono"
 import { getApiKeyScopedOrganizationId, isScopedApiKeyForOrganization } from "../api-keys.js"
+import { shadowCompareOrganization } from "../modules/runtime.js"
 import { getOrganizationContextForUser, resolveUserOrganizations, type OrganizationContext } from "../orgs.js"
 import type { AuthContextVariables } from "../session.js"
 import { getRequestScopedOrganizationId, hydrateSessionActiveOrganization, shouldHydrateSessionActiveOrganization, type UserOrganizationsContext } from "./user-organizations.js"
@@ -110,6 +111,7 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   }
 
   c.set("organizationContext", context)
+  shadowCompareOrganization(context.organization)
   c.set("activeOrganizationId", context.organization.id)
   c.set("activeOrganizationSlug", context.organization.slug)
   await next()

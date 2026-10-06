@@ -12,6 +12,7 @@
   "dependencies": {
     "@hono/node-server": "2.0.12",
     "@openwork-ee/den-db": "workspace:*",
+    "@openwork-ee/den-modules": "workspace:*",
     "@openwork-ee/telemetry": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
     "@openwork/free-auto": "workspace:*",

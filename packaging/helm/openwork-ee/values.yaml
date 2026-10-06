@@ -16,6 +16,11 @@ config:
   openworkDevMode: "0"
   # Passed to the den-api Node.js process as NODE_OPTIONS at container startup.
   denApiNodeOptions: ""
+  deployment:
+    # Den modules: cloud | self_hosted. Empty derives it from tenancy.mode
+    # (multi_org → cloud), which is today's behavior. Rendered as DEN_DEPLOYMENT
+    # for den-api and the gateway.
+    kind: ""
   tenancy:
     mode: single_org
     singleOrgName: OpenWork

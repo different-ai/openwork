@@ -46,6 +46,7 @@
     "@openwork-ee/cloud-runtime": "workspace:*",
     "@openwork-ee/cloud-runtime-daytona": "workspace:*",
     "@openwork-ee/den-db": "workspace:*",
+    "@openwork-ee/den-modules": "workspace:*",
     "@openwork-ee/headless-protocol": "workspace:*",
     "@openwork-ee/telemetry": "workspace:*",
     "@openwork-ee/utils": "workspace:*",

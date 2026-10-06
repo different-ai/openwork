@@ -4,6 +4,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { getMcpResourceContext, verifyMcpRequest } from "../mcp/auth.js"
 import { DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
 import { getOrganizationContextForUser } from "../orgs.js"
+import { shadowCompareOrganization } from "../modules/runtime.js"
 import { organizationRoleValueSatisfies } from "../organization-role-hierarchy.js"
 import type { AuthContextVariables } from "../session.js"
 import { requireAdminMiddleware } from "./admin.js"
@@ -42,6 +43,7 @@ const cloudTransportRouteHandler: MiddlewareHandler<{ Variables: OrganizationCon
   }
 
   c.set("organizationContext", organizationContext)
+  shadowCompareOrganization(organizationContext.organization)
   await next()
 }
 

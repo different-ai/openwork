@@ -5,6 +5,7 @@ import { flush } from "@sentry/node"
 import app from "./app.js"
 import { closeUsageWriteDatabase } from "./db.js"
 import { env } from "./env.js"
+import "./modules/runtime.js"
 import { installGracefulShutdown, waitForQueueIdle } from "./shutdown.js"
 import { gatewayUsageWrites } from "./usage-write-queue.js"
 

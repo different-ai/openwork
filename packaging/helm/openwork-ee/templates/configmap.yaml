@@ -17,6 +17,9 @@ data:
   DATABASE_REDIS_ALLOW_INSECURE_INTERNAL: {{ ternary "1" "0" .Values.redis.allowInsecureInternal | quote }}
   DB_MODE: {{ .Values.config.databaseMode | quote }}
   DEN_ORG_MODE: {{ .Values.config.tenancy.mode | quote }}
+  {{- with (.Values.config.deployment | default dict).kind }}
+  DEN_DEPLOYMENT: {{ . | quote }}
+  {{- end }}
   DEN_SINGLE_ORG_NAME: {{ .Values.config.tenancy.singleOrgName | quote }}
   DEN_SINGLE_ORG_SLUG: {{ .Values.config.tenancy.singleOrgSlug | quote }}
   DEN_SINGLE_ORG_OWNER_EMAILS: {{ .Values.config.tenancy.ownerEmails | quote }}
