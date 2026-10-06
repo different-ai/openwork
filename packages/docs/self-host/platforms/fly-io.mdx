@@ -1,0 +1,24 @@
+---
+title: "Plan OpenWork on Fly.io"
+sidebarTitle: "Fly.io"
+description: "Plan OpenWork with Fly Machines, a MySQL-compatible database, service routing, and persistent worker storage."
+---
+
+Fly.io can deploy container images to Machines. Those Machines are a possible host for OpenWork's team control plane and separately designed worker runtimes. This is planning guidance; OpenWork does not ship a tested Fly.io deployment configuration.
+
+## Deployment approach
+
+Plan separate apps for Den web and Den API, with an external or separately operated MySQL 8-compatible database. Fly's [image deployment guide](https://www.fly.io/docs/blueprints/using-the-fly-docker-registry/) describes image-based deployment. Use OpenWork's [common requirements](/self-host/platforms/overview#common-requirements) to configure the services.
+
+## What you need
+
+- Pinned images and service ports, HTTPS domains, secrets, and private database connectivity.
+- Database TLS, durable storage, backups, and a migration task before API traffic.
+- A Machine start/stop policy that preserves background tasks and availability.
+- A configured provisioner and durable workspace/data paths for cloud workers.
+
+[Fly Volumes](https://docs.fly.io/volumes/overview) are local to their Machines and are not automatically replicated. Plan placement, backups, and recovery explicitly; adding replicas does not make worker files or a self-managed database redundant.
+
+## Next step
+
+Review [licensing](/start-here/pricing-and-licensing). For help choosing the database and worker topology, [ask us about Fly.io deployment](mailto:sales@openworklabs.com?subject=OpenWork%20deployment%20on%20Fly.io&body=Platform%3A%20Fly.io%0ADocs%3A%20https%3A%2F%2Fopenworklabs.com%2Fdocs%2Fself-host%2Fplatforms%2Ffly-io%0ATeam%20size%3A%20%0ADeployment%20constraints%3A%20).
