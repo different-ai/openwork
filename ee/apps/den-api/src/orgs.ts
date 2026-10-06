@@ -9,8 +9,6 @@ import {
   OrganizationTable,
   ScimProviderTable,
   ScimUserTombstoneTable,
-  SsoConnectionTable,
-  SsoProviderTable,
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
@@ -1101,25 +1099,16 @@ export async function getSingletonSsoStatus() {
     }
   }
 
-  const rows = await db
-    .select({ signInPath: SsoConnectionTable.signInPath })
-    .from(SsoConnectionTable)
-    .innerJoin(SsoProviderTable, and(
-      eq(SsoConnectionTable.providerId, SsoProviderTable.providerId),
-      eq(SsoConnectionTable.organizationId, SsoProviderTable.organizationId),
-      eq(SsoProviderTable.domainVerified, true),
-    ))
-    .where(and(
-      eq(SsoConnectionTable.organizationId, organization.id),
-      eq(SsoConnectionTable.status, "enabled"),
-    ))
-    .limit(1)
-  const signInPath = rows[0]?.signInPath || fallbackSignInPath
+  const requirement = await coreHooks.resolve(
+    "auth.signInMethodResolver",
+    { lookup: "organization", organizationId: organization.id, organizationSlug },
+    async () => null,
+  )
 
   return {
-    configured: Boolean(rows[0]),
+    configured: Boolean(requirement),
     organizationSlug,
-    signInPath,
+    signInPath: requirement?.signInPath || fallbackSignInPath,
   }
 }
 

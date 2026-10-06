@@ -12,11 +12,12 @@ import { validateBrandIconUrl } from "../../brand-icon-validation.js"
 import { cloudHostingAvailable } from "../../capability-sources/cloud-hosting.js"
 import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
+import { coreHooks } from "../../core/hooks/index.js"
 import { db } from "../../db.js"
 import { checkEntitlement, getOrganizationEntitlements, parseOrganizationPlan } from "../../entitlements.js"
 import { env } from "../../env.js"
 import { deploymentCapabilities } from "../../gateway-deployment.js"
-import { findEnterpriseAuthRequirementForEmailDomain, resolveNonSsoSignInMethodForEmail } from "../../enterprise-auth-requirement.js"
+import { resolveNonSsoSignInMethodForEmail } from "../../enterprise-auth-requirement.js"
 import { jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidator, resolveMemberTeamsMiddleware, userSessionRoute } from "../../middleware/index.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
@@ -611,7 +612,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         }, 429)
       }
 
-      const requirement = await findEnterpriseAuthRequirementForEmailDomain(query.email)
+      const requirement = await coreHooks.resolve("auth.signInMethodResolver", { lookup: "emailDomain", email: query.email }, async () => null)
 
       if (requirement) {
         return c.json({

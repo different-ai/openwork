@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { APIError } from "better-auth/api"
 import { invitationHasAdminTeam } from "../../../organization-team-roles.js"
 import { organizationRoleValueSatisfies } from "../../../organization-role-hierarchy.js"
 import { coreHooks } from "../default-registry.js"
@@ -125,4 +126,51 @@ coreHooks.registerTx({
     }
     await tx.delete(TeamTable).where(eq(TeamTable.organizationId, organizationId))
   },
+})
+
+// Always denied: turning the module off must not reopen raw team endpoints.
+coreHooks.registerBootContributor({
+  point: "auth.rawMutationDenials",
+  id: "legacy/teams/raw-team-mutations",
+  registrant: "legacy",
+  security: true,
+  order: CORE_HOOK_ORDER.security,
+  contribute: () => [
+    { path: "/organization/create-team", message: "Use the Den teams API to manage teams." },
+    { path: "/organization/update-team", message: "Use the Den teams API to manage teams." },
+    { path: "/organization/remove-team", message: "Use the Den teams API to manage teams." },
+    { path: "/organization/add-team-member", message: "Use the Den teams API to manage team membership." },
+    { path: "/organization/remove-team-member", message: "Use the Den teams API to manage team membership." },
+  ],
+})
+
+async function denyBetterAuthTeamMutation() {
+  throw new APIError("FORBIDDEN", { message: "Use the Den teams API to manage teams and their membership." })
+}
+
+// Server-side Better Auth team calls are refused too, not only raw HTTP.
+coreHooks.registerBootContributor({
+  point: "betterAuth.orgHooks",
+  id: "legacy/teams/deny-better-auth-team-mutations",
+  registrant: "legacy",
+  security: true,
+  order: CORE_HOOK_ORDER.security,
+  contribute: () => ({
+    beforeCreateTeam: denyBetterAuthTeamMutation,
+    beforeUpdateTeam: denyBetterAuthTeamMutation,
+    beforeDeleteTeam: denyBetterAuthTeamMutation,
+    beforeAddTeamMember: denyBetterAuthTeamMutation,
+    beforeRemoveTeamMember: denyBetterAuthTeamMutation,
+  }),
+})
+
+// The Better Auth tables exist in every deployment, so ids are always generated.
+coreHooks.registerBootContributor({
+  point: "auth.modelIds",
+  id: "legacy/teams/model-ids",
+  registrant: "legacy",
+  contribute: () => ({
+    team: () => createDenTypeId("team"),
+    teamMember: () => createDenTypeId("teamMember"),
+  }),
 })

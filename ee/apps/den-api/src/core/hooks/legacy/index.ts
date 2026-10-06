@@ -2,6 +2,8 @@
 // future owning module. Each module plan deletes its file and registers the
 // same hooks from its manifest (setting moduleId and security/alwaysRun).
 // Delete this folder when it is empty.
+import "./advanced-permissions.js"
+import "./agent-mcp.js"
 import "./ai-gateway.js"
 import "./analytics.js"
 import "./audit-logs.js"
@@ -27,5 +29,6 @@ import "./retired-generated-views.js"
 import "./slack-assistant.js"
 import "./teams.js"
 import "./web-origins.js"
+import "./workbot.js"
 import "./workflows.js"
 import "./workspace-bootstrap.js"

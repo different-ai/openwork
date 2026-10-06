@@ -176,3 +176,14 @@ coreHooks.registerTx({
     await tx.delete(GatewayKeyTable).where(eq(GatewayKeyTable.organization_id, organizationId))
   },
 })
+
+// The retired gateway dashboard flag: older clients may still send it on
+// create, and it is silently dropped.
+coreHooks.registerBootContributor({
+  point: "org.reservedMetadataKeys",
+  id: "legacy/ai-gateway/dropped-metadata-keys",
+  registrant: "legacy",
+  security: true,
+  order: CORE_HOOK_ORDER.security + 6,
+  contribute: () => ({ droppedCapabilityKeys: ["gatewayDashboard"] }),
+})

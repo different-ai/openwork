@@ -14,6 +14,7 @@ export type CoreHookPhase =
   | "contributor"
   | "resolver"
   | "decorator"
+  | "middleware"
 
 export const CORE_HOOK_ORDER = {
   lock: 100,

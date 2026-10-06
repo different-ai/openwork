@@ -43,3 +43,13 @@ coreHooks.registerTx({
     await tx.delete(AutomationTable).where(eq(AutomationTable.organization_id, organizationId))
   },
 })
+
+// Platform-owned metadata; always reserved, whatever the module state.
+coreHooks.registerBootContributor({
+  point: "org.reservedMetadataKeys",
+  id: "legacy/automations/reserved-metadata-keys",
+  registrant: "legacy",
+  security: true,
+  order: CORE_HOOK_ORDER.security + 4,
+  contribute: () => ({ capabilityKeys: ["headlessAutomations"] }),
+})

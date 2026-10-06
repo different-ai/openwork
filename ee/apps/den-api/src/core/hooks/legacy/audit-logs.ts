@@ -33,3 +33,13 @@ coreHooks.registerTx({
     await tx.delete(AuditStateTable).where(eq(AuditStateTable.organization_id, organizationId))
   },
 })
+
+// Platform-owned metadata; always reserved, whatever the module state.
+coreHooks.registerBootContributor({
+  point: "org.reservedMetadataKeys",
+  id: "legacy/audit-logs/reserved-metadata-keys",
+  registrant: "legacy",
+  security: true,
+  order: CORE_HOOK_ORDER.security + 2,
+  contribute: () => ({ capabilityKeys: ["auditLogs"] }),
+})

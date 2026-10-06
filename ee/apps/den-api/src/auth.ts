@@ -1,34 +1,13 @@
-import * as crypto from "node:crypto";
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy";
 import { revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js";
-import { coreHooks } from "./core/hooks/index.js";
+import { coreHooks, mergeCoreHookRecords, type CoreBootContributorPoints, type CoreRawMutationDenial } from "./core/hooks/index.js";
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
+import { maybeString, readStringProperty } from "./better-auth-values.js";
 import { db } from "./db.js";
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js";
 import { env } from "./env.js";
 import { appLogger } from "./observability/logger.js";
-import {
-  deleteMcpOAuthGrantFamilyForSession,
-  getMcpSessionLiveness,
-} from "./mcp/session-liveness.js";
-import { contributeMcpGrantClaim } from "./mcp/grant-claims.js";
-import {
-  assertLiveMcpRefreshGrant,
-  McpRefreshGrantRevokedError,
-  type McpRefreshGrantRow,
-} from "./mcp/refresh-grant-liveness.js";
-import { deriveDenMcpAgentResource, deriveDenMcpResource, mcpEndpointResource } from "./mcp/resource.js";
 import { getDenAuthIssuer, getDenJwtOptions } from "./mcp/jwt-policy.js";
-import {
-  addRequestedMcpClientScopes,
-  DEN_MCP_DEFAULT_CLIENT_SCOPES,
-  DEN_MCP_SCOPES,
-} from "./mcp/scopes.js";
-import {
-  DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
-  DEN_MCP_OAUTH_AUTHORIZATION_EXPIRES_IN_SECONDS,
-  DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS,
-} from "./mcp/token-lifetime.js";
 import {
   DEN_SESSION_EXPIRES_IN_SECONDS,
   DEN_SESSION_UPDATE_AGE_IN_SECONDS,
@@ -37,8 +16,6 @@ import { DEN_ACCOUNT_CONFIG } from "./account-linking-policy.js";
 import { cache } from "./cache.js";
 import { SCIM_TOKEN_STORAGE_STRATEGY } from "./scim-token-storage.js";
 import { createScimExistingUserLinkCheck } from "./scim-existing-user-linking.js";
-import { isCimdClientIdUrlAllowed } from "./mcp/cimd-policy.js";
-import { withLoopbackRedirectRelaxation } from "./mcp/cimd-loopback-redirects.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
 import {
@@ -77,12 +54,6 @@ import {
 } from "./sso-saml-policy.js";
 import { SSO_DOMAIN_VERIFICATION_TOKEN_PREFIX } from "./sso-domain-verification.js";
 import {
-  authorizeOrganizationSsoSignIn,
-  completeOrganizationSsoTestIntent,
-  failOrganizationSsoTestIntent,
-  getSsoTestIntentIdFromCallbackUrl,
-} from "./sso-test-lifecycle.js";
-import {
   getOrganizationContextForUser,
   listAssignableRoles,
   reconcilePendingInvitationsForUser,
@@ -90,18 +61,13 @@ import {
   validateOrganizationMemberRemovalForHook,
   validateOrganizationMemberRoleUpdate,
 } from "./orgs.js";
-import {
-  findEnterpriseAuthRequirementForEmail,
-  findEnterpriseAuthRequirementForUserId,
-} from "./enterprise-auth-requirement.js";
 import { normalizeLoginEmail } from "./auth-login-options.js";
 import { getAuthBodyEmail, getSingleOrgEmailSignupPolicyViolation } from "./single-org-signup-policy.js";
 import { readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstrap.js";
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
-import { cimdClientDiscovery } from "@better-auth/cimd";
-import { extendOAuthProvider, oauthProvider } from "@better-auth/oauth-provider";
+import { oauthProvider } from "@better-auth/oauth-provider";
 import { scim } from "@better-auth/scim";
 import { sso } from "@better-auth/sso";
 import { betterAuth } from "better-auth";
@@ -118,95 +84,25 @@ import {
   stageDeviceSessionOrganization,
   takeDeviceSessionOrganization,
 } from "./device-authorization.js";
-import { WORKBOT_OAUTH_CLIENT_ID } from "./workbot/config.js";
-import { ensureWorkbotOAuthClient } from "./workbot/oauth-client.js";
 
 const logger = appLogger.child({ component: "auth" });
 
-function localMcpResourceAliases(resource: string) {
-  if (!env.devMode) {
-    return [];
-  }
-
-  try {
-    const url = new URL(resource);
-    if (url.hostname === "127.0.0.1") {
-      url.hostname = "localhost";
-      return [url.toString().replace(/\/+$/, "")];
-    }
-    if (url.hostname === "localhost") {
-      url.hostname = "127.0.0.1";
-      return [url.toString().replace(/\/+$/, "")];
-    }
-  } catch {}
-
-  return [];
-}
-
-function apiPublicMcpResource(apiPublicUrl: string | undefined) {
-  if (!apiPublicUrl) return [];
-
-  try {
-    const url = new URL(apiPublicUrl);
-    const pathname = url.pathname.replace(/\/+$/, "");
-    return [`${url.origin}${pathname === "/" ? "" : pathname}/mcp`];
-  } catch {
-    return [];
-  }
-}
-
-function mcpEndpointResourceAliases(resource: string) {
-  return [mcpEndpointResource(resource, "agent"), mcpEndpointResource(resource, "admin")];
-}
-
-export const DEN_MCP_RESOURCE = env.mcpResourceUrl ?? deriveDenMcpResource(env.betterAuthUrl, env.webAppHosts);
-export const DEN_MCP_OAUTH_RESOURCE = deriveDenMcpAgentResource({
-  apiPublicUrl: env.apiPublicUrl,
-  mcpResource: DEN_MCP_RESOURCE,
-});
-export const DEN_MCP_FIRST_PARTY_CLIENT_ID = "openwork-desktop";
-const DEN_API_PUBLIC_MCP_RESOURCES = apiPublicMcpResource(env.apiPublicUrl);
-const DEN_MCP_BASE_RESOURCES = [
-  DEN_MCP_RESOURCE,
-  // Audience compatibility: tokens issued before the proxied default carry
-  // the bare-origin resource (`<betterAuthUrl>/mcp`); keep accepting them.
-  `${env.betterAuthUrl}/mcp`,
-  // Auto-trust the public API origin so multi-origin clients work without extra config.
-  ...DEN_API_PUBLIC_MCP_RESOURCES,
-  ...env.mcpAdditionalResources,
-  ...localMcpResourceAliases(DEN_MCP_RESOURCE),
-  ...DEN_API_PUBLIC_MCP_RESOURCES.flatMap((resource) => localMcpResourceAliases(resource)),
-  ...env.mcpAdditionalResources.flatMap((resource) => localMcpResourceAliases(resource)),
-];
-export const DEN_MCP_LEGACY_PARENT_RESOURCES = Array.from(new Set(DEN_MCP_BASE_RESOURCES));
-export const DEN_MCP_FIRST_PARTY_RESOURCES = Array.from(new Set([
-  ...DEN_MCP_BASE_RESOURCES,
-  // rmcp uses the configured concrete endpoint as the OAuth resource during
-  // token exchange. Accept the two registered child endpoints as aliases of
-  // their canonical parent resource.
-  ...DEN_MCP_BASE_RESOURCES.flatMap((resource) => mcpEndpointResourceAliases(resource)),
-]));
-export const DEN_MCP_RESOURCES = Array.from(new Set([
+export {
+  DEN_MCP_FIRST_PARTY_CLIENT_ID,
+  DEN_MCP_FIRST_PARTY_RESOURCES,
+  DEN_MCP_GRANT_ID_CLAIM,
+  DEN_MCP_LEGACY_PARENT_RESOURCES,
   DEN_MCP_OAUTH_RESOURCE,
-  ...DEN_MCP_FIRST_PARTY_RESOURCES,
-]));
-export const DEN_MCP_OAUTH_VALID_AUDIENCES = [DEN_MCP_OAUTH_RESOURCE];
-export const DEN_MCP_TOKEN_USE_CLAIM = `${env.mcpClaimNamespace}/token_use`;
-export const DEN_MCP_ORG_ID_CLAIM = `${env.mcpClaimNamespace}/org_id`;
-export const DEN_MCP_RESOURCE_CLAIM = `${env.mcpClaimNamespace}/resource`;
-export const DEN_MCP_GRANT_ID_CLAIM = `${env.mcpClaimNamespace}/grant_id`;
-export const DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX = "ow_mcp_at_";
-const DEN_MCP_REFRESH_TOKEN_PREFIX = "ow_mcp_rt_";
-const INVALID_MCP_SESSION_GRANT_DESCRIPTION = "The authorization backing this grant has been revoked. Re-authorize the connection.";
+  DEN_MCP_OAUTH_VALID_AUDIENCES,
+  DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX,
+  DEN_MCP_ORG_ID_CLAIM,
+  DEN_MCP_RESOURCE,
+  DEN_MCP_RESOURCE_CLAIM,
+  DEN_MCP_RESOURCES,
+  DEN_MCP_TOKEN_USE_CLAIM,
+  normalizeMcpOAuthResource,
+} from "./mcp/oauth-resources.js";
 export { DEN_MCP_SCOPES } from "./mcp/scopes.js";
-
-export function normalizeMcpOAuthResource(resource: string): string | null {
-  const normalized = resource.replace(/\/+$/, "");
-  if (normalized === DEN_MCP_OAUTH_RESOURCE) {
-    return DEN_MCP_OAUTH_RESOURCE;
-  }
-  return DEN_MCP_FIRST_PARTY_RESOURCES.includes(normalized) ? DEN_MCP_OAUTH_RESOURCE : null;
-}
 
 type AuthMemberHookRow = typeof schema.MemberTable.$inferSelect;
 
@@ -233,16 +129,6 @@ function hasRole(roleValue: string, roleName: string) {
   return organizationRoleValueIncludes(roleValue, roleName);
 }
 
-function maybeString(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function stringArray(value: unknown) {
-  return Array.isArray(value)
-    ? value.filter((entry: unknown): entry is string => typeof entry === "string")
-    : [];
-}
-
 function pickRemoteIdentity(userInfo: Record<string, unknown>) {
   return (
     maybeString(userInfo.sub) ??
@@ -265,10 +151,6 @@ function buildInvitationLink(invitationId: string) {
     `/join-org?invite=${encodeURIComponent(invitationId)}`,
     getInvitationOrigin(),
   ).toString();
-}
-
-function hasMcpScope(scopes: readonly string[]) {
-  return scopes.some((scope) => scope.startsWith("mcp:"));
 }
 
 async function revokeOrganizationMemberCredentials(input: {
@@ -331,57 +213,43 @@ function removedMemberIdentity(value: unknown): { id: string; organizationId: st
   return { id, organizationId };
 }
 
-const RAW_BETTER_AUTH_MUTATION_DENIALS: readonly (readonly [string, string])[] = [
-  ["/organization/update", "Use the Den organization settings API to update workspace configuration."],
-  ["/organization/delete", "Workspace deletion through Better Auth is disabled."],
-  ["/organization/update-member-role", "Use the Den member role API to change organization roles."],
-  ["/organization/remove-member", "Use the Den member API to remove organization members."],
-  ["/organization/create-role", "Use the Den roles API to manage organization roles."],
-  ["/organization/update-role", "Use the Den roles API to manage organization roles."],
-  ["/organization/delete-role", "Use the Den roles API to manage organization roles."],
-  ["/organization/create-team", "Use the Den teams API to manage teams."],
-  ["/organization/update-team", "Use the Den teams API to manage teams."],
-  ["/organization/remove-team", "Use the Den teams API to manage teams."],
-  ["/organization/add-team-member", "Use the Den teams API to manage team membership."],
-  ["/organization/remove-team-member", "Use the Den teams API to manage team membership."],
-  ["/organization/add-member", "Use the Den invitation API to add members."],
-  ["/organization/invite-member", "Use the Den invitation API to invite members."],
-  ["/organization/cancel-invitation", "Use the Den invitation API to cancel invitations."],
-  ["/organization/accept-invitation", "Use the Den invitation API to accept invitations."],
-  ["/sso/register", "Use the Den SSO API to manage SSO providers."],
-  ["/sso/update-provider", "Use the Den SSO API to manage SSO providers."],
-  ["/sso/delete-provider", "Use the Den SSO API to manage SSO providers."],
-  ["/sso/request-domain-verification", "Use the Den SSO API to verify SSO domains."],
-  ["/sso/verify-domain", "Use the Den SSO API to verify SSO domains."],
-  ["/api-key/create", "Use the Den API key API to manage organization API keys."],
-  ["/api-key/update", "Use the Den API key API to manage organization API keys."],
-  ["/api-key/delete", "Use the Den API key API to manage organization API keys."],
-  ["/scim/generate-token", "Use the Den SCIM API to manage SCIM tokens."],
-  ["/scim/delete-provider-connection", "Use the Den SCIM API to manage SCIM providers."],
+// Raw Better Auth endpoints Den replaces with its own APIs. Modules
+// contribute theirs through core/hooks (auth.rawMutationDenials); a duplicate
+// path fails the boot.
+const CORE_RAW_BETTER_AUTH_MUTATION_DENIALS: readonly CoreRawMutationDenial[] = [
+  { path: "/organization/update", message: "Use the Den organization settings API to update workspace configuration." },
+  { path: "/organization/delete", message: "Workspace deletion through Better Auth is disabled." },
+  { path: "/organization/update-member-role", message: "Use the Den member role API to change organization roles." },
+  { path: "/organization/remove-member", message: "Use the Den member API to remove organization members." },
+  { path: "/organization/add-member", message: "Use the Den invitation API to add members." },
+  { path: "/organization/invite-member", message: "Use the Den invitation API to invite members." },
+  { path: "/organization/cancel-invitation", message: "Use the Den invitation API to cancel invitations." },
+  { path: "/organization/accept-invitation", message: "Use the Den invitation API to accept invitations." },
+  { path: "/api-key/create", message: "Use the Den API key API to manage organization API keys." },
+  { path: "/api-key/update", message: "Use the Den API key API to manage organization API keys." },
+  { path: "/api-key/delete", message: "Use the Den API key API to manage organization API keys." },
 ];
 
+const RAW_BETTER_AUTH_MUTATION_DENIALS: ReadonlyMap<string, string> = new Map(Object.entries(mergeCoreHookRecords(
+  "auth.rawMutationDenials",
+  [CORE_RAW_BETTER_AUTH_MUTATION_DENIALS, ...coreHooks.collectBoot("auth.rawMutationDenials")]
+    .flat()
+    .map((denial) => ({ [denial.path]: denial.message })),
+)));
+
 export function getRawBetterAuthMutationDenial(path: string) {
-  const denial = RAW_BETTER_AUTH_MUTATION_DENIALS.find(([deniedPath]) => deniedPath === path);
-  if (!denial) {
+  const message = RAW_BETTER_AUTH_MUTATION_DENIALS.get(path);
+  if (message === undefined) {
     return null;
   }
   return {
     error: "forbidden",
-    message: denial[1],
+    message,
   };
 }
 
 async function denyBetterAuthTeamMutation() {
   throw new APIError("FORBIDDEN", { message: "Use the Den teams API to manage teams and their membership." });
-}
-
-function readStringProperty(value: unknown, propertyName: string) {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const property = Object.getOwnPropertyDescriptor(value, propertyName)?.value;
-  return typeof property === "string" && property.trim() ? property.trim() : null;
 }
 
 function readRequestQueryParam(request: Request | undefined, propertyName: string) {
@@ -454,59 +322,6 @@ function readBooleanProperty(value: unknown, propertyName: string) {
   return Object.getOwnPropertyDescriptor(value, propertyName)?.value === true;
 }
 
-function hashOAuthProviderToken(token: string) {
-  return crypto.createHash("sha256").update(token).digest("base64url");
-}
-
-function stripMcpRefreshTokenPrefix(refreshToken: string) {
-  return refreshToken.startsWith(DEN_MCP_REFRESH_TOKEN_PREFIX)
-    ? refreshToken.slice(DEN_MCP_REFRESH_TOKEN_PREFIX.length)
-    : null;
-}
-
-async function assertLiveMcpSessionForRefreshGrant(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) {
-  if (ctx.path !== "/oauth2/token" || readStringProperty(ctx.body, "grant_type") !== "refresh_token") {
-    return;
-  }
-
-  const refreshToken = readStringProperty(ctx.body, "refresh_token");
-  if (!refreshToken) {
-    return;
-  }
-
-  const tokenSecret = stripMcpRefreshTokenPrefix(refreshToken);
-  if (!tokenSecret) {
-    return;
-  }
-
-  const grant = await ctx.context.adapter.findOne<McpRefreshGrantRow>({
-    model: "oauthRefreshToken",
-    where: [{ field: "token", value: hashOAuthProviderToken(tokenSecret) }],
-  });
-  try {
-    await assertLiveMcpRefreshGrant({
-      grant,
-      getSessionLiveness: getMcpSessionLiveness,
-      findConsent: ({ clientId, userId, referenceId }) => ctx.context.adapter.findOne<{ id: string }>({
-        model: "oauthConsent",
-        where: [
-          { field: "clientId", value: clientId },
-          { field: "userId", value: userId },
-          { field: "referenceId", value: referenceId },
-        ],
-      }),
-      deleteGrantFamily: deleteMcpOAuthGrantFamilyForSession,
-    });
-  } catch (error) {
-    if (!(error instanceof McpRefreshGrantRevokedError)) {
-      throw error;
-    }
-    throw new APIError("BAD_REQUEST", {
-      error: "invalid_grant",
-      error_description: INVALID_MCP_SESSION_GRANT_DESCRIPTION,
-    });
-  }
-}
 
 async function assertBetterAuthInvitationRoleAssignment(input: {
   organizationId: string;
@@ -623,16 +438,48 @@ function getEnterpriseAuthRedirectUrl(input: {
   return url.toString();
 }
 
-function removeSsoTestSessionCookie(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) {
-  const headers = ctx.context.responseHeaders;
-  if (!headers) return;
-  const sessionCookiePrefix = `${ctx.context.authCookies.sessionToken.name}=`;
-  const cookies = headers.getSetCookie().filter((cookie) => !cookie.startsWith(sessionCookiePrefix));
-  headers.delete("set-cookie");
-  for (const cookie of cookies) {
-    headers.append("set-cookie", cookie);
+const BETTER_AUTH_MODEL_ID_GENERATORS: ReadonlyMap<string, () => string> = new Map(Object.entries(mergeCoreHookRecords("auth.modelIds", [
+  {
+    user: () => createDenTypeId("user"),
+    session: () => createDenTypeId("session"),
+    account: () => createDenTypeId("account"),
+    verification: () => createDenTypeId("verification"),
+    apikey: () => createDenTypeId("apiKey"),
+    apiKey: () => createDenTypeId("apiKey"),
+    rateLimit: () => createDenTypeId("rateLimit"),
+    deviceCode: () => createDenTypeId("deviceCode"),
+    organization: () => createDenTypeId("organization"),
+    member: () => createDenTypeId("member"),
+    invitation: () => createDenTypeId("invitation"),
+    organizationRole: () => createDenTypeId("organizationRole"),
+  },
+  ...coreHooks.collectBoot("auth.modelIds"),
+])));
+
+const RESERVED_ORGANIZATION_METADATA_KEYS = (() => {
+  const fragments = coreHooks.collectBoot("org.reservedMetadataKeys");
+  return {
+    keys: fragments.flatMap((fragment) => fragment.keys ?? []),
+    capabilityKeys: fragments.flatMap((fragment) => fragment.capabilityKeys ?? []),
+    droppedCapabilityKeys: fragments.flatMap((fragment) => fragment.droppedCapabilityKeys ?? []),
+  };
+})();
+
+function mergeBootFragments<P extends "betterAuth.orgHooks" | "oauth.providerConfig">(point: P): CoreBootContributorPoints[P] {
+  const merged: CoreBootContributorPoints[P] = {};
+  for (const fragment of coreHooks.collectBoot(point)) {
+    const collision = Object.keys(fragment).find((key) => key in merged);
+    if (collision) {
+      throw new Error(`core_hook_contribution_collision: ${point} key "${collision}" is contributed twice`);
+    }
+    Object.assign(merged, fragment);
   }
+  return merged;
 }
+
+const contributedPlugins = coreHooks.collectBoot("betterAuth.plugins").flat();
+const contributedOAuthProviderConfig = mergeBootFragments("oauth.providerConfig");
+const contributedOrganizationHooks = mergeBootFragments("betterAuth.orgHooks");
 
 export const auth = betterAuth({
   baseURL: env.betterAuthUrl,
@@ -813,36 +660,14 @@ export const auth = betterAuth({
         }
       }
 
-      await assertLiveMcpSessionForRefreshGrant(ctx);
-
       if (ctx.path === "/oauth2/authorize") {
         const clientId = maybeString(ctx.query?.client_id);
-        // Workbot's first-party client follows DEN_WORKBOT_URL; created on its first sign-in.
-        if (clientId === WORKBOT_OAUTH_CLIENT_ID) {
-          await ensureWorkbotOAuthClient(ctx.context.adapter);
-        }
-        const requestedScopes = maybeString(ctx.query?.scope)?.split(/\s+/).filter(Boolean) ?? [];
-
         if (clientId) {
-          const client = await ctx.context.adapter.findOne<{ scopes?: unknown }>({
-            model: "oauthClient",
-            where: [{ field: "clientId", value: clientId }],
-          });
-          const clientScopes = stringArray(client?.scopes);
-          const nextScopes = addRequestedMcpClientScopes(clientScopes, requestedScopes);
-
-          if (nextScopes.length > clientScopes.length) {
-            await ctx.context.adapter.update({
-              model: "oauthClient",
-              where: [{ field: "clientId", value: clientId }],
-              update: {
-                scopes: nextScopes,
-                updatedAt: new Date(),
-              },
-            });
-          }
+          await coreHooks.runMiddleware("oauth.firstPartyClients", { clientId, adapter: ctx.context.adapter });
         }
       }
+
+      await coreHooks.runMiddleware("auth.beforePath", { ctx, isRequest: Boolean(ctx.request) });
 
       if (ctx.request) {
         const deniedMutation = getRawBetterAuthMutationDenial(ctx.path);
@@ -917,22 +742,6 @@ export const auth = betterAuth({
             }
           }
         }
-
-        if (ctx.path === "/sign-in/sso") {
-          const token = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null);
-          const session = typeof token === "string" ? await cache.auth.session(token) : null;
-          const authorization = await authorizeOrganizationSsoSignIn({
-            providerId: readStringProperty(ctx.body, "providerId"),
-            organizationSlug: readStringProperty(ctx.body, "organizationSlug"),
-            domain: readStringProperty(ctx.body, "domain"),
-            email: readStringProperty(ctx.body, "email"),
-            callbackUrl: readStringProperty(ctx.body, "callbackURL"),
-            userId: session?.user.id ?? null,
-          });
-          if (!authorization.ok) {
-            throw new APIError("FORBIDDEN", { message: authorization.message });
-          }
-        }
       }
 
       if (ctx.path !== "/sign-in/email" && ctx.path !== "/sign-up/email") {
@@ -956,14 +765,10 @@ export const auth = betterAuth({
         return;
       }
 
-      const requirement = await findEnterpriseAuthRequirementForEmail(email);
-      if (!requirement) {
-        return;
+      const rejection = await coreHooks.runGuards("auth.signInEnforcement", { stage: "credentialSignIn", email });
+      if (rejection) {
+        throw new APIError("FORBIDDEN", { message: rejection.message });
       }
-
-      throw new APIError("FORBIDDEN", {
-        message: "This account is managed by an organization. Use SSO to sign in.",
-      });
     }),
     after: createAuthMiddleware(async (ctx) => {
       if (ctx.path === "/device/token") {
@@ -985,30 +790,7 @@ export const auth = betterAuth({
         return;
       }
 
-      if (ctx.path === "/sso/callback/:providerId" || ctx.path === "/sso/saml2/sp/acs/:providerId") {
-        const callbackUrl = ctx.context.responseHeaders?.get("location") ?? null;
-        const intentId = getSsoTestIntentIdFromCallbackUrl(callbackUrl);
-        const providerId = readStringProperty(ctx.params, "providerId");
-        if (!intentId || !providerId) {
-          return;
-        }
-
-        const newSession = ctx.context.newSession;
-        if (!newSession) {
-          await failOrganizationSsoTestIntent(intentId, "authentication");
-          return;
-        }
-
-        await completeOrganizationSsoTestIntent({
-          intentId,
-          providerId,
-          authenticatedUserId: newSession.user.id,
-        });
-        await ctx.context.internalAdapter.deleteSession(newSession.session.token);
-        await cache.auth.revokeSession(newSession.session.token);
-        removeSsoTestSessionCookie(ctx);
-        return;
-      }
+      await coreHooks.runMiddleware("auth.afterPath", { ctx });
 
       if (ctx.path !== "/callback/:id") {
         return;
@@ -1019,17 +801,18 @@ export const auth = betterAuth({
         return;
       }
 
-      const requirement = await findEnterpriseAuthRequirementForUserId(newSession.user.id);
-      if (!requirement) {
+      const rejection = await coreHooks.runGuards("auth.signInEnforcement", { stage: "socialCallback", userId: newSession.user.id });
+      if (!rejection) {
         return;
       }
+      const signInPath = rejection.details?.signInPath;
 
       await ctx.context.internalAdapter.deleteSession(newSession.session.token);
       // Enterprise auth rejection deletes the just-created session outside hooks in some adapters.
       await cache.auth.revokeSession(newSession.session.token);
       deleteSessionCookie(ctx);
       throw ctx.redirect(getEnterpriseAuthRedirectUrl({
-        signInPath: requirement.signInPath,
+        signInPath: typeof signInPath === "string" ? signInPath : "/",
         email: newSession.user.email,
         callbackUrl: ctx.context.responseHeaders?.get("location") ?? null,
       }));
@@ -1051,72 +834,7 @@ export const auth = betterAuth({
       ipv6Subnet: 64,
     },
     database: {
-      generateId: (options) => {
-        switch (options.model) {
-          case "user":
-            return createDenTypeId("user");
-          case "session":
-            return createDenTypeId("session");
-          case "account":
-            return createDenTypeId("account");
-          case "verification":
-            return createDenTypeId("verification");
-          case "apikey":
-          case "apiKey":
-            return createDenTypeId("apiKey");
-          case "oauthClient":
-            return createDenTypeId("oauthClient");
-          case "oauthAccessToken":
-            return createDenTypeId("oauthAccessToken");
-          case "oauthRefreshToken":
-            return createDenTypeId("oauthRefreshToken");
-          case "oauthConsent":
-            return createDenTypeId("oauthConsent");
-          // better-auth 1.7 oauth-provider models with no den typeid: without
-          // an id the drizzle adapter emits `insert ... values (default, ...)`
-          // and MySQL rejects it (no default on `id`) — the oauthResource seed
-          // storm of 2026-08-07. oauthClientResource/oauthClientAssertion use
-          // forceAllowId, but cover them for any future non-forced create.
-          case "oauthResource":
-          case "oauthClientResource":
-          case "oauthClientAssertion":
-            return crypto.randomUUID();
-          case "rateLimit":
-            return createDenTypeId("rateLimit");
-          case "deviceCode":
-            return createDenTypeId("deviceCode");
-          case "organization":
-            return createDenTypeId("organization");
-          case "member":
-            return createDenTypeId("member");
-          case "invitation":
-            return createDenTypeId("invitation");
-          case "team":
-            return createDenTypeId("team");
-          case "teamMember":
-            return createDenTypeId("teamMember");
-          case "organizationRole":
-            return createDenTypeId("organizationRole");
-          case "scimProvider":
-            return createDenTypeId("scimProvider");
-          case "scimGroup":
-            return createDenTypeId("scimGroup");
-          case "scimGroupMember":
-            return createDenTypeId("scimGroupMember");
-          case "scimGroupRole":
-            return createDenTypeId("scimGroupRole");
-          case "scimGroupRoleGrant":
-            return createDenTypeId("scimGroupRoleGrant");
-          case "ssoProvider":
-            return createDenTypeId("ssoProvider");
-          case "ssoConnection":
-            return createDenTypeId("ssoConnection");
-          case "externalIdentity":
-            return createDenTypeId("externalIdentity");
-          default:
-            return false;
-        }
-      },
+      generateId: (options) => BETTER_AUTH_MODEL_ID_GENERATORS.get(options.model)?.() ?? false,
     },
   },
   rateLimit: {
@@ -1221,24 +939,21 @@ export const auth = betterAuth({
           } catch {
             throw new APIError("BAD_REQUEST", { message: "Organization metadata must be a JSON object." });
           }
-          if ("dpaSigned" in metadata) {
-            throw new APIError("FORBIDDEN", { message: "dpaSigned is reserved for internal platform administration." });
-          }
-          if ("plan" in metadata) {
-            throw new APIError("FORBIDDEN", { message: "plan is reserved for internal platform administration." });
+          const reservedKey = RESERVED_ORGANIZATION_METADATA_KEYS.keys.find((key) => key in metadata);
+          if (reservedKey) {
+            throw new APIError("FORBIDDEN", { message: `${reservedKey} is reserved for internal platform administration.` });
           }
           const capabilities = metadata.capabilities;
-          if (capabilities && typeof capabilities === "object" && "auditLogs" in capabilities) {
-            throw new APIError("FORBIDDEN", { message: "capabilities.auditLogs is reserved for internal platform administration." });
+          const reservedCapability = capabilities && typeof capabilities === "object"
+            ? RESERVED_ORGANIZATION_METADATA_KEYS.capabilityKeys.find((key) => key in capabilities)
+            : undefined;
+          if (reservedCapability) {
+            throw new APIError("FORBIDDEN", { message: `capabilities.${reservedCapability} is reserved for internal platform administration.` });
           }
-          for (const key of ["slackAssistant", "slackAssistantHeadless", "headlessAutomations", "workbot"]) {
-            if (capabilities && typeof capabilities === "object" && key in capabilities) {
-              throw new APIError("FORBIDDEN", { message: `capabilities.${key} is reserved for internal platform administration.` });
-            }
-          }
-          if (capabilities && typeof capabilities === "object" && "gatewayDashboard" in capabilities) {
-            const retainedCapabilities = { ...capabilities };
-            delete retainedCapabilities.gatewayDashboard;
+          if (capabilities && typeof capabilities === "object" && RESERVED_ORGANIZATION_METADATA_KEYS.droppedCapabilityKeys.some((key) => key in capabilities)) {
+            const retainedCapabilities = Object.fromEntries(
+              Object.entries(capabilities).filter(([key]) => !RESERVED_ORGANIZATION_METADATA_KEYS.droppedCapabilityKeys.includes(key)),
+            );
             return { data: { metadata: { ...metadata, capabilities: retainedCapabilities } } };
           }
         },
@@ -1248,11 +963,7 @@ export const auth = betterAuth({
             throw new APIError("FORBIDDEN", { message: "Use the Den organization settings API to update workspace configuration." });
           }
         },
-        beforeCreateTeam: denyBetterAuthTeamMutation,
-        beforeUpdateTeam: denyBetterAuthTeamMutation,
-        beforeDeleteTeam: denyBetterAuthTeamMutation,
-        beforeAddTeamMember: denyBetterAuthTeamMutation,
-        beforeRemoveTeamMember: denyBetterAuthTeamMutation,
+        ...contributedOrganizationHooks,
         afterCreateOrganization: async ({ organization }) => {
           const organizationId = normalizeDenTypeId("organization", organization.id);
           await seedDefaultOrganizationRoles(organizationId);
@@ -1352,133 +1063,11 @@ export const auth = betterAuth({
     oauthProvider({
       loginPage: env.betterAuthUrl,
       consentPage: `${env.betterAuthUrl}/mcp/select-organization`,
-      scopes: [...DEN_MCP_SCOPES],
-      validAudiences: DEN_MCP_OAUTH_VALID_AUDIENCES,
-      // better-auth 1.7 gates every token-request `resource` parameter on the
-      // oauthResource registry (invalid_target "is not configured" otherwise;
-      // validAudiences no longer whitelists issuance). Seed all accepted MCP
-      // resource aliases at startup — seeding is idempotent (insertOnly).
-      resources: [...DEN_MCP_RESOURCES],
-      // 1.7 defaults to requiring an oauthClientResource link per client per
-      // resource. Dynamically registered MCP clients never request resources
-      // at registration, so enforcement would invalid_target every DCR client.
-      // Keep pre-1.7 behavior: registry + audience validation, no per-client ACL.
-      enforcePerClientResources: false,
-      allowPublicClientPrelogin: true,
-      allowDynamicClientRegistration: true,
-      allowUnauthenticatedClientRegistration: true,
-      codeExpiresIn: DEN_MCP_OAUTH_AUTHORIZATION_EXPIRES_IN_SECONDS,
-      accessTokenExpiresIn: DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
-      m2mAccessTokenExpiresIn: DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
-      refreshTokenExpiresIn: DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS,
-      refreshTokenReuseInterval: 30,
-      storeTokens: { hash: hashOAuthProviderToken },
-      clientRegistrationDefaultScopes: [...DEN_MCP_DEFAULT_CLIENT_SCOPES],
-      clientRegistrationAllowedScopes: [...DEN_MCP_SCOPES],
-      advertisedMetadata: {
-        scopes_supported: [...DEN_MCP_SCOPES],
-        claims_supported: [
-          DEN_MCP_TOKEN_USE_CLAIM,
-          DEN_MCP_ORG_ID_CLAIM,
-          DEN_MCP_RESOURCE_CLAIM,
-          DEN_MCP_GRANT_ID_CLAIM,
-        ],
-      },
-      extensions: [{
-        claims: {
-          accessToken: ({ ctx, client, user, referenceId }) => contributeMcpGrantClaim({
-            claimName: DEN_MCP_GRANT_ID_CLAIM,
-            clientId: client.clientId,
-            userId: user?.id,
-            referenceId,
-            findConsent: ({ clientId, userId, referenceId: consentReferenceId }) => ctx.context.adapter.findOne<{ id: string }>({
-              model: "oauthConsent",
-              where: [
-                { field: "clientId", value: clientId },
-                { field: "userId", value: userId },
-                { field: "referenceId", value: consentReferenceId },
-              ],
-            }),
-          }),
-        },
-      }],
-      postLogin: {
-        page: `${env.betterAuthUrl}/mcp/select-organization`,
-        shouldRedirect: async ({ session, scopes }) => {
-          if (!hasMcpScope(scopes)) {
-            return false;
-          }
-
-          return !session.activeOrganizationId;
-        },
-        consentReferenceId: async ({ session, scopes }) => {
-          if (!hasMcpScope(scopes)) {
-            return undefined;
-          }
-
-          const activeOrganizationId = typeof session.activeOrganizationId === "string"
-            ? session.activeOrganizationId
-            : undefined;
-          if (!activeOrganizationId) {
-            throw new APIError("BAD_REQUEST", {
-              message: "Select an organization before authorizing MCP access.",
-            });
-          }
-
-          return normalizeDenTypeId("organization", activeOrganizationId);
-        },
-      },
-      customAccessTokenClaims: ({ referenceId, resources, scopes }) => {
-        const claims: Record<string, string> = {};
-        const resource = resources?.[0];
-        const mcpResource = typeof resource === "string" ? normalizeMcpOAuthResource(resource) : null;
-        if (hasMcpScope(scopes) || mcpResource) {
-          claims[DEN_MCP_TOKEN_USE_CLAIM] = "mcp";
-          claims[DEN_MCP_RESOURCE_CLAIM] = mcpResource ?? DEN_MCP_OAUTH_RESOURCE;
-        }
-        if (referenceId) {
-          claims[DEN_MCP_ORG_ID_CLAIM] = referenceId;
-        }
-        return claims;
-      },
-      // Better Auth refresh-family teardown and /oauth2/revoke intentionally do
-      // not remove durable consent. Already minted JWT exposure remains bounded
-      // by the configured 45-minute MCP access-token lifetime.
-      prefix: {
-        opaqueAccessToken: DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX,
-        refreshToken: DEN_MCP_REFRESH_TOKEN_PREFIX,
-        clientSecret: "ow_mcp_cs_",
-      },
+      ...contributedOAuthProviderConfig,
     }),
-    // Client ID Metadata Documents (MCP authorization spec): an MCP client may
-    // present the HTTPS URL of a JSON document it hosts as its client_id. The
-    // plugin fetches and validates the document, stores it as a public client,
-    // and advertises `client_id_metadata_document_supported` in discovery, so
-    // spec-following clients no longer need dynamic registration. DCR stays on
-    // as the fallback for clients that do not support this yet.
-    {
-      id: "cimd",
-      init(ctx) {
-        extendOAuthProvider(ctx, {
-          // Same discovery the @better-auth/cimd plugin installs, wrapped so a
-          // registered loopback redirect matches on any port (RFC 8252 §7.3),
-          // which native MCP clients such as Claude Code depend on.
-          clientDiscovery: withLoopbackRedirectRelaxation(cimdClientDiscovery({
-            // Redirect URIs are matched at authorize time and Den's MCP redirect
-            // policy still applies; native clients legitimately redirect to
-            // loopback or another origin than the one hosting their document.
-            originBoundFields: ["post_logout_redirect_uris", "client_uri"],
-            allowFetch: (url) => isCimdClientIdUrlAllowed(url),
-            onClientCreated: ({ client }) => {
-              logger.info("Registered MCP client from its client ID metadata document", {
-                clientId: client.clientId,
-                clientName: client.name ?? null,
-              });
-            },
-          })),
-        });
-      },
-    },
+    // Contributed plugins (core/hooks: betterAuth.plugins), in contribution
+    // order: CIMD client discovery today.
+    ...contributedPlugins,
     scim({
       linkExistingUsers: {
         requireExistingOrgMembership: true,

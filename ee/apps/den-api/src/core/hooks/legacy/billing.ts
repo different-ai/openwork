@@ -64,3 +64,13 @@ coreHooks.registerTx({
     await tx.delete(OrgSubscriptionTable).where(eq(OrgSubscriptionTable.organization_id, organizationId))
   },
 })
+
+// Platform-owned metadata; always reserved, whatever the module state.
+coreHooks.registerBootContributor({
+  point: "org.reservedMetadataKeys",
+  id: "legacy/billing/reserved-metadata-keys",
+  registrant: "legacy",
+  security: true,
+  order: CORE_HOOK_ORDER.security + 1,
+  contribute: () => ({ keys: ["plan"] }),
+})

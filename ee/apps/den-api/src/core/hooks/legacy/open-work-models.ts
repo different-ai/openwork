@@ -68,3 +68,13 @@ coreHooks.registerTx({
     await tx.delete(InferenceOrgUpstreamProviderKeyTable).where(eq(InferenceOrgUpstreamProviderKeyTable.organization_id, organizationId))
   },
 })
+
+// Platform-owned metadata; always reserved, whatever the module state.
+coreHooks.registerBootContributor({
+  point: "org.reservedMetadataKeys",
+  id: "legacy/openwork-models/reserved-metadata-keys",
+  registrant: "legacy",
+  security: true,
+  order: CORE_HOOK_ORDER.security + 0,
+  contribute: () => ({ keys: ["dpaSigned"] }),
+})

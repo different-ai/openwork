@@ -16,6 +16,39 @@ for (const [key, value] of Object.entries(placeholders)) {
 
 // Reviewers: a diff here is an ordering or membership change of a Core hook.
 const expected = {
+  "auth.afterPath": ["legacy/enterprise-auth-sso/complete-sso-test-callback"],
+  "auth.beforePath": [
+    "legacy/agent-mcp/refresh-grant-liveness",
+    "legacy/agent-mcp/widen-authorize-client-scopes",
+    "legacy/enterprise-auth-sso/authorize-sso-sign-in",
+  ],
+  "auth.modelIds": [
+    "legacy/agent-mcp/oauth-model-ids",
+    "legacy/enterprise-auth-scim/model-ids",
+    "legacy/enterprise-auth-sso/model-ids",
+    "legacy/teams/model-ids",
+  ],
+  "auth.rawMutationDenials": [
+    "legacy/advanced-permissions/raw-role-mutations",
+    "legacy/enterprise-auth-scim/raw-scim-mutations",
+    "legacy/enterprise-auth-sso/raw-sso-mutations",
+    "legacy/teams/raw-team-mutations",
+  ],
+  "auth.signInEnforcement": ["legacy/enterprise-auth-sso/require-sso-sign-in"],
+  "auth.signInMethodResolver": ["legacy/enterprise-auth-sso/resolve-sso-sign-in"],
+  "betterAuth.orgHooks": ["legacy/teams/deny-better-auth-team-mutations"],
+  "betterAuth.plugins": ["legacy/agent-mcp/cimd-client-discovery"],
+  "oauth.firstPartyClients": ["legacy/workbot/ensure-oauth-client"],
+  "oauth.providerConfig": ["legacy/agent-mcp/oauth-provider-config"],
+  "org.reservedMetadataKeys": [
+    "legacy/openwork-models/reserved-metadata-keys",
+    "legacy/billing/reserved-metadata-keys",
+    "legacy/audit-logs/reserved-metadata-keys",
+    "legacy/slack-assistant/reserved-metadata-keys",
+    "legacy/automations/reserved-metadata-keys",
+    "legacy/workbot/reserved-metadata-keys",
+    "legacy/ai-gateway/dropped-metadata-keys",
+  ],
   "invitation.accepted": ["legacy/teams/assign-invitation-team"],
   "invitation.cancelGuard": ["legacy/teams/admin-team-invitation-cancel"],
   "invitation.createGuard": ["legacy/teams/admin-team-invitation-refresh"],

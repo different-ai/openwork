@@ -20,7 +20,7 @@ import {
 } from "../../auth-protection.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
-import { findEnterpriseAuthRequirementForEmailDomain } from "../../enterprise-auth-requirement.js"
+import { coreHooks } from "../../core/hooks/index.js"
 import {
   authorizeInitialAdminBootstrapSignup,
   completeInitialAdminBootstrapSignup,
@@ -974,7 +974,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
             signInPath: singletonSsoStatus.signInPath,
           }
         : null
-      const requirement = singletonSsoRequirement ?? await findEnterpriseAuthRequirementForEmailDomain(email)
+      const requirement = singletonSsoRequirement ?? await coreHooks.resolve("auth.signInMethodResolver", { lookup: "emailDomain", email }, async () => null)
       const accounts = requirement ? [] : await getLoginOptionAccounts(email)
       if (!requirement && accounts.length === 0) {
         const missRetryAfter = await checkLoginOptionsMissRateLimit(rateLimitKeys.domainMiss)

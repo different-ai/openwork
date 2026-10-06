@@ -5,7 +5,14 @@ export type CoreHookScope =
   | { kind: "org"; organizationId: string; tx?: CoreHookInputBase["tx"] }
   | { kind: "instance" }
 
-export function coreHookScope(input: CoreHookInputBase): CoreHookScope {
+// Instance-scoped points (Better Auth middleware, boot config, resolvers)
+// carry no organization fields at all.
+function isOrgScopedInput(input: object): input is CoreHookInputBase {
+  return "organizationId" in input
+}
+
+export function coreHookScope(input: object): CoreHookScope {
+  if (!isOrgScopedInput(input)) return { kind: "instance" }
   return typeof input.organizationId === "string" && input.organizationId.length > 0
     ? { kind: "org", organizationId: input.organizationId, tx: input.tx }
     : { kind: "instance" }

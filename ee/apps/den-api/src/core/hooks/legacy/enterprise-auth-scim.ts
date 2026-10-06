@@ -8,6 +8,7 @@ import {
   ScimSyncEventTable,
   ScimUserTombstoneTable,
 } from "@openwork-ee/den-db/schema"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { isScimManagedTeam } from "../../../scim-groups.js"
 import { coreHooks } from "../default-registry.js"
 import { CORE_HOOK_ORDER } from "../types.js"
@@ -79,4 +80,30 @@ coreHooks.registerTx({
     await tx.delete(ScimUserTombstoneTable).where(eq(ScimUserTombstoneTable.organizationId, organizationId))
     await tx.delete(ScimGroupTable).where(eq(ScimGroupTable.organizationId, organizationId))
   },
+})
+
+// Always denied: turning the module off must not reopen raw SCIM endpoints.
+coreHooks.registerBootContributor({
+  point: "auth.rawMutationDenials",
+  id: "legacy/enterprise-auth-scim/raw-scim-mutations",
+  registrant: "legacy",
+  security: true,
+  order: CORE_HOOK_ORDER.security,
+  contribute: () => [
+    { path: "/scim/generate-token", message: "Use the Den SCIM API to manage SCIM tokens." },
+    { path: "/scim/delete-provider-connection", message: "Use the Den SCIM API to manage SCIM providers." },
+  ],
+})
+
+coreHooks.registerBootContributor({
+  point: "auth.modelIds",
+  id: "legacy/enterprise-auth-scim/model-ids",
+  registrant: "legacy",
+  contribute: () => ({
+    scimProvider: () => createDenTypeId("scimProvider"),
+    scimGroup: () => createDenTypeId("scimGroup"),
+    scimGroupMember: () => createDenTypeId("scimGroupMember"),
+    scimGroupRole: () => createDenTypeId("scimGroupRole"),
+    scimGroupRoleGrant: () => createDenTypeId("scimGroupRoleGrant"),
+  }),
 })

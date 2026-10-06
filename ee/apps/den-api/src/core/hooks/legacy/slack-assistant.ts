@@ -45,3 +45,13 @@ coreHooks.registerTx({
     await tx.delete(SlackAssistantInstallationTable).where(eq(SlackAssistantInstallationTable.organizationId, organizationId))
   },
 })
+
+// Platform-owned metadata; always reserved, whatever the module state.
+coreHooks.registerBootContributor({
+  point: "org.reservedMetadataKeys",
+  id: "legacy/slack-assistant/reserved-metadata-keys",
+  registrant: "legacy",
+  security: true,
+  order: CORE_HOOK_ORDER.security + 3,
+  contribute: () => ({ capabilityKeys: ["slackAssistant", "slackAssistantHeadless"] }),
+})

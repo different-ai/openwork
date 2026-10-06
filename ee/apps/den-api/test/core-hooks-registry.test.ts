@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import type { CoreHookModuleStateSource } from "../src/core/hooks/module-state.js"
-import type { CorePostCommitPoints, CoreTxPoints } from "../src/core/hooks/points.js"
+import { mergeCoreHookRecords } from "../src/core/hooks/merge.js"
+import type { CoreMiddlewarePoints, CorePostCommitPoints, CoreResolverPoints, CoreTxPoints } from "../src/core/hooks/points.js"
 import { createCoreHookRegistry, type CoreHookLogger } from "../src/core/hooks/registry.js"
 import { runWithAfterCommit } from "../src/core/hooks/mutation.js"
 import { shouldRunCoreHook } from "../src/core/hooks/run.js"
@@ -248,5 +249,68 @@ describe("post-commit error semantics", () => {
     await registry.runPostCommit("member.removed", removedInput())
     assert.equal(attempts, 2)
     assert.deepEqual(lines, [])
+  })
+})
+
+describe("boot contributors", () => {
+  test("collect in order, skip unavailable modules unless security, and close registration", () => {
+    const { lines, logger } = recordingLogger()
+    const registry = createCoreHookRegistry({ logger })
+    registry.setModuleStateSource(stateSource({ effective: true, available: false }))
+    registry.registerBootContributor({ point: "auth.rawMutationDenials", id: "legacy/b", registrant: "legacy", order: 2, contribute: () => [{ path: "/b", message: "b" }] })
+    registry.registerBootContributor({ point: "auth.rawMutationDenials", id: "legacy/a", registrant: "legacy", order: 1, contribute: () => [{ path: "/a", message: "a" }] })
+    registry.registerBootContributor({ point: "auth.rawMutationDenials", id: "teams/off", registrant: "teams", moduleId: "teams", contribute: () => [{ path: "/off", message: "off" }] })
+    registry.registerBootContributor({ point: "auth.rawMutationDenials", id: "teams/denial", registrant: "teams", moduleId: "teams", security: true, contribute: () => [{ path: "/kept", message: "kept" }] })
+    assert.deepEqual(registry.collectBoot("auth.rawMutationDenials").flat().map((denial) => denial.path), ["/a", "/b", "/kept"])
+    assert.ok(lines.some((line) => line.message === "core_hook_skipped" && line.fields?.hook_id === "teams/off"))
+    assert.throws(() => registry.registerBootContributor({ point: "auth.modelIds", id: "late", registrant: "legacy", contribute: () => ({}) }), /core_hooks_frozen/)
+  })
+
+  test("a throwing contributor fails the boot", () => {
+    const registry = createCoreHookRegistry()
+    registry.registerBootContributor({ point: "auth.modelIds", id: "broken", registrant: "legacy", contribute: () => { throw new Error("boom") } })
+    assert.throws(() => registry.collectBoot("auth.modelIds"), /boom/)
+  })
+
+  test("merging keyed fragments refuses a key contributed twice", () => {
+    assert.deepEqual(mergeCoreHookRecords("auth.modelIds", [{ a: 1 }, { b: 2 }]), { a: 1, b: 2 })
+    assert.throws(() => mergeCoreHookRecords("auth.modelIds", [{ a: 1 }, { a: 2 }]), /core_hook_contribution_collision/)
+  })
+})
+
+describe("middleware", () => {
+  test("runs in order and propagates errors", async () => {
+    const registry = createCoreHookRegistry()
+    const calls: string[] = []
+    registry.registerMiddleware({ point: "oauth.firstPartyClients", id: "b", registrant: "legacy", order: 2, handler: async () => { calls.push("b"); throw new Error("denied") } })
+    registry.registerMiddleware({ point: "oauth.firstPartyClients", id: "a", registrant: "legacy", order: 1, handler: async ({ clientId }) => { calls.push(`a:${clientId}`) } })
+    registry.registerMiddleware({ point: "oauth.firstPartyClients", id: "c", registrant: "legacy", order: 3, handler: async () => { calls.push("c") } })
+    const adapter: CoreMiddlewarePoints["oauth.firstPartyClients"]["adapter"] = Object.create(null)
+    await assert.rejects(registry.runMiddleware("oauth.firstPartyClients", { clientId: "client", adapter }), /denied/)
+    assert.deepEqual(calls, ["a:client", "b"])
+  })
+})
+
+describe("resolvers", () => {
+  const lookup: CoreResolverPoints["auth.signInMethodResolver"]["input"] = { lookup: "emailDomain", email: "person@example.com" }
+  const requirement = (slug: string) => ({ organizationId: "org_test", organizationSlug: slug, signInPath: `/sso/${slug}`, ssoProviderId: null, hasSso: true })
+
+  test("falls back to the Core default with no provider", async () => {
+    const registry = createCoreHookRegistry()
+    assert.equal(await registry.resolve("auth.signInMethodResolver", lookup, async () => null), null)
+  })
+
+  test("the highest-order running provider wins; a disabled module's provider is skipped", async () => {
+    const registry = createCoreHookRegistry()
+    registry.setModuleStateSource(stateSource({ effective: true, available: false }))
+    registry.registerResolver({ point: "auth.signInMethodResolver", id: "legacy/low", registrant: "legacy", order: 100, handler: async () => requirement("low") })
+    registry.registerResolver({ point: "auth.signInMethodResolver", id: "sso/high", registrant: "sso", moduleId: "enterpriseAuth.sso", order: 900, handler: async () => requirement("high") })
+    assert.equal((await registry.resolve("auth.signInMethodResolver", lookup, async () => null))?.organizationSlug, "low")
+  })
+
+  test("two providers at the same order fail at registration", () => {
+    const registry = createCoreHookRegistry()
+    registry.registerResolver({ point: "auth.signInMethodResolver", id: "a", registrant: "legacy", handler: async () => null })
+    assert.throws(() => registry.registerResolver({ point: "auth.signInMethodResolver", id: "b", registrant: "legacy", handler: async () => null }), /core_hook_resolver_conflict/)
   })
 })

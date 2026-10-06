@@ -1,11 +1,17 @@
 import { alwaysOnModuleStateSource, type CoreHookModuleStateSource } from "./module-state.js"
 import type {
+  CoreBootContributorPointName,
+  CoreBootContributorPoints,
   CoreGuardPointName,
   CoreGuardPoints,
+  CoreMiddlewarePointName,
+  CoreMiddlewarePoints,
   CoreParticipantPointName,
   CoreParticipantPoints,
   CorePostCommitPointName,
   CorePostCommitPoints,
+  CoreResolverPointName,
+  CoreResolverPoints,
   CoreTxPointName,
   CoreTxPoints,
 } from "./points.js"
@@ -13,7 +19,6 @@ import { compareCoreHookRegistrations, coreHookScope, shouldRunCoreHook } from "
 import {
   CORE_HOOK_ORDER,
   type CoreHookErrorPolicy,
-  type CoreHookInputBase,
   type CoreHookRegistrationBase,
   type CoreHookRejection,
 } from "./types.js"
@@ -38,10 +43,32 @@ export interface CorePostCommitRegistration<P extends CorePostCommitPointName> e
   handler: (input: CorePostCommitPoints[P]) => Promise<void>
 }
 
+export interface CoreMiddlewareRegistration<P extends CoreMiddlewarePointName> extends CoreHookRegistrationBase<P> {
+  // Runs inside a Better Auth hook. Throw (APIError, redirect) to stop the
+  // request; errors always propagate, so these points fail closed.
+  handler: (input: CoreMiddlewarePoints[P]) => Promise<void>
+}
+
+export interface CoreBootContributorRegistration<P extends CoreBootContributorPointName> extends CoreHookRegistrationBase<P> {
+  // Collected once while the process boots (Better Auth is built at module
+  // load), filtered by instance availability, never per organization.
+  // Errors propagate: a broken auth contributor must stop the boot.
+  contribute: () => CoreBootContributorPoints[P]
+}
+
+export interface CoreResolverRegistration<P extends CoreResolverPointName> extends CoreHookRegistrationBase<P> {
+  // The highest-order running provider answers; Core's default answers when
+  // none runs. Errors propagate.
+  handler: (input: CoreResolverPoints[P]["input"]) => Promise<CoreResolverPoints[P]["output"]>
+}
+
 type GuardStore = { [K in CoreGuardPointName]: CoreGuardRegistration<K>[] }
 type TxStore = { [K in CoreTxPointName]: CoreTxRegistration<K>[] }
 type ParticipantStore = { [K in CoreParticipantPointName]: CoreParticipantRegistration<K>[] }
 type PostCommitStore = { [K in CorePostCommitPointName]: CorePostCommitRegistration<K>[] }
+type MiddlewareStore = { [K in CoreMiddlewarePointName]: CoreMiddlewareRegistration<K>[] }
+type BootContributorStore = { [K in CoreBootContributorPointName]: CoreBootContributorRegistration<K>[] }
+type ResolverStore = { [K in CoreResolverPointName]: CoreResolverRegistration<K>[] }
 
 // One entry per point: adding a point to points.ts without listing it here
 // fails typecheck, so the runtime catalogue cannot drift from the types.
@@ -52,6 +79,7 @@ function emptyGuardStore(): GuardStore {
     "invitation.cancelGuard": [],
     "team.mutationGuard": [],
     "org.deletion.pre": [],
+    "auth.signInEnforcement": [],
   }
 }
 
@@ -80,6 +108,31 @@ function emptyPostCommitStore(): PostCommitStore {
     "org.created": [],
     "org.deletion.post": [],
     "module.enabledForOrg": [],
+  }
+}
+
+function emptyMiddlewareStore(): MiddlewareStore {
+  return {
+    "auth.beforePath": [],
+    "auth.afterPath": [],
+    "oauth.firstPartyClients": [],
+  }
+}
+
+function emptyBootContributorStore(): BootContributorStore {
+  return {
+    "betterAuth.plugins": [],
+    "oauth.providerConfig": [],
+    "betterAuth.orgHooks": [],
+    "auth.rawMutationDenials": [],
+    "auth.modelIds": [],
+    "org.reservedMetadataKeys": [],
+  }
+}
+
+function emptyResolverStore(): ResolverStore {
+  return {
+    "auth.signInMethodResolver": [],
   }
 }
 
@@ -130,6 +183,9 @@ export function createCoreHookRegistry(options: CoreHookRegistryOptions = {}) {
   const txHooks = emptyTxStore()
   const participants = emptyParticipantStore()
   const postCommits = emptyPostCommitStore()
+  const middlewares = emptyMiddlewareStore()
+  const bootContributors = emptyBootContributorStore()
+  const resolvers = emptyResolverStore()
   const ids = new Map<string, string>()
   let frozen = false
   let moduleStateSource: CoreHookModuleStateSource = alwaysOnModuleStateSource
@@ -150,18 +206,28 @@ export function createCoreHookRegistry(options: CoreHookRegistryOptions = {}) {
 
   async function shouldRun(
     registration: CoreHookRegistrationBase<string>,
-    input: CoreHookInputBase,
+    input: object,
   ) {
-    const run = await shouldRunCoreHook(registration, coreHookScope(input), moduleStateSource)
+    const scope = coreHookScope(input)
+    const run = await shouldRunCoreHook(registration, scope, moduleStateSource)
     if (!run) {
       logger.info("core_hook_skipped", {
         point: registration.point,
         hook_id: registration.id,
         module_id: registration.moduleId,
-        organization_id: input.organizationId ?? undefined,
+        organization_id: scope.kind === "org" ? scope.organizationId : undefined,
       })
     }
     return run
+  }
+
+  function shouldRunBoot(registration: CoreHookRegistrationBase<string>) {
+    if (registration.moduleId === undefined || registration.security === true || registration.alwaysRun !== undefined) return true
+    const available = moduleStateSource.isAvailable(registration.moduleId)
+    if (!available) {
+      logger.info("core_hook_skipped", { point: registration.point, hook_id: registration.id, module_id: registration.moduleId })
+    }
+    return available
   }
 
   function dispatchStarted() {
@@ -225,6 +291,32 @@ export function createCoreHookRegistry(options: CoreHookRegistryOptions = {}) {
       sortRegistrations(list)
     },
 
+    registerMiddleware<P extends CoreMiddlewarePointName>(registration: CoreMiddlewareRegistration<P>) {
+      claim(registration)
+      const list: CoreMiddlewareRegistration<P>[] = middlewares[registration.point]
+      list.push(registration)
+      sortRegistrations(list)
+    },
+
+    registerBootContributor<P extends CoreBootContributorPointName>(registration: CoreBootContributorRegistration<P>) {
+      claim(registration)
+      const list: CoreBootContributorRegistration<P>[] = bootContributors[registration.point]
+      list.push(registration)
+      sortRegistrations(list)
+    },
+
+    registerResolver<P extends CoreResolverPointName>(registration: CoreResolverRegistration<P>) {
+      const order = registration.order ?? CORE_HOOK_ORDER.default
+      const list: CoreResolverRegistration<P>[] = resolvers[registration.point]
+      const clash = list.find((existing) => (existing.order ?? CORE_HOOK_ORDER.default) === order)
+      if (clash) {
+        throw new Error(`core_hook_resolver_conflict: ${registration.id} and ${clash.id} both provide ${registration.point} at order ${order}`)
+      }
+      claim(registration)
+      list.push(registration)
+      sortRegistrations(list)
+    },
+
     setModuleStateSource(source: CoreHookModuleStateSource) {
       moduleStateSource = source
     },
@@ -240,7 +332,7 @@ export function createCoreHookRegistry(options: CoreHookRegistryOptions = {}) {
     // point → ordered hook ids, for the boot log line and the snapshot test.
     describe() {
       const description: Record<string, string[]> = {}
-      const stores: Array<Record<string, ReadonlyArray<{ id: string }> | undefined>> = [guards, txHooks, participants, postCommits]
+      const stores: Array<Record<string, ReadonlyArray<{ id: string }> | undefined>> = [guards, txHooks, participants, postCommits, middlewares, bootContributors, resolvers]
       for (const store of stores) {
         for (const [point, list] of Object.entries(store)) {
           if (list && list.length > 0) description[point] = list.map((registration) => registration.id)
@@ -313,6 +405,44 @@ export function createCoreHookRegistry(options: CoreHookRegistryOptions = {}) {
         }
       }
       if (propagated) throw propagated.error
+    },
+
+    // Sequential; errors propagate (Better Auth turns them into responses).
+    async runMiddleware<P extends CoreMiddlewarePointName>(point: P, input: CoreMiddlewarePoints[P]): Promise<void> {
+      dispatchStarted()
+      for (const registration of middlewares[point]) {
+        if (!(await shouldRun(registration, input))) continue
+        await registration.handler(input)
+      }
+    },
+
+    // Synchronous and instance-scoped: callers build process-wide config
+    // (Better Auth) from it. Collecting closes registration, so a hook
+    // registered after Better Auth was built fails the boot instead of being
+    // silently ignored.
+    collectBoot<P extends CoreBootContributorPointName>(point: P): CoreBootContributorPoints[P][] {
+      dispatchStarted()
+      const fragments: CoreBootContributorPoints[P][] = []
+      for (const registration of bootContributors[point]) {
+        if (!shouldRunBoot(registration)) continue
+        fragments.push(registration.contribute())
+      }
+      return fragments
+    },
+
+    async resolve<P extends CoreResolverPointName>(
+      point: P,
+      input: CoreResolverPoints[P]["input"],
+      coreDefault: (input: CoreResolverPoints[P]["input"]) => Promise<CoreResolverPoints[P]["output"]>,
+    ): Promise<CoreResolverPoints[P]["output"]> {
+      dispatchStarted()
+      const list: CoreResolverRegistration<P>[] = resolvers[point]
+      for (let index = list.length - 1; index >= 0; index -= 1) {
+        const registration = list[index]
+        if (!registration || !(await shouldRun(registration, input))) continue
+        return registration.handler(input)
+      }
+      return coreDefault(input)
     },
   }
 }
