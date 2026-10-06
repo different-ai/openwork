@@ -103,6 +103,18 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
           pnpm evals:check
+      # A few seconds. Den module boundaries (W0-08): report mode until modules opt in via
+      # scripts/modules/enforced-modules.json. Needs origin/dev (fetched above) for the ratchet.
+      - name: Check module boundaries
+        run: |
+          pnpm boundaries:graph --check
+          pnpm boundaries:selftest
+          pnpm boundaries:check
+          pnpm boundaries:folders
+          pnpm boundaries:ratchet
+      - name: Report module boundaries
+        if: always() && steps.setup.outcome == 'success'
+        run: pnpm --silent boundaries:report >> "$GITHUB_STEP_SUMMARY" || true
 
   openwork-tests-build:
     name: Build and boot the desktop app
