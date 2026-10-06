@@ -6,7 +6,7 @@ import { materializeCloudWorkerProviders } from "../llm/cloud-provider-materiali
 import { appLogger } from "../observability/logger.js"
 import { captureException } from "../observability/runtime.js"
 import { CLOUD_INSTANCE_BACKEND } from "./cloud-constants.js"
-import { automationUpdateChangedRows } from "../automations/update-result.js"
+import { updateChangedRows } from "../core/db/affected-rows.js"
 import {
   isCloudRuntimeInstanceMissingError,
   type ProvisionInput,
@@ -134,7 +134,7 @@ const databaseCloudLifecycleStore: CloudLifecycleStore = {
       eq(WorkerTable.id, workerId),
       eq(WorkerTable.status, "stopped"),
     ))
-    return automationUpdateChangedRows(result)
+    return updateChangedRows(result)
   },
   async listIdleWorkers(input) {
     return db
@@ -163,7 +163,7 @@ const databaseCloudLifecycleStore: CloudLifecycleStore = {
       ),
       noActiveCloudAutomationRun(),
     ))
-    return automationUpdateChangedRows(result)
+    return updateChangedRows(result)
   },
   async updateWorkerStatus(input) {
     const update = {

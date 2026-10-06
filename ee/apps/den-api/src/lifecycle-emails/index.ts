@@ -10,7 +10,7 @@ import {
   WorkspaceClaimTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils"
-import { automationAffectedRows } from "../automations/update-result.js"
+import { affectedRows } from "../core/db/affected-rows.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
@@ -64,7 +64,7 @@ export async function recordLifecycleUnsubscribe(email: string) {
 /** Insert the ledger row first; only the replica whose insert wins sends. */
 async function reserve(kind: string, subjectKey: string, recipient: string) {
   const result = await db.insert(LifecycleEmailTable).ignore().values({ kind, subjectKey, recipient, status: "sending" })
-  return automationAffectedRows(result) > 0
+  return affectedRows(result) > 0
 }
 
 async function settle(kind: string, subjectKey: string, outcome: { ok: true } | { ok: false; error: unknown }) {

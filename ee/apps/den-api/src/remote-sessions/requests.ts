@@ -11,7 +11,7 @@ import {
   type RemoteSessionRequestResult,
 } from "@openwork/types/automations"
 import { db } from "../db.js"
-import { automationUpdateChangedRows } from "../automations/update-result.js"
+import { updateChangedRows } from "../core/db/affected-rows.js"
 
 /** Requests are interactive: an unanswered one is useless after a couple of minutes. */
 export const REMOTE_SESSION_REQUEST_TTL_MS = 2 * 60_000
@@ -176,7 +176,7 @@ export const databaseRemoteSessionRequestStore: RemoteSessionRequestStore = {
       eq(RemoteSessionRequestTable.status, "pending"),
       gt(RemoteSessionRequestTable.expires_at, now),
     ))
-    if (!automationUpdateChangedRows(result)) return null
+    if (!updateChangedRows(result)) return null
     return requestById(requestId)
   },
 
@@ -201,7 +201,7 @@ export const databaseRemoteSessionRequestStore: RemoteSessionRequestStore = {
       eq(RemoteSessionRequestTable.target_runner_id, input.runnerId),
       eq(RemoteSessionRequestTable.status, "claimed"),
     ))
-    if (!automationUpdateChangedRows(result)) return null
+    if (!updateChangedRows(result)) return null
     return requestById(requestId)
   },
 

@@ -1,6 +1,6 @@
 import { and, asc, eq, isNull, lt } from "@openwork-ee/den-db/drizzle"
 import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
-import { automationUpdateChangedRows } from "../automations/update-result.js"
+import { updateChangedRows } from "../core/db/affected-rows.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
@@ -51,7 +51,7 @@ const databaseProvisioningReconcileStore: ProvisioningReconcileStore = {
         eq(WorkerTable.updated_at, input.worker.updated_at),
         lt(WorkerTable.updated_at, input.staleBefore),
       ))
-    return automationUpdateChangedRows(result)
+    return updateChangedRows(result)
   },
   async getActiveTokens(workerId) {
     return db

@@ -6,7 +6,7 @@ import type {
   RemoteSessionCommandSessionReport,
 } from "@openwork/types/automations"
 import { db } from "../db.js"
-import { automationUpdateChangedRows } from "../automations/update-result.js"
+import { updateChangedRows } from "../core/db/affected-rows.js"
 
 export const DEFAULT_TTL_MS = 10 * 60_000
 
@@ -306,7 +306,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       gt(RemoteSessionCommandTable.expires_at, now),
       targetableBy(input.computerIds),
     ))
-    if (!automationUpdateChangedRows(result)) return null
+    if (!updateChangedRows(result)) return null
     return commandById(input.commandId)
   },
 
@@ -327,7 +327,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       eq(RemoteSessionCommandTable.claimed_by_runner_id, input.runnerId),
       eq(RemoteSessionCommandTable.status, "claimed"),
     ))
-    if (!automationUpdateChangedRows(result)) return null
+    if (!updateChangedRows(result)) return null
     return commandById(input.commandId)
   },
 
@@ -363,7 +363,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       eq(RemoteSessionCommandTable.claimed_by_runner_id, input.runnerId),
       eq(RemoteSessionCommandTable.status, "delivered"),
     ))
-    if (automationUpdateChangedRows(result)) return "reported"
+    if (updateChangedRows(result)) return "reported"
     const existing = await db.select({ id: RemoteSessionCommandTable.id })
       .from(RemoteSessionCommandTable).where(scope).limit(1)
     return existing[0] ? "conflict" : "not_found"
