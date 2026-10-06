@@ -83,7 +83,7 @@ export function formatChord(chord: string, os: ShortcutOs): string {
 
 /** Chords the app already uses. A model shortcut may not take them. */
 const BUILT_IN_CHORDS: ReadonlyArray<{ chord: string; label: string; os?: ShortcutOs }> = [
-  { chord: "Mod+Shift+F", label: "Search all conversations" },
+  { chord: "Mod+Shift+F", label: "Search sessions" },
   { chord: "Mod+Shift+T", label: "Previous tab" },
   { chord: "Ctrl+Shift+M", label: "Next saved model", os: "macos" },
   { chord: "Mod+Shift+M", label: "Next saved model", os: "other" },

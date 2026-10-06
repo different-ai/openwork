@@ -869,7 +869,6 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
 
   useEffect(() => {
     let cancelled = false
-    let previewActive = true
     const live = Promise.withResolvers<{ origin: McpAppOrigin; app: OpenworkMcpAppResource }>()
     // Discovery failure retires the preview through the existing error state.
     void live.promise.catch(() => undefined)
@@ -889,7 +888,6 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
     consumedRetryToken.current = resolveToken
     const cancelDiscovery = scheduleCachedMcpAppDiscovery(origin, part.toolName, launch, manual,
         (resolved) => {
-          previewActive = false
           launchId = resolved?.launchId
           if (cancelled) { release(); return }
           // A preserved MCP result is neutral transport data. A null resolution
@@ -903,7 +901,6 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
           else live.reject(new Error("This tool no longer advertises an App."))
         },
         (cause) => {
-          previewActive = false
           live.reject(cause)
           if (cancelled) return
           checkpoints.push(`resolve-failed+${Math.round(performance.now() - startedAt)}ms`)
@@ -926,14 +923,17 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
           resolvedFor.current = resolution
           setApp(cached)
           setPreviewActions(() => async () => {
-            const current = await live.promise
-            if (!previewActive || cancelled) throw new Error("This artifact view has closed or changed.")
-            return current
+            await live.promise
+            // Live discovery always retires this cached document: the same
+            // commit mounts a replacement with its own lease. A startup call
+            // that waited here belongs to the retiring document, so leave it
+            // pending until teardown instead of rejecting it into an error
+            // the guest would render as a broken view.
+            return new Promise<never>(() => undefined)
           })
         })
     return () => {
       cancelled = true
-      previewActive = false
       cancelDiscovery()
       release()
     }

@@ -20,7 +20,7 @@ import {
   shouldWaitForCloudProviderSyncBeforePolicyReconcile,
   type OrganizationModelsRefreshReason,
 } from "./managed-models-recovery";
-import { createSessionOpenworkServer } from "./session-openwork-server";
+import { createSessionOpenworkServer, type SessionServerEndpoint } from "./session-openwork-server";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "./store";
 
 const emptyWorkspaceDisplay: WorkspaceDisplay = {
@@ -42,6 +42,12 @@ export type UseSessionProviderAuthInput = {
   selectedWorkspaceEndpoint: ResolvedWorkspaceEndpoint | null;
   selectedWorkspaceRoot: string;
   selectedWorkspaceId: string;
+  /**
+   * The local server and its managed engine, addressed without a workspace.
+   * Set only while no workspace exists, so organization providers sync at
+   * sign-in the same way Settings syncs them.
+   */
+  engineRootServer?: SessionServerEndpoint | null;
   /**
    * Live host token of the local OpenWork server (desktop runtime host info).
    * Enables the server-side provider sync path: PUT /den-session and
@@ -67,6 +73,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     selectedWorkspaceEndpoint,
     selectedWorkspaceRoot,
     selectedWorkspaceId,
+    engineRootServer,
     localServerHostToken,
     localServerGeneration,
     setProviders,
@@ -92,6 +99,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     selectedWorkspace,
     selectedWorkspaceEndpoint,
     selectedWorkspaceRoot,
+    engineRootServer,
     localServerHostToken,
     localServerGeneration,
   });
@@ -105,6 +113,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     selectedWorkspace,
     selectedWorkspaceEndpoint,
     selectedWorkspaceRoot,
+    engineRootServer,
     localServerHostToken,
     localServerGeneration,
   };
@@ -137,7 +146,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
         // pushes the Den session to the local server and sync runs
         // server-side.
         openworkServer: createSessionOpenworkServer({
-          endpoint: () => stateRef.current.selectedWorkspaceEndpoint ?? null,
+          endpoint: () => stateRef.current.selectedWorkspaceEndpoint ?? stateRef.current.engineRootServer ?? null,
           hostToken: () => stateRef.current.localServerHostToken ?? "",
           generation: () => stateRef.current.localServerGeneration ?? null,
         }),
@@ -170,12 +179,13 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     return {
       client: opencodeClient,
       workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
+      engineRoot: Boolean(engineRootServer),
       workspaceRoot: selectedWorkspaceRoot,
       denBaseUrl: settings.baseUrl,
       activeOrgId: settings.activeOrgId?.trim() ?? "",
       signedIn: denAuth.isSignedIn && Boolean(settings.authToken?.trim()),
     };
-  }, [denAuth.isSignedIn, denSettingsVersion, opencodeClient, selectedWorkspaceEndpoint?.workspaceId, selectedWorkspaceRoot]);
+  }, [denAuth.isSignedIn, denSettingsVersion, engineRootServer, opencodeClient, selectedWorkspaceEndpoint?.workspaceId, selectedWorkspaceRoot]);
   const [completedCloudProviderSync, setCompletedCloudProviderSync] = useState<{
     context: typeof cloudProviderSyncContext;
     providerList: ProviderListResponse | null;
@@ -269,13 +279,14 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     selectedWorkspaceEndpoint?.token,
     selectedWorkspaceEndpoint?.workspaceId,
     selectedWorkspaceRoot,
+    engineRootServer?.baseUrl,
     store,
   ]);
 
   useEffect(() => {
     if (
       !cloudProviderSyncContext.client ||
-      !cloudProviderSyncContext.workspaceId ||
+      !(cloudProviderSyncContext.workspaceId || cloudProviderSyncContext.engineRoot) ||
       !cloudProviderSyncContext.signedIn ||
       !cloudProviderSyncContext.activeOrgId
     ) return;
