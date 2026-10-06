@@ -10,7 +10,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { AUTOMATION_CLOUD_DEFAULT_MODEL, AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
 import { db } from "../db.js"
-import { organizationAllowsManagedModels } from "../inference.js"
+import { organizationAllowsManagedModels } from "../inference-shared/public.js"
 import { calculateDesktopPolicyForOrgMember } from "../desktop-policies.js"
 
 type ProviderId = typeof LlmProviderTable.$inferSelect.id

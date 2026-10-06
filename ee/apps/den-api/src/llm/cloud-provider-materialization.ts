@@ -16,7 +16,7 @@ import {
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { ensureMemberGatewayKey } from "../gateway-keys.js"
-import { organizationAllowsManagedModels } from "../inference.js"
+import { organizationAllowsManagedModels } from "../inference-shared/public.js"
 import { appLogger } from "../observability/logger.js"
 import { listAccessibleLlmProviderAccess } from "../routes/org/llm-provider-access.js"
 import { fetchPreviewNoRedirect, fetchWithConnectRetry, previewFetch } from "../workers/preview-fetch.js"

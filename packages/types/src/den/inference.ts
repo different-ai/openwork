@@ -227,6 +227,12 @@ export function withFreeInferenceDefaultPinned(metadata: Record<string, unknown>
   return { ...metadata, inferenceFree: { ...(typeof free === "object" && free !== null && !Array.isArray(free) ? free : {}), defaultPinned } };
 }
 
+/** Sets only `inferenceFree.offerAllowed`, keeping every other free inference setting. Read back by `freeInferenceOrganizationAllowed`. */
+export function withFreeInferenceOfferAllowed(metadata: Record<string, unknown>, offerAllowed: boolean): Record<string, unknown> {
+  const free = metadata.inferenceFree;
+  return { ...metadata, inferenceFree: { ...(typeof free === "object" && free !== null && !Array.isArray(free) ? free : {}), offerAllowed } };
+}
+
 export function managedModelCatalog(): ManagedModelRecommendation[] {
   return [{ modelID: INFERENCE_FREE_MODEL_ID, displayName: "Auto", providerName: "OpenWork",
     summary: "Free automatic model", recommended: true, rank: 1, capabilities: ["tools"] }];

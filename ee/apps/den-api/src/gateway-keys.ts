@@ -3,6 +3,7 @@ import { GatewayKeyTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { createGatewayBearerKey, gatewayBearerKey, gatewayBearerKeyMatchesDigest, gatewayBearerKeyPrefix, gatewayBearerKeyStorageDigest } from "@openwork-ee/utils/gateway-bearer-key"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
+import { revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js"
 
 /** Member fence serializes issuance/rotation with joins and offboarding, including an empty key store. */
 export async function ensureMemberGatewayKey(input: {
@@ -38,4 +39,25 @@ export async function ensureMemberGatewayKey(input: {
     })
     return key.value
   })
+}
+
+/**
+ * aiGateway member hook. Runs before `openworkModelsMemberChanged`: on removal it revokes every member
+ * inference credential (Gateway and `ow_inf_` keys) before Models deletes provider rows.
+ */
+export async function aiGatewayMemberChanged(input: {
+  organizationId: typeof MemberTable.$inferSelect.organizationId
+  memberId: typeof MemberTable.$inferSelect.id
+  memberCount: number
+  change: "added" | "removed"
+}) {
+  if (input.change === "removed") {
+    await revokeMemberGatewayCredentials(input)
+    return
+  }
+  const [member] = await db.select({ userId: MemberTable.userId }).from(MemberTable)
+    .where(and(eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
+  // Invitations reserve an unbound member row; issuance happens when the user joins.
+  if (!member?.userId) return
+  await ensureMemberGatewayKey(input)
 }

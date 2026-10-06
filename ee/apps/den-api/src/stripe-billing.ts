@@ -13,7 +13,7 @@ import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-pol
 import { db } from "./db.js"
 import { env } from "./env.js"
 import type { DenOrgMode } from "./env.js"
-import { setInferenceEnabled } from "./inference.js"
+import { setInferenceEnabled } from "./openwork-models/public.js"
 import { assertOrganizationManagedModelsAllowed } from "./organization-metadata.js"
 import { appLogger } from "./observability/logger.js"
 import { isOpenWorkWebAvailable } from "./openwork-web-availability.js"

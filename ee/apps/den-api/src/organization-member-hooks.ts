@@ -3,7 +3,8 @@ import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { cache } from "./cache.js"
 import { db } from "./db.js"
-import { syncInferenceAfterMemberChange } from "./inference.js"
+import { aiGatewayMemberChanged } from "./gateway-keys.js"
+import { openworkModelsMemberChanged } from "./openwork-models/public.js"
 import { syncInferenceSubscriptionQuantityAfterMemberChange, syncSeatSubscriptionQuantityAfterMemberChange, syncWebSubscriptionQuantityAfterMemberChange } from "./stripe-billing.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
@@ -21,7 +22,8 @@ type OrganizationMemberChangeHookInput = {
 type OrganizationMemberChangeHook = (input: OrganizationMemberChangeHookInput) => Promise<void>
 
 const organizationMemberChangeHooks: OrganizationMemberChangeHook[] = [
-  syncInferenceAfterMemberChange,
+  aiGatewayMemberChanged,
+  openworkModelsMemberChanged,
   syncSeatSubscriptionQuantityAfterMemberChange,
   syncInferenceSubscriptionQuantityAfterMemberChange,
   syncWebSubscriptionQuantityAfterMemberChange,

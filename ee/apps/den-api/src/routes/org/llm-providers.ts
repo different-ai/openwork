@@ -38,8 +38,7 @@ import {
 import { getModelsDevProvider, listModelsDevProviders } from "../../llm/models-dev.js"
 import type { MemberTeamsContext } from "../../middleware/member-teams.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
-import { organizationAllowsManagedModels, repairMemberInferenceAccessIfNeeded } from "../../inference.js"
-import { assertOrganizationManagedModelsAllowed } from "../../organization-metadata.js"
+import { managedLlmProviderSource, managedLlmProviderSources } from "../../inference-shared/public.js"
 import { listAccessibleLlmProviderAccess, listGrantedLlmProviderMemberIds } from "./llm-provider-access.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, ensureOrganizationAdminRole, idParamSchema, memberHasRole, orgAccessFailureStatus } from "./shared.js"
@@ -611,7 +610,8 @@ async function loadLlmProviders(input: {
         inArray(LlmProviderTable.id, accessibleProviderIds),
       )
 
-  const managedModelsAllowed = await organizationAllowsManagedModels(input.organizationId)
+  const openworkSource = managedLlmProviderSource("openwork")
+  const managedModelsAllowed = openworkSource ? await openworkSource.rowsAllowed(input.organizationId) : false
   const providers = await db
     .select()
     .from(LlmProviderTable)
@@ -1332,13 +1332,15 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       // but this member's OpenWork provider/key was deleted, re-provision before
       // listing so Subscribe CTAs don't lie about an already-enabled org.
       if (query.scope === "usable") {
-        try {
-          await repairMemberInferenceAccessIfNeeded({
-            organizationId: payload.organization.id,
-            memberId: payload.currentMember.id,
-          })
-        } catch {
-          // Keep listing other providers even if OpenWork re-provision fails.
+        for (const source of managedLlmProviderSources()) {
+          try {
+            await source.beforeUsableList({
+              organizationId: payload.organization.id,
+              memberId: payload.currentMember.id,
+            })
+          } catch {
+            // Keep listing other providers even if OpenWork re-provision fails.
+          }
         }
       }
 
@@ -1417,7 +1419,9 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
       if (provider.source === "openwork") {
         try {
-          await assertOrganizationManagedModelsAllowed(payload.organization.id)
+          const openworkSource = managedLlmProviderSource("openwork")
+          if (!openworkSource) throw new ManagedModelsPolicyError("managed_models_policy_unavailable")
+          await openworkSource.assertConnectable(payload.organization.id)
         } catch (error) {
           if (!(error instanceof ManagedModelsPolicyError)) throw error
           // A list/connect race must not abort older desktops' entire BYOK sync.

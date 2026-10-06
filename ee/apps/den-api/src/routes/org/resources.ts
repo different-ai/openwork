@@ -14,7 +14,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
-import { organizationAllowsManagedModels } from "../../inference.js"
+import { organizationAllowsManagedModels } from "../../inference-shared/public.js"
 import { listAccessibleMarketplaceCapabilityReferences } from "../../mcp/marketplace-capabilities.js"
 import {
   type MemberTeamsContext,

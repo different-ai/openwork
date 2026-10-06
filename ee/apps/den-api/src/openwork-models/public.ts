@@ -1,0 +1,7 @@
+export { readInferenceMetadata } from "./metadata.js"
+export { buildOpenWorkProviderConfig } from "./provider-projection.js"
+export { ensureMemberInferenceKey, repairMemberInferenceAccessIfNeeded } from "./member-keys.js"
+export { allowFreeInferenceOffer, getInferenceStatus, setInferenceEnabled, syncInferenceForOrganizationMembers } from "./service.js"
+export { openworkModelsMemberChanged } from "./member-hooks.js"
+export { openWorkModelsManagedProviderSource, registerOpenWorkModelsManagedProviderSource } from "./managed-provider-source.js"
+export { registerOpenWorkModelsRoutes } from "./routes.js"
