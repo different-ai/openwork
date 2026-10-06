@@ -15,6 +15,7 @@ import {
   activeUsageMember,
   bucketWindow,
   usageFail,
+  type GatewayUsageAdminAuthority,
   type GatewayUsageDb,
   type GatewayUsageScope,
 } from "./gateway-usage-read"
@@ -30,6 +31,7 @@ export async function listPendingGatewayUsageRequests(
   db: GatewayUsageDb,
   input: {
     actor: GatewayUsageScope
+    adminAuthority?: GatewayUsageAdminAuthority
     memberId: GatewayUsageScope["memberId"]
     before: string
     limit?: number
@@ -39,7 +41,7 @@ export async function listPendingGatewayUsageRequests(
   if (!validUsageDate(input.before) || !Number.isInteger(limit) || limit < 1 || limit > 100)
     return usageFail("invalid_operation", 400, "Use an ISO cutoff and a limit of 1–100.")
   return db.transaction(async (tx) => {
-    await activeUsageMember(tx, input.actor, true)
+    await activeUsageMember(tx, input.actor, true, false, input.adminAuthority)
     return tx
       .select({ requestId: E.id, admittedAt: E.admittedAt, trackingVersion: E.trackingVersion })
       .from(E)
@@ -60,6 +62,7 @@ export async function recoverGatewayUsageRequests(
   db: GatewayUsageDb,
   input: {
     actor: GatewayUsageScope
+    adminAuthority?: GatewayUsageAdminAuthority
     requestIds: string[]
     abandonedBefore: string
     reviewReference: string
@@ -84,7 +87,7 @@ export async function recoverGatewayUsageRequests(
   for (const requestId of [...new Set(input.requestIds)]) {
     results.push(
       await db.transaction(async (tx) => {
-        await activeUsageMember(tx, input.actor, true, input.apply === true)
+        await activeUsageMember(tx, input.actor, true, input.apply === true, input.adminAuthority)
         const [event] = await tx.select().from(E).where(eq(E.id, requestId))
         const [raw] = event
           ? []
@@ -137,6 +140,7 @@ export async function rotateGatewayUsageEpoch(
   db: GatewayUsageDb,
   input: {
     actor: GatewayUsageScope
+    adminAuthority?: GatewayUsageAdminAuthority
     members: { memberId: GatewayUsageScope["memberId"]; expectedVersion: number }[]
     action: "suspend" | "resume"
     reviewReference: string
@@ -172,7 +176,7 @@ export async function rotateGatewayUsageEpoch(
             input.actor.memberId,
             member.memberId,
           ])
-        await activeUsageMember(tx, input.actor, true, input.apply === true)
+        await activeUsageMember(tx, input.actor, true, input.apply === true, input.adminAuthority)
         await activeUsageMember(tx, { ...input.actor, memberId: member.memberId })
         const query = tx
           .select()

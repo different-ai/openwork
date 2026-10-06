@@ -1,7 +1,8 @@
 // FUTURE(modules/ai-gateway/usage-limits): how usage limits plug into Core
 // membership and authority.
-import { withGatewayUsageEntitlementMutation } from "@openwork-ee/den-db/gateway-usage-limits"
+import { withGatewayUsageEntitlementMutation, type GatewayUsageAdminAuthority } from "@openwork-ee/den-db/gateway-usage-limits"
 import { CORE_HOOK_ORDER, type MembershipMutationParticipant } from "./core/hook-seams.js"
+import { listAuthorityElevations } from "./core/member-authority.js"
 
 // The usage-entitlement lock as a `membership.mutation.participant`. Accounting
 // consistency: it locks usage org/member rows right after the org row,
@@ -16,3 +17,16 @@ export const gatewayUsageEntitlementParticipant: MembershipMutationParticipant =
   run: (context, next) => withGatewayUsageEntitlementMutation(context.tx, context.organizationId, next, context.memberIds),
 }
 
+// Usage-limit administration follows the same authority rules as every other
+// admin check (Admin teams, minus unconfirmed or orphaned SCIM projections).
+// den-db calls this only after the direct-role check fails, inside its
+// transaction; with lock it rechecks under FOR SHARE.
+export const gatewayUsageAdminAuthority: GatewayUsageAdminAuthority = async (reader, input) => {
+  const elevations = await listAuthorityElevations({
+    organizationId: input.organizationId,
+    memberId: input.memberId,
+    database: reader,
+    lock: input.lock ? "share" : undefined,
+  })
+  return elevations.some((elevation) => elevation.role === "admin")
+}

@@ -18,6 +18,7 @@ import type { Context, Hono, MiddlewareHandler } from "hono"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { gatewayManagementUnavailable } from "../../gateway-deployment.js"
+import { gatewayUsageAdminAuthority } from "../../gateway-usage-membership.js"
 import {
   jsonValidator,
   orgMemberRoute,
@@ -120,7 +121,7 @@ const admin: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, nex
 }
 export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRouteVariables }>(
   app: Hono<T>,
-  service: Service = createGatewayUsageLimits(db),
+  service: Service = createGatewayUsageLimits(db, { adminAuthority: gatewayUsageAdminAuthority }),
 ) {
   app.get(
     "/v1/gateway/usage-limit-policies",

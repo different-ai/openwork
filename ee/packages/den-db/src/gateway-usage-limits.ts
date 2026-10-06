@@ -22,6 +22,7 @@ import {
   currentUsage,
   readUsageStatus,
   usageFail as fail,
+  type GatewayUsageAdminAuthority,
   type GatewayUsageDb,
   type GatewayUsageScope,
   type UsageTx,
@@ -50,9 +51,17 @@ export {
   expireUsageRequestsForMembers,
   fenceUsageOrganizationDeletion,
 } from "./gateway-usage-lifecycle"
-export type { GatewayUsageDb, GatewayUsageScope, GatewayUsageSnapshot } from "./gateway-usage-read"
+export type { GatewayUsageAdminAuthority, GatewayUsageDb, GatewayUsageScope, GatewayUsageSnapshot } from "./gateway-usage-read"
 
-export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new Date()) {
+export type GatewayUsageLimitsOptions = {
+  clock?: () => Date
+  // Admin authority beyond direct owner/admin roles (Admin teams). Omitted: direct roles only.
+  adminAuthority?: GatewayUsageAdminAuthority
+}
+
+export function createGatewayUsageLimits(db: GatewayUsageDb, options: GatewayUsageLimitsOptions = {}) {
+  const clock = options.clock ?? (() => new Date())
+  const adminAuthority = options.adminAuthority
   async function transaction<T>(run: (tx: UsageTx, now: Date) => Promise<T>): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       try {
@@ -138,7 +147,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
   return {
     listPolicies(scope: GatewayUsageScope) {
       return transaction(async (tx) => {
-        await activeUsageMember(tx, scope, true)
+        await activeUsageMember(tx, scope, true, false, adminAuthority)
         return { policies: await usagePolicies(tx, scope.organizationId) }
       })
     },
@@ -154,7 +163,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           tx,
           scope.organizationId,
           async () => {
-            await activeUsageMember(tx, scope, true, true)
+            await activeUsageMember(tx, scope, true, true, adminAuthority)
             const policyId = id ?? randomUUID()
             const previous = id ? await policyById(tx, scope, id) : null
             if (previous && (previous.archivedAt || previous.revision !== revision))
@@ -208,7 +217,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           tx,
           scope.organizationId,
           async () => {
-            await activeUsageMember(tx, scope, true, true)
+            await activeUsageMember(tx, scope, true, true, adminAuthority)
             const policy = await policyById(tx, scope, id)
             if (policy.revision !== revision)
               return fail(
@@ -236,7 +245,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           tx,
           scope.organizationId,
           async () => {
-            await activeUsageMember(tx, scope, true, true)
+            await activeUsageMember(tx, scope, true, true, adminAuthority)
             const policy = await policyById(tx, scope, id)
             if (policy.revision !== revision)
               return fail(
@@ -291,7 +300,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           tx,
           scope.organizationId,
           async () => {
-            await activeUsageMember(tx, scope, true, true)
+            await activeUsageMember(tx, scope, true, true, adminAuthority)
             const policy = await policyById(tx, scope, policyId)
             if (policy.archivedAt)
               return fail("policy_archived", 409, "Archived policies cannot be assigned.")
@@ -334,7 +343,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           tx,
           scope.organizationId,
           async () => {
-            await activeUsageMember(tx, scope, true, true)
+            await activeUsageMember(tx, scope, true, true, adminAuthority)
             await policyById(tx, scope, policyId)
             await tx
               .delete(A)
@@ -355,7 +364,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     },
     members(scope: GatewayUsageScope, query = "") {
       return transaction(async (tx) => {
-        await activeUsageMember(tx, scope, true)
+        await activeUsageMember(tx, scope, true, false, adminAuthority)
         return {
           members: await tx
             .select({ id: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email })
@@ -380,7 +389,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     },
     getStatus(scope: GatewayUsageScope, memberId?: GatewayUsageScope["memberId"]) {
       return transaction(async (tx, now) => {
-        if (memberId !== undefined) await activeUsageMember(tx, scope, true)
+        if (memberId !== undefined) await activeUsageMember(tx, scope, true, false, adminAuthority)
         return (await readUsageStatus(tx, { ...scope, memberId: memberId ?? scope.memberId }, now))
           .usage
       })
@@ -472,7 +481,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     },
     listResets(scope: GatewayUsageScope, own: boolean, options: GatewayUsageResetListOptions = {}) {
       return transaction(async (tx, now) => {
-        await activeUsageMember(tx, scope, !own)
+        await activeUsageMember(tx, scope, !own, false, adminAuthority)
         return readGatewayUsageResetPage(tx, scope, own, options, now)
       })
     },
@@ -489,7 +498,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           .where(and(eq(R.id, id), eq(R.organizationId, scope.organizationId)))
         if (!subject) return fail("reset_not_found", 404, "Increase request not found.")
         await lockUsageMembers(tx, scope.organizationId, [subject.memberId, scope.memberId])
-        await activeUsageMember(tx, scope, true, true)
+        await activeUsageMember(tx, scope, true, true, adminAuthority)
         const [row] = await tx
           .select()
           .from(R)

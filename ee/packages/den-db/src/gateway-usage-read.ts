@@ -41,11 +41,22 @@ export function usageFail(
   throw new GatewayUsageError(code, status, message)
 }
 
+// Decides whether a member without a direct owner/admin role still holds admin
+// authority (for example through an Admin team), applying the caller's full
+// authority rules. With lock, it must recheck under FOR SHARE in this
+// transaction. den-db knows nothing about teams or SCIM; without a callback,
+// only direct roles qualify (fail closed).
+export type GatewayUsageAdminAuthority = (
+  reader: UsageReader,
+  input: GatewayUsageScope & { lock: boolean },
+) => Promise<boolean>
+
 export async function activeUsageMember(
   tx: UsageReader,
   scope: GatewayUsageScope,
   admin = false,
   lock = false,
+  adminAuthority?: GatewayUsageAdminAuthority,
 ) {
   const query = tx
     .select()
@@ -62,27 +73,19 @@ export async function activeUsageMember(
   if (!member) return usageFail("member_not_found", 404, "Current organization member not found.")
   if (
     admin &&
-    !member.role.split(",").some((role) => ["owner", "admin", "super-admin"].includes(role.trim()))
-  ) {
-    const teams = tx
-      .select({ id: TeamTable.id })
-      .from(TeamMemberTable)
-      .innerJoin(
-        TeamTable,
-        and(
-          eq(TeamTable.id, TeamMemberTable.teamId),
-          eq(TeamTable.organizationId, scope.organizationId),
-          eq(TeamTable.grantsOrganizationAdmin, true),
-        ),
-      )
-      .where(eq(TeamMemberTable.orgMembershipId, scope.memberId))
-    if (!(await (lock ? teams.for("share") : teams)).length)
-      return usageFail(
-        "forbidden",
-        403,
-        "Only workspace owners and admins can manage usage limits.",
-      )
-  }
+    !member.role.split(",").some((role) => ["owner", "admin", "super-admin"].includes(role.trim())) &&
+    !(adminAuthority &&
+      (await adminAuthority(tx, {
+        organizationId: scope.organizationId,
+        memberId: scope.memberId,
+        lock,
+      })))
+  )
+    return usageFail(
+      "forbidden",
+      403,
+      "Only workspace owners and admins can manage usage limits.",
+    )
   return member
 }
 

@@ -14,7 +14,7 @@ DEN_USAGE_OPERATIONS_DATABASE_URL='<authorized loopback MySQL URL>' \
 
 Default: preview, without database mutations. Add `--apply` only after reviewing the preview. The output path must not exist; it is opened privately before any database mutation. Results go to that file, not diagnostic logs. Stdout/stderr contain only bounded operation status/error codes, never credentials, request bodies, SQL parameters or database rows. This CLI refuses non-loopback database URLs. It does not obtain credentials or set up tunnels.
 
-The underlying exported APIs are `listPendingGatewayUsageRequests`, `recoverGatewayUsageRequests`, and `rotateGatewayUsageEpoch` from `@openwork-ee/den-db/gateway-usage-limits`. Each validates an active organization administrator. Member IDs and expected versions are explicit; there is no all-organization fallback. Timestamps use `YYYY-MM-DDTHH:mm:ss.sssZ`.
+The underlying exported APIs are `listPendingGatewayUsageRequests`, `recoverGatewayUsageRequests`, and `rotateGatewayUsageEpoch` from `@openwork-ee/den-db/gateway-usage-limits`. Each validates an active organization administrator. The CLI accepts only actors with a direct owner/admin/super-admin role; Admin-team authority is resolved by den-api (callers pass `adminAuthority`), so a team-only admin is refused here. Member IDs and expected versions are explicit; there is no all-organization fallback. Timestamps use `YYYY-MM-DDTHH:mm:ss.sssZ`.
 
 ## Abandoned request recovery
 
