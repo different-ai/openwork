@@ -353,6 +353,7 @@ test("create, preview, save and reopen an app without changing already-open resu
   await step("reopen the saved app after a reload", async () => {
     await world.open("/dashboard");
     await user.reload();
+    await user.hover({ label: "Team briefing" });
     await user.click("Artifact options for Team briefing");
     await user.click("Open Team briefing");
     await user.see({ text: "Saved artifact" }, { timeoutMs: 30_000 });
@@ -367,6 +368,7 @@ test("create, preview, save and reopen an app without changing already-open resu
   const companyBefore = (await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body;
   await step("remove a personal card and add the saved app again", async () => {
     await world.open("/dashboard");
+    await user.hover({ label: "Team briefing" });
     await user.click("Artifact options for Team briefing");
     await user.click("Remove Team briefing from dashboard");
     await user.see({ text: "Pin the artifacts you check every day" }, { timeoutMs: 30_000 });
@@ -379,6 +381,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.screenshot();
     await world.open("/dashboard");
     await user.reload();
+    await user.hover({ label: "Team briefing" });
     await user.see("Artifact options for Team briefing", { timeoutMs: 30_000 });
     await probe.eventually(() => world.previewText(), { within: 30_000, label: "saved app rendered on dashboard", until: (text) => text.includes("Weekly overview") && text.includes("Launch briefing") });
     // The granted company dashboard stays in Den but no longer renders on Desktop.
@@ -819,6 +822,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.click("Cancel");
     expect((await readApp()).onDashboard).toBe(true);
     await world.open("/dashboard");
+    await user.hover({ label: "Team briefing" });
     await user.click("Artifact options for Team briefing");
     await user.click("Delete Team briefing");
     await user.click("Delete artifact");
