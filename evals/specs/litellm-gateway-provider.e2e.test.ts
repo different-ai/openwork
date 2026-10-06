@@ -5,9 +5,8 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
-import { denFetch } from "@openwork/behaviors";
-import type { DenSession } from "@openwork/behaviors";
-import { eventually, localMysqlIsRunning, needs, queryDenDatabase, server, SkipError, test } from "@openwork/testkit";
+import { denFetch, eventually, localMysqlIsRunning, needs, queryDenDatabase, server, SkipError, test } from "@openwork/testkit";
+import type { DenSession } from "@openwork/testkit";
 
 /**
  * LiteLLM as an AI Gateway provider, end to end, in its three key modes:
