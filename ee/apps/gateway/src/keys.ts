@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto"
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
-import { GatewayKeyTable, InferenceOrgUpstreamProviderKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
+import { GatewayKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
 import { findActiveInferenceKeyByBearer } from "@openwork-ee/den-db/inference-keys"
 import { assertManagedModelsAllowed, ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { gatewayBearerKeyLookupDigest, type GatewayBearerKey } from "@openwork-ee/utils/gateway-bearer-key"
@@ -45,15 +45,4 @@ export async function findActiveGatewayKey(key: GatewayBearerKey): Promise<Pick<
       isNull(MemberTable.removedAt), isNotNull(MemberTable.userId)))
     .limit(1)
   return row ?? null
-}
-
-export async function getOpenRouterProviderKey(organizationId: string): Promise<typeof InferenceOrgUpstreamProviderKeyTable.$inferSelect | null> {
-  const rows = await db.select().from(InferenceOrgUpstreamProviderKeyTable)
-    .where(and(
-      eq(InferenceOrgUpstreamProviderKeyTable.organization_id, normalizeDenTypeId("organization", organizationId)),
-      eq(InferenceOrgUpstreamProviderKeyTable.provider, "openrouter"),
-      eq(InferenceOrgUpstreamProviderKeyTable.status, "active"),
-    ))
-    .limit(1)
-  return rows[0] ?? null
 }

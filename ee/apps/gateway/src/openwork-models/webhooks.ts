@@ -5,10 +5,10 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { INFERENCE_USAGE_CONVERSION_FACTOR, INFERENCE_WINDOW_TYPES } from "@openwork/types/den/inference"
 import * as Sentry from "@sentry/node"
-import { db } from "./db.js"
-import { env } from "./env.js"
-import { constantTimeEquals } from "./keys.js"
-import { resolveModelByUpstreamModel } from "./model-catalog.js"
+import { db } from "../db.js"
+import { env } from "../env.js"
+import { constantTimeEquals } from "../keys.js"
+import { resolveModelByUpstreamModel } from "../model-catalog.js"
 
 type JsonRecord = Record<string, unknown>
 
