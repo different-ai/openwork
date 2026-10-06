@@ -9,7 +9,7 @@ import {
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { updateChangedRows } from "../core/db/affected-rows.js"
-import { DEN_MCP_HEADLESS_RUN_CLIENT_ID } from "../mcp/headless-run-token.js"
+import { DEN_MCP_HEADLESS_RUN_CLIENT_ID } from "../infra/headless-runner/run-token.js"
 import { appLogger } from "../observability/logger.js"
 import {
   databaseRemoteSessionCommandStore,

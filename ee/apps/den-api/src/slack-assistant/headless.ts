@@ -1,6 +1,6 @@
 import type { RemoteSessionAction } from "../mcp/remote-session-capabilities.js"
 import { organizationHasCapability } from "../organization-capabilities.js"
-import { stepLabel } from "../headless-runner/client.js"
+import { stepLabel } from "../infra/headless-runner/client.js"
 import {
   createHeadlessRunnerClient,
   defaultHeadlessRunnerDeps,
@@ -9,7 +9,7 @@ import {
   type HeadlessRunnerActor,
   type HeadlessRunnerDeps,
   type RunnerRepeatLimits,
-} from "../headless-runner/client.js"
+} from "../infra/headless-runner/client.js"
 
 /**
  * Slack runs for organizations with `slackAssistantHeadless` go to the shared
@@ -48,7 +48,7 @@ export function slackHeadlessDeps(base: HeadlessDeps | null = defaultHeadlessRun
     ...base,
     // Loaded lazily: the minter pulls in the auth and database modules.
     mintToken: async (input) => {
-      const minted = await (await import("../mcp/headless-run-token-mint.js")).mintHeadlessRunMcpToken(input)
+      const minted = await (await import("../infra/headless-runner/run-token-mint.js")).mintHeadlessRunMcpToken(input)
       try {
         const { recordSlackRunToken } = await import("./desktop-handoff.js")
         await recordSlackRunToken({ tokenId: minted.tokenId, expiresAt: minted.expiresAt, userId: input.userId, messageId: input.messageId })
