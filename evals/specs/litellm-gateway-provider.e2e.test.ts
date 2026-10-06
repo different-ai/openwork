@@ -21,6 +21,10 @@ import { eventually, localMysqlIsRunning, needs, queryDenDatabase, server, SkipE
  *   3. OpenWork creates keys  with the admin key, OpenWork finds each member in LiteLLM by
  *                             email and creates their keys; nobody pastes anything.
  *
+ * LiteLLM is behind the `litellm` feature (packages/features): off until a
+ * platform admin turns it on for the organization in /admin. The journey starts
+ * with it off.
+ *
  * The LiteLLM proxy here is a loopback fake that keeps users, teams and keys
  * like LiteLLM v1.97 and records which key each chat request used. Where real
  * LiteLLM is surprising, the fake copies it (checked against a v1.97 proxy):
@@ -380,6 +384,25 @@ test("an owner connects the team's LiteLLM proxy three ways, and each member's r
   litellm.keys.push({ value: CAROL_KEY, token: `caroltoken${"0".repeat(54)}`, userId: "carol", teamId: null, alias: "carol-laptop", metadata: {}, createdAt: "2025-12-02T00:00:00.000Z", generated: {} });
   litellm.keys.push({ value: ALICE_KEY, token: `alicetoken${"0".repeat(54)}`, userId: "alice", teamId: "t-research", alias: "alice-laptop", metadata: { owner: "it" }, createdAt: "2025-12-01T00:00:00.000Z", generated: { max_budget: 10, tpm_limit: 1000 } });
 
+  // --- 0. Preview flag ----------------------------------------------------------
+  const flagOf = async (session: DenSession) => recordAt((await den(session, orgId, "/v1/org")).body, "features").litellm;
+  expect(await flagOf(owner)).toBe(false);
+  const refused = await den(owner, orgId, "/v1/inference-providers/litellm", { body: { name: "LiteLLM", baseUrl: litellm.baseUrl, mode: "org", apiKey: ORG_KEY, allMembers: true } });
+  expect(refused.status).toBe(404);
+  expect(refused.body).toMatchObject({ error: "feature_disabled" });
+  const memberToggle = await den(alice, orgId, `/v1/admin/organizations/${orgId}/capabilities`, { method: "PUT", body: { capabilities: { litellm: true } } });
+  expect(memberToggle.status).toBe(403);
+  // Locally the seeded owner is also the platform admin who manages capabilities in /admin.
+  const enabled = await den(owner, orgId, `/v1/admin/organizations/${orgId}/capabilities`, { method: "PUT", body: { capabilities: { litellm: true } } });
+  expect(enabled.status).toBe(200);
+  expect(recordAt(enabled.body, "capabilities").litellm).toBe(true);
+  expect(await flagOf(alice)).toBe(true);
+  evidence.recordAssertionEvidence(
+    "LiteLLM is off until a platform admin turns it on for the organization",
+    `Before: /v1/org reports litellm=false and adding LiteLLM is refused (HTTP ${refused.status}, feature_disabled); a member's attempt to switch it on is refused (HTTP ${memberToggle.status}). After the platform admin enables it in /admin, every member's org context reports litellm=true.`,
+    true,
+  );
+
   // --- 1. One organization key ------------------------------------------------
   const shared = await den(owner, orgId, "/v1/inference-providers/litellm", { body: { name: "LiteLLM (shared key)", baseUrl: litellm.baseUrl, mode: "org", apiKey: ORG_KEY, allMembers: true } });
   expect(shared.status).toBe(201);
@@ -501,6 +524,20 @@ test("an owner connects the team's LiteLLM proxy three ways, and each member's r
   evidence.recordAssertionEvidence(
     "switching to copying existing keys mirrors Alice's laptop key without its budget",
     `The copy kept team t-research and the key's metadata, dropped the $10 budget and 1000 TPM limit, and replaced both team keys. OpenWork-made keys are never used as the source.`,
+    true,
+  );
+
+  // Turning the preview off pauses LiteLLM management; models people already have keep working.
+  const disabled = await den(owner, orgId, `/v1/admin/organizations/${orgId}/capabilities`, { method: "PUT", body: { capabilities: { litellm: false } } });
+  expect(disabled.status).toBe(200);
+  const pausedSync = await den(owner, orgId, `/v1/inference-providers/${sharedId}/litellm/sync`, { method: "POST", body: {} });
+  expect(pausedSync.status).toBe(404);
+  expect(pausedSync.body).toMatchObject({ error: "feature_disabled" });
+  const stillWorks = await chat(gateway, gatewayKey, sharedModel?.alias ?? "");
+  expect(stillWorks.status).toBe(200);
+  evidence.recordAssertionEvidence(
+    "turning the preview off pauses LiteLLM management but keeps existing models working and providers removable",
+    `With litellm=false, syncing is refused (HTTP ${pausedSync.status}, feature_disabled); Alice's existing gpt-4o model still answers (HTTP ${stillWorks.status}); removing the created-keys provider below still deletes OpenWork's keys in LiteLLM.`,
     true,
   );
 

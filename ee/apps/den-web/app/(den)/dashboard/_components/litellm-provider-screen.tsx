@@ -15,7 +15,7 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenSegmented } from "../../_components/ui/segmented";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getAiGatewayProviderRoute, getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
+import { getAiGatewayProviderRoute, getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource } from "./inference-provider-data";
 import type { DenInferenceProviderDetails } from "./inference-provider-request";
@@ -107,10 +107,17 @@ function removeAudience(value: AccessValue, audience: Audience): AccessValue {
 }
 
 /** Setup for a new LiteLLM provider: proxy URL, key mode, key, and who gets access. */
+/** LiteLLM is in preview: off until a platform admin turns it on for the organization. False while loading. */
+function useLiteLlmPreviewOff(): boolean {
+  const { orgContext } = useOrgDashboard();
+  return orgContext !== null && !orgFeatureEnabled(orgContext, "litellm");
+}
+
 export function LiteLlmSetupScreen({ embedded = false }: { embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
   const { orgSlug, runReauthableAction } = useOrgDashboard();
+  const previewOff = useLiteLlmPreviewOff();
   const [baseUrl, setBaseUrl] = useState("");
   const [mode, setMode] = useState<LiteLlmMode>("org");
   const [issueStrategy, setIssueStrategy] = useState<LiteLlmIssueStrategy>("per_team");
@@ -148,6 +155,7 @@ export function LiteLlmSetupScreen({ embedded = false }: { embedded?: boolean })
         <Mark />
         <Heading className="text-[20px] font-medium tracking-[-0.02em] text-gray-900" data-testid="gateway-provider-title">Add LiteLLM</Heading>
       </div>
+      {previewOff ? <div data-testid="litellm-preview-off"><DenNotice tone="info" className="mt-4" message="LiteLLM is in preview and isn't turned on for your organization yet. Contact OpenWork to try it." /></div> : <>
       {error ? <DenNotice tone="error" message={error} className="mt-4" /> : null}
 
       <section className={`${CARD} mt-5`} aria-labelledby="litellm-connection-heading">
@@ -193,6 +201,7 @@ export function LiteLlmSetupScreen({ embedded = false }: { embedded?: boolean })
         <Link href={getAiGatewayProvidersRoute(orgSlug)} className={buttonVariants({ variant: "secondary" })}>Cancel</Link>
         <DenButton data-testid="litellm-connect" loading={saving} onClick={() => void connect()}>Connect LiteLLM</DenButton>
       </DenStickyActionBar>
+      </>}
     </div>
   );
 }
@@ -202,6 +211,7 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
   const { orgSlug, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
+  const previewOff = useLiteLlmPreviewOff();
   const status = provider.litellm;
   const uiMode: LiteLlmMode = status ? liteLlmStatusMode(status) : "org";
   const [busy, setBusy] = useState<"sync" | "key" | "access" | "issue" | "remove" | null>(null);
@@ -286,8 +296,9 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
       <div className="mt-3 flex items-center gap-3">
         <Mark />
         <Heading className="min-w-0 flex-1 truncate text-[20px] font-medium tracking-[-0.02em] text-gray-900" data-testid="gateway-provider-title">{provider.name}</Heading>
-        <DenButton icon={RefreshCw} loading={busy === "sync"} disabled={busy !== null && busy !== "sync"} onClick={() => void sync()} data-testid="litellm-sync">Sync models</DenButton>
+        <DenButton icon={RefreshCw} loading={busy === "sync"} disabled={previewOff || (busy !== null && busy !== "sync")} onClick={() => void sync()} data-testid="litellm-sync">Sync models</DenButton>
       </div>
+      {previewOff ? <div data-testid="litellm-preview-off"><DenNotice tone="info" className="mt-4" message="LiteLLM is turned off for your organization. People keep the models they have, but syncing, key changes and new connections are paused. You can still remove this provider." /></div> : null}
       {error ? <DenNotice tone="error" message={error} className="mt-4" /> : null}
       {!error && status?.lastSyncError ? <DenNotice tone="error" message={`Last sync failed: ${status.lastSyncError} Fix the key or URL, then sync again.`} className="mt-4" /> : null}
       {notice ? <DenNotice tone="info" message={notice} className="mt-4" /> : null}
@@ -301,16 +312,16 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
             {uiMode === "issued" && status.issueStrategy ? (
               <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">Each person gets</dt><dd className="flex-1">
                 <DenSegmented<LiteLlmIssueStrategy> aria-label="How keys are created" value={status.issueStrategy} options={[
-                  { value: "per_team", label: liteLlmIssueStrategyLabel("per_team"), disabled: busy !== null },
-                  { value: "mirror", label: liteLlmIssueStrategyLabel("mirror"), disabled: busy !== null },
+                  { value: "per_team", label: liteLlmIssueStrategyLabel("per_team"), disabled: previewOff || busy !== null },
+                  { value: "mirror", label: liteLlmIssueStrategyLabel("mirror"), disabled: previewOff || busy !== null },
                 ]} onChange={(issueStrategy) => void changeIssue({ issueStrategy })} />
               </dd></div>
             ) : null}
             {uiMode === "issued" && status.issueStrategy === "mirror" && status.mirrorFallback ? (
               <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">No key to copy</dt><dd className="flex-1">
                 <DenSegmented<LiteLlmMirrorFallback> aria-label="No key to copy" value={status.mirrorFallback} options={[
-                  { value: "per_team", label: liteLlmMirrorFallbackLabel("per_team"), disabled: busy !== null },
-                  { value: "error", label: liteLlmMirrorFallbackLabel("error"), disabled: busy !== null },
+                  { value: "per_team", label: liteLlmMirrorFallbackLabel("per_team"), disabled: previewOff || busy !== null },
+                  { value: "error", label: liteLlmMirrorFallbackLabel("error"), disabled: previewOff || busy !== null },
                 ]} onChange={(mirrorFallback) => void changeIssue({ mirrorFallback })} />
               </dd></div>
             ) : null}
@@ -332,7 +343,7 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
                 ) : (
                   <>
                     <span className="flex flex-1 items-center gap-1.5 text-gray-900">{status.hasSyncKey ? <><Check className="h-4 w-4 text-emerald-600" aria-hidden="true" strokeWidth={1.5} />Saved</> : "Missing"}</span>
-                    <DenButton size="sm" variant="secondary" disabled={busy !== null} onClick={() => setReplacing(true)} data-testid="litellm-replace-key">Replace key</DenButton>
+                    <DenButton size="sm" variant="secondary" disabled={previewOff || busy !== null} onClick={() => setReplacing(true)} data-testid="litellm-replace-key">Replace key</DenButton>
                   </>
                 )}
               </dd>

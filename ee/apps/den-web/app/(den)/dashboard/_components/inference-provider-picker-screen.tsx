@@ -7,7 +7,7 @@ import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenChip } from "../../_components/ui/chip";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
-import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
+import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { isSupportedGatewayNpm } from "./inference-provider-request";
 import { getProviderIconSlug, requestLlmProviderCatalog, type DenModelsDevProviderSummary } from "./llm-provider-data";
@@ -42,7 +42,9 @@ export function orderCatalog<T extends { id: string; name: string }>(providers: 
 
 export function InferenceProviderPickerScreen({ embedded = false }: { embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
-  const { orgId, orgSlug } = useOrgDashboard();
+  const { orgId, orgSlug, orgContext } = useOrgDashboard();
+  // LiteLLM is in preview: offered only where a platform admin turned it on.
+  const liteLlmOffered = orgFeatureEnabled(orgContext, "litellm");
   const [catalog, setCatalog] = useState<DenModelsDevProviderSummary[]>([]);
   const [query, setQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -105,7 +107,7 @@ export function InferenceProviderPickerScreen({ embedded = false }: { embedded?:
               </button>
             </li>
           ) : null}
-          {!query.trim() || "litellm".includes(query.trim().toLowerCase()) ? (
+          {liteLlmOffered && (!query.trim() || "litellm".includes(query.trim().toLowerCase())) ? (
             <li className="border-t border-gray-100">
               <Link href={getNewAiGatewayProviderRoute(orgSlug, LITELLM_PROVIDER_ID)} data-testid="gateway-provider-pick-litellm" aria-label="Add LiteLLM" className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
                 <DenBrandMark name="LiteLLM" serviceUrl={LITELLM_DOC_URL} className="h-7 w-7 shrink-0 rounded-[7px]" imageClassName="h-3.5 w-3.5" />

@@ -3,6 +3,10 @@ title: "Use your LiteLLM proxy"
 description: "Connect your own LiteLLM proxy to OpenWork AI Gateway with one organization key, each person's own LiteLLM key, or keys OpenWork creates for each person, and sync its models and teams."
 ---
 
+<Note>
+**Preview.** LiteLLM is off until a platform administrator turns it on for your organization, so it doesn't appear under **Add a provider** until then. To try it on OpenWork Cloud, contact [the OpenWork team](mailto:team@openworklabs.com). On a self-hosted deployment, a platform admin turns on **AI Gateway: LiteLLM** for the organization in Den `/admin`, or an operator turns it on for the whole install with the Helm value `config.features.litellm`.
+</Note>
+
 Connect a LiteLLM proxy you already run to OpenWork AI Gateway. OpenWork reads the proxy's models, creates model groups for them, and routes requests through the gateway to LiteLLM.
 
 ## Pick how keys work
@@ -180,6 +184,7 @@ If LiteLLM can't be read, OpenWork keeps the last synced models and shows the er
 
 | What you see | Why | What to do |
 | --- | --- | --- |
+| LiteLLM is missing from **Add a provider**, or a request returns `feature_disabled` | LiteLLM hasn't been turned on for your organization, or was turned off. People keep the models they already have, but adding, syncing and connecting are paused | Ask a platform administrator to turn it on (see the note at the top) |
 | "LiteLLM rejected the key" | The key doesn't exist, is blocked, or has expired | Check the key in LiteLLM, or create a new one |
 | The key is refused when you add the provider | The proxy URL is wrong, unreachable, or the key is not valid there | Check the URL opens `/v1/models` with that key. For a private proxy, ask the operator to allow its origin |
 | "This LiteLLM key can call models but can't manage LiteLLM" | **Each person's own key** and **OpenWork creates keys** need a key that can read users, teams and keys | Use the master key or a proxy admin key |
