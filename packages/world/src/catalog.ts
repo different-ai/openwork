@@ -157,13 +157,16 @@ export const WORLD_GUIDES: Readonly<Record<string, WorldGuide>> = {
     ],
     examples: [
       { intent: "Workbot, Den and the headless runner from this checkout", command: `${UP} preview-workbot --stage <stage>` },
+      { intent: "Feel Workbot for real: a real model, its own computer and an MCP App (local; keys from env or Infisical)", command: `${UP} preview-workbot --stage <stage> ${DETACH} -- --live` },
       { intent: "Workbot from latest dev on Daytona", command: `${UP} preview-workbot --place daytona --stage <stage> ${DETACH}` },
       { intent: "Workbot on Freestyle", command: `${UP} preview-workbot --place freestyle --stage <stage> --source ref:dev ${DETACH}` },
     ],
     caveats: [
       "Sign in to Workbot as alex@acme.test (Den's seeded owner); Workbot and headless Automations are on for Acme Robotics.",
-      "The model is the deterministic Acme upstream (every answer is the same sentence) and the runner's computer is off: no paid keys or Freestyle key enter the world.",
-      "Every placement signs in through Den, sends a message and checks the runner's answer before reporting ready.",
+      "Acme Robotics has the in-memory demo Slack, Gmail, Google Calendar, Notion and Linear connected (you are Alex Chen); writes stay in memory until the world stops.",
+      "By default the model is the deterministic Acme upstream (every answer is the same sentence) and the runner's computer is off: no paid keys or Freestyle key enter the world.",
+      "-- --live (local only) uses a real model (ANTHROPIC_API_KEY or Infisical), turns on Workbot's computer when a Freestyle key is available, and seeds the Order calculator MCP App; it leaves the conversation empty so your first open is real.",
+      "Every placement signs in through Den before reporting ready; without --live it also sends a message and checks the runner's answer.",
     ],
   },
 };

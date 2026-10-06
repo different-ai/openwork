@@ -1,10 +1,10 @@
-export const summary = "Workbot with Den sign-in and the headless runner: the seeded Acme org, Workbot turned on.";
+export const summary = "Workbot with Den sign-in and the headless runner: the seeded Acme org with demo Slack, Gmail, Calendar, Notion and Linear; -- --live adds a real model, the computer and an MCP App.";
 export const supportedTargets = ["local/host", "daytona/linux", "freestyle/linux"];
 
 import { hold } from "../packages/world/src/hold.ts";
 import { output, secret } from "../packages/world/src/outputs.ts";
 import { resolvePlace } from "../evals/packages/env/src/place.ts";
-import { bootWorkbot, probeWorkbot, workbotOutputs } from "./lib/workbot.ts";
+import { bootWorkbot, parseWorkbotOptions, probeWorkbot, workbotOutputs } from "./lib/workbot.ts";
 
 const NAME = "preview-workbot";
 
@@ -36,9 +36,11 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     await hold({ name: NAME, outputs: await bootWorkbotOnDaytona(stack, place) });
     return;
   }
-  const world = await bootWorkbot(stack);
+  // `-- --live`: a real model, Workbot's own computer and an MCP App, for feeling the product (local only).
+  const world = await bootWorkbot(stack, undefined, parseWorkbotOptions(argv));
   const proof = await probeWorkbot(world);
-  await hold({ name: NAME, outputs: workbotOutputs(world, { verified: output(`Signed in through Den and answered: ${proof.reply}`, { group: "Verification" }) }) });
+  const verified = world.live ? `Signed in through Den; ${proof.reply}` : `Signed in through Den and answered: ${proof.reply}`;
+  await hold({ name: NAME, outputs: workbotOutputs(world, { verified: output(verified, { group: "Verification" }) }) });
 }
 
 if (import.meta.main) await main();

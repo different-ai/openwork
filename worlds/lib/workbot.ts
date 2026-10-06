@@ -19,11 +19,16 @@ import { output, secret } from "../../packages/world/src/outputs.ts";
 import type { WorldOutput } from "../../packages/world/src/outputs.ts";
 import { receiptName, resolveStage } from "../../packages/world/src/stage.ts";
 import { ACME_MODEL, ACME_REPLY, record, startAcmeUpstream } from "./acme-gateway.ts";
+import { bootDemoWorkspace, connectDemoWorkspace, DEMO_WORKSPACE_SERVICES, type DemoWorkspace } from "./demo-workspace.ts";
 
 /**
  * Workbot with everything it runs on: the seeded Acme Den (where people sign in), the headless runner (where the
- * conversation runs) and the Workbot app, wired the way production is. The model is the deterministic Acme upstream,
- * so no paid key is needed; the runner's computer stays off, so no Freestyle key enters the world.
+ * conversation runs) and the Workbot app, wired the way production is. The Acme org has the demo Slack, Notion,
+ * Linear, Google Calendar and Gmail (in-memory, worlds/lib/demo-workspace.ts) connected.
+ *
+ * By default the model is the deterministic Acme upstream and the runner's computer is off, so no paid key enters
+ * the world. `--live` (local only) is for feeling the product: a real model, Workbot's own computer (background
+ * tasks), and the "Order calculator" MCP App seeded into the org (worlds/mcp-apps-demo.ts).
  */
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
@@ -37,6 +42,80 @@ const DAYTONA_UPSTREAM_PORT = 3990;
 const DAYTONA_LIFETIME_MINUTES = 120;
 const execFileAsync = promisify(execFile);
 
+/** `--live`: a real model, the computer on, and an MCP App seeded. Local placement only. */
+export type WorkbotWorldOptions = { live: boolean };
+
+export function parseWorkbotOptions(argv: string[]): WorkbotWorldOptions {
+  for (const arg of argv) if (arg !== "--live") throw new Error(`preview-workbot: unknown option ${arg} (supported: --live)`);
+  return { live: argv.includes("--live") };
+}
+
+/** A secret from the caller's environment, else the team's dev Infisical; never printed. */
+async function secretFromEnvOrInfisical(names: string[], infisical: { name: string; path?: string }): Promise<string | null> {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) return value;
+  }
+  const args = ["secrets", "get", infisical.name, "--env", "dev", "--plain", "--silent", ...(infisical.path ? ["--path", infisical.path] : [])];
+  const found = await execFileAsync("infisical", args, { timeout: 30_000 }).then((result) => result.stdout.trim()).catch(() => "");
+  return found && found !== "*not found*" ? found : null;
+}
+
+/** The runner's model and computer: the Acme upstream and no computer, or (live) a real model and Freestyle. */
+async function runnerModel(stack: AsyncDisposableStack, live: boolean) {
+  if (!live) {
+    const upstream = await startAcmeUpstream(stack);
+    return {
+      env: { HEADLESS_MODEL_PROTOCOL: "anthropic", HEADLESS_MODEL_BASE_URL: `${upstream.baseUrl}/v1`, HEADLESS_MODEL: ACME_MODEL, HEADLESS_MODEL_API_KEY: upstream.key, HEADLESS_COMPUTER: "off" },
+      upstreamKey: upstream.key, model: ACME_MODEL, computer: false,
+    };
+  }
+  const key = await secretFromEnvOrInfisical(["HEADLESS_MODEL_API_KEY", "ANTHROPIC_API_KEY"], { name: "ANTHROPIC_API_KEY" });
+  if (!key) throw new Error("preview-workbot --live needs a model key: set ANTHROPIC_API_KEY (or HEADLESS_MODEL_API_KEY), or log in to Infisical.");
+  const model = process.env.HEADLESS_MODEL?.trim() || "claude-sonnet-5-5";
+  const freestyle = await secretFromEnvOrInfisical(["FREESTYLE_API_KEY"], { name: "FREESTYLE_API_KEY", path: "/openwork-ops" });
+  if (freestyle) {
+    // A no-op unless the computer image changed; then it builds the new snapshot (about three minutes).
+    await execFileAsync("pnpm", ["--filter", "@openwork-ee/headless-computer", "snapshot:build"], {
+      cwd: REPO_ROOT, env: { ...process.env, FREESTYLE_API_KEY: freestyle }, maxBuffer: 16 * 1024 * 1024, timeout: 900_000,
+    });
+  }
+  return {
+    env: {
+      HEADLESS_MODEL_PROTOCOL: process.env.HEADLESS_MODEL_PROTOCOL?.trim() || "anthropic",
+      HEADLESS_MODEL_BASE_URL: process.env.HEADLESS_MODEL_BASE_URL?.trim() || "https://api.anthropic.com/v1",
+      HEADLESS_MODEL: model, HEADLESS_MODEL_API_KEY: key,
+      ...(freestyle ? { HEADLESS_COMPUTER: "freestyle", FREESTYLE_API_KEY: freestyle } : { HEADLESS_COMPUTER: "off" }),
+    },
+    upstreamKey: "", model, computer: Boolean(freestyle),
+  };
+}
+
+/** Kills whatever listens on a loopback port (the App demo's Inventory server runs detached). */
+async function stopListener(port: number) {
+  const pids = await execFileAsync("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"]).then((result) => result.stdout.split("\n").filter(Boolean)).catch(() => []);
+  for (const pid of pids) try { process.kill(Number(pid), "SIGTERM"); } catch { /* already gone */ }
+}
+
+/**
+ * Seeds the "Order calculator" MCP App (with its mock Inventory connection and two Workflows) into the Acme org,
+ * through OpenWork Connect's create_app, as worlds/mcp-apps-demo.ts does.
+ */
+async function seedOrderCalculator(stack: AsyncDisposableStack, den: Den): Promise<{ title: string; pluginPage: string }> {
+  const [inventoryPort] = await allocateFreePorts(1);
+  stack.defer(() => stopListener(inventoryPort));
+  const result = await execFileAsync(process.execPath, [
+    "worlds/mcp-apps-demo.ts", "--den-api", den.ref.apiUrl, "--den-web", den.ref.webUrl,
+    "--email", den.admin.email, "--password", den.admin.password, "--inventory-port", String(inventoryPort),
+  ], { cwd: REPO_ROOT, maxBuffer: 16 * 1024 * 1024, timeout: 300_000 });
+  const parsed: unknown = JSON.parse(result.stdout);
+  const app = record(parsed) && record(parsed.app) ? parsed.app : {};
+  return {
+    title: typeof app.title === "string" ? app.title : "Order calculator",
+    pluginPage: record(parsed) && typeof parsed.pluginPage === "string" ? parsed.pluginPage : `${den.ref.webUrl}/dashboard`,
+  };
+}
+
 export interface WorkbotWorld {
   den: Den;
   orgId: string;
@@ -48,6 +127,11 @@ export interface WorkbotWorld {
   denWebPublic: string;
   runnerUrl: string;
   secrets: { runnerToken: string; sessionSecret: string; upstreamKey: string };
+  live: boolean;
+  model: string;
+  computer: boolean;
+  demo: DemoWorkspace | null;
+  app: { title: string; pluginPage: string } | null;
 }
 
 const token = () => randomBytes(32).toString("base64url");
@@ -108,20 +192,24 @@ async function buildWorkbot() {
  * Den, the runner and Workbot on this machine (also inside a Freestyle VM, where `preview` holds the snapshot's
  * template origins and the edge gateway translates them for browsers).
  */
-export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: string; workbot: string }): Promise<WorkbotWorld> {
+export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: string; workbot: string }, options: WorkbotWorldOptions = { live: false }): Promise<WorkbotWorld> {
   const place = resolvePlace();
   if (place.kind !== "local") throw new Error("bootWorkbot runs next to MySQL (--place local, or inside a prepared VM).");
-  const upstream = await startAcmeUpstream(stack);
+  if (options.live && preview) throw new Error("preview-workbot --live runs locally only.");
+  const runner = await runnerModel(stack, options.live);
   const [runnerPort, workbotPort] = await allocateFreePorts(2);
   const runnerUrl = `http://127.0.0.1:${runnerPort}`;
   const workbotInternal = `http://127.0.0.1:${workbotPort}`;
   const workbotUrl = preview?.workbot ?? workbotInternal;
-  const secrets = { runnerToken: token(), sessionSecret: token(), upstreamKey: upstream.key };
+  const secrets = { runnerToken: token(), sessionSecret: token(), upstreamKey: runner.upstreamKey };
   const den = stack.use(await server({
     place, web: true, seedProfile: "demo-org",
     env: {
       DEN_WORKBOT_URL: workbotUrl, DEN_HEADLESS_RUNNER_URL: runnerUrl, DEN_HEADLESS_RUNNER_TOKEN: secrets.runnerToken,
       RESEND_API_KEY: "", SMTP_HOST: "",
+      // Its own sign-in cookie names: a browser shares 127.0.0.1's cookies across ports, so another local Den's
+      // sign-in must never be read (or overwritten) by this world's Den.
+      DEN_AUTH_COOKIE_PREFIX: `openwork-den-${randomBytes(4).toString("hex")}`,
       ...(preview ? {
         DEN_WEB_ALLOWED_DEV_ORIGINS: new URL(preview.den).hostname,
         NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${PREVIEW_EGRESS}`].filter(Boolean).join(" "),
@@ -140,9 +228,8 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
     health: `${runnerUrl}/health`,
     env: {
       HEADLESS_API_TOKEN: secrets.runnerToken, HEADLESS_PORT: String(runnerPort), HEADLESS_DB_PATH: join(data, "runner.sqlite"),
-      HEADLESS_MODEL_PROTOCOL: "anthropic", HEADLESS_MODEL_BASE_URL: `${upstream.baseUrl}/v1`, HEADLESS_MODEL: ACME_MODEL,
-      HEADLESS_MODEL_API_KEY: upstream.key, HEADLESS_MCP_URL: `${den.ref.apiUrl}/mcp/agent`,
-      HEADLESS_FILES: "disk", HEADLESS_FILES_DIR: join(data, "files"), HEADLESS_COMPUTER: "off",
+      ...runner.env, HEADLESS_MCP_URL: `${den.ref.apiUrl}/mcp/agent`,
+      HEADLESS_FILES: "disk", HEADLESS_FILES_DIR: join(data, "files"),
     },
   });
   await buildWorkbot();
@@ -163,7 +250,14 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
     },
   });
   const orgId = await enableWorkbot(den);
-  return { den, orgId, workbotUrl, workbotInternal, denWebPublic: preview?.den ?? den.ref.webUrl, runnerUrl, secrets };
+  // The Acme team's apps (in memory), so Workbot has a real-looking calendar, inbox and Slack to read.
+  const demo = await bootDemoWorkspace(stack, den);
+  await connectDemoWorkspace(den, demo);
+  const app = options.live ? await seedOrderCalculator(stack, den) : null;
+  return {
+    den, orgId, workbotUrl, workbotInternal, denWebPublic: preview?.den ?? den.ref.webUrl, runnerUrl, secrets,
+    live: options.live, model: runner.model, computer: runner.computer, demo, app,
+  };
 }
 
 /** Daytona interposes a warning page for browsers; scripted requests skip it. */
@@ -247,6 +341,8 @@ export async function probeWorkbot(world: WorkbotWorld, options: { denInternal?:
   const me = await call("/v1/workbot/me");
   const who: unknown = await me.json().catch(() => null);
   if (!me.ok || !record(who) || who.enabled !== true) throw new Error(`Workbot does not see Alex with Workbot on: HTTP ${me.status}`);
+  // Live: leave the conversation untouched, so the person's first open is a real first open (Workbot says hello).
+  if (world.live) return { reply: "the conversation is left empty for your first open" };
   const sent = await call("/v1/workbot/messages", { method: "POST", body: JSON.stringify({ id: `probe${randomUUID().replaceAll("-", "").slice(0, 16)}`, text: "Hello from the world check." }) });
   if (sent.status !== 202) throw new Error(`Workbot refused the message: HTTP ${sent.status} ${(await sent.text()).slice(0, 200)}`);
   const deadline = Date.now() + 120_000;
@@ -268,8 +364,14 @@ export function workbotOutputs(world: WorkbotWorld, extra: Record<string, WorldO
     denWeb: output(world.denWebPublic, { group: "URLs" }),
     denApi: output(world.den.ref.apiUrl, { group: "URLs" }),
     runnerUrl: output(world.runnerUrl, { group: "Headless runner", note: "Private service; Workbot and Den reach it with the runner token" }),
-    model: output(ACME_MODEL, { group: "Headless runner", note: "Deterministic Acme upstream; no paid inference keys" }),
-    reply: output(ACME_REPLY, { group: "Headless runner" }),
+    model: output(world.model, { group: "Headless runner", note: world.live ? "Real model (live)" : "Deterministic Acme upstream; no paid inference keys" }),
+    ...(world.live ? {} : { reply: output(ACME_REPLY, { group: "Headless runner" }) }),
+    computer: output(world.computer ? "on (Freestyle)" : "off", { group: "Headless runner", note: world.computer ? "Background tasks run on Workbot's own computer" : "No background tasks; --live with a Freestyle key turns it on" }),
+    ...(world.demo ? {
+      demoApps: output(DEMO_WORKSPACE_SERVICES.map((service) => service.name).join(", "), { group: "Demo apps", note: "Acme Robotics demo data (you are Alex Chen); reads and writes stay in memory until the world stops" }),
+      ...(world.demo.stateUrl ? { demoState: output(world.demo.stateUrl, { group: "Demo apps", note: "Live demo data; POST /reset restores the seed" }) } : {}),
+    } : {}),
+    ...(world.app ? { mcpApp: output(world.app.title, { group: "Demo apps", note: `MCP App in the Acme library: ${world.app.pluginPage}` }) } : {}),
     capabilities: output("workbot, headlessAutomations", { group: "Org", note: "Turned on for Acme Robotics" }),
     alexEmail: output(world.den.admin.email, { group: "Accounts", note: "org owner and platform admin" }),
     alexPassword: secret(world.den.admin.password, { group: "Accounts" }),
@@ -356,6 +458,7 @@ export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: P
   const world: WorkbotWorld = {
     den, orgId, workbotUrl: workbotPreview.browserOrigin, workbotInternal: workbotPreview.browserOrigin,
     denWebPublic: den.ref.webUrl, runnerUrl: runnerPreview.browserOrigin, secrets,
+    live: false, model: ACME_MODEL, computer: false, demo: null, app: null,
   };
   const proof = await probeWorkbot(world);
   return workbotOutputs(world, {
