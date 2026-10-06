@@ -234,10 +234,18 @@ test("DPA policy blocks warm managed keys without revoking customer-owned models
   }
   const rawCreate = await denFetch(admin, "/api/auth/organization/create", { method: "POST", headers: { cookie }, body: JSON.stringify({ name: "Raw DPA", slug: `raw-${world.orgId}`, metadata: { dpaSigned: true } }) });
   expect(rawCreate.response.status, rawCreate.text).toBe(403);
+  const featuresBefore = record((await api("/v1/org")).body).features;
+  expect(featuresBefore).toEqual(expect.objectContaining({ auditLogs: expect.any(Boolean), workbot: expect.any(Boolean) }));
+  expect((await api("/v1/org", "POST", { name: "Self-granted", metadata: { capabilities: { auditLogs: true, workbot: true }, plan: { tier: "enterprise" } } })).response.status).toBe(400);
+  for (const metadata of [{ capabilities: { orgManagedDashboards: true, modelsAnalytics: true } }, { limits: { members: 9999 } }, undefined]) {
+    const rawCapabilityCreate = await denFetch(admin, "/api/auth/organization/create", { method: "POST", headers: { cookie }, body: JSON.stringify({ name: "Raw Capabilities", slug: `raw-cap-${world.orgId}`, metadata }) });
+    expect(rawCapabilityCreate.response.status, rawCapabilityCreate.text).toBe(403);
+  }
+  expect(record((await api("/v1/org")).body).features).toEqual(featuresBefore);
   expect(record((await fixture()).metadata).dpaSigned).toBe(true);
   expect(list((await fixture()).audits)).toHaveLength(1);
   await blocked();
-  evidence.recordAssertionEvidence("Ordinary and raw BetterAuth metadata writes cannot set or erase the flag", "Strict Den writes rejected extra metadata/flag with 400; raw BetterAuth replacement and creation attempts returned 403. Flag remains true with exactly one approved audit event.", true);
+  evidence.recordAssertionEvidence("Ordinary and raw BetterAuth metadata writes cannot set or erase the flag", "Strict Den writes rejected extra metadata/flag with 400; raw BetterAuth replacement and creation attempts (DPA, capabilities, limits, no metadata) returned 403; Den org creation rejected client metadata with 400 and the org's effective features did not change. Flag remains true with exactly one approved audit event.", true);
 
   await setDpa(false, "boundary approved unset");
   const unset = await fixture();
