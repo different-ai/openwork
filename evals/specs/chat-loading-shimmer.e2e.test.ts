@@ -114,7 +114,8 @@ test("chat working and command activity use quiet shimmer without spinners", asy
       return {
         text: row instanceof HTMLElement ? row.innerText.replace(/\s+/g, " ").trim() : "",
         hasSpinner: Boolean(row?.querySelector<HTMLElement>(".animate-spin")),
-        hasShimmer: Boolean(row?.querySelector<HTMLElement>(".ow-text-shimmer")),
+        // The live step's own text carries the shimmer.
+        hasShimmer: Boolean(row?.matches(".ow-text-shimmer") || row?.querySelector<HTMLElement>(".ow-text-shimmer")),
         summary: summary instanceof HTMLElement ? summary.innerText.replace(/\s+/g, " ").trim() : "",
       };
     });
