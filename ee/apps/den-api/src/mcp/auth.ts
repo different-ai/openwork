@@ -24,7 +24,7 @@ import { mcpProtectedResourceMetadataUrl, mcpRouteResource, resolveMcpResourceFr
 import { DEN_MCP_REQUESTED_SCOPE } from "./scopes.js"
 import { getMcpGrantLiveness } from "./grant-liveness.js"
 import { getMcpSessionLiveness } from "./session-liveness.js"
-import { DEN_MCP_HEADLESS_RUN_CLIENT_ID, DEN_MCP_HEADLESS_RUN_TOKEN_ID_CLAIM, isHeadlessRunMcpToken } from "./headless-run-token.js"
+import { DEN_MCP_HEADLESS_RUN_CLIENT_ID, DEN_MCP_HEADLESS_RUN_TOKEN_ID_CLAIM, isHeadlessRunMcpToken } from "../infra/headless-runner/run-token.js"
 export { hasActiveMcpSession } from "./session-liveness.js"
 
 export type McpPrincipal = {

@@ -70,7 +70,7 @@ import {
   type RemoteSessionAction,
 } from "./remote-session-capabilities.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
-import { headlessRunTokenId } from "./headless-run-token.js"
+import { headlessRunTokenId } from "../infra/headless-runner/run-token.js"
 import {
   compareCapabilityMatches,
   EXECUTE_CAPABILITY_TOOL_NAME,

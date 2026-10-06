@@ -12,8 +12,8 @@ import {
   type RunnerMessage,
   type RunnerRepeatLimits,
   type RunnerTurn,
-} from "../headless-runner/client.js"
-import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
+} from "../infra/headless-runner/client.js"
+import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../infra/headless-runner/run-token.js"
 import type { CloudAgentEvent, CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent-executor.js"
 import { cloudAutomationRuntime } from "./headless-runtime.js"
 

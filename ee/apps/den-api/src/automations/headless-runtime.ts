@@ -3,7 +3,7 @@ import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { planIncludesHeadlessAutomations } from "../entitlements.js"
-import { headlessRunnerConfig } from "../headless-runner/client.js"
+import { headlessRunnerConfig } from "../infra/headless-runner/client.js"
 import { getOrganizationFeatures, type FeatureMap } from "../features.js"
 
 /** Engine kind recorded on cloud agent runs that executed on the headless runner. */
