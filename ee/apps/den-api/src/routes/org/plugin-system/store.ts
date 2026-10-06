@@ -23,7 +23,6 @@ import {
   PluginConfigObjectTable,
   PluginMcpRequirementBindingTable,
   PluginTable,
-  RemoteMcpAppTable,
   TeamTable,
   TeamMemberTable,
 } from "@openwork-ee/den-db/schema"
@@ -5470,15 +5469,7 @@ async function derivePluginMcpRequirementAccess(input: {
     return { memberIds: [], orgWide: false, teamIds: [] }
   }
   if (activeRows[0].objectType === "app") {
-    const activeApp = await db.select({ configObjectId: RemoteMcpAppTable.configObjectId })
-      .from(RemoteMcpAppTable)
-      .where(and(
-        eq(RemoteMcpAppTable.organizationId, input.organizationId),
-        eq(RemoteMcpAppTable.configObjectId, input.configObjectId),
-        eq(RemoteMcpAppTable.status, "active"),
-      ))
-      .limit(1)
-    if (!activeApp[0]) return { memberIds: [], orgWide: false, teamIds: [] }
+    return { memberIds: [], orgWide: false, teamIds: [] }
   }
 
   const marketplaceIds = await activeMarketplaceIdsForPlugin({ organizationId: input.organizationId, pluginId: input.pluginId })

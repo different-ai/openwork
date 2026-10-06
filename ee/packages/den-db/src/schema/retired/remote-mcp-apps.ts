@@ -1,7 +1,11 @@
 import { sql } from "drizzle-orm"
 import { index, mysqlEnum, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
-import { denTypeIdColumn } from "../columns"
+import { denTypeIdColumn } from "../../columns"
 
+// Retired (W0-P13 PR B, D36). Nothing reads or writes this table any more.
+// The file is not exported from the schema barrel, only listed in
+// drizzle.config.ts so db:generate keeps the table until the follow-up drop
+// (W0-P13 PR G, one release later). Do not import it from runtime code.
 export const remoteMcpAppStatusValues = ["active", "retired"] as const
 
 /**

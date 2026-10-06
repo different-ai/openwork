@@ -42,7 +42,7 @@ function resolveDrizzleDbCredentials() {
 
 export default defineConfig({
   dialect: "mysql",
-  schema: "./src/schema.ts",
+  schema: ["./src/schema.ts", "./src/schema/retired/*.ts"],
   out: "./drizzle",
   dbCredentials: resolveDrizzleDbCredentials(),
 })
