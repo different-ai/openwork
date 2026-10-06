@@ -26,7 +26,7 @@ import {
 // its `effect` dependency) into every spec that imports this module, which
 // the evals layer rules forbid.
 import { automationRepository, automationRunnerRowId } from "../automations/repository.js"
-import { cloudHostingAvailable } from "../capability-sources/cloud-hosting.js"
+import { cloudHostingAvailable } from "../openwork-web-cloud-hosting.js"
 import {
   databaseRemoteSessionCommandStore,
   DEFAULT_TTL_MS,
