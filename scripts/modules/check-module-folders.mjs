@@ -7,6 +7,9 @@
 //   - a retired id has a folder
 //   - enforced-modules.json names an unknown id, is not sorted, or an enforced module still
 //     has entries in known-violations.json (an enforced module must be clean, not baselined)
+//   - a group folder (D44: `org/`, `library/connectors/native/`, ...) holds anything but module
+//     and group folders: no files, no marker file of its own, no other directories (for
+//     example `org/teams/` instead of `org/members/teams/`). Groups are namespaces, never modules.
 // den-db only checks folders directly under schema/ that are not inside a module, because
 // `index.ts` is a common file name inside a module's own schema folder.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -34,13 +37,14 @@ function ownsPath(module, root, path, graph) {
 }
 
 /**
- * @param {{ repoRoot: string, prefix?: string, graph: { modules: { id: string, folder: string, parent: string | null }[], retired: { id: string, folder: string }[] },
+ * @param {{ repoRoot: string, prefix?: string, graph: { modules: { id: string, folder: string, parent: string | null }[], groups?: { id: string, folder: string }[], retired: { id: string, folder: string }[] },
  *           enforced: { core: boolean, modules: string[] }, baseline: { from: string, rule: { name: string } }[] }} input
  * @returns {string[]} errors
  */
 export function checkModuleFolders({ repoRoot, prefix = "", graph, enforced, baseline }) {
   const errors = [];
   const folders = new Map(graph.modules.map((module) => [module.folder, module.id]));
+  const groups = new Map((graph.groups ?? []).map((group) => [group.folder, group.id]));
   const retired = new Map(graph.retired.map((module) => [module.folder, module.id]));
   const roots = moduleRoots(prefix);
 
@@ -49,9 +53,15 @@ export function checkModuleFolders({ repoRoot, prefix = "", graph, enforced, bas
     if (root.db) {
       candidates = candidates.filter((candidate) => folders.has(candidate) || ![...folders.keys()].some((folder) => candidate.startsWith(`${folder}/`)));
     }
+    const reported = new Set();
     for (const candidate of candidates) {
       const path = `${root.moduleRoot}/${candidate}`.slice(prefix.length);
       if (folders.has(candidate)) continue;
+      reported.add(candidate);
+      if (groups.has(candidate)) {
+        errors.push(`${path}: is the folder of group ${groups.get(candidate)}, which is a namespace, never a module (D44); move the ${root.marker.join("/")} into a module folder`);
+        continue;
+      }
       if (retired.has(candidate)) {
         errors.push(`${path}: belongs to retired module id ${retired.get(candidate)}; move its code to the module that replaced it`);
         continue;
@@ -60,6 +70,19 @@ export function checkModuleFolders({ repoRoot, prefix = "", graph, enforced, bas
       const likely = [...folders.keys()].filter((folder) => folder.split("/").pop() === leaf);
       const hint = likely.length > 0 ? ` Did you mean ${likely.map((folder) => `${folder} (${folders.get(folder)})`).join(" or ")}? Sub-modules nest inside their parent's folder.` : "";
       errors.push(`${path}: has a ${root.marker.join("/")} but maps to no module registry id.${hint}`);
+    }
+    for (const [groupFolder, groupId] of groups) {
+      const directory = resolve(repoRoot, root.moduleRoot, groupFolder);
+      if (!existsSync(directory)) continue;
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const relative = `${groupFolder}/${entry.name}`;
+        const path = `${root.moduleRoot}/${relative}`.slice(prefix.length);
+        if (entry.isDirectory() && (folders.has(relative) || groups.has(relative) || reported.has(relative))) continue;
+        if (entry.isDirectory() && [...reported].some((candidate) => candidate.startsWith(`${relative}/`))) continue;
+        if (entry.isFile() && root.marker.includes(entry.name) && reported.has(groupFolder)) continue;
+        const inside = graph.modules.filter((module) => module.folder.startsWith(`${groupFolder}/`)).map((module) => module.folder);
+        errors.push(`${path}: is inside group ${groupId} (D44), which may only hold module or group folders (${inside.join(", ")}); move it into a module folder`);
+      }
     }
   }
 

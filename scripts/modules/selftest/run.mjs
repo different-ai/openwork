@@ -1,11 +1,14 @@
 // Self-test for the Den module boundary tooling (W0-08). Run: pnpm boundaries:selftest
 //
+// 0. Checks fixture-graph.json is generated from fixture-registry.yaml, and that the generator
+//    rejects registries that break the D44 id rules (registries-bad/*.yaml).
 // 1. Cruises the fixture tree with the fixture graph in report mode and in enforced mode and
-//    asserts the exact { rule, from, to, severity } set.
+//    asserts the exact { rule, from, to, severity } set. The fixture has groups (D44): `kit`
+//    (top level, like `org`) and `alpha.ns` (inside a module, like `library.connectors.native`).
 // 2. Runs the folder <-> registry check against a good and a bad folder tree.
 // 3. Runs the ratchet comparison against a synthetic growth, shrink and Core flip.
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkModuleFolders } from "../check-module-folders.mjs";
@@ -15,6 +18,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../..");
 const prefix = "scripts/modules/selftest/fixture/";
 const depcruiseBin = resolve(repoRoot, "node_modules/dependency-cruiser/bin/dependency-cruiser.mjs");
+const tsxBin = resolve(repoRoot, "node_modules/tsx/dist/cli.mjs");
+const generator = resolve(here, "../generate-module-graph.mts");
 const graph = JSON.parse(readFileSync(resolve(here, "fixture-graph.json"), "utf8"));
 
 const API = "ee/apps/den-api/src";
@@ -27,6 +32,7 @@ const FEATURES = "packages/features/src";
 const EXPECTED = [
   // Core -> module internals (den-api) and Core -> module public (den-web, non-route file).
   ["core-imports-module", `${API}/core.ts`, `${API}/modules/alpha/internal.ts`, "warn"],
+  ["core-imports-module", `${API}/core.ts`, `${API}/modules/kit/one/internal.ts`, "warn"],
   ["core-imports-module", `${WEB}/_lib/nav.ts`, `${WEB}/_modules/alpha/public.tsx`, "warn"],
   // Route file -> module internals. (Route file -> public.tsx is allowed.)
   ["core-route-imports-module-internals", `${WEB}/alpha/page.tsx`, `${WEB}/_modules/alpha/screen.tsx`, "warn"],
@@ -34,8 +40,17 @@ const EXPECTED = [
   ["framework-imports-manifest-only", `${API}/modules/registry.ts`, `${API}/modules/beta/internal.ts`, "error"],
   // Parent -> sub-module (D6).
   ["module:alpha", `${API}/modules/alpha/service.ts`, `${API}/modules/alpha/child/internal.ts`, "warn"],
+  // Parent -> sub-module behind a group folder (alpha/ns/ is the group alpha.ns, D44).
+  ["module:alpha", `${API}/modules/alpha/service.ts`, `${API}/modules/alpha/ns/leaf/internal.ts`, "warn"],
   // Sub-module -> parent internals. (Sub-module -> parent public.ts is allowed.)
   ["module:alpha.child", `${API}/modules/alpha/child/uses-parent.ts`, `${API}/modules/alpha/internal.ts`, "warn"],
+  // The nearest module ancestor is the parent (alpha), not the group: alpha/public.ts is allowed,
+  // alpha internals are not.
+  ["module:alpha.ns.leaf", `${API}/modules/alpha/ns/leaf/uses-parent.ts`, `${API}/modules/alpha/internal.ts`, "warn"],
+  // Same group, no declared dependency: kit.one -> kit.two public is a violation (groups imply
+  // nothing). kit.two hard-depends on kit.one: public is allowed, internals are not.
+  ["module:kit.one", `${API}/modules/kit/one/uses-sibling.ts`, `${API}/modules/kit/two/public.ts`, "warn"],
+  ["module:kit.two", `${API}/modules/kit/two/uses-one.ts`, `${API}/modules/kit/one/internal.ts`, "warn"],
   // beta soft-depends on alpha: alpha internals via a .js specifier, a type-only import of
   // alpha internals, alpha's sub-module (not declared) and delta (not declared).
   ["module:beta", `${API}/modules/beta/uses-alpha.ts`, `${API}/modules/alpha/internal.ts`, "warn"],
@@ -55,6 +70,37 @@ const EXPECTED = [
 ];
 
 const failures = [];
+
+function runGenerator(args) {
+  return spawnSync(process.execPath, [tsxBin, generator, ...args], { cwd: repoRoot, encoding: "utf8" });
+}
+
+const fixtureGraph = runGenerator([
+  "--bootstrap", "scripts/modules/selftest/fixture-registry.yaml",
+  "--output", "scripts/modules/selftest/fixture-graph.json",
+  "--check",
+]);
+if (fixtureGraph.status !== 0) failures.push(`fixture-graph.json is not generated from fixture-registry.yaml:\n  ${fixtureGraph.stderr.trim()}`);
+
+// Each bad registry must fail with this message fragment.
+const BAD_REGISTRIES = {
+  "depends-on-group.yaml": "depends on group kit",
+  "group-as-parent.yaml": "kit.one: parent must be the nearest module ancestor null, got kit",
+  "group-is-module.yaml": "kit is both a group and a module",
+  "missing-group.yaml": "kit.one: prefix kit is neither a module nor a group",
+  "skips-module-parent.yaml": "alpha.ns.leaf: parent must be the nearest module ancestor alpha, got null",
+  "too-deep.yaml": "more than 4 segments",
+};
+const badDirectory = resolve(here, "registries-bad");
+for (const file of readdirSync(badDirectory)) {
+  if (!(file in BAD_REGISTRIES)) failures.push(`registries-bad/${file} has no expected error in run.mjs`);
+}
+for (const [file, fragment] of Object.entries(BAD_REGISTRIES)) {
+  const result = runGenerator(["--bootstrap", resolve(badDirectory, file), "--output", resolve(badDirectory, "unused.json"), "--check"]);
+  if (result.status === 0 || !result.stderr.includes(fragment)) {
+    failures.push(`generator on registries-bad/${file}: expected a failure containing "${fragment}", got status ${result.status}:\n  ${result.stderr.trim()}`);
+  }
+}
 
 function key([rule, from, to, severity]) {
   return `${severity} ${rule}: ${from} -> ${to}`;
@@ -114,7 +160,19 @@ assertErrors(
     enforced: { core: false, modules: ["beta", "alpha", "unknownModule"] },
     baseline: [{ type: "dependency", from: `${prefix}${API}/modules/beta/uses-alpha.ts`, to: `${prefix}${API}/modules/delta/public.ts`, rule: { name: "module:beta", severity: "error" } }],
   }),
-  ["modules/child", "modules/gamma", "_modules/unknown", "not sorted", "unknownModule", "beta is enforced"],
+  [
+    "modules/child",
+    "retired module id analytics",
+    "_modules/unknown",
+    "modules/kit: is the folder of group kit",
+    "modules/kit/helper.ts: is inside group kit",
+    "modules/kit/three: has a module.ts",
+    "_modules/kit/stray: is inside group kit",
+    "schema/alpha/ns/index.ts: is inside group alpha.ns",
+    "not sorted",
+    "unknownModule",
+    "beta is enforced",
+  ],
 );
 
 const entry = (rule, from, to) => ({ type: "dependency", from, to, rule: { name: rule, severity: "error" } });
@@ -136,5 +194,5 @@ if (failures.length > 0) {
   console.error(`boundaries selftest failed:\n- ${failures.join("\n- ")}`);
   process.exitCode = 1;
 } else {
-  console.log(`boundaries selftest: ${EXPECTED.length} expected violations matched in report and enforced mode; folder and ratchet checks behave`);
+  console.log(`boundaries selftest: fixture graph generated, ${Object.keys(BAD_REGISTRIES).length} bad registries rejected, ${EXPECTED.length} expected violations matched in report and enforced mode; folder and ratchet checks behave`);
 }

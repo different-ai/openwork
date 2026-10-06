@@ -16,6 +16,13 @@
 //   module-db-barrel                  report-only nudge away from the den-db barrels
 //   shared-imports-module             Core/shared packages (@openwork/features) never import a
 //                                     module folder. Core and every module may import them.
+//
+// Module ids are location paths with groups (D44). A module's folder is its id path
+// (module-folder-path.mts); groups are plain folders that contain module folders and are
+// never modules themselves, so no rule targets a group and a group gives its members no
+// access to each other. "Parent" always means the nearest ancestor that is a module, so
+// `library.connectors.native.googleWorkspace` (folder library/connectors/native/google-workspace)
+// is a sub-module of `library.connectors` and is excluded from its parent's own folder.
 
 const TEST_FILES = ["\\.test\\.tsx?$", "/__fixtures__/", "/__tests__/"];
 
@@ -95,7 +102,7 @@ function severityFor(enforced) {
 }
 
 /**
- * @param {{ graph: { modules: { id: string, folder: string, parent: string | null, ancestors: string[], hard: string[], soft: string[] }[] },
+ * @param {{ graph: { modules: { id: string, folder: string, parent: string | null, ancestors: string[], hard: string[], soft: string[] }[], groups?: { id: string, folder: string }[] },
  *           enforced: { core: boolean, modules: string[] },
  *           roots: ReturnType<typeof moduleRoots>,
  *           shared?: ReturnType<typeof sharedPackages> }} input
@@ -106,9 +113,12 @@ export function buildModuleRules({ graph, enforced, roots, shared = [] }) {
   const byId = new Map(modules.map((module) => [module.id, module]));
   const childrenOf = (id) => modules.filter((module) => module.parent === id);
   const descendantsOf = (id) => modules.filter((module) => module.ancestors.includes(id));
-  const topFolders = [...new Set(modules.map((module) => module.folder.split("/")[0]))].sort();
-  const anyModule = (root) => `^${escapeRegex(root.moduleRoot)}/${alternation(topFolders.map(escapeRegex))}/`;
-  const allModuleRoots = `^${alternation(roots.map((root) => escapeRegex(root.moduleRoot)))}/${alternation(topFolders.map(escapeRegex))}/`;
+  // Folders of modules without a parent. Every sub-module folder sits inside its parent's
+  // folder, so these cover all module code. Group folders (D44) are not modules: only the
+  // module folders inside them are matched.
+  const rootFolders = modules.filter((module) => module.parent === null).map((module) => escapeRegex(module.folder)).sort();
+  const anyModule = (root) => `^${escapeRegex(root.moduleRoot)}/${alternation(rootFolders)}/`;
+  const allModuleRoots = `^${alternation(roots.map((root) => escapeRegex(root.moduleRoot)))}/${alternation(rootFolders)}/`;
   const allFolders = alternation(modules.map((module) => escapeRegex(module.folder)));
   const dbRoot = roots.find((root) => root.db);
   const coreSeverity = severityFor(enforced.core);

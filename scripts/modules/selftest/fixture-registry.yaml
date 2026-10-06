@@ -1,0 +1,17 @@
+# Module registry for the boundary self-test, in the bootstrap format
+# (scripts/modules/bootstrap-graph.yaml). fixture-graph.json is generated from it:
+#   pnpm boundaries:graph --bootstrap scripts/modules/selftest/fixture-registry.yaml --output scripts/modules/selftest/fixture-graph.json
+# beta soft-depends on alpha; delta is undeclared everywhere. Retired ids come from the generator
+# (folders-bad uses `analytics`, removed by D44).
+# `alpha.ns` is a group inside a module (like library.connectors.native): alpha.ns.leaf's parent
+# is alpha. `kit` is a top-level group (like org): kit.one and kit.two have no parent, and
+# kit.two hard-depends on kit.one. Being in the same group gives them nothing.
+- alpha.ns:         {group: true}
+- kit:              {group: true}
+- alpha:            {parent: null,  hard: [],        soft: []}
+- alpha.child:      {parent: alpha, hard: [],        soft: []}
+- alpha.ns.leaf:    {parent: alpha, hard: [],        soft: []}
+- beta:             {parent: null,  hard: [],        soft: [alpha]}
+- delta:            {parent: null,  hard: [],        soft: []}
+- kit.one:          {parent: null,  hard: [],        soft: []}
+- kit.two:          {parent: null,  hard: [kit.one], soft: []}

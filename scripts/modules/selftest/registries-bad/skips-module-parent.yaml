@@ -1,0 +1,3 @@
+- alpha: {parent: null, hard: [], soft: []}
+- alpha.ns.leaf: {parent: null, hard: [], soft: []}
+- alpha.ns: {group: true}

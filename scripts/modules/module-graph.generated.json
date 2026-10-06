@@ -3,62 +3,73 @@
   "source": "bootstrap",
   "modules": [
     {
-      "id": "advancedPermissions",
-      "folder": "advanced-permissions",
-      "parent": null,
-      "ancestors": [],
-      "hard": [],
-      "soft": []
-    },
-    {
-      "id": "aiGateway",
-      "folder": "ai-gateway",
+      "id": "ai.customProviders",
+      "folder": "ai/custom-providers",
       "parent": null,
       "ancestors": [],
       "hard": [],
       "soft": [
-        "auditLogs"
+        "org.desktopPolicies"
       ]
     },
     {
-      "id": "aiGateway.usageLimits",
-      "folder": "ai-gateway/usage-limits",
-      "parent": "aiGateway",
+      "id": "ai.gateway",
+      "folder": "ai/gateway",
+      "parent": null,
+      "ancestors": [],
+      "hard": [],
+      "soft": [
+        "org.observability.auditLogs"
+      ]
+    },
+    {
+      "id": "ai.gateway.freeInference",
+      "folder": "ai/gateway/free-inference",
+      "parent": "ai.gateway",
       "ancestors": [
-        "aiGateway"
+        "ai.gateway"
       ],
       "hard": [],
       "soft": [
-        "teams"
+        "org.desktopPolicies"
       ]
     },
     {
-      "id": "analytics",
-      "folder": "analytics",
-      "parent": null,
-      "ancestors": [],
-      "hard": [],
-      "soft": [
-        "workflows"
-      ]
-    },
-    {
-      "id": "auditLogs",
-      "folder": "audit-logs",
-      "parent": null,
-      "ancestors": [],
-      "hard": [],
-      "soft": []
-    },
-    {
-      "id": "auditLogs.export",
-      "folder": "audit-logs/export",
-      "parent": "auditLogs",
+      "id": "ai.gateway.openworkModels",
+      "folder": "ai/gateway/openwork-models",
+      "parent": "ai.gateway",
       "ancestors": [
-        "auditLogs"
+        "ai.gateway"
+      ],
+      "hard": [
+        "org.billing"
+      ],
+      "soft": [
+        "ai.customProviders"
+      ]
+    },
+    {
+      "id": "ai.gateway.openworkModels.analytics",
+      "folder": "ai/gateway/openwork-models/analytics",
+      "parent": "ai.gateway.openworkModels",
+      "ancestors": [
+        "ai.gateway.openworkModels",
+        "ai.gateway"
       ],
       "hard": [],
       "soft": []
+    },
+    {
+      "id": "ai.gateway.usageLimits",
+      "folder": "ai/gateway/usage-limits",
+      "parent": "ai.gateway",
+      "ancestors": [
+        "ai.gateway"
+      ],
+      "hard": [],
+      "soft": [
+        "org.members.teams"
+      ]
     },
     {
       "id": "automations",
@@ -67,12 +78,12 @@
       "ancestors": [],
       "hard": [],
       "soft": [
-        "aiGateway",
-        "customProviders",
-        "desktopPolicies",
-        "openworkModels",
+        "ai.customProviders",
+        "ai.gateway",
+        "ai.gateway.openworkModels",
+        "library.workflows",
         "openworkWeb",
-        "workflows"
+        "org.desktopPolicies"
       ]
     },
     {
@@ -98,190 +109,118 @@
       ]
     },
     {
-      "id": "billing",
-      "folder": "billing",
-      "parent": null,
-      "ancestors": [],
-      "hard": [],
-      "soft": []
-    },
-    {
-      "id": "branding",
-      "folder": "branding",
-      "parent": null,
-      "ancestors": [],
-      "hard": [],
-      "soft": []
-    },
-    {
-      "id": "connect",
-      "folder": "connect",
-      "parent": null,
-      "ancestors": [],
-      "hard": [],
-      "soft": [
-        "marketplace"
-      ]
-    },
-    {
-      "id": "connect.nativeProviders",
-      "folder": "connect/native-providers",
-      "parent": "connect",
-      "ancestors": [
-        "connect"
-      ],
-      "hard": [],
-      "soft": []
-    },
-    {
-      "id": "customProviders",
-      "folder": "custom-providers",
-      "parent": null,
-      "ancestors": [],
-      "hard": [],
-      "soft": [
-        "desktopPolicies"
-      ]
-    },
-    {
       "id": "dashboards",
       "folder": "dashboards",
       "parent": null,
       "ancestors": [],
       "hard": [],
       "soft": [
-        "connect",
-        "mcpApps"
+        "library.apps",
+        "library.connectors"
       ]
     },
     {
-      "id": "desktopPolicies",
-      "folder": "desktop-policies",
-      "parent": null,
-      "ancestors": [],
-      "hard": [],
-      "soft": [
-        "teams"
-      ]
-    },
-    {
-      "id": "diagnostics",
-      "folder": "diagnostics",
-      "parent": null,
-      "ancestors": [],
-      "hard": [],
-      "soft": []
-    },
-    {
-      "id": "enterpriseAuth",
-      "folder": "enterprise-auth",
-      "parent": null,
-      "ancestors": [],
-      "hard": [],
-      "soft": []
-    },
-    {
-      "id": "enterpriseAuth.scim",
-      "folder": "enterprise-auth/scim",
-      "parent": "enterpriseAuth",
-      "ancestors": [
-        "enterpriseAuth"
-      ],
-      "hard": [
-        "enterpriseAuth.sso"
-      ],
-      "soft": [
-        "teams"
-      ]
-    },
-    {
-      "id": "enterpriseAuth.sso",
-      "folder": "enterprise-auth/sso",
-      "parent": "enterpriseAuth",
-      "ancestors": [
-        "enterpriseAuth"
-      ],
-      "hard": [],
-      "soft": []
-    },
-    {
-      "id": "freeInference",
-      "folder": "free-inference",
-      "parent": null,
-      "ancestors": [],
-      "hard": [],
-      "soft": [
-        "desktopPolicies"
-      ]
-    },
-    {
-      "id": "installLinks",
-      "folder": "install-links",
-      "parent": null,
-      "ancestors": [],
-      "hard": [],
-      "soft": [
-        "branding",
-        "versionPinning"
-      ]
-    },
-    {
-      "id": "marketplace",
-      "folder": "marketplace",
-      "parent": null,
-      "ancestors": [],
-      "hard": [],
-      "soft": [
-        "connect",
-        "workflows"
-      ]
-    },
-    {
-      "id": "marketplace.githubSync",
-      "folder": "marketplace/github-sync",
-      "parent": "marketplace",
-      "ancestors": [
-        "marketplace"
-      ],
-      "hard": [],
-      "soft": [
-        "connect"
-      ]
-    },
-    {
-      "id": "mcpApps",
-      "folder": "mcp-apps",
+      "id": "library.apps",
+      "folder": "library/apps",
       "parent": null,
       "ancestors": [],
       "hard": [
-        "connect",
-        "marketplace"
+        "library.connectors",
+        "library.plugins"
       ],
       "soft": [
-        "workflows"
+        "library.workflows"
       ]
     },
     {
-      "id": "openworkModels",
-      "folder": "openwork-models",
+      "id": "library.connectors",
+      "folder": "library/connectors",
       "parent": null,
       "ancestors": [],
-      "hard": [
-        "billing"
-      ],
+      "hard": [],
       "soft": [
-        "customProviders"
+        "library.plugins"
       ]
     },
     {
-      "id": "openworkModels.analytics",
-      "folder": "openwork-models/analytics",
-      "parent": "openworkModels",
+      "id": "library.connectors.native.googleWorkspace",
+      "folder": "library/connectors/native/google-workspace",
+      "parent": "library.connectors",
       "ancestors": [
-        "openworkModels"
+        "library.connectors"
       ],
       "hard": [],
       "soft": []
+    },
+    {
+      "id": "library.connectors.native.microsoft365",
+      "folder": "library/connectors/native/microsoft365",
+      "parent": "library.connectors",
+      "ancestors": [
+        "library.connectors"
+      ],
+      "hard": [],
+      "soft": []
+    },
+    {
+      "id": "library.connectors.slackAssistant",
+      "folder": "library/connectors/slack-assistant",
+      "parent": "library.connectors",
+      "ancestors": [
+        "library.connectors"
+      ],
+      "hard": [],
+      "soft": [
+        "automations.remoteSessions",
+        "openworkWeb"
+      ]
+    },
+    {
+      "id": "library.connectors.slackAssistant.headless",
+      "folder": "library/connectors/slack-assistant/headless",
+      "parent": "library.connectors.slackAssistant",
+      "ancestors": [
+        "library.connectors.slackAssistant",
+        "library.connectors"
+      ],
+      "hard": [],
+      "soft": []
+    },
+    {
+      "id": "library.plugins",
+      "folder": "library/plugins",
+      "parent": null,
+      "ancestors": [],
+      "hard": [],
+      "soft": [
+        "library.connectors",
+        "library.workflows"
+      ]
+    },
+    {
+      "id": "library.plugins.githubSync",
+      "folder": "library/plugins/github-sync",
+      "parent": "library.plugins",
+      "ancestors": [
+        "library.plugins"
+      ],
+      "hard": [],
+      "soft": [
+        "library.connectors"
+      ]
+    },
+    {
+      "id": "library.workflows",
+      "folder": "library/workflows",
+      "parent": null,
+      "ancestors": [],
+      "hard": [
+        "library.plugins"
+      ],
+      "soft": [
+        "automations",
+        "library.connectors"
+      ]
     },
     {
       "id": "openworkWeb",
@@ -289,56 +228,126 @@
       "parent": null,
       "ancestors": [],
       "hard": [
-        "connect"
+        "library.connectors"
       ],
       "soft": [
-        "aiGateway",
-        "automations",
-        "openworkModels"
+        "ai.gateway",
+        "ai.gateway.openworkModels",
+        "automations"
       ]
     },
     {
-      "id": "slackAssistant",
-      "folder": "slack-assistant",
+      "id": "org.auth.scim",
+      "folder": "org/auth/scim",
       "parent": null,
       "ancestors": [],
       "hard": [
-        "connect"
+        "org.auth.sso"
       ],
       "soft": [
-        "automations.remoteSessions",
-        "openworkWeb"
+        "org.members.teams"
       ]
     },
     {
-      "id": "slackAssistant.headless",
-      "folder": "slack-assistant/headless",
-      "parent": "slackAssistant",
+      "id": "org.auth.sso",
+      "folder": "org/auth/sso",
+      "parent": null,
+      "ancestors": [],
+      "hard": [],
+      "soft": []
+    },
+    {
+      "id": "org.billing",
+      "folder": "org/billing",
+      "parent": null,
+      "ancestors": [],
+      "hard": [],
+      "soft": []
+    },
+    {
+      "id": "org.branding",
+      "folder": "org/branding",
+      "parent": null,
+      "ancestors": [],
+      "hard": [],
+      "soft": []
+    },
+    {
+      "id": "org.desktopPolicies",
+      "folder": "org/desktop-policies",
+      "parent": null,
+      "ancestors": [],
+      "hard": [],
+      "soft": [
+        "org.members.teams"
+      ]
+    },
+    {
+      "id": "org.desktopPolicies.versionPinning",
+      "folder": "org/desktop-policies/version-pinning",
+      "parent": "org.desktopPolicies",
       "ancestors": [
-        "slackAssistant"
+        "org.desktopPolicies"
       ],
       "hard": [],
       "soft": []
     },
     {
-      "id": "teams",
-      "folder": "teams",
+      "id": "org.diagnostics",
+      "folder": "org/diagnostics",
       "parent": null,
       "ancestors": [],
       "hard": [],
       "soft": []
     },
     {
-      "id": "versionPinning",
-      "folder": "version-pinning",
+      "id": "org.installLinks",
+      "folder": "org/install-links",
+      "parent": null,
+      "ancestors": [],
+      "hard": [],
+      "soft": [
+        "org.branding",
+        "org.desktopPolicies.versionPinning"
+      ]
+    },
+    {
+      "id": "org.members.roles",
+      "folder": "org/members/roles",
       "parent": null,
       "ancestors": [],
       "hard": [],
       "soft": []
     },
     {
-      "id": "webOrigins",
-      "folder": "web-origins",
+      "id": "org.members.teams",
+      "folder": "org/members/teams",
+      "parent": null,
+      "ancestors": [],
+      "hard": [],
+      "soft": []
+    },
+    {
+      "id": "org.observability.auditLogs",
+      "folder": "org/observability/audit-logs",
+      "parent": null,
+      "ancestors": [],
+      "hard": [],
+      "soft": []
+    },
+    {
+      "id": "org.observability.auditLogs.export",
+      "folder": "org/observability/audit-logs/export",
+      "parent": "org.observability.auditLogs",
+      "ancestors": [
+        "org.observability.auditLogs"
+      ],
+      "hard": [],
+      "soft": []
+    },
+    {
+      "id": "org.webOrigins",
+      "folder": "org/web-origins",
       "parent": null,
       "ancestors": [],
       "hard": [],
@@ -350,30 +359,55 @@
       "parent": null,
       "ancestors": [],
       "hard": [
-        "connect"
+        "library.connectors"
       ],
       "soft": [
         "automations.headless"
       ]
+    }
+  ],
+  "groups": [
+    {
+      "id": "ai",
+      "folder": "ai"
     },
     {
-      "id": "workflows",
-      "folder": "workflows",
-      "parent": null,
-      "ancestors": [],
-      "hard": [
-        "marketplace"
-      ],
-      "soft": [
-        "automations",
-        "connect"
-      ]
+      "id": "library",
+      "folder": "library"
+    },
+    {
+      "id": "library.connectors.native",
+      "folder": "library/connectors/native"
+    },
+    {
+      "id": "org",
+      "folder": "org"
+    },
+    {
+      "id": "org.auth",
+      "folder": "org/auth"
+    },
+    {
+      "id": "org.members",
+      "folder": "org/members"
+    },
+    {
+      "id": "org.observability",
+      "folder": "org/observability"
     }
   ],
   "retired": [
     {
+      "id": "analytics",
+      "folder": "analytics"
+    },
+    {
       "id": "customRoles",
       "folder": "custom-roles"
+    },
+    {
+      "id": "enterpriseAuth",
+      "folder": "enterprise-auth"
     },
     {
       "id": "enterpriseAuth.requireSso",

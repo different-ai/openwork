@@ -1,0 +1,2 @@
+- kit: {group: true}
+- kit.one.two.three.four: {parent: null, hard: [], soft: []}

@@ -1,46 +1,57 @@
-# TEMPORARY bootstrap copy of docs/modules/dependency-map.md §2 (module graph).
-# Read by scripts/modules/generate-module-graph.ts until the W0-01 registry
-# (@openwork/license-contracts MODULE_DEFINITIONS) is merged.
+# TEMPORARY bootstrap copy of the W0-01 module registry (#5683,
+# packages/license-contracts/src/module-id-list.ts + modules.ts), D44 ids: location paths
+# with groups (docs/modules/dependency-map.md §2a). Read by
+# scripts/modules/generate-module-graph.mts until W0-01 is merged.
 # TODO(W0-01): delete this file when GRAPH_SOURCE switches to "license-contracts".
-# Ids per D41/D42. Lines starting with "# <id>: RETIRED|FOLDED" mark retired ids.
-# Only id, parent, hard and soft are parsed. The deploy/infra columns are notes; the
-# contract's deployment values are `cloud` and `self_hosted` (D43, R11).
 #
-# id                          parent              hard deps                    soft deps                                   deploy   infra (availability)
-- connect:                    {parent: null,      hard: [],                    soft: [marketplace],                       deploy: both}
-- connect.nativeProviders:    {parent: connect,   hard: [],                    soft: [],                                  deploy: both,   infra: [Google/Microsoft OAuth endpoints]}
-- marketplace:                {parent: null,      hard: [],                    soft: [connect, workflows],                deploy: both}
-- marketplace.githubSync:     {parent: marketplace, hard: [],                  soft: [connect],                           deploy: both,   infra: [GitHub App creds]}
-- workflows:                  {parent: null,      hard: [marketplace],         soft: [connect, automations],              deploy: both}   # workflows are marketplace config objects
-# workflows.generatedViews: RETIRED (D36), not a module; removed in refactor P13
-- mcpApps:                    {parent: null,      hard: [connect, marketplace], soft: [workflows],                        deploy: both}
-- dashboards:                 {parent: null,      hard: [],                    soft: [mcpApps, connect],                           deploy: both}
-- automations:                {parent: null,      hard: [],                    soft: [workflows, openworkWeb, aiGateway, openworkModels, customProviders, desktopPolicies], deploy: both}  # D30
-- automations.headless:       {parent: automations, hard: [],                  soft: [],                                  deploy: both,   infra: [headlessRunner]}
-- automations.remoteSessions:             {parent: automations, hard: [],                  soft: [openworkWeb],                       deploy: both}
-- openworkWeb:                {parent: null,      hard: [connect],             soft: [aiGateway, openworkModels, automations], deploy: cloud*, infra: [cloud runtime provider]}  # D26; *self-host only with a runtime provider
-- workbot:                    {parent: null,      hard: [connect],             soft: [automations.headless],              deploy: cloud?, infra: [DEN_WORKBOT_URL, headlessRunner]}
-- slackAssistant:             {parent: null,      hard: [connect],             soft: [automations.remoteSessions, openworkWeb],       deploy: both}
-- slackAssistant.headless:    {parent: slackAssistant, hard: [],               soft: [],                                  deploy: both,   infra: [headlessRunner]}
-- aiGateway:                  {parent: null,      hard: [],                    soft: [auditLogs],                         deploy: both,   infra: [gateway service + DB/encryption config]}   # D38: mint missing member keys on enable
-- aiGateway.usageLimits:      {parent: aiGateway, hard: [],                    soft: [teams],                             deploy: both}   # off = skip admission only; accounting always runs
-- openworkModels:             {parent: null,      hard: [billing],             soft: [customProviders],                   deploy: cloud,  infra: [OpenRouter]}  # NEW (D28)
-- openworkModels.analytics:   {parent: openworkModels, hard: [],               soft: [],                                  deploy: cloud}  # was aiGateway.modelsAnalytics
-- freeInference:              {parent: null,      hard: [],                    soft: [desktopPolicies],                   deploy: cloud,  infra: [free inference config]}  # D26; member path only, guest path = infra
-- customProviders:            {parent: null,      hard: [],                    soft: [desktopPolicies],                   deploy: both}
-- desktopPolicies:            {parent: null,      hard: [],                    soft: [teams],                             deploy: both}
-- versionPinning:             {parent: null,      hard: [],                    soft: [],                                  deploy: both}
-- branding:                   {parent: null,      hard: [],                    soft: [],                                  deploy: both}
-- analytics:                  {parent: null,      hard: [],                    soft: [workflows],                         deploy: both}
-- auditLogs:                  {parent: null,      hard: [],                    soft: [],                                  deploy: both}
-- auditLogs.export:           {parent: auditLogs, hard: [],                    soft: [],                                  deploy: both}
-- teams:                      {parent: null,      hard: [],                    soft: [],                                  deploy: both}   # D29: off = audiences resolve empty
-- advancedPermissions:        {parent: null,      hard: [],                    soft: [],                                  deploy: both}   # custom roles (D26, D41)
-- diagnostics:                {parent: null,      hard: [],                    soft: [],                                  deploy: both}
-- billing:                    {parent: null,      hard: [],                    soft: [],                                  deploy: cloud,  infra: [Stripe]}  # D3
-- enterpriseAuth:             {parent: null,      hard: [],                    soft: [],                                  deploy: both}   # license key `auth` → `enterpriseAuth` (D1)
-- enterpriseAuth.sso:         {parent: enterpriseAuth, hard: [],               soft: [],                                  deploy: both}
-- enterpriseAuth.scim:        {parent: enterpriseAuth, hard: [enterpriseAuth.sso], soft: [teams],                         deploy: both}
-# enterpriseAuth.requireSso: FOLDED INTO enterpriseAuth.sso (D32)
-- installLinks:               {parent: null,      hard: [],                    soft: [branding, versionPinning],          deploy: both}   # D37: includes /v1/me/install*; likely default-on
-- webOrigins:                 {parent: null,      hard: [],                    soft: [],                                  deploy: both}
+# Check against #5683 (prints "identical" or fails):
+#   pnpm boundaries:graph --compare --source license-contracts --registry <#5683 checkout>/packages/license-contracts/src/modules.ts
+#
+# `{group: true}` lines are groups: pure namespaces, never toggled, never parents (D44).
+# Module lines: only id, parent, hard and soft are parsed. parent = the nearest ancestor id
+# that is a module (groups are skipped); the generator rejects anything else. The deploy and
+# infra columns are notes; the contract's deployment values are `cloud` and `self_hosted`.
+#
+# id                                           parent                              hard deps                              soft deps                                                                                              deploy
+- org:                                         {group: true}
+- org.members:                                 {group: true}
+- org.auth:                                    {group: true}
+- org.observability:                           {group: true}
+- ai:                                          {group: true}
+- library:                                     {group: true}
+- library.connectors.native:                   {group: true}
+
+- org.members.teams:                           {parent: null,                      hard: [],                              soft: [],                                                                                              deploy: both}
+- org.members.roles:                           {parent: null,                      hard: [],                              soft: [],                                                                                              deploy: both}   # custom roles
+- org.auth.sso:                                {parent: null,                      hard: [],                              soft: [],                                                                                              deploy: both}
+- org.auth.scim:                               {parent: null,                      hard: [org.auth.sso],                  soft: [org.members.teams],                                                                             deploy: both}
+- org.observability.auditLogs:                 {parent: null,                      hard: [],                              soft: [],                                                                                              deploy: both}
+- org.observability.auditLogs.export:          {parent: org.observability.auditLogs, hard: [],                            soft: [],                                                                                              deploy: both}
+- org.desktopPolicies:                         {parent: null,                      hard: [],                              soft: [org.members.teams],                                                                             deploy: both}
+- org.desktopPolicies.versionPinning:          {parent: org.desktopPolicies,       hard: [],                              soft: [],                                                                                              deploy: both}
+- org.installLinks:                            {parent: null,                      hard: [],                              soft: [org.branding, org.desktopPolicies.versionPinning],                                             deploy: both}   # free
+- org.branding:                                {parent: null,                      hard: [],                              soft: [],                                                                                              deploy: both}
+- org.webOrigins:                              {parent: null,                      hard: [],                              soft: [],                                                                                              deploy: both}
+- org.diagnostics:                             {parent: null,                      hard: [],                              soft: [],                                                                                              deploy: both}
+- org.billing:                                 {parent: null,                      hard: [],                              soft: [],                                                                                              deploy: cloud}  # free
+- ai.gateway:                                  {parent: null,                      hard: [],                              soft: [org.observability.auditLogs],                                                                   deploy: both,   infra: [gateway service]}
+- ai.gateway.usageLimits:                      {parent: ai.gateway,                hard: [],                              soft: [org.members.teams],                                                                             deploy: both}
+- ai.gateway.openworkModels:                   {parent: ai.gateway,                hard: [org.billing],                   soft: [ai.customProviders],                                                                            deploy: cloud}
+- ai.gateway.openworkModels.analytics:         {parent: ai.gateway.openworkModels, hard: [],                              soft: [],                                                                                              deploy: cloud}
+- ai.gateway.freeInference:                    {parent: ai.gateway,                hard: [],                              soft: [org.desktopPolicies],                                                                           deploy: cloud}
+- ai.customProviders:                          {parent: null,                      hard: [],                              soft: [org.desktopPolicies],                                                                           deploy: both}   # legacy BYOK
+- library.plugins:                             {parent: null,                      hard: [],                              soft: [library.connectors, library.workflows],                                                         deploy: both}
+- library.plugins.githubSync:                  {parent: library.plugins,           hard: [],                              soft: [library.connectors],                                                                            deploy: both}
+- library.workflows:                           {parent: null,                      hard: [library.plugins],               soft: [library.connectors, automations],                                                               deploy: both}
+- library.apps:                                {parent: null,                      hard: [library.plugins, library.connectors], soft: [library.workflows],                                                                 deploy: both}
+- library.connectors:                          {parent: null,                      hard: [],                              soft: [library.plugins],                                                                               deploy: both}
+- library.connectors.native.googleWorkspace:   {parent: library.connectors,        hard: [],                              soft: [],                                                                                              deploy: both}
+- library.connectors.native.microsoft365:      {parent: library.connectors,        hard: [],                              soft: [],                                                                                              deploy: both}
+- library.connectors.slackAssistant:           {parent: library.connectors,        hard: [],                              soft: [automations.remoteSessions, openworkWeb],                                                       deploy: both}
+- library.connectors.slackAssistant.headless:  {parent: library.connectors.slackAssistant, hard: [],                       soft: [],                                                                                              deploy: both}
+- dashboards:                                  {parent: null,                      hard: [],                              soft: [library.apps, library.connectors],                                                              deploy: both}
+- automations:                                 {parent: null,                      hard: [],                              soft: [library.workflows, openworkWeb, ai.gateway, ai.gateway.openworkModels, ai.customProviders, org.desktopPolicies], deploy: both}
+- automations.headless:                        {parent: automations,               hard: [],                              soft: [],                                                                                              deploy: both,   infra: [headlessRunner]}
+- automations.remoteSessions:                  {parent: automations,               hard: [],                              soft: [openworkWeb],                                                                                   deploy: both}
+- openworkWeb:                                 {parent: null,                      hard: [library.connectors],            soft: [ai.gateway, ai.gateway.openworkModels, automations],                                            deploy: both}
+- workbot:                                     {parent: null,                      hard: [library.connectors],            soft: [automations.headless],                                                                          deploy: both}
