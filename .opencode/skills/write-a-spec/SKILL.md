@@ -234,7 +234,8 @@ placeholder, or test id. Bound every wait; declare external requirements in
   before → after story on their own.
 - Your own eye passes what you designed. Run the design review on the same
   record before pushing and fix its `medium` notes, or say in the PR why the
-  screen is right (`evals/design-review/README.md`):
+  screen is right (`evals/design-review/README.md`; on a PR, the
+  `fix-design-notes` skill reads the Design review check):
 
   ```sh
   pnpm --dir evals design:review -- --test-run latest

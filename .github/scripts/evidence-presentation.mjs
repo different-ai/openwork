@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { updatePreviewCard } from "./evidence-preview-card.mjs";
+import { upsertDesignCheck, validateDesignDigest } from "./design-review-check.mjs";
 
 const checkName = "Evidence preview";
 const validId = value => Number.isSafeInteger(value) && value > 0;
@@ -110,7 +111,15 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
     state: status !== "completed" ? "pending" : ["success", "neutral"].includes(conclusion) ? "success" : "failure",
     description: title.slice(0, 140), target_url: detailsUrl,
   });
-  await updatePreviewCard({ repo, pr: stub.number, sha, status, conclusion, title, reportUrl, logUrl, reviewUrl }, api, current);
+  // Advisory design notes get their own check, readable with `gh pr checks` and
+  // the checks API. It never changes the evidence verdict, and its failure never
+  // fails this presentation.
+  let design;
+  const digest = phase === "complete" && reportUrl ? validateDesignDigest(receipt?.design) : undefined;
+  if (digest && await current()) {
+    design = await upsertDesignCheck({ repo, sha, runId: source.id, runAttempt: source.run_attempt, detailsUrl: reportUrl, digest }, api).catch(() => undefined);
+  }
+  await updatePreviewCard({ repo, pr: stub.number, sha, status, conclusion, title, reportUrl, logUrl, reviewUrl, design }, api, current);
   if (!reportUrl || !await current()) return { checkId: check.id };
   // Each publication is immutable and tied to the tested SHA. Do not let a
   // late deployment automatically deactivate a newer commit's preview.

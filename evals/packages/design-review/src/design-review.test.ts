@@ -17,7 +17,7 @@ function box(text: string, x: number, y: number, width: number, extra: Partial<L
   return {
     text, x, y, width, height: 16, fontSize: 13, fontWeight: 400,
     color: "rgb(17, 24, 39)", background: "rgb(255, 255, 255)", opacity: 1,
-    interactive: false, controlWidth: 0, disabled: false, clipped: false, ...extra,
+    interactive: false, controlWidth: 0, disabled: false, clipped: false, anchor: "", classes: "", ...extra,
   };
 }
 
@@ -69,6 +69,15 @@ test("a list whose rows are one wide button is still read as rows; a button besi
     box("Remove", 1780, 200 + row * 44, 50, { interactive: true, controlWidth: 72 }),
   ]));
   expect(checkSplitRows(toolbar)).toEqual([]);
+});
+
+test("a note names the code hooks of the rows it is about, so an agent can find the component", () => {
+  const hooked = layout(libraryBefore.boxes.map((entry, index) => ({
+    ...entry, anchor: `[data-library-row="item-${Math.floor(index / 4)}"]`, classes: index % 4 === 2 ? "w-[84px] text-xs" : "truncate text-[13px]",
+  })));
+  const [note] = checkSplitRows(hooked);
+  expect(note?.anchors).toEqual(['[data-library-row="item-0"]', '[data-library-row="item-1"]', '[data-library-row="item-2"]']);
+  expect(note?.classes).toEqual(["truncate text-[13px]", "w-[84px] text-xs"]);
 });
 
 test("the fixed Library, a settings row and a dense table are not flagged", () => {

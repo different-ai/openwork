@@ -20,6 +20,10 @@ export interface DesignNote {
   /** "layout": measured from the DOM boxes. "vision": judged from the pixels against the rubric. */
   source: "layout" | "vision";
   region?: DesignRegion;
+  /** Where in the code: DOM hooks of the boxes involved, e.g. `[data-library-row="docs-helper"]`. */
+  anchors?: string[];
+  /** Class lists of the boxes involved: grep targets when no hook exists. */
+  classes?: string[];
 }
 
 export const DESIGN_REVIEW_FILE = "design-review.json";
@@ -32,9 +36,21 @@ export interface DesignReviewFile {
   model: string | null;
   /** Short hash of the rubric the vision pass used. */
   rubric: string | null;
+  /** Repository-relative spec that recorded the screenshots, when known. */
+  specFile: string | null;
+  /** What each screenshot shows: its caption (the spec step) and route. */
+  screens: Record<string, { caption: string; route: string }>;
   /** Notes per screenshot file name in the same test-run directory. */
   notes: Record<string, DesignNote[]>;
   errors: string[];
+}
+
+/** The commands that reproduce a spec's design review on a laptop. */
+export function reproCommand(specFile: string | null): string {
+  const slug = specFile?.split("/").pop()?.replace(/\.e2e\.test\.ts$/, "").replace(/\.test\.ts$/, "");
+  return slug
+    ? `pnpm evals:e2e ${slug} --local && pnpm --dir evals design:review -- --test-run latest --json`
+    : "pnpm --dir evals design:review -- --test-run latest --json";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -68,6 +84,11 @@ export function parseDesignNote(value: unknown): DesignNote | null {
     && fraction(value.region.x) && fraction(value.region.y) && fraction(value.region.width) && fraction(value.region.height)
     ? clampRegion({ x: value.region.x, y: value.region.y, width: value.region.width, height: value.region.height })
     : undefined;
+  const strings = (entry: unknown, limit: number) => Array.isArray(entry)
+    ? entry.filter((item): item is string => typeof item === "string" && item.trim() !== "").map((item) => item.slice(0, limit)).slice(0, 3)
+    : [];
+  const anchors = strings(value.anchors, 200);
+  const classes = strings(value.classes, 160);
   return {
     rule: value.rule.trim().slice(0, 40),
     severity: value.severity,
@@ -75,6 +96,8 @@ export function parseDesignNote(value: unknown): DesignNote | null {
     detail: value.detail.trim().slice(0, 1_000),
     source: value.source,
     ...(region ? { region } : {}),
+    ...(anchors.length ? { anchors } : {}),
+    ...(classes.length ? { classes } : {}),
   };
 }
 
@@ -91,12 +114,20 @@ export function parseDesignReviewFile(value: unknown): DesignReviewFile | null {
     }
     notes[fileName] = parsed;
   }
+  const screens: Record<string, { caption: string; route: string }> = {};
+  if (isRecord(value.screens)) {
+    for (const [fileName, screen] of Object.entries(value.screens)) {
+      if (isRecord(screen) && typeof screen.caption === "string") screens[fileName] = { caption: screen.caption, route: typeof screen.route === "string" ? screen.route : "" };
+    }
+  }
   return {
     schemaVersion: 1,
     gitSha: typeof value.gitSha === "string" ? value.gitSha : null,
     reviewedAt: value.reviewedAt,
     model: typeof value.model === "string" ? value.model : null,
     rubric: typeof value.rubric === "string" ? value.rubric : null,
+    specFile: typeof value.specFile === "string" ? value.specFile : null,
+    screens,
     notes,
     errors: Array.isArray(value.errors) ? value.errors.filter((entry): entry is string => typeof entry === "string") : [],
   };

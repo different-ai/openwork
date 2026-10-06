@@ -78,6 +78,7 @@ export function EvidenceViewer({ report, id, connected = false }: { report: Revi
               <strong><span className="design-marker">{noteIndex + 1}</span><span>{note.title}</span></strong>
               <span className={`result ${note.severity === "medium" ? "pending" : ""}`}>{note.severity === "medium" ? "Worth fixing" : "Minor"} · <code>{note.rule}</code> · {note.source === "layout" ? "measured" : "judged"}</span>
               <p>{note.detail}</p>
+              {(note.anchors?.length || note.classes?.length) ? <p className="design-note-where">Where in the code: {[...(note.anchors ?? []), ...(note.classes ?? []).map((value) => `class "${value}"`)].map((hook) => <code key={hook}>{hook}</code>)}</p> : null}
             </div>)}
           </>}
           {assertions.length > 0 && <><h3>Source assertions</h3>{assertions.map((judgment, index) => <div className="viewer-judgment" key={index}><strong>{judgment.expectation}</strong><span className={`result ${judgment.state}`}>{judgment.state}</span><p>{judgment.reasoning}</p></div>)}</>}

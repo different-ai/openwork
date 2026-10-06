@@ -36,6 +36,38 @@ async function readDesignNotes(directory: string, gitSha: string): Promise<Recor
   }
 }
 
+/** One design note as the PR's Design review check shows it: the note plus where it was found. */
+export interface DesignDigestNote extends ReviewDesignNote {
+  spec: string | null;
+  step: string;
+}
+
+/**
+ * Every design note across the published runs, flattened for the PR. Same
+ * rules as the report: a missing, malformed or other-commit file adds nothing.
+ */
+export async function designDigest(testRunDirs: string[]): Promise<{ reviewed: number; notes: DesignDigestNote[] }> {
+  let reviewed = 0;
+  const notes: DesignDigestNote[] = [];
+  for (const directory of [...new Set(testRunDirs)]) {
+    const stored = await readTestRunDirectory(directory);
+    if (!stored?.testRun.gitSha) continue;
+    try {
+      const parsed = designReviewFileSchema.safeParse(JSON.parse((await regularFile(join(directory, "design-review.json"))).toString("utf8")));
+      if (!parsed.success || (parsed.data.gitSha && parsed.data.gitSha.toLowerCase() !== stored.testRun.gitSha.toLowerCase())) continue;
+      reviewed += 1;
+      const captions = new Map(stored.testRun.artifacts.map((artifact) => [artifact.fileName, artifact.caption]));
+      for (const [fileName, entries] of Object.entries(parsed.data.notes)) {
+        const step = parsed.data.screens?.[fileName]?.caption ?? captions.get(fileName) ?? fileName;
+        for (const note of entries) notes.push({ ...note, spec: parsed.data.specFile ?? stored.testRun.specFile ?? null, step });
+      }
+    } catch {
+      // No design review for this run; publishing the evidence never depends on it.
+    }
+  }
+  return { reviewed, notes };
+}
+
 export async function assembleReview(options: {
   testRunDirs: string[];
   docShots?: string[];

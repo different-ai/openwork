@@ -29,11 +29,23 @@ pnpm --dir evals design:review -- --test-run latest --no-vision
 It writes `design-review.json` beside `test-run.json` and prints one line per
 note. Fix `medium` notes or say in the PR why the screen is right as it is.
 
+## For agents
+
+Everything a person sees in the review app is also on the PR, where agents
+already look. The **Design review** check (neutral when there are notes, never
+required) lists each note with its rule, the spec step that took the
+screenshot, where in the code to look (the DOM hook and class list of the
+boxes involved) and the command that reproduces it, plus the same notes as
+JSON. `pnpm --dir evals design:review -- --test-run latest --json` gives the
+same entries locally. The `fix-design-notes` skill is the loop: read the
+check, reproduce, fix, re-run, push.
+
 ## In CI
 
 The trusted `judge-vision` job in `pr-proof.yml` runs
 `evals/scripts/design-review-journeys.mjs` after judging screenshot claims.
-Notes go to the job summary and into the proof record; the review report shows
-them on each screenshot (count in the gallery, outlined regions and the notes
-in the viewer), and a manual `--publish` evidence comment counts them. The step is
+Notes go to the job summary and into the proof record. The trusted publisher
+turns them into the PR's Design review check and one line on the evidence
+card; the review report shows them on each screenshot (count in the gallery,
+outlined regions, notes and code hooks in the viewer). The step is
 `continue-on-error`: a finding or a provider error never fails the job.

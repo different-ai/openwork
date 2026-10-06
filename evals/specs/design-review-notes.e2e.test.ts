@@ -35,11 +35,13 @@ test("a reviewer sees what is off in a PR screenshot before merging, and a clean
     );
   });
 
-  await step("after: opening the screenshot outlines the hole and names the rule and the fix", async () => {
+  await step("after: opening the screenshot outlines the hole and names the rule, the fix and where in the code to look", async () => {
     await user.click({ role: "link", label: `Inspect ${apart.title}` });
     await user.see({ role: "heading", text: "Design notes" });
     await user.see({ text: "Columns drift away from their rows" });
     await user.see({ text: "layout.split-row" });
+    // The note says where in the code to look: the rows' own data hook.
+    await user.see({ text: '[data-library-row="docs-helper"]' });
     const regions = await probe.eventually(async () => (await probe.dom(".design-region.medium")).elements, {
       within: 5_000, label: "the hole is outlined on the screenshot", until: (elements) => elements.length === 1 && (elements[0]?.rect.width ?? 0) > 40,
     });

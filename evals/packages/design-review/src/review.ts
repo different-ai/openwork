@@ -2,8 +2,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { layoutFileName, parseLayoutSnapshot, type LayoutSnapshot } from "./layout.ts";
 import { critiqueScreenshot, loadDesignRubric, type AskVision, type DesignRubric } from "./critique.ts";
-import { checkLayout } from "./geometry.ts";
-import { DESIGN_REVIEW_FILE, type DesignNote, type DesignReviewFile } from "./notes.ts";
+import { checkLayout, hooksOf } from "./geometry.ts";
+import { DESIGN_REVIEW_FILE, reproCommand, type DesignNote, type DesignReviewFile } from "./notes.ts";
 
 export interface ReviewDesignOptions {
   /** The judged pass: a provider and model. Without it only the measured rules run. */
@@ -93,6 +93,22 @@ function restatesMeasured(note: DesignNote, measured: DesignNote[]): boolean {
       || quoted(entry.detail).some((text) => own.some((value) => value.startsWith(text) || text.startsWith(value)))));
 }
 
+/** Hooks for a judged note: the boxes whose centre falls inside its region. */
+function withHooks(note: DesignNote, layout: LayoutSnapshot | null): DesignNote {
+  if (!note.region || !layout) return note;
+  const { width, height } = layout.viewport;
+  const left = note.region.x * width;
+  const top = note.region.y * height;
+  const right = left + note.region.width * width;
+  const bottom = top + note.region.height * height;
+  const inside = layout.boxes.filter((box) => {
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    return x >= left && x <= right && y >= top && y <= bottom;
+  });
+  return { ...note, ...hooksOf(inside) };
+}
+
 /**
  * A judged note pointing inside an image on screen (a screenshot shown in the
  * review app, an artifact preview) is about what the image depicts, not about
@@ -152,8 +168,10 @@ export async function reviewTestRunDesign(testRunDir: string, options: ReviewDes
     ? { ...options.vision, rubric: options.rubric ?? await loadDesignRubric() }
     : null;
   const notes: Record<string, DesignNote[]> = {};
+  const screens: Record<string, { caption: string; route: string }> = {};
   const errors: string[] = [];
   for (const shot of screenshots(value)) {
+    screens[shot.fileName] = { caption: shot.caption, route: shot.route };
     const layout = await readLayout(testRunDir, shot.fileName);
     const measured = layout ? checkLayout(layout) : [];
     let judged: DesignNote[] = [];
@@ -169,7 +187,9 @@ export async function reviewTestRunDesign(testRunDir: string, options: ReviewDes
         errors.push(`${shot.caption}: ${errorMessage(error)}`);
       }
     }
-    notes[shot.fileName] = [...measured, ...judged.filter((note) => !note.rule.startsWith("layout.") && !restatesMeasured(note, measured) && !insideImage(note, layout))]
+    notes[shot.fileName] = [...measured, ...judged
+      .filter((note) => !note.rule.startsWith("layout.") && !restatesMeasured(note, measured) && !insideImage(note, layout))
+      .map((note) => withHooks(note, layout))]
       .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
   }
   collapseRepeats(notes);
@@ -179,6 +199,8 @@ export async function reviewTestRunDesign(testRunDir: string, options: ReviewDes
     reviewedAt: new Date().toISOString(),
     model: vision?.model ?? null,
     rubric: vision?.rubric.hash ?? null,
+    specFile: typeof value.specFile === "string" ? value.specFile : null,
+    screens,
     notes,
     errors,
   };
@@ -194,9 +216,34 @@ export function renderDesignReview(name: string, review: DesignReviewFile): stri
   lines.push(`${total} design ${total === 1 ? "note" : "notes"} on ${entries.length} ${entries.length === 1 ? "screenshot" : "screenshots"}${review.model ? ` (layout rules + ${review.model}, rubric ${review.rubric})` : " (layout rules only)"}.`);
   for (const [fileName, notes] of entries) {
     if (notes.length === 0) continue;
-    lines.push("", `**${fileName}**`);
-    for (const note of notes) lines.push(`- ${note.severity} \`${note.rule}\` ${note.title}: ${note.detail}`);
+    lines.push("", `**${review.screens[fileName]?.caption ?? fileName}** (${fileName})`);
+    for (const note of notes) {
+      lines.push(`- ${note.severity} \`${note.rule}\` ${note.title}: ${note.detail}`);
+      const hooks = [...(note.anchors ?? []), ...(note.classes ?? []).map((value) => `class "${value}"`)];
+      if (hooks.length) lines.push(`  where: ${hooks.join(" · ")}`);
+    }
   }
+  if (total > 0) lines.push("", `Reproduce: ${reproCommand(review.specFile)}`);
   for (const error of review.errors) lines.push(`- Not reviewed: ${error}`);
   return `${lines.join("\n")}\n`;
+}
+
+/** One flat entry per note with everything an agent needs to find and fix it. */
+export interface AgentDesignNote extends DesignNote {
+  screenshot: string;
+  step: string;
+  route: string;
+  spec: string | null;
+  reproduce: string;
+}
+
+export function agentDesignNotes(review: DesignReviewFile): AgentDesignNote[] {
+  return Object.entries(review.notes).flatMap(([fileName, notes]) => notes.map((note) => ({
+    ...note,
+    screenshot: fileName,
+    step: review.screens[fileName]?.caption ?? fileName,
+    route: review.screens[fileName]?.route ?? "",
+    spec: review.specFile,
+    reproduce: reproCommand(review.specFile),
+  })));
 }

@@ -27,6 +27,13 @@ export interface LayoutBox {
   disabled: boolean;
   /** The text is cut by an overflow container (intentional truncation). */
   clipped: boolean;
+  /**
+   * Nearest stable hook in the DOM, as a selector an agent can grep for:
+   * `[data-library-row="docs-helper"]`, `[aria-label="More for Slack"]`, or "".
+   */
+  anchor: string;
+  /** The text element's own class list (first 160 characters): another grep target. */
+  classes: string;
 }
 
 export interface LayoutRect { x: number; y: number; width: number; height: number }
@@ -111,6 +118,22 @@ export function collectLayout(limit: number): LayoutSnapshot {
     const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
     if (hit && !element.contains(hit) && !hit.contains(element)) continue;
     const control = element.closest("button, a, input, select, textarea, label, [role=button], [role=tab], [role=menuitem], [role=option], [role=switch], [role=checkbox]");
+    // Nearest attribute a person put there on purpose: data-testid first, then
+    // any other data-* that is not UI-library state, then an aria-label.
+    let anchor = "";
+    for (let current: Element | null = element; current && !anchor; current = current.parentElement) {
+      const names = current.getAttributeNames();
+      const chosen = names.includes("data-testid")
+        ? "data-testid"
+        : names.find((name) => name.startsWith("data-")
+          && !/^data-(state|side|align|orientation|disabled|highlighted|open|closed|popup-open|pressed|checked|selected|active|focused|hovered|starting-style|ending-style|instant|base-ui.*|slot|radix.*|headlessui.*)$/.test(name));
+      if (chosen) {
+        const value = (current.getAttribute(chosen) ?? "").slice(0, 60);
+        anchor = value ? `[${chosen}="${value}"]` : `[${chosen}]`;
+      } else if (current.hasAttribute("aria-label")) {
+        anchor = `[aria-label="${(current.getAttribute("aria-label") ?? "").slice(0, 60)}"]`;
+      }
+    }
     const ink = srgb(style.color);
     if (boxes.length >= limit) {
       truncated = true;
@@ -131,6 +154,8 @@ export function collectLayout(limit: number): LayoutSnapshot {
       controlWidth: control ? round(control.getBoundingClientRect().width) : 0,
       disabled: element.closest("[disabled], [aria-disabled=true]") !== null,
       clipped,
+      anchor,
+      classes: (element.getAttribute("class") ?? "").replace(/\s+/g, " ").trim().slice(0, 160),
     });
   }
   const images: LayoutRect[] = [];
@@ -172,6 +197,8 @@ function parseBox(value: unknown): LayoutBox | null {
     || typeof value.interactive !== "boolean" || typeof value.disabled !== "boolean" || typeof value.clipped !== "boolean"
   ) return null;
   const controlWidth = isFiniteNumber(value.controlWidth) ? value.controlWidth : 0;
+  const anchor = typeof value.anchor === "string" ? value.anchor.slice(0, 200) : "";
+  const classes = typeof value.classes === "string" ? value.classes.slice(0, 160) : "";
   return {
     text: value.text,
     x: value.x,
@@ -187,6 +214,8 @@ function parseBox(value: unknown): LayoutBox | null {
     controlWidth,
     disabled: value.disabled,
     clipped: value.clipped,
+    anchor,
+    classes,
   };
 }
 

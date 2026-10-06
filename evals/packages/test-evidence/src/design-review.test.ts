@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 import type { Surface } from "@openwork/cdp";
 import { layoutFileName, reviewTestRunDesign, type LayoutBox, type LayoutSnapshot } from "@openwork/design-review";
-import { assembleReview, renderReviewComment } from "@openwork/test-artifacts/review";
-import { reviewDesign } from "./design-review.ts";
+import { assembleReview, designDigest, renderReviewComment } from "@openwork/test-artifacts/review";
+import { agentDesignNotes, reviewDesign } from "./design-review.ts";
 import { screenshot } from "./screenshot.ts";
 import { createTestEvidence } from "./test-evidence.ts";
 import { withTestEvidence } from "./ambient.ts";
@@ -14,7 +14,7 @@ function box(text: string, x: number, y: number, width: number, extra: Partial<L
   return {
     text, x, y, width, height: 16, fontSize: 13, fontWeight: 400,
     color: "rgb(17, 24, 39)", background: "rgb(255, 255, 255)", opacity: 1,
-    interactive: false, controlWidth: 0, disabled: false, clipped: false, ...extra,
+    interactive: false, controlWidth: 0, disabled: false, clipped: false, anchor: "", classes: "", ...extra,
   };
 }
 
@@ -110,6 +110,11 @@ test("the design review writes advisory notes per screenshot and the report show
     expect(review).toMatchObject({ model: "unit-model", errors: [] });
     expect(JSON.parse(await readFile(join(outDir, "design-review.json"), "utf8")).notes[fileName ?? ""]).toHaveLength(2);
 
+    // Agents get one flat entry per note: the step that took the screenshot and how to reproduce it.
+    const [forAgent] = agentDesignNotes(review);
+    expect(forAgent).toMatchObject({ rule: "layout.split-row", step: "before: the Library on a wide window", screenshot: fileName });
+    expect(forAgent?.reproduce).toContain("pnpm --dir evals design:review -- --test-run latest --json");
+
     // Layout rules alone run without a model key.
     const measuredOnly = await reviewDesign(outDir, { vision: false });
     expect(measuredOnly.model).toBeNull();
@@ -119,6 +124,9 @@ test("the design review writes advisory notes per screenshot and the report show
     const { report } = await assembleReview({ testRunDirs: [outDir] });
     const image = report.evidence.find((item) => item.kind === "image");
     expect(image?.kind === "image" ? image.designNotes?.map((note) => note.rule) : []).toEqual(["layout.split-row", "OW-LIST-HEADER"]);
+    const digest = await designDigest([outDir]);
+    expect(digest.reviewed).toBe(1);
+    expect(digest.notes.map((note) => `${note.rule} @ ${note.step}`)).toEqual(["layout.split-row @ before: the Library on a wide window", "OW-LIST-HEADER @ before: the Library on a wide window"]);
     const comment = renderReviewComment(report);
     expect(comment).toContain("Selected evidence: **Passed**");
     expect(comment).toContain("Design review (advisory): 2 note(s), 2 worth fixing before merge.");

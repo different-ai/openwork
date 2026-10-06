@@ -33,6 +33,10 @@ export const designNoteSchema = z.object({
   detail: z.string().max(1_000),
   source: z.enum(["layout", "vision"]),
   region: z.object({ x: fraction, y: fraction, width: fraction, height: fraction }).optional(),
+  /** Where in the code: DOM hooks such as `[data-library-row="docs-helper"]`. */
+  anchors: z.array(z.string().max(200)).max(3).optional(),
+  /** Class lists of the boxes involved, as grep targets. */
+  classes: z.array(z.string().max(160)).max(3).optional(),
 });
 export type DesignNote = z.infer<typeof designNoteSchema>;
 /** `design-review.json`, written beside a test run's `test-run.json` by the design review. */
@@ -41,6 +45,8 @@ export const designReviewFileSchema = z.object({
   gitSha: z.string().nullable(),
   model: z.string().nullable(),
   rubric: z.string().nullable(),
+  specFile: z.string().nullable().optional(),
+  screens: z.record(z.string(), z.object({ caption: z.string(), route: z.string() })).optional(),
   notes: z.record(z.string(), z.array(designNoteSchema)),
 });
 

@@ -1,7 +1,7 @@
-import { renderDesignReview, reviewTestRunDesign, type DesignReviewFile } from "@openwork/design-review";
+import { agentDesignNotes, renderDesignReview, reviewTestRunDesign, type DesignReviewFile } from "@openwork/design-review";
 import { defaultVisionAsk, visionModel } from "./validate.ts";
 
-export { renderDesignReview };
+export { agentDesignNotes, renderDesignReview };
 
 /**
  * The design review with this machine's model key (OPENAI_API_KEY, then

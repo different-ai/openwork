@@ -33,6 +33,15 @@ function withRegion(note: Omit<DesignNote, "region">, rect: DesignRegion | undef
   return rect ? { ...note, region: rect } : note;
 }
 
+/** The code hooks of the boxes a note is about, most common first, so an agent can find the component. */
+export function hooksOf(boxes: LayoutBox[]): Pick<DesignNote, "anchors" | "classes"> {
+  const ranked = (values: string[]) => [...values.reduce((counts, value) => counts.set(value, (counts.get(value) ?? 0) + 1), new Map<string, number>())]
+    .sort((a, b) => b[1] - a[1]).map(([value]) => value).slice(0, 3);
+  const anchors = ranked(boxes.map((box) => box.anchor).filter(Boolean));
+  const classes = ranked(boxes.map((box) => box.classes).filter(Boolean));
+  return { ...(anchors.length ? { anchors } : {}), ...(classes.length ? { classes } : {}) };
+}
+
 /** Text drawn on top of other text is never intended. */
 export function checkOverlap(layout: LayoutSnapshot): DesignNote[] {
   const boxes = layout.boxes.filter((box) => box.opacity >= 0.3);
@@ -56,6 +65,7 @@ export function checkOverlap(layout: LayoutSnapshot): DesignNote[] {
     title: "Text overlaps other text",
     detail: `${quote(a.text)} is drawn over ${quote(b.text)}.`,
     source: "layout",
+    ...hooksOf([a, b]),
   }, region(layout, union([a, b]))));
 }
 
@@ -70,6 +80,7 @@ export function checkHorizontalScroll(layout: LayoutSnapshot): DesignNote[] {
     title: "The page is wider than the window",
     detail: `The document is ${Math.round(layout.document.width)}px wide in a ${layout.viewport.width}px window${beyond.length ? `; ${beyond.slice(0, 3).map((box) => quote(box.text)).join(", ")} run past the edge` : ""}.`,
     source: "layout",
+    ...hooksOf(beyond),
   }, region(layout, { x: layout.viewport.width - 24, y: 0, width: 24, height: layout.viewport.height }, 0))];
 }
 
@@ -155,6 +166,7 @@ export function checkSplitRows(layout: LayoutSnapshot): DesignNote[] {
       title: "Columns drift away from their rows",
       detail: `${entries.length} rows leave a ${Math.min(...gaps)}–${Math.max(...gaps)}px hole between the row's text and its other values, e.g. ${quote(before.text)} … ${quote(after.text)}. Keep related values next to each other and let the longest text take the remaining width.`,
       source: "layout",
+      ...hooksOf(entries.flatMap((entry) => entry.row)),
     }, region(layout, union(holes), 0)));
   }
   return notes;
@@ -189,6 +201,7 @@ export function checkLaneDrift(layout: LayoutSnapshot): DesignNote[] {
         title: "A column does not start on one line",
         detail: `In ${rows.length} repeated rows, column ${column + 1} (${quote(cells[0]?.text ?? "")}) starts up to ${starts.toFixed(1)}px apart. Use a fixed-width slot so the lane is straight.`,
         source: "layout",
+        ...hooksOf(cells),
       }, region(layout, union(cells))));
       if (notes.length >= 2) return notes;
     }
@@ -241,6 +254,7 @@ export function checkContrast(layout: LayoutSnapshot): DesignNote[] {
     title: "Text is too faint to read",
     detail: `${faint.length} text ${faint.length === 1 ? "item has" : "items have"} contrast under 3:1, e.g. ${faint.slice(0, 3).map(({ box, ratio }) => `${quote(box.text)} at ${ratio.toFixed(1)}:1`).join(", ")}.`,
     source: "layout",
+    ...hooksOf(faint.map(({ box }) => box)),
   }, region(layout, union(faint.slice(0, 6).map(({ box }) => box))))];
 }
 
@@ -254,6 +268,7 @@ export function checkTinyText(layout: LayoutSnapshot): DesignNote[] {
     title: "Text smaller than 11px",
     detail: `${tiny.length} text ${tiny.length === 1 ? "item is" : "items are"} under 11px, e.g. ${tiny.slice(0, 3).map((box) => `${quote(box.text)} at ${box.fontSize}px`).join(", ")}.`,
     source: "layout",
+    ...hooksOf(tiny),
   }, region(layout, union(tiny.slice(0, 6))))];
 }
 

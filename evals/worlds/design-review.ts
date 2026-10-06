@@ -39,8 +39,8 @@ const rows = [
 function libraryPage(layout: "apart" | "together"): string {
   const cell = (text: string, style: string) => `<span style="${style}">${text}</span>`;
   const row = ([name, kind, from, description]: readonly string[]) => layout === "apart"
-    ? `<div class="row"><i></i>${cell(name ?? "", "width:190px;font-weight:500")}${cell(description ?? "", "flex:1")}${cell(kind ?? "", "width:104px;color:#60646c")}${cell(from ?? "", "width:200px;color:#60646c")}</div>`
-    : `<div class="row"><i></i>${cell(name ?? "", "width:220px;font-weight:500")}${cell(kind ?? "", "width:84px;color:#60646c")}${cell(from ?? "", "width:160px;color:#60646c")}${cell(description ?? "", "flex:1;color:#60646c")}</div>`;
+    ? `<div class="row" data-library-row="${name ?? ""}"><i></i>${cell(name ?? "", "width:190px;font-weight:500")}${cell(description ?? "", "flex:1")}${cell(kind ?? "", "width:104px;color:#60646c")}${cell(from ?? "", "width:200px;color:#60646c")}</div>`
+    : `<div class="row" data-library-row="${name ?? ""}"><i></i>${cell(name ?? "", "width:220px;font-weight:500")}${cell(kind ?? "", "width:84px;color:#60646c")}${cell(from ?? "", "width:160px;color:#60646c")}${cell(description ?? "", "flex:1;color:#60646c")}</div>`;
   return `<!doctype html><html><head><meta charset="utf-8"><style>
 body{margin:0;font:13px/20px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#1c2024;background:#fff}
 main{padding:32px 40px}h1{font-size:16px;margin:0 0 20px;font-weight:600}
