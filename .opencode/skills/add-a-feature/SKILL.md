@@ -39,7 +39,7 @@ exactly one module (`module` in the registry entry, required).
 | Answers | What does this organization have? | Is this new code safe to show yet? |
 | Lifetime | Permanent | Temporary: deleted when the rollout is done |
 | Decided by | Plan or license entitlement, plus the organization's own opt-outs | The platform team: deployment, kill switch, operator lock, per-organization override, everyone on or off |
-| Declared in | `packages/license-contracts/src/module-ids.ts` and `modules.ts` | `packages/features/src/registry.ts` |
+| Declared in | `packages/license-contracts/src/module-id-list.ts` and `modules.ts` | `packages/features/src/registry.ts` |
 | Stored in | License snapshot and `organization.modules` | `feature_rollout` and `organization_feature` |
 
 - **On means both.** A feature is on only when its module is on and its flag

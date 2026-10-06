@@ -22,7 +22,7 @@ import {
   featureAvailableOn,
   featureLockEnvName,
 } from "../packages/features/src/index.ts"
-import { MODULE_IDS } from "../packages/license-contracts/src/module-ids.ts"
+import { MODULE_IDS } from "../packages/license-contracts/src/module-id-list.ts"
 import { checkDockerWorkspacePackages } from "./check-docker-workspace-packages.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
@@ -151,7 +151,7 @@ if (check) {
     if (typeof definition.module !== "string" || definition.module === "") {
       problems.push(`Feature "${key}" needs a module: every feature belongs to exactly one module (see .opencode/skills/add-a-feature).`)
     } else if (!MODULE_IDS.includes(definition.module)) {
-      problems.push(`Feature "${key}" names unknown module "${definition.module}". Use an id from packages/license-contracts/src/module-ids.ts, or add the module there first.`)
+      problems.push(`Feature "${key}" names unknown module "${definition.module}". Use an id from packages/license-contracts/src/module-id-list.ts, or add the module there first.`)
     }
     const since = /^(\d{4})-(\d{2})$/.exec(definition.since)
     if (!since) {
