@@ -182,7 +182,7 @@ const organizationContextResponseSchema = z.object({
     }),
   }).passthrough(),
   deploymentCapabilities: deploymentCapabilitiesSchema,
-  entitlements: z.object({ sso: z.boolean(), desktopPolicies: z.boolean(), orgControls: z.boolean(), analytics: z.boolean(), auditLogs: z.boolean() }),
+  entitlements: z.object({ sso: z.boolean(), desktopPolicies: z.boolean(), orgControls: z.boolean(), auditLogs: z.boolean() }),
 }).passthrough().meta({ ref: "OrganizationContextResponse" })
 
 const userEmailRequiredSchema = z.object({

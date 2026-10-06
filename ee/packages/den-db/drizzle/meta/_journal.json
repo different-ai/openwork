@@ -890,6 +890,13 @@
       "when": 1791239110693,
       "tag": "0127_glossy_joystick",
       "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "5",
+      "when": 1791246307322,
+      "tag": "0128_remove_legacy_analytics",
+      "breakpoints": true
     }
   ]
 }

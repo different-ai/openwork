@@ -1,8 +1,13 @@
 "use client";
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../../_components/ui/tooltip";
-import { formatWeekLabel } from "./trend-chart";
 import { assignSeriesColors } from "./series-colors";
+
+function formatWeekLabel(weekStart: string): string {
+  const date = new Date(`${weekStart}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return weekStart;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+}
 
 type DailyStack = { date: string; total: number | null; values: Record<string, number | null> };
 type StackSeries = { id: string; label: string };

@@ -18,7 +18,7 @@ import {
   type DenOrgContext,
   type DenOrgTeam,
 } from "../../_lib/den-org";
-import { formatUsageCost } from "../_features/analytics/stacked-daily-chart";
+import { formatUsageCost } from "../_features/gateway-usage/stacked-daily-chart";
 import { directoryAccess, directoryLimit, limitSourceLabel, limitSummary, memberSubject, type DirectorySubject } from "./gateway-directory-data";
 import { initials } from "./gateway-spend-breakdown";
 import { useGatewayAccessProviders, type GatewayAccessProvider } from "./gateway-subject-access-data";

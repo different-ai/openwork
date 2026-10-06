@@ -1,5 +1,4 @@
 import type { InferenceUsageBucket } from "../../../_lib/inference-status";
-import { analyticsSurfaceClass } from "./analytics-layout";
 
 type InferenceWindowType = InferenceUsageBucket["windowType"];
 
@@ -42,7 +41,7 @@ export function UsageLimitsCard({ buckets }: { buckets: InferenceUsageBucket[] }
     <div className="grid gap-3.5 sm:grid-cols-3">
       {ordered.map((bucket) => {
         const remaining = computeRemainingPercent(bucket);
-        return <div key={bucket.windowType} className={`${analyticsSurfaceClass} p-5`}>
+        return <div key={bucket.windowType} className={`rounded-2xl border border-[#e3e7ee] bg-white p-5`}>
           <p className="text-xs font-medium text-[#637291]">{WINDOW_LABEL[bucket.windowType]}</p>
           <p className="mt-3 text-[26px] font-semibold tracking-tight text-[#07192C] tabular-nums">{remaining.toFixed(1)}% <span className="text-sm font-normal text-[#637291]">left</span></p>
           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#edf0f5]" role="progressbar" aria-label={`${WINDOW_LABEL[bucket.windowType]} remaining`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={remaining}>

@@ -30,7 +30,6 @@
   "opencode-v2-mcp-hot-reload.e2e.test.ts": 1,
   "opencode-v2-skill-jit.e2e.test.ts": 2,
   "org-api-key-authenticates.e2e.test.ts": 11,
-  "org-model-analytics.e2e.test.ts": 4,
   "parent-child-permission-approval.e2e.test.ts": 2,
   "reauth-popup.e2e.test.ts": 7,
   "reliable-app-recovery.e2e.test.ts": 1,
@@ -47,6 +46,5 @@
   "team-organization-admin-ui.e2e.test.ts": 10,
   "v2-sessionless-first-send.e2e.test.ts": 9,
   "web-workspace-startup.e2e.test.ts": 3,
-  "workflow-run-previews.e2e.test.ts": 3,
   "workspace-storm-auth-coherence.e2e.test.ts": 8
 }

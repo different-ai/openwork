@@ -8,7 +8,6 @@ export type CreateWorkspaceLocalState = {
   pickingFolder: boolean;
   showProgressDetails: boolean;
   now: number;
-  projectLabel: string;
 };
 
 type CreateWorkspaceLocalAction<K extends keyof CreateWorkspaceLocalState = keyof CreateWorkspaceLocalState> =
@@ -23,7 +22,6 @@ export function createInitialWorkspaceLocalState(): CreateWorkspaceLocalState {
     pickingFolder: false,
     showProgressDetails: false,
     now: Date.now(),
-    projectLabel: "",
   };
 }
 
