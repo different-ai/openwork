@@ -1,5 +1,5 @@
 import { readFeatureRollouts } from "@openwork-ee/den-db/organization-features"
-import { FEATURE_KEYS, featureAvailableOn, featureDefinition, featureRollout } from "@openwork/features"
+import { FEATURE_KEYS, featureAvailableOn, resolveFeature } from "@openwork/features"
 import type { Env, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -8,43 +8,38 @@ import { env } from "../../env.js"
 import { publicRoute } from "../../middleware/index.js"
 import { jsonResponse } from "../../openapi.js"
 
-const publicRolloutsResponseSchema = z.object({
+const publicFeaturesResponseSchema = z.object({
   version: z.literal(1),
   deployment: z.enum(["cloud", "self_hosted"]),
-  features: z.record(z.string(), z.object({
-    percent: z.number().int().min(0).max(100),
-    killed: z.boolean(),
-    lock: z.boolean().nullable(),
-  })),
-}).meta({ ref: "PublicFeatureRollouts" })
+  features: z.record(z.string(), z.boolean()),
+}).meta({ ref: "PublicFeatures" })
 
 /**
- * Rollout state of features rolled out to people (`subject: "person"`), for
- * clients that resolve them locally, including desktops that are not signed in
- * and have no organization. Organization features are resolved by den-api and
- * never listed here.
+ * Which features are on for someone without an organization (for example a
+ * desktop that is not signed in): the deployment-wide state after the kill
+ * switch and operator locks. Signed-in clients read `features` from GET /v1/org,
+ * which also applies their organization's overrides.
  */
 export function registerFeatureRoutes<T extends Env>(app: Hono<T>) {
   app.get(
-    "/v1/features/rollouts",
+    "/v1/features",
     describeRoute({
       tags: ["System"],
       security: [],
-      summary: "Get rollout state for features rolled out to people",
-      description: "Percentage, kill switch and operator lock for every person feature that is part of this deployment. Clients bucket by user id when signed in and by install id when signed out, with the same rules as packages/features (resolveFeature). A feature missing here is off.",
+      summary: "Get features for people without an organization",
+      description: "On or off for every feature that is part of this deployment, for someone who is not signed in: the deployment-wide state after the kill switch and operator locks, with no organization overrides. A feature missing here is off.",
       responses: {
-        200: jsonResponse("Rollout state returned.", publicRolloutsResponseSchema),
+        200: jsonResponse("Features returned.", publicFeaturesResponseSchema),
       },
     }),
     publicRoute,
     async (c) => {
       c.header("Cache-Control", "public, max-age=60, stale-if-error=86400")
       const rollouts = await readFeatureRollouts(db)
-      const features: Record<string, { percent: number; killed: boolean; lock: boolean | null }> = {}
+      const features: Record<string, boolean> = {}
       for (const key of FEATURE_KEYS) {
-        if (featureDefinition(key).subject !== "person" || !featureAvailableOn(key, env.features.deployment)) continue
-        const { percent, killed } = featureRollout(key, rollouts)
-        features[key] = { percent, killed, lock: env.features.locks[key] ?? null }
+        if (!featureAvailableOn(key, env.features.deployment)) continue
+        features[key] = resolveFeature(key, { ...env.features, rollouts, overrides: {} }).enabled
       }
       return c.json({ version: 1 as const, deployment: env.features.deployment, features })
     },

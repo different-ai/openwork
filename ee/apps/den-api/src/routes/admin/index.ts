@@ -143,8 +143,8 @@ const adminOrganizationCapabilitiesSchema = z.object({
 
 const adminFeatureStateSchema = z.object({
   enabled: z.boolean(),
-  source: z.enum(["unavailable", "killed", "lock", "override", "rollout"]),
-  percent: z.number().int().min(0).max(100),
+  source: z.enum(["unavailable", "killed", "lock", "override", "everyone"]),
+  everyone: z.boolean(),
   killed: z.boolean(),
   lock: z.boolean().nullable(),
   override: z.boolean().nullable(),
@@ -152,7 +152,7 @@ const adminFeatureStateSchema = z.object({
 })
 
 const adminFeatureStatesSchema = z.object(mapFeatures(() => adminFeatureStateSchema)).meta({
-  description: "Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or percentage rollout), and whether an organization override would take effect.",
+  description: "Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.",
 })
 
 const adminFeatureSchema = z.object({
@@ -160,19 +160,18 @@ const adminFeatureSchema = z.object({
   label: z.string(),
   description: z.string(),
   since: z.string(),
-  subject: z.enum(["organization", "person"]),
   deployments: z.array(z.enum(["cloud", "self_hosted"])),
-  start: z.number().int().min(0).max(100),
+  default: z.boolean(),
   available: z.boolean(),
-  percent: z.number().int().min(0).max(100),
+  enabled: z.boolean(),
   killed: z.boolean(),
   lock: z.boolean().nullable(),
 }).meta({ ref: "AdminFeature" })
 
 const updateFeatureRolloutSchema = z.object({
-  percent: z.number().int().min(0).max(100).optional(),
+  enabled: z.boolean().optional(),
   killed: z.boolean().optional(),
-}).strict().refine((value) => value.percent !== undefined || value.killed !== undefined, { message: "Set percent, killed, or both." })
+}).strict().refine((value) => value.enabled !== undefined || value.killed !== undefined, { message: "Set enabled, killed, or both." })
 
 const createAdminSchema = z.object({
   email: z.string().trim().max(255).email().transform((email) => email.toLowerCase()),
@@ -336,15 +335,14 @@ function parseBooleanQuery(value: string | undefined): boolean {
 
 type DescribedFeatures = Record<FeatureKey, ResolvedFeature>
 
-function describeOrganization(organizationId: string, rollouts: FeatureRollouts, overrides: FeatureOverrides): DescribedFeatures {
-  // Person features have no single person here; they show the organization-wide answer.
-  return describeFeatures({ rollouts, overrides, subjects: { organizationId }, environment: env.features })
+function describeOrganization(rollouts: FeatureRollouts, overrides: FeatureOverrides): DescribedFeatures {
+  return describeFeatures({ rollouts, overrides, environment: env.features })
 }
 
 function readAdminFeatureStates(described: DescribedFeatures): z.infer<typeof adminFeatureStatesSchema> {
   return mapFeatures((key) => {
-    const { enabled, source, percent, killed, lock, override, overrideApplies } = described[key]
-    return { enabled, source, percent, killed, lock, override, overrideApplies }
+    const { enabled, source, everyone, killed, lock, override, overrideApplies } = described[key]
+    return { enabled, source, everyone, killed, lock, override, overrideApplies }
   })
 }
 
@@ -354,17 +352,16 @@ function readAdminVisibleOrganizationCapabilities(described: DescribedFeatures):
 
 function readAdminFeature(key: FeatureKey, rollouts: FeatureRollouts): z.infer<typeof adminFeatureSchema> {
   const definition = featureDefinition(key)
-  const { percent, killed } = featureRollout(key, rollouts)
+  const { enabled, killed } = featureRollout(key, rollouts)
   return {
     key,
     label: definition.label,
     description: definition.description,
     since: definition.since,
-    subject: definition.subject,
     deployments: [...definition.deployments],
-    start: definition.start,
+    default: definition.default,
     available: featureAvailableOn(key, env.features.deployment),
-    percent,
+    enabled,
     killed,
     lock: env.features.locks[key] ?? null,
   }
@@ -1000,7 +997,7 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
   const webSubscriptionByOrg = new Map(webSubscriptionRows.map((row) => [row.organizationId, row]))
 
   return rows.map((entry) => {
-    const described = describeOrganization(entry.id, featureRollouts, featureOverridesByOrg.get(entry.id) ?? {})
+    const described = describeOrganization(featureRollouts, featureOverridesByOrg.get(entry.id) ?? {})
     const metadata = normalizeOrganizationMetadata(entry.metadata).metadata
     const seatLimit = metadata.limits.members ?? DEFAULT_ORGANIZATION_LIMITS.members
     const seatCounts = calculateOrganizationSeatBillingCounts({ memberCount: memberCountByOrg.get(entry.id) ?? 0, metadata })
@@ -2023,7 +2020,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       }
 
       const [overrides, rollouts] = await Promise.all([readOrganizationFeatureOverrides(db, organization.id), readFeatureRollouts(db)])
-      const described = describeOrganization(organization.id, rollouts, overrides)
+      const described = describeOrganization(rollouts, overrides)
       return c.json({ capabilities: readAdminVisibleOrganizationCapabilities(described), featureStates: readAdminFeatureStates(described) })
     },
   )
@@ -2080,7 +2077,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         setByUserId: c.get("user")?.id ?? null,
       })
 
-      const described = describeOrganization(organizationId, await readFeatureRollouts(db), overrides)
+      const described = describeOrganization(await readFeatureRollouts(db), overrides)
       return c.json({ ok: true, organization: { id: organizationId }, capabilities: readAdminVisibleOrganizationCapabilities(described), featureStates: readAdminFeatureStates(described) })
     },
   )
@@ -2089,8 +2086,8 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     "/v1/admin/features",
     describeRoute({
       tags: ["Admin"],
-      summary: "List features and their rollout",
-      description: "Every feature in the registry (packages/features/src/registry.ts) with what is fixed in code (subject, deployments, starting percentage) and this deployment's rollout: percentage, kill switch, and any operator lock.",
+      summary: "List features and their state",
+      description: "Every feature in the registry (packages/features/src/registry.ts) with what is fixed in code (deployments, default) and this deployment's state: on or off for everyone, kill switch, and any operator lock.",
       responses: {
         200: jsonResponse("Features returned.", z.object({ deployment: z.enum(["cloud", "self_hosted"]), features: z.array(adminFeatureSchema) })),
         ...adminRouteErrors,
@@ -2107,10 +2104,10 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     "/v1/admin/features/:key",
     describeRoute({
       tags: ["Admin"],
-      summary: "Change a feature's rollout",
-      description: "Sets the percentage (0–100) of the feature's subject that has it, and/or the kill switch, for this deployment. The kill switch turns the feature off everywhere, outranking operator locks and organization overrides; it is the way to revert. Lowering the percentage turns it off for the subjects added last.",
+      summary: "Change a feature's state",
+      description: "Turns the feature on or off for everyone on this deployment (organization overrides still apply), and/or sets the kill switch. The kill switch turns the feature off everywhere, outranking operator locks and organization overrides; it is the way to revert.",
       responses: {
-        200: jsonResponse("Rollout updated.", z.object({ ok: z.literal(true), feature: adminFeatureSchema })),
+        200: jsonResponse("Feature updated.", z.object({ ok: z.literal(true), feature: adminFeatureSchema })),
         400: jsonResponse("The feature or body was invalid.", adminRequestErrorSchema),
         ...adminRouteErrors,
       },
@@ -2121,16 +2118,16 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       if (!key.success) return c.json({ error: "invalid_request", message: "Unknown feature." }, 400)
       const body = updateFeatureRolloutSchema.safeParse(await c.req.json().catch(() => null))
       if (!body.success) {
-        return c.json({ error: "invalid_request", message: body.error.issues[0]?.message ?? "Invalid rollout request." }, 400)
+        return c.json({ error: "invalid_request", message: body.error.issues[0]?.message ?? "Invalid feature request." }, 400)
       }
       if (!featureAvailableOn(key.data, env.features.deployment)) {
         return c.json({ error: "invalid_request", message: `${key.data} is not part of this deployment.` }, 400)
       }
       const rollouts = await setFeatureRollout(db, {
         key: key.data,
-        percent: body.data.percent,
+        enabled: body.data.enabled,
         killed: body.data.killed,
-        startPercent: featureDefinition(key.data).start,
+        defaultEnabled: featureDefinition(key.data).default,
         updatedByUserId: c.get("user")?.id ?? null,
       })
       return c.json({ ok: true, feature: readAdminFeature(key.data, rollouts) })

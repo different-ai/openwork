@@ -22,7 +22,7 @@ export async function readModelsAnalyticsSettings(db: Db, orgId: ModelsAnalytics
   const metadata = record(org?.metadata)
   // Shared by den-api and the gateway, which receive the same DEN_DEPLOYMENT /
   // DEN_FEATURE_* configuration; den-api validates it at boot.
-  const available = org ? (await readFeatures(db, { organizationId: orgId }, parseFeatureEnvironment(process.env))).modelsAnalytics : false
+  const available = org ? (await readFeatures(db, orgId, parseFeatureEnvironment(process.env))).modelsAnalytics : false
   const subscribed = subscription?.status === "active" || subscription?.status === "trialing"
   const modelsEnabled = record(metadata.inference).enabled === true
   // Unreleased organizations do not touch the new tables. This also keeps

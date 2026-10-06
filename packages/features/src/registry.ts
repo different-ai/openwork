@@ -3,21 +3,22 @@
  *
  * This is the file you edit to add a feature. Read
  * .opencode/skills/add-a-feature/SKILL.md first. Every new user-visible
- * feature, or a change existing users would notice, starts here at 0% before
+ * feature, or a change existing users would notice, starts here, off, before
  * any feature code is written.
  *
  * A feature is rolled out, and reverted, along several dimensions:
  *
  *   deployments   which products it exists on (OpenWork Cloud, self-hosted)
- *   percentage    how much of its subject has it, from 0% (dark) to 100% (everyone),
- *                 changed in /admin without a deploy
+ *   everyone      on or off for everyone on the deployment, changed in /admin
+ *                 without a deploy
  *   organization  platform admins turn it on or off for one organization in /admin
  *   operator      a self-hosted operator locks it on or off for the whole install (Helm)
  *   kill switch   turns it off everywhere at once, outranking everything above
  *
- * The entry only declares what is fixed in code. Percentages, kill switches
- * and per-organization overrides live in the database of each deployment, and
- * start from `start`. Run `pnpm features:sync` after editing this file.
+ * The entry only declares what is fixed in code. The on/off state, kill
+ * switches and per-organization overrides live in the database of each
+ * deployment, and start from `default`. Run `pnpm features:sync` after
+ * editing this file.
  *
  * Keys are permanent: the same name is the Helm values key, the
  * DEN_FEATURE_<KEY> environment variable, the API field, and the stored rows.
@@ -26,16 +27,6 @@
 
 export type FeatureDeployment = "cloud" | "self_hosted"
 
-/**
- * What the percentage counts.
- *
- * - "organization": something that only exists with Den (dashboards, Connect,
- *   audit logs). People who are not signed in never get it.
- * - "person": anything in the app itself. Buckets by user id when signed in and
- *   by install id when signed out, so people without an organization are included.
- */
-export type FeatureSubject = "organization" | "person"
-
 export type FeatureDefinition = {
   /** Short name shown to platform admins and operators. */
   label: string
@@ -43,11 +34,10 @@ export type FeatureDefinition = {
   description: string
   /** Year and month the entry was added or last changed, e.g. "2026-10". */
   since: `${number}-${number}`
-  subject: FeatureSubject
   /** Products it exists on. Leave one out on purpose, e.g. ["cloud"] for cloud-only. */
   deployments: readonly FeatureDeployment[]
-  /** Starting percentage on a fresh deployment: 0 for new work, 100 once everyone has it. */
-  start: number
+  /** On or off for everyone on a fresh deployment: false for new work, true once everyone has it. */
+  default: boolean
   /**
    * The switch is part of the product (e.g. platform admins turn Connect off for
    * one organization), not a temporary rollout. Rollouts are deleted once done;
@@ -67,73 +57,64 @@ export const FEATURES = defineFeatures({
     label: "Install links",
     description: "Workspace admins can create desktop install links for their organization.",
     since: "2026-10",
-    subject: "organization",
     deployments: everywhere,
-    start: 100,
+    default: true,
   },
   mcpConnections: {
     label: "OpenWork Connect",
     description: "Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab.",
     since: "2026-10",
-    subject: "organization",
     deployments: everywhere,
-    start: 100,
+    default: true,
   },
   modelsAnalytics: {
     label: "OpenWork Models task analytics",
     description: "Organization admins can opt in to task analytics for OpenWork Models.",
     since: "2026-10",
-    subject: "organization",
     deployments: everywhere,
-    start: 0,
+    default: false,
   },
   auditLogs: {
     label: "Audit logs",
     description: "Organization admins can read and configure audit logs. Capture still needs an audit entitlement.",
     since: "2026-10",
-    subject: "organization",
     deployments: everywhere,
-    start: 0,
+    default: false,
   },
   orgManagedDashboards: {
     label: "Dashboards",
     description: "Organization admins publish dashboards to members in Den and the desktop app.",
     since: "2026-10",
-    subject: "organization",
     deployments: everywhere,
-    start: 0,
+    default: false,
   },
   slackAssistant: {
     label: "Slack Assistant",
     description: "Answers Slack mentions and DMs for the organization after the Slack connector is set up.",
     since: "2026-10",
-    subject: "organization",
     deployments: everywhere,
-    start: 0,
+    default: false,
   },
   slackAssistantHeadless: {
     label: "Slack Assistant: headless runtime",
     description: "Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner.",
     since: "2026-10",
-    subject: "organization",
     deployments: everywhere,
-    start: 0,
+    default: false,
   },
   headlessAutomations: {
     label: "Cloud Automations: headless runtime",
     description: "Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it.",
     since: "2026-10",
-    subject: "organization",
     deployments: everywhere,
-    start: 0,
+    default: false,
   },
   workbot: {
     label: "Workbot",
     description: "Members can use Workbot. Needs the deployment's Workbot app.",
     since: "2026-10",
-    subject: "organization",
     deployments: everywhere,
-    start: 0,
+    default: false,
   },
 })
 

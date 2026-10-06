@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "1b9c5895-3730-4548-a4b5-02f22ebe391c",
+  "id": "4a063f6b-ca91-4c0b-a2ae-fdc24e9714c3",
   "prevId": "c5692a38-5f18-4465-96ca-5c97046e67ee",
   "tables": {
     "account": {
@@ -8848,9 +8848,9 @@
           "notNull": true,
           "autoincrement": false
         },
-        "percent": {
-          "name": "percent",
-          "type": "int",
+        "enabled": {
+          "name": "enabled",
+          "type": "boolean",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false

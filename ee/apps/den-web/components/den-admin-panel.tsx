@@ -130,13 +130,14 @@ type AdminUser = {
   organizations: AdminUserOrganization[];
 };
 
-const ADMIN_FEATURE_SOURCES = ["unavailable", "killed", "lock", "override", "rollout"] as const;
+const ADMIN_FEATURE_SOURCES = ["unavailable", "killed", "lock", "override", "everyone"] as const;
 
 /** One registry feature for one organization, as /v1/admin reports it (featureStates). */
 type AdminFeatureState = {
   enabled: boolean;
   source: (typeof ADMIN_FEATURE_SOURCES)[number];
-  percent: number;
+  /** The deployment-wide on/off state. */
+  everyone: boolean;
   killed: boolean;
   override: boolean | null;
   /** An organization override would take effect (not killed or locked). */
@@ -146,7 +147,7 @@ type AdminFeatureState = {
 type AdminOrganizationFeatures = Record<FeatureKey, AdminFeatureState>;
 
 function parseAdminFeatureSource(value: unknown): AdminFeatureState["source"] {
-  return ADMIN_FEATURE_SOURCES.find((source) => source === value) ?? "rollout";
+  return ADMIN_FEATURE_SOURCES.find((source) => source === value) ?? "everyone";
 }
 
 /** Server featureStates, falling back to the effective capabilities map from older servers. */
@@ -157,12 +158,12 @@ function parseAdminOrganizationFeatures(featureStates: unknown, capabilities: un
     const state = states[key];
     if (!isRecord(state)) {
       const enabled = effective[key] === true;
-      return { enabled, source: "rollout", percent: enabled ? 100 : 0, killed: false, override: null, overrideApplies: true };
+      return { enabled, source: "everyone", everyone: enabled, killed: false, override: null, overrideApplies: true };
     }
     return {
       enabled: state.enabled === true,
       source: parseAdminFeatureSource(state.source),
-      percent: typeof state.percent === "number" ? state.percent : 0,
+      everyone: state.everyone === true,
       killed: state.killed === true,
       override: typeof state.override === "boolean" ? state.override : null,
       overrideApplies: state.overrideApplies === true,
@@ -172,10 +173,8 @@ function parseAdminOrganizationFeatures(featureStates: unknown, capabilities: un
 
 function describeAdminFeatureSource(state: AdminFeatureState): string {
   switch (state.source) {
-    case "rollout":
-      if (state.percent >= 100) return "On for everyone";
-      if (state.percent <= 0) return "Not rolled out";
-      return `${state.enabled ? "In" : "Not in"} the ${state.percent}% rollout`;
+    case "everyone":
+      return state.everyone ? "On for everyone" : "Off for everyone";
     case "override":
       return "Set for this organization";
     case "lock":
@@ -874,7 +873,7 @@ function buildFixtureOrganization(index: number): AdminOrganization {
     billableSeatCount: target ? 103 : 0,
     features: mapFeatures((key) => {
       const enabled = target && (key === "installLinks" || key === "mcpConnections");
-      return { enabled, source: "rollout", percent: enabled ? 100 : 0, killed: false, override: null, overrideApplies: true };
+      return { enabled, source: "everyone", everyone: enabled, killed: false, override: null, overrideApplies: true };
     }),
     openworkWebAccess: {
       hasAccess: target,
@@ -2167,7 +2166,7 @@ export function DenAdminPanel() {
     });
   }, []);
 
-  // value: true/false sets an override for this organization; null makes it follow the rollout again.
+  // value: true/false sets an override for this organization; null makes it follow the deployment-wide state again.
   const saveOrganizationFeature = useCallback(async (org: AdminOrganization, key: FeatureKey, value: boolean | null) => {
     const previous = org.features;
     setSavingCapabilityOrgId(org.id);
@@ -2178,10 +2177,9 @@ export function DenAdminPanel() {
       ...features,
       [key]: {
         ...features[key],
-        // Following the rollout again depends on this organization's bucket; the server answer replaces this.
-        enabled: value ?? features[key].enabled,
+        enabled: value ?? features[key].everyone,
         override: value,
-        source: value === null ? "rollout" : "override",
+        source: value === null ? "everyone" : "override",
       },
     }));
 
@@ -2769,7 +2767,7 @@ export function DenAdminPanel() {
                   <div className="mt-4 border-t border-slate-200 pt-4">
                     <div className="flex items-baseline justify-between gap-3">
                       <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Features</p>
-                      <a href="/admin/features" className="text-xs font-medium text-slate-500 underline-offset-2 hover:underline">Rollouts</a>
+                      <a href="/admin/features" className="text-xs font-medium text-slate-500 underline-offset-2 hover:underline">All features</a>
                     </div>
                     {/* Generated from packages/features/src/registry.ts; add features there, not here. */}
                     <ul className="mt-2 grid gap-2">
@@ -2801,7 +2799,7 @@ export function DenAdminPanel() {
                                 onClick={() => void saveOrganizationFeature(org, key, null)}
                                 className="shrink-0 text-xs font-medium text-slate-500 underline-offset-2 hover:underline disabled:opacity-50"
                               >
-                                Follow rollout
+                                Use everyone&apos;s setting
                               </button>
                             ) : null}
                           </li>

@@ -34,7 +34,7 @@ escalate any leak instead of rewriting history.
   100% necessary or instructed.
 * Prefer Tailwind, React, shadcn/ui (Base UI), TanStack Query, Zustand, Zod,
   Drizzle, Better-Auth. Reuse `@/components`; end users are non-technical.
-* New feature or a change users would notice? Declare it at 0% in
+* New feature or a change users would notice? Declare it, off, in
   `packages/features/src/registry.ts` before writing the code, make it safe
   to turn off, then roll it out from `/admin`. Follow
   `.opencode/skills/add-a-feature`.

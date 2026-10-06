@@ -487,7 +487,7 @@ export function registerAdminMcpTools(server: McpServer) {
     "den_set_org_capability",
     {
       description:
-        "Admin write tool: turn one feature on or off for one organization (an organization override, the same switch as the admin panel), e.g. capability='workbot'. enabled=null removes the override so the feature follows its rollout percentage again. The kill switch (den_set_feature_rollout) still outranks it.",
+        "Admin write tool: turn one feature on or off for one organization (an organization override, the same switch as the admin panel), e.g. capability='workbot'. enabled=null removes the override so the feature follows the deployment-wide on/off state again. The kill switch (den_set_feature_rollout) still outranks it.",
       inputSchema: z.object({
         organizationId: z.string().min(1).describe("Organization id, e.g. org_..."),
         capability: featureKeySchema.describe("Feature to set (see packages/features/src/registry.ts)"),
@@ -524,7 +524,6 @@ export function registerAdminMcpTools(server: McpServer) {
             ...env.features,
             rollouts: await readFeatureRollouts(db),
             overrides,
-            subjects: { organizationId: organization.id },
           }).enabled,
         }
       }),
@@ -534,7 +533,7 @@ export function registerAdminMcpTools(server: McpServer) {
     "den_list_features",
     {
       description:
-        "Admin read tool: every feature in the registry with its subject (organization or person), the deployments it exists on, and this deployment's rollout (percentage, kill switch, operator lock).",
+        "Admin read tool: every feature in the registry with the deployments it exists on and this deployment's state (on or off for everyone, kill switch, operator lock).",
       inputSchema: z.object({}),
     },
     async () =>
@@ -547,7 +546,6 @@ export function registerAdminMcpTools(server: McpServer) {
             return {
               key,
               label: definition.label,
-              subject: definition.subject,
               deployments: definition.deployments,
               available: featureAvailableOn(key, env.features.deployment),
               ...featureRollout(key, rollouts),
@@ -562,18 +560,18 @@ export function registerAdminMcpTools(server: McpServer) {
     "den_set_feature_rollout",
     {
       description:
-        "Admin write tool: change a feature's rollout for this whole deployment. percent (0-100) is how much of the feature's subject has it; killed=true turns it off everywhere at once (the revert), outranking operator locks and organization overrides. Raising the percentage only adds subjects.",
+        "Admin write tool: change a feature for this whole deployment. enabled turns it on or off for everyone (organization overrides still apply); killed=true turns it off everywhere at once (the revert), outranking operator locks and organization overrides.",
       inputSchema: z.object({
         feature: featureKeySchema.describe("Feature key (see den_list_features)"),
-        percent: z.number().int().min(0).max(100).optional().describe("0-100"),
+        enabled: z.boolean().optional().describe("true for on for everyone, false for off"),
         killed: z.boolean().optional().describe("true to turn it off everywhere, false to clear the kill switch"),
       }),
     },
-    async ({ feature, percent, killed }) =>
+    async ({ feature, enabled, killed }) =>
       run(async () => {
-        if (percent === undefined && killed === undefined) throw new Error("Set percent, killed, or both.")
+        if (enabled === undefined && killed === undefined) throw new Error("Set enabled, killed, or both.")
         if (!featureAvailableOn(feature, env.features.deployment)) throw new Error(`${feature} is not part of this deployment.`)
-        const rollouts = await setFeatureRollout(db, { key: feature, percent, killed, startPercent: featureDefinition(feature).start })
+        const rollouts = await setFeatureRollout(db, { key: feature, enabled, killed, defaultEnabled: featureDefinition(feature).default })
         return { ok: true, feature, ...featureRollout(feature, rollouts) }
       }),
   )

@@ -303,10 +303,9 @@ helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
 
 OpenWork features are declared once, in `packages/features/src/registry.ts`,
 and rolled out along several dimensions: which products a feature exists on,
-a percentage (0% to 100%), per-organization overrides, and a kill switch.
-Platform admins change the percentage, overrides and kill switch in `/admin`
-without a redeploy. As the operator, you can also lock a feature for the whole
-install under `config.features`:
+on or off for everyone, per-organization overrides, and a kill switch.
+Platform admins change these in `/admin` without a redeploy. As the operator,
+you can also lock a feature for the whole install under `config.features`:
 
 ```yaml
 config:
@@ -315,8 +314,8 @@ config:
     installLinks: "false"          # off for everyone on this install
 ```
 
-- `""` (the default) follows this install's rollout in `/admin`, which starts
-  at the percentage listed below.
+- `""` (the default) follows `/admin`, which starts from the default listed
+  below.
 - `"true"` or `"false"` locks the feature for everyone. `/admin` shows "Set by
   deployment config" for it. The `/admin` kill switch still turns it off.
 
@@ -328,17 +327,17 @@ that isn't listed below fails `helm install` through `values.schema.json`.
 OpenWork Cloud. Don't change it on a customer install.
 
 <!-- BEGIN GENERATED features (pnpm features:sync) -->
-| `config.features.*` | Environment variable | Rollout starts at | What it does |
+| `config.features.*` | Environment variable | Default | What it does |
 | --- | --- | --- | --- |
-| `installLinks` | `DEN_FEATURE_INSTALL_LINKS` | starts at 100% | Workspace admins can create desktop install links for their organization. |
-| `mcpConnections` | `DEN_FEATURE_MCP_CONNECTIONS` | starts at 100% | Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab. |
-| `modelsAnalytics` | `DEN_FEATURE_MODELS_ANALYTICS` | starts at 0% | Organization admins can opt in to task analytics for OpenWork Models. |
-| `auditLogs` | `DEN_FEATURE_AUDIT_LOGS` | starts at 0% | Organization admins can read and configure audit logs. Capture still needs an audit entitlement. |
-| `orgManagedDashboards` | `DEN_FEATURE_ORG_MANAGED_DASHBOARDS` | starts at 0% | Organization admins publish dashboards to members in Den and the desktop app. |
-| `slackAssistant` | `DEN_FEATURE_SLACK_ASSISTANT` | starts at 0% | Answers Slack mentions and DMs for the organization after the Slack connector is set up. |
-| `slackAssistantHeadless` | `DEN_FEATURE_SLACK_ASSISTANT_HEADLESS` | starts at 0% | Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner. |
-| `headlessAutomations` | `DEN_FEATURE_HEADLESS_AUTOMATIONS` | starts at 0% | Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it. |
-| `workbot` | `DEN_FEATURE_WORKBOT` | starts at 0% | Members can use Workbot. Needs the deployment's Workbot app. |
+| `installLinks` | `DEN_FEATURE_INSTALL_LINKS` | default on | Workspace admins can create desktop install links for their organization. |
+| `mcpConnections` | `DEN_FEATURE_MCP_CONNECTIONS` | default on | Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab. |
+| `modelsAnalytics` | `DEN_FEATURE_MODELS_ANALYTICS` | default off | Organization admins can opt in to task analytics for OpenWork Models. |
+| `auditLogs` | `DEN_FEATURE_AUDIT_LOGS` | default off | Organization admins can read and configure audit logs. Capture still needs an audit entitlement. |
+| `orgManagedDashboards` | `DEN_FEATURE_ORG_MANAGED_DASHBOARDS` | default off | Organization admins publish dashboards to members in Den and the desktop app. |
+| `slackAssistant` | `DEN_FEATURE_SLACK_ASSISTANT` | default off | Answers Slack mentions and DMs for the organization after the Slack connector is set up. |
+| `slackAssistantHeadless` | `DEN_FEATURE_SLACK_ASSISTANT_HEADLESS` | default off | Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner. |
+| `headlessAutomations` | `DEN_FEATURE_HEADLESS_AUTOMATIONS` | default off | Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it. |
+| `workbot` | `DEN_FEATURE_WORKBOT` | default off | Members can use Workbot. Needs the deployment's Workbot app. |
 <!-- END GENERATED features -->
 
 The table and the `config.features` block are generated: run `pnpm features:sync`

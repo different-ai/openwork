@@ -40,7 +40,7 @@ const helmKeys = FEATURE_KEYS.filter((key) => featureAvailableOn(key, "self_host
 
 function defaultLabel(key) {
   const scope = featureAvailableOn(key, "self_hosted") ? "" : " (cloud only)"
-  return `starts at ${FEATURES[key].start}%${scope}`
+  return `default ${FEATURES[key].default ? "on" : "off"}${scope}`
 }
 
 function valuesBlock() {
@@ -48,7 +48,7 @@ function valuesBlock() {
   const lines = [
     `  ${BEGIN}`,
     "  # Operator locks for this install. Each key renders DEN_FEATURE_<KEY>.",
-    "  #   \"\"      follow this install's rollout: the percentage and organization overrides set in /admin",
+    "  #   \"\"      follow /admin: on or off for everyone, plus per-organization overrides",
     "  #   \"true\"  on for everyone; /admin shows \"Set by deployment config\"",
     "  #   \"false\" off for everyone; /admin shows \"Set by deployment config\"",
     "  # The /admin kill switch still turns a feature off, even when locked on.",
@@ -107,7 +107,7 @@ function renderReadme(current) {
   const rows = helmKeys.map((key) => `| \`${key}\` | \`${featureLockEnvName(key)}\` | ${defaultLabel(key)} | ${FEATURES[key].description} |`)
   const table = [
     README_BEGIN,
-    "| `config.features.*` | Environment variable | Rollout starts at | What it does |",
+    "| `config.features.*` | Environment variable | Default | What it does |",
     "| --- | --- | --- | --- |",
     ...rows,
     README_END,
@@ -150,9 +150,6 @@ if (check) {
     if (!since) {
       problems.push(`Feature "${key}" since must be "YYYY-MM".`)
       continue
-    }
-    if (!Number.isInteger(definition.start) || definition.start < 0 || definition.start > 100) {
-      problems.push(`Feature "${key}" start must be a whole percentage from 0 to 100.`)
     }
     if (definition.deployments.length === 0) problems.push(`Feature "${key}" must exist on at least one deployment.`)
     const ageMonths = (now.getUTCFullYear() - Number(since[1])) * 12 + (now.getUTCMonth() + 1 - Number(since[2]))

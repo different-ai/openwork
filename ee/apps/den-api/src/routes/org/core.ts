@@ -686,7 +686,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
 
       const [currentOrganization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, payload.organization.id)).limit(1)
       if (!currentOrganization) return c.json({ error: "organization_not_found" }, 404)
-      const features = await getOrganizationFeatures(payload.organization.id, { userId: payload.currentMember.userId })
+      const features = await getOrganizationFeatures(payload.organization.id)
       const owner = payload.members.find((member: typeof payload.members[number]) => member.isOwner) ?? null
       // Cloud is entitled by OpenWork Web access (paid subscription or the
       // platform-admin complimentary grant) on hosted deployments; there is no

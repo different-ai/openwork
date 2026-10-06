@@ -289,7 +289,7 @@ import type {
   GetV1DesktopPoliciesResponses,
   GetV1DiagnosticsEgressErrors,
   GetV1DiagnosticsEgressResponses,
-  GetV1FeaturesRolloutsResponses,
+  GetV1FeaturesResponses,
   GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsErrors,
   GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses,
   GetV1GatewayUsageLimitPoliciesErrors,
@@ -1284,9 +1284,9 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * List features and their rollout
+   * List features and their state
    *
-   * Every feature in the registry (packages/features/src/registry.ts) with what is fixed in code (subject, deployments, starting percentage) and this deployment's rollout: percentage, kill switch, and any operator lock.
+   * Every feature in the registry (packages/features/src/registry.ts) with what is fixed in code (deployments, default) and this deployment's state: on or off for everyone, kill switch, and any operator lock.
    */
   public getV1AdminFeatures<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1AdminFeaturesResponses, GetV1AdminFeaturesErrors, ThrowOnError>({
@@ -1296,9 +1296,9 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Change a feature's rollout
+   * Change a feature's state
    *
-   * Sets the percentage (0–100) of the feature's subject that has it, and/or the kill switch, for this deployment. The kill switch turns the feature off everywhere, outranking operator locks and organization overrides; it is the way to revert. Lowering the percentage turns it off for the subjects added last.
+   * Turns the feature on or off for everyone on this deployment (organization overrides still apply), and/or sets the kill switch. The kill switch turns the feature off everywhere, outranking operator locks and organization overrides; it is the way to revert.
    */
   public putV1AdminFeaturesByKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -14174,13 +14174,13 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Get rollout state for features rolled out to people
+   * Get features for people without an organization
    *
-   * Percentage, kill switch and operator lock for every person feature that is part of this deployment. Clients bucket by user id when signed in and by install id when signed out, with the same rules as packages/features (resolveFeature). A feature missing here is off.
+   * On or off for every feature that is part of this deployment, for someone who is not signed in: the deployment-wide state after the kill switch and operator locks, with no organization overrides. A feature missing here is off.
    */
-  public getV1FeaturesRollouts<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetV1FeaturesRolloutsResponses, unknown, ThrowOnError>({
-      url: "/v1/features/rollouts",
+  public getV1Features<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetV1FeaturesResponses, unknown, ThrowOnError>({
+      url: "/v1/features",
       ...options,
     });
   }

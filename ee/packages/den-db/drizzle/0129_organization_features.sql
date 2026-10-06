@@ -1,6 +1,6 @@
 CREATE TABLE `feature_rollout` (
 	`feature_key` varchar(64) NOT NULL,
-	`percent` int NOT NULL,
+	`enabled` boolean NOT NULL,
 	`killed` boolean NOT NULL DEFAULT false,
 	`updated_by_user_id` varchar(64),
 	`created_at` timestamp(3) NOT NULL DEFAULT (now()),

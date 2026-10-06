@@ -1,12 +1,12 @@
 /**
- * How a feature from ./registry.ts resolves for one subject. One function for
+ * How a feature from ./registry.ts resolves. One function for
  * every feature and every place it is checked (den-api, Den web, the desktop):
  *
- *   1. not part of this deployment      → off   ("unavailable")
- *   2. kill switch                      → off   ("killed")       the revert, no deploy
+ *   1. not part of this deployment      → off    ("unavailable")
+ *   2. kill switch                      → off    ("killed")      the revert, no deploy
  *   3. operator lock (DEN_FEATURE_*)    → as set ("lock")
  *   4. organization override (/admin)   → as set ("override")
- *   5. percentage of the subject        → in or out ("rollout")   0% dark … 100% everyone
+ *   5. on or off for everyone (/admin)  → as set ("everyone")
  *
  * Pure functions with no I/O, safe in browsers.
  */
@@ -65,40 +65,14 @@ export function mapFeatures<V>(fn: (key: FeatureKey) => V): Record<FeatureKey, V
 /** Accepts exactly the registry keys. */
 export const featureKeySchema = z.enum(mapFeatures((key) => key))
 
-/** Deployment-wide rollout state, stored per deployment and changed in /admin. */
-export type FeatureRollout = { percent: number; killed: boolean }
+/** Deployment-wide state of one feature, stored per deployment and changed in /admin. */
+export type FeatureRollout = { enabled: boolean; killed: boolean }
 
 export type FeatureRollouts = Partial<Record<FeatureKey, FeatureRollout>>
 
-/** The stored state, or the registry's starting percentage when nothing is stored. */
+/** The stored state, or the registry default when nothing is stored. */
 export function featureRollout(key: FeatureKey, rollouts: FeatureRollouts): FeatureRollout {
-  return rollouts[key] ?? { percent: featureDefinition(key).start, killed: false }
-}
-
-export function clampPercent(value: number): number {
-  if (!Number.isFinite(value)) return 0
-  return Math.min(100, Math.max(0, Math.round(value)))
-}
-
-/**
- * Stable bucket 0–99 for one subject and feature (FNV-1a). Raising the
- * percentage only adds subjects; the same subject always lands in the same
- * bucket, and buckets differ per feature so the same people are not always first.
- */
-export function rolloutBucket(key: FeatureKey, subjectId: string): number {
-  let hash = 0x811c9dc5
-  for (const char of `${key}:${subjectId}`) {
-    hash ^= char.codePointAt(0) ?? 0
-    hash = Math.imul(hash, 0x01000193) >>> 0
-  }
-  return hash % 100
-}
-
-export function inRollout(key: FeatureKey, subjectId: string | null | undefined, percent: number): boolean {
-  const clamped = clampPercent(percent)
-  if (clamped >= 100) return true
-  if (clamped <= 0 || !subjectId) return false
-  return rolloutBucket(key, subjectId) < clamped
+  return rollouts[key] ?? { enabled: featureDefinition(key).default, killed: false }
 }
 
 export type FeatureEnvironment = {
@@ -107,27 +81,20 @@ export type FeatureEnvironment = {
   locks: FeatureOverrides
 }
 
-/** Who the feature is being resolved for. Leave one out when it does not apply. */
-export type FeatureSubjects = {
-  organizationId?: string | null
-  /** User id when signed in, install id when signed out. */
-  personId?: string | null
-}
-
 export type FeatureContext = FeatureEnvironment & {
   rollouts: FeatureRollouts
-  /** Stored overrides for the subject's organization, if any. */
+  /** Stored overrides for the organization being resolved; empty when there is none (signed out). */
   overrides: FeatureOverrides
-  subjects: FeatureSubjects
 }
 
-export type FeatureSource = "unavailable" | "killed" | "lock" | "override" | "rollout"
+export type FeatureSource = "unavailable" | "killed" | "lock" | "override" | "everyone"
 
 export type ResolvedFeature = {
   key: FeatureKey
   enabled: boolean
   source: FeatureSource
-  percent: number
+  /** The deployment-wide on/off state. */
+  everyone: boolean
   killed: boolean
   lock: boolean | null
   override: boolean | null
@@ -136,18 +103,17 @@ export type ResolvedFeature = {
 }
 
 export function resolveFeature(key: FeatureKey, context: FeatureContext): ResolvedFeature {
-  const { percent, killed } = featureRollout(key, context.rollouts)
+  const { enabled: everyone, killed } = featureRollout(key, context.rollouts)
   const lock = context.locks[key] ?? null
   const override = context.overrides[key] ?? null
-  const base = { key, percent: clampPercent(percent), killed, lock, override }
+  const base = { key, everyone, killed, lock, override }
   if (!featureAvailableOn(key, context.deployment)) {
     return { ...base, enabled: false, source: "unavailable", overrideApplies: false }
   }
   if (killed) return { ...base, enabled: false, source: "killed", overrideApplies: false }
   if (lock !== null) return { ...base, enabled: lock, source: "lock", overrideApplies: false }
   if (override !== null) return { ...base, enabled: override, source: "override", overrideApplies: true }
-  const subjectId = featureDefinition(key).subject === "organization" ? context.subjects.organizationId : context.subjects.personId
-  return { ...base, enabled: inRollout(key, subjectId, percent), source: "rollout", overrideApplies: true }
+  return { ...base, enabled: everyone, source: "everyone", overrideApplies: true }
 }
 
 export function resolveFeatures(context: FeatureContext): FeatureMap {
