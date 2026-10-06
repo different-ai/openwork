@@ -62,7 +62,7 @@ jobs:
 
             // Route, schema, or contract changes must ship the regenerated
             // packages/docs/openapi.json and packages/sdk/src/gen.
-            const denContractPrefixes = ["ee/apps/den-api/", "ee/packages/", "packages/types/", "packages/features/", "packages/sdk/"]
+            const denContractPrefixes = ["ee/apps/den-api/", "ee/packages/", "packages/types/", "packages/features/", "packages/sdk/", "packages/license-contracts/"]
             // The workflow itself is listed so changes to this check exercise it.
             const denContractFiles = new Set(["packages/docs/openapi.json", ".spectral.yaml", ".spectral-baseline.json", "scripts/api-lint.mjs", "scripts/den-contract.mjs", ".github/workflows/ci-tests.yml"])
             const touchesDenContract = (name) => Boolean(name) && (denContractFiles.has(name) || denContractPrefixes.some((prefix) => name.startsWith(prefix)))
@@ -97,6 +97,10 @@ jobs:
           pnpm --filter @openwork-ee/den-api test
       - name: Check contract generation and commit-hook safety
         run: pnpm test:contracts
+      - name: Run package unit tests
+        run: |
+          pnpm --filter @openwork/license-contracts typecheck
+          pnpm --filter @openwork/license-contracts test
       # About 20s. Runs on every PR so lint and ratchet baselines cannot drift;
       # it used to run only nightly, and debt piled up unnoticed.
       - name: Check the test framework (lint and ratchets)
