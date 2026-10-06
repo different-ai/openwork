@@ -27,6 +27,14 @@ hold:
 Otherwise it dismisses any earlier `diff-warden` approval. A new push dismisses
 the approval through the branch rule, and the next Warden run decides again.
 
+Either way, `diff-warden` keeps one comment on the PR, edited after every run:
+approved or not and why, then each security finding (severity, title,
+`file:line`, description). Confidentiality findings appear only as a count;
+their text could name the outside identity the rule protects. Model-written
+text is escaped and its @mentions are broken, so a finding cannot ping anyone.
+The repository is public, so security findings are visible to anyone, as the
+run summary already was.
+
 The approval only unblocks merges if the `dev` ruleset accepts it. With a
 required `openwork-reviewers` team review, an App approval cannot count, so
 that team requirement must be removed for clearance to merge PRs. Then any
