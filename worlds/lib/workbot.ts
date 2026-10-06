@@ -210,6 +210,8 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
       // Its own sign-in cookie names: a browser shares 127.0.0.1's cookies across ports, so another local Den's
       // sign-in must never be read (or overwritten) by this world's Den.
       DEN_AUTH_COOKIE_PREFIX: `openwork-den-${randomBytes(4).toString("hex")}`,
+      // Eval Dens leave Apps built in OpenWork off; --live seeds one, as production has them on.
+      ...(options.live ? { DEN_APP_MCP_SERVERS_ENABLED: "true" } : {}),
       ...(preview ? {
         DEN_WEB_ALLOWED_DEV_ORIGINS: new URL(preview.den).hostname,
         NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${PREVIEW_EGRESS}`].filter(Boolean).join(" "),
