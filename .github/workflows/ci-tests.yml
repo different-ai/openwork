@@ -96,6 +96,12 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
           pnpm evals:check
+      # The MySQL-backed den-db cases skip with a message when no database is reachable.
+      - name: Run Den storage unit tests
+        run: |
+          pnpm --filter @openwork-ee/den-db typecheck
+          pnpm --filter @openwork-ee/den-db test
+          pnpm --filter @openwork-ee/den-api test
 
   openwork-tests-build:
     name: Build and boot the desktop app
