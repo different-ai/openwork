@@ -4,7 +4,7 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { ORGANIZATION_AUDIT_ACTIONS, recordAuditAfterCommit, relatedAuditResource } from "../../core/audit/index.js"
 import { db } from "../../db.js"
 import { invitationBillingUrl } from "../../agent-links.js"
 import { withOrganizationTeamMutation } from "../../organization-team-roles.js"
@@ -18,7 +18,7 @@ import { isEmailAllowedForOrganization, listAssignableRoles, removeOrganizationM
 import { getOrganizationSeatAddEligibility } from "../../stripe-billing.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { buildInvitationLink, createInvitationId, createInvitationToken, ensureInviteManager, ensureOrganizationSuperAdmin, idParamSchema, normalizeRoleName, orgAccessFailureStatus } from "./shared.js"
+import { buildInvitationLink, createInvitationId, createInvitationToken, ensureInviteManager, ensureOrganizationSuperAdmin, idParamSchema, normalizeRoleName, orgAccessFailureStatus, orgAuditContext } from "./shared.js"
 
 const inviteMemberSchema = z.object({
   email: z.string().email(),
@@ -340,18 +340,21 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       await runPostOrganizationMemberChangeHooks({ organizationId: payload.organization.id, memberId: createdOrgMemberId, change: "added", source: "invitation" })
     }
 
-    await recordOrganizationAuditEvent({
-      organizationId: payload.organization.id,
-      actorUserId: payload.currentMember.userId,
+    await recordAuditAfterCommit(orgAuditContext(c, "organization.invitation", invitationId), {
       action: refreshed
         ? ORGANIZATION_AUDIT_ACTIONS.invitationRefreshed
         : ORGANIZATION_AUDIT_ACTIONS.invitationCreated,
-      payload: {
-        invitationId,
-        targetOrgMembershipId: invitationOrgMemberId,
-        targetEmail: email,
-        role: assignedRole,
-        expiresAt: expiresAt.toISOString(),
+      category: "security",
+      outcome: "succeeded",
+      resources: [
+        { type: "invitation", id: invitationId, relationship: "target" },
+        { type: "organization", id: payload.organization.id, relationship: "parent" },
+        ...relatedAuditResource("member", invitationOrgMemberId),
+      ],
+      changes: {
+        before: null,
+        after: { role: assignedRole, email, expiresAt: expiresAt.toISOString() },
+        changedFields: ["role", "email", "expiresAt"],
       },
     })
 
@@ -506,16 +509,19 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       }
     }
 
-    await recordOrganizationAuditEvent({
-      organizationId: payload.organization.id,
-      actorUserId: payload.currentMember.userId,
+    await recordAuditAfterCommit(orgAuditContext(c, "organization.invitation", cancellation.invitation.id), {
       action: ORGANIZATION_AUDIT_ACTIONS.invitationCanceled,
-      payload: {
-        invitationId: cancellation.invitation.id,
-        targetOrgMembershipId: invitedMember?.id ?? null,
-        targetEmail: cancellation.invitation.email,
-        role: cancellation.invitation.role,
-        previousStatus: cancellation.invitation.status,
+      category: "security",
+      outcome: "succeeded",
+      resources: [
+        { type: "invitation", id: cancellation.invitation.id, relationship: "target" },
+        { type: "organization", id: payload.organization.id, relationship: "parent" },
+        ...relatedAuditResource("member", invitedMember?.id),
+      ],
+      changes: {
+        before: { role: cancellation.invitation.role, email: cancellation.invitation.email, status: cancellation.invitation.status },
+        after: { role: cancellation.invitation.role, email: cancellation.invitation.email, status: "canceled" },
+        changedFields: ["status"],
       },
     })
 

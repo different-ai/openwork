@@ -3,12 +3,12 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { ORGANIZATION_AUDIT_ACTIONS, recordAuditAfterCommit, relatedAuditResource } from "../../core/audit/index.js"
 import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { listAssignableRoles, removeOrganizationMember, transferOrganizationOwnership, updateOrganizationMemberRole } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureMemberRemover, ensureOrganizationSuperAdmin, ensureOwner, idParamSchema, normalizeRoleName, orgAccessFailureStatus } from "./shared.js"
+import { ensureMemberRemover, ensureOrganizationSuperAdmin, ensureOwner, idParamSchema, normalizeRoleName, orgAccessFailureStatus, orgAuditContext } from "./shared.js"
 
 const updateMemberRoleSchema = z.object({
   role: z.string().trim().min(1).max(64),
@@ -71,16 +71,16 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
     }
 
     if (updated.changed) {
-      await recordOrganizationAuditEvent({
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
+      await recordAuditAfterCommit(orgAuditContext(c, "organization.member", updated.member.id), {
         action: ORGANIZATION_AUDIT_ACTIONS.memberRoleUpdated,
-        payload: {
-          targetOrgMembershipId: updated.member.id,
-          targetUserId: updated.member.userId,
-          previousRole: updated.previousRole,
-          nextRole: updated.nextRole,
-        },
+        category: "security",
+        outcome: "succeeded",
+        resources: [
+          { type: "member", id: updated.member.id, relationship: "target" },
+          { type: "organization", id: payload.organization.id, relationship: "parent" },
+          ...relatedAuditResource("user", updated.member.userId),
+        ],
+        changes: { before: { role: updated.previousRole }, after: { role: updated.nextRole }, changedFields: ["role"] },
       })
     }
 
@@ -131,20 +131,19 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
       return c.json({ error: transfer.error, message: transfer.message }, 400)
     }
 
-    await recordOrganizationAuditEvent({
-      organizationId: payload.organization.id,
-      actorUserId: payload.currentMember.userId,
+    await recordAuditAfterCommit(orgAuditContext(c, "organization.member", transfer.newOwner.id), {
       action: ORGANIZATION_AUDIT_ACTIONS.memberOwnershipTransferred,
-      payload: {
-        previousOwnerOrgMembershipId: transfer.previousOwner.id,
-        previousOwnerUserId: transfer.previousOwner.userId,
-        previousOwnerRole: transfer.previousOwner.role,
-        previousOwnerNextRole: transfer.previousOwnerRole,
-        previousOwnerCount: transfer.previousOwnerCount,
-        newOwnerOrgMembershipId: transfer.newOwner.id,
-        newOwnerUserId: transfer.newOwner.userId,
-        newOwnerPreviousRole: transfer.newOwner.role,
-        newOwnerRole: transfer.newOwnerRole,
+      category: "security",
+      outcome: "succeeded",
+      resources: [
+        { type: "member", id: transfer.newOwner.id, relationship: "target" },
+        { type: "organization", id: payload.organization.id, relationship: "parent" },
+        { type: "member", id: transfer.previousOwner.id, relationship: "related" },
+      ],
+      changes: {
+        before: { ownerMemberId: transfer.previousOwner.id, ownerRole: transfer.previousOwner.role, newOwnerRole: transfer.newOwner.role },
+        after: { ownerMemberId: transfer.newOwner.id, ownerRole: transfer.newOwnerRole, previousOwnerRole: transfer.previousOwnerRole, previousOwnerCount: transfer.previousOwnerCount },
+        changedFields: ["ownerMemberId", "ownerRole", "previousOwnerRole"],
       },
     })
 
@@ -196,15 +195,16 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
       return c.json({ error: removed.error, message: removed.message }, 400)
     }
 
-    await recordOrganizationAuditEvent({
-      organizationId: payload.organization.id,
-      actorUserId: payload.currentMember.userId,
+    await recordAuditAfterCommit(orgAuditContext(c, "organization.member", removed.member.id), {
       action: ORGANIZATION_AUDIT_ACTIONS.memberRemoved,
-      payload: {
-        targetOrgMembershipId: removed.member.id,
-        targetUserId: removed.member.userId,
-        previousRole: removed.member.role,
-      },
+      category: "security",
+      outcome: "succeeded",
+      resources: [
+        { type: "member", id: removed.member.id, relationship: "target" },
+        { type: "organization", id: payload.organization.id, relationship: "parent" },
+        ...relatedAuditResource("user", removed.member.userId),
+      ],
+      changes: { before: { role: removed.member.role }, after: null, changedFields: ["role"] },
     })
 
     return c.body(null, 204)

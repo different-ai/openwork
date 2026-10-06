@@ -17,6 +17,8 @@ import {
   type SecurityConfigurationPermissionPayload,
 } from "../../organization-access.js"
 import type { AuthContextVariables } from "../../session.js"
+import { organizationRouteAuditContext } from "../../core/audit/organization-events.js"
+import type { AuditKind, AuditSinkContext } from "../../core/audit/types.js"
 
 export type OrgRouteVariables =
   & AuthContextVariables
@@ -48,6 +50,24 @@ export function getFreshPrivilegedSessionRequiredResponse(): FreshPrivilegedSess
 
 type PrivilegedOrgRouteContext = {
   get: <K extends "apiKey" | "organizationContext" | "session">(key: K) => OrgRouteVariables[K]
+}
+
+type OrgAuditRouteContext = {
+  get: <K extends "apiKey" | "organizationContext">(key: K) => OrgRouteVariables[K]
+  var: { readonly requestId?: string }
+}
+
+/** Audit sink context for the current organization member (and API key, if any). */
+export function orgAuditContext(c: OrgAuditRouteContext, kind: AuditKind, scope: string): AuditSinkContext {
+  const payload = c.get("organizationContext")
+  if (!payload) throw new Error("organization_context_missing")
+  return organizationRouteAuditContext({
+    organizationId: payload.organization.id,
+    userId: payload.currentMember.userId,
+    memberId: payload.currentMember.id,
+    credentialId: c.get("apiKey")?.id,
+    requestId: c.var.requestId,
+  }, kind, scope)
 }
 
 type OrganizationAdminRouteContext = {

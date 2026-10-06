@@ -1,7 +1,8 @@
 import type { AuditCategory } from "@openwork/types/den/audit"
+import { auditEventTypes, ORGANIZATION_AUDIT_EVENT_TYPES, type AuditEventTypeDeclaration, type AuditKind } from "../core/audit/index.js"
 
 export type AuditCoverageDeclaration = Readonly<{
-  status: "implemented_scoped" | "legacy_only" | "uncovered" | "support" | "excluded"
+  status: "implemented_scoped" | "uncovered" | "support" | "excluded"
   operationKinds: readonly string[]
   actions: readonly string[]
   categories: readonly AuditCategory[]
@@ -99,8 +100,12 @@ export const defaultPolicyCoverage: AuditCoverageDeclaration = {
   limitations: "Temporary 6,000,000 retained OPERATIONS, not events; 300-second grouping; PILOT_DEFAULT_CATEGORIES; cloud/delete_oldest or operator/keep_all declarations grant no entitlement. No enforced cap, billing, cleanup, deletion, legacy backfill or forced restore on upgrade.",
 }
 
+/** Audit-internal actions plus every action registered in the Core audit event catalog. */
 export function supportedAuditEventTypes(): string[] {
-  return [...new Set([...providerCoverage.actions, ...auditReadCoverage.actions, ...pilotPolicyCoverage.actions, ...auditCaptureCoverage.actions, ...defaultPolicyCoverage.actions])].sort()
+  return [...new Set([
+    ...providerCoverage.actions, ...auditReadCoverage.actions, ...pilotPolicyCoverage.actions, ...auditCaptureCoverage.actions, ...defaultPolicyCoverage.actions,
+    ...auditEventTypes().flatMap((declaration) => declaration.actions),
+  ])].sort()
 }
 
 function uncovered(limitations: string): AuditCoverageDeclaration {
@@ -110,15 +115,25 @@ function uncovered(limitations: string): AuditCoverageDeclaration {
 function support(limitations: string): AuditCoverageDeclaration {
   return { ...uncovered(limitations), status: "support" }
 }
-function legacy(actions: string[], resources: string[]): AuditCoverageDeclaration {
-  return { status: "legacy_only", operationKinds: [], actions, categories: [], resources,
-    capturePolicy: "Existing legacy emitter only; not operation policy gated.", snapshotPolicy: "Existing legacy payload only; no new safe before/after or operation grouping guarantee.",
-    emitter: "src/audit-events.ts:recordOrganizationAuditEvent", failurePolicy: "Existing legacy semantics; not upgraded to atomic operation capture.",
-    limitations: "Only selected legacy actions, NOT every route/read/denial in this module. Legacy rows preserved, not backfilled or counted retroactively." }
+function organizationEventType(kind: AuditKind): AuditEventTypeDeclaration {
+  const declaration = ORGANIZATION_AUDIT_EVENT_TYPES.find((entry) => entry.kind === kind)
+  if (!declaration) throw new Error(`audit_event_type_missing:${kind}`)
+  return declaration
+}
+const POST_COMMIT_FAILURE_POLICY = "Post-commit: recorded in its own short transaction after the change commits. A capture failure is logged (audit_sink audit_capture_failed) and reported, and the request still succeeds; the committed change is never undone."
+const ATOMIC_FAILURE_POLICY = "Atomic: capture opens in the mutation transaction after the organization FOR UPDATE lock; a capture failure rolls back the change."
+function sinkCoverage(kind: AuditKind, emitter: string, failurePolicy: string, limitations: string): AuditCoverageDeclaration {
+  const declaration = organizationEventType(kind)
+  return {
+    status: "implemented_scoped", operationKinds: [kind], actions: declaration.actions, categories: declaration.categories, resources: declaration.resources,
+    capturePolicy: "Core AuditSink: auditLogs effective (fresh literal metadata.capabilities.auditLogs=true AND Enterprise/explicit self-hosted entitlement AND default-on deployment capture switch, under the organization share lock) AND enabled stored policy AND selected category.",
+    snapshotPolicy: "Allowlisted before/after fields per action; never secrets, tokens or credential material; evidence validation rejects sensitive keys and bearer-like values.",
+    emitter, failurePolicy, limitations,
+  }
 }
 
 export const orgAuditCoverage: Readonly<Record<string, AuditCoverageDeclaration>> = {
-  "api-keys.ts": legacy(["organization.api_key.created", "organization.api_key.deleted"], ["api_key"]),
+  "api-keys.ts": sinkCoverage("organization.api_key", "src/routes/org/api-keys.ts:recordAuditAfterCommit", POST_COMMIT_FAILURE_POLICY, "Only API key create and delete. No reads, key use or rate-limit events. Not recorded when auditLogs is not effective for the organization."),
   "audit.ts": { ...auditReadCoverage, operationKinds: [...auditReadCoverage.operationKinds, ...auditCaptureCoverage.operationKinds], actions: [...auditReadCoverage.actions, ...auditCaptureCoverage.actions], categories: [...auditReadCoverage.categories, ...auditCaptureCoverage.categories], capturePolicy: `${auditReadCoverage.capturePolicy} ${auditCaptureCoverage.capturePolicy}`, snapshotPolicy: `${auditReadCoverage.snapshotPolicy} ${auditCaptureCoverage.snapshotPolicy}`, emitter: `${auditReadCoverage.emitter}; ${auditCaptureCoverage.emitter}`, failurePolicy: `${auditReadCoverage.failurePolicy} ${auditCaptureCoverage.failurePolicy}`, limitations: `${auditReadCoverage.limitations} ${auditCaptureCoverage.limitations}` },
   "billing.ts": uncovered("Organization billing and checkout are not operation-audited; no audit billing product is introduced."),
   "brand-assets.ts": uncovered("Branding uploads and downloads."),
@@ -139,29 +154,29 @@ export const orgAuditCoverage: Readonly<Record<string, AuditCoverageDeclaration>
   "inference-providers.ts": providerCoverage,
   "inference.ts": uncovered("Inference management outside the declared provider configuration routes."),
   "install-links.ts": uncovered("Installation link creation and consumption."),
-  "invitations.ts": legacy(["organization.invitation.created", "organization.invitation.refreshed", "organization.invitation.canceled"], ["invitation"]),
+  "invitations.ts": sinkCoverage("organization.invitation", "src/routes/org/invitations.ts:recordAuditAfterCommit", POST_COMMIT_FAILURE_POLICY, "Only invitation create, refresh and cancel. Acceptance, email delivery and reads are not captured."),
   "llm-provider-access.ts": support("Legacy LLM provider authorization helpers, not operation capture."),
   "llm-providers.ts": uncovered("Legacy LLM provider management; not the implemented inference-provider emitter."),
   "mcp-app-catalog.ts": uncovered("Reads of the Apps built in OpenWork an admin can add to a dashboard."),
   "mcp-connections.ts": uncovered("MCP connection administration and OAuth."),
-  "members.ts": legacy(["organization.member.role_updated", "organization.member.ownership_transferred", "organization.member.removed"], ["member"]),
+  "members.ts": sinkCoverage("organization.member", "src/routes/org/members.ts:recordAuditAfterCommit", POST_COMMIT_FAILURE_POLICY, "Only role update, ownership transfer and removal through these routes. SCIM, SSO JIT and Better Auth membership changes are not captured."),
   "microsoft-365.ts": uncovered("Microsoft 365 connections and external operations."),
   "models-analytics.ts": uncovered("Model analytics reads; exports registered outside this module also uncovered."),
   "oauth-providers.ts": uncovered("OAuth provider configuration and authorization lifecycle."),
   "plugin-system/": uncovered("Plugin/marketplace configuration, permissions, versions and imports; nested modules included as uncovered, not covered by provider capture."),
   "resources.ts": uncovered("Organization resource reads."),
-  "roles.ts": legacy(["organization.role.created", "organization.role.updated", "organization.role.deleted"], ["role"]),
-  "scim.ts": legacy(["organization.scim.token_rotated", "organization.scim.connection_deleted", "organization.scim.reconciliation_run", "organization.scim.group_mapping_updated"], ["scim_connection"]),
+  "roles.ts": sinkCoverage("organization.role", "src/routes/org/roles.ts:recordAuditAfterCommit", POST_COMMIT_FAILURE_POLICY, "Only custom role create, update and delete. Permission contents are not retained, only that they changed."),
+  "scim.ts": sinkCoverage("organization.scim", "src/routes/org/scim.ts:recordAuditAfterCommit", POST_COMMIT_FAILURE_POLICY, "Only token rotation, group mapping, reconciliation and connection delete from these routes. SCIM protocol provisioning traffic is not captured."),
   "shared.ts": support("Organization authorization and context utilities, not an audit emitter."),
-  "sso.ts": legacy(["organization.sso.connection_registered", "organization.sso.connection_enabled", "organization.sso.connection_disabled", "organization.sso.connection_deleted"], ["sso_connection"]),
+  "sso.ts": sinkCoverage("organization.sso", "src/routes/org/sso.ts:recordAuditAfterCommit", POST_COMMIT_FAILURE_POLICY, "Only connection register, enable, disable and delete. Configuration edits, tests, domain verification and sign-ins are not captured."),
   "teams.ts": uncovered("Team and membership management."),
-  "web-origins.ts": legacy(["organization.web_origin.approved", "organization.web_origin.removed"], ["web_origin"]),
+  "web-origins.ts": sinkCoverage("organization.web_origin", "src/routes/org/web-origins.ts:recordAuditAfterCommit", POST_COMMIT_FAILURE_POLICY, "Only approve and remove."),
 }
 
 export const otherAuditSurfaces: readonly Readonly<{ location: string; surface: "route" | "mcp" | "job" | "service" | "cli"; coverage: AuditCoverageDeclaration }>[] = [
   { location: "ee/apps/den-api/src/audit/capture.ts", surface: "service", coverage: defaultPolicyCoverage },
   { location: "ee/apps/den-api/scripts/audit-pilot.ts", surface: "cli", coverage: pilotPolicyCoverage },
-  { location: "ee/apps/den-api/src/routes/admin", surface: "route", coverage: { ...uncovered("Some platform-admin actions retain legacy events; remaining actions uncovered, not migrated to operation capture."), status: "legacy_only", emitter: "src/audit-events.ts:buildOrganizationAuditEvent" } },
+  { location: "ee/apps/den-api/src/routes/admin", surface: "route", coverage: sinkCoverage("platform_admin.organization", "src/routes/admin/index.ts:openAuditCapture", ATOMIC_FAILURE_POLICY, "Only DPA and complimentary OpenWork Web access changes, recorded in the target organization when auditLogs is effective there. Other platform-admin actions are uncovered.") },
   ...[
     "auth", "automations", "bootstrap", "cloud", "dev", "me", "version", "webhooks", "workers", "deprecated-memory.ts", "deprecated-skill-hubs.ts",
   ].map((name) => ({ location: `ee/apps/den-api/src/routes/${name}`, surface: "route", coverage: uncovered("No operation-audit implementation for this route surface; existing logging/receipts do not establish coverage.") } satisfies { location: string; surface: "route"; coverage: AuditCoverageDeclaration })),

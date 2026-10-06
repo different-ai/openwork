@@ -27,7 +27,6 @@ import {
   GatewayRequestLogTable,
   WorkerTable,
   AdminAllowlistTable,
-  AuditEventTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, isDenTypeId } from "@openwork-ee/utils/typeid"
 import { ManagedModelsPolicyError, readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
@@ -48,7 +47,7 @@ import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata } from "../.
 import { updateOrganizationMetadata } from "../../organization-metadata.js"
 import { env } from "../../env.js"
 import type { AuthContextVariables } from "../../session.js"
-import { buildOrganizationAuditEvent, logOrganizationAuditEvent, ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
+import { auditFreeText, openAuditCapture, ORGANIZATION_AUDIT_ACTIONS, platformAdminAuditContext } from "../../core/audit/index.js"
 import { hasOpenWorkWebComplimentaryAccess, resolveOpenWorkWebAccess, setOpenWorkWebComplimentaryAccess } from "../../openwork-web-access.js"
 import { isOpenWorkWebAvailable } from "../../openwork-web-availability.js"
 import { calculateOrganizationSeatBillingCounts, getOrganizationSeatBillingCounts, isEligibleOpenWorkWebSubscriptionStatus, isOngoingOpenWorkWebSubscriptionStatus, organizationHasOngoingOpenWorkWebSubscription, refreshOrgSubscriptionFromStripe, syncSeatSubscriptionQuantityAfterMemberChange } from "../../stripe-billing.js"
@@ -1808,6 +1807,8 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
           .limit(1)
           .for("update")
         if (!organization) return "not_found"
+        // Opened after the organization FOR UPDATE (lock order rule in core/audit).
+        const audit = await openAuditCapture(tx, platformAdminAuditContext({ organizationId, adminUserId: actorUserId, requestId: c.var.requestId }))
 
         let metadata: Record<string, unknown>
         try {
@@ -1815,21 +1816,22 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         } catch {
           return "policy_unavailable"
         }
-        const auditEvent = buildOrganizationAuditEvent({
-          organizationId,
-          actorUserId,
-          action: ORGANIZATION_AUDIT_ACTIONS.dpaSignedUpdated,
-          payload: {
-            previousDpaSigned: typeof metadata.dpaSigned === "boolean" ? metadata.dpaSigned : null,
-            dpaSigned: body.dpaSigned,
-            reason: body.reason,
-          },
-        })
+        const previousDpaSigned = typeof metadata.dpaSigned === "boolean" ? metadata.dpaSigned : null
         await tx.update(OrganizationTable)
           .set({ metadata: { ...metadata, dpaSigned: body.dpaSigned } })
           .where(eq(OrganizationTable.id, organizationId))
-        await tx.insert(AuditEventTable).values(auditEvent)
-        return { auditEvent }
+        await audit?.record({
+          action: ORGANIZATION_AUDIT_ACTIONS.dpaSignedUpdated,
+          category: "change",
+          outcome: "succeeded",
+          resources: [{ type: "organization", id: organizationId, relationship: "target" }],
+          changes: {
+            before: { dpaSigned: previousDpaSigned },
+            after: { dpaSigned: body.dpaSigned, reason: auditFreeText(body.reason) },
+            changedFields: ["dpaSigned", "reason"],
+          },
+        })
+        return "updated"
       })
       if (result === "not_found") {
         return c.json({ error: "not_found", message: "Organization not found." }, 404)
@@ -1838,7 +1840,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         const error = new ManagedModelsPolicyError("managed_models_policy_unavailable")
         return c.json({ error: error.code, message: error.message }, error.status)
       }
-      logOrganizationAuditEvent(result.auditEvent)
       return c.json({ ok: true, organization: { id: organizationId, dpaSigned: body.dpaSigned } })
     },
   )
@@ -1888,6 +1889,8 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         if (!organization) {
           return "not_found"
         }
+        // Opened after the organization FOR UPDATE (lock order rule in core/audit).
+        const audit = await openAuditCapture(tx, platformAdminAuditContext({ organizationId, adminUserId: actorUserId, requestId: c.var.requestId }))
 
         const webSubscriptions = await tx
           .select({
@@ -1907,26 +1910,28 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
           return "subscription_exists"
         }
 
+        const previousComplimentaryAccess = hasOpenWorkWebComplimentaryAccess(organization.metadata)
         const metadata = setOpenWorkWebComplimentaryAccess(organization.metadata, body.data.enabled)
-        const auditEvent = buildOrganizationAuditEvent({
-          organizationId,
-          actorUserId,
-          action: body.data.enabled
-            ? ORGANIZATION_AUDIT_ACTIONS.openWorkWebComplimentaryAccessGranted
-            : ORGANIZATION_AUDIT_ACTIONS.openWorkWebComplimentaryAccessRevoked,
-          payload: {
-            reason: body.data.reason,
-            complimentaryAccess: body.data.enabled,
-          },
-        })
 
         await tx
           .update(OrganizationTable)
           .set({ metadata })
           .where(eq(OrganizationTable.id, organizationId))
-        await tx.insert(AuditEventTable).values(auditEvent)
+        await audit?.record({
+          action: body.data.enabled
+            ? ORGANIZATION_AUDIT_ACTIONS.openWorkWebComplimentaryAccessGranted
+            : ORGANIZATION_AUDIT_ACTIONS.openWorkWebComplimentaryAccessRevoked,
+          category: "change",
+          outcome: "succeeded",
+          resources: [{ type: "organization", id: organizationId, relationship: "target" }],
+          changes: {
+            before: { complimentaryAccess: previousComplimentaryAccess },
+            after: { complimentaryAccess: body.data.enabled, reason: auditFreeText(body.data.reason) },
+            changedFields: ["complimentaryAccess", "reason"],
+          },
+        })
 
-        return { metadata, webSubscription, auditEvent }
+        return { metadata, webSubscription }
       })
 
       if (result === "not_found") {
@@ -1939,7 +1944,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         }, 409)
       }
 
-      logOrganizationAuditEvent(result.auditEvent)
       return c.json({
         ok: true,
         organization: {

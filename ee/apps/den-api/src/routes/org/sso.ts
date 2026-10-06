@@ -4,7 +4,7 @@ import { z } from "zod"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { SsoConnectionTable } from "@openwork-ee/den-db/schema"
 import { auth } from "../../auth.js"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { ORGANIZATION_AUDIT_ACTIONS, recordAuditAfterCommit, type AuditEventInput } from "../../core/audit/index.js"
 import { db } from "../../db.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { env } from "../../env.js"
@@ -34,7 +34,7 @@ import {
 } from "../../sso-test-lifecycle.js"
 import { orgMemberRoute } from "../../middleware/index.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureSsoManager, ensureSsoReader, orgAccessFailureStatus } from "./shared.js"
+import { ensureSsoManager, ensureSsoReader, orgAccessFailureStatus, orgAuditContext } from "./shared.js"
 
 const invalidRequestSchema = z.object({
   error: z.literal("invalid_request"),
@@ -271,6 +271,17 @@ async function buildConnectionPayload(connection: NonNullable<Awaited<ReturnType
   })
 }
 
+function ssoAuditResources(connectionId: string, organizationId: string): AuditEventInput["resources"] {
+  return [
+    { type: "sso_connection", id: connectionId, relationship: "target" },
+    { type: "organization", id: organizationId, relationship: "parent" },
+  ]
+}
+
+function ssoAuditSnapshot(connection: { providerId: string; kind: string; issuer: string | null; domain: string | null }) {
+  return { providerId: connection.providerId, kind: connection.kind, issuer: connection.issuer, domain: connection.domain }
+}
+
 export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/sso",
@@ -352,17 +363,12 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       })
       const domainVerificationToken = await requestDomainVerificationToken(connection.providerId, c.req.raw.headers).catch(() => null)
 
-      await recordOrganizationAuditEvent({
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
+      await recordAuditAfterCommit(orgAuditContext(c, "organization.sso", connection.id), {
         action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered,
-        payload: {
-          ssoConnectionId: connection.id,
-          providerId: connection.providerId,
-          kind: connection.kind,
-          issuer: connection.issuer,
-          domain: connection.domain,
-        },
+        category: "security",
+        outcome: "succeeded",
+        resources: ssoAuditResources(connection.id, payload.organization.id),
+        changes: { before: null, after: ssoAuditSnapshot(connection), changedFields: ["providerId", "kind", "issuer", "domain"] },
       })
 
       return c.json({ connection: await buildConnectionPayload(connection, c.req.url), domainVerificationToken }, 201)
@@ -415,17 +421,12 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       })
       const domainVerificationToken = await requestDomainVerificationToken(connection.providerId, c.req.raw.headers).catch(() => null)
 
-      await recordOrganizationAuditEvent({
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
+      await recordAuditAfterCommit(orgAuditContext(c, "organization.sso", connection.id), {
         action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered,
-        payload: {
-          ssoConnectionId: connection.id,
-          providerId: connection.providerId,
-          kind: connection.kind,
-          issuer: connection.issuer,
-          domain: connection.domain,
-        },
+        category: "security",
+        outcome: "succeeded",
+        resources: ssoAuditResources(connection.id, payload.organization.id),
+        changes: { before: null, after: ssoAuditSnapshot(connection), changedFields: ["providerId", "kind", "issuer", "domain"] },
       })
 
       return c.json({ connection: await buildConnectionPayload(connection, c.req.url), domainVerificationToken }, 201)
@@ -458,17 +459,12 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       const connection = await getOrganizationSsoConnection(payload.organization.id)
       const deleted = await deleteOrganizationSsoConnection(payload.organization.id)
       if (deleted && connection) {
-        await recordOrganizationAuditEvent({
-          organizationId: payload.organization.id,
-          actorUserId: payload.currentMember.userId,
+        await recordAuditAfterCommit(orgAuditContext(c, "organization.sso", connection.id), {
           action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted,
-          payload: {
-            ssoConnectionId: connection.id,
-            providerId: connection.providerId,
-            kind: connection.kind,
-            issuer: connection.issuer,
-            domain: connection.domain,
-          },
+          category: "security",
+          outcome: "succeeded",
+          resources: ssoAuditResources(connection.id, payload.organization.id),
+          changes: { before: ssoAuditSnapshot(connection), after: null, changedFields: ["providerId", "kind", "issuer", "domain"] },
         })
       }
       return c.body(null, 204)
@@ -616,11 +612,12 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       if (!entitlement.ok) return c.json(entitlement.response, entitlement.status)
       const enabled = await enableOrganizationSsoConnection(payload.organization.id)
       if (!enabled.ok) return c.json({ error: "sso_lifecycle_error", message: enabled.message }, 409)
-      await recordOrganizationAuditEvent({
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
+      await recordAuditAfterCommit(orgAuditContext(c, "organization.sso", enabled.connectionId), {
         action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionEnabled,
-        payload: { ssoConnectionId: enabled.connectionId, providerId: enabled.providerId },
+        category: "security",
+        outcome: "succeeded",
+        resources: ssoAuditResources(enabled.connectionId, payload.organization.id),
+        changes: { before: { providerId: enabled.providerId, enabled: false }, after: { providerId: enabled.providerId, enabled: true }, changedFields: ["enabled"] },
       })
       return c.body(null, 204)
     },
@@ -647,11 +644,12 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       const payload = c.get("organizationContext")
       const disabled = await disableOrganizationSsoConnection(payload.organization.id)
       if (!disabled.ok) return c.json({ error: "organization_not_found" }, 404)
-      await recordOrganizationAuditEvent({
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
+      await recordAuditAfterCommit(orgAuditContext(c, "organization.sso", disabled.connectionId), {
         action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDisabled,
-        payload: { ssoConnectionId: disabled.connectionId, providerId: disabled.providerId },
+        category: "security",
+        outcome: "succeeded",
+        resources: ssoAuditResources(disabled.connectionId, payload.organization.id),
+        changes: { before: { providerId: disabled.providerId, enabled: true }, after: { providerId: disabled.providerId, enabled: false }, changedFields: ["enabled"] },
       })
       return c.body(null, 204)
     },

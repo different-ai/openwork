@@ -9,7 +9,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { ORGANIZATION_AUDIT_ACTIONS, recordAuditAfterCommit } from "../../core/audit/index.js"
 import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import {
@@ -19,7 +19,7 @@ import {
   type OrganizationWebOriginRecord,
 } from "../../organization-web-origins.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOrganizationAdminRole, ensureOrganizationSuperAdmin, idParamSchema, orgAccessFailureStatus } from "./shared.js"
+import { ensureOrganizationAdminRole, ensureOrganizationSuperAdmin, idParamSchema, orgAccessFailureStatus, orgAuditContext } from "./shared.js"
 
 const INVALID_WEB_ORIGIN_MESSAGE = "Enter an exact HTTPS origin like https://workspace.example.com, with an optional port and no path."
 const WEB_ORIGIN_ALREADY_APPROVED_MESSAGE = "This origin is already approved."
@@ -154,11 +154,15 @@ export function registerOrgWebOriginRoutes<T extends { Variables: OrgRouteVariab
           : c.json({ error: "web_origin_limit_reached" as const, message: WEB_ORIGIN_LIMIT_REACHED_MESSAGE }, 409)
       }
 
-      await recordOrganizationAuditEvent({
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
+      await recordAuditAfterCommit(orgAuditContext(c, "organization.web_origin", result.webOrigin.id), {
         action: ORGANIZATION_AUDIT_ACTIONS.webOriginApproved,
-        payload: { origin },
+        category: "security",
+        outcome: "succeeded",
+        resources: [
+          { type: "web_origin", id: result.webOrigin.id, relationship: "target" },
+          { type: "organization", id: payload.organization.id, relationship: "parent" },
+        ],
+        changes: { before: null, after: { origin }, changedFields: ["origin"] },
       })
       return c.json(serializeWebOrigin(result.webOrigin), 201)
     },
@@ -185,19 +189,24 @@ export function registerOrgWebOriginRoutes<T extends { Variables: OrgRouteVariab
       if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
 
       const payload = c.get("organizationContext")
+      const webOriginId = normalizeDenTypeId("organizationWebOrigin", c.req.valid("param").webOriginId)
       const removedOrigin = await removeOrganizationWebOrigin({
         organizationId: payload.organization.id,
-        id: normalizeDenTypeId("organizationWebOrigin", c.req.valid("param").webOriginId),
+        id: webOriginId,
       })
       if (!removedOrigin) {
         return c.json({ error: "web_origin_not_found" as const, message: WEB_ORIGIN_NOT_FOUND_MESSAGE }, 404)
       }
 
-      await recordOrganizationAuditEvent({
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
+      await recordAuditAfterCommit(orgAuditContext(c, "organization.web_origin", webOriginId), {
         action: ORGANIZATION_AUDIT_ACTIONS.webOriginRemoved,
-        payload: { origin: removedOrigin },
+        category: "security",
+        outcome: "succeeded",
+        resources: [
+          { type: "web_origin", id: webOriginId, relationship: "target" },
+          { type: "organization", id: payload.organization.id, relationship: "parent" },
+        ],
+        changes: { before: { origin: removedOrigin }, after: null, changedFields: ["origin"] },
       })
       return c.body(null, 204)
     },

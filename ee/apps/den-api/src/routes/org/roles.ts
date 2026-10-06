@@ -4,7 +4,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { ORGANIZATION_AUDIT_ACTIONS, recordAuditAfterCommit } from "../../core/audit/index.js"
 import { db } from "../../db.js"
 import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
@@ -13,7 +13,7 @@ import { isProtectedOrganizationRoleName } from "../../organization-role-hierarc
 import { revokeCredentialsForOrganizationRoleMembers } from "../../organization-role-credential-revocation.js"
 import { serializePermissionRecord } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { createRoleId, ensureOrganizationSuperAdmin, idParamSchema, normalizeRoleName, orgAccessFailureStatus, replaceRoleValue, splitRoles } from "./shared.js"
+import { createRoleId, ensureOrganizationSuperAdmin, idParamSchema, normalizeRoleName, orgAccessFailureStatus, orgAuditContext, replaceRoleValue, splitRoles } from "./shared.js"
 
 const permissionSchema = z.record(z.string(), z.array(z.string()))
 
@@ -88,14 +88,15 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
       permission: serializePermissionRecord(input.permission),
     })
 
-    await recordOrganizationAuditEvent({
-      organizationId: payload.organization.id,
-      actorUserId: payload.currentMember.userId,
+    await recordAuditAfterCommit(orgAuditContext(c, "organization.role", roleId), {
       action: ORGANIZATION_AUDIT_ACTIONS.roleCreated,
-      payload: {
-        organizationRoleId: roleId,
-        role: roleName,
-      },
+      category: "security",
+      outcome: "succeeded",
+      resources: [
+        { type: "organization_role", id: roleId, relationship: "target" },
+        { type: "organization", id: payload.organization.id, relationship: "parent" },
+      ],
+      changes: { before: null, after: { role: roleName }, changedFields: ["role"] },
     })
 
     return c.json({ success: true }, 201)
@@ -226,16 +227,18 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
       })
     }
 
-    await recordOrganizationAuditEvent({
-      organizationId: payload.organization.id,
-      actorUserId: payload.currentMember.userId,
+    await recordAuditAfterCommit(orgAuditContext(c, "organization.role", roleRow.id), {
       action: ORGANIZATION_AUDIT_ACTIONS.roleUpdated,
-      payload: {
-        organizationRoleId: roleRow.id,
-        previousRole: roleRow.role,
-        nextRole: nextRoleName,
-        roleRenamed: nextRoleName !== roleRow.role,
-        permissionChanged,
+      category: "security",
+      outcome: "succeeded",
+      resources: [
+        { type: "organization_role", id: roleRow.id, relationship: "target" },
+        { type: "organization", id: payload.organization.id, relationship: "parent" },
+      ],
+      changes: {
+        before: { role: roleRow.role },
+        after: { role: nextRoleName },
+        changedFields: [...(nextRoleName !== roleRow.role ? ["role"] : []), ...(permissionChanged ? ["permission"] : [])],
       },
     })
 
@@ -314,14 +317,15 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
     }
 
     await db.delete(OrganizationRoleTable).where(eq(OrganizationRoleTable.id, roleRow.id))
-    await recordOrganizationAuditEvent({
-      organizationId: payload.organization.id,
-      actorUserId: payload.currentMember.userId,
+    await recordAuditAfterCommit(orgAuditContext(c, "organization.role", roleRow.id), {
       action: ORGANIZATION_AUDIT_ACTIONS.roleDeleted,
-      payload: {
-        organizationRoleId: roleRow.id,
-        role: roleRow.role,
-      },
+      category: "security",
+      outcome: "succeeded",
+      resources: [
+        { type: "organization_role", id: roleRow.id, relationship: "target" },
+        { type: "organization", id: payload.organization.id, relationship: "parent" },
+      ],
+      changes: { before: { role: roleRow.role }, after: null, changedFields: ["role"] },
     })
     return c.body(null, 204)
     },

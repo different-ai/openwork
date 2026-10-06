@@ -8,12 +8,12 @@ import {
   DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
   listOrganizationApiKeys,
 } from "../../api-keys.js"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { ORGANIZATION_AUDIT_ACTIONS, recordAuditAfterCommit } from "../../core/audit/index.js"
 import { jsonValidator, orgMemberRoute, paramValidator } from "../../middleware/index.js"
 import { denTypeIdSchema } from "../../openapi.js"
 import { auth } from "../../auth.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureApiKeyManager, ensureApiKeyReader, idParamSchema, orgAccessFailureStatus } from "./shared.js"
+import { ensureApiKeyManager, ensureApiKeyReader, idParamSchema, orgAccessFailureStatus, orgAuditContext } from "./shared.js"
 
 const createOrganizationApiKeySchema = z.object({
   name: z.string().trim().min(2).max(64),
@@ -239,15 +239,19 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
         },
       })
 
-      await recordOrganizationAuditEvent({
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
+      await recordAuditAfterCommit(orgAuditContext(c, "organization.api_key", created.id), {
         action: ORGANIZATION_AUDIT_ACTIONS.apiKeyCreated,
-        payload: {
-          apiKeyId: created.id,
-          orgMembershipId: payload.currentMember.id,
-          name: created.name,
-          prefix: created.prefix,
+        category: "security",
+        outcome: "succeeded",
+        resources: [
+          { type: "api_key", id: created.id, relationship: "target" },
+          { type: "organization", id: payload.organization.id, relationship: "parent" },
+          { type: "member", id: payload.currentMember.id, relationship: "related" },
+        ],
+        changes: {
+          before: null,
+          after: { name: created.name, prefix: created.prefix ?? null, orgMembershipId: payload.currentMember.id },
+          changedFields: ["name", "prefix", "orgMembershipId"],
         },
       })
 
@@ -335,16 +339,19 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
         return c.json({ error: "api_key_not_found" }, 404)
       }
 
-      await recordOrganizationAuditEvent({
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
+      await recordAuditAfterCommit(orgAuditContext(c, "organization.api_key", deleted.id), {
         action: ORGANIZATION_AUDIT_ACTIONS.apiKeyDeleted,
-        payload: {
-          apiKeyId: deleted.id,
-          ownerUserId: deleted.owner.userId,
-          ownerOrgMembershipId: deleted.owner.memberId,
-          name: deleted.name,
-          prefix: deleted.prefix,
+        category: "security",
+        outcome: "succeeded",
+        resources: [
+          { type: "api_key", id: deleted.id, relationship: "target" },
+          { type: "organization", id: payload.organization.id, relationship: "parent" },
+          { type: "member", id: deleted.owner.memberId, relationship: "related" },
+        ],
+        changes: {
+          before: { name: deleted.name, prefix: deleted.prefix ?? null, ownerOrgMembershipId: deleted.owner.memberId, ownerUserId: deleted.owner.userId },
+          after: null,
+          changedFields: ["name", "prefix", "ownerOrgMembershipId", "ownerUserId"],
         },
       })
 

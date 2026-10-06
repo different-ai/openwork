@@ -4,10 +4,10 @@ import { z } from "zod"
 import { deleteOrganizationScimConnection, getOrganizationScimConnection, getOrganizationScimHealth, getScimBaseUrl, reconcileOrganizationScimDrift, rotateOrganizationScimToken } from "../../scim.js"
 import { setScimGroupMappingMode } from "../../scim-groups.js"
 import { hasEnabledOrganizationSsoConnection } from "../../sso.js"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { ORGANIZATION_AUDIT_ACTIONS, recordAuditAfterCommit } from "../../core/audit/index.js"
 import { jsonValidator, orgMemberRoute } from "../../middleware/index.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureScimManager, ensureScimReader, orgAccessFailureStatus } from "./shared.js"
+import { ensureScimManager, ensureScimReader, orgAccessFailureStatus, orgAuditContext } from "./shared.js"
 
 const invalidRequestSchema = z.object({
   error: z.literal("invalid_request"),
@@ -256,14 +256,15 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
       })
       const health = await getOrganizationScimHealth(payload.organization.id)
 
-      await recordOrganizationAuditEvent({
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
+      await recordAuditAfterCommit(orgAuditContext(c, "organization.scim", rotated.connection.id), {
         action: ORGANIZATION_AUDIT_ACTIONS.scimTokenRotated,
-        payload: {
-          scimProviderId: rotated.connection.id,
-          providerId: rotated.connection.providerId,
-        },
+        category: "security",
+        outcome: "succeeded",
+        resources: [
+          { type: "scim_connection", id: rotated.connection.id, relationship: "target" },
+          { type: "organization", id: payload.organization.id, relationship: "parent" },
+        ],
+        changes: { before: null, after: { providerId: rotated.connection.providerId, rotated: true }, changedFields: ["rotated"] },
       })
 
       return c.json({
@@ -309,11 +310,15 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
 
       const input = c.req.valid("json")
       await setScimGroupMappingMode({ provider: connection, mode: input.groupMappingMode })
-      await recordOrganizationAuditEvent({
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
+      await recordAuditAfterCommit(orgAuditContext(c, "organization.scim", connection.id), {
         action: ORGANIZATION_AUDIT_ACTIONS.scimGroupMappingUpdated,
-        payload: { groupMappingMode: input.groupMappingMode },
+        category: "security",
+        outcome: "succeeded",
+        resources: [
+          { type: "scim_connection", id: connection.id, relationship: "target" },
+          { type: "organization", id: payload.organization.id, relationship: "parent" },
+        ],
+        changes: { before: null, after: { groupMappingMode: input.groupMappingMode }, changedFields: ["groupMappingMode"] },
       })
 
       const [updated, health, ssoReady] = await Promise.all([
@@ -384,11 +389,12 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
 
       const payload = c.get("organizationContext")
       const result = await reconcileOrganizationScimDrift(payload.organization.id)
-      await recordOrganizationAuditEvent({
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
+      await recordAuditAfterCommit(orgAuditContext(c, "organization.scim", payload.organization.id), {
         action: ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun,
-        payload: result,
+        category: "execution",
+        outcome: "succeeded",
+        resources: [{ type: "organization", id: payload.organization.id, relationship: "target" }],
+        changes: { before: null, after: { checked: result.checked, repaired: result.repaired, failures: result.failures }, changedFields: ["checked", "repaired", "failures"] },
       })
       return c.json(result)
     },
@@ -449,10 +455,11 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
       const payload = c.get("organizationContext")
       const deleted = await deleteOrganizationScimConnection(payload.organization.id)
       if (deleted) {
-        await recordOrganizationAuditEvent({
-          organizationId: payload.organization.id,
-          actorUserId: payload.currentMember.userId,
+        await recordAuditAfterCommit(orgAuditContext(c, "organization.scim", payload.organization.id), {
           action: ORGANIZATION_AUDIT_ACTIONS.scimConnectionDeleted,
+          category: "security",
+          outcome: "succeeded",
+          resources: [{ type: "organization", id: payload.organization.id, relationship: "target" }],
         })
       }
       return c.body(null, 204)
