@@ -1,10 +1,12 @@
 ---
-title: "Choose your deployment platform"
+title: "Self-host OpenWork: choose your deployment platform"
 sidebarTitle: "Choose your platform"
-description: "Plan a self-hosted OpenWork deployment on Docker, virtual machines, Kubernetes, managed containers, or your own infrastructure."
+description: "Compare self-hosted OpenWork deployment paths: Helm on Kubernetes, Docker Compose, Linux VMs, and managed container platforms."
 ---
 
 You do not need Kubernetes to self-host OpenWork. The desktop app runs locally, and the team control plane has published Linux container images you can adapt to your infrastructure. Choose the environment you already use to see the requirements and the available deployment path.
+
+Start with [Docker Compose for evaluation](/self-host/evaluate-with-docker-compose), use the [Helm chart on Kubernetes](/self-host/deploy-to-your-cloud/overview) for the tested production path, or plan a deployment on your existing container or VM platform below.
 
 The [desktop app](https://openworklabs.com/download) is MIT-licensed. The team control plane uses the EE License; review [Pricing and licensing](/start-here/pricing-and-licensing) for evaluation and production terms.
 
@@ -14,7 +16,7 @@ The Helm guides document the tested production path on EKS, AKS, and GKE. The EC
 
 | Environment | Deployment path |
 | --- | --- |
-| [Docker and virtual machines](/self-host/platforms/docker-and-vms) | Compose for evaluation; your own container setup for production. Includes EC2, Azure VMs, Compute Engine, Hetzner, and other Linux hosts. |
+| [Docker Compose and virtual machines](/self-host/platforms/docker-and-vms) | Docker Compose for evaluation; your own container setup for production. Includes EC2, Azure VMs, Compute Engine, Hetzner, and other Linux hosts. |
 | [AWS ECS / Fargate](/self-host/platforms/aws-ecs) | Existing draft Terraform module with RDS and HTTPS. |
 | [Azure Container Apps](/self-host/platforms/azure-container-apps) | Adapt the web and API images to Container Apps and managed MySQL. |
 | [Google Cloud Run](/self-host/platforms/google-cloud-run) | Assess the control plane separately from background work and durable workers. |
