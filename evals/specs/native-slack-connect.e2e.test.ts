@@ -31,6 +31,14 @@ test("a platform admin rolls Slack search out by organization while members keep
   const privateConversation = world.slack.conversations.find(entry => entry.type === "private_channel");
   if (!privateConversation) throw new Error("The synthetic private conversation is missing");
   let retainedSearchName = "";
+  const retainedAccounts = new Map<"first" | "other", { connectedAt: string; externalAccountId: string }>();
+  const rememberAccount = async (identity: "first" | "other") => {
+    const account = await world.connection(identity);
+    if (typeof account?.connectedAt !== "string" || typeof account.externalAccountId !== "string") {
+      throw new Error("Expected a connected account before changing availability");
+    }
+    retainedAccounts.set(identity, { connectedAt: account.connectedAt, externalAccountId: account.externalAccountId });
+  };
   const featureState = async (organizationId: string, key = "nativeSlack") =>
     record(record((await world.organizationFeatures(organizationId)).featureStates)[key]);
   const expectFeature = async (organizationId: string, enabled: boolean, override: boolean | null, source: string, key = "nativeSlack") => {
@@ -460,6 +468,7 @@ test("a platform admin rolls Slack search out by organization while members keep
     await user.click({ role: "button", text: "Authorize another workspace" });
     await user.see({ role: "heading", text: "You're connected" }, { timeoutMs: 30_000 });
     expect(await world.connection("other")).toMatchObject({ connectedForMe: true });
+    await rememberAccount("other");
     const ownSearch = await world.memberRequest("other", "/v1/capabilities/slack/search?query=Amber%20launch");
     expect(ownSearch.status).toBe(200);
     expect(ownSearch.text).toContain(world.slack.otherConversations[0].text);
@@ -470,6 +479,7 @@ test("a platform admin rolls Slack search out by organization while members keep
   });
 
   await step("turning off the first organization blocks retained grants while the second keeps working", async () => {
+    await rememberAccount("first");
     await toggleOrganization(world.organizationId, world.organizationSlug, false);
     await expectFeature(world.otherOrganizationId, true, true, "override");
     const authenticated = await world.memberRequest("first", "/v1/org");
@@ -495,8 +505,8 @@ test("a platform admin rolls Slack search out by organization while members keep
     await member.notSee({ testId: "connect-my-mcp-account-slack" });
     const account = await world.connection("first");
     expect(account).toMatchObject({ policyBlocked: true, policyOwner: "openwork", connectedForMe: true, needsReconnect: false });
-    expect(account?.externalAccountId).toBe("slack:TSYNTHETIC:USYNTHFIRST");
-    evidence.recordAssertionEvidence("Blocking does not erase the account", "The first member sees Blocked and Disconnect, not a Connect/Reconnect action. The same saved Slack identity remains connectedForMe=true with policyOwner=openwork and needsReconnect=false.", true);
+    expect(account?.connectedAt).toBe(retainedAccounts.get("first")?.connectedAt);
+    evidence.recordAssertionEvidence("Blocking does not erase the account", "The first member sees Blocked and Disconnect, not a Connect/Reconnect action. The saved account's connectedAt marker is unchanged, with connectedForMe=true, policyOwner=openwork and needsReconnect=false. The blocked summary does not need to disclose its internal Slack identity.", true);
     await member.screenshot();
   });
 
@@ -557,10 +567,10 @@ test("a platform admin rolls Slack search out by organization while members keep
     const before = world.slack.calls().length;
     await expectBlocked("first");
     await expectBlocked("other");
-    expect(await world.connection("first")).toMatchObject({ externalAccountId: "slack:TSYNTHETIC:USYNTHFIRST", policyBlocked: true, policyOwner: "openwork", connectedForMe: true, needsReconnect: false });
-    expect(await world.connection("other")).toMatchObject({ externalAccountId: `slack:${world.slack.otherWorkspace}:USYNTHFIRST`, policyBlocked: true, policyOwner: "openwork", connectedForMe: true, needsReconnect: false });
+    expect(await world.connection("first")).toMatchObject({ connectedAt: retainedAccounts.get("first")?.connectedAt, policyBlocked: true, policyOwner: "openwork", connectedForMe: true, needsReconnect: false });
+    expect(await world.connection("other")).toMatchObject({ connectedAt: retainedAccounts.get("other")?.connectedAt, policyBlocked: true, policyOwner: "openwork", connectedForMe: true, needsReconnect: false });
     expect(world.slack.calls()).toHaveLength(before);
-    evidence.recordAssertionEvidence("The global kill outranks both true overrides", "Both organizations resolve source=killed while retaining override=true and their own stored identities. Subsequent starts/status/search/threads and retained MCP execution are blocked for both, with 0 provider calls. No claim is made about already in-flight requests.", true);
+    evidence.recordAssertionEvidence("The global kill outranks both true overrides", "Both organizations resolve source=killed while retaining override=true, connectedForMe=true and their original connectedAt markers. Subsequent starts/status/search/threads and retained MCP execution are blocked for both, with 0 provider calls. Identity is rechecked after restore; no claim is made about already in-flight requests.", true);
     await admin.screenshot();
   });
 
@@ -569,6 +579,13 @@ test("a platform admin rolls Slack search out by organization while members keep
     await admin.see({ testId: "admin-feature-state-nativeSlack" }, { text: "Off · organization overrides only" });
     await expectFeature(world.organizationId, true, true, "override");
     await expectFeature(world.otherOrganizationId, true, true, "override");
+    const restoredIdentities: Array<"first" | "other"> = ["first", "other"];
+    for (const identity of restoredIdentities) {
+      expect(await world.connection(identity)).toMatchObject({
+        connectedAt: retainedAccounts.get(identity)?.connectedAt,
+        externalAccountId: retainedAccounts.get(identity)?.externalAccountId,
+      });
+    }
     const before = world.slack.calls().length;
     const firstSearch = await world.memberRequest("first", "/v1/capabilities/slack/search?query=Amber%20launch");
     const otherSearch = await world.memberRequest("other", "/v1/capabilities/slack/search?query=Amber%20launch");
