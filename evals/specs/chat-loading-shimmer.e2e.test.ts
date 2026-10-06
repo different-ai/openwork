@@ -30,7 +30,8 @@ test("chat working and command activity use quiet shimmer without spinners", asy
       const row = document.querySelector<HTMLElement>('[data-loading-message="working"]');
       const shimmer = row?.querySelector<HTMLElement>(".ow-text-shimmer");
       const pane = document.querySelector<HTMLElement>("main[data-session-pane]");
-      const header = pane?.querySelector("header");
+      // The session header is part of the window titlebar, outside the pane.
+      const header = document.querySelector<HTMLElement>("header[data-session-header]");
       const filterOf = (element: Element) => getComputedStyle(element).backdropFilter;
       const nestedFilters = [];
       if (row instanceof HTMLElement && pane instanceof HTMLElement) {
@@ -82,7 +83,7 @@ test("chat working and command activity use quiet shimmer without spinners", asy
 
   await step("the session pane is the only backdrop-filter surface above the transcript", async () => {
     // The macOS shell blurs the vibrancy backdrop once, on the session pane.
-    // Nothing scrolls beneath the pane header or behind the transcript surface,
+    // Nothing scrolls beneath the session header or behind the transcript surface,
     // so any further backdrop filter between the pane and the Working row is an
     // invisible extra full-pane blur pass on every transcript repaint.
     if (!isRecord(working) || typeof working.isMac !== "boolean") {
