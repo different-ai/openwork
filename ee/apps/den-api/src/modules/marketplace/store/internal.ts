@@ -28,6 +28,7 @@ import { redactWorkflowNormalizedPayloadAuthoringDetails } from "../../../workfl
 import type { PluginMcpRequirementBindingRow } from "../../../mcp/plugin-mcp-requirement-bindings.js"
 import { PluginArchRouteFailure } from "./route-failure.js"
 import { authoredMcpAppVersionReadView } from "./object-types/app.js"
+import type { GithubDiscoveredPlugin, GithubDiscoveryTreeEntry } from "../../../routes/org/plugin-system/github-discovery.js"
 
 export type OrganizationId = PluginArchActorContext["organizationContext"]["organization"]["id"]
 
@@ -858,4 +859,86 @@ export async function removeGrant(input: GrantTarget & { context: PluginArchActo
     .limit(1)
   if (!rows[0]) throw new PluginArchRouteFailure(404, "access_grant_not_found", "Access grant not found.")
   await db.update(ConnectorInstanceAccessGrantTable).set({ removedAt }).where(eq(ConnectorInstanceAccessGrantTable.id, input.grantId))
+}
+
+export type GithubDiscoveryImportPlan = {
+  fileShaByPath?: Record<string, string>
+  objectType: ConnectorMappingRow["objectType"]
+  paths: string[]
+  selector: string
+}
+
+export async function ensureVisibleConnectorInstance(context: PluginArchActorContext, connectorInstanceId: ConnectorInstanceId) {
+  const row = await getConnectorInstanceRow(context.organizationContext.organization.id, connectorInstanceId)
+  if (!row) {
+    throw new PluginArchRouteFailure(404, "connector_instance_not_found", "Connector instance not found.")
+  }
+  await requirePluginArchResourceRole({ context, resourceId: row.id, resourceKind: "connector_instance", role: "viewer" })
+  return row
+}
+
+export function buildGithubDiscoveryImportPlans(input: { discoveredPlugins: GithubDiscoveredPlugin[]; treeEntries: GithubDiscoveryTreeEntry[] }) {
+  return Object.fromEntries(input.discoveredPlugins.map((plugin) => [
+    plugin.key,
+    discoveryMappingsForPlugin(plugin).map((mapping) => {
+      const entries = importableGithubPathsForMapping({ mapping, treeEntries: input.treeEntries })
+      const fileShaByPath: Record<string, string> = {}
+      for (const entry of entries) {
+        if (entry.sha) {
+          fileShaByPath[entry.path] = entry.sha
+        }
+      }
+      return {
+        fileShaByPath,
+        objectType: mapping.objectType,
+        paths: entries.map((entry) => entry.path),
+        selector: mapping.selector,
+      } satisfies GithubDiscoveryImportPlan
+    }),
+  ])) satisfies Record<string, GithubDiscoveryImportPlan[]>
+}
+
+function discoveryMappingsForPlugin(plugin: GithubDiscoveredPlugin) {
+  return [
+    ...plugin.componentPaths.skills.map((selector) => ({
+      objectType: "skill" as const,
+      selector: plugin.sourceKind === "agent_plugin_manifest" ? selector : `${selector}/**`,
+    })),
+    ...plugin.componentPaths.commands.map((selector) => ({ objectType: "command" as const, selector: `${selector}/**` })),
+    ...plugin.componentPaths.agents.map((selector) => ({ objectType: "agent" as const, selector: `${selector}/**` })),
+    ...plugin.componentPaths.hooks.map((selector) => ({ objectType: "hook" as const, selector })),
+    ...plugin.componentPaths.mcpServers.map((selector) => ({ objectType: "mcp" as const, selector })),
+  ]
+}
+
+function mappingSelectorMatchesPath(selector: string, path: string) {
+  const normalizedSelector = selector.trim().replace(/^\/+/, "")
+  const normalizedPath = path.trim().replace(/^\/+/, "")
+  if (normalizedSelector.endsWith("/**")) {
+    const prefix = normalizedSelector.slice(0, -3)
+    return normalizedPath.startsWith(`${prefix}/`)
+  }
+  return normalizedPath === normalizedSelector
+}
+
+function importableGithubPathsForMapping(input: {
+  mapping: Pick<ConnectorMappingRow, "objectType" | "selector">
+  treeEntries: GithubDiscoveryTreeEntry[]
+}) {
+  const matchingBlobs = input.treeEntries
+    .filter((entry) => entry.kind === "blob")
+    .filter((entry) => mappingSelectorMatchesPath(input.mapping.selector, entry.path))
+
+  if (input.mapping.objectType === "skill") {
+    const preferred = matchingBlobs.filter((entry) => entry.path.endsWith("/SKILL.md"))
+    return preferred.length > 0 ? preferred : matchingBlobs.filter((entry) => entry.path.endsWith(".md"))
+  }
+  if (input.mapping.objectType === "agent") {
+    const preferred = matchingBlobs.filter((entry) => entry.path.endsWith("/AGENT.md"))
+    return preferred.length > 0 ? preferred : matchingBlobs.filter((entry) => entry.path.endsWith(".md"))
+  }
+  if (input.mapping.objectType === "command") {
+    return matchingBlobs.filter((entry) => entry.path.endsWith(".md"))
+  }
+  return matchingBlobs
 }
