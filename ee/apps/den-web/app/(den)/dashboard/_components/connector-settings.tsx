@@ -4,9 +4,11 @@ import { type ReactNode, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenSelect } from "../../_components/ui/select";
 import { DenInput } from "../../_components/ui/input";
+import { ApiKeySchemeAdvanced } from "./connector-setup-fields";
 import { ConfirmDialog } from "./item-list";
+import { credentialModeForAuth } from "./member-api-key";
 import { McpCredentialInput } from "./mcp-credential-input";
-import { type ExternalMcpAuthType, type ExternalMcpCredentialMode, type ExternalMcpConnection, type McpIssuerReview, type UpdateMcpConnectionInput, useReviewMcpIssuer, useUpdateMcpConnection } from "./mcp-connections-data";
+import { apiKeyAuthSchemeInput, type ExternalMcpApiKeyAuthScheme, type ExternalMcpAuthType, type ExternalMcpCredentialMode, type ExternalMcpConnection, type McpIssuerReview, type UpdateMcpConnectionInput, useReviewMcpIssuer, useUpdateMcpConnection } from "./mcp-connections-data";
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -24,6 +26,7 @@ export function ConnectorSettingsForm({ connection, onSaved }: { connection: Ext
   const [url, setUrl] = useState(connection.url);
   const [authType, setAuthType] = useState<ExternalMcpAuthType>(connection.authType);
   const [credentialMode, setCredentialMode] = useState<ExternalMcpCredentialMode>(connection.credentialMode);
+  const [apiKeyAuthScheme, setApiKeyAuthScheme] = useState<ExternalMcpApiKeyAuthScheme>(connection.apiKeyAuthScheme);
   const [showOAuthApp, setShowOAuthApp] = useState(Boolean(connection.oauthClientId) || connection.oauthClientRequired === true);
   const [scopes, setScopes] = useState((connection.requestedScopes ?? []).join(" "));
   const [exposeDirectly, setExposeDirectly] = useState(connection.exposeDirectly);
@@ -35,13 +38,19 @@ export function ConnectorSettingsForm({ connection, onSaved }: { connection: Ext
   const managedByPlugin = connection.identityManagedBy.length > 0;
   const usesKey = authType === "apikey";
   const usesOAuthApp = authType === "oauth" && showOAuthApp;
-  const chosenMode = authType === "oauth" ? credentialMode : "shared";
-  const identityChanged = url.trim() !== connection.url || authType !== connection.authType || chosenMode !== connection.credentialMode;
+  const chosenMode = credentialModeForAuth(authType, credentialMode);
+  const usesSharedKey = usesKey && chosenMode === "shared";
+  const usesPersonalKey = usesKey && chosenMode === "per_member";
+  const normalizedApiKey = apiKey.trim();
+  const identityChanged = url.trim() !== connection.url
+    || authType !== connection.authType
+    || chosenMode !== connection.credentialMode
+    || (usesKey && apiKeyAuthScheme !== connection.apiKeyAuthScheme);
   const requestedScopes = [...new Set(scopes.split(/[\s,]+/).filter(Boolean))];
   const scopesChanged = requestedScopes.join(" ") !== (connection.requestedScopes ?? []).join(" ");
   const clientChanged = usesOAuthApp && (clientId.trim() !== (connection.oauthClientId ?? "") || Boolean(clientSecret.trim()));
-  const changed = name.trim() !== connection.name || identityChanged || Boolean(apiKey.trim()) || clientChanged || scopesChanged || exposeDirectly !== connection.exposeDirectly;
-  const keyRequired = usesKey && identityChanged && !apiKey.trim();
+  const changed = name.trim() !== connection.name || identityChanged || Boolean(usesSharedKey && normalizedApiKey) || clientChanged || scopesChanged || exposeDirectly !== connection.exposeDirectly;
+  const keyRequired = usesSharedKey && identityChanged && !normalizedApiKey;
   const disabled = !changed || !name.trim() || !url.trim() || keyRequired || (clientChanged && !clientId.trim()) || !connection.updatedAt;
 
   async function save() {
@@ -56,7 +65,8 @@ export function ConnectorSettingsForm({ connection, onSaved }: { connection: Ext
       credentialMode: chosenMode,
       exposeDirectly,
       ...(authType === "oauth" && !managedByPlugin ? { requestedScopes } : {}),
-      ...(usesKey && !managedByPlugin && apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+      ...(!managedByPlugin ? apiKeyAuthSchemeInput(authType, apiKeyAuthScheme) : {}),
+      ...(usesSharedKey && !managedByPlugin && normalizedApiKey ? { apiKey: normalizedApiKey } : {}),
       ...(clientChanged && clientId.trim()
         ? { oauthClient: { clientId: clientId.trim(), ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}) } }
         : {}),
@@ -66,9 +76,13 @@ export function ConnectorSettingsForm({ connection, onSaved }: { connection: Ext
       const updated = await updateConnection.mutateAsync(input);
       setApiKey("");
       setClientSecret("");
-      onSaved(updated.reconnectionRequired ? `${updated.name} is saved. Sign in again to use it.` : `${updated.name} is saved.`);
+      onSaved(usesPersonalKey
+        ? `${updated.name} is ready. Each person can now add their own key in My Library.`
+        : updated.reconnectionRequired ? `${updated.name} is saved. Sign in again to use it.` : `${updated.name} is saved.`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "That did not save.");
+      setError(usesPersonalKey
+        ? "The connection did not save. Check the settings and try again."
+        : cause instanceof Error ? cause.message : "That did not save.");
     }
   }
 
@@ -101,19 +115,22 @@ export function ConnectorSettingsForm({ connection, onSaved }: { connection: Ext
         </DenSelect>
       </Field>
       <Field label="How people sign in">
-        <DenSelect value={chosenMode} disabled={managedByPlugin || authType !== "oauth"} onChange={(event) => {
+        <DenSelect value={chosenMode} disabled={managedByPlugin || authType === "none"} onChange={(event) => {
           const value = event.target.value;
           if (value === "per_member" || value === "shared") setCredentialMode(value);
         }}>
-          <option value="per_member">Each person signs in</option>
-          <option value="shared">One account for everyone</option>
+          <option value="per_member">{usesKey ? "Each person adds a key" : "Each person signs in"}</option>
+          <option value="shared">{usesKey ? "One key for everyone" : "One account for everyone"}</option>
         </DenSelect>
       </Field>
-      {authType !== "oauth" ? <p className="text-[12px] text-gray-500">This connection is shared; nobody signs in individually.</p> : null}
+      {authType === "none" ? <p className="text-[12px] text-gray-500">This connection is shared; nobody signs in individually.</p> : null}
+      {usesKey ? (
+        <ApiKeySchemeAdvanced value={apiKeyAuthScheme} onChange={setApiKeyAuthScheme} disabled={managedByPlugin} testId="connector-settings-api-key-auth-scheme" />
+      ) : null}
       {authType === "oauth" && !showOAuthApp ? <DenButton type="button" variant="secondary" size="sm" onClick={() => setShowOAuthApp(true)}>Add OAuth app</DenButton> : null}
-      {usesKey && !managedByPlugin ? (
+      {usesSharedKey && !managedByPlugin ? (
         <Field label={keyRequired ? "New API key" : "New API key (optional)"}>
-          <McpCredentialInput kind="secret" name="connector-settings-api-key" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Leave empty to keep the saved key" data-testid="connector-settings-api-key" />
+          <McpCredentialInput kind="secret" name="connector-settings-api-key" autoComplete="off" data-ph-no-capture value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Leave empty to keep the saved key" data-testid="connector-settings-api-key" />
         </Field>
       ) : null}
       {usesOAuthApp ? (
@@ -144,7 +161,7 @@ export function ConnectorSettingsForm({ connection, onSaved }: { connection: Ext
     <ConfirmDialog
         confirm={confirming ? {
           title: `Change how ${connection.name} connects?`,
-          description: "Everyone signed in to it signs in again.",
+          description: "Saved sign-ins and API keys are cleared. Everyone reconnects.",
           action: "Save and sign everyone out",
         } : null}
         onConfirm={save}

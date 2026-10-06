@@ -51,7 +51,7 @@ import { resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
 import { fetchFiniteDesktopHttp } from "./finite-http-fetch.mjs";
-import { createDesktopTransferRegistry, uploadMultipartFromBytes } from "./binary-transfer.mjs";
+import { createDesktopTransferRegistry } from "./binary-transfer.mjs";
 import {
   createLinuxDesktopIntegration,
 } from "./linux-desktop-integration.mjs";
@@ -1066,13 +1066,9 @@ const IDLE_ENGINE_INFO = Object.freeze({
 
 const IDLE_OPENWORK_SERVER_INFO = Object.freeze({
   running: false,
-  remoteAccessEnabled: false,
   host: null,
   port: null,
   baseUrl: null,
-  connectUrl: null,
-  mdnsUrl: null,
-  lanUrl: null,
   clientToken: null,
   ownerToken: null,
   hostToken: null,
@@ -1135,26 +1131,6 @@ const workspaceStore = createWorkspaceStore({
 });
 
 const desktopTransfers = createDesktopTransferRegistry();
-
-async function runDesktopTransfer(event, input, operation) {
-  return desktopTransfers.run(event, input?.transferId, async (signal) => {
-    // Both authorities come from app-owned state in userData; workspace-
-    // writable configuration must never widen where a transfer may write.
-    const [authorizedRoots, allowedUrlPrefixes] = await Promise.all([
-      workspaceStore.listLocalWorkspacePaths(),
-      workspaceStore.listRemoteWorkspaceUrlPrefixes(),
-    ]);
-    return await operation(input, {
-      authorizedRoots,
-      allowedUrlPrefixes,
-      // App-owned staging keeps in-flight downloads outside every authorized
-      // workspace root until they complete.
-      stagingDir: path.join(app.getPath("userData"), "binary-transfers"),
-      fetcher: electronNet.fetch,
-      signal,
-    });
-  });
-}
 
 const connectLinkReplayGuard = createConnectLinkReplayGuard({
   filePath: path.join(app.getPath("userData"), "connect-link-seen.json"),
@@ -1457,13 +1433,12 @@ async function bootRuntimeForSelectedWorkspace() {
     ? list.workspaces.find((entry) => entry?.id === selectedId)
     : list.workspaces[0];
   const workspaceRoot = String(workspace?.path ?? "").trim();
-  if (!workspaceRoot || workspace?.workspaceType === "remote") {
+  if (!workspaceRoot) {
     return { ok: true, skipped: true, reason: "no-local-workspace" };
   }
 
   const workspacePaths = [];
   for (const entry of list.workspaces) {
-    if (entry?.workspaceType === "remote") continue;
     const workspacePath = String(entry?.path ?? "").trim();
     if (workspacePath && !workspacePaths.includes(workspacePath)) workspacePaths.push(workspacePath);
   }
@@ -1480,7 +1455,7 @@ async function bootRuntimeForSelectedWorkspace() {
   } catch (error) {
     const fallback = list.workspaces.find((entry) => {
       const candidatePath = String(entry?.path ?? "").trim();
-      return entry?.workspaceType !== "remote" && candidatePath && candidatePath !== workspaceRoot;
+      return candidatePath && candidatePath !== workspaceRoot;
     });
     const fallbackRoot = String(fallback?.path ?? "").trim();
     if (!fallback || !fallbackRoot) throw error;
@@ -1765,12 +1740,6 @@ const desktopCommandHandlers = {
   },
   "workspaceCreate": async (event, ...args) => {
       return workspaceStore.createWorkspace(args[0] ?? {});
-  },
-  "workspaceCreateRemote": async (event, ...args) => {
-      return workspaceStore.createRemoteWorkspace(args[0] ?? {});
-  },
-  "workspaceUpdateRemote": async (event, ...args) => {
-      return workspaceStore.updateRemoteWorkspace(args[0] ?? {});
   },
   "workspaceForget": async (event, ...args) => {
       return workspaceStore.forgetWorkspace(String(args[0] ?? "").trim());
@@ -2266,9 +2235,6 @@ const desktopCommandHandlers = {
       return cancellable && init.transferId
         ? desktopTransfers.run(event, init.transferId, fetchResponse)
         : fetchResponse(undefined);
-  },
-  "__uploadMultipart": async (event, ...args) => {
-      return runDesktopTransfer(event, args[0] ?? {}, uploadMultipartFromBytes);
   },
   "__cancelTransfer": async (event, ...args) => {
       return desktopTransfers.cancel(event, args[0]);

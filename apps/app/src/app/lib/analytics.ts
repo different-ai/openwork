@@ -1,7 +1,7 @@
 /**
  * Product analytics for the OpenWork desktop app (PostHog, zero-dependency).
  *
- * Principles (mirrors `den-telemetry.ts`):
+ * Product instrumentation principles:
  * - Never send message content, file paths, code, or prompts. Only event
  *   names, counts, lengths, durations, and coarse context (workspace type,
  *   provider/model id). Sole exception: answers the user types directly

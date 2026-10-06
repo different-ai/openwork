@@ -67,6 +67,7 @@ import { readConnectState } from "../state.ts";
 import type {
   Agent,
   ClickOptions,
+  CredentialInputState,
   Probe,
   ProbeEvalOptions,
   Seed,
@@ -1084,6 +1085,39 @@ export class ProbeChannel implements Probe {
   connectorCatalog() {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "connectorCatalog", "connectorCatalog", surface, () => readConnectorCatalog(surface));
+  }
+
+  credentialInputState(selector: string, candidate = ""): Promise<CredentialInputState> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "credentialInputState", "credentialInputState(<masked>)", surface, async () => {
+      const value = await callFunctionOnSurface(surface, (selector, candidate) => {
+        const input = document.querySelector<HTMLInputElement>(selector);
+        const dialog = input?.closest('[role="dialog"]');
+        const storageValues = (storage: Storage) => Array.from({ length: storage.length }, (_, index) => {
+          const key = storage.key(index);
+          return key ? `${key}:${storage.getItem(key) ?? ""}` : "";
+        });
+        const contains = (text: string) => candidate.length > 0 && text.includes(candidate);
+        return {
+          dialogPresent: Boolean(dialog),
+          dialogExcludedFromCapture: dialog?.hasAttribute("data-ph-no-capture") === true,
+          inputExcludedFromCapture: input?.hasAttribute("data-ph-no-capture") === true,
+          inputType: input?.type ?? null,
+          autoComplete: input?.getAttribute("autocomplete") ?? null,
+          empty: input?.value === "",
+          inputContainsSecret: candidate.length > 0 && input?.value === candidate,
+          bodyContainsSecret: contains(document.body?.innerText ?? ""),
+          urlContainsSecret: [location.href, ...performance.getEntriesByType("resource").map(entry => entry.name)].some(contains),
+          historyContainsSecret: contains(JSON.stringify(history.state) ?? ""),
+          storageContainsSecret: [...storageValues(localStorage), ...storageValues(sessionStorage)].some(contains),
+          consoleContainsSecret: contains(JSON.stringify(Reflect.get(window, "__nativeProofConsole") ?? []) ?? ""),
+        };
+      }, [selector, candidate]);
+      if (!value || Object.values(value).some(field => typeof field !== "boolean" && typeof field !== "string" && field !== null)) {
+        throw new Error("Credential input probe returned an invalid masked projection.");
+      }
+      return value;
+    });
   }
 
   storage(key: string): Promise<unknown>;

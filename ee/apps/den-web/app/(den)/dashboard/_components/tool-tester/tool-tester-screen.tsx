@@ -23,6 +23,7 @@ import { DenRequestTimeoutError } from "../../../_lib/den-flow";
 import { getMcpConnectionsRoute, getOrgAccessFlags } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { marketplaceConnectionNeedsAdminSetup } from "../mcp-connection-setup";
+import { personalApiKeyStatus, personalApiKeyStatusLabel } from "../member-api-key";
 import {
   type ExternalMcpConnection,
   type ExternalMcpTool,
@@ -131,6 +132,7 @@ export function ToolTesterScreen() {
   const [pendingLoad, setPendingLoad] = useState<StoredToolRun | null>(null);
 
   const selectedConnection = testableConnections.find((connection) => connection.id === selectedConnectionId) ?? null;
+  const selectedApiKeyStatus = selectedConnection ? personalApiKeyStatus(selectedConnection) : null;
   const catalog = useMcpConnectionTools(selectedConnectionId, Boolean(selectedConnection));
   const updatePolicy = useUpdateMcpConnectionToolPolicy(selectedConnectionId);
   const runTool = useRunMcpConnectionTool(selectedConnectionId);
@@ -427,8 +429,10 @@ export function ToolTesterScreen() {
                 {testableConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name}</option>)}
               </DenSelect>
             </div>
-            <DenBadge tone={selectedConnection.connectedForMe ? "success" : "neutral"}>
-              {selectedConnection.connectedForMe ? "Connected as you" : "Not connected"}
+            <DenBadge tone={selectedApiKeyStatus === "reconnect_required" ? "warning" : selectedApiKeyStatus === "saved_unverified" ? "neutral" : selectedConnection.connectedForMe ? "success" : "neutral"}>
+              {selectedApiKeyStatus
+                ? personalApiKeyStatusLabel(selectedApiKeyStatus)
+                : selectedConnection.connectedForMe ? "Connected as you" : "Not connected"}
             </DenBadge>
             <DenButton
               className="shrink-0 whitespace-nowrap sm:ml-auto"

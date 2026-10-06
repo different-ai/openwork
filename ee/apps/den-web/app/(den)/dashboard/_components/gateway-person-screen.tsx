@@ -8,7 +8,7 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { getAiGatewayLimitRoute, getAiGatewayProvidersRoute, getAiGatewayUsersTeamsRoute, getNewAiGatewayLimitRoute, type DenOrgMember, type DenOrgTeam } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { formatUsageCost } from "../_features/analytics/stacked-daily-chart";
+import { formatUsageCost } from "../_features/gateway-usage/stacked-daily-chart";
 import { accessReason, directoryAccess, memberSubject, providerAudienceLabel } from "./gateway-directory-data";
 import { initials, ModelMark, ShareBar } from "./gateway-spend-breakdown";
 import { useGatewayAccessProviders } from "./gateway-subject-access-data";

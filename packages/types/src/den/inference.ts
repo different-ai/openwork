@@ -132,13 +132,11 @@ export const INFERENCE_FREE_MODEL_ID = "openai/gpt-6-luna";
 export const INFERENCE_FREE_ENV = {
   enabled: "INFERENCE_FREE_ENABLED",
   weeklyBudgetUsd: "INFERENCE_FREE_WEEKLY_BUDGET_USD",
-  rolloutAllOrganizations: "INFERENCE_FREE_ROLLOUT_ALL_ORGS",
   modelID: "INFERENCE_FREE_MODEL_ID",
 } as const;
 
 export type FreeInferenceConfig = {
   enabled: boolean;
-  rolloutAllOrganizations: boolean;
   weeklyBudgetUsd: number;
   weeklyLimitAmount: number;
   modelID: typeof INFERENCE_FREE_MODEL_ID;
@@ -147,8 +145,6 @@ export type FreeInferenceConfig = {
 export function readFreeInferenceConfig(environment: Record<string, string | undefined>): FreeInferenceConfig {
   const enabled = environment[INFERENCE_FREE_ENV.enabled] ?? "false";
   if (!["true", "false", "1", "0"].includes(enabled)) throw new Error("Invalid INFERENCE_FREE_ENABLED");
-  const rollout = environment[INFERENCE_FREE_ENV.rolloutAllOrganizations] ?? "false";
-  if (!["true", "false", "1", "0"].includes(rollout)) throw new Error("Invalid INFERENCE_FREE_ROLLOUT_ALL_ORGS");
   const budget = environment[INFERENCE_FREE_ENV.weeklyBudgetUsd] ?? "5";
   const weeklyBudgetUsd = Number(budget);
   const weeklyLimitAmount = Math.floor(weeklyBudgetUsd * INFERENCE_USAGE_CONVERSION_FACTOR);
@@ -156,7 +152,7 @@ export function readFreeInferenceConfig(environment: Record<string, string | und
     || !Number.isSafeInteger(weeklyLimitAmount)) throw new Error("Invalid INFERENCE_FREE_WEEKLY_BUDGET_USD");
   const modelID = environment[INFERENCE_FREE_ENV.modelID] ?? INFERENCE_FREE_MODEL_ID;
   if (modelID !== INFERENCE_FREE_MODEL_ID) throw new Error("Unapproved free model");
-  return { enabled: enabled === "true" || enabled === "1", rolloutAllOrganizations: rollout === "true" || rollout === "1", weeklyBudgetUsd: weeklyLimitAmount / INFERENCE_USAGE_CONVERSION_FACTOR, weeklyLimitAmount, modelID: INFERENCE_FREE_MODEL_ID };
+  return { enabled: enabled === "true" || enabled === "1", weeklyBudgetUsd: weeklyLimitAmount / INFERENCE_USAGE_CONVERSION_FACTOR, weeklyLimitAmount, modelID: INFERENCE_FREE_MODEL_ID };
 }
 
 export function freeInferenceWindow(now = new Date()) {
@@ -229,21 +225,6 @@ export function freeInferenceDefaultPinned(metadata: unknown): boolean {
 export function withFreeInferenceDefaultPinned(metadata: Record<string, unknown>, defaultPinned: boolean): Record<string, unknown> {
   const free = metadata.inferenceFree;
   return { ...metadata, inferenceFree: { ...(typeof free === "object" && free !== null && !Array.isArray(free) ? free : {}), defaultPinned } };
-}
-
-/** Platform-admin pilot enrollment; broad rollout changes only the default for organizations without an override. */
-export function freeInferenceRolloutEnabled(metadata: unknown, config: Pick<FreeInferenceConfig, "rolloutAllOrganizations">): boolean {
-  const free = readOrganizationMetadata(metadata).inferenceFree;
-  if (typeof free === "object" && free !== null && "rolloutEnabled" in free) return free.rolloutEnabled === true;
-  return config.rolloutAllOrganizations;
-}
-
-export function withFreeInferenceRollout(metadata: Record<string, unknown>, enabled: boolean | null): Record<string, unknown> {
-  const free = metadata.inferenceFree;
-  const next: Record<string, unknown> = { ...(typeof free === "object" && free !== null && !Array.isArray(free) ? free : {}) };
-  if (enabled === null) delete next.rolloutEnabled;
-  else next.rolloutEnabled = enabled;
-  return { ...metadata, inferenceFree: next };
 }
 
 export function managedModelCatalog(): ManagedModelRecommendation[] {

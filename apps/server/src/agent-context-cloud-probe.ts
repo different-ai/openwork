@@ -183,7 +183,7 @@ export type CloudCatalogProbeFetch = (
 
 export type ProbeOpenworkCloudCatalogInput = {
   workspaceId: string;
-  workspaceType: "local" | "remote";
+  workspaceType: "local";
   runtimeConfigAvailable?: boolean;
   config: Record<string, unknown> | null | undefined;
   engineRegistration: CloudEngineRegistrationEvidence;
@@ -364,7 +364,6 @@ function authorizationHeader(config: Record<string, unknown>): { value: string |
  * boundaries can skip the probe.
  */
 function prepare(input: ProbeOpenworkCloudCatalogInput): PreparedProbe | CloudCatalogProbeCode {
-  if (input.workspaceType !== "local") return "remote_workspace_unavailable";
   if (input.runtimeConfigAvailable === false) return "runtime_config_unavailable";
   if (!isRecord(input.config)) return "cloud_mcp_missing";
   if (input.config.type !== "remote") return "cloud_mcp_not_remote";

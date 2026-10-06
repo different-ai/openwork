@@ -1,6 +1,9 @@
 export { browserScript } from "@openwork/cdp";
 export { attachSurface, evaluateOnSurface } from "@openwork/cdp";
-export { denFetch, signIn as signInDen } from "@openwork/behaviors";
+export { denFetch, signIn as signInDen, engineSessionProbe, sendComposerMessage, waitFor } from "@openwork/behaviors";
+export type { DenSession } from "@openwork/behaviors";
+export { allocateFreePorts, listTargets, setViewport } from "@openwork/cdp";
+export { chrome } from "@openwork/hosts";
 // checkpointCapability and its types come from @openwork/env (re-exported below).
 export { screenshot } from "@openwork/test-evidence";
 export type { BrowserEvaluation, BrowserScript } from "@openwork/cdp";

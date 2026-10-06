@@ -136,18 +136,18 @@ Where `create_app` is available, Workflow-bound views are read-only:
 the REST save and activate routes return `legacy_view_read_only`. Existing views
 keep their render, preview, run, and resource paths, and can still be retired.
 
-Building your own Apps is off by default for every organization. A platform
-admin turns it on per organization in /admin (the `appMcpServers` org
-capability; only a literal `true` enables it). It also needs
+Building your own Apps is on for every organization. It needs
 `DEN_APP_MCP_SERVERS_ENABLED` (default `true`; `false`, `0`, `off`, or `no`
 turns it off for the deployment) and the organization's member-facing MCP
-connections. `appMcpServersEnabled` in `mcp-app-rollout.ts` combines the three,
-and `GET /v1/org` reports the result as the `appMcpServers` capability. Where it
-is off, an organization keeps the previous surface: no builder tools or App
-servers, the original connection index and `save_artifact_view` guidance, and
-writable Workflow-bound views. MCP Apps from connected MCP servers work either
-way. Eval Dens that enable generated artifact views default the deployment flag
-to `false` so older Workflow-bound journeys keep testing that mode.
+connections. `appMcpServersEnabled` in `mcp-app-rollout.ts` combines the two,
+and `GET /v1/org` reports the result as the `appMcpServers` capability. The
+retired per-organization `appMcpServers` override is ignored and dropped on the
+next admin capabilities write. Where it is off, an organization keeps the
+previous surface: no builder tools or App servers, the original connection index
+and `save_artifact_view` guidance, and writable Workflow-bound views. MCP Apps
+from connected MCP servers work either way. Eval Dens default the deployment
+flag to `false` so older Workflow-bound journeys keep testing that mode; the
+App journeys set it to `true`.
 
 ### Live generated apps
 

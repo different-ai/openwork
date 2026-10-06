@@ -369,7 +369,7 @@ export async function migrateWorkspaceRuntimeConfigToEngineGlobal(
 }
 
 export type RuntimeOpencodeConfigInspection = {
-  status: "available" | "database-missing" | "row-missing" | "table-missing" | "unreadable" | "invalid-row" | "remote-workspace";
+  status: "available" | "database-missing" | "row-missing" | "table-missing" | "unreadable" | "invalid-row";
   config: RuntimeOpencodeConfig;
 };
 

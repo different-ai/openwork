@@ -304,7 +304,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
     if (systemState.reload.reloadBusy) return;
 
     if (!systemState.canReloadWorkspaceEngine) {
-      // Reload controls unavailable (e.g. remote worker): surface the
+      // Reload controls unavailable: surface the
       // pending change quietly; auto-reload picks it up once controls
       // register again.
       notifyEvent({

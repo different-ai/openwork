@@ -347,6 +347,7 @@ function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headl
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-popup-blocking",
+    ...(process.platform === "darwin" ? ["--use-mock-keychain", "--password-store=basic"] : []),
     // Avoid the Daytona preview h2 stall when ~28 dev chunks multiplex; h1.1 loads them, while plain-http local Den never negotiates h2.
     "--disable-http2",
     startUrl,

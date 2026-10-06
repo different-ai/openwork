@@ -23,11 +23,8 @@ import {
   Pin,
   PinOff,
   Plus,
-  Share2,
   Trash2,
-  RefreshCw,
   RotateCcw,
-  Settings,
   FolderOpen,
   SquarePen,
   Tag,
@@ -37,7 +34,6 @@ import { LazyMotion, MotionContext, Reorder, domMax, m, useDragControls } from "
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
-import { OpenWorkDenHelpLink } from "../../workspace/openwork-den-help-link";
 import { SidebarActions, SidebarTitlebar, type ConversationHistoryControls } from "./sidebar-chrome";
 import { useUiStateStore } from "../../../shell/ui-state-store";
 import type {
@@ -45,9 +41,7 @@ import type {
   WorkspaceSessionGroup,
 } from "../../../../app/types";
 import {
-  isRemoteConnectionErrorMessage,
   getWorkspaceTaskLoadErrorDisplay,
-  isRemoteConnectionWorkspace,
   isMacPlatform,
   isWindowsPlatform,
 } from "../../../../app/utils";
@@ -87,7 +81,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { TaskRecovery } from "@/components/chat/task-recovery";
 import {
   Dialog,
   DialogClose,
@@ -543,12 +536,10 @@ function SessionContextMenu({
 
 type WorkspaceActionsMenuProps = {
   workspace: WorkspaceInfo;
-  isConnectionActionBusy: boolean;
-  canRecover: boolean;
   className: string;
 };
 
-function WorkspaceActionsMenu({ workspace, isConnectionActionBusy, canRecover, className }: WorkspaceActionsMenuProps) {
+function WorkspaceActionsMenu({ workspace, className }: WorkspaceActionsMenuProps) {
   const ctx = useSidebarContext();
   const platform = usePlatform();
 
@@ -574,42 +565,11 @@ function WorkspaceActionsMenu({ workspace, isConnectionActionBusy, canRecover, c
           <Pencil className="size-4" />
           {t("workspace_list.edit_name")}
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => ctx.onShareWorkspace(workspace.id)}>
-          <Share2 className="size-4" />
-          {t("workspace_list.share")}
-        </DropdownMenuItem>
         {workspace.workspaceType === "local" && platform.capabilities.revealInFileManager ? (
           <DropdownMenuItem onClick={() => ctx.onRevealWorkspace(workspace.id)}>
             <FolderOpen className="size-4" />
             {isWindowsPlatform() ? t("workspace_list.reveal_explorer") : t("workspace_list.reveal_finder")}
           </DropdownMenuItem>
-        ) : null}
-        {workspace.workspaceType === "remote" ? (
-          <>
-            {canRecover ? (
-              <DropdownMenuItem
-                onClick={() => void Promise.resolve(ctx.onRecoverWorkspace(workspace.id))}
-                disabled={isConnectionActionBusy}
-              >
-                <RefreshCw className="size-4" />
-                {t("workspace_list.recover")}
-              </DropdownMenuItem>
-            ) : null}
-            <DropdownMenuItem
-              onClick={() => void Promise.resolve(ctx.onTestWorkspaceConnection(workspace.id))}
-              disabled={isConnectionActionBusy}
-            >
-              <RefreshCw className="size-4" />
-              {t("workspace_list.test_connection")}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => ctx.onEditWorkspaceConnection(workspace.id)}
-              disabled={isConnectionActionBusy}
-            >
-              <Settings className="size-4" />
-              {t("workspace_list.edit_connection")}
-            </DropdownMenuItem>
-          </>
         ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => ctx.onOpenCreateGroupModal?.(workspace.id)}>
@@ -626,66 +586,6 @@ function WorkspaceActionsMenu({ workspace, isConnectionActionBusy, canRecover, c
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-function RemoteConnectionIssueCard(props: {
-  message: string;
-  tone: "error" | "offline";
-  canRecover: boolean;
-  busy: boolean;
-  onRecover: () => void;
-  onTest: () => void;
-  onEdit: () => void;
-}) {
-  return (
-    <SidebarMenuSubItem>
-      <div
-        className="w-full px-3 py-3 text-left text-dls-secondary"
-      >
-        <div className="flex items-start gap-2.5">
-          <div className="min-w-0 flex-1">
-            <TaskRecovery compact title={t("workspace_list.remote_worker_unavailable")}
-              description={t("workspace_list.remote_worker_unavailable_hint")} technicalDetails={props.message} />
-            <OpenWorkDenHelpLink />
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {props.canRecover ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 gap-1.5 rounded-lg px-2 text-[11px]"
-                  onClick={props.onRecover}
-                  disabled={props.busy}
-                >
-                  {t("workspace_list.recover")}
-                </Button>
-              ) : null}
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1.5 rounded-lg px-2 text-[11px]"
-                onClick={props.onTest}
-                disabled={props.busy}
-              >
-                {t("workspace_list.test_connection")}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1.5 rounded-lg px-2 text-[11px]"
-                onClick={props.onEdit}
-                disabled={props.busy}
-              >
-                {t("common.edit")}
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </SidebarMenuSubItem>
   );
 }
 
@@ -714,11 +614,7 @@ export type AppSidebarProps = {
   archiveDisabledReason?: string;
   onOpenCreateGroupModal?: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
-  onShareWorkspace: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
-  onRecoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
-  onTestWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean | void;
-  onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
   onOpenCreateWorkspace: () => void;
   automationsActive?: boolean;
@@ -828,11 +724,7 @@ export function AppSidebar(props: AppSidebarProps) {
     archiveDisabledReason: props.archiveDisabledReason,
     onOpenCreateGroupModal: props.onOpenCreateGroupModal,
     onOpenRenameWorkspace: props.onOpenRenameWorkspace,
-    onShareWorkspace: props.onShareWorkspace,
     onRevealWorkspace: props.onRevealWorkspace,
-    onRecoverWorkspace: props.onRecoverWorkspace,
-    onTestWorkspaceConnection: props.onTestWorkspaceConnection,
-    onEditWorkspaceConnection: props.onEditWorkspaceConnection,
     onForgetWorkspace: props.onForgetWorkspace,
     expandWorkspace,
     toggleWorkspaceExpanded,
@@ -1235,28 +1127,17 @@ function WorkspaceSidebarGroup({
     message: null,
   };
   const isConnectionActionBusy = isConnecting || connectionState.status === "connecting";
-  const isRemoteWorkspace = isRemoteConnectionWorkspace(workspace);
-  const canRecover = isRemoteWorkspace && connectionState.status === "error";
-  const taskLoadError = getWorkspaceTaskLoadErrorDisplay(workspace, group.error);
-  const connectionIssueMessage = connectionState.status === "error"
-    ? connectionState.message?.trim() || taskLoadError.message
-    : group.error?.trim() || taskLoadError.message;
-  const showRemoteConnectionIssue =
-    (isRemoteWorkspace || isRemoteConnectionErrorMessage(connectionIssueMessage)) &&
-    Boolean(connectionIssueMessage) &&
-    (connectionState.status === "error" || group.status === "error");
+  const taskLoadError = getWorkspaceTaskLoadErrorDisplay(group.error);
   const isExpanded = ctx.expandedWorkspaceIds.has(workspace.id);
   const isSelected = ctx.selectedWorkspaceId === workspace.id;
 
   const statusLabel = (() => {
-    if (showRemoteConnectionIssue) return t("workspace_list.unavailable");
     if (connectionState.status === "error") return connectionState.message?.trim() || taskLoadError.message;
     if (group.status === "error") return taskLoadError.label;
     if (isConnectionActionBusy) return t("workspace_list.connecting");
-    if (isRemoteWorkspace && connectionState.status === "connected") return connectionState.message?.trim() || t("workspace_list.connected");
     if (!ctx.developerMode) return "";
     if (isSelected) return t("workspace.selected");
-    return workspaceKindLabel(workspace);
+    return workspaceKindLabel();
   })();
 
   const pinnedIdList = useSessionManagementStore((state) => state.pinnedIds);
@@ -1333,8 +1214,6 @@ function WorkspaceSidebarGroup({
                 </Button>
                 <WorkspaceActionsMenu
                   workspace={workspace}
-                  isConnectionActionBusy={isConnectionActionBusy}
-                  canRecover={canRecover}
                   className="size-5 text-muted-foreground"
                 />
               </div>
@@ -1355,23 +1234,7 @@ function WorkspaceSidebarGroup({
 
             <CollapsibleContent className="pt-px">
               <SidebarMenuSub>
-                {showRemoteConnectionIssue ? (
-                  <RemoteConnectionIssueCard
-                    message={connectionIssueMessage}
-                    tone={taskLoadError.tone}
-                    canRecover={canRecover}
-                    busy={isConnectionActionBusy}
-                    onRecover={() => {
-                      void Promise.resolve(ctx.onRecoverWorkspace(workspace.id));
-                    }}
-                    onTest={() => {
-                      void Promise.resolve(ctx.onTestWorkspaceConnection(workspace.id));
-                    }}
-                    onEdit={() => {
-                      ctx.onEditWorkspaceConnection(workspace.id);
-                    }}
-                  />
-                ) : group.status === "loading" && group.sessions.length === 0 ? null : activeSessions.length > 0 || ((wsGroups.length > 0 || workspaceDraft.hasDraft) && group.status !== "error") ? (
+                {group.status === "loading" && group.sessions.length === 0 ? null : activeSessions.length > 0 || ((wsGroups.length > 0 || workspaceDraft.hasDraft) && group.status !== "error") ? (
                   <>
                     {wsGroups.length > 0 ? (
                       <GroupedSessionList
@@ -1412,7 +1275,7 @@ function WorkspaceSidebarGroup({
                   <SidebarMenuSubItem>
                     <SidebarMenuSubButton
                       aria-disabled
-                      className={cn("text-xs", taskLoadError.tone === "offline" ? "text-amber-600" : "text-destructive")}
+                      className="text-xs text-destructive"
                     >
                       <span className="truncate">{taskLoadError.message}</span>
                     </SidebarMenuSubButton>
@@ -1425,14 +1288,12 @@ function WorkspaceSidebarGroup({
                       aria-disabled={ctx.newTaskDisabled}
                     >
                       <span className="truncate">
-                        {isRemoteWorkspace && connectionState.status === "connected"
-                          ? connectionState.message?.trim() || t("workspace.connected_no_tasks")
-                          : t("workspace.no_tasks")}
+                        {t("workspace.no_tasks")}
                       </span>
                     </SidebarMenuSubButton>
                   </SidebarMenuSubItem>
                 )}
-                {showRemoteConnectionIssue || (group.status === "loading" && group.sessions.length === 0) || (activeSessions.length === 0 && ((wsGroups.length === 0 && !workspaceDraft.hasDraft) || group.status === "error")) ? (
+                {(group.status === "loading" && group.sessions.length === 0) || (activeSessions.length === 0 && ((wsGroups.length === 0 && !workspaceDraft.hasDraft) || group.status === "error")) ? (
                   wsGroups.length > 0 ? <GroupedSessionList
                     sessionRows={[]}
                     groups={wsGroups}

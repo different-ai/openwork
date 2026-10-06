@@ -14,7 +14,7 @@
 //   (apps/server/src/types.ts `Capabilities.providerSync: true`) — and carry
 //   the live host token so the store can PUT /den-session and
 //   POST /cloud-provider-sync/run;
-// - remote workspaces and non-loopback local URL overrides stay config-only:
+// - non-loopback local URL overrides stay config-only:
 //   a local workspace label does not authorize forwarding desktop credentials.
 import {
   createOpenworkServerClient,
@@ -73,7 +73,7 @@ export function createSessionOpenworkServer(
           openworkServerCapabilities: null,
         };
       }
-      if (endpoint.isRemote || !isLoopbackOpenworkServerUrl(endpoint.baseUrl)) {
+      if (!isLoopbackOpenworkServerUrl(endpoint.baseUrl)) {
         return {
           openworkServerStatus: "connected",
           openworkServerClient: endpoint.client,

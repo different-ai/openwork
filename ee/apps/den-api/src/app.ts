@@ -43,7 +43,6 @@ import { resolveMcpMemberIdentity } from "./mcp/external-capabilities.js"
 import { DEN_MCP_REQUESTED_SCOPES } from "./mcp/scopes.js"
 import { registerMeRoutes } from "./routes/me/index.js"
 import { registerOrgRoutes } from "./routes/org/index.js"
-import { registerTelemetryRoutes } from "./routes/telemetry/index.js"
 import { registerVersionRoutes } from "./routes/version/index.js"
 import { registerWebhookRoutes } from "./routes/webhooks/index.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
@@ -290,7 +289,6 @@ registerMcpRoutes(app)
 registerAgentMcpRoutes(app)
 registerExternalConnectionProxyRoutes(app)
 registerAdminMcpRoutes(app)
-registerTelemetryRoutes(app)
 
 configureCloudAgentExecutor({ execute: executeCloudAgent, runtimeAvailable: cloudAgentRuntimeAvailable })
 configureHeadlessAgentExecutor((input) => executeHeadlessAgent(input))
@@ -429,7 +427,6 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Connectors", description: "Connector accounts and instances (GitHub and other sources) and their sync state." },
       { name: "GitHub", description: "GitHub App installation, repository discovery, and plugin import from GitHub." },
       { name: "Diagnostics", description: "Controlled egress diagnostics for self-hosted deployments." },
-      { name: "Telemetry", description: "Telemetry event ingestion and adoption analytics." },
       { name: "Webhooks", description: "Signed inbound webhooks from third-party providers." },
       { name: "Admin", description: "Platform administration routes for allowlisted OpenWork administrators." },
       { name: "Deprecated", description: "Removed features that answer with 410 or an empty result for old clients." },

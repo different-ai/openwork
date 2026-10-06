@@ -1319,7 +1319,7 @@ export async function managedVaultWorld(_seed: Seed, { place }: { place: Place }
         timeoutMs: 15_000,
       }).catch(() => null);
       if (isRecord(info)) {
-        const baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").replace(/\/+$/, "");
+        const baseUrl = String(info.baseUrl ?? "").replace(/\/+$/, "");
         const token = String(info.ownerToken ?? info.clientToken ?? "");
         if (baseUrl && token) return { baseUrl, token };
       }

@@ -135,7 +135,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
         // Truthful endpoint-backed snapshot: local endpoints expose the
         // server's providerSync capability and host-token auth so sign-in
         // pushes the Den session to the local server and sync runs
-        // server-side; remote workspaces keep the config-only shape.
+        // server-side.
         openworkServer: createSessionOpenworkServer({
           endpoint: () => stateRef.current.selectedWorkspaceEndpoint ?? null,
           hostToken: () => stateRef.current.localServerHostToken ?? "",
@@ -267,7 +267,6 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     selectedWorkspace?.workspaceType,
     selectedWorkspaceEndpoint?.baseUrl,
     selectedWorkspaceEndpoint?.token,
-    selectedWorkspaceEndpoint?.isRemote,
     selectedWorkspaceEndpoint?.workspaceId,
     selectedWorkspaceRoot,
     store,

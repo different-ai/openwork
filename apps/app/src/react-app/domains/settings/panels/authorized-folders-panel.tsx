@@ -46,7 +46,6 @@ export type AuthorizedFoldersPanelProps = {
   openworkServerCapabilities: OpenworkServerCapabilities | null;
   runtimeWorkspaceId: string | null;
   selectedWorkspaceRoot: string;
-  activeWorkspaceType: "local" | "remote";
   onConfigUpdated: () => void;
 };
 
@@ -154,7 +153,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
 
   const canUseNativeFilePicker = platform.capabilities.nativeFilePicker;
   const canPickAuthorizedFolder =
-    canUseNativeFilePicker && canWriteConfig && props.activeWorkspaceType === "local";
+    canUseNativeFilePicker && canWriteConfig;
   const workspaceRootFolder = serverWorkspaceRoot || props.selectedWorkspaceRoot.trim();
   const visibleAuthorizedFolders = useMemo(() => {
     const root = workspaceRootFolder;

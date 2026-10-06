@@ -883,6 +883,20 @@
       "when": 1791236866859,
       "tag": "0126_telemetry_event_org_window_index",
       "breakpoints": true
+    },
+    {
+      "idx": 127,
+      "version": "5",
+      "when": 1791239110693,
+      "tag": "0127_glossy_joystick",
+      "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "5",
+      "when": 1791246307322,
+      "tag": "0128_remove_legacy_analytics",
+      "breakpoints": true
     }
   ]
 }

@@ -9,6 +9,7 @@ export type ToolErrorAttribution = {
 }
 
 export type ChatToolReconnectAction = {
+  credentialKind?: "personal_key";
   connectionId: string
   connectionName: string
   label: string
@@ -159,7 +160,7 @@ function chatConnectionTarget(toolName: string, result: unknown, input?: unknown
   const targetId = target?.connectionId
   if (targetId && Array.isArray(parsed.matches) && parsed.matches.some(match => isRecord(match)
     && typeof match.connectionId === "string" && match.connectionId !== targetId)) return null
-  return target ? { connection: target, memberOAuth } : null
+  return target ? { connection: target, memberOAuth, memberPersonalKey: authType === "apikey" && credentialMode === "per_member" } : null
 }
 
 export function connectionCardPayloadFromChatToolResult(
@@ -178,15 +179,19 @@ export function reconnectActionFromChatToolResult(
   options?: ChatConnectionTargetOptions,
 ): ChatToolReconnectAction | null {
   const target = chatConnectionTarget(toolName, result, input, options)
-  if (!target?.memberOAuth) return null
+  if (!target || (!target.memberOAuth && !target.memberPersonalKey)) return null
   const { connection } = target
   if (connection.actor !== "member" || connection.action?.surface !== "openwork_your_connections"
-    || !((connection.state === "needs_connection" && connection.action.type === "connect")
-      || (connection.state === "reauth_required" && connection.action.type === "reconnect"))) return null
+    || !(target.memberPersonalKey
+      // A member-held key only ever uses the credential action, never an OAuth connect or reconnect.
+      ? connection.action.type === "update_credentials" && (connection.state === "needs_connection" || connection.state === "reauth_required")
+      : (connection.state === "needs_connection" && connection.action.type === "connect")
+        || (connection.state === "reauth_required" && connection.action.type === "reconnect"))) return null
   return {
     connectionId: connection.connectionId,
     connectionName: connection.connectionName,
-    label: connection.state === "needs_connection" ? "Connect" : "Reconnect",
+    label: target.memberPersonalKey ? connection.state === "reauth_required" ? "Replace key" : "Add key" : connection.state === "needs_connection" ? "Connect" : "Reconnect",
+    ...(target.memberPersonalKey ? { credentialKind: "personal_key" } : {}),
   }
 }
 

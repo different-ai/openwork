@@ -19,7 +19,6 @@ import {
   type DenOrgAccessFlags,
   type DenOrgCapabilities,
   getAiGatewayRoute,
-  getAnalyticsRoute,
   getApiKeysRoute,
   getAuditLogsRoute,
   getAutomationsRoute,
@@ -126,7 +125,6 @@ export function buildDashboardNavSections({
     : [];
   const observabilityItems: DashboardNavItem[] = orgSlug
     ? [
-        ...(access.isAdmin ? [{ href: getAnalyticsRoute(orgSlug), label: "Analytics", icon: BarChart3 }] : []),
         ...(capabilities.auditLogs ? [{ href: getAuditLogsRoute(orgSlug), label: "Audit logs", icon: access.isAdmin ? ScrollText : LockKeyhole, ...(access.isAdmin ? {} : { badge: "Admin access" }) }] : []),
       ]
     : [];
@@ -177,7 +175,6 @@ export function buildDashboardNavSections({
 const PAGE_KEYWORDS: Record<string, string[]> = {
   Advanced: ["marketplace", "collections", "branding", "brand appearance"],
   "AI Gateway": ["llm", "provider", "gateway", "inference", "usage"],
-  Analytics: ["usage", "stats", "consumption", "workflow runs", "history", "langfuse"],
   "Audit logs": ["audit", "history", "operations", "changes", "security"],
   "API Keys": ["token", "secret"],
   Billing: ["plan", "invoice", "payment"],

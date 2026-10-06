@@ -69,7 +69,23 @@ export interface Agent {
   on(surface: Surface): Agent;
 }
 
+export interface CredentialInputState {
+  dialogPresent: boolean;
+  dialogExcludedFromCapture: boolean;
+  inputExcludedFromCapture: boolean;
+  inputType: string | null;
+  autoComplete: string | null;
+  empty: boolean;
+  inputContainsSecret: boolean;
+  bodyContainsSecret: boolean;
+  urlContainsSecret: boolean;
+  historyContainsSecret: boolean;
+  storageContainsSecret: boolean;
+  consoleContainsSecret: boolean;
+}
+
 export interface Probe {
+  credentialInputState(selector: string, candidate?: string): Promise<CredentialInputState>;
   /** Applied CSS-to-DIP page zoom from Chromium, not the stored zoom preference. */
   zoom(): Promise<number>;
   browserState(): Promise<import("@openwork/behaviors").BrowserState>;

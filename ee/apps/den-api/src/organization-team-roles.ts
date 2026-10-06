@@ -3,6 +3,7 @@ import { InvitationTable, MemberTable, OrganizationTable, ScimGroupMemberTable, 
 import { db } from "./db.js"
 import { withGatewayUsageEntitlementMutation } from "@openwork-ee/den-db/gateway-usage-limits"
 import { organizationRoleValueSatisfies } from "./organization-role-hierarchy.js"
+import { pruneUnreachableMemberApiKeys } from "./capability-sources/external-mcp-connections.js"
 
 export type OrganizationAdminTeam = { id: string; name: string }
 
@@ -26,9 +27,13 @@ export function withOrganizationMembershipUsageMutation<T>(
   mutation: (tx: TeamMutationTransaction) => Promise<T>,
   memberIds: typeof MemberTable.$inferSelect.id[] | ((tx: TeamMutationTransaction) => Promise<typeof MemberTable.$inferSelect.id[]>),
 ) {
-  return withOrganizationTeamMutation(organizationId, async (tx) =>
-    withGatewayUsageEntitlementMutation(tx, organizationId, () => mutation(tx), typeof memberIds === "function" ? await memberIds(tx) : memberIds),
-  )
+  return withOrganizationTeamMutation(organizationId, async (tx) => {
+    const affected = [...new Set(typeof memberIds === "function" ? await memberIds(tx) : memberIds)]
+    const result = await withGatewayUsageEntitlementMutation(tx, organizationId, () => mutation(tx), affected)
+    // Team membership is one of the grants a personal MCP key relies on.
+    await pruneUnreachableMemberApiKeys(tx, { organizationId, orgMembershipIds: affected })
+    return result
+  })
 }
 
 export function effectiveOrganizationRole(directRole: string, adminTeams: readonly OrganizationAdminTeam[]) {

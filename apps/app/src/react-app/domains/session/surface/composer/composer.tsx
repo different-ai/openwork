@@ -116,9 +116,6 @@ type ComposerProps = {
   pastedText: PastedTextChip[];
   onExpandPastedText: (id: string) => void;
   onRemovePastedText: (id: string) => void;
-  isRemoteWorkspace: boolean;
-  isSandboxWorkspace: boolean;
-  onUploadInboxFiles?: ((files: File[]) => void | Promise<unknown>) | null;
   draftScopeKey?: string;
   compactTopSpacing?: boolean;
   /** Render inline in a page (new-task hero): no sticky dock chrome or inner max-width, aligning with sibling content. */
@@ -1379,33 +1376,12 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   return;
                 }
 
-                const text = event.clipboardData?.getData("text/plain") ?? "";
-
                 // Plain text paste display is owned by PasteChipPlugin inside
                 // the Lexical editor: text collapses when it would exceed the
                 // editor's current width and maximum height, unless the whole
                 // string is a standalone HTTP(S) URL. Text that fits, or is
                 // expanded from a chip, renders like normal text. Do NOT
                 // duplicate that here.
-
-                if (
-                  text.trim() &&
-                  (props.isRemoteWorkspace || props.isSandboxWorkspace) &&
-                  /file:\/\/|(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(text)
-                ) {
-                  const attachedFiles = props.attachments.map((attachment) => attachment.file);
-                  toast.warning(t("composer.remote_worker_paste_warning"), {
-                    action:
-                      props.onUploadInboxFiles && attachedFiles.length > 0
-                        ? {
-                            label: t("composer.upload_to_shared_folder"),
-                            onClick: () => void props.onUploadInboxFiles?.(attachedFiles),
-                          }
-                        : undefined,
-                  });
-                  // Intentionally no preventDefault — the notice is advisory,
-                  // the paste still goes through the editor.
-                }
               }}
               onDragOver={(event) => {
                 if (event.dataTransfer?.files?.length) {

@@ -56,8 +56,8 @@ Add `--verbose` to print resolved config details on startup. Use `--version` to 
 ## Desktop task recovery
 
 The desktop enables `resumeInterruptedTasks` when embedding a server that owns
-its local engines. Standalone servers, attached engines, remote workspaces, and
-read-only servers do not opt in. Recovery works with both OpenCode v1 and v2 and
+its local engines. Standalone servers, attached engines, and read-only
+servers do not opt in. Recovery works with both OpenCode v1 and v2 and
 does not depend on an open conversation tab.
 
 The `desktop_task_recovery` table in the existing runtime SQLite database stores

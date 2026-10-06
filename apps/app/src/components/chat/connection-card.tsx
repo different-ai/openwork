@@ -66,7 +66,7 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   const messageList = useOptionalMessageList()
   const found = connectionFromChatToolPart(part, { allowDiscovery })
   const connection = found?.connection ?? null
-  const action = connection && connection.actor === "member" && (connection.action?.type === "connect" || connection.action?.type === "reconnect")
+  const action = connection && connection.actor === "member" && (connection.action?.type === "connect" || connection.action?.type === "reconnect" || connection.action?.type === "update_credentials")
     ? found?.action ?? null
     : null
   const {
@@ -96,11 +96,12 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   const blocked = !settled && !action
   const verb = action?.label ?? "Connect"
   const title = skipped ? `Skipped ${name}`
-    : connected ? `${name} connected`
+    : connected ? action?.credentialKind === "personal_key" ? `${name}: key saved` : `${name} connected`
     : blocked ? blockedTitle(connection)
-    : opening ? `Signing in to ${name}…`
+    : opening ? action?.credentialKind === "personal_key" ? `${verb === "Replace key" ? "Replacing" : "Adding"} your key for ${name}…` : `Signing in to ${name}…`
     : waiting ? `Finish signing in to ${name} in your browser`
     : failed ? `${name} sign-in didn't finish`
+    : action?.credentialKind === "personal_key" ? `${verb} for ${name}${decisionAvailable ? " to continue" : ""}`
     : decisionAvailable ? `${verb} ${name} to continue` : `${verb} ${name}`
   const primaryLabel = waiting ? "Open sign-in again" : failed ? "Try again" : decisionAvailable ? "Authenticate" : verb
   const actionable = !readOnly && (!settled || decisionAvailable)

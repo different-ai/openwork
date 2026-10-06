@@ -51,15 +51,25 @@ export function modelSource(model: ModelRef & { source?: ModelOption["source"] }
   return "local";
 }
 
-export function modelTitle(model: ModelRef & { title?: string }) {
-  return isAutoModel(model) ? "Auto" : model.title || model.modelID;
+/** Gateway ids (`gwm_…`, `ipr_…`) are long and opaque: never a name a person reads. */
+function isOpaqueModelId(value: string) {
+  return /^(gwm|ipr)_/.test(value);
+}
+
+/** A model's display name: its title, never an opaque gateway id (then "<Provider> model"). */
+export function modelTitle(model: ModelRef & { title?: string; description?: string }) {
+  if (isAutoModel(model)) return "Auto";
+  const name = model.title?.trim() || model.modelID;
+  if (!isOpaqueModelId(name)) return name;
+  const provider = model.description?.trim();
+  return provider ? `${provider} model` : "Model";
 }
 
 /** A name safe to show as a value: the public title, never an opaque provider/model id. */
 export function publicModelTitle(model: ModelRef & { title?: string }): string | undefined {
   if (isAutoModel(model)) return "Auto";
   const title = model.title?.trim();
-  if (!title || title === model.modelID || /^(gwm|ipr)_/.test(title)) return undefined;
+  if (!title || title === model.modelID || isOpaqueModelId(title)) return undefined;
   return title;
 }
 

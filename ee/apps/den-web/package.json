@@ -25,7 +25,6 @@
     "@opentelemetry/sdk-node": "0.220.0",
     "@opentelemetry/sdk-trace-base": "2.9.0",
     "@opentelemetry/semantic-conventions": "1.42.0",
-    "@openwork-ee/telemetry-contracts": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
     "@openwork/types": "workspace:*",
     "@openwork/ui": "workspace:*",
