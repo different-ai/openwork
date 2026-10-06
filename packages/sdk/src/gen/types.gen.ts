@@ -173,7 +173,6 @@ export type AdminOrganizationsPageResponse = {
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
-      appMcpServers: boolean;
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
@@ -252,7 +251,6 @@ export type AdminOverviewResponse = {
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
-      appMcpServers: boolean;
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
@@ -1370,7 +1368,6 @@ export type CapabilityDisabledError = {
     | "modelsAnalytics"
     | "auditLogs"
     | "orgManagedDashboards"
-    | "appMcpServers"
     | "slackAssistant"
     | "slackAssistantHeadless"
     | "headlessAutomations"
@@ -5316,7 +5313,6 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
-      appMcpServers: boolean;
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
@@ -5383,7 +5379,6 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
-      appMcpServers: boolean;
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;

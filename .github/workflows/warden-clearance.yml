@@ -3,6 +3,7 @@ name: Warden Clearance
 # Approves a same-repository PR as the diff-warden App when its latest Warden
 # review is complete for the current head with no high/medium security findings
 # and no confidentiality findings; otherwise withdraws an earlier clearance.
+# Either way it keeps one PR comment with the result and security findings.
 # PRs that touch .github/, warden.toml, .warden/, agent skills, .opencode/, or
 # AGENTS.md always need a human. See .warden/README.md.
 #
@@ -50,6 +51,16 @@ jobs:
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/warden-receipt
 
+      # Security findings for the PR comment; absent for incomplete reviews.
+      - name: Download security findings
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: warden-findings
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/warden-findings
+
       - name: Mint clearance token
         id: app
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
@@ -69,4 +80,5 @@ jobs:
           CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           PULL_REQUESTS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
           RECEIPT_PATH: ${{ runner.temp }}/warden-receipt/warden-summary.json
+          FINDINGS_PATH: ${{ runner.temp }}/warden-findings/warden-findings.json
         run: node .github/scripts/warden-clearance.mjs

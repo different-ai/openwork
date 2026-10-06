@@ -132,7 +132,6 @@ type AdminUser = {
 type AdminOrganizationCapabilities = {
   auditLogs: boolean;
   orgManagedDashboards: boolean;
-  appMcpServers: boolean;
   slackAssistant: boolean;
   slackAssistantHeadless: boolean;
   headlessAutomations: boolean;
@@ -461,7 +460,6 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
           capabilities: {
             auditLogs: capabilities.auditLogs === true,
             orgManagedDashboards: capabilities.orgManagedDashboards === true,
-            appMcpServers: capabilities.appMcpServers === true,
             slackAssistant: capabilities.slackAssistant === true,
             slackAssistantHeadless: capabilities.slackAssistantHeadless === true,
             headlessAutomations: capabilities.headlessAutomations === true,
@@ -839,7 +837,7 @@ function buildFixtureOrganization(index: number): AdminOrganization {
     freeSeatCount: target ? 25 : DEFAULT_FREE_SEAT_COUNT,
     seatsFreeAdditional: target ? 20 : 0,
     billableSeatCount: target ? 103 : 0,
-    capabilities: { auditLogs: false, orgManagedDashboards: false, appMcpServers: false, slackAssistant: false, slackAssistantHeadless: false, headlessAutomations: false, workbot: false, installLinks: target, mcpConnections: target, modelsAnalytics: false },
+    capabilities: { auditLogs: false, orgManagedDashboards: false, slackAssistant: false, slackAssistantHeadless: false, headlessAutomations: false, workbot: false, installLinks: target, mcpConnections: target, modelsAnalytics: false },
     openworkWebAccess: {
       hasAccess: target,
       accessSource: target ? "complimentary" : null,
@@ -2767,17 +2765,6 @@ export function DenAdminPanel() {
                       <label className="inline-flex items-center gap-2 text-sm text-slate-700">
                         <input
                           type="checkbox"
-                          data-testid="admin-capability-appMcpServers"
-                          checked={org.capabilities.appMcpServers}
-                          disabled={savingCapabilityOrgId === org.id}
-                          onChange={(event) => void saveOrganizationCapability(org, "appMcpServers", event.target.checked)}
-                          className="h-4 w-4 rounded-sm border-slate-300"
-                        />
-                        Apps built in OpenWork
-                      </label>
-                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
                           data-testid="admin-capability-slackAssistant"
                           checked={org.capabilities.slackAssistant}
                           disabled={savingCapabilityOrgId === org.id}
@@ -2843,7 +2830,6 @@ export function DenAdminPanel() {
                     <p className="mt-1 text-xs text-slate-400">Slack Assistant is off by default. Enables Slack mentions and DMs for this organization after Slack connector setup. Turn off to stop new requests and further replies; no redeploy is needed.</p>
                     <p className="mt-1 text-xs text-slate-400">Slack Assistant: headless runtime is off by default. Answers Slack requests on the shared headless runner instead of each member&apos;s OpenWork Web computer, so no Web seat is needed. Requires the deployment&apos;s headless runner to be configured.</p>
                     <p className="mt-1 text-xs text-slate-400">Confined multi-tool scripts run server-side for this organization.</p>
-                    <p className="mt-1 text-xs text-slate-400">Off by default. Requires the deployment master switch and exposes native provider MCP Apps and imported Apps for this organization.</p>
                   </div>
 
                   <div className="mt-4 border-t border-slate-200 pt-4" data-testid="admin-openwork-web-access">
