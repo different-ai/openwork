@@ -1,4 +1,5 @@
 import { and, asc, count, desc, eq, inArray, isNull, notExists, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
+import { parseOrganizationModulesColumn } from "@openwork-ee/den-db/organization-modules"
 import {
   AuthUserTable,
   ConfigObjectAccessGrantTable,
@@ -6663,6 +6664,7 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
         id: organization.id,
         logo: organization.logo ?? null,
         metadata: organization.metadata ? JSON.stringify(organization.metadata) : null,
+        modules: parseOrganizationModulesColumn(organization.modules).doc,
         name: organization.name,
         slug: organization.slug,
         updatedAt: organization.updatedAt,

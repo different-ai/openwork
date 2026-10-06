@@ -2076,7 +2076,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
             ...capabilities,
           },
         }
-      })
+      }, { syncLegacyKillSwitches: true })
 
       return c.json({ ok: true, organization: { id: organizationId }, capabilities: readAdminVisibleOrganizationCapabilities(metadata) })
     },

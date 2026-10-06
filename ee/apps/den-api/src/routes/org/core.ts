@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { deploymentCapabilitiesSchema } from "@openwork/types/den/deployment-capabilities"
 import { eq } from "@openwork-ee/den-db/drizzle"
+import { organizationColumnsWithoutModules } from "@openwork-ee/den-db/organization-modules"
 import { OrganizationTable, ScimProviderTable, SsoConnectionTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
@@ -331,7 +332,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     await setRequestActiveOrganization(c, organizationId)
 
     const organization = await db
-      .select()
+      .select(organizationColumnsWithoutModules)
       .from(OrganizationTable)
       .where(eq(OrganizationTable.id, organizationId))
       .limit(1)
@@ -701,10 +702,13 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           .limit(1),
       ])
 
+      // The stored modules document is server-only (it can carry a license
+      // payload); the response schema is passthrough, so drop it explicitly.
+      const { modules: _storedModules, ...organizationFields } = payload.organization
       return c.json({
         ...payload,
         organization: {
-          ...payload.organization,
+          ...organizationFields,
           metadata: serializeMemberFacingOrganizationMetadata(payload.organization.metadata),
           owner: owner
             ? {

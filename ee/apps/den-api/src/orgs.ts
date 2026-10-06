@@ -25,6 +25,7 @@ import {
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
+import { organizationColumnsWithoutModules, parseOrganizationModulesColumn, type OrganizationModules } from "@openwork-ee/den-db/organization-modules"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { revokeOrganizationApiKeysForMember } from "./api-keys.js"
 import { cache } from "./cache.js"
@@ -180,6 +181,8 @@ export type OrganizationContext = {
     logo: string | null
     allowedEmailDomains: AllowedEmailDomains
     metadata: string | null
+    /** Stored `organization.modules` document; server-only, never serialized to clients. */
+    modules: OrganizationModules | null
     createdAt: Date
     updatedAt: Date
   }
@@ -1432,7 +1435,7 @@ export async function updateOrganizationSettings(input: {
       .where(eq(OrganizationTable.id, input.organizationId))
 
     const rows = await tx
-      .select()
+      .select(organizationColumnsWithoutModules)
       .from(OrganizationTable)
       .where(eq(OrganizationTable.id, input.organizationId))
       .limit(1)
@@ -1560,6 +1563,20 @@ export async function resolveUserOrganizations(input: {
   }
 }
 
+const reportedInvalidOrganizationModules = new Set<string>()
+
+function organizationModulesForContext(organizationId: OrgId, stored: unknown): OrganizationModules | null {
+  const parsed = parseOrganizationModulesColumn(stored)
+  if (parsed.status === "invalid") {
+    if (!reportedInvalidOrganizationModules.has(organizationId)) {
+      reportedInvalidOrganizationModules.add(organizationId)
+      console.error("organization_modules_invalid", { organizationId, issues: parsed.issues })
+    }
+    return null
+  }
+  return parsed.doc
+}
+
 export async function getOrganizationContextForUser(input: {
   userId: UserId
   organizationId: OrgId
@@ -1627,6 +1644,7 @@ export async function getOrganizationContextForUser(input: {
       logo: organization.logo,
       allowedEmailDomains: normalizeStoredAllowedEmailDomains(organization.allowedEmailDomains),
       metadata: serializeOrganizationMetadata(organization.metadata),
+      modules: organizationModulesForContext(organization.id, organization.modules),
       createdAt: organization.createdAt,
       updatedAt: organization.updatedAt,
     },

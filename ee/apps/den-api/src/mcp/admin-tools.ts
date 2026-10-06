@@ -512,7 +512,7 @@ export function registerAdminMcpTools(server: McpServer) {
           if (enabled === null) delete capabilities[capability]
           else capabilities[capability] = enabled
           return { ...current, capabilities }
-        })
+        }, { syncLegacyKillSwitches: true })
         return {
           ok: true,
           organization: { id: organization.id, name: organization.name, slug: organization.slug },
