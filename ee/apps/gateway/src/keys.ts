@@ -1,12 +1,10 @@
 import { timingSafeEqual } from "node:crypto"
-import { and, eq, inArray, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
-import { GatewayKeyTable, InferenceKeyTable, InferenceOrgUpstreamProviderKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
+import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
+import { GatewayKeyTable, InferenceOrgUpstreamProviderKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
+import { findActiveInferenceKeyByBearer } from "@openwork-ee/den-db/inference-keys"
 import { assertManagedModelsAllowed, ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { gatewayBearerKeyLookupDigest, type GatewayBearerKey } from "@openwork-ee/utils/gateway-bearer-key"
-import {
-  inferenceBearerKeyLookupDigests,
-  type InferenceBearerKey,
-} from "@openwork-ee/utils/inference-bearer-key"
+import type { InferenceBearerKey } from "@openwork-ee/utils/inference-bearer-key"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 
@@ -18,22 +16,7 @@ export function constantTimeEquals(a: string, b: string) {
 
 export async function findActiveInferenceKey(key: InferenceBearerKey) {
   if (key.value.startsWith("ow_gw_")) return null
-  const keyHashes = await inferenceBearerKeyLookupDigests(key)
-  const [row] = await db
-    .select({ inferenceKey: InferenceKeyTable })
-    .from(InferenceKeyTable)
-    .innerJoin(MemberTable, eq(InferenceKeyTable.org_membership_id, MemberTable.id))
-    .where(and(
-      inArray(InferenceKeyTable.key_hash, keyHashes),
-      eq(InferenceKeyTable.status, "active"),
-      eq(MemberTable.organizationId, InferenceKeyTable.organization_id),
-      isNull(MemberTable.removedAt),
-    ))
-    .limit(1)
-  if (!row) {
-    return null
-  }
-  return row.inferenceKey
+  return findActiveInferenceKeyByBearer(db, key)
 }
 
 export async function assertOrganizationManagedModelsAllowed(organizationId: string): Promise<void> {

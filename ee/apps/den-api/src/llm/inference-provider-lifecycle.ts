@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
-import { GatewayKeyTable, GatewayCredentialSetTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderOauthStateTable, GatewayProviderTable, InferenceKeyTable, MemberTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
+import { GatewayKeyTable, GatewayCredentialSetTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderOauthStateTable, GatewayProviderTable, MemberTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
+import { revokeInferenceKeysForMembers } from "@openwork-ee/den-db/inference-keys"
 import { parseGatewayProviderSecret } from "@openwork/types/den/gateway"
 import { db } from "../db.js"
 import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
@@ -17,8 +18,7 @@ export async function revokeInferenceCredentialsForMembers(tx: Tx, memberIds: Me
   await tx.delete(GatewayProviderOauthStateTable).where(inArray(GatewayProviderOauthStateTable.org_membership_id, memberIds))
   const credentials = await tx.select().from(GatewayProviderCredentialTable)
     .where(inArray(GatewayProviderCredentialTable.org_membership_id, memberIds)).for("update")
-  await tx.update(InferenceKeyTable).set({ status: "revoked", revoked_at: new Date() })
-    .where(and(inArray(InferenceKeyTable.org_membership_id, memberIds), eq(InferenceKeyTable.status, "active")))
+  await revokeInferenceKeysForMembers(tx, memberIds)
   await tx.update(GatewayKeyTable).set({ status: "revoked", revoked_at: new Date(), updated_at: new Date() })
     .where(and(inArray(GatewayKeyTable.org_membership_id, memberIds), eq(GatewayKeyTable.status, "active")))
   await tx.update(GatewayProviderCredentialTable).set({ status: "revoked", secret: "{}", expires_at: null, scopes: null, refreshing_until: null, last_error: null, updated_at: new Date() })

@@ -15,6 +15,7 @@ export default defineConfig({
     "schema/system": "src/schema/system.ts",
     drizzle: "src/drizzle.ts",
     "gateway-usage-limits": "src/gateway-usage-limits.ts",
+    "inference-keys": "src/inference-keys.ts",
     "audit-log": "src/audit-log.ts",
     "organization-features": "src/organization-features.ts",
     "audit-accounting": "src/audit-accounting.ts",

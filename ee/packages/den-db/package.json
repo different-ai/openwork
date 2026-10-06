@@ -81,6 +81,11 @@
       "development": "./src/gateway-usage-limits.ts",
       "default": "./dist/gateway-usage-limits.js"
     },
+    "./inference-keys": {
+      "types": "./src/inference-keys.ts",
+      "development": "./src/inference-keys.ts",
+      "default": "./dist/inference-keys.js"
+    },
     "./drizzle": {
       "types": "./src/drizzle.ts",
       "development": "./src/drizzle.ts",
