@@ -7,27 +7,25 @@ const test = spec.world(sidebarChrome, {
   resources: { surfaces: ["desktop"], services: ["den"], nativeReason: "The sidebar shares the native Electron titlebar, traffic-light clearance and platform shortcuts." },
 });
 
-test("a member can search and read notifications from either titlebar while session selection follows the destination", async ({ world, user, agent, probe, step }) => {
+test("a member can search sessions and open Activity from either titlebar while session selection follows the destination", async ({ world, user, agent, probe, step }) => {
   const search: Target = { role: "button", label: "Search sessions" };
-  const bell: Target = { role: "button", label: /^Notifications/ };
+  const bell: Target = { role: "button", label: /^Activity/ };
   const hideSidebar: Target = { testId: "sidebar-sidebar-toggle" };
   const showSidebar: Target = { testId: "main-sidebar-toggle" };
   const newSession: Target = { role: "button", label: "New session" };
   const sessionsBefore = await agent.list();
   const selected = () => probe.dom('[data-sidebar="menu-button"][aria-current="page"]');
-  const openNotifications = async () => {
+  const openActivity = async () => {
     await user.click(bell);
-    await user.see({ text: "1 new provider available" });
     await probe.eventually(world.presentation, {
-      within: 5_000, label: "notifications finish opening", until: (value) => value.panelSettled,
+      within: 5_000, label: "Activity finishes opening", until: (value) => value.panelSettled,
     });
   };
-  const closeNotifications = async () => {
+  const closeActivity = async () => {
     await user.press("Escape");
     await probe.eventually(() => probe.dom('[data-notification-panel]'), {
-      within: 5_000, label: "notifications finish closing", until: (value) => value.elements.length === 0,
+      within: 5_000, label: "Activity finishes closing", until: (value) => value.elements.length === 0,
     });
-    await user.notSee({ text: "1 new provider available" });
   };
 
   await step("before: Dashboard and New session have separate destinations and only Dashboard is selected", async () => {
@@ -38,7 +36,7 @@ test("a member can search and read notifications from either titlebar while sess
     await user.see({ role: "button", label: "Library" });
     expect((await selected()).elements.map((element) => element.text)).toEqual(["Dashboard"]);
     expect((await probe.dom('[data-sidebar-actions] button')).elements).toHaveLength(2);
-    expect((await probe.dom('[data-notification-unread]')).elements).toHaveLength(1);
+    expect((await probe.dom('[data-notification-unread]')).elements).toHaveLength(0);
     await user.screenshot();
   });
 
@@ -69,23 +67,23 @@ test("a member can search and read notifications from either titlebar while sess
     await user.screenshot();
   });
 
-  await step("opening the bell clears its unread dot while the notification is still visible", async () => {
-    await openNotifications();
-    expect((await probe.dom('[data-notification-unread]')).elements).toHaveLength(0);
+  await step("the bell opens Activity and returns focus to itself when it closes", async () => {
+    await openActivity();
+    expect((await probe.dom('[data-notification-panel]')).elements).toHaveLength(1);
     await user.screenshot();
-    await closeNotifications();
+    await closeActivity();
     expect((await probe.dom('[data-notification-bell]')).elements[0]?.focused).toBe(true);
   });
 
-  await step("hiding the sidebar keeps search and notifications in the main titlebar", async () => {
+  await step("hiding the sidebar keeps search and Activity in the main titlebar", async () => {
     await user.click(hideSidebar);
     await probe.eventually(() => probe.dom('[data-slot="sidebar-gap"]'), {
       within: 5_000, label: "sidebar finishes closing", until: (value) => value.elements[0]?.rect.width === 0,
     });
     expect((await probe.dom('[data-session-header] [data-sidebar-actions] button')).elements).toHaveLength(2);
-    await openNotifications();
+    await openActivity();
     await user.screenshot();
-    await closeNotifications();
+    await closeActivity();
     await user.click(search);
     await user.see({ placeholder: "Search session titles…" });
     await user.press("Escape");
@@ -101,10 +99,10 @@ test("a member can search and read notifications from either titlebar while sess
     await world.reducedMotion(true);
     await user.click(hideSidebar);
     expect((await world.presentation()).sidebarTransitions).toEqual(["none", "none"]);
-    await openNotifications();
+    await openActivity();
     expect((await world.presentation()).panelAnimation).toBe("none");
     await user.screenshot();
-    await closeNotifications();
+    await closeActivity();
     await user.click(showSidebar);
     await world.reducedMotion(false);
   });
