@@ -76,6 +76,16 @@
       "development": "./src/gateway-usage-limits.ts",
       "default": "./dist/gateway-usage-limits.js"
     },
+    "./organization-modules": {
+      "types": "./src/organization-modules.ts",
+      "development": "./src/organization-modules.ts",
+      "default": "./dist/organization-modules.js"
+    },
+    "./license-snapshot": {
+      "types": "./src/license-snapshot.ts",
+      "development": "./src/license-snapshot.ts",
+      "default": "./dist/license-snapshot.js"
+    },
     "./drizzle": {
       "types": "./src/drizzle.ts",
       "development": "./src/drizzle.ts",
@@ -85,6 +95,8 @@
   "scripts": {
     "build": "pnpm run build:utils && tsup && tsup --config tsup.scripts.config.ts && node scripts/build-assets.mjs",
     "build:utils": "pnpm --dir ../utils run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
     "db:baseline": "node --import tsx scripts/baseline-migrations.ts",
     "db:migrate:local": "node --import tsx scripts/dev-migrate.ts",
     "db:bootstrap": "pnpm run build && node dist/scripts/bootstrap.js",
@@ -99,13 +111,15 @@
     "@openwork-ee/utils": "workspace:*",
     "@planetscale/database": "^1.19.0",
     "drizzle-orm": "^0.45.2",
-    "mysql2": "^3.23.1"
+    "mysql2": "^3.23.1",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
     "drizzle-kit": "^0.31.9",
     "tsup": "^8.5.0",
     "tsx": "^4.23.1",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^4.1.11"
   }
 }

@@ -17,6 +17,8 @@ export default defineConfig({
     "gateway-usage-limits": "src/gateway-usage-limits.ts",
     "audit-log": "src/audit-log.ts",
     "audit-accounting": "src/audit-accounting.ts",
+    "organization-modules": "src/organization-modules.ts",
+    "license-snapshot": "src/license-snapshot.ts",
   },
   format: ["esm"],
   dts: true,

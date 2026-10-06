@@ -2,6 +2,7 @@ import { relations, sql } from "drizzle-orm"
 import { boolean, index, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import type { DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions"
 import type { ConnectLinkClaims } from "@openwork/types/connect-link"
+import type { OrganizationModules } from "../organization-modules-contract"
 import { denTypeIdColumn, mediumBlobColumn } from "../columns"
 
 export const DesktopHandoffGrantTable = mysqlTable(
@@ -47,6 +48,8 @@ export const OrganizationTable = mysqlTable(
     allowedEmailDomains: json("allowed_email_domains").$type<string[] | null>(),
     desktopAppRestrictions: json("desktop_app_restrictions").$type<DesktopAppRestrictions>().notNull().default(sql`(json_object())`),
     metadata: json("metadata").$type<Record<string, unknown> | null>(),
+    /** Read and written only through `@openwork-ee/den-db/organization-modules`; never sent to clients. NULL = no document yet. */
+    modules: json("modules").$type<OrganizationModules | null>(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
       .notNull()
