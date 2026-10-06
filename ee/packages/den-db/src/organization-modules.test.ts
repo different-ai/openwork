@@ -42,8 +42,8 @@ describe("parseOrganizationModulesColumn", () => {
   })
 })
 
-test("normalizeDisabledModules dedupes, sorts and keeps unknown ids", () => {
-  expect(normalizeDisabledModules(["installLinks", "connect", "installLinks", "zUnknown"])).toEqual(["connect", "installLinks", "zUnknown"])
+test("normalizeDisabledModules dedupes, orders by MODULE_IDS and keeps unknown ids last", () => {
+  expect(normalizeDisabledModules(["installLinks", "zUnknown", "teams", "connect", "installLinks", "aUnknown"])).toEqual(["connect", "teams", "installLinks", "aUnknown", "zUnknown"])
 })
 
 test("emptyOrganizationModules is the NULL-equivalent document", () => {

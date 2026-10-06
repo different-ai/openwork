@@ -16,6 +16,7 @@ import {
   readOrganizationModules,
   repairOrganizationModules,
   updateOrganizationModules,
+  type EntitlementSnapshot,
 } from "./organization-modules"
 import { OrganizationTable } from "./schema/org"
 import { LicenseSnapshotTable } from "./schema/system"
@@ -49,6 +50,20 @@ function currentTableDdl(tables: string[]) {
     if (!statement) throw new Error(`No CREATE TABLE for ${table} in drizzle-kit export`)
     return statement
   })
+}
+
+function snapshotFixture(featureFlags: Record<string, boolean>): EntitlementSnapshot {
+  return {
+    schemaVersion: 1,
+    payload: {
+      schemaVersion: 2, licenseId: "lic_fixture", kind: "standard", status: "active", modules: { auditLogs: true }, featureFlags,
+      maxUsers: 10, expiresAt: null, invalidatedAt: null, checkedAt: "2026-10-05T12:00:00.000Z", cacheTtlSeconds: 300,
+    },
+    lastVerifiedAt: "2026-10-05T12:00:00.000Z",
+    nextRefreshAt: "2026-10-05T12:05:00.000Z",
+    transitionStartedAt: null,
+    credentialRejectedAt: null,
+  }
 }
 
 describe.skipIf(!available)("organization.modules storage (MySQL)", () => {
@@ -101,7 +116,7 @@ describe.skipIf(!available)("organization.modules storage (MySQL)", () => {
     expect(await updateOrganizationModules(handle.db, { organizationId: createDenTypeId("organization"), kind: "toggle", actorMemberId: null, mutate: (doc) => doc }))
       .toEqual({ ok: false, reason: "not_found", attempts: 1 })
     const id = await createOrganization()
-    await expect(compareAndSetOrganizationModules(handle.db, { organizationId: id, expectedRevision: 0, kind: "toggle", next: { ...emptyOrganizationModules(now), revision: 1, entitlement: { blob: "x".repeat(70_000) } } }))
+    await expect(compareAndSetOrganizationModules(handle.db, { organizationId: id, expectedRevision: 0, kind: "toggle", next: { ...emptyOrganizationModules(now), revision: 1, entitlement: snapshotFixture(Object.fromEntries(Array.from({ length: 800 }, (_, index) => [`flag_${index}_${"x".repeat(80)}`, true]))) } }))
       .rejects.toBeInstanceOf(OrganizationModulesTooLargeError)
     expect((await rawRow(id))?.modules).toBeNull()
   })
@@ -111,13 +126,13 @@ describe.skipIf(!available)("organization.modules storage (MySQL)", () => {
     await handle.db.execute(sql`UPDATE organization SET updated_at = '2020-01-01 00:00:00.000' WHERE id = ${id}`)
     const legacy = await updateOrganizationModules(handle.db, { organizationId: id, kind: "legacy", actorMemberId: "om_ignored", now, mutate: (doc) => ({ ...doc, disabled: ["installLinks"] }) })
     expect(legacy).toMatchObject({ ok: true, unchanged: false, doc: { revision: 1, updatedBy: null, updatedAt: now.toISOString() } })
-    const entitlement = await updateOrganizationModules(handle.db, { organizationId: id, kind: "entitlement", actorMemberId: null, now: new Date("2026-10-06T00:00:00.000Z"), mutate: (doc) => ({ ...doc, entitlement: { schemaVersion: 1 } }) })
-    expect(entitlement).toMatchObject({ ok: true, doc: { revision: 2, updatedAt: now.toISOString(), updatedBy: null, entitlement: { schemaVersion: 1 } } })
+    const entitlement = await updateOrganizationModules(handle.db, { organizationId: id, kind: "entitlement", actorMemberId: null, now: new Date("2026-10-06T00:00:00.000Z"), mutate: (doc) => ({ ...doc, entitlement: snapshotFixture({ marker: true }) }) })
+    expect(entitlement).toMatchObject({ ok: true, doc: { revision: 2, updatedAt: now.toISOString(), updatedBy: null, entitlement: snapshotFixture({ marker: true }) } })
     expect((await rawRow(id))?.updatedAt.toISOString()).toBe("2020-01-01T00:00:00.000Z")
 
     const later = new Date("2026-10-07T00:00:00.000Z")
     const toggle = await updateOrganizationModules(handle.db, { organizationId: id, kind: "toggle", actorMemberId: "om_owner", now: later, mutate: (doc) => ({ ...doc, disabled: [...doc.disabled, "teams"] }) })
-    expect(toggle).toMatchObject({ ok: true, doc: { revision: 3, disabled: ["installLinks", "teams"], updatedAt: later.toISOString(), updatedBy: "om_owner", entitlement: { schemaVersion: 1 } } })
+    expect(toggle).toMatchObject({ ok: true, doc: { revision: 3, disabled: ["teams", "installLinks"], updatedAt: later.toISOString(), updatedBy: "om_owner", entitlement: snapshotFixture({ marker: true }) } })
     expect((await rawRow(id))?.updatedAt.toISOString()).not.toBe("2020-01-01T00:00:00.000Z")
 
     expect(await updateOrganizationModules(handle.db, { organizationId: id, kind: "toggle", actorMemberId: "om_owner", mutate: (doc) => ({ ...doc, disabled: ["teams", "installLinks"] }) }))
@@ -184,10 +199,10 @@ describe.skipIf(!available)("organization.modules storage (MySQL)", () => {
     const first = "a".repeat(64)
     const second = "b".repeat(64)
     expect(await readLicenseSnapshot(handle.db, first)).toEqual({ status: "absent" })
-    await writeLicenseSnapshot(handle.db, first, { schemaVersion: 1, note: "first" })
-    await writeLicenseSnapshot(handle.db, first, { schemaVersion: 1, note: "updated" })
-    expect(await readLicenseSnapshot(handle.db, first)).toEqual({ status: "valid", snapshot: { schemaVersion: 1, note: "updated" } })
-    await writeLicenseSnapshot(handle.db, second, { schemaVersion: 1 })
+    await writeLicenseSnapshot(handle.db, first, snapshotFixture({ first: true }))
+    await writeLicenseSnapshot(handle.db, first, snapshotFixture({ updated: true }))
+    expect(await readLicenseSnapshot(handle.db, first)).toEqual({ status: "valid", snapshot: snapshotFixture({ updated: true }) })
+    await writeLicenseSnapshot(handle.db, second, snapshotFixture({}))
     expect(await handle.db.select({ fingerprint: LicenseSnapshotTable.fingerprint }).from(LicenseSnapshotTable)).toEqual([{ fingerprint: second }])
     await handle.db.update(LicenseSnapshotTable).set({ snapshot: ["not", "an", "object"] })
     expect((await readLicenseSnapshot(handle.db, second)).status).toBe("invalid")

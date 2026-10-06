@@ -1,4 +1,5 @@
 import { and, eq, getTableColumns, sql } from "drizzle-orm"
+import { MODULE_IDS } from "@openwork/license-contracts/modules"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { createDenDb } from "./client"
 import { organizationModulesSchema, type OrganizationModules } from "./organization-modules-contract"
@@ -120,13 +121,20 @@ export function readOrganizationModulesRevision(value: unknown): number | null {
   return revisionOf(decoded.value)
 }
 
+const MODULE_ID_ORDER: ReadonlyMap<string, number> = new Map(MODULE_IDS.map((id, index) => [id, index]))
+
 /**
- * Dedupes and sorts `disabled`, keeping unknown strings (forward compatibility
- * after a downgrade). Validating which ids may be toggled is the caller's job.
- * TODO(W0-01): order by `MODULE_IDS` with unknown ids last.
+ * Dedupes and orders `disabled` by `MODULE_IDS`, keeping unknown strings
+ * (forward compatibility after a downgrade) last, sorted. Validating which ids
+ * may be toggled is the caller's job.
  */
 export function normalizeDisabledModules(ids: readonly string[]): string[] {
-  return [...new Set(ids)].sort()
+  return [...new Set(ids)].sort((a, b) => {
+    const left = MODULE_ID_ORDER.get(a) ?? Number.MAX_SAFE_INTEGER
+    const right = MODULE_ID_ORDER.get(b) ?? Number.MAX_SAFE_INTEGER
+    if (left !== right) return left - right
+    return a < b ? -1 : a > b ? 1 : 0
+  })
 }
 
 export function emptyOrganizationModules(now: Date): OrganizationModules {

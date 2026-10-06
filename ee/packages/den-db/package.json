@@ -107,6 +107,7 @@
     "benchmark:admin-scale:mysql": "node --import tsx scripts/admin-scale-benchmark.ts"
   },
   "dependencies": {
+    "@openwork/license-contracts": "workspace:*",
     "@openwork/types": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
     "@planetscale/database": "^1.19.0",
