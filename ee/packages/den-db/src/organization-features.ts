@@ -96,10 +96,10 @@ export async function readFeatures(
   environment: FeatureEnvironment,
   options: { lock?: "share" } = {},
 ): Promise<FeatureMap> {
-  const [rollouts, overrides] = await Promise.all([
-    readFeatureRollouts(database),
-    organizationId ? readOrganizationFeatureOverrides(database, organizationId, options) : Promise.resolve({}),
-  ])
+  // Sequential on purpose: callers may pass a transaction, and a PlanetScale
+  // transaction is one session that fails when two queries are in flight.
+  const rollouts = await readFeatureRollouts(database)
+  const overrides = organizationId ? await readOrganizationFeatureOverrides(database, organizationId, options) : {}
   return resolveFeatures({ ...environment, rollouts, overrides })
 }
 
