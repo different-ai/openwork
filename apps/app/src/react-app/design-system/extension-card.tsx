@@ -12,15 +12,16 @@ import { ExtensionMeshAvatar } from "./extension-mesh-avatar";
 
 /**
  * Column widths shared by every Library row and the column header above
- * them, so names, kinds, sources and actions form straight lanes. Below `xl`
- * a row reads Name · Kind · caption; from `xl` the extra width becomes a
- * "What it does" column and a separate "From" column instead of empty gaps.
+ * them, so names, kinds, sources and actions form straight lanes. Short,
+ * fixed columns come first and the long "What it does" text comes last and
+ * takes the remaining width, so a wide window never opens a gap between a
+ * row's name and its kind. Below `lg` a row reads Name · Kind · caption.
  */
 export const libraryRowLanes = {
-  name: "w-[150px] md:w-[190px] 2xl:w-[240px]",
-  description: "hidden min-w-0 flex-1 xl:block",
-  kind: "hidden w-[84px] sm:block xl:w-[104px]",
-  from: "min-w-0 flex-1 xl:w-[200px] xl:flex-none",
+  name: "w-[150px] md:w-[190px] 2xl:w-[220px]",
+  kind: "hidden w-[84px] sm:block",
+  from: "min-w-0 flex-1 lg:w-[160px] lg:flex-none",
+  description: "hidden min-w-0 flex-1 lg:block",
   action: "min-w-[96px]",
 } as const;
 
@@ -159,17 +160,17 @@ export function ExtensionCard(props: ExtensionCardProps) {
           {preview ? <span className="shrink-0 rounded-md bg-dls-hover px-1.5 py-0.5 text-[11px] text-dls-secondary">Preview</span> : null}
           {beta ? <span className="shrink-0 rounded-md bg-dls-hover px-1.5 py-0.5 text-[11px] text-dls-secondary">{t("common.beta")}</span> : null}
         </div>
-        <p data-library-description className={`truncate text-[13px] text-dls-text/80 ${libraryRowLanes.description}`}>{summary}</p>
-        <span className={`shrink-0 text-xs text-dls-secondary ${libraryRowLanes.kind}`}>{extensionTaxonomyLabel(taxonomy)}</span>
+        <span data-library-kind className={`shrink-0 text-xs text-dls-secondary ${libraryRowLanes.kind}`}>{extensionTaxonomyLabel(taxonomy)}</span>
         {meta ? (
           <p data-library-caption className={`truncate text-xs text-dls-secondary ${libraryRowLanes.from}`}>{meta}</p>
         ) : (
           // Nothing to say about the source: narrow rows fall back to what it
-          // does, wide rows keep the empty lane so later columns stay aligned.
+          // does, wide rows keep the empty lane so the next column stays aligned.
           <p className={`truncate text-xs text-dls-secondary ${libraryRowLanes.from}`}>
-            <span className="xl:hidden">{summary}</span>
+            <span className="lg:hidden">{summary}</span>
           </p>
         )}
+        <p data-library-description className={`truncate text-xs text-dls-secondary ${libraryRowLanes.description}`}>{summary}</p>
       </button>
       <div className={`flex shrink-0 items-center justify-end gap-1 ${libraryRowLanes.action}`}>
         {!disabledReason && !connecting && nextActionLabel ? (

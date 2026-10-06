@@ -37,24 +37,32 @@ test("a member on a big screen reads the Library as one aligned list, and there 
     );
   });
 
-  await step("after: at 1920 wide every row has its own What it does, Kind and From columns, in straight lanes", async () => {
+  await step("after: at 1920 wide Name, Kind, From and What it does sit side by side in straight lanes under their labels", async () => {
     const header = await probe.eventually(async () => (await probe.dom("[data-library-columns]")).elements, {
       within: 10_000, label: "the column header shows", until: (elements) => elements.length === 1 && (elements[0]?.rect.width ?? 0) > 0,
     });
     const listed = await rows(expected);
-    const descriptions = (await probe.dom("button[data-library-row] [data-library-description]")).elements;
-    const visible = descriptions.filter((element) => element.rect.width > 0);
-    const descriptionLanes = lanes(visible.map((element) => element.rect));
-    const widest = Math.max(...visible.map((element) => element.rect.width));
+    const kinds = (await probe.dom("button[data-library-row] [data-library-kind]")).elements;
+    const descriptions = (await probe.dom("button[data-library-row] [data-library-description]")).elements.filter((element) => element.rect.width > 0);
+    const labels = (await probe.dom("[data-library-columns] span")).elements.filter((element) => element.text);
+    const kindLabel = labels.find((element) => element.text === "Kind");
+    const descriptionLabel = labels.find((element) => element.text === "What it does");
+    const kindLanes = lanes(kinds.map((element) => element.rect));
+    const descriptionLanes = lanes(descriptions.map((element) => element.rect));
+    // Kind follows the name lane directly instead of being pushed to the far edge.
+    const kindFromRowStart = Math.round((kinds[0]?.rect.left ?? 0) - (listed[0]?.rect.left ?? 0));
+    const underLabels = kindLabel !== undefined && descriptionLabel !== undefined
+      && kindLanes.length === 1 && kindLanes[0] === Math.round(kindLabel.rect.left)
+      && descriptionLanes.length === 1 && descriptionLanes[0] === Math.round(descriptionLabel.rect.left);
     await user.screenshot();
     evidence.recordAssertionEvidence(
-      "Name · What it does · Kind · From, aligned",
-      `header "${header[0]?.text}"; ${visible.length}/${listed.length} rows show what they do; description lane starts at x=${descriptionLanes.join(", ")}; widest ${Math.round(widest)}px`,
-      header[0]?.text.includes("What it does") === true && visible.length === listed.length && descriptionLanes.length === 1,
+      "Columns line up with their labels and stay close to the name",
+      `header "${header[0]?.text}"; Kind lane x=${kindLanes.join(", ")} (label x=${Math.round(kindLabel?.rect.left ?? -1)}), ${kindFromRowStart}px from the row start; What it does lane x=${descriptionLanes.join(", ")} (label x=${Math.round(descriptionLabel?.rect.left ?? -1)}); ${descriptions.length}/${listed.length} rows show what they do`,
+      underLabels && kindFromRowStart < 320 && descriptions.length === listed.length,
     );
-    expect(header[0]?.text).toContain("What it does");
-    expect(visible).toHaveLength(listed.length);
-    expect(descriptionLanes).toHaveLength(1);
+    expect(underLabels).toBe(true);
+    expect(kindFromRowStart).toBeLessThan(320);
+    expect(descriptions).toHaveLength(listed.length);
   });
 
   await step("at 2560 wide the lanes stay aligned and nothing scrolls sideways", async () => {
@@ -73,8 +81,27 @@ test("a member on a big screen reads the Library as one aligned list, and there 
     expect(descriptionLanes).toHaveLength(1);
   });
 
-  await step("on a narrower window (1180 wide) the row folds back to Name, Kind and one caption, without the column header", async () => {
-    await user.resizeViewport({ width: 1180, height: 800, deviceScaleFactor: 1 });
+  await step("at 1280 wide, a common laptop window, the same columns still fit with every description on one line", async () => {
+    await user.resizeViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+    const descriptions = await probe.eventually(async () => (await probe.dom("button[data-library-row] [data-library-description]")).elements, {
+      within: 10_000, label: "descriptions show at 1280", until: (elements) => elements.length > 0 && elements.every((element) => element.rect.width > 0),
+    });
+    const page = await probe.dom("button[data-library-row]");
+    const descriptionLanes = lanes(descriptions.map((element) => element.rect));
+    const narrowest = Math.round(Math.min(...descriptions.map((element) => element.rect.width)));
+    await user.screenshot();
+    evidence.recordAssertionEvidence(
+      "Laptop width keeps all four columns",
+      `${descriptions.length} descriptions in one lane at x=${descriptionLanes.join(", ")}; description column ${narrowest}px wide; document ${page.documentWidth}px in a ${page.viewportWidth}px window`,
+      descriptionLanes.length === 1 && narrowest >= 240 && page.documentWidth <= page.viewportWidth,
+    );
+    expect(descriptionLanes).toHaveLength(1);
+    expect(narrowest).toBeGreaterThanOrEqual(240);
+    expect(page.documentWidth).toBeLessThanOrEqual(page.viewportWidth);
+  });
+
+  await step("on a narrow window (900 wide) the row folds back to Name, Kind and one caption, without the column header", async () => {
+    await user.resizeViewport({ width: 900, height: 800, deviceScaleFactor: 1 });
     const header = await probe.eventually(async () => (await probe.dom("[data-library-columns]")).elements, {
       within: 10_000, label: "the column header hides on a narrower window", until: (elements) => elements.every((element) => element.rect.width === 0),
     });

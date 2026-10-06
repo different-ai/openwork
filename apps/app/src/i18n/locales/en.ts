@@ -831,6 +831,7 @@ export default {
   "extensions.row_action_sign_in": "Sign in",
   "extensions.row_action_set_up": "Set up",
   "extensions.row_local_you": "Local",
+  "extensions.row_locked_from": "OpenWork Cloud",
   "extensions.row_cloud_from": "From {source}",
   "extensions.row_shared_by": "Shared by {name}",
   "extensions.row_owned_just_me": "Just me",

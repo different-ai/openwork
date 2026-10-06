@@ -2356,13 +2356,13 @@ function LibrarySignUpBanner(props: { onSignUp?: () => void }) {
 function LibraryColumnHeader() {
   const label = "shrink-0 text-xs text-dls-secondary";
   return (
-    <div data-library-columns aria-hidden className="hidden h-8 items-center gap-3 border-b border-dls-border xl:flex">
+    <div data-library-columns aria-hidden className="hidden h-7 items-center gap-3 lg:flex">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <span className="w-8 shrink-0" />
         <span className={`${label} ${libraryRowLanes.name}`}>{t("extensions.column_name")}</span>
-        <span className={`${label} ${libraryRowLanes.description}`}>{t("extensions.column_description")}</span>
         <span className={`${label} ${libraryRowLanes.kind}`}>{t("extensions.column_kind")}</span>
         <span className={`${label} ${libraryRowLanes.from}`}>{t("extensions.column_from")}</span>
+        <span className={`${label} ${libraryRowLanes.description}`}>{t("extensions.column_description")}</span>
       </div>
       <span className={`shrink-0 ${libraryRowLanes.action}`} />
     </div>
@@ -2391,12 +2391,10 @@ export function LibraryInventory(props: {
     .filter((entry) => entry.rows.length > 0);
   const containerClassName = "flex flex-col [&>div]:border-b [&>div]:border-dls-border/60";
   const showLocked = props.signedOut === true && category === "all" && !needle && !props.onlyNeedsSignIn;
-  const showRows = !(sections.length === 0 && props.loading) && (sections.length > 0 || showLocked);
 
   return (
     <div className="space-y-6">
       {props.signedOut ? <LibrarySignUpBanner onSignUp={props.onSignUp} /> : null}
-      {showRows ? <LibraryColumnHeader /> : null}
       {sections.length === 0 && props.loading ? (
         <div className="flex flex-col gap-2">
           {[0, 1, 2].map((index) => (
@@ -2404,37 +2402,45 @@ export function LibraryInventory(props: {
           ))}
         </div>
       ) : sections.length === 0 && !showLocked ? props.emptyState ?? null : (
-        sections.map(({ section, rows }) => (
-          <div key={section} data-library-section={section}>
-            <LibrarySectionHeader section={section} label={librarySectionLabel(section)} meta={props.sectionMeta?.[section]} />
-            <div className={containerClassName}>
-              {rows.map((row) => (
-                <div key={row.key} data-library-row-key={row.key}>{row.node}</div>
-              ))}
-            </div>
-          </div>
-        ))
-      )}
-      {showLocked ? (
-        <div className="space-y-2.5" data-library-section="locked">
-          <LibrarySectionHeader section="openwork" label={t("extensions.section_openwork_locked")} />
-          <div className={containerClassName}>
-            {lockedLibraryPreviews.map((preview) => (
-              <div key={preview.name} className="opacity-60" data-library-locked={preview.name}>
-                <ExtensionCard
-                  name={preview.name}
-                  description={preview.description}
-                  iconSrc={preview.iconSrc}
-                  taxonomy="connection"
-                  disabled
-                  trailing={<Lock size={13} className="text-dls-secondary" aria-label={t("extensions.row_locked")} />}
-                />
+        // The column labels belong to the rows: they sit directly on the first
+        // section instead of floating one section-gap above it.
+        <div>
+          <LibraryColumnHeader />
+          <div className="space-y-6">
+            {sections.map(({ section, rows }) => (
+              <div key={section} data-library-section={section}>
+                <LibrarySectionHeader section={section} label={librarySectionLabel(section)} meta={props.sectionMeta?.[section]} />
+                <div className={containerClassName}>
+                  {rows.map((row) => (
+                    <div key={row.key} data-library-row-key={row.key}>{row.node}</div>
+                  ))}
+                </div>
               </div>
             ))}
+            {showLocked ? (
+              <div data-library-section="locked">
+                <LibrarySectionHeader section="openwork" label={t("extensions.section_openwork_locked")} />
+                <div className={containerClassName}>
+                  {lockedLibraryPreviews.map((preview) => (
+                    <div key={preview.name} className="opacity-60" data-library-locked={preview.name}>
+                      <ExtensionCard
+                        name={preview.name}
+                        description={preview.description}
+                        iconSrc={preview.iconSrc}
+                        meta={t("extensions.row_locked_from")}
+                        taxonomy="connection"
+                        disabled
+                        trailing={<Lock size={13} className="text-dls-secondary" aria-label={t("extensions.row_locked")} />}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-2.5 px-0.5 text-xs text-dls-secondary">{t("extensions.locked_more")}</p>
+              </div>
+            ) : null}
           </div>
-          <p className="px-0.5 text-xs text-dls-secondary">{t("extensions.locked_more")}</p>
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
