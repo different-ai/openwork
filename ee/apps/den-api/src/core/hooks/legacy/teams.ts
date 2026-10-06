@@ -107,3 +107,22 @@ coreHooks.registerTx({
     })
   },
 })
+
+coreHooks.registerTx({
+  point: "org.deletion.purge",
+  id: "legacy/teams/purge-organization-teams",
+  registrant: "legacy",
+  alwaysRun: "cleanup",
+  order: CORE_HOOK_ORDER.cleanup + 2,
+  handler: async ({ tx, organizationId }) => {
+    const teamIds = (await tx
+      .select({ id: TeamTable.id })
+      .from(TeamTable)
+      .where(eq(TeamTable.organizationId, organizationId)))
+      .map((row) => row.id)
+    if (teamIds.length > 0) {
+      await tx.delete(TeamMemberTable).where(inArray(TeamMemberTable.teamId, teamIds))
+    }
+    await tx.delete(TeamTable).where(eq(TeamTable.organizationId, organizationId))
+  },
+})

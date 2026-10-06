@@ -1,6 +1,20 @@
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { expireUsageRequestsForMembers } from "@openwork-ee/den-db/gateway-usage-limits"
-import { GatewayProviderAccessTable } from "@openwork-ee/den-db/schema"
+import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
+import { deleteGatewayUsageForOrganization, expireUsageRequestsForMembers } from "@openwork-ee/den-db/gateway-usage-limits"
+import {
+  GatewayCredentialSetTable,
+  GatewayKeyTable,
+  GatewayLiteLlmIssuedKeyTable,
+  GatewayModelGroupModelTable,
+  GatewayModelGroupTable,
+  GatewayProviderAccessTable,
+  GatewayProviderCredentialTable,
+  GatewayProviderModelTable,
+  GatewayProviderOauthStateTable,
+  GatewayProviderTable,
+  GatewayRequestLogTable,
+  GatewayUsageAssignmentTable,
+  GatewayUsageRollupTable,
+} from "@openwork-ee/den-db/schema"
 import { ensureMemberGatewayKey } from "../../../gateway-keys.js"
 import {
   invalidateTeamInferenceOAuth,
@@ -103,5 +117,65 @@ coreHooks.registerTx({
   handler: async ({ tx, memberIds, afterCommit }) => {
     const credentials = await revokeInferenceCredentialsForMembers(tx, memberIds)
     afterCommit(() => revokeGoogleCredentials(credentials))
+  },
+})
+
+coreHooks.registerTx({
+  point: "team.deleting",
+  id: "legacy/ai-gateway/delete-team-usage-assignments",
+  registrant: "legacy",
+  alwaysRun: "cleanup",
+  // Runs inside deleteTeam's usage mutation, so affected members' effective
+  // policies are recomputed when the assignment disappears. No soft-delete
+  // column exists; policy history stays in gateway_usage_audit.
+  order: CORE_HOOK_ORDER.security + 2,
+  handler: async ({ tx, organizationId, teamId }) => {
+    await tx.delete(GatewayUsageAssignmentTable).where(and(
+      eq(GatewayUsageAssignmentTable.organizationId, organizationId),
+      eq(GatewayUsageAssignmentTable.teamId, teamId),
+    ))
+  },
+})
+
+coreHooks.registerTx({
+  point: "org.deletion.purge",
+  id: "legacy/ai-gateway/erase-organization-usage",
+  registrant: "legacy",
+  alwaysRun: "cleanup",
+  // First: erasure fences usage writers for the organization.
+  order: CORE_HOOK_ORDER.lock,
+  handler: ({ tx, organizationId }) => deleteGatewayUsageForOrganization(tx, organizationId),
+})
+
+coreHooks.registerTx({
+  point: "org.deletion.purge",
+  id: "legacy/ai-gateway/purge-organization-providers",
+  registrant: "legacy",
+  alwaysRun: "cleanup",
+  order: CORE_HOOK_ORDER.cleanup + 4,
+  handler: async ({ tx, organizationId }) => {
+    const gatewayProviderIds = (await tx
+      .select({ id: GatewayProviderTable.id })
+      .from(GatewayProviderTable)
+      .where(eq(GatewayProviderTable.organization_id, organizationId)).for("update"))
+      .map((row) => row.id)
+    if (gatewayProviderIds.length > 0) {
+      await tx.delete(GatewayProviderOauthStateTable).where(inArray(GatewayProviderOauthStateTable.gateway_provider_id, gatewayProviderIds))
+      // Keys OpenWork created in a customer's LiteLLM outlive this record; that proxy is not ours to change.
+      await tx.delete(GatewayLiteLlmIssuedKeyTable).where(inArray(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, gatewayProviderIds))
+      const groups = await tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, gatewayProviderIds))
+      if (groups.length) await tx.delete(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id)))
+      await tx.delete(GatewayProviderAccessTable).where(inArray(GatewayProviderAccessTable.gateway_provider_id, gatewayProviderIds))
+      await tx.delete(GatewayProviderCredentialTable).where(inArray(GatewayProviderCredentialTable.gateway_provider_id, gatewayProviderIds))
+      await tx.delete(GatewayCredentialSetTable).where(inArray(GatewayCredentialSetTable.gateway_provider_id, gatewayProviderIds))
+      await tx.delete(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, gatewayProviderIds))
+      await tx.delete(GatewayProviderModelTable).where(inArray(GatewayProviderModelTable.gateway_provider_id, gatewayProviderIds))
+    }
+    await tx.delete(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.organization_id, organizationId))
+    // Account erasure remains distinct from provider deletion, which retains its history.
+    await tx.delete(GatewayRequestLogTable).where(eq(GatewayRequestLogTable.organization_id, organizationId))
+    await tx.delete(GatewayUsageRollupTable).where(eq(GatewayUsageRollupTable.organization_id, organizationId))
+    await tx.delete(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, organizationId))
+    await tx.delete(GatewayKeyTable).where(eq(GatewayKeyTable.organization_id, organizationId))
   },
 })

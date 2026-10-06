@@ -20,3 +20,14 @@ coreHooks.registerTx({
       ))
   },
 })
+
+coreHooks.registerTx({
+  point: "org.deletion.purge",
+  id: "legacy/connect-native-providers/purge-organization-connected-accounts",
+  registrant: "legacy",
+  alwaysRun: "cleanup",
+  order: CORE_HOOK_ORDER.cleanup + 17,
+  handler: async ({ tx, organizationId }) => {
+    await tx.delete(ConnectedAccountTable).where(eq(ConnectedAccountTable.organizationId, organizationId))
+  },
+})

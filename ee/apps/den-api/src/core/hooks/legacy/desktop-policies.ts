@@ -1,5 +1,5 @@
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
-import { DesktopPolicyMemberTable } from "@openwork-ee/den-db/schema"
+import { DesktopPolicyMemberTable, DesktopPolicyTable } from "@openwork-ee/den-db/schema"
 import { ensureDefaultDesktopPolicyForOrganization } from "../../../desktop-policies.js"
 import { coreHooks } from "../default-registry.js"
 import { CORE_HOOK_ORDER } from "../types.js"
@@ -47,5 +47,17 @@ coreHooks.registerPostCommit({
       organizationId: input.organizationId,
       createdByOrgMemberId: input.ownerMemberId,
     })
+  },
+})
+
+coreHooks.registerTx({
+  point: "org.deletion.purge",
+  id: "legacy/desktop-policies/purge-organization-policies",
+  registrant: "legacy",
+  alwaysRun: "cleanup",
+  order: CORE_HOOK_ORDER.cleanup + 13,
+  handler: async ({ tx, organizationId }) => {
+    await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.organizationId, organizationId))
+    await tx.delete(DesktopPolicyTable).where(eq(DesktopPolicyTable.organizationId, organizationId))
   },
 })

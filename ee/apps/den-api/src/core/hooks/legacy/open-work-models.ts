@@ -1,3 +1,12 @@
+import { eq, inArray } from "@openwork-ee/den-db/drizzle"
+import {
+  InferenceKeyTable,
+  InferenceOrgLimitPolicyTable,
+  InferenceOrgUpstreamProviderKeyTable,
+  InferenceOrgUsageBucketTable,
+  InferenceUsageLedgerBucketChargeTable,
+  InferenceUsageLedgerEntryTable,
+} from "@openwork-ee/den-db/schema"
 import { syncInferenceAfterMemberChange } from "../../../inference.js"
 import { coreHooks } from "../default-registry.js"
 import { CORE_HOOK_ORDER } from "../types.js"
@@ -35,4 +44,27 @@ coreHooks.registerPostCommit({
     memberCount: input.memberCount,
     change: "removed",
   }),
+})
+
+coreHooks.registerTx({
+  point: "org.deletion.purge",
+  id: "legacy/openwork-models/purge-organization-inference",
+  registrant: "legacy",
+  alwaysRun: "cleanup",
+  order: CORE_HOOK_ORDER.cleanup + 5,
+  handler: async ({ tx, organizationId }) => {
+    const ledgerEntryIds = (await tx
+      .select({ id: InferenceUsageLedgerEntryTable.id })
+      .from(InferenceUsageLedgerEntryTable)
+      .where(eq(InferenceUsageLedgerEntryTable.organization_id, organizationId)))
+      .map((row) => row.id)
+    if (ledgerEntryIds.length > 0) {
+      await tx.delete(InferenceUsageLedgerBucketChargeTable).where(inArray(InferenceUsageLedgerBucketChargeTable.ledger_entry_id, ledgerEntryIds))
+    }
+    await tx.delete(InferenceUsageLedgerEntryTable).where(eq(InferenceUsageLedgerEntryTable.organization_id, organizationId))
+    await tx.delete(InferenceKeyTable).where(eq(InferenceKeyTable.organization_id, organizationId))
+    await tx.delete(InferenceOrgLimitPolicyTable).where(eq(InferenceOrgLimitPolicyTable.organization_id, organizationId))
+    await tx.delete(InferenceOrgUsageBucketTable).where(eq(InferenceOrgUsageBucketTable.organization_id, organizationId))
+    await tx.delete(InferenceOrgUpstreamProviderKeyTable).where(eq(InferenceOrgUpstreamProviderKeyTable.organization_id, organizationId))
+  },
 })

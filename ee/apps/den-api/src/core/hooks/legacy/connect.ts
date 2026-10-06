@@ -1,5 +1,5 @@
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
-import { ExternalMcpConnectionAccessGrantTable } from "@openwork-ee/den-db/schema"
+import { ExternalMcpConnectionAccessGrantTable, ExternalMcpConnectionTable, OrgOAuthClientTable, PluginMcpRequirementBindingTable } from "@openwork-ee/den-db/schema"
 import { coreHooks } from "../default-registry.js"
 import { CORE_HOOK_ORDER } from "../types.js"
 
@@ -29,5 +29,19 @@ coreHooks.registerTx({
   order: CORE_HOOK_ORDER.cleanup + 1,
   handler: async ({ tx, teamId }) => {
     await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.teamId, teamId))
+  },
+})
+
+coreHooks.registerTx({
+  point: "org.deletion.purge",
+  id: "legacy/connect/purge-organization-connections",
+  registrant: "legacy",
+  alwaysRun: "cleanup",
+  order: CORE_HOOK_ORDER.cleanup + 18,
+  handler: async ({ tx, organizationId }) => {
+    await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.organizationId, organizationId))
+    await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.organizationId, organizationId))
+    await tx.delete(PluginMcpRequirementBindingTable).where(eq(PluginMcpRequirementBindingTable.organizationId, organizationId))
+    await tx.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.organizationId, organizationId))
   },
 })
