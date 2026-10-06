@@ -141,7 +141,7 @@ function SavedDashboardApp({ app, onRemove, removing, onCreateApp, fallbackEndpo
   const live = liveRevision ? { view: app.view, revision: liveRevision }
     : !isLiveGeneratedApp(app.view) && !detail.isError && detail.data && isLiveGeneratedApp(detail.data.view) && detail.data.revision ? { view: detail.data.view, revision: detail.data.revision } : null;
   const hasPreview = !isLiveGeneratedApp(app.view) && Boolean(detail.data?.html && detail.data.payload && detail.data.revision);
-  return <article className="min-w-0" style={{ minHeight: detail.isPending ? reserved?.outerHeight : undefined }} data-personal-dashboard-app={app.view.id}>
+  return <article className="min-w-0" style={{ minHeight: detail.isPending ? reserved?.outerHeight : undefined }} data-personal-dashboard-app={app.view.id} data-testid={`dashboard-artifact-${app.view.id}`}>
       {live ? <LiveGeneratedApp view={live.view} revision={live.revision} fallbackEndpoints={fallbackEndpoints} renderActions={renderActions} />
         : <DashboardTileShell title={app.view.title} compact={(hasPreview && !detail.isError) || (detail.isPending && Boolean(reserved))} renderActions={renderActions}>
         {isLiveGeneratedApp(app.view) ? <p role="status" className="py-4 text-sm text-muted-foreground">This artifact has no saved version ready to open.</p>
