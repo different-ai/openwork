@@ -174,7 +174,7 @@ export async function cloudAgentRuntimeAvailable(scope: OwnerScope): Promise<boo
     isNull(MemberTable.removedAt),
   )).limit(1)
   if (!members[0]) return false
-  if (!cloudHostingAvailable({ orgMode: env.orgMode })) return false
+  if (!cloudHostingAvailable({ orgMode: env.orgMode, openworkWebEnabled: env.openworkWebEnabled })) return false
   const webAccess = await getOpenWorkWebRuntimeAccess(organizationId)
   if (!webAccess.hasAccess) return false
   const worker = await ownerCloudWorker(scope)

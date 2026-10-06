@@ -691,7 +691,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       // Cloud is entitled by OpenWork Web access (paid subscription or the
       // platform-admin complimentary grant) on hosted deployments; there is no
       // separate per-organization Cloud rollout flag.
-      const cloudEnabled = cloudHostingAvailable({ orgMode: env.orgMode })
+      const cloudEnabled = cloudHostingAvailable({ orgMode: env.orgMode, openworkWebEnabled: env.openworkWebEnabled })
         && (await getOpenWorkWebAccess(payload.organization.id)).hasAccess
       const [ssoRows, scimRows] = await Promise.all([
         db

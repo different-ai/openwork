@@ -49,7 +49,7 @@ import {
 } from "./desktop";
 import { enterpriseActivationRequired } from "./enterprise-activation";
 import { observeDenRequest } from "./den-request-diagnostics";
-import { getOpenworkGatewayOrigin } from "./gateway-runtime";
+import { getOpenworkGatewayOrigin, readOpenworkGatewayDenBaseUrl } from "./gateway-runtime";
 import { clearDesktopSignInIntent, clearOrgSelectionPending } from "./den-sign-in-intent";
 import { clearDashboardTileCacheStorage } from "./dashboard-cache-storage";
 import { isDesktopRuntime } from "./runtime-env";
@@ -92,6 +92,7 @@ const ORG_SCOPE_HEADER = "x-openwork-org-id";
 const DEFAULT_DEN_TIMEOUT_MS = 12_000;
 
 const BUILD_DEN_BASE_URL =
+  readOpenworkGatewayDenBaseUrl() ||
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_BASE_URL === "string"
     ? import.meta.env.VITE_DEN_BASE_URL
     : "").trim() || "https://app.openworklabs.com";
