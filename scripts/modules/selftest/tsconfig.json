@@ -1,0 +1,13 @@
+// Resolution only, for the boundary self-test. Never used to compile.
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  "include": ["fixture"]
+}

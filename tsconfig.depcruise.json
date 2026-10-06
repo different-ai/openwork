@@ -1,0 +1,13 @@
+// Resolution only, for dependency-cruiser (pnpm boundaries:check). Never used to compile.
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "noEmit": true
+  },
+  "include": ["ee/apps/den-api/src", "ee/apps/den-web/app", "ee/apps/den-web/components", "ee/packages/den-db/src"]
+}

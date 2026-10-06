@@ -40,6 +40,9 @@
     ".opencode/node_modules/**",
     ".opencode/openwork/**",
     ".warden/**",
+    // Module boundary self-test data (scripts/modules/selftest), never compiled.
+    "scripts/modules/selftest/fixture/**",
+    "scripts/modules/selftest/folders-bad/**",
     "infra/**/.terraform/**"
   ],
   "ignoreDependencies": [
@@ -53,7 +56,9 @@
     "@stoplight/spectral-cli",
     "@sentry/cli",
     "babel-plugin-react-compiler",
-    "@react-email/ui"
+    "@react-email/ui",
+    // Spawned by path from scripts/modules/*.mjs (pnpm boundaries:*).
+    "dependency-cruiser"
   ],
   "workspaces": {
     ".": {

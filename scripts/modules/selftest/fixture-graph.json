@@ -1,0 +1,11 @@
+{
+  "_comment": "Module graph for the boundary self-test. beta soft-depends on alpha; delta is undeclared everywhere; gamma is retired.",
+  "source": "bootstrap",
+  "modules": [
+    { "id": "alpha", "folder": "alpha", "parent": null, "ancestors": [], "hard": [], "soft": [] },
+    { "id": "alpha.child", "folder": "alpha/child", "parent": "alpha", "ancestors": ["alpha"], "hard": [], "soft": [] },
+    { "id": "beta", "folder": "beta", "parent": null, "ancestors": [], "hard": [], "soft": ["alpha"] },
+    { "id": "delta", "folder": "delta", "parent": null, "ancestors": [], "hard": [], "soft": [] }
+  ],
+  "retired": [{ "id": "gamma", "folder": "gamma" }]
+}

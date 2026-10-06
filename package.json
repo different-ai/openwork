@@ -68,11 +68,20 @@
     "release:cut": "node scripts/release/cut.mjs",
     "release:cut:watch": "node scripts/release/cut.mjs --watch",
     "evals:check-browser": "pnpm --dir evals check:browser",
-    "evals:check": "pnpm --dir evals run check"
+    "evals:check": "pnpm --dir evals run check",
+    "boundaries:graph": "tsx scripts/modules/generate-module-graph.mts",
+    "boundaries:check": "node scripts/modules/boundaries.mjs check",
+    "boundaries:report": "node scripts/modules/boundaries.mjs report",
+    "boundaries:baseline": "node scripts/modules/boundaries.mjs baseline",
+    "boundaries:selftest": "node scripts/modules/selftest/run.mjs",
+    "boundaries:folders": "node scripts/modules/check-module-folders.mjs",
+    "boundaries:ratchet": "node scripts/modules/check-boundary-ratchet.mjs"
   },
   "devDependencies": {
     "@stoplight/spectral-cli": "6.16.3",
     "@types/node": "^24.0.0",
+    "dependency-cruiser": "18.5.0",
+    "tsx": "^4.23.1",
     "turbo": "^2.10.7",
     "typescript": "^5.9.0"
   },

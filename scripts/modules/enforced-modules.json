@@ -1,0 +1,5 @@
+{
+  "_comment": "Module boundary enable switches (W0-08). To enforce module X: add its id to `modules` (keep the list sorted), run `pnpm boundaries:check`, and fix or move code until it is clean. Never add baseline entries (known-violations.json) for an enforced module. `core` flips to true once three modules are enforced; that PR regenerates the baseline once with `pnpm boundaries:baseline`.",
+  "core": false,
+  "modules": []
+}
