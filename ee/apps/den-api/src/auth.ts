@@ -1,7 +1,7 @@
 import * as crypto from "node:crypto";
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy";
-import { invalidateTeamInferenceOAuth, revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js";
-import { ensureMemberGatewayKey } from "./gateway-keys.js";
+import { revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js";
+import { coreHooks } from "./core/hooks/index.js";
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js";
@@ -700,23 +700,26 @@ export const auth = betterAuth({
     teamMember: {
       delete: {
         before: async (membership: typeof schema.TeamMemberTable.$inferSelect) => {
-          await db.transaction((tx) => invalidateTeamInferenceOAuth(tx, membership.teamId));
+          await db.transaction((tx) => coreHooks.runTx("team.membershipChanged", { tx, organizationId: null, teamId: membership.teamId }));
         },
       },
     },
     team: {
       delete: {
         before: async (team: typeof schema.TeamTable.$inferSelect) => {
-          await db.transaction((tx) => invalidateTeamInferenceOAuth(tx, team.id));
+          await db.transaction((tx) => coreHooks.runTx("team.membershipChanged", { tx, organizationId: team.organizationId, teamId: team.id }));
         },
       },
     },
     member: {
       create: {
         after: async (member: AuthMemberHookRow) => {
-          if (member.userId && !member.removedAt) await ensureMemberGatewayKey({
+          await coreHooks.runPostCommit("member.added", {
             organizationId: normalizeDenTypeId("organization", member.organizationId),
             memberId: normalizeDenTypeId("member", member.id),
+            source: "betterAuthAdapter",
+            userId: member.userId ?? null,
+            removedAt: member.removedAt ?? null,
           });
         },
       },
@@ -1251,9 +1254,9 @@ export const auth = betterAuth({
         beforeAddTeamMember: denyBetterAuthTeamMutation,
         beforeRemoveTeamMember: denyBetterAuthTeamMutation,
         afterCreateOrganization: async ({ organization }) => {
-          await seedDefaultOrganizationRoles(
-            normalizeDenTypeId("organization", organization.id),
-          );
+          const organizationId = normalizeDenTypeId("organization", organization.id);
+          await seedDefaultOrganizationRoles(organizationId);
+          await coreHooks.runPostCommit("org.created", { organizationId, ownerMemberId: null, source: "betterAuth" });
         },
         beforeAddMember: async ({ member }) => {
           if (readStringProperty(member, "teamId")) {

@@ -3,21 +3,10 @@ import { and, asc, count, eq, gt, inArray, isNotNull, isNull, or, sql } from "@o
 import {
   AuthSessionTable,
   AuthUserTable,
-  ConfigObjectAccessGrantTable,
-  ConnectedAccountTable,
-  ConnectorInstanceAccessGrantTable,
-  DashboardAccessGrantTable,
-  DesktopPolicyMemberTable,
-  ExternalMcpConnectionAccessGrantTable,
   InvitationTable,
-  LlmProviderAccessTable,
-  LlmProviderMemberCredentialTable,
-  MarketplaceAccessGrantTable,
   MemberTable,
   OrganizationRoleTable,
   OrganizationTable,
-  PluginAccessGrantTable,
-  ScimGroupMemberTable,
   ScimProviderTable,
   ScimUserTombstoneTable,
   SsoConnectionTable,
@@ -29,7 +18,6 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { revokeOrganizationApiKeysForMember } from "./api-keys.js"
 import { cache } from "./cache.js"
 import { revokeMembershipSessionCredentials } from "./credential-revocation.js"
-import { revokeGoogleCredentials, revokeInferenceCredentialsForMembers } from "./llm/inference-provider-lifecycle.js"
 import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
@@ -42,6 +30,7 @@ import {
   type MemberLifecycleValidation,
 } from "./organization-member-guards.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
+import { coreHooks, runWithAfterCommit } from "./core/hooks/index.js"
 import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js"
 import { getScimManagedTeamIds } from "./scim-groups.js"
 import { effectiveOrganizationRole, listOrganizationAdminTeamGrants, withOrganizationMembershipUsageMutation, withOrganizationTeamMutation, type OrganizationAdminTeam } from "./organization-team-roles.js"
@@ -58,7 +47,7 @@ import {
   type OrganizationPermissionRecord,
 } from "./organization-access.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "./desktop-policies.js"
-import { isProtectedOrganizationRoleName, organizationRoleValueSatisfies, shouldRevokeSessionsForRoleChange } from "./organization-role-hierarchy.js"
+import { isProtectedOrganizationRoleName, shouldRevokeSessionsForRoleChange } from "./organization-role-hierarchy.js"
 import { appLogger } from "./observability/logger.js"
 import { isSingleOrgOwnerEmailEligible, resolveSingleOrgMembershipRole } from "./single-org-policy.js"
 
@@ -882,40 +871,12 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
       }
     }
 
-    if (currentInvitation.teamId) {
-      const teams = await tx
-        .select({ id: TeamTable.id, grantsOrganizationAdmin: TeamTable.grantsOrganizationAdmin })
-        .from(TeamTable)
-        .where(and(
-          eq(TeamTable.id, currentInvitation.teamId),
-          eq(TeamTable.organizationId, currentInvitation.organizationId),
-        ))
-        .limit(1)
-
-      if (teams[0]) {
-        const existingTeamMember = await tx
-          .select({ id: TeamMemberTable.id })
-          .from(TeamMemberTable)
-          .where(and(eq(TeamMemberTable.teamId, currentInvitation.teamId), eq(TeamMemberTable.orgMembershipId, member.id)))
-          .limit(1)
-
-        const inviters = currentInvitation.orgMemberId ? await tx.select({ role: MemberTable.role })
-          .from(MemberTable).where(and(
-            eq(MemberTable.id, currentInvitation.orgMemberId),
-            eq(MemberTable.organizationId, currentInvitation.organizationId),
-            isNull(MemberTable.removedAt),
-          )).limit(1) : []
-        const mayAssignTeam = !teams[0].grantsOrganizationAdmin || (inviters[0] && organizationRoleValueSatisfies({ roleValue: inviters[0].role, requiredRole: "super-admin" }))
-        const scimTeams = await getScimManagedTeamIds(currentInvitation.organizationId, tx)
-        if (!existingTeamMember[0] && mayAssignTeam && !scimTeams.has(teams[0].id)) {
-          await tx.insert(TeamMemberTable).values({
-            id: createDenTypeId("teamMember"),
-            teamId: currentInvitation.teamId,
-            orgMembershipId: member.id,
-          })
-        }
-      }
-    }
+    await coreHooks.runTx("invitation.accepted", {
+      tx,
+      organizationId: currentInvitation.organizationId,
+      invitation: currentInvitation,
+      member,
+    })
 
     await tx
       .update(InvitationTable)
@@ -1013,6 +974,7 @@ export async function acceptInvitationForUser(input: {
       organizationId: accepted.invitation.organizationId,
       memberId: accepted.member.id,
       change: "added",
+      source: "acceptance",
     })
   }
   return {
@@ -1109,12 +1071,7 @@ async function createOrganizationRecord(input: {
     userId: input.userId,
     role: "owner",
   })
-  await ensureMemberGatewayKey({ organizationId, memberId: ownerMemberId })
-
-  await ensureDefaultDesktopPolicyForOrganization({
-    organizationId,
-    createdByOrgMemberId: ownerMemberId,
-  })
+  await coreHooks.runPostCommit("org.created", { organizationId, ownerMemberId, source: "den" })
 
   await ensureDefaultDynamicRoles(organizationId)
 
@@ -2026,8 +1983,9 @@ export async function removeOrganizationMember(input: {
   memberId: MemberRow["id"]
   removedByOrgMemberId?: MemberRow["id"]
 }): Promise<MemberMutationResult> {
-  let gatewayCredentials: Awaited<ReturnType<typeof revokeInferenceCredentialsForMembers>> = []
-  const removed = await withOrganizationMembershipUsageMutation(input.organizationId, async (tx): Promise<MemberMutationResult> => {
+  // Hooks queue post-commit work (Google credential revocation) that must run
+  // before Core revokes API keys and sessions, as it did inline before.
+  const removed = await runWithAfterCommit((afterCommit) => withOrganizationMembershipUsageMutation(input.organizationId, async (tx): Promise<MemberMutationResult> => {
     const activeRows = await tx
       .select({ member: MemberTable, userId: AuthUserTable.id })
       .from(MemberTable)
@@ -2055,103 +2013,23 @@ export async function removeOrganizationMember(input: {
     const member = memberRow.member
     const removedAt = new Date()
 
-    if (input.removedByOrgMemberId) {
-      const adminTeams = await tx.select({ id: TeamTable.id }).from(TeamTable)
-        .innerJoin(TeamMemberTable, eq(TeamMemberTable.teamId, TeamTable.id))
-        .where(and(eq(TeamTable.organizationId, input.organizationId), eq(TeamTable.grantsOrganizationAdmin, true), eq(TeamMemberTable.orgMembershipId, member.id)))
-        .limit(1)
-      const [actor] = await tx.select({ role: MemberTable.role }).from(MemberTable)
-        .where(and(eq(MemberTable.id, input.removedByOrgMemberId), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt), isNotNull(MemberTable.userId))).for("share")
-      if (adminTeams.length > 0 && (!actor || !organizationRoleValueSatisfies({ roleValue: actor.role, requiredRole: "super-admin" }))) {
-        return { ok: false, error: "forbidden", message: "Only workspace owners and super-admins can remove members with Admin team access." }
-      }
+    const rejection = await coreHooks.runGuards("member.removalGuard", {
+      tx,
+      organizationId: input.organizationId,
+      memberId: member.id,
+      removedByOrgMemberId: input.removedByOrgMemberId ?? null,
+    })
+    if (rejection) {
+      return { ok: false, error: "forbidden", message: rejection.message }
     }
 
-    gatewayCredentials = await revokeInferenceCredentialsForMembers(tx, [member.id])
-    await tx
-      .delete(ConnectedAccountTable)
-      .where(and(
-        eq(ConnectedAccountTable.organizationId, input.organizationId),
-        eq(ConnectedAccountTable.orgMembershipId, member.id),
-      ))
-
-    await tx
-      .delete(LlmProviderMemberCredentialTable)
-      .where(and(
-        eq(LlmProviderMemberCredentialTable.organizationId, input.organizationId),
-        eq(LlmProviderMemberCredentialTable.orgMembershipId, member.id),
-      ))
-
-    await tx
-      .delete(TeamMemberTable)
-      .where(eq(TeamMemberTable.orgMembershipId, member.id))
-
-    await tx.update(ScimGroupMemberTable)
-      .set({ userId: null, orgMembershipId: null, teamMemberId: null, updatedAt: new Date() })
-      .where(and(eq(ScimGroupMemberTable.organizationId, input.organizationId), eq(ScimGroupMemberTable.orgMembershipId, member.id)))
-
-    await tx
-      .delete(LlmProviderAccessTable)
-      .where(eq(LlmProviderAccessTable.orgMembershipId, member.id))
-
-    await tx
-      .delete(DesktopPolicyMemberTable)
-      .where(and(
-        eq(DesktopPolicyMemberTable.organizationId, input.organizationId),
-        eq(DesktopPolicyMemberTable.orgMemberId, member.id),
-      ))
-
-    await tx
-      .delete(ExternalMcpConnectionAccessGrantTable)
-      .where(and(
-        eq(ExternalMcpConnectionAccessGrantTable.organizationId, input.organizationId),
-        eq(ExternalMcpConnectionAccessGrantTable.orgMembershipId, member.id),
-      ))
-
-    await tx
-      .update(MarketplaceAccessGrantTable)
-      .set({ removedAt })
-      .where(and(
-        eq(MarketplaceAccessGrantTable.organizationId, input.organizationId),
-        eq(MarketplaceAccessGrantTable.orgMembershipId, member.id),
-        isNull(MarketplaceAccessGrantTable.removedAt),
-      ))
-
-    await tx
-      .update(ConfigObjectAccessGrantTable)
-      .set({ removedAt })
-      .where(and(
-        eq(ConfigObjectAccessGrantTable.organizationId, input.organizationId),
-        eq(ConfigObjectAccessGrantTable.orgMembershipId, member.id),
-        isNull(ConfigObjectAccessGrantTable.removedAt),
-      ))
-
-    await tx
-      .update(PluginAccessGrantTable)
-      .set({ removedAt })
-      .where(and(
-        eq(PluginAccessGrantTable.organizationId, input.organizationId),
-        eq(PluginAccessGrantTable.orgMembershipId, member.id),
-        isNull(PluginAccessGrantTable.removedAt),
-      ))
-
-    await tx
-      .update(ConnectorInstanceAccessGrantTable)
-      .set({ removedAt })
-      .where(and(
-        eq(ConnectorInstanceAccessGrantTable.organizationId, input.organizationId),
-        eq(ConnectorInstanceAccessGrantTable.orgMembershipId, member.id),
-        isNull(ConnectorInstanceAccessGrantTable.removedAt),
-      ))
-
-    await tx
-      .update(DashboardAccessGrantTable)
-      .set({ removedAt })
-      .where(and(
-        eq(DashboardAccessGrantTable.organizationId, input.organizationId),
-        eq(DashboardAccessGrantTable.orgMembershipId, member.id),
-        isNull(DashboardAccessGrantTable.removedAt),
-      ))
+    await coreHooks.runTx("member.removing", {
+      tx,
+      organizationId: input.organizationId,
+      memberIds: [member.id],
+      removedAt,
+      afterCommit,
+    })
 
     await tx
       .update(MemberTable)
@@ -2159,13 +2037,11 @@ export async function removeOrganizationMember(input: {
       .where(and(eq(MemberTable.id, member.id), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
 
     return { ok: true, member }
-  }, [input.memberId])
+  }, [input.memberId]))
 
   if (!removed.ok) {
     return removed
   }
-
-  await revokeGoogleCredentials(gatewayCredentials)
 
   await revokeOrganizationApiKeysForMember({
     organizationId: input.organizationId,

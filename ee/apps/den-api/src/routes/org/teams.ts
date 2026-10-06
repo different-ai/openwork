@@ -1,16 +1,8 @@
 import { declarativeDeleteSchema, declarativeResponses, externalKeyParamsSchema, isDuplicateEntry, type ResourceActionContext, type ResourceOrganizationContext } from "./declarative.js"
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
-  ConfigObjectAccessGrantTable,
-  ConnectorInstanceAccessGrantTable,
-  DesktopPolicyMemberTable,
-  ExternalMcpConnectionAccessGrantTable,
   InvitationTable,
-  GatewayProviderAccessTable,
-  LlmProviderAccessTable,
-  MarketplaceAccessGrantTable,
   MemberTable,
-  PluginAccessGrantTable,
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
@@ -19,7 +11,7 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
-import { invalidateTeamInferenceOAuth } from "../../llm/inference-provider-lifecycle.js"
+import { coreHooks } from "../../core/hooks/index.js"
 import { isScimManagedTeam } from "../../scim-groups.js"
 import { withOrganizationTeamMutation, withOrganizationMembershipUsageMutation, type TeamMutationTransaction } from "../../organization-team-roles.js"
 import {
@@ -253,7 +245,7 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     .where(eq(TeamMemberTable.teamId, team.id)))
     .map((row) => row.id)
 
-    if (memberIds) await invalidateTeamInferenceOAuth(tx, team.id)
+    if (memberIds) await coreHooks.runTx("team.membershipChanged", { tx, organizationId: payload.organization.id, teamId: team.id })
     await tx.update(TeamTable).set({ name: nextName, updatedAt, grantsOrganizationAdmin: input.grantsOrganizationAdmin }).where(eq(TeamTable.id, team.id))
 
     if (memberIds) {
@@ -307,8 +299,9 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   if (!team) {
     return c.json({ error: "team_not_found" }, 404)
   }
-  if (await isScimManagedTeam({ organizationId: payload.organization.id, teamId: team.id }, tx)) {
-    return c.json({ error: "scim_managed_team", message: "Disable SCIM team mapping before deleting this team." }, 409)
+  const rejection = await coreHooks.runGuards("team.mutationGuard", { tx, organizationId: payload.organization.id, teamId: team.id, operation: "delete" })
+  if (rejection) {
+    return c.json({ error: rejection.code, message: rejection.message }, 409)
   }
   if (team.grantsOrganizationAdmin) {
     const rolePermission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can delete Admin teams.")
@@ -316,8 +309,6 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   }
 
     const removedAt = new Date()
-    await invalidateTeamInferenceOAuth(tx, team.id)
-    await tx.delete(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.team_id, team.id))
 
     await tx
       .update(InvitationTable)
@@ -328,26 +319,7 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
         eq(InvitationTable.status, "pending"),
       ))
 
-    await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.teamId, team.id))
-    await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.teamId, team.id))
-    await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.teamId, team.id))
-
-    await tx
-      .update(MarketplaceAccessGrantTable)
-      .set({ removedAt })
-      .where(and(eq(MarketplaceAccessGrantTable.teamId, team.id), isNull(MarketplaceAccessGrantTable.removedAt)))
-    await tx
-      .update(ConfigObjectAccessGrantTable)
-      .set({ removedAt })
-      .where(and(eq(ConfigObjectAccessGrantTable.teamId, team.id), isNull(ConfigObjectAccessGrantTable.removedAt)))
-    await tx
-      .update(PluginAccessGrantTable)
-      .set({ removedAt })
-      .where(and(eq(PluginAccessGrantTable.teamId, team.id), isNull(PluginAccessGrantTable.removedAt)))
-    await tx
-      .update(ConnectorInstanceAccessGrantTable)
-      .set({ removedAt })
-      .where(and(eq(ConnectorInstanceAccessGrantTable.teamId, team.id), isNull(ConnectorInstanceAccessGrantTable.removedAt)))
+    await coreHooks.runTx("team.deleting", { tx, organizationId: payload.organization.id, teamId: team.id, removedAt })
 
     await tx.delete(TeamMemberTable).where(eq(TeamMemberTable.teamId, team.id))
     await tx.delete(TeamTable).where(eq(TeamTable.id, team.id))

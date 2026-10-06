@@ -52,6 +52,7 @@ import { sessionMiddleware } from "./session.js"
 import { preclaimScopeMiddleware } from "./middleware/preclaim-scope.js"
 import { isOperationalErrorPath, normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
 import { sanitizePublicResponseHeaders } from "./public-response-headers.js"
+import { describeCoreHooks, freezeCoreHooks } from "./core/hooks/index.js"
 
 type AppVariables = RequestIdVariables & AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> & Partial<MemberTeamsContext>
 
@@ -78,6 +79,11 @@ const openApiDocumentSchema = z.object({
   paths: z.record(z.string(), z.unknown()),
   components: z.object({}).passthrough().optional(),
 }).passthrough().meta({ ref: "OpenApiDocument" })
+
+// Every Core hook (legacy registrations today, module manifests after W0-04)
+// is registered by now; close registration before any route can dispatch.
+freezeCoreHooks()
+appLogger.info("core hooks registered", { component: "core_hooks", hooks: describeCoreHooks() })
 
 const app = new Hono<{ Variables: AppVariables }>()
 const strictTransportSecurityHeader = "max-age=31536000; includeSubDomains"
