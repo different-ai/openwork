@@ -1,9 +1,11 @@
 ---
 title: "Deploy to your cloud"
-description: "Run OpenWork in your AWS, Azure, or Google Cloud account with managed MySQL and either Kubernetes or Cloud Run."
+description: "Run OpenWork in your AWS, Azure, or Google Cloud account with managed MySQL and either Kubernetes or Cloud Run, or plan a deployment on another container platform."
 ---
 
 OpenWork's primary private-cloud shape uses the published Helm chart, a managed Kubernetes cluster, and a MySQL-compatible database in your own account. A Google Cloud Run starter is also available for Den Web and Den API. You control the network, DNS, certificates, database, backups, identity provider, and secrets.
+
+Using another environment? Kubernetes is not required: [choose your deployment platform](/self-host/platforms/overview) for the draft ECS module and requirements for Docker, VMs, managed containers, and on-premises infrastructure. The sequence below applies to the Helm path.
 
 <CardGroup cols={3}>
   <Card title="AWS" icon="cloud" href="/self-host/deploy-to-your-cloud/aws">

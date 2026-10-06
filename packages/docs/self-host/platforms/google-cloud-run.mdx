@@ -1,0 +1,25 @@
+---
+title: "Plan OpenWork on Google Cloud Run"
+sidebarTitle: "Google Cloud Run"
+description: "Assess OpenWork's control plane on Cloud Run, including Cloud SQL for MySQL, background CPU, request timeouts, and worker storage."
+---
+
+Cloud Run can host containerized HTTP services, making it a candidate for OpenWork's team control plane. This is a planning guide, not a tested OpenWork Cloud Run installer. Assess Den separately from worker execution before choosing this route.
+
+## Deployment approach
+
+Plan Den web and Den API as separate services with Cloud SQL for MySQL or another MySQL 8-compatible database. Use the [common requirements](/self-host/platforms/overview#common-requirements). The documented Kubernetes path is [Deploy on Google Cloud](/self-host/deploy-to-your-cloud/google-cloud).
+
+## What you need
+
+- Images compatible with the [Cloud Run container contract](https://cloud.google.com/run/docs/container-contract), including its injected `PORT`.
+- HTTPS origins, secrets, and database access from each service that needs it.
+- A controlled migration job before API traffic.
+- An explicit CPU and minimum-instance policy for background tasks; request-only CPU and scale-to-zero need review.
+- A [request timeout](https://cloud.google.com/run/docs/configuring/request-timeout) suitable for enabled streaming flows, plus reconnection handling.
+
+Instances can restart and their writable local filesystem is ephemeral. Keep database state outside the containers and plan durable, isolated worker runtimes separately. A stateless HTTP deployment does not establish that cloud workspaces work on the same service.
+
+## Next step
+
+Review [licensing](/start-here/pricing-and-licensing). For help evaluating background work, streaming, and worker placement, [ask us about Cloud Run deployment](mailto:sales@openworklabs.com?subject=OpenWork%20deployment%20on%20Google%20Cloud%20Run&body=Platform%3A%20Google%20Cloud%20Run%0ADocs%3A%20https%3A%2F%2Fopenworklabs.com%2Fdocs%2Fself-host%2Fplatforms%2Fgoogle-cloud-run%0ATeam%20size%3A%20%0ADeployment%20constraints%3A%20).
