@@ -108,13 +108,17 @@ Do not use break-glass accounts for routine administration.
 OpenWork records structured organization audit events for privileged Cloud actions, including:
 
 - API key creation and deletion
-- member role changes and removals
+- member role changes, ownership transfers, and removals
 - invitation creation, refresh, and cancellation
 - custom role creation, updates, and deletion
-- SCIM token rotation and connection deletion
-- SSO registration and deletion
+- approved web origin changes
+- SCIM token rotation, group mapping changes, reconciliation runs, and connection deletion
+- SSO registration, enabling, disabling, and deletion
+- platform administrator changes to an organization's DPA status and complimentary OpenWork Web access
 
-Audit payloads avoid bearer tokens, API key secrets, SCIM tokens, SAML certificates, and OIDC client secrets. Sensitive access changes also emit structured `[audit-alert]` log lines so operators can route SSO, SCIM, API-key, role, invitation, and member-change events into alerting. For private deployments, export audit data and audit-alert logs through the deployment's database or logging pipeline into the organization's retention and SIEM process.
+These events are recorded in **Audit logs** for organizations that have audit logs enabled. Organizations without audit logs do not get a record of these actions. Audit events avoid bearer tokens, API key secrets, SCIM tokens, SAML certificates, and OIDC client secrets.
+
+To keep audit events in your own retention or SIEM pipeline, use audit log export (`GET /v1/audit/export`, NDJSON or CSV). Real-time alert routing for audit events is not offered today.
 
 ## Availability and failover
 
