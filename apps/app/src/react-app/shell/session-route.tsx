@@ -25,7 +25,7 @@ import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
 import { createClient, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl, v2AcknowledgementText, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
 import { abortSessionSafe, forkSession, listCommands, revertSession, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
-import { composeNativeSessionHistory, getNativeSessionMessages } from "@/app/lib/opencode-session-native";
+import { composeNativeSessionHistory } from "@/app/lib/opencode-session-native";
 import { prefetchOpeningSessionHistory, sessionHistoryIdentity, sessionHistoryRuntimeOwner, useSessionHistoryRuntimeOwners } from "@/react-app/domains/session/surface/session-history";
 import { sendSessionCommand, sessionWorkHeld } from "@/app/lib/opencode-interruption";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
@@ -202,7 +202,6 @@ import { commandPaletteModelTarget, createCommandPaletteModelControls } from "./
 import { requestRenameSession } from "./session-actions-bus";
 import type { ThinkingModeShortcutDirection } from "./thinking-mode-shortcut";
 import { SessionSearchDialog } from "./session-search-dialog";
-import type { SessionMessageFetcher } from "@/react-app/domains/session/search/session-search";
 import { useBootState } from "./boot-state";
 import {
   forgetWorkspaceMemory,
@@ -3115,25 +3114,12 @@ export function SessionRoute() {
     assignSessionToGroup(selectedWorkspaceId, selectedSessionId, groupId);
   }, [assignSessionToGroup, selectedSessionId, selectedWorkspaceId]);
 
-  const sessionSearchFetcher = useMemo<SessionMessageFetcher | null>(() => {
-    if (!client) return null;
-    // Cap the transcript fetch to keep multi-workspace scans fast; matches in
-    // anything older than the most recent 400 messages are traded away for
-    // responsiveness.
-    return async (workspaceId: string, sessionId: string) => {
-      const workspace = workspaces.find((item) => item.id === workspaceId);
-      const endpoint = endpointForWorkspace(workspace);
-      if (!endpoint) throw new Error("Workspace runtime is not connected.");
-      return getNativeSessionMessages(endpoint, sessionId, { limit: 400 });
-    };
-  }, [client, endpointForWorkspace, workspaces]);
-
   const sessionSearchPaletteItem = useMemo<PaletteItem>(() => ({
     id: "session-search.open",
-    title: "Search session messages",
-    detail: "Deep search every session, including message content",
+    title: "Search sessions",
+    detail: "Find a session by title in any workspace",
     meta: "Cmd/Ctrl+Shift+F",
-    searchText: "search find sessions messages history transcript content",
+    searchText: "search find sessions titles history",
     action: () => {
       setCommandPaletteOpen(false);
       setSessionSearchOpen(true);
@@ -3978,7 +3964,6 @@ export function SessionRoute() {
       open={sessionSearchOpen}
       onClose={() => setSessionSearchOpen(false)}
       sessions={paletteSessionOptions}
-      fetchMessages={sessionSearchFetcher}
       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
     />
     <ModelPickerModal

@@ -60,7 +60,7 @@ test("a member can search and read notifications from either titlebar while sess
 
   await step("the search icon opens the existing session search and the result selects its session", async () => {
     await user.click(search);
-    await user.type({ placeholder: "Search all sessions and messages…" }, "Planning");
+    await user.type({ placeholder: "Search session titles…" }, "Planning");
     await user.see({ role: "option", label: /Planning notes/ });
     await user.screenshot();
     await user.press("Enter");
@@ -87,9 +87,9 @@ test("a member can search and read notifications from either titlebar while sess
     await user.screenshot();
     await closeNotifications();
     await user.click(search);
-    await user.see({ placeholder: "Search all sessions and messages…" });
+    await user.see({ placeholder: "Search session titles…" });
     await user.press("Escape");
-    await probe.eventually(() => probe.dom('[placeholder="Search all sessions and messages…"]'), {
+    await probe.eventually(() => probe.dom('[placeholder="Search session titles…"]'), {
       within: 5_000, label: "session search closes", until: (value) => value.elements.length === 0,
     });
     await user.screenshot();
