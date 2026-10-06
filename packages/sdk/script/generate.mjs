@@ -3,12 +3,16 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+import { resolve } from "node:path";
 import { createClient } from "@hey-api/openapi-ts";
 import { format } from "prettier";
 
 const packageDir = fileURLToPath(new URL("..", import.meta.url));
 const repoDir = fileURLToPath(new URL("../../..", import.meta.url));
-const check = process.argv.includes("--check");
+const { values } = parseArgs({ options: { check: { type: "boolean" }, input: { type: "string" } } });
+const check = values.check === true;
+if (check && values.input) throw new Error("--check must regenerate from route source, not trust an input snapshot.");
 const temporary = await mkdtemp(join(tmpdir(), "openwork-sdk-"));
 
 async function files(directory, prefix = "") {
@@ -23,11 +27,15 @@ async function files(directory, prefix = "") {
 }
 
 try {
-  // This workspace package exposes built browser assets even in development.
-  execFileSync("pnpm", ["--filter", "@openwork/mcp-apps", "build"], { cwd: repoDir, stdio: "inherit" });
-  const input = join(temporary, "openapi.json");
-  execFileSync("pnpm", ["--filter", "@openwork-ee/den-api", "exec", "tsx", "--conditions=development",
-    "scripts/generate-openapi-snapshot.ts", "--output", input], { cwd: repoDir, stdio: "inherit" });
+  // den:contract supplies the snapshot it just generated, so build and import
+  // the API only once. Standalone generation and CI checks still use live source.
+  const input = values.input ? resolve(process.cwd(), values.input) : join(temporary, "openapi.json");
+  if (!values.input) {
+    // This workspace package exposes built browser assets even in development.
+    execFileSync("pnpm", ["--filter", "@openwork/mcp-apps", "build"], { cwd: repoDir, stdio: "inherit" });
+    execFileSync("pnpm", ["--filter", "@openwork-ee/den-api", "exec", "tsx", "--conditions=development",
+      "scripts/generate-openapi-snapshot.ts", "--output", input], { cwd: repoDir, stdio: "inherit" });
+  }
   const committed = join(packageDir, "src/gen");
   const output = check ? join(temporary, "gen") : committed;
   await createClient({

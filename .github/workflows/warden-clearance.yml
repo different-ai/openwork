@@ -4,8 +4,8 @@ name: Warden Clearance
 # review is complete for the current head with no high/medium security findings
 # and no confidentiality findings; otherwise withdraws an earlier clearance.
 # Either way it keeps one PR comment with the result and security findings.
-# PRs that touch .github/, warden.toml, .warden/, agent skills, .opencode/, or
-# AGENTS.md always need a human. See .warden/README.md.
+# PRs that change Warden itself (warden.yml, this file, the warden-*.mjs
+# scripts, warden.toml, .warden/) always need a human. See .warden/README.md.
 #
 # workflow_run executes this file and its script from the default branch, so a
 # PR cannot change the clearance logic. The App never pushes, so it satisfies

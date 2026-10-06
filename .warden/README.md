@@ -19,10 +19,15 @@ hold:
 - Both skills completed, and the receipt matches the run, attempt, PR, and head.
 - No high or medium security findings. Low findings are noted, not blocking.
 - No confidentiality findings at any severity.
-- The PR does not touch `.github/`, `warden.toml`, `.warden/`,
-  `.agents/skills/`, `.claude/skills/`, `.opencode/`, or `AGENTS.md`. Those
-  changes always need a human, because a PR could otherwise rewrite its own
-  reviewer.
+- The PR does not change Warden itself: `.github/workflows/warden.yml`,
+  `.github/workflows/warden-clearance.yml`, `.github/scripts/warden-report.mjs`,
+  `.github/scripts/warden-clearance.mjs`, `warden.toml`, or `.warden/`.
+  `warden.yml` runs inside the PR's own review and could forge its result; the
+  others would let one PR rewrite the reviewer for every later PR.
+
+Other CI workflows, `AGENTS.md`, and agent skills are approvable. The security
+skill reviews workflow changes for concrete CI attack paths, and Warden's
+runtime never loads `AGENTS.md` or skills from the PR as instructions.
 
 Otherwise it dismisses any earlier `diff-warden` approval. A new push dismisses
 the approval through the branch rule, and the next Warden run decides again.

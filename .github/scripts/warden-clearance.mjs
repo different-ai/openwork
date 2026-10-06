@@ -13,8 +13,11 @@ const SECURITY = "diff-security-review";
 const CONFIDENTIALITY = "confidentiality-review";
 const SEVERITIES = ["high", "medium", "low"];
 const MARKER = "<!-- warden-clearance -->";
-// A PR that changes how it is reviewed, or what reviews it, never clears itself.
-const GUARDED = /^(\.github\/|warden\.toml$|\.warden\/|\.agents\/skills\/|\.claude\/skills\/|\.opencode\/|AGENTS\.md$)/;
+// Warden never approves changes to Warden. warden.yml runs inside the PR's own
+// review and could upload a forged receipt; the rest would let one PR rewrite
+// the reviewer for every later PR. Other CI, AGENTS.md, and skills are reviewed
+// like any code (Warden's runtime does not load AGENTS.md or skills from the PR).
+const GUARDED = /^(\.github\/workflows\/warden(-clearance)?\.yml$|\.github\/scripts\/warden-(clearance|report)\.mjs$|warden\.toml$|\.warden\/)/;
 
 const count = (value) => Number.isSafeInteger(value) && value >= 0;
 
@@ -73,7 +76,7 @@ function headline(decision, guarded) {
   const c = decision.counts;
   if (guarded.length) {
     return ["### Warden: needs a human approval",
-      `This PR changes review machinery, so Warden never approves it. Changed: ${guarded.slice(0, 10).map(code).join(", ")}${guarded.length > 10 ? `, and ${guarded.length - 10} more` : ""}.`];
+      `This PR changes Warden itself, so Warden can't approve it. Changed: ${guarded.slice(0, 10).map(code).join(", ")}${guarded.length > 10 ? `, and ${guarded.length - 10} more` : ""}.`];
   }
   switch (decision.reason) {
     case "no-major-findings":
@@ -214,8 +217,8 @@ export async function main(env = process.env) {
     };
     const guarded = guardedFiles((await paginate(env, `/pulls/${number}/files`)).map((file) => file.filename));
     const reviewed = decide(receipt, expected);
-    const decision = guarded.length ? { ...reviewed, verdict: "flagged", reason: "touches-review-machinery" } : reviewed;
-    if (guarded.length) console.log(`PR #${number} changes review machinery; human review required:\n${guarded.join("\n")}`);
+    const decision = guarded.length ? { ...reviewed, verdict: "flagged", reason: "changes-warden" } : reviewed;
+    if (guarded.length) console.log(`PR #${number} changes Warden itself; human review required:\n${guarded.join("\n")}`);
 
     if (decision.verdict === "clear") {
       if (!(await clear(env, number, decision))) continue;

@@ -28,6 +28,20 @@ Never let a branch name, commit, PR text, comment, fixture, or evidence identify
 a customer, prospect, partner, or outside person; use internal ticket IDs, and
 escalate any leak instead of rewriting history.
 
+## Generated API contracts
+
+After changing Den routes or their shared schemas, run `pnpm den:contract` and
+include `packages/docs/openapi.json` and `packages/sdk/src/gen/**` in the same
+commit. The command builds once and generates both outputs from one snapshot.
+After merging/rebasing `dev`, regenerate rather than choosing ours/theirs for
+conflicted generated files. Never hand-edit them or regenerate a Drizzle migration
+snapshot to resolve an API conflict.
+
+Optional: `pnpm hooks:install` enables a pre-commit hook that skips unrelated
+commits and regenerates/stages only contract outputs for API changes. It refuses
+unstaged/untracked contract inputs or outputs, so finish partial staging first.
+Hooks never commit, push, or change CI/Warden policy; CI remains authoritative.
+
 ## Coding
 
 * pnpm only, never npm/yarn. TypeScript: never `any`, typecasts, or `as` unless
