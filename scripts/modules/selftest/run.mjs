@@ -20,6 +20,7 @@ const graph = JSON.parse(readFileSync(resolve(here, "fixture-graph.json"), "utf8
 const API = "ee/apps/den-api/src";
 const WEB = "ee/apps/den-web/app/(den)/dashboard";
 const DB = "ee/packages/den-db/src";
+const FEATURES = "packages/features/src";
 
 // [rule, from, to, severity in report mode]. Enforced mode turns every severity to "error"
 // except module-db-barrel, which is report-only by design.
@@ -47,6 +48,10 @@ const EXPECTED = [
   ["module-db-boundary:beta", `${API}/modules/beta/db.ts`, `${DB}/schema/delta/index.ts`, "warn"],
   ["module-db-boundary:beta", `${API}/modules/beta/db.test.ts`, `${DB}/schema/delta/index.ts`, "warn"],
   ["module-db-barrel", `${API}/modules/beta/db.ts`, `${DB}/schema.ts`, "warn"],
+  // Core/shared package (@openwork/features) -> any module folder, public entry included.
+  // Always an error. (Core -> shared and module -> shared are allowed.)
+  ["shared-imports-module", `${FEATURES}/leaks.ts`, `${API}/modules/alpha/public.ts`, "error"],
+  ["shared-imports-module", `${FEATURES}/leaks.ts`, `${API}/modules/alpha/internal.ts`, "error"],
 ];
 
 const failures = [];

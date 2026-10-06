@@ -1,9 +1,15 @@
 // Shared dependency-cruiser configuration for the Den module boundaries (W0-08).
 // Used by the repo config (.dependency-cruiser.mjs) and the self-test config.
-import { buildModuleRules, escapeRegex, moduleRoots } from "./rules.mjs";
+import { buildModuleRules, escapeRegex, moduleRoots, sharedPackages } from "./rules.mjs";
 
 // What `pnpm boundaries:*` cruises. Keep in sync with includeOnly below and tsconfig.depcruise.json.
-export const CRUISE_ROOTS = ["ee/apps/den-api/src", "ee/apps/den-web/app", "ee/apps/den-web/components", "ee/packages/den-db/src"];
+export const CRUISE_ROOTS = [
+  "ee/apps/den-api/src",
+  "ee/apps/den-web/app",
+  "ee/apps/den-web/components",
+  "ee/packages/den-db/src",
+  ...sharedPackages().map((pkg) => pkg.cruiseRoot),
+];
 
 /**
  * @param {{ graph: Parameters<typeof buildModuleRules>[0]["graph"],
@@ -13,11 +19,15 @@ export const CRUISE_ROOTS = ["ee/apps/den-api/src", "ee/apps/den-web/app", "ee/a
  */
 export function createDepcruiseConfig({ graph, enforced, prefix = "", tsConfig }) {
   const roots = moduleRoots(prefix);
+  const shared = sharedPackages(prefix);
   const p = escapeRegex(prefix);
   return {
-    forbidden: buildModuleRules({ graph, enforced, roots }),
+    forbidden: buildModuleRules({ graph, enforced, roots, shared }),
     options: {
-      includeOnly: `^${p}(?:ee/apps/den-api/src|ee/apps/den-web/(?:app|components)|ee/packages/den-db/src)/`,
+      includeOnly: [
+        `^${p}(?:ee/apps/den-api/src|ee/apps/den-web/(?:app|components)|ee/packages/den-db/src)/`,
+        ...shared.map((pkg) => pkg.path),
+      ],
       exclude: { path: "(?:\\.next|dist|generated)/" },
       doNotFollow: { path: "node_modules" },
       tsPreCompilationDeps: true,

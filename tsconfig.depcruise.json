@@ -9,5 +9,5 @@
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["ee/apps/den-api/src", "ee/apps/den-web/app", "ee/apps/den-web/components", "ee/packages/den-db/src"]
+  "include": ["ee/apps/den-api/src", "ee/apps/den-web/app", "ee/apps/den-web/components", "ee/packages/den-db/src", "packages/features/src"]
 }

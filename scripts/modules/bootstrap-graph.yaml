@@ -3,6 +3,8 @@
 # (@openwork/license-contracts MODULE_DEFINITIONS) is merged.
 # TODO(W0-01): delete this file when GRAPH_SOURCE switches to "license-contracts".
 # Ids per D41/D42. Lines starting with "# <id>: RETIRED|FOLDED" mark retired ids.
+# Only id, parent, hard and soft are parsed. The deploy/infra columns are notes; the
+# contract's deployment values are `cloud` and `self_hosted` (D43, R11).
 #
 # id                          parent              hard deps                    soft deps                                   deploy   infra (availability)
 - connect:                    {parent: null,      hard: [],                    soft: [marketplace],                       deploy: both}

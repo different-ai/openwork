@@ -14,6 +14,8 @@
 //   module-db-boundary:<id>           den-api/den-web module code only touches den-db schema
 //                                     folders of its own module, ancestors and dependencies
 //   module-db-barrel                  report-only nudge away from the den-db barrels
+//   shared-imports-module             Core/shared packages (@openwork/features) never import a
+//                                     module folder. Core and every module may import them.
 
 const TEST_FILES = ["\\.test\\.tsx?$", "/__fixtures__/", "/__tests__/"];
 
@@ -64,6 +66,15 @@ export function moduleRoots(prefix = "") {
   ];
 }
 
+/**
+ * Core/shared workspace packages: anyone (Core and every module) may import them, and they
+ * never import a module folder. `prefix` relocates them like moduleRoots().
+ */
+export function sharedPackages(prefix = "") {
+  const p = escapeRegex(prefix);
+  return [{ name: "@openwork/features", path: `^${p}packages/features/src/`, cruiseRoot: `${prefix}packages/features/src` }];
+}
+
 function alternation(values) {
   return values.length === 1 ? values[0] : `(?:${values.join("|")})`;
 }
@@ -86,9 +97,10 @@ function severityFor(enforced) {
 /**
  * @param {{ graph: { modules: { id: string, folder: string, parent: string | null, ancestors: string[], hard: string[], soft: string[] }[] },
  *           enforced: { core: boolean, modules: string[] },
- *           roots: ReturnType<typeof moduleRoots> }} input
+ *           roots: ReturnType<typeof moduleRoots>,
+ *           shared?: ReturnType<typeof sharedPackages> }} input
  */
-export function buildModuleRules({ graph, enforced, roots }) {
+export function buildModuleRules({ graph, enforced, roots, shared = [] }) {
   const modules = graph.modules;
   if (modules.length === 0) return [];
   const byId = new Map(modules.map((module) => [module.id, module]));
@@ -126,6 +138,16 @@ export function buildModuleRules({ graph, enforced, roots }) {
       severity: "error",
       from: { path: root.frameworkFiles },
       to: { path: anyModule(root), pathNot: root.frameworkEntry },
+    });
+  }
+
+  for (const pkg of shared) {
+    rules.push({
+      name: "shared-imports-module",
+      comment: `${pkg.name}: a Core/shared package never imports a module folder (Core and every module import it, not the reverse).`,
+      severity: "error",
+      from: { path: pkg.path },
+      to: { path: allModuleRoots },
     });
   }
 
