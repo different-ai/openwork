@@ -1739,6 +1739,32 @@ export type ConflictError = {
   message?: string;
 };
 
+export type GatewayLiteLlmStatus = {
+  mode: "org" | "member";
+  keySource: "personal" | "issued" | null;
+  issueStrategy: "per_team" | "mirror" | null;
+  mirrorFallback: "per_team" | "error" | null;
+  issuedMemberCount: number;
+  attentionCount: number;
+  attention: Array<{
+    /**
+     * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+     */
+    memberId: string;
+    name: string | null;
+    email: string | null;
+    reason: "not_in_litellm" | "no_key_to_mirror" | "no_models" | "error";
+  }>;
+  baseUrl: string | null;
+  spendTracking: boolean;
+  hasSyncKey: boolean;
+  lastSyncedAt: string | null;
+  lastSyncError: string | null;
+  modelCount: number;
+  teamCount: number;
+  connectedMemberCount: number;
+};
+
 export type GatewayProviderDetails = {
   /**
    * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
@@ -1817,6 +1843,7 @@ export type GatewayProviderDetails = {
     llmProviderId: string;
     runtimeEnvNames: Array<string>;
   };
+  litellm?: GatewayLiteLlmStatus;
   settings: {
     [key: string]: unknown;
   };
@@ -17553,6 +17580,16 @@ export type GetV1InferenceProvidersOauthBrowserStatusResponses = {
    */
   200: {
     status: "sign_in_required" | "account_mismatch" | "ready";
+    /**
+     * Present when ready. google: continue with browser-start. litellm_key: submit the member's LiteLLM key to browser-litellm-key. litellm_issued: OpenWork creates the key; issue reports why it has not yet, and browser-litellm-check retries.
+     */
+    method?: "google" | "litellm_key" | "litellm_issued";
+    providerName?: string;
+    issue?: {
+      status: string;
+      message: string | null;
+      keyCount: number;
+    };
   };
 };
 
@@ -17715,6 +17752,492 @@ export type DeleteV1InferenceProvidersByInferenceProviderIdOauthResponses = {
 
 export type DeleteV1InferenceProvidersByInferenceProviderIdOauthResponse =
   DeleteV1InferenceProvidersByInferenceProviderIdOauthResponses[keyof DeleteV1InferenceProvidersByInferenceProviderIdOauthResponses];
+
+export type PostV1InferenceProvidersLitellmData = {
+  body: {
+    name?: string;
+    /**
+     * LiteLLM proxy URL, with or without /v1.
+     */
+    baseUrl: string;
+    /**
+     * org: one organization LiteLLM key for everyone, with OpenWork spend tracking. member: each person connects their own LiteLLM key. issued: OpenWork creates a LiteLLM key for each allowed person, found by their OpenWork email. In member and issued modes apiKey is a LiteLLM admin key and OpenWork spend tracking is off.
+     */
+    mode: "org" | "member" | "issued";
+    /**
+     * issued mode. per_team: one key per LiteLLM team the person belongs to, or one key without a team when they are in none. mirror: a copy of their oldest active key (team, models, aliases, tags, expiry; never key-level budgets or rate limits).
+     */
+    issueStrategy?: "per_team" | "mirror";
+    /**
+     * issued + mirror: for someone with no key to copy, create per-team keys, or report them and create nothing.
+     */
+    mirrorFallback?: "per_team" | "error";
+    /**
+     * Organization key (org mode) or admin key (member and issued modes). Write-only.
+     */
+    apiKey: string;
+    allMembers?: boolean;
+    memberIds?: Array<string>;
+    teamIds?: Array<string>;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers/litellm";
+};
+
+export type PostV1InferenceProvidersLitellmErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceProvidersLitellmError =
+  PostV1InferenceProvidersLitellmErrors[keyof PostV1InferenceProvidersLitellmErrors];
+
+export type PostV1InferenceProvidersLitellmResponses = {
+  /**
+   * Create LiteLLM gateway provider
+   */
+  201: {
+    inferenceProvider: GatewayProviderDetails;
+    sync: {
+      modelCount: number;
+      groupCount: number;
+      teamCount: number;
+      members: {
+        matched: number;
+        rejected: number;
+        unavailable: number;
+        removed: number;
+      };
+      warnings: Array<string>;
+      issued?: {
+        people: number;
+        keys: number;
+        notInLiteLlm: number;
+        noKeyToMirror: number;
+        noModels: number;
+        errors: number;
+        removed: number;
+      };
+    };
+  };
+};
+
+export type PostV1InferenceProvidersLitellmResponse =
+  PostV1InferenceProvidersLitellmResponses[keyof PostV1InferenceProvidersLitellmResponses];
+
+export type PostV1InferenceProvidersByInferenceProviderIdLitellmSyncData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/litellm/sync";
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdLitellmSyncErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdLitellmSyncError =
+  PostV1InferenceProvidersByInferenceProviderIdLitellmSyncErrors[keyof PostV1InferenceProvidersByInferenceProviderIdLitellmSyncErrors];
+
+export type PostV1InferenceProvidersByInferenceProviderIdLitellmSyncResponses = {
+  /**
+   * Sync LiteLLM models and groups
+   */
+  200: {
+    inferenceProvider: GatewayProviderDetails;
+    sync: {
+      modelCount: number;
+      groupCount: number;
+      teamCount: number;
+      members: {
+        matched: number;
+        rejected: number;
+        unavailable: number;
+        removed: number;
+      };
+      warnings: Array<string>;
+      issued?: {
+        people: number;
+        keys: number;
+        notInLiteLlm: number;
+        noKeyToMirror: number;
+        noModels: number;
+        errors: number;
+        removed: number;
+      };
+    };
+  };
+};
+
+export type PostV1InferenceProvidersByInferenceProviderIdLitellmSyncResponse =
+  PostV1InferenceProvidersByInferenceProviderIdLitellmSyncResponses[keyof PostV1InferenceProvidersByInferenceProviderIdLitellmSyncResponses];
+
+export type PatchV1InferenceProvidersByInferenceProviderIdLitellmData = {
+  body: {
+    apiKey?: string;
+    /**
+     * issued mode. per_team: one key per LiteLLM team the person belongs to, or one key without a team when they are in none. mirror: a copy of their oldest active key (team, models, aliases, tags, expiry; never key-level budgets or rate limits).
+     */
+    issueStrategy?: "per_team" | "mirror";
+    /**
+     * issued + mirror: for someone with no key to copy, create per-team keys, or report them and create nothing.
+     */
+    mirrorFallback?: "per_team" | "error";
+  };
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/litellm";
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdLitellmErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdLitellmError =
+  PatchV1InferenceProvidersByInferenceProviderIdLitellmErrors[keyof PatchV1InferenceProvidersByInferenceProviderIdLitellmErrors];
+
+export type PatchV1InferenceProvidersByInferenceProviderIdLitellmResponses = {
+  /**
+   * Update LiteLLM key or key creation
+   */
+  200: {
+    inferenceProvider: GatewayProviderDetails;
+    sync: {
+      modelCount: number;
+      groupCount: number;
+      teamCount: number;
+      members: {
+        matched: number;
+        rejected: number;
+        unavailable: number;
+        removed: number;
+      };
+      warnings: Array<string>;
+      issued?: {
+        people: number;
+        keys: number;
+        notInLiteLlm: number;
+        noKeyToMirror: number;
+        noModels: number;
+        errors: number;
+        removed: number;
+      };
+    };
+  };
+};
+
+export type PatchV1InferenceProvidersByInferenceProviderIdLitellmResponse =
+  PatchV1InferenceProvidersByInferenceProviderIdLitellmResponses[keyof PatchV1InferenceProvidersByInferenceProviderIdLitellmResponses];
+
+export type PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyData = {
+  body: {
+    apiKey: string;
+    /**
+     * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+     */
+    credentialSetId?: string;
+  };
+  path: {
+    /**
+     * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+     */
+    inferenceProviderId: string;
+  };
+  query?: never;
+  url: "/v1/inference-providers/{inferenceProviderId}/litellm/member-key";
+};
+
+export type PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyError =
+  PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyErrors[keyof PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyErrors];
+
+export type PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyResponses = {
+  /**
+   * Connect the caller's LiteLLM key
+   */
+  200: {
+    connected: true;
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    modelGroupId: string;
+    modelGroupName: string;
+    modelIds: Array<string>;
+  };
+};
+
+export type PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyResponse =
+  PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyResponses[keyof PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyResponses];
+
+export type PostV1InferenceProvidersOauthBrowserLitellmKeyData = {
+  body: {
+    attempt: string;
+    apiKey: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers/oauth/browser-litellm-key";
+};
+
+export type PostV1InferenceProvidersOauthBrowserLitellmKeyErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceProvidersOauthBrowserLitellmKeyError =
+  PostV1InferenceProvidersOauthBrowserLitellmKeyErrors[keyof PostV1InferenceProvidersOauthBrowserLitellmKeyErrors];
+
+export type PostV1InferenceProvidersOauthBrowserLitellmKeyResponses = {
+  /**
+   * Connect a LiteLLM key from a signed-in browser
+   */
+  200: {
+    connected: true;
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    modelGroupId: string;
+    modelGroupName: string;
+    modelIds: Array<string>;
+  };
+};
+
+export type PostV1InferenceProvidersOauthBrowserLitellmKeyResponse =
+  PostV1InferenceProvidersOauthBrowserLitellmKeyResponses[keyof PostV1InferenceProvidersOauthBrowserLitellmKeyResponses];
+
+export type PostV1InferenceProvidersOauthBrowserLitellmCheckData = {
+  body: {
+    attempt: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers/oauth/browser-litellm-check";
+};
+
+export type PostV1InferenceProvidersOauthBrowserLitellmCheckErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceProvidersOauthBrowserLitellmCheckError =
+  PostV1InferenceProvidersOauthBrowserLitellmCheckErrors[keyof PostV1InferenceProvidersOauthBrowserLitellmCheckErrors];
+
+export type PostV1InferenceProvidersOauthBrowserLitellmCheckResponses = {
+  /**
+   * Retry creating the caller's LiteLLM keys from a signed-in browser
+   */
+  200: {
+    status: string;
+    message: string | null;
+    keyCount: number;
+  };
+};
+
+export type PostV1InferenceProvidersOauthBrowserLitellmCheckResponse =
+  PostV1InferenceProvidersOauthBrowserLitellmCheckResponses[keyof PostV1InferenceProvidersOauthBrowserLitellmCheckResponses];
 
 export type PostV1InferenceProvidersMigrateFromLlmProviderData = {
   body: {

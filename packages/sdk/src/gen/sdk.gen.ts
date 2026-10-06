@@ -553,6 +553,8 @@ import type {
   PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors,
   PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponses,
   PatchV1InferenceProvidersByInferenceProviderIdErrors,
+  PatchV1InferenceProvidersByInferenceProviderIdLitellmErrors,
+  PatchV1InferenceProvidersByInferenceProviderIdLitellmResponses,
   PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors,
   PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponses,
   PatchV1InferenceProvidersByInferenceProviderIdResponses,
@@ -714,11 +716,19 @@ import type {
   PostV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses,
   PostV1InferenceProvidersByInferenceProviderIdEnableModelsErrors,
   PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses,
+  PostV1InferenceProvidersByInferenceProviderIdLitellmSyncErrors,
+  PostV1InferenceProvidersByInferenceProviderIdLitellmSyncResponses,
   PostV1InferenceProvidersByInferenceProviderIdModelGroupsErrors,
   PostV1InferenceProvidersByInferenceProviderIdModelGroupsResponses,
   PostV1InferenceProvidersErrors,
+  PostV1InferenceProvidersLitellmErrors,
+  PostV1InferenceProvidersLitellmResponses,
   PostV1InferenceProvidersMigrateFromLlmProviderErrors,
   PostV1InferenceProvidersMigrateFromLlmProviderResponses,
+  PostV1InferenceProvidersOauthBrowserLitellmCheckErrors,
+  PostV1InferenceProvidersOauthBrowserLitellmCheckResponses,
+  PostV1InferenceProvidersOauthBrowserLitellmKeyErrors,
+  PostV1InferenceProvidersOauthBrowserLitellmKeyResponses,
   PostV1InferenceProvidersResponses,
   PostV1InstallConnectExchangeErrors,
   PostV1InstallConnectExchangeResponses,
@@ -868,6 +878,8 @@ import type {
   PutV1DesktopPoliciesByKeyByExternalKeyResponses,
   PutV1DiagnosticsEgressTokenErrors,
   PutV1DiagnosticsEgressTokenResponses,
+  PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyErrors,
+  PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyResponses,
   PutV1LlmProvidersByKeyByExternalKeyErrors,
   PutV1LlmProvidersByKeyByExternalKeyResponses,
   PutV1LlmProvidersByLlmProviderIdMemberCredentialsByOrgMembershipIdErrors,
@@ -7534,6 +7546,233 @@ export class DenClient extends HeyApiClient {
       url: "/v1/inference-providers/{inferenceProviderId}/oauth",
       ...options,
       ...params,
+    });
+  }
+
+  /**
+   * Create LiteLLM gateway provider
+   *
+   * Connects the organization's own LiteLLM proxy and syncs its models. mode=org stores one organization LiteLLM key used for everyone, creates an "All LiteLLM models" group granted to the given audiences, and keeps OpenWork spend tracking and limits on. mode=member stores a LiteLLM admin key used only to sync models and teams; each person then connects their own LiteLLM key, which picks the shared group matching that key's models. The given audiences are granted the empty "Can connect a LiteLLM key" group, and OpenWork spend tracking is off because LiteLLM budgets those keys. Keys are write-only. Requires owner/admin and Gateway management; session callers must recently reauthenticate.
+   */
+  public postV1InferenceProvidersLitellm<ThrowOnError extends boolean = false>(
+    parameters: {
+      name?: string;
+      baseUrl: string;
+      mode: "org" | "member" | "issued";
+      issueStrategy?: "per_team" | "mirror";
+      mirrorFallback?: "per_team" | "error";
+      apiKey: string;
+      allMembers?: boolean;
+      memberIds?: Array<string>;
+      teamIds?: Array<string>;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "name" },
+            { in: "body", key: "baseUrl" },
+            { in: "body", key: "mode" },
+            { in: "body", key: "issueStrategy" },
+            { in: "body", key: "mirrorFallback" },
+            { in: "body", key: "apiKey" },
+            { in: "body", key: "allMembers" },
+            { in: "body", key: "memberIds" },
+            { in: "body", key: "teamIds" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersLitellmResponses,
+      PostV1InferenceProvidersLitellmErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/litellm",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Sync LiteLLM models and groups
+   *
+   * Reads the LiteLLM proxy with the stored organization key (org mode) or admin key (member mode) and refreshes the provider's models. Org mode refreshes the "All LiteLLM models" group. Member mode refreshes team groups, re-checks every connected member key, moves members to the group matching their key's models, revokes keys LiteLLM rejects, and removes automatic grants of people who may no longer connect. A failed read keeps the last synced catalog and records the error. Requires owner/admin and Gateway management.
+   */
+  public postV1InferenceProvidersByInferenceProviderIdLitellmSync<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "inferenceProviderId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersByInferenceProviderIdLitellmSyncResponses,
+      PostV1InferenceProvidersByInferenceProviderIdLitellmSyncErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/litellm/sync",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Update LiteLLM key or key creation
+   *
+   * Verifies and stores a new organization LiteLLM key (org mode) or LiteLLM admin key (member and issued modes), and in issued mode changes how keys are created, then syncs. Changing issueStrategy replaces existing created keys at that sync. The proxy URL and mode are fixed; create a new provider to change them. Keys are write-only. Requires owner/admin and Gateway management; session callers must recently reauthenticate.
+   */
+  public patchV1InferenceProvidersByInferenceProviderIdLitellm<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      apiKey?: string;
+      issueStrategy?: "per_team" | "mirror";
+      mirrorFallback?: "per_team" | "error";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "body", key: "apiKey" },
+            { in: "body", key: "issueStrategy" },
+            { in: "body", key: "mirrorFallback" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1InferenceProvidersByInferenceProviderIdLitellmResponses,
+      PatchV1InferenceProvidersByInferenceProviderIdLitellmErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/litellm",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Connect the caller's LiteLLM key
+   *
+   * Stores the caller's own LiteLLM key for a per-user LiteLLM provider after checking it with the LiteLLM proxy, and grants the shared model group whose models match what that key can reach. Requires a user session and an admin grant that lets the caller connect a key. Replacing the key re-matches the group. The key is write-only. Disconnect with DELETE /v1/inference-providers/{inferenceProviderId}/oauth.
+   */
+  public putV1InferenceProvidersByInferenceProviderIdLitellmMemberKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      apiKey: string;
+      credentialSetId?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "body", key: "apiKey" },
+            { in: "body", key: "credentialSetId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).put<
+      PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyResponses,
+      PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/litellm/member-key",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Connect a LiteLLM key from a signed-in browser
+   *
+   * Completes a LiteLLM Connect started in the desktop app: the ten-minute entry handle from oauth/start plus the signed-in browser session of the same user. Checks the key with the LiteLLM proxy, stores it as the member's own credential and grants the matching shared model group. A rejected key keeps the handle usable so the person can retry; success consumes it. Bearer authentication alone is not accepted.
+   */
+  public postV1InferenceProvidersOauthBrowserLitellmKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      attempt: string;
+      apiKey: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "attempt" },
+            { in: "body", key: "apiKey" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersOauthBrowserLitellmKeyResponses,
+      PostV1InferenceProvidersOauthBrowserLitellmKeyErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/oauth/browser-litellm-key",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Retry creating the caller's LiteLLM keys from a signed-in browser
+   *
+   * For LiteLLM providers where OpenWork creates each person's key. Uses the ten-minute entry handle from oauth/start plus the signed-in browser session of the same user to look the person up in LiteLLM by email again and create their keys. Returns the outcome; success consumes the handle. Bearer authentication alone is not accepted.
+   */
+  public postV1InferenceProvidersOauthBrowserLitellmCheck<ThrowOnError extends boolean = false>(
+    parameters: {
+      attempt: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "attempt" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersOauthBrowserLitellmCheckResponses,
+      PostV1InferenceProvidersOauthBrowserLitellmCheckErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/oauth/browser-litellm-check",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 

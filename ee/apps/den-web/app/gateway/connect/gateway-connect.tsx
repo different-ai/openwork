@@ -4,10 +4,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { LockKeyhole } from "lucide-react";
 import { DenPageHeader } from "../../(den)/_components/ui/page-header";
 import { DenButton, buttonVariants } from "../../(den)/_components/ui/button";
+import { DenInput } from "../../(den)/_components/ui/input";
 import { DenNotice } from "../../(den)/_components/ui/notice";
 import { gatewayBrowserEndpoint } from "./gateway-browser-endpoint";
 
-type BrowserStep = "loading" | "sign_in_required" | "account_mismatch" | "ready" | "error" | "blocked" | "restart";
+type BrowserStep = "loading" | "sign_in_required" | "account_mismatch" | "ready" | "error" | "blocked" | "restart" | "connected";
+type ConnectMethod = "google" | "litellm_key" | "litellm_issued";
+type IssueState = { status: string; message: string | null; keyCount: number };
+
+function readIssue(value: unknown): IssueState | null {
+  if (typeof value !== "object" || value === null) return null;
+  const status = readString(value, "status");
+  const keyCount: unknown = Reflect.get(value, "keyCount");
+  return status ? { status, message: readString(value, "message"), keyCount: typeof keyCount === "number" ? keyCount : 0 } : null;
+}
 
 function readString(value: unknown, key: string) {
   if (typeof value !== "object" || value === null || !(key in value)) return null;
@@ -30,9 +40,15 @@ export function GatewayConnect() {
   const actionRequest = useRef<AbortController | null>(null);
   const startAttempted = useRef(false);
   const ready = useRef(false);
+  const [method, setMethod] = useState<ConnectMethod>("google");
+  const [providerName, setProviderName] = useState("LiteLLM");
+  const [liteLlmKey, setLiteLlmKey] = useState("");
+  const [connectedModels, setConnectedModels] = useState(0);
+  const [issue, setIssue] = useState<IssueState | null>(null);
+  const connected = useRef(false);
 
   const checkStatus = useCallback(async () => {
-    if (!mounted.current || actionRequest.current || startAttempted.current) return;
+    if (!mounted.current || actionRequest.current || startAttempted.current || connected.current) return;
     statusRequest.current?.abort();
     const controller = new AbortController();
     statusRequest.current = controller;
@@ -73,6 +89,19 @@ export function GatewayConnect() {
         throw new Error("invalid_browser_status");
       }
       ready.current = status === "ready";
+      if (status === "ready") {
+        const reported = readString(payload, "method");
+        const nextMethod = reported === "litellm_key" || reported === "litellm_issued" ? reported : "google";
+        setMethod(nextMethod);
+        setProviderName(readString(payload, "providerName") ?? "LiteLLM");
+        const nextIssue = nextMethod === "litellm_issued" && typeof payload === "object" && payload !== null ? readIssue(Reflect.get(payload, "issue")) : null;
+        setIssue(nextIssue);
+        if (nextIssue && nextIssue.keyCount > 0) {
+          connected.current = true;
+          setStep("connected");
+          return;
+        }
+      }
       setStep(status);
     } catch {
       if (!current()) return;
@@ -176,6 +205,129 @@ export function GatewayConnect() {
     }
   }
 
+  /** Per-user LiteLLM: the member pastes their own key; OpenWork checks it with the proxy. */
+  async function connectLiteLlmKey() {
+    if (!mounted.current || !ready.current || actionRequest.current) return;
+    const apiKey = liteLlmKey.trim();
+    if (!apiKey) {
+      setError(`Paste your ${providerName} key.`);
+      return;
+    }
+    const controller = new AbortController();
+    actionRequest.current = controller;
+    const current = () => mounted.current && !controller.signal.aborted && actionRequest.current === controller;
+    statusRequest.current?.abort();
+    setBusy(true);
+    setError(null);
+    try {
+      const attempt = browserAttempt();
+      if (!attempt) {
+        setStep("restart");
+        setError("This sign-in link is invalid. Start signing in again in OpenWork.");
+        return;
+      }
+      const endpoint = await gatewayBrowserEndpoint("/v1/inference-providers/oauth/browser-litellm-key");
+      if (!current()) return;
+      const response = await fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify({ attempt, apiKey }),
+        cache: "no-store",
+        referrerPolicy: "no-referrer",
+        redirect: "error",
+        signal: controller.signal,
+      });
+      const payload: unknown = await response.json();
+      if (!current()) return;
+      if (response.ok) {
+        const models: unknown = typeof payload === "object" && payload !== null ? Reflect.get(payload, "modelIds") : null;
+        setConnectedModels(Array.isArray(models) ? models.length : 0);
+        setLiteLlmKey("");
+        ready.current = false;
+        connected.current = true;
+        setStep("connected");
+        return;
+      }
+      const code = readString(payload, "error");
+      if (code === "browser_signin_required" || code === "browser_account_mismatch") {
+        setStep(code === "browser_signin_required" ? "sign_in_required" : "account_mismatch");
+      } else if (response.status === 400 && code === "oauth_entry_expired") {
+        setStep("restart");
+        setError("This sign-in link expired. Start signing in again in OpenWork.");
+      } else if (response.status === 403) {
+        setStep("blocked");
+        setError(readString(payload, "message") ?? "You can't connect a key here right now. Ask your admin.");
+      } else {
+        setError(code === "litellm_unauthorized" ? `${providerName} rejected this key. Check it and try again.` : readString(payload, "message") ?? "Could not connect this key. Try again.");
+      }
+    } catch {
+      if (!current()) return;
+      setError("Could not reach OpenWork. Check your connection and try again.");
+    } finally {
+      if (current()) {
+        actionRequest.current = null;
+        setBusy(false);
+      }
+    }
+  }
+
+  /** OpenWork-created LiteLLM keys: look the person up in LiteLLM again. */
+  async function checkIssuedKey() {
+    if (!mounted.current || !ready.current || actionRequest.current) return;
+    const controller = new AbortController();
+    actionRequest.current = controller;
+    const current = () => mounted.current && !controller.signal.aborted && actionRequest.current === controller;
+    statusRequest.current?.abort();
+    setBusy(true);
+    setError(null);
+    try {
+      const attempt = browserAttempt();
+      if (!attempt) {
+        setStep("restart");
+        setError("This sign-in link is invalid. Start signing in again in OpenWork.");
+        return;
+      }
+      const endpoint = await gatewayBrowserEndpoint("/v1/inference-providers/oauth/browser-litellm-check");
+      if (!current()) return;
+      const response = await fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify({ attempt }),
+        cache: "no-store",
+        referrerPolicy: "no-referrer",
+        redirect: "error",
+        signal: controller.signal,
+      });
+      const payload: unknown = await response.json();
+      if (!current()) return;
+      const next = response.ok ? readIssue(payload) : null;
+      if (next) {
+        setIssue(next);
+        if (next.keyCount > 0) {
+          ready.current = false;
+          connected.current = true;
+          setStep("connected");
+        }
+        return;
+      }
+      const code = readString(payload, "error");
+      if (code === "browser_signin_required" || code === "browser_account_mismatch") setStep(code === "browser_signin_required" ? "sign_in_required" : "account_mismatch");
+      else if (response.status === 400 && code === "oauth_entry_expired") { setStep("restart"); setError("This sign-in link expired. Start signing in again in OpenWork."); }
+      else if (response.status === 403) { setStep("blocked"); setError(readString(payload, "message") ?? "You don't have LiteLLM access right now. Ask your admin."); }
+      else setError(readString(payload, "message") ?? "Could not check LiteLLM. Try again.");
+    } catch {
+      if (!current()) return;
+      setError("Could not reach OpenWork. Check your connection and try again.");
+    } finally {
+      if (current()) {
+        actionRequest.current = null;
+        setBusy(false);
+      }
+    }
+  }
+
   async function signOut() {
     if (!mounted.current || actionRequest.current || startAttempted.current) return;
     const controller = new AbortController();
@@ -216,9 +368,12 @@ export function GatewayConnect() {
     }
   }
 
+  const liteLlm = method === "litellm_key";
+  const issued = method === "litellm_issued";
   const title = step === "sign_in_required" ? "Sign in to OpenWork"
     : step === "account_mismatch" ? "Switch OpenWork account"
-      : step === "ready" ? "Sign in to Google"
+      : step === "connected" ? issued ? `${providerName} is ready` : `${providerName} connected`
+      : step === "ready" ? liteLlm ? `Connect your ${providerName} key` : issued ? `${providerName} isn't set up for you yet` : "Sign in to Google"
         : step === "blocked" ? "Sign-in unavailable"
           : step === "restart" ? "Start signing in again"
             : "Could not verify sign-in";
@@ -234,9 +389,21 @@ export function GatewayConnect() {
         ) : <DenPageHeader title={title} className="[&_h1]:text-xl [&_h1]:leading-tight [&_h1]:text-[var(--dls-text-primary)]" />}
         {step === "account_mismatch" ? <DenNotice tone="neutral" message={<span className="flex items-start gap-2"><LockKeyhole aria-hidden="true" strokeWidth={1.5} className="size-4 shrink-0" />Use the OpenWork account that started signing in.</span>} /> : null}
         {error ? <DenNotice tone={step === "blocked" ? "neutral" : "error"} message={error} /> : null}
+        {step === "connected" && !issued ? <DenNotice tone="info" message={`${connectedModels} ${connectedModels === 1 ? "model is" : "models are"} ready in OpenWork. You can close this tab.`} /> : null}
+        {step === "connected" && issued ? <DenNotice tone="info" message="Your models are ready in OpenWork. You can close this tab." /> : null}
+        {step === "ready" && issued ? <DenNotice tone="neutral" message={issue?.message ?? "OpenWork is creating your LiteLLM key. Check again in a moment."} /> : null}
+        {step === "ready" && liteLlm ? (
+          <label className="flex flex-col gap-1.5 text-[12px] font-medium text-[var(--dls-text-secondary)]">
+            {providerName} key
+            <DenInput type="password" autoComplete="off" value={liteLlmKey} placeholder="sk-…" data-testid="gateway-connect-litellm-key" className="font-mono text-[12px]"
+              onChange={(event) => setLiteLlmKey(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void connectLiteLlmKey(); }} />
+          </label>
+        ) : null}
         <div className="flex flex-wrap gap-3">
           {step === "sign_in_required" ? <a href="/" target="_blank" rel="noopener noreferrer" className={buttonVariants()}>Sign in to OpenWork</a> : null}
-          {step === "ready" ? <DenButton loading={busy} disabled={checking || startAttempted.current} onClick={() => void continueToGoogle()}>Continue to Google</DenButton> : null}
+          {step === "ready" && !liteLlm && !issued ? <DenButton loading={busy} disabled={checking || startAttempted.current} onClick={() => void continueToGoogle()}>Continue to Google</DenButton> : null}
+          {step === "ready" && issued ? <DenButton loading={busy} disabled={checking} data-testid="gateway-connect-litellm-check" onClick={() => void checkIssuedKey()}>Check again</DenButton> : null}
+          {step === "ready" && liteLlm ? <DenButton loading={busy} disabled={checking} data-testid="gateway-connect-litellm-submit" onClick={() => void connectLiteLlmKey()}>Connect key</DenButton> : null}
           {step === "account_mismatch" ? <DenButton loading={busy} disabled={checking} onClick={() => void signOut()}>Sign out of this browser account</DenButton> : null}
           {step === "error" || step === "blocked" ? <DenButton loading={checking} onClick={() => void checkStatus()}>Retry sign-in check</DenButton> : null}
         </div>

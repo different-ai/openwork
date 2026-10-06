@@ -8,6 +8,8 @@ import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
 import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
 import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { isLiteLlmProviderId, liteLlmSpendTrackingEnabled } from "@openwork-ee/utils/litellm-catalog"
+import { fixedModelPricing, readModelPrice, type PricingCatalog } from "./pricing.js"
 import { GATEWAY_REQUEST_MODEL_HEADER, GATEWAY_GRANT_HEADER, type GatewayRequestOutcome, type GatewayRequestProtocol } from "@openwork/types/den/gateway"
 import type { Context, Hono } from "hono"
 import { sanitizeIncomingHeaders } from "./inference-reporting.js"
@@ -731,6 +733,9 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const headerModel = c.req.header(GATEWAY_REQUEST_MODEL_HEADER)
     const modelHint = parseGatewayModelAlias(headerModel) ? headerModel ?? null : null
     let gatewayUsage: import("@openwork-ee/den-db/gateway-usage-limits").GatewayUsageSnapshot | undefined
+    // LiteLLM: org keys are priced from the synced model row; per-user keys are not tracked.
+    let requestPricing: PricingCatalog | undefined
+    let spendTracking = true
     const recorder = createRequestLogRecorder({ insertRequestLog: dependencies.insertRequestLog, updateRequestLog: dependencies.updateRequestLog, reporter: dependencies.reporter, now: dependencies.now })
     const startRecorder = (state: {
       protocol: GatewayRequestProtocol
@@ -767,6 +772,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         gatewayUsage,
         signal: request.signal,
         startedAt,
+        pricing: requestPricing,
+        spendTracking,
       })
     }
     const reject = (response: Response, errorCode: string, reason: string) => {
@@ -830,6 +837,11 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       return reject(gatewayError(403, selected.code, "No current grant authorizes this model and selection."), selected.code, "Gateway model access denied")
     }
     selection = selected.selection
+    if (isLiteLlmProviderId(provider.provider_id)) {
+      spendTracking = liteLlmSpendTrackingEnabled(selection.row.credentialSet.credential_mode)
+      const price = spendTracking && selection.upstreamModel ? readModelPrice(selection.row.model?.model_config) : null
+      requestPricing = price && selection.upstreamModel ? fixedModelPricing(provider.provider_id, selection.upstreamModel, price) : undefined
+    }
     rewriteSelectedModel(prepared, resolved, selection.upstreamModel)
     if (resolved.family === "bedrock_mantle" && resolved.regionDerived) {
       // Mantle serves some models under /openai/v1; the path comes from the trusted catalog, never the request.
@@ -911,7 +923,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }
 
     if (auth.kind === "signer") prepared.url.host = auth.host
-    const usageRejection = await dependencies.checkUsage({
+    // Per-user LiteLLM keys are budgeted by LiteLLM, so they skip OpenWork admission and limits.
+    const usageRejection = !spendTracking ? null : await dependencies.checkUsage({
       organizationId: identity.organizationId,
       memberId: identity.orgMembershipId,
       requestId: openworkRequestId,
@@ -923,6 +936,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       upstreamOrigin: prepared.url.origin,
       upstreamPath: prepared.url.pathname,
       deferred: prepared.json?.background === true || prepared.json?.async === true || prepared.json?.deferred === true,
+      priced: requestPricing !== undefined,
     })
     startRecorder({
       protocol: resolved.protocol,

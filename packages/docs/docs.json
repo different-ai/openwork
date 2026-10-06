@@ -139,6 +139,7 @@
             "pages": [
               "ai-gateway/overview",
               "ai-gateway/compare-litellm-bifrost",
+              "ai-gateway/litellm",
               "ai-gateway/google-agent-platform"
             ]
           },
