@@ -37,7 +37,7 @@ test("a member can search sessions and open Activity from either titlebar while 
     expect((await selected()).elements.map((element) => element.text)).toEqual(["Dashboard"]);
     expect((await probe.dom('[data-sidebar-actions] button')).elements).toHaveLength(2);
     expect((await probe.dom('[data-notification-unread]')).elements).toHaveLength(0);
-    await user.screenshot();
+    await user.looks(["The Dashboard page is open and Dashboard is the only highlighted item in the sidebar navigation."]);
   });
 
   await step("after: starting a draft leaves navigation unselected and creates no empty session", async () => {
@@ -48,7 +48,7 @@ test("a member can search sessions and open Activity from either titlebar while 
     expect(await agent.list()).toEqual(sessionsBefore);
     // The regression was a permanent background, despite inactive navigation.
     expect((await world.presentation()).newSessionBackground).toBe("rgba(0, 0, 0, 0)");
-    await user.screenshot();
+    await user.looks(["The new-session composer is shown and no item in the sidebar navigation is highlighted."]);
     await user.click({ role: "button", label: "Dashboard" });
     await user.press(`${world.modifier}+n`);
     await user.see("composer", { editable: true });
@@ -60,17 +60,17 @@ test("a member can search sessions and open Activity from either titlebar while 
     await user.click(search);
     await user.type({ placeholder: "Search session titles…" }, "Planning");
     await user.see({ role: "option", label: /Planning notes/ });
-    await user.screenshot();
+    await user.looks(["A session search dialog lists the Planning notes session under a Sessions group with its workspace name, and shows no message text or message snippets."]);
     await user.press("Enter");
     await user.see({ role: "heading", label: "Planning notes" });
     expect((await probe.dom(`[data-testid="sidebar-session-${world.session.sessionId}"][data-session-tab-active="true"]`)).elements).toHaveLength(1);
-    await user.screenshot();
+    await user.looks(["The Planning notes session is open and highlighted in the sidebar session list."]);
   });
 
   await step("the bell opens Activity and returns focus to itself when it closes", async () => {
     await openActivity();
     expect((await probe.dom('[data-notification-panel]')).elements).toHaveLength(1);
-    await user.screenshot();
+    await user.looks(["An Activity panel is open below the bell in the sidebar titlebar."]);
     await closeActivity();
     expect((await probe.dom('[data-notification-bell]')).elements[0]?.focused).toBe(true);
   });
@@ -82,7 +82,7 @@ test("a member can search sessions and open Activity from either titlebar while 
     });
     expect((await probe.dom('[data-session-header] [data-sidebar-actions] button')).elements).toHaveLength(2);
     await openActivity();
-    await user.screenshot();
+    await user.looks(["The sidebar is hidden and an Activity panel is open below the bell in the main titlebar."]);
     await closeActivity();
     await user.click(search);
     await user.see({ placeholder: "Search session titles…" });
@@ -90,7 +90,7 @@ test("a member can search sessions and open Activity from either titlebar while 
     await probe.eventually(() => probe.dom('[placeholder="Search session titles…"]'), {
       within: 5_000, label: "session search closes", until: (value) => value.elements.length === 0,
     });
-    await user.screenshot();
+    await user.looks(["The sidebar is hidden, the main titlebar shows the search and bell buttons, and no dialog or Activity panel is open."]);
     await user.click(showSidebar);
     await user.see(newSession);
   });
@@ -101,7 +101,7 @@ test("a member can search sessions and open Activity from either titlebar while 
     expect((await world.presentation()).sidebarTransitions).toEqual(["none", "none"]);
     await openActivity();
     expect((await world.presentation()).panelAnimation).toBe("none");
-    await user.screenshot();
+    await user.looks(["The sidebar is hidden and an Activity panel is open below the bell in the main titlebar."]);
     await closeActivity();
     await user.click(showSidebar);
     await world.reducedMotion(false);
