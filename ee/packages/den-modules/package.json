@@ -1,0 +1,37 @@
+{
+  "name": "@openwork-ee/den-modules",
+  "private": true,
+  "type": "module",
+  "description": "Den module runtime: effective module state per organization (memo, legacy adapter, shadow compare, entitlement snapshots), shared by den-api and the gateway.",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "source": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./src/testing.ts",
+      "development": "./src/testing.ts",
+      "default": "./dist/testing.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@openwork-ee/den-db": "workspace:*",
+    "@openwork-ee/utils": "workspace:*",
+    "@openwork/license-contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsup": "^8.5.0",
+    "typescript": "^5.5.4",
+    "vitest": "^4.1.11"
+  }
+}

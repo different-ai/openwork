@@ -94,6 +94,8 @@ jobs:
         run: |
           pnpm --filter @openwork/license-contracts typecheck
           pnpm --filter @openwork/license-contracts test
+          pnpm --filter @openwork-ee/den-modules typecheck
+          pnpm --filter @openwork-ee/den-modules test
       # About 20s. Runs on every PR so lint and ratchet baselines cannot drift;
       # it used to run only nightly, and debt piled up unnoticed.
       - name: Check the test framework (lint and ratchets)

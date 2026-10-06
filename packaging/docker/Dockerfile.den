@@ -25,6 +25,7 @@ COPY packages/install-config/package.json /app/packages/install-config/package.j
 COPY packages/connect-link/package.json /app/packages/connect-link/package.json
 COPY packages/headless-threads/package.json /app/packages/headless-threads/package.json
 COPY packages/mcp-apps/package.json /app/packages/mcp-apps/package.json
+COPY packages/license-contracts/package.json /app/packages/license-contracts/package.json
 # apps/desktop/package.json is copied below for version metadata, and it depends
 # on @openwork/paths and @openwork/browser-tabs, so those packages must exist
 # for workspace resolution.
@@ -42,6 +43,7 @@ COPY ee/packages/headless-protocol/package.json /app/ee/packages/headless-protoc
 COPY ee/packages/cloud-runtime/package.json /app/ee/packages/cloud-runtime/package.json
 COPY ee/packages/cloud-runtime-daytona/package.json /app/ee/packages/cloud-runtime-daytona/package.json
 COPY ee/packages/den-db/package.json /app/ee/packages/den-db/package.json
+COPY ee/packages/den-modules/package.json /app/ee/packages/den-modules/package.json
 COPY ee/packages/telemetry-contracts/package.json /app/ee/packages/telemetry-contracts/package.json
 COPY ee/packages/telemetry/package.json /app/ee/packages/telemetry/package.json
 COPY ee/apps/den-api/package.json /app/ee/apps/den-api/package.json
@@ -58,6 +60,7 @@ COPY packages/install-config /app/packages/install-config
 COPY packages/connect-link /app/packages/connect-link
 COPY packages/headless-threads /app/packages/headless-threads
 COPY packages/mcp-apps /app/packages/mcp-apps
+COPY packages/license-contracts /app/packages/license-contracts
 COPY packages/paths /app/packages/paths
 COPY packages/browser-tabs /app/packages/browser-tabs
 COPY ee/packages/utils /app/ee/packages/utils
@@ -65,6 +68,7 @@ COPY ee/packages/headless-protocol /app/ee/packages/headless-protocol
 COPY ee/packages/cloud-runtime /app/ee/packages/cloud-runtime
 COPY ee/packages/cloud-runtime-daytona /app/ee/packages/cloud-runtime-daytona
 COPY ee/packages/den-db /app/ee/packages/den-db
+COPY ee/packages/den-modules /app/ee/packages/den-modules
 COPY ee/packages/telemetry-contracts /app/ee/packages/telemetry-contracts
 COPY ee/packages/telemetry /app/ee/packages/telemetry
 COPY ee/apps/den-api /app/ee/apps/den-api
