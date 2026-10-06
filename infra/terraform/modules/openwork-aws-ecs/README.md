@@ -63,7 +63,7 @@ module "openwork" {
   # Optional
   ecs_cluster_arn       = "arn:aws:ecs:us-east-1:123456789012:cluster/platform" # empty creates <name>-den
   create_redis          = false
-  wait_for_steady_state = true                                                  # block apply until tasks are healthy (default: false)
+  wait_for_steady_state = true # apply waits until the new tasks are healthy
   email_from            = "OpenWork <no-reply@example.com>"
   smtp = {
     host     = "email-smtp.us-east-1.amazonaws.com"
@@ -94,19 +94,30 @@ After `terraform apply`:
   services are named `den-api` and `den-web`, so they must not collide with
   services already in that cluster. They use `launch_type = "FARGATE"`,
   which overrides the cluster's default capacity provider strategy. The
-  module still creates its own Cloud Map namespace (`<name>.internal`), ALB,
-  security groups and IAM roles.
-- **ALB and security groups.** By default, the module creates an Application
-  Load Balancer (`<name>-den`) in `alb_subnet_ids` and creates a dedicated security
-  group allowing HTTP (80) and HTTPS (443). If `alb_security_group_id` is omitted,
-  that security group is created and attached to the ALB. To deploy behind an
-  existing ALB, pass `load_balancer_arn` (or `alb_listener_arn` to attach rules
-  to an existing listener) and set `alb_security_group_id` so ECS tasks permit
-  ingress from your load balancer. You can also pass `alb_security_group_id` when
-  creating an ALB to attach a custom security group instead of generating one.
-- **Wait for steady state.** `wait_for_steady_state` defaults to `false`.
-  Set `wait_for_steady_state = true` to cause `terraform apply` to block until tasks
-  pass target health checks and old tasks drain.
+  module still creates its own Cloud Map namespace (`<name>.internal`), ALB
+  (unless you bring one, below), security groups and IAM roles.
+- **Existing load balancer.** By default the module creates an ALB
+  (`<name>-den`) in `alb_subnet_ids`, a security group allowing 80/443 from
+  `allowed_ingress_cidrs` (or attaches `alb_security_group_id` instead), the
+  HTTPS and HTTP-redirect listeners, and, with `route53_zone_id`, DNS records
+  for both hostnames. To use a load balancer you already run, set
+  `alb_security_group_id` to its security group and one of:
+  - `alb_listener_arn`: an HTTPS listener, for example on a shared ALB. The
+    module adds host-header rules for `domain_name` and the API host
+    (`web_listener_rule_priority`, `api_listener_rule_priority`; pick
+    priorities that are free on that listener). Set
+    `attach_listener_certificate = true` unless the listener's certificates
+    already cover both hostnames.
+  - `load_balancer_arn`: an ALB with nothing on ports 80 and 443. The module
+    adds its own listeners to it.
+
+  In both cases the module creates no DNS records: point both hostnames at
+  your load balancer. `route53_zone_id` is then only used to validate a
+  certificate the module creates.
+- **Wait for steady state.** With `wait_for_steady_state = true`,
+  `terraform apply` waits until the new tasks pass health checks and the old
+  ones drain, so a crash or failed migration fails the apply. The default
+  (`false`) returns as soon as ECS accepts the update.
 - **Migrations** run in each den-api task before the app starts, like the Helm
   chart's pre-upgrade Job. They are idempotent but not locked, so keep
   `den_api.desired_count = 1` until you need more, and scale after a deploy

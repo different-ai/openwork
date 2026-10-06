@@ -20,13 +20,13 @@ output "bootstrap_code" {
 }
 
 output "alb_dns_name" {
-  description = "ALB hostname, for a CNAME/alias if you manage DNS outside Route 53."
-  value       = local.create_alb ? aws_lb.this[0].dns_name : null
+  description = "ALB hostname, for a CNAME/alias if you manage DNS outside Route 53. Null with an existing ALB or listener."
+  value       = one(aws_lb.this[*].dns_name)
 }
 
 output "alb_zone_id" {
-  description = "ALB hosted zone ID, for a Route 53 alias record."
-  value       = local.create_alb ? aws_lb.this[0].zone_id : null
+  description = "ALB hosted zone ID, for a Route 53 alias record. Null with an existing ALB or listener."
+  value       = one(aws_lb.this[*].zone_id)
 }
 
 output "cluster_name" {
@@ -39,8 +39,8 @@ output "cluster_arn" {
 }
 
 output "alb_arn" {
-  description = "ALB ARN (created, or passed as load_balancer_arn)."
-  value       = local.load_balancer_arn
+  description = "ALB ARN (created, or passed as load_balancer_arn). Null with alb_listener_arn."
+  value       = local.create_listener ? local.load_balancer_arn : null
 }
 
 output "alb_security_group_id" {

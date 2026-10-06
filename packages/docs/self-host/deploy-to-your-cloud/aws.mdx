@@ -28,7 +28,7 @@ For exact CLI commands, values, DNS/TLS choices, migration troubleshooting, veri
 
 ## ECS Fargate with Terraform (draft)
 
-If you run containers on ECS Fargate rather than Kubernetes, a draft Terraform module deploys the same two services without a cluster: Den API and Den web as Fargate services behind an HTTPS Application Load Balancer, RDS for MySQL, optional ElastiCache for Redis, and secrets in AWS Secrets Manager. Database migrations run before Den API starts on each deploy.
+If you run containers on ECS Fargate rather than Kubernetes, a draft Terraform module deploys the same two services without a cluster: Den API and Den web as Fargate services behind an HTTPS Application Load Balancer (a new one, or your existing ALB or HTTPS listener), RDS for MySQL, optional ElastiCache for Redis, and secrets in AWS Secrets Manager. Database migrations run before Den API starts on each deploy.
 
 <Warning>
   The module is an early draft. It has been applied end to end in a test account, but inputs may change. Pin it to a commit, and open an issue or pull request for anything that fails in your environment.

@@ -1,15 +1,48 @@
-# Security groups ------------------------------------------------------------
+# Load balancer modes:
+#   default            the module creates the ALB, its security group, and the
+#                      HTTPS/HTTP listeners.
+#   load_balancer_arn  the module adds HTTPS/HTTP listeners to your ALB.
+#   alb_listener_arn   the module adds host rules to your HTTPS listener
+#                      (takes precedence over load_balancer_arn).
 
 locals {
   create_alb      = var.load_balancer_arn == "" && var.alb_listener_arn == ""
   create_listener = var.alb_listener_arn == ""
-  create_alb_sg   = var.alb_security_group_id == "" && (local.create_alb || local.create_listener)
-  alb_security_group_id = var.alb_security_group_id != "" ? var.alb_security_group_id : (
-    length(aws_security_group.alb) > 0 ? aws_security_group.alb[0].id : ""
-  )
-  load_balancer_arn = local.create_alb ? (length(aws_lb.this) > 0 ? aws_lb.this[0].arn : "") : var.load_balancer_arn
-  listener_arn      = local.create_listener ? (length(aws_lb_listener.https) > 0 ? aws_lb_listener.https[0].arn : "") : var.alb_listener_arn
+  # A security group can only be attached to an ALB this module creates. With
+  # an existing ALB, alb_security_group_id is required (see tasks_from_alb).
+  create_alb_sg         = local.create_alb && var.alb_security_group_id == ""
+  alb_security_group_id = local.create_alb_sg ? one(aws_security_group.alb[*].id) : var.alb_security_group_id
+  load_balancer_arn     = local.create_alb ? one(aws_lb.this[*].arn) : var.load_balancer_arn
+  listener_arn          = local.create_listener ? one(aws_lb_listener.https[*].arn) : var.alb_listener_arn
 }
+
+# These resources gained `count`; keep existing deployments' objects in place.
+moved {
+  from = aws_security_group.alb
+  to   = aws_security_group.alb[0]
+}
+
+moved {
+  from = aws_vpc_security_group_egress_rule.alb
+  to   = aws_vpc_security_group_egress_rule.alb[0]
+}
+
+moved {
+  from = aws_lb.this
+  to   = aws_lb.this[0]
+}
+
+moved {
+  from = aws_lb_listener.https
+  to   = aws_lb_listener.https[0]
+}
+
+moved {
+  from = aws_lb_listener.http
+  to   = aws_lb_listener.http[0]
+}
+
+# Security groups ------------------------------------------------------------
 
 resource "aws_security_group" "alb" {
   count = local.create_alb_sg ? 1 : 0
@@ -54,13 +87,20 @@ resource "aws_security_group" "tasks" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "tasks_from_alb" {
-  for_each = local.alb_security_group_id != "" ? toset(["8788", "3005"]) : toset([])
+  for_each = toset(["8788", "3005"])
 
   security_group_id            = aws_security_group.tasks.id
   from_port                    = tonumber(each.value)
   to_port                      = tonumber(each.value)
   ip_protocol                  = "tcp"
   referenced_security_group_id = local.alb_security_group_id
+
+  lifecycle {
+    precondition {
+      condition     = local.create_alb || var.alb_security_group_id != ""
+      error_message = "Set alb_security_group_id to your load balancer's security group when using load_balancer_arn or alb_listener_arn, so the tasks accept traffic from it."
+    }
+  }
 }
 
 # den-web -> den-api over Cloud Map.
@@ -86,7 +126,7 @@ resource "aws_lb" "this" {
   name                       = "${var.name}-den"
   internal                   = var.internal_alb
   load_balancer_type         = "application"
-  security_groups            = local.alb_security_group_id != "" ? [local.alb_security_group_id] : []
+  security_groups            = [local.alb_security_group_id]
   subnets                    = var.alb_subnet_ids
   idle_timeout               = 300 # chat and MCP responses stream
   drop_invalid_header_fields = true
@@ -94,7 +134,7 @@ resource "aws_lb" "this" {
 
   lifecycle {
     precondition {
-      condition     = !local.create_alb || length(var.alb_subnet_ids) >= 2
+      condition     = length(var.alb_subnet_ids) >= 2
       error_message = "alb_subnet_ids must contain at least two subnet IDs in different availability zones when creating an ALB."
     }
   }

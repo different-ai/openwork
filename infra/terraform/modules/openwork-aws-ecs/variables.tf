@@ -32,9 +32,14 @@ variable "owner_emails" {
 # ---------------------------------------------------------------------------
 
 variable "load_balancer_arn" {
-  description = "The ARN of an existing Application Load Balancer to deploy to. Empty creates an ALB (<name>-den) in alb_subnet_ids."
+  description = "ARN of an existing Application Load Balancer. The module adds its HTTPS (443) and HTTP (80) listeners to it, so the ALB must not already listen on those ports; for a shared ALB, use alb_listener_arn instead. Requires alb_security_group_id. Empty creates an ALB (<name>-den) in alb_subnet_ids."
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.load_balancer_arn == "" || can(regex("^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:loadbalancer/app/.+$", var.load_balancer_arn))
+    error_message = "load_balancer_arn must be a full Application Load Balancer ARN (arn:aws:elasticloadbalancing:<region>:<account>:loadbalancer/app/<name>/<id>) or empty."
+  }
 }
 
 variable "alb_subnet_ids" {
@@ -50,31 +55,36 @@ variable "internal_alb" {
 }
 
 variable "alb_listener_arn" {
-  description = "The ARN of an existing ALB HTTPS listener. If set, listener rules are attached to this listener instead of creating new listeners on load_balancer_arn."
+  description = "ARN of an existing ALB HTTPS listener (for example on a shared ALB). The module adds host-header rules for domain_name and the API host to it instead of creating listeners, and creates no DNS records. Takes precedence over load_balancer_arn. Requires alb_security_group_id."
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.alb_listener_arn == "" || can(regex("^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:listener/app/.+$", var.alb_listener_arn))
+    error_message = "alb_listener_arn must be a full ALB listener ARN (arn:aws:elasticloadbalancing:<region>:<account>:listener/app/<name>/<id>/<id>) or empty."
+  }
 }
 
 variable "alb_security_group_id" {
-  description = "The security group ID of the ALB. If omitted when creating an ALB, a security group is created and attached to it. When using an existing ALB or listener, set this to the ALB's security group so ECS tasks allow ingress from it."
+  description = "Security group of the load balancer. Required with load_balancer_arn or alb_listener_arn so the tasks accept traffic from it. When the module creates the ALB, empty creates a security group allowing 80/443 from allowed_ingress_cidrs; set it to attach your own instead."
   type        = string
   default     = ""
 }
 
 variable "api_listener_rule_priority" {
-  description = "Priority for the API listener rule."
+  description = "Priority of the den-api host rule on the HTTPS listener. Must be unique on that listener; change it when using alb_listener_arn on a listener that already has rules."
   type        = number
   default     = 10
 }
 
 variable "web_listener_rule_priority" {
-  description = "Priority for the Web listener rule when using an existing listener."
+  description = "Priority of the den-web host rule, created only with alb_listener_arn. Must be unique on that listener."
   type        = number
   default     = 20
 }
 
 variable "attach_listener_certificate" {
-  description = "Whether to attach certificate_arn to the existing listener using aws_lb_listener_certificate."
+  description = "With alb_listener_arn, also add the certificate (certificate_arn, or the one the module creates) to that listener. Leave false when the listener's certificates already cover both hostnames."
   type        = bool
   default     = false
 }
