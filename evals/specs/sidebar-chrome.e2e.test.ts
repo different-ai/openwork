@@ -7,7 +7,7 @@ const test = spec.world(sidebarChrome, {
   resources: { surfaces: ["desktop"], services: ["den"], nativeReason: "The sidebar shares the native Electron titlebar, traffic-light clearance and platform shortcuts." },
 });
 
-test("a member can search sessions and open Activity from either titlebar while session selection follows the destination", async ({ world, user, agent, probe, step }) => {
+test("a member can search sessions and open Activity from either titlebar while session selection follows the destination", async ({ world, user, agent, probe, step, evidence }) => {
   const search: Target = { role: "button", label: "Search sessions" };
   const bell: Target = { role: "button", label: /^Activity/ };
   const hideSidebar: Target = { testId: "sidebar-sidebar-toggle" };
@@ -54,6 +54,7 @@ test("a member can search sessions and open Activity from either titlebar while 
     await user.see("composer", { editable: true });
     expect((await selected()).elements).toHaveLength(0);
     expect(await agent.list()).toEqual(sessionsBefore);
+    evidence.recordAssertionEvidence("A draft selects no navigation and creates no session", `New session and ${world.modifier}+N both open an editable composer with no sidebar item selected, and the session list still has ${sessionsBefore.length} session(s).`, true);
   });
 
   await step("the search icon opens the existing session search and the result selects its session", async () => {
@@ -64,6 +65,7 @@ test("a member can search sessions and open Activity from either titlebar while 
     await user.press("Enter");
     await user.see({ role: "heading", label: "Planning notes" });
     expect((await probe.dom(`[data-testid="sidebar-session-${world.session.sessionId}"][data-session-tab-active="true"]`)).elements).toHaveLength(1);
+    evidence.recordAssertionEvidence("Session search finds a session by title and opens it", "Typing Planning into Search session titles lists the Planning notes session; Enter opens it and selects its sidebar row.", true);
     await user.looks(["The Planning notes session is open and highlighted in the sidebar session list."]);
   });
 
@@ -73,6 +75,7 @@ test("a member can search sessions and open Activity from either titlebar while 
     await user.looks(["An Activity panel is open below the bell in the sidebar titlebar."]);
     await closeActivity();
     expect((await probe.dom('[data-notification-bell]')).elements[0]?.focused).toBe(true);
+    evidence.recordAssertionEvidence("The bell opens Activity and returns focus", "The sidebar bell opens the Activity panel with no unread dot, and Escape closes it and focuses the bell again.", true);
   });
 
   await step("hiding the sidebar keeps search and Activity in the main titlebar", async () => {
@@ -91,6 +94,7 @@ test("a member can search sessions and open Activity from either titlebar while 
       within: 5_000, label: "session search closes", until: (value) => value.elements.length === 0,
     });
     await user.looks(["The sidebar is hidden, the main titlebar shows the search and bell buttons, and no dialog or Activity panel is open."]);
+    evidence.recordAssertionEvidence("Search and Activity stay reachable with the sidebar hidden", "With the sidebar collapsed, the main titlebar holds both buttons: the bell opens Activity and the search icon opens session search, and each closes with Escape.", true);
     await user.click(showSidebar);
     await user.see(newSession);
   });
