@@ -13,6 +13,10 @@ const maxDistinctShimmerPositions = 24;
 // Below this many animation frames per second the sample cannot tell a stepped
 // sweep from a smooth one, so the claim is unreadable rather than proven.
 const minSampledFrames = 30;
+// The app re-checks a busy run once it has gone a minute without new output,
+// which is normal while a long conversation waits for its first token. Wait
+// past that point so the claim covers the silent stretch.
+const silentRunWaitMs = 62_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -89,6 +93,12 @@ test("chat working and command activity use quiet shimmer without spinners", asy
       headerFilter: "none",
       nestedFilters: [],
     });
+  });
+
+  await step("the Working line stays through a minute with no new output", async () => {
+    await new Promise((resolve) => setTimeout(resolve, silentRunWaitMs));
+    await user.see({ text: /Working \d+m \d+s/ });
+    await user.screenshot();
   });
 
   await arrangeControl(seed, world.app, "eval.session_lifecycle.seed_unfinished_tools", { lifecycle: "active" });
