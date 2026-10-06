@@ -14,6 +14,31 @@ import type { RunnerMessage, RunnerSnapshot, RunnerTurn } from "@openwork-ee/hea
 /** Runner message ids for Workbot turns are the page's own ids with this prefix. */
 export const WORKBOT_MESSAGE_PREFIX = "wb_"
 
+/** The turn in which Workbot says hello first, on the person's first visit: one per conversation. */
+export const GREETING_RUNNER_ID = `${WORKBOT_MESSAGE_PREFIX}hello`
+
+/** Whether a runner message id is Workbot's first hello (it runs with a token that can only read). */
+export function isGreetingRunnerId(messageId: string | undefined) {
+  return messageId === GREETING_RUNNER_ID
+}
+
+/**
+ * Workbot ends its hello with "Next: a | b | c": the things the person could ask next, shown as buttons. Returns
+ * the text without that line, and the suggestions.
+ */
+export function splitSuggestions(text: string): { text: string; suggestions: string[] } {
+  const lines = text.trimEnd().split("\n")
+  const last = lines.at(-1)?.trim() ?? ""
+  const match = /^\**next:?\**\s*:?\s*(.+)$/i.exec(last)
+  if (!match?.[1]) return { text, suggestions: [] }
+  const suggestions = match[1]
+    .split("|")
+    .map((entry) => entry.replace(/^[\s"“*-]+|[\s"”*.]+$/g, ""))
+    .filter((entry) => entry.length > 0 && entry.length <= 60)
+    .slice(0, 3)
+  return { text: lines.slice(0, -1).join("\n").trimEnd(), suggestions }
+}
+
 export type WorkbotTurnStatus = "queued" | "working" | "done" | "failed" | "stopped"
 /** A file in the conversation; `updatedAt` changes when Workbot revises it in place. */
 export type WorkbotAttachment = { id: string; name: string; mediaType: string; size: number; updatedAt?: number }
@@ -36,6 +61,22 @@ export type WorkbotStep = {
 }
 export type WorkbotPart = { kind: "text"; text: string } | { kind: "steps"; steps: WorkbotStep[] }
 
+/**
+ * A bigger job this message handed to a background task: the page keeps it in view where it started, so the person
+ * can see it is still going (and stop it) until it reports back.
+ */
+export type WorkbotTask = {
+  id: string
+  title: string
+  status: "queued" | "working" | "paused" | "done" | "failed" | "stopped"
+  startedAt: number | null
+  finishedAt: number | null
+  /** What it is doing now, in its own plain words (its latest update from its computer), while it works. */
+  update: string | null
+  /** Everything it said it did on its computer, oldest first, kept after it is over. */
+  updates: string[]
+}
+
 export type WorkbotTurn = {
   id: string
   text: string
@@ -56,9 +97,48 @@ export type WorkbotTurn = {
    */
   modelSteps: number
   error: string | null
+  /** Background tasks this message started, oldest first. */
+  tasks: WorkbotTask[]
+  /** Workbot's first hello: it spoke first, so there is no message from the person above it. */
+  greeting: boolean
+  /** Things the person could ask next, offered as buttons under Workbot's hello. */
+  suggestions: string[]
 }
 
 const ACTIVE = new Set(["queued", "running"])
+
+const TASK_STATUS: Record<string, WorkbotTask["status"]> = {
+  queued: "queued",
+  running: "working",
+  interrupted: "paused",
+  completed: "done",
+  failed: "failed",
+  aborted: "stopped",
+}
+
+function tasksOf(snapshot: RunnerSnapshot, parent: string, byTurn: Map<string, RunnerMessage[]>): WorkbotTask[] {
+  return snapshot.turns
+    .filter((entry) => entry.kind === "task" && entry.parent === parent)
+    .map((entry) => {
+      const status = TASK_STATUS[entry.status] ?? "working"
+      const open = status === "queued" || status === "working" || status === "paused"
+      // Its plain-language updates: the description it gave each command on its computer.
+      const updates = (byTurn.get(entry.messageId) ?? [])
+        .flatMap((message) => (message.role === "assistant" ? message.toolCalls : []))
+        .filter((call) => COMPUTER_TOOLS.has(call.name) && typeof call.input.description === "string" && call.input.description.trim())
+        .map((call) => String(call.input.description).trim())
+      const update = open ? (updates.at(-1) ?? null) : null
+      return {
+        id: entry.messageId.slice(WORKBOT_MESSAGE_PREFIX.length),
+        title: entry.title ?? "Background task",
+        status,
+        startedAt: entry.createdAt ?? null,
+        finishedAt: open ? null : (entry.updatedAt ?? null),
+        update,
+        updates,
+      }
+    })
+}
 
 function friendlyError(code: string | null): string {
   if (!code) return "Something went wrong. Try again."
@@ -73,7 +153,7 @@ function friendlyError(code: string | null): string {
 const APPS: Array<[RegExp, string]> = [
   [/slack/i, "Slack"],
   [/gmail|mail/i, "Gmail"],
-  [/calendar/i, "Google Calendar"],
+  [/calendar|gcal/i, "Google Calendar"],
   [/drive|docs|sheets/i, "Google Drive"],
   [/notion/i, "Notion"],
   [/linear/i, "Linear"],
@@ -206,11 +286,13 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
     const parts: WorkbotPart[] = []
     let reaction: string | null = null
     let modelSteps = 0
+    const greeting = isGreetingRunnerId(turn.messageId)
     for (const message of messages) {
       if (message.role !== "assistant") continue
       modelSteps += 1
       const text = message.text.trim()
-      if (text) {
+      // Workbot's hello is one finished message: what it said to itself between lookups ("retrying that") stays out.
+      if (text && !(greeting && message.toolCalls.length > 0)) {
         const last = parts.at(-1)
         if (last?.kind === "text") last.text = `${last.text}\n\n${text}`
         else parts.push({ kind: "text", text })
@@ -248,12 +330,22 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
 
     const status = statusOf(turn)
     const working = status === "working" || status === "queued"
+    // Workbot's hello: the prompt that asked for it stays hidden, and its closing "Next:" line becomes buttons.
+    let suggestions: string[] = []
+    if (greeting && !working) {
+      const last = [...parts].reverse().find((part) => part.kind === "text")
+      if (last?.kind === "text") {
+        const split = splitSuggestions(last.text)
+        last.text = split.text
+        suggestions = split.suggestions
+      }
+    }
     const outputs = outputsOf(files, turn.createdAt ?? null, working ? null : (turn.updatedAt ?? null))
     // A report is Workbot speaking first: the task's notes to it stay hidden, and it brings back what the task made.
     const task = turn.kind === "report" ? snapshot.turns.find((entry) => entry.messageId === turn.parent) : undefined
     turns.push({
       id: turn.messageId.slice(WORKBOT_MESSAGE_PREFIX.length),
-      text: turn.kind === "report" ? "" : user.text,
+      text: turn.kind === "report" || greeting ? "" : user.text,
       sentAt: turn.createdAt ?? null,
       finishedAt: working ? null : turn.updatedAt ?? null,
       status,
@@ -265,6 +357,9 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
       parts,
       modelSteps,
       error: status === "failed" ? friendlyError(turn.error) : null,
+      tasks: turn.kind === undefined ? tasksOf(snapshot, turn.messageId, byTurn) : [],
+      greeting,
+      suggestions,
     })
   }
   return turns

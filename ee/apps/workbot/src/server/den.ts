@@ -158,11 +158,28 @@ export function createDen(options: { apiUrl: string; publicUrl: string }) {
       if (status !== 200 || !parsed.success) throw new Error(`den_run_token_${status}`)
       return parsed.data.token
     },
+    /** The Gmail, Slack and Microsoft 365 connections the person's admins set up, and whether each is ready for them. */
+    async connections(accessToken: string) {
+      const { status, payload } = await authorized("GET", "/v1/workbot/connections", accessToken)
+      const parsed = workbotConnectionsSchema.safeParse(payload)
+      if (status !== 200 || !parsed.success) throw new Error(`den_connections_${status}`)
+      return parsed.data.connections
+    },
     /** Den's web app, from its sign-in issuer, for links back to OpenWork and app logos. */
     async webUrl() {
       return new URL((await discover()).issuer).origin
     },
   }
 }
+
+const workbotConnectionsSchema = z.object({
+  connections: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    app: z.enum(["gmail", "slack", "microsoft"]),
+    ready: z.boolean(),
+    connectUrl: z.string().nullable(),
+  })),
+})
 
 export type Den = ReturnType<typeof createDen>

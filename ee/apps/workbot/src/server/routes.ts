@@ -91,6 +91,35 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     })
   })
 
+  /** Leaving the welcome screen: Workbot starts the conversation with its own hello. */
+  app.post("/v1/workbot/hello", async (c) => {
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const body = z.object({ timeZone: z.string().min(1).max(100).optional() }).safeParse(await c.req.json().catch(() => ({})))
+    if (!body.success) return c.json({ error: "invalid_request" }, 400)
+    const member = c.get("member")
+    try {
+      return c.json(await workbotFor(member).hello(actorOf(member), body.data))
+    } catch (error) {
+      if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
+      throw error
+    }
+  })
+
+  /** The everyday apps to connect on the welcome screen; connecting happens in Den, in a new tab. */
+  app.get("/v1/workbot/connections", async (c) => {
+    const member = c.get("member")
+    const connections = await den.connections(member.accessToken).catch(() => null)
+    if (!connections) return c.json({ connections: [] })
+    const denWeb = config.denWebUrl ?? (await den.webUrl().catch(() => null))
+    return c.json({
+      connections: connections.map((connection) => ({
+        ...connection,
+        // Den's own link, at the Den web origin this Workbot is configured with.
+        connectUrl: connection.ready || !denWeb ? connection.connectUrl : `${denWeb}/dashboard/your-connections?connectionId=${encodeURIComponent(connection.id)}`,
+      })),
+    })
+  })
+
   app.get("/v1/workbot", async (c) => {
     if (!enabled(c)) return c.json({ available: false as const, reason: "workbot_not_enabled" as const })
     const query = threadQuerySchema.safeParse(c.req.query())
@@ -127,6 +156,17 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     const member = c.get("member")
     try {
       return c.json(await workbotFor(member).stop(actorOf(member)))
+    } catch (error) {
+      if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
+      throw error
+    }
+  })
+
+  app.post("/v1/workbot/tasks/:taskId/stop", async (c) => {
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const member = c.get("member")
+    try {
+      return c.json(await workbotFor(member).stopTask(actorOf(member), c.req.param("taskId")))
     } catch (error) {
       if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
       throw error

@@ -14,6 +14,9 @@ import { jsonResponse, unauthorizedSchema } from "../openapi.js"
 import { organizationHasCapability } from "../organization-capabilities.js"
 import { jsonValidator, tokenRoute } from "../middleware/index.js"
 import { checkRateLimit } from "../utils/rate-limit.js"
+import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
+import { getOrganizationContextForUser, listTeamsForMember } from "../orgs.js"
+import { listMemberUsableConnectionFacts } from "../routes/org/mcp-connections.js"
 
 /**
  * What Den tells the Workbot app (ee/apps/workbot) about a signed-in person. Workbot calls these server-to-server
@@ -62,6 +65,26 @@ function safeJson(text: string): unknown {
   } catch {
     return null
   }
+}
+
+const workbotConnectionsSchema = z.object({
+  connections: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    app: z.enum(["gmail", "slack", "microsoft"]),
+    ready: z.boolean(),
+    connectUrl: z.string().nullable(),
+  })),
+})
+
+/** Which everyday app a connection is, for Workbot's welcome: Gmail (or Google Workspace), Slack, or Microsoft 365. */
+function everydayApp(fact: { name: string; url: string; nativeProviderKey: string | null }): "gmail" | "slack" | "microsoft" | null {
+  const key = fact.nativeProviderKey?.toLowerCase() ?? ""
+  const text = `${fact.name} ${fact.url}`.toLowerCase()
+  if (key.includes("google") || /gmail|google workspace/.test(text)) return "gmail"
+  if (key.includes("microsoft") || /microsoft|outlook|office ?365|m365/.test(text)) return "microsoft"
+  if (/slack/.test(text)) return "slack"
+  return null
 }
 
 /** The person behind a Workbot access token: a live Den grant, an active member of the token's organization. */
@@ -124,6 +147,40 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         enabled: organizationHasCapability(organization.metadata, "workbot"),
         canSchedule,
       })
+    },
+  )
+
+  app.get(
+    "/v1/workbot/connections",
+    describeWorkbotRoute({
+      tags: ["Workbot"],
+      operationId: "listWorkbotConnections",
+      "x-mcp": false,
+      summary: "The everyday apps the person can connect for Workbot",
+      description:
+        "For the Workbot app only. The Gmail or Google Workspace, Slack and Microsoft 365 connections the organization's admins set up and this member may use, with whether each is ready for them, and where in Den they connect their own account.",
+      responses: {
+        200: jsonResponse("The connections.", workbotConnectionsSchema),
+        401: jsonResponse("The token is missing, expired or revoked, or the membership ended.", unauthorizedSchema),
+      },
+    }),
+    tokenRoute,
+    async (c) => {
+      const resolved = await resolve(c.req.raw.headers)
+      if (resolved instanceof Response) return resolved
+      const organizationContext = await getOrganizationContextForUser({ userId: normalizeDenTypeId("user", resolved.principal.userId), organizationId: resolved.organization.id })
+      if (!organizationContext) return c.json({ connections: [] })
+      const memberTeams = await listTeamsForMember({ organizationId: resolved.organization.id, memberId: normalizeDenTypeId("member", resolved.memberId) })
+      const facts = await listMemberUsableConnectionFacts({ context: { organizationContext, memberTeams, session: null } })
+      const connections = facts.flatMap((fact) => {
+        const app = everydayApp(fact)
+        if (!app) return []
+        // Set up by an admin but not finished there: not something the member can do anything about yet.
+        if (fact.setupRequired === true) return []
+        const ready = fact.connectedForMe && !fact.needsReconnect
+        return [{ id: fact.id, name: fact.name, app, ready, connectUrl: ready ? null : openworkYourConnectionsUrl(fact.id) }]
+      })
+      return c.json({ connections })
     },
   )
 
