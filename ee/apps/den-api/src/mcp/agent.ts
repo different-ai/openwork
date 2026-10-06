@@ -33,7 +33,7 @@ import {
   SEARCH_CAPABILITIES_TOOL_NAME,
   type CapabilityMatch,
 } from "./search.js"
-import { resolveMcpMemberIdentity } from "./external-capabilities.js"
+import { resolveMcpMemberIdentity } from "../core/mcp/member-identity.js"
 import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, parseMarketplaceCapabilityName, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { resolvePublicOrigin } from "../core/oauth/public-origin.js"
 import { automationService } from "../automations/service.js"

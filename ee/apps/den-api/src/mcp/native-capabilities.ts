@@ -11,7 +11,8 @@ import {
   pathParameterNamesFromTemplate,
   type McpToolOperation,
 } from "./catalog.js"
-import { buildExternalConnectionStatus, type ExternalCapabilityMatch, type McpMemberIdentity } from "./external-capabilities.js"
+import { buildExternalConnectionStatus, type ExternalCapabilityMatch } from "./external-capabilities.js"
+import type { McpMemberIdentity } from "../core/mcp/member-identity.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
 import { compareCapabilityMatches, scoreText, tokenize, type CapabilityMatch } from "./search.js"
 import {

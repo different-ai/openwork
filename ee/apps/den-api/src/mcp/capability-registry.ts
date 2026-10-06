@@ -45,8 +45,8 @@ import {
   probeExternalConnectionStatus,
   searchExternalCapabilities,
   type ExternalCapabilityExecuteResult,
-  type McpMemberIdentity,
 } from "./external-capabilities.js"
+import type { McpMemberIdentity } from "../core/mcp/member-identity.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
 import {
   executeMarketplaceCapability,

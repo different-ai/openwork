@@ -37,7 +37,7 @@ import { executeWorkflow } from "./workflow-service.js"
 import { artifactRunInputSchema, artifactRuntime } from "../artifact-runtime.js"
 import { listPluginMcpRequirementBindings, type PluginMcpRequirementBindingRow } from "./plugin-mcp-requirement-bindings.js"
 import { scoreText, tokenize } from "./search.js"
-import type { McpMemberIdentity } from "./external-capabilities.js"
+import type { McpMemberIdentity } from "../core/mcp/member-identity.js"
 import type { CapabilityMatch } from "./search.js"
 
 const MARKETPLACE_CAPABILITY_PREFIX = "plugin:"

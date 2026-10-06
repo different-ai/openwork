@@ -21,8 +21,8 @@ import {
   executeExternalCapability,
   EXTERNAL_MCP_SEARCH_CONCURRENCY,
   providerMarksReadOnly,
-  type McpMemberIdentity,
 } from "./external-capabilities.js"
+import type { McpMemberIdentity } from "../core/mcp/member-identity.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
 import {
   buildNativeCapabilityName,
