@@ -719,9 +719,13 @@ function QuietLine({ label }: { label: string }) {
 function useSmoothText(target: string) {
   const [shown, setShown] = useState(0);
   const shownRef = useRef(0);
+  const previous = useRef("");
   useEffect(() => {
     const goal = target.length;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || shownRef.current > goal) {
+    // A new piece of text (the next step's) starts from its beginning; more of the same text continues.
+    if (!target.startsWith(previous.current.slice(0, shownRef.current))) shownRef.current = 0;
+    previous.current = target;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       shownRef.current = goal;
       setShown(goal);
       return;
@@ -730,14 +734,15 @@ function useSmoothText(target: string) {
     const tick = () => {
       const current = shownRef.current;
       if (current >= goal) return;
-      // About 12 frames to catch up with whatever is buffered, never slower than 2 characters a frame.
-      shownRef.current = Math.min(goal, current + Math.max(2, Math.ceil((goal - current) / 12)));
+      // A steady pace, as if written: about 45 frames (¾ s) to catch up with whatever has arrived, never slower
+      // than 2 characters a frame. A reply that arrives in one burst still reads as written, not pasted.
+      shownRef.current = Math.min(goal, current + Math.max(2, Math.ceil((goal - current) / 45)));
       setShown(shownRef.current);
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [target.length]);
+  }, [target]);
   return target.slice(0, Math.min(shown, target.length));
 }
 
@@ -910,6 +915,21 @@ function UsedLine({ steps }: { steps: WorkbotStep[] }) {
   );
 }
 
+/**
+ * The hello as it is written: nothing while it is still looking things up (a call that starts a lookup, or a short
+ * line that could be a note to itself), and never its closing "Next:" line, which becomes buttons when it's done.
+ */
+function helloSoFar(text: string, working: LiveText["working"] | null) {
+  if (working || (text.length < 40 && !text.includes("\n"))) return "";
+  const lines = text.split("\n");
+  const next = lines.findIndex((line) => /^\**next\b/i.test(line.trim()));
+  if (next !== -1) return lines.slice(0, next).join("\n").trimEnd();
+  // A last line that may still become "Next:" waits until it can't.
+  const last = lines.at(-1)?.trim().replace(/\*/g, "").toLowerCase() ?? "";
+  if (last && "next:".startsWith(last)) return lines.slice(0, -1).join("\n").trimEnd();
+  return text;
+}
+
 function TurnView(props: {
   turn: WorkbotTurn;
   live: LiveText | null;
@@ -922,10 +942,15 @@ function TurnView(props: {
   const working = turn.status === "working" || turn.status === "queued";
   // The model call in progress (not stored yet): its text so far, and whether it has started a step.
   const current = working && props.live && props.live.step >= turn.modelSteps ? props.live : null;
-  // Workbot's hello arrives as one finished message, so it never streams its notes between lookups.
-  const liveText = turn.greeting ? "" : (current?.text ?? "");
+  // Workbot's hello streams only its message, never its notes between lookups.
+  const liveText = turn.greeting ? helloSoFar(current?.text ?? "", current?.working ?? null) : (current?.text ?? "");
   const starting = current?.working ?? null;
   const texts = turn.parts.flatMap((part, index) => (part.kind === "text" ? [{ key: index, text: part.text }] : []));
+  // An answer watched while it was written keeps revealing at the same pace once it's stored, instead of the whole
+  // text snapping in when the turn ends. Answers already done when the page opened show at once.
+  const watched = useRef(working);
+  if (working) watched.current = true;
+  const tail: string | null = working ? liveText || null : watched.current ? (texts.at(-1)?.text ?? null) : null;
   const allSteps = turn.parts.flatMap((part) => (part.kind === "steps" ? part.steps : []));
   // What it has worked with in this answer only grows: between two steps (or when a live step ends before it is
   // stored) the card stays instead of blinking back to the typing bubble.
@@ -940,14 +965,15 @@ function TurnView(props: {
       <UserBubble text={turn.text} reaction={turn.reaction} />
       {texts.length > 0 || liveText || showActivity ? <Gap /> : null}
       {working ? null : <UsedLine steps={allSteps} />}
-      {texts.map((part) => (
+      {(!working && tail !== null ? texts.slice(0, -1) : texts).map((part) => (
         <AssistantBubble key={part.key}>
           <WorkbotMarkdown text={part.text} />
         </AssistantBubble>
       ))}
-      {liveText ? (
+      {/* One slot for the text being written, kept when the answer is stored, so the reveal carries on. */}
+      {tail ? (
         <AssistantBubble>
-          <StreamingText text={liveText} />
+          <StreamingText text={tail} />
         </AssistantBubble>
       ) : null}
       {showActivity ? (
