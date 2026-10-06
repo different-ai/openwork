@@ -74,7 +74,21 @@ for (const sendCase of cases) {
 
     await step(sendCase.when, async () => {
       const started = Date.now();
-      if (sendCase.waitMs > 0) await new Promise((resolve) => setTimeout(resolve, sendCase.waitMs));
+      if (sendCase.waitMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, sendCase.waitMs));
+        // Regression guard: sign-in alone must have put the organization
+        // provider into the running engine, before any workspace exists.
+        const engine = await probe.desktopApi("/opencode/provider");
+        const connected = listField(engine.body, "connected").filter((id): id is string => typeof id === "string");
+        const workspaces = listField((await probe.desktopApi("/workspaces")).body, "items").length;
+        evidence.recordAssertionEvidence(
+          "Before the first message, the engine already serves the organization provider",
+          `${sendCase.waitMs} ms after the composer appeared, ${workspaces} workspaces: GET /opencode/provider → HTTP ${engine.status}; organization provider connected: ${connected.includes(world.providerId)}`,
+          engine.status === 200 && workspaces === 0 && connected.includes(world.providerId),
+        );
+        expect(workspaces).toBe(0);
+        expect(connected).toContain(world.providerId);
+      }
       await user.type("composer", "hello");
       await user.press("Enter");
       const elapsed = Date.now() - started;

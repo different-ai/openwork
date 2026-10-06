@@ -32,6 +32,7 @@ import { useSessionManagementStore as sessionManagementStore } from "@/react-app
 import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
 import { buildOpenworkWorkspaceBaseUrl } from "@/app/lib/openwork-server";
 import {
+  resolveEngineRootEndpoint,
   resolveWorkspaceEndpoint,
   type ResolvedWorkspaceEndpoint,
 } from "@/app/lib/workspace-endpoint";
@@ -360,6 +361,8 @@ function focusPromptSoon() {
 }
 
 const EVAL_UNAVAILABLE_PROVIDER_ID = "eval-unavailable-provider";
+/** Bound on the first chat waiting for the organization provider sync. */
+const FIRST_CHAT_PROVIDER_SYNC_TIMEOUT_MS = 20_000;
 
 function nextEvalUnavailableModel(current: ModelRef | null | undefined) {
   return {
@@ -925,6 +928,23 @@ export function SessionRoute() {
     });
   const newTaskBehavior = useMemo(() => getModelBehaviorSummary(newTaskModel?.providerID ?? "",
     newTaskModel ? providerCatalog[newTaskModel.providerID]?.[newTaskModel.modelID] : undefined, newTaskVariant), [newTaskModel, newTaskVariant, providerCatalog]);
+  // Same as Settings: a member who signed in before creating a workspace
+  // still has the local server's managed engine, so organization providers
+  // sync at sign-in instead of racing the first chat's workspace creation.
+  const engineRootEndpoint = useMemo(
+    () => (isDesktopRuntime() && !loading && workspaces.length === 0
+      ? resolveEngineRootEndpoint({ baseUrl, token })
+      : null),
+    [baseUrl, loading, token, workspaces.length],
+  );
+  const providerAuthClient = useMemo(() => {
+    if (opencodeClient || !engineRootEndpoint) return opencodeClient;
+    return createClient(engineRootEndpoint.opencodeBaseUrl, undefined, { token: engineRootEndpoint.token, mode: "openwork" });
+  }, [engineRootEndpoint, opencodeClient]);
+  const engineRootServer = useMemo(
+    () => (engineRootEndpoint && client ? { baseUrl, token, client } : null),
+    [baseUrl, client, engineRootEndpoint, token],
+  );
   const {
     store: sessionProviderAuthStore,
     snapshot: sessionProviderAuthSnapshot,
@@ -932,8 +952,8 @@ export function SessionRoute() {
     cloudProviderList,
     refreshCloudProviderSync,
   } = useSessionProviderAuth({
-    opencodeClient,
-    opencodeBaseUrl,
+    opencodeClient: providerAuthClient,
+    opencodeBaseUrl: opencodeBaseUrl || (engineRootEndpoint?.opencodeBaseUrl ?? ""),
     providers,
     providerDefaults,
     providerConnectedIds,
@@ -942,6 +962,7 @@ export function SessionRoute() {
     selectedWorkspaceEndpoint,
     selectedWorkspaceRoot,
     selectedWorkspaceId,
+    engineRootServer,
     localServerHostToken: openworkServerHostInfoState?.hostToken?.trim() ?? "",
     localServerGeneration: openworkServerHostInfoState?.generation ?? null,
     setProviders,
@@ -3466,6 +3487,18 @@ export function SessionRoute() {
           if (canCreateWorkspaces()) handleOpenCreateWorkspace();
           throw new Error("Choose a workspace before retrying this message.");
         }
+        // The first workspace's engine instance reads its providers when this
+        // chat starts. Let the organization provider sync begun at sign-in
+        // finish first (bounded; on timeout the send proceeds as before).
+        if (newTaskModel && isCloudManagedProviderKey(newTaskModel.providerID)) {
+          await new Promise<void>((resolve) => {
+            const timer = window.setTimeout(resolve, FIRST_CHAT_PROVIDER_SYNC_TIMEOUT_MS);
+            void sessionProviderAuthStore.runCloudProviderSync("new_chat").finally(() => {
+              window.clearTimeout(timer);
+              resolve();
+            });
+          });
+        }
         const home = await getDesktopHomeDir().catch(() => "");
         const folder = home ? await joinDesktopPath(home, "OpenWork Chat").catch(() => "") : "";
         if (!folder) throw new Error("Choose a workspace before retrying this message.");
@@ -3479,7 +3512,7 @@ export function SessionRoute() {
       const current = usePendingConversationStore.getState().conversations[pending.id];
       if (current) publishCreatedConversation(current, created, newTaskAgent, prepared?.title);
     });
-  }, [endpointForWorkspace, handleCreateWorkspace, handleOpenCreateWorkspace, navigate, newTaskAgent, publishCreatedConversation, sessionDraftScope, workspacesRef]);
+  }, [endpointForWorkspace, handleCreateWorkspace, handleOpenCreateWorkspace, navigate, newTaskAgent, newTaskModel, publishCreatedConversation, sessionDraftScope, sessionProviderAuthStore, workspacesRef]);
 
   const createWorkspaceControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "workspace.create",
