@@ -22,6 +22,8 @@ const EnvSchema = z
     OPENAI_API_KEY: z.string().optional(),
     GATEWAY_ADMIN_TOKEN: z.string().optional(),
     GATEWAY_UPSTREAM_TIMEOUT_MS: z.number().int().min(1000).max(24 * 60 * 60_000),
+    GATEWAY_RESPONSE_START_MS: z.number().int().min(1000).max(24 * 60 * 60_000),
+    GATEWAY_RESPONSE_HEARTBEAT_MS: z.number().int().min(1000).max(90000),
     GATEWAY_WEBHOOK_SECRET: z.string().optional(),
     GATEWAY_CREDITS_PER_DOLLAR: z.string().optional(),
   })
@@ -63,6 +65,11 @@ const input = {
   GATEWAY_ADMIN_TOKEN: process.env.GATEWAY_ADMIN_TOKEN ?? process.env.INFERENCE_ADMIN_TOKEN,
   GATEWAY_UPSTREAM_TIMEOUT_MS: gatewayInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS ?? process.env.INFERENCE_UPSTREAM_TIMEOUT_MS, "GATEWAY_UPSTREAM_TIMEOUT_MS", 30 * 60_000, 1000, 24 * 60 * 60_000),
   GATEWAY_STREAM_IDLE_MS: gatewayInteger(process.env.GATEWAY_STREAM_IDLE_MS ?? process.env.INFERENCE_STREAM_IDLE_MS, "GATEWAY_STREAM_IDLE_MS", 120000, 1000, 900000),
+  // A proxy in front of the gateway (Cloudflare: ~100s) answers 524 when response
+  // headers take longer than its limit. Streaming requests commit their response
+  // after this long and keep it alive with SSE comments; keep it well below that limit.
+  GATEWAY_RESPONSE_START_MS: gatewayInteger(process.env.GATEWAY_RESPONSE_START_MS, "GATEWAY_RESPONSE_START_MS", 20000, 1000, 24 * 60 * 60_000),
+  GATEWAY_RESPONSE_HEARTBEAT_MS: gatewayInteger(process.env.GATEWAY_RESPONSE_HEARTBEAT_MS, "GATEWAY_RESPONSE_HEARTBEAT_MS", 15000, 1000, 90000),
   // Keep below the host's SIGKILL grace (Render: maxShutdownDelaySeconds, default 30s)
   // minus ~5s for usage writes and telemetry flush.
   GATEWAY_SHUTDOWN_DRAIN_MS: gatewayInteger(process.env.GATEWAY_SHUTDOWN_DRAIN_MS, "GATEWAY_SHUTDOWN_DRAIN_MS", 25000, 0, 600000),
@@ -142,6 +149,8 @@ export const env = {
   managedUpstreamTimeoutMs: process.env.GATEWAY_UPSTREAM_TIMEOUT_MS !== undefined || process.env.INFERENCE_UPSTREAM_TIMEOUT_MS !== undefined
     ? parsed.GATEWAY_UPSTREAM_TIMEOUT_MS : 120000,
   streamIdleMs: parsed.GATEWAY_STREAM_IDLE_MS,
+  responseStartMs: parsed.GATEWAY_RESPONSE_START_MS,
+  responseHeartbeatMs: parsed.GATEWAY_RESPONSE_HEARTBEAT_MS,
   shutdownDrainMs: parsed.GATEWAY_SHUTDOWN_DRAIN_MS,
   corsOrigins: splitCsv(parsed.CORS_ORIGINS).map((origin) => gatewayDeployment.enabled ? gatewayOrigin(origin, "CORS_ORIGINS", !isDevMode, true) : origin),
   databaseUrl: parsed.DATABASE_URL,
