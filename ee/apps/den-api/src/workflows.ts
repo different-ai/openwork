@@ -42,11 +42,10 @@ import {
 import { redactWorkflowGraphAuthoringDetails, redactWorkflowVersionAuthoringDetails } from "./workflow-projections.js"
 import {
   PluginArchAuthorizationError,
-  requirePluginArchResourceRole,
   resolvePluginArchGrantRole,
-  resolvePluginArchResourceRole,
   type PluginArchActorContext,
-} from "./routes/org/plugin-system/access.js"
+} from "./core/sharing/resource-access.js"
+import { requirePluginArchResourceRole, resolvePluginArchResourceRole } from "./routes/org/plugin-system/access.js"
 import { memberHasRole } from "./routes/org/shared.js"
 import { assertWorkflowSourceSafe, getWorkflowAuthoringSource } from "./workflow-authoring-receipts.js"
 

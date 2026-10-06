@@ -29,11 +29,8 @@ import { db } from "./db.js"
 import { buildGeneratedMcpApp, type GeneratedArtifactViewBuildResult } from "./generated-artifact-view-builder.js"
 import type { McpMemberIdentity } from "./mcp/external-capabilities.js"
 import { buildMarketplaceCapabilityName, listAccessibleMarketplaceCapabilityReferences, parseMarketplaceCapabilityName } from "./mcp/marketplace-capabilities.js"
-import {
-  PluginArchAuthorizationError,
-  requirePluginArchResourceRole,
-  type PluginArchActorContext,
-} from "./routes/org/plugin-system/access.js"
+import { PluginArchAuthorizationError, type PluginArchActorContext } from "./core/sharing/resource-access.js"
+import { requirePluginArchResourceRole } from "./routes/org/plugin-system/access.js"
 import {
   attachConfigObjectToPlugin,
   createConfigObject,

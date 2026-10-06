@@ -11,24 +11,29 @@ import {
   PluginConfigObjectTable,
   PluginTable,
 } from "@openwork-ee/den-db/schema"
-import type { MemberTeamSummary, OrganizationContext } from "../../../orgs.js"
+import type { OrganizationContext } from "../../../orgs.js"
 import { db } from "../../../db.js"
-import { memberHasRole } from "../shared.js"
+import {
+  isPluginArchOrgAdmin,
+  maxRole,
+  PluginArchAuthorizationError,
+  resolvePluginArchGrantRole,
+  roleSatisfies,
+  type PluginArchActorContext,
+  type PluginArchRole,
+} from "../../../core/sharing/resource-access.js"
 
-export type PluginArchResourceKind = "config_object" | "connector_instance" | "marketplace" | "plugin"
-export type PluginArchRole = "viewer" | "editor" | "manager"
-export type PluginArchCapability = "config_object.create" | "connector_account.create" | "connector_instance.create" | "marketplace.create" | "plugin.create"
-
-export type PluginArchActorContext = {
-  apiKey?: true
-  automation?: true
-  memberTeams: MemberTeamSummary[]
-  organizationContext: OrganizationContext
-  session: { createdAt?: Date | string | null } | null | undefined
+export {
+  isPluginArchOrgAdmin,
+  PluginArchAuthorizationError,
+  resolvePluginArchGrantRole,
+  type PluginArchActorContext,
+  type PluginArchRole,
 }
 
-type MemberId = OrganizationContext["currentMember"]["id"]
-type TeamId = MemberTeamSummary["id"]
+export type PluginArchResourceKind = "config_object" | "connector_instance" | "marketplace" | "plugin"
+export type PluginArchCapability = "config_object.create" | "connector_account.create" | "connector_instance.create" | "marketplace.create" | "plugin.create"
+
 type OrganizationId = OrganizationContext["organization"]["id"]
 type ConfigObjectId = typeof ConfigObjectTable.$inferSelect.id
 type MarketplaceId = typeof MarketplaceTable.$inferSelect.id
@@ -74,44 +79,11 @@ type RequireResourceRoleInput = ResourceLookupInput & {
   role: PluginArchRole
 }
 
-export class PluginArchAuthorizationError extends Error {
-  constructor(
-    readonly status: 403,
-    readonly error: "forbidden" | "reauth",
-    message: string,
-    readonly reason?: string,
-  ) {
-    super(message)
-    this.name = "PluginArchAuthorizationError"
-  }
-}
-
-const rolePriority: Record<PluginArchRole, number> = {
-  viewer: 1,
-  editor: 2,
-  manager: 3,
-}
-
-function maxRole(current: PluginArchRole | null, candidate: PluginArchRole | null) {
-  if (!candidate) return current
-  if (!current) return candidate
-  return rolePriority[candidate] > rolePriority[current] ? candidate : current
-}
-
-export function isPluginArchOrgAdmin(context: PluginArchActorContext) {
-  return context.organizationContext.currentMember.isOwner || memberHasRole(context.organizationContext.currentMember.role, "admin")
-}
-
 export function hasPluginArchCapability(context: PluginArchActorContext, capability: PluginArchCapability) {
   if (capability === "plugin.create" || capability === "config_object.create") {
     return true
   }
   return isPluginArchOrgAdmin(context)
-}
-
-function roleSatisfies(role: PluginArchRole | null, required: PluginArchRole) {
-  if (!role) return false
-  return rolePriority[role] >= rolePriority[required]
 }
 
 async function filterPluginIdsInOrganization(organizationId: OrganizationId, pluginIds: PluginId[]) {
@@ -176,24 +148,6 @@ async function resourceExistsInOrganization(input: ResourceLookupInput) {
     .where(and(eq(ConfigObjectTable.organizationId, organizationId), eq(ConfigObjectTable.id, input.resourceId)))
     .limit(1)
   return Boolean(rows[0])
-}
-
-export function resolvePluginArchGrantRole(input: {
-  grants: GrantRow[]
-  memberId: MemberId
-  teamIds: TeamId[]
-}) {
-  const teamIds = new Set(input.teamIds)
-  let resolved: PluginArchRole | null = null
-
-  for (const grant of input.grants) {
-    if (grant.removedAt) continue
-    const applies = grant.orgWide || grant.orgMembershipId === input.memberId || (grant.teamId ? teamIds.has(grant.teamId) : false)
-    if (!applies) continue
-    resolved = maxRole(resolved, grant.role)
-  }
-
-  return resolved
 }
 
 async function resolveGrantRole(input: {

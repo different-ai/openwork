@@ -23,7 +23,8 @@ import {
 } from "../../middleware/index.js"
 import { jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { listAccessibleLlmProviderAccess } from "./llm-provider-access.js"
-import { resolvePluginArchResourceRole, type PluginArchActorContext } from "./plugin-system/access.js"
+import { resolvePluginArchResourceRole } from "./plugin-system/access.js"
+import type { PluginArchActorContext } from "../../core/sharing/resource-access.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { organizationFeatureEnabled } from "../../features.js"
 

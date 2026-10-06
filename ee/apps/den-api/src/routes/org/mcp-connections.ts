@@ -124,7 +124,8 @@ import {
   diagnoseExternalMcpToolCall,
   externalMcpToolCallInspectionForError,
 } from "../../capability-sources/external-mcp-tool-inspection.js"
-import { resolvePluginArchResourceRole, type PluginArchActorContext } from "./plugin-system/access.js"
+import { resolvePluginArchResourceRole } from "./plugin-system/access.js"
+import type { PluginArchActorContext } from "../../core/sharing/resource-access.js"
 import {
   ensureOrganizationAdmin,
   ensureOrganizationAdminRole,
