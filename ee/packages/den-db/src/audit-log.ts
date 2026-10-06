@@ -37,9 +37,27 @@ export type AuditEventInput = {
 
 export const MAX_AUDIT_EVENT_BYTES = 262_144
 const categories: AuditCategory[] = ["change", "security", "execution", "access", "read", "request", "lifecycle"]
-const kinds = new Set(["provider.configuration", "audit.access", "audit.policy"])
+type ClientClaimsWorkflow = {
+  grouping: "client_claims"
+  status: string
+  charging: string
+  maximumStepClaims: number
+  maximumRequestsPerStepScope: 1
+  claimPolicy: string
+  scopeAuthority: string
+  fallback: string
+  createScope: string
+  lateJobs: string
+  steps: Record<string, "provider" | "model-groups" | "credential-sets" | "access-grants" | "grant-target">
+}
+// One operation per request (or a standalone operation for post-commit and
+// system captures). No client grouping claims.
+type RequestWorkflow = { grouping: "request"; status: string; charging: string; scope: string }
+const requestWorkflow = (scope: string): RequestWorkflow => ({ grouping: "request", status: "pilot", charging: "disabled", scope })
+
 export const AUDIT_WORKFLOW_REGISTRY = {
   "provider.configuration": {
+    grouping: "client_claims",
     status: "pilot",
     charging: "disabled",
     maximumStepClaims: 128,
@@ -58,7 +76,22 @@ export const AUDIT_WORKFLOW_REGISTRY = {
       "catalog.refresh": "provider",
     },
   },
-} satisfies Record<string, { status: string; charging: string; maximumStepClaims: number; maximumRequestsPerStepScope: 1; claimPolicy: string; scopeAuthority: string; fallback: string; createScope: string; lateJobs: string; steps: Record<string, "provider" | "model-groups" | "credential-sets" | "access-grants" | "grant-target"> }>
+  "audit.access": requestWorkflow("audit operation id or audit.<action>"),
+  "audit.policy": requestWorkflow("organization id"),
+  "organization.api_key": requestWorkflow("api key id"),
+  "organization.invitation": requestWorkflow("invitation id"),
+  "organization.member": requestWorkflow("target member id"),
+  "organization.role": requestWorkflow("organization role id"),
+  "organization.web_origin": requestWorkflow("web origin id"),
+  "organization.scim": requestWorkflow("SCIM provider id, or organization id when no provider remains"),
+  "organization.sso": requestWorkflow("SSO provider id"),
+  "platform_admin.organization": requestWorkflow("organization id"),
+} satisfies Record<string, ClientClaimsWorkflow | RequestWorkflow>
+export type AuditKind = keyof typeof AUDIT_WORKFLOW_REGISTRY
+const kinds: ReadonlySet<string> = new Set(Object.keys(AUDIT_WORKFLOW_REGISTRY))
+export function isAuditKind(kind: string): kind is AuditKind {
+  return kinds.has(kind)
+}
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const sensitiveKey = /^(?:api[-_]?keys?|(?:client[-_]?)?secrets?|passwords?|private[-_]?keys?|access[-_]?tokens?|refresh[-_]?tokens?|tokens?|authorization|cookies?|set-cookie|headers?|body|prompt|messages|ciphertext)$/i
 
@@ -194,8 +227,8 @@ export async function readAuditPolicy(database: AuditDatabase | AuditTx, organiz
 }
 
 function workflowClaim(context: AuditContext) {
-  if (context.kind !== "provider.configuration" || !context.requestId || context.jobRunId || context.actor.type === "unknown" || context.actor.id === null || typeof context.correlationId !== "string" || !uuid.test(context.correlationId)) return null
-  const workflow = AUDIT_WORKFLOW_REGISTRY[context.kind]
+  const workflow = isAuditKind(context.kind) ? AUDIT_WORKFLOW_REGISTRY[context.kind] : null
+  if (!workflow || workflow.grouping !== "client_claims" || !context.requestId || context.jobRunId || context.actor.type === "unknown" || context.actor.id === null || typeof context.correlationId !== "string" || !uuid.test(context.correlationId)) return null
   const rule = Object.entries(workflow.steps).find(([step]) => step === context.workflowStep)
   if (!rule || typeof context.workflowStepScope !== "string" || context.workflowStepScope.length > 512) return null
   const [step, resource] = rule
