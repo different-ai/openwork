@@ -733,6 +733,13 @@ export function modelPicker(seed: Seed) {
   return seedModelPicker(seed);
 }
 
+/** The picker world plus the chord that opens the command palette on this platform. */
+export async function commandPaletteModels(seed: Seed) {
+  const world = await seedModelPicker(seed);
+  const paletteKey = await seed.evalIn(world.app, () => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "Meta+K" : "Control+K");
+  return { ...world, paletteKey };
+}
+
 async function seedDisabledAutoPicker(seed: Seed, disableAutoByEnvironment: boolean) {
   const world = await seedModelPicker(seed, { disabledAutoDesktop: true, disableAutoByEnvironment });
   // No first-class seed primitive initializes model preferences on a sessionless route.
