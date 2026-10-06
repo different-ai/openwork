@@ -233,6 +233,16 @@ test("create, preview, save and reopen an app without changing already-open resu
   if (!Array.isArray(drafts) || drafts.length !== 1) throw new Error("The conversation must create exactly one draft.");
   const view = record(drafts[0]);
   const appId = field(view, "id");
+  const focusPersonalTileControls = async () => {
+    const focused = `[data-personal-dashboard-app="${appId}"] button[aria-label="Artifact options for Team briefing"]:focus`;
+    // Compact tiles reveal controls on keyboard focus as well as mouse hover.
+    // Tab keeps this interaction on the same trusted input rail as a user.
+    for (let count = 0; count < 60; count += 1) {
+      if ((await probe.dom(focused)).elements.length === 1) return;
+      await user.press("Tab");
+    }
+    expect((await probe.dom(focused)).elements, "The personal artifact's options are keyboard-accessible").toHaveLength(1);
+  };
   if (!Array.isArray(view.revisions) || !view.revisions[0]) throw new Error("The conversation draft has no revision.");
   const revisionId = field(view.revisions[0], "id");
   const requests = await world.den.mocks.tracker.agentRequests({ promptMarker: creationPrompt });
@@ -353,7 +363,7 @@ test("create, preview, save and reopen an app without changing already-open resu
   await step("reopen the saved app after a reload", async () => {
     await world.open("/dashboard");
     await user.reload();
-    await user.hover({ testId: `dashboard-artifact-${appId}` });
+    await focusPersonalTileControls();
     await user.click("Artifact options for Team briefing");
     await user.click("Open Team briefing");
     await user.see({ text: "Saved artifact" }, { timeoutMs: 30_000 });
@@ -368,7 +378,7 @@ test("create, preview, save and reopen an app without changing already-open resu
   const companyBefore = (await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body;
   await step("remove a personal card and add the saved app again", async () => {
     await world.open("/dashboard");
-    await user.hover({ testId: `dashboard-artifact-${appId}` });
+    await focusPersonalTileControls();
     await user.click("Artifact options for Team briefing");
     await user.click("Remove Team briefing from dashboard");
     await user.see({ text: "Pin the artifacts you check every day" }, { timeoutMs: 30_000 });
@@ -381,7 +391,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.screenshot();
     await world.open("/dashboard");
     await user.reload();
-    await user.hover({ testId: `dashboard-artifact-${appId}` });
+    await focusPersonalTileControls();
     await user.see("Artifact options for Team briefing", { timeoutMs: 30_000 });
     await probe.eventually(() => world.previewText(), { within: 30_000, label: "saved app rendered on dashboard", until: (text) => text.includes("Weekly overview") && text.includes("Launch briefing") });
     // The granted company dashboard stays in Den but no longer renders on Desktop.
@@ -822,7 +832,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.click("Cancel");
     expect((await readApp()).onDashboard).toBe(true);
     await world.open("/dashboard");
-    await user.hover({ testId: `dashboard-artifact-${appId}` });
+    await focusPersonalTileControls();
     await user.click("Artifact options for Team briefing");
     await user.click("Delete Team briefing");
     await user.click("Delete artifact");
