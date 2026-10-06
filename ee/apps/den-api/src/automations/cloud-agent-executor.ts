@@ -14,7 +14,7 @@ import {
 import { materializeCloudWorkerProviders } from "../llm/cloud-provider-materialization.js"
 import { appLogger } from "../observability/logger.js"
 import { resolveCloudRuntimeAccess, type CloudWorkerAccess } from "../workers/worker-access.js"
-import { cloudHostingAvailable } from "../capability-sources/cloud-hosting.js"
+import { cloudHostingAvailable } from "../openwork-web-cloud-hosting.js"
 import { CLOUD_INSTANCE_BACKEND } from "../workers/cloud-constants.js"
 import { cloudRuntimeAvailable } from "../workers/cloud-runtime.js"
 import { wakeCloudWorker } from "../workers/cloud-lifecycle.js"
