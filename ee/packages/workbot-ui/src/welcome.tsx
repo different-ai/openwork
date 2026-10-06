@@ -11,7 +11,7 @@ import { OpenWorkMark } from "./mark";
  * their everyday apps to connect. Nothing to read about the interface (DESIGN P1); one primary action per step.
  * Each step's parts rise in one after another (V6: 200ms, ease-out, staggered), and leave together.
  */
-export function Welcome({ firstName, onBegin, onDone }: { firstName: string | null; onBegin: () => void; onDone: () => void }) {
+export function Welcome({ name, firstName, onBegin, onDone }: { name: string; firstName: string | null; onBegin: () => void; onDone: () => void }) {
   const [step, setStep] = useState<"hello" | "connect">("hello");
   const [leaving, setLeaving] = useState(false);
   const [waitingFor, setWaitingFor] = useState<string | null>(null);
@@ -31,9 +31,11 @@ export function Welcome({ firstName, onBegin, onDone }: { firstName: string | nu
       setLeaving(false);
     }, reduced ? 0 : 180);
   };
-  const finish = () => leaveTo(onDone);
-  const getStarted = () => {
+  const finish = () => {
     onBegin();
+    leaveTo(onDone);
+  };
+  const getStarted = () => {
     // Nothing set up to connect (or the list isn't back yet and failed): straight to the conversation.
     if (list.length === 0) finish();
     else leaveTo(() => setStep("connect"));
@@ -53,7 +55,7 @@ export function Welcome({ firstName, onBegin, onDone }: { firstName: string | nu
               </h1>
             </Rise>
             <Rise order={2}>
-              <p className="pt-2 text-[15px] leading-[22px] text-[var(--wb-muted)]">Nice to meet you. Welcome to OpenWork.</p>
+              <p className="pt-2 text-[15px] leading-[22px] text-[var(--wb-muted)]">I&apos;m {name}. I can help with your connected apps and take on longer jobs while you keep chatting.</p>
             </Rise>
             <Rise order={3}>
               <div className="pt-9">
@@ -135,7 +137,7 @@ function ConnectStep(props: {
       <Rise order={3}>
         <div className="flex flex-col items-center gap-3 pt-8">
           <PrimaryButton onClick={props.onContinue} disabled={props.leaving}>
-            Continue
+            Start chatting
           </PrimaryButton>
           {allReady ? null : (
             <button

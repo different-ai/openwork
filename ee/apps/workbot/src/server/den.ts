@@ -152,8 +152,8 @@ export function createDen(options: { apiUrl: string; publicUrl: string }) {
       if (status !== 200 || !parsed.success) throw new Error(`den_session_${status}`)
       return parsed.data
     },
-    async runToken(accessToken: string): Promise<string> {
-      const { status, payload } = await authorized("POST", "/v1/workbot/run-token", accessToken, {})
+    async runToken(accessToken: string, input: { readOnly?: boolean } = {}): Promise<string> {
+      const { status, payload } = await authorized("POST", "/v1/workbot/run-token", accessToken, input)
       const parsed = z.object({ token: z.string() }).safeParse(payload)
       if (status !== 200 || !parsed.success) throw new Error(`den_run_token_${status}`)
       return parsed.data.token

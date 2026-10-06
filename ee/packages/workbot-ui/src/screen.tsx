@@ -89,8 +89,8 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   const dragging = useFileDrop(filesEnabled, addFiles);
 
   useEffect(() => {
-    if (greetingAwaited && (start.isError || (data?.turns.length ?? 0) > 0)) setGreetingAwaited(false);
-  }, [data, greetingAwaited, start.isError]);
+    if (greetingAwaited && (start.isError || start.data?.started === false || (data?.turns.length ?? 0) > 0)) setGreetingAwaited(false);
+  }, [data, greetingAwaited, start.isError, start.data]);
   useEffect(() => {
     if (welcome === "pending" && data) setWelcome(needsWelcome(data.turns) && pending.length === 0 ? "showing" : "done");
   }, [data, welcome, pending.length]);
@@ -195,8 +195,9 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   if (welcome === "showing" || (welcome === "pending" && pending.length === 0 && needsWelcome(data.turns))) {
     return (
       <Welcome
+        name={data.name}
         firstName={firstName}
-        // "Get started": Workbot starts looking at their day right away, so its hello is ready by the time they're in.
+        // Start only after the person finishes or skips connecting their apps.
         onBegin={() => {
           if (start.isIdle) {
             setGreetingAwaited(true);
@@ -208,7 +209,7 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
     );
   }
   // Right after the welcome: the conversation, with Workbot typing its hello. If that can't start, the drawn greeting.
-  const starting = empty && !start.isIdle && !start.isError;
+  const starting = empty && (start.isPending || (greetingAwaited && start.data?.started === true));
   const composer = (
     <Composer
       name={data.name}
@@ -237,6 +238,12 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
       <div className="flex min-w-0 flex-1 flex-col">
       {empty && !starting ? (
         <FirstOpen name={data.name} organizationName={data.organizationName} firstName={firstName} onSuggestion={(text) => submit(text)}>
+          {start.isError ? (
+            <div className="flex items-center gap-2 py-2 text-[13px] text-[var(--wb-muted)]" role="status">
+              <span>Couldn&apos;t check your day.</span>
+              <button type="button" onClick={() => { setGreetingAwaited(true); start.mutate(); }} className="rounded-full px-2 py-1 font-medium text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">Try again</button>
+            </div>
+          ) : null}
           {composer}
         </FirstOpen>
       ) : (
@@ -252,7 +259,10 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
             loadingEarlier={thread.isFetching && turnWindow > data.turns.length}
             onLoadEarlier={() => setTurnWindow((current) => Math.min(200, current + PAGE_TURNS))}
             onRetry={(entry) => submit(entry.text, entry)}
-            onRetryTurn={(turn) => submit(turn.text)}
+            onRetryTurn={(turn) => {
+              if (turn.greeting) { setGreetingAwaited(true); start.mutate(); }
+              else submit(turn.text);
+            }}
             onSuggestion={(text) => submit(text)}
             starting={starting}
             intro={
@@ -1190,7 +1200,7 @@ function TurnView(props: {
         ) : null}
       </div>
       {turn.outputs.length ? <OutputFiles files={turn.outputs} /> : null}
-      {turn.tasks.length ? <TaskCards tasks={turn.tasks} /> : null}
+      {turn.tasks.length ? <TaskCards tasks={turn.tasks} canRetry={props.canChange} onRetry={(task) => props.onSuggestion(`Try the "${task.title}" background task again.`)} /> : null}
       {/* Workbot's hello offers what to ask next, only while it is still the latest message. */}
       {turn.suggestions.length && props.latest ? (
         <ul className="flex flex-wrap gap-2 pl-1 pt-3">
@@ -1301,7 +1311,7 @@ function WorkCard(props: {
 }
 
 /** One background task as a card: the little person at work, what it's doing, how long, and Stop. */
-function TaskCard({ task }: { task: WorkbotTask }) {
+function TaskCard({ task, onRetry, canRetry = true }: { task: WorkbotTask; onRetry?: () => void; canRetry?: boolean }) {
   const stop = useStopWorkbotTask();
   const running = isOpen(task);
   const outcome = running ? null : task.status === "done" ? "done" : task.status === "failed" ? "failed" : "stopped";
@@ -1328,6 +1338,8 @@ function TaskCard({ task }: { task: WorkbotTask }) {
           >
             {stopping ? "Stopping" : "Stop"}
           </button>
+        ) : task.status === "failed" && onRetry ? (
+          <button type="button" disabled={!canRetry} onClick={onRetry} className="h-7 shrink-0 rounded-full px-3 text-[12px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-chip)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">Try again</button>
         ) : null
       }
     />
@@ -1338,11 +1350,11 @@ function TaskCard({ task }: { task: WorkbotTask }) {
  * Background tasks where they started. While one runs, its card is pinned above the composer (RunningTasks), so
  * here one quiet line says where it went; once it's over, its card stays here, quiet (DESIGN P11, T1).
  */
-function TaskCards({ tasks }: { tasks: WorkbotTask[] }) {
+function TaskCards({ tasks, onRetry, canRetry }: { tasks: WorkbotTask[]; onRetry: (task: WorkbotTask) => void; canRetry: boolean }) {
   const running = tasks.filter(isOpen).length;
   return (
     <div className="flex flex-col gap-2 pl-1 pt-3">
-      {tasks.filter((task) => !isOpen(task)).map((task) => <TaskCard key={task.id} task={task} />)}
+      {tasks.filter((task) => !isOpen(task)).map((task) => <TaskCard key={task.id} task={task} canRetry={canRetry} onRetry={() => onRetry(task)} />)}
       {running ? (
         <p className="pl-0.5 text-[12px] leading-4 text-[var(--wb-faint)]">
           {running === 1 ? "Working on it in the background" : `Working on ${running} things in the background`}

@@ -43,7 +43,11 @@ const DAYTONA_LIFETIME_MINUTES = 120;
 const execFileAsync = promisify(execFile);
 
 /** `--live`: a real model, the computer on, and an MCP App seeded. Local placement only. */
-export type WorkbotWorldOptions = { live: boolean };
+export type WorkbotWorldOptions = {
+  live: boolean;
+  upstream?: { baseUrl: string; key: string; model: string };
+  runnerProxy?: (runnerUrl: string) => Promise<string>;
+};
 
 export function parseWorkbotOptions(argv: string[]): WorkbotWorldOptions {
   for (const arg of argv) if (arg !== "--live") throw new Error(`preview-workbot: unknown option ${arg} (supported: --live)`);
@@ -62,12 +66,12 @@ async function secretFromEnvOrInfisical(names: string[], infisical: { name: stri
 }
 
 /** The runner's model and computer: the Acme upstream and no computer, or (live) a real model and Freestyle. */
-async function runnerModel(stack: AsyncDisposableStack, live: boolean) {
+async function runnerModel(stack: AsyncDisposableStack, live: boolean, fixture?: WorkbotWorldOptions["upstream"]) {
   if (!live) {
-    const upstream = await startAcmeUpstream(stack);
+    const upstream = fixture ?? await startAcmeUpstream(stack);
     return {
-      env: { HEADLESS_MODEL_PROTOCOL: "anthropic", HEADLESS_MODEL_BASE_URL: `${upstream.baseUrl}/v1`, HEADLESS_MODEL: ACME_MODEL, HEADLESS_MODEL_API_KEY: upstream.key, HEADLESS_COMPUTER: "off" },
-      upstreamKey: upstream.key, model: ACME_MODEL, computer: false,
+      env: { HEADLESS_MODEL_PROTOCOL: "anthropic", HEADLESS_MODEL_BASE_URL: `${upstream.baseUrl}/v1`, HEADLESS_MODEL: fixture?.model ?? ACME_MODEL, HEADLESS_MODEL_API_KEY: upstream.key, HEADLESS_COMPUTER: "off" },
+      upstreamKey: upstream.key, model: fixture?.model ?? ACME_MODEL, computer: false,
     };
   }
   const key = await secretFromEnvOrInfisical(["HEADLESS_MODEL_API_KEY", "ANTHROPIC_API_KEY"], { name: "ANTHROPIC_API_KEY" });
@@ -196,7 +200,7 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
   const place = resolvePlace();
   if (place.kind !== "local") throw new Error("bootWorkbot runs next to MySQL (--place local, or inside a prepared VM).");
   if (options.live && preview) throw new Error("preview-workbot --live runs locally only.");
-  const runner = await runnerModel(stack, options.live);
+  const runner = await runnerModel(stack, options.live, options.upstream);
   const [runnerPort, workbotPort] = await allocateFreePorts(2);
   const runnerUrl = `http://127.0.0.1:${runnerPort}`;
   const workbotInternal = `http://127.0.0.1:${workbotPort}`;
@@ -242,7 +246,7 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
     health: `${workbotInternal}/healthz`,
     env: {
       PORT: String(workbotPort), WORKBOT_PUBLIC_URL: workbotUrl, WORKBOT_DEN_API_URL: den.ref.apiUrl,
-      WORKBOT_DEN_WEB_URL: preview?.den ?? den.ref.webUrl, WORKBOT_RUNNER_URL: runnerUrl, WORKBOT_RUNNER_TOKEN: secrets.runnerToken,
+      WORKBOT_DEN_WEB_URL: preview?.den ?? den.ref.webUrl, WORKBOT_RUNNER_URL: options.runnerProxy ? await options.runnerProxy(runnerUrl) : runnerUrl, WORKBOT_RUNNER_TOKEN: secrets.runnerToken,
       WORKBOT_SESSION_SECRET: secrets.sessionSecret, WORKBOT_DB_PATH: join(data, "workbot.sqlite"),
       ...(preview ? {
         // Workbot reaches Den's sign-in at its advertised (template) origin; inside the VM that is loopback.
@@ -301,7 +305,7 @@ const cookieHeader = (jar: Map<string, string>) => [...jar].map(([key, value]) =
  * owner, then sends one message and waits for the runner's answer. Proves Den sign-in, the runner, its model and
  * Workbot's live conversation together.
  */
-export async function probeWorkbot(world: WorkbotWorld, options: { denInternal?: string } = {}) {
+export async function signInWorkbot(world: WorkbotWorld, options: { denInternal?: string } = {}) {
   const denInternal = options.denInternal ?? world.den.ref.webUrl;
   const toInternal = (url: string) => url.replace(world.denWebPublic, denInternal).replace(world.workbotUrl, world.workbotInternal);
   const workbotJar = new Map<string, string>();
@@ -343,6 +347,11 @@ export async function probeWorkbot(world: WorkbotWorld, options: { denInternal?:
   const me = await call("/v1/workbot/me");
   const who: unknown = await me.json().catch(() => null);
   if (!me.ok || !record(who) || who.enabled !== true) throw new Error(`Workbot does not see Alex with Workbot on: HTTP ${me.status}`);
+  return { call, cookie: cookieHeader(workbotJar) };
+}
+
+export async function probeWorkbot(world: WorkbotWorld, options: { denInternal?: string } = {}) {
+  const { call } = await signInWorkbot(world, options);
   // Live: leave the conversation untouched, so the person's first open is a real first open (Workbot says hello).
   if (world.live) return { reply: "the conversation is left empty for your first open" };
   const sent = await call("/v1/workbot/messages", { method: "POST", body: JSON.stringify({ id: `probe${randomUUID().replaceAll("-", "").slice(0, 16)}`, text: "Hello from the world check." }) });

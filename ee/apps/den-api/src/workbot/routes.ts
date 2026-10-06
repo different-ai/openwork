@@ -10,6 +10,7 @@ import { db } from "../db.js"
 import { verifyMcpRequest } from "../mcp/auth.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
 import { mintHeadlessRunMcpToken } from "../mcp/headless-run-token-mint.js"
+import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
 import { jsonResponse, unauthorizedSchema } from "../openapi.js"
 import { organizationHasCapability } from "../organization-capabilities.js"
 import { jsonValidator, tokenRoute } from "../middleware/index.js"
@@ -47,6 +48,7 @@ const RUN_TOKEN_WINDOW_MS = 10 * 60_000
 type Principal = { userId: string; organizationId: string }
 type Resolved = {
   principal: Principal
+  scopes: Set<string>
   user: { id: string; name: string | null; email: string }
   organization: Pick<typeof OrganizationTable.$inferSelect, "id" | "name" | "metadata">
   memberId: string
@@ -113,6 +115,7 @@ async function resolve(headers: Headers): Promise<Resolved | Response> {
   }
   return {
     principal: { userId, organizationId },
+    scopes: verified.scopes,
     user: { id: user.id, name: user.name?.trim() || null, email: user.email },
     organization,
     memberId: member.id,
@@ -196,23 +199,28 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       responses: {
         200: jsonResponse("The token.", runTokenSchema),
         401: jsonResponse("The token is missing, expired or revoked, or the membership ended.", unauthorizedSchema),
-        403: jsonResponse("Workbot is off for this workspace.", signedOutSchema),
+        403: jsonResponse("Workbot is off or the sign-in grant cannot start a turn.", signedOutSchema),
         429: jsonResponse("Too many tokens requested.", z.object({ error: z.literal("rate_limited"), retryAfter: z.number() })),
       },
     }),
     tokenRoute,
-    jsonValidator(z.object({ ttlMs: z.number().int().min(60_000).max(DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS).optional() })),
+    jsonValidator(z.object({ ttlMs: z.number().int().min(60_000).max(DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS).optional(), readOnly: z.boolean().optional() })),
     async (c) => {
       const resolved = await resolve(c.req.raw.headers)
       if (resolved instanceof Response) return resolved
       const { principal, organization } = resolved
+      const readOnly = c.req.valid("json").readOnly === true
+      const requiredScopes = readOnly ? [DEN_MCP_READ_SCOPE] : [DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE]
+      if (requiredScopes.some((scope) => !resolved.scopes.has(scope))) {
+        return c.json({ error: "insufficient_scope", message: "The sign-in grant does not allow this Workbot turn." }, 403)
+      }
       if (!organizationHasCapability(organization.metadata, "workbot")) {
         return c.json({ error: "workbot_not_enabled", message: "Workbot is off for this workspace." }, 403)
       }
       const retryAfter = await checkRateLimit(`workbot-run-token:${principal.organizationId}:${principal.userId}`, RUN_TOKENS_PER_WINDOW, RUN_TOKEN_WINDOW_MS, Date.now())
       if (retryAfter !== null) return c.json({ error: "rate_limited" as const, retryAfter }, 429)
       const ttlMs = c.req.valid("json").ttlMs ?? DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS
-      const { token } = await mintHeadlessRunMcpToken({ ...principal, ttlMs })
+      const { token } = await mintHeadlessRunMcpToken({ ...principal, ttlMs, readOnly })
       return c.json({ token, expiresAt: new Date(Date.now() + ttlMs).toISOString() })
     },
   )

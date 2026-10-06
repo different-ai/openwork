@@ -6,6 +6,7 @@ import { ModelError, type ModelClient } from "./model.js"
 import type { Store, StoredMessage, Turn } from "./store.js"
 import { REACTION_TOOL_NAMES, REACTION_TOOLS, reactionEndsTurn, runReactionTool } from "./reactions.js"
 import { asAttachment, runSavedFileTool, SAVED_FILE_TOOL_NAMES, SAVED_FILE_TOOLS, type SavedFiles } from "./saved-files.js"
+
 import {
   MAX_OPEN_TASKS,
   MAX_RUNNING_TASKS,
@@ -19,6 +20,8 @@ import {
 } from "./tasks.js"
 import { formatBytes, withoutAttachments } from "./tool-files.js"
 import { RESUMABLE, type Attachment, type Message, type RepeatLimits, type SessionComputer, type ToolResult, type TurnCredentials } from "./types.js"
+
+const READ_ONLY_LOCAL_TOOLS: ReadonlySet<string> = new Set(["list_files", "read_file", "list_saved_files", "open_file"])
 
 export const DEFAULT_SYSTEM_PROMPT = `You are OpenWork, an assistant running in the cloud on behalf of one person. There is no UI and nobody can approve actions while you work.
 
@@ -451,10 +454,11 @@ export class Runner {
       const repeatLimits = { ...DEFAULT_REPEAT_LIMITS, ...session?.repeats }
       // Files and the computer only for conversations that asked for them (see Session.files / .computer).
       const files = session?.files ? this.options.files : undefined
-      const computer = session?.computer ? this.options.computer : undefined
+      const readOnly = credentials.readOnly === true
+      const computer = session?.computer && !readOnly ? this.options.computer : undefined
       // Reactions and task tools are for the person's own messages, not for tasks or their reports.
-      const reactions = session?.reactions === true && kind === "message"
-      const taskTools = session?.tasks === true && kind === "message"
+      const reactions = session?.reactions === true && kind === "message" && !readOnly
+      const taskTools = session?.tasks === true && kind === "message" && !readOnly
       // Wake the computer while the model thinks, when this turn is likely to need it.
       const sentFiles = turnMessages().some((message) => message.role === "user" && (message.attachments?.length ?? 0) > 0)
       if (computer && (sentFiles || computer.known(sessionId))) computer.prewarm(sessionId)
@@ -465,12 +469,12 @@ export class Runner {
         tools ? "" : "No OpenWork connection is available in this conversation, so connected apps cannot be reached.",
         session?.instructions ?? "",
         memorySection(store.memoryFiles(sessionId)),
-        kind === "task" ? taskInstructions(turn?.title ?? "") : session?.tasks ? tasksSection(store.recentTasks(sessionId, 8), Date.now()) : "",
+        kind === "task" ? taskInstructions() : "",
         `Current time: ${new Date(this.options.now?.() ?? Date.now()).toISOString()}`,
       ]
         .filter(Boolean)
         .join("\n\n")
-      const toolSpecs = [...FILE_TOOLS, ...(files ? SAVED_FILE_TOOLS : []), ...(computer?.tools ?? []), ...(reactions ? REACTION_TOOLS : []), ...(taskTools ? TASK_TOOLS : []), ...(tools?.tools ?? [])]
+      const toolSpecs = [...FILE_TOOLS.filter((tool) => !readOnly || READ_ONLY_LOCAL_TOOLS.has(tool.name)), ...(files ? SAVED_FILE_TOOLS.filter((tool) => !readOnly || READ_ONLY_LOCAL_TOOLS.has(tool.name)) : []), ...(computer?.tools ?? []), ...(reactions ? REACTION_TOOLS : []), ...(taskTools ? TASK_TOOLS : []), ...(tools?.tools ?? [])]
       // The current turn's files, read once and shown to the model on every step of this turn.
       const expanded = new Map<string, Message>()
       const withFiles = async (messages: Message[]) =>
@@ -527,11 +531,11 @@ export class Runner {
           system: askedToStop ? `${baseSystem}\n\n${STOP_REPEATING_INSTRUCTION}` : baseSystem,
           // A task sees only its own brief and work; the conversation sees everything but tasks' work.
           messages: await withFiles(
-            buildContext(
+            [...(kind !== "task" && session?.tasks && store.recentTasks(sessionId, 8).length ? [{ role: "user" as const, text: tasksSection(store.recentTasks(sessionId, 8), Date.now()) }] : []), ...buildContext(
               kind === "task" ? store.turnMessages(sessionId, messageId) : store.contextMessages(sessionId, messageId, limits.contextCharBudget),
               messageId,
               limits.contextCharBudget,
-            ),
+            )],
           ),
           tools: toolSpecs,
           model: turn?.model ?? this.options.defaultModel,
@@ -559,7 +563,9 @@ export class Runner {
           signal.throwIfAborted()
           const outcome: ToolResult = call.inputError
             ? { output: call.inputError, isError: true }
-            : FILE_TOOL_NAMES.has(call.name)
+            : readOnly && (FILE_TOOL_NAMES.has(call.name) || SAVED_FILE_TOOL_NAMES.has(call.name) || TASK_TOOL_NAMES.has(call.name) || REACTION_TOOL_NAMES.has(call.name)) && !READ_ONLY_LOCAL_TOOLS.has(call.name)
+              ? { output: "read_only_turn: This turn can only read; changing files, starting work and reacting are unavailable.", isError: true }
+              : FILE_TOOL_NAMES.has(call.name)
               ? runFileTool(store, sessionId, call.name, call.input)
               : files && SAVED_FILE_TOOL_NAMES.has(call.name)
                 ? await runSavedFileTool(files, store, sessionId, call.name, call.input).catch((error: unknown) => ({

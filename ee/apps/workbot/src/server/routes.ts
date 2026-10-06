@@ -71,7 +71,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       client: createHeadlessRunnerClient({
         config: config.runner,
         fetch,
-        mintToken: async () => ({ token: await den.runToken(member.accessToken) }),
+        mintToken: async ({ readOnly }) => ({ token: await den.runToken(member.accessToken, { readOnly }) }),
         maxTokenTtlMs: RUN_TOKEN_TTL_MS,
       }),
       canSchedule: async () => member.den.canSchedule,

@@ -14116,10 +14116,21 @@ export class DenClient extends HeyApiClient {
   public createWorkbotRunToken<ThrowOnError extends boolean = false>(
     parameters?: {
       ttlMs?: number;
+      readOnly?: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "ttlMs" }] }]);
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "ttlMs" },
+            { in: "body", key: "readOnly" },
+          ],
+        },
+      ],
+    );
     return (options?.client ?? this.client).post<
       CreateWorkbotRunTokenResponses,
       CreateWorkbotRunTokenErrors,

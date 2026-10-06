@@ -26986,6 +26986,7 @@ export type ListWorkbotConnectionsResponse = ListWorkbotConnectionsResponses[key
 export type CreateWorkbotRunTokenData = {
   body: {
     ttlMs?: number;
+    readOnly?: boolean;
   };
   path?: never;
   query?: never;
@@ -26998,7 +26999,7 @@ export type CreateWorkbotRunTokenErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Workbot is off for this workspace.
+   * Workbot is off or the sign-in grant cannot start a turn.
    */
   403: {
     error: string;

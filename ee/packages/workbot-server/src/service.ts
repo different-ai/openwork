@@ -88,6 +88,7 @@ export function workbotInstructions(input: {
     "- Reach their connected apps with search_capabilities, then execute_capability. Look things up before asking them.",
     "- Answer in the chat. Keep replies short; use a short list or a quoted draft when it helps.",
     "- Like a colleague, take bigger jobs away and come back with them: hand anything more than a quick look to start_task and tell them in a few words that you're on it. When a task reports back, give them what matters in a line or two and the obvious next step.",
+    "- Say a background job has started only after start_task succeeds. If it cannot start, say so; never promise a result from work that isn't running.",
     "- React to their message with one emoji (react) when a colleague would, before you reply: 👍 when you're on it or agree, ❤️ for thanks, 😮 or ‼️ when they tell you something surprising, 😂 when it's funny, 🎉 for good news. Not on every message. When a reaction is all a colleague would send back (\"thanks!\", \"ok\", \"sounds good\"), react with final: that is your whole reply.",
     `- Memory: older messages drop out of what you can see, but files under memory/ are always shown to you. Keep them current without being asked: who ${person} is and how they like to work (memory/about.md), the people, projects and threads they care about (memory/people.md, memory/projects.md), and anything they ask you to remember. Write facts, not transcripts; update or remove what is no longer true. Never tell them you are updating memory unless they asked you to remember something.`,
     "- Ask before you send, post, delete or change anything in their apps, unless they asked for that exact action in this message.",
@@ -176,14 +177,20 @@ export async function startWorkbotGreeting(actor: WorkbotActor, input: { timeZon
   const client = clientOf(deps)
   const sessionId = workbotSessionId(actor.organizationId, actor.memberId)
   const read = await client.readSession(sessionId, { turns: 1, limit: 1, outputs: "none" })
-  if (read.ok) return { started: false }
-  if (read.status !== 404) throw new WorkbotUnavailableError("workbot_runner_unavailable")
+  if (read.ok && read.value.turns.length > 0) {
+    const greeting = read.value.turns[0]
+    if (greeting?.messageId !== GREETING_RUNNER_ID || !["failed", "aborted"].includes(greeting.status)) return { started: false }
+    const removed = await client.deleteTurns(sessionId, GREETING_RUNNER_ID)
+    if (!removed.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
+  }
+  if (!read.ok && read.status !== 404) throw new WorkbotUnavailableError("workbot_runner_unavailable")
   const timeZone = validTimeZone(input.timeZone)
   await ensureSession(actor, timeZone, deps)
-  await client.sendTurn(
+  const sent = await client.sendTurn(
     { userId: actor.userId, organizationId: actor.organizationId },
-    { sessionId, messageId: GREETING_RUNNER_ID, prompt: greetingPrompt({ firstName: actor.firstName, timeZone }) },
+    { sessionId, messageId: GREETING_RUNNER_ID, prompt: greetingPrompt({ firstName: actor.firstName, timeZone }), readOnly: true },
   )
+  if (!sent.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
   return { started: true }
 }
 
@@ -205,7 +212,7 @@ export async function readWorkbotThread(
 
   // A runner restart, or a long task's token running out, pauses a turn; re-sending its id resumes it with a fresh token.
   for (const interrupted of interruptedTurnIds(read.value)) {
-    await client.sendTurn({ userId: actor.userId, organizationId: actor.organizationId }, { sessionId, messageId: interrupted, prompt: "resume" }).catch(() => null)
+    await client.sendTurn({ userId: actor.userId, organizationId: actor.organizationId }, { sessionId, messageId: interrupted, prompt: "resume", ...(interrupted === GREETING_RUNNER_ID ? { readOnly: true } : {}) }).catch(() => null)
   }
 
   const filesEnabled = await client.filesEnabled()

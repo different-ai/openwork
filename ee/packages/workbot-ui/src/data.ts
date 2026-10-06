@@ -290,6 +290,9 @@ export function useStartWorkbot() {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const { response, payload } = await requestJson("/v1/workbot/hello", { method: "POST", body: JSON.stringify({ timeZone }) }, 30_000);
       if (!response.ok) throw new Error(getErrorMessage(payload, "Couldn't start."));
+      const parsed = z.object({ started: z.boolean() }).safeParse(payload);
+      if (!parsed.success) throw new Error("Couldn't start.");
+      return parsed.data;
     },
     onSettled: async () => queryClient.invalidateQueries({ queryKey: workbotQueryKey }),
   });
