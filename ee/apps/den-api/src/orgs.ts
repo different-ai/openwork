@@ -30,7 +30,8 @@ import {
   type MemberLifecycleValidation,
 } from "./organization-member-guards.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
-import { coreHooks, runWithAfterCommit } from "./core/hooks/index.js"
+import { coreHooks, type CoreMemberAccessEndSource } from "./core/hooks/index.js"
+import { endMemberAccess } from "./core/member-access-end.js"
 import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js"
 import { getScimManagedTeamIds } from "./scim-groups.js"
 import { effectiveOrganizationRole, listOrganizationAdminTeamGrants, withOrganizationMembershipUsageMutation, withOrganizationTeamMutation, type OrganizationAdminTeam } from "./organization-team-roles.js"
@@ -1982,78 +1983,58 @@ export async function removeOrganizationMember(input: {
   organizationId: OrgId
   memberId: MemberRow["id"]
   removedByOrgMemberId?: MemberRow["id"]
+  source?: Extract<CoreMemberAccessEndSource, "remove" | "scim_deprovision">
 }): Promise<MemberMutationResult> {
-  // Hooks queue post-commit work (Google credential revocation) that must run
-  // before Core revokes API keys and sessions, as it did inline before.
-  const removed = await runWithAfterCommit((afterCommit) => withOrganizationMembershipUsageMutation(input.organizationId, async (tx): Promise<MemberMutationResult> => {
-    const activeRows = await tx
-      .select({ member: MemberTable, userId: AuthUserTable.id })
-      .from(MemberTable)
-      .leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
-      .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.id, input.memberId), isNull(MemberTable.removedAt)))
-      .for("update")
+  const removed = await endMemberAccess<MemberMutationFailure>({
+    organizationId: input.organizationId,
+    memberIds: [input.memberId],
+    source: input.source ?? "remove",
+    mode: "soft_remove",
+    removedByOrgMemberId: input.removedByOrgMemberId ?? null,
+    authorize: async (tx) => {
+      const activeRows = await tx
+        .select({ member: MemberTable, userId: AuthUserTable.id })
+        .from(MemberTable)
+        .leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
+        .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.id, input.memberId), isNull(MemberTable.removedAt)))
+        .for("update")
 
-    const memberRow = activeRows.find((row) => row.member.id === input.memberId) ?? null
-    if (!memberRow) {
-      return memberNotFound()
-    }
+      const memberRow = activeRows.find((row) => row.member.id === input.memberId) ?? null
+      if (!memberRow) {
+        return memberNotFound()
+      }
 
-    const validation = validateOrganizationMemberRemoval({
-      member: memberRow.member,
-      activeMembers: activeRows.map((row) => ({
-        id: row.member.id,
-        role: row.member.role,
-        userId: row.userId,
-      })),
-    })
-    if (!validation.ok) {
-      return validation
-    }
+      const validation = validateOrganizationMemberRemoval({
+        member: memberRow.member,
+        activeMembers: activeRows.map((row) => ({
+          id: row.member.id,
+          role: row.member.role,
+          userId: row.userId,
+        })),
+      })
+      if (!validation.ok) {
+        return validation
+      }
 
-    const member = memberRow.member
-    const removedAt = new Date()
-
-    const rejection = await coreHooks.runGuards("member.removalGuard", {
-      tx,
-      organizationId: input.organizationId,
-      memberId: member.id,
-      removedByOrgMemberId: input.removedByOrgMemberId ?? null,
-    })
-    if (rejection) {
-      return { ok: false, error: "forbidden", message: rejection.message }
-    }
-
-    await coreHooks.runTx("member.removing", {
-      tx,
-      organizationId: input.organizationId,
-      memberIds: [member.id],
-      removedAt,
-      afterCommit,
-    })
-
-    await tx
-      .update(MemberTable)
-      .set({ removedAt, removedByOrgMember: input.removedByOrgMemberId ?? null })
-      .where(and(eq(MemberTable.id, member.id), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
-
-    return { ok: true, member }
-  }, [input.memberId]))
+      const rejection = await coreHooks.runGuards("member.removalGuard", {
+        tx,
+        organizationId: input.organizationId,
+        memberId: memberRow.member.id,
+        removedByOrgMemberId: input.removedByOrgMemberId ?? null,
+      })
+      if (rejection) {
+        return { ok: false, error: "forbidden", message: rejection.message }
+      }
+      return null
+    },
+  })
 
   if (!removed.ok) {
-    return removed
+    return removed.refusal
   }
-
-  await revokeOrganizationApiKeysForMember({
-    organizationId: input.organizationId,
-    orgMembershipId: removed.member.id,
-    userId: removed.member.userId,
-  })
-  await revokeMembershipSessionCredentials({
-    organizationId: input.organizationId,
-    userId: removed.member.userId,
-  })
-
-  await runPostOrganizationMemberChangeHooks({ organizationId: input.organizationId, memberId: removed.member.id, change: "removed" })
-
-  return removed
+  const member = removed.members[0]
+  if (!member) {
+    return memberNotFound()
+  }
+  return { ok: true, member }
 }

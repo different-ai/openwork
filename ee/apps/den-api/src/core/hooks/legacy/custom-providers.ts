@@ -22,6 +22,19 @@ coreHooks.registerTx({
 })
 
 coreHooks.registerTx({
+  point: "user.deleting",
+  id: "legacy/custom-providers/delete-deleted-user-credentials",
+  registrant: "legacy",
+  security: true,
+  // Every membership, including ones removed earlier, as admin user delete did.
+  order: CORE_HOOK_ORDER.security + 3,
+  handler: async ({ tx, memberIds }) => {
+    if (memberIds.length === 0) return
+    await tx.delete(LlmProviderMemberCredentialTable).where(inArray(LlmProviderMemberCredentialTable.orgMembershipId, memberIds))
+  },
+})
+
+coreHooks.registerTx({
   point: "member.removing",
   id: "legacy/custom-providers/delete-member-provider-access",
   registrant: "legacy",

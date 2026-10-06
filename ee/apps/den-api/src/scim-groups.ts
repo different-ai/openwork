@@ -551,7 +551,15 @@ export async function deleteScimGroup(input: {
     }
     const members = await tx.select().from(ScimGroupMemberTable).where(eq(ScimGroupMemberTable.groupId, group.id))
     const teamMemberIds = members.flatMap((member) => provider.groupMappingMode === "create_teams" && member.teamMemberId ? [member.teamMemberId] : [])
-    if (teamMemberIds.length > 0) await tx.delete(TeamMemberTable).where(inArray(TeamMemberTable.id, teamMemberIds))
+    if (teamMemberIds.length > 0) {
+      // Same OAuth fence as every other team-membership change (W0-P10).
+      const teamIds = [...new Set((await tx.select({ teamId: TeamMemberTable.teamId }).from(TeamMemberTable)
+        .where(inArray(TeamMemberTable.id, teamMemberIds))).map((row) => row.teamId))].sort()
+      for (const teamId of teamIds) {
+        await coreHooks.runTx("team.membershipChanged", { tx, organizationId: input.provider.organizationId, teamId })
+      }
+      await tx.delete(TeamMemberTable).where(inArray(TeamMemberTable.id, teamMemberIds))
+    }
     await tx.delete(ScimGroupMemberTable).where(eq(ScimGroupMemberTable.groupId, group.id))
     await tx.delete(ScimGroupTable).where(eq(ScimGroupTable.id, group.id))
     return { ok: true }
@@ -603,6 +611,9 @@ export async function setScimGroupMappingMode(input: {
         if (input.mode === "create_teams") {
           // Re-enabling mapping hands membership back to the IdP, not to the
           // manual edits made while the retained team was disconnected.
+          for (const teamId of [...teamIds].sort()) {
+            await coreHooks.runTx("team.membershipChanged", { tx, organizationId: input.provider.organizationId, teamId })
+          }
           await tx.delete(TeamMemberTable).where(inArray(TeamMemberTable.teamId, teamIds))
         }
       }

@@ -28,6 +28,7 @@ const expected = {
   ],
   "member.removalGuard": ["legacy/teams/admin-team-member-removal"],
   "member.removed": [
+    "legacy/ai-gateway/re-revoke-member-credentials-after-removal",
     "legacy/openwork-models/sync-inference-after-member-removed",
     "legacy/billing/seat-quantity-after-member-removed",
     "legacy/billing/inference-quantity-after-member-removed",
@@ -104,6 +105,8 @@ const expected = {
   "user.deleting": [
     "legacy/ai-gateway/expire-member-usage-requests",
     "legacy/ai-gateway/revoke-deleted-user-inference-credentials",
+    "legacy/connect-native-providers/delete-deleted-user-connected-accounts",
+    "legacy/custom-providers/delete-deleted-user-credentials",
     "legacy/enterprise-auth-sso/delete-user-external-identities",
     "legacy/enterprise-auth-scim/delete-user-sync-events",
     "legacy/openwork-web/detach-deleted-user-workers",
@@ -115,3 +118,31 @@ test("legacy registrations reproduce today's hook order", async () => {
   assert.deepEqual(describeCoreHooks(), expected)
 })
 
+// W0-P10 / README R1: these revocations run whatever the module state. A
+// module plan that moves one into its manifest must keep `security: true`.
+const requiredSecurityHooks = {
+  "member.removed": ["legacy/ai-gateway/re-revoke-member-credentials-after-removal"],
+  "member.removing": [
+    "legacy/ai-gateway/revoke-member-inference-credentials",
+    "legacy/connect-native-providers/delete-member-connected-accounts",
+    "legacy/custom-providers/delete-member-credentials",
+  ],
+  "org.deletion.purge": [
+    "legacy/ai-gateway/revoke-organization-google-credentials",
+    "legacy/connect-native-providers/revoke-organization-google-workspace-accounts",
+  ],
+  "team.deleting": ["legacy/ai-gateway/invalidate-deleted-team-inference-oauth"],
+  "team.membershipChanged": ["legacy/ai-gateway/invalidate-team-inference-oauth"],
+  // R1 "deprovision blocks": SCIM-managed teams refuse Den edits even when SCIM is off.
+  "team.mutationGuard": ["legacy/enterprise-auth-scim/refuse-scim-managed-team-mutation"],
+  "user.deleting": [
+    "legacy/ai-gateway/revoke-deleted-user-inference-credentials",
+    "legacy/connect-native-providers/delete-deleted-user-connected-accounts",
+    "legacy/custom-providers/delete-deleted-user-credentials",
+  ],
+}
+
+test("member, team, user and org revocations are security hooks", async () => {
+  const { describeCoreSecurityHooks } = await import("../src/core/hooks/index.js")
+  assert.deepEqual(describeCoreSecurityHooks(), requiredSecurityHooks)
+})

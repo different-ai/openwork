@@ -247,7 +247,7 @@ const databaseCloudWorkerStore: CloudWorkerStore = {
     // Cloud is per-user. Legacy shared rows already have created_by_user_id set
     // to the first clicker; that member keeps the row while others get fresh
     // instances. Follow-up: admin user deletion currently nulls
-    // created_by_user_id (src/user-deletion.ts), orphaning instances; cleanup is
+    // created_by_user_id (src/core/user-account-deletion.ts), orphaning instances; cleanup is
     // tracked separately.
     const rows = await db
       .select()

@@ -17,3 +17,7 @@ export function freezeCoreHooks() {
 export function describeCoreHooks() {
   return coreHooks.describe()
 }
+
+export function describeCoreSecurityHooks() {
+  return coreHooks.describeSecurity()
+}

@@ -28,6 +28,19 @@ coreHooks.registerTx({
 })
 
 coreHooks.registerTx({
+  point: "user.deleting",
+  id: "legacy/connect-native-providers/delete-deleted-user-connected-accounts",
+  registrant: "legacy",
+  security: true,
+  // Every membership, including ones removed earlier, as admin user delete did.
+  order: CORE_HOOK_ORDER.security + 2,
+  handler: async ({ tx, memberIds }) => {
+    if (memberIds.length === 0) return
+    await tx.delete(ConnectedAccountTable).where(inArray(ConnectedAccountTable.orgMembershipId, memberIds))
+  },
+})
+
+coreHooks.registerTx({
   point: "org.deletion.purge",
   id: "legacy/connect-native-providers/revoke-organization-google-workspace-accounts",
   registrant: "legacy",

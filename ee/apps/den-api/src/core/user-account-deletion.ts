@@ -1,4 +1,4 @@
-import { eq } from "@openwork-ee/den-db/drizzle"
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   AuthAccountTable,
   AuthApiKeyTable,
@@ -11,13 +11,44 @@ import {
   OAuthConsentTable,
   OAuthRefreshTokenTable,
 } from "@openwork-ee/den-db/schema"
-import { cache } from "./cache.js"
-import { db } from "./db.js"
-import { coreHooks, runWithAfterCommit } from "./core/hooks/index.js"
+import { cache } from "../cache.js"
+import { db } from "../db.js"
+import { coreHooks, runWithAfterCommit, type CoreMemberAccessEndSource } from "./hooks/index.js"
+import { endMemberAccess } from "./member-access-end.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
+type MemberRow = typeof MemberTable.$inferSelect
 
-export async function deleteGlobalAuthUser(userId: UserId) {
+export type UserAccountDeletionSource = Extract<CoreMemberAccessEndSource, "user_delete" | "admin_user_delete" | "scim_deprovision">
+
+// The one user-deletion implementation (W0-P10), used by SCIM deprovisioning
+// and admin user delete. Every still-active membership first goes through
+// `endMemberAccess`, so each organization runs the full `member.removing`
+// chain (credentials, connected accounts, grants) and the post-change chain
+// (OpenWork Models providers, billing quantities). Then `user.deleting` and
+// the identity purge run in one transaction.
+export async function deleteUserAccount(userId: UserId, options: { source: UserAccountDeletionSource }) {
+  const activeMemberships = await db
+    .select({ id: MemberTable.id, organizationId: MemberTable.organizationId })
+    .from(MemberTable)
+    .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
+  // Sorted organization then member order keeps lock acquisition stable.
+  const membersByOrganization = new Map<MemberRow["organizationId"], MemberRow["id"][]>()
+  for (const membership of activeMemberships) {
+    const memberIds = membersByOrganization.get(membership.organizationId) ?? []
+    memberIds.push(membership.id)
+    membersByOrganization.set(membership.organizationId, memberIds)
+  }
+  const organizationIds = [...membersByOrganization.keys()].sort()
+  for (const organizationId of organizationIds) {
+    await endMemberAccess<never>({
+      organizationId,
+      memberIds: membersByOrganization.get(organizationId) ?? [],
+      source: options.source,
+      mode: "soft_remove",
+    })
+  }
+
   const memberships = await db
     .select({ organizationId: MemberTable.organizationId })
     .from(MemberTable)
@@ -34,6 +65,7 @@ export async function deleteGlobalAuthUser(userId: UserId) {
   const { oauthConsents } = await runWithAfterCommit((afterCommit) => db.transaction(async (tx) => {
     const members = await tx.select({ id: MemberTable.id }).from(MemberTable)
       .where(eq(MemberTable.userId, userId)).orderBy(MemberTable.id).for("update")
+    // Covers memberships removed earlier too: revocation is idempotent.
     await coreHooks.runTx("user.deleting", { tx, userId, memberIds: members.map((member) => member.id), afterCommit })
     const consentRows = await tx
       .select({ id: OAuthConsentTable.id })

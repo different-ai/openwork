@@ -11,7 +11,7 @@ import { SCIM_SYNC_FAILURE_RECORDED_OPERATIONAL_MARKER } from "./operational-log
 import { removeOrganizationMember } from "./orgs.js"
 import { resolveStoredScimProvider } from "./scim-token-storage.js"
 import { reconcileScimGroupsForUser } from "./scim-groups.js"
-import { deleteGlobalAuthUser } from "./user-deletion.js"
+import { deleteUserAccount } from "./core/user-account-deletion.js"
 import { shouldDeleteGlobalUser } from "./scim-deprovisioning.js"
 
 type OrganizationId = typeof MemberTable.$inferSelect.organizationId
@@ -421,6 +421,7 @@ export async function deleteScimProvisionedAccessForProvider(input: {
     const removed = await removeOrganizationMember({
       organizationId: input.provider.organizationId,
       memberId: member.id,
+      source: "scim_deprovision",
     })
     if (!removed.ok) {
       return { ok: false as const, status: 409, body: { detail: removed.message } }
@@ -472,7 +473,7 @@ export async function deleteScimProvisionedAccessForProvider(input: {
     .where(and(eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
   const deleteUser = shouldDeleteGlobalUser(Number(otherActiveMembershipRows[0]?.value ?? 0))
   if (deleteUser && user) {
-    await deleteGlobalAuthUser(input.userId)
+    await deleteUserAccount(input.userId, { source: "scim_deprovision" })
   }
 
   return { ok: true as const, userDeleted: deleteUser && Boolean(user) }

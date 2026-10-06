@@ -19,6 +19,7 @@ import {
   invalidateTeamInferenceOAuth,
   revokeGoogleCredentials,
   revokeInferenceCredentialsForMembers,
+  revokeMemberGatewayCredentials,
 } from "../../../llm/inference-provider-lifecycle.js"
 import { appLogger } from "../../../observability/logger.js"
 import { coreHooks } from "../default-registry.js"
@@ -40,6 +41,18 @@ coreHooks.registerTx({
     const credentials = await revokeInferenceCredentialsForMembers(tx, memberIds)
     afterCommit(() => revokeGoogleCredentials(credentials))
   },
+})
+
+coreHooks.registerPostCommit({
+  point: "member.removed",
+  id: "legacy/ai-gateway/re-revoke-member-credentials-after-removal",
+  registrant: "legacy",
+  security: true,
+  // Idempotent re-run after commit: closes the window in which a concurrent
+  // key mint lands between the removal transaction and a Better Auth hard
+  // delete. Runs whatever the module state, before any sync hook.
+  order: CORE_HOOK_ORDER.security,
+  handler: ({ organizationId, memberId }) => revokeMemberGatewayCredentials({ organizationId, memberId }),
 })
 
 coreHooks.registerPostCommit({

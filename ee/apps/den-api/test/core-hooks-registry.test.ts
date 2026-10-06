@@ -32,7 +32,7 @@ function removingInput(afterCommit: (callback: () => Promise<void>) => void = ()
 }
 
 function removedInput(): CorePostCommitPoints["member.removed"] {
-  return { organizationId: "org_test", memberId: "om_one", memberCount: 1, source: "removal" }
+  return { organizationId: "org_test", memberId: "om_one", memberCount: 1, source: "remove" }
 }
 
 describe("ordering and registration", () => {

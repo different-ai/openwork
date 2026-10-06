@@ -2,7 +2,7 @@ import { peopleMemberCondition } from "./setup-agent-members.js"
 import { and, eq, sql } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { cache } from "./cache.js"
-import { coreHooks } from "./core/hooks/index.js"
+import { coreHooks, type CoreMemberAccessEndSource } from "./core/hooks/index.js"
 import { db } from "./db.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
@@ -16,14 +16,15 @@ async function countOrganizationMembers(organizationId: OrgId) {
   return Math.max(0, Number(row?.count ?? 0))
 }
 
-// Den invitation create, invitation acceptance and member removal dispatch
+// Den invitation create, invitation acceptance and every access-ending path
+// (core/member-access-end.ts) dispatch
 // `member.added` / `member.removed` through here. Module reactions are
 // registered on the Core hook registry (core/hooks/legacy until each module
 // plan moves them).
 export async function runPostOrganizationMemberChangeHooks(input: {
   organizationId: OrgId
   memberId: MemberId
-} & ({ change: "added"; source: "invitation" | "acceptance" } | { change: "removed" })) {
+} & ({ change: "added"; source: "invitation" | "acceptance" } | { change: "removed"; source: CoreMemberAccessEndSource })) {
   // Member add/remove changes both list rendering and membership auth decisions.
   await cache.org.deleteMembers(input.organizationId)
   const memberCount = await countOrganizationMembers(input.organizationId)
@@ -40,6 +41,6 @@ export async function runPostOrganizationMemberChangeHooks(input: {
     organizationId: input.organizationId,
     memberId: input.memberId,
     memberCount,
-    source: "removal",
+    source: input.source,
   })
 }

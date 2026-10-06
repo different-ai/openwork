@@ -196,6 +196,18 @@ export function createCoreHookRegistry(options: CoreHookRegistryOptions = {}) {
     options.reportError?.(lastError, fields)
   }
 
+  function describeStores(include: (registration: CoreHookRegistrationBase<string>) => boolean) {
+    const description: Record<string, string[]> = {}
+    const stores: Array<Record<string, ReadonlyArray<CoreHookRegistrationBase<string>> | undefined>> = [guards, txHooks, participants, postCommits]
+    for (const store of stores) {
+      for (const [point, list] of Object.entries(store)) {
+        const ids = (list ?? []).filter(include).map((registration) => registration.id)
+        if (ids.length > 0) description[point] = ids
+      }
+    }
+    return Object.fromEntries(Object.entries(description).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)))
+  }
+
   return {
     registerGuard<P extends CoreGuardPointName>(registration: CoreGuardRegistration<P>) {
       claim(registration)
@@ -239,14 +251,14 @@ export function createCoreHookRegistry(options: CoreHookRegistryOptions = {}) {
 
     // point → ordered hook ids, for the boot log line and the snapshot test.
     describe() {
-      const description: Record<string, string[]> = {}
-      const stores: Array<Record<string, ReadonlyArray<{ id: string }> | undefined>> = [guards, txHooks, participants, postCommits]
-      for (const store of stores) {
-        for (const [point, list] of Object.entries(store)) {
-          if (list && list.length > 0) description[point] = list.map((registration) => registration.id)
-        }
-      }
-      return Object.fromEntries(Object.entries(description).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)))
+      return describeStores(() => true)
+    },
+
+    // point → ordered ids of `security: true` hooks (W0-P10): revocations
+    // that run whatever the module state. A module plan that drops the flag
+    // breaks the required-ids test.
+    describeSecurity() {
+      return describeStores((registration) => registration.security === true)
     },
 
     // First rejection wins. Thrown errors propagate (the request fails closed).

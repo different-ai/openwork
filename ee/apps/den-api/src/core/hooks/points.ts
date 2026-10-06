@@ -14,6 +14,16 @@ type TeamId = typeof TeamTable.$inferSelect.id
 type UserId = typeof AuthUserTable.$inferSelect.id
 type InvitationRow = typeof InvitationTable.$inferSelect
 
+// Every path that ends a person's access to an organization (W0-P10). All of
+// them run the same `member.removing` chain through core/member-access-end.ts.
+export type CoreMemberAccessEndSource =
+  | "remove"
+  | "leave"
+  | "better_auth_delete"
+  | "user_delete"
+  | "admin_user_delete"
+  | "scim_deprovision"
+
 export type CoreMemberAddedSource = "invitation" | "acceptance" | "betterAuthAdapter"
 
 // Invitation and acceptance carry the post-change member count today's
@@ -68,6 +78,9 @@ export interface CoreGuardPoints {
 }
 
 export interface CoreTxPoints {
+  // Every access-ending path, whatever the module state: security hooks
+  // revoke credentials, cleanup hooks drop grants. The member row still
+  // exists (soft removal sets removedAt after this point).
   "member.removing": {
     tx: CoreTx
     organizationId: OrgId
@@ -129,7 +142,7 @@ export interface CorePostCommitPoints {
     organizationId: OrgId
     memberId: MemberId
     memberCount: number
-    source: "removal"
+    source: CoreMemberAccessEndSource
   }
   // Defined for module consumers (research/05 hook 11); no registrations yet.
   "member.roleChanged": {

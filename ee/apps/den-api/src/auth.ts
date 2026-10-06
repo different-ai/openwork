@@ -1,6 +1,6 @@
 import * as crypto from "node:crypto";
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy";
-import { revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js";
+import { completeHardDeletedMemberAccess, endMemberAccess } from "./core/member-access-end.js";
 import { coreHooks } from "./core/hooks/index.js";
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
@@ -288,27 +288,6 @@ async function revokeOrganizationMemberCredentials(input: {
     organizationId,
     userId,
   });
-}
-
-async function deleteOrganizationMemberConnectedAccounts(input: {
-  organizationId: string;
-  orgMembershipId: string;
-}) {
-  const organizationId = normalizeDenTypeId("organization", input.organizationId);
-  const orgMembershipId = normalizeDenTypeId("member", input.orgMembershipId);
-
-  await db
-    .delete(schema.ConnectedAccountTable)
-    .where(and(
-      eq(schema.ConnectedAccountTable.organizationId, organizationId),
-      eq(schema.ConnectedAccountTable.orgMembershipId, orgMembershipId),
-    ));
-  await db
-    .delete(schema.LlmProviderMemberCredentialTable)
-    .where(and(
-      eq(schema.LlmProviderMemberCredentialTable.organizationId, organizationId),
-      eq(schema.LlmProviderMemberCredentialTable.orgMembershipId, orgMembershipId),
-    ));
 }
 
 function throwMemberLifecycleError(message: string): never {
@@ -685,37 +664,10 @@ export const auth = betterAuth({
           });
         },
       },
-      delete: {
-        before: async (member: AuthMemberHookRow) => {
-          const validation = await validateOrganizationMemberRemovalForHook({
-            organizationId: normalizeDenTypeId("organization", member.organizationId),
-            memberId: normalizeDenTypeId("member", member.id),
-          });
-          if (!validation.ok) {
-            throwMemberLifecycleError(validation.message);
-          }
-
-          await deleteOrganizationMemberConnectedAccounts({
-            organizationId: member.organizationId,
-            orgMembershipId: member.id,
-          });
-          await revokeOrganizationMemberCredentials({
-            organizationId: member.organizationId,
-            orgMembershipId: member.id,
-            userId: member.userId,
-          });
-          await revokeMemberGatewayCredentials({
-            organizationId: normalizeDenTypeId("organization", member.organizationId),
-            memberId: normalizeDenTypeId("member", member.id),
-          });
-        },
-        after: async (member: AuthMemberHookRow) => {
-          await revokeMemberGatewayCredentials({
-            organizationId: normalizeDenTypeId("organization", member.organizationId),
-            memberId: normalizeDenTypeId("member", member.id),
-          });
-        },
-      },
+      // No member.delete hooks: Better Auth's organization plugin deletes
+      // members through the raw adapter, which never runs databaseHooks.
+      // Removal goes through organizationHooks.beforeRemoveMember /
+      // afterRemoveMember instead (W0-P10).
     },
     session: {
       create: {
@@ -1227,22 +1179,28 @@ export const auth = betterAuth({
           });
         },
         beforeRemoveMember: async ({ member }) => {
-          const validation = await validateOrganizationMemberRemovalForHook({
-            organizationId: normalizeDenTypeId("organization", member.organizationId),
-            memberId: normalizeDenTypeId("member", member.id),
-          });
+          const organizationId = normalizeDenTypeId("organization", member.organizationId);
+          const memberId = normalizeDenTypeId("member", member.id);
+          const validation = await validateOrganizationMemberRemovalForHook({ organizationId, memberId });
           if (!validation.ok) {
             throwMemberLifecycleError(validation.message);
           }
 
-          await deleteOrganizationMemberConnectedAccounts({
-            organizationId: member.organizationId,
-            orgMembershipId: member.id,
+          // Better Auth deletes the row after this hook, so the full removal
+          // chain (credentials, connected accounts, grants) runs now while the
+          // row still exists, in its own committed transaction.
+          await endMemberAccess<never>({
+            organizationId,
+            memberIds: [memberId],
+            source: "better_auth_delete",
+            mode: "pre_hard_delete",
           });
-          await revokeOrganizationMemberCredentials({
-            organizationId: member.organizationId,
-            orgMembershipId: member.id,
-            userId: member.userId,
+        },
+        afterRemoveMember: async ({ member }) => {
+          await completeHardDeletedMemberAccess({
+            organizationId: normalizeDenTypeId("organization", member.organizationId),
+            memberId: normalizeDenTypeId("member", member.id),
+            source: "better_auth_delete",
           });
         },
         beforeUpdateMemberRole: async ({ member, newRole }) => {
