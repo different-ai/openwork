@@ -1,49 +1,7 @@
 import { z } from "zod"
+import { MODULE_GROUPS, MODULE_IDS, type ModuleGroupId, type ModuleId } from "./module-id-list"
 
-/**
- * Every module id, in dependency-map order. APPEND-ONLY: never remove,
- * rename or reorder an id. Retire one with `stability: "deprecated"` in the
- * registry. `module-ids.snapshot.json` must stay a prefix of this list.
- */
-export const MODULE_IDS = [
-  "connect",
-  "connect.nativeProviders",
-  "marketplace",
-  "marketplace.githubSync",
-  "workflows",
-  "mcpApps",
-  "dashboards",
-  "automations",
-  "automations.headless",
-  "automations.remoteSessions",
-  "openworkWeb",
-  "workbot",
-  "slackAssistant",
-  "slackAssistant.headless",
-  "aiGateway",
-  "aiGateway.usageLimits",
-  "openworkModels",
-  "openworkModels.analytics",
-  "freeInference",
-  "customProviders",
-  "desktopPolicies",
-  "versionPinning",
-  "branding",
-  "analytics",
-  "auditLogs",
-  "auditLogs.export",
-  "teams",
-  "advancedPermissions",
-  "diagnostics",
-  "billing",
-  "enterpriseAuth",
-  "enterpriseAuth.sso",
-  "enterpriseAuth.scim",
-  "installLinks",
-  "webOrigins",
-] as const
-
-export type ModuleId = (typeof MODULE_IDS)[number]
+export { MODULE_GROUPS, MODULE_ID_MAX_SEGMENTS, MODULE_IDS, type ModuleGroupId, type ModuleId } from "./module-id-list"
 
 /** Strict id schema, for authoring (license server writes). Den parsing uses tolerant string keys. */
 export const moduleIdSchema = z.enum(MODULE_IDS)
@@ -51,8 +9,34 @@ export const moduleIdSchema = z.enum(MODULE_IDS)
 const MODULE_ID_SET: ReadonlySet<string> = new Set(MODULE_IDS)
 const MODULE_ID_ORDER: ReadonlyMap<string, number> = new Map(MODULE_IDS.map((id, index) => [id, index]))
 
+const MODULE_GROUP_SET: ReadonlySet<string> = new Set(MODULE_GROUPS)
+
 export function isModuleId(value: unknown): value is ModuleId {
   return typeof value === "string" && MODULE_ID_SET.has(value)
+}
+
+/** A group (D44): a pure namespace, never a module. */
+export function isModuleGroupId(value: unknown): value is ModuleGroupId {
+  return typeof value === "string" && MODULE_GROUP_SET.has(value)
+}
+
+/** Every proper prefix of a dotted id, nearest first (`a.b.c` → `a.b`, `a`). */
+export function moduleIdPrefixes(id: string): string[] {
+  const parts = id.split(".")
+  const prefixes: string[] = []
+  for (let length = parts.length - 1; length > 0; length -= 1) prefixes.push(parts.slice(0, length).join("."))
+  return prefixes
+}
+
+/**
+ * The module's parent by location (D44): the nearest prefix that is a module.
+ * Groups are skipped, so a module directly under a group has no parent.
+ */
+export function nearestModuleAncestor(id: ModuleId): ModuleId | null {
+  for (const prefix of moduleIdPrefixes(id)) {
+    if (isModuleId(prefix)) return prefix
+  }
+  return null
 }
 
 function isCompleteModuleRecord<T>(record: Partial<Record<ModuleId, T>>): record is Record<ModuleId, T> {

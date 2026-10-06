@@ -8,7 +8,7 @@ export const LICENSE_VERIFICATION_GRACE_MS = 24 * 60 * 60 * 1000
 export const LICENSE_TRANSITION_MS = 30 * 24 * 60 * 60 * 1000
 
 // One commercial module, with operation-specific transition behavior.
-/** @deprecated Use the `transitionOperations` of `enterpriseAuth.sso` in MODULE_DEFINITIONS. Kept for v1 consumers. */
+/** @deprecated Use the `transitionOperations` of `org.auth.sso` in MODULE_DEFINITIONS. Kept for v1 consumers. */
 export const AUTH_TRANSITION_POLICY = Object.freeze({
   ssoSignIn: "verified_owner_or_superadmin",
   scim: "continue",
@@ -130,29 +130,30 @@ export type LicenseCheckResponseAny = z.infer<typeof licenseCheckResponseSchemaA
  * `remoteMcpApps` was retired with `remote_mcp_app` (D36) and is dropped.
  */
 export const LEGACY_V1_CAPABILITY_MODULES = Object.freeze({
-  installLinks: "installLinks",
-  mcpConnections: "connect",
-  workflows: "workflows",
+  installLinks: "org.installLinks",
+  mcpConnections: "library.connectors",
+  workflows: "library.workflows",
   cloud: "openworkWeb",
   remoteMcpApps: null,
 } satisfies Record<string, ModuleId | null>)
 
 const LEGACY_V1_CAPABILITIES: ReadonlyMap<string, ModuleId | null> = new Map(Object.entries(LEGACY_V1_CAPABILITY_MODULES))
 
-const ENTERPRISE_AUTH_MODULES = ["enterpriseAuth", "enterpriseAuth.sso", "enterpriseAuth.scim"] as const
+/** The modules v1 `auth` covered. `org.auth` itself is a group, never a module (D44). */
+export const LEGACY_V1_AUTH_MODULES = Object.freeze(["org.auth.sso", "org.auth.scim"] as const satisfies readonly ModuleId[])
 
-/** v1 `auth` covered SSO and SCIM (D1): it grants all three `enterpriseAuth*` ids. */
-function enterpriseAuthFromV1(auth: boolean): Record<string, boolean> {
-  return Object.fromEntries(ENTERPRISE_AUTH_MODULES.map((id) => [id, auth]))
+/** v1 `auth` covered SSO and SCIM: it grants both `org.auth.*` modules. */
+function authModulesFromV1(auth: boolean): Record<string, boolean> {
+  return Object.fromEntries(LEGACY_V1_AUTH_MODULES.map((id) => [id, auth]))
 }
 
 /**
- * Upgrades a v1 answer to the v2 shape: `auth` becomes the three
- * `enterpriseAuth*` ids, legacy capability flags move into `modules`, other
+ * Upgrades a v1 answer to the v2 shape: `auth` becomes `org.auth.sso` and
+ * `org.auth.scim`, legacy capability flags move into `modules`, other
  * flags stay flags, and `kind` is `standard`.
  */
 export function upgradeLicenseCheckResponseToV2(response: LicenseCheckResponseV1): LicenseCheckResponseV2 {
-  const modules: Record<string, boolean> = enterpriseAuthFromV1(response.modules.auth)
+  const modules: Record<string, boolean> = authModulesFromV1(response.modules.auth)
   const featureFlags: Record<string, boolean> = {}
   for (const [key, value] of Object.entries(response.featureFlags)) {
     if (!LEGACY_V1_CAPABILITIES.has(key)) {
@@ -182,8 +183,8 @@ function grantedOnWire(modules: Readonly<Record<string, boolean>>, id: ModuleId)
 }
 
 /**
- * Projects a v2 answer for a v1 consumer. `auth` is least privilege (all three
- * `enterpriseAuth*` ids), the legacy capability flags are rebuilt from the
+ * Projects a v2 answer for a v1 consumer. `auth` is least privilege (both
+ * `org.auth.*` modules), the legacy capability flags are rebuilt from the
  * module map, and `kind` is dropped.
  */
 export function projectLicenseResponseToV1(response: LicenseCheckResponseV2): LicenseCheckResponseV1 {
@@ -198,7 +199,7 @@ export function projectLicenseResponseToV1(response: LicenseCheckResponseV2): Li
     schemaVersion: 1,
     licenseId: response.licenseId,
     status: response.status,
-    modules: { auth: ENTERPRISE_AUTH_MODULES.every((id) => response.modules[id] === true) },
+    modules: { auth: LEGACY_V1_AUTH_MODULES.every((id) => response.modules[id] === true) },
     featureFlags,
     maxUsers: response.maxUsers,
     expiresAt: response.expiresAt,
@@ -230,7 +231,7 @@ export interface LicenseEntitlement {
  * Normalizes a validated v1 or v2 answer. v1 goes through
  * `upgradeLicenseCheckResponseToV2`. A v2 answer that still carries the v1
  * `auth` key (server not migrated) is read like v1 `auth` for any
- * `enterpriseAuth*` id it doesn't set; `validateLicenseModules` reports the key
+ * `org.auth.*` module it doesn't set; `validateLicenseModules` reports the key
  * as `unknown_module` for logging.
  */
 export function normalizeLicenseCheckResponse(response: LicenseCheckResponseAny): LicenseEntitlement {
@@ -239,7 +240,7 @@ export function normalizeLicenseCheckResponse(response: LicenseCheckResponseAny)
   const wire: Record<string, boolean> = { ...v2.modules }
   const legacyAuth = wireVersion === 2 ? v2.modules.auth : undefined
   if (legacyAuth !== undefined) {
-    for (const id of ENTERPRISE_AUTH_MODULES) wire[id] ??= legacyAuth
+    for (const id of LEGACY_V1_AUTH_MODULES) wire[id] ??= legacyAuth
   }
   const modules: Partial<Record<ModuleId, boolean>> = {}
   for (const [key, value] of Object.entries(wire)) {

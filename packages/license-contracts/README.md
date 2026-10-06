@@ -14,7 +14,7 @@ conditions expose `src/`.
 | Subpath | File | Contents |
 |---|---|---|
 | `.` | `src/index.ts` | Everything below |
-| `./modules` | `src/modules.ts` (+ `src/module-ids.ts`) | `MODULE_IDS`, `ModuleDefinition`, `MODULE_DEFINITIONS`, graph helpers, `CLOUD_FREE_PLAN_MODULES`, `validateLicenseModules` |
+| `./modules` | `src/modules.ts` (+ `src/module-ids.ts`, `src/module-id-list.ts`) | `MODULE_IDS`, `MODULE_GROUPS`, `ModuleDefinition`, `MODULE_DEFINITIONS`, graph helpers, `CLOUD_FREE_PLAN_MODULES`, `validateLicenseModules` |
 | `./resolver` | `src/resolver.ts` (+ `src/operations.ts`) | `resolveModules`, `ModuleState`, `EffectiveModules`, `computeTransitionStart`, `evaluateModuleOperation` |
 | `./errors` | `src/errors.ts` | The "module off" body (`module_disabled`), headers, status, `license_unavailable` |
 | `./license` | `src/license.ts` | License check v1 (frozen) and v2 schemas, constants, normalize, upgrade, project |
@@ -22,23 +22,64 @@ conditions expose `src/`.
 | `./payload` | `src/payload.ts` | Client wire shape of module states (`/v1/org`, `/v1/me`, desktop config) |
 | `./org-modules` | `src/org-modules.ts` | The `organization.modules` column document and the persisted entitlement snapshot |
 
-## Module ids are append-only
+## Module ids are location paths (D44)
 
-`MODULE_IDS` never loses, renames or reorders an id. Retire one by setting
-`stability: "deprecated"` in its definition, so old licenses and old Den
+A module id says where the feature lives in the product: dot-separated
+camelCase segments, at most 4 (`ai.gateway.openworkModels.analytics`,
+`library.connectors.native.googleWorkspace`). Every prefix of an id is either
+a **module** (`MODULE_IDS`, 34 today) or a **group** (`MODULE_GROUPS`):
+
+| Group | Holds |
+|---|---|
+| `org` | Organization settings modules (`org.branding`, `org.billing`, …) |
+| `org.members` | `org.members.teams`, `org.members.roles` (custom roles) |
+| `org.auth` | `org.auth.sso`, `org.auth.scim` |
+| `org.observability` | `org.observability.auditLogs` (+ `.export`) |
+| `ai` | `ai.gateway` and its sub-modules, `ai.customProviders` |
+| `library` | My Library: plugins, workflows, apps, connectors |
+| `library.connectors.native` | `…native.googleWorkspace`, `…native.microsoft365` |
+
+Groups are pure namespaces. They are never toggled, never entitled, never a
+parent or a dependency, and never appear in resolved module states: think of
+them as always on. A group id in a license is `unknown_module`, and in
+`organization.modules.disabled` it is ignored.
+
+A module's `parent` is its **nearest ancestor that is a module**; groups are
+skipped (`nearestModuleAncestor`). So `library.connectors.native.microsoft365`
+has parent `library.connectors`, and `org.auth.scim` has no parent. The parent
+is a hard dependency (D6). Every other dependency is declared explicitly in
+`dependsOn` (hard) or `softDependsOn` and is never implied by the path
+(`org.auth.scim` hard-depends on `org.auth.sso`).
+
+`MODULE_IDS` and `MODULE_GROUPS` live in `src/module-id-list.ts`, which imports
+nothing, so plain Node scripts can read them without installing this package's
+dependencies.
+
+### Append-only
+
+Once merged, `MODULE_IDS` never loses, renames or reorders an id. Retire one by
+setting `stability: "deprecated"` in its definition, so old licenses and old Den
 versions still parse. `src/module-ids.snapshot.json` must stay a prefix of
 `MODULE_IDS`; append to both when adding a module.
+
+The snapshot was **reset before first merge** (D44, 2026-10-06) to the
+location-path ids; no Den, desktop or license server ever shipped the earlier
+flat ids (`connect`, `aiGateway`, `enterpriseAuth`, …). The old→new mapping is
+in `docs/modules/dependency-map.md` §2a. From the first merge on, the snapshot
+only grows.
 
 Definition data (names, edges, `entitlement`, `orgToggle`, `expiryPolicy`,
 `transitionOperations`) can change in a reviewed PR. Ids can't.
 
 Rules the tests enforce:
 
-- A dotted id is a sub-module; its `parent` is the prefix (one level). A
-  sub-module is never effective without its parent; a parent works without its
-  sub-modules (D6).
+- Ids are camelCase segments, at most 4; no id is both a module and a group;
+  every prefix of a module or group is a module or a group.
+- `parent` equals the nearest module ancestor. A sub-module is never effective
+  without its parent; a parent works without its sub-modules (D6).
 - `dependsOn` (hard) drives state; `softDependsOn` never does. The hard graph
-  (`parent ∪ dependsOn`) is acyclic.
+  (`parent ∪ dependsOn`) is acyclic. Group ids never appear in `parent`,
+  `dependsOn` or `softDependsOn`.
 - `entitlement: "free"` ⇔ `expiryPolicy: "n/a"`. `expiryPolicy: "restricted"`
   ⇔ `transitionOperations` with an `other` key.
 
@@ -89,8 +130,11 @@ order, the first matching rule wins: `not_on_deployment`, `not_available`,
 - **v1 is frozen.** The unsuffixed v1 names (`licenseCheckRequestSchema`,
   `licenseCheckResponseSchema`, `AUTH_TRANSITION_POLICY`, …) are kept byte for
   byte because the private server imports them; `…SchemaV1` are aliases. v1 has
-  one module, `auth`, which normalizes to `enterpriseAuth`,
-  `enterpriseAuth.sso` and `enterpriseAuth.scim` (D1).
+  one module, `auth`, which normalizes to `org.auth.sso` and `org.auth.scim`
+  (`LEGACY_V1_AUTH_MODULES`; `org.auth` itself is a group). Projected back to
+  v1, `auth` is true only when both are granted. The stale v1 capability flags
+  map to `org.installLinks`, `library.connectors`, `library.workflows` and
+  `openworkWeb` (`LEGACY_V1_CAPABILITY_MODULES`).
 - **v2** adds `instanceId` and `version` to requests (diagnostics only, never
   binding) and a flat `modules` map plus `kind: "standard" | "trial"` to
   responses. Den parses responses tolerantly: unknown fields are stripped and
@@ -109,7 +153,7 @@ The private license server vendors this package with a finite file allowlist
 (`scripts/source-policy.ts`). When adding a file or subpath here, add it to
 that allowlist in the same window, or its sync fails closed. Files today:
 `README.md`, `package.json`, `tsconfig.json`, `tsup.config.ts`,
-`src/{index,module-ids,modules,resolver,operations,errors,license,hints,payload,org-modules}.ts`
+`src/{index,module-id-list,module-ids,modules,resolver,operations,errors,license,hints,payload,org-modules}.ts`
 and `src/module-ids.snapshot.json`.
 
 ## Docker images

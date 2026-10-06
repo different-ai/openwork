@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest"
 import {
   AUTH_TRANSITION_POLICY,
+  LEGACY_V1_AUTH_MODULES,
   LEGACY_V1_CAPABILITY_MODULES,
   LICENSE_CACHE_TTL_SECONDS,
   LICENSE_CHECK_PATH,
@@ -45,7 +46,7 @@ const v2Active = {
   licenseId: "lic_123",
   kind: "standard",
   status: "active",
-  modules: { enterpriseAuth: true, "enterpriseAuth.sso": true, "enterpriseAuth.scim": false, teams: true, "future.module": true },
+  modules: { "org.auth.sso": true, "org.auth.scim": false, "org.members.teams": true, "future.module": true },
   featureFlags: { beta: true },
   maxUsers: 25,
   expiresAt: null,
@@ -130,9 +131,10 @@ describe("v2", () => {
 })
 
 describe("normalize, upgrade and project", () => {
-  test("v1 auth grants the three enterpriseAuth ids", () => {
+  test("v1 auth grants org.auth.sso and org.auth.scim (org.auth is a group)", () => {
+    expect([...LEGACY_V1_AUTH_MODULES]).toEqual(["org.auth.sso", "org.auth.scim"])
     const entitlement = normalizeLicenseCheckResponse(licenseCheckResponseSchemaV1.parse(v1Active))
-    expect(entitlement.modules).toEqual({ enterpriseAuth: true, "enterpriseAuth.sso": true, "enterpriseAuth.scim": true })
+    expect(entitlement.modules).toEqual({ "org.auth.sso": true, "org.auth.scim": true })
     expect(entitlement).toMatchObject({ wireVersion: 1, kind: "standard", isTrial: false, status: "active", featureFlags: { beta: true } })
   })
 
@@ -143,12 +145,11 @@ describe("normalize, upgrade and project", () => {
       featureFlags: { beta: true, installLinks: false, mcpConnections: true, workflows: true, cloud: false, remoteMcpApps: true },
     })
     expect(upgraded.modules).toEqual({
-      enterpriseAuth: false,
-      "enterpriseAuth.sso": false,
-      "enterpriseAuth.scim": false,
-      installLinks: false,
-      connect: true,
-      workflows: true,
+      "org.auth.sso": false,
+      "org.auth.scim": false,
+      "org.installLinks": false,
+      "library.connectors": true,
+      "library.workflows": true,
       openworkWeb: false,
     })
     expect(upgraded.featureFlags).toEqual({ beta: true })
@@ -177,13 +178,21 @@ describe("normalize, upgrade and project", () => {
 
   test("v2 keeps known ids only and reads the trial kind", () => {
     const entitlement = normalizeLicenseCheckResponse(licenseCheckResponseSchemaV2.parse({ ...v2Active, kind: "trial", expiresAt: "2026-09-12T12:00:00.000Z" }))
-    expect(entitlement.modules).toEqual({ enterpriseAuth: true, "enterpriseAuth.sso": true, "enterpriseAuth.scim": false, teams: true })
+    expect(entitlement.modules).toEqual({ "org.auth.sso": true, "org.auth.scim": false, "org.members.teams": true })
     expect(entitlement).toMatchObject({ wireVersion: 2, kind: "trial", isTrial: true })
   })
 
-  test("a v2 answer still carrying v1 auth fills unset enterpriseAuth ids", () => {
-    const entitlement = normalizeLicenseCheckResponse(licenseCheckResponseSchemaV2.parse({ ...v2Active, modules: { auth: true, "enterpriseAuth.scim": false } }))
-    expect(entitlement.modules).toEqual({ enterpriseAuth: true, "enterpriseAuth.sso": true, "enterpriseAuth.scim": false })
+  test("a v2 answer still carrying v1 auth fills unset org.auth modules", () => {
+    const entitlement = normalizeLicenseCheckResponse(licenseCheckResponseSchemaV2.parse({ ...v2Active, modules: { auth: true, "org.auth.scim": false } }))
+    expect(entitlement.modules).toEqual({ "org.auth.sso": true, "org.auth.scim": false })
+  })
+
+  test("projection grants v1 auth only when both org.auth modules are granted", () => {
+    const both = licenseCheckResponseSchemaV2.parse({ ...v2Active, modules: { "org.auth.sso": true, "org.auth.scim": true } })
+    expect(projectLicenseResponseToV1(both).modules).toEqual({ auth: true })
+    const groupOnly = licenseCheckResponseSchemaV2.parse({ ...v2Active, modules: { "org.auth": true } })
+    expect(projectLicenseResponseToV1(groupOnly).modules).toEqual({ auth: false })
+    expect(normalizeLicenseCheckResponse(groupOnly).modules).toEqual({})
   })
 
   test("legacy capability targets are module ids", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest"
-import { MODULE_IDS, type ModuleId } from "./module-ids"
+import { isModuleGroupId, MODULE_GROUPS, MODULE_IDS, nearestModuleAncestor, type ModuleId } from "./module-ids"
 import {
   CLOUD_FREE_PLAN_MODULES,
   computeModuleTopoOrder,
@@ -14,45 +14,49 @@ import {
 } from "./modules"
 
 /**
- * dependency-map.md §2 (with D42 / Q-B2: dashboards → mcpApps is soft).
+ * dependency-map.md §2a (D44 tree) with the §2 edges carried over
+ * (D42 / Q-B2: dashboards → library.apps is soft).
  * Any edge or deployment change must show up as a diff here.
  */
 const GRAPH: Record<ModuleId, { parent: ModuleId | null; hard: ModuleId[]; soft: ModuleId[]; cloudOnly?: true }> = {
-  connect: { parent: null, hard: [], soft: ["marketplace"] },
-  "connect.nativeProviders": { parent: "connect", hard: [], soft: [] },
-  marketplace: { parent: null, hard: [], soft: ["connect", "workflows"] },
-  "marketplace.githubSync": { parent: "marketplace", hard: [], soft: ["connect"] },
-  workflows: { parent: null, hard: ["marketplace"], soft: ["connect", "automations"] },
-  mcpApps: { parent: null, hard: ["connect", "marketplace"], soft: ["workflows"] },
-  dashboards: { parent: null, hard: [], soft: ["mcpApps", "connect"] },
-  automations: { parent: null, hard: [], soft: ["workflows", "openworkWeb", "aiGateway", "openworkModels", "customProviders", "desktopPolicies"] },
+  "org.members.teams": { parent: null, hard: [], soft: [] },
+  "org.members.roles": { parent: null, hard: [], soft: [] },
+  "org.auth.sso": { parent: null, hard: [], soft: [] },
+  "org.auth.scim": { parent: null, hard: ["org.auth.sso"], soft: ["org.members.teams"] },
+  "org.observability.auditLogs": { parent: null, hard: [], soft: [] },
+  "org.observability.auditLogs.export": { parent: "org.observability.auditLogs", hard: [], soft: [] },
+  "org.desktopPolicies": { parent: null, hard: [], soft: ["org.members.teams"] },
+  "org.desktopPolicies.versionPinning": { parent: "org.desktopPolicies", hard: [], soft: [] },
+  "org.installLinks": { parent: null, hard: [], soft: ["org.branding", "org.desktopPolicies.versionPinning"] },
+  "org.branding": { parent: null, hard: [], soft: [] },
+  "org.webOrigins": { parent: null, hard: [], soft: [] },
+  "org.diagnostics": { parent: null, hard: [], soft: [] },
+  "org.billing": { parent: null, hard: [], soft: [], cloudOnly: true },
+  "ai.gateway": { parent: null, hard: [], soft: ["org.observability.auditLogs"] },
+  "ai.gateway.usageLimits": { parent: "ai.gateway", hard: [], soft: ["org.members.teams"] },
+  "ai.gateway.openworkModels": { parent: "ai.gateway", hard: ["org.billing"], soft: ["ai.customProviders"], cloudOnly: true },
+  "ai.gateway.openworkModels.analytics": { parent: "ai.gateway.openworkModels", hard: [], soft: [], cloudOnly: true },
+  "ai.gateway.freeInference": { parent: "ai.gateway", hard: [], soft: ["org.desktopPolicies"], cloudOnly: true },
+  "ai.customProviders": { parent: null, hard: [], soft: ["org.desktopPolicies"] },
+  "library.plugins": { parent: null, hard: [], soft: ["library.connectors", "library.workflows"] },
+  "library.plugins.githubSync": { parent: "library.plugins", hard: [], soft: ["library.connectors"] },
+  "library.workflows": { parent: null, hard: ["library.plugins"], soft: ["library.connectors", "automations"] },
+  "library.apps": { parent: null, hard: ["library.plugins", "library.connectors"], soft: ["library.workflows"] },
+  "library.connectors": { parent: null, hard: [], soft: ["library.plugins"] },
+  "library.connectors.native.googleWorkspace": { parent: "library.connectors", hard: [], soft: [] },
+  "library.connectors.native.microsoft365": { parent: "library.connectors", hard: [], soft: [] },
+  "library.connectors.slackAssistant": { parent: "library.connectors", hard: [], soft: ["automations.remoteSessions", "openworkWeb"] },
+  "library.connectors.slackAssistant.headless": { parent: "library.connectors.slackAssistant", hard: [], soft: [] },
+  dashboards: { parent: null, hard: [], soft: ["library.apps", "library.connectors"] },
+  automations: {
+    parent: null,
+    hard: [],
+    soft: ["library.workflows", "openworkWeb", "ai.gateway", "ai.gateway.openworkModels", "ai.customProviders", "org.desktopPolicies"],
+  },
   "automations.headless": { parent: "automations", hard: [], soft: [] },
   "automations.remoteSessions": { parent: "automations", hard: [], soft: ["openworkWeb"] },
-  openworkWeb: { parent: null, hard: ["connect"], soft: ["aiGateway", "openworkModels", "automations"] },
-  workbot: { parent: null, hard: ["connect"], soft: ["automations.headless"] },
-  slackAssistant: { parent: null, hard: ["connect"], soft: ["automations.remoteSessions", "openworkWeb"] },
-  "slackAssistant.headless": { parent: "slackAssistant", hard: [], soft: [] },
-  aiGateway: { parent: null, hard: [], soft: ["auditLogs"] },
-  "aiGateway.usageLimits": { parent: "aiGateway", hard: [], soft: ["teams"] },
-  openworkModels: { parent: null, hard: ["billing"], soft: ["customProviders"], cloudOnly: true },
-  "openworkModels.analytics": { parent: "openworkModels", hard: [], soft: [], cloudOnly: true },
-  freeInference: { parent: null, hard: [], soft: ["desktopPolicies"], cloudOnly: true },
-  customProviders: { parent: null, hard: [], soft: ["desktopPolicies"] },
-  desktopPolicies: { parent: null, hard: [], soft: ["teams"] },
-  versionPinning: { parent: null, hard: [], soft: [] },
-  branding: { parent: null, hard: [], soft: [] },
-  analytics: { parent: null, hard: [], soft: ["workflows"] },
-  auditLogs: { parent: null, hard: [], soft: [] },
-  "auditLogs.export": { parent: "auditLogs", hard: [], soft: [] },
-  teams: { parent: null, hard: [], soft: [] },
-  advancedPermissions: { parent: null, hard: [], soft: [] },
-  diagnostics: { parent: null, hard: [], soft: [] },
-  billing: { parent: null, hard: [], soft: [], cloudOnly: true },
-  enterpriseAuth: { parent: null, hard: [], soft: [] },
-  "enterpriseAuth.sso": { parent: "enterpriseAuth", hard: [], soft: [] },
-  "enterpriseAuth.scim": { parent: "enterpriseAuth", hard: ["enterpriseAuth.sso"], soft: ["teams"] },
-  installLinks: { parent: null, hard: [], soft: ["branding", "versionPinning"] },
-  webOrigins: { parent: null, hard: [], soft: [] },
+  openworkWeb: { parent: null, hard: ["library.connectors"], soft: ["ai.gateway", "ai.gateway.openworkModels", "automations"] },
+  workbot: { parent: null, hard: ["library.connectors"], soft: ["automations.headless"] },
 }
 
 const definitions: ModuleDefinition[] = MODULE_IDS.map((id) => MODULE_DEFINITIONS[id])
@@ -73,15 +77,17 @@ describe("registry shape", () => {
     }
   })
 
-  test("dotted ids have their prefix as parent, one level deep", () => {
+  test("parent is the nearest module ancestor; groups are never parents (D44)", () => {
     for (const definition of definitions) {
-      const parts = definition.id.split(".")
-      expect(parts.length).toBeLessThanOrEqual(2)
-      if (parts.length === 2) {
-        expect(definition.parent).toBe(parts[0])
-        expect(MODULE_IDS).toContain(parts[0])
-      } else {
-        expect(definition.parent).toBeNull()
+      expect([definition.id, definition.parent]).toEqual([definition.id, nearestModuleAncestor(definition.id)])
+      if (definition.parent) expect(definition.id.startsWith(`${definition.parent}.`)).toBe(true)
+    }
+  })
+
+  test("group ids never appear as a parent or a dependency", () => {
+    for (const definition of definitions) {
+      for (const edge of [definition.parent, ...definition.dependsOn, ...definition.softDependsOn]) {
+        expect([definition.id, edge !== null && isModuleGroupId(edge)]).toEqual([definition.id, false])
       }
     }
   })
@@ -129,16 +135,17 @@ describe("graph", () => {
     }
   })
 
-  test("soft cycles (connect ↔ marketplace) don't affect the order", () => {
-    expect(MODULE_DEFINITIONS.connect.softDependsOn).toContain("marketplace")
-    expect(MODULE_DEFINITIONS.marketplace.softDependsOn).toContain("connect")
-    expect(MODULE_TOPO_ORDER.slice(0, 3)).toEqual(["connect", "connect.nativeProviders", "marketplace"])
+  test("soft cycles (library.connectors ↔ library.plugins) don't affect the order", () => {
+    expect(MODULE_DEFINITIONS["library.connectors"].softDependsOn).toContain("library.plugins")
+    expect(MODULE_DEFINITIONS["library.plugins"].softDependsOn).toContain("library.connectors")
+    const position = new Map(MODULE_TOPO_ORDER.map((id, index) => [id, index]))
+    expect(position.get("library.connectors")).toBeLessThan(position.get("library.apps") ?? -1)
   })
 
   test("a hard cycle throws", () => {
     const cyclic = {
       ...MODULE_DEFINITIONS,
-      connect: { ...MODULE_DEFINITIONS.connect, dependsOn: ["mcpApps"] },
+      "library.connectors": { ...MODULE_DEFINITIONS["library.connectors"], dependsOn: ["library.apps"] },
     } satisfies Record<ModuleId, ModuleDefinition>
     expect(() => computeModuleTopoOrder(cyclic)).toThrow(/cycle/)
   })
@@ -154,13 +161,21 @@ describe("graph", () => {
   })
 
   test("ancestors, children and closure", () => {
-    expect(moduleAncestors("enterpriseAuth.scim")).toEqual(["enterpriseAuth"])
-    expect(moduleAncestors("connect")).toEqual([])
+    expect(moduleAncestors("ai.gateway.openworkModels.analytics")).toEqual(["ai.gateway.openworkModels", "ai.gateway"])
+    expect(moduleAncestors("org.auth.scim")).toEqual([])
+    expect(moduleAncestors("library.connectors.native.microsoft365")).toEqual(["library.connectors"])
     expect(moduleChildren("automations")).toEqual(["automations.headless", "automations.remoteSessions"])
-    expect(moduleChildren("teams")).toEqual([])
-    expect(hardDependencyClosure("enterpriseAuth.scim")).toEqual(["enterpriseAuth", "enterpriseAuth.sso"])
-    expect(hardDependencyClosure("openworkModels.analytics")).toEqual(["billing", "openworkModels"])
-    expect(hardDependencyClosure("mcpApps")).toEqual(["connect", "marketplace"])
+    expect(moduleChildren("library.connectors")).toEqual([
+      "library.connectors.native.googleWorkspace",
+      "library.connectors.native.microsoft365",
+      "library.connectors.slackAssistant",
+    ])
+    expect(moduleChildren("ai.gateway")).toEqual(["ai.gateway.usageLimits", "ai.gateway.openworkModels", "ai.gateway.freeInference"])
+    expect(moduleChildren("org.members.teams")).toEqual([])
+    expect(hardDependencyClosure("org.auth.scim")).toEqual(["org.auth.sso"])
+    expect(hardDependencyClosure("ai.gateway.openworkModels.analytics")).toEqual(["org.billing", "ai.gateway", "ai.gateway.openworkModels"])
+    expect(hardDependencyClosure("library.apps")).toEqual(["library.plugins", "library.connectors"])
+    expect(hardDependencyClosure("library.connectors.slackAssistant.headless")).toEqual(["library.connectors", "library.connectors.slackAssistant"])
     expect(hardDependencyClosure("dashboards")).toEqual([])
   })
 })
@@ -178,15 +193,14 @@ describe("policy fields", () => {
   test("cloud-only, free and no-toggle sets", () => {
     const where = (predicate: (definition: ModuleDefinition) => boolean) => definitions.filter(predicate).map((definition) => definition.id)
     expect(where((definition) => !definition.deployments.includes("self_hosted")))
-      .toEqual(["openworkModels", "openworkModels.analytics", "freeInference", "billing"])
-    expect(where((definition) => definition.entitlement === "free")).toEqual(["billing", "installLinks"])
-    expect(where((definition) => definition.orgToggle === "none"))
-      .toEqual(["billing", "enterpriseAuth", "enterpriseAuth.sso", "enterpriseAuth.scim"])
-    expect(where((definition) => definition.expiryPolicy === "restricted")).toEqual(["enterpriseAuth.sso"])
+      .toEqual(["org.billing", "ai.gateway.openworkModels", "ai.gateway.openworkModels.analytics", "ai.gateway.freeInference"])
+    expect(where((definition) => definition.entitlement === "free")).toEqual(["org.installLinks", "org.billing"])
+    expect(where((definition) => definition.orgToggle === "none")).toEqual(["org.auth.sso", "org.auth.scim", "org.billing"])
+    expect(where((definition) => definition.expiryPolicy === "restricted")).toEqual(["org.auth.sso"])
   })
 
   test("SSO transition: members keep signing in, new SSO users are blocked (Q-B5)", () => {
-    expect(MODULE_DEFINITIONS["enterpriseAuth.sso"].transitionOperations).toMatchObject({
+    expect(MODULE_DEFINITIONS["org.auth.sso"].transitionOperations).toMatchObject({
       ssoSignIn: "allow",
       ssoJitProvision: "deny",
       other: "deny",
@@ -205,21 +219,21 @@ describe("CLOUD_FREE_PLAN_MODULES", () => {
 })
 
 describe("validateLicenseModules", () => {
-  test("reports unknown keys, D6, deployment and hard-dependency issues", () => {
-    expect(validateLicenseModules({ "foo.bar": true, auth: true }, { scope: "external_den" }).map((issue) => issue.code))
-      .toEqual(["unknown_module", "unknown_module"])
-    expect(validateLicenseModules({ "aiGateway.usageLimits": true }, { scope: "external_den" }))
-      .toEqual([{ code: "submodule_without_parent", module: "aiGateway.usageLimits", detail: "aiGateway" }])
-    expect(validateLicenseModules({ freeInference: true }, { scope: "external_den" }))
-      .toEqual([{ code: "not_on_deployment", module: "freeInference", detail: "self_hosted" }])
-    expect(validateLicenseModules({ mcpApps: true, connect: true }, { scope: "external_den" }))
-      .toEqual([{ code: "missing_hard_dependency", module: "mcpApps", detail: "marketplace" }])
+  test("reports unknown keys (including groups), D6, deployment and hard-dependency issues", () => {
+    expect(validateLicenseModules({ "foo.bar": true, auth: true, "org.auth": true }, { scope: "external_den" }).map((issue) => issue.code))
+      .toEqual(["unknown_module", "unknown_module", "unknown_module"])
+    expect(validateLicenseModules({ "ai.gateway.usageLimits": true }, { scope: "external_den" }))
+      .toEqual([{ code: "submodule_without_parent", module: "ai.gateway.usageLimits", detail: "ai.gateway" }])
+    expect(validateLicenseModules({ "ai.gateway": true, "ai.gateway.freeInference": true }, { scope: "external_den" }))
+      .toEqual([{ code: "not_on_deployment", module: "ai.gateway.freeInference", detail: "self_hosted" }])
+    expect(validateLicenseModules({ "library.apps": true, "library.connectors": true }, { scope: "external_den" }))
+      .toEqual([{ code: "missing_hard_dependency", module: "library.apps", detail: "library.plugins" }])
   })
 
   test("free modules satisfy dependencies unless explicitly denied", () => {
-    expect(validateLicenseModules({ openworkModels: true }, { scope: "hosted_cloud_org" })).toEqual([])
-    expect(validateLicenseModules({ openworkModels: true, billing: false }, { scope: "hosted_cloud_org" }))
-      .toEqual([{ code: "missing_hard_dependency", module: "openworkModels", detail: "billing" }])
+    expect(validateLicenseModules({ "ai.gateway": true, "ai.gateway.openworkModels": true }, { scope: "hosted_cloud_org" })).toEqual([])
+    expect(validateLicenseModules({ "ai.gateway": true, "ai.gateway.openworkModels": true, "org.billing": false }, { scope: "hosted_cloud_org" }))
+      .toEqual([{ code: "missing_hard_dependency", module: "ai.gateway.openworkModels", detail: "org.billing" }])
   })
 
   test("every licensed module granted with its closure is valid on its deployments", () => {
@@ -230,5 +244,10 @@ describe("validateLicenseModules", () => {
         expect([definition.id, validateLicenseModules(modules, { scope })]).toEqual([definition.id, []])
       }
     }
+  })
+
+  test("groups are never module definitions", () => {
+    const keys: readonly string[] = Object.keys(MODULE_DEFINITIONS)
+    for (const group of MODULE_GROUPS) expect(keys).not.toContain(group)
   })
 })

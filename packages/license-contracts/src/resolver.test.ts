@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { LICENSE_TRANSITION_MS, LICENSE_VERIFICATION_GRACE_MS, type LicenseEntitlement } from "./license"
-import { mapModuleIds, MODULE_IDS, type ModuleId } from "./module-ids"
+import { mapModuleIds, MODULE_GROUPS, MODULE_IDS, type ModuleId } from "./module-ids"
 import { CLOUD_FREE_PLAN_MODULES, MODULE_DEFINITIONS, type ModuleDefinition } from "./modules"
 import { evaluateModuleOperation } from "./operations"
 import {
@@ -70,50 +70,52 @@ afterEach(() => vi.restoreAllMocks())
 
 describe("reason precedence (§6.3 steps 1-8)", () => {
   test("1. not on this deployment, even when entitled and available", () => {
-    expect(state(resolve({ deployment: "self_hosted" }), "billing")).toEqual(OFF("not_on_deployment"))
-    expect(state(resolve({ deployment: "self_hosted" }), "openworkModels.analytics")).toEqual(OFF("not_on_deployment"))
+    expect(state(resolve({ deployment: "self_hosted" }), "org.billing")).toEqual(OFF("not_on_deployment"))
+    expect(state(resolve({ deployment: "self_hosted" }), "ai.gateway.openworkModels.analytics")).toEqual(OFF("not_on_deployment"))
   })
 
   test("2. not available: missing key is unknown, otherwise the reason", () => {
-    const availability: AvailabilityMap = { ...ALL_AVAILABLE, aiGateway: undefined, workbot: { reason: "workbot_url_missing" } }
-    const effective = resolve({ availability, disabled: ["aiGateway"] })
-    expect(state(effective, "aiGateway")).toEqual(OFF("not_available", { detail: "unknown" }))
+    const availability: AvailabilityMap = { ...ALL_AVAILABLE, "ai.gateway": undefined, workbot: { reason: "workbot_url_missing" } }
+    const effective = resolve({ availability, disabled: ["ai.gateway"] })
+    expect(state(effective, "ai.gateway")).toEqual(OFF("not_available", { detail: "unknown" }))
     expect(state(effective, "workbot")).toEqual(OFF("not_available", { detail: "workbot_url_missing" }))
-    expect(state(effective, "aiGateway.usageLimits")).toEqual(OFF("requires", { requires: "aiGateway" }))
+    expect(state(effective, "ai.gateway.usageLimits")).toEqual(OFF("requires", { requires: "ai.gateway" }))
   })
 
   test("3. not entitled beats org toggles and dependencies", () => {
     const effective = resolve({
-      entitlement: { source: "static", modules: { ...ALL_ENTITLED, aiGateway: false, connect: false, mcpApps: false } },
-      disabled: ["aiGateway"],
+      entitlement: { source: "static", modules: { ...ALL_ENTITLED, "ai.gateway": false, "library.connectors": false, "library.apps": false } },
+      disabled: ["ai.gateway"],
     })
-    expect(state(effective, "aiGateway")).toEqual(OFF("not_entitled"))
-    expect(state(effective, "mcpApps")).toEqual(OFF("not_entitled"))
+    expect(state(effective, "ai.gateway")).toEqual(OFF("not_entitled"))
+    expect(state(effective, "library.apps")).toEqual(OFF("not_entitled"))
   })
 
   test("4. license expired beats the org toggle", () => {
-    const effective = resolve({ entitlement: licenseInput({}, { lastVerifiedAt: at(-DAY - 31 * DAY) }), disabled: ["aiGateway"] })
-    expect(state(effective, "aiGateway")).toEqual(OFF("license_expired"))
+    const effective = resolve({ entitlement: licenseInput({}, { lastVerifiedAt: at(-DAY - 31 * DAY) }), disabled: ["ai.gateway"] })
+    expect(state(effective, "ai.gateway")).toEqual(OFF("license_expired"))
   })
 
   test("5. disabled by org", () => {
-    expect(state(resolve({ disabled: ["aiGateway"] }), "aiGateway")).toEqual(OFF("disabled_by_org"))
+    expect(state(resolve({ disabled: ["ai.gateway"] }), "ai.gateway")).toEqual(OFF("disabled_by_org"))
   })
 
   test("6. requires: the first failing parent or hard dependency", () => {
-    const effective = resolve({ disabled: ["connect", "marketplace"] })
-    expect(state(effective, "mcpApps")).toEqual(OFF("requires", { requires: "connect" }))
-    expect(state(effective, "workflows")).toEqual(OFF("requires", { requires: "marketplace" }))
-    expect(state(effective, "connect.nativeProviders")).toEqual(OFF("requires", { requires: "connect" }))
+    const effective = resolve({ disabled: ["library.connectors", "library.plugins"] })
+    expect(state(effective, "library.apps")).toEqual(OFF("requires", { requires: "library.plugins" }))
+    expect(state(effective, "library.workflows")).toEqual(OFF("requires", { requires: "library.plugins" }))
+    expect(state(effective, "library.connectors.native.googleWorkspace")).toEqual(OFF("requires", { requires: "library.connectors" }))
+    expect(state(effective, "library.connectors.native.microsoft365")).toEqual(OFF("requires", { requires: "library.connectors" }))
+    expect(state(effective, "library.connectors.slackAssistant.headless")).toEqual(OFF("requires", { requires: "library.connectors.slackAssistant" }))
     expect(state(effective, "dashboards")).toEqual({ state: "on" })
   })
 
   test("7. restricted during a license transition", () => {
     const effective = resolve({ entitlement: licenseInput({}, { lastVerifiedAt: at(-25 * HOUR) }) })
-    expect(state(effective, "enterpriseAuth.sso")).toEqual({
+    expect(state(effective, "org.auth.sso")).toEqual({
       state: "restricted",
       until: at(-HOUR + LICENSE_TRANSITION_MS),
-      operations: MODULE_DEFINITIONS["enterpriseAuth.sso"].transitionOperations,
+      operations: MODULE_DEFINITIONS["org.auth.sso"].transitionOperations,
     })
   })
 
@@ -126,10 +128,10 @@ describe("reason precedence (§6.3 steps 1-8)", () => {
 describe("entitlement sources", () => {
   test("none: every module is not entitled, including free ones (D14)", () => {
     const effective = resolve({ deployment: "self_hosted", entitlement: { source: "none" } })
-    expect(state(effective, "installLinks")).toEqual(OFF("not_entitled"))
-    expect(state(effective, "billing")).toEqual(OFF("not_on_deployment"))
+    expect(state(effective, "org.installLinks")).toEqual(OFF("not_entitled"))
+    expect(state(effective, "org.billing")).toEqual(OFF("not_on_deployment"))
     for (const id of MODULE_IDS) expect(isModuleUsable(effective, id)).toBe(false)
-    expect(state(resolve({ entitlement: { source: "none" } }), "billing")).toEqual(OFF("not_entitled"))
+    expect(state(resolve({ entitlement: { source: "none" } }), "org.billing")).toEqual(OFF("not_entitled"))
   })
 
   test("cloudFreeFallback: the Cloud free plan", () => {
@@ -137,29 +139,29 @@ describe("entitlement sources", () => {
     for (const id of MODULE_IDS) {
       expect([id, isModuleOn(effective, id)]).toEqual([id, CLOUD_FREE_PLAN_MODULES[id]])
     }
-    expect(state(effective, "auditLogs.export")).toEqual(OFF("not_entitled"))
+    expect(state(effective, "org.observability.auditLogs.export")).toEqual(OFF("not_entitled"))
   })
 
   test("static: missing keys fall back to free, explicit false wins", () => {
     const missing = resolve({ entitlement: { source: "static", modules: {} } })
-    expect(state(missing, "installLinks")).toEqual({ state: "on" })
-    expect(state(missing, "billing")).toEqual({ state: "on" })
-    expect(state(missing, "teams")).toEqual(OFF("not_entitled"))
-    const denied = resolve({ entitlement: { source: "static", modules: { installLinks: false } } })
-    expect(state(denied, "installLinks")).toEqual(OFF("not_entitled"))
+    expect(state(missing, "org.installLinks")).toEqual({ state: "on" })
+    expect(state(missing, "org.billing")).toEqual({ state: "on" })
+    expect(state(missing, "org.members.teams")).toEqual(OFF("not_entitled"))
+    const denied = resolve({ entitlement: { source: "static", modules: { "org.installLinks": false } } })
+    expect(state(denied, "org.installLinks")).toEqual(OFF("not_entitled"))
   })
 
   test("static feature flags pass through; flags never grant modules", () => {
-    const effective = resolve({ entitlement: { source: "static", modules: {}, featureFlags: { teams: true } } })
-    expect(effective.featureFlags).toEqual({ teams: true })
-    expect(state(effective, "teams")).toEqual(OFF("not_entitled"))
+    const effective = resolve({ entitlement: { source: "static", modules: {}, featureFlags: { "org.members.teams": true } } })
+    expect(effective.featureFlags).toEqual({ "org.members.teams": true })
+    expect(state(effective, "org.members.teams")).toEqual(OFF("not_entitled"))
   })
 
   test("license: missing keys are not entitled, free modules always are", () => {
-    const effective = resolve({ entitlement: licenseInput({ modules: { teams: true, installLinks: false } }) })
-    expect(state(effective, "teams")).toEqual({ state: "on" })
-    expect(state(effective, "auditLogs")).toEqual(OFF("not_entitled"))
-    expect(state(effective, "installLinks")).toEqual({ state: "on" })
+    const effective = resolve({ entitlement: licenseInput({ modules: { "org.members.teams": true, "org.installLinks": false } }) })
+    expect(state(effective, "org.members.teams")).toEqual({ state: "on" })
+    expect(state(effective, "org.observability.auditLogs")).toEqual(OFF("not_entitled"))
+    expect(state(effective, "org.installLinks")).toEqual({ state: "on" })
     expect(effective.featureFlags).toEqual({ beta: true })
     expect(effective.entitlementSource).toBe("license")
   })
@@ -167,56 +169,72 @@ describe("entitlement sources", () => {
 
 describe("sub-modules and dependencies (D6)", () => {
   test("a sub-module without its parent resolves to requires", () => {
-    const effective = resolve({ entitlement: licenseInput({ modules: { "aiGateway.usageLimits": true } }) })
-    expect(state(effective, "aiGateway")).toEqual(OFF("not_entitled"))
-    expect(state(effective, "aiGateway.usageLimits")).toEqual(OFF("requires", { requires: "aiGateway" }))
+    const effective = resolve({ entitlement: licenseInput({ modules: { "ai.gateway.usageLimits": true } }) })
+    expect(state(effective, "ai.gateway")).toEqual(OFF("not_entitled"))
+    expect(state(effective, "ai.gateway.usageLimits")).toEqual(OFF("requires", { requires: "ai.gateway" }))
   })
 
   test("a parent works without its sub-modules", () => {
-    const effective = resolve({ entitlement: licenseInput({ modules: { aiGateway: true } }) })
-    expect(state(effective, "aiGateway")).toEqual({ state: "on" })
-    expect(state(effective, "aiGateway.usageLimits")).toEqual(OFF("not_entitled"))
+    const effective = resolve({ entitlement: licenseInput({ modules: { "ai.gateway": true } }) })
+    expect(state(effective, "ai.gateway")).toEqual({ state: "on" })
+    expect(state(effective, "ai.gateway.usageLimits")).toEqual(OFF("not_entitled"))
   })
 
   test("requires names the first failing dependency, not the root cause", () => {
-    const effective = resolve({ entitlement: { source: "static", modules: { ...ALL_ENTITLED, billing: false } } })
-    expect(state(effective, "openworkModels")).toEqual(OFF("requires", { requires: "billing" }))
-    expect(state(effective, "openworkModels.analytics")).toEqual(OFF("requires", { requires: "openworkModels" }))
-    const scim = resolve({ entitlement: { source: "static", modules: { ...ALL_ENTITLED, "enterpriseAuth.sso": false } } })
-    expect(state(scim, "enterpriseAuth.scim")).toEqual(OFF("requires", { requires: "enterpriseAuth.sso" }))
+    const effective = resolve({ entitlement: { source: "static", modules: { ...ALL_ENTITLED, "org.billing": false } } })
+    expect(state(effective, "ai.gateway.openworkModels")).toEqual(OFF("requires", { requires: "org.billing" }))
+    expect(state(effective, "ai.gateway.openworkModels.analytics")).toEqual(OFF("requires", { requires: "ai.gateway.openworkModels" }))
+    const scim = resolve({ entitlement: { source: "static", modules: { ...ALL_ENTITLED, "org.auth.sso": false } } })
+    expect(state(scim, "org.auth.scim")).toEqual(OFF("requires", { requires: "org.auth.sso" }))
+  })
+
+  test("modules inside the gateway need it (D44)", () => {
+    const effective = resolve({ disabled: ["ai.gateway"] })
+    expect(state(effective, "ai.gateway.openworkModels")).toEqual(OFF("requires", { requires: "ai.gateway" }))
+    expect(state(effective, "ai.gateway.freeInference")).toEqual(OFF("requires", { requires: "ai.gateway" }))
+    expect(state(effective, "ai.customProviders")).toEqual({ state: "on" })
+  })
+
+  test("groups are never resolved, and a module under a group has no implied parent", () => {
+    const effective = resolve({ disabled: ["org.desktopPolicies"] })
+    expect(Object.keys(effective.modules)).toEqual([...MODULE_IDS])
+    for (const group of MODULE_GROUPS) expect(Object.keys(effective.modules)).not.toContain(group)
+    expect(state(effective, "org.desktopPolicies.versionPinning")).toEqual(OFF("requires", { requires: "org.desktopPolicies" }))
+    expect(state(effective, "org.installLinks")).toEqual({ state: "on" })
+    expect(state(resolve({ disabled: ["org.auth", "library"] }), "org.auth.sso")).toEqual({ state: "on" })
   })
 
   test("a disabled parent makes the child require it", () => {
-    expect(state(resolve({ disabled: ["aiGateway"] }), "aiGateway.usageLimits")).toEqual(OFF("requires", { requires: "aiGateway" }))
+    expect(state(resolve({ disabled: ["ai.gateway"] }), "ai.gateway.usageLimits")).toEqual(OFF("requires", { requires: "ai.gateway" }))
   })
 
   test("soft dependencies never affect state", () => {
-    const effective = resolve({ disabled: ["mcpApps", "workflows", "auditLogs", "teams"] })
+    const effective = resolve({ disabled: ["library.apps", "library.workflows", "org.observability.auditLogs", "org.members.teams"] })
     expect(state(effective, "dashboards")).toEqual({ state: "on" })
-    expect(state(effective, "aiGateway")).toEqual({ state: "on" })
+    expect(state(effective, "ai.gateway")).toEqual({ state: "on" })
     expect(state(effective, "automations")).toEqual({ state: "on" })
   })
 })
 
 describe("org toggles", () => {
   test("only optOut modules can be switched off; unknown ids are ignored", () => {
-    const effective = resolve({ disabled: ["billing", "enterpriseAuth.sso", "customRoles", "foo"] })
-    expect(state(effective, "billing")).toEqual({ state: "on" })
-    expect(state(effective, "enterpriseAuth.sso")).toEqual({ state: "on" })
+    const effective = resolve({ disabled: ["org.billing", "org.auth.sso", "customRoles", "foo"] })
+    expect(state(effective, "org.billing")).toEqual({ state: "on" })
+    expect(state(effective, "org.auth.sso")).toEqual({ state: "on" })
   })
 
   test("toggles survive and restore", () => {
-    const entitledOff = resolve({ entitlement: { source: "static", modules: { ...ALL_ENTITLED, teams: false } }, disabled: ["teams"] })
-    expect(state(entitledOff, "teams")).toEqual(OFF("not_entitled"))
-    expect(state(resolve({ disabled: ["teams"] }), "teams")).toEqual(OFF("disabled_by_org"))
-    expect(state(resolve({ disabled: [] }), "teams")).toEqual({ state: "on" })
+    const entitledOff = resolve({ entitlement: { source: "static", modules: { ...ALL_ENTITLED, "org.members.teams": false } }, disabled: ["org.members.teams"] })
+    expect(state(entitledOff, "org.members.teams")).toEqual(OFF("not_entitled"))
+    expect(state(resolve({ disabled: ["org.members.teams"] }), "org.members.teams")).toEqual(OFF("disabled_by_org"))
+    expect(state(resolve({ disabled: [] }), "org.members.teams")).toEqual({ state: "on" })
   })
 })
 
 describe("license transitions", () => {
   test("verified 23h ago: all on, valid until the verification grace ends", () => {
     const effective = resolve({ entitlement: licenseInput({}, { lastVerifiedAt: at(-23 * HOUR) }) })
-    expect(isModuleOn(effective, "enterpriseAuth.sso")).toBe(true)
+    expect(isModuleOn(effective, "org.auth.sso")).toBe(true)
     expect(effective.validUntil).toBe(at(-23 * HOUR + LICENSE_VERIFICATION_GRACE_MS))
     expect(effective.license).toEqual({ status: "active", kind: "standard", isTrial: false, expiresAt: null, transition: null })
   })
@@ -224,10 +242,9 @@ describe("license transitions", () => {
   test("verified 25h ago: grace ended 1h ago, the 30-day transition runs", () => {
     const t0 = -HOUR
     const effective = resolve({ entitlement: licenseInput({}, { lastVerifiedAt: at(-25 * HOUR) }) })
-    expect(state(effective, "aiGateway")).toEqual({ state: "on" })
-    expect(state(effective, "enterpriseAuth")).toEqual({ state: "on" })
-    expect(state(effective, "enterpriseAuth.sso")).toMatchObject({ state: "restricted", until: at(t0 + LICENSE_TRANSITION_MS) })
-    expect(state(effective, "enterpriseAuth.scim")).toEqual({ state: "on" })
+    expect(state(effective, "ai.gateway")).toEqual({ state: "on" })
+    expect(state(effective, "org.auth.sso")).toMatchObject({ state: "restricted", until: at(t0 + LICENSE_TRANSITION_MS) })
+    expect(state(effective, "org.auth.scim")).toEqual({ state: "on" })
     expect(effective.validUntil).toBe(at(t0 + LICENSE_TRANSITION_MS))
     expect(effective.license?.transition).toEqual({ startedAt: at(t0), endsAt: at(t0 + LICENSE_TRANSITION_MS) })
   })
@@ -244,7 +261,7 @@ describe("license transitions", () => {
   test("expired: the transition starts at expiresAt", () => {
     const entitlement = licenseInput({ status: "expired", expiresAt: at(-2 * DAY) })
     expect(computeTransitionStart(entitlement, NOW)).toBe(at(-2 * DAY))
-    expect(state(resolve({ entitlement }), "enterpriseAuth.sso")).toMatchObject({ until: at(-2 * DAY + LICENSE_TRANSITION_MS) })
+    expect(state(resolve({ entitlement }), "org.auth.sso")).toMatchObject({ until: at(-2 * DAY + LICENSE_TRANSITION_MS) })
   })
 
   test("an active license past expiresAt starts the transition; a future expiry caps validUntil", () => {
@@ -265,7 +282,7 @@ describe("license transitions", () => {
 
   test("a persisted earlier start wins, so restarts can't extend grace", () => {
     const effective = resolve({ entitlement: licenseInput({}, { lastVerifiedAt: at(-25 * HOUR), transitionStartedAt: at(-31 * DAY) }) })
-    expect(state(effective, "aiGateway")).toEqual(OFF("license_expired"))
+    expect(state(effective, "ai.gateway")).toEqual(OFF("license_expired"))
   })
 
   test("trial expiry is immediate: no grace, no restricted state (D22)", () => {
@@ -279,30 +296,30 @@ describe("license transitions", () => {
 
   test("an expired trial is still a trial", () => {
     const effective = resolve({ entitlement: licenseInput({ kind: "trial", status: "expired", expiresAt: at(-HOUR) }) })
-    expect(state(effective, "enterpriseAuth.sso")).toEqual(OFF("license_expired"))
+    expect(state(effective, "org.auth.sso")).toEqual(OFF("license_expired"))
   })
 
   test("a healthy trial is on until it expires", () => {
     const effective = resolve({ entitlement: licenseInput({ kind: "trial", expiresAt: at(3 * HOUR) }) })
-    expect(isModuleOn(effective, "teams")).toBe(true)
+    expect(isModuleOn(effective, "org.members.teams")).toBe(true)
     expect(effective.validUntil).toBe(at(3 * HOUR))
   })
 
   test("a module that isn't entitled stays not_entitled during a transition", () => {
-    const effective = resolve({ entitlement: licenseInput({ modules: { teams: true } }, { lastVerifiedAt: at(-DAY - 31 * DAY) }) })
-    expect(state(effective, "teams")).toEqual(OFF("license_expired"))
-    expect(state(effective, "auditLogs")).toEqual(OFF("not_entitled"))
+    const effective = resolve({ entitlement: licenseInput({ modules: { "org.members.teams": true } }, { lastVerifiedAt: at(-DAY - 31 * DAY) }) })
+    expect(state(effective, "org.members.teams")).toEqual(OFF("license_expired"))
+    expect(state(effective, "org.observability.auditLogs")).toEqual(OFF("not_entitled"))
   })
 
   test("custom definitions apply their own expiry policy", () => {
     const definitions = {
       ...MODULE_DEFINITIONS,
-      aiGateway: { ...MODULE_DEFINITIONS.aiGateway, expiryPolicy: "immediate" },
+      "ai.gateway": { ...MODULE_DEFINITIONS["ai.gateway"], expiryPolicy: "immediate" },
     } satisfies Record<ModuleId, ModuleDefinition>
     const effective = resolve({ entitlement: licenseInput({}, { lastVerifiedAt: at(-25 * HOUR) }) }, definitions)
-    expect(state(effective, "aiGateway")).toEqual(OFF("license_expired"))
-    expect(state(effective, "aiGateway.usageLimits")).toEqual(OFF("requires", { requires: "aiGateway" }))
-    expect(state(effective, "teams")).toEqual({ state: "on" })
+    expect(state(effective, "ai.gateway")).toEqual(OFF("license_expired"))
+    expect(state(effective, "ai.gateway.usageLimits")).toEqual(OFF("requires", { requires: "ai.gateway" }))
+    expect(state(effective, "org.members.teams")).toEqual({ state: "on" })
   })
 
   test("a healthy license has no transition start", () => {
@@ -317,7 +334,7 @@ describe("purity", () => {
       deployment: "cloud",
       availability: ALL_AVAILABLE,
       entitlement: licenseInput({}, { lastVerifiedAt: at(-25 * HOUR) }),
-      disabled: ["teams"],
+      disabled: ["org.members.teams"],
       now: NOW,
     }
     expect(resolveModules(inputs)).toEqual(resolveModules(inputs))
@@ -330,7 +347,7 @@ describe("purity", () => {
       deployment: "cloud",
       availability: ALL_AVAILABLE,
       entitlement: licenseInput({}, { lastVerifiedAt: at(-25 * HOUR) }),
-      disabled: ["teams", "aiGateway"],
+      disabled: ["org.members.teams", "ai.gateway"],
       now: NOW,
     }
     const started = performance.now()

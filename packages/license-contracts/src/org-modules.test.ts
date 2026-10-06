@@ -11,7 +11,7 @@ const v2Payload = {
   licenseId: "lic_1",
   kind: "standard",
   status: "active",
-  modules: { teams: true, "future.module": true },
+  modules: { "org.members.teams": true, "future.module": true },
   featureFlags: {},
   maxUsers: 5,
   expiresAt: null,
@@ -43,7 +43,7 @@ describe("entitlementSnapshotSchema", () => {
   test("becomes a license resolver input", () => {
     const input = entitlementInputFromSnapshot(entitlementSnapshotSchema.parse(snapshot))
     expect(input).toMatchObject({ source: "license", lastVerifiedAt: snapshot.lastVerifiedAt, transitionStartedAt: null, credentialRejectedAt: null })
-    expect(input.license.modules).toEqual({ teams: true })
+    expect(input.license.modules).toEqual({ "org.members.teams": true })
   })
 })
 
@@ -51,19 +51,19 @@ describe("organizationModulesSchema", () => {
   const document = {
     schemaVersion: 1,
     revision: 3,
-    disabled: ["teams", "customRoles", "someFutureModule"],
+    disabled: ["org.members.teams", "customRoles", "someFutureModule"],
     updatedAt: "2026-10-05T10:00:00.000Z",
     updatedBy: "member_1",
   }
 
   test("keeps unknown ids in disabled so they survive a downgrade", () => {
-    expect(organizationModulesSchema.parse(document).disabled).toEqual(["teams", "customRoles", "someFutureModule"])
+    expect(organizationModulesSchema.parse(document).disabled).toEqual(["org.members.teams", "customRoles", "someFutureModule"])
   })
 
   test("accepts the optional entitlement snapshot and reconcile marker", () => {
-    const parsed = organizationModulesSchema.parse({ ...document, entitlement: snapshot, reconciled: ["aiGateway"] })
+    const parsed = organizationModulesSchema.parse({ ...document, entitlement: snapshot, reconciled: ["ai.gateway"] })
     expect(parsed.entitlement?.payload.licenseId).toBe("lic_1")
-    expect(parsed.reconciled).toEqual(["aiGateway"])
+    expect(parsed.reconciled).toEqual(["ai.gateway"])
   })
 
   test("rejects bad documents", () => {
@@ -79,14 +79,14 @@ describe("client payload", () => {
       deployment: "self_hosted",
       availability: { ...mapModuleIds((): true => true), workbot: { reason: "workbot_url_missing" } },
       entitlement: { source: "static", modules: mapModuleIds(() => true), featureFlags: { beta: true } },
-      disabled: ["connect"],
+      disabled: ["library.connectors"],
       now: new Date("2026-10-05T12:00:00.000Z"),
     })
     const payload = toOrgModulesPayload(effective)
     expect(orgModulesPayloadSchema.parse(payload)).toEqual(payload)
-    expect(payload.modules.billing).toEqual({ state: "off", reason: "not_on_deployment" })
+    expect(payload.modules["org.billing"]).toEqual({ state: "off", reason: "not_on_deployment" })
     expect(payload.modules.workbot).toEqual({ state: "off", reason: "not_available", detail: "workbot_url_missing" })
-    expect(payload.modules.mcpApps).toEqual({ state: "off", reason: "requires", requires: "connect" })
+    expect(payload.modules["library.apps"]).toEqual({ state: "off", reason: "requires", requires: "library.connectors" })
     expect(payload.featureFlags).toEqual({ beta: true })
   })
 
