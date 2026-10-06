@@ -6,8 +6,8 @@ import type { Place } from "@openwork/env";
 import baselineModels from "../../ee/apps/gateway/src/models/openwork-models.json";
 import { bootManagedOpenworkServer } from "./openwork-server-cli.ts";
 
-export async function bootManagedInference(place: Place) {
-  const service = await managedInference(place);
+export async function bootManagedInference(place: Place, options: { env?: Record<string, string> } = {}) {
+  const service = await managedInference(place, options);
   const resources = new AsyncDisposableStack();
   resources.use(service);
   return {

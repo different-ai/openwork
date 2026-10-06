@@ -19,7 +19,8 @@
   "dependencies": {
     "@openwork-ee/den-db": "workspace:*",
     "@openwork-ee/telemetry-contracts": "workspace:*",
-    "@openwork-ee/utils": "workspace:*"
+    "@openwork-ee/utils": "workspace:*",
+    "@openwork/features": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",

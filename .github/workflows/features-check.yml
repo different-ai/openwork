@@ -1,0 +1,65 @@
+name: Feature registry check
+
+# The feature registry (packages/features/src/registry.ts) generates the Helm
+# chart's config.features block, values schema and README table. This job
+# fails when those are stale, when the chart renders DEN_FEATURE_* names that
+# den-api does not read, when a Dockerfile misses a workspace package its
+# service needs, or when code adds a DEN_*_ENABLED switch or reads
+# organization metadata.capabilities instead of the registry.
+# See .opencode/skills/add-a-feature/SKILL.md.
+
+on:
+  pull_request:
+    paths:
+      - "packages/features/**"
+      - "packaging/helm/openwork-ee/**"
+      - "scripts/features-sync.mjs"
+      - "scripts/check-docker-workspace-packages.mjs"
+      - "packaging/docker/**"
+      - "pnpm-workspace.yaml"
+      - "apps/*/package.json"
+      - "packages/*/package.json"
+      - "ee/apps/*/package.json"
+      - "ee/packages/*/package.json"
+      - "ee/apps/den-api/src/**"
+      - "ee/apps/den-web/app/**"
+      - "ee/apps/den-web/components/**"
+      - "ee/apps/gateway/src/**"
+      - "ee/packages/**"
+      - "apps/app/src/**"
+      - "apps/server/src/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  features:
+    name: Feature registry, Helm chart and guard rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+
+      - name: Install the registry's dependencies
+        run: pnpm install --frozen-lockfile --filter "@openwork/features"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+
+      - name: Test the resolver
+        run: pnpm --filter @openwork/features test
+
+      - name: Check the feature registry
+        run: pnpm features:check

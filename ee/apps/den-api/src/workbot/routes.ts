@@ -12,7 +12,7 @@ import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token
 import { mintHeadlessRunMcpToken } from "../mcp/headless-run-token-mint.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
 import { jsonResponse, unauthorizedSchema } from "../openapi.js"
-import { organizationHasCapability } from "../organization-capabilities.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { jsonValidator, tokenRoute } from "../middleware/index.js"
 import { checkRateLimit } from "../utils/rate-limit.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
@@ -147,7 +147,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         user,
         organization: { id: organization.id, name: organization.name, brandAppName: readBrandAppName(organization.metadata) },
         memberId,
-        enabled: organizationHasCapability(organization.metadata, "workbot"),
+        enabled: await organizationFeatureEnabled(organization.id, "workbot"),
         canSchedule,
       })
     },
@@ -214,7 +214,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       if (requiredScopes.some((scope) => !resolved.scopes.has(scope))) {
         return c.json({ error: "insufficient_scope", message: "The sign-in grant does not allow this Workbot turn." }, 403)
       }
-      if (!organizationHasCapability(organization.metadata, "workbot")) {
+      if (!(await organizationFeatureEnabled(organization.id, "workbot"))) {
         return c.json({ error: "workbot_not_enabled", message: "Workbot is off for this workspace." }, 403)
       }
       const retryAfter = await checkRateLimit(`workbot-run-token:${principal.organizationId}:${principal.userId}`, RUN_TOKENS_PER_WINDOW, RUN_TOKEN_WINDOW_MS, Date.now())

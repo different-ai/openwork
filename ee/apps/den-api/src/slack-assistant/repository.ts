@@ -20,8 +20,7 @@ import {
   readConnectedAccountForExternalMcpIdentity,
   type ExternalMcpConnectionRow,
 } from "../capability-sources/external-mcp-connections.js"
-import { memberFacingMcpConnectionsEnabled } from "../capability-sources/external-mcp-rollout.js"
-import { organizationHasCapability } from "../organization-capabilities.js"
+import { getOrganizationFeatures, organizationFeatureEnabled } from "../features.js"
 import { getOpenWorkWebRuntimeAccess } from "../openwork-web-runtime-access.js"
 import { listTeamsForMember } from "../orgs.js"
 import { canUseSlackAssistant, scopeKey, slackClient, type SlackEvent } from "./protocol.js"
@@ -34,20 +33,10 @@ export async function getInstallation(connectionId: DenTypeId<"externalMcpConnec
   return (await db.select().from(Installation).where(eq(Installation.connectionId, connectionId)).limit(1))[0] ?? null
 }
 export async function slackAssistantEnabledForInstallation(installation: InstallationRow) {
-  const [organization] = await db
-    .select({ metadata: OrganizationTable.metadata })
-    .from(OrganizationTable)
-    .where(eq(OrganizationTable.id, installation.organizationId))
-    .limit(1)
-  return organizationHasCapability(organization?.metadata, "slackAssistant")
+  return organizationFeatureEnabled(installation.organizationId, "slackAssistant")
 }
 export async function slackRuntimeForInstallation(installation: InstallationRow): Promise<SlackRuntime> {
-  const [organization] = await db
-    .select({ metadata: OrganizationTable.metadata })
-    .from(OrganizationTable)
-    .where(eq(OrganizationTable.id, installation.organizationId))
-    .limit(1)
-  return slackRuntimeForOrganization(organization?.metadata)
+  return slackRuntimeForOrganization(await getOrganizationFeatures(installation.organizationId))
 }
 export function isSlackConnection(connection: ExternalMcpConnectionRow) {
   return (
@@ -204,15 +193,16 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
     .limit(1)
   const member = members[0]
   if (!member?.userId) return null
-  const [organizations, teams, account, access] = await Promise.all([
+  const [organizations, teams, account, access, features] = await Promise.all([
     db.select().from(OrganizationTable).where(eq(OrganizationTable.id, installation.organizationId)).limit(1),
     listTeamsForMember({ organizationId: installation.organizationId, memberId: member.id }),
     readConnectedAccountForExternalMcpIdentity({ connection, orgMembershipId: member.id }),
     getOpenWorkWebRuntimeAccess(installation.organizationId),
+    getOrganizationFeatures(installation.organizationId),
   ])
   const organization = organizations[0]
   // The headless runner needs no per-member OpenWork Web computer.
-  const runtime = slackRuntimeForOrganization(organization?.metadata)
+  const runtime = slackRuntimeForOrganization(features)
   const granted = await memberCanUseExternalMcpConnection({
     connectionId: connection.id,
     orgMembershipId: member.id,
@@ -221,10 +211,10 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
   if (
     !organization ||
     !canUseSlackAssistant({
-      capabilityEnabled: organizationHasCapability(organization.metadata, "slackAssistant"),
+      capabilityEnabled: features.slackAssistant,
       enabled: installation.enabled,
       individualAccounts: true,
-      mcpEnabled: memberFacingMcpConnectionsEnabled(organization.metadata),
+      mcpEnabled: features.mcpConnections,
       webAccess: runtime === "headless" || access.hasAccess,
       activeMember: true,
       granted,

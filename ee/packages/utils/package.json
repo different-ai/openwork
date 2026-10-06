@@ -70,6 +70,11 @@
       "types": "./src/inference-bearer-key.ts",
       "development": "./src/inference-bearer-key.ts",
       "default": "./dist/inference-bearer-key.js"
+    },
+    "./litellm-catalog": {
+      "types": "./src/litellm-catalog.ts",
+      "development": "./src/litellm-catalog.ts",
+      "default": "./dist/litellm-catalog.js"
     }
   },
   "scripts": {

@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto"
 import type { createDenDb } from "@openwork-ee/den-db"
 import { and, eq, sql } from "@openwork-ee/den-db/drizzle"
+import { readFeatures } from "@openwork-ee/den-db/organization-features"
+import { parseFeatureEnvironment } from "@openwork/features"
 import { ModelsAnalyticsEventTable, ModelsAnalyticsSettingsTable, OrganizationTable, OrgSubscriptionTable } from "@openwork-ee/den-db/schema"
 import { modelsAnalyticsEventSchema, type ModelsAnalyticsEvent } from "@openwork-ee/telemetry-contracts"
 
@@ -18,7 +20,9 @@ export async function readModelsAnalyticsSettings(db: Db, orgId: ModelsAnalytics
   const [subscription] = await db.select({ status: OrgSubscriptionTable.status })
     .from(OrgSubscriptionTable).where(and(eq(OrgSubscriptionTable.organization_id, orgId), eq(OrgSubscriptionTable.type, "inference"))).limit(1)
   const metadata = record(org?.metadata)
-  const available = record(metadata.capabilities).modelsAnalytics === true
+  // Shared by den-api and the gateway, which receive the same DEN_DEPLOYMENT /
+  // DEN_FEATURE_* configuration; den-api validates it at boot.
+  const available = org ? (await readFeatures(db, orgId, parseFeatureEnvironment(process.env))).modelsAnalytics : false
   const subscribed = subscription?.status === "active" || subscription?.status === "trialing"
   const modelsEnabled = record(metadata.inference).enabled === true
   // Unreleased organizations do not touch the new tables. This also keeps

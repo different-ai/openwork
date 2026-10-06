@@ -5,9 +5,11 @@ import { readOrganizationMetadata } from "@openwork/types/den/managed-models-pol
 import { z } from "zod"
 import { db } from "../db.js"
 import { getDesktopReleaseMetadata } from "../desktop-releases.js"
+import { env } from "../env.js"
 import { parseOrganizationPlan, type PlanTier } from "../entitlements.js"
 import { normalizeOrganizationMetadata } from "../organization-limits.js"
-import { organizationCapabilityKeySchema, organizationHasCapability } from "../organization-capabilities.js"
+import { readFeatureRollouts, setFeatureRollout, setOrganizationFeatureOverrides } from "@openwork-ee/den-db/organization-features"
+import { FEATURE_KEYS, featureAvailableOn, featureDefinition, featureKeySchema, featureRollout, resolveFeature } from "@openwork/features"
 import { updateOrganizationMetadata } from "../organization-metadata.js"
 
 /**
@@ -485,10 +487,10 @@ export function registerAdminMcpTools(server: McpServer) {
     "den_set_org_capability",
     {
       description:
-        "Admin write tool: turn one organization capability on or off (the same switches as the admin panel), e.g. capability='workbot'. enabled=null removes the override and restores the default.",
+        "Admin write tool: turn one feature on or off for one organization (an organization override, the same switch as the admin panel), e.g. capability='workbot'. enabled=null removes the override so the feature follows the deployment-wide on/off state again. The kill switch (den_set_feature_rollout) still outranks it.",
       inputSchema: z.object({
         organizationId: z.string().min(1).describe("Organization id, e.g. org_..."),
-        capability: organizationCapabilityKeySchema.describe("Capability to set"),
+        capability: featureKeySchema.describe("Feature to set (see packages/features/src/registry.ts)"),
         enabled: z.boolean().nullable().describe("true or false, or null to restore the default"),
       }),
     },
@@ -506,19 +508,71 @@ export function registerAdminMcpTools(server: McpServer) {
         if (!organization) {
           throw new Error(`No organization found for ${organizationId}`)
         }
-        const metadata = await updateOrganizationMetadata(organizationId, (current) => {
-          // Other capability keys (and unmanaged ones) are kept as they are.
-          const capabilities = { ...readOrganizationMetadata(current.capabilities) }
-          if (enabled === null) delete capabilities[capability]
-          else capabilities[capability] = enabled
-          return { ...current, capabilities }
+        if (!featureAvailableOn(capability, env.features.deployment)) {
+          throw new Error(`${capability} is not part of this deployment.`)
+        }
+        const overrides = await setOrganizationFeatureOverrides(db, {
+          organizationId,
+          changes: { [capability]: enabled },
+          source: "platform",
         })
         return {
           ok: true,
           organization: { id: organization.id, name: organization.name, slug: organization.slug },
           capability,
-          enabled: organizationHasCapability(metadata, capability),
+          enabled: resolveFeature(capability, {
+            ...env.features,
+            rollouts: await readFeatureRollouts(db),
+            overrides,
+          }).enabled,
         }
+      }),
+  )
+
+  server.registerTool(
+    "den_list_features",
+    {
+      description:
+        "Admin read tool: every feature in the registry with the deployments it exists on and this deployment's state (on or off for everyone, kill switch, operator lock).",
+      inputSchema: z.object({}),
+    },
+    async () =>
+      run(async () => {
+        const rollouts = await readFeatureRollouts(db)
+        return {
+          deployment: env.features.deployment,
+          features: FEATURE_KEYS.map((key) => {
+            const definition = featureDefinition(key)
+            return {
+              key,
+              label: definition.label,
+              deployments: definition.deployments,
+              available: featureAvailableOn(key, env.features.deployment),
+              ...featureRollout(key, rollouts),
+              lock: env.features.locks[key] ?? null,
+            }
+          }),
+        }
+      }),
+  )
+
+  server.registerTool(
+    "den_set_feature_rollout",
+    {
+      description:
+        "Admin write tool: change a feature for this whole deployment. enabled turns it on or off for everyone (organization overrides still apply); killed=true turns it off everywhere at once (the revert), outranking operator locks and organization overrides.",
+      inputSchema: z.object({
+        feature: featureKeySchema.describe("Feature key (see den_list_features)"),
+        enabled: z.boolean().optional().describe("true for on for everyone, false for off"),
+        killed: z.boolean().optional().describe("true to turn it off everywhere, false to clear the kill switch"),
+      }),
+    },
+    async ({ feature, enabled, killed }) =>
+      run(async () => {
+        if (enabled === undefined && killed === undefined) throw new Error("Set enabled, killed, or both.")
+        if (!featureAvailableOn(feature, env.features.deployment)) throw new Error(`${feature} is not part of this deployment.`)
+        const rollouts = await setFeatureRollout(db, { key: feature, enabled, killed, defaultEnabled: featureDefinition(feature).default })
+        return { ok: true, feature, ...featureRollout(feature, rollouts) }
       }),
   )
 

@@ -11,7 +11,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { OPENWORK_DOWNLOAD_URL } from "../../CONSTS.js"
 import { resolvePublicOrigin } from "../../capability-sources/generic-oauth.js"
-import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
+import { organizationFeatureEnabled } from "../../features.js"
 import { db } from "../../db.js"
 import { mintDesktopConnectLink } from "../../desktop-connect-link.js"
 import { resolveInstallerReleaseTag } from "../../desktop-releases.js"
@@ -25,7 +25,7 @@ import { env } from "../../env.js"
 import { hashInstallLinkToken, mintOrganizationInstallLink } from "../../install-links.js"
 import { jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
-import { organizationCapabilityKeySchema } from "../../organization-capabilities.js"
+import { featureKeySchema } from "@openwork/features"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import {
   cloudDesktopReleaseAssetName,
@@ -95,7 +95,7 @@ const installLinkNotFoundSchema = z.object({
 
 const capabilityDisabledSchema = z.object({
   error: z.literal("capability_disabled"),
-  capability: organizationCapabilityKeySchema,
+  capability: featureKeySchema,
 }).meta({ ref: "CapabilityDisabledError" })
 
 const rateLimitedSchema = z.object({
@@ -391,7 +391,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       const input = c.req.valid("json")
       const payload = c.get("organizationContext")
 
-      if (!organizationInstallLinksEnabled(payload.organization.metadata)) {
+      if (!(await organizationFeatureEnabled(payload.organization.id, "installLinks"))) {
         return c.json({ error: "capability_disabled", capability: "installLinks" }, 403)
       }
 
@@ -416,7 +416,6 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       const installLink = await mintOrganizationInstallLink({
         organizationId: payload.organization.id,
         createdByUserId: payload.currentMember.userId,
-        metadata: payload.organization.metadata,
         rotate: input.rotate,
       })
 

@@ -102,10 +102,10 @@ export async function auditLogs(seed: Seed, { place }: { place: Place }) {
   const providerId = identifier(record(record(created.body).inferenceProvider).id);
   const warmed = await seed.api(den.admin, `/v1/inference-providers/${encodeURIComponent(providerId)}/models`);
   if (!warmed.response.ok) throw new Error(`Synthetic model setup failed: ${warmed.response.status}`);
-  // Seed only the release flag, preserving all existing metadata and sibling capabilities.
+  // Seed only the auditLogs feature override, leaving every other feature alone.
   // Provider setup predates the grant; browser/API traffic initializes the real
   // default policy and records access events before the user's provider save.
-  await seedAuditDatabase(den, "UPDATE organization SET metadata = JSON_SET(JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.capabilities', COALESCE(JSON_EXTRACT(metadata, '$.capabilities'), JSON_OBJECT())), '$.capabilities.auditLogs', CAST('true' AS JSON)) WHERE id = ?", [orgId]);
+  await seedAuditDatabase(den, "INSERT INTO organization_feature (organization_id, feature_key, enabled, source) VALUES (?, 'auditLogs', TRUE, 'platform') ON DUPLICATE KEY UPDATE enabled = TRUE", [orgId]);
   const viewport = { width: 1440, height: 1100 };
   const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/audit-logs", headless: true, viewport });
   const memberWeb = await seed.web({ den, signedInAs: teammate, startPath: "/dashboard/audit-logs", headless: true, viewport });

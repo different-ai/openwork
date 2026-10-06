@@ -53,6 +53,8 @@
     "test:fs-engine": "pnpm --filter @openwork/app test:fs-engine",
     "warden:check": "PI_CODING_AGENT_DIR=.warden/pi pnpm dlx @sentry/warden@0.43.0 --runtime pi --config-path warden.toml --log",
     "check:outbound-access": "node scripts/check-outbound-access.mjs",
+    "features:sync": "node scripts/features-sync.mjs",
+    "features:check": "node scripts/features-sync.mjs --check",
     "test:e2e": "pnpm --filter @openwork/app test:e2e",
     "benchmark:admin-scale:mysql": "pnpm --filter @openwork-ee/den-db benchmark:admin-scale:mysql",
     "evals:e2e": "node evals/bin/evals.mjs",

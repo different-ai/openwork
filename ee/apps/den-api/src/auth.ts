@@ -1224,19 +1224,12 @@ export const auth = betterAuth({
           if ("plan" in metadata) {
             throw new APIError("FORBIDDEN", { message: "plan is reserved for internal platform administration." });
           }
-          const capabilities = metadata.capabilities;
-          if (capabilities && typeof capabilities === "object" && "auditLogs" in capabilities) {
-            throw new APIError("FORBIDDEN", { message: "capabilities.auditLogs is reserved for internal platform administration." });
-          }
-          for (const key of ["slackAssistant", "slackAssistantHeadless", "headlessAutomations", "workbot"]) {
-            if (capabilities && typeof capabilities === "object" && key in capabilities) {
-              throw new APIError("FORBIDDEN", { message: `capabilities.${key} is reserved for internal platform administration.` });
-            }
-          }
-          if (capabilities && typeof capabilities === "object" && "gatewayDashboard" in capabilities) {
-            const retainedCapabilities = { ...capabilities };
-            delete retainedCapabilities.gatewayDashboard;
-            return { data: { metadata: { ...metadata, capabilities: retainedCapabilities } } };
+          // Features live in the organization_feature table and only platform
+          // admins write them. Organization metadata never turns a feature on,
+          // so a client-supplied capabilities object is dropped, not stored.
+          if ("capabilities" in metadata) {
+            const { capabilities: _ignored, ...retained } = metadata;
+            return { data: { metadata: retained } };
           }
         },
         beforeUpdateOrganization: async ({ organization }) => {

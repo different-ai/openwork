@@ -81,7 +81,6 @@ import { env } from "../../../env.js"
 import { appLogger } from "../../../observability/logger.js"
 import { roleIncludesOwner } from "../../../orgs.js"
 import { redactWorkflowNormalizedPayloadAuthoringDetails } from "../../../workflow-projections.js"
-import { memberFacingMcpConnectionsEnabled } from "../../../capability-sources/external-mcp-rollout.js"
 import { comparablePluginMcpRequirementUrl, marketplaceMcpServerEntries, resolveMarketplacePluginCloudReadiness } from "../../../mcp/marketplace-capabilities.js"
 import { assertPublicUrl, PrivateUrlError } from "../../../capability-sources/url-guard.js"
 import {
@@ -118,6 +117,7 @@ import {
 import { resolveImportedConnectorTarget } from "../../../capability-sources/claude-connector-aliases.js"
 import { NATIVE_OAUTH_PROVIDERS } from "../../../capability-sources/provider-registry.js"
 import type { MemberUsableConnectionFacts } from "../mcp-connections.js"
+import { organizationFeatureEnabled } from "../../../features.js"
 
 type OrganizationId = PluginArchActorContext["organizationContext"]["organization"]["id"]
 const logger = appLogger.child({ component: "plugin_system_store" })
@@ -3757,7 +3757,7 @@ export async function getMarketplaceResolved(input: { context: PluginArchActorCo
     counts.set(objectType, (counts.get(objectType) ?? 0) + 1)
   }
 
-  const cloudReadinessByPlugin = memberFacingMcpConnectionsEnabled(input.context.organizationContext.organization.metadata)
+  const cloudReadinessByPlugin = (await organizationFeatureEnabled(input.context.organizationContext.organization.id, "mcpConnections"))
     ? await resolveMarketplacePluginCloudReadiness({
         organizationId,
         member: {

@@ -18,6 +18,8 @@ export type GatewayUsagePreflight = {
   upstreamOrigin: string
   upstreamPath: string
   deferred: boolean
+  /** The selected model row carries its own price (synced LiteLLM models). */
+  priced?: boolean
 }
 
 export function isGatewayUsageAccountable(
@@ -32,7 +34,7 @@ export function isGatewayUsageAccountable(
     input.upstreamOrigin === "https://openrouter.ai" &&
     input.upstreamPath === "/api/v1/chat/completions"
 
-  return reportsCost || pricing?.getModelPrice(input.providerId, input.modelId) != null
+  return reportsCost || input.priced === true || pricing?.getModelPrice(input.providerId, input.modelId) != null
 }
 
 export type CheckGatewayUsage = (

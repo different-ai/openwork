@@ -5,7 +5,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
+import { organizationFeatureEnabled } from "../../features.js"
 import { jsonValidator, publicRoute, userSessionRoute } from "../../middleware/index.js"
 import { db } from "../../db.js"
 import { env, type DenOrgMode } from "../../env.js"
@@ -648,7 +648,6 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
     // back to null when the session has no resolvable organization; the app
     // then repairs through its normal org-resolution path.
     let organization: { id: string; slug: string; name: string } | null = null
-    let organizationMetadata: string | null = null
     try {
       const userId = normalizeDenTypeId("user", exchange.user.id)
       let resolved = await resolveUserOrganizations({
@@ -666,7 +665,6 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       }
       const activeOrg = resolved.orgs.find((org) => org.id === resolved.activeOrgId) ?? null
       organization = activeOrg ? { id: activeOrg.id, slug: activeOrg.slug, name: activeOrg.name } : null
-      organizationMetadata = activeOrg?.metadata ?? null
     } catch {
       organization = null
     }
@@ -674,7 +672,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
     let connectEnabled: boolean | null = null
     if (organization) {
       try {
-        connectEnabled = memberFacingMcpConnectionsEnabled(organizationMetadata)
+        connectEnabled = await organizationFeatureEnabled(organization.id, "mcpConnections")
       } catch {
         connectEnabled = null
       }

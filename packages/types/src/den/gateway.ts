@@ -203,11 +203,54 @@ export interface GatewayProviderSummary {
   apiKeys?: Record<string, string>;
 }
 
+/**
+ * LiteLLM provider state for management views. `org` uses one organization
+ * key and OpenWork spend tracking; `member` uses each person's own LiteLLM
+ * key, so LiteLLM owns budgets and OpenWork does not price or limit usage.
+ */
+export type GatewayLiteLlmAttentionReason = "not_in_litellm" | "no_key_to_mirror" | "no_models" | "error";
+
+export interface GatewayLiteLlmStatus {
+  mode: InferenceProviderCredentialMode;
+  /** member mode: each person pastes their key, or OpenWork creates it. */
+  keySource: "personal" | "issued" | null;
+  /** issued: one key per LiteLLM team, or a copy of each person's existing key. */
+  issueStrategy: "per_team" | "mirror" | null;
+  /** issued + mirror: fall back to per-team keys, or report people with no key to copy. */
+  mirrorFallback: "per_team" | "error" | null;
+  /** issued: people with at least one key OpenWork created. */
+  issuedMemberCount: number;
+  /** issued: people OpenWork could not create keys for (first 50 in attention). */
+  attentionCount: number;
+  attention: Array<{ memberId: string; name: string | null; email: string | null; reason: GatewayLiteLlmAttentionReason }>;
+  /** LiteLLM proxy root, never a key. */
+  baseUrl: string | null;
+  spendTracking: boolean;
+  /** Organization key (org mode) or admin key (member mode) is stored. */
+  hasSyncKey: boolean;
+  lastSyncedAt: string | null;
+  lastSyncError: string | null;
+  modelCount: number;
+  teamCount: number;
+  connectedMemberCount: number;
+}
+
+export interface GatewayLiteLlmSyncResult {
+  modelCount: number;
+  groupCount: number;
+  teamCount: number;
+  members: { matched: number; rejected: number; unavailable: number; removed: number };
+  warnings: string[];
+  /** issued mode: keys OpenWork created or refreshed in this sync. */
+  issued?: { people: number; keys: number; notInLiteLlm: number; noKeyToMirror: number; noModels: number; errors: number; removed: number };
+}
+
 export interface GatewayProviderDetails extends GatewayProviderSummary {
   settings: Record<string, unknown>;
   modelGroups: GatewayModelGroup[];
   credentialSets: GatewayCredentialSet[];
   accessGrants: GatewayAccessGrant[];
+  litellm?: GatewayLiteLlmStatus;
 }
 
 export interface GatewayProviderListResponse {

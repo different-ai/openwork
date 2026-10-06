@@ -389,23 +389,19 @@ function serializeMetadataRecord(metadata: Record<string, unknown>) {
   return Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null
 }
 
+/**
+ * Organization metadata as members see it. Feature overrides are platform
+ * administration data (still mirrored into metadata.capabilities for one
+ * release, for rollback) and are never sent; clients read the effective
+ * `features` from GET /v1/org instead.
+ */
 export function serializeMemberFacingOrganizationMetadata(input: OrganizationMetadataInput) {
   const metadata = parseMetadataRecord(input)
-  const capabilities = isRecord(metadata.capabilities) ? metadata.capabilities : null
-  if (!capabilities || !("cloud" in capabilities)) {
+  if (!("capabilities" in metadata)) {
     return serializeOrganizationMetadata(input)
   }
-
-  const nextCapabilities = { ...capabilities }
-  delete nextCapabilities.cloud
-  const nextMetadata = { ...metadata }
-  if (Object.keys(nextCapabilities).length > 0) {
-    nextMetadata.capabilities = nextCapabilities
-  } else {
-    delete nextMetadata.capabilities
-  }
-
-  return serializeMetadataRecord(nextMetadata)
+  const { capabilities: _platformOnly, ...memberFacing } = metadata
+  return serializeMetadataRecord(memberFacing)
 }
 
 export function parsePermissionRecord(value: string | null) {

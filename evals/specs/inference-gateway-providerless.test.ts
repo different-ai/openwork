@@ -35,6 +35,9 @@ const ANTHROPIC_UPSTREAM_KEY = "sk-ant-fake-providerless-upstream-key";
 const OPENAI_UPSTREAM_KEY = "sk-openai-fake-providerless-upstream-key";
 const ANTHROPIC_MODEL = "claude-haiku-4-5-20251001";
 const OPENAI_MODEL = "gpt-4o-mini";
+// The gateway commits streaming responses after RESPONSE_START_MS; the slow fake provider answers after SLOW_PROVIDER_MS.
+const RESPONSE_START_MS = 1_000;
+const SLOW_PROVIDER_MS = 3_000;
 const ALIAS_PATTERN = /^gwm_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -103,6 +106,25 @@ async function startFakeUpstreams(): Promise<FakeUpstreams> {
 
       if (request.method === "POST" && request.url === "/v1/messages") {
         if (headers["x-api-key"] !== ANTHROPIC_UPSTREAM_KEY) return json(response, 401, { type: "error", error: { type: "authentication_error", message: "wrong anthropic key" } });
+        const prompt = Array.isArray(body.messages) && isRecord(body.messages[0]) ? body.messages[0].content : null;
+        if (body.stream === true && (prompt === "slow" || prompt === "slow-overloaded")) {
+          // A provider that takes longer to start answering than the gateway's response-start window.
+          setTimeout(() => {
+            if (response.destroyed) return;
+            if (prompt === "slow-overloaded") return json(response, 529, { type: "error", error: { type: "overloaded_error", message: "Overloaded" } });
+            const event = (type: string, data: Record<string, unknown>) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+            response.writeHead(200, { "content-type": "text/event-stream" });
+            response.end([
+              event("message_start", { message: { id: "msg_slow", type: "message", role: "assistant", model, content: [], stop_reason: null, usage: { input_tokens: 11, output_tokens: 0 } } }),
+              event("content_block_start", { index: 0, content_block: { type: "text", text: "" } }),
+              event("content_block_delta", { index: 0, delta: { type: "text_delta", text: "anthropic slow ok" } }),
+              event("content_block_stop", { index: 0 }),
+              event("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 7 } }),
+              event("message_stop", {}),
+            ].join(""));
+          }, SLOW_PROVIDER_MS);
+          return;
+        }
         return json(response, 200, {
           id: "msg_providerless", type: "message", role: "assistant", model, stop_reason: "end_turn",
           content: [{ type: "text", text: "anthropic ok" }], usage: { input_tokens: 11, output_tokens: 7 },
@@ -162,6 +184,8 @@ async function startGateway(input: { port: number; databaseUrl: string; allowedO
       GATEWAY_PROXY_BASE_URL: `http://127.0.0.1:${input.port}`,
       GATEWAY_PUBLIC_BASE_URL: `http://127.0.0.1:${input.port}`,
       GATEWAY_EGRESS_ALLOWED_ORIGINS: input.allowedOrigin,
+      GATEWAY_RESPONSE_START_MS: String(RESPONSE_START_MS),
+      GATEWAY_RESPONSE_HEARTBEAT_MS: "1000",
       CORS_ORIGINS: "",
       OPENROUTER_UPSTREAM_URL: "https://openrouter.ai/api/v1",
       SENTRY_DSN: "",
@@ -464,4 +488,44 @@ test("provider-less Gateway routes list and invoke every granted model across pr
   expect(scopedList.status).toBe(200);
   expect(listedModels(scopedList).map((model) => stringAt(model, "id"))).toEqual([openaiAlias]);
   expect(upstream.requests).toHaveLength(before + 1);
+
+  // --- A slow provider: stream headers are committed early, so a proxy in front never times out (524). ---
+  const streamMessages = async (content: string) => {
+    const started = Date.now();
+    const response = await fetch(`${gateway}/api/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: anthropicAlias, max_tokens: 32, stream: true, messages: [{ role: "user", content }] }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const headersAfterMs = Date.now() - started;
+    return { response, headersAfterMs, text: await response.text() };
+  };
+  const slow = await streamMessages("slow");
+  expect(slow.response.status).toBe(200);
+  expect(slow.headersAfterMs).toBeLessThan(SLOW_PROVIDER_MS - 500);
+  expect(slow.response.headers.get("content-type")).toContain("text/event-stream");
+  expect(slow.text.startsWith(": processing\n\n")).toBe(true);
+  expect(slow.text).toContain("anthropic slow ok");
+  expect(slow.text).toContain("event: message_stop");
+  const overloaded = await streamMessages("slow-overloaded");
+  expect(overloaded.response.status).toBe(200);
+  expect(overloaded.headersAfterMs).toBeLessThan(SLOW_PROVIDER_MS - 500);
+  expect(overloaded.text).toContain(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } })}\n\n`);
+  expect(overloaded.text).not.toContain("message_stop");
+  const slowRows = await eventually(async () => {
+    const rows = await queryDenDatabase(databaseUrl,
+      "SELECT status, outcome, output_tokens, completed_at FROM gateway_request_logs WHERE organization_id = ? AND stream = 1 ORDER BY started_at",
+      [orgId]);
+    return rows.length === 2 && rows.every((row) => isRecord(row) && row.completed_at !== null) ? rows : false;
+  }, { within: 15_000, intervalMs: 250, label: "two completed streaming gateway_request_logs rows" });
+  expect(slowRows).toEqual([
+    expect.objectContaining({ status: 200, outcome: "ok", output_tokens: 7 }),
+    expect.objectContaining({ status: 529, outcome: "upstream_error" }),
+  ]);
+  evidence.recordAssertionEvidence(
+    "A slow Anthropic provider gets early stream headers on the provider-less route",
+    `With the provider silent for ${SLOW_PROVIDER_MS} ms and a ${RESPONSE_START_MS} ms window, headers arrived after ${slow.headersAfterMs} ms and ${overloaded.headersAfterMs} ms. The success relayed the full Anthropic stream after a heartbeat; the 529 became one Anthropic error event (overloaded_error). Usage rows keep the provider's real status: ${JSON.stringify(slowRows)}.`,
+    true,
+  );
 });

@@ -1,5 +1,5 @@
 import type { RemoteSessionAction } from "../mcp/remote-session-capabilities.js"
-import { organizationHasCapability } from "../organization-capabilities.js"
+import type { FeatureMap } from "../features.js"
 import { stepLabel } from "../headless-runner/client.js"
 import {
   createHeadlessRunnerClient,
@@ -29,11 +29,10 @@ export type SlackRuntime = "headless" | "web"
 
 /** An organization uses the headless runner only when it is switched on for it and the deployment has one. */
 export function slackRuntimeForOrganization(
-  metadata: Parameters<typeof organizationHasCapability>[0],
+  features: Pick<FeatureMap, "slackAssistantHeadless">,
   env: Record<string, string | undefined> = process.env,
 ): SlackRuntime {
-  const enabled = organizationHasCapability(metadata, "slackAssistantHeadless")
-  return enabled && headlessRunnerConfig(env) !== null ? "headless" : "web"
+  return features.slackAssistantHeadless && headlessRunnerConfig(env) !== null ? "headless" : "web"
 }
 
 export { stepLabel }
