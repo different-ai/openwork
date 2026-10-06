@@ -27,7 +27,7 @@ export type EnterprisePlanRequiredError = {
 const ENTITLEMENT_FEATURE_LABELS: Record<EntitlementKey, string> = {
   sso: "SSO / SAML",
   desktopPolicies: "Desktop policies",
-  orgControls: "Enforced SSO and desktop version controls",
+  orgControls: "Desktop version controls",
   auditLogs: "Audit logs",
 }
 
@@ -92,7 +92,7 @@ export function getOrganizationEntitlements(
   const entitled = !gatingEnabled || tier === "enterprise"
 
   return {
-    // SSO / SAML is part of Team. Enforced SSO (orgControls), SCIM, and policies stay on Enterprise.
+    // SSO / SAML is part of Team. Desktop version controls (orgControls), SCIM, and policies stay on Enterprise.
     sso: !gatingEnabled || tier === "team" || tier === "enterprise",
     desktopPolicies: entitled,
     orgControls: entitled,

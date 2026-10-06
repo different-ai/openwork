@@ -668,7 +668,7 @@ export function SsoScreen() {
                     <CheckCircle2 className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
                     <div>
                       <p className="font-semibold">Domain verified{connection.status === "enabled" ? " · SSO enabled" : ""}</p>
-                      <p className="mt-1 text-emerald-800">{connection.status === "enabled" ? "This tested configuration is active." : "The configuration is still disabled. Test it before enabling SSO."} The DNS TXT record was a one-time proof and may now be removed.</p>
+                      <p className="mt-1 text-emerald-800">{connection.status === "enabled" ? `This tested configuration is active. Members with an @${connection.domain} email must sign in with SSO.` : `The configuration is still disabled. Test it before enabling SSO. Once enabled, members with an @${connection.domain} email must sign in with SSO.`} The DNS TXT record was a one-time proof and may now be removed.</p>
                     </div>
                   </div>
                 )}

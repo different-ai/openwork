@@ -2932,7 +2932,6 @@ export class DenClient extends HeyApiClient {
       name?: string;
       allowedEmailDomains?: Array<string> | null;
       allowedDesktopVersions?: Array<string> | null;
-      requireSso?: boolean;
       brandAppName?: string | null;
       brandLogoUrl?: string | null;
       brandIconUrl?: string | null;
@@ -2948,7 +2947,6 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "name" },
             { in: "body", key: "allowedEmailDomains" },
             { in: "body", key: "allowedDesktopVersions" },
-            { in: "body", key: "requireSso" },
             { in: "body", key: "brandAppName" },
             { in: "body", key: "brandLogoUrl" },
             { in: "body", key: "brandIconUrl" },

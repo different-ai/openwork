@@ -14,7 +14,15 @@ test("workspace SSO verifies through a real popup and safely recovers from inter
     await world.enable();
     evidence.recordAssertionEvidence("A signed OIDC authentication passes the configuration test before SSO is enabled", "The browser completed the provider approval and configuration callback, then the server enabled the tested connection.", true);
   });
-  await user.navigate(new URL("/dashboard/org-settings", world.den.ref.webUrl).toString());
+  await step("SSO is enforced by the verified domain, with no separate requirement toggle", async () => {
+    const domain = world.otherEmail.split("@")[1] ?? "";
+    await user.navigate(new URL("/dashboard/sso", world.den.ref.webUrl).toString());
+    await user.see({ text: new RegExp(`Members with an @${domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} email must sign in with SSO`) }, { timeoutMs: 90_000 });
+    await user.navigate(new URL("/dashboard/org-settings", world.den.ref.webUrl).toString());
+    await user.see({ role: "button", label: "Save settings" }, { timeoutMs: 90_000 });
+    await user.notSee({ text: "Single sign-on requirement" });
+    evidence.recordAssertionEvidence("SSO settings say enforcement follows the verified domain and org settings has no Require SSO toggle", `The enabled SSO connection states that @${domain} members must sign in with SSO; org settings no longer shows the inert requirement card.`, true);
+  });
   await user.see({ role: "button", label: "Save settings" }, { timeoutMs: 90_000 });
   await world.ageSession();
   const changedName = `${world.originalName} updated`;

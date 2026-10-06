@@ -43,8 +43,10 @@ Gated (return HTTP 402 without the entitlement):
 - Team or Enterprise: `POST /v1/sso/request-domain-verification`, `POST /v1/sso/verify-domain`
 - Enterprise: `POST /v1/desktop-policies`, `PATCH /v1/desktop-policies/:id` — create/edit
   policies and assignments (`routes/org/desktop-policies.ts`)
-- Enterprise: `PATCH /v1/org` **only when the patch touches** `requireSso` or
-  `allowedDesktopVersions` (`routes/org/core.ts` → `orgs.ts:updateOrganizationSettings`)
+- Enterprise: `PATCH /v1/org` **only when the patch enables**
+  `allowedDesktopVersions` (`routes/org/core.ts` → `orgs.ts:updateOrganizationSettings`).
+  The inert `requireSso` setting was removed; SSO is enforced whenever an
+  enabled connection has a verified domain.
 
 Never gated:
 

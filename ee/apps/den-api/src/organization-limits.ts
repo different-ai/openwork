@@ -35,7 +35,6 @@ export type OrganizationMetadata = {
   limits: OrganizationLimits
   seatsFreeAdditional?: number
   allowedDesktopVersions?: string[]
-  requireSso?: boolean
   brandAppName?: string
   brandLogoUrl?: string
   brandIconUrl?: string

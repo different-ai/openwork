@@ -56,7 +56,7 @@ For access reviews, export the current member list, roles, teams, pending invita
 
 For production organizations, use SSO with identity-provider MFA as the primary step-up control:
 
-- Enable enforced SSO for organizations that have owners, admins, SCIM, SSO, API keys, or shared production providers.
+- Enable SSO with a verified domain for organizations that have owners, admins, SCIM, SSO, API keys, or shared production providers. Members with that email domain must then sign in with SSO.
 - Require MFA, phishing-resistant factors where available, and conditional-access policy in the identity provider before users reach OpenWork Cloud.
 - Keep SSO, SCIM, API-key management, and Admin team designation with owners and super-admins. Direct or inherited `Admin`, or a custom role with `security_configuration.manage` alone, does not satisfy those role requirements.
 - Admins can invite only `Member` users. Owners and super-admins can assign other permitted invitation roles, but not `Owner`; ownership requires transfer.
