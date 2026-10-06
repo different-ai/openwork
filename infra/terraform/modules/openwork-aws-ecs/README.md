@@ -61,9 +61,10 @@ module "openwork" {
   database_subnet_ids = ["subnet-private-a", "subnet-private-b"]
 
   # Optional
-  ecs_cluster_arn = "arn:aws:ecs:us-east-1:123456789012:cluster/platform" # empty creates <name>-den
-  create_redis    = false
-  email_from   = "OpenWork <no-reply@example.com>"
+  ecs_cluster_arn       = "arn:aws:ecs:us-east-1:123456789012:cluster/platform" # empty creates <name>-den
+  create_redis          = false
+  wait_for_steady_state = true                                                  # block apply until tasks are healthy (default: false)
+  email_from            = "OpenWork <no-reply@example.com>"
   smtp = {
     host     = "email-smtp.us-east-1.amazonaws.com"
     username = var.ses_smtp_user
@@ -104,6 +105,9 @@ After `terraform apply`:
   security groups so ECS tasks permit ingress from your load balancer. You can
   also pass `alb_security_group_id` to override auto-discovery or attach a custom
   security group when creating an ALB.
+- **Wait for steady state.** `wait_for_steady_state` defaults to `false`.
+  Set `wait_for_steady_state = true` to cause `terraform apply` to block until tasks
+  pass target health checks and old tasks drain.
 - **Migrations** run in each den-api task before the app starts, like the Helm
   chart's pre-upgrade Job. They are idempotent but not locked, so keep
   `den_api.desired_count = 1` until you need more, and scale after a deploy

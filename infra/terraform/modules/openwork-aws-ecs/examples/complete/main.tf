@@ -88,8 +88,9 @@ module "openwork" {
   certificate_arn = var.certificate_arn
   route53_zone_id = var.route53_zone_id
 
-  create_redis    = var.create_redis
-  ecs_cluster_arn = var.ecs_cluster_arn
+  create_redis          = var.create_redis
+  ecs_cluster_arn       = var.ecs_cluster_arn
+  wait_for_steady_state = var.wait_for_steady_state
 
   # Disposable test stack: allow a clean destroy.
   database = {
