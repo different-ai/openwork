@@ -13,8 +13,8 @@ import { captureException } from "../observability/runtime.js"
 import {
   getGithubConnectorAppConfig,
   getGithubRepositoryHeadSha,
-} from "../routes/org/plugin-system/github-app.js"
-import { executeGithubConnectorSyncEvent } from "../routes/org/plugin-system/store.js"
+} from "../modules/marketplace/github-sync/github-app.js"
+import { executeGithubConnectorSyncEvent } from "../modules/marketplace/github-sync/store/index.js"
 import { isTransientGithubSyncError } from "./github-sync-retry.js"
 
 export { isTransientGithubSyncError } from "./github-sync-retry.js"

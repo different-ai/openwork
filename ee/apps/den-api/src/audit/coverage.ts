@@ -166,6 +166,7 @@ export const otherAuditSurfaces: readonly Readonly<{ location: string; surface: 
   ...[
     "auth", "automations", "bootstrap", "cloud", "dev", "me", "telemetry", "version", "webhooks", "workers", "deprecated-memory.ts", "deprecated-skill-hubs.ts",
   ].map((name) => ({ location: `ee/apps/den-api/src/routes/${name}`, surface: "route", coverage: uncovered("No operation-audit implementation for this route surface; existing logging/receipts do not establish coverage.") } satisfies { location: string; surface: "route"; coverage: AuditCoverageDeclaration })),
+  { location: "ee/apps/den-api/src/modules/marketplace", surface: "route", coverage: uncovered("Plugin/marketplace configuration, permissions, versions and imports; nested modules included as uncovered, not covered by provider capture.") },
   { location: "ee/apps/den-api/src/routes/mcp", surface: "mcp", coverage: uncovered("MCP transport, invocation, delegation and observed external effects not captured. A downstream covered provider mutation does not imply MCP invocation coverage.") },
   { location: "ee/apps/den-api/src/mcp", surface: "mcp", coverage: uncovered("Capability search/execution and external MCP tools/apps are not operation-audited.") },
   { location: "ee/apps/den-api/src/workers", surface: "job", coverage: uncovered("Provisioning, GitHub sync/retry/reconciliation and cloud lifecycle jobs; no persisted audit job context or late-result protection.") },

@@ -13,6 +13,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import type { OrganizationContext } from "../../../orgs.js"
 import { db } from "../../../db.js"
+import { connectorInstanceExistsInOrganization, listConnectorInstanceAccessGrants } from "../../../modules/marketplace/github-sync/access-connector-instance.js"
 import {
   isPluginArchOrgAdmin,
   maxRole,
@@ -134,12 +135,8 @@ async function resourceExistsInOrganization(input: ResourceLookupInput) {
   }
 
   if (input.resourceKind === "connector_instance") {
-    const rows = await db
-      .select({ id: ConnectorInstanceTable.id })
-      .from(ConnectorInstanceTable)
-      .where(and(eq(ConnectorInstanceTable.organizationId, organizationId), eq(ConnectorInstanceTable.id, input.resourceId)))
-      .limit(1)
-    return Boolean(rows[0])
+    // TODO(M-marketplace.githubSync): resolve this kind through a resource-kind registry instead of importing the sub-module.
+    return connectorInstanceExistsInOrganization(organizationId, input.resourceId)
   }
 
   const rows = await db
@@ -373,19 +370,7 @@ export async function resolvePluginArchResourceRole(input: ResourceLookupInput) 
   }
 
   if (input.resourceKind === "connector_instance") {
-    const grants = await db
-      .select({
-        orgMembershipId: ConnectorInstanceAccessGrantTable.orgMembershipId,
-        orgWide: ConnectorInstanceAccessGrantTable.orgWide,
-        removedAt: ConnectorInstanceAccessGrantTable.removedAt,
-        role: ConnectorInstanceAccessGrantTable.role,
-        teamId: ConnectorInstanceAccessGrantTable.teamId,
-      })
-      .from(ConnectorInstanceAccessGrantTable)
-      .where(and(
-        eq(ConnectorInstanceAccessGrantTable.connectorInstanceId, input.resourceId),
-        eq(ConnectorInstanceAccessGrantTable.organizationId, input.context.organizationContext.organization.id),
-      ))
+    const grants = await listConnectorInstanceAccessGrants({ connectorInstanceId: input.resourceId, organizationId: input.context.organizationContext.organization.id })
     return resolveGrantRole({ context: input.context, grants })
   }
 

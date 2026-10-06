@@ -4,13 +4,13 @@ import { describeRoute } from "hono-openapi"
 import { env } from "../../env.js"
 import { signedWebhookRoute } from "../../middleware/index.js"
 import { emptyResponse, jsonResponse } from "../../openapi.js"
-import { enqueueGithubWebhookSync } from "../org/plugin-system/store.js"
+import { enqueueGithubWebhookSync } from "../../modules/marketplace/github-sync/store/index.js"
 import {
   githubWebhookAcceptedResponseSchema,
   githubWebhookIgnoredResponseSchema,
   githubWebhookUnauthorizedResponseSchema,
-} from "../org/plugin-system/schemas.js"
-import { pluginArchRoutePaths } from "../org/plugin-system/contracts.js"
+} from "../../modules/marketplace/github-sync/schemas.js"
+import { githubSyncRoutePaths } from "../../modules/marketplace/github-sync/contracts.js"
 
 export function signGithubBody(rawBody: string, secret: string) {
   return `sha256=${createHmac("sha256", secret).update(rawBody).digest("hex")}`
@@ -28,7 +28,7 @@ export function safeCompareGithubSignature(received: string, expected: string) {
 
 export function registerGithubWebhookRoutes<T extends Env>(app: Hono<T>) {
   app.post(
-    pluginArchRoutePaths.githubWebhookIngress,
+    githubSyncRoutePaths.githubWebhookIngress,
     describeRoute({
       tags: ["Webhooks"],
       security: [],
