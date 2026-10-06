@@ -389,9 +389,8 @@ export async function cloudDraftRouting(seed: Seed) {
       if (!fault) throw new Error("Slow draft resolve fault lost its document");
       return { ...fault.state };
     }),
-    async [Symbol.asyncDispose]() {
-      await seed.evalIn(app, () => { window.__openworkSlowDraftResolve?.dispose(); });
-    },
+    // The owned app closes with this world, discarding its fetch wrapper.
+    // A seed call during stack disposal would run after the world is disposed.
     async launchDiagnostics(sinceIso: string) {
       const sanitize = (value: string) => [field(credentials, "token"), field(credentials, "appHostToken")]
         .reduce((text, secret) => text.replaceAll(secret, "[redacted]"), value)
