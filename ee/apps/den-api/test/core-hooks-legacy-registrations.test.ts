@@ -57,6 +57,8 @@ const expected = {
   "org.deletion.purge": [
     "legacy/ai-gateway/erase-organization-usage",
     "legacy/analytics/erase-organization-models-analytics",
+    "legacy/ai-gateway/revoke-organization-google-credentials",
+    "legacy/connect-native-providers/revoke-organization-google-workspace-accounts",
     "legacy/install-links/purge-organization-install-links",
     "legacy/openwork-web/purge-organization-workers",
     "legacy/teams/purge-organization-teams",
@@ -112,3 +114,4 @@ test("legacy registrations reproduce today's hook order", async () => {
   const { describeCoreHooks } = await import("../src/core/hooks/index.js")
   assert.deepEqual(describeCoreHooks(), expected)
 })
+

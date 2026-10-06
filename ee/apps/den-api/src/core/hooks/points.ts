@@ -97,9 +97,12 @@ export interface CoreTxPoints {
   // Inside the org-delete transaction, after the org-row lock and before Core
   // deletes invitations, members and the organization row. Every module purges
   // its organization-scoped rows here.
+  // `afterCommit` queues remote revocations of grants read before the purge
+  // (Google tokens); they run once the deletion has committed.
   "org.deletion.purge": {
     tx: CoreTx
     organizationId: OrgId
+    afterCommit: AfterCommit
   }
   // A user spans organizations, so this point is instance-scoped.
   "user.deleting": {

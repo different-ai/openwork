@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, or } from "@openwork-ee/den-db/drizzle"
 import { deleteGatewayUsageForOrganization, expireUsageRequestsForMembers } from "@openwork-ee/den-db/gateway-usage-limits"
 import {
   GatewayCredentialSetTable,
@@ -20,8 +20,10 @@ import {
   revokeGoogleCredentials,
   revokeInferenceCredentialsForMembers,
 } from "../../../llm/inference-provider-lifecycle.js"
+import { appLogger } from "../../../observability/logger.js"
 import { coreHooks } from "../default-registry.js"
 import { CORE_HOOK_ORDER } from "../types.js"
+import { collectGrantsForRevocation, revokeAfterOrganizationDeletion } from "./google-revocation.js"
 
 // Future owner: aiGateway (credentials and keys are shared with openworkModels
 // until W0-P07 splits inference.ts; usage requests belong to aiGateway.usageLimits).
@@ -144,6 +146,43 @@ coreHooks.registerTx({
   // First: erasure fences usage writers for the organization.
   order: CORE_HOOK_ORDER.lock,
   handler: ({ tx, organizationId }) => deleteGatewayUsageForOrganization(tx, organizationId),
+})
+
+const logger = appLogger.child({ component: "core_hooks_ai_gateway" })
+
+coreHooks.registerTx({
+  point: "org.deletion.purge",
+  id: "legacy/ai-gateway/revoke-organization-google-credentials",
+  registrant: "legacy",
+  security: true,
+  // Reads Google OAuth credentials before the provider purge deletes them,
+  // then revokes them at Google once the deletion has committed.
+  order: CORE_HOOK_ORDER.security,
+  handler: async ({ tx, organizationId, afterCommit }) => {
+    const gatewayProviderIds = (await tx
+      .select({ id: GatewayProviderTable.id })
+      .from(GatewayProviderTable)
+      .where(eq(GatewayProviderTable.organization_id, organizationId)).for("update"))
+      .map((row) => row.id)
+    const credentials = await collectGrantsForRevocation(logger, "gateway_provider_credentials", organizationId, async () => (await tx
+      .select()
+      .from(GatewayProviderCredentialTable)
+      .where(and(
+        eq(GatewayProviderCredentialTable.kind, "oauth_google"),
+        gatewayProviderIds.length > 0
+          ? or(eq(GatewayProviderCredentialTable.organization_id, organizationId), inArray(GatewayProviderCredentialTable.gateway_provider_id, gatewayProviderIds))
+          : eq(GatewayProviderCredentialTable.organization_id, organizationId),
+      ))
+      .for("update"))
+      .filter((credential) => credential.status !== "revoked"))
+    if (credentials.length === 0) return
+    afterCommit(() => revokeAfterOrganizationDeletion(logger, {
+      organizationId,
+      source: "gateway_provider_credentials",
+      count: credentials.length,
+      revoke: () => revokeGoogleCredentials(credentials),
+    }))
+  },
 })
 
 coreHooks.registerTx({

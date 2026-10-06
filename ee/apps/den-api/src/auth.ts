@@ -4,7 +4,6 @@ import { revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecyc
 import { coreHooks } from "./core/hooks/index.js";
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
-import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js";
 import { env } from "./env.js";
 import { appLogger } from "./observability/logger.js";
 import {
@@ -316,26 +315,12 @@ function throwMemberLifecycleError(message: string): never {
   throw new APIError("BAD_REQUEST", { message });
 }
 
-function removedMemberIdentity(value: unknown): { id: string; organizationId: string } | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const nestedMember = Object.getOwnPropertyDescriptor(value, "member")?.value;
-  const candidate = nestedMember && typeof nestedMember === "object" ? nestedMember : value;
-  const id = Object.getOwnPropertyDescriptor(candidate, "id")?.value;
-  const organizationId = Object.getOwnPropertyDescriptor(candidate, "organizationId")?.value;
-  if (typeof id !== "string" || typeof organizationId !== "string") {
-    return null;
-  }
-  return { id, organizationId };
-}
-
 const RAW_BETTER_AUTH_MUTATION_DENIALS: readonly (readonly [string, string])[] = [
   ["/organization/update", "Use the Den organization settings API to update workspace configuration."],
   ["/organization/delete", "Workspace deletion through Better Auth is disabled."],
   ["/organization/update-member-role", "Use the Den member role API to change organization roles."],
   ["/organization/remove-member", "Use the Den member API to remove organization members."],
+  ["/organization/leave", "Ask a workspace admin to remove you from the workspace."],
   ["/organization/create-role", "Use the Den roles API to manage organization roles."],
   ["/organization/update-role", "Use the Den roles API to manage organization roles."],
   ["/organization/delete-role", "Use the Den roles API to manage organization roles."],
@@ -587,29 +572,6 @@ async function assertBetterAuthInvitationRefreshRole(input: {
   }
 }
 
-async function getOrganizationMemberRole(input: {
-  organizationId: string;
-  userId: string;
-}) {
-  const member = await cache.org.membership({
-    organizationId: normalizeDenTypeId("organization", input.organizationId),
-    userId: normalizeDenTypeId("user", input.userId),
-  });
-  if (!member) {
-    return null;
-  }
-  const authority = await resolveOrganizationMemberAuthority({
-    organizationId: normalizeDenTypeId("organization", input.organizationId),
-    memberId: member.id,
-  });
-  if (!authority) return null;
-  return {
-    role: authority.directRole,
-    adminTeams: authority.adminTeams,
-    isOwner: hasRole(authority.directRole, ORGANIZATION_OWNER_ROLE),
-  };
-}
-
 function getEnterpriseAuthRedirectUrl(input: {
   signInPath: string;
   email: string;
@@ -850,28 +812,6 @@ export const auth = betterAuth({
           throw new APIError("FORBIDDEN", { message: deniedMutation.message });
         }
 
-        if (ctx.path === "/organization/leave") {
-          const organizationId = readStringProperty(ctx.body, "organizationId");
-          const token = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null);
-          const session = typeof token === "string" ? await cache.auth.session(token) : null;
-          if (organizationId && session?.user.id) {
-            const member = await getOrganizationMemberRole({
-              organizationId,
-              userId: session.user.id,
-            });
-            if (member?.isOwner) {
-              throw new APIError("FORBIDDEN", {
-                message: "The organization owner cannot leave the workspace. Transfer ownership first.",
-              });
-            }
-            if (member?.adminTeams.length && !hasRole(member.role, ORGANIZATION_SUPER_ADMIN_ROLE)) {
-              throw new APIError("FORBIDDEN", {
-                message: "Ask a workspace owner or super-admin to remove your Admin team membership before leaving.",
-              });
-            }
-          }
-        }
-
         if (ctx.path === "/organization/add-member") {
           const token = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null);
           const session = typeof token === "string" ? await cache.auth.session(token) : null;
@@ -970,17 +910,6 @@ export const auth = betterAuth({
         const deviceCode = readStringProperty(ctx.body, "device_code");
         if (deviceCode) {
           clearDeviceSessionOrganization(deviceCode);
-        }
-        return;
-      }
-
-      if (ctx.path === "/organization/leave") {
-        const member = removedMemberIdentity(ctx.context.returned);
-        if (member) {
-          await deleteOrganizationMemberConnectedAccounts({
-            organizationId: member.organizationId,
-            orgMembershipId: member.id,
-          });
         }
         return;
       }

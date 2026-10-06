@@ -304,13 +304,22 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
       }
 
       let affectedSessions: Array<{ id: typeof AuthSessionTable.$inferSelect.id; token: typeof AuthSessionTable.$inferSelect.token }> = []
+      // Remote revocations queued by purge hooks (Google grants). They run only
+      // once the deletion has committed, after sessions are revoked.
+      const afterCommitWork: Array<() => Promise<void>> = []
       await db.transaction(async (tx) => {
         await tx.select({ id: OrganizationTable.id }).from(OrganizationTable)
           .where(eq(OrganizationTable.id, organizationId)).for("update")
 
         // Every module purges its organization-scoped rows (core/hooks/legacy
         // until each module plan registers from its manifest).
-        await coreHooks.runTx("org.deletion.purge", { tx, organizationId })
+        await coreHooks.runTx("org.deletion.purge", {
+          tx,
+          organizationId,
+          afterCommit: (callback) => {
+            afterCommitWork.push(callback)
+          },
+        })
 
         const memberRows = await tx
           .select({ id: MemberTable.id, userId: MemberTable.userId })
@@ -359,13 +368,19 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(OrganizationTable).where(eq(OrganizationTable.id, organizationId))
       })
 
-      // Org deletion removes every member row; clear aggregate and per-user membership cache keys.
-      await cache.org.deleteMembers(organizationId)
-      await coreHooks.runPostCommit("org.deletion.post", { organizationId })
-      await Promise.all(affectedSessions.flatMap((session) => [
-        cache.auth.revokeSession(session.token),
-        cache.auth.revokeSessionId(session.id),
-      ]))
+      try {
+        // Org deletion removes every member row; clear aggregate and per-user membership cache keys.
+        await cache.org.deleteMembers(organizationId)
+        await coreHooks.runPostCommit("org.deletion.post", { organizationId })
+        await Promise.all(affectedSessions.flatMap((session) => [
+          cache.auth.revokeSession(session.token),
+          cache.auth.revokeSessionId(session.id),
+        ]))
+      } finally {
+        for (const work of afterCommitWork) {
+          await work()
+        }
+      }
 
       logger.info("organization deleted", {
         organization_id: organizationId,
