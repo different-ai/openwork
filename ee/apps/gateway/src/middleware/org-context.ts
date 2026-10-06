@@ -7,6 +7,8 @@ import type { InferenceAuthVariables } from "./inference-auth.js"
 export type OrganizationContext = {
   id: string
   metadata: Record<string, unknown> | null
+  /** Raw `organization.modules` column (W0-02); parsed by the module runtime, unused until W0-06. */
+  modules: unknown
 }
 
 export type OrganizationVariables = {
@@ -32,11 +34,11 @@ const defaultMaxEntries = 1_000
 export const loadOrganizationFromDb: LoadOrganization = async (organizationId) => {
   const { db } = await import("../db.js")
   const [row] = await db
-    .select({ id: OrganizationTable.id, metadata: OrganizationTable.metadata })
+    .select({ id: OrganizationTable.id, metadata: OrganizationTable.metadata, modules: OrganizationTable.modules })
     .from(OrganizationTable)
     .where(eq(OrganizationTable.id, normalizeDenTypeId("organization", organizationId)))
     .limit(1)
-  return row ? { id: row.id, metadata: row.metadata ?? null } : null
+  return row ? { id: row.id, metadata: row.metadata ?? null, modules: row.modules ?? null } : null
 }
 
 export function orgContext(dependencies: OrgContextDependencies) {
