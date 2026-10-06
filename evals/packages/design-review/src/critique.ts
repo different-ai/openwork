@@ -18,13 +18,21 @@ export interface VisionRequest {
 
 export type AskVision = (req: VisionRequest) => Promise<string>;
 
+/** Strips a Markdown code fence around a JSON reply without a backtracking pattern. */
+function unfence(raw: string): string {
+  let text = raw.trim();
+  if (!text.startsWith("```")) return text;
+  const firstLine = text.indexOf("\n");
+  text = firstLine >= 0 ? text.slice(firstLine + 1) : text.slice(3);
+  text = text.trimEnd();
+  return (text.endsWith("```") ? text.slice(0, -3) : text).trim();
+}
+
 function parseJsonResponse(raw: string, label: string): unknown {
-  const trimmed = raw.trim();
-  const candidate = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed)?.[1] ?? trimmed;
   try {
-    return JSON.parse(candidate);
+    return JSON.parse(unfence(raw));
   } catch (error) {
-    throw new Error(`${label} was not valid JSON: ${error instanceof Error ? error.message : String(error)}. Response: ${trimmed.slice(0, 300)}`);
+    throw new Error(`${label} was not valid JSON: ${error instanceof Error ? error.message : String(error)}. Response: ${raw.trim().slice(0, 300)}`);
   }
 }
 

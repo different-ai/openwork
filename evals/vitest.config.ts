@@ -36,7 +36,9 @@ export default defineConfig({
           ...common,
           name: "pr",
           // Live specs are attached-system incident signals: exclude them unless explicitly named.
-          include: ["specs/**/*.test.ts", "../scenarios/**/*.test.ts"],
+          // Unit tests live next to the eval package they test (the spec boundary
+          // ratchet keeps evals/specs for journeys that cross a product boundary).
+          include: ["specs/**/*.test.ts", "../scenarios/**/*.test.ts", "packages/*/src/**/*.test.ts"],
           // Custom excludes replace Vitest's defaults, so keep dependencies out explicitly.
           // "**" does not match "../", so ../scenarios needs its own patterns.
           exclude: ["**/node_modules/**", "**/*.e2e.test.ts", "**/e2e.test.ts", "../**/node_modules/**", "../**/*.e2e.test.ts", "../**/e2e.test.ts",

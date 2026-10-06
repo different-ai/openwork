@@ -1,26 +1,14 @@
-import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import type { Surface } from "@openwork/cdp";
-import {
-  checkContrast,
-  checkLaneDrift,
-  checkLayout,
-  checkOverlap,
-  checkSplitRows,
-  contrastRatio,
-  critiquePrompt,
-  layoutFileName,
-  loadDesignRubric,
-  parseCritique,
-  reviewTestRunDesign,
-  type LayoutBox,
-  type LayoutSnapshot,
-} from "@openwork/design-review";
-import { createTestEvidence, reviewDesign, screenshot, withTestEvidence } from "@openwork/test-evidence";
+import { layoutFileName, reviewTestRunDesign, type LayoutBox, type LayoutSnapshot } from "@openwork/design-review";
 import { assembleReview, renderReviewComment } from "@openwork/test-artifacts/review";
+import { reviewDesign } from "./design-review.ts";
+import { screenshot } from "./screenshot.ts";
+import { createTestEvidence } from "./test-evidence.ts";
+import { withTestEvidence } from "./ambient.ts";
 
 function box(text: string, x: number, y: number, width: number, extra: Partial<LayoutBox> = {}): LayoutBox {
   return {
@@ -51,98 +39,6 @@ const libraryBefore = layout(descriptions.flatMap((text, row) => [
   box(row < 2 ? "Connector" : "Skill", 1462, 300 + row * 63, row < 2 ? 74 : 30),
   box("Local", 1599, 300 + row * 63, 37),
 ]));
-
-// The fix: short columns first, what it does last.
-const libraryAfter = layout(descriptions.flatMap((text, row) => [
-  box(`item-${row}`, 296, 280 + row * 53, 90),
-  box(row < 2 ? "Connector" : "Skill", 528, 280 + row * 53, row < 2 ? 59 : 24),
-  box("Local", 624, 280 + row * 53, 30),
-  box(text, 796, 280 + row * 53, text.length * 6),
-]));
-
-test("a Library whose columns sit at the far edge is flagged as rows drifting apart", () => {
-  const notes = checkSplitRows(libraryBefore);
-  expect(notes).toHaveLength(1);
-  expect(notes[0]).toMatchObject({ rule: "layout.split-row", severity: "medium", source: "layout" });
-  expect(notes[0]?.detail).toContain("6 rows leave a");
-  expect(notes[0]?.region?.x).toBeGreaterThan(0.2);
-});
-
-test("a list whose rows are one wide button is still read as rows; a button beside a label is not a value", () => {
-  const asButtons = layout(libraryBefore.boxes.map((entry) => ({ ...entry, interactive: true, controlWidth: 1600 })));
-  expect(checkSplitRows(asButtons).map((note) => note.rule)).toEqual(["layout.split-row"]);
-  const toolbar = layout([0, 1, 2, 3].flatMap((row) => [
-    box(`Setting ${row}`, 260, 200 + row * 44, 120),
-    box("Off", 1300, 200 + row * 44, 22),
-    box("Change", 1700, 200 + row * 44, 50, { interactive: true, controlWidth: 72 }),
-    box("Remove", 1780, 200 + row * 44, 50, { interactive: true, controlWidth: 72 }),
-  ]));
-  expect(checkSplitRows(toolbar)).toEqual([]);
-});
-
-test("the fixed Library, a settings row and a dense table are not flagged", () => {
-  expect(checkSplitRows(libraryAfter)).toEqual([]);
-  // DESIGN.md S2: label left, one state right.
-  const settings = layout([0, 1, 2, 3].flatMap((row) => [box(`Setting ${row}`, 260, 200 + row * 44, 120), box("On", 1700, 200 + row * 44, 18)]));
-  expect(checkSplitRows(settings)).toEqual([]);
-  // A table with evenly spread columns: the widest gap does not dwarf the others.
-  const table = layout([0, 1, 2, 3].flatMap((row) => [
-    box(`Plugin ${row}`, 431, 300 + row * 52, 110),
-    box("Sales", 790, 300 + row * 52, 34),
-    box("Maya Rivera", 1029, 300 + row * 52, 75),
-    box("2h ago", 1226, 300 + row * 52, 39),
-  ]), 1440, 900);
-  expect(checkSplitRows(table)).toEqual([]);
-  expect(checkLayout(libraryAfter)).toEqual([]);
-});
-
-test("text drawn over other text is flagged; neighbours are not", () => {
-  const overlapping = layout([box("Name", 296, 210, 34), box("On this computer", 270, 214, 100), box("Kind", 528, 210, 28)]);
-  const notes = checkOverlap(overlapping);
-  expect(notes).toHaveLength(1);
-  expect(notes[0]?.detail).toContain("“Name” is drawn over “On this computer”");
-  expect(checkOverlap(libraryAfter)).toEqual([]);
-});
-
-test("faint text is flagged by contrast, disabled controls are exempt", () => {
-  expect(contrastRatio({ color: "rgb(17, 24, 39)", background: "rgb(255, 255, 255)", opacity: 1 })).toBeGreaterThan(15);
-  const faint = layout([box("Hard to read", 10, 10, 80, { color: "rgb(205, 208, 214)" }), box("Locked", 10, 40, 40, { color: "rgb(205, 208, 214)", disabled: true })]);
-  const notes = checkContrast(faint);
-  expect(notes).toHaveLength(1);
-  expect(notes[0]?.detail).toContain("“Hard to read”");
-  expect(notes[0]?.detail).not.toContain("Locked");
-});
-
-test("a column that starts a few pixels apart across repeated rows is flagged as lane drift", () => {
-  const drifting = layout([0, 1, 2, 3].flatMap((row) => [
-    box(`Row ${row}`, 100, 100 + row * 44, 60),
-    box("Skill", row % 2 ? 403 : 400, 100 + row * 44, 30),
-    box("Local", 500, 100 + row * 44, 30),
-  ]));
-  const notes = checkLaneDrift(drifting);
-  expect(notes).toHaveLength(1);
-  expect(notes[0]).toMatchObject({ rule: "layout.lane-drift", severity: "low" });
-  expect(checkLaneDrift(libraryAfter)).toEqual([]);
-});
-
-test("the rubric packs the OpenWork Design rules with DESIGN.md, and the critique is parsed defensively", async () => {
-  const rubric = await loadDesignRubric();
-  expect(rubric.text).toContain("OW-LIST-HEADER");
-  expect(rubric.text).toContain("openwork-paper-design");
-  expect(rubric.text).toContain("**S2** Settings and lists are compact rows");
-  expect(rubric.hash).toMatch(/^[a-f0-9]{12}$/);
-  const prompt = critiquePrompt({ png: Buffer.alloc(0), hash: "h", caption: "after: the Library", route: "#/extensions", layout: libraryBefore, measured: checkSplitRows(libraryBefore) }, rubric);
-  expect(prompt).toContain("window 1920×1080");
-  expect(prompt).toContain("layout.split-row");
-  const notes = parseCritique(JSON.stringify({ findings: [
-    { rule: "OW-LIST-HEADER", severity: "high", title: "Column header row on a plain list", evidence: "“Name Kind From What it does” above the rows", where: { x: 0.1, y: 0.2, width: 0.8, height: 0.03 } },
-    { rule: "S2", severity: "low", title: "x", evidence: "y", where: null },
-    { rule: "", severity: "low", title: "dropped: no rule", evidence: "" },
-  ] }));
-  expect(notes).toHaveLength(2);
-  expect(notes[0]).toMatchObject({ rule: "OW-LIST-HEADER", severity: "medium", source: "vision", region: { x: 0.1, y: 0.2, width: 0.8, height: 0.03 } });
-  expect(notes[1]?.region).toBeUndefined();
-});
 
 const PNG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
@@ -260,10 +156,3 @@ test("a judged note about what an on-screen image depicts is dropped; a note abo
   }
 });
 
-test("the committed rubric names every plugin skill it packs", async () => {
-  const root = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
-  const rubric = await readFile(join(root, "evals", "design-review", "rubric.md"), "utf8");
-  for (const skill of ["openwork-paper-design", "paper-design-consistency-audit", "openwork-ui-source-map", "rams", "web-design-guidelines", "better-ui", "impeccable", "interface-design"]) {
-    expect(rubric).toContain(`\`${skill}\``);
-  }
-});

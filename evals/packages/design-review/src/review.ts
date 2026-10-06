@@ -55,7 +55,10 @@ const severityOrder = { medium: 0, low: 1 } as const;
 /** On-screen text a note quotes, normalised: “Kind”, "Sync with OpenWork Cloud". */
 function quoted(text: string): string[] {
   return [...text.matchAll(/[“"]([^”"]{4,})[”"]/g)].flatMap((match) => {
-    const value = match[1]?.replace(/…|\.\.\.$/g, "").trim().replace(/[.,;:]+$/, "").toLowerCase();
+    let value = (match[1] ?? "").replaceAll("…", "").trim();
+    let end = value.length;
+    while (end > 0 && ".,;:".includes(value.charAt(end - 1))) end -= 1;
+    value = value.slice(0, end).trim().toLowerCase();
     return value ? [value] : [];
   });
 }

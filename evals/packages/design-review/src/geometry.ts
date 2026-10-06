@@ -197,9 +197,11 @@ export function checkLaneDrift(layout: LayoutSnapshot): DesignNote[] {
 }
 
 function channels(color: string): [number, number, number, number] | null {
-  const match = /rgba?\(([^)]+)\)/.exec(color);
-  if (!match?.[1]) return null;
-  const parts = match[1].split(/[\s,/]+/).filter(Boolean).map((part) => Number.parseFloat(part));
+  // String slicing, not a regular expression: colours come from arbitrary pages.
+  const open = color.indexOf("(");
+  const close = color.lastIndexOf(")");
+  if (open < 0 || close <= open || !color.slice(0, open).trim().toLowerCase().startsWith("rgb")) return null;
+  const parts = color.slice(open + 1, close).split(/[\s,/]+/).filter(Boolean).map((part) => Number.parseFloat(part));
   const [red, green, blue, alpha = 1] = parts;
   if (red === undefined || green === undefined || blue === undefined || [red, green, blue, alpha].some((value) => !Number.isFinite(value))) return null;
   return [red, green, blue, alpha];
