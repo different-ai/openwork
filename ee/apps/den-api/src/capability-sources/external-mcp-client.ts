@@ -3,7 +3,7 @@ import { Buffer } from "node:buffer"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { env } from "../env.js"
 import { parseGrantedOAuthScopes } from "./oauth-credentials.js"
-import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
+import { createGuardedFetch, createRealmSafeFetch } from "../core/net/url-guard.js"
 import {
   type OAuthClientProvider,
   UnauthorizedError,

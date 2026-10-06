@@ -1,4 +1,4 @@
-import { assertPublicUrl, PrivateUrlError } from "../capability-sources/url-guard.js"
+import { assertPublicUrl, PrivateUrlError } from "../core/net/url-guard.js"
 import { env } from "../env.js"
 
 /**

@@ -83,7 +83,7 @@ import { roleIncludesOwner } from "../../../orgs.js"
 import { redactWorkflowNormalizedPayloadAuthoringDetails } from "../../../workflow-projections.js"
 import { memberFacingMcpConnectionsEnabled } from "../../../capability-sources/external-mcp-rollout.js"
 import { comparablePluginMcpRequirementUrl, marketplaceMcpServerEntries, resolveMarketplacePluginCloudReadiness } from "../../../mcp/marketplace-capabilities.js"
-import { assertPublicUrl, PrivateUrlError } from "../../../capability-sources/url-guard.js"
+import { assertPublicUrl, PrivateUrlError } from "../../../core/net/url-guard.js"
 import {
   createExternalMcpConnection,
   deleteExternalMcpConnection,

@@ -85,7 +85,7 @@ import { listNativeProviderUsableEntries } from "../../capability-sources/native
 import { getNativeOAuthProvider } from "../../capability-sources/provider-registry.js"
 import { connectCallbackPage } from "../../core/oauth/callback-page.js"
 import { getConnectedAccount, getOrgOAuthClient, upsertOrgOAuthClient } from "../../capability-sources/oauth-credentials.js"
-import { assertPublicUrl, createGuardedFetch, createRealmSafeFetch } from "../../capability-sources/url-guard.js"
+import { assertPublicUrl, createGuardedFetch, createRealmSafeFetch } from "../../core/net/url-guard.js"
 import {
   externalMcpCallbackUrl,
   externalMcpCompatibleCallbackUrl,

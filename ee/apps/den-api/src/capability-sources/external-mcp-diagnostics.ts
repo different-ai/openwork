@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { isEnterpriseMcpLifecycleDeadline } from "@openwork/enterprise-mcp-client"
-import { PrivateUrlError } from "./url-guard.js"
+import { PrivateUrlError } from "../core/net/url-guard.js"
 
 export const EXTERNAL_MCP_DIAGNOSTIC_PHASES = [
   "CONFIGURATION",

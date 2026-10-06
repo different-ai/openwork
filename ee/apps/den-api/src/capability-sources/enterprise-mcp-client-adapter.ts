@@ -9,7 +9,7 @@ import {
   type EnterpriseMcpDiagnosticEvent,
 } from "@openwork/enterprise-mcp-client"
 import { env } from "../env.js"
-import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
+import { createGuardedFetch, createRealmSafeFetch } from "../core/net/url-guard.js"
 import { memberApiKeyStillCurrent, rejectMemberApiKey, resolveMemberApiKey, type ExternalMcpConnectionRow } from "./external-mcp-connections.js"
 import { memberApiKeyAuthorization, usesMemberApiKey } from "./member-api-key.js"
 import {
