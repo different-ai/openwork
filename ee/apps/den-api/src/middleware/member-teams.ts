@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from "hono"
+import { coreHooks } from "../core/hooks/index.js"
 import { listTeamsForMember, type MemberTeamSummary } from "../orgs.js"
 import type { AuthContextVariables } from "../session.js"
 import type { OrganizationContextVariables } from "./organization-context.js"
@@ -15,10 +16,12 @@ export const resolveMemberTeamsMiddleware: MiddlewareHandler<{
     return c.json({ error: "organization_context_required" }, 500) as never
   }
 
-  const memberTeams = await listTeamsForMember({
-    organizationId: context.organization.id,
-    memberId: context.currentMember.id,
-  })
+  // Core's default audience is today's team membership (core/hooks: audience.resolver).
+  const memberTeams = await coreHooks.resolve(
+    "audience.resolver",
+    { organizationId: context.organization.id, memberId: context.currentMember.id },
+    listTeamsForMember,
+  )
 
   c.set("memberTeams", memberTeams)
   await next()

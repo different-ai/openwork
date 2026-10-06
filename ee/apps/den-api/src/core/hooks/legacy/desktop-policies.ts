@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { DesktopPolicyMemberTable, DesktopPolicyTable } from "@openwork-ee/den-db/schema"
-import { ensureDefaultDesktopPolicyForOrganization } from "../../../desktop-policies.js"
+import { calculateDesktopPolicyForOrgMember, ensureDefaultDesktopPolicyForOrganization } from "../../../desktop-policies.js"
 import { coreHooks } from "../default-registry.js"
 import { CORE_HOOK_ORDER } from "../types.js"
 
@@ -60,4 +60,13 @@ coreHooks.registerTx({
     await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.organizationId, organizationId))
     await tx.delete(DesktopPolicyTable).where(eq(DesktopPolicyTable.organizationId, organizationId))
   },
+})
+
+coreHooks.registerContributor({
+  point: "me.desktopConfig",
+  id: "legacy/desktop-policies/desktop-config-policy",
+  registrant: "legacy",
+  errorPolicy: "propagate",
+  order: CORE_HOOK_ORDER.default + 0,
+  contribute: async ({ organizationId, memberId }) => ({ ...await calculateDesktopPolicyForOrgMember({ organizationId, orgMemberId: memberId }) }),
 })

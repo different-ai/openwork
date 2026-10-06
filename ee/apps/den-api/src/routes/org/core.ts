@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { deploymentCapabilitiesSchema } from "@openwork/types/den/deployment-capabilities"
 import { eq } from "@openwork-ee/den-db/drizzle"
-import { OrganizationTable, ScimProviderTable, SsoConnectionTable } from "@openwork-ee/den-db/schema"
+import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
@@ -9,24 +9,15 @@ import { z } from "zod"
 import { auth } from "../../auth.js"
 import { verifyBotProtection } from "../../bot-protection.js"
 import { validateBrandIconUrl } from "../../brand-icon-validation.js"
-import { cloudHostingAvailable } from "../../capability-sources/cloud-hosting.js"
-import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
-import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
-import { coreHooks } from "../../core/hooks/index.js"
+import { coreHooks, mergeCoreHookRecords } from "../../core/hooks/index.js"
 import { db } from "../../db.js"
-import { checkEntitlement, getOrganizationEntitlements, parseOrganizationPlan } from "../../entitlements.js"
+import { checkEntitlement } from "../../entitlements.js"
 import { env } from "../../env.js"
-import { deploymentCapabilities } from "../../gateway-deployment.js"
 import { resolveNonSsoSignInMethodForEmail } from "../../enterprise-auth-requirement.js"
 import { jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidator, resolveMemberTeamsMiddleware, userSessionRoute } from "../../middleware/index.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
-import { organizationHasCapability, organizationManagedDashboardsEnabled } from "../../organization-capabilities.js"
-import { appMcpServersEnabled } from "../../mcp-app-rollout.js"
-import { workbotOrigin } from "../../workbot/config.js"
-import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
-import { getOpenWorkWebAccess } from "../../stripe-billing.js"
 import {
   acceptInvitationForUser,
   createOrganizationForUser,
@@ -684,29 +675,22 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       const [currentOrganization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, payload.organization.id)).limit(1)
       if (!currentOrganization) return c.json({ error: "organization_not_found" }, 404)
       const owner = payload.members.find((member: typeof payload.members[number]) => member.isOwner) ?? null
-      // Cloud is entitled by OpenWork Web access (paid subscription or the
-      // platform-admin complimentary grant) on hosted deployments; there is no
-      // separate per-organization Cloud rollout flag.
-      const cloudEnabled = cloudHostingAvailable({ orgMode: env.orgMode })
-        && (await getOpenWorkWebAccess(payload.organization.id)).hasAccess
-      const [ssoRows, scimRows] = await Promise.all([
-        db
-          .select({ id: SsoConnectionTable.id })
-          .from(SsoConnectionTable)
-          .where(eq(SsoConnectionTable.organizationId, payload.organization.id))
-          .limit(1),
-        db
-          .select({ id: ScimProviderTable.id })
-          .from(ScimProviderTable)
-          .where(eq(ScimProviderTable.organizationId, payload.organization.id))
-          .limit(1),
-      ])
+      // Module fields (capabilities, entitlements, plan, deployment
+      // capabilities, auth methods, current member teams) are contributed
+      // through core/hooks (org.context), in registration order.
+      const fragments = await coreHooks.collect("org.context", {
+        organizationId: payload.organization.id,
+        memberId: payload.currentMember.id,
+        metadata: payload.organization.metadata,
+        storedMetadata: currentOrganization.metadata,
+        memberTeams: c.get("memberTeams") ?? [],
+      })
 
       return c.json({
         ...payload,
         organization: {
           ...payload.organization,
-          metadata: serializeMemberFacingOrganizationMetadata(payload.organization.metadata),
+          metadata: await serializeMemberFacingOrganizationMetadata(payload.organization.metadata, payload.organization.id),
           owner: owner
             ? {
               memberId: owner.id,
@@ -717,42 +701,9 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
             }
             : null,
         },
-        currentMemberTeams: c.get("memberTeams") ?? [],
-        deploymentCapabilities: deploymentCapabilities(),
-        plan: parseOrganizationPlan(currentOrganization.metadata),
-        entitlements: getOrganizationEntitlements(currentOrganization.metadata),
-        capabilities: {
-          auditLogs: organizationHasCapability(currentOrganization.metadata, "auditLogs") && env.auditVisibilityEnabled,
-          gatewayDashboard: true,
-          // Protocol capability: clients must see this explicit signal before
-          // calling the dashboard routes. Older Den versions omit the field,
-          // allowing newer Desktop builds to fail closed during a staggered
-          // rollout instead of calling an endpoint that does not exist yet.
-          // Per-organization and default-off: platform admins enable it with
-          // metadata.capabilities.orgManagedDashboards = true.
-          orgManagedDashboards: organizationManagedDashboardsEnabled(payload.organization.metadata),
-          // Expose the effective value, not the raw stored flag: Connect is
-          // member-facing default-on unless an explicit org kill switch says no.
-          mcpConnections: memberFacingMcpConnectionsEnabled(payload.organization.metadata),
-          // Building your own Apps is on for every organization unless the
-          // deployment or the org's member-facing MCP connections turn it off.
-          appMcpServers: appMcpServersEnabled(payload.organization.metadata),
-          // Workflows/Code Mode are enabled for every organization; the field
-          // remains for published clients that still read it.
-          workflows: true,
-          installLinks: organizationInstallLinksEnabled(payload.organization.metadata),
-          // Effective offer: the deployment switch enables Web generally,
-          // while the platform-admin complimentary grant enables only this
-          // organization when the deployment switch is off.
-          openworkWeb: isOpenWorkWebAvailableForOrganization(payload.organization.metadata),
-          // Workbot is its own app (DEN_WORKBOT_URL), per-organization and default-off.
-          workbot: organizationHasCapability(payload.organization.metadata, "workbot") && workbotOrigin() !== null,
-          ...(cloudEnabled ? { cloud: true } : {}),
-        },
-        authMethods: {
-          sso: Boolean(ssoRows[0]),
-          scim: Boolean(scimRows[0]),
-        },
+        ...mergeCoreHookRecords("org.context", fragments.map((fragment) => fragment.fields ?? {})),
+        capabilities: mergeCoreHookRecords("org.context capabilities", fragments.map((fragment) => fragment.capabilities ?? {})),
+        authMethods: mergeCoreHookRecords("org.context authMethods", fragments.map((fragment) => fragment.authMethods ?? {})),
       })
     },
   )

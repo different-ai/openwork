@@ -174,3 +174,13 @@ coreHooks.registerBootContributor({
     teamMember: () => createDenTypeId("teamMember"),
   }),
 })
+
+coreHooks.registerContributor({
+  point: "org.context",
+  id: "legacy/teams/org-context-current-member-teams",
+  registrant: "legacy",
+  // Today a failure here is a 500; keep it.
+  errorPolicy: "propagate",
+  order: CORE_HOOK_ORDER.default + 0,
+  contribute: async ({ memberTeams }) => ({ fields: { currentMemberTeams: memberTeams } }),
+})

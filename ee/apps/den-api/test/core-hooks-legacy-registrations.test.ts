@@ -16,6 +16,34 @@ for (const [key, value] of Object.entries(placeholders)) {
 
 // Reviewers: a diff here is an ordering or membership change of a Core hook.
 const expected = {
+  "auth.handoffPayload": ["legacy/connect/handoff-connect-enabled"],
+  "invitation.preview": ["legacy/branding/invitation-branding"],
+  "me.desktopConfig": [
+    "legacy/desktop-policies/desktop-config-policy",
+    "legacy/automations/desktop-config-automations",
+    "legacy/dashboards/desktop-config-dashboard-tab",
+    "legacy/connect/desktop-config-connect",
+    "legacy/version-pinning/desktop-config-allowed-versions",
+    "legacy/branding/desktop-config-branding",
+  ],
+  "member.visibilityFilter": ["legacy/workspace-bootstrap/exclude-setup-agent"],
+  "org.context": [
+    "legacy/teams/org-context-current-member-teams",
+    "legacy/audit-logs/org-context-capability",
+    "legacy/ai-gateway/org-context-deployment",
+    "legacy/billing/org-context-plan",
+    "legacy/dashboards/org-context-capability",
+    "legacy/connect/org-context-capability",
+    "legacy/mcp-apps/org-context-capability",
+    "legacy/workflows/org-context-capability",
+    "legacy/install-links/org-context-capability",
+    "legacy/openwork-web/org-context-capability",
+    "legacy/workbot/org-context-capability",
+    "legacy/openwork-web/org-context-cloud",
+    "legacy/enterprise-auth-sso/org-context-auth-method",
+    "legacy/enterprise-auth-scim/org-context-auth-method",
+  ],
+  "org.memberFacingMetadata": ["legacy/openwork-web/hide-cloud-capability"],
   "auth.afterPath": ["legacy/enterprise-auth-sso/complete-sso-test-callback"],
   "auth.beforePath": [
     "legacy/agent-mcp/refresh-grant-liveness",

@@ -8,6 +8,7 @@ import {
 } from "../../../stripe-billing.js"
 import { coreHooks } from "../default-registry.js"
 import { CORE_HOOK_ORDER } from "../types.js"
+import { getOrganizationEntitlements, parseOrganizationPlan } from "../../../entitlements.js"
 
 // Future owner: billing. Stripe quantity syncs keep today's "propagate"
 // semantics and today's paths (Den invitation create, acceptance, removal);
@@ -73,4 +74,14 @@ coreHooks.registerBootContributor({
   security: true,
   order: CORE_HOOK_ORDER.security + 1,
   contribute: () => ({ keys: ["plan"] }),
+})
+
+coreHooks.registerContributor({
+  point: "org.context",
+  id: "legacy/billing/org-context-plan",
+  registrant: "legacy",
+  // Today a failure here is a 500; keep it.
+  errorPolicy: "propagate",
+  order: CORE_HOOK_ORDER.default + 3,
+  contribute: async ({ storedMetadata }) => ({ fields: { plan: parseOrganizationPlan(storedMetadata), entitlements: getOrganizationEntitlements(storedMetadata) } }),
 })

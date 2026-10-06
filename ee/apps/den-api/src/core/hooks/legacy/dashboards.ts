@@ -2,6 +2,8 @@ import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { DashboardAccessGrantTable, DashboardTable } from "@openwork-ee/den-db/schema"
 import { coreHooks } from "../default-registry.js"
 import { CORE_HOOK_ORDER } from "../types.js"
+import { env } from "../../../env.js"
+import { organizationManagedDashboardsEnabled } from "../../../organization-capabilities.js"
 
 // Future owner: dashboards.
 
@@ -53,4 +55,26 @@ coreHooks.registerTx({
     await tx.delete(DashboardAccessGrantTable).where(eq(DashboardAccessGrantTable.organizationId, organizationId))
     await tx.delete(DashboardTable).where(eq(DashboardTable.organizationId, organizationId))
   },
+})
+
+// Protocol capability: clients must see this explicit signal before calling
+// the dashboard routes (older Den versions omit it, so newer desktops fail
+// closed). Per-organization and default-off: metadata.capabilities.orgManagedDashboards.
+coreHooks.registerContributor({
+  point: "org.context",
+  id: "legacy/dashboards/org-context-capability",
+  registrant: "legacy",
+  // Today a failure here is a 500; keep it.
+  errorPolicy: "propagate",
+  order: CORE_HOOK_ORDER.default + 4,
+  contribute: async ({ metadata }) => ({ capabilities: { orgManagedDashboards: organizationManagedDashboardsEnabled(metadata) } }),
+})
+
+coreHooks.registerContributor({
+  point: "me.desktopConfig",
+  id: "legacy/dashboards/desktop-config-dashboard-tab",
+  registrant: "legacy",
+  errorPolicy: "propagate",
+  order: CORE_HOOK_ORDER.default + 2,
+  contribute: async () => ({ dashboardEnabled: env.dashboardsEnabled }),
 })

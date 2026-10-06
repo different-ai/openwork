@@ -15,3 +15,30 @@ coreHooks.registerTx({
     await tx.delete(OrganizationBrandAssetTable).where(eq(OrganizationBrandAssetTable.organizationId, organizationId))
   },
 })
+
+coreHooks.registerContributor({
+  point: "me.desktopConfig",
+  id: "legacy/branding/desktop-config-branding",
+  registrant: "legacy",
+  errorPolicy: "propagate",
+  order: CORE_HOOK_ORDER.default + 5,
+  contribute: async ({ normalizedMetadata }) => ({
+    ...(typeof normalizedMetadata.brandAppName === "string" ? { brandAppName: normalizedMetadata.brandAppName } : {}),
+    ...(typeof normalizedMetadata.brandLogoUrl === "string" ? { brandLogoUrl: normalizedMetadata.brandLogoUrl } : {}),
+    ...(typeof normalizedMetadata.brandIconUrl === "string" ? { brandIconUrl: normalizedMetadata.brandIconUrl } : {}),
+    ...(typeof normalizedMetadata.brandAccentColor === "string" ? { brandAccentColor: normalizedMetadata.brandAccentColor } : {}),
+  }),
+})
+
+// Invitation previews show the organization's branding instead of OpenWork's.
+coreHooks.registerDecorator({
+  point: "invitation.preview",
+  id: "legacy/branding/invitation-branding",
+  registrant: "legacy",
+  errorPolicy: "propagate",
+  handler: async (branding, { normalizedMetadata }) => ({
+    appName: typeof normalizedMetadata.brandAppName === "string" ? normalizedMetadata.brandAppName : branding.appName,
+    logoUrl: typeof normalizedMetadata.brandLogoUrl === "string" ? normalizedMetadata.brandLogoUrl : branding.logoUrl,
+    iconUrl: typeof normalizedMetadata.brandIconUrl === "string" ? normalizedMetadata.brandIconUrl : branding.iconUrl,
+  }),
+})

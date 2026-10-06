@@ -197,3 +197,13 @@ coreHooks.registerResolver({
     }
   },
 })
+
+coreHooks.registerContributor({
+  point: "org.context",
+  id: "legacy/enterprise-auth-sso/org-context-auth-method",
+  registrant: "legacy",
+  // Today a failure here is a 500; keep it.
+  errorPolicy: "propagate",
+  order: CORE_HOOK_ORDER.default + 12,
+  contribute: async ({ organizationId }) => ({ authMethods: { sso: (await db.select({ id: SsoConnectionTable.id }).from(SsoConnectionTable).where(eq(SsoConnectionTable.organizationId, organizationId)).limit(1)).length > 0 } }),
+})

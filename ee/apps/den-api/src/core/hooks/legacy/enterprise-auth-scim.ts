@@ -12,6 +12,7 @@ import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { isScimManagedTeam } from "../../../scim-groups.js"
 import { coreHooks } from "../default-registry.js"
 import { CORE_HOOK_ORDER } from "../types.js"
+import { db } from "../../../db.js"
 
 // Future owner: enterpriseAuth.scim.
 
@@ -106,4 +107,14 @@ coreHooks.registerBootContributor({
     scimGroupRole: () => createDenTypeId("scimGroupRole"),
     scimGroupRoleGrant: () => createDenTypeId("scimGroupRoleGrant"),
   }),
+})
+
+coreHooks.registerContributor({
+  point: "org.context",
+  id: "legacy/enterprise-auth-scim/org-context-auth-method",
+  registrant: "legacy",
+  // Today a failure here is a 500; keep it.
+  errorPolicy: "propagate",
+  order: CORE_HOOK_ORDER.default + 13,
+  contribute: async ({ organizationId }) => ({ authMethods: { scim: (await db.select({ id: ScimProviderTable.id }).from(ScimProviderTable).where(eq(ScimProviderTable.organizationId, organizationId)).limit(1)).length > 0 } }),
 })

@@ -22,6 +22,7 @@ import {
 } from "../../../llm/inference-provider-lifecycle.js"
 import { coreHooks } from "../default-registry.js"
 import { CORE_HOOK_ORDER } from "../types.js"
+import { deploymentCapabilities } from "../../../gateway-deployment.js"
 
 // Future owner: aiGateway (credentials and keys are shared with openworkModels
 // until W0-P07 splits inference.ts; usage requests belong to aiGateway.usageLimits).
@@ -186,4 +187,14 @@ coreHooks.registerBootContributor({
   security: true,
   order: CORE_HOOK_ORDER.security + 6,
   contribute: () => ({ droppedCapabilityKeys: ["gatewayDashboard"] }),
+})
+
+coreHooks.registerContributor({
+  point: "org.context",
+  id: "legacy/ai-gateway/org-context-deployment",
+  registrant: "legacy",
+  // Today a failure here is a 500; keep it.
+  errorPolicy: "propagate",
+  order: CORE_HOOK_ORDER.default + 2,
+  contribute: async () => ({ fields: { deploymentCapabilities: deploymentCapabilities() }, capabilities: { gatewayDashboard: true } }),
 })

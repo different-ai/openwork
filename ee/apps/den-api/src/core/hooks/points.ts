@@ -2,6 +2,7 @@ import type { AuthUserTable, InvitationTable, MemberTable, OrganizationTable, Te
 import type { OAuthOptions, Scope } from "@better-auth/oauth-provider"
 import type { BetterAuthPlugin } from "better-auth"
 import type { createAuthMiddleware } from "better-auth/api"
+import type { SQL } from "@openwork-ee/den-db/drizzle"
 import type { OrganizationOptions } from "better-auth/plugins"
 import type { AfterCommit, CoreHookModuleId, CoreHookRejection, CoreTx } from "./types.js"
 
@@ -240,12 +241,101 @@ export interface CoreBootContributorPoints {
   // Better Auth model name → id generator.
   "auth.modelIds": Readonly<Record<string, () => string>>
   "org.reservedMetadataKeys": CoreReservedMetadataKeys
+  // Conditions a member row must also meet to count as a person (seat counts,
+  // member lists, seat eligibility), and'ed with Core's "not removed".
+  "member.visibilityFilter": SQL
+}
+
+export type CoreMemberTeam = {
+  id: TeamId
+  name: string
+  organizationId: OrgId
+  createdAt: Date
+  updatedAt: Date
 }
 
 export interface CoreResolverPoints {
   "auth.signInMethodResolver": {
     input: CoreSignInMethodLookup
     output: CoreSsoSignInRequirement | null
+  }
+  // The teams a member belongs to, for audience matching. Core's default is
+  // today's team membership; M-teams moves it and makes the default "no
+  // teams" (D29).
+  "audience.resolver": {
+    input: { organizationId: OrgId; memberId: MemberId }
+    output: CoreMemberTeam[]
+  }
+}
+
+// Stored organization metadata as Core hands it around (a JSON column, or a
+// serialized string on older paths).
+export type CoreOrganizationMetadata = string | Readonly<Record<string, unknown>> | null
+
+// A JSON response fragment. Values are serialized by the route (Dates become
+// ISO strings), exactly as before they were contributed.
+export type CoreResponseFragment = Readonly<Record<string, unknown>>
+
+export type CoreOrgContextFragment = {
+  // Top-level fields of GET /v1/org, merged after Core's organization field.
+  fields?: CoreResponseFragment
+  // `capabilities.*` and `authMethods.*` flags.
+  capabilities?: Readonly<Record<string, boolean>>
+  authMethods?: Readonly<Record<string, boolean>>
+}
+
+// Async contributors. Fragments are collected concurrently and merged in
+// order; a key written twice fails the request (a registration bug).
+export interface CoreContributorPoints {
+  // GET /v1/org. `metadata` is the context's metadata, `storedMetadata` the
+  // row re-read by the route.
+  "org.context": {
+    input: {
+      organizationId: OrgId
+      memberId: MemberId
+      metadata: CoreOrganizationMetadata
+      storedMetadata: CoreOrganizationMetadata
+      memberTeams: CoreMemberTeam[]
+    }
+    fragment: CoreOrgContextFragment
+  }
+  // GET /v1/me/desktop-config, merged in order.
+  "me.desktopConfig": {
+    input: {
+      organizationId: OrgId
+      memberId: MemberId
+      metadata: CoreOrganizationMetadata
+      normalizedMetadata: Readonly<Record<string, unknown>>
+    }
+    fragment: CoreResponseFragment
+  }
+  // The desktop handoff exchange response, after token, user and organization.
+  "auth.handoffPayload": {
+    input: {
+      organizationId: string | null
+      metadata: CoreOrganizationMetadata
+    }
+    fragment: CoreResponseFragment
+  }
+}
+
+export type CoreInvitationPreviewBranding = {
+  appName: string
+  logoUrl: string | null
+  iconUrl: string | null
+}
+
+// Decorators transform a value in order.
+export interface CoreDecoratorPoints {
+  // Organization metadata shown to members (GET /v1/org, the org list).
+  "org.memberFacingMetadata": {
+    input: { organizationId: OrgId }
+    value: Readonly<Record<string, unknown>>
+  }
+  // The branding block of the public invitation preview.
+  "invitation.preview": {
+    input: { organizationId: OrgId; normalizedMetadata: Readonly<Record<string, unknown>> }
+    value: CoreInvitationPreviewBranding
   }
 }
 
@@ -256,6 +346,8 @@ export type CorePostCommitPointName = keyof CorePostCommitPoints
 export type CoreMiddlewarePointName = keyof CoreMiddlewarePoints
 export type CoreBootContributorPointName = keyof CoreBootContributorPoints
 export type CoreResolverPointName = keyof CoreResolverPoints
+export type CoreContributorPointName = keyof CoreContributorPoints
+export type CoreDecoratorPointName = keyof CoreDecoratorPoints
 export type CoreHookPointName =
   | CoreGuardPointName
   | CoreTxPointName
@@ -264,3 +356,5 @@ export type CoreHookPointName =
   | CoreMiddlewarePointName
   | CoreBootContributorPointName
   | CoreResolverPointName
+  | CoreContributorPointName
+  | CoreDecoratorPointName

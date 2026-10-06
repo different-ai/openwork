@@ -1,5 +1,9 @@
 import { alwaysOnModuleStateSource, type CoreHookModuleStateSource } from "./module-state.js"
 import type {
+  CoreContributorPointName,
+  CoreContributorPoints,
+  CoreDecoratorPointName,
+  CoreDecoratorPoints,
   CoreBootContributorPointName,
   CoreBootContributorPoints,
   CoreGuardPointName,
@@ -62,6 +66,21 @@ export interface CoreResolverRegistration<P extends CoreResolverPointName> exten
   handler: (input: CoreResolverPoints[P]["input"]) => Promise<CoreResolverPoints[P]["output"]>
 }
 
+export interface CoreContributorRegistration<P extends CoreContributorPointName> extends CoreHookRegistrationBase<P> {
+  // Default "isolate": a failing contributor's fragment is omitted and a warn
+  // is logged. "propagate" fails the request (legacy contributors, to keep
+  // today's 500s).
+  errorPolicy?: CoreHookErrorPolicy
+  contribute: (input: CoreContributorPoints[P]["input"]) => Promise<CoreContributorPoints[P]["fragment"]>
+}
+
+export interface CoreDecoratorRegistration<P extends CoreDecoratorPointName> extends CoreHookRegistrationBase<P> {
+  // Default "isolate": a failing decorator is skipped (the value passes
+  // through) and a warn is logged.
+  errorPolicy?: CoreHookErrorPolicy
+  handler: (value: CoreDecoratorPoints[P]["value"], input: CoreDecoratorPoints[P]["input"]) => Promise<CoreDecoratorPoints[P]["value"]>
+}
+
 type GuardStore = { [K in CoreGuardPointName]: CoreGuardRegistration<K>[] }
 type TxStore = { [K in CoreTxPointName]: CoreTxRegistration<K>[] }
 type ParticipantStore = { [K in CoreParticipantPointName]: CoreParticipantRegistration<K>[] }
@@ -69,6 +88,8 @@ type PostCommitStore = { [K in CorePostCommitPointName]: CorePostCommitRegistrat
 type MiddlewareStore = { [K in CoreMiddlewarePointName]: CoreMiddlewareRegistration<K>[] }
 type BootContributorStore = { [K in CoreBootContributorPointName]: CoreBootContributorRegistration<K>[] }
 type ResolverStore = { [K in CoreResolverPointName]: CoreResolverRegistration<K>[] }
+type ContributorStore = { [K in CoreContributorPointName]: CoreContributorRegistration<K>[] }
+type DecoratorStore = { [K in CoreDecoratorPointName]: CoreDecoratorRegistration<K>[] }
 
 // One entry per point: adding a point to points.ts without listing it here
 // fails typecheck, so the runtime catalogue cannot drift from the types.
@@ -127,12 +148,29 @@ function emptyBootContributorStore(): BootContributorStore {
     "auth.rawMutationDenials": [],
     "auth.modelIds": [],
     "org.reservedMetadataKeys": [],
+    "member.visibilityFilter": [],
   }
 }
 
 function emptyResolverStore(): ResolverStore {
   return {
     "auth.signInMethodResolver": [],
+    "audience.resolver": [],
+  }
+}
+
+function emptyContributorStore(): ContributorStore {
+  return {
+    "org.context": [],
+    "me.desktopConfig": [],
+    "auth.handoffPayload": [],
+  }
+}
+
+function emptyDecoratorStore(): DecoratorStore {
+  return {
+    "org.memberFacingMetadata": [],
+    "invitation.preview": [],
   }
 }
 
@@ -186,6 +224,8 @@ export function createCoreHookRegistry(options: CoreHookRegistryOptions = {}) {
   const middlewares = emptyMiddlewareStore()
   const bootContributors = emptyBootContributorStore()
   const resolvers = emptyResolverStore()
+  const contributors = emptyContributorStore()
+  const decorators = emptyDecoratorStore()
   const ids = new Map<string, string>()
   let frozen = false
   let moduleStateSource: CoreHookModuleStateSource = alwaysOnModuleStateSource
@@ -317,6 +357,20 @@ export function createCoreHookRegistry(options: CoreHookRegistryOptions = {}) {
       sortRegistrations(list)
     },
 
+    registerContributor<P extends CoreContributorPointName>(registration: CoreContributorRegistration<P>) {
+      claim(registration)
+      const list: CoreContributorRegistration<P>[] = contributors[registration.point]
+      list.push(registration)
+      sortRegistrations(list)
+    },
+
+    registerDecorator<P extends CoreDecoratorPointName>(registration: CoreDecoratorRegistration<P>) {
+      claim(registration)
+      const list: CoreDecoratorRegistration<P>[] = decorators[registration.point]
+      list.push(registration)
+      sortRegistrations(list)
+    },
+
     setModuleStateSource(source: CoreHookModuleStateSource) {
       moduleStateSource = source
     },
@@ -332,7 +386,7 @@ export function createCoreHookRegistry(options: CoreHookRegistryOptions = {}) {
     // point → ordered hook ids, for the boot log line and the snapshot test.
     describe() {
       const description: Record<string, string[]> = {}
-      const stores: Array<Record<string, ReadonlyArray<{ id: string }> | undefined>> = [guards, txHooks, participants, postCommits, middlewares, bootContributors, resolvers]
+      const stores: Array<Record<string, ReadonlyArray<{ id: string }> | undefined>> = [guards, txHooks, participants, postCommits, middlewares, bootContributors, resolvers, contributors, decorators]
       for (const store of stores) {
         for (const [point, list] of Object.entries(store)) {
           if (list && list.length > 0) description[point] = list.map((registration) => registration.id)
@@ -443,6 +497,44 @@ export function createCoreHookRegistry(options: CoreHookRegistryOptions = {}) {
         return registration.handler(input)
       }
       return coreDefault(input)
+    },
+
+    // Fragments in registration order. Contributors run concurrently; an
+    // "isolate" failure drops its fragment, a "propagate" failure rejects.
+    async collect<P extends CoreContributorPointName>(point: P, input: CoreContributorPoints[P]["input"]): Promise<CoreContributorPoints[P]["fragment"][]> {
+      dispatchStarted()
+      const list: CoreContributorRegistration<P>[] = contributors[point]
+      const results = await Promise.all(list.map(async (registration) => {
+        if (!(await shouldRun(registration, input))) return null
+        try {
+          return { fragment: await registration.contribute(input) }
+        } catch (error) {
+          if ((registration.errorPolicy ?? "isolate") === "propagate") throw error
+          logger.warn("core_hook_failure", { point, hook_id: registration.id, ...errorFields(error) })
+          return null
+        }
+      }))
+      const fragments: CoreContributorPoints[P]["fragment"][] = []
+      for (const result of results) {
+        if (result) fragments.push(result.fragment)
+      }
+      return fragments
+    },
+
+    // Sequential. An "isolate" failure leaves the value as it was.
+    async decorate<P extends CoreDecoratorPointName>(point: P, value: CoreDecoratorPoints[P]["value"], input: CoreDecoratorPoints[P]["input"]): Promise<CoreDecoratorPoints[P]["value"]> {
+      dispatchStarted()
+      let current = value
+      for (const registration of decorators[point]) {
+        if (!(await shouldRun(registration, input))) continue
+        try {
+          current = await registration.handler(current, input)
+        } catch (error) {
+          if ((registration.errorPolicy ?? "isolate") === "propagate") throw error
+          logger.warn("core_hook_failure", { point, hook_id: registration.id, ...errorFields(error) })
+        }
+      }
+      return current
     },
   }
 }

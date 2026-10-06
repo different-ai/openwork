@@ -14,8 +14,7 @@ import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, u
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSummary } from "../../orgs.js"
 import type { AuthContextVariables } from "../../session.js"
-import { calculateDesktopPolicyForOrgMember } from "../../desktop-policies.js"
-import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
+import { coreHooks, mergeCoreHookRecords } from "../../core/hooks/index.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 
 const DOWNLOAD_LINK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
@@ -366,33 +365,16 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
     async (c) => {
       const organization = c.get("organizationContext").organization
       const currentMember = c.get("organizationContext").currentMember
-      const metadata = normalizeOrganizationMetadata(organization.metadata).metadata
-      const desktopPolicy = await calculateDesktopPolicyForOrgMember({
+      // Every field is contributed through core/hooks (me.desktopConfig):
+      // desktop policy, feature switches, version pinning and branding.
+      const fragments = await coreHooks.collect("me.desktopConfig", {
         organizationId: organization.id,
-        orgMemberId: currentMember.id,
+        memberId: currentMember.id,
+        metadata: organization.metadata,
+        normalizedMetadata: normalizeOrganizationMetadata(organization.metadata).metadata,
       })
 
-      return c.json({
-        ...desktopPolicy,
-        automationsEnabled: env.automations.enabled,
-        dashboardEnabled: env.dashboardsEnabled,
-        connectEnabled: memberFacingMcpConnectionsEnabled(organization.metadata),
-        ...(Array.isArray(metadata.allowedDesktopVersions)
-          ? { allowedDesktopVersions: metadata.allowedDesktopVersions }
-          : {}),
-        ...(typeof metadata.brandAppName === "string"
-          ? { brandAppName: metadata.brandAppName }
-          : {}),
-        ...(typeof metadata.brandLogoUrl === "string"
-          ? { brandLogoUrl: metadata.brandLogoUrl }
-          : {}),
-        ...(typeof metadata.brandIconUrl === "string"
-          ? { brandIconUrl: metadata.brandIconUrl }
-          : {}),
-        ...(typeof metadata.brandAccentColor === "string"
-          ? { brandAccentColor: metadata.brandAccentColor }
-          : {}),
-      })
+      return c.json(mergeCoreHookRecords("me.desktopConfig", fragments))
     },
   )
 }

@@ -9,6 +9,8 @@ export type { CoreHookModuleStateSource } from "./module-state.js"
 export type * from "./points.js"
 export type {
   CoreBootContributorRegistration,
+  CoreContributorRegistration,
+  CoreDecoratorRegistration,
   CoreGuardRegistration,
   CoreHookLogger,
   CoreHookRegistry,

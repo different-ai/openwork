@@ -10,6 +10,8 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { coreHooks } from "../default-registry.js"
 import { CORE_HOOK_ORDER } from "../types.js"
+import { env } from "../../../env.js"
+import { organizationHasCapability } from "../../../organization-capabilities.js"
 
 // Future owner: auditLogs.
 
@@ -42,4 +44,14 @@ coreHooks.registerBootContributor({
   security: true,
   order: CORE_HOOK_ORDER.security + 2,
   contribute: () => ({ capabilityKeys: ["auditLogs"] }),
+})
+
+coreHooks.registerContributor({
+  point: "org.context",
+  id: "legacy/audit-logs/org-context-capability",
+  registrant: "legacy",
+  // Today a failure here is a 500; keep it.
+  errorPolicy: "propagate",
+  order: CORE_HOOK_ORDER.default + 1,
+  contribute: async ({ storedMetadata }) => ({ capabilities: { auditLogs: organizationHasCapability(storedMetadata, "auditLogs") && env.auditVisibilityEnabled } }),
 })

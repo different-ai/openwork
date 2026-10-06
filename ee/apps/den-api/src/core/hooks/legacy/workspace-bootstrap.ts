@@ -1,5 +1,5 @@
 import { eq } from "@openwork-ee/den-db/drizzle"
-import { WorkspaceBootstrapTable, WorkspaceClaimCodeTable, WorkspaceClaimTable } from "@openwork-ee/den-db/schema"
+import { MemberTable, WorkspaceBootstrapTable, WorkspaceClaimCodeTable, WorkspaceClaimTable } from "@openwork-ee/den-db/schema"
 import { coreHooks } from "../default-registry.js"
 import { CORE_HOOK_ORDER } from "../types.js"
 
@@ -17,4 +17,12 @@ coreHooks.registerTx({
     await tx.delete(WorkspaceClaimTable).where(eq(WorkspaceClaimTable.organizationId, organizationId))
     await tx.delete(WorkspaceBootstrapTable).where(eq(WorkspaceBootstrapTable.organizationId, organizationId))
   },
+})
+
+// The sign-in-less setup agent holding a provisional workspace is not a person.
+coreHooks.registerBootContributor({
+  point: "member.visibilityFilter",
+  id: "legacy/workspace-bootstrap/exclude-setup-agent",
+  registrant: "legacy",
+  contribute: () => eq(MemberTable.isSetupAgent, false),
 })

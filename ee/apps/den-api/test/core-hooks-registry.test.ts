@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import type { CoreHookModuleStateSource } from "../src/core/hooks/module-state.js"
 import { mergeCoreHookRecords } from "../src/core/hooks/merge.js"
-import type { CoreMiddlewarePoints, CorePostCommitPoints, CoreResolverPoints, CoreTxPoints } from "../src/core/hooks/points.js"
+import type { CoreContributorPoints, CoreMiddlewarePoints, CorePostCommitPoints, CoreResolverPoints, CoreTxPoints } from "../src/core/hooks/points.js"
 import { createCoreHookRegistry, type CoreHookLogger } from "../src/core/hooks/registry.js"
 import { runWithAfterCommit } from "../src/core/hooks/mutation.js"
 import { shouldRunCoreHook } from "../src/core/hooks/run.js"
@@ -312,5 +312,47 @@ describe("resolvers", () => {
     const registry = createCoreHookRegistry()
     registry.registerResolver({ point: "auth.signInMethodResolver", id: "a", registrant: "legacy", handler: async () => null })
     assert.throws(() => registry.registerResolver({ point: "auth.signInMethodResolver", id: "b", registrant: "legacy", handler: async () => null }), /core_hook_resolver_conflict/)
+  })
+})
+
+describe("contributors", () => {
+  const input: CoreContributorPoints["auth.handoffPayload"]["input"] = { organizationId: null, metadata: null }
+
+  test("fragments keep registration order even when contributors finish out of order", async () => {
+    const registry = createCoreHookRegistry()
+    registry.registerContributor({ point: "auth.handoffPayload", id: "slow", registrant: "legacy", order: 1, contribute: async () => { await new Promise((resolve) => setTimeout(resolve, 5)); return { first: 1 } } })
+    registry.registerContributor({ point: "auth.handoffPayload", id: "fast", registrant: "legacy", order: 2, contribute: async () => ({ second: 2 }) })
+    assert.deepEqual(Object.keys(mergeCoreHookRecords("auth.handoffPayload", await registry.collect("auth.handoffPayload", input))), ["first", "second"])
+  })
+
+  test("isolate drops the failing fragment and logs; propagate rejects", async () => {
+    const { lines, logger } = recordingLogger()
+    const registry = createCoreHookRegistry({ logger })
+    registry.registerContributor({ point: "auth.handoffPayload", id: "broken", registrant: "legacy", order: 1, contribute: async () => { throw new Error("down") } })
+    registry.registerContributor({ point: "auth.handoffPayload", id: "ok", registrant: "legacy", order: 2, contribute: async () => ({ ok: true }) })
+    assert.deepEqual(await registry.collect("auth.handoffPayload", input), [{ ok: true }])
+    assert.ok(lines.some((line) => line.level === "warn" && line.message === "core_hook_failure" && line.fields?.hook_id === "broken"))
+
+    const strict = createCoreHookRegistry()
+    strict.registerContributor({ point: "auth.handoffPayload", id: "broken", registrant: "legacy", errorPolicy: "propagate", contribute: async () => { throw new Error("down") } })
+    await assert.rejects(strict.collect("auth.handoffPayload", input), /down/)
+  })
+
+  test("a disabled module's contributor is skipped for its organization", async () => {
+    const registry = createCoreHookRegistry()
+    registry.setModuleStateSource(stateSource({ effective: false, available: true }))
+    registry.registerContributor({ point: "auth.handoffPayload", id: "connect/flag", registrant: "connect", moduleId: "connect", contribute: async () => ({ connectEnabled: true }) })
+    assert.deepEqual(await registry.collect("auth.handoffPayload", { organizationId: organizationId, metadata: null }), [])
+  })
+})
+
+describe("decorators", () => {
+  test("transform in order; an isolated failure passes the value through", async () => {
+    const registry = createCoreHookRegistry()
+    registry.registerDecorator({ point: "invitation.preview", id: "a", registrant: "legacy", order: 1, handler: async (branding) => ({ ...branding, appName: `${branding.appName}-a` }) })
+    registry.registerDecorator({ point: "invitation.preview", id: "b", registrant: "legacy", order: 2, handler: async () => { throw new Error("down") } })
+    registry.registerDecorator({ point: "invitation.preview", id: "c", registrant: "legacy", order: 3, handler: async (branding) => ({ ...branding, appName: `${branding.appName}-c` }) })
+    const branding = await registry.decorate("invitation.preview", { appName: "OpenWork", logoUrl: null, iconUrl: null }, { organizationId: "org_test", normalizedMetadata: {} })
+    assert.equal(branding.appName, "OpenWork-a-c")
   })
 })

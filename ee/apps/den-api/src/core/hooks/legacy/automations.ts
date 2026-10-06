@@ -9,6 +9,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { coreHooks } from "../default-registry.js"
 import { CORE_HOOK_ORDER } from "../types.js"
+import { env } from "../../../env.js"
 
 // Future owner: automations. Previously orphaned (W0-05). Revisions, runs and
 // run events carry no organization column, so they are joined through the
@@ -52,4 +53,13 @@ coreHooks.registerBootContributor({
   security: true,
   order: CORE_HOOK_ORDER.security + 4,
   contribute: () => ({ capabilityKeys: ["headlessAutomations"] }),
+})
+
+coreHooks.registerContributor({
+  point: "me.desktopConfig",
+  id: "legacy/automations/desktop-config-automations",
+  registrant: "legacy",
+  errorPolicy: "propagate",
+  order: CORE_HOOK_ORDER.default + 1,
+  contribute: async () => ({ automationsEnabled: env.automations.enabled }),
 })

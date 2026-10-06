@@ -5,7 +5,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
+import { coreHooks, mergeCoreHookRecords } from "../../core/hooks/index.js"
 import { jsonValidator, publicRoute, userSessionRoute } from "../../middleware/index.js"
 import { db } from "../../db.js"
 import { env, type DenOrgMode } from "../../env.js"
@@ -671,20 +671,16 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       organization = null
     }
 
-    let connectEnabled: boolean | null = null
-    if (organization) {
-      try {
-        connectEnabled = memberFacingMcpConnectionsEnabled(organizationMetadata)
-      } catch {
-        connectEnabled = null
-      }
-    }
+    const fragments = await coreHooks.collect("auth.handoffPayload", {
+      organizationId: organization?.id ?? null,
+      metadata: organizationMetadata,
+    })
 
     return c.json({
       token: exchange.token,
       user: exchange.user,
       organization,
-      connectEnabled,
+      ...mergeCoreHookRecords("auth.handoffPayload", fragments),
     })
     },
   )

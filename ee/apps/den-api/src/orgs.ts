@@ -376,23 +376,12 @@ function serializeMetadataRecord(metadata: Record<string, unknown>) {
   return Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null
 }
 
-export function serializeMemberFacingOrganizationMetadata(input: OrganizationMetadataInput) {
+// Modules hide platform-owned fields from members through core/hooks
+// (org.memberFacingMetadata). An untouched record is serialized as stored.
+export async function serializeMemberFacingOrganizationMetadata(input: OrganizationMetadataInput, organizationId: OrgId) {
   const metadata = parseMetadataRecord(input)
-  const capabilities = isRecord(metadata.capabilities) ? metadata.capabilities : null
-  if (!capabilities || !("cloud" in capabilities)) {
-    return serializeOrganizationMetadata(input)
-  }
-
-  const nextCapabilities = { ...capabilities }
-  delete nextCapabilities.cloud
-  const nextMetadata = { ...metadata }
-  if (Object.keys(nextCapabilities).length > 0) {
-    nextMetadata.capabilities = nextCapabilities
-  } else {
-    delete nextMetadata.capabilities
-  }
-
-  return serializeMetadataRecord(nextMetadata)
+  const decorated = await coreHooks.decorate("org.memberFacingMetadata", metadata, { organizationId })
+  return decorated === metadata ? serializeOrganizationMetadata(input) : serializeMetadataRecord({ ...decorated })
 }
 
 export function parsePermissionRecord(value: string | null) {
@@ -1029,11 +1018,12 @@ export async function getInvitationPreview(invitationIdRaw: string): Promise<Inv
       name: row.organization.name,
       slug: row.organization.slug,
       allowedEmailDomains: normalizeStoredAllowedEmailDomains(row.organization.allowedEmailDomains),
-      branding: {
-        appName: typeof organizationMetadata.brandAppName === "string" ? organizationMetadata.brandAppName : "OpenWork",
-        logoUrl: typeof organizationMetadata.brandLogoUrl === "string" ? organizationMetadata.brandLogoUrl : row.organization.logo,
-        iconUrl: typeof organizationMetadata.brandIconUrl === "string" ? organizationMetadata.brandIconUrl : null,
-      },
+      // OpenWork defaults; branding overrides them through core/hooks.
+      branding: await coreHooks.decorate(
+        "invitation.preview",
+        { appName: "OpenWork", logoUrl: row.organization.logo, iconUrl: null },
+        { organizationId: row.organization.id, normalizedMetadata: organizationMetadata },
+      ),
     },
   }
 }
@@ -1455,7 +1445,7 @@ export async function listUserOrgs(userId: UserId) {
       slug: row.organization.slug,
       logo: row.organization.logo,
       allowedEmailDomains: normalizeStoredAllowedEmailDomains(row.organization.allowedEmailDomains),
-      metadata: serializeMemberFacingOrganizationMetadata(row.organization.metadata),
+      metadata: await serializeMemberFacingOrganizationMetadata(row.organization.metadata, row.organization.id),
       role: effectiveOrganizationRole(row.role, adminTeams),
       directRole: row.role,
       adminTeams,

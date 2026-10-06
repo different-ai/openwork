@@ -1,5 +1,10 @@
-import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, isNull, type SQL } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
+import { coreHooks } from "./core/hooks/index.js"
+
+// Collected on first use, not at import: this file is imported while the
+// legacy registrations load.
+let contributedPeopleConditions: SQL[] | null = null
 
 /**
  * Members that are people: not removed, and not the sign-in-less setup agent
@@ -8,5 +13,6 @@ import { MemberTable } from "@openwork-ee/den-db/schema"
  * (the agent acting for its own workspace) keeps using plain membership.
  */
 export function peopleMemberCondition() {
-  return and(isNull(MemberTable.removedAt), eq(MemberTable.isSetupAgent, false))
+  contributedPeopleConditions ??= coreHooks.collectBoot("member.visibilityFilter")
+  return and(isNull(MemberTable.removedAt), ...contributedPeopleConditions)
 }
